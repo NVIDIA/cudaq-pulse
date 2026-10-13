@@ -2,5 +2,9 @@
   "llvm_version": "22.1.8",
   "release_tag": "mlir-toolchain-22.1.8",
   "base_url": "https://github.com/NVIDIA/cudaq-pulse/releases/download/mlir-toolchain-22.1.8",
-  "assets": {}
+  "assets": {
+    "mlir-toolchain-22.1.8-linux-aarch64.tar.xz": "e5766f46aef89c30db0d73d2f7356f4f64db0639df2f61fc4f9c277feaead648",
+    "mlir-toolchain-22.1.8-linux-x86_64.tar.xz": "3d348285f6e82def6df94659b9f4ea2b5b9b6113efd4a8219d1281c4ffd98fea",
+    "mlir-toolchain-22.1.8-macos-aarch64.tar.xz": "9cda098f72bda9f062aec04836dc3d50affa6441bfbce23f18250b2c56c3f220"
+  }
 }
