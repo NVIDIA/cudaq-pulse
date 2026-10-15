@@ -36,11 +36,11 @@ runs:
         set -euo pipefail
         args=()
         if [[ -n "$PLATFORM" ]]; then args+=(--platform "$PLATFORM"); fi
-        archive="$(python3 tools/fetch-mlir-toolchain.py --print-archive-name "${args[@]}")"
+        archive="$(python3 tools/fetch-mlir-toolchain.py --print-archive-name ${args[@]+"${args[@]}"})"
         tag="$(python3 -c 'import json; print(json.load(open("tools/mlir-toolchain.lock.json"))["release_tag"])')"
         mkdir -p .cache/mlir/downloads
         gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
           --pattern "$archive" --dir .cache/mlir/downloads --clobber
         if [[ "$UNPACK" == "true" ]]; then
-          python3 tools/fetch-mlir-toolchain.py "${args[@]}"
+          python3 tools/fetch-mlir-toolchain.py ${args[@]+"${args[@]}"}
         fi
