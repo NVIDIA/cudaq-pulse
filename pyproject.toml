@@ -12,7 +12,7 @@
 [build-system]
 requires = [
     "scikit-build-core>=0.11",
-    "setuptools-scm>=8",
+    "setuptools-scm>=9",
     "nanobind>=2.12",
 ]
 build-backend = "scikit_build_core.build"
@@ -119,7 +119,13 @@ CUDAQ_PULSE_ENABLE_GPU = { env = "CUDAQ_PULSE_ENABLE_GPU", default = "OFF" }
 CUDAQ_PULSE_CUDA12_ROOT = { env = "CUDAQ_PULSE_CUDA12_ROOT", default = "" }
 CUDAQ_PULSE_CUDA13_ROOT = { env = "CUDAQ_PULSE_CUDA13_ROOT", default = "" }
 
+# Only v* tags carry package versions; mlir-toolchain-* tags name toolchain
+# releases.
 [tool.setuptools_scm]
+tag_regex = '^v(?P<version>\d+(?:\.\d+)*(?:(?:a|b|rc)\d+)?)$'
+
+[tool.setuptools_scm.scm.git]
+describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "v*"]
 
 [tool.cibuildwheel]
 # cp312 builds the abi3 wheel that also covers 3.13 and later.
