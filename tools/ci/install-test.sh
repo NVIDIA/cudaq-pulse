@@ -85,6 +85,9 @@ run_pytest() {
   dir="${work}/tests-$(basename "$venv")"
   mkdir -p "$dir"
   cp -R "${repo_root}/tests" "${repo_root}/pyproject.toml" "$dir/"
+  # tests/test_frontend_features.py checks the canonical workload op counts.
+  mkdir -p "$dir/benchmarks/compiler"
+  cp "${repo_root}/benchmarks/compiler/compile_time.py" "$dir/benchmarks/compiler/"
   (cd "$dir" && PATH="${venv}/bin:${PATH}" VIRTUAL_ENV="$venv" \
     python -m pytest -p no:cacheprovider -m "$markers")
 }
