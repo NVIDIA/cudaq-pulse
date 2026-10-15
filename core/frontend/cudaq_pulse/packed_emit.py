@@ -32,6 +32,7 @@ import struct
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 from .passes.ir_types import OpKind, Program, ValueType
 
@@ -86,7 +87,7 @@ def _header(opcode: int, payload_len: int) -> int:
     return opcode | (payload_len << 8)
 
 
-def pack_program(prog: Program) -> np.ndarray:
+def pack_program(prog: Program) -> npt.NDArray[np.int64]:
     """Encode a Program into a flat int64 numpy array (zero-copy ready)."""
     buf = np.empty(len(prog.ops) * 10, dtype=np.int64)
     c = 0

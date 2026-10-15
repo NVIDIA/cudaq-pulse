@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 from .._native._cudaq_pulse_native import JITModule, MLIRPipeline
 from .gpu import GpuRuntime, require_gpu_runtime
@@ -31,12 +32,12 @@ class JITResult:
 
     raw_ptr: int
     shape: tuple[int, ...]
-    dtype: np.dtype
-    _array: np.ndarray | None = field(default=None, repr=False, compare=False)
+    dtype: np.dtype[Any]
+    _array: npt.NDArray[Any] | None = field(default=None, repr=False, compare=False)
 
-    def to_numpy(self) -> np.ndarray:
+    def to_numpy(self) -> npt.NDArray[Any]:
         """Interpret the raw device-to-host copy as a NumPy array."""
-        result: np.ndarray
+        result: npt.NDArray[Any]
         if self._array is not None:
             result = self._array.reshape(self.shape).copy()
             return result
@@ -44,7 +45,7 @@ class JITResult:
         for s in self.shape:
             n_elements *= s
         buf = (ctypes.c_double * (n_elements * 2)).from_address(self.raw_ptr)
-        flat = np.frombuffer(buf, dtype=np.complex128, count=n_elements)
+        flat = np.ctypeslib.as_array(buf).view(np.complex128)
         result = flat.reshape(self.shape).copy()
         return result
 

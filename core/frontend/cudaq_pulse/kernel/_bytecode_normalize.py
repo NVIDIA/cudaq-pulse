@@ -50,8 +50,29 @@ _SKIP_OPS = frozenset(
         "TO_BOOL",
         "COPY_FREE_VARS",
         "EXTENDED_ARG",
+        "NOT_TAKEN",
     }
 )
+
+# ── Opcodes added in 3.13+ that alias an older canonical op ──────────
+
+_ALIASES: dict[str, str] = {
+    "LOAD_FAST_BORROW": "LOAD_FAST",
+    "LOAD_SMALL_INT": "LOAD_CONST",
+    "POP_ITER": "POP_TOP",
+}
+
+# Superinstructions (3.13+) whose argval is a pair of local names; each is
+# split into its two canonical instructions.
+_SUPERINSTRUCTIONS: dict[str, tuple[str, str]] = {
+    "LOAD_FAST_LOAD_FAST": ("LOAD_FAST", "LOAD_FAST"),
+    "LOAD_FAST_BORROW_LOAD_FAST_BORROW": ("LOAD_FAST", "LOAD_FAST"),
+    "STORE_FAST_LOAD_FAST": ("STORE_FAST", "LOAD_FAST"),
+    "STORE_FAST_STORE_FAST": ("STORE_FAST", "STORE_FAST"),
+}
+
+# 3.14 folded BINARY_SUBSCR into BINARY_OP with this sub-code.
+_NB_SUBSCR = 26
 
 # ── Binary op sub-codes (3.11+ encode op kind in BINARY_OP arg) ─────
 
@@ -178,10 +199,24 @@ def normalize(code: CodeType) -> list[CanonicalInstr]:
         if sl is not None:
             prev_line = sl
 
-        canonical_op = opname_map.get(instr.opname, instr.opname)
+        pair = _SUPERINSTRUCTIONS.get(instr.opname)
+        if pair is not None:
+            # The second half gets an odd offset, which no real instruction
+            # or jump target uses.
+            for i, (op, name) in enumerate(zip(pair, instr.argval)):
+                result.append(
+                    CanonicalInstr(op=op, arg=name, offset=instr.offset + i, lineno=lineno)
+                )
+            continue
+
+        opname = _ALIASES.get(instr.opname, instr.opname)
+        canonical_op = opname_map.get(opname, opname)
         arg = instr.argval
 
-        if canonical_op == "BINARY_OP":
+        if canonical_op == "BINARY_OP" and instr.argval == _NB_SUBSCR and not is_39:
+            canonical_op = "BINARY_SUBSCR"
+            arg = None
+        elif canonical_op == "BINARY_OP":
             if is_39:
                 arg = _BINARY_NAME_TO_STR_39.get(instr.opname, instr.opname)
             elif isinstance(instr.argval, int):

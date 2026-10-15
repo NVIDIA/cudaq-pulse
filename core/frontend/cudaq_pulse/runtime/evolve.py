@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 from ..passes.canonicalize import run_canonicalize as _run_canonicalize
 from ..passes.fusion import run_fusion as _run_fusion
@@ -38,9 +39,9 @@ _VALID_INTEGRATORS = frozenset(
 class EvolveResult:
     """Result of a pulse-level time evolution."""
 
-    final_state: np.ndarray
-    times: np.ndarray
-    expectation_values: dict[str, np.ndarray] | None = None
+    final_state: npt.NDArray[Any]
+    times: npt.NDArray[Any]
+    expectation_values: dict[str, npt.NDArray[Any]] | None = None
 
 
 def evolve(

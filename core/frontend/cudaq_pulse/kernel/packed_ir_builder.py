@@ -19,6 +19,7 @@ import struct
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 from .ir_builder import CompilationError, IRValue, Parameter, ParameterExpression, is_symbolic
 
@@ -128,7 +129,7 @@ class PackedIRBuilder:
         self.name = name
         self.clock_ghz = clock_ghz
         self._freq_hz = qubit_freq_hz or {}
-        self._buf: np.ndarray = np.empty(8192, dtype=np.int64)
+        self._buf: npt.NDArray[np.int64] = np.empty(8192, dtype=np.int64)
         self._cur = 0
         self._next_id = 0
         self._next_qubit = 0
@@ -646,12 +647,12 @@ class PackedIRBuilder:
     def has_parameters(self) -> bool:
         return bool(self._param_vids)
 
-    def get_buffer(self) -> np.ndarray:
+    def get_buffer(self) -> npt.NDArray[np.int64]:
         """Return the trimmed packed buffer."""
-        trimmed: np.ndarray = self._buf[: self._cur].copy()
+        trimmed: npt.NDArray[np.int64] = self._buf[: self._cur].copy()
         return trimmed
 
-    def get_freq_array(self) -> np.ndarray:
+    def get_freq_array(self) -> npt.NDArray[np.float64]:
         """Return qubit frequencies as a float64 array indexed by qubit."""
         arr = np.zeros(self._next_qubit, dtype=np.float64)
         for q, f in self._freq_hz.items():
