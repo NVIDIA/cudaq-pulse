@@ -83,6 +83,10 @@ def _f2i(x: float) -> int:
     return int(_unpack_q.unpack(_pack_d.pack(float(x)))[0])
 
 
+# The record header stores the payload length in 8 bits.
+_MAX_PAYLOAD = 0xFF
+
+
 def _header(opcode: int, payload_len: int, param_mask: int = 0) -> int:
     return opcode | (payload_len << 8) | (param_mask << 16)
 
@@ -137,6 +141,7 @@ class PackedIRBuilder:
         self._qref_to_qubit: dict[int, int] = {}
         self._wf_attrs: dict[int, dict[str, Any]] = {}
         self._param_vids: dict[int, int] = {}  # Parameter.index → vid
+        self._param_names: dict[int, str] = {}  # Parameter.index → name
         # Key by the expression object itself, not id(expression): temporary
         # expressions may be collected and Python may reuse their integer IDs.
         self._numeric_vids: dict[tuple[ParameterExpression, str], int] = {}
@@ -163,7 +168,6 @@ class PackedIRBuilder:
     ) -> tuple[IRValue, ...]:
         a = attrs or {}
         results = tuple(self._mk(rt) for rt in result_types)
-        self._op_count += 1
 
         # --- Qubit alloc (not encoded, just tracked) ---
         if kind in ("pulse.qudit_arg", "pulse.qudit_alloc"):
@@ -172,6 +176,9 @@ class PackedIRBuilder:
                 self._qref_to_qubit[r.vid] = idx
             self._next_qubit = max(self._next_qubit, idx + 1)
             return results
+
+        # Like Program.op_count(), count pulse-program ops but not qudit binding.
+        self._op_count += 1
 
         # --- get_drive_line → ALLOC_DRIVE ---
         if kind == "pulse.get_drive_line":
@@ -308,6 +315,11 @@ class PackedIRBuilder:
         if kind == "pulse.sync":
             n = len(operands)
             payload_len = 1 + 3 * n
+            if payload_len > _MAX_PAYLOAD:
+                raise CompilationError(
+                    f"sync() over {n} lines exceeds the packed limit of "
+                    f"{(_MAX_PAYLOAD - 1) // 3} lines per sync"
+                )
             self._ensure(1 + payload_len)
             self._w(_header(_SYNC, payload_len))
             self._w(n)
@@ -426,7 +438,8 @@ class PackedIRBuilder:
                 self._w(_f2i(freq))
             return results
 
-        # SCF operations are rejected or unrolled by the emitter.
+        # The packed encoding has no regions; without supports_regions the
+        # emitter unrolls every loop.
         if kind.startswith("scf."):
             raise CompilationError(f"structured control flow op {kind!r} cannot be packed")
 
@@ -466,6 +479,7 @@ class PackedIRBuilder:
         vid = self._next_id
         self._next_id += 1
         self._param_vids[param.index] = vid
+        self._param_names[param.index] = param.name
         self._ensure(3)
         self._w(_header(_PARAM, 2))
         self._w(vid)
@@ -614,8 +628,10 @@ class PackedIRBuilder:
             sample_values = list(samples)
         except TypeError as exc:
             raise CompilationError("custom_samples() requires a finite sequence") from exc
-        if len(sample_values) > 253:
-            raise CompilationError("custom_samples() supports at most 253 samples per waveform")
+        if len(sample_values) > _MAX_PAYLOAD - 2:
+            raise CompilationError(
+                f"custom_samples() supports at most {_MAX_PAYLOAD - 2} samples per waveform"
+            )
         if not sample_values:
             raise CompilationError("custom_samples() requires at least one sample")
         encoded: list[int] = []
@@ -636,12 +652,8 @@ class PackedIRBuilder:
 
     @property
     def param_names(self) -> list[str]:
-        """Return parameter names in index order."""
-        if not self._param_vids:
-            return []
-        max_idx = max(self._param_vids.keys())
-        names: list[str] = [""] * (max_idx + 1)
-        return names
+        """Names of the parameters referenced so far, in index order."""
+        return [self._param_names[i] for i in sorted(self._param_names)]
 
     @property
     def has_parameters(self) -> bool:

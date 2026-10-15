@@ -15,7 +15,7 @@ OP_TABLE, LINEAR_TYPES, and CompilationError.
 from __future__ import annotations
 
 from collections import namedtuple
-from typing import Any
+from typing import Any, NoReturn
 
 Op = namedtuple("Op", ["kind", "operands", "results", "attrs"])
 
@@ -83,7 +83,7 @@ class _SymbolicNumber:
             raise CompilationError(f"unsupported symbolic cast to {dtype}")
         return ParameterExpression("cast", self, dtype=dtype)
 
-    def _not_concrete(self, operation: str) -> None:
+    def _not_concrete(self, operation: str) -> NoReturn:
         raise CompilationError(
             f"Cannot evaluate symbolic parameter expression with {operation}. "
             "Use it in a supported pulse numeric argument."
@@ -91,15 +91,12 @@ class _SymbolicNumber:
 
     def __bool__(self) -> bool:
         self._not_concrete("bool()")
-        return False
 
     def __float__(self) -> float:
         self._not_concrete("float()")
-        return 0.0
 
     def __int__(self) -> int:
         self._not_concrete("int()")
-        return 0
 
 
 class Parameter(_SymbolicNumber):
@@ -193,6 +190,9 @@ OP_TABLE: dict[str, tuple[int, tuple[str, ...], tuple[str, ...] | None]] = {
 class PythonIRBuilder:
     """Lightweight in-memory IR builder (swap for real MLIR bindings)."""
 
+    # Accepts scf.for regions, so the tracer may emit a loop once.
+    supports_regions = True
+
     def __init__(self, name: str = "main"):
         self.name = name
         self.ops: list[Op] = []
@@ -213,6 +213,13 @@ class PythonIRBuilder:
         results = tuple(self._mk(rt) for rt in result_types)
         self.ops.append(Op(kind, operands, results, attrs or {}))
         return results
+
+    def checkpoint(self) -> tuple[int, int]:
+        return len(self.ops), self._next_id
+
+    def rollback(self, checkpoint: tuple[int, int]) -> None:
+        n_ops, self._next_id = checkpoint
+        del self.ops[n_ops:]
 
     def pretty(self) -> str:
         lines = [f"func.func @{self.name}() {{"]

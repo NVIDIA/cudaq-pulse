@@ -16,9 +16,8 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from ._bytecode_normalize import normalize
-from ._emitter import PulseIREmitter
-from ._structure import recover_structure
+from ._bytecode_normalize import DecodedCode, decode
+from ._emitter import PulseIREmitter, _extract_closures
 from .decorator import QuditRef, QvecRef
 from .ir_builder import CompilationError, PythonIRBuilder
 
@@ -27,41 +26,17 @@ def compile_kernel_bytecode(fn: Callable[..., Any]) -> Callable[..., PythonIRBui
     """Compile a pulse kernel function via bytecode analysis.
 
     Returns a callable that, given concrete arguments, produces a
-    populated ``PythonIRBuilder``.
+    populated ``PythonIRBuilder``. Captured variables are read on every call.
     """
     code = fn.__code__
-    params = list(code.co_varnames[: code.co_argcount])
-
-    instrs = normalize(code)
-    regions = recover_structure(instrs)
-
-    fn_globals = getattr(fn, "__globals__", {})
-    fn_closures = _extract_closures(fn)
+    prog = decode(code)
+    params = code.co_varnames[: code.co_argcount]
 
     def _emit(*args: Any, **kwargs: Any) -> PythonIRBuilder:
         if kwargs:
             raise CompilationError("keyword arguments not supported in pulse kernels")
-        if len(args) != len(params):
-            raise CompilationError(f"{fn.__name__}: expected {len(params)} args, got {len(args)}")
-
         builder = PythonIRBuilder(name=fn.__name__)
-        emitter = PulseIREmitter(builder, fn_globals=fn_globals, fn_closures=fn_closures)
-
-        for name, val in zip(params, args):
-            if isinstance(val, QuditRef):
-                attrs = {"index": val.index} if val.index is not None else {}
-                (ir_val,) = builder.emit("pulse.qudit_arg", (), ("qref",), attrs)
-                emitter.locals[name] = ir_val
-            elif isinstance(val, QvecRef):
-                ir_vals = []
-                for i in range(len(val)):
-                    (v,) = builder.emit("pulse.qudit_arg", (), ("qref",), {"index": i})
-                    ir_vals.append(v)
-                emitter.locals[name] = ir_vals
-            else:
-                emitter.locals[name] = val
-
-        emitter.emit_regions(regions)
+        _trace(fn, builder, args, "pulse.qudit_arg", prog, params)
         return builder
 
     return _emit
@@ -70,48 +45,41 @@ def compile_kernel_bytecode(fn: Callable[..., Any]) -> Callable[..., PythonIRBui
 def _trace_kernel_with_builder(fn: Callable[..., Any], builder: Any, args: Sequence[Any]) -> None:
     """Re-trace *fn* using *builder* (any object with an ``emit()`` method).
 
-    This allows ``compile()`` to inject an ``MLIRIRBuilder`` that writes
-    directly to an in-memory MLIR module instead of a ``PythonIRBuilder``.
+    This allows ``compile()`` to inject a ``PackedIRBuilder`` that writes
+    directly to a packed buffer instead of a ``PythonIRBuilder``.
     """
     code = fn.__code__
-    params = list(code.co_varnames[: code.co_argcount])
+    _trace(
+        fn, builder, args, "pulse.qudit_alloc", decode(code), code.co_varnames[: code.co_argcount]
+    )
 
-    instrs = normalize(code)
-    regions = recover_structure(instrs)
 
-    fn_globals = getattr(fn, "__globals__", {})
-    fn_closures = _extract_closures(fn)
-
+def _trace(
+    fn: Any,
+    builder: Any,
+    args: Sequence[Any],
+    qudit_op: str,
+    prog: DecodedCode,
+    params: tuple[str, ...],
+) -> None:
     if len(args) != len(params):
         raise CompilationError(f"{fn.__name__}: expected {len(params)} args, got {len(args)}")
 
-    emitter = PulseIREmitter(builder, fn_globals=fn_globals, fn_closures=fn_closures)
-
+    closures = _extract_closures(fn) if fn.__closure__ else {}
+    emitter = PulseIREmitter(builder, fn.__globals__, closures)
+    local_vars = emitter.locals
     for name, val in zip(params, args):
         if isinstance(val, QuditRef):
             attrs = {"index": val.index} if val.index is not None else {}
-            (ir_val,) = builder.emit("pulse.qudit_alloc", (), ("qref",), attrs)
-            emitter.locals[name] = ir_val
+            (ir_val,) = builder.emit(qudit_op, (), ("qref",), attrs)
+            local_vars[name] = ir_val
         elif isinstance(val, QvecRef):
             ir_vals = []
             for i in range(len(val)):
-                (v,) = builder.emit("pulse.qudit_alloc", (), ("qref",), {"index": i})
+                (v,) = builder.emit(qudit_op, (), ("qref",), {"index": i})
                 ir_vals.append(v)
-            emitter.locals[name] = ir_vals
+            local_vars[name] = ir_vals
         else:
-            emitter.locals[name] = val
+            local_vars[name] = val
 
-    emitter.emit_regions(regions)
-
-
-def _extract_closures(fn: Callable[..., Any]) -> dict[str, Any]:
-    """Extract closure variable values from the function."""
-    closures: dict[str, Any] = {}
-    code = fn.__code__
-    if fn.__closure__ and code.co_freevars:
-        for name, cell in zip(code.co_freevars, fn.__closure__):
-            try:
-                closures[name] = cell.cell_contents
-            except ValueError:
-                pass
-    return closures
+    emitter._loop(prog, 0, -1, len(prog.instrs), -1)

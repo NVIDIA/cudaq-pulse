@@ -63,8 +63,12 @@ def test_two_qubit_sync(two_qubit_program):
 
 def test_loop_program(echo_program):
     mlir = program_to_pulse_mlir(echo_program)
-    assert len(re.findall(r"= pulse\.drive ", mlir)) == 10
-    assert "scf.for" not in mlir
+    assert "scf.for" in mlir
+    assert "iter_args" in mlir
+    assert "scf.yield" in mlir
+    assert "arith.constant 0 : index" in mlir
+    assert "arith.constant 5 : index" in mlir
+    assert len(re.findall(r"= pulse\.drive ", mlir)) == 2
 
 
 def test_shift_phase_emission():

@@ -128,11 +128,9 @@ def kernel(fn: Callable[..., Any]) -> Callable[..., Any]:
     Returns:
         A wrapped callable that performs bytecode tracing on each call.
     """
-    import sys
+    from ._bytecode_normalize import check_interpreter
 
-    _major, _minor = sys.version_info[:2]
-    if _major != 3 or _minor < 10:
-        raise RuntimeError(f"@cudaq_pulse.kernel requires Python >= 3.10, got {_major}.{_minor}")
+    check_interpreter()
 
     _cache_key: list[Any] = [None]
 

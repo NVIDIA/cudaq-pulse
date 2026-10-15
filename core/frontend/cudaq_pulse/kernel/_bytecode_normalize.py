@@ -5,237 +5,605 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""Version-isolated bytecode normalizer.
+"""Version-isolated bytecode decoder.
 
-This is the ONLY file that contains Python-version-specific bytecode
-knowledge. All downstream modules operate on CanonicalInstr sequences
-and never see raw dis.Instruction objects.
+This is the ONLY module that knows how CPython lays out bytecode. It decodes
+a code object once, with :func:`dis.get_instructions`, into a flat program
+over a small canonical instruction set whose semantics are identical on every
+supported interpreter (3.10 through 3.14):
 
-Adding support for a new CPython version: add an ``_OPNAME_MAP_3XX``
-dict and a branch in ``_select_map``.
+* calls are ``CALL n`` / ``CALL_KW n``; the implicit ``NULL`` slots of 3.11+
+  are dropped, and ``KW_NAMES`` (3.11, 3.12) becomes an explicit constant
+* binary operators, comparisons and unary operators carry the Python
+  ``operator`` function to apply, so no names are matched while tracing
+* jump targets are instruction indices, never byte offsets, so a jump to a
+  skipped instruction (``EXTENDED_ARG``, ``NOP``, ``END_FOR``) lands on the
+  next canonical instruction
+* ``FOR_ITER`` consumes the iterator on exit; each version's loop-exit
+  cleanup (``END_FOR``, ``POP_TOP``, ``POP_ITER``) is removed here
+* superinstructions are split, and ``RETURN_CONST`` becomes ``LOAD_CONST`` +
+  ``RETURN``
+
+Constructs the tracer does not support decode to ``UNSUPPORTED`` and raise
+only when executed, so the error is the same on every version.
+
+Other interpreters fail fast with ``UnsupportedInterpreterError``. Adding a
+CPython version means adding it to ``SUPPORTED_MINORS`` and its loop epilogue
+to ``_FOR_EXIT_CLEANUP``, teaching the opname tables any new opnames, and
+running ``tests/kernel/test_ir_golden.py`` on it.
 """
 
 from __future__ import annotations
 
 import dis
+import operator as _op
 import sys
-from dataclasses import dataclass
 from types import CodeType
-from typing import Any
+from typing import Any, NamedTuple
 
-_PY_MAJOR, _PY_MINOR = sys.version_info[:2]
+# ── Canonical opcodes ────────────────────────────────────────────────
 
-# ── Canonical instruction ────────────────────────────────────────────
+(
+    LOAD_FAST,
+    STORE_FAST,
+    DELETE_FAST,
+    LOAD_CONST,
+    LOAD_GLOBAL,
+    LOAD_DEREF,
+    STORE_DEREF,
+    LOAD_ATTR,
+    CALL,
+    CALL_KW,
+    BINARY,
+    SUBSCR,
+    STORE_SUBSCR,
+    BUILD_SLICE,
+    UNARY,
+    NOT,
+    COMPARE,
+    IS,
+    CONTAINS,
+    BUILD_TUPLE,
+    BUILD_LIST,
+    BUILD_MAP,
+    BUILD_CONST_KEY_MAP,
+    BUILD_STRING,
+    LIST_APPEND,
+    LIST_EXTEND,
+    UNPACK_SEQUENCE,
+    POP_TOP,
+    COPY,
+    SWAP,
+    ROT,
+    JUMP,
+    JUMP_IF_FALSE,
+    JUMP_IF_TRUE,
+    JUMP_IF_NONE,
+    JUMP_IF_NOT_NONE,
+    JUMP_IF_FALSE_OR_POP,
+    JUMP_IF_TRUE_OR_POP,
+    GET_ITER,
+    FOR_ITER,
+    RETURN,
+    IMPORT_NAME,
+    IMPORT_FROM,
+    CONVERT,
+    FORMAT,
+    RAISE,
+    UNSUPPORTED,
+) = range(47)
 
+OP_NAMES: tuple[str, ...] = tuple(
+    (
+        "LOAD_FAST STORE_FAST DELETE_FAST LOAD_CONST LOAD_GLOBAL LOAD_DEREF "
+        "STORE_DEREF LOAD_ATTR CALL CALL_KW BINARY SUBSCR STORE_SUBSCR BUILD_SLICE "
+        "UNARY NOT COMPARE IS CONTAINS BUILD_TUPLE BUILD_LIST BUILD_MAP "
+        "BUILD_CONST_KEY_MAP BUILD_STRING LIST_APPEND LIST_EXTEND UNPACK_SEQUENCE "
+        "POP_TOP COPY SWAP ROT JUMP JUMP_IF_FALSE JUMP_IF_TRUE JUMP_IF_NONE "
+        "JUMP_IF_NOT_NONE JUMP_IF_FALSE_OR_POP JUMP_IF_TRUE_OR_POP GET_ITER "
+        "FOR_ITER RETURN IMPORT_NAME IMPORT_FROM CONVERT FORMAT RAISE UNSUPPORTED"
+    ).split()
+)
 
-@dataclass(frozen=True)
-class CanonicalInstr:
-    op: str
-    arg: Any
-    offset: int
-    lineno: int
-
-
-# ── Opcodes to silently skip (CPython internals, no semantic meaning) ─
-
-_SKIP_OPS = frozenset(
+_JUMPS = frozenset(
     {
-        "RESUME",
-        "CACHE",
-        "NOP",
-        "PUSH_NULL",
-        "COPY",
-        "PRECALL",
-        "END_FOR",
-        "TO_BOOL",
-        "COPY_FREE_VARS",
-        "EXTENDED_ARG",
-        "NOT_TAKEN",
+        JUMP,
+        JUMP_IF_FALSE,
+        JUMP_IF_TRUE,
+        JUMP_IF_NONE,
+        JUMP_IF_NOT_NONE,
+        JUMP_IF_FALSE_OR_POP,
+        JUMP_IF_TRUE_OR_POP,
+        FOR_ITER,
     }
 )
 
-# ── Opcodes added in 3.13+ that alias an older canonical op ──────────
+# A canonical instruction is an ``(op, arg)`` pair. Jumps carry the target
+# instruction index; FOR_ITER carries ``(exit_index, loop_var_is_read)``.
+Instr = tuple[int, Any]
 
-_ALIASES: dict[str, str] = {
-    "LOAD_FAST_BORROW": "LOAD_FAST",
-    "LOAD_SMALL_INT": "LOAD_CONST",
-    "POP_ITER": "POP_TOP",
+# ── Opname table (union over 3.10-3.14; opnames never change meaning) ─
+
+_SKIP = frozenset(
+    {
+        "CACHE",
+        "COPY_FREE_VARS",
+        "EXTENDED_ARG",
+        "MAKE_CELL",
+        "NOP",
+        "NOT_TAKEN",
+        "PRECALL",
+        "PUSH_NULL",
+        "RESUME",
+        "TO_BOOL",
+    }
+)
+
+_SIMPLE: dict[str, int] = {
+    "LOAD_FAST": LOAD_FAST,
+    "LOAD_FAST_CHECK": LOAD_FAST,
+    "LOAD_FAST_BORROW": LOAD_FAST,
+    "STORE_FAST": STORE_FAST,
+    "DELETE_FAST": DELETE_FAST,
+    "LOAD_CONST": LOAD_CONST,
+    "LOAD_SMALL_INT": LOAD_CONST,
+    "LOAD_GLOBAL": LOAD_GLOBAL,
+    "LOAD_NAME": LOAD_GLOBAL,
+    "LOAD_DEREF": LOAD_DEREF,
+    "LOAD_CLOSURE": LOAD_DEREF,
+    "STORE_DEREF": STORE_DEREF,
+    "LOAD_ATTR": LOAD_ATTR,
+    "LOAD_METHOD": LOAD_ATTR,
+    "CALL": CALL,
+    "CALL_FUNCTION": CALL,
+    "CALL_METHOD": CALL,
+    "CALL_KW": CALL_KW,
+    "CALL_FUNCTION_KW": CALL_KW,
+    "BINARY_SUBSCR": SUBSCR,
+    "STORE_SUBSCR": STORE_SUBSCR,
+    "BUILD_SLICE": BUILD_SLICE,
+    "UNARY_NOT": NOT,
+    "BUILD_TUPLE": BUILD_TUPLE,
+    "BUILD_LIST": BUILD_LIST,
+    "BUILD_MAP": BUILD_MAP,
+    "BUILD_CONST_KEY_MAP": BUILD_CONST_KEY_MAP,
+    "BUILD_STRING": BUILD_STRING,
+    "LIST_APPEND": LIST_APPEND,
+    "LIST_EXTEND": LIST_EXTEND,
+    "UNPACK_SEQUENCE": UNPACK_SEQUENCE,
+    "POP_TOP": POP_TOP,
+    "POP_ITER": POP_TOP,
+    "COPY": COPY,
+    "SWAP": SWAP,
+    "GET_ITER": GET_ITER,
+    "IMPORT_NAME": IMPORT_NAME,
+    "IMPORT_FROM": IMPORT_FROM,
+    "RAISE_VARARGS": RAISE,
+    "RETURN_VALUE": RETURN,
 }
 
-# Superinstructions (3.13+) whose argval is a pair of local names; each is
-# split into its two canonical instructions.
-_SUPERINSTRUCTIONS: dict[str, tuple[str, str]] = {
-    "LOAD_FAST_LOAD_FAST": ("LOAD_FAST", "LOAD_FAST"),
-    "LOAD_FAST_BORROW_LOAD_FAST_BORROW": ("LOAD_FAST", "LOAD_FAST"),
-    "STORE_FAST_LOAD_FAST": ("STORE_FAST", "LOAD_FAST"),
-    "STORE_FAST_STORE_FAST": ("STORE_FAST", "STORE_FAST"),
+_JUMP_NAMES: dict[str, int] = {
+    "JUMP_FORWARD": JUMP,
+    "JUMP_ABSOLUTE": JUMP,
+    "JUMP_BACKWARD": JUMP,
+    "JUMP_BACKWARD_NO_INTERRUPT": JUMP,
+    "POP_JUMP_IF_FALSE": JUMP_IF_FALSE,
+    "POP_JUMP_FORWARD_IF_FALSE": JUMP_IF_FALSE,
+    "POP_JUMP_BACKWARD_IF_FALSE": JUMP_IF_FALSE,
+    "POP_JUMP_IF_TRUE": JUMP_IF_TRUE,
+    "POP_JUMP_FORWARD_IF_TRUE": JUMP_IF_TRUE,
+    "POP_JUMP_BACKWARD_IF_TRUE": JUMP_IF_TRUE,
+    "POP_JUMP_IF_NONE": JUMP_IF_NONE,
+    "POP_JUMP_FORWARD_IF_NONE": JUMP_IF_NONE,
+    "POP_JUMP_BACKWARD_IF_NONE": JUMP_IF_NONE,
+    "POP_JUMP_IF_NOT_NONE": JUMP_IF_NOT_NONE,
+    "POP_JUMP_FORWARD_IF_NOT_NONE": JUMP_IF_NOT_NONE,
+    "POP_JUMP_BACKWARD_IF_NOT_NONE": JUMP_IF_NOT_NONE,
+    "JUMP_IF_FALSE_OR_POP": JUMP_IF_FALSE_OR_POP,
+    "JUMP_IF_TRUE_OR_POP": JUMP_IF_TRUE_OR_POP,
+    "FOR_ITER": FOR_ITER,
 }
 
-# 3.14 folded BINARY_SUBSCR into BINARY_OP with this sub-code.
+# Opcodes that only change how an operand is stored, not what it means.
+_ROTATIONS: dict[str, tuple[Instr, ...]] = {
+    "DUP_TOP": ((COPY, 1),),
+    "DUP_TOP_TWO": ((COPY, 2), (COPY, 2)),
+    "ROT_TWO": ((SWAP, 2),),
+    "ROT_THREE": ((ROT, 3),),
+    "ROT_FOUR": ((ROT, 4),),
+}
+
+_SUPERINSTRUCTIONS: dict[str, tuple[int, int]] = {
+    "LOAD_FAST_LOAD_FAST": (LOAD_FAST, LOAD_FAST),
+    "LOAD_FAST_BORROW_LOAD_FAST_BORROW": (LOAD_FAST, LOAD_FAST),
+    "STORE_FAST_LOAD_FAST": (STORE_FAST, LOAD_FAST),
+    "STORE_FAST_STORE_FAST": (STORE_FAST, STORE_FAST),
+}
+
+# BINARY_OP (3.11+) sub-codes, in ``_nb_ops`` order; 26 is 3.14's subscript.
+_NB_OPS: tuple[Any, ...] = (
+    _op.add,
+    _op.and_,
+    _op.floordiv,
+    _op.lshift,
+    _op.matmul,
+    _op.mul,
+    _op.mod,
+    _op.or_,
+    _op.pow,
+    _op.rshift,
+    _op.sub,
+    _op.truediv,
+    _op.xor,
+    _op.iadd,
+    _op.iand,
+    _op.ifloordiv,
+    _op.ilshift,
+    _op.imatmul,
+    _op.imul,
+    _op.imod,
+    _op.ior,
+    _op.ipow,
+    _op.irshift,
+    _op.isub,
+    _op.itruediv,
+    _op.ixor,
+)
 _NB_SUBSCR = 26
 
-# ── Binary op sub-codes (3.11+ encode op kind in BINARY_OP arg) ─────
+# 3.10 spells each binary operator as its own opcode.
+_BINARY_NAMES: dict[str, Any] = {}
+for _stem, _fn, _ifn in (
+    ("ADD", _op.add, _op.iadd),
+    ("AND", _op.and_, _op.iand),
+    ("FLOOR_DIVIDE", _op.floordiv, _op.ifloordiv),
+    ("LSHIFT", _op.lshift, _op.ilshift),
+    ("MATRIX_MULTIPLY", _op.matmul, _op.imatmul),
+    ("MULTIPLY", _op.mul, _op.imul),
+    ("MODULO", _op.mod, _op.imod),
+    ("OR", _op.or_, _op.ior),
+    ("POWER", _op.pow, _op.ipow),
+    ("RSHIFT", _op.rshift, _op.irshift),
+    ("SUBTRACT", _op.sub, _op.isub),
+    ("TRUE_DIVIDE", _op.truediv, _op.itruediv),
+    ("XOR", _op.xor, _op.ixor),
+):
+    _BINARY_NAMES["BINARY_" + _stem] = _fn
+    _BINARY_NAMES["INPLACE_" + _stem] = _ifn
 
-_NB_OP_TO_STR: dict[int, str] = {
-    0: "+",
-    1: "&",
-    2: "//",
-    3: "<<",
-    5: "*",
-    6: "%",
-    7: "|",
-    8: "**",
-    9: ">>",
-    10: "-",
-    11: "/",
-    12: "^",
-    13: "+=",
-    14: "&=",
-    15: "//=",
-    16: "<<=",
-    17: "@=",
-    18: "*=",
-    19: "%=",
-    20: "|=",
-    21: "**=",
-    22: ">>=",
-    23: "-=",
-    24: "/=",
-    25: "^=",
+_UNARY_NAMES: dict[str, Any] = {
+    "UNARY_NEGATIVE": _op.neg,
+    "UNARY_POSITIVE": _op.pos,
+    "UNARY_INVERT": _op.invert,
 }
 
-# ── Per-version opname canonicalization maps ─────────────────────────
-
-_OPNAME_MAP_39: dict[str, str] = {
-    "CALL_FUNCTION": "CALL",
-    "CALL_METHOD": "CALL",
-    "LOAD_METHOD": "LOAD_ATTR",
-    "BINARY_ADD": "BINARY_OP",
-    "BINARY_SUBTRACT": "BINARY_OP",
-    "BINARY_MULTIPLY": "BINARY_OP",
-    "BINARY_TRUE_DIVIDE": "BINARY_OP",
-    "BINARY_FLOOR_DIVIDE": "BINARY_OP",
-    "BINARY_MODULO": "BINARY_OP",
-    "BINARY_POWER": "BINARY_OP",
-    "UNARY_NEGATIVE": "UNARY_NEGATIVE",
-    "POP_JUMP_IF_FALSE": "JUMP_IF_FALSE",
-    "POP_JUMP_IF_TRUE": "JUMP_IF_TRUE",
-    "JUMP_ABSOLUTE": "JUMP",
-    "JUMP_FORWARD": "JUMP",
-    "RETURN_VALUE": "RETURN",
-    "IMPORT_NAME": "IMPORT_NAME",
-}
-
-_BINARY_NAME_TO_STR_39: dict[str, str] = {
-    "BINARY_ADD": "+",
-    "BINARY_SUBTRACT": "-",
-    "BINARY_MULTIPLY": "*",
-    "BINARY_TRUE_DIVIDE": "/",
-    "BINARY_FLOOR_DIVIDE": "//",
-    "BINARY_MODULO": "%",
-    "BINARY_POWER": "**",
-}
-
-_OPNAME_MAP_312: dict[str, str] = {
-    "CALL": "CALL",
-    "BINARY_OP": "BINARY_OP",
-    "POP_JUMP_IF_FALSE": "JUMP_IF_FALSE",
-    "POP_JUMP_IF_TRUE": "JUMP_IF_TRUE",
-    "POP_JUMP_FORWARD_IF_FALSE": "JUMP_IF_FALSE",
-    "POP_JUMP_FORWARD_IF_TRUE": "JUMP_IF_TRUE",
-    "JUMP_FORWARD": "JUMP",
-    "JUMP_BACKWARD": "JUMP",
-    "JUMP_BACKWARD_NO_INTERRUPT": "JUMP",
-    "RETURN_VALUE": "RETURN",
-    "RETURN_CONST": "RETURN",
-    "IMPORT_NAME": "IMPORT_NAME",
-}
-
-# 3.11 is 3.12 plus the opcodes 3.12 removed: method loads were folded into
-# LOAD_ATTR, and the FORWARD/BACKWARD conditional-jump variants were merged
-# back into direction-agnostic POP_JUMP_IF_*.
-_OPNAME_MAP_311: dict[str, str] = {
-    **_OPNAME_MAP_312,
-    "LOAD_METHOD": "LOAD_ATTR",
-    "POP_JUMP_BACKWARD_IF_FALSE": "JUMP_IF_FALSE",
-    "POP_JUMP_BACKWARD_IF_TRUE": "JUMP_IF_TRUE",
+_COMPARE: dict[str, Any] = {
+    "<": _op.lt,
+    "<=": _op.le,
+    "==": _op.eq,
+    "!=": _op.ne,
+    ">": _op.gt,
+    ">=": _op.ge,
 }
 
 
-def _select_map(major: int, minor: int) -> dict[str, str]:
-    if major != 3:
-        raise NotImplementedError(f"Python {major}.{minor} is not supported")
-    if minor in (9, 10):
-        return _OPNAME_MAP_39
-    if minor == 11:
-        return _OPNAME_MAP_311
-    if minor in (12, 13, 14):
-        return _OPNAME_MAP_312
-    raise NotImplementedError(
-        f"Python {major}.{minor} is not yet supported by the bytecode bridge. "
-        f"Supported: 3.9-3.14 (3.12 primary). Add an opname map to "
-        f"_bytecode_normalize.py to add support."
+def _not_supported(what: str) -> str:
+    return f"{what} are not supported in @cudaq_pulse.kernel"
+
+
+_NESTED_MESSAGE = _not_supported("lambdas, nested functions and comprehensions")
+_TRY_MESSAGE = _not_supported("try and with statements")
+_UNSUPPORTED: dict[str, str] = {
+    "MAKE_FUNCTION": _NESTED_MESSAGE,
+    "LOAD_FAST_AND_CLEAR": _NESTED_MESSAGE,
+    "SETUP_FINALLY": _TRY_MESSAGE,
+    "SETUP_WITH": _TRY_MESSAGE,
+    "SETUP_ASYNC_WITH": _TRY_MESSAGE,
+    "BEFORE_WITH": _TRY_MESSAGE,
+    "LOAD_SPECIAL": _TRY_MESSAGE,
+    "RETURN_GENERATOR": _not_supported("generators"),
+    "GEN_START": _not_supported("generators"),
+    "YIELD_VALUE": _not_supported("generators"),
+    "CALL_FUNCTION_EX": _not_supported("star-argument calls"),
+}
+
+_WHILE_MESSAGE = (
+    "unsupported control flow: while loops are not supported in "
+    "@cudaq_pulse.kernel; use for loops over range()"
+)
+
+_PY_MINOR = sys.version_info[1]
+
+# CPython minors whose bytecode this decoder has been verified against.
+SUPPORTED_MINORS = (10, 11, 12, 13, 14, 15)
+ISSUES_URL = "https://github.com/NVIDIA/cudaq-pulse/issues"
+
+
+class UnsupportedInterpreterError(RuntimeError):
+    """The running interpreter's bytecode is not known to the kernel tracer."""
+
+
+def check_interpreter() -> None:
+    """Raise ``UnsupportedInterpreterError`` unless kernels can be traced here."""
+    impl = sys.implementation.name
+    major, minor = sys.version_info[:2]
+    if impl == "cpython" and major == 3 and minor in SUPPORTED_MINORS:
+        return
+    supported = ", ".join(f"3.{m}" for m in SUPPORTED_MINORS)
+    raise UnsupportedInterpreterError(
+        f"@cudaq_pulse.kernel traces CPython bytecode and supports CPython "
+        f"{supported}; this is {impl} {major}.{minor}. Run kernels on a supported "
+        f"interpreter, or report the version at {ISSUES_URL}."
     )
 
 
-# ── Main normalize function ──────────────────────────────────────────
+# Instructions at a FOR_ITER exit target that pop the exhausted iterator.
+# Canonical FOR_ITER already consumes it.
+_FOR_EXIT_CLEANUP: tuple[str, ...] = {
+    10: (),
+    11: (),
+    12: ("END_FOR",),
+    13: ("END_FOR", "POP_TOP"),
+    14: ("END_FOR", "POP_ITER"),
+    15: ("END_FOR", "POP_ITER"),
+}.get(_PY_MINOR, ())
 
 
-def normalize(code: CodeType) -> list[CanonicalInstr]:
-    """Convert a code object to a version-agnostic canonical instruction stream."""
+def _iter_slots() -> int:
+    """Stack slots a for-loop iterator occupies (3.15+ adds one)."""
+    op = dis.opmap["GET_ITER"]
+    try:
+        return 1 + dis.stack_effect(op)
+    except ValueError:  # GET_ITER takes an oparg on 3.15+
+        return 1 + dis.stack_effect(op, 0)
+
+
+# Canonical GET_ITER pushes the iterator plus padding to this many slots, so
+# ``break`` pops as many slots as the interpreter's bytecode does.
+ITER_SLOTS = _iter_slots()
+
+# Comparison results are coerced to bool when 3.13+ sets this bit.
+_COMPARE_ARG_SHIFT = {10: 0, 11: 0, 12: 4}.get(_PY_MINOR, 5)
+
+
+def _compare_fn(instr: dis.Instruction) -> Any:
+    if isinstance(instr.argval, str):
+        name = instr.argval.removeprefix("bool(").removesuffix(")")
+    else:
+        name = dis.cmp_op[(instr.arg or 0) >> _COMPARE_ARG_SHIFT]
+    return _COMPARE[name]
+
+
+# ── Decoding ─────────────────────────────────────────────────────────
+
+
+class Position(NamedTuple):
+    """Source span of an instruction; field names match ``dis.Positions``.
+
+    3.11+ reuses the ``dis.Positions`` objects themselves. 3.10 bytecode
+    records only line numbers, so ``end_lineno`` and the columns are None.
+    """
+
+    lineno: int | None
+    end_lineno: int | None
+    col_offset: int | None
+    end_col_offset: int | None
+
+
+class DecodedCode:
+    """A decoded code object: flat canonical instructions.
+
+    ``positions[i]`` is the source span of ``instrs[i]`` (None for the
+    synthetic trailing return).
+    """
+
+    __slots__ = ("code", "instrs", "positions")
+
+    def __init__(
+        self,
+        code: CodeType,
+        instrs: tuple[Instr, ...],
+        positions: tuple[Position | None, ...],
+    ):
+        self.code = code
+        self.instrs = instrs
+        self.positions = positions
+
+    def location(self, index: int) -> tuple[str, int | None, int | None, int | None, int | None]:
+        """``(filename, line, end_line, col, end_col)`` of instruction *index*."""
+        pos = self.positions[index] if 0 <= index < len(self.positions) else None
+        if pos is None:
+            return (self.code.co_filename, None, None, None, None)
+        return (self.code.co_filename, *pos)
+
+    def dump(self) -> str:
+        """Readable listing for debugging and tests."""
+        lines = []
+        for i, (op, arg) in enumerate(self.instrs):
+            if callable(arg) and not isinstance(arg, type):
+                arg = getattr(arg, "__name__", arg)
+            lines.append(f"{i:4d} {OP_NAMES[op]} {arg!r}")
+        return "\n".join(lines)
+
+
+def _protected_starts(code: CodeType) -> list[int]:
+    """Byte offsets where a 3.11+ exception-table range begins."""
+    if _PY_MINOR < 11 or not getattr(code, "co_exceptiontable", b""):
+        return []
+    entries = getattr(dis.Bytecode(code), "exception_entries", ())
+    return sorted({e.start for e in entries})
+
+
+def _decode(code: CodeType) -> DecodedCode:
+    """Decode *code* into canonical instructions (uncached)."""
     raw = list(dis.get_instructions(code))
-    opname_map = _select_map(_PY_MAJOR, _PY_MINOR)
-    is_39 = _PY_MINOR in (9, 10)
 
-    result: list[CanonicalInstr] = []
-    prev_line = 0
+    exit_offsets = {ins.argval for ins in raw if ins.opname == "FOR_ITER"}
+    protected = _protected_starts(code)
+    next_protected = 0
 
-    for instr in raw:
-        if instr.opname in _SKIP_OPS:
+    out: list[list[Any]] = []
+    positions: list[Position | None] = []
+    pos: Position | None = None
+    index_at: dict[int, int] = {}
+    pending_kw_names = False
+    cleanup = 0  # remaining loop-exit cleanup instructions to drop
+
+    for ins in raw:
+        if len(positions) < len(out):
+            positions.extend([pos] * (len(out) - len(positions)))
+        if _PY_MINOR >= 11:
+            pos = getattr(ins, "positions")
+        elif ins.starts_line is not None:
+            pos = Position(ins.starts_line, None, None, None)
+
+        name = ins.opname
+        off = ins.offset
+        iarg = ins.arg if ins.arg is not None else 0
+        index_at[off] = len(out)
+
+        if off in exit_offsets:
+            cleanup = len(_FOR_EXIT_CLEANUP)
+        if cleanup:
+            expected = _FOR_EXIT_CLEANUP[len(_FOR_EXIT_CLEANUP) - cleanup]
+            cleanup -= 1
+            if name == expected:
+                continue
+            cleanup = 0
+
+        while next_protected < len(protected) and protected[next_protected] <= off:
+            next_protected += 1
+            out.append([UNSUPPORTED, _TRY_MESSAGE])
+
+        if name in _SKIP:
             continue
 
-        sl = getattr(instr, "line_number", None) or getattr(instr, "starts_line", None)
-        lineno = sl if sl is not None else prev_line
-        if sl is not None:
-            prev_line = sl
-
-        pair = _SUPERINSTRUCTIONS.get(instr.opname)
-        if pair is not None:
-            # The second half gets an odd offset, which no real instruction
-            # or jump target uses.
-            for i, (op, name) in enumerate(zip(pair, instr.argval)):
-                result.append(
-                    CanonicalInstr(op=op, arg=name, offset=instr.offset + i, lineno=lineno)
-                )
+        op = _SIMPLE.get(name)
+        if op is not None:
+            if op == CALL and pending_kw_names:
+                op = CALL_KW
+                pending_kw_names = False
+            out.append([op, ins.argval])
             continue
 
-        opname = _ALIASES.get(instr.opname, instr.opname)
-        canonical_op = opname_map.get(opname, opname)
-        arg = instr.argval
+        op = _JUMP_NAMES.get(name)
+        if op is not None:
+            out.append([op, ins.argval])  # byte offset, resolved below
+            continue
 
-        if canonical_op == "BINARY_OP" and instr.argval == _NB_SUBSCR and not is_39:
-            canonical_op = "BINARY_SUBSCR"
-            arg = None
-        elif canonical_op == "BINARY_OP":
-            if is_39:
-                arg = _BINARY_NAME_TO_STR_39.get(instr.opname, instr.opname)
-            elif isinstance(instr.argval, int):
-                arg = _NB_OP_TO_STR.get(instr.argval, str(instr.argval))
-            # else argval is already a string like "+" on some versions
+        if name == "BINARY_OP":
+            if iarg == _NB_SUBSCR:
+                out.append([SUBSCR, None])
+            else:
+                out.append([BINARY, _NB_OPS[iarg]])
+        elif name in _BINARY_NAMES:
+            out.append([BINARY, _BINARY_NAMES[name]])
+        elif name == "BINARY_SLICE":
+            out.append([BUILD_SLICE, 2])
+            out.append([SUBSCR, None])
+        elif name in _UNARY_NAMES:
+            out.append([UNARY, _UNARY_NAMES[name]])
+        elif name == "CALL_INTRINSIC_1" and ins.argval == "INTRINSIC_UNARY_POSITIVE":
+            out.append([UNARY, _op.pos])
+        elif name == "COMPARE_OP":
+            out.append([COMPARE, _compare_fn(ins)])
+        elif name == "IS_OP":
+            out.append([IS, bool(iarg)])
+        elif name == "CONTAINS_OP":
+            out.append([CONTAINS, bool(iarg)])
+        elif name in _ROTATIONS:
+            out.extend([list(x) for x in _ROTATIONS[name]])
+        elif name == "ROT_N":
+            out.append([ROT, iarg])
+        elif name in _SUPERINSTRUCTIONS:
+            first, second = _SUPERINSTRUCTIONS[name]
+            out.append([first, ins.argval[0]])
+            out.append([second, ins.argval[1]])
+        elif name == "RETURN_CONST":
+            out.append([LOAD_CONST, ins.argval])
+            out.append([RETURN, None])
+        elif name == "KW_NAMES":
+            out.append([LOAD_CONST, code.co_consts[iarg]])
+            pending_kw_names = True
+        elif name in ("LOAD_ASSERTION_ERROR", "LOAD_COMMON_CONSTANT"):
+            value = AssertionError if name == "LOAD_ASSERTION_ERROR" else ins.argval
+            out.append([LOAD_CONST, value])
+        elif name == "FORMAT_VALUE":
+            if iarg & 0x3:
+                out.append([CONVERT, iarg & 0x3])
+            out.append([FORMAT, bool(iarg & 0x4)])
+        elif name == "CONVERT_VALUE":
+            out.append([CONVERT, iarg])
+        elif name in ("FORMAT_SIMPLE", "FORMAT_WITH_SPEC"):
+            out.append([FORMAT, name == "FORMAT_WITH_SPEC"])
+        elif name in _UNSUPPORTED:
+            out.append([UNSUPPORTED, _UNSUPPORTED[name]])
+        else:
+            out.append([UNSUPPORTED, f"unsupported bytecode instruction: {name}"])
 
-        if canonical_op == "RETURN" and instr.opname == "RETURN_CONST":
-            arg = instr.argval
+    positions.extend([pos] * (len(out) - len(positions)))
 
-        if canonical_op == "JUMP":
-            arg = instr.argval  # target offset (already resolved by dis)
+    # Falling off the end, or jumping past it, returns None.
+    end = len(out)
+    out.append([LOAD_CONST, None])
+    out.append([RETURN, None])
+    positions.extend((None, None))
 
-        result.append(
-            CanonicalInstr(
-                op=canonical_op,
-                arg=arg,
-                offset=instr.offset,
-                lineno=lineno,
-            )
-        )
+    # CPython versions attribute jumps to different lines. A conditional jump
+    # takes the span of the value it tests; a rejected while loop points at
+    # its condition: the widest single-line span on the loop's first line.
+    for i, entry in enumerate(out):
+        op = entry[0]
+        if op not in _JUMPS:
+            continue
+        target = index_at.get(entry[1], end)
+        if op == FOR_ITER:
+            entry[1] = (target, _loop_var_is_read(out, i, target))
+        elif target <= i and out[target][0] != FOR_ITER:
+            # Only for-loops jump backwards to their FOR_ITER header.
+            out[i] = [UNSUPPORTED, _WHILE_MESSAGE]
+            spans = [p for p in positions[target : i + 1] if p is not None and p[0] is not None]
+            if spans:
+                positions[i] = min(spans, key=_condition_rank)
+        else:
+            entry[1] = target
+            if op != JUMP and i > 0:
+                positions[i] = positions[i - 1]
 
-    return result
+    return DecodedCode(code, tuple((op, arg) for op, arg in out), tuple(positions))
+
+
+def _condition_rank(p: Position) -> tuple[int, bool, int]:
+    multiline = p.end_lineno is not None and p.end_lineno != p.lineno
+    width = (p.end_col_offset or 0) - (p.col_offset or 0)
+    return (p.lineno or 0, multiline, -width)
+
+
+def _loop_var_is_read(out: list[list[Any]], for_idx: int, exit_idx: int) -> bool:
+    """Whether the loop target is a single local read inside the body."""
+    store = out[for_idx + 1] if for_idx + 1 < len(out) else None
+    if store is None or store[0] != STORE_FAST:
+        return True
+    name = store[1]
+    for j in range(for_idx + 2, exit_idx):
+        op, arg = out[j]
+        if arg == name and op in (LOAD_FAST, DELETE_FAST, LOAD_DEREF):
+            return True
+    return False
+
+
+_CACHE: dict[int, DecodedCode] = {}
+_CACHE_LIMIT = 4096
+
+
+def decode(code: CodeType) -> DecodedCode:
+    """Decode *code*, caching the result per code object."""
+    hit = _CACHE.get(id(code))
+    if hit is not None and hit.code is code:
+        return hit
+    check_interpreter()
+    decoded = _decode(code)
+    if len(_CACHE) >= _CACHE_LIMIT:
+        _CACHE.clear()
+    _CACHE[id(code)] = decoded
+    return decoded

@@ -345,7 +345,7 @@ class TestLinearRebinding:
 
 
 class TestForLoop:
-    def test_for_range_is_fully_unrolled(self):
+    def test_for_range_emits_scf(self):
 
         def loop_test(q0):
             d0, t0 = get_drive_line(q0)
@@ -355,10 +355,12 @@ class TestForLoop:
 
         ir = compile_kernel_bytecode(loop_test)(qudit_ref())
         kinds = [op.kind for op in ir.ops]
-        assert kinds.count("pulse.drive") == 5
-        assert "scf.for" not in kinds
+        assert kinds.count("pulse.drive") == 1
+        assert "scf.for_end" in kinds
+        scf_for = next(op for op in ir.ops if op.kind == "scf.for")
+        assert scf_for.attrs == {"lb": 0, "ub": 5, "step": 1, "var": "i"}
 
-    def test_for_loop_does_not_leave_region_markers(self):
+    def test_for_loop_with_yield(self):
 
         def loop_yield(q0):
             d0, t0 = get_drive_line(q0)
@@ -367,9 +369,107 @@ class TestForLoop:
                 drive(d0, wf, t0)
 
         ir = compile_kernel_bytecode(loop_yield)(qudit_ref())
+        (yield_op,) = [op for op in ir.ops if op.kind == "scf.yield"]
+        end = ir.ops[-1]
+        assert end.kind == "scf.for_end"
+        assert end.attrs == {"iter_args": ["d0", "t0"]}
+        assert [v.vtype for v in yield_op.operands] == ["drive_line", "tone"]
+
+    def test_loop_var_read_unrolls(self):
+
+        def loop_test(q0):
+            d0, t0 = get_drive_line(q0)
+            for i in range(2, 9, 3):
+                shift_phase(t0, float(i))
+
+        ir = compile_kernel_bytecode(loop_test)(qudit_ref())
+        phases = [op.attrs["phase_rad"] for op in ir.ops if op.kind == "pulse.shift_phase"]
+        assert phases == [2.0, 5.0, 8.0]
+        assert not any(op.kind.startswith("scf.") for op in ir.ops)
+
+    def test_python_state_carried_across_iterations_unrolls(self):
+
+        def loop_test(q0):
+            d0, t0 = get_drive_line(q0)
+            amp = 0.1
+            for _ in range(3):
+                drive(d0, square(10, amp), t0)
+                amp = amp * 2
+
+        ir = compile_kernel_bytecode(loop_test)(qudit_ref())
+        amps = [op.attrs["amplitude"] for op in ir.ops if op.kind == "pulse.square"]
+        assert amps == [0.1, 0.2, 0.4]
+        assert not any(op.kind.startswith("scf.") for op in ir.ops)
+
+    def test_list_mutation_in_loop_unrolls(self):
+
+        def loop_test(q0):
+            d0, t0 = get_drive_line(q0)
+            waves = []
+            for _ in range(3):
+                waves.append(square(10, 0.1))
+            for w in range(len(waves)):
+                drive(d0, waves[w], t0)
+
+        ir = compile_kernel_bytecode(loop_test)(qudit_ref())
         kinds = [op.kind for op in ir.ops]
+        assert kinds.count("pulse.square") == 3
         assert kinds.count("pulse.drive") == 3
-        assert "scf.yield" not in kinds
+        assert "scf.for" not in kinds
+
+    def test_break_in_loop_unrolls(self):
+
+        def loop_test(q0):
+            d0, t0 = get_drive_line(q0)
+            for _ in range(4):
+                drive(d0, square(10, 0.1), t0)
+                break
+
+        ir = compile_kernel_bytecode(loop_test)(qudit_ref())
+        kinds = [op.kind for op in ir.ops]
+        assert kinds.count("pulse.drive") == 1
+        assert "scf.for" not in kinds
+
+    def test_nested_rolled_loops(self):
+
+        def loop_test(q0):
+            d0, t0 = get_drive_line(q0)
+            x = square(10, 0.1)
+            for _ in range(3):
+                for _ in range(4):
+                    drive(d0, x, t0)
+
+        ir = compile_kernel_bytecode(loop_test)(qudit_ref())
+        kinds = [op.kind for op in ir.ops]
+        assert kinds.count("scf.for") == 2
+        assert kinds.count("pulse.drive") == 1
+        assert [op.attrs["ub"] for op in ir.ops if op.kind == "scf.for"] == [3, 4]
+
+    def test_conditional_chain_inside_unrolled_loop(self):
+        """`and` chains at the end of a loop body compile to a backward jump
+        on 3.12+; every taken branch must still be traced."""
+
+        def loop_test(q0):
+            d0, t0 = get_drive_line(q0)
+            x = square(10, 0.1)
+            for r in range(4):
+                if 0 < r and r < 3:
+                    drive(d0, x, t0)
+
+        ir = compile_kernel_bytecode(loop_test)(qudit_ref())
+        assert [op.kind for op in ir.ops].count("pulse.drive") == 2
+
+    def test_while_loop_rejected(self):
+
+        def loop_test(q0):
+            d0, t0 = get_drive_line(q0)
+            n = 2
+            while n:
+                wait(d0, 10)
+                n -= 1
+
+        with pytest.raises(CompilationError, match="while loops"):
+            compile_kernel_bytecode(loop_test)(qudit_ref())
 
 
 # ── Qudit allocation patterns ────────────────────────────────────────

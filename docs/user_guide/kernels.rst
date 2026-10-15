@@ -121,8 +121,13 @@ at trace time:
 
 .. :spellcheck-enable:
 
-Concrete ``range`` loops are unrolled exactly at trace time. Symbolic or
-runtime-dependent loop bounds are rejected.
+A loop whose induction variable is never read, like the one above, is
+captured once as a structured ``scf.for`` in the kernel IR, so the IR size
+does not depend on the trip count. Loops that read the induction variable,
+or that carry Python state from one iteration to the next, are unrolled
+exactly at trace time. ``cudaq_pulse.compile()`` writes the packed program
+directly and always unrolls. Symbolic or runtime-dependent loop bounds, and
+``while`` loops, are rejected.
 
 **If/else** with compile-time conditions:
 
@@ -148,9 +153,14 @@ The following Python constructs are **not** supported inside kernels
 and will raise ``CompilationError``:
 
 - ``while`` loops
-- Nested function definitions or closures
+- Lambdas and function definitions inside the kernel body
 - List comprehensions or generator expressions
-- ``try`` / ``except`` blocks
-- Calls to arbitrary Python functions (only ``cudaq_pulse`` ops are allowed)
+- ``try`` / ``except`` and ``with`` blocks
 - Dynamic loop bounds (bounds must be known at trace time)
 - Runtime-dependent ``if`` conditions and measurement-conditioned control flow
+
+Kernels may read variables captured from an enclosing scope; captured values
+are read again on every call. Calls to ``cudaq_pulse`` ops are emitted as IR.
+Helper functions that take IR values or call ``cudaq_pulse`` ops are inlined.
+Any other Python call, such as ``math.sin`` or ``len``, is evaluated at trace
+time on concrete values.

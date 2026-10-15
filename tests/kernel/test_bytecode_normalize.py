@@ -5,58 +5,33 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""Tests for the version-isolated bytecode normalizer.
+"""Tests for the version-isolated bytecode decoder.
 
-CI exercises a single interpreter, so the per-version opname maps are
-checked directly here: a map that is missing an opcode the running
-version emits only shows up as a ``CompilationError`` on that version.
+CI runs these on every supported interpreter. Each test states a property of
+the canonical instruction stream that must hold on all of them.
 """
 
+import sys
+
 import pytest
-from cudaq_pulse.kernel._bytecode_normalize import (
-    _OPNAME_MAP_39,
-    _OPNAME_MAP_311,
-    _OPNAME_MAP_312,
-    _select_map,
-    normalize,
-)
-
-# Versions the bridge claims to support.
-_SUPPORTED = [(3, 9), (3, 10), (3, 11), (3, 12), (3, 13), (3, 14)]
+from cudaq_pulse.kernel import _bytecode_normalize as bc
+from cudaq_pulse.kernel._bytecode_normalize import _decode, decode
 
 
-@pytest.mark.parametrize("major,minor", _SUPPORTED)
-def test_every_supported_version_has_a_map(major, minor):
-    assert _select_map(major, minor)
+def _ops(fn):
+    return [bc.OP_NAMES[op] for op, _ in decode(fn.__code__).instrs]
 
 
-def test_unsupported_version_raises():
-    with pytest.raises(NotImplementedError):
-        _select_map(3, 8)
-    with pytest.raises(NotImplementedError):
-        _select_map(2, 7)
+def test_decode_is_cached_per_code_object():
 
+    def f(x):
+        return x + 1
 
-@pytest.mark.parametrize("major,minor", [(3, 9), (3, 10), (3, 11)])
-def test_pre_312_versions_canonicalize_load_method(major, minor):
-    """LOAD_METHOD was folded into LOAD_ATTR in 3.12; earlier versions
-    still emit it for ``obj.method()`` and must map it explicitly."""
-    assert _select_map(major, minor)["LOAD_METHOD"] == "LOAD_ATTR"
-
-
-def test_311_map_extends_the_312_map():
-    for opname, canonical in _OPNAME_MAP_312.items():
-        assert _OPNAME_MAP_311[opname] == canonical
-
-
-def test_39_map_canonicalizes_calls():
-    assert _OPNAME_MAP_39["CALL_METHOD"] == "CALL"
-    assert _OPNAME_MAP_39["CALL_FUNCTION"] == "CALL"
+    assert decode(f.__code__) is decode(f.__code__)
+    assert _decode(f.__code__) is not decode(f.__code__)
 
 
 def test_attribute_call_normalizes_to_load_attr_and_call():
-    """Runs on whatever interpreter CI uses: a module-attribute call must
-    canonicalize identically on every supported version."""
 
     class _Mod:
         @staticmethod
@@ -66,17 +41,91 @@ def test_attribute_call_normalizes_to_load_attr_and_call():
     def attr_call():
         return _Mod.helper()
 
-    ops = [ci.op for ci in normalize(attr_call.__code__)]
-    assert "LOAD_ATTR" in ops
-    assert "CALL" in ops
-    assert not any(op.startswith("LOAD_METHOD") for op in ops)
-
-
-def test_bare_call_normalizes_to_call():
-
-    def bare_call():
-        return len([])
-
-    ops = [ci.op for ci in normalize(bare_call.__code__)]
-    assert "CALL" in ops
+    ops = _ops(attr_call)
+    assert ops[:3] == ["LOAD_DEREF", "LOAD_ATTR", "CALL"]
     assert ops[-1] == "RETURN"
+
+
+def test_no_interpreter_bookkeeping_survives():
+
+    def f(n):
+        for i in range(n):
+            g(i)  # noqa: F821
+        return None
+
+    ops = set(_ops(f))
+    assert ops <= set(bc.OP_NAMES) - {"UNSUPPORTED"}
+
+
+def test_keyword_call_is_call_kw_with_names_constant():
+
+    def f():
+        return g(1, b=2)  # noqa: F821
+
+    instrs = decode(f.__code__).instrs
+    kw = [i for i, (op, _) in enumerate(instrs) if op == bc.CALL_KW]
+    assert len(kw) == 1 and instrs[kw[0]][1] == 2
+    assert instrs[kw[0] - 1] == (bc.LOAD_CONST, ("b",))
+
+
+def test_jump_targets_are_instruction_indices():
+
+    def f(a, n):
+        for _ in range(n):
+            if a and n:
+                g()  # noqa: F821
+
+    instrs = decode(f.__code__).instrs
+    for i, (op, arg) in enumerate(instrs):
+        if op == bc.FOR_ITER:
+            exit_idx, var_is_read = arg
+            assert i < exit_idx < len(instrs)
+            assert var_is_read is False
+        elif op in (bc.JUMP, bc.JUMP_IF_FALSE, bc.JUMP_IF_TRUE):
+            assert 0 <= arg < len(instrs)
+            if arg <= i:
+                assert instrs[arg][0] == bc.FOR_ITER
+
+
+def test_loop_var_read_is_detected():
+
+    def f(n):
+        for i in range(n):
+            g(i)  # noqa: F821
+
+    (loop,) = [arg for op, arg in decode(f.__code__).instrs if op == bc.FOR_ITER]
+    assert loop[1] is True
+
+
+def test_while_loop_decodes_to_unsupported():
+
+    def f(n):
+        while n:
+            n -= 1
+
+    instrs = decode(f.__code__).instrs
+    assert any(op == bc.UNSUPPORTED and "while loops" in arg for op, arg in instrs)
+
+
+def test_positions_cover_every_instruction():
+
+    def f(x):
+        y = x + 1
+        return y
+
+    d = decode(f.__code__)
+    assert len(d.positions) == len(d.instrs)
+    filename, line, end_line, col, end_col = d.location(0)
+    assert filename == __file__
+    assert line == f.__code__.co_firstlineno + 1
+    # The first instruction loads ``x`` in ``y = x + 1``.
+    if sys.version_info >= (3, 11):
+        assert (end_line, col, end_col) == (line, 12, 13)
+    else:
+        assert (end_line, col, end_col) == (None, None, None)
+    assert d.location(len(d.instrs) - 1)[1:] == (None, None, None, None)
+
+
+@pytest.mark.parametrize("name", bc.OP_NAMES)
+def test_op_names_match_constants(name):
+    assert bc.OP_NAMES[getattr(bc, name)] == name
