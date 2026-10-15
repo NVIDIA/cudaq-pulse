@@ -1,0 +1,13 @@
+{
+  "bicycle_6x6_compile": 35.957,
+  "dd_loop_n512": 0.181,
+  "dd_loop_n8": 0.18,
+  "parametric_compile": 1.605,
+  "parametric_trace": 0.176,
+  "surface_d5_compile": 8.724,
+  "surface_d9_trace": 19.217,
+  "tier1_bell": 0.491,
+  "tier1_dd_cpmg8": 0.242,
+  "tier1_qaoa4": 1.626,
+  "tier1_vqe_hea": 1.866
+}

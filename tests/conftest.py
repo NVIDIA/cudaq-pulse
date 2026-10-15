@@ -12,6 +12,19 @@ from cudaq_pulse.lower import _to_program
 from cudaq_pulse.runtime.gpu import GpuRuntimeError, require_gpu_runtime
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--run-benchmarks",
+        action="store_true",
+        help="run the timing tests marked `benchmark` (skipped by default)",
+    )
+    parser.addoption(
+        "--update-perf-baseline",
+        action="store_true",
+        help="rewrite benchmarks/baselines/frontend_perf.json from this run",
+    )
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config, items):
     """Selecting any GPU test requires a working GPU runtime.
@@ -20,6 +33,11 @@ def pytest_collection_modifyitems(config, items):
     the GPU, while a run that selects GPU tests fails outright, with the
     specific reason, instead of skipping them.
     """
+    if not config.getoption("--run-benchmarks"):
+        skip = pytest.mark.skip(reason="timing test; pass --run-benchmarks")
+        for item in items:
+            if item.get_closest_marker("benchmark"):
+                item.add_marker(skip)
     if not any(item.get_closest_marker("gpu") for item in items):
         return
     try:

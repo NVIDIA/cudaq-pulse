@@ -44,12 +44,21 @@ jobs:
   test:
     name: test (${{ matrix.platform }}, py${{ matrix.python }})
     runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.prerelease == true }}
     strategy:
       fail-fast: false
       matrix:
+        # Every supported interpreter: the kernel frontend decodes each
+        # version's bytecode, and tests/kernel/test_ir_golden.py checks they
+        # all trace to the same IR.
         include:
           - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.10" }
+          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.11" }
+          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.12" }
+          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.13" }
           - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.14" }
+          # Pre-release interpreter: uv resolves "3.15" to the newest rc.
+          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.15", prerelease: true }
           - { platform: linux-aarch64, runner: ubuntu-24.04-arm, python: "3.12" }
           - { platform: macos-aarch64, runner: macos-15, python: "3.12" }
     env:
@@ -81,6 +90,13 @@ jobs:
           PYTHONPATH=build/dev/python uv run --no-sync python
           benchmarks/compiler/compile_time.py --iterations 5
           --baseline benchmarks/baselines/compile_time.json
+
+      # Timing on shared runners is noisy; report regressions without failing.
+      - name: Compile-time perf guard (non-blocking)
+        continue-on-error: true
+        run: >
+          PYTHONPATH=build/dev/python uv run --no-sync python -m pytest
+          tests/test_perf_guard.py --run-benchmarks -q
 
   # Opt-in: requires a runner with an NVIDIA GPU, a driver, and the CUDA 12.9
   # toolkit, selected by the GPU_RUNNER repository variable. Fails if any of
