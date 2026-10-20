@@ -153,7 +153,7 @@ def test_stack_copies_are_executed():
         wait(d0, x)
 
     ops = [bc.OP_NAMES[op] for op, _ in bc.decode(k.__wrapped__.__code__).instrs]
-    assert "COPY" in ops if sys.version_info >= (3, 11) else "ROT" in ops
+    assert "COPY" in ops
     waits = [op.attrs["duration"] for op in k(pulse.qudit_ref()).ops if op.kind == "pulse.wait"]
     assert waits == [10, 20, 2]
 
@@ -206,7 +206,7 @@ def test_running_interpreter_is_supported():
     assert sys.version_info[1] in bc.SUPPORTED_MINORS
 
 
-@pytest.mark.parametrize("version", [(3, 16, 0, "alpha", 1), (3, 9, 18, "final", 0)])
+@pytest.mark.parametrize("version", [(3, 16, 0, "alpha", 1), (3, 11, 9, "final", 0)])
 def test_unknown_interpreter_fails_at_decoration(monkeypatch, version):
     monkeypatch.setattr(sys, "version_info", version)
     with pytest.raises(bc.UnsupportedInterpreterError) as info:
@@ -217,7 +217,7 @@ def test_unknown_interpreter_fails_at_decoration(monkeypatch, version):
 
     message = str(info.value)
     assert f"{version[0]}.{version[1]}" in message
-    assert "3.10, 3.11" in message and bc.ISSUES_URL in message
+    assert "3.12, 3.13, 3.14, 3.15" in message and bc.ISSUES_URL in message
 
 
 # ── Errors ───────────────────────────────────────────────────────────

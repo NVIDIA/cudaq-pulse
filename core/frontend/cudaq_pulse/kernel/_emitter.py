@@ -413,22 +413,11 @@ class PulseIREmitter:
                 elif op == bc.SWAP:
                     stack[-1], stack[-arg] = stack[-arg], stack[-1]
 
-                elif op == bc.ROT:
-                    stack.insert(-(arg - 1), pop())
-
                 elif op == bc.JUMP_IF_NONE or op == bc.JUMP_IF_NOT_NONE:
                     if (pop() is None) == (op == bc.JUMP_IF_NONE):
                         pc = self._jump(arg, lo, hi, header)
                         if pc < 0:
                             return None
-
-                elif op == bc.JUMP_IF_FALSE_OR_POP or op == bc.JUMP_IF_TRUE_OR_POP:
-                    if _truth(stack[-1]) == (op == bc.JUMP_IF_TRUE_OR_POP):
-                        pc = self._jump(arg, lo, hi, header)
-                        if pc < 0:
-                            return None
-                    else:
-                        pop()
 
                 elif op == bc.STORE_DEREF:
                     local_vars[arg] = pop()

@@ -54,7 +54,7 @@ if(NOT Python_EXECUTABLE)
 endif()
 # scikit-build-core sets SKBUILD_SABI_COMPONENT when it tags the wheel abi3
 # (wheel.py-api, Python >= 3.12), which nanobind's STABLE_ABI requires.
-find_package(Python 3.10 REQUIRED
+find_package(Python 3.12 REQUIRED
   COMPONENTS Interpreter Development.Module ${SKBUILD_SABI_COMPONENT})
 
 # nanobind ships its own CMake package inside the Python wheel. Ask the

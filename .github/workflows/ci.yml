@@ -44,7 +44,6 @@ jobs:
   test:
     name: test (${{ matrix.platform }}, py${{ matrix.python }})
     runs-on: ${{ matrix.runner }}
-    continue-on-error: ${{ matrix.prerelease == true }}
     strategy:
       fail-fast: false
       matrix:
@@ -52,13 +51,10 @@ jobs:
         # version's bytecode, and tests/kernel/test_ir_golden.py checks they
         # all trace to the same IR.
         include:
-          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.10" }
-          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.11" }
           - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.12" }
           - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.13" }
           - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.14" }
-          # Pre-release interpreter: uv resolves "3.15" to the newest rc.
-          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.15", prerelease: true }
+          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.15" }
           - { platform: linux-aarch64, runner: ubuntu-24.04-arm, python: "3.12" }
           - { platform: macos-aarch64, runner: macos-15, python: "3.12" }
     env:

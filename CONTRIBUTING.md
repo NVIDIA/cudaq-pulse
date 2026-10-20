@@ -147,9 +147,9 @@ but leaves committing the printed lock file to you.
   baseline on Linux x86_64, Linux aarch64, and macOS. A manually dispatched
   run with `gpu` enabled also builds with GPU support on the runner named by
   the `GPU_RUNNER` repository variable.
-- `wheels.yml`: cibuildwheel for `cp310`, `cp311`, and `cp312-abi3` (3.12 and
-  newer) on manylinux_2_28 (x86_64, aarch64, with the CUDA 12 and CUDA 13
-  runtimes) and macOS arm64 (compiler-only), plus an sdist. It then installs
+- `wheels.yml`: cibuildwheel for `cp312-abi3` (3.12 and newer) on
+  manylinux_2_28 (x86_64, aarch64, with the CUDA 12 and CUDA 13 runtimes) and
+  macOS arm64 (compiler-only), plus an sdist. It then installs
   the wheels in clean containers without a CUDA toolkit. A manually
   dispatched run with `gpu` enabled also runs the GPU tests from the wheels on
   the `GPU_RUNNER` runner.

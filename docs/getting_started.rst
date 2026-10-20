@@ -18,7 +18,7 @@ Getting Started
 Installation
 ------------
 
-cudaq-pulse requires Python 3.10 or newer and does not depend on CUDA-Q. Its
+cudaq-pulse requires Python 3.12 or newer and does not depend on CUDA-Q. Its
 wheels contain a statically linked MLIR, so ``pip`` is the only installer
 needed.
 
@@ -52,10 +52,10 @@ same files, so install only one of them per environment.
      - Python
      - Capabilities
    * - Linux x86_64 and aarch64, glibc 2.28 or newer
-     - 3.10+
+     - 3.12+
      - Compiler; GPU execution with ``[cu12]`` or ``[cu13]``
    * - macOS 11 or newer, arm64
-     - 3.10+
+     - 3.12+
      - Compiler only
 
 GPU execution additionally requires an NVIDIA GPU with compute capability 7.0

@@ -36,8 +36,8 @@ the same directories, so install only one of them per environment.
 
 | Platform | Python | What you get |
 | --- | --- | --- |
-| Linux x86_64 and aarch64, glibc 2.28+ | 3.10+ | Compiler; GPU execution with `[cu12]` or `[cu13]` |
-| macOS 11+ arm64 | 3.10+ | Compiler only |
+| Linux x86_64 and aarch64, glibc 2.28+ | 3.12+ | Compiler; GPU execution with `[cu12]` or `[cu13]` |
+| macOS 11+ arm64 | 3.12+ | Compiler only |
 
 GPU execution needs an NVIDIA GPU (compute capability 7.0 or newer) and a
 driver for the CUDA major you installed:

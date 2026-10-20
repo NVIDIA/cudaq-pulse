@@ -33,7 +33,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
 
 include(GNUInstallDirs)
 
-find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter Development.Module)
+find_package(Python3 3.12 REQUIRED COMPONENTS Interpreter Development.Module)
 
 set(CUDAQ_PULSE_LLVM_VERSION "22.1.8")
 

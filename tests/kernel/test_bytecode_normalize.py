@@ -11,8 +11,6 @@ CI runs these on every supported interpreter. Each test states a property of
 the canonical instruction stream that must hold on all of them.
 """
 
-import sys
-
 import pytest
 from cudaq_pulse.kernel import _bytecode_normalize as bc
 from cudaq_pulse.kernel._bytecode_normalize import _decode, decode
@@ -119,10 +117,7 @@ def test_positions_cover_every_instruction():
     assert filename == __file__
     assert line == f.__code__.co_firstlineno + 1
     # The first instruction loads ``x`` in ``y = x + 1``.
-    if sys.version_info >= (3, 11):
-        assert (end_line, col, end_col) == (line, 12, 13)
-    else:
-        assert (end_line, col, end_col) == (None, None, None)
+    assert (end_line, col, end_col) == (line, 12, 13)
     assert d.location(len(d.instrs) - 1)[1:] == (None, None, None, None)
 
 

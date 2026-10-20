@@ -18,7 +18,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sys
 from pathlib import Path
 
 import pytest
@@ -45,8 +44,6 @@ def _load() -> dict:
 
 
 if os.environ.get("CUDAQ_PULSE_UPDATE_GOLDENS") == "1":
-    if sys.version_info < (3, 11):
-        raise RuntimeError("regenerate goldens on Python >= 3.11, which records column spans")
     GOLDEN.parent.mkdir(exist_ok=True)
     GOLDEN.write_text(
         json.dumps({c.name: _golden_record(trace(c)) for c in CASES}, indent=1) + "\n"
@@ -66,12 +63,8 @@ def test_ir_matches_golden(case):
     if "error" in expected:
         assert actual.get("error") == expected["error"]
         if "span" in expected:
-            assert actual["span"][0] == expected["span"][0]
-            if sys.version_info >= (3, 11):
-                assert actual["span"] == expected["span"]
-                assert actual["cols"] == expected["cols"]
-            else:
-                assert actual["cols"] == [None, None]
+            assert actual["span"] == expected["span"]
+            assert actual["cols"] == expected["cols"]
         return
     assert "error" not in actual, actual.get("error")
     got = _golden_record(actual)

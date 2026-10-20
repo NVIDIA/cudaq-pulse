@@ -10,10 +10,10 @@
 This is the ONLY module that knows how CPython lays out bytecode. It decodes
 a code object once, with :func:`dis.get_instructions`, into a flat program
 over a small canonical instruction set whose semantics are identical on every
-supported interpreter (3.10 through 3.14):
+supported interpreter (3.12 through 3.15):
 
-* calls are ``CALL n`` / ``CALL_KW n``; the implicit ``NULL`` slots of 3.11+
-  are dropped, and ``KW_NAMES`` (3.11, 3.12) becomes an explicit constant
+* calls are ``CALL n`` / ``CALL_KW n``; the implicit ``NULL`` slots are
+  dropped, and 3.12's ``KW_NAMES`` becomes an explicit constant
 * binary operators, comparisons and unary operators carry the Python
   ``operator`` function to apply, so no names are matched while tracing
 * jump targets are instruction indices, never byte offsets, so a jump to a
@@ -39,7 +39,7 @@ import dis
 import operator as _op
 import sys
 from types import CodeType
-from typing import Any, NamedTuple
+from typing import Any
 
 # ── Canonical opcodes ────────────────────────────────────────────────
 
@@ -74,14 +74,11 @@ from typing import Any, NamedTuple
     POP_TOP,
     COPY,
     SWAP,
-    ROT,
     JUMP,
     JUMP_IF_FALSE,
     JUMP_IF_TRUE,
     JUMP_IF_NONE,
     JUMP_IF_NOT_NONE,
-    JUMP_IF_FALSE_OR_POP,
-    JUMP_IF_TRUE_OR_POP,
     GET_ITER,
     FOR_ITER,
     RETURN,
@@ -91,7 +88,7 @@ from typing import Any, NamedTuple
     FORMAT,
     RAISE,
     UNSUPPORTED,
-) = range(47)
+) = range(44)
 
 OP_NAMES: tuple[str, ...] = tuple(
     (
@@ -99,8 +96,8 @@ OP_NAMES: tuple[str, ...] = tuple(
         "STORE_DEREF LOAD_ATTR CALL CALL_KW BINARY SUBSCR STORE_SUBSCR BUILD_SLICE "
         "UNARY NOT COMPARE IS CONTAINS BUILD_TUPLE BUILD_LIST BUILD_MAP "
         "BUILD_CONST_KEY_MAP BUILD_STRING LIST_APPEND LIST_EXTEND UNPACK_SEQUENCE "
-        "POP_TOP COPY SWAP ROT JUMP JUMP_IF_FALSE JUMP_IF_TRUE JUMP_IF_NONE "
-        "JUMP_IF_NOT_NONE JUMP_IF_FALSE_OR_POP JUMP_IF_TRUE_OR_POP GET_ITER "
+        "POP_TOP COPY SWAP JUMP JUMP_IF_FALSE JUMP_IF_TRUE JUMP_IF_NONE "
+        "JUMP_IF_NOT_NONE GET_ITER "
         "FOR_ITER RETURN IMPORT_NAME IMPORT_FROM CONVERT FORMAT RAISE UNSUPPORTED"
     ).split()
 )
@@ -112,8 +109,6 @@ _JUMPS = frozenset(
         JUMP_IF_TRUE,
         JUMP_IF_NONE,
         JUMP_IF_NOT_NONE,
-        JUMP_IF_FALSE_OR_POP,
-        JUMP_IF_TRUE_OR_POP,
         FOR_ITER,
     }
 )
@@ -122,7 +117,7 @@ _JUMPS = frozenset(
 # instruction index; FOR_ITER carries ``(exit_index, loop_var_is_read)``.
 Instr = tuple[int, Any]
 
-# ── Opname table (union over 3.10-3.14; opnames never change meaning) ─
+# ── Opname table (union over 3.12-3.15; opnames never change meaning) ─
 
 _SKIP = frozenset(
     {
@@ -132,7 +127,6 @@ _SKIP = frozenset(
         "MAKE_CELL",
         "NOP",
         "NOT_TAKEN",
-        "PRECALL",
         "PUSH_NULL",
         "RESUME",
         "TO_BOOL",
@@ -153,12 +147,8 @@ _SIMPLE: dict[str, int] = {
     "LOAD_CLOSURE": LOAD_DEREF,
     "STORE_DEREF": STORE_DEREF,
     "LOAD_ATTR": LOAD_ATTR,
-    "LOAD_METHOD": LOAD_ATTR,
     "CALL": CALL,
-    "CALL_FUNCTION": CALL,
-    "CALL_METHOD": CALL,
     "CALL_KW": CALL_KW,
-    "CALL_FUNCTION_KW": CALL_KW,
     "BINARY_SUBSCR": SUBSCR,
     "STORE_SUBSCR": STORE_SUBSCR,
     "BUILD_SLICE": BUILD_SLICE,
@@ -184,33 +174,13 @@ _SIMPLE: dict[str, int] = {
 
 _JUMP_NAMES: dict[str, int] = {
     "JUMP_FORWARD": JUMP,
-    "JUMP_ABSOLUTE": JUMP,
     "JUMP_BACKWARD": JUMP,
     "JUMP_BACKWARD_NO_INTERRUPT": JUMP,
     "POP_JUMP_IF_FALSE": JUMP_IF_FALSE,
-    "POP_JUMP_FORWARD_IF_FALSE": JUMP_IF_FALSE,
-    "POP_JUMP_BACKWARD_IF_FALSE": JUMP_IF_FALSE,
     "POP_JUMP_IF_TRUE": JUMP_IF_TRUE,
-    "POP_JUMP_FORWARD_IF_TRUE": JUMP_IF_TRUE,
-    "POP_JUMP_BACKWARD_IF_TRUE": JUMP_IF_TRUE,
     "POP_JUMP_IF_NONE": JUMP_IF_NONE,
-    "POP_JUMP_FORWARD_IF_NONE": JUMP_IF_NONE,
-    "POP_JUMP_BACKWARD_IF_NONE": JUMP_IF_NONE,
     "POP_JUMP_IF_NOT_NONE": JUMP_IF_NOT_NONE,
-    "POP_JUMP_FORWARD_IF_NOT_NONE": JUMP_IF_NOT_NONE,
-    "POP_JUMP_BACKWARD_IF_NOT_NONE": JUMP_IF_NOT_NONE,
-    "JUMP_IF_FALSE_OR_POP": JUMP_IF_FALSE_OR_POP,
-    "JUMP_IF_TRUE_OR_POP": JUMP_IF_TRUE_OR_POP,
     "FOR_ITER": FOR_ITER,
-}
-
-# Opcodes that only change how an operand is stored, not what it means.
-_ROTATIONS: dict[str, tuple[Instr, ...]] = {
-    "DUP_TOP": ((COPY, 1),),
-    "DUP_TOP_TWO": ((COPY, 2), (COPY, 2)),
-    "ROT_TWO": ((SWAP, 2),),
-    "ROT_THREE": ((ROT, 3),),
-    "ROT_FOUR": ((ROT, 4),),
 }
 
 _SUPERINSTRUCTIONS: dict[str, tuple[int, int]] = {
@@ -220,7 +190,7 @@ _SUPERINSTRUCTIONS: dict[str, tuple[int, int]] = {
     "STORE_FAST_STORE_FAST": (STORE_FAST, STORE_FAST),
 }
 
-# BINARY_OP (3.11+) sub-codes, in ``_nb_ops`` order; 26 is 3.14's subscript.
+# BINARY_OP sub-codes, in ``_nb_ops`` order; 26 is the 3.14+ subscript.
 _NB_OPS: tuple[Any, ...] = (
     _op.add,
     _op.and_,
@@ -251,29 +221,8 @@ _NB_OPS: tuple[Any, ...] = (
 )
 _NB_SUBSCR = 26
 
-# 3.10 spells each binary operator as its own opcode.
-_BINARY_NAMES: dict[str, Any] = {}
-for _stem, _fn, _ifn in (
-    ("ADD", _op.add, _op.iadd),
-    ("AND", _op.and_, _op.iand),
-    ("FLOOR_DIVIDE", _op.floordiv, _op.ifloordiv),
-    ("LSHIFT", _op.lshift, _op.ilshift),
-    ("MATRIX_MULTIPLY", _op.matmul, _op.imatmul),
-    ("MULTIPLY", _op.mul, _op.imul),
-    ("MODULO", _op.mod, _op.imod),
-    ("OR", _op.or_, _op.ior),
-    ("POWER", _op.pow, _op.ipow),
-    ("RSHIFT", _op.rshift, _op.irshift),
-    ("SUBTRACT", _op.sub, _op.isub),
-    ("TRUE_DIVIDE", _op.truediv, _op.itruediv),
-    ("XOR", _op.xor, _op.ixor),
-):
-    _BINARY_NAMES["BINARY_" + _stem] = _fn
-    _BINARY_NAMES["INPLACE_" + _stem] = _ifn
-
 _UNARY_NAMES: dict[str, Any] = {
     "UNARY_NEGATIVE": _op.neg,
-    "UNARY_POSITIVE": _op.pos,
     "UNARY_INVERT": _op.invert,
 }
 
@@ -296,13 +245,9 @@ _TRY_MESSAGE = _not_supported("try and with statements")
 _UNSUPPORTED: dict[str, str] = {
     "MAKE_FUNCTION": _NESTED_MESSAGE,
     "LOAD_FAST_AND_CLEAR": _NESTED_MESSAGE,
-    "SETUP_FINALLY": _TRY_MESSAGE,
-    "SETUP_WITH": _TRY_MESSAGE,
-    "SETUP_ASYNC_WITH": _TRY_MESSAGE,
     "BEFORE_WITH": _TRY_MESSAGE,
     "LOAD_SPECIAL": _TRY_MESSAGE,
     "RETURN_GENERATOR": _not_supported("generators"),
-    "GEN_START": _not_supported("generators"),
     "YIELD_VALUE": _not_supported("generators"),
     "CALL_FUNCTION_EX": _not_supported("star-argument calls"),
 }
@@ -315,7 +260,7 @@ _WHILE_MESSAGE = (
 _PY_MINOR = sys.version_info[1]
 
 # CPython minors whose bytecode this decoder has been verified against.
-SUPPORTED_MINORS = (10, 11, 12, 13, 14, 15)
+SUPPORTED_MINORS = (12, 13, 14, 15)
 ISSUES_URL = "https://github.com/NVIDIA/cudaq-pulse/issues"
 
 
@@ -340,8 +285,6 @@ def check_interpreter() -> None:
 # Instructions at a FOR_ITER exit target that pop the exhausted iterator.
 # Canonical FOR_ITER already consumes it.
 _FOR_EXIT_CLEANUP: tuple[str, ...] = {
-    10: (),
-    11: (),
     12: ("END_FOR",),
     13: ("END_FOR", "POP_TOP"),
     14: ("END_FOR", "POP_ITER"),
@@ -362,8 +305,8 @@ def _iter_slots() -> int:
 # ``break`` pops as many slots as the interpreter's bytecode does.
 ITER_SLOTS = _iter_slots()
 
-# Comparison results are coerced to bool when 3.13+ sets this bit.
-_COMPARE_ARG_SHIFT = {10: 0, 11: 0, 12: 4}.get(_PY_MINOR, 5)
+# COMPARE_OP keeps the comparison in its high bits; 3.13+ adds a bool flag.
+_COMPARE_ARG_SHIFT = 4 if _PY_MINOR == 12 else 5
 
 
 def _compare_fn(instr: dis.Instruction) -> Any:
@@ -377,17 +320,9 @@ def _compare_fn(instr: dis.Instruction) -> Any:
 # ── Decoding ─────────────────────────────────────────────────────────
 
 
-class Position(NamedTuple):
-    """Source span of an instruction; field names match ``dis.Positions``.
-
-    3.11+ reuses the ``dis.Positions`` objects themselves. 3.10 bytecode
-    records only line numbers, so ``end_lineno`` and the columns are None.
-    """
-
-    lineno: int | None
-    end_lineno: int | None
-    col_offset: int | None
-    end_col_offset: int | None
+# Source span of an instruction: the ``dis`` objects themselves, shared with
+# the decoded instruction stream rather than copied.
+Position = dis.Positions
 
 
 class DecodedCode:
@@ -427,8 +362,8 @@ class DecodedCode:
 
 
 def _protected_starts(code: CodeType) -> list[int]:
-    """Byte offsets where a 3.11+ exception-table range begins."""
-    if _PY_MINOR < 11 or not getattr(code, "co_exceptiontable", b""):
+    """Byte offsets where an exception-table range begins."""
+    if not code.co_exceptiontable:
         return []
     entries = getattr(dis.Bytecode(code), "exception_entries", ())
     return sorted({e.start for e in entries})
@@ -452,10 +387,7 @@ def _decode(code: CodeType) -> DecodedCode:
     for ins in raw:
         if len(positions) < len(out):
             positions.extend([pos] * (len(out) - len(positions)))
-        if _PY_MINOR >= 11:
-            pos = getattr(ins, "positions")
-        elif ins.starts_line is not None:
-            pos = Position(ins.starts_line, None, None, None)
+        pos = ins.positions
 
         name = ins.opname
         off = ins.offset
@@ -496,8 +428,6 @@ def _decode(code: CodeType) -> DecodedCode:
                 out.append([SUBSCR, None])
             else:
                 out.append([BINARY, _NB_OPS[iarg]])
-        elif name in _BINARY_NAMES:
-            out.append([BINARY, _BINARY_NAMES[name]])
         elif name == "BINARY_SLICE":
             out.append([BUILD_SLICE, 2])
             out.append([SUBSCR, None])
@@ -511,10 +441,6 @@ def _decode(code: CodeType) -> DecodedCode:
             out.append([IS, bool(iarg)])
         elif name == "CONTAINS_OP":
             out.append([CONTAINS, bool(iarg)])
-        elif name in _ROTATIONS:
-            out.extend([list(x) for x in _ROTATIONS[name]])
-        elif name == "ROT_N":
-            out.append([ROT, iarg])
         elif name in _SUPERINSTRUCTIONS:
             first, second = _SUPERINSTRUCTIONS[name]
             out.append([first, ins.argval[0]])
@@ -573,7 +499,7 @@ def _decode(code: CodeType) -> DecodedCode:
     return DecodedCode(code, tuple((op, arg) for op, arg in out), tuple(positions))
 
 
-def _condition_rank(p: Position) -> tuple[int, bool, int]:
+def _condition_rank(p: Any) -> tuple[int, bool, int]:
     multiline = p.end_lineno is not None and p.end_lineno != p.lineno
     width = (p.end_col_offset or 0) - (p.col_offset or 0)
     return (p.lineno or 0, multiline, -width)

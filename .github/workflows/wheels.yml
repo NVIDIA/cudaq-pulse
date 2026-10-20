@@ -97,7 +97,7 @@ jobs:
           if-no-files-found: error
 
   # Installs the wheels into images that have no CUDA toolkit, the way users
-  # will: rockylinux:8 is the manylinux_2_28 glibc floor, ubuntu:22.04 uses its
+  # will: rockylinux:8 is the manylinux_2_28 glibc floor, ubuntu:24.04 uses its
   # system Python, and the [cu12]/[cu13] extras must load without a GPU.
   install-test:
     name: install-test (${{ matrix.platform }}, ${{ matrix.image || matrix.runner }})
@@ -108,28 +108,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { platform: linux-x86_64, runner: ubuntu-24.04, image: "python:3.10-slim", python: python3 }
           - { platform: linux-x86_64, runner: ubuntu-24.04, image: "python:3.12-slim", python: python3 }
           - { platform: linux-x86_64, runner: ubuntu-24.04, image: "python:3.14-slim", python: python3 }
-          - { platform: linux-x86_64, runner: ubuntu-24.04, image: "ubuntu:22.04", python: python3 }
-          - { platform: linux-x86_64, runner: ubuntu-24.04, image: "rockylinux:8", python: python3.11 }
-          - { platform: linux-aarch64, runner: ubuntu-24.04-arm, image: "python:3.10-slim", python: python3 }
+          - { platform: linux-x86_64, runner: ubuntu-24.04, image: "python:3.15-slim", python: python3 }
+          - { platform: linux-x86_64, runner: ubuntu-24.04, image: "ubuntu:24.04", python: python3 }
+          - { platform: linux-x86_64, runner: ubuntu-24.04, image: "rockylinux:8", python: python3.12 }
           - { platform: linux-aarch64, runner: ubuntu-24.04-arm, image: "python:3.12-slim", python: python3 }
           - { platform: linux-aarch64, runner: ubuntu-24.04-arm, image: "python:3.14-slim", python: python3 }
-          - { platform: linux-aarch64, runner: ubuntu-24.04-arm, image: "ubuntu:22.04", python: python3 }
-          - { platform: linux-aarch64, runner: ubuntu-24.04-arm, image: "rockylinux:8", python: python3.11 }
-          - { platform: macos-aarch64, runner: macos-14, image: "", python: python3, python-version: "3.10" }
+          - { platform: linux-aarch64, runner: ubuntu-24.04-arm, image: "python:3.15-slim", python: python3 }
+          - { platform: linux-aarch64, runner: ubuntu-24.04-arm, image: "ubuntu:24.04", python: python3 }
+          - { platform: linux-aarch64, runner: ubuntu-24.04-arm, image: "rockylinux:8", python: python3.12 }
+          - { platform: macos-aarch64, runner: macos-14, image: "", python: python3, python-version: "3.12" }
           - { platform: macos-aarch64, runner: macos-15, image: "", python: python3, python-version: "3.14" }
     steps:
-      - name: Install Python (ubuntu:22.04)
-        if: matrix.image == 'ubuntu:22.04'
+      - name: Install Python (ubuntu:24.04)
+        if: matrix.image == 'ubuntu:24.04'
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             python3-pip python3-venv
       - name: Install Python (rockylinux:8)
         if: matrix.image == 'rockylinux:8'
-        run: dnf install -y python3.11 python3.11-pip
+        run: dnf install -y python3.12 python3.12-pip
       - uses: actions/setup-python@v6
         if: runner.os == 'macOS'
         with:
