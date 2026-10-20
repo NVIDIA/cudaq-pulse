@@ -87,6 +87,8 @@ class ScheduleError(ValueError):
 _TIMED_KINDS = frozenset({OpKind.DRIVE, OpKind.READOUT, OpKind.WAIT})
 _LINE_TYPES = frozenset({ValueType.DRIVE_LINE, ValueType.READOUT_LINE})
 _LINEAR_TYPES = _LINE_TYPES | {ValueType.TONE}
+_REGION_STARTS = frozenset({OpKind.FOR_LOOP, OpKind.IF})
+_REGION_ENDS = frozenset({OpKind.END_FOR, OpKind.END_IF})
 
 # Iterations simulated before giving up on finding a steady per-iteration
 # advance; past this the loop is simulated in full.
@@ -211,6 +213,7 @@ class _Scheduler:
         self.machine = machine
         self.roots = _resource_roots(program)
         self.ends = _loop_ends(self.ops)
+        self.loop_starts = {end: start for start, end in self.ends.items()}
         self.ifs = _if_bounds(self.ops)
         # Earliest start for ops inside a measurement-conditioned arm.
         self.floor = 0.0
@@ -266,13 +269,13 @@ class _Scheduler:
         i = i0
         while i < i1:
             op = ops[i]
-            if op.kind == OpKind.FOR_LOOP:
-                end = self.ends[i]
-                self._forward_loop(i, end, record, iterations)
-                i = end + 1
-                continue
-            if op.kind == OpKind.IF:
-                i = self._forward_if(i, record, iterations) + 1
+            if op.kind in _REGION_STARTS:
+                if op.kind == OpKind.FOR_LOOP:
+                    end = self.ends[i]
+                    self._forward_loop(i, end, record, iterations)
+                    i = end + 1
+                else:
+                    i = self._forward_if(i, record, iterations) + 1
                 continue
             operand_ready = max((ready.get(v.vid, 0.0) for v in op.operands), default=floor)
             if operand_ready < floor:
@@ -437,13 +440,13 @@ class _Scheduler:
         i = i1 - 1
         while i >= i0:
             op = ops[i]
-            if op.kind == OpKind.END_IF:
-                i = self._backward_if(i, record, iterations) - 1
-                continue
-            if op.kind == OpKind.END_FOR:
-                start = next(s for s, e in self.ends.items() if e == i)
-                self._backward_loop(start, i, record, iterations)
-                i = start - 1
+            if op.kind in _REGION_ENDS:
+                if op.kind == OpKind.END_IF:
+                    i = self._backward_if(i, record, iterations) - 1
+                else:
+                    start = self.loop_starts[i]
+                    self._backward_loop(start, i, record, iterations)
+                    i = start - 1
                 continue
             duration = duration_of(op) if op.kind in _TIMED_KINDS else 0.0
             end = min((latest.get(v.vid, makespan) for v in op.results), default=makespan)

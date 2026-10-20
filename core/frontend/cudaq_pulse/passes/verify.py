@@ -14,6 +14,7 @@ calibration heuristics.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from operator import attrgetter
 
 from .ir_types import (
     OpKind,
@@ -96,47 +97,20 @@ class CrossResonanceMiscalibrationError(TypeCheckError):
 # ---------------------------------------------------------------------------
 
 
-def check_linearity(program: Program) -> list[TypeCheckError]:
+def check_linearity(program: Program, *, regions: bool | None = None) -> list[TypeCheckError]:
     """Every linear value must be produced exactly once and consumed exactly once."""
     errors: list[TypeCheckError] = []
     produced: dict[int, int] = {}  # vid -> op_index that produced it
     consumed: dict[int, int] = {}  # vid -> consume count
-    # Inside an if, consumption is counted per arm; a value consumed once in
-    # each arm is consumed once on every path.
-    arms: list[tuple[dict[int, int], dict[int, int], bool]] = []
-
-    def consume(vid: int) -> None:
-        if arms:
-            then_counts, else_counts, in_else = arms[-1]
-            counts = else_counts if in_else else then_counts
-        else:
-            counts = consumed
-        counts[vid] = counts.get(vid, 0) + 1
+    # Inside an if, consumption is counted per arm (into ``counts``); a value
+    # consumed once in each arm is consumed once on every path.
+    counts = consumed
+    arms: list[tuple[dict[int, int], dict[int, int], dict[int, int]]] = []  # outer, then, else
+    if regions is None:
+        regions = _has_conditionals(program)
 
     for idx, op in enumerate(program.ops):
-        if op.kind == OpKind.ELSE and arms:
-            for v in op.operands:
-                if is_linear_type(v.vtype):
-                    consume(v.vid)
-            then_counts, else_counts, _ = arms[-1]
-            arms[-1] = (then_counts, else_counts, True)
-            continue
-        merged_arms = op.kind == OpKind.END_IF and bool(arms)
-        if merged_arms:
-            for v in op.operands:
-                if is_linear_type(v.vtype):
-                    consume(v.vid)
-            then_counts, else_counts, _ = arms.pop()
-            if arms:
-                outer_then, outer_else, outer_in_else = arms[-1]
-                target = outer_else if outer_in_else else outer_then
-            else:
-                target = consumed
-            for vid in then_counts.keys() | else_counts.keys():
-                target[vid] = target.get(vid, 0) + max(
-                    then_counts.get(vid, 0), else_counts.get(vid, 0)
-                )
-
+        kind = op.kind
         for v in op.results:
             if not is_linear_type(v.vtype):
                 continue
@@ -153,12 +127,25 @@ def check_linearity(program: Program) -> list[TypeCheckError]:
             else:
                 produced[v.vid] = idx
 
-        for v in () if merged_arms else op.operands:
+        for v in op.operands:
             if not is_linear_type(v.vtype):
                 continue
-            consume(v.vid)
-        if op.kind == OpKind.IF:
-            arms.append(({}, {}, False))
+            counts[v.vid] = counts.get(v.vid, 0) + 1
+
+        if not regions:
+            continue
+        if kind == OpKind.IF:
+            arms.append((counts, {}, {}))
+            counts = arms[-1][1]
+        elif kind == OpKind.ELSE and arms:
+            counts = arms[-1][2]
+        elif kind == OpKind.END_IF and arms:
+            outer, then_counts, else_counts = arms.pop()
+            for vid in then_counts.keys() | else_counts.keys():
+                outer[vid] = outer.get(vid, 0) + max(
+                    then_counts.get(vid, 0), else_counts.get(vid, 0)
+                )
+            counts = outer
 
     for vid, prod_idx in produced.items():
         count = consumed.get(vid, 0)
@@ -195,11 +182,19 @@ def _line_roots(program: Program) -> dict[int, int]:
         if op.kind in (OpKind.ALLOC_DRIVE, OpKind.ALLOC_READOUT):
             for result in results:
                 roots[result.vid] = result.vid
-        else:
+        elif operands:
             # The k-th line result continues the k-th line operand.
             for operand, result in zip(operands, results):
                 roots[result.vid] = roots.get(operand.vid, operand.vid)
     return roots
+
+
+_REGION_KINDS = frozenset({OpKind.IF, OpKind.ELSE, OpKind.END_IF})
+_kind_of = attrgetter("kind")
+
+
+def _has_conditionals(program: Program) -> bool:
+    return not _REGION_KINDS.isdisjoint(map(_kind_of, program.ops))
 
 
 def _arm_paths(program: Program) -> list[tuple[tuple[int, bool], ...]]:
@@ -223,7 +218,7 @@ def _exclusive(a: tuple[tuple[int, bool], ...], b: tuple[tuple[int, bool], ...])
     return any(arms.get(index, in_else) != in_else for index, in_else in b)
 
 
-def check_monotone_time(program: Program) -> list[TypeCheckError]:
+def check_monotone_time(program: Program, *, regions: bool | None = None) -> list[TypeCheckError]:
     """Verify that time only moves forward on each line."""
     errors: list[TypeCheckError] = []
     roots = _line_roots(program)
@@ -231,9 +226,13 @@ def check_monotone_time(program: Program) -> list[TypeCheckError]:
     # Each arm of an if starts from the clocks at the IF; they rejoin at the
     # later of the two arms.
     saved: list[tuple[dict[int, float], dict[int, float] | None]] = []
+    if regions is None:
+        regions = _has_conditionals(program)
 
     for idx, op in enumerate(program.ops):
-        if op.kind == OpKind.IF:
+        if not regions:
+            pass
+        elif op.kind == OpKind.IF:
             saved.append((dict(line_clocks), None))
         elif op.kind == OpKind.ELSE and saved:
             entry, _ = saved[-1]
@@ -276,7 +275,9 @@ def check_monotone_time(program: Program) -> list[TypeCheckError]:
     return errors
 
 
-def check_drive_exclusivity(program: Program) -> list[TypeCheckError]:
+def check_drive_exclusivity(
+    program: Program, *, regions: bool | None = None
+) -> list[TypeCheckError]:
     """Drive ops on the same line lineage must be totally ordered, non-overlapping.
 
     Only meaningful after scheduling — if no ops carry ``start_vtu`` attrs
@@ -289,7 +290,9 @@ def check_drive_exclusivity(program: Program) -> list[TypeCheckError]:
         return errors
 
     roots = _line_roots(program)
-    paths = _arm_paths(program)
+    if regions is None:
+        regions = _has_conditionals(program)
+    paths = _arm_paths(program) if regions else None
     line_intervals: dict[int, list[tuple[float, float, int]]] = {}
 
     for idx, op in enumerate(program.ops):
@@ -308,7 +311,7 @@ def check_drive_exclusivity(program: Program) -> list[TypeCheckError]:
             line_intervals[root] = []
 
         for prev_start, prev_end, prev_idx in line_intervals[root]:
-            if _exclusive(paths[prev_idx], paths[idx]):
+            if paths is not None and _exclusive(paths[prev_idx], paths[idx]):
                 continue
             if start < prev_end - 1e-12 and end > prev_start + 1e-12:
                 errors.append(
@@ -364,13 +367,15 @@ def check_cr_miscalibration(program: Program) -> list[TypeCheckError]:
     return errors
 
 
-def check_if_structure(program: Program) -> list[TypeCheckError]:
+def check_if_structure(program: Program, *, regions: bool | None = None) -> list[TypeCheckError]:
     """Verify IF/ELSE/END_IF regions are well formed.
 
     The condition is a single measurement result, each IF has exactly one
     ELSE, and both arms yield values matching the END_IF results.
     """
     errors: list[TypeCheckError] = []
+    if not (_has_conditionals(program) if regions is None else regions):
+        return errors
     stack: list[tuple[int, int | None]] = []
 
     def error(idx: int, message: str) -> None:
@@ -514,12 +519,13 @@ def verify(program: Program, *, strict: bool = False) -> list[TypeCheckError]:
         If True, raise ``RuntimeError`` on the first error-severity issue.
     """
     errors: list[TypeCheckError] = []
-    errors.extend(check_linearity(program))
+    regions = _has_conditionals(program)
+    errors.extend(check_linearity(program, regions=regions))
     errors.extend(check_loop_structure(program))
-    errors.extend(check_if_structure(program))
+    errors.extend(check_if_structure(program, regions=regions))
     errors.extend(check_waveform_validity(program))
-    errors.extend(check_monotone_time(program))
-    errors.extend(check_drive_exclusivity(program))
+    errors.extend(check_monotone_time(program, regions=regions))
+    errors.extend(check_drive_exclusivity(program, regions=regions))
     errors.extend(check_cr_miscalibration(program))
 
     if strict:
