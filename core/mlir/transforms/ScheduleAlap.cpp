@@ -39,6 +39,7 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
 
+#include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
 
 namespace {
@@ -741,6 +742,29 @@ static void unrollFully(mlir::scf::ForOp loop) {
   }
 }
 
+/// A loop in which two ops on one physical line move by different periods
+/// per iteration. Each op's timing is affine, but the line's timeline is not
+/// one pattern repeated, which happens when the first iteration differs.
+static std::optional<NotAffine> periodMismatch(mlir::func::FuncOp function) {
+  std::optional<NotAffine> problem;
+  function.walk([&](mlir::scf::ForOp loop) {
+    if (problem)
+      return;
+    size_t level = pulse::enclosingLoops(loop).size();
+    llvm::DenseMap<mlir::Operation *, int64_t> periodOf;
+    loop.getBody()->walk([&](mlir::Operation *op) {
+      auto periods = op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_vtu");
+      if (problem || !isTimedOp(op) || !periods || periods.size() <= level)
+        return;
+      mlir::Operation *line = pulse::traceAllocation(op->getOperand(0));
+      auto [it, inserted] = periodOf.try_emplace(line, periods[level]);
+      if (!inserted && it->second != periods[level])
+        problem = NotAffine{loop, true, false};
+    });
+  });
+  return problem;
+}
+
 static mlir::LogicalResult schedule(mlir::func::FuncOp function,
                                     Resources resources, bool isAlap) {
   if (resources.enabled &&
@@ -753,8 +777,19 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
     Scheduler scheduler(function, resources);
     if (mlir::failed(scheduler.forward()))
       return mlir::failure();
-    if (isAlap && mlir::failed(scheduler.backward()))
-      return mlir::failure();
+    if (isAlap) {
+      Scheduler backward(function, resources);
+      if (mlir::failed(backward.forward()) || mlir::failed(backward.backward()))
+        return mlir::failure();
+      // Handing out resources in reverse program order can need time before
+      // zero; the forward resource schedule is always feasible.
+      bool feasible = llvm::all_of(backward.samples, [](const auto &entry) {
+        return llvm::all_of(entry.second,
+                            [](const Sample &s) { return s.start >= 0; });
+      });
+      if (feasible)
+        scheduler = std::move(backward);
+    }
 
     std::optional<NotAffine> problem;
     function.walk([&](mlir::Operation *op) {
@@ -766,6 +801,8 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
         samples = it->second;
       problem = writeTiming(op, samples, scheduler.extrapolations);
     });
+    if (!problem)
+      problem = periodMismatch(function);
     if (!problem)
       return mlir::success();
     if (problem->peelFront)

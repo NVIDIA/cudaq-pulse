@@ -51,9 +51,17 @@ class _Writer:
     def emit(self, line: str) -> None:
         self.text.append("  " + line)
 
-    def op(self, op: tuple) -> None:
+    def op(self, op: tuple, unroll: bool = False) -> None:
         kind = op[0]
-        if kind == "drive":
+        if kind == "loop":
+            _, trips, body = op
+            if unroll:
+                for _ in range(trips):
+                    for inner in body:
+                        self.op(inner, unroll)
+            else:
+                self.loop(trips, body)
+        elif kind == "drive":
             _, i, d = op
             line, tone = self.fresh("d"), self.fresh("t")
             self.emit(
@@ -107,16 +115,9 @@ class _Writer:
 def _programs(n_lines, pre, trips, body, post):
     rolled = _Writer(n_lines)
     unrolled = _Writer(n_lines)
-    for op in pre:
+    for op in [*pre, ("loop", trips, body), *post]:
         rolled.op(op)
-        unrolled.op(op)
-    rolled.loop(trips, body)
-    for _ in range(trips):
-        for op in body:
-            unrolled.op(op)
-    for op in post:
-        rolled.op(op)
-        unrolled.op(op)
+        unrolled.op(op, unroll=True)
     return rolled.finish(), unrolled.finish()
 
 
@@ -138,11 +139,12 @@ def _ops(n_lines):
 def _case(draw):
     n = draw(st.integers(1, 3))
     ops = _ops(n)
+    nested = st.tuples(st.just("loop"), st.integers(0, 4), st.lists(ops, min_size=1, max_size=3))
     return (
         n,
         draw(st.lists(ops, max_size=4)),
         draw(st.integers(0, 6)),
-        draw(st.lists(ops, min_size=1, max_size=5)),
+        draw(st.lists(st.one_of(ops, nested), min_size=1, max_size=5)),
         draw(st.lists(ops, max_size=3)),
     )
 

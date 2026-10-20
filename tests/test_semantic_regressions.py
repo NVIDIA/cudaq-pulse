@@ -272,3 +272,26 @@ def test_virtual_time_arguments_are_not_silently_truncated():
 
     with pytest.raises(CompilationError, match="must be an integer"):
         pulse.compile(kernel, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9})
+
+
+def test_alap_rcp_never_schedules_before_time_zero():
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "benchmarks" / "compiler" / "compile_time.py"
+    spec = importlib.util.spec_from_file_location("compile_time", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault(spec.name, module)
+    spec.loader.exec_module(module)
+    workloads = {name: (k, n, f) for name, k, n, f in module.WORKLOADS}
+    kernel, n, freq = workloads["qaoa4"]
+    compiled = pulse.compile(
+        kernel,
+        [pulse.qudit_ref() for _ in range(n)],
+        qubit_freq_hz=freq,
+        schedule="alap_rcp",
+        machine=MachineModel(max_concurrent_drives=2, max_concurrent_readouts=1),
+    )
+    assert min(e.start_vtu for e in compiled.events()) >= 0
+    compiled.module.run_passes(["pulse-verify"])

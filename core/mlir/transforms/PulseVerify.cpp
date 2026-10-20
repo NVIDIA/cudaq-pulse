@@ -121,6 +121,11 @@ private:
                 "scf.for");
       return;
     }
+    if (*start < 0) {
+      op->emitError("operation is scheduled before time zero: start ")
+          << *start;
+      hadError = true;
+    }
     mlir::Operation *physicalLine = pulse::traceAllocation(op->getOperand(0));
     if (!physicalLine) {
       error(op, "cannot trace timed operation to a physical line");
