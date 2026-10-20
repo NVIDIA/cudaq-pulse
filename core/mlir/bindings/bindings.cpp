@@ -17,6 +17,7 @@
 
 #include <bit>
 #include <cstring>
+#include <functional>
 
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
@@ -53,6 +54,7 @@
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
 
 #include "cudaq-pulse/Analysis/LineTrace.h"
+#include "cudaq-pulse/Analysis/Timing.h"
 
 #include "cudaq-pulse/Dialect/CuDensityMat/CuDensityMatDialect.h.inc"
 #include "cudaq-pulse/Dialect/QOp/QOpDialect.h.inc"
@@ -277,32 +279,46 @@ public:
                            std::optional<int64_t>, std::optional<int64_t>>;
 
   /// (kind, line, qubit, start_vtu, duration_vtu) for every drive, readout
-  /// and wait. Lines are numbered in allocation order.
+  /// and wait, once per loop iteration and in program order. Both arms of a
+  /// conditional are listed. Lines are numbered in allocation order.
   std::vector<Event> events() {
     llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
     module_->walk([&](mlir::Operation *op) {
       if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
         lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
     });
-    auto timing = [](mlir::Operation *op,
-                     llvm::StringRef name) -> std::optional<int64_t> {
-      if (auto attr = op->getAttrOfType<mlir::IntegerAttr>(name))
-        return attr.getInt();
-      return std::nullopt;
-    };
     std::vector<Event> result;
-    module_->walk([&](mlir::Operation *op) {
-      if (!mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op))
-        return;
-      mlir::Operation *allocation = pulse::traceAllocation(op->getOperand(0));
-      int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
-      int64_t qubit = -1;
-      if (allocation)
-        if (auto attr = allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
-          qubit = attr.getInt();
-      result.emplace_back(op->getName().stripDialect().str(), line, qubit,
-                          timing(op, "start_vtu"), timing(op, "duration_vtu"));
-    });
+    llvm::SmallVector<int64_t, 2> iteration;
+    std::function<void(mlir::Block &)> collect = [&](mlir::Block &block) {
+      for (mlir::Operation &op : block) {
+        if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op)) {
+          mlir::Operation *allocation =
+              pulse::traceAllocation(op.getOperand(0));
+          int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
+          int64_t qubit = -1;
+          if (allocation)
+            if (auto attr =
+                    allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
+              qubit = attr.getInt();
+          result.emplace_back(op.getName().stripDialect().str(), line, qubit,
+                              pulse::scheduledStart(&op, iteration),
+                              pulse::scheduledDuration(&op));
+        } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+          int64_t trips = pulse::constantTripCount(loop).value_or(0);
+          iteration.push_back(0);
+          for (int64_t k = 0; k < trips; ++k) {
+            iteration.back() = k;
+            collect(*loop.getBody());
+          }
+          iteration.pop_back();
+        } else {
+          for (mlir::Region &region : op.getRegions())
+            for (mlir::Block &nested : region)
+              collect(nested);
+        }
+      }
+    };
+    collect(*module_->getBody());
     return result;
   }
 

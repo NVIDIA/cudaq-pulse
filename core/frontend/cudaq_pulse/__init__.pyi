@@ -159,7 +159,11 @@ class CompiledKernel:
         ...
 
     def events(self) -> list[ScheduledEvent]:
-        """The drives, readouts and waits of the kernel with their timing."""
+        """The drives, readouts and waits of the kernel with their timing.
+
+        Ops in a loop are listed once per iteration; both arms of a
+        measurement-conditioned branch are listed.
+        """
         ...
 
     def lower_to_llvm(self) -> str:

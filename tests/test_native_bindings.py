@@ -67,7 +67,7 @@ def test_pass_failures_carry_the_diagnostics():
         "}\n"
     )
     module = native.MLIRPipeline().parse_to_module(text)
-    with pytest.raises(RuntimeError, match="linear pulse value has 2 uses"):
+    with pytest.raises(RuntimeError, match="linear pulse value is consumed more than once"):
         module.run_passes(["pulse-verify"])
     with pytest.raises(RuntimeError, match="expected"):
         native.MLIRPipeline().parse_to_module("func.func @main() {")

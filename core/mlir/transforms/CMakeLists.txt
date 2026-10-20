@@ -23,5 +23,6 @@ add_mlir_dialect_library(CudaqPulsePulseTransforms
   MLIRSupport
   MLIRFuncDialect
   MLIRArithDialect
+  MLIRSCFDialect
   MLIRTransformUtils
 )

@@ -42,5 +42,5 @@ func.func @invalid_linearity_and_timing() {
   return
 }
 
-// CHECK: error: linear pulse value has 2 uses; expected at most one
+// CHECK: error: linear pulse value is consumed more than once on one path
 // CHECK-COUNT-2: error: operation overlaps or precedes its physical-line predecessor

@@ -140,7 +140,11 @@ class CompiledKernel:
         return bool(self._param_names)
 
     def events(self) -> list[ScheduledEvent]:
-        """The drives, readouts and waits of the kernel with their timing."""
+        """The drives, readouts and waits of the kernel with their timing.
+
+        Ops in a loop are listed once per iteration; both arms of a
+        measurement-conditioned branch are listed.
+        """
         return [ScheduledEvent(*event) for event in self._pulse_module.events()]
 
     def __call__(self, *args: Any, **kwargs: Any) -> CompiledKernel:
