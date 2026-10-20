@@ -115,6 +115,51 @@ def test_bicycle_code_op_count(lm):
     assert ck.metrics.op_count == n + 2 + 2 * l * m * 6 * 3
 
 
+# ── Lines and tones held in lists ────────────────────────────────────
+
+
+def test_list_held_lines_are_rebound():
+
+    @pulse.kernel
+    def k(q0):
+        line, tone = get_drive_line(q0)
+        lines, tones = [line], [tone]
+        x = square(40, 0.1)
+        drive(lines[0], x, tones[0])
+        drive(lines[0], x, tones[0])
+
+    first, second = [op for op in k(pulse.qudit_ref()).ops if op.kind == "pulse.drive"]
+    assert second.operands[0] is first.results[0]
+    assert second.operands[2] is first.results[1]
+
+
+def test_loop_over_a_list_held_line_stays_rolled():
+    from cudaq_pulse.passes.scheduling import schedule_asap
+
+    @pulse.kernel
+    def k(q0):
+        line, tone = get_drive_line(q0)
+        lines, tones = [line], [tone]
+        x = square(40, 0.1)
+        for _ in range(6):
+            drive(lines[0], x, tones[0])
+        wait(lines[0], 10)
+
+    ir = k(pulse.qudit_ref())
+    assert [op.kind for op in ir.ops].count("scf.for") == 1
+    program = _to_program(ir, clock_ghz=2.0, qubit_freq_hz={0: 5e9})
+    assert schedule_asap(program)[1].total_length_vtu == 6 * 40 + 10
+
+
+def test_compile_with_default_passes_accepts_list_indexed_kernels():
+    workloads = _compile_time_workloads()
+    for name in ("qaoa4", "syndrome", "vqe_hea"):
+        kernel, n_qubits, freq = workloads[name]
+        pulse.compile(kernel, [pulse.qudit_ref() for _ in range(n_qubits)], qubit_freq_hz=freq)
+    for kernel, n in (surface_syndrome(3), bicycle_syndrome(3, 3)):
+        pulse.compile(kernel, [pulse.qvec_ref(n)], qubit_freq_hz={i: 5e9 for i in range(n)})
+
+
 # ── Closures, helpers, parameters ────────────────────────────────────
 
 

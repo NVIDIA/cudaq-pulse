@@ -197,7 +197,16 @@ class _NotRollableError(Exception):
 class PulseIREmitter:
     """Traces decoded bytecode and emits pulse IR via a builder."""
 
-    __slots__ = ("b", "stack", "locals", "_fn_globals", "_fn_closures", "_builtins", "_can_roll")
+    __slots__ = (
+        "b",
+        "stack",
+        "locals",
+        "_fn_globals",
+        "_fn_closures",
+        "_builtins",
+        "_can_roll",
+        "_slots",
+    )
 
     def __init__(
         self,
@@ -212,6 +221,9 @@ class PulseIREmitter:
         self._fn_closures = {} if fn_closures is None else fn_closures
         self._builtins = _BUILTINS
         self._can_roll = getattr(builder, "supports_regions", False)
+        # id(line or tone) -> (list, index, value) for values read out of a
+        # list, so the op that consumes one can rebind the list slot.
+        self._slots: dict[int, tuple[list[Any], int, IRValue]] = {}
         if not _PULSE_FUNCTIONS:
             _load_pulse_functions()
 
@@ -342,11 +354,18 @@ class PulseIREmitter:
                     index = pop()
                     obj = pop()
                     try:
-                        push(obj[index])
+                        value = obj[index]
                     except (TypeError, IndexError, KeyError) as e:
                         raise CompilationError(
                             f"subscript failed: {type(obj).__name__}[{index!r}]: {e}"
                         ) from e
+                    push(value)
+                    if (
+                        value.__class__ is IRValue
+                        and obj.__class__ is list
+                        and value.vtype in LINEAR_TYPES
+                    ):
+                        self._slots[id(value)] = (obj, index, value)
 
                 elif op is _binary or op is _compare:
                     right = pop()
@@ -575,13 +594,19 @@ class PulseIREmitter:
         ]
 
         builder.emit("scf.if", (value,), ())
-        then_locals = self._trace_arm(view, index, join, then_start, saved_stack, containers)
+        then_locals, then_slots = self._trace_arm(
+            view, index, join, then_start, saved_stack, containers
+        )
         stack[:] = saved_stack
         self.locals.clear()
         self.locals.update(saved_locals)
+        for obj, copy in containers:
+            _restore_container(obj, copy)
         else_index = len(builder.ops)
         builder.emit("scf.else", (), ())
-        else_locals = self._trace_arm(view, index, join, else_start, saved_stack, containers)
+        else_locals, else_slots = self._trace_arm(
+            view, index, join, else_start, saved_stack, containers
+        )
 
         merged: dict[str, StackVal] = {}
         results: list[tuple[str, IRValue, IRValue]] = []
@@ -602,16 +627,38 @@ class PulseIREmitter:
                     "resources (lines, tones, waveforms) may differ between the "
                     "arms of a measurement-conditioned if"
                 )
-        builder.insert(else_index, "scf.yield", tuple(a for _, a, _ in results))
-        builder.emit("scf.yield", tuple(b for _, _, b in results), ())
+        # List slots holding lines or tones that either arm rebound.
+        slot_results: list[tuple[list[Any], int, IRValue, IRValue]] = []
+        originals = {id(obj): copy for obj, copy in containers}
+        keys: dict[tuple[int, int], list[Any]] = {}
+        for obj, i, _ in then_slots + else_slots:
+            keys[(id(obj), i)] = obj
+        then_new = {(id(obj), i): new for obj, i, new in then_slots}
+        else_new = {(id(obj), i): new for obj, i, new in else_slots}
+        for key, obj in keys.items():
+            old = originals[key[0]][key[1]]
+            a = then_new.get(key, old)
+            b = else_new.get(key, old)
+            if a is not b:
+                slot_results.append((obj, key[1], a, b))
+
+        labels = [name for name, _, _ in results]
+        labels += [self._slot_label(obj, i) for obj, i, _, _ in slot_results]
+        then_vals = tuple(a for _, a, _ in results) + tuple(a for _, _, a, _ in slot_results)
+        else_vals = tuple(b for _, _, b in results) + tuple(b for _, _, _, b in slot_results)
+        builder.insert(else_index, "scf.yield", then_vals)
+        builder.emit("scf.yield", else_vals, ())
         outs = builder.emit(
             "scf.if_end",
             (),
-            tuple(a.vtype for _, a, _ in results),
-            {"result_names": [name for name, _, _ in results]},
+            tuple(v.vtype for v in then_vals),
+            {"result_names": labels},
         )
         for (name, _, _), out in zip(results, outs):
             merged[name] = out
+        for (obj, i, _, _), out in zip(slot_results, outs[len(results) :]):
+            obj[i] = out
+            self._slots[id(out)] = (obj, i, out)
         self.locals.clear()
         self.locals.update(merged)
         stack[:] = saved_stack
@@ -626,8 +673,8 @@ class PulseIREmitter:
         start: int,
         saved_stack: list[StackVal],
         containers: list[tuple[Any, Any]],
-    ) -> dict[str, StackVal]:
-        """Trace one arm until it reaches *join*; return its locals."""
+    ) -> tuple[dict[str, StackVal], list[tuple[list[Any], int, IRValue]]]:
+        """Trace one arm until it reaches *join*; return its locals and rebound slots."""
         returns = join >= len(view.instrs)
         # An arm may only move forward from the branch, except that a join at
         # an enclosing loop header (both arms continue) ends the arm.
@@ -643,11 +690,13 @@ class PulseIREmitter:
                 raise CompilationError("a measurement-conditioned branch cannot return a value")
         elif outcome is not _REGION_DONE or len(self.stack) != len(saved_stack):
             raise CompilationError(_REJOIN_MESSAGE)
-        if not all(_container_unchanged(obj, copy) for obj, copy in containers):
+        slots = _slot_changes(containers)
+        if slots is None:
             raise CompilationError(
-                "a measurement-conditioned branch cannot change Python lists or dicts"
+                "a measurement-conditioned branch may only change list entries that "
+                "hold lines or tones"
             )
-        return dict(self.locals)
+        return dict(self.locals), slots
 
     @staticmethod
     def _jump(target: int, lo: int, hi: int, header: int) -> int:
@@ -689,10 +738,11 @@ class PulseIREmitter:
         stack.append(rng[0] if count else 0)
         try:
             self._loop(prog, for_idx + 1, for_idx, exit_idx, for_idx)
+            slot_changes = _slot_changes(containers)
             ok = (
                 len(stack) == len(saved_stack)
                 and self._python_state_unchanged(saved_locals)
-                and all(_container_unchanged(obj, copy) for obj, copy in containers)
+                and slot_changes is not None
             )
         except _NotRollableError:
             ok = False
@@ -707,15 +757,20 @@ class PulseIREmitter:
             return False
 
         delta = self._ir_delta(snap)
-        if delta:
+        assert slot_changes is not None
+        if delta or slot_changes:
             names = sorted(delta)
-            vals = tuple(delta[n] for n in names)
+            vals = tuple(delta[n] for n in names) + tuple(new for _, _, new in slot_changes)
+            labels = names + [self._slot_label(obj, i) for obj, i, _ in slot_changes]
             self.b.emit("scf.yield", vals, ())
             results = self.b.emit(
-                "scf.for_end", (), tuple(v.vtype for v in vals), {"iter_args": names}
+                "scf.for_end", (), tuple(v.vtype for v in vals), {"iter_args": labels}
             )
             for n, r in zip(names, results):
                 self.locals[n] = r
+            for (obj, i, _), r in zip(slot_changes, results[len(names) :]):
+                obj[i] = r
+                self._slots[id(r)] = (obj, i, r)
         else:
             self.b.emit("scf.for_end", (), ())
 
@@ -726,6 +781,10 @@ class PulseIREmitter:
         else:
             self.locals.pop(var, None)
         return True
+
+    def _slot_label(self, obj: list[Any], index: int) -> str:
+        name = next((n for n, v in self.locals.items() if v is obj), "")
+        return f"{name}[{index}]"
 
     def _python_state_unchanged(self, before: dict[str, StackVal]) -> bool:
         after = self.locals
@@ -975,26 +1034,53 @@ class PulseIREmitter:
         call_args: list[StackVal],
         results: tuple[IRValue, ...],
     ) -> None:
-        """Rebind local names for linear-typed results (drive_line, tone, etc)."""
-        arg_info: list[tuple[str | None, IRValue | None]] = []
+        """Rebind the locals and list slots holding consumed linear values.
+
+        Each linear result (drive_line, tone, ...) replaces the first
+        unclaimed operand of the same type, wherever the kernel holds it.
+        """
+        slots = self._slots
+        if fname == "drive" and len(results) == 2:
+            # drive(line, waveform, tone) -> (line, tone): the common case.
+            self._rebind_one(call_args[0], results[0])
+            self._rebind_one(call_args[2], results[1])
+            return
+        arg_info: list[tuple[str | None, IRValue | None, Any]] = []
         for a in call_args:
             if isinstance(a, IRValue):
-                name = self._find_local_name(a)
-                arg_info.append((name, a))
+                slot = slots.get(id(a))
+                if slot is not None and (slot[2] is not a or slot[0][slot[1]] is not a):
+                    slot = None
+                arg_info.append((self._find_local_name(a), a, slot))
             else:
-                arg_info.append((None, None))
+                arg_info.append((None, None, None))
 
         claimed: set[int] = set()
         for res in results:
             if res.vtype not in LINEAR_TYPES:
                 continue
-            for i, (name, op_val) in enumerate(arg_info):
-                if i in claimed or op_val is None or name is None:
+            for i, (name, op_val, slot) in enumerate(arg_info):
+                if i in claimed or op_val is None or (name is None and slot is None):
                     continue
                 if op_val.vtype == res.vtype:
-                    self.locals[name] = res
+                    if name is not None:
+                        self.locals[name] = res
+                    if slot is not None:
+                        slot[0][slot[1]] = res
+                        slots[id(res)] = (slot[0], slot[1], res)
                     claimed.add(i)
                     break
+
+    def _rebind_one(self, old: Any, new: IRValue) -> None:
+        if old.__class__ is not IRValue or old.vtype != new.vtype:
+            return
+        name = self._find_local_name(old)
+        if name is not None:
+            self.locals[name] = new
+        slot = self._slots.get(id(old))
+        if slot is not None and slot[2] is old and slot[0][slot[1]] is old:
+            slot[0][slot[1]] = new
+            self._slots[id(new)] = (slot[0], slot[1], new)
 
     def _find_local_name(self, val: IRValue) -> str | None:
         """Find the local variable name bound to a given IRValue."""
@@ -1014,6 +1100,32 @@ class PulseIREmitter:
             for k, v in self.locals.items()
             if isinstance(v, IRValue) and (k not in snap or snap[k] is not v)
         }
+
+
+def _slot_changes(
+    containers: list[tuple[Any, Any]],
+) -> list[tuple[list[Any], int, IRValue]] | None:
+    """List slots whose linear value was replaced, or None for any other change."""
+    changes: list[tuple[list[Any], int, IRValue]] = []
+    for obj, copy in containers:
+        if len(obj) != len(copy):
+            return None
+        if not isinstance(obj, list):
+            if not _container_unchanged(obj, copy):
+                return None
+            continue
+        for i, (new, old) in enumerate(zip(obj, copy)):
+            if new is old:
+                continue
+            if not (
+                isinstance(new, IRValue)
+                and isinstance(old, IRValue)
+                and new.vtype == old.vtype
+                and new.vtype in LINEAR_TYPES
+            ):
+                return None
+            changes.append((obj, i, new))
+    return changes
 
 
 def _container_unchanged(obj: list[Any] | dict[Any, Any], copy: Any) -> bool:
