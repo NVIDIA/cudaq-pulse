@@ -224,6 +224,59 @@ def ReadoutOp : PulseOp<"readout", []> {
 }
 
 //===----------------------------------------------------------------------===//
+// Measurement results
+//===----------------------------------------------------------------------===//
+
+def OutcomeOp : PulseOp<"outcome", [Pure]> {
+  let summary = "Level observed by a readout";
+  let description = [{
+    The level `k` in `[0, d)` that the `pulse.readout` producing
+    `measurement` observed on its `d`-level qudit. Compare it with
+    `arith.cmpi` to branch on a particular level of a qudit:
+
+    ```mlir
+    %k = pulse.outcome %m : !pulse.measurement -> i64
+    %c2 = arith.constant 2 : i64
+    %is2 = arith.cmpi eq, %k, %c2 : i64
+    scf.if %is2 { ... }
+    ```
+  }];
+  let arguments = (ins MeasurementType:$measurement);
+  let results = (outs I64:$level);
+  let assemblyFormat = [{
+    $measurement attr-dict `:` qualified(type($measurement)) `->` type($level)
+  }];
+  let hasVerifier = 1;
+}
+
+def IsSetOp : PulseOp<"is_set", [Pure]> {
+  let summary = "Whether a readout observed a nonzero level";
+  let description = [{
+    `true` when the `pulse.readout` producing `measurement` observed any
+    level other than 0: the truth value a kernel tests with `if result:`.
+    Measurement-conditioned feedback is an `scf.if` on this condition, with
+    the lines and tones either branch advances passed through `scf.yield`:
+
+    ```mlir
+    %bit = pulse.is_set %m : !pulse.measurement -> i1
+    %d1, %t1 = scf.if %bit -> (!pulse.drive_line, !pulse.tone) {
+      %d, %t = pulse.drive %d0, %x, %t0 : ...
+      scf.yield %d, %t : !pulse.drive_line, !pulse.tone
+    } else {
+      scf.yield %d0, %t0 : !pulse.drive_line, !pulse.tone
+    }
+    ```
+  }];
+  let arguments = (ins MeasurementType:$measurement);
+  let results = (outs I1:$condition);
+  let assemblyFormat = [{
+    $measurement attr-dict `:` qualified(type($measurement)) `->` type($condition)
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+//===----------------------------------------------------------------------===//
 // Timing operations
 //===----------------------------------------------------------------------===//
 

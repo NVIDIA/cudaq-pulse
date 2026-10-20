@@ -11,6 +11,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -166,6 +167,56 @@ LogicalResult SyncOp::verify() {
            << getLines().size() << ") must match number of output lines ("
            << getSyncedLines().size() << ")";
   return success();
+}
+
+/// A measurement record comes from a readout, or is carried into a region
+/// (block argument) or out of one (region-op result).
+static LogicalResult verifyMeasurementSource(Operation *op, Value measurement) {
+  Operation *def = measurement.getDefiningOp();
+  if (!def || isa<ReadoutOp>(def) || def->getNumRegions() > 0)
+    return success();
+  return op->emitOpError("measurement must be produced by pulse.readout, got ")
+         << def->getName();
+}
+
+LogicalResult OutcomeOp::verify() {
+  return verifyMeasurementSource(*this, getMeasurement());
+}
+
+LogicalResult IsSetOp::verify() {
+  return verifyMeasurementSource(*this, getMeasurement());
+}
+
+namespace {
+/// `arith.cmpi ne, (pulse.outcome %m), 0` is `pulse.is_set %m`.
+struct OutcomeNonzeroToIsSet : OpRewritePattern<arith::CmpIOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(arith::CmpIOp cmp,
+                                PatternRewriter &rewriter) const override {
+    if (cmp.getPredicate() != arith::CmpIPredicate::ne)
+      return failure();
+    Value lhs = cmp.getLhs(), rhs = cmp.getRhs();
+    auto outcome = lhs.getDefiningOp<OutcomeOp>();
+    Value other = rhs;
+    if (!outcome) {
+      outcome = rhs.getDefiningOp<OutcomeOp>();
+      other = lhs;
+    }
+    APInt zero;
+    if (!outcome || !matchPattern(other, m_ConstantInt(&zero)) ||
+        !zero.isZero())
+      return failure();
+    rewriter.replaceOpWithNewOp<IsSetOp>(cmp, cmp.getType(),
+                                         outcome.getMeasurement());
+    return success();
+  }
+};
+} // namespace
+
+void IsSetOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
+                                          MLIRContext *ctx) {
+  patterns.add<OutcomeNonzeroToIsSet>(ctx);
 }
 
 LogicalResult PulseAddOp::verify() { return success(); }

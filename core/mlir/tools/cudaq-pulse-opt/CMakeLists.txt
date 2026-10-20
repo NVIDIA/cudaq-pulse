@@ -25,6 +25,7 @@ target_link_libraries(cudaq-pulse-opt PRIVATE
   CudaqPulseCuDensityMatToLLVM
   MLIRFuncDialect
   MLIRArithDialect
+  MLIRSCFDialect
   MLIRArithToLLVM
   MLIRFuncToLLVM
   MLIRLLVMDialect

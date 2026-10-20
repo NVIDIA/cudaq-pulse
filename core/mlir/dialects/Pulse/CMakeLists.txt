@@ -15,6 +15,7 @@ add_mlir_dialect_library(CudaqPulsePulse
   CudaqPulsePulseIncGen
 
   LINK_LIBS PUBLIC
+  MLIRArithDialect
   MLIRIR
   MLIRSupport
   MLIRBytecodeOpInterface
