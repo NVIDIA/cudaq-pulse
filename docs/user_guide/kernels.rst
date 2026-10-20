@@ -165,12 +165,9 @@ directly and always unrolls. Symbolic or runtime-dependent loop bounds, and
 .. :spellcheck-enable:
 
 Both branches are traced, and lines and tones they rebind become the
-results of the region. The Program passes verify such regions and schedule
-them for the longer branch, starting once the measurement is available. Both
-branches must continue after the ``if``, and other Python values must not
-differ between them. ``cudaq_pulse.compile()``, pulse MLIR emission and
-simulation cannot lower conditional regions yet and raise an error naming
-the stage.
+results of the region. Both branches must continue after the ``if``, and
+other Python values must not differ between them. ``cudaq_pulse.compile()``
+cannot lower conditional regions yet and raises an error at the ``if``.
 
 Unsupported Patterns
 --------------------

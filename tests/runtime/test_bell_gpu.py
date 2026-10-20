@@ -12,9 +12,9 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.lower import _to_program as to_program
-from cudaq_pulse.passes.to_pulse_mlir import program_to_pulse_mlir
 from cudaq_pulse.targets import Coupling, Qubit, Target
+
+from tests.runtime._lowering import pulse_mlir
 
 gpu = pytest.mark.gpu
 
@@ -38,8 +38,7 @@ def test_bell_mlir_structure():
         drive(d1, x90, t1)
 
     ir = bell_cr(pulse.qudit_ref(), pulse.qudit_ref())
-    prog = to_program(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9, 1: 5.1e9})
-    mlir = program_to_pulse_mlir(prog)
+    mlir = pulse_mlir(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9, 1: 5.1e9})
 
     assert mlir.count("pulse.qudit_alloc") == 2
     assert mlir.count("pulse.get_drive_line") == 2

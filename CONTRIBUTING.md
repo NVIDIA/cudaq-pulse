@@ -51,6 +51,17 @@ python examples/01_single_qubit_rabi.py
 Python sources are staged as symlinks, so edits to `core/frontend/` take
 effect without rebuilding; C++ changes need `cmake --build build/dev`.
 
+## Writing passes
+
+Compiler passes are C++ MLIR passes in `core/mlir/transforms/`. To try one
+without changing the tree, build it as a plugin and load it with
+`cudaq-pulse-opt --load-pass-plugin`; checks over a compiled kernel's
+schedule can be plain Python. [`examples/custom_passes/`](examples/custom_passes)
+has a minimal example of each, and
+[docs/user_guide/custom_passes.rst](docs/user_guide/custom_passes.rst)
+walks through them. `check-pulse` builds the example plugin and runs it in
+`test/Plugins/`.
+
 ## Lint and type-check
 
 ```bash

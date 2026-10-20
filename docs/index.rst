@@ -13,8 +13,8 @@ quantum control. Its Python DSL drives an MLIR-based compiler pipeline:
 
 1. Write a pulse kernel with the ``@pulse.kernel`` DSL.
 2. Compile it to Pulse-dialect MLIR with ``pulse.compile()``.
-3. Write and apply transform passes over the pulse program.
-4. Emit MLIR (and lower further) from the transformed program.
+3. Inspect the schedule, or extend the pipeline with custom passes.
+4. Lower the module to LLVM and simulate it on the GPU.
 
 .. warning::
 
@@ -38,7 +38,7 @@ quantum control. Its Python DSL drives an MLIR-based compiler pipeline:
    user_guide/kernels
    user_guide/operations
    user_guide/compilation
-   user_guide/passes
+   user_guide/custom_passes
 
 .. toctree::
    :maxdepth: 2

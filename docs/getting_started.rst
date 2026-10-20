@@ -100,11 +100,12 @@ cudaq-pulse is a Python-first compiler pipeline with four stages:
    (``get_drive_line``, ``drive``, ``gaussian``, ``wait``, ``sync``, ...).
 2. **Compile to MLIR** -- ``pulse.compile()`` returns a ``CompiledKernel``
    whose ``.mlir`` is the scheduled Pulse dialect. See :doc:`user_guide/compilation`.
-3. **Write transform passes in Python and apply them** -- passes are plain
-   ``Program -> Program`` functions; compose the built-ins or author your own.
-   See :doc:`user_guide/passes`.
-4. **Emit** -- lower the transformed program back to MLIR with
-   ``program_to_pulse_mlir``.
+3. **Extend the pipeline** -- check a compiled kernel's ``events()`` in
+   Python, or load your own MLIR passes into ``cudaq-pulse-opt`` as plugins.
+   See :doc:`user_guide/custom_passes`.
+4. **Lower and simulate** -- ``CompiledKernel.lower_to_llvm()`` and
+   ``pulse.evolve()`` run the native Pulse -> QOp -> CuDensityMat -> LLVM
+   lowering.
 
 GPU simulation via NVIDIA cuDensityMat is a preview capability; see
 :doc:`user_guide/gpu_execution`.

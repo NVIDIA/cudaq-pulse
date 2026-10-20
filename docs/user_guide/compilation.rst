@@ -67,7 +67,9 @@ Parameters
    ``"fusion"``, ``"licm"``.
 
 ``machine`` *(MachineModel, optional)*
-   Machine model for resource-constrained scheduling (RCP).
+   Resource limits for the RCP schedules: ``pulse.MachineModel(
+   max_concurrent_drives=4, max_concurrent_readouts=2, readout_latency_vtu=0,
+   line_switch_penalty_vtu=0)``.
 
 CompiledKernel
 --------------

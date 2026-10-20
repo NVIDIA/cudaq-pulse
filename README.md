@@ -101,8 +101,9 @@ cudaq-pulse-opt --pulse-to-qop kernel.mlir
 ```
 
 The [user guide](docs/index.rst) covers the kernel model, operations,
-compilation, passes, and GPU execution. [`examples/`](examples) has runnable
-programs.
+compilation, custom passes, and GPU execution. [`examples/`](examples) has
+runnable programs, and [`examples/custom_passes/`](examples/custom_passes)
+shows how to write passes in Python and as C++ plugins.
 
 ## Run the test suite against your installation
 
@@ -147,7 +148,7 @@ wheels only; the source distribution is attached to each GitHub release.
 
 ## Repository contents
 
-- `core/frontend/` — Python DSL, compiler pipeline, passes, targets, and
+- `core/frontend/` — Python DSL, compiler pipeline, targets, and
   runtime
 - `core/mlir/` — Pulse, `QOp`, and CuDensityMat dialects, transformations,
   bindings, and `cudaq-pulse-opt`

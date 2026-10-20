@@ -29,9 +29,6 @@ import pytest
 from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder
 from cudaq_pulse.kernel.ir_builder import Parameter
 from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
-from cudaq_pulse.lower import _to_program
-from cudaq_pulse.passes.scheduling import schedule_alap
-from cudaq_pulse.passes.verify import verify
 
 from tests.kernel.ir_corpus import bicycle_syndrome, dd_loop, parametric, surface_syndrome
 
@@ -76,14 +73,14 @@ def _compile_time_workloads():
     return {name: (k, n, f) for name, k, n, f in module.WORKLOADS}
 
 
-def _python_path(kernel, n_qubits: int, freq: dict[int, float]) -> Callable[[], object]:
-    def run():
-        ir = kernel(*[pulse.qudit_ref() for _ in range(n_qubits)])
-        program = _to_program(ir, clock_ghz=2.0, qubit_freq_hz=freq)
-        verify(program)
-        schedule_alap(program)
+def _kernel_ir(kernel, n_qubits: int) -> Callable[[], object]:
+    return lambda: kernel(*[pulse.qudit_ref() for _ in range(n_qubits)])
 
-    return run
+
+def _compile(kernel, n_qubits: int, freq: dict[int, float]) -> Callable[[], object]:
+    return lambda: pulse.compile(
+        kernel, [pulse.qudit_ref() for _ in range(n_qubits)], qubit_freq_hz=freq
+    )
 
 
 def _fused(kernel, n: int) -> Callable[[], object]:
@@ -106,9 +103,11 @@ def _cases() -> dict[str, Callable[[], object]]:
     workloads = _compile_time_workloads()
     cases = {}
     for name in ("bell", "qaoa4", "dd_cpmg8", "vqe_hea"):
-        cases[f"tier1_{name}"] = _python_path(*workloads[name])
+        kernel, n_qubits, freq = workloads[name]
+        cases[f"tier1_{name}_trace"] = _kernel_ir(kernel, n_qubits)
+        cases[f"tier1_{name}_compile"] = _compile(kernel, n_qubits, freq)
     for n in (8, 512):
-        cases[f"dd_loop_n{n}"] = _python_path(dd_loop(n), 1, {0: 5e9})
+        cases[f"dd_loop_n{n}"] = _kernel_ir(dd_loop(n), 1)
     surface5, n5 = surface_syndrome(5)
     surface9, n9 = surface_syndrome(9)
     bicycle, nb = bicycle_syndrome(6, 6)

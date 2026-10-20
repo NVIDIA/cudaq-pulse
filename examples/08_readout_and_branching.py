@@ -41,8 +41,7 @@ def measure_single_qubit():
 def active_reset():
     """Active reset: measure, and if excited, apply an X pulse.
 
-    The ``if`` becomes an scf.if region in the kernel IR, and the Program
-    passes verify and schedule it for the longer branch. compile() and the
+    The ``if`` becomes an scf.if region in the kernel IR. compile() and the
     simulator cannot lower it yet.
     """
     qubit = pulse.qudit_ref()
@@ -109,15 +108,7 @@ if __name__ == "__main__":
     print(compiled_kernel.mlir)
 
     print("\n=== Active reset (measurement-conditioned branch) ===")
-    from cudaq_pulse.lower import _to_program
-    from cudaq_pulse.passes import schedule_alap, verify
-
-    reset_ir = active_reset()
-    print(reset_ir.pretty())
-    reset_program = _to_program(reset_ir, clock_ghz=2.0, qubit_freq_hz={0: 5e9})
-    _, reset_metrics = schedule_alap(reset_program)
-    errors = [e for e in verify(reset_program) if e.severity == "error"]
-    print(f"  verified ({len(errors)} errors), worst case {reset_metrics.total_length_ns:.0f} ns")
+    print(active_reset().pretty())
     try:
         pulse.compile(active_reset, [], qubit_freq_hz={0: 5e9})
     except pulse.CompilationError as error:

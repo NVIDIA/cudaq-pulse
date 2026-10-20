@@ -8,25 +8,18 @@
 # ============================================================================ #
 """Target-aware lowering demo on the Krinner target.
 
-  kernel -> verify -> schedule -> pulse_to_operator(target) -> Pulse MLIR
+  kernel -> pulse.compile (verify, virtual-Z, fusion, ALAP) -> Pulse MLIR
+         -> QOp (operator algebra) -> CuDensityMat -> LLVM
 
-Prints execution-ready Pulse MLIR with target and evolution attributes. The
-native lowering stack consumes this IR as
-Pulse -> QOp -> CuDensityMat -> LLVM.
-
-NOTE: This example uses the advanced internal API (``_to_program``) because
-it demonstrates intermediate compiler representations. Application code that
-wants to execute a kernel should use ``pulse.evolve`` instead.
+Prints the intermediate representations of the native lowering stack.
+``pulse.evolve`` runs the same stack, adding the target's calibration
+(drive scales, couplings, T1/T2) as module attributes, and executes it.
 """
 
 import math
 
 import cudaq_pulse as pulse
-from cudaq_pulse.lower import _to_program
-from cudaq_pulse.passes.pulse_to_operator import run_pulse_to_operator
-from cudaq_pulse.passes.scheduling import schedule_alap
-from cudaq_pulse.passes.to_pulse_mlir import program_to_pulse_mlir
-from cudaq_pulse.passes.verify import verify
+from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from cudaq_pulse.targets import transmon_krinner_17q
 
 target = transmon_krinner_17q()
@@ -63,39 +56,22 @@ def krinner_bell(qubit_0, qubit_1):
     drive(drive_line_1, x_echo, tone_1)
 
 
-ir = krinner_bell(pulse.qudit_ref(), pulse.qudit_ref())
-program = _to_program(
-    ir,
-    clock_ghz=2.0,
+print("=== Stage 1: compile (verify, virtual-Z, fusion, ALAP schedule) ===")
+compiled = pulse.compile(
+    krinner_bell,
+    [pulse.qudit_ref(), pulse.qudit_ref()],
     qubit_freq_hz={0: qubit_0_info.frequency_hz, 1: qubit_1_info.frequency_hz},
 )
+total_vtu = max(e.start_vtu + e.duration_vtu for e in compiled.events())
+print(f"  {compiled.metrics.op_count} ops, {total_vtu / 2.0:.0f} ns total")
 
-# Stage 1: Verify
-print("=== Stage 1: Verify ===")
-issues = verify(program)
-print(f"  {len(issues)} issue(s)")
+print("\n=== Stage 2: scheduled Pulse MLIR ===")
+print(compiled.mlir)
 
-# Stage 2: Schedule
-print("\n=== Stage 2: Schedule (ALAP) ===")
-events, metrics = schedule_alap(program)
-print(f"  {metrics.op_count} ops, {metrics.total_length_ns:.0f} ns total")
+print("=== Stage 3: operator (QOp) lowering ===")
+qop = MLIRPipeline().run_pulse_to_qop(compiled.mlir)
+print(f"  {qop.count('qop.callback_scalar')} time-dependent drive terms")
 
-# Stage 3: Pulse-to-operator
-print("\n=== Stage 3: Pulse-to-Operator ===")
-op_ir = run_pulse_to_operator(program, target=target)
-print(f"  {len(op_ir.hamiltonian_terms)} Hamiltonian terms")
-print(f"  {len(op_ir.dissipator_terms)} dissipator terms")
-print(f"  {op_ir.n_qubits} qubits, {op_ir.total_time_ns:.1f} ns total time")
-
-# Stage 4: target-aware Pulse MLIR emission. The target metadata is consumed
-# by the native Pulse -> QOp lowering.
-print("\n=== Stage 4: Execution-ready Pulse MLIR ===")
-pulse_mlir = program_to_pulse_mlir(
-    program,
-    target=target,
-    t_start=0.0,
-    t_end=op_ir.total_time_ns,
-    num_steps=100,
-    integrator="rk4",
-)
-print(pulse_mlir)
+print("\n=== Stage 4: LLVM IR for the cuDensityMat runtime ===")
+llvm = compiled.lower_to_llvm()
+print(f"  {llvm.count('llvm.call')} runtime calls")

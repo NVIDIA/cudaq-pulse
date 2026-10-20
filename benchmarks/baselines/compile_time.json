@@ -1,26 +1,26 @@
 {
   "bell": {
-    "ms": 7.506,
+    "ms": 0.738,
     "op_count": 15
   },
   "cnot_cr": {
-    "ms": 0.383,
+    "ms": 0.64,
     "op_count": 12
   },
   "qaoa4": {
-    "ms": 1.589,
+    "ms": 1.116,
     "op_count": 52
   },
   "syndrome": {
-    "ms": 1.441,
+    "ms": 1.139,
     "op_count": 53
   },
   "dd_cpmg8": {
-    "ms": 0.39,
+    "ms": 0.694,
     "op_count": 7
   },
   "vqe_hea": {
-    "ms": 1.323,
+    "ms": 1.301,
     "op_count": 58
   }
 }

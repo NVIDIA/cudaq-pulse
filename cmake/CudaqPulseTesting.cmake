@@ -16,6 +16,12 @@ endif()
 enable_testing()
 
 set(CUDAQ_PULSE_TOOLS_DIR "${LLVM_RUNTIME_OUTPUT_INTDIR}")
+
+# The pass-plugin example is built and loaded by the lit suite.
+add_subdirectory(${CUDAQ_PULSE_SOURCE_DIR}/examples/custom_passes/cpp
+                 ${CUDAQ_PULSE_BINARY_DIR}/examples/custom_passes)
+set(CUDAQ_PULSE_EXAMPLE_PLUGIN
+    "${CUDAQ_PULSE_BINARY_DIR}/lib/PulseExamplePlugin${LLVM_PLUGIN_EXT}")
 configure_file(
   ${CUDAQ_PULSE_SOURCE_DIR}/test/lit.site.cfg.py.in
   ${CUDAQ_PULSE_BINARY_DIR}/test/lit.site.cfg.py
@@ -44,7 +50,7 @@ set(_cudaq_pulse_pytest_command
 
 add_custom_target(check-pulse-mlir
   COMMAND ${_cudaq_pulse_lit_command}
-  DEPENDS cudaq-pulse-opt
+  DEPENDS cudaq-pulse-opt PulseExamplePlugin
   COMMENT "Running cudaq-pulse MLIR tests"
   USES_TERMINAL)
 

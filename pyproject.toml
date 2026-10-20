@@ -177,11 +177,8 @@ select = ["E", "F", "W", "I", "N", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 "test/**/lit*.cfg.py" = ["F821"]
-# Physics notation (L, H_total) and short corpus constructors (_C, _O, ...).
-"core/frontend/cudaq_pulse/passes/pulse_to_operator.py" = ["N806"]
+# Short corpus constructors (_C, _O, ...).
 "tests/workloads/bug_corpus.py" = ["N802"]
-# Public API name.
-"core/frontend/cudaq_pulse/passes/verify.py" = ["N818"]
 # Column-aligned report tables.
 "benchmarks/**" = ["E501"]
 "examples/**" = ["E501"]

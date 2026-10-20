@@ -7,219 +7,93 @@
 # ============================================================================ #
 """Verification error detection: intentionally bad programs.
 
-Demonstrates every category of error the pulse-verify pass can catch:
-  - Linearity violations (double consumption, unconsumed values)
-  - Backward time travel
-  - Drive exclusivity overlap
-  - Cross-resonance miscalibration heuristic
+The kernel frontend rebinds every line and tone it advances, so most of
+these mistakes cannot be written as a ``@pulse.kernel``. They can be written
+as Pulse MLIR, though, by hand or by a custom pass, and the ``pulse-verify``
+pass rejects them with a diagnostic per violation:
+
+  - Linearity violations (a line consumed twice)
+  - Backward time travel and overlap on one physical line
+  - Non-positive waveform durations (rejected by the op verifier as the
+    MLIR is parsed)
 """
 
-from cudaq_pulse.passes.ir_types import (
-    Op,
-    OpKind,
-    Program,
-    ValueType,
-    _mk,
-    _reset_vid_counter,
+import cudaq_pulse as pulse
+from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
+
+_PRELUDE = """
+  %q = pulse.qudit_alloc : !pulse.qref
+  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %amp = arith.constant 0.1 : f64
+  %zero = arith.constant 0.0 : f64
+"""
+
+_SQUARE = "pulse.square {dur}, %amp, %zero : i64, f64, f64 -> !pulse.waveform"
+_DRIVE = (
+    "pulse.drive {line}, {wf}, {tone}{attrs} : !pulse.drive_line, !pulse.waveform, "
+    "!pulse.tone -> !pulse.drive_line, !pulse.tone"
 )
-from cudaq_pulse.passes.verify import (
-    BackwardTimeTravelError,
-    CrossResonanceMiscalibrationError,
-    LinearityViolation,
-    UnintentionalOverlapError,
-    verify,
-)
 
-# ── 1. Linearity violation: double consumption ──────────────────────────────
-
-
-def linearity_double_consume() -> Program:
-    """Use the same linear drive_line value in two drive ops."""
-    _reset_vid_counter()
-
-    drive_line_0 = _mk(ValueType.DRIVE_LINE, "d0")
-    tone_0 = _mk(ValueType.TONE, "t0")
-    waveform = _mk(ValueType.WAVEFORM, "wf")
-    drive_out_1 = _mk(ValueType.DRIVE_LINE)
-    tone_out_1 = _mk(ValueType.TONE)
-    drive_out_2 = _mk(ValueType.DRIVE_LINE)
-    tone_out_2 = _mk(ValueType.TONE)
-
-    ops = [
-        Op(OpKind.ALLOC_DRIVE, (), (drive_line_0, tone_0), {"qubit": 0}),
-        Op(OpKind.MAKE_WAVEFORM, (), (waveform,), {"duration_vtu": 40}),
-        Op(
-            OpKind.DRIVE,
-            (drive_line_0, waveform, tone_0),
-            (drive_out_1, tone_out_1),
-            {"duration_vtu": 40},
-        ),
-        Op(
-            OpKind.DRIVE,
-            (drive_line_0, waveform, tone_0),
-            (drive_out_2, tone_out_2),
-            {"duration_vtu": 40},
-        ),
-    ]
-
-    return Program(
-        name="bad_linearity", clock_ghz=1.0, ops=ops, values=[drive_line_0, tone_0, waveform]
-    )
+PROGRAMS = {
+    "linearity: one drive line consumed twice": f"""
+  %c40 = arith.constant 40 : i64
+  %wf = {_SQUARE.format(dur="%c40")}
+  %d1, %t1 = {_DRIVE.format(line="%d", wf="%wf", tone="%t", attrs="")}
+  %d2, %t2 = {_DRIVE.format(line="%d", wf="%wf", tone="%t1", attrs="")}
+""",
+    "timing: a drive starts before its predecessor ends": f"""
+  %c40 = arith.constant 40 : i64
+  %wf = {_SQUARE.format(dur="%c40")}
+  %d1, %t1 = {
+        _DRIVE.format(
+            line="%d", wf="%wf", tone="%t", attrs=" {start_vtu = 0 : i64, duration_vtu = 40 : i64}"
+        )
+    }
+  %d2, %t2 = {
+        _DRIVE.format(
+            line="%d1",
+            wf="%wf",
+            tone="%t1",
+            attrs=" {start_vtu = 20 : i64, duration_vtu = 40 : i64}",
+        )
+    }
+""",
+    "waveform: non-positive duration": f"""
+  %c0 = arith.constant 0 : i64
+  %wf = {_SQUARE.format(dur="%c0")}
+  %d1, %t1 = {_DRIVE.format(line="%d", wf="%wf", tone="%t", attrs="")}
+""",
+}
 
 
-# ── 2. Backward time travel ─────────────────────────────────────────────────
+def check(body: str) -> str:
+    text = "func.func @main() {" + _PRELUDE + body + "  return\n}\n"
+    try:
+        # Op verifiers run as the text is parsed; pulse-verify adds the
+        # checks that need the whole program.
+        MLIRPipeline().parse_to_module(text).run_passes(["pulse-verify"])
+    except RuntimeError as error:
+        return str(error)
+    return "verified"
 
 
-def backward_time() -> Program:
-    """An op references a start time earlier than its predecessor's end."""
-    _reset_vid_counter()
-
-    drive_line_0 = _mk(ValueType.DRIVE_LINE, "d0")
-    tone_0 = _mk(ValueType.TONE, "t0")
-    waveform = _mk(ValueType.WAVEFORM, "wf")
-    drive_line_1 = _mk(ValueType.DRIVE_LINE)
-    tone_1 = _mk(ValueType.TONE)
-    drive_line_2 = _mk(ValueType.DRIVE_LINE)
-    tone_2 = _mk(ValueType.TONE)
-
-    ops = [
-        Op(OpKind.ALLOC_DRIVE, (), (drive_line_0, tone_0), {"qubit": 0}),
-        Op(OpKind.MAKE_WAVEFORM, (), (waveform,), {"duration_vtu": 100}),
-        Op(
-            OpKind.DRIVE,
-            (drive_line_0, waveform, tone_0),
-            (drive_line_1, tone_1),
-            {"duration_vtu": 100, "start_vtu": 0},
-        ),
-        Op(
-            OpKind.DRIVE,
-            (drive_line_1, waveform, tone_1),
-            (drive_line_2, tone_2),
-            {"duration_vtu": 40, "start_vtu": 50},
-        ),
-    ]
-
-    return Program(name="bad_time", clock_ghz=1.0, ops=ops, values=[drive_line_0, tone_0, waveform])
-
-
-# ── 3. Drive exclusivity overlap ────────────────────────────────────────────
-
-
-def overlapping_drives() -> Program:
-    """Two drive ops on the same line with overlapping time intervals."""
-    _reset_vid_counter()
-
-    drive_line_0 = _mk(ValueType.DRIVE_LINE, "d0")
-    tone_0 = _mk(ValueType.TONE, "t0")
-    waveform = _mk(ValueType.WAVEFORM, "wf")
-    drive_line_1 = _mk(ValueType.DRIVE_LINE)
-    tone_1 = _mk(ValueType.TONE)
-    drive_line_2 = _mk(ValueType.DRIVE_LINE)
-    tone_2 = _mk(ValueType.TONE)
-
-    ops = [
-        Op(OpKind.ALLOC_DRIVE, (), (drive_line_0, tone_0), {"qubit": 0}),
-        Op(OpKind.MAKE_WAVEFORM, (), (waveform,), {"duration_vtu": 100}),
-        Op(
-            OpKind.DRIVE,
-            (drive_line_0, waveform, tone_0),
-            (drive_line_1, tone_1),
-            {"duration_vtu": 100, "start_vtu": 0},
-        ),
-        Op(
-            OpKind.DRIVE,
-            (drive_line_0, waveform, tone_0),
-            (drive_line_2, tone_2),
-            {"duration_vtu": 100, "start_vtu": 50},
-        ),
-    ]
-
-    return Program(
-        name="bad_overlap", clock_ghz=1.0, ops=ops, values=[drive_line_0, tone_0, waveform]
-    )
-
-
-# ── 4. Cross-resonance miscalibration ───────────────────────────────────────
-
-
-def cr_miscalibration() -> Program:
-    """A CR drive tagged for qubit 1 but using a tone labeled for qubit 2."""
-    _reset_vid_counter()
-
-    drive_line_0 = _mk(ValueType.DRIVE_LINE, "d0")
-    tone_0 = _mk(ValueType.TONE, "t0")
-    waveform = _mk(ValueType.WAVEFORM, "wf")
-    drive_line_1 = _mk(ValueType.DRIVE_LINE)
-    tone_1 = _mk(ValueType.TONE)
-
-    ops = [
-        Op(OpKind.ALLOC_DRIVE, (), (drive_line_0, tone_0), {"qubit": 0}),
-        Op(OpKind.MAKE_WAVEFORM, (), (waveform,), {"duration_vtu": 200}),
-        Op(
-            OpKind.DRIVE,
-            (drive_line_0, waveform, tone_0),
-            (drive_line_1, tone_1),
-            {"duration_vtu": 200, "cr_target": 1, "tone_tag": "q2_tone"},
-        ),
-    ]
-
-    return Program(name="bad_cr", clock_ghz=1.0, ops=ops, values=[drive_line_0, tone_0, waveform])
-
-
-# ── 5. Clean program (control) ──────────────────────────────────────────────
-
-
-def clean_program() -> Program:
-    """A well-formed program that should pass all checks."""
-    _reset_vid_counter()
-
-    drive_line_0 = _mk(ValueType.DRIVE_LINE, "d0")
-    tone_0 = _mk(ValueType.TONE, "t0")
-    waveform = _mk(ValueType.WAVEFORM, "wf")
-    drive_line_1 = _mk(ValueType.DRIVE_LINE)
-    tone_1 = _mk(ValueType.TONE)
-
-    ops = [
-        Op(OpKind.ALLOC_DRIVE, (), (drive_line_0, tone_0), {"qubit": 0}),
-        Op(OpKind.MAKE_WAVEFORM, (), (waveform,), {"duration_vtu": 40}),
-        Op(
-            OpKind.DRIVE,
-            (drive_line_0, waveform, tone_0),
-            (drive_line_1, tone_1),
-            {"duration_vtu": 40},
-        ),
-    ]
-
-    return Program(name="clean", clock_ghz=1.0, ops=ops, values=[drive_line_0, tone_0, waveform])
+@pulse.kernel
+def zero_length(q0):
+    d0, t0 = get_drive_line(q0)
+    drive(d0, gaussian(0, 0.1, 10.0), t0)
 
 
 def main():
-    test_cases = [
-        ("Linearity violation (double consume)", linearity_double_consume, LinearityViolation),
-        ("Backward time travel", backward_time, BackwardTimeTravelError),
-        ("Overlapping drives", overlapping_drives, UnintentionalOverlapError),
-        ("CR miscalibration", cr_miscalibration, CrossResonanceMiscalibrationError),
-        ("Clean program (should pass)", clean_program, None),
-    ]
+    for title, body in PROGRAMS.items():
+        print(f"=== {title} ===")
+        print(check(body))
+        print()
 
-    for label, builder, expected_type in test_cases:
-        prog = builder()
-        issues = verify(prog)
-        status = "PASS" if not issues else f"CAUGHT {len(issues)} issue(s)"
-        print(f"\n{'=' * 60}")
-        print(f"  {label}: {status}")
-        print(f"{'=' * 60}")
-
-        for issue in issues:
-            matched = expected_type and isinstance(issue, expected_type)
-            tag = "EXPECTED" if matched else "OTHER"
-            print(f"  [{tag}] {issue}")
-
-        if not issues:
-            if expected_type is None:
-                print("  All checks passed (as expected).")
-            else:
-                print(f"  WARNING: Expected {expected_type.__name__} but no issues found.")
+    print("=== the same check on a kernel ===")
+    try:
+        pulse.compile(zero_length, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9})
+    except RuntimeError as error:
+        print(error)
 
 
 if __name__ == "__main__":

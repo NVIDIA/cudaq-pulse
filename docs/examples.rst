@@ -41,7 +41,7 @@ Core Examples
      - Two-qubit CNOT via echoed cross-resonance driving
    * - 03
      - ``03_t1_t2_dissipator.py``
-     - T1/T2 measurement with Lindblad dissipator modeling
+     - T1, Ramsey and Hahn-echo experiment kernels
    * - 04
      - ``04_echo_paper.py``
      - Canonical Hahn spin-echo sequence (pi/2 - tau - pi - tau - pi/2)
@@ -62,22 +62,16 @@ Core Examples
      - Full ``pulse.compile()`` API walkthrough with pass customization
    * - 10
      - ``10_scheduling_comparison.py``
-     - Side-by-side ASAP, ALAP, and RCP scheduling on a 4-qubit program
-   * - 11
-     - ``11_loop_optimizations.py``
-     - LICM and loop strength reduction on pulse loop bodies
+     - Side-by-side ASAP, ALAP, and RCP scheduling on a 4-qubit kernel
    * - 12
      - ``12_error_detection.py``
-     - Verification error detection with intentionally malformed programs
+     - ``pulse-verify`` diagnostics for intentionally malformed Pulse MLIR
    * - 13
      - ``13_dynamical_decoupling.py``
      - XY4, Uhrig, and CPMG dynamical decoupling sequences
    * - 14
      - ``14_randomized_benchmarking.py``
      - Single-qubit randomized benchmarking with Clifford decomposition
-   * - 15
-     - ``15_pulse_to_operator.py``
-     - Experimental Python pulse-to-operator reference lowering
    * - 16
      - ``16_visualization.py``
      - Pulse schedule visualization with matplotlib Gantt charts
@@ -87,6 +81,21 @@ Core Examples
 
 Hardware Target Examples
 ------------------------
+
+**Custom passes** (``examples/custom_passes/``):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - File
+     - Description
+   * - ``python_pass.py``
+     - A schedule check written in Python over ``CompiledKernel.events()``
+   * - ``cpp/DriveCount.cpp``
+     - An MLIR pass plugin loaded with ``cudaq-pulse-opt --load-pass-plugin``
+
+See :doc:`user_guide/custom_passes`.
 
 **Transmon** (``examples/transmon/``):
 
@@ -99,7 +108,7 @@ Hardware Target Examples
    * - ``krinner_rabi.py``
      - Rabi oscillation on the Krinner 17-qubit transmon target
    * - ``krinner_full_pipeline.py``
-     - Target-aware intermediate lowering and execution-ready Pulse MLIR
+     - Each stage of the native lowering: Pulse MLIR, QOp, and LLVM IR
    * - ``krinner_evolve_gpu.py``
      - Public ``pulse.evolve`` GPU path for the Krinner target
    * - ``krinner_surface_code_cycle.py``

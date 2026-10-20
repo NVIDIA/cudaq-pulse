@@ -23,7 +23,6 @@ from pathlib import Path
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.lower import _to_program
 
 from tests.kernel.ir_corpus import bicycle_syndrome, dd_loop, surface_syndrome
 
@@ -46,9 +45,8 @@ def _compile_time_workloads():
 @pytest.mark.parametrize("n", [1, 8, 32, 128, 512])
 def test_dd_loop_is_retained_with_constant_op_count(n):
     ir = dd_loop(n)(pulse.qudit_ref())
-    program = _to_program(ir, clock_ghz=2.0, qubit_freq_hz={0: 5e9})
-    # alloc_drive_line, square, for_loop, drive, end_for
-    assert program.op_count() == 5
+    # get_drive_line, square, scf.for, drive, scf.for_end
+    assert ir.op_count() == 5
     (loop,) = [op for op in ir.ops if op.kind == "scf.for"]
     assert loop.attrs["ub"] == n
 
@@ -66,8 +64,7 @@ def test_compile_time_workload_op_counts():
     for name, count in expected.items():
         kernel, n_qubits, freq = workloads[name]
         ir = kernel(*[pulse.qudit_ref() for _ in range(n_qubits)])
-        program = _to_program(ir, clock_ghz=2.0, qubit_freq_hz=freq)
-        assert program.op_count() == count, name
+        assert ir.op_count() == count, name
 
 
 def test_compile_unrolls_loops_into_the_packed_program():
@@ -134,8 +131,6 @@ def test_list_held_lines_are_rebound():
 
 
 def test_loop_over_a_list_held_line_stays_rolled():
-    from cudaq_pulse.passes.scheduling import schedule_asap
-
     @pulse.kernel
     def k(q0):
         line, tone = get_drive_line(q0)
@@ -147,8 +142,8 @@ def test_loop_over_a_list_held_line_stays_rolled():
 
     ir = k(pulse.qudit_ref())
     assert [op.kind for op in ir.ops].count("scf.for") == 1
-    program = _to_program(ir, clock_ghz=2.0, qubit_freq_hz={0: 5e9})
-    assert schedule_asap(program)[1].total_length_vtu == 6 * 40 + 10
+    compiled = pulse.compile(k, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9}, schedule="asap")
+    assert max(e.start_vtu + e.duration_vtu for e in compiled.events()) == 6 * 40 + 10
 
 
 def test_compile_with_default_passes_accepts_list_indexed_kernels():

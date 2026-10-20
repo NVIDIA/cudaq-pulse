@@ -122,25 +122,16 @@ class JITCompiler:
 
     def compile_and_run(
         self,
-        program: Any,
+        pulse_mlir: str,
         *,
         entry: str = "main",
-        n_qubits: int | None = None,
+        n_qubits: int = 1,
     ) -> list[JITResult]:
-        """Compile a pulse ``Program`` or Pulse-MLIR string and execute it."""
-        if isinstance(program, str):
-            pulse_mlir = program
-        else:
-            from ..passes.ir_types import Program
-            from ..passes.to_pulse_mlir import program_to_pulse_mlir
-
-            if not isinstance(program, Program):
-                raise TypeError("expected a pulse Program or Pulse-MLIR string")
-            pulse_mlir = program_to_pulse_mlir(program)
-            if n_qubits is None:
-                n_qubits = len(program.qubit_freq_hz) or 1
+        """Compile a Pulse-MLIR module and execute it."""
+        if not isinstance(pulse_mlir, str):
+            raise TypeError("expected Pulse-MLIR text")
         module = self.compile_pulse_mlir(pulse_mlir)
-        return self.load_and_run(module, entry=entry, n_qubits=n_qubits or 1)
+        return self.load_and_run(module, entry=entry, n_qubits=n_qubits)
 
 
 def _marshal_args(args: Sequence[Any]) -> list[Any]:

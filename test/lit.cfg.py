@@ -17,3 +17,4 @@ config.test_source_root = os.path.dirname(__file__)
 
 # Tests resolve tools only from this build and the pinned MLIR toolchain.
 config.environment["PATH"] = os.pathsep.join([config.cudaq_pulse_tools_dir, config.llvm_tools_dir])
+config.substitutions.append(("%pulse_example_plugin", config.pulse_example_plugin))

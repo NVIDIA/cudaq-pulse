@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.lower import _to_program
-from cudaq_pulse.passes import schedule_asap
 
 from tests.workloads.bug_corpus import CORRECT, BugCase
 
@@ -25,82 +23,35 @@ def _freq(n):
     return {i: 5.0e9 + i * 0.1e9 for i in range(n)}
 
 
-_FREQ_2Q = {0: 5.0e9, 1: 5.1e9}
-
-# ── W2: CNOT-CR (simplest 2-qubit, no helpers outside kernel) ─────────
-
-
-def test_w2_cnot_cr_compile():
-    from tests.workloads.w2_cnot_cr import build
-
-    q0, q1 = _make_qubits(2)
-    ir = build(q0, q1)
-    prog = _to_program(ir, clock_ghz=2.0, qubit_freq_hz=_FREQ_2Q)
-    events, metrics = schedule_asap(prog)
-    assert metrics.total_length_vtu > 0
-    assert metrics.op_count > 0
+def _ir_op_count(ir):
+    """Pulse-program ops in kernel IR, not counting qudit binding."""
+    return sum(op.kind != "pulse.qudit_arg" for op in ir.ops)
 
 
-# ── W5: DD-CPMG (single qubit, loop-heavy) ───────────────────────────
+_WORKLOAD_MODULES = [
+    "w1_bell",
+    "w2_cnot_cr",
+    "w3_qaoa4",
+    "w4_syndrome",
+    "w5_dd_cpmg8",
+    "w6_vqe_hea",
+]
 
 
-def test_w5_dd_cpmg_compile():
-    from tests.workloads.w5_dd_cpmg8 import build
+@pytest.mark.parametrize("name", _WORKLOAD_MODULES)
+def test_workload_compiles_and_schedules(name):
+    import importlib
 
-    q0 = pulse.qudit_ref()
-    ir = build(q0)
-    prog = _to_program(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
-    events, metrics = schedule_asap(prog)
-    assert metrics.total_length_vtu > 0
-    assert metrics.op_count > 0
-
-
-# ── W1: Bell ─────────────────────────────────────────────────────────
-
-
-def test_w1_bell_compile():
-    from tests.workloads.w1_bell import build
-
-    q0, q1 = _make_qubits(2)
-    ir = build(q0, q1)
-    prog = _to_program(ir, clock_ghz=2.0, qubit_freq_hz=_FREQ_2Q)
-    assert prog.op_count() > 0
-
-
-# ── W3: QAOA-4 ───────────────────────────────────────────────────────
-
-
-def test_w3_qaoa4_compile():
-    from tests.workloads.w3_qaoa4 import build
-
-    qs = _make_qubits(4)
-    ir = build(*qs)
-    prog = _to_program(ir, clock_ghz=2.0, qubit_freq_hz={i: 5e9 + i * 0.1e9 for i in range(4)})
-    assert prog.op_count() > 0
-
-
-# ── W4: Syndrome ─────────────────────────────────────────────────────
-
-
-def test_w4_syndrome_compile():
-    from tests.workloads.w4_syndrome import NUM_QUBITS, build
-
-    qs = _make_qubits(NUM_QUBITS)
-    ir = build(*qs)
-    prog = _to_program(ir, clock_ghz=2.0, qubit_freq_hz=_freq(NUM_QUBITS))
-    assert prog.op_count() > 0
-
-
-# ── W6: VQE-HEA ─────────────────────────────────────────────────────
-
-
-def test_w6_vqe_hea_compile():
-    from tests.workloads.w6_vqe_hea import NUM_QUBITS, build
-
-    qs = _make_qubits(NUM_QUBITS)
-    ir = build(*qs)
-    prog = _to_program(ir, clock_ghz=2.0, qubit_freq_hz=_freq(NUM_QUBITS))
-    assert prog.op_count() > 0
+    module = importlib.import_module(f"tests.workloads.{name}")
+    n = module.NUM_QUBITS
+    compiled = pulse.compile(module.build, _make_qubits(n), qubit_freq_hz=_freq(n), schedule="asap")
+    events = compiled.events()
+    assert compiled.metrics.op_count > 0
+    assert max(e.start_vtu + e.duration_vtu for e in events) > 0
+    for line in {e.line for e in events}:
+        timeline = [e for e in events if e.line == line]
+        for before, after in zip(timeline, timeline[1:]):
+            assert after.start_vtu >= before.start_vtu + before.duration_vtu
 
 
 # ── Bug corpus: module imports and stats are sane ─────────────────────
@@ -131,22 +82,11 @@ def test_correct_corpus_compiles(case: BugCase):
         pytest.skip("not a kernel")
 
     nargs = fn_or_kern.__wrapped__.__code__.co_argcount
-    qs = _make_qubits(nargs)
-    ir = fn_or_kern(*qs)
-    prog = _to_program(ir, clock_ghz=2.0, qubit_freq_hz=_freq(nargs))
-    assert prog.op_count() > 0
+    compiled = pulse.compile(fn_or_kern, _make_qubits(nargs), qubit_freq_hz=_freq(nargs))
+    assert compiled.metrics.op_count > 0
 
 
 # ── Every workload through both paths ────────────────────────────────
-
-_WORKLOAD_MODULES = [
-    "w1_bell",
-    "w2_cnot_cr",
-    "w3_qaoa4",
-    "w4_syndrome",
-    "w5_dd_cpmg8",
-    "w6_vqe_hea",
-]
 
 
 @pytest.mark.parametrize("name", _WORKLOAD_MODULES)
@@ -155,10 +95,10 @@ def test_workload_compiles_on_the_packed_path(name):
 
     module = importlib.import_module(f"tests.workloads.{name}")
     n = module.NUM_QUBITS
-    program = _to_program(module.build(*_make_qubits(n)), clock_ghz=2.0, qubit_freq_hz=_freq(n))
+    ir = module.build(*_make_qubits(n))
     compiled = pulse.compile(module.build, _make_qubits(n), qubit_freq_hz=_freq(n))
-    if not any(op.kind == "for_loop" for op in program.ops):
-        assert compiled.metrics.op_count == program.op_count()
+    if not any(op.kind == "scf.for" for op in ir.ops):
+        assert compiled.metrics.op_count == _ir_op_count(ir)
 
 
 def test_list_amplitude_packs_like_complex():

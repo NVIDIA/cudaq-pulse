@@ -14,10 +14,9 @@ import re
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
+from cudaq_pulse import MachineModel
 from cudaq_pulse._native._cudaq_pulse_native import PulseModuleBuilder
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.passes._builder import ProgramBuilder
-from cudaq_pulse.passes.scheduling import MachineModel, schedule_alap, schedule_asap, schedule_rcp
 
 
 def _drive_timings(mlir: str) -> list[tuple[int, int]]:
@@ -197,38 +196,47 @@ def test_compile_uses_resource_machine_for_overlapping_intervals():
     assert _drive_timings(compiled.mlir) == [(0, 100), (100, 40)]
 
 
-def test_python_scheduler_tracks_line_lineage_and_resource_intervals():
-    builder = ProgramBuilder("lineage")
-    line, tone = builder.get_drive_line(0, 5.0e9)
-    for duration in (10, 20, 30):
-        waveform = builder.square(duration, 0.2)
-        line, tone = builder.drive(line, waveform, tone)
-    program = builder.build()
-    events, metrics = schedule_asap(program)
-    drives = [event for event in events if event.kind == "drive"]
-    assert [event.start_vtu for event in drives] == [0, 10, 30]
-    assert metrics.total_length_vtu == 60
+def test_scheduler_tracks_line_lineage_and_resource_intervals():
+    @pulse.kernel
+    def lineage(q0):
+        line, tone = get_drive_line(q0)
+        for duration in range(10, 40, 10):
+            drive(line, square(duration, 0.2), tone)
 
-    independent = ProgramBuilder("resources")
-    for qubit in range(3):
-        line, tone = independent.get_drive_line(qubit, 5.0e9 + qubit * 1.0e8)
-        waveform = independent.square(100, 0.2)
-        independent.drive(line, waveform, tone)
-    events, _ = schedule_rcp(independent.build(), MachineModel(max_concurrent_drives=2))
-    starts = [event.start_vtu for event in events if event.kind == "drive"]
-    assert starts == [0, 0, 100]
+    compiled = pulse.compile(
+        lineage, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9}, passes=(), schedule="asap"
+    )
+    assert [e.start_vtu for e in compiled.events()] == [0, 10, 30]
+
+    @pulse.kernel
+    def resources(qs):
+        for i in range(3):
+            line, tone = get_drive_line(qs[i])
+            drive(line, square(100, 0.2), tone)
+
+    compiled = pulse.compile(
+        resources,
+        [pulse.qvec_ref(3)],
+        qubit_freq_hz={i: 5e9 + i * 1e8 for i in range(3)},
+        passes=(),
+        schedule="rcp",
+        machine=MachineModel(max_concurrent_drives=2),
+    )
+    assert [e.start_vtu for e in compiled.events()] == [0, 0, 100]
 
 
-def test_python_alap_delays_independent_shorter_operation():
-    builder = ProgramBuilder("alap")
-    line0, tone0 = builder.get_drive_line(0, 5.0e9)
-    line1, tone1 = builder.get_drive_line(1, 5.1e9)
-    builder.drive(line0, builder.square(40, 0.2), tone0)
-    builder.drive(line1, builder.square(100, 0.2), tone1)
-    events, metrics = schedule_alap(builder.build())
-    drives = [event for event in events if event.kind == "drive"]
-    assert [event.start_vtu for event in drives] == [60, 0]
-    assert metrics.total_length_vtu == 100
+def test_alap_delays_independent_shorter_operation():
+    @pulse.kernel
+    def k(q0, q1):
+        line0, tone0 = get_drive_line(q0)
+        line1, tone1 = get_drive_line(q1)
+        drive(line0, square(40, 0.2), tone0)
+        drive(line1, square(100, 0.2), tone1)
+
+    compiled = pulse.compile(
+        k, [pulse.qudit_ref(), pulse.qudit_ref()], qubit_freq_hz={0: 5e9, 1: 5.1e9}, passes=()
+    )
+    assert [(e.line, e.start_vtu) for e in compiled.events()] == [(0, 60), (1, 0)]
 
 
 def test_packed_decoder_rejects_truncated_and_unknown_records():

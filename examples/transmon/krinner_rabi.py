@@ -11,19 +11,13 @@
 Demonstrates:
   - Loading the pre-defined transmon target
   - Using per-qubit drive parameters from the target
-  - Running verify + schedule on a single-qubit pulse program
-  - Lowering to an operator program with the target Hamiltonian
-
-NOTE: This example uses the advanced internal API (``_to_program``) because
-``run_pulse_to_operator`` operates on ``Program`` objects — a specialized
-pass not available in the standard C++ compilation pipeline.
+  - Compiling (verify, virtual-Z, fusion, ALAP schedule) a single-qubit
+    pulse program
+  - Lowering it to the operator (QOp) dialect the simulator consumes
 """
 
 import cudaq_pulse as pulse
-from cudaq_pulse.lower import _to_program
-from cudaq_pulse.passes.pulse_to_operator import run_pulse_to_operator
-from cudaq_pulse.passes.scheduling import schedule_alap
-from cudaq_pulse.passes.verify import verify
+from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from cudaq_pulse.targets import transmon_krinner_17q
 
 target = transmon_krinner_17q()
@@ -60,20 +54,11 @@ def rabi_d5(qubit):
         wait(drive_line, 100)
 
 
-ir = rabi_d5(pulse.qudit_ref(qubit_idx))
-program = _to_program(ir, clock_ghz=2.0, qubit_freq_hz={qubit_idx: qubit_d5.frequency_hz})
-
-issues = verify(program)
-print(f"\nVerification: {len(issues)} issue(s)")
-for issue in issues:
-    print(f"  {issue}")
-
-events, metrics = schedule_alap(program)
-print(f"\nScheduled {metrics.op_count} ops, total length = {metrics.total_length_ns:.1f} ns")
-
-op_ir = run_pulse_to_operator(program, target=target)
-print(
-    f"\nOperator program: {len(op_ir.hamiltonian_terms)} Hamiltonian terms, "
-    f"{len(op_ir.dissipator_terms)} dissipator terms, {op_ir.n_qubits} qubits"
+compiled = pulse.compile(
+    rabi_d5, [pulse.qudit_ref(qubit_idx)], qubit_freq_hz={qubit_idx: qubit_d5.frequency_hz}
 )
-print(f"Total simulated time: {op_ir.total_time_ns:.1f} ns")
+total_vtu = max(e.start_vtu + e.duration_vtu for e in compiled.events())
+print(f"\nCompiled {compiled.metrics.op_count} ops, total length = {total_vtu / 2.0:.1f} ns")
+
+qop = MLIRPipeline().run_pulse_to_qop(compiled.mlir)
+print(f"Operator program: {qop.count('qop.callback_scalar')} time-dependent drive terms")

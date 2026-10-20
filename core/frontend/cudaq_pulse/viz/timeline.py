@@ -7,8 +7,8 @@
 # ============================================================================ #
 """Timeline visualization for pulse schedules.
 
-Plots a per-line timeline of drive, readout, wait, and sync events
-using matplotlib.
+Plots a per-line timeline of the drives, readouts and waits of a compiled
+kernel using matplotlib.
 """
 
 from __future__ import annotations
@@ -18,58 +18,50 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
-from ..passes.ir_types import Program
-from ..passes.scheduling import ScheduledEvent
+    from ..compile import CompiledKernel, ScheduledEvent
 
 _DRIVE_COLOR = "#4C72B0"
 _READOUT_COLOR = "#DD8452"
 _WAIT_COLOR = "#CCCCCC"
-_SYNC_COLOR = "#55A868"
-_TONE_MOD_COLOR = "#C44E52"
 
 
 def plot_schedule(
-    events: list[ScheduledEvent],
-    program: Program | None = None,
+    schedule: CompiledKernel | list[ScheduledEvent],
     figsize: tuple[float, float] = (14, 4),
     title: str | None = None,
 ) -> Figure:
-    """Plot a pulse schedule timeline.
+    """Plot a pulse schedule timeline, one row per drive or readout line.
 
     Args:
-        events: Scheduled events from the scheduling pass.
-        program: Optional program for additional metadata.
+        schedule: A scheduled ``CompiledKernel`` or its ``events()``.
         figsize: Figure size (width, height).
         title: Optional figure title.
 
     Returns:
         matplotlib Figure.
     """
+    events = schedule if isinstance(schedule, list) else schedule.events()
+    spans: list[tuple[str, int, int, int]] = []
+    for ev in events:
+        if ev.start_vtu is None or ev.duration_vtu is None:
+            raise ValueError("the kernel is not scheduled; evaluate its parameters first")
+        spans.append((ev.kind, ev.line, ev.start_vtu, ev.duration_vtu))
     import matplotlib.patches as mpatches
     import matplotlib.pyplot as plt
 
     line_ids: list[int] = []
-    for ev in events:
-        if ev.line_id is not None and ev.line_id not in line_ids:
-            line_ids.append(ev.line_id)
+    for _, line, _, _ in spans:
+        if line not in line_ids:
+            line_ids.append(line)
 
     line_to_row = {lid: i for i, lid in enumerate(line_ids)}
     n_rows = max(len(line_ids), 1)
 
     fig, ax = plt.subplots(figsize=figsize)
 
-    for ev in events:
-        if ev.line_id is None:
-            continue
-        row = line_to_row.get(ev.line_id)
-        if row is None:
-            continue
-
-        y = row
-        x = ev.start_vtu
-        w = ev.duration_vtu
-
-        if ev.kind in ("drive",):
+    for kind, line, x, w in spans:
+        y = line_to_row[line]
+        if kind == "drive":
             rect = mpatches.FancyBboxPatch(
                 (x, y - 0.35),
                 w,
@@ -81,7 +73,7 @@ def plot_schedule(
                 alpha=0.85,
             )
             ax.add_patch(rect)
-        elif ev.kind in ("readout", "iq_acquire"):
+        elif kind == "readout":
             rect = mpatches.FancyBboxPatch(
                 (x, y - 0.35),
                 w,
@@ -93,7 +85,7 @@ def plot_schedule(
                 alpha=0.85,
             )
             ax.add_patch(rect)
-        elif ev.kind == "wait" and w > 0:
+        elif kind == "wait" and w > 0:
             wait_rect = mpatches.Rectangle(
                 (x, y - 0.3),
                 w,
@@ -106,49 +98,16 @@ def plot_schedule(
             )
             ax.add_patch(wait_rect)
 
-    sync_times: set[float] = set()
-    for ev in events:
-        if ev.kind == "sync":
-            sync_times.add(ev.start_vtu)
-    for t in sync_times:
-        ax.axvline(x=t, color=_SYNC_COLOR, linestyle="--", linewidth=1, alpha=0.7)
-
-    for ev in events:
-        if ev.kind in ("shift_phase", "set_phase") and ev.tone_id is not None:
-            for lid, row in line_to_row.items():
-                ax.plot(
-                    ev.start_vtu,
-                    row,
-                    marker="^",
-                    color=_TONE_MOD_COLOR,
-                    markersize=6,
-                    zorder=5,
-                )
-                break
-        elif ev.kind in ("shift_frequency", "set_frequency") and ev.tone_id is not None:
-            for lid, row in line_to_row.items():
-                ax.plot(
-                    ev.start_vtu,
-                    row,
-                    marker="s",
-                    color=_TONE_MOD_COLOR,
-                    markersize=5,
-                    zorder=5,
-                )
-                break
-
     ax.set_yticks(range(n_rows))
     ax.set_yticklabels([f"line {lid}" for lid in line_ids])
     ax.set_xlabel("Time (VTU)")
     ax.set_ylim(-0.5, n_rows - 0.5)
 
-    max_time = max((ev.start_vtu + ev.duration_vtu for ev in events), default=100)
+    max_time = max((x + w for _, _, x, w in spans), default=100)
     ax.set_xlim(-max_time * 0.02, max_time * 1.05)
 
     if title:
         ax.set_title(title)
-    elif program:
-        ax.set_title(f"Pulse Schedule: {program.name}")
 
     legend_handles = [
         mpatches.Patch(color=_DRIVE_COLOR, label="Drive"),
@@ -161,13 +120,12 @@ def plot_schedule(
 
 
 def save_schedule(
-    events: list[ScheduledEvent],
+    schedule: CompiledKernel | list[ScheduledEvent],
     path: str,
-    program: Program | None = None,
     **kwargs: Any,
 ) -> None:
     """Plot and save a schedule to a file."""
-    fig = plot_schedule(events, program=program, **kwargs)
+    fig = plot_schedule(schedule, **kwargs)
     fig.savefig(path, dpi=150, bbox_inches="tight")
     import matplotlib.pyplot as plt
 

@@ -15,6 +15,14 @@ Compilation API
    :undoc-members:
    :show-inheritance:
 
+.. autoclass:: cudaq_pulse.MachineModel
+   :members:
+   :undoc-members:
+
+.. autoclass:: cudaq_pulse.ScheduledEvent
+   :members:
+   :undoc-members:
+
 .. autoclass:: cudaq_pulse.CompileMetrics
    :members:
    :undoc-members:

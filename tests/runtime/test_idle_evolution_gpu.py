@@ -17,10 +17,9 @@ import math
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.lower import _to_program as to_program
-from cudaq_pulse.passes import run_canonicalize, run_fusion, run_virtual_z, schedule_alap
-from cudaq_pulse.passes.to_pulse_mlir import program_to_pulse_mlir
 from cudaq_pulse.targets import Qubit, Target
+
+from tests.runtime._lowering import pulse_mlir
 
 gpu = pytest.mark.gpu
 
@@ -86,12 +85,7 @@ def test_idle_evolution_mlir_structure():
         drive(d0, square(40, math.pi / 20.0), t0)
         wait(d0, 1000)
 
-    prog = to_program(kernel(pulse.qudit_ref()), clock_ghz=_CLOCK_GHZ, qubit_freq_hz={0: 5.0e9})
-    prog = run_canonicalize(prog)
-    prog = run_virtual_z(prog)
-    prog = run_fusion(prog)
-    schedule_alap(prog)
-    mlir = program_to_pulse_mlir(prog)
+    mlir = pulse_mlir(kernel(pulse.qudit_ref()), clock_ghz=_CLOCK_GHZ, qubit_freq_hz={0: 5.0e9})
     assert "pulse.wait" in mlir
 
 

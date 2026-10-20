@@ -12,25 +12,17 @@ Demonstrates:
   - Building a multi-qubit pulse program on the 17-qubit target
   - Z-stabilizer and X-stabilizer measurement rounds
   - Sync barriers between stabilizer groups
-  - Full pipeline: verify -> schedule -> pulse_to_operator
+  - Compiling it with pulse.compile (verify, virtual-Z, fusion, ALAP)
 
 The 17-qubit layout (Krinner et al.):
   Data qubits:     D1-D9 (indices 0-8)
   Z-ancillas:      Z1-Z4 (indices 9-12)
   X-ancillas:      X1-X4 (indices 13-16)
-
-NOTE: This example uses the advanced internal API (``_to_program``) because
-``run_pulse_to_operator`` operates on ``Program`` objects — a specialized
-pass not available in the standard C++ compilation pipeline.
 """
 
 import math
 
 import cudaq_pulse as pulse
-from cudaq_pulse.lower import _to_program
-from cudaq_pulse.passes.pulse_to_operator import run_pulse_to_operator
-from cudaq_pulse.passes.scheduling import schedule_alap
-from cudaq_pulse.passes.verify import verify
 from cudaq_pulse.targets import transmon_krinner_17q
 
 target = transmon_krinner_17q()
@@ -305,27 +297,13 @@ def surface_code_cycle(
     drive(drive_line_8, x_echo, tone_8)
 
 
-ir = surface_code_cycle(*(pulse.qudit_ref() for _ in range(17)))
-program = _to_program(
-    ir,
-    clock_ghz=2.0,
+compiled = pulse.compile(
+    surface_code_cycle,
+    [pulse.qudit_ref() for _ in range(17)],
     qubit_freq_hz={qi: target.qubits[qi].frequency_hz for qi in all_qubits},
 )
-
-issues = verify(program)
-errors = [i for i in issues if i.severity == "error"]
-print(f"\nVerification: {len(issues)} total issues, {len(errors)} errors")
-for issue in issues[:5]:
-    print(f"  {issue}")
-
-events, metrics = schedule_alap(program)
+total_ns = max(e.start_vtu + e.duration_vtu for e in compiled.events()) / 2.0
 print(
-    f"\nScheduled: {metrics.op_count} ops, "
-    f"total = {metrics.total_length_ns:.0f} ns ({metrics.total_length_ns / 1000:.1f} us)"
-)
-
-op_ir = run_pulse_to_operator(program, target=target)
-print(
-    f"\nOperator program: {len(op_ir.hamiltonian_terms)} Hamiltonian terms, "
-    f"{len(op_ir.dissipator_terms)} dissipator terms"
+    f"\nCompiled and verified: {compiled.metrics.op_count} ops, "
+    f"total = {total_ns:.0f} ns ({total_ns / 1000:.1f} us)"
 )

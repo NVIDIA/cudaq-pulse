@@ -16,10 +16,9 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.lower import _to_program as to_program
-from cudaq_pulse.passes import run_canonicalize, run_fusion, run_virtual_z, schedule_alap
-from cudaq_pulse.passes.to_pulse_mlir import program_to_pulse_mlir
 from cudaq_pulse.targets import Qubit, Target
+
+from tests.runtime._lowering import pulse_mlir
 
 gpu = pytest.mark.gpu
 
@@ -34,12 +33,7 @@ def test_rabi_mlir_structure():
         drive(d0, wf, t0)
 
     ir = rabi(pulse.qudit_ref())
-    prog = to_program(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
-    prog = run_canonicalize(prog)
-    prog = run_virtual_z(prog)
-    prog = run_fusion(prog)
-    schedule_alap(prog)
-    mlir = program_to_pulse_mlir(prog)
+    mlir = pulse_mlir(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
 
     assert "module @rabi" in mlir
     assert "pulse.qudit_alloc" in mlir

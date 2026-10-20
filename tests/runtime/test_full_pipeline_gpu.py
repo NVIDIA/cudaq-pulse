@@ -12,16 +12,8 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.lower import _to_program as to_program
-from cudaq_pulse.passes import (
-    run_canonicalize,
-    run_fusion,
-    run_licm,
-    run_virtual_z,
-    schedule_alap,
-    verify,
-)
-from cudaq_pulse.passes.to_pulse_mlir import program_to_pulse_mlir
+
+from tests.runtime._lowering import pulse_mlir
 
 gpu = pytest.mark.gpu
 
@@ -39,17 +31,7 @@ def test_full_pipeline_mlir():
         drive(d1, wf, t1)
 
     ir = my_kernel(pulse.qudit_ref(), pulse.qudit_ref())
-    prog = to_program(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9, 1: 5.1e9})
-
-    verify(prog, strict=False)
-
-    prog = run_canonicalize(prog)
-    prog = run_virtual_z(prog)
-    prog = run_fusion(prog)
-    prog = run_licm(prog)
-    schedule_alap(prog)
-
-    mlir = program_to_pulse_mlir(prog)
+    mlir = pulse_mlir(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9, 1: 5.1e9})
 
     assert "module @" in mlir
     assert "func.func @main()" in mlir

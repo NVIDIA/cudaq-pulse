@@ -19,9 +19,9 @@ import math
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.lower import _to_program as to_program
-from cudaq_pulse.passes.to_pulse_mlir import program_to_pulse_mlir
 from cudaq_pulse.targets import Qubit, Target
+
+from tests.runtime._lowering import pulse_mlir
 
 gpu = pytest.mark.gpu
 
@@ -66,12 +66,11 @@ def test_bell_schedule_mlir_structure():
         drive(d0, gaussian(160, 0.05, 40.0), t1)  # cross-resonance
         sync(d0, d1)
 
-    prog = to_program(
+    mlir = pulse_mlir(
         bell(pulse.qudit_ref(), pulse.qudit_ref()),
         clock_ghz=2.0,
         qubit_freq_hz={0: 5.0e9, 1: 5.1e9},
     )
-    mlir = program_to_pulse_mlir(prog)
     assert mlir.count("pulse.qudit_alloc") == 2
     assert "pulse.sync" in mlir
 
@@ -90,12 +89,11 @@ def test_ghz_schedule_mlir_structure():
         drive(d1, gaussian(160, 0.05, 40.0), t2)
         sync(d0, d1, d2)
 
-    prog = to_program(
+    mlir = pulse_mlir(
         ghz(pulse.qudit_ref(), pulse.qudit_ref(), pulse.qudit_ref()),
         clock_ghz=2.0,
         qubit_freq_hz={0: 5.0e9, 1: 5.1e9, 2: 5.2e9},
     )
-    mlir = program_to_pulse_mlir(prog)
     assert mlir.count("pulse.qudit_alloc") == 3
 
 

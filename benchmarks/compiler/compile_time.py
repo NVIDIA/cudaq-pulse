@@ -11,9 +11,11 @@ Usage:
     python benchmarks/compiler/compile_time.py [--iterations N]
         [--baseline FILE [--gate FACTOR]] [--write-baseline FILE]
 
-Compiles each of the 6 canonical workloads, verifies, and schedules. With
---baseline, exits 1 if any op count differs from the baseline; adding --gate
-also fails any workload slower than its baseline time x FACTOR.
+Compiles each of the 6 canonical workloads with ``pulse.compile()`` (verify,
+virtual-Z, fusion, ALAP schedule). The op count is that of the traced kernel
+IR, with loops retained. With --baseline, exits 1 if any op count differs
+from the baseline; adding --gate also fails any workload slower than its
+baseline time x FACTOR.
 """
 
 from __future__ import annotations
@@ -27,9 +29,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import cudaq_pulse as pulse
-from cudaq_pulse.lower import _to_program as to_program
-from cudaq_pulse.passes.scheduling import schedule_alap
-from cudaq_pulse.passes.verify import verify
 
 
 @dataclass
@@ -238,17 +237,13 @@ WORKLOADS = [
 
 
 def _bench(kernel_fn, n_qubits: int, freq_dict: dict, iterations: int) -> tuple[float, int]:
+    op_count = kernel_fn(*[pulse.qudit_ref() for _ in range(n_qubits)]).op_count()
     total = 0.0
-    op_count = 0
     for _ in range(iterations):
         t0 = time.monotonic()
         qubits = [pulse.qudit_ref() for _ in range(n_qubits)]
-        ir = kernel_fn(*qubits)
-        program = to_program(ir, clock_ghz=2.0, qubit_freq_hz=freq_dict)
-        verify(program)
-        schedule_alap(program)
+        pulse.compile(kernel_fn, qubits, qubit_freq_hz=freq_dict)
         total += time.monotonic() - t0
-        op_count = program.op_count()
     return (total / iterations) * 1000.0, op_count
 
 

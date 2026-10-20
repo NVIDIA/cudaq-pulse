@@ -40,6 +40,8 @@ target_link_libraries(cudaq-pulse-opt PRIVATE
 )
 
 llvm_update_compile_flags(cudaq-pulse-opt)
+# Pass plugins (--load-pass-plugin) resolve MLIR symbols from this executable.
+export_executable_symbols_for_plugins(cudaq-pulse-opt)
 mlir_check_all_link_libraries(cudaq-pulse-opt)
 
 if(SKBUILD)
