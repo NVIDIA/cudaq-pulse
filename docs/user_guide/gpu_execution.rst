@@ -157,8 +157,10 @@ The lowering passes through three dialect conversions:
 
 **Pulse -> QOp**
    Converts supported drive operations and waveforms into backend-agnostic
-   Hamiltonian and Lindblad operator algebra. Readout and acquisition are
-   rejected because this preview does not implement measurement simulation.
+   Hamiltonian and Lindblad operator algebra. A drive in a retained loop
+   becomes one pulse-train coefficient. A program that measures is lowered
+   one segment at a time along a chosen outcome for each measurement; see
+   :ref:`measurement-simulation`.
 
 **QOp -> CuDensityMat**
    Maps operator algebra to cuDensityMat API calls (state creation,
@@ -263,3 +265,41 @@ not establish production numerical accuracy.
 
 The ``run()`` method and returned state representation are experimental and
 will evolve with the lowering and runtime implementation.
+
+.. _measurement-simulation:
+
+Measurement and Feedback
+------------------------
+
+``pulse.simulate()`` evolves a program that measures, and branches on the
+results, in segments between measurements. A readout measures its qudit in
+the computational basis when it completes: every level ``k`` is a separate
+outcome, and each continues along its own path, on which a branch on that
+measurement takes the arm the outcome selects. The unnormalized states of
+all paths sum to the ensemble
+
+.. math::
+
+   \rho' = \sum_m U_m P_m \rho P_m^\dagger U_m^\dagger
+
+with no sampling error. Requesting ``shots`` also samples per-shot records
+of the outcomes from the same branch probabilities.
+
+.. :spellcheck-disable:
+
+.. code-block:: python
+
+   result = pulse.simulate(active_reset(pulse.qudit_ref()), target=target,
+                           shots=1000, backend="cpu")
+   result.density_matrix   # ensemble state at the end
+   result.branches         # [(outcomes, probability), ...]
+   result.records          # one row of outcomes per shot
+
+.. :spellcheck-enable:
+
+``backend="cpu"`` integrates the same lowered operator with a NumPy RK4
+reference; ``backend="gpu"`` evolves each segment with cuDensityMat, starting
+from the projected state. ``levels`` gives qudits more than two levels; a
+transmon target then includes its anharmonicity. ``pulse.evolve()`` uses
+the GPU path for programs that measure and returns the ensemble density
+matrix.

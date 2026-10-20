@@ -125,10 +125,12 @@ struct QOpToCuDensityMatPass
       module.emitError("qop-to-cudm requires exactly one qop.lindblad op");
       return signalPassFailure();
     }
-    const bool hasDissipation = !lindbladOps.front().getCollapseOps().empty();
+    const bool hasDissipation = !lindbladOps.front().getCollapseOps().empty() ||
+                                module->hasAttr("qop.mixed_state");
 
     // 2. cudm.create_state (|0...0>). Open-system evolution requires a
-    // density matrix; unitary evolution can retain the cheaper state vector.
+    // density matrix; unitary evolution can retain the cheaper state vector
+    // unless qop.mixed_state asks to evolve one (a mixed initial state).
     auto purityAttr = cudm::StatePurityAttr::get(
         b.getContext(),
         hasDissipation ? cudm::StatePurity::Mixed : cudm::StatePurity::Pure);

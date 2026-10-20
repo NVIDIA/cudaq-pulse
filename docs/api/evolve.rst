@@ -16,6 +16,12 @@ GPU Evolution API
 
 .. autofunction:: cudaq_pulse.evolve
 
+.. autofunction:: cudaq_pulse.simulate
+
+.. autoclass:: cudaq_pulse.SimulationResult
+   :members:
+   :undoc-members:
+
 .. autoclass:: cudaq_pulse.EvolveResult
    :members:
    :undoc-members:

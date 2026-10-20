@@ -55,7 +55,10 @@ def evolve(
     The kernel call that produced *program* is compiled with
     ``cudaq_pulse.compile()`` (verify, canonicalize, virtual-Z, fusion and an
     ALAP schedule), annotated with the target's calibration, lowered
-    pulse -> qop -> cudm -> LLVM, and JIT-executed on the GPU.
+    pulse -> qop -> cudm -> LLVM, and JIT-executed on the GPU. A program
+    that measures is evolved between measurements, projecting at each one,
+    and ``final_state`` is the ensemble density matrix over all outcomes
+    (see ``cudaq_pulse.simulate`` for shot records and the CPU reference).
 
     Parameters
     ----------
@@ -111,6 +114,26 @@ def evolve(
         )
 
     compiled = _compile_for(program, target=target, clock_ghz=clock_ghz)
+    if compiled.module.next_measurement([]) is not None:
+        # Evolve between measurements and sum the branches of every outcome.
+        from .simulate import _simulate_compiled
+
+        result = _simulate_compiled(
+            compiled,
+            target,
+            levels=2,
+            initial_state=None,
+            shots=None,
+            seed=None,
+            backend="gpu",
+            t_start=t_start,
+            t_end=t_end,
+            dt_ns=(t_end - t_start) / num_steps,
+            integrator=integrator,
+            clock_ghz=clock_ghz,
+        )
+        times = np.linspace(t_start, t_end, num_steps + 1)
+        return EvolveResult(final_state=result.density_matrix, times=times)
     compiled.module.set_attributes(
         _target_attributes(
             target,

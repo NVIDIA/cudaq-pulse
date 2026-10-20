@@ -14,6 +14,8 @@ NOTE: Requires cudaq-pulse native C++ bindings (see README for build
 instructions).
 """
 
+import math
+
 import cudaq_pulse as pulse
 
 
@@ -54,7 +56,9 @@ def active_reset():
     sync(drive_line, readout_line)
 
     if result:
-        x_pulse = drag(40, 0.5, 10.0, 0.5)
+        # A pi pulse: 40 virtual units at 2 GHz is 20 ns, and with
+        # H = amplitude * X / 2 this amplitude (rad/ns) rotates by pi.
+        x_pulse = square(40, math.pi / 20)
         drive(drive_line, x_pulse, drive_tone)
 
 
@@ -111,6 +115,24 @@ if __name__ == "__main__":
     print(active_reset().pretty())
     compiled_kernel = pulse.compile(active_reset, [], qubit_freq_hz={0: 5e9})
     print(compiled_kernel.mlir)
+
+    print("\n=== Simulating it (CPU reference) ===")
+    from cudaq_pulse.targets import Qubit, Target
+
+    target = Target(
+        name="reset-demo",
+        qubits={
+            0: Qubit(index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=0.0, t2_star_us=0.0)
+        },
+    )
+    # Start in (|0> + |1>) / sqrt(2): each outcome is equally likely, and
+    # either way the qubit ends in |0>.
+    result = pulse.simulate(
+        active_reset(), target=target, initial_state=[2**-0.5, 2**-0.5], shots=1000, seed=7
+    )
+    for outcomes, probability in result.branches:
+        print(f"  measured {outcomes}: p = {probability:.3f}")
+    print(f"  final |0> population: {result.density_matrix[0, 0].real:.4f}")
 
     print("\n=== Repeated measurement (5 shots) ===")
     compiled_kernel = pulse.compile(repeated_measurement, [5], qubit_freq_hz={0: 5e9})

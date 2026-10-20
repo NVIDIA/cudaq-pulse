@@ -195,6 +195,33 @@ def evolve(
     """Compile the kernel call that produced *program* and evolve it on the GPU."""
     ...
 
+class SimulationResult:
+    """Ensemble final state, measurement paths, and optional shot records."""
+
+    density_matrix: Any
+    dims: tuple[int, ...]
+    measurements: list[Any]
+    branches: list[tuple[tuple[int, ...], float]]
+    records: Any | None
+    times_ns: tuple[float, float]
+
+def simulate(
+    program: Any,
+    *,
+    target: Any,
+    levels: int | dict[int, int] = 2,
+    initial_state: Any | None = None,
+    shots: int | None = None,
+    seed: int | None = None,
+    backend: str = "cpu",
+    t_end: float | None = None,
+    dt_ns: float = 0.05,
+    integrator: str = "rk4",
+    clock_ghz: float = 2.0,
+) -> SimulationResult:
+    """Simulate a kernel call that may measure and branch on the outcome."""
+    ...
+
 def compile(
     kernel_fn: Callable[..., Any],
     args: Sequence[Any],

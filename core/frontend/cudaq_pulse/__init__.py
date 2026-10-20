@@ -68,6 +68,8 @@ from .ops import wf_scale as wf_scale
 from .ops import wf_sub as wf_sub
 from .runtime.evolve import EvolveResult as EvolveResult
 from .runtime.evolve import evolve as evolve
+from .runtime.simulate import SimulationResult as SimulationResult
+from .runtime.simulate import simulate as simulate
 
 # DSL names that get injected into the importing module's globals.
 _DSL_EXPORTS: list[str] = [
@@ -108,6 +110,8 @@ __all__: list[str] = [
     "CompilationError",
     "EvolveResult",
     "evolve",
+    "SimulationResult",
+    "simulate",
     "qudit_ref",
     "qvec_ref",
     "QuditRef",
