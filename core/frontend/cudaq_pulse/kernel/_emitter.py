@@ -208,7 +208,8 @@ class PulseIREmitter:
         lo: int,
         hi: int,
         header: int,
-        # Tracing hot loop: opcodes bound as defaults are plain local reads.
+        # Tracing hot loop: opcodes bound as defaults are plain local reads, and
+        # are small ints, which CPython caches, so ``is`` compares them exactly.
         _load_fast: int = LOAD_FAST,
         _load_const: int = LOAD_CONST,
         _load_deref: int = LOAD_DEREF,
@@ -226,6 +227,9 @@ class PulseIREmitter:
         _for_iter: int = FOR_ITER,
         _get_iter: int = GET_ITER,
         _unpack: int = UNPACK_SEQUENCE,
+        _return: int = bc.RETURN,
+        _build_tuple: int = bc.BUILD_TUPLE,
+        _build_list: int = bc.BUILD_LIST,
         _iter_slots: int = ITER_SLOTS,
     ) -> Any:
         """Run from *pc*. Jumps must stay inside ``(lo, hi)``.
@@ -249,17 +253,17 @@ class PulseIREmitter:
                 op, arg = instrs[pc]
                 pc += 1
 
-                if op == _load_fast:
+                if op is _load_fast:
                     try:
                         push(local_vars[arg])
                     except KeyError:
                         raise CompilationError(f"undefined local: {arg}") from None
 
-                elif op == _load_global:
+                elif op is _load_global:
                     value = fn_globals.get(arg, _MISSING)
                     push(self._resolve_global(arg) if value is _MISSING else value)
 
-                elif op == _call:
+                elif op is _call:
                     if arg:
                         call_args = stack[-arg:]
                         del stack[-arg:]
@@ -267,10 +271,10 @@ class PulseIREmitter:
                         call_args = []
                     self._dispatch_call(pop(), call_args, None)
 
-                elif op == _pop_top:
+                elif op is _pop_top:
                     pop()
 
-                elif op == _load_deref:
+                elif op is _load_deref:
                     value = local_vars.get(arg, _MISSING)
                     if value is _MISSING:
                         value = closures.get(arg, _MISSING)
@@ -282,13 +286,18 @@ class PulseIREmitter:
                             )
                     push(value)
 
-                elif op == _load_const:
+                elif op is _load_const:
                     push(arg)
 
-                elif op == _store_fast:
+                elif op is _store_fast:
                     local_vars[arg] = pop()
 
-                elif op == _load_attr:
+                elif op is _return:
+                    if header >= 0:
+                        raise _NotRollableError
+                    return pop()
+
+                elif op is _load_attr:
                     obj = pop()
                     if isinstance(obj, tuple) and len(obj) == 2 and obj[0] == "__unresolved__":
                         push(("__unresolved__", arg))
@@ -300,7 +309,7 @@ class PulseIREmitter:
                                 f"cannot resolve attribute {arg!r} on {type(obj).__name__}"
                             ) from e
 
-                elif op == _subscr:
+                elif op is _subscr:
                     index = pop()
                     obj = pop()
                     try:
@@ -310,23 +319,23 @@ class PulseIREmitter:
                             f"subscript failed: {type(obj).__name__}[{index!r}]: {e}"
                         ) from e
 
-                elif op == _binary or op == _compare:
+                elif op is _binary or op is _compare:
                     right = pop()
                     left = pop()
                     push(arg(left, right))
 
-                elif op == _jif or op == _jit:
-                    if _truth(pop()) == (op == _jit):
+                elif op is _jif or op is _jit:
+                    if _truth(pop()) == (op is _jit):
                         pc = self._jump(arg, lo, hi, header)
                         if pc < 0:
                             return None
 
-                elif op == _jump:
+                elif op is _jump:
                     pc = self._jump(arg, lo, hi, header)
                     if pc < 0:
                         return None
 
-                elif op == _for_iter:
+                elif op is _for_iter:
                     loop = stack[-_iter_slots]
                     if type(loop) is not _Loop:
                         raise CompilationError(_RANGE_BOUNDS_MESSAGE)
@@ -346,18 +355,13 @@ class PulseIREmitter:
                     else:
                         push(value)
 
-                elif op == bc.RETURN:
-                    if header >= 0:
-                        raise _NotRollableError
-                    return pop()
-
-                elif op == _get_iter:
+                elif op is _get_iter:
                     value = pop()
                     push(_Loop(value) if isinstance(value, range) else _BAD_ITER)
                     if _iter_slots > 1:
                         stack.extend([None] * (_iter_slots - 1))
 
-                elif op == _unpack:
+                elif op is _unpack:
                     val = pop()
                     if not isinstance(val, (tuple, list)):
                         raise CompilationError(f"cannot unpack {type(val)}")
@@ -365,41 +369,41 @@ class PulseIREmitter:
                         raise CompilationError(f"unpack mismatch: expected {arg}, got {len(val)}")
                     stack.extend(reversed(val))
 
-                elif op == bc.BUILD_TUPLE or op == bc.BUILD_LIST:
+                elif op is _build_tuple or op is _build_list:
                     if arg:
                         items = stack[-arg:]
                         del stack[-arg:]
                     else:
                         items = []
-                    push(tuple(items) if op == bc.BUILD_TUPLE else items)
+                    push(tuple(items) if op is _build_tuple else items)
 
-                elif op == bc.LIST_APPEND or op == bc.LIST_EXTEND:
+                elif op is bc.LIST_APPEND or op is bc.LIST_EXTEND:
                     val = pop()
                     lst = stack[-arg]
                     if not isinstance(lst, list):
                         raise CompilationError(f"list update on non-list: {type(lst)}")
-                    if op == bc.LIST_APPEND:
+                    if op is bc.LIST_APPEND:
                         lst.append(val)
                     else:
                         lst.extend(val)
 
-                elif op == bc.UNARY:
+                elif op is bc.UNARY:
                     push(arg(pop()))
 
-                elif op == bc.NOT:
+                elif op is bc.NOT:
                     push(not _truth(pop()))
 
-                elif op == bc.IS:
+                elif op is bc.IS:
                     right = pop()
                     left = pop()
                     push((left is right) != arg)
 
-                elif op == bc.CONTAINS:
+                elif op is bc.CONTAINS:
                     right = pop()
                     left = pop()
                     push((left in right) != arg)
 
-                elif op == bc.CALL_KW:
+                elif op is bc.CALL_KW:
                     names = pop()
                     values = stack[-arg:]
                     del stack[-arg:]
@@ -407,71 +411,71 @@ class PulseIREmitter:
                     kwargs = dict(zip(names, values[n_pos:]))
                     self._dispatch_call(pop(), values[:n_pos], kwargs)
 
-                elif op == bc.COPY:
+                elif op is bc.COPY:
                     push(stack[-arg])
 
-                elif op == bc.SWAP:
+                elif op is bc.SWAP:
                     stack[-1], stack[-arg] = stack[-arg], stack[-1]
 
-                elif op == bc.JUMP_IF_NONE or op == bc.JUMP_IF_NOT_NONE:
-                    if (pop() is None) == (op == bc.JUMP_IF_NONE):
+                elif op is bc.JUMP_IF_NONE or op is bc.JUMP_IF_NOT_NONE:
+                    if (pop() is None) == (op is bc.JUMP_IF_NONE):
                         pc = self._jump(arg, lo, hi, header)
                         if pc < 0:
                             return None
 
-                elif op == bc.STORE_DEREF:
+                elif op is bc.STORE_DEREF:
                     local_vars[arg] = pop()
 
-                elif op == bc.DELETE_FAST:
+                elif op is bc.DELETE_FAST:
                     local_vars.pop(arg, None)
 
-                elif op == bc.BUILD_SLICE:
+                elif op is bc.BUILD_SLICE:
                     items = stack[-arg:]
                     del stack[-arg:]
                     push(slice(*items))
 
-                elif op == bc.STORE_SUBSCR:
+                elif op is bc.STORE_SUBSCR:
                     index = pop()
                     obj = pop()
                     value = pop()
                     obj[index] = value
 
-                elif op == bc.BUILD_CONST_KEY_MAP:
+                elif op is bc.BUILD_CONST_KEY_MAP:
                     keys = pop()
                     vals = stack[-arg:] if arg else []
                     del stack[len(stack) - arg :]
                     push(dict(zip(keys, vals)))
 
-                elif op == bc.BUILD_MAP:
+                elif op is bc.BUILD_MAP:
                     items = stack[len(stack) - 2 * arg :]
                     del stack[len(stack) - 2 * arg :]
                     push(dict(zip(items[::2], items[1::2])))
 
-                elif op == bc.BUILD_STRING:
+                elif op is bc.BUILD_STRING:
                     parts = stack[-arg:] if arg else []
                     del stack[len(stack) - arg :]
                     push("".join(parts))
 
-                elif op == bc.CONVERT:
+                elif op is bc.CONVERT:
                     push((str, repr, ascii)[arg - 1](pop()))
 
-                elif op == bc.FORMAT:
+                elif op is bc.FORMAT:
                     spec = pop() if arg else ""
                     push(format(pop(), spec))
 
-                elif op == bc.IMPORT_NAME:
+                elif op is bc.IMPORT_NAME:
                     fromlist = pop()
                     level = pop()
                     push(__import__(arg, self._fn_globals, None, fromlist, level))
 
-                elif op == bc.IMPORT_FROM:
+                elif op is bc.IMPORT_FROM:
                     push(getattr(stack[-1], arg))
 
-                elif op == bc.RAISE:
+                elif op is bc.RAISE:
                     exc = pop() if arg else None
                     raise CompilationError(f"kernel raised {exc!r}")
 
-                elif op == bc.UNSUPPORTED:
+                elif op is bc.UNSUPPORTED:
                     raise CompilationError(arg)
 
                 else:  # pragma: no cover - decode only produces the ops above
