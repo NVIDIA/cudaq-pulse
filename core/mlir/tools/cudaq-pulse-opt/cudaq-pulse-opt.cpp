@@ -60,6 +60,7 @@ std::unique_ptr<mlir::Pass> createCuDensityMatToLLVMPass();
 // Pulse Transforms passes
 namespace pulse {
 std::unique_ptr<mlir::Pass> createPulseVerifyPass();
+std::unique_ptr<mlir::Pass> createPulseCanonicalizePass();
 std::unique_ptr<mlir::Pass> createVirtualZPass();
 std::unique_ptr<mlir::Pass> createPulseFusionPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleAsapPass();
@@ -84,6 +85,7 @@ int main(int argc, char **argv) {
 
   // Pulse Transforms passes
   mlir::registerPass(pulse::createPulseVerifyPass);
+  mlir::registerPass(pulse::createPulseCanonicalizePass);
   mlir::registerPass(pulse::createVirtualZPass);
   mlir::registerPass(pulse::createPulseFusionPass);
   mlir::registerPass(pulse::createPulseScheduleAsapPass);

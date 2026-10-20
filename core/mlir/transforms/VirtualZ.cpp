@@ -10,6 +10,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
@@ -61,6 +62,50 @@ struct FoldShiftPhaseIntoDrive
   }
 };
 
+/// A frame change that both arms of an `scf.if` pass through unchanged
+/// applies after the `if` on either path: move it there, so that it can fold
+/// into the drive that follows.
+struct SinkShiftPhaseThroughIf
+    : public mlir::OpRewritePattern<pulse::ShiftPhaseOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(pulse::ShiftPhaseOp op,
+                  mlir::PatternRewriter &rewriter) const override {
+    mlir::Value tone = op.getResult();
+    mlir::scf::IfOp branch;
+    std::optional<unsigned> index;
+    for (mlir::OpOperand &use : tone.getUses()) {
+      auto yield = mlir::dyn_cast<mlir::scf::YieldOp>(use.getOwner());
+      auto parent = yield
+                        ? mlir::dyn_cast<mlir::scf::IfOp>(yield->getParentOp())
+                        : mlir::scf::IfOp();
+      if (!parent || (branch && parent != branch) ||
+          (index && *index != use.getOperandNumber()))
+        return mlir::failure();
+      branch = parent;
+      index = use.getOperandNumber();
+    }
+    if (!branch || branch.getElseRegion().empty() ||
+        std::distance(tone.use_begin(), tone.use_end()) != 2)
+      return mlir::failure();
+
+    mlir::Value result = branch.getResult(*index);
+    rewriter.modifyOpInPlace(branch.thenYield(), [&] {
+      branch.thenYield()->setOperand(*index, op.getTone());
+    });
+    rewriter.modifyOpInPlace(branch.elseYield(), [&] {
+      branch.elseYield()->setOperand(*index, op.getTone());
+    });
+    rewriter.setInsertionPointAfter(branch);
+    auto moved = pulse::ShiftPhaseOp::create(
+        rewriter, op.getLoc(), op.getType(), result, op.getPhaseRad());
+    rewriter.replaceAllUsesExcept(result, moved.getResult(), moved);
+    rewriter.eraseOp(op);
+    return mlir::success();
+  }
+};
+
 struct VirtualZPass
     : public mlir::PassWrapper<VirtualZPass,
                                mlir::OperationPass<mlir::func::FuncOp>> {
@@ -74,7 +119,8 @@ struct VirtualZPass
 
   void runOnOperation() override {
     mlir::RewritePatternSet patterns(&getContext());
-    patterns.add<FoldShiftPhaseIntoDrive>(&getContext());
+    patterns.add<FoldShiftPhaseIntoDrive, SinkShiftPhaseThroughIf>(
+        &getContext());
     mlir::GreedyRewriteConfig config;
     if (mlir::failed(mlir::applyPatternsGreedily(getOperation(),
                                                  std::move(patterns), config)))

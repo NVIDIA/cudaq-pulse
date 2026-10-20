@@ -11,6 +11,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
@@ -96,6 +97,11 @@ struct PulseCanonicalizePass
     mlir::RewritePatternSet patterns(&getContext());
     patterns.add<RemoveSingleOperandSync>(&getContext());
     patterns.add<RemoveRedundantSync>(&getContext());
+    // Branch on pulse.is_set, and inline or drop loops that run once or
+    // never. scf.if patterns are left out: they may turn a branch over
+    // lines and tones into arith.select.
+    pulse::IsSetOp::getCanonicalizationPatterns(patterns, &getContext());
+    mlir::scf::ForOp::getCanonicalizationPatterns(patterns, &getContext());
 
     mlir::GreedyRewriteConfig config;
     if (mlir::failed(mlir::applyPatternsGreedily(getOperation(),
