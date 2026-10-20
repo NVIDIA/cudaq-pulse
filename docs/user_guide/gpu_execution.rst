@@ -231,8 +231,8 @@ constant pulse segments from being sampled across a discontinuity.
 Physical Model
 --------------
 
-The current native execution lowering is a two-level transmon model in one
-rotating frame per qubit. Drive envelopes are converted to X/Y Hamiltonian
+The native execution lowering is a transmon model in one rotating frame per
+qudit, with two levels unless ``levels`` asks for more. Drive envelopes are converted to X/Y Hamiltonian
 coefficients in radians per nanosecond; tone frequency and phase determine the
 rotating-frame detuning and quadrature. A target may supply
 ``amplitude_scale_rad_per_ns`` explicitly, or pulse infers a scale from its
@@ -240,18 +240,23 @@ calibrated Gaussian/DRAG pi-pulse parameters when available.
 
 Target relaxation and dephasing data produce Lindblad collapse operators.
 Coupling edges are modeled as always-on XX terms and residual crosstalk as
-always-on ZZ terms. ``anharmonicity_hz`` is retained as calibration metadata
-but is not part of this two-level model; leakage requires a future multilevel
-lowering.
+always-on ZZ terms. With three or more levels, a qudit's drive acts through
+its ladder operator (X = a + a^dagger, Y = i(a^dagger - a)) and
+``anharmonicity_hz`` adds (alpha / 2) n (n - 1), so leakage out of the qubit
+subspace is modeled; with two levels the anharmonicity is calibration
+metadata only.
 
 Unsupported Execution Features
 ------------------------------
 
-The execution lowering fails explicitly for readout/acquisition, observables,
-neutral-atom targets, multilevel models, unspecialized numeric parameters,
-arbitrary Python waveform callbacks, and waveform-algebra nodes. Built-in
-waveforms and ``custom_samples`` are supported. The callback runtime currently
-supports at most 128 drive operations per compiled module.
+The execution lowering fails explicitly for observables, neutral-atom
+targets, unspecialized numeric parameters, arbitrary Python waveform
+callbacks, and waveform-algebra nodes. Built-in waveforms and
+``custom_samples`` are supported. The callback runtime holds 1024 drive
+coefficients per evolution, two per drive op; a drive repeated by a loop
+needs only one pair. A single evolution cannot contain a measurement: a
+program that measures is lowered and evolved one segment at a time (see
+:ref:`measurement-simulation`).
 
 The GPU test suite (``pytest tests -m gpu``, or the ``check-pulse-gpu`` target
 in a source build) covers single-qubit drives, T1 decay, idle evolution,

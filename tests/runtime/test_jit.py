@@ -129,3 +129,35 @@ def test_evolve_rejects_unimplemented_options():
             num_steps=1,
             observables={"z": object()},
         )
+
+
+def test_evolve_lowers_multilevel_transmons(monkeypatch):
+    from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
+    from cudaq_pulse.runtime import evolve as evolve_module
+
+    target = Target(
+        name="qutrit",
+        qubits={
+            0: Qubit(
+                index=0, frequency_hz=5.0e9, anharmonicity_hz=-200.0e6, t1_us=0.0, t2_star_us=0.0
+            )
+        },
+    )
+    captured = {}
+
+    class Result:
+        @staticmethod
+        def to_numpy():
+            return np.eye(1, 3).ravel().astype(complex)
+
+    def fake_run(mlir, *, entry, n_qubits):
+        captured["mlir"] = mlir
+        return [Result()]
+
+    monkeypatch.setattr(evolve_module, "compile_and_run_pulse", fake_run)
+    ir = _jit_test_kernel(pulse.qudit_ref())
+    result = pulse.evolve(ir, target=target, t_start=0.0, t_end=20.0, num_steps=100, levels=3)
+    assert result.final_state.shape == (3,)
+    assert "pulse.levels = array<i64: 3>" in captured["mlir"]
+    qop = MLIRPipeline().run_pulse_to_qop(captured["mlir"])
+    assert "qop.mode_extents = array<i64: 3>" in qop and "tensor<3x3x2xf64>" in qop

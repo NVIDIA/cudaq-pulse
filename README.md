@@ -134,15 +134,16 @@ wheels only; the source distribution is attached to each GitHub release.
 
 - The compiler, dialects, lowering experiments, and CPU unit tests are the
   primary research surface.
-- GPU evolution models two-level transmons in per-qubit rotating frames.
-  Target T1/T2 data, XX couplings, residual ZZ terms, and calibrated
-  drive-amplitude scaling are supported. Transmon anharmonicity remains target
-  metadata because a faithful leakage model requires three or more levels.
+- GPU evolution models transmons in per-qubit rotating frames, as qubits or
+  with any number of levels (including their anharmonicity). Target T1/T2
+  data, XX couplings, residual ZZ terms, and calibrated drive-amplitude
+  scaling are supported. Programs that measure and branch on the result are
+  evolved between measurements as an exact ensemble over outcomes, on the GPU
+  or with a NumPy reference (`pulse.simulate`).
 - GPU evolution supports the `rk1`, `rk2`, `rk4`, `magnus`, and
-  `crank_nicolson` integrators. Readout/acquisition, observable evaluation,
-  neutral-atom and multilevel models, unspecialized parameters, arbitrary
-  Python waveform callbacks, and waveform algebra are rejected explicitly by
-  the execution lowering.
+  `crank_nicolson` integrators. Observable evaluation, neutral-atom models,
+  unspecialized parameters, arbitrary Python waveform callbacks, and waveform
+  algebra are rejected explicitly by the execution lowering.
 - GPU numerical results are research regression coverage, with no production
   compatibility or accuracy commitment.
 

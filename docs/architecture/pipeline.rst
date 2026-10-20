@@ -85,7 +85,9 @@ For GPU execution, three dialect conversion passes lower the IR:
 3. **CuDensityMat -> LLVM**: Final lowering to LLVM IR with runtime
    library calls
 
-The execution lowering currently supports two-level transmon models in a
-rotating frame. It rejects unsupported measurement, neutral-atom, multilevel,
-and unspecialized waveform cases instead of silently approximating them. See
+The execution lowering supports transmon models with any number of levels in
+a rotating frame. A program that measures is lowered one segment at a time
+along a measurement-outcome path, and the segments are joined by projecting
+the state. Neutral-atom targets and unspecialized waveforms are rejected
+instead of silently approximated. See
 :doc:`../user_guide/gpu_execution` for the complete model and limitations.

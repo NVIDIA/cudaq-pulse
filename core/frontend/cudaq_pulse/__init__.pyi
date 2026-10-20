@@ -191,6 +191,7 @@ def evolve(
     integrator: str = "rk4",
     clock_ghz: float = 2.0,
     observables: dict[str, Any] | None = None,
+    levels: int | dict[int, int] = 2,
 ) -> EvolveResult:
     """Compile the kernel call that produced *program* and evolve it on the GPU."""
     ...

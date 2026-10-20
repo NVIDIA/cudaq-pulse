@@ -49,6 +49,7 @@ def evolve(
     integrator: str = "rk4",
     clock_ghz: float = 2.0,
     observables: dict[str, Any] | None = None,
+    levels: int | dict[int, int] = 2,
 ) -> EvolveResult:
     """Run a pulse program through the full compilation pipeline and evolve.
 
@@ -80,6 +81,9 @@ def evolve(
         Pulse virtual-clock rate in GHz when converting a traced kernel IR.
     observables:
         Optional dict mapping names to operator expressions.
+    levels:
+        Levels per qudit (an int for all, or a dict by qudit index); a
+        transmon with three or more levels includes its anharmonicity.
 
     Returns
     -------
@@ -92,9 +96,8 @@ def evolve(
         )
     if getattr(target, "architecture", None) != "transmon":
         raise NotImplementedError(
-            "GPU evolution currently supports two-level transmon targets "
-            "only; neutral-atom and multilevel target lowering is not yet "
-            "implemented"
+            "GPU evolution supports transmon targets; neutral-atom target "
+            "lowering is not implemented"
         )
     if integrator not in _VALID_INTEGRATORS:
         raise ValueError(
@@ -121,7 +124,7 @@ def evolve(
         result = _simulate_compiled(
             compiled,
             target,
-            levels=2,
+            levels=levels,
             initial_state=None,
             shots=None,
             seed=None,
@@ -134,24 +137,28 @@ def evolve(
         )
         times = np.linspace(t_start, t_end, num_steps + 1)
         return EvolveResult(final_state=result.density_matrix, times=times)
-    compiled.module.set_attributes(
-        _target_attributes(
-            target,
-            compiled._qubits,
-            compiled._n_qubits,
-            t_start=t_start,
-            t_end=t_end,
-            num_steps=num_steps,
-            integrator=integrator,
-        )
+    dims, extra = _level_attributes(target, compiled._qubits, compiled._n_qubits, levels)
+    attributes = _target_attributes(
+        target,
+        compiled._qubits,
+        compiled._n_qubits,
+        t_start=t_start,
+        t_end=t_end,
+        num_steps=num_steps,
+        integrator=integrator,
     )
+    compiled.module.set_attributes(attributes[:-1] + ", " + extra + "}")
     pulse_mlir = compiled.module.print()
     results = compile_and_run_pulse(pulse_mlir, entry="main", n_qubits=compiled._n_qubits)
     if not results:
         raise RuntimeError("JIT execution returned no results.")
 
     times = np.linspace(t_start, t_end, num_steps + 1)
-    return EvolveResult(final_state=results[0].to_numpy(), times=times)
+    values = results[0].to_numpy().ravel()
+    dim = math.prod(dims)
+    # cuDensityMat stores a density matrix with the ket index fastest.
+    final_state = values.reshape((dim, dim), order="F") if values.size == dim * dim else values
+    return EvolveResult(final_state=final_state, times=times)
 
 
 _EVOLVE_PASSES = ("verify", "canonicalize", "virtual_z", "fusion")
@@ -180,6 +187,24 @@ def _compile_for(program: Any, *, target: Any, clock_ghz: float) -> Any:
     if missing:
         raise ValueError(f"target {target.name!r} does not define active qubits {missing}")
     return compiled
+
+
+def _level_attributes(
+    target: Any, qubits: tuple[int, ...], n_qubits: int, levels: int | dict[int, int]
+) -> tuple[tuple[int, ...], str]:
+    """Levels per qudit, and the module attributes that model them."""
+    dims = tuple(
+        (levels.get(q, 2) if isinstance(levels, dict) else int(levels)) for q in range(n_qubits)
+    )
+    if any(d < 2 for d in dims):
+        raise ValueError("every qudit needs at least two levels")
+    attrs = [f"pulse.levels = array<i64: {', '.join(map(str, dims))}>"]
+    if any(d > 2 for d in dims):
+        alphas = [0.0] * n_qubits
+        for q in qubits:
+            alphas[q] = float(target.qubits[q].anharmonicity_hz)
+        attrs.append(f"pulse.anharmonicity_hz = {_f64_array(alphas)}")
+    return dims, ", ".join(attrs)
 
 
 def _f64_literal(value: float) -> str:

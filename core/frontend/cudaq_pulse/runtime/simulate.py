@@ -33,7 +33,7 @@ import numpy as np
 import numpy.typing as npt
 
 from .._native._cudaq_pulse_native import evaluate_callback
-from .evolve import _compile_for, _f64, _f64_array, _target_attributes
+from .evolve import _compile_for, _f64, _level_attributes, _target_attributes
 
 # Branches whose weight falls below this fraction of the initial state's are
 # not followed.
@@ -155,9 +155,7 @@ def _simulate_compiled(
 ) -> SimulationResult:
     module = compiled.module
     n = compiled._n_qubits
-    dims = tuple((levels.get(q, 2) if isinstance(levels, dict) else int(levels)) for q in range(n))
-    if any(d < 2 for d in dims):
-        raise ValueError("every qudit needs at least two levels")
+    dims, extra = _level_attributes(target, compiled._qubits, n, levels)
     attributes = _target_attributes(
         target,
         compiled._qubits,
@@ -167,13 +165,7 @@ def _simulate_compiled(
         num_steps=1,
         integrator=integrator,
     )
-    extra = [f"pulse.levels = array<i64: {', '.join(map(str, dims))}>"]
-    if any(d > 2 for d in dims):
-        alphas = [0.0] * n
-        for q in compiled._qubits:
-            alphas[q] = float(target.qubits[q].anharmonicity_hz)
-        extra.append(f"pulse.anharmonicity_hz = {_f64_array(alphas)}")
-    module.set_attributes(attributes[:-1] + ", " + ", ".join(extra) + "}")
+    module.set_attributes(attributes[:-1] + ", " + extra + "}")
 
     if t_end is None:
         ends = [e.start_vtu + e.duration_vtu for e in compiled.events() if e.start_vtu is not None]
