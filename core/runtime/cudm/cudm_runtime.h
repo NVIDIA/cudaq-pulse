@@ -46,6 +46,9 @@ CudmStatus cudm_state_alloc(CudmHandle handle, CudmState *state,
 CudmStatus cudm_state_destroy(CudmState state);
 CudmStatus cudm_state_init_zero(CudmHandle handle, CudmState state);
 CudmStatus cudm_state_capture(CudmState state);
+// Use `data` (`size` bytes, in the layout cudm_state_capture produces) as the
+// initial value of the next state allocated on this thread instead of |0>.
+CudmStatus cudm_set_initial_state(const void *data, int64_t size);
 int64_t cudm_last_result_size(void);
 CudmStatus cudm_last_result_copy(void *destination, int64_t destination_size);
 const char *cudm_last_error_message(void);

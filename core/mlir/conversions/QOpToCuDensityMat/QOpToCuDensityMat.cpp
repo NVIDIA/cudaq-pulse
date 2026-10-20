@@ -98,6 +98,16 @@ struct QOpToCuDensityMatPass
     }
 
     SmallVector<int64_t> modeExtents(nQubits, 2);
+    if (auto extents =
+            module->getAttrOfType<DenseI64ArrayAttr>("qop.mode_extents")) {
+      if (static_cast<int64_t>(extents.size()) < nQubits) {
+        module.emitError("qop.mode_extents has fewer entries than modes");
+        return signalPassFailure();
+      }
+      modeExtents.assign(extents.asArrayRef().begin(),
+                         extents.asArrayRef().end());
+      nQubits = static_cast<int64_t>(modeExtents.size());
+    }
 
     auto handleTy = cudm::HandleType::get(b.getContext());
     auto stateTy = cudm::StateType::get(b.getContext());
@@ -212,6 +222,52 @@ struct QOpToCuDensityMatPass
       }
     });
 
+    // Dense single-mode matrices, for qudits with more than two levels.
+    module.walk([&](qop::MatrixLeafOp leaf) {
+      b.setInsertionPoint(returnOp);
+      auto constant = leaf.getData().getDefiningOp<arith::ConstantOp>();
+      auto values = constant
+                        ? dyn_cast<DenseFPElementsAttr>(constant.getValue())
+                        : DenseFPElementsAttr();
+      if (!values || leaf.getTargets().size() != 1) {
+        leaf.emitError("cudm lowering supports single-mode matrix leaves with "
+                       "constant data");
+        return;
+      }
+      const int64_t d = leaf.getDimensions()[0];
+      SmallVector<double> data(values.getValues<double>().begin(),
+                               values.getValues<double>().end());
+      if (static_cast<int64_t>(data.size()) != 2 * d * d) {
+        leaf.emitError("matrix leaf data does not match its dimension");
+        return;
+      }
+      // Column-major interleaved; the adjoint swaps rows and columns and
+      // conjugates.
+      SmallVector<double> adjoint(data.size());
+      for (int64_t row = 0; row < d; ++row)
+        for (int64_t column = 0; column < d; ++column) {
+          adjoint[2 * (column * d + row)] = data[2 * (row * d + column)];
+          adjoint[2 * (column * d + row) + 1] =
+              -data[2 * (row * d + column) + 1];
+        }
+      auto sparsityAttr =
+          cudm::SparsityAttr::get(b.getContext(), cudm::Sparsity::None);
+      auto type = RankedTensorType::get({d, d, 2}, b.getF64Type());
+      auto make = [&](ArrayRef<double> tensor) -> Value {
+        auto value = arith::ConstantOp::create(
+            b, loc, DenseFPElementsAttr::get(type, tensor));
+        Value elementary = cudm::CreateElementaryOpOp::create(
+            b, loc, elemOpTy, handle, value, sparsityAttr, dtypeAttr,
+            b.getDenseI64ArrayAttr({d}), FlatSymbolRefAttr());
+        allElementaryOps.push_back(elementary);
+        return elementary;
+      };
+      Value elementary = make(data);
+      spinToCudmElem[leaf.getOperation()] = elementary;
+      spinToDaggerCudmElem[leaf.getOperation()] =
+          adjoint == data ? elementary : make(adjoint);
+    });
+
     // 6. Lower qop products to reusable cuDensityMat operator terms.
     struct ProductData {
       SmallVector<Operation *> factors;
@@ -268,25 +324,32 @@ struct QOpToCuDensityMatPass
       }
 
       for (Value factor : product.getFactors()) {
-        auto spin = factor.getDefiningOp<qop::SpinOp>();
-        if (!spin) {
-          product.emitError("only qop.spin factors are currently supported");
+        Operation *leaf = factor.getDefiningOp();
+        std::optional<int64_t> mode;
+        if (auto spin = dyn_cast_or_null<qop::SpinOp>(leaf)) {
+          auto target = spin.getTarget().getDefiningOp<arith::ConstantOp>();
+          if (auto attr = target ? dyn_cast<IntegerAttr>(target.getValue())
+                                 : IntegerAttr{})
+            mode = attr.getInt();
+        } else if (auto matrix = dyn_cast_or_null<qop::MatrixLeafOp>(leaf)) {
+          mode = matrix.getTargets()[0];
+        } else {
+          product.emitError(
+              "only qop.spin and qop.matrix_leaf factors are supported");
           conversionFailed = true;
           return;
         }
-        auto elementary = spinToCudmElem.find(spin.getOperation());
-        auto target = spin.getTarget().getDefiningOp<arith::ConstantOp>();
-        auto targetAttr =
-            target ? dyn_cast<IntegerAttr>(target.getValue()) : IntegerAttr{};
-        if (elementary == spinToCudmElem.end() || !targetAttr ||
-            targetAttr.getInt() < 0 || targetAttr.getInt() >= nQubits) {
-          product.emitError("spin target must be a valid constant mode index");
+        auto elementary = spinToCudmElem.find(leaf);
+        if (elementary == spinToCudmElem.end() || !mode || *mode < 0 ||
+            *mode >= nQubits) {
+          product.emitError("operator target must be a valid constant mode "
+                            "index");
           conversionFailed = true;
           return;
         }
-        data.factors.push_back(spin.getOperation());
+        data.factors.push_back(leaf);
         data.elementaryOps.push_back(elementary->second);
-        data.modes.push_back(static_cast<int32_t>(targetAttr.getInt()));
+        data.modes.push_back(static_cast<int32_t>(*mode));
       }
       if (data.elementaryOps.empty()) {
         product.emitError("operator product must contain at least one factor");

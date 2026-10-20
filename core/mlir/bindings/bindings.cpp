@@ -33,6 +33,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
@@ -53,8 +54,10 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
 
+#include "cudaq-pulse/Analysis/Execution.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
+#include "cudaq-pulse/Runtime/WaveformCallback.h"
 
 #include "cudaq-pulse/Dialect/CuDensityMat/CuDensityMatDialect.h.inc"
 #include "cudaq-pulse/Dialect/QOp/QOpDialect.h.inc"
@@ -322,6 +325,191 @@ public:
     return result;
   }
 
+  using Measurement =
+      std::tuple<int64_t, std::vector<int64_t>, int64_t, double, double>;
+
+  /// The first measurement to complete on `path` (entries [readout index,
+  /// iteration..., outcome]) that the path gives no outcome for, as
+  /// (readout index, iteration, qubit, start ns, end ns).
+  std::optional<Measurement>
+  next_measurement(const std::vector<std::vector<int64_t>> &path) {
+    auto readouts = readoutOps();
+    pulse::Path chosen = toPath(path, readouts);
+    double clockGHz = clock();
+    std::optional<Measurement> next;
+    pulse::ExecutionWalker walker(clockGHz, chosen);
+    walker.onReadout = [&](const pulse::Occurrence &occurrence,
+                           const pulse::MeasurementKey &key) {
+      if (chosen.count(key))
+        return false;
+      double end = (occurrence.startVtu + occurrence.durationVtu) / clockGHz;
+      if (next && std::get<4>(*next) <= end)
+        return false;
+      int64_t index =
+          std::distance(readouts.begin(), llvm::find(readouts, occurrence.op));
+      int64_t qubit = -1;
+      if (auto *allocation =
+              pulse::traceAllocation(occurrence.op->getOperand(0)))
+        if (auto attr = allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
+          qubit = attr.getInt();
+      next = Measurement{index, key.iteration, qubit,
+                         occurrence.startVtu / clockGHz, end};
+      return false;
+    };
+    auto function = getFuncOp();
+    if (!function)
+      throw std::runtime_error("no 'main' func in module");
+    if (!walker.run(function))
+      throw std::runtime_error(walker.error);
+    return next;
+  }
+
+  using Factor = std::tuple<int64_t, int64_t, std::vector<double>>;
+  using Term = std::tuple<double, double, int32_t, std::vector<double>,
+                          std::vector<Factor>>;
+  using OperatorProgram =
+      std::tuple<std::vector<int64_t>, std::vector<Term>, std::vector<Term>,
+                 double, double, int64_t, std::string>;
+
+  /// The Hamiltonian and collapse operators pulse-to-qop builds, as data:
+  /// (mode extents, Hamiltonian terms, collapse terms, t_start, t_end,
+  /// num_steps, integrator). A term is (coefficient real, imaginary,
+  /// callback kind or 0, callback parameters, factors), and a factor is
+  /// (mode, dimension, column-major interleaved complex matrix).
+  OperatorProgram operator_program() {
+    auto lowered = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
+    mlir::PassManager pm(ctx_.get());
+    pm.addPass(pulse::createPulseToQOpPass());
+    runPipeline(pm, *lowered, "pulse-to-qop failed");
+
+    auto constantI64 = [](mlir::Value value) -> int64_t {
+      mlir::Attribute attr;
+      if (mlir::matchPattern(value, mlir::m_Constant(&attr)))
+        if (auto integer = mlir::dyn_cast<mlir::IntegerAttr>(attr))
+          return integer.getInt();
+      throw std::runtime_error("qop operator target is not a constant");
+    };
+    auto spinData = [](llvm::StringRef kind) -> std::vector<double> {
+      if (kind == "spin_x")
+        return {0, 0, 1, 0, 1, 0, 0, 0};
+      if (kind == "spin_y")
+        return {0, 0, 0, 1, 0, -1, 0, 0};
+      if (kind == "spin_z")
+        return {1, 0, 0, 0, 0, 0, -1, 0};
+      if (kind == "spin_i")
+        return {1, 0, 0, 0, 0, 0, 1, 0};
+      if (kind == "spin_lowering")
+        return {0, 0, 0, 0, 1, 0, 0, 0};
+      if (kind == "spin_raising")
+        return {0, 0, 1, 0, 0, 0, 0, 0};
+      throw std::runtime_error("unsupported qop spin kind " + kind.str());
+    };
+    auto term = [&](mlir::Value productValue) -> Term {
+      mlir::Operation *product = productValue.getDefiningOp();
+      if (!product || product->getName().getStringRef() != "qop.make_product")
+        throw std::runtime_error("qop sum term is not a qop.make_product");
+      Term result{1.0, 0.0, 0, {}, {}};
+      mlir::Operation *scalar = product->getOperand(0).getDefiningOp();
+      if (scalar->getName().getStringRef() == "qop.const_scalar") {
+        std::get<0>(result) =
+            mlir::cast<mlir::FloatAttr>(scalar->getAttr("real"))
+                .getValueAsDouble();
+        std::get<1>(result) =
+            mlir::cast<mlir::FloatAttr>(scalar->getAttr("imag"))
+                .getValueAsDouble();
+      } else {
+        std::get<2>(result) =
+            mlir::cast<mlir::IntegerAttr>(scalar->getAttr("cudm.callback_kind"))
+                .getInt();
+        auto params = mlir::cast<mlir::DenseF64ArrayAttr>(
+            scalar->getAttr("cudm.callback_params"));
+        std::get<3>(result).assign(params.asArrayRef().begin(),
+                                   params.asArrayRef().end());
+      }
+      for (mlir::Value factor : product->getOperands().drop_front()) {
+        mlir::Operation *leaf = factor.getDefiningOp();
+        if (leaf->getName().getStringRef() == "qop.spin") {
+          std::string kind;
+          llvm::raw_string_ostream os(kind);
+          leaf->getAttr("kind").print(os);
+          llvm::StringRef name(kind);
+          name = name.substr(name.rfind(' ') + 1).rtrim('>');
+          std::get<4>(result).emplace_back(constantI64(leaf->getOperand(0)), 2,
+                                           spinData(name));
+        } else {
+          auto targets =
+              mlir::cast<mlir::DenseI64ArrayAttr>(leaf->getAttr("targets"));
+          auto dims =
+              mlir::cast<mlir::DenseI64ArrayAttr>(leaf->getAttr("dimensions"));
+          mlir::Attribute data;
+          if (!mlir::matchPattern(leaf->getOperand(0), mlir::m_Constant(&data)))
+            throw std::runtime_error("qop matrix leaf data is not a constant");
+          auto values = mlir::cast<mlir::DenseFPElementsAttr>(data);
+          std::get<4>(result).emplace_back(
+              targets[0], dims[0],
+              std::vector<double>(values.getValues<double>().begin(),
+                                  values.getValues<double>().end()));
+        }
+      }
+      return result;
+    };
+
+    mlir::Operation *lindblad = nullptr;
+    lowered->walk([&](mlir::Operation *op) {
+      if (op->getName().getStringRef() == "qop.lindblad")
+        lindblad = op;
+    });
+    if (!lindblad)
+      throw std::runtime_error("pulse-to-qop produced no qop.lindblad");
+    auto sumTerms = [&](mlir::Value sum) {
+      std::vector<Term> terms;
+      for (mlir::Value product : sum.getDefiningOp()->getOperands())
+        terms.push_back(term(product));
+      return terms;
+    };
+    std::vector<Term> hamiltonian = sumTerms(lindblad->getOperand(0));
+    std::vector<Term> collapse;
+    for (mlir::Value op : lindblad->getOperands().drop_front())
+      for (Term &t : sumTerms(op))
+        collapse.push_back(std::move(t));
+
+    mlir::Operation *top = lowered->getOperation();
+    std::vector<int64_t> extents;
+    if (auto attr =
+            top->getAttrOfType<mlir::DenseI64ArrayAttr>("qop.mode_extents"))
+      extents.assign(attr.asArrayRef().begin(), attr.asArrayRef().end());
+    else {
+      int64_t modes = 1;
+      if (auto attr = top->getAttrOfType<mlir::IntegerAttr>("qop.n_qubits"))
+        modes = attr.getInt();
+      else if (auto attr =
+                   top->getAttrOfType<mlir::IntegerAttr>("pulse.n_qubits"))
+        modes = attr.getInt();
+      for (const Term &t : hamiltonian)
+        for (const Factor &f : std::get<4>(t))
+          modes = std::max(modes, std::get<0>(f) + 1);
+      extents.assign(static_cast<size_t>(modes), 2);
+    }
+    auto number = [&](llvm::StringRef name, double fallback) {
+      if (auto attr = top->getAttrOfType<mlir::FloatAttr>(name))
+        return attr.getValueAsDouble();
+      return fallback;
+    };
+    int64_t steps = 100;
+    if (auto attr = top->getAttrOfType<mlir::IntegerAttr>("qop.num_steps"))
+      steps = attr.getInt();
+    std::string integrator = "rk4";
+    if (auto attr = top->getAttrOfType<mlir::StringAttr>("qop.integrator"))
+      integrator = attr.getValue().str();
+    return {extents,
+            hamiltonian,
+            collapse,
+            number("qop.t_start", 0.0),
+            number("qop.t_end", 0.0),
+            steps,
+            integrator};
+  }
+
   /// Merge a dictionary attribute, written in MLIR syntax, into the module
   /// attributes.
   void set_attributes(const std::string &dictionary) {
@@ -412,6 +600,38 @@ public:
   }
 
 private:
+  llvm::SmallVector<mlir::Operation *> readoutOps() {
+    llvm::SmallVector<mlir::Operation *> readouts;
+    module_->walk([&](mlir::Operation *op) {
+      if (mlir::isa<pulse::ReadoutOp>(op) ||
+          op->getName().getStringRef() == "pulse.iq_acquire")
+        readouts.push_back(op);
+    });
+    return readouts;
+  }
+
+  static pulse::Path toPath(const std::vector<std::vector<int64_t>> &entries,
+                            llvm::ArrayRef<mlir::Operation *> readouts) {
+    pulse::Path path;
+    for (const auto &entry : entries) {
+      if (entry.size() < 2 || entry.front() < 0 ||
+          entry.front() >= static_cast<int64_t>(readouts.size()))
+        throw std::invalid_argument("path entries are [readout index, "
+                                    "iteration..., outcome]");
+      path[{readouts[entry.front()],
+            std::vector<int64_t>(entry.begin() + 1, entry.end() - 1)}] =
+          entry.back();
+    }
+    return path;
+  }
+
+  double clock() {
+    if (auto attr = module_->getOperation()->getAttrOfType<mlir::FloatAttr>(
+            "pulse.clock_ghz"))
+      return attr.getValueAsDouble();
+    return 1.0;
+  }
+
   mlir::func::FuncOp getFuncOp() {
     return module_->lookupSymbol<mlir::func::FuncOp>("main");
   }
@@ -1184,6 +1404,10 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::arg("switch_penalty") = 0)
       .def("events", &PulseModule::events,
            "(kind, line, qubit, start_vtu, duration_vtu) of each timed op")
+      .def("next_measurement", &PulseModule::next_measurement,
+           "The next measurement without an outcome on a path", nb::arg("path"))
+      .def("operator_program", &PulseModule::operator_program,
+           "The lowered Hamiltonian and collapse operators as data")
       .def("set_attributes", &PulseModule::set_attributes,
            "Merge an MLIR dictionary attribute into the module attributes",
            nb::arg("dictionary"))
@@ -1206,6 +1430,24 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::arg("param_names") = std::vector<std::string>{},
            nb::arg("param_types") = std::vector<std::string>{},
            nb::arg("name") = "main");
+
+  m.def(
+      "evaluate_callback",
+      [](int32_t kind, const std::vector<double> &params,
+         const std::vector<double> &times) {
+        std::vector<double> values;
+        values.reserve(times.size());
+        for (double time : times) {
+          double value = 0.0;
+          if (cudaq_pulse::evaluateWaveform(kind, params.data(), params.size(),
+                                            time, value))
+            throw std::invalid_argument("invalid waveform callback");
+          values.push_back(value);
+        }
+        return values;
+      },
+      "Evaluate a drive-envelope callback at the given times (ns)",
+      nb::arg("kind"), nb::arg("params"), nb::arg("times"));
 
   nb::class_<JITModule>(m, "JITModule")
       .def("lookup", &JITModule::lookup,

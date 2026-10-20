@@ -69,6 +69,15 @@ class _Writer:
                 f"{_LINE}, !pulse.waveform, {_TONE} -> {_LINE}, {_TONE}"
             )
             self.lines[i], self.tones[i] = line, tone
+        elif kind == "phase":
+            _, i, value = op
+            tone = self.fresh("t")
+            angle = f"%c{tone[1:]}"
+            self.emit(f"{angle} = arith.constant {float(value)!r} : f64")
+            self.emit(
+                f"{tone} = pulse.shift_phase {self.tones[i]}, {angle} : {_TONE}, f64 -> {_TONE}"
+            )
+            self.tones[i] = tone
         elif kind == "wait":
             _, i, d = op
             line = self.fresh("d")

@@ -7,6 +7,7 @@
  *******************************************************************************/
 
 #include "cudm_runtime.h"
+#include "cudaq-pulse/Runtime/WaveformCallback.h"
 
 #include <cuComplex.h>
 #include <cuda_runtime_api.h>
@@ -71,7 +72,7 @@ struct WaveformCallback {
   std::vector<double> parameters;
 };
 
-constexpr size_t callbackCapacity = 256;
+constexpr size_t callbackCapacity = 1024;
 std::array<WaveformCallback, callbackCapacity> waveformCallbacks;
 std::mutex waveformCallbackMutex;
 
@@ -84,75 +85,13 @@ int32_t evaluateWaveformCallback(size_t slot, double time,
       return 1;
     callback = waveformCallbacks[slot];
   }
-  if (!scalarStorage || callback.parameters.size() < 10)
+  if (!scalarStorage)
     return 2;
-  const auto &p = callback.parameters;
-  const double localTime = time - p[0];
-  const double duration = p[1];
-  double real = 0.0;
-  double imaginary = 0.0;
-  if (localTime >= 0.0 && localTime < duration && duration > 0.0) {
-    const double centered = localTime - duration / 2.0;
-    switch (callback.kind) {
-    case 1: // square
-      real = p[2];
-      imaginary = p[3];
-      break;
-    case 2: { // Gaussian
-      const double gaussian =
-          std::exp(-0.5 * centered * centered / (p[4] * p[4]));
-      real = p[2] * gaussian;
-      break;
-    }
-    case 3: { // DRAG: Gaussian plus beta times its derivative.
-      const double gaussian =
-          std::exp(-0.5 * centered * centered / (p[4] * p[4]));
-      real = p[2] * gaussian;
-      imaginary = -p[5] * centered * real / (p[4] * p[4]);
-      break;
-    }
-    case 4: // raised cosine
-      real = p[2] * 0.5 * (1.0 - std::cos(2.0 * M_PI * localTime / duration));
-      break;
-    case 5: // smooth tanh ramp from zero to the requested amplitude
-      real =
-          p[2] * 0.5 * (1.0 + std::tanh((localTime - duration / 2.0) / p[4]));
-      break;
-    case 6: { // Gaussian-square
-      const double edge = p[6];
-      if (localTime < edge) {
-        const double x = localTime - edge;
-        real = p[2] * std::exp(-0.5 * x * x / (p[4] * p[4]));
-      } else if (localTime >= duration - edge) {
-        const double x = localTime - (duration - edge);
-        real = p[2] * std::exp(-0.5 * x * x / (p[4] * p[4]));
-      } else {
-        real = p[2];
-      }
-      break;
-    }
-    case 7: { // custom samples, held piecewise constant over the duration
-      const size_t sampleCount = p.size() - 10;
-      if (sampleCount > 0) {
-        const auto index =
-            std::min(sampleCount - 1,
-                     static_cast<size_t>(localTime * sampleCount / duration));
-        real = p[10 + index];
-      }
-      break;
-    }
-    default:
-      return 3;
-    }
-  }
-
-  const double angle = p[7] + p[9] * localTime;
-  const double cosine = std::cos(angle);
-  const double sine = std::sin(angle);
-  const double rotatedReal = real * cosine - imaginary * sine;
-  const double rotatedImaginary = real * sine + imaginary * cosine;
-  // H_control = (Re(envelope) X + Im(envelope) Y) / 2.
-  const double value = 0.5 * (p[8] == 0.0 ? rotatedReal : rotatedImaginary);
+  double value = 0.0;
+  if (int32_t status = cudaq_pulse::evaluateWaveform(
+          callback.kind, callback.parameters.data(), callback.parameters.size(),
+          time, value))
+    return status;
   if (dataType == CUDA_C_32F)
     *static_cast<cuFloatComplex *>(scalarStorage) =
         make_cuFloatComplex(static_cast<float>(value), 0.0F);
@@ -206,6 +145,7 @@ void releaseCallbackSlot(size_t slot) {
 }
 
 thread_local std::vector<std::byte> lastResult;
+thread_local std::vector<std::byte> pendingInitialState;
 thread_local std::string lastError;
 
 CudmStatus fail(CudmStatus status, const char *message) {
@@ -614,6 +554,26 @@ CudmStatus cudm_state_alloc(CudmHandle handle, CudmState *state,
                        "cudensitymatStateAttachComponentStorage");
   if (status == CUDM_SUCCESS)
     status = initializeBasisZero(data);
+  if (status == CUDM_SUCCESS && !pendingInitialState.empty()) {
+    size_t total = 0;
+    for (size_t componentSize : data->bufferSizes)
+      total += componentSize;
+    if (total != pendingInitialState.size()) {
+      status = fail(CUDM_ERROR_INVALID_STATE,
+                    "initial state size does not match the allocated state");
+    } else {
+      size_t offset = 0;
+      for (size_t i = 0; status == CUDM_SUCCESS && i < data->buffers.size();
+           ++i) {
+        status = checkCuda(
+            cudaMemcpy(data->buffers[i], pendingInitialState.data() + offset,
+                       data->bufferSizes[i], cudaMemcpyHostToDevice),
+            "cudaMemcpy(initial state)");
+        offset += data->bufferSizes[i];
+      }
+    }
+    pendingInitialState.clear();
+  }
   if (status != CUDM_SUCCESS) {
     for (void *buffer : data->buffers)
       if (buffer)
@@ -677,6 +637,14 @@ CudmStatus cudm_state_capture(CudmState state) {
     offset += data->bufferSizes[i];
   }
   lastError.clear();
+  return CUDM_SUCCESS;
+}
+
+CudmStatus cudm_set_initial_state(const void *data, int64_t size) {
+  if (size < 0 || (size > 0 && !data))
+    return fail(CUDM_ERROR_INVALID_STATE, "invalid initial state buffer");
+  const auto *bytes = static_cast<const std::byte *>(data);
+  pendingInitialState.assign(bytes, bytes + size);
   return CUDM_SUCCESS;
 }
 
