@@ -432,7 +432,11 @@ class PulseIREmitter:
                         del stack[-arg:]
                     else:
                         items = []
-                    push(tuple(items) if op is _build_tuple else items)
+                    if op is _build_tuple:
+                        push(tuple(items))
+                    else:
+                        push(items)
+                        self._track_slots(items, 0)
 
                 elif op is bc.LIST_APPEND or op is bc.LIST_EXTEND:
                     val = pop()
@@ -904,6 +908,9 @@ class PulseIREmitter:
             except _EVALUATION_ERRORS as e:
                 raise CompilationError(f"failed to evaluate {fname}({call_args!r}): {e}") from e
             self.stack.append(result)
+            owner = getattr(callable_val, "__self__", None)
+            if owner.__class__ is list and fname in ("append", "extend", "insert"):
+                self._track_slots(owner, len(owner) - 1 if fname == "append" else 0)
             return
 
         raise CompilationError(f"cannot call: {callable_val!r}")
@@ -938,6 +945,7 @@ class PulseIREmitter:
             fn_globals=fn.__globals__,
             fn_closures=_extract_closures(fn),
         )
+        helper._slots = self._slots
         helper.locals.update(zip(params, call_args))
         result = helper.run(code)
 
@@ -1070,6 +1078,14 @@ class PulseIREmitter:
                         slots[id(res)] = (slot[0], slot[1], res)
                     claimed.add(i)
                     break
+
+    def _track_slots(self, items: list[Any], start: int) -> None:
+        """Remember the list slots from *start* on that hold lines or tones."""
+        slots = self._slots
+        for i in range(start, len(items)):
+            v = items[i]
+            if v.__class__ is IRValue and v.vtype in LINEAR_TYPES:
+                slots[id(v)] = (items, i, v)
 
     def _rebind_one(self, old: Any, new: IRValue) -> None:
         if old.__class__ is not IRValue or old.vtype != new.vtype:

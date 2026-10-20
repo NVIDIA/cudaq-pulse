@@ -135,7 +135,7 @@
  },
  "workload_qaoa4": {
   "ops": 109,
-  "sha256": "3ffa7a9188378ea3a88e70dedca3f2f6e06109a0978140d18220b2bcb4dd9a35"
+  "sha256": "279cae7a361124bbcced5f0fc2cd7f5834811e1e041a2176ebdb061f0e08f472"
  },
  "workload_syndrome": {
   "ops": 61,

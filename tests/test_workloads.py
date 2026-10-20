@@ -135,3 +135,47 @@ def test_correct_corpus_compiles(case: BugCase):
     ir = fn_or_kern(*qs)
     prog = _to_program(ir, clock_ghz=2.0, qubit_freq_hz=_freq(nargs))
     assert prog.op_count() > 0
+
+
+# ── Every workload through both paths ────────────────────────────────
+
+_WORKLOAD_MODULES = [
+    "w1_bell",
+    "w2_cnot_cr",
+    "w3_qaoa4",
+    "w4_syndrome",
+    "w5_dd_cpmg8",
+    "w6_vqe_hea",
+]
+
+
+@pytest.mark.parametrize("name", _WORKLOAD_MODULES)
+def test_workload_compiles_on_the_packed_path(name):
+    import importlib
+
+    module = importlib.import_module(f"tests.workloads.{name}")
+    n = module.NUM_QUBITS
+    program = _to_program(module.build(*_make_qubits(n)), clock_ghz=2.0, qubit_freq_hz=_freq(n))
+    compiled = pulse.compile(module.build, _make_qubits(n), qubit_freq_hz=_freq(n))
+    if not any(op.kind == "for_loop" for op in program.ops):
+        assert compiled.metrics.op_count == program.op_count()
+
+
+def test_list_amplitude_packs_like_complex():
+    from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder
+    from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
+
+    def words(amplitude):
+        @pulse.kernel
+        def k(q0):
+            d0, t0 = get_drive_line(q0)
+            drive(d0, square(40, amplitude), t0)
+
+        builder = PackedIRBuilder(name="k", qubit_freq_hz={0: 5e9})
+        _trace_kernel_with_builder(k.__wrapped__, builder, [pulse.qudit_ref()])
+        return builder.get_buffer().tolist()
+
+    assert words([0.047, 0.01]) == words(0.047 + 0.01j)
+    assert words((0.047,)) == words(0.047)
+    with pytest.raises(pulse.CompilationError, match=r"\[re\] or \[re, im\]"):
+        words([0.1, 0.2, 0.3])

@@ -96,8 +96,16 @@ def _real(val: Any) -> float:
 
 
 def _complex_parts(val: Any) -> tuple[float, float]:
-    if isinstance(val, complex):
-        return (val.real, val.imag)
+    """``(re, im)`` of an amplitude: a number, or ``[re]`` / ``[re, im]``."""
+    if isinstance(val, (complex, np.complexfloating)):
+        return (float(val.real), float(val.imag))
+    if isinstance(val, (list, tuple, np.ndarray)):
+        parts = np.asarray(val, dtype=float).ravel() if len(val) else np.zeros(0)
+        if parts.size not in (1, 2):
+            raise CompilationError(
+                f"an amplitude sequence must be [re] or [re, im], got {len(parts)} values"
+            )
+        return (float(parts[0]), float(parts[1]) if parts.size == 2 else 0.0)
     return (float(val), 0.0)
 
 
