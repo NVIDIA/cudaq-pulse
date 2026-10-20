@@ -92,6 +92,7 @@ def _to_program(
     ops: list[Op] = []
     values: list[Value] = []
     collected_freqs: dict[int, float] = {}
+    pending_yield: tuple[Value, ...] = ()
 
     def _map_val(iv: IRValue) -> Value:
         if iv.vid in val_map:
@@ -268,11 +269,17 @@ def _to_program(
                 f"IF_BEGIN/IF_END lowering (not yet implemented)."
             )
 
+        # A loop's yielded values become the END_FOR operands, pairing each
+        # loop result with the body value it carries out.
         if kind == "scf.yield":
+            pending_yield = tuple(_map_val(o) for o in kop.operands)
             continue
+        if kind == "scf.for_end":
+            operand_vals, pending_yield = pending_yield, ()
+        else:
+            operand_vals = tuple(_map_val(o) for o in kop.operands)
 
         # Generic mapping for remaining ops
-        operand_vals = tuple(_map_val(o) for o in kop.operands)
         result_vals = tuple(_map_val(r) for r in kop.results)
         pass_kind = _KIND_MAP.get(kind, kind)
         ops.append(
