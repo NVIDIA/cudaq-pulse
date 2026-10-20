@@ -27,6 +27,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
 #include "mlir/ExecutionEngine/OptUtils.h"
 #include "mlir/IR/Builders.h"
@@ -99,6 +100,7 @@ mlir::DialectRegistry makeRegistry() {
   reg.insert<mlir::arith::ArithDialect>();
   reg.insert<mlir::func::FuncDialect>();
   reg.insert<mlir::scf::SCFDialect>();
+  reg.insert<mlir::ub::UBDialect>();
   reg.insert<mlir::LLVM::LLVMDialect>();
   return reg;
 }
@@ -133,6 +135,13 @@ constexpr int kOpWfSub = 25;
 constexpr int kOpWfMul = 26;
 constexpr int kOpWfScale = 27;
 constexpr int kOpWfNeg = 28;
+constexpr int kOpForBegin = 29;
+constexpr int kOpForEnd = 30;
+constexpr int kOpIfBegin = 31;
+constexpr int kOpElse = 32;
+constexpr int kOpIfEnd = 33;
+// A payload length of 0xFF means the length is in the next word.
+constexpr int kExtendedPayload = 0xFF;
 
 /// Collects the error diagnostics emitted while it is alive, so that a
 /// failure can report them in the Python exception instead of on stderr.
@@ -735,6 +744,18 @@ public:
                                  std::to_string(vid));
       return it->second;
     };
+    // Region bodies are built in detached blocks and moved into their scf op
+    // when the region closes; values they use from outside stay in scope.
+    struct Region {
+      bool isLoop;
+      int64_t lb = 0, ub = 0, step = 1;
+      mlir::Value condition;
+      mlir::Block *parent;
+      std::unique_ptr<mlir::Block> body;
+      std::unique_ptr<mlir::Block> elseBody;
+    };
+    std::vector<Region> regions;
+
     auto getQubit = [&](int64_t q) -> mlir::Value {
       if (q < 0 || q >= n_qubits)
         throw std::invalid_argument("packed: qubit index out of range: " +
@@ -742,6 +763,10 @@ public:
       auto it = qubitSSA.find(q);
       if (it != qubitSSA.end())
         return it->second;
+      // Allocate outside any region, so every later use is dominated.
+      mlir::OpBuilder::InsertionGuard guard(*builder_);
+      if (!regions.empty())
+        builder_->setInsertionPointToEnd(regions.front().parent);
       auto alloc = pulse::QuditAllocOp::create(*builder_, loc, qrefTy);
       alloc->setAttr("qubit", builder_->getI64IntegerAttr(q));
       auto v = alloc.getResult();
@@ -753,14 +778,22 @@ public:
     while (cur < len) {
       int64_t hdr = d[cur];
       int opcode = static_cast<int>(hdr & 0xFF);
-      int plen = static_cast<int>((hdr >> 8) & 0xFF);
+      int64_t plen = (hdr >> 8) & 0xFF;
       int pmask = static_cast<int>((hdr >> 16) & 0xFFFF);
-      if (cur + 1 + static_cast<size_t>(plen) > len)
+      size_t headerWords = 1;
+      if (plen == kExtendedPayload) {
+        if (cur + 1 >= len || d[cur + 1] < 0)
+          throw std::invalid_argument("packed: truncated record at word " +
+                                      std::to_string(cur));
+        plen = d[cur + 1];
+        headerWords = 2;
+      }
+      if (cur + headerWords + static_cast<size_t>(plen) > len)
         throw std::invalid_argument("packed: truncated record at word " +
                                     std::to_string(cur));
-      const int64_t *p = d + cur + 1;
+      const int64_t *p = d + cur + headerWords;
 
-      auto requirePayload = [&](int expected) {
+      auto requirePayload = [&](int64_t expected) {
         if (plen != expected)
           throw std::invalid_argument(
               "packed: opcode " + std::to_string(opcode) + " expects " +
@@ -786,6 +819,134 @@ public:
       };
 
       switch (opcode) {
+
+      case kOpForBegin: {
+        requirePayload(3);
+        Region region{true,
+                      p[0],
+                      p[1],
+                      p[2],
+                      {},
+                      builder_->getBlock(),
+                      std::make_unique<mlir::Block>(),
+                      nullptr};
+        if (region.step <= 0)
+          throw std::invalid_argument("packed: loop step must be positive");
+        builder_->setInsertionPointToEnd(region.body.get());
+        regions.push_back(std::move(region));
+        break;
+      }
+      case kOpForEnd: {
+        if (regions.empty() || !regions.back().isLoop || plen < 1 || p[0] < 0 ||
+            plen != 1 + 3 * p[0])
+          throw std::invalid_argument("packed: malformed loop end");
+        Region region = std::move(regions.back());
+        regions.pop_back();
+        builder_->setInsertionPointToEnd(region.parent);
+        const int64_t n = p[0];
+        // A value carried under two names is one iteration argument.
+        llvm::SmallVector<mlir::Value> inits, yields;
+        llvm::SmallVector<size_t> argOf;
+        llvm::DenseMap<int64_t, size_t> argOfInit;
+        for (int64_t i = 0; i < n; ++i) {
+          int64_t init = p[1 + i];
+          mlir::Value next = look(p[1 + n + i]);
+          if (init >= 0) {
+            auto [it, inserted] = argOfInit.try_emplace(init, inits.size());
+            if (!inserted) {
+              if (yields[it->second] != next)
+                throw std::invalid_argument(
+                    "packed: one loop value carried to two different values");
+              argOf.push_back(it->second);
+              continue;
+            }
+          }
+          argOf.push_back(inits.size());
+          inits.push_back(init >= 0 ? look(init)
+                                    : mlir::ub::PoisonOp::create(
+                                          *builder_, loc, next.getType()));
+          yields.push_back(next);
+        }
+        auto index = [&](int64_t v) -> mlir::Value {
+          return mlir::arith::ConstantIndexOp::create(*builder_, loc, v);
+        };
+        auto loop = mlir::scf::ForOp::create(*builder_, loc, index(region.lb),
+                                             index(region.ub),
+                                             index(region.step), inits);
+        mlir::Block *body = loop.getBody();
+        if (!body->empty())
+          body->getTerminator()->erase();
+        body->getOperations().splice(body->end(), region.body->getOperations());
+        {
+          mlir::OpBuilder::InsertionGuard guard(*builder_);
+          builder_->setInsertionPointToEnd(body);
+          mlir::scf::YieldOp::create(*builder_, loc, yields);
+        }
+        for (auto [init, arg] : llvm::zip(inits, loop.getRegionIterArgs()))
+          init.replaceUsesWithIf(arg, [&](mlir::OpOperand &use) {
+            return loop->isProperAncestor(use.getOwner());
+          });
+        for (int64_t i = 0; i < n; ++i)
+          bind(p[1 + 2 * n + i], loop.getResult(argOf[i]));
+        break;
+      }
+      case kOpIfBegin: {
+        requirePayload(1);
+        Region region{false,
+                      0,
+                      0,
+                      1,
+                      look(p[0]),
+                      builder_->getBlock(),
+                      std::make_unique<mlir::Block>(),
+                      nullptr};
+        builder_->setInsertionPointToEnd(region.body.get());
+        regions.push_back(std::move(region));
+        break;
+      }
+      case kOpElse: {
+        requirePayload(0);
+        if (regions.empty() || regions.back().isLoop || regions.back().elseBody)
+          throw std::invalid_argument("packed: else outside an if");
+        regions.back().elseBody = std::make_unique<mlir::Block>();
+        builder_->setInsertionPointToEnd(regions.back().elseBody.get());
+        break;
+      }
+      case kOpIfEnd: {
+        if (regions.empty() || regions.back().isLoop || plen < 1 || p[0] < 0 ||
+            plen != 1 + 3 * p[0])
+          throw std::invalid_argument("packed: malformed if end");
+        Region region = std::move(regions.back());
+        regions.pop_back();
+        builder_->setInsertionPointToEnd(region.parent);
+        const int64_t n = p[0];
+        llvm::SmallVector<mlir::Value> thenValues, elseValues;
+        llvm::SmallVector<mlir::Type> types;
+        for (int64_t i = 0; i < n; ++i) {
+          thenValues.push_back(look(p[1 + i]));
+          elseValues.push_back(look(p[1 + n + i]));
+          types.push_back(thenValues.back().getType());
+        }
+        auto condition = pulse::IsSetOp::create(
+            *builder_, loc, builder_->getI1Type(), region.condition);
+        auto branch = mlir::scf::IfOp::create(*builder_, loc, types, condition,
+                                              /*withElseRegion=*/true);
+        auto fill = [&](mlir::Block *arm, mlir::Block *source,
+                        llvm::ArrayRef<mlir::Value> values) {
+          if (!arm->empty())
+            arm->getTerminator()->erase();
+          if (source)
+            arm->getOperations().splice(arm->end(), source->getOperations());
+          mlir::OpBuilder::InsertionGuard guard(*builder_);
+          builder_->setInsertionPointToEnd(arm);
+          mlir::scf::YieldOp::create(*builder_, loc, values);
+        };
+        fill(branch.thenBlock(), region.body.get(), thenValues);
+        fill(branch.elseBlock(), region.elseBody.get(), elseValues);
+        for (int64_t i = 0; i < n; ++i)
+          bind(p[1 + 2 * n + i], branch.getResult(i));
+        break;
+      }
 
       case kOpAllocDrive: {
         requirePayload(3);
@@ -1176,8 +1337,10 @@ public:
                                     std::to_string(opcode));
       }
 
-      cur += 1 + plen;
+      cur += headerWords + plen;
     }
+    if (!regions.empty())
+      throw std::invalid_argument("packed: region left open");
 
     mlir::func::ReturnOp::create(*builder_, loc);
     auto owningModule = mlir::OwningOpRef<mlir::ModuleOp>(module);

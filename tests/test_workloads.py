@@ -23,11 +23,6 @@ def _freq(n):
     return {i: 5.0e9 + i * 0.1e9 for i in range(n)}
 
 
-def _ir_op_count(ir):
-    """Pulse-program ops in kernel IR, not counting qudit binding."""
-    return sum(op.kind != "pulse.qudit_arg" for op in ir.ops)
-
-
 _WORKLOAD_MODULES = [
     "w1_bell",
     "w2_cnot_cr",
@@ -97,8 +92,7 @@ def test_workload_compiles_on_the_packed_path(name):
     n = module.NUM_QUBITS
     ir = module.build(*_make_qubits(n))
     compiled = pulse.compile(module.build, _make_qubits(n), qubit_freq_hz=_freq(n))
-    if not any(op.kind == "scf.for" for op in ir.ops):
-        assert compiled.metrics.op_count == _ir_op_count(ir)
+    assert compiled.metrics.op_count == ir.op_count()
 
 
 def test_list_amplitude_packs_like_complex():

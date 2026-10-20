@@ -22,7 +22,6 @@ from pathlib import Path
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.kernel.ir_builder import CompilationError
 
 from tests.kernel.ir_corpus import bicycle_syndrome, dd_loop, surface_syndrome
 
@@ -67,11 +66,13 @@ def test_compile_time_workload_op_counts():
         assert ir.op_count() == count, name
 
 
-def test_compile_unrolls_loops_into_the_packed_program():
-    ck = pulse.compile(dd_loop(8), [pulse.qudit_ref()], qubit_freq_hz={0: 5e9}, passes=())
-    # alloc_drive_line, square, and one drive per iteration
-    assert ck.metrics.op_count == 10
-    assert ck.mlir.count("= pulse.drive ") == 8
+@pytest.mark.parametrize("n", [1, 8, 512])
+def test_compile_retains_loops_in_the_packed_program(n):
+    ck = pulse.compile(dd_loop(n), [pulse.qudit_ref()], qubit_freq_hz={0: 5e9}, passes=())
+    # get_drive_line, square, scf.for, drive, scf.for_end
+    assert ck.metrics.op_count == 5
+    assert ck.mlir.count("= pulse.drive ") == 1
+    assert len(ck.events()) == n
 
 
 # ── Index-dependent loops and conditions are traced exactly ──────────
@@ -190,7 +191,7 @@ def test_symbolic_parameters_compile_once():
     assert ck(amp=0.5).mlir != ck(amp=0.25).mlir
 
 
-def test_compile_rejects_measurement_branch_at_the_condition():
+def test_compile_retains_a_measurement_branch():
 
     @pulse.kernel
     def k(q0):
@@ -199,8 +200,7 @@ def test_compile_rejects_measurement_branch_at_the_condition():
         if bit:
             wait(r0, 10)
 
-    with pytest.raises(CompilationError, match="measurement-conditioned branches") as info:
-        pulse.compile(k, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9})
-    decoded, index = info.value.pulse_source
-    _, line, *_ = decoded.location(index)
-    assert line == k.__wrapped__.__code__.co_firstlineno + 4
+    ir = k(pulse.qudit_ref())
+    compiled = pulse.compile(k, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9})
+    assert compiled.metrics.op_count == ir.op_count()
+    assert compiled.mlir.count("scf.if") == 1

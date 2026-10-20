@@ -108,6 +108,7 @@ def _cases() -> dict[str, Callable[[], object]]:
         cases[f"tier1_{name}_compile"] = _compile(kernel, n_qubits, freq)
     for n in (8, 512):
         cases[f"dd_loop_n{n}"] = _kernel_ir(dd_loop(n), 1)
+        cases[f"dd_loop_n{n}_compile"] = _compile(dd_loop(n), 1, {0: 5e9})
     surface5, n5 = surface_syndrome(5)
     surface9, n9 = surface_syndrome(9)
     bicycle, nb = bicycle_syndrome(6, 6)
@@ -148,3 +149,4 @@ def test_compile_time_within_baseline(ratios, request):
 
 def test_retained_loop_compile_time_is_flat(ratios):
     assert ratios["dd_loop_n512"] < ratios["dd_loop_n8"] * FLAT_LOOP_LIMIT
+    assert ratios["dd_loop_n512_compile"] < ratios["dd_loop_n8_compile"] * FLAT_LOOP_LIMIT

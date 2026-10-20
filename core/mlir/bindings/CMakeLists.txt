@@ -35,6 +35,7 @@ target_link_libraries(_cudaq_pulse_native PRIVATE
   MLIRReconcileUnrealizedCasts
   MLIRParser
   MLIRSCFDialect
+  MLIRUBDialect
   MLIRTargetLLVMIRExport
   MLIRBuiltinToLLVMIRTranslation
   MLIRLLVMToLLVMIRTranslation

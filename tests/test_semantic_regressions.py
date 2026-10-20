@@ -30,7 +30,7 @@ def _drive_timings(mlir: str) -> list[tuple[int, int]]:
     return timings
 
 
-def test_constant_loop_is_fully_unrolled():
+def test_constant_loop_is_retained_and_scheduled_per_iteration():
 
     @pulse.kernel
     def kernel(q):
@@ -42,8 +42,15 @@ def test_constant_loop_is_fully_unrolled():
     compiled = pulse.compile(
         kernel, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9}, schedule="asap", passes=()
     )
-    assert compiled.mlir.count("= pulse.drive ") == 5
-    assert _drive_timings(compiled.mlir) == [(0, 10), (10, 10), (20, 10), (30, 10), (40, 10)]
+    assert compiled.mlir.count("= pulse.drive ") == 1
+    assert "scf.for" in compiled.mlir
+    assert [(e.start_vtu, e.duration_vtu) for e in compiled.events()] == [
+        (0, 10),
+        (10, 10),
+        (20, 10),
+        (30, 10),
+        (40, 10),
+    ]
 
 
 def test_range_start_stop_step_values_are_preserved():
@@ -60,7 +67,7 @@ def test_range_start_stop_step_values_are_preserved():
         assert f"{value:.6e}" in compiled.mlir
 
 
-def test_compile_rejects_measurement_dependent_branch():
+def test_compile_keeps_a_measurement_dependent_branch():
 
     @pulse.kernel
     def kernel(q):
@@ -69,8 +76,9 @@ def test_compile_rejects_measurement_dependent_branch():
         if result:
             wait(line, 10)
 
-    with pytest.raises(CompilationError, match=r"compile\(\) writes a packed program"):
-        pulse.compile(kernel, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9})
+    compiled = pulse.compile(kernel, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9})
+    assert "pulse.is_set" in compiled.mlir and "scf.if" in compiled.mlir
+    compiled.module.run_passes(["pulse-verify"])
 
 
 def test_documented_waveforms_and_algebra_lower_to_typed_ops():

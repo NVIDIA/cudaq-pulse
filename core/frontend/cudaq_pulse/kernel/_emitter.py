@@ -51,6 +51,7 @@ from ._bytecode_normalize import (
 from .ir_builder import (
     LINEAR_TYPES,
     OP_TABLE,
+    UNDEFINED_VID,
     CompilationError,
     IRValue,
     PythonIRBuilder,
@@ -61,11 +62,7 @@ _ALLOC_OPS = {"qudit_ref": "pulse.qudit_alloc", "qvec_ref": "pulse.qvec_alloc"}
 _PULSE_OP_NAMES = frozenset(OP_TABLE.keys()) | frozenset(_ALLOC_OPS.keys())
 
 _RANGE_BOUNDS_MESSAGE = "range() bounds must be compile-time integers in pulse kernels"
-_PACKED_BRANCH_MESSAGE = (
-    "measurement-conditioned branches are retained in kernel IR (call the kernel "
-    "to inspect it), but compile() writes a packed program for the MLIR "
-    "pipeline, which cannot represent them yet"
-)
+_PACKED_BRANCH_MESSAGE = "measurement-conditioned branches need an IR builder that supports regions"
 _REJOIN_MESSAGE = (
     "both branches of a measurement-conditioned if must continue after it; "
     "break, continue or return in only one branch is not supported"
@@ -606,7 +603,7 @@ class PulseIREmitter:
         self.locals.update(saved_locals)
         for obj, copy in containers:
             _restore_container(obj, copy)
-        else_index = len(builder.ops)
+        else_index = builder.mark()
         builder.emit("scf.else", (), ())
         else_locals, else_slots = self._trace_arm(
             view, index, join, else_start, saved_stack, containers
@@ -765,10 +762,19 @@ class PulseIREmitter:
         if delta or slot_changes:
             names = sorted(delta)
             vals = tuple(delta[n] for n in names) + tuple(new for _, _, new in slot_changes)
+            originals = {id(obj): copy for obj, copy in containers}
+            # A name first bound in the body has no value entering the loop;
+            # the body binds it before reading it.
+            inits = tuple(
+                saved_locals[n] if n in saved_locals else IRValue(UNDEFINED_VID, delta[n].vtype)
+                for n in names
+            ) + tuple(originals[id(obj)][i] for obj, i, _ in slot_changes)
             labels = names + [self._slot_label(obj, i) for obj, i, _ in slot_changes]
             self.b.emit("scf.yield", vals, ())
+            # The body was traced with the values carried into the loop; its
+            # end lists them so that each iteration can rebind them.
             results = self.b.emit(
-                "scf.for_end", (), tuple(v.vtype for v in vals), {"iter_args": labels}
+                "scf.for_end", inits, tuple(v.vtype for v in vals), {"iter_args": labels}
             )
             for n, r in zip(names, results):
                 self.locals[n] = r

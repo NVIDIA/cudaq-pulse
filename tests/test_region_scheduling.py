@@ -167,7 +167,7 @@ def _timeline(text, policy, drives, latency, penalty):
 
 @pytest.mark.parametrize("policy", ["asap", "alap", "rcp", "alap_rcp"])
 @given(case=_case(), drives=st.integers(1, 3), penalty=st.integers(0, 5))
-@settings(max_examples=60, deadline=None)
+@settings(max_examples=60, deadline=None, derandomize=True)
 def test_retained_loop_schedules_like_its_unrolling(policy, case, drives, penalty):
     rolled, unrolled = _programs(*case)
     assert _timeline(rolled, policy, drives, 0, penalty) == _timeline(

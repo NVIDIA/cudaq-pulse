@@ -41,8 +41,8 @@ def measure_single_qubit():
 def active_reset():
     """Active reset: measure, and if excited, apply an X pulse.
 
-    The ``if`` becomes an scf.if region in the kernel IR. compile() and the
-    simulator cannot lower it yet.
+    The ``if`` becomes an scf.if region: compile() keeps it as a branch on
+    pulse.is_set and schedules it for the longer arm.
     """
     qubit = pulse.qudit_ref()
     drive_line, drive_tone = get_drive_line(qubit)
@@ -109,10 +109,8 @@ if __name__ == "__main__":
 
     print("\n=== Active reset (measurement-conditioned branch) ===")
     print(active_reset().pretty())
-    try:
-        pulse.compile(active_reset, [], qubit_freq_hz={0: 5e9})
-    except pulse.CompilationError as error:
-        print(f"  compile() cannot lower it yet: {error}")
+    compiled_kernel = pulse.compile(active_reset, [], qubit_freq_hz={0: 5e9})
+    print(compiled_kernel.mlir)
 
     print("\n=== Repeated measurement (5 shots) ===")
     compiled_kernel = pulse.compile(repeated_measurement, [5], qubit_freq_hz={0: 5e9})

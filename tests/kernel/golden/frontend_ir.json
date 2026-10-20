@@ -1,7 +1,7 @@
 {
  "dd_loop_n8": {
   "ops": 7,
-  "sha256": "f511f5e3732679126ea958592845a7cb550a53ddb5b1f01454899f2f8e1bf185",
+  "sha256": "e6530a6bd5c3a0483e3c5424d8df282dd50a3cd8be0d2cd9355055d323745a85",
   "dump": [
    "func @dd",
    "%0:qref = pulse.qudit_arg() {}",
@@ -10,12 +10,12 @@
    "= scf.for() {lb: 0, step: 1, ub: 8, var: '_'}",
    "%4:drive_line, %5:tone = pulse.drive(%1, %3, %2) {}",
    "= scf.yield(%4, %5) {}",
-   "%6:drive_line, %7:tone = scf.for_end() {iter_args: ['d0', 't0']}"
+   "%6:drive_line, %7:tone = scf.for_end(%1, %2) {iter_args: ['d0', 't0']}"
   ]
  },
  "dd_loop_n32": {
   "ops": 7,
-  "sha256": "1a2173d7478faac0b74089ffc7330e38c6aa746686310ccce8612418494c01c9",
+  "sha256": "364baf5410964d001e7da27b56390fa9bd312dd2fce17abf0ddbd782d400c668",
   "dump": [
    "func @dd",
    "%0:qref = pulse.qudit_arg() {}",
@@ -24,12 +24,12 @@
    "= scf.for() {lb: 0, step: 1, ub: 32, var: '_'}",
    "%4:drive_line, %5:tone = pulse.drive(%1, %3, %2) {}",
    "= scf.yield(%4, %5) {}",
-   "%6:drive_line, %7:tone = scf.for_end() {iter_args: ['d0', 't0']}"
+   "%6:drive_line, %7:tone = scf.for_end(%1, %2) {iter_args: ['d0', 't0']}"
   ]
  },
  "dd_loop_n128": {
   "ops": 7,
-  "sha256": "9b2a713501742f86659a3b062d1dc55478bbd3568c0477a30ea5fd5abd00a2f0",
+  "sha256": "87aa642319c086b9996c7ec9f0aa8796f3e91f1b76ac427e602a55aa1349e6c7",
   "dump": [
    "func @dd",
    "%0:qref = pulse.qudit_arg() {}",
@@ -38,12 +38,12 @@
    "= scf.for() {lb: 0, step: 1, ub: 128, var: '_'}",
    "%4:drive_line, %5:tone = pulse.drive(%1, %3, %2) {}",
    "= scf.yield(%4, %5) {}",
-   "%6:drive_line, %7:tone = scf.for_end() {iter_args: ['d0', 't0']}"
+   "%6:drive_line, %7:tone = scf.for_end(%1, %2) {iter_args: ['d0', 't0']}"
   ]
  },
  "dd_loop_n512": {
   "ops": 7,
-  "sha256": "7a83a41a8e584d7a19f159d3d41968457c825b1a24ca23b48051dabaa3f87b56",
+  "sha256": "c770e2651dd6fb1ad8d43ef19a8d4cfbe1a8c283ae9d7e60c64081b2280e91fa",
   "dump": [
    "func @dd",
    "%0:qref = pulse.qudit_arg() {}",
@@ -52,22 +52,22 @@
    "= scf.for() {lb: 0, step: 1, ub: 512, var: '_'}",
    "%4:drive_line, %5:tone = pulse.drive(%1, %3, %2) {}",
    "= scf.yield(%4, %5) {}",
-   "%6:drive_line, %7:tone = scf.for_end() {iter_args: ['d0', 't0']}"
+   "%6:drive_line, %7:tone = scf.for_end(%1, %2) {iter_args: ['d0', 't0']}"
   ]
  },
  "dd_loop_n8_packed": {
-  "ops": 10,
-  "sha256": "1415cb73afdcd43dfbe6de5d6c98aa76b189cad7a071f8ef3c1f439ad96d2810",
+  "ops": 5,
+  "sha256": "debfe7eda3ff37633f01e7fc63587568509e0adab77da61369684850f4b773ea",
   "dump": [
-   "packed n_qubits=1 op_count=10",
-   "words 768 0 1 2 1028 3 40 4586934234875359658 0 1802 1 3 2 4 5 -1 -1 1802 4 3 5 6 7 -1 -1 1802 6 3 7 8 9 -1 -1 1802 8 3 9 10 11 -1 -1 1802 10 3 11 12 13 -1 -1 1802 12 3 13 14 15 -1 -1 1802 14 3 15 16 17 -1 -1 1802 16 3 17 18 19 -1 -1",
+   "packed n_qubits=1 op_count=5",
+   "words 768 0 1 2 1028 3 40 4586934234875359658 0 797 0 8 1 1802 1 3 2 4 5 -1 -1 1822 2 1 2 4 5 6 7",
    "freq [5000000000.0]",
    "waveforms {3: {amplitude: (0.047+0j), duration_vtu: 40, waveform_type: 'square'}}"
   ]
  },
  "cpmg_with_waits": {
   "ops": 10,
-  "sha256": "0287b2a6f5e4692b538d80b74d024e3b9ad5db186cbf709431850ac4dd48dd79",
+  "sha256": "6d95a86b44a24d15d88ea520b7736e4555bd9e20bb8172c7fdb79eecfcdea48c",
   "dump": [
    "func @cpmg_with_waits",
    "%0:qref = pulse.qudit_arg() {}",
@@ -79,7 +79,7 @@
    "%6:drive_line, %7:tone = pulse.drive(%5, %3, %2) {}",
    "%8:drive_line = pulse.wait(%6) {duration: 100}",
    "= scf.yield(%8, %7) {}",
-   "%9:drive_line, %10:tone = scf.for_end() {iter_args: ['d0', 't0']}"
+   "%9:drive_line, %10:tone = scf.for_end(%4, %2) {iter_args: ['d0', 't0']}"
   ]
  },
  "workload_bell": {
@@ -207,7 +207,7 @@
  },
  "workload_dd_cpmg8": {
   "ops": 9,
-  "sha256": "ba61155b7d2208de513f0093ecc58915b395bb8827744b849135b2933f471268",
+  "sha256": "2ababb35074081c328f7c5dc15bac789a02f1f51bc894bce9813ac3c2cb70897",
   "dump": [
    "func @build",
    "%0:qref = pulse.qudit_arg() {}",
@@ -218,7 +218,7 @@
    "%5:drive_line, %6:tone = pulse.drive(%4, %3, %2) {}",
    "%7:drive_line = pulse.wait(%5) {duration: 200}",
    "= scf.yield(%7, %6) {}",
-   "%8:drive_line, %9:tone = scf.for_end() {iter_args: ['d0', 't0']}"
+   "%8:drive_line, %9:tone = scf.for_end(%4, %2) {iter_args: ['d0', 't0']}"
   ]
  },
  "workload_vqe_hea": {
@@ -402,25 +402,23 @@
   ]
  },
  "parametric": {
-  "ops": 11,
-  "sha256": "50a2b9fd8c674d257ddaf01cfee52bd6d008f0379cbd87289b9809fb81ef9d46",
+  "ops": 7,
+  "sha256": "421894c06d739accae790b314aac6821bcc754348e92b81b96cec384ce6f9e2a",
   "dump": [
-   "packed n_qubits=1 op_count=11",
-   "words 768 0 1 2 530 4 0 787 5 1 4602678819172646912 1300 6 1 2 4 5 263171 3 40 6 4621819117588971520 1802 1 3 2 7 8 -1 -1 530 10 1 787 11 0 2 1300 12 0 2 10 11 262925 7 9 12 787 14 1 4602678819172646912 1300 15 1 2 4 14 263171 13 40 15 4621819117588971520 1802 9 13 8 16 17 -1 -1 787 19 0 2 1300 20 0 2 10 19 262925 16 18 20 787 22 1 4602678819172646912 1300 23 1 2 4 22 263171 21 40 23 4621819117588971520 1802 18 21 17 24 25 -1 -1 787 27 0 2 1300 28 0 2 10 27 262925 24 26 28 789 30 1 4 262926 25 29 30",
+   "packed n_qubits=1 op_count=7",
+   "words 768 0 1 2 797 0 3 1 530 4 0 787 5 1 4602678819172646912 1300 6 1 2 4 5 263171 3 40 6 4621819117588971520 1802 1 3 2 7 8 -1 -1 530 10 1 787 11 0 2 1300 12 0 2 10 11 262925 7 9 12 1822 2 1 2 9 8 13 14 789 16 1 4 262926 14 15 16",
    "freq [5000000000.0]",
-   "waveforms {3: {amplitude: ParameterExpression(mul, Parameter('amp', idx=0, f64), 0.5), duration_vtu: 40, sigma: 10.0, waveform_type: 'gaussian'}, 13: {amplitude: ParameterExpression(mul, Parameter('amp', idx=0, f64), 0.5), duration_vtu: 40, sigma: 10.0, waveform_type: 'gaussian'}, 21: {amplitude: ParameterExpression(mul, Parameter('amp', idx=0, f64), 0.5), duration_vtu: 40, sigma: 10.0, waveform_type: 'gaussian'}}"
+   "waveforms {3: {amplitude: ParameterExpression(mul, Parameter('amp', idx=0, f64), 0.5), duration_vtu: 40, sigma: 10.0, waveform_type: 'gaussian'}}"
   ]
  },
  "measurement_branch": {
-  "error": "CompilationError: measurement-conditioned branches are retained in kernel IR (call the kernel to inspect it), but compile() writes a packed program for the MLIR pipeline, which cannot represent them yet",
-  "code": "measurement_branch",
-  "span": [
-   4,
-   4
-  ],
-  "cols": [
-   7,
-   10
+  "ops": 7,
+  "sha256": "91eeb2740ed18da99dcdc809352e80a751555a632abe3bc005b62336093c5b1e",
+  "dump": [
+   "packed n_qubits=1 op_count=7",
+   "words 769 0 1 2 1028 3 10 4596373779694328218 0 1547 1 3 2 4 5 6 287 6 781 4 7 10 32 1057 1 7 4 8",
+   "freq [5000000000.0]",
+   "waveforms {3: {amplitude: 0.2, duration_vtu: 10, waveform_type: 'square'}}"
   ]
  },
  "active_reset": {
@@ -472,7 +470,7 @@
  },
  "feedback_in_loop": {
   "ops": 16,
-  "sha256": "23d713d5bef8c971aaae6c27f7c62dccdb35d069044d2a97a861e932f54a1b0d",
+  "sha256": "2503f7d3a8a3dcd7222021aef4cd3bd7289862567a232df297d476e6a2f677b6",
   "dump": [
    "func @feedback_in_loop",
    "%0:qref = pulse.qudit_arg() {}",
@@ -490,7 +488,7 @@
    "= scf.yield(%9, %2) {}",
    "%14:drive_line, %15:tone = scf.if_end() {result_names: ['d0', 't0']}",
    "= scf.yield(%8, %14, %10, %7, %15) {}",
-   "%16:measurement, %17:drive_line, %18:readout_line, %19:tone, %20:tone = scf.for_end() {iter_args: ['bit', 'd0', 'r0', 'rt', 't0']}"
+   "%16:measurement, %17:drive_line, %18:readout_line, %19:tone, %20:tone = scf.for_end(%-1, %1, %3, %4, %2) {iter_args: ['bit', 'd0', 'r0', 'rt', 't0']}"
   ]
  },
  "feedback_both_return": {

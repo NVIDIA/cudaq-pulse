@@ -20,7 +20,14 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-from .ir_builder import CompilationError, IRValue, Parameter, ParameterExpression, is_symbolic
+from .ir_builder import (
+    UNDEFINED_VID,
+    CompilationError,
+    IRValue,
+    Parameter,
+    ParameterExpression,
+    is_symbolic,
+)
 
 _pack_d = struct.Struct("=d")
 _unpack_q = struct.Struct("=q")
@@ -55,6 +62,11 @@ _WF_SUB = 25
 _WF_MUL = 26
 _WF_SCALE = 27
 _WF_NEG = 28
+_FOR_BEGIN = 29
+_FOR_END = 30
+_IF_BEGIN = 31
+_ELSE = 32
+_IF_END = 33
 
 _NUMERIC_TYPE = {"i64": 0, "f64": 1}
 _BINARY_OP = {
@@ -82,7 +94,9 @@ def _f2i(x: float) -> int:
     return int(_unpack_q.unpack(_pack_d.pack(float(x)))[0])
 
 
-# The record header stores the payload length in 8 bits.
+# The record header stores the payload length in 8 bits. Region records,
+# whose payload grows with the values they carry, write 0xFF there and the
+# length in the next word.
 _MAX_PAYLOAD = 0xFF
 
 
@@ -130,6 +144,9 @@ class PackedIRBuilder:
     pre-allocated numpy buffer.
     """
 
+    # Loops and measurement-conditioned branches become region records.
+    supports_regions = True
+
     def __init__(
         self,
         name: str = "main",
@@ -152,6 +169,8 @@ class PackedIRBuilder:
         # Key by the expression object itself, not id(expression): temporary
         # expressions may be collected and Python may reuse their integer IDs.
         self._numeric_vids: dict[tuple[ParameterExpression, str], int] = {}
+        # Open regions, innermost last: the yields seen so far in each.
+        self._regions: list[dict[str, tuple[int, ...]]] = []
 
     def _mk(self, vtype: str, name: str = "") -> IRValue:
         v = IRValue(self._next_id, vtype, name)
@@ -445,10 +464,8 @@ class PackedIRBuilder:
                 self._w(_f2i(freq))
             return results
 
-        # The packed encoding has no regions; without supports_regions the
-        # emitter unrolls every loop.
         if kind.startswith("scf."):
-            raise CompilationError(f"structured control flow op {kind!r} cannot be packed")
+            return self._region(kind, operands, results, a)
 
         algebra_opcodes = {
             "pulse.wf_add": _WF_ADD,
@@ -476,6 +493,91 @@ class PackedIRBuilder:
             return results
 
         raise CompilationError(f"unsupported packed pulse op: {kind}")
+
+    def _record(self, opcode: int, payload: list[int]) -> None:
+        extended = len(payload) >= _MAX_PAYLOAD
+        self._ensure(len(payload) + 2)
+        self._w(_header(opcode, _MAX_PAYLOAD if extended else len(payload)))
+        if extended:
+            self._w(len(payload))
+        for word in payload:
+            self._w(word)
+
+    def _region(
+        self,
+        kind: str,
+        operands: tuple[IRValue, ...],
+        results: tuple[IRValue, ...],
+        attrs: dict[str, Any],
+    ) -> tuple[IRValue, ...]:
+        if kind == "scf.yield":
+            # Yields are part of the record that closes their region.
+            self._op_count -= 1
+            region = self._regions[-1]
+            region["else" if "else" in region else "yield"] = tuple(v.vid for v in operands)
+            return results
+        if kind == "scf.for":
+            lb = _as_i64(attrs.get("lb", 0), "loop lower bound")
+            ub = _as_i64(attrs.get("ub", 0), "loop upper bound")
+            step = _as_i64(attrs.get("step", 1), "loop step")
+            self._record(_FOR_BEGIN, [lb, ub, step])
+            self._regions.append({})
+        elif kind == "scf.for_end":
+            region = self._regions.pop()
+            inits = [v.vid if v.vid != UNDEFINED_VID else -1 for v in operands]
+            yields = list(region.get("yield", ()))
+            self._record(_FOR_END, [len(results), *inits, *yields, *(r.vid for r in results)])
+        elif kind == "scf.if":
+            self._record(_IF_BEGIN, [operands[0].vid])
+            self._regions.append({})
+        elif kind == "scf.else":
+            self._record(_ELSE, [])
+            self._regions[-1]["else"] = ()
+        elif kind == "scf.if_end":
+            region = self._regions.pop()
+            self._record(
+                _IF_END,
+                [
+                    len(results),
+                    *region.get("yield", ()),
+                    *region.get("else", ()),
+                    *(r.vid for r in results),
+                ],
+            )
+        else:
+            raise CompilationError(f"unsupported structured control flow op {kind!r}")
+        return results
+
+    def mark(self) -> int:
+        return self._cur
+
+    def insert(self, index: int, kind: str, operands: tuple[IRValue, ...]) -> None:
+        """The emitter inserts only the then-arm yield, once the arm is traced."""
+        if kind != "scf.yield" or not self._regions:
+            raise CompilationError(f"cannot insert {kind!r} into a packed program")
+        self._regions[-1]["yield"] = tuple(v.vid for v in operands)
+
+    def checkpoint(self) -> tuple[Any, ...]:
+        return (
+            self._cur,
+            self._next_id,
+            self._next_qubit,
+            self._op_count,
+            [dict(region) for region in self._regions],
+        )
+
+    def rollback(self, checkpoint: tuple[Any, ...]) -> None:
+        self._cur, self._next_id, self._next_qubit, self._op_count, regions = checkpoint
+        self._regions = regions
+        live = self._next_id
+        for table in (self._qref_to_qubit, self._wf_attrs):
+            for vid in [vid for vid in table if vid >= live]:
+                del table[vid]
+        for index in [i for i, vid in self._param_vids.items() if vid >= live]:
+            del self._param_vids[index]
+            self._param_names.pop(index, None)
+        for key in [k for k, vid in self._numeric_vids.items() if vid >= live]:
+            del self._numeric_vids[key]
 
     def _get_parameter_base_vid(self, param: Parameter, expected_dtype: str) -> int:
         """Get a block-argument reference and infer its storage type."""

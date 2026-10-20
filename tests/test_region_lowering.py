@@ -70,7 +70,7 @@ def _case(draw):
 
 
 @given(case=_case(), policy=st.sampled_from(["asap", "alap"]))
-@settings(max_examples=80, deadline=None)
+@settings(max_examples=80, deadline=None, derandomize=True)
 def test_retained_loop_lowers_like_its_unrolling(case, policy):
     rolled, unrolled = _programs(*case)
     a = _hamiltonian(rolled, case[0], policy)

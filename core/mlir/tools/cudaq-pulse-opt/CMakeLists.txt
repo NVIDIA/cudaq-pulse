@@ -26,6 +26,7 @@ target_link_libraries(cudaq-pulse-opt PRIVATE
   MLIRFuncDialect
   MLIRArithDialect
   MLIRSCFDialect
+  MLIRUBDialect
   MLIRArithToLLVM
   MLIRFuncToLLVM
   MLIRLLVMDialect

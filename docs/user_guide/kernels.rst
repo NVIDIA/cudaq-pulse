@@ -125,9 +125,10 @@ A loop whose induction variable is never read, like the one above, is
 captured once as a structured ``scf.for`` in the kernel IR, so the IR size
 does not depend on the trip count. Loops that read the induction variable,
 or that carry Python state from one iteration to the next, are unrolled
-exactly at trace time. ``cudaq_pulse.compile()`` writes the packed program
-directly and always unrolls. Symbolic or runtime-dependent loop bounds, and
-``while`` loops, are rejected.
+exactly at trace time. ``cudaq_pulse.compile()`` keeps the same loops as an
+``scf.for`` that carries the lines and tones its body advances; the
+scheduler times every iteration. Symbolic or runtime-dependent loop bounds,
+and ``while`` loops, are rejected.
 
 **If/else** with compile-time conditions:
 
@@ -167,7 +168,10 @@ directly and always unrolls. Symbolic or runtime-dependent loop bounds, and
 Both branches are traced, and lines and tones they rebind become the
 results of the region. Both branches must continue after the ``if``, and
 other Python values must not differ between them. ``cudaq_pulse.compile()``
-cannot lower conditional regions yet and raises an error at the ``if``.
+keeps the branch as an ``scf.if`` on ``pulse.is_set`` (whether the readout
+observed a nonzero level), whose arms yield the lines and tones they
+advance; both arms start once the measurement completes, and the code after
+the ``if`` waits for the longer arm.
 
 Unsupported Patterns
 --------------------

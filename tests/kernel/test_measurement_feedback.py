@@ -15,6 +15,18 @@ from cudaq_pulse.kernel.ir_builder import CompilationError
 
 from tests.kernel.ir_corpus import active_reset, feedback_in_loop, negated_feedback
 
+_FREQ = {0: 5.0e9, 1: 5.1e9}
+
+
+def _compile(kernel, n_qubits=1, **kwargs):
+    return pulse.compile(
+        kernel, [pulse.qudit_ref() for _ in range(n_qubits)], qubit_freq_hz=_FREQ, **kwargs
+    )
+
+
+def _makespan(compiled):
+    return max(e.start_vtu + e.duration_vtu for e in compiled.events())
+
 
 def test_active_reset_retains_the_conditional():
     ir = active_reset(pulse.qudit_ref())
@@ -46,10 +58,38 @@ def test_negation_swaps_the_arms():
     assert "pulse.drive" in else_arm and "pulse.shift_phase" in else_arm
 
 
+def test_compiled_feedback_verifies():
+    for kernel, n in ((active_reset, 1), (negated_feedback, 2), (feedback_in_loop, 1)):
+        compiled = _compile(kernel, n)
+        assert "pulse.is_set" in compiled.mlir
+        compiled.module.run_passes(["pulse-verify"])
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap"])
+def test_schedule_allows_for_the_longer_arm(schedule):
+    # readout (300) then the conditional X (40) and a wait (10)
+    assert _makespan(_compile(active_reset, schedule=schedule)) == 300 + 40 + 10
+    # else arm (wait 40 on d0) vs then arm (shift + 40 on d1); both start
+    # after the readout, then a 20 drive on d0.
+    assert _makespan(_compile(negated_feedback, 2, schedule=schedule)) == 300 + 40 + 20
+
+
+def test_conditional_waits_for_the_measurement():
+    events = _compile(active_reset, schedule="asap").events()
+    readout = next(e for e in events if e.kind == "readout")
+    drive = next(e for e in events if e.kind == "drive")
+    assert drive.start_vtu >= readout.start_vtu + readout.duration_vtu
+
+
 def test_feedback_inside_a_retained_loop():
     ir = feedback_in_loop(pulse.qudit_ref())
     kinds = [op.kind for op in ir.ops]
     assert kinds.count("scf.for") == 1 and kinds.count("scf.if") == 1
+    compiled = _compile(feedback_in_loop, schedule="asap")
+    assert compiled.mlir.count("scf.for") == 1
+    # Each readout may start while the previous iteration's conditional
+    # drive is still playing on the drive line.
+    assert _makespan(compiled) == 5 * 300 + 40
 
 
 def test_python_state_cannot_depend_on_a_measurement():

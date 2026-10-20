@@ -215,6 +215,9 @@ class IRValue(_UndecidableComparisons):
 
 LINEAR_TYPES = frozenset({"drive_line", "readout_line", "tone"})
 
+# The vid of a loop-carried value that has no value entering the loop.
+UNDEFINED_VID = -1
+
 # (n_value_args, attr_names, result_types)
 #   n_value_args: leading args that are IR values; -1 = variadic all-values
 #   result_types: None = mirror operand types
@@ -247,7 +250,7 @@ OP_TABLE: dict[str, tuple[int, tuple[str, ...], tuple[str, ...] | None]] = {
 }
 
 
-_UNCOUNTED_OPS = frozenset({"pulse.qudit_arg", "scf.yield"})
+_UNCOUNTED_OPS = frozenset({"pulse.qudit_arg", "pulse.qudit_alloc", "scf.yield"})
 
 
 class PythonIRBuilder:
@@ -279,6 +282,10 @@ class PythonIRBuilder:
         results = tuple(self._mk(rt) for rt in result_types)
         self.ops.append(Op(kind, operands, results, attrs or {}))
         return results
+
+    def mark(self) -> int:
+        """A position that ``insert`` can later insert at."""
+        return len(self.ops)
 
     def insert(self, index: int, kind: str, operands: tuple[IRValue, ...]) -> None:
         """Insert a result-less op before ``ops[index]``."""
