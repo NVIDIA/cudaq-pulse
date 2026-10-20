@@ -32,6 +32,7 @@ from .ir_types import (
     ValueType,
     duration_of,
     line_id_of,
+    reject_conditionals,
 )
 
 # ---------------------------------------------------------------------------
@@ -469,6 +470,7 @@ def run_pulse_to_operator(
     t1_times, t2_times : dict, optional
         Legacy per-qubit decoherence dicts. Ignored if ``target`` is provided.
     """
+    reject_conditionals(program, "operator lowering (simulation)")
     if target is not None:
         active_qubits = set(program.qubit_freq_hz)
         missing = sorted(active_qubits - set(target.qubits))

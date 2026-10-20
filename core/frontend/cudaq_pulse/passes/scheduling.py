@@ -145,6 +145,26 @@ def _loop_ends(ops: list[Op]) -> dict[int, int]:
     return ends
 
 
+def _if_bounds(ops: list[Op]) -> dict[int, tuple[int, int]]:
+    """Map each IF and END_IF index to the indices of its ELSE and other end."""
+    bounds: dict[int, tuple[int, int]] = {}
+    stack: list[list[int]] = []
+    for index, op in enumerate(ops):
+        if op.kind == OpKind.IF:
+            stack.append([index, -1])
+        elif op.kind == OpKind.ELSE and stack:
+            stack[-1][1] = index
+        elif op.kind == OpKind.END_IF:
+            if not stack or stack[-1][1] < 0:
+                raise ScheduleError(f"END_IF at op[{index}] without a matching IF and ELSE")
+            start, middle = stack.pop()
+            bounds[start] = (middle, index)
+            bounds[index] = (start, middle)
+    if stack:
+        raise ScheduleError(f"IF at op[{stack[-1][0]}] without matching END_IF")
+    return bounds
+
+
 def _trip_count(op: Op, index: int) -> int:
     attrs = op.attrs
     if "count" in attrs and "ub" not in attrs:
@@ -191,6 +211,11 @@ class _Scheduler:
         self.machine = machine
         self.roots = _resource_roots(program)
         self.ends = _loop_ends(self.ops)
+        self.ifs = _if_bounds(self.ops)
+        # Earliest start for ops inside a measurement-conditioned arm.
+        self.floor = 0.0
+        # Earliest begin of the ops in each enclosing arm (ALAP).
+        self.arm_begin: list[float] = []
         self.events: list[ScheduledEvent | None] = [None] * len(self.ops)
         self.acct = _Accounting()
         n_drive = machine.max_concurrent_drives if machine is not None else 0
@@ -237,6 +262,7 @@ class _Scheduler:
         ops = self.ops
         ready = self.ready
         machine = self.machine
+        floor = self.floor
         i = i0
         while i < i1:
             op = ops[i]
@@ -245,7 +271,12 @@ class _Scheduler:
                 self._forward_loop(i, end, record, iterations)
                 i = end + 1
                 continue
-            operand_ready = max((ready.get(v.vid, 0.0) for v in op.operands), default=0.0)
+            if op.kind == OpKind.IF:
+                i = self._forward_if(i, record, iterations) + 1
+                continue
+            operand_ready = max((ready.get(v.vid, 0.0) for v in op.operands), default=floor)
+            if operand_ready < floor:
+                operand_ready = floor
             duration = duration_of(op) if op.kind in _TIMED_KINDS else 0.0
             start = operand_ready
             result_ready = start + duration
@@ -265,6 +296,46 @@ class _Scheduler:
             for result in op.results:
                 ready[result.vid] = result_ready
             i += 1
+
+    def _forward_if(self, start: int, record: bool, iterations: int) -> int:
+        """Schedule both arms from the same state; return the END_IF index."""
+        middle, end = self.ifs[start]
+        ops = self.ops
+        cond_ready = max(
+            self.floor, max((self.ready.get(v.vid, 0.0) for v in ops[start].operands), default=0.0)
+        )
+        if record:
+            self._record(start, cond_ready, 0.0, iterations)
+        entry = dict(self.ready)
+        entry_lanes = (list(self.drive_lanes), list(self.readout_lanes))
+        outer_floor = self.floor
+        self.floor = cond_ready
+
+        self._forward_range(start + 1, middle, record, iterations)
+        then_ready = dict(self.ready)
+        then_lanes = (self.drive_lanes, self.readout_lanes)
+        self.ready.clear()
+        self.ready.update(entry)
+        self.drive_lanes, self.readout_lanes = (list(lanes) for lanes in entry_lanes)
+        self._forward_range(middle + 1, end, record, iterations)
+        self.floor = outer_floor
+
+        ready = self.ready
+        for vid, value in then_ready.items():
+            if value > ready.get(vid, value - 1.0):
+                ready[vid] = value
+        for mine, theirs in zip((self.drive_lanes, self.readout_lanes), then_lanes):
+            mine.sort()
+            for j, value in enumerate(sorted(theirs)):
+                mine[j] = max(mine[j], value)
+        joined = []
+        for result, a, b in zip(ops[end].results, ops[middle].operands, ops[end].operands):
+            ready[result.vid] = max(ready.get(a.vid, 0.0), ready.get(b.vid, 0.0))
+            joined.append(ready[result.vid])
+        if record:
+            self._record(middle, cond_ready, 0.0, iterations)
+            self._record(end, max(joined, default=cond_ready), 0.0, iterations)
+        return end
 
     def _forward_loop(self, start: int, end: int, record: bool, iterations: int) -> None:
         n = _trip_count(self.ops[start], start)
@@ -362,9 +433,13 @@ class _Scheduler:
         ops = self.ops
         latest = self.latest
         makespan = self.makespan
+        arm_begin = self.arm_begin
         i = i1 - 1
         while i >= i0:
             op = ops[i]
+            if op.kind == OpKind.END_IF:
+                i = self._backward_if(i, record, iterations) - 1
+                continue
             if op.kind == OpKind.END_FOR:
                 start = next(s for s, e in self.ends.items() if e == i)
                 self._backward_loop(start, i, record, iterations)
@@ -373,12 +448,47 @@ class _Scheduler:
             duration = duration_of(op) if op.kind in _TIMED_KINDS else 0.0
             end = min((latest.get(v.vid, makespan) for v in op.results), default=makespan)
             begin = end - duration
+            if arm_begin and begin < arm_begin[-1]:
+                arm_begin[-1] = begin
             if record:
                 self._record(i, begin, duration, iterations)
             self.acct.add(self.line_of[i], begin, duration)
             for operand in op.operands:
                 latest[operand.vid] = min(latest.get(operand.vid, makespan), begin)
             i -= 1
+
+    def _backward_if(self, end: int, record: bool, iterations: int) -> int:
+        """Schedule both arms back from the END_IF; return the IF index."""
+        start, middle = self.ifs[end]
+        ops = self.ops
+        latest = self.latest
+        makespan = self.makespan
+        joined = []
+        for result, a, b in zip(ops[end].results, ops[middle].operands, ops[end].operands):
+            limit = latest.get(result.vid, makespan)
+            latest[a.vid] = min(latest.get(a.vid, makespan), limit)
+            latest[b.vid] = min(latest.get(b.vid, makespan), limit)
+            joined.append(limit)
+        entry = dict(latest)
+        self.arm_begin.append(makespan)
+        self._backward_range(middle + 1, end, record, iterations)
+        else_latest = dict(latest)
+        latest.clear()
+        latest.update(entry)
+        self._backward_range(start + 1, middle, record, iterations)
+        earliest = self.arm_begin.pop()
+        for vid, value in else_latest.items():
+            if value < latest.get(vid, value + 1.0):
+                latest[vid] = value
+        if self.arm_begin and earliest < self.arm_begin[-1]:
+            self.arm_begin[-1] = earliest
+        for v in ops[start].operands:
+            latest[v.vid] = min(latest.get(v.vid, makespan), earliest)
+        if record:
+            self._record(end, min(joined, default=earliest), 0.0, iterations)
+            self._record(middle, earliest, 0.0, iterations)
+            self._record(start, earliest, 0.0, iterations)
+        return start
 
     def _backward_loop(self, start: int, end: int, record: bool, iterations: int) -> None:
         n = _trip_count(self.ops[start], start)

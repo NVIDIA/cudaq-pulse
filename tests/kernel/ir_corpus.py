@@ -242,6 +242,70 @@ def measurement_branch(q0):
 
 
 @pulse.kernel
+def active_reset(q0):
+    d0, t0 = get_drive_line(q0)
+    r0, rt = get_readout_line(q0)
+    x = square(40, 0.1)
+    sync(d0, r0)
+    bit = readout(r0, square(300, 0.05), rt)
+    if bit:
+        drive(d0, x, t0)
+    wait(d0, 10)
+
+
+@pulse.kernel
+def negated_feedback(q0, q1):
+    d0, t0 = get_drive_line(q0)
+    d1, t1 = get_drive_line(q1)
+    r0, rt = get_readout_line(q0)
+    bit = readout(r0, square(300, 0.05), rt)
+    sync(d0, d1, r0)
+    if not bit:
+        t1 = shift_phase(t1, math.pi)
+        drive(d1, square(40, 0.1), t1)
+    else:
+        wait(d0, 40)
+    drive(d0, square(20, 0.2), t0)
+
+
+@pulse.kernel
+def feedback_in_loop(q0):
+    d0, t0 = get_drive_line(q0)
+    r0, rt = get_readout_line(q0)
+    for _ in range(5):
+        bit = readout(r0, square(300, 0.05), rt)
+        sync(d0, r0)
+        if bit:
+            drive(d0, square(40, 0.1), t0)
+
+
+@pulse.kernel
+def feedback_both_return(q0):
+    d0, t0 = get_drive_line(q0)
+    r0, rt = get_readout_line(q0)
+    bit = readout(r0, square(300, 0.05), rt)
+    if bit:
+        drive(d0, square(40, 0.1), t0)
+        return
+    wait(d0, 40)
+
+
+@pulse.kernel
+def compare_symbolic(q0, amp: float):
+    d0, t0 = get_drive_line(q0)
+    if amp > 0.5:
+        wait(d0, 10)
+
+
+@pulse.kernel
+def compare_measurement(q0):
+    r0, t0 = get_readout_line(q0)
+    bit = readout(r0, square(10, 0.2), t0)
+    if bit == 1:
+        wait(r0, 10)
+
+
+@pulse.kernel
 def bad_attribute(q0):
     d0, t0 = get_drive_line(q0)
     drive(d0, math.not_a_function(3), t0)
@@ -304,6 +368,19 @@ def _cases() -> list[Case]:
         )
     )
     cases.append(Case("measurement_branch", measurement_branch, _qubits(1), "packed"))
+    cases.append(Case("active_reset", active_reset, _qubits(1), "python"))
+    cases.append(Case("negated_feedback", negated_feedback, _qubits(2), "python"))
+    cases.append(Case("feedback_in_loop", feedback_in_loop, _qubits(1), "python"))
+    cases.append(Case("feedback_both_return", feedback_both_return, _qubits(1), "python"))
+    cases.append(
+        Case(
+            "compare_symbolic",
+            compare_symbolic,
+            lambda: [pulse.qudit_ref(), Parameter("amp", 0, "f64")],
+            "packed",
+        )
+    )
+    cases.append(Case("compare_measurement", compare_measurement, _qubits(1), "python"))
     cases.append(Case("bad_attribute", bad_attribute, _qubits(1), "python"))
     cases.append(Case("while_loop", while_loop, _qubits(1), "python"))
     return cases

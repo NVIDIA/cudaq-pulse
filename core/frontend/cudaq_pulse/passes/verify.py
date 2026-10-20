@@ -101,8 +101,42 @@ def check_linearity(program: Program) -> list[TypeCheckError]:
     errors: list[TypeCheckError] = []
     produced: dict[int, int] = {}  # vid -> op_index that produced it
     consumed: dict[int, int] = {}  # vid -> consume count
+    # Inside an if, consumption is counted per arm; a value consumed once in
+    # each arm is consumed once on every path.
+    arms: list[tuple[dict[int, int], dict[int, int], bool]] = []
+
+    def consume(vid: int) -> None:
+        if arms:
+            then_counts, else_counts, in_else = arms[-1]
+            counts = else_counts if in_else else then_counts
+        else:
+            counts = consumed
+        counts[vid] = counts.get(vid, 0) + 1
 
     for idx, op in enumerate(program.ops):
+        if op.kind == OpKind.ELSE and arms:
+            for v in op.operands:
+                if is_linear_type(v.vtype):
+                    consume(v.vid)
+            then_counts, else_counts, _ = arms[-1]
+            arms[-1] = (then_counts, else_counts, True)
+            continue
+        merged_arms = op.kind == OpKind.END_IF and bool(arms)
+        if merged_arms:
+            for v in op.operands:
+                if is_linear_type(v.vtype):
+                    consume(v.vid)
+            then_counts, else_counts, _ = arms.pop()
+            if arms:
+                outer_then, outer_else, outer_in_else = arms[-1]
+                target = outer_else if outer_in_else else outer_then
+            else:
+                target = consumed
+            for vid in then_counts.keys() | else_counts.keys():
+                target[vid] = target.get(vid, 0) + max(
+                    then_counts.get(vid, 0), else_counts.get(vid, 0)
+                )
+
         for v in op.results:
             if not is_linear_type(v.vtype):
                 continue
@@ -119,10 +153,12 @@ def check_linearity(program: Program) -> list[TypeCheckError]:
             else:
                 produced[v.vid] = idx
 
-        for v in op.operands:
+        for v in () if merged_arms else op.operands:
             if not is_linear_type(v.vtype):
                 continue
-            consumed[v.vid] = consumed.get(v.vid, 0) + 1
+            consume(v.vid)
+        if op.kind == OpKind.IF:
+            arms.append(({}, {}, False))
 
     for vid, prod_idx in produced.items():
         count = consumed.get(vid, 0)
@@ -159,14 +195,32 @@ def _line_roots(program: Program) -> dict[int, int]:
         if op.kind in (OpKind.ALLOC_DRIVE, OpKind.ALLOC_READOUT):
             for result in results:
                 roots[result.vid] = result.vid
-        elif op.kind == OpKind.SYNC:
+        else:
+            # The k-th line result continues the k-th line operand.
             for operand, result in zip(operands, results):
                 roots[result.vid] = roots.get(operand.vid, operand.vid)
-        elif operands:
-            root = roots.get(operands[0].vid, operands[0].vid)
-            for result in results:
-                roots[result.vid] = root
     return roots
+
+
+def _arm_paths(program: Program) -> list[tuple[tuple[int, bool], ...]]:
+    """For each op, the (IF index, in else-arm) pairs of the arms enclosing it."""
+    paths: list[tuple[tuple[int, bool], ...]] = []
+    stack: list[tuple[int, bool]] = []
+    for idx, op in enumerate(program.ops):
+        if op.kind == OpKind.ELSE and stack:
+            stack[-1] = (stack[-1][0], True)
+        if op.kind == OpKind.END_IF and stack:
+            stack.pop()
+        paths.append(tuple(stack))
+        if op.kind == OpKind.IF:
+            stack.append((idx, False))
+    return paths
+
+
+def _exclusive(a: tuple[tuple[int, bool], ...], b: tuple[tuple[int, bool], ...]) -> bool:
+    """Whether two ops lie in different arms of the same if, so never both run."""
+    arms = dict(a)
+    return any(arms.get(index, in_else) != in_else for index, in_else in b)
 
 
 def check_monotone_time(program: Program) -> list[TypeCheckError]:
@@ -174,8 +228,22 @@ def check_monotone_time(program: Program) -> list[TypeCheckError]:
     errors: list[TypeCheckError] = []
     roots = _line_roots(program)
     line_clocks: dict[int, float] = {}
+    # Each arm of an if starts from the clocks at the IF; they rejoin at the
+    # later of the two arms.
+    saved: list[tuple[dict[int, float], dict[int, float] | None]] = []
 
     for idx, op in enumerate(program.ops):
+        if op.kind == OpKind.IF:
+            saved.append((dict(line_clocks), None))
+        elif op.kind == OpKind.ELSE and saved:
+            entry, _ = saved[-1]
+            saved[-1] = (entry, line_clocks)
+            line_clocks = dict(entry)
+        elif op.kind == OpKind.END_IF and saved:
+            _, then_clocks = saved.pop()
+            for key, value in (then_clocks or {}).items():
+                if value > line_clocks.get(key, 0.0):
+                    line_clocks[key] = value
         lid = line_id_of(op)
         if lid is None:
             continue
@@ -221,6 +289,7 @@ def check_drive_exclusivity(program: Program) -> list[TypeCheckError]:
         return errors
 
     roots = _line_roots(program)
+    paths = _arm_paths(program)
     line_intervals: dict[int, list[tuple[float, float, int]]] = {}
 
     for idx, op in enumerate(program.ops):
@@ -239,6 +308,8 @@ def check_drive_exclusivity(program: Program) -> list[TypeCheckError]:
             line_intervals[root] = []
 
         for prev_start, prev_end, prev_idx in line_intervals[root]:
+            if _exclusive(paths[prev_idx], paths[idx]):
+                continue
             if start < prev_end - 1e-12 and end > prev_start + 1e-12:
                 errors.append(
                     UnintentionalOverlapError(
@@ -290,6 +361,52 @@ def check_cr_miscalibration(program: Program) -> list[TypeCheckError]:
                 )
             )
 
+    return errors
+
+
+def check_if_structure(program: Program) -> list[TypeCheckError]:
+    """Verify IF/ELSE/END_IF regions are well formed.
+
+    The condition is a single measurement result, each IF has exactly one
+    ELSE, and both arms yield values matching the END_IF results.
+    """
+    errors: list[TypeCheckError] = []
+    stack: list[tuple[int, int | None]] = []
+
+    def error(idx: int, message: str) -> None:
+        errors.append(TypeCheckError(message=message, op_index=idx))
+
+    for idx, op in enumerate(program.ops):
+        if op.kind == OpKind.IF:
+            if len(op.operands) != 1 or op.operands[0].vtype != ValueType.MEASUREMENT:
+                error(idx, f"IF at op[{idx}] must take exactly one measurement result")
+            stack.append((idx, None))
+        elif op.kind == OpKind.ELSE:
+            if not stack or stack[-1][1] is not None:
+                error(idx, f"ELSE at op[{idx}] without an open IF")
+                continue
+            stack[-1] = (stack[-1][0], idx)
+        elif op.kind == OpKind.END_IF:
+            if not stack:
+                error(idx, f"END_IF at op[{idx}] without matching IF")
+                continue
+            start, else_idx = stack.pop()
+            if else_idx is None:
+                error(idx, f"IF at op[{start}] has no ELSE")
+                continue
+            expected = [r.vtype for r in op.results]
+            for arm, values in (
+                ("then", program.ops[else_idx].operands),
+                ("else", op.operands),
+            ):
+                if [v.vtype for v in values] != expected:
+                    error(
+                        idx,
+                        f"IF at op[{start}]: {arm} arm yields "
+                        f"{[str(v.vtype) for v in values]}, expected {[str(t) for t in expected]}",
+                    )
+    for start, _ in stack:
+        error(start, f"IF at op[{start}] without matching END_IF")
     return errors
 
 
@@ -399,6 +516,7 @@ def verify(program: Program, *, strict: bool = False) -> list[TypeCheckError]:
     errors: list[TypeCheckError] = []
     errors.extend(check_linearity(program))
     errors.extend(check_loop_structure(program))
+    errors.extend(check_if_structure(program))
     errors.extend(check_waveform_validity(program))
     errors.extend(check_monotone_time(program))
     errors.extend(check_drive_exclusivity(program))

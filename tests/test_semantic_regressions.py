@@ -61,7 +61,7 @@ def test_range_start_stop_step_values_are_preserved():
         assert f"{value:.6e}" in compiled.mlir
 
 
-def test_measurement_dependent_branch_is_rejected():
+def test_compile_rejects_measurement_dependent_branch():
 
     @pulse.kernel
     def kernel(q):
@@ -70,7 +70,7 @@ def test_measurement_dependent_branch_is_rejected():
         if result:
             wait(line, 10)
 
-    with pytest.raises(CompilationError, match="runtime-dependent branches"):
+    with pytest.raises(CompilationError, match=r"compile\(\) writes a packed program"):
         pulse.compile(kernel, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9})
 
 

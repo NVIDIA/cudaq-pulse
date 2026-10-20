@@ -412,7 +412,7 @@
   ]
  },
  "measurement_branch": {
-  "error": "CompilationError: runtime-dependent branches are not supported in the pulse research preview; measurement results cannot control Python if statements",
+  "error": "CompilationError: measurement-conditioned branches are retained in kernel IR (call the kernel or lower it with the Program passes), but compile() writes a packed program for the MLIR pipeline, which cannot represent them yet",
   "code": "measurement_branch",
   "span": [
    4,
@@ -421,6 +421,120 @@
   "cols": [
    7,
    10
+  ]
+ },
+ "active_reset": {
+  "ops": 14,
+  "sha256": "755d03413e1b22fdaa422721f846304fe0ad2f0f465d9a0056e7df8c49cd9835",
+  "dump": [
+   "func @active_reset",
+   "%0:qref = pulse.qudit_arg() {}",
+   "%1:drive_line, %2:tone = pulse.get_drive_line(%0) {}",
+   "%3:readout_line, %4:tone = pulse.get_readout_line(%0) {}",
+   "%5:waveform = pulse.square() {amplitude: 0.1, duration: 40}",
+   "%6:drive_line, %7:readout_line = pulse.sync(%1, %3) {}",
+   "%8:waveform = pulse.square() {amplitude: 0.05, duration: 300}",
+   "%9:readout_line, %10:tone, %11:measurement = pulse.readout(%7, %8, %4) {}",
+   "= scf.if(%11) {}",
+   "%12:drive_line, %13:tone = pulse.drive(%6, %5, %2) {}",
+   "= scf.yield(%12, %13) {}",
+   "= scf.else() {}",
+   "= scf.yield(%6, %2) {}",
+   "%14:drive_line, %15:tone = scf.if_end() {result_names: ['d0', 't0']}",
+   "%16:drive_line = pulse.wait(%14) {duration: 10}"
+  ]
+ },
+ "negated_feedback": {
+  "ops": 19,
+  "sha256": "e2b7325e1a6f74d23c373fddefd4ece010b4389d62fc5271b511c74416f118b8",
+  "dump": [
+   "func @negated_feedback",
+   "%0:qref = pulse.qudit_arg() {}",
+   "%1:qref = pulse.qudit_arg() {}",
+   "%2:drive_line, %3:tone = pulse.get_drive_line(%0) {}",
+   "%4:drive_line, %5:tone = pulse.get_drive_line(%1) {}",
+   "%6:readout_line, %7:tone = pulse.get_readout_line(%0) {}",
+   "%8:waveform = pulse.square() {amplitude: 0.05, duration: 300}",
+   "%9:readout_line, %10:tone, %11:measurement = pulse.readout(%6, %8, %7) {}",
+   "%12:drive_line, %13:drive_line, %14:readout_line = pulse.sync(%2, %4, %9) {}",
+   "= scf.if(%11) {}",
+   "%15:drive_line = pulse.wait(%12) {duration: 40}",
+   "= scf.yield(%15, %13, %5) {}",
+   "= scf.else() {}",
+   "%16:tone = pulse.shift_phase(%5) {phase_rad: 3.141592653589793}",
+   "%17:waveform = pulse.square() {amplitude: 0.1, duration: 40}",
+   "%18:drive_line, %19:tone = pulse.drive(%13, %17, %16) {}",
+   "= scf.yield(%12, %18, %19) {}",
+   "%20:drive_line, %21:drive_line, %22:tone = scf.if_end() {result_names: ['d0', 'd1', 't1']}",
+   "%23:waveform = pulse.square() {amplitude: 0.2, duration: 20}",
+   "%24:drive_line, %25:tone = pulse.drive(%20, %23, %3) {}"
+  ]
+ },
+ "feedback_in_loop": {
+  "ops": 16,
+  "sha256": "23d713d5bef8c971aaae6c27f7c62dccdb35d069044d2a97a861e932f54a1b0d",
+  "dump": [
+   "func @feedback_in_loop",
+   "%0:qref = pulse.qudit_arg() {}",
+   "%1:drive_line, %2:tone = pulse.get_drive_line(%0) {}",
+   "%3:readout_line, %4:tone = pulse.get_readout_line(%0) {}",
+   "= scf.for() {lb: 0, step: 1, ub: 5, var: '_'}",
+   "%5:waveform = pulse.square() {amplitude: 0.05, duration: 300}",
+   "%6:readout_line, %7:tone, %8:measurement = pulse.readout(%3, %5, %4) {}",
+   "%9:drive_line, %10:readout_line = pulse.sync(%1, %6) {}",
+   "= scf.if(%8) {}",
+   "%11:waveform = pulse.square() {amplitude: 0.1, duration: 40}",
+   "%12:drive_line, %13:tone = pulse.drive(%9, %11, %2) {}",
+   "= scf.yield(%12, %13) {}",
+   "= scf.else() {}",
+   "= scf.yield(%9, %2) {}",
+   "%14:drive_line, %15:tone = scf.if_end() {result_names: ['d0', 't0']}",
+   "= scf.yield(%8, %14, %10, %7, %15) {}",
+   "%16:measurement, %17:drive_line, %18:readout_line, %19:tone, %20:tone = scf.for_end() {iter_args: ['bit', 'd0', 'r0', 'rt', 't0']}"
+  ]
+ },
+ "feedback_both_return": {
+  "ops": 13,
+  "sha256": "6ad2f9ac6b3ea8db91e070cb301c2e761199173eebc07174bbc39b0764f306c7",
+  "dump": [
+   "func @feedback_both_return",
+   "%0:qref = pulse.qudit_arg() {}",
+   "%1:drive_line, %2:tone = pulse.get_drive_line(%0) {}",
+   "%3:readout_line, %4:tone = pulse.get_readout_line(%0) {}",
+   "%5:waveform = pulse.square() {amplitude: 0.05, duration: 300}",
+   "%6:readout_line, %7:tone, %8:measurement = pulse.readout(%3, %5, %4) {}",
+   "= scf.if(%8) {}",
+   "%9:waveform = pulse.square() {amplitude: 0.1, duration: 40}",
+   "%10:drive_line, %11:tone = pulse.drive(%1, %9, %2) {}",
+   "= scf.yield(%10, %11) {}",
+   "= scf.else() {}",
+   "%12:drive_line = pulse.wait(%1) {duration: 40}",
+   "= scf.yield(%12, %2) {}",
+   "%13:drive_line, %14:tone = scf.if_end() {result_names: ['d0', 't0']}"
+  ]
+ },
+ "compare_symbolic": {
+  "error": "CompilationError: cannot decide Parameter('amp', idx=0, f64) > 0.5 at trace time: symbolic parameters have no value until the compiled kernel is evaluated; pass a concrete value to compile() to branch on it",
+  "code": "compare_symbolic",
+  "span": [
+   3,
+   3
+  ],
+  "cols": [
+   7,
+   16
+  ]
+ },
+ "compare_measurement": {
+  "error": "CompilationError: cannot compare a runtime IR value at trace time (%v6:measurement == 1); branch on a measurement result directly with `if result:` or `if not result:`",
+  "code": "compare_measurement",
+  "span": [
+   4,
+   4
+  ],
+  "cols": [
+   7,
+   15
   ]
  },
  "bad_attribute": {

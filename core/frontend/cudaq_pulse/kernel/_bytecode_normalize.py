@@ -88,7 +88,8 @@ from typing import Any
     FORMAT,
     RAISE,
     UNSUPPORTED,
-) = range(44)
+    REGION_END,
+) = range(45)
 
 OP_NAMES: tuple[str, ...] = tuple(
     (
@@ -98,7 +99,8 @@ OP_NAMES: tuple[str, ...] = tuple(
         "BUILD_CONST_KEY_MAP BUILD_STRING LIST_APPEND LIST_EXTEND UNPACK_SEQUENCE "
         "POP_TOP COPY SWAP JUMP JUMP_IF_FALSE JUMP_IF_TRUE JUMP_IF_NONE "
         "JUMP_IF_NOT_NONE GET_ITER "
-        "FOR_ITER RETURN IMPORT_NAME IMPORT_FROM CONVERT FORMAT RAISE UNSUPPORTED"
+        "FOR_ITER RETURN IMPORT_NAME IMPORT_FROM CONVERT FORMAT RAISE UNSUPPORTED "
+        "REGION_END"
     ).split()
 )
 
@@ -518,6 +520,84 @@ def _loop_var_is_read(out: list[list[Any]], for_idx: int, exit_idx: int) -> bool
     return False
 
 
+def _successors(instrs: tuple[Instr, ...], i: int, exit_node: int) -> tuple[int, ...]:
+    op, arg = instrs[i]
+    if op == JUMP:
+        return (arg,)
+    if op in (JUMP_IF_FALSE, JUMP_IF_TRUE, JUMP_IF_NONE, JUMP_IF_NOT_NONE):
+        return (i + 1, arg)
+    if op == FOR_ITER:
+        return (i + 1, arg[0])
+    if op in (RETURN, RAISE, UNSUPPORTED):
+        return (exit_node,)
+    return (i + 1,)
+
+
+def join_point(decoded: DecodedCode, branch: int) -> int:
+    """Immediate post-dominator of the conditional jump at *branch*.
+
+    This is where both arms of an ``if`` meet again. ``len(instrs)`` stands
+    for the function exit, reached when both arms return.
+    """
+    key = (id(decoded), branch)
+    hit = _JOINS.get(key)
+    if hit is not None and hit[0] is decoded:
+        return hit[1]
+    instrs = decoded.instrs
+    exit_node = len(instrs)
+    reachable: list[int] = []
+    seen = {branch}
+    work = [branch]
+    while work:
+        node = work.pop()
+        reachable.append(node)
+        if node == exit_node:
+            continue
+        for succ in _successors(instrs, node, exit_node):
+            if succ not in seen:
+                seen.add(succ)
+                work.append(succ)
+    nodes = sorted(reachable, reverse=True)
+    postdom: dict[int, frozenset[int]] = {exit_node: frozenset((exit_node,))}
+    everything = frozenset(reachable)
+    for node in nodes:
+        if node != exit_node:
+            postdom[node] = everything
+    changed = True
+    while changed:
+        changed = False
+        for node in nodes:
+            if node == exit_node:
+                continue
+            succs = _successors(instrs, node, exit_node)
+            common = frozenset.intersection(*(postdom[s] for s in succs))
+            new = common | {node}
+            if new != postdom[node]:
+                postdom[node] = new
+                changed = True
+    strict = postdom[branch] - {branch}
+    join = next(p for p in strict if postdom[p] == strict)
+    _JOINS[key] = (decoded, join)
+    return join
+
+
+def region_view(decoded: DecodedCode, join: int) -> DecodedCode:
+    """*decoded* with ``REGION_END`` at *join*, so tracing an arm stops there."""
+    if join >= len(decoded.instrs):
+        return decoded
+    key = (id(decoded), join)
+    hit = _VIEWS.get(key)
+    if hit is not None and hit[0] is decoded:
+        return hit[1]
+    instrs = list(decoded.instrs)
+    instrs[join] = (REGION_END, None)
+    view = DecodedCode(decoded.code, tuple(instrs), decoded.positions)
+    _VIEWS[key] = (decoded, view)
+    return view
+
+
+_JOINS: dict[tuple[int, int], tuple[DecodedCode, int]] = {}
+_VIEWS: dict[tuple[int, int], tuple[DecodedCode, DecodedCode]] = {}
 _CACHE: dict[int, DecodedCode] = {}
 _CACHE_LIMIT = 4096
 

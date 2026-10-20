@@ -24,6 +24,7 @@ from .ir_types import (
     Value,
     ValueType,
     clone_program,
+    reject_conditionals,
 )
 
 
@@ -57,6 +58,7 @@ def run_virtual_z(program: Program) -> Program:
       - Phase state tracks through SSA tone lineage (shift_phase produces a new
         tone VID, and the accumulated phase transfers to that new VID).
     """
+    reject_conditionals(program, "virtual-Z")
     result = clone_program(program)
 
     # Phase state keyed by tone VID: (mode, accumulated_phase)

@@ -24,8 +24,68 @@ class CompilationError(Exception):
     pass
 
 
-class _SymbolicNumber:
+class UndecidableComparison:
+    """A comparison whose outcome is only known when the program runs.
+
+    Comparing a symbolic parameter or an IR value builds one of these
+    instead of falling back to object identity; using it as a condition
+    raises, so a kernel never silently takes one branch.
+    """
+
+    __slots__ = ("lhs", "op", "rhs")
+
+    def __init__(self, lhs: Any, op: str, rhs: Any):
+        self.lhs = lhs
+        self.op = op
+        self.rhs = rhs
+
+    def __bool__(self) -> bool:
+        operands = (self.lhs, self.rhs)
+        if any(isinstance(v, IRValue) for v in operands):
+            raise CompilationError(
+                f"cannot compare a runtime IR value at trace time ({self.lhs!r} {self.op} "
+                f"{self.rhs!r}); branch on a measurement result directly with "
+                "`if result:` or `if not result:`"
+            )
+        raise CompilationError(
+            f"cannot decide {self.lhs!r} {self.op} {self.rhs!r} at trace time: symbolic "
+            "parameters have no value until the compiled kernel is evaluated; pass a "
+            "concrete value to compile() to branch on it"
+        )
+
+    def __repr__(self) -> str:
+        return f"({self.lhs!r} {self.op} {self.rhs!r})"
+
+
+class _UndecidableComparisons:
+    """Comparison operators that defer to ``UndecidableComparison``."""
+
+    __slots__ = ()
+    __hash__ = object.__hash__
+
+    def __eq__(self, other: object) -> UndecidableComparison:  # type: ignore[override]
+        return UndecidableComparison(self, "==", other)
+
+    def __ne__(self, other: object) -> UndecidableComparison:  # type: ignore[override]
+        return UndecidableComparison(self, "!=", other)
+
+    def __lt__(self, other: Any) -> UndecidableComparison:
+        return UndecidableComparison(self, "<", other)
+
+    def __le__(self, other: Any) -> UndecidableComparison:
+        return UndecidableComparison(self, "<=", other)
+
+    def __gt__(self, other: Any) -> UndecidableComparison:
+        return UndecidableComparison(self, ">", other)
+
+    def __ge__(self, other: Any) -> UndecidableComparison:
+        return UndecidableComparison(self, ">=", other)
+
+
+class _SymbolicNumber(_UndecidableComparisons):
     """Arithmetic shared by symbolic kernel parameters and expressions."""
+
+    __slots__ = ()
 
     def _binary(self, op: str, other: Any) -> ParameterExpression:
         return ParameterExpression(op, self, other)
@@ -141,7 +201,7 @@ def is_symbolic(value: Any) -> bool:
     return isinstance(value, _SymbolicNumber)
 
 
-class IRValue:
+class IRValue(_UndecidableComparisons):
     __slots__ = ("vid", "vtype", "name")
 
     def __init__(self, vid: int, vtype: str, name: str = ""):
@@ -213,6 +273,10 @@ class PythonIRBuilder:
         results = tuple(self._mk(rt) for rt in result_types)
         self.ops.append(Op(kind, operands, results, attrs or {}))
         return results
+
+    def insert(self, index: int, kind: str, operands: tuple[IRValue, ...]) -> None:
+        """Insert a result-less op before ``ops[index]``."""
+        self.ops.insert(index, Op(kind, operands, (), {}))
 
     def checkpoint(self) -> tuple[int, int]:
         return len(self.ops), self._next_id

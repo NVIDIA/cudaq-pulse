@@ -62,6 +62,9 @@ _KIND_MAP: dict[str, str] = {
     "pulse.set_frequency": OpKind.SET_FREQUENCY,
     "scf.for": OpKind.FOR_LOOP,
     "scf.for_end": OpKind.END_FOR,
+    "scf.if": OpKind.IF,
+    "scf.else": OpKind.ELSE,
+    "scf.if_end": OpKind.END_IF,
 }
 
 
@@ -262,19 +265,13 @@ def _to_program(
             )
             continue
 
-        if kind in ("scf.if", "scf.else", "scf.if_end"):
-            raise CompilationError(
-                f"conditional control flow ({kind}) is not yet supported "
-                f"in the pass IR. Mid-circuit measurement branching requires "
-                f"IF_BEGIN/IF_END lowering (not yet implemented)."
-            )
-
-        # A loop's yielded values become the END_FOR operands, pairing each
-        # loop result with the body value it carries out.
+        # Yielded values become the operands of the op that closes the
+        # region (END_FOR, or ELSE / END_IF for the two arms of an if),
+        # pairing each region result with the value it carries out.
         if kind == "scf.yield":
             pending_yield = tuple(_map_val(o) for o in kop.operands)
             continue
-        if kind == "scf.for_end":
+        if kind in ("scf.for_end", "scf.else", "scf.if_end"):
             operand_vals, pending_yield = pending_yield, ()
         else:
             operand_vals = tuple(_map_val(o) for o in kop.operands)

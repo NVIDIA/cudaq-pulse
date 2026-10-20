@@ -20,6 +20,7 @@ from .ir_types import (
     clone_program,
     duration_of,
     is_loop_or_barrier,
+    reject_conditionals,
 )
 
 # ---------------------------------------------------------------------------
@@ -230,6 +231,7 @@ def run_canonicalize(program: Program) -> Program:
     Runs redundant-sync elimination, dead-line elimination, idle
     compression, and waveform CSE.
     """
+    reject_conditionals(program, "canonicalize")
     result = clone_program(program)
     result.ops = _redundant_sync_elim(result.ops)
     result.ops = _dead_line_elim(result.ops)

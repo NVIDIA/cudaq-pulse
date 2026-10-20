@@ -23,6 +23,7 @@ from .ir_types import (
     ValueType,
     clone_program,
     duration_of,
+    reject_conditionals,
 )
 
 
@@ -120,6 +121,7 @@ def run_fusion(program: Program) -> Program:
       - Same amplitude
       - No intervening ops on the line between the two drives
     """
+    reject_conditionals(program, "pulse fusion")
     result = clone_program(program)
     next_vid = 1 + max(
         (value.vid for op in result.ops for value in (*op.operands, *op.results)),

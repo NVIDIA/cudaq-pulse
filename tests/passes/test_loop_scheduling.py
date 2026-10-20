@@ -96,6 +96,22 @@ _BODIES = {
         readout(r0, m, rt)
 """,
     ),
+    "feedback": (
+        1,
+        """
+    d0, t0 = get_drive_line(q0)
+    r0, rt = get_readout_line(q0)
+    x = square(40, 0.1)
+    m = square(300, 0.05)
+    {loop}
+        bit = readout(r0, m, rt)
+        sync(d0, r0)
+        if bit:
+            drive(d0, x, t0)
+        else:
+            wait(d0, 70)
+""",
+    ),
     "nested": (
         2,
         """

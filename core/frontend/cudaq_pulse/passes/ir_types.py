@@ -46,6 +46,12 @@ class OpKind:
     MAKE_WAVEFORM = "make_waveform"
     FOR_LOOP = "for_loop"
     END_FOR = "end_for"
+    # Measurement-conditioned region: IF takes the measurement; ELSE carries
+    # the then-arm's yielded values and END_IF the else-arm's, with END_IF's
+    # results the values both arms produce.
+    IF = "if"
+    ELSE = "else"
+    END_IF = "end_if"
 
     # Operator dialect (pulse_to_operator lowering targets)
     QOP_SPIN = "qop.spin"
@@ -157,11 +163,25 @@ _BARRIER_KINDS = frozenset(
     {
         OpKind.FOR_LOOP,
         OpKind.END_FOR,
+        OpKind.IF,
+        OpKind.ELSE,
+        OpKind.END_IF,
         OpKind.SYNC,
         "for_begin",
         "for_end",
     }
 )
+
+
+def reject_conditionals(program: Program, stage: str) -> None:
+    """Raise if *program* has a measurement-conditioned region *stage* cannot handle."""
+    for index, op in enumerate(program.ops):
+        if op.kind == OpKind.IF:
+            raise NotImplementedError(
+                f"{stage} does not support measurement-conditioned regions yet "
+                f"(IF at op[{index}]); schedule and verify the program, or keep "
+                "the branch out of programs sent to this stage"
+            )
 
 
 def is_loop_or_barrier(op: Op) -> bool:

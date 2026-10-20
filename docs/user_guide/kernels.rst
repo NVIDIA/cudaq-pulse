@@ -146,6 +146,32 @@ directly and always unrolls. Symbolic or runtime-dependent loop bounds, and
 
 .. :spellcheck-enable:
 
+**Measurement feedback**: an ``if`` on a measurement result (``if result:`` or
+``if not result:``) is kept as a conditional region:
+
+.. :spellcheck-disable:
+
+.. code-block:: python
+
+   @pulse.kernel
+   def active_reset(qubit):
+       drive_line, drive_tone = get_drive_line(qubit)
+       readout_line, readout_tone = get_readout_line(qubit)
+       result = readout(readout_line, square(1000, 0.05), readout_tone)
+       sync(drive_line, readout_line)
+       if result:
+           drive(drive_line, drag(40, 0.5, 10.0, 0.5), drive_tone)
+
+.. :spellcheck-enable:
+
+Both branches are traced, and lines and tones they rebind become the
+results of the region. The Program passes verify such regions and schedule
+them for the longer branch, starting once the measurement is available. Both
+branches must continue after the ``if``, and other Python values must not
+differ between them. ``cudaq_pulse.compile()``, pulse MLIR emission and
+simulation cannot lower conditional regions yet and raise an error naming
+the stage.
+
 Unsupported Patterns
 --------------------
 
@@ -157,7 +183,8 @@ and will raise ``CompilationError``:
 - List comprehensions or generator expressions
 - ``try`` / ``except`` and ``with`` blocks
 - Dynamic loop bounds (bounds must be known at trace time)
-- Runtime-dependent ``if`` conditions and measurement-conditioned control flow
+- ``if`` conditions on anything that is only known at runtime other than a
+  measurement result, including comparisons of symbolic parameters
 
 Kernels may read variables captured from an enclosing scope; captured values
 are read again on every call. Calls to ``cudaq_pulse`` ops are emitted as IR.

@@ -61,9 +61,17 @@ _ALLOC_OPS = {"qudit_ref": "pulse.qudit_alloc", "qvec_ref": "pulse.qvec_alloc"}
 _PULSE_OP_NAMES = frozenset(OP_TABLE.keys()) | frozenset(_ALLOC_OPS.keys())
 
 _RANGE_BOUNDS_MESSAGE = "range() bounds must be compile-time integers in pulse kernels"
-_BRANCH_MESSAGE = (
-    "runtime-dependent branches are not supported in the pulse research "
-    "preview; measurement results cannot control Python if statements"
+_PACKED_BRANCH_MESSAGE = (
+    "measurement-conditioned branches are retained in kernel IR (call the kernel "
+    "or lower it with the Program passes), but compile() writes a packed program "
+    "for the MLIR pipeline, which cannot represent them yet"
+)
+_REJOIN_MESSAGE = (
+    "both branches of a measurement-conditioned if must continue after it; "
+    "break, continue or return in only one branch is not supported"
+)
+_BRANCH_TYPE_MESSAGE = (
+    "only measurement results can control a branch at runtime; got an IR value of type {}"
 )
 
 # The emulated stack mixes IR values with arbitrary Python constants
@@ -135,9 +143,30 @@ def _uses_pulse_ops(fn: types.FunctionType, seen: set[int] | None = None) -> boo
 
 
 def _truth(value: StackVal) -> bool:
-    if isinstance(value, IRValue):
-        raise CompilationError(_BRANCH_MESSAGE)
+    if isinstance(value, (IRValue, _NotMeasurement)):
+        raise CompilationError(
+            "a measurement result is only known at runtime; use it directly as "
+            "an if condition (`if result:` or `if not result:`)"
+        )
     return bool(value)
+
+
+class _NotMeasurement:
+    """``not result`` for a measurement result, pending use as a condition."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: IRValue):
+        self.value = value
+
+
+class _RegionDone:
+    """Returned by ``_loop`` when an if-arm reaches its join point."""
+
+    __slots__ = ()
+
+
+_REGION_DONE = _RegionDone()
 
 
 class _BadIter:
@@ -325,7 +354,16 @@ class PulseIREmitter:
                     push(arg(left, right))
 
                 elif op is _jif or op is _jit:
-                    if _truth(pop()) == (op is _jit):
+                    cond = pop()
+                    if cond.__class__ is not bool:
+                        if isinstance(cond, (IRValue, _NotMeasurement)):
+                            pc = self._runtime_branch(prog, pc - 1, cond, op is _jit)
+                            pc = self._jump(pc, lo, hi, header)
+                            if pc < 0:
+                                return None
+                            continue
+                        cond = _truth(cond)
+                    if cond == (op is _jit):
                         pc = self._jump(arg, lo, hi, header)
                         if pc < 0:
                             return None
@@ -391,7 +429,13 @@ class PulseIREmitter:
                     push(arg(pop()))
 
                 elif op is bc.NOT:
-                    push(not _truth(pop()))
+                    value = pop()
+                    if isinstance(value, IRValue):
+                        push(_NotMeasurement(value))
+                    elif isinstance(value, _NotMeasurement):
+                        push(value.value)
+                    else:
+                        push(not _truth(value))
 
                 elif op is bc.IS:
                     right = pop()
@@ -478,6 +522,9 @@ class PulseIREmitter:
                 elif op is bc.UNSUPPORTED:
                     raise CompilationError(arg)
 
+                elif op is bc.REGION_END:
+                    return _REGION_DONE
+
                 else:  # pragma: no cover - decode only produces the ops above
                     raise CompilationError(f"unknown canonical instruction {op}")
         except _NotRollableError:
@@ -489,6 +536,118 @@ class PulseIREmitter:
                 except AttributeError:
                     pass
             raise
+
+    # ── Measurement-conditioned branches ─────────────────────────────
+
+    def _runtime_branch(
+        self, prog: bc.DecodedCode, index: int, cond: Any, jump_if_true: bool
+    ) -> int:
+        """Emit the ``if`` whose conditional jump is ``prog.instrs[index]``.
+
+        Both arms are traced from the same state into an ``scf.if`` region.
+        Pulse resources rebound by either arm become results of the region;
+        any other value must end up the same in both arms. Returns the
+        instruction index where tracing continues.
+        """
+        negated = isinstance(cond, _NotMeasurement)
+        value = cond.value if negated else cond
+        if value.vtype != "measurement":
+            raise CompilationError(_BRANCH_TYPE_MESSAGE.format(value.vtype))
+        if not self._can_roll:
+            raise CompilationError(_PACKED_BRANCH_MESSAGE)
+
+        target = prog.instrs[index][1]
+        then_start, else_start = (target, index + 1) if jump_if_true else (index + 1, target)
+        if negated:
+            then_start, else_start = else_start, then_start
+        join = bc.join_point(prog, index)
+        view = bc.region_view(prog, join)
+        returns = join >= len(prog.instrs)
+
+        builder = self.b
+        stack = self.stack
+        saved_stack = list(stack)
+        saved_locals = dict(self.locals)
+        containers = [
+            (v, list(v) if isinstance(v, list) else dict(v))
+            for v in saved_locals.values()
+            if isinstance(v, (list, dict))
+        ]
+
+        builder.emit("scf.if", (value,), ())
+        then_locals = self._trace_arm(view, index, join, then_start, saved_stack, containers)
+        stack[:] = saved_stack
+        self.locals.clear()
+        self.locals.update(saved_locals)
+        else_index = len(builder.ops)
+        builder.emit("scf.else", (), ())
+        else_locals = self._trace_arm(view, index, join, else_start, saved_stack, containers)
+
+        merged: dict[str, StackVal] = {}
+        results: list[tuple[str, IRValue, IRValue]] = []
+        for name in sorted(then_locals.keys() | else_locals.keys()):
+            a = then_locals.get(name, _MISSING)
+            b = else_locals.get(name, _MISSING)
+            if a is b:
+                merged[name] = a
+            elif isinstance(a, IRValue) and isinstance(b, IRValue) and a.vtype == b.vtype:
+                results.append((name, a, b))
+            elif a is _MISSING or b is _MISSING:
+                continue  # bound in one arm only: unbound after the if
+            elif type(a) is type(b) and isinstance(a, _SCALARS) and a == b:
+                merged[name] = a
+            else:
+                raise CompilationError(
+                    f"{name!r} would depend on a measurement result; only pulse "
+                    "resources (lines, tones, waveforms) may differ between the "
+                    "arms of a measurement-conditioned if"
+                )
+        builder.insert(else_index, "scf.yield", tuple(a for _, a, _ in results))
+        builder.emit("scf.yield", tuple(b for _, _, b in results), ())
+        outs = builder.emit(
+            "scf.if_end",
+            (),
+            tuple(a.vtype for _, a, _ in results),
+            {"result_names": [name for name, _, _ in results]},
+        )
+        for (name, _, _), out in zip(results, outs):
+            merged[name] = out
+        self.locals.clear()
+        self.locals.update(merged)
+        stack[:] = saved_stack
+        # Both arms returned: continue at the trailing ``return None``.
+        return len(prog.instrs) - 2 if returns else join
+
+    def _trace_arm(
+        self,
+        view: bc.DecodedCode,
+        branch: int,
+        join: int,
+        start: int,
+        saved_stack: list[StackVal],
+        containers: list[tuple[Any, Any]],
+    ) -> dict[str, StackVal]:
+        """Trace one arm until it reaches *join*; return its locals."""
+        returns = join >= len(view.instrs)
+        # An arm may only move forward from the branch, except that a join at
+        # an enclosing loop header (both arms continue) ends the arm.
+        header = join if join < branch else -1
+        try:
+            outcome = self._loop(view, start, branch, len(view.instrs), header)
+        except _NotRollableError:
+            raise CompilationError(_REJOIN_MESSAGE) from None
+        if header >= 0 and outcome is None:
+            outcome = _REGION_DONE
+        if returns:
+            if outcome is not None:
+                raise CompilationError("a measurement-conditioned branch cannot return a value")
+        elif outcome is not _REGION_DONE or len(self.stack) != len(saved_stack):
+            raise CompilationError(_REJOIN_MESSAGE)
+        if not all(_container_unchanged(obj, copy) for obj, copy in containers):
+            raise CompilationError(
+                "a measurement-conditioned branch cannot change Python lists or dicts"
+            )
+        return dict(self.locals)
 
     @staticmethod
     def _jump(target: int, lo: int, hi: int, header: int) -> int:

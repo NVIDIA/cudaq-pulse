@@ -9,8 +9,9 @@
 
 Loop retention, exact unrolling of index-dependent loops, closures and
 helpers, symbolic parameters, and rejection of measurement-dependent
-branches. Expected counts come from the kernel structure, not from a
-previous run, so a frontend that drops or duplicates ops fails here.
+branches in the packed compile() path. Expected counts come from the
+kernel structure, not from a previous run, so a frontend that drops or
+duplicates ops fails here.
 """
 
 from __future__ import annotations
@@ -149,7 +150,7 @@ def test_symbolic_parameters_compile_once():
     assert ck(amp=0.5).mlir != ck(amp=0.25).mlir
 
 
-def test_measurement_dependent_branch_is_rejected_at_the_condition():
+def test_compile_rejects_measurement_branch_at_the_condition():
 
     @pulse.kernel
     def k(q0):
@@ -158,7 +159,7 @@ def test_measurement_dependent_branch_is_rejected_at_the_condition():
         if bit:
             wait(r0, 10)
 
-    with pytest.raises(CompilationError, match="runtime-dependent branches") as info:
+    with pytest.raises(CompilationError, match="measurement-conditioned branches") as info:
         pulse.compile(k, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9})
     decoded, index = info.value.pulse_source
     _, line, *_ = decoded.location(index)

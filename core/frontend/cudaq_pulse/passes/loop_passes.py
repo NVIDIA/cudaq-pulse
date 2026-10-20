@@ -18,6 +18,7 @@ from .ir_types import (
     Program,
     ValueType,
     clone_program,
+    reject_conditionals,
 )
 
 # ---------------------------------------------------------------------------
@@ -106,6 +107,7 @@ def run_licm(program: Program) -> Program:
     A waveform op is loop-invariant if all its operands are defined outside
     the loop body.
     """
+    reject_conditionals(program, "loop-invariant code motion")
     result = clone_program(program)
     ops = result.ops
 
@@ -203,6 +205,7 @@ def run_loop_strength_reduction(program: Program) -> Program:
     For each for-loop, find shift_phase ops with a constant delta applied
     every iteration. Mark them with metadata for downstream consumption.
     """
+    reject_conditionals(program, "loop strength reduction")
     result = clone_program(program)
     ops = result.ops
     loops = _find_loops(ops)

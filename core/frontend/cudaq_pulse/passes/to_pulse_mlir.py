@@ -563,6 +563,13 @@ def program_to_pulse_mlir(
     str
         MLIR module text parseable by ``mlir-opt`` with the pulse dialect.
     """
+    for index, op in enumerate(prog.ops):
+        if op.kind == OpKind.IF:
+            raise NotImplementedError(
+                f"measurement-conditioned regions (IF at op[{index}]) cannot be lowered to "
+                "the pulse MLIR dialect yet: it has no op that turns a measurement result "
+                "into an i1 branch condition"
+            )
     st = _EmitterState()
     active_qubits = sorted(prog.qubit_freq_hz)
     n_qubits = max(active_qubits, default=0) + 1

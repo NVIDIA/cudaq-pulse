@@ -5,10 +5,10 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""Readout, measurement, and measurement limitations.
+"""Readout, measurement, and measurement-conditioned feedback.
 
-Shows how to use readout channels and acquire IQ data. Runtime-dependent
-branching is demonstrated as an intentionally rejected preview limitation.
+Shows how to use readout channels and acquire IQ data, and how an ``if`` on a
+measurement result is kept as a conditional region in the kernel IR.
 
 NOTE: Requires cudaq-pulse native C++ bindings (see README for build
 instructions).
@@ -41,9 +41,9 @@ def measure_single_qubit():
 def active_reset():
     """Active reset: measure, and if excited, apply an X pulse.
 
-    The first research preview rejects this construct because execution does
-    not yet implement feedback control. It is retained to demonstrate the
-    compile-time diagnostic.
+    The ``if`` becomes an scf.if region in the kernel IR, and the Program
+    passes verify and schedule it for the longer branch. compile() and the
+    simulator cannot lower it yet.
     """
     qubit = pulse.qudit_ref()
     drive_line, drive_tone = get_drive_line(qubit)
@@ -109,10 +109,19 @@ if __name__ == "__main__":
     print(compiled_kernel.mlir)
 
     print("\n=== Active reset (measurement-conditioned branch) ===")
+    from cudaq_pulse.lower import _to_program
+    from cudaq_pulse.passes import schedule_alap, verify
+
+    reset_ir = active_reset()
+    print(reset_ir.pretty())
+    reset_program = _to_program(reset_ir, clock_ghz=2.0, qubit_freq_hz={0: 5e9})
+    _, reset_metrics = schedule_alap(reset_program)
+    errors = [e for e in verify(reset_program) if e.severity == "error"]
+    print(f"  verified ({len(errors)} errors), worst case {reset_metrics.total_length_ns:.0f} ns")
     try:
         pulse.compile(active_reset, [], qubit_freq_hz={0: 5e9})
     except pulse.CompilationError as error:
-        print(f"  Correctly rejected in the research preview: {error}")
+        print(f"  compile() cannot lower it yet: {error}")
 
     print("\n=== Repeated measurement (5 shots) ===")
     compiled_kernel = pulse.compile(repeated_measurement, [5], qubit_freq_hz={0: 5e9})
