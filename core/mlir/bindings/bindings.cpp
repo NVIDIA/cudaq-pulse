@@ -18,6 +18,8 @@
 #include <bit>
 #include <cstring>
 #include <functional>
+#include <mutex>
+#include <thread>
 
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
@@ -148,8 +150,12 @@ constexpr int kExtendedPayload = 0xFF;
 class DiagnosticCollector {
 public:
   explicit DiagnosticCollector(mlir::MLIRContext *ctx)
-      : handler_(ctx, [this](mlir::Diagnostic &diagnostic) {
-          if (diagnostic.getSeverity() != mlir::DiagnosticSeverity::Error)
+      : owner_(std::this_thread::get_id()),
+        handler_(ctx, [this](mlir::Diagnostic &diagnostic) {
+          // Modules from specialize() share a context; another thread's
+          // pipeline may be running on it too.
+          if (diagnostic.getSeverity() != mlir::DiagnosticSeverity::Error ||
+              std::this_thread::get_id() != owner_)
             return mlir::failure();
           llvm::raw_string_ostream os(messages_);
           os << "\n  " << diagnostic.getLocation() << ": " << diagnostic;
@@ -164,6 +170,7 @@ public:
 
 private:
   std::string messages_;
+  std::thread::id owner_;
   mlir::ScopedDiagnosticHandler handler_;
 };
 
@@ -206,9 +213,11 @@ class PulseModule {
 public:
   PulseModule(std::shared_ptr<mlir::MLIRContext> ctx,
               mlir::OwningOpRef<mlir::ModuleOp> mod)
-      : ctx_(std::move(ctx)), module_(std::move(mod)) {}
+      : ctx_(std::move(ctx)), module_(std::move(mod)),
+        lock_(std::make_shared<std::recursive_mutex>()) {}
 
   std::string print() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
     std::string result;
     llvm::raw_string_ostream os(result);
     module_->print(os);
@@ -216,6 +225,7 @@ public:
   }
 
   std::string run_passes(const std::vector<std::string> &pipeline) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
     mlir::PassManager pm(ctx_.get());
     for (auto &name : pipeline) {
       if (name == "pulse-to-qop")
@@ -249,6 +259,7 @@ public:
   }
 
   std::string run_full_lowering() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
     // Lower a clone so inspection does not consume the scheduled Pulse module;
     // callers may lower repeatedly and still execute the original artifact.
     auto lowered = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
@@ -270,6 +281,7 @@ public:
   std::string schedule(const std::string &policy, int64_t maxDrives = 4,
                        int64_t maxReadouts = 2, int64_t readoutLatency = 0,
                        int64_t switchPenalty = 0) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
     mlir::PassManager pm(ctx_.get());
     if (policy == "asap")
       pm.addNestedPass<mlir::func::FuncOp>(
@@ -294,6 +306,7 @@ public:
   /// and wait, once per loop iteration and in program order. Both arms of a
   /// conditional are listed. Lines are numbered in allocation order.
   std::vector<Event> events() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
     llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
     module_->walk([&](mlir::Operation *op) {
       if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
@@ -342,6 +355,7 @@ public:
   /// (readout index, iteration, qubit, start ns, end ns).
   std::optional<Measurement>
   next_measurement(const std::vector<std::vector<int64_t>> &path) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
     auto readouts = readoutOps();
     pulse::Path chosen = toPath(path, readouts);
     double clockGHz = clock();
@@ -386,6 +400,7 @@ public:
   /// callback kind or 0, callback parameters, factors), and a factor is
   /// (mode, dimension, column-major interleaved complex matrix).
   OperatorProgram operator_program() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
     auto lowered = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
     mlir::PassManager pm(ctx_.get());
     pm.addPass(pulse::createPulseToQOpPass());
@@ -522,6 +537,7 @@ public:
   /// Merge a dictionary attribute, written in MLIR syntax, into the module
   /// attributes.
   void set_attributes(const std::string &dictionary) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
     auto attr = mlir::parseAttribute(dictionary, ctx_.get());
     auto entries = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(attr);
     if (!entries)
@@ -531,11 +547,13 @@ public:
   }
 
   bool is_parametric() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
     auto funcOp = getFuncOp();
     return funcOp && funcOp.getNumArguments() > 0;
   }
 
   std::vector<std::string> param_names() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
     std::vector<std::string> names;
     if (auto attr = module_->getOperation()->getAttrOfType<mlir::ArrayAttr>(
             "pulse.param_names")) {
@@ -551,6 +569,7 @@ public:
                          int64_t maxDrives = 4, int64_t maxReadouts = 2,
                          int64_t readoutLatency = 0,
                          int64_t switchPenalty = 0) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
     auto clonedModule = module_->clone();
     auto funcOp = clonedModule.lookupSymbol<mlir::func::FuncOp>("main");
     if (!funcOp)
@@ -647,6 +666,9 @@ private:
 
   std::shared_ptr<mlir::MLIRContext> ctx_;
   mlir::OwningOpRef<mlir::ModuleOp> module_;
+  // Python threads may call into one module concurrently once the GIL is
+  // released; MLIR does not allow concurrent mutation of one module.
+  std::shared_ptr<std::recursive_mutex> lock_;
 };
 
 // -----------------------------------------------------------------------
@@ -670,6 +692,7 @@ public:
                     std::vector<std::string> param_names = {},
                     std::vector<std::string> param_types = {},
                     const std::string &name = "main") {
+    std::lock_guard<std::mutex> guard(lock_);
 
     const int64_t *d = stream.data();
     const size_t len = stream.shape(0);
@@ -1350,6 +1373,7 @@ public:
 private:
   std::shared_ptr<mlir::MLIRContext> ctx_;
   std::unique_ptr<mlir::OpBuilder> builder_;
+  std::mutex lock_;
 };
 
 // -----------------------------------------------------------------------
@@ -1556,28 +1580,40 @@ NB_MODULE(_cudaq_pulse_native, m) {
   m.doc() = "cudaq-pulse native MLIR pipeline bindings";
 
   nb::class_<PulseModule>(m, "PulseModule")
-      .def("print", &PulseModule::print, "Print MLIR text representation")
+      .def("print", &PulseModule::print,
+           nb::call_guard<nb::gil_scoped_release>(),
+           "Print MLIR text representation")
       .def("run_passes", &PulseModule::run_passes,
+           nb::call_guard<nb::gil_scoped_release>(),
            "Run named MLIR passes on this module")
       .def("run_full_lowering", &PulseModule::run_full_lowering,
+           nb::call_guard<nb::gil_scoped_release>(),
            "Run full lowering: pulse -> qop -> cudm -> llvm")
-      .def("schedule", &PulseModule::schedule, "Schedule pulse operations",
-           nb::arg("policy"), nb::arg("max_drives") = 4,
-           nb::arg("max_readouts") = 2, nb::arg("readout_latency") = 0,
-           nb::arg("switch_penalty") = 0)
+      .def("schedule", &PulseModule::schedule,
+           nb::call_guard<nb::gil_scoped_release>(),
+           "Schedule pulse operations", nb::arg("policy"),
+           nb::arg("max_drives") = 4, nb::arg("max_readouts") = 2,
+           nb::arg("readout_latency") = 0, nb::arg("switch_penalty") = 0)
       .def("events", &PulseModule::events,
+           nb::call_guard<nb::gil_scoped_release>(),
            "(kind, line, qubit, start_vtu, duration_vtu) of each timed op")
       .def("next_measurement", &PulseModule::next_measurement,
+           nb::call_guard<nb::gil_scoped_release>(),
            "The next measurement without an outcome on a path", nb::arg("path"))
       .def("operator_program", &PulseModule::operator_program,
+           nb::call_guard<nb::gil_scoped_release>(),
            "The lowered Hamiltonian and collapse operators as data")
       .def("set_attributes", &PulseModule::set_attributes,
+           nb::call_guard<nb::gil_scoped_release>(),
            "Merge an MLIR dictionary attribute into the module attributes",
            nb::arg("dictionary"))
       .def("is_parametric", &PulseModule::is_parametric,
+           nb::call_guard<nb::gil_scoped_release>(),
            "True if the module has func.func block arguments (parameters)")
-      .def("param_names", &PulseModule::param_names, "Get parameter names")
+      .def("param_names", &PulseModule::param_names,
+           nb::call_guard<nb::gil_scoped_release>(), "Get parameter names")
       .def("specialize", &PulseModule::specialize,
+           nb::call_guard<nb::gil_scoped_release>(),
            "Clone module, substitute parameters with constants, fold, schedule",
            nb::arg("f64_args"), nb::arg("i64_args"),
            nb::arg("schedule") = "alap", nb::arg("max_drives") = 4,
@@ -1587,6 +1623,7 @@ NB_MODULE(_cudaq_pulse_native, m) {
   nb::class_<PulseModuleBuilder>(m, "PulseModuleBuilder")
       .def(nb::init<>())
       .def("build_from_packed", &PulseModuleBuilder::build_from_packed,
+           nb::call_guard<nb::gil_scoped_release>(),
            "Build an in-memory PulseModule from a packed int64 numpy buffer",
            nb::arg("stream"), nb::arg("clock_ghz"), nb::arg("n_qubits"),
            nb::arg("qubit_freqs"),
@@ -1609,34 +1646,45 @@ NB_MODULE(_cudaq_pulse_native, m) {
         }
         return values;
       },
+      nb::call_guard<nb::gil_scoped_release>(),
       "Evaluate a drive-envelope callback at the given times (ns)",
       nb::arg("kind"), nb::arg("params"), nb::arg("times"));
 
   nb::class_<JITModule>(m, "JITModule")
       .def("lookup", &JITModule::lookup,
+           nb::call_guard<nb::gil_scoped_release>(),
            "Return the address of a JIT-compiled symbol", nb::arg("name"));
 
   nb::class_<MLIRPipeline>(m, "MLIRPipeline")
       .def(nb::init<>())
       .def("jit_pulse", &MLIRPipeline::jit_pulse,
+           nb::call_guard<nb::gil_scoped_release>(),
            "Lower pulse MLIR and JIT-compile it in-process",
            nb::arg("pulse_mlir"), nb::arg("shared_libs"))
       .def("jit_llvm_dialect", &MLIRPipeline::jit_llvm_dialect,
+           nb::call_guard<nb::gil_scoped_release>(),
            "JIT-compile an LLVM-dialect MLIR module in-process",
            nb::arg("mlir_text"), nb::arg("shared_libs"))
       .def("parse_and_print", &MLIRPipeline::parse_and_print,
+           nb::call_guard<nb::gil_scoped_release>(),
            "Parse MLIR text and print it back (roundtrip)")
       .def("run_full_pipeline", &MLIRPipeline::run_full_pipeline,
+           nb::call_guard<nb::gil_scoped_release>(),
            "Run full pipeline: pulse -> qop -> cudm -> llvm")
       .def("run_full_pipeline_to_llvm_ir",
            &MLIRPipeline::run_full_pipeline_to_llvm_ir,
+           nb::call_guard<nb::gil_scoped_release>(),
            "Run the full pipeline and translate to textual LLVM IR")
       .def("run_pulse_to_qop", &MLIRPipeline::run_pulse_to_qop,
+           nb::call_guard<nb::gil_scoped_release>(),
            "Run pulse-to-qop pass only")
       .def("run_qop_to_cudm", &MLIRPipeline::run_qop_to_cudm,
+           nb::call_guard<nb::gil_scoped_release>(),
            "Run qop-to-cudm pass only")
       .def("run_cudm_to_llvm", &MLIRPipeline::run_cudm_to_llvm,
+           nb::call_guard<nb::gil_scoped_release>(),
            "Run cudm-to-llvm pass only")
       .def("parse_to_module", &MLIRPipeline::parse_to_module,
+           nb::call_guard<nb::gil_scoped_release>(),
            "Parse MLIR text into a PulseModule");
 }

@@ -117,6 +117,15 @@ Fields (all in milliseconds):
 - ``total_ms`` -- sum of all stages
 - ``op_count`` -- number of MLIR operations in the module
 
+Threads
+-------
+
+The native stages (module construction, passes, scheduling, specialization,
+lowering and JIT compilation) release the GIL, so kernels can be compiled,
+evaluated at different parameter values, and lowered from several Python
+threads at once. Calls on one ``CompiledKernel`` are serialized; tracing a
+kernel is Python and holds the GIL.
+
 Customizing the Pass Pipeline
 -----------------------------
 
