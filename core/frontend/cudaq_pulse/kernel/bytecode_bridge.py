@@ -37,6 +37,7 @@ def compile_kernel_bytecode(fn: Callable[..., Any]) -> Callable[..., PythonIRBui
             raise CompilationError("keyword arguments not supported in pulse kernels")
         builder = PythonIRBuilder(name=fn.__name__)
         _trace(fn, builder, args, "pulse.qudit_arg", prog, params)
+        builder.source = (fn, args)
         return builder
 
     return _emit

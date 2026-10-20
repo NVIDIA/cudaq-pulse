@@ -12,11 +12,13 @@
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
 
 #include <bit>
 #include <cstring>
 
+#include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVMPass.h"
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
@@ -49,6 +51,8 @@
 
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
+
+#include "cudaq-pulse/Analysis/LineTrace.h"
 
 #include "cudaq-pulse/Dialect/CuDensityMat/CuDensityMatDialect.h.inc"
 #include "cudaq-pulse/Dialect/QOp/QOpDialect.h.inc"
@@ -125,6 +129,49 @@ constexpr int kOpWfMul = 26;
 constexpr int kOpWfScale = 27;
 constexpr int kOpWfNeg = 28;
 
+/// Collects the error diagnostics emitted while it is alive, so that a
+/// failure can report them in the Python exception instead of on stderr.
+class DiagnosticCollector {
+public:
+  explicit DiagnosticCollector(mlir::MLIRContext *ctx)
+      : handler_(ctx, [this](mlir::Diagnostic &diagnostic) {
+          if (diagnostic.getSeverity() != mlir::DiagnosticSeverity::Error)
+            return mlir::failure();
+          llvm::raw_string_ostream os(messages_);
+          os << "\n  " << diagnostic.getLocation() << ": " << diagnostic;
+          for (mlir::Diagnostic &note : diagnostic.getNotes())
+            os << "\n    note: " << note;
+          return mlir::success();
+        }) {}
+
+  [[noreturn]] void fail(const std::string &what) const {
+    throw std::runtime_error(what + messages_);
+  }
+
+private:
+  std::string messages_;
+  mlir::ScopedDiagnosticHandler handler_;
+};
+
+/// Parse `text`, raising with the parser diagnostics on failure.
+mlir::OwningOpRef<mlir::ModuleOp> parseModule(const std::string &text,
+                                              mlir::MLIRContext *ctx,
+                                              const std::string &what) {
+  DiagnosticCollector diagnostics(ctx);
+  auto module = mlir::parseSourceString<mlir::ModuleOp>(text, ctx);
+  if (!module)
+    diagnostics.fail(what);
+  return module;
+}
+
+/// Run `pm` on `op`, raising with the collected diagnostics on failure.
+void runPipeline(mlir::PassManager &pm, mlir::Operation *op,
+                 const std::string &what) {
+  DiagnosticCollector diagnostics(pm.getContext());
+  if (mlir::failed(pm.run(op)))
+    diagnostics.fail(what);
+}
+
 inline double i2f(int64_t bits) {
   double d;
   std::memcpy(&d, &bits, sizeof(double));
@@ -183,8 +230,7 @@ public:
       else
         throw std::runtime_error("Unknown pass: " + name);
     }
-    if (mlir::failed(pm.run(*module_)))
-      throw std::runtime_error("MLIR pass pipeline failed");
+    runPipeline(pm, *module_, "MLIR pass pipeline failed");
     return print();
   }
 
@@ -200,8 +246,7 @@ public:
     pm.addPass(mlir::createArithToLLVMConversionPass());
     pm.addPass(mlir::createConvertFuncToLLVMPass());
     pm.addPass(mlir::createReconcileUnrealizedCastsPass());
-    if (mlir::failed(pm.run(*lowered)))
-      throw std::runtime_error("MLIR full lowering pipeline failed");
+    runPipeline(pm, *lowered, "MLIR full lowering pipeline failed");
     std::string result;
     llvm::raw_string_ostream os(result);
     lowered->print(os);
@@ -224,9 +269,52 @@ public:
           policy == "alap_rcp"));
     else
       throw std::invalid_argument("unknown schedule policy: " + policy);
-    if (mlir::failed(pm.run(*module_)))
-      throw std::runtime_error("pulse scheduling failed");
+    runPipeline(pm, *module_, "pulse scheduling failed");
     return print();
+  }
+
+  using Event = std::tuple<std::string, int64_t, int64_t,
+                           std::optional<int64_t>, std::optional<int64_t>>;
+
+  /// (kind, line, qubit, start_vtu, duration_vtu) for every drive, readout
+  /// and wait. Lines are numbered in allocation order.
+  std::vector<Event> events() {
+    llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
+    module_->walk([&](mlir::Operation *op) {
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+        lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
+    });
+    auto timing = [](mlir::Operation *op,
+                     llvm::StringRef name) -> std::optional<int64_t> {
+      if (auto attr = op->getAttrOfType<mlir::IntegerAttr>(name))
+        return attr.getInt();
+      return std::nullopt;
+    };
+    std::vector<Event> result;
+    module_->walk([&](mlir::Operation *op) {
+      if (!mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op))
+        return;
+      mlir::Operation *allocation = pulse::traceAllocation(op->getOperand(0));
+      int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
+      int64_t qubit = -1;
+      if (allocation)
+        if (auto attr = allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
+          qubit = attr.getInt();
+      result.emplace_back(op->getName().stripDialect().str(), line, qubit,
+                          timing(op, "start_vtu"), timing(op, "duration_vtu"));
+    });
+    return result;
+  }
+
+  /// Merge a dictionary attribute, written in MLIR syntax, into the module
+  /// attributes.
+  void set_attributes(const std::string &dictionary) {
+    auto attr = mlir::parseAttribute(dictionary, ctx_.get());
+    auto entries = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(attr);
+    if (!entries)
+      throw std::invalid_argument("expected an MLIR dictionary attribute");
+    for (mlir::NamedAttribute entry : entries)
+      module_->getOperation()->setAttr(entry.getName(), entry.getValue());
   }
 
   bool is_parametric() {
@@ -301,8 +389,7 @@ public:
     else
       throw std::invalid_argument("unsupported specialization schedule: " +
                                   schedule);
-    if (mlir::failed(pm.run(clonedModule)))
-      throw std::runtime_error("specialize: pass pipeline failed");
+    runPipeline(pm, clonedModule, "specialize: pass pipeline failed");
 
     auto owning = mlir::OwningOpRef<mlir::ModuleOp>(clonedModule);
     return PulseModule(ctx_, std::move(owning));
@@ -336,7 +423,8 @@ public:
                     double clock_ghz, int64_t n_qubits,
                     nb::ndarray<double, nb::ndim<1>, nb::c_contig> qubit_freqs,
                     std::vector<std::string> param_names = {},
-                    std::vector<std::string> param_types = {}) {
+                    std::vector<std::string> param_types = {},
+                    const std::string &name = "main") {
 
     const int64_t *d = stream.data();
     const size_t len = stream.shape(0);
@@ -353,7 +441,7 @@ public:
       throw std::invalid_argument(
           "packed: parameter names and types have different lengths");
 
-    auto module = mlir::ModuleOp::create(loc, mlir::StringRef("main"));
+    auto module = mlir::ModuleOp::create(loc, mlir::StringRef(name));
     module->setAttr("pulse.n_qubits", builder_->getI64IntegerAttr(n_qubits));
     module->setAttr("pulse.clock_ghz", builder_->getF64FloatAttr(clock_ghz));
 
@@ -362,7 +450,7 @@ public:
     size_t flen = qubit_freqs.shape(0);
     llvm::SmallVector<double> freqVec(fdata, fdata + flen);
     module->setAttr("pulse.qubit_freq_hz",
-                    builder_->getF64ArrayAttr(llvm::ArrayRef<double>(freqVec)));
+                    builder_->getDenseF64ArrayAttr(freqVec));
 
     // Build func.func type: parameters become block arguments
     llvm::SmallVector<mlir::Type> argTypes;
@@ -938,13 +1026,11 @@ public:
     ctx.loadAllAvailableDialects();
     mlir::registerBuiltinDialectTranslation(ctx);
     mlir::registerLLVMDialectTranslation(ctx);
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(pulse_mlir, &ctx);
-    if (!module)
-      throw std::runtime_error("Failed to parse pulse MLIR text");
+    auto module =
+        parseModule(pulse_mlir, &ctx, "Failed to parse pulse MLIR text");
     mlir::PassManager pm(&ctx);
     addPulseLoweringPasses(pm);
-    if (mlir::failed(pm.run(*module)))
-      throw std::runtime_error("MLIR pass pipeline failed");
+    runPipeline(pm, *module, "MLIR pass pipeline failed");
     return createJITModule(*module, shared_libs);
   }
 
@@ -955,9 +1041,8 @@ public:
     ctx.loadAllAvailableDialects();
     mlir::registerBuiltinDialectTranslation(ctx);
     mlir::registerLLVMDialectTranslation(ctx);
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(mlir_text, &ctx);
-    if (!module)
-      throw std::runtime_error("Failed to parse LLVM-dialect MLIR text");
+    auto module =
+        parseModule(mlir_text, &ctx, "Failed to parse LLVM-dialect MLIR text");
     return createJITModule(*module, shared_libs);
   }
 
@@ -965,9 +1050,7 @@ public:
     mlir::MLIRContext ctx;
     ctx.appendDialectRegistry(registry_);
     ctx.loadAllAvailableDialects();
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(mlir_text, &ctx);
-    if (!module)
-      throw std::runtime_error("Failed to parse MLIR text");
+    auto module = parseModule(mlir_text, &ctx, "Failed to parse MLIR text");
     std::string result;
     llvm::raw_string_ostream os(result);
     module->print(os);
@@ -978,13 +1061,11 @@ public:
     mlir::MLIRContext ctx;
     ctx.appendDialectRegistry(registry_);
     ctx.loadAllAvailableDialects();
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(pulse_mlir, &ctx);
-    if (!module)
-      throw std::runtime_error("Failed to parse pulse MLIR text");
+    auto module =
+        parseModule(pulse_mlir, &ctx, "Failed to parse pulse MLIR text");
     mlir::PassManager pm(&ctx);
     addPulseLoweringPasses(pm);
-    if (mlir::failed(pm.run(*module)))
-      throw std::runtime_error("MLIR pass pipeline failed");
+    runPipeline(pm, *module, "MLIR pass pipeline failed");
     std::string result;
     llvm::raw_string_ostream os(result);
     module->print(os);
@@ -997,13 +1078,11 @@ public:
     ctx.loadAllAvailableDialects();
     mlir::registerBuiltinDialectTranslation(ctx);
     mlir::registerLLVMDialectTranslation(ctx);
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(pulse_mlir, &ctx);
-    if (!module)
-      throw std::runtime_error("Failed to parse pulse MLIR text");
+    auto module =
+        parseModule(pulse_mlir, &ctx, "Failed to parse pulse MLIR text");
     mlir::PassManager pm(&ctx);
     addPulseLoweringPasses(pm);
-    if (mlir::failed(pm.run(*module)))
-      throw std::runtime_error("MLIR pass pipeline failed");
+    runPipeline(pm, *module, "MLIR pass pipeline failed");
 
     llvm::LLVMContext llvmContext;
     auto llvmModule = mlir::translateModuleToLLVMIR(*module, llvmContext);
@@ -1019,13 +1098,11 @@ public:
     mlir::MLIRContext ctx;
     ctx.appendDialectRegistry(registry_);
     ctx.loadAllAvailableDialects();
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(pulse_mlir, &ctx);
-    if (!module)
-      throw std::runtime_error("Failed to parse pulse MLIR text");
+    auto module =
+        parseModule(pulse_mlir, &ctx, "Failed to parse pulse MLIR text");
     mlir::PassManager pm(&ctx);
     pm.addPass(pulse::createPulseToQOpPass());
-    if (mlir::failed(pm.run(*module)))
-      throw std::runtime_error("pulse-to-qop pass failed");
+    runPipeline(pm, *module, "pulse-to-qop pass failed");
     std::string result;
     llvm::raw_string_ostream os(result);
     module->print(os);
@@ -1036,13 +1113,10 @@ public:
     mlir::MLIRContext ctx;
     ctx.appendDialectRegistry(registry_);
     ctx.loadAllAvailableDialects();
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(qop_mlir, &ctx);
-    if (!module)
-      throw std::runtime_error("Failed to parse qop MLIR text");
+    auto module = parseModule(qop_mlir, &ctx, "Failed to parse qop MLIR text");
     mlir::PassManager pm(&ctx);
     pm.addPass(qop::createQOpToCuDensityMatPass());
-    if (mlir::failed(pm.run(*module)))
-      throw std::runtime_error("qop-to-cudm pass failed");
+    runPipeline(pm, *module, "qop-to-cudm pass failed");
     std::string result;
     llvm::raw_string_ostream os(result);
     module->print(os);
@@ -1053,13 +1127,11 @@ public:
     mlir::MLIRContext ctx;
     ctx.appendDialectRegistry(registry_);
     ctx.loadAllAvailableDialects();
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(cudm_mlir, &ctx);
-    if (!module)
-      throw std::runtime_error("Failed to parse cudm MLIR text");
+    auto module =
+        parseModule(cudm_mlir, &ctx, "Failed to parse cudm MLIR text");
     mlir::PassManager pm(&ctx);
     pm.addPass(cudm::createCuDensityMatToLLVMPass());
-    if (mlir::failed(pm.run(*module)))
-      throw std::runtime_error("cudm-to-llvm pass failed");
+    runPipeline(pm, *module, "cudm-to-llvm pass failed");
     std::string result;
     llvm::raw_string_ostream os(result);
     module->print(os);
@@ -1070,9 +1142,8 @@ public:
     auto ctx = std::make_shared<mlir::MLIRContext>();
     ctx->appendDialectRegistry(registry_);
     ctx->loadAllAvailableDialects();
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(mlir_text, ctx.get());
-    if (!module)
-      throw std::runtime_error("Failed to parse MLIR text");
+    auto module =
+        parseModule(mlir_text, ctx.get(), "Failed to parse MLIR text");
     return PulseModule(ctx, std::move(module));
   }
 
@@ -1095,6 +1166,11 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::arg("policy"), nb::arg("max_drives") = 4,
            nb::arg("max_readouts") = 2, nb::arg("readout_latency") = 0,
            nb::arg("switch_penalty") = 0)
+      .def("events", &PulseModule::events,
+           "(kind, line, qubit, start_vtu, duration_vtu) of each timed op")
+      .def("set_attributes", &PulseModule::set_attributes,
+           "Merge an MLIR dictionary attribute into the module attributes",
+           nb::arg("dictionary"))
       .def("is_parametric", &PulseModule::is_parametric,
            "True if the module has func.func block arguments (parameters)")
       .def("param_names", &PulseModule::param_names, "Get parameter names")
@@ -1112,7 +1188,8 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::arg("stream"), nb::arg("clock_ghz"), nb::arg("n_qubits"),
            nb::arg("qubit_freqs"),
            nb::arg("param_names") = std::vector<std::string>{},
-           nb::arg("param_types") = std::vector<std::string>{});
+           nb::arg("param_types") = std::vector<std::string>{},
+           nb::arg("name") = "main");
 
   nb::class_<JITModule>(m, "JITModule")
       .def("lookup", &JITModule::lookup,

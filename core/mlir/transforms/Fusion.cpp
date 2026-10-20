@@ -49,6 +49,12 @@ static bool sameSSAValue(mlir::Value a, mlir::Value b) {
   return false;
 }
 
+static double phaseAttr(pulse::DriveOp drive, llvm::StringRef name) {
+  if (auto attr = drive->getAttrOfType<mlir::FloatAttr>(name))
+    return attr.getValueAsDouble();
+  return 0.0;
+}
+
 struct FuseAdjacentSquareDrives
     : public mlir::OpRewritePattern<pulse::DriveOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -81,6 +87,13 @@ struct FuseAdjacentSquareDrives
     if (secondDrive.getTone() != firstDrive.getUpdatedTone())
       return mlir::failure();
 
+    // A frame change folded into the second drive (virtual Z) or a different
+    // per-pulse phase would be lost by playing both as one pulse.
+    if (phaseAttr(secondDrive, "frame_phase_offset") != 0.0 ||
+        phaseAttr(firstDrive, "phase_offset") !=
+            phaseAttr(secondDrive, "phase_offset"))
+      return mlir::failure();
+
     auto dur1 = traceConstantI64(firstWf.getDuration());
     auto dur2 = traceConstantI64(secondWf.getDuration());
     if (!dur1 || !dur2)
@@ -100,8 +113,10 @@ struct FuseAdjacentSquareDrives
         firstDrive.getUpdatedTone().getType(), firstDrive.getLine(),
         fusedWf.getResult(), firstDrive.getTone());
 
-    if (auto a = firstDrive->getAttrOfType<mlir::IntegerAttr>("start_vtu"))
-      fusedDrive->setAttr("start_vtu", a);
+    for (llvm::StringRef name :
+         {"start_vtu", "frame_phase_offset", "phase_offset"})
+      if (auto a = firstDrive->getAttr(name))
+        fusedDrive->setAttr(name, a);
     fusedDrive->setAttr("duration_vtu", rewriter.getI64IntegerAttr(fusedDur));
     fusedDrive->setAttr("fused", rewriter.getUnitAttr());
 

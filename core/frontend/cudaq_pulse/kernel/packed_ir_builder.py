@@ -7,7 +7,6 @@
 # ============================================================================ #
 """PackedIRBuilder -- fused tracer-to-packed-buffer emitter.
 
-Replaces PythonIRBuilder + lower.py + pack_program on the fast path.
 Writes directly into a flat numpy int64 array during kernel tracing,
 producing a buffer that ``PulseModuleBuilder.build_from_packed()``
 consumes via zero-copy FFI.
@@ -26,7 +25,7 @@ from .ir_builder import CompilationError, IRValue, Parameter, ParameterExpressio
 _pack_d = struct.Struct("=d")
 _unpack_q = struct.Struct("=q")
 
-# OpCodes -- must match packed_emit.py and bindings.cpp kOp* constants
+# OpCodes -- must match the bindings.cpp kOp* constants
 _ALLOC_DRIVE = 0
 _ALLOC_READOUT = 1
 _ALLOC_TONE = 2
@@ -185,7 +184,7 @@ class PackedIRBuilder:
             self._next_qubit = max(self._next_qubit, idx + 1)
             return results
 
-        # Like Program.op_count(), count pulse-program ops but not qudit binding.
+        # Like PythonIRBuilder.op_count(), count pulse-program ops but not qudit binding.
         self._op_count += 1
 
         # --- get_drive_line → ALLOC_DRIVE ---
@@ -683,6 +682,11 @@ class PackedIRBuilder:
     @property
     def n_qubits(self) -> int:
         return self._next_qubit
+
+    @property
+    def qubits(self) -> tuple[int, ...]:
+        """Indices of the allocated qudits."""
+        return tuple(sorted(set(self._qref_to_qubit.values())))
 
     @property
     def op_count(self) -> int:

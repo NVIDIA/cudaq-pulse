@@ -97,6 +97,31 @@ class CompileMetrics:
     total_ms: float
     op_count: int
 
+class MachineModel:
+    """Hardware resource limits for the ``rcp`` and ``alap_rcp`` schedules."""
+
+    max_concurrent_drives: int
+    max_concurrent_readouts: int
+    readout_latency_vtu: int
+    line_switch_penalty_vtu: int
+
+    def __init__(
+        self,
+        max_concurrent_drives: int = 4,
+        max_concurrent_readouts: int = 2,
+        readout_latency_vtu: int = 0,
+        line_switch_penalty_vtu: int = 0,
+    ) -> None: ...
+
+class ScheduledEvent:
+    """One drive, readout or wait of a compiled kernel, with its timing."""
+
+    kind: str
+    line: int
+    qubit: int
+    start_vtu: int | None
+    duration_vtu: int | None
+
 class CompiledKernel:
     """Result of ``pulse.compile()``.
 
@@ -128,6 +153,15 @@ class CompiledKernel:
         """
         ...
 
+    @property
+    def module(self) -> Any:
+        """The in-memory native ``PulseModule``."""
+        ...
+
+    def events(self) -> list[ScheduledEvent]:
+        """The drives, readouts and waits of the kernel with their timing."""
+        ...
+
     def lower_to_llvm(self) -> str:
         """Lower the scheduled pulse module to LLVM IR."""
         ...
@@ -154,16 +188,18 @@ def evolve(
     clock_ghz: float = 2.0,
     observables: dict[str, Any] | None = None,
 ) -> EvolveResult:
-    """Compile and evolve a pulse program on the cuDensityMat GPU path."""
+    """Compile the kernel call that produced *program* and evolve it on the GPU."""
     ...
 
 def compile(
     kernel_fn: Callable[..., Any],
     args: Sequence[Any],
     *,
+    clock_ghz: float = 2.0,
     qubit_freq_hz: dict[int, float] | None = None,
-    passes: Sequence[str] | None = None,
     schedule: str = "alap",
+    passes: Sequence[str] | None = None,
+    machine: MachineModel | None = None,
 ) -> CompiledKernel:
     """Compile a ``@pulse.kernel`` function into a scheduled MLIR module.
 
@@ -172,7 +208,9 @@ def compile(
         args: Positional arguments (typically ``pulse.qudit_ref()`` objects).
         qubit_freq_hz: Mapping of qubit index to frequency in Hz.
         passes: Optimization passes to run (default: verify, virtual_z, fusion).
-        schedule: Scheduling strategy (``"alap"``, ``"asap"``, ``"rcp"``).
+        schedule: Scheduling strategy (``"alap"``, ``"asap"``, ``"rcp"``,
+            ``"alap_rcp"``).
+        machine: Resource limits for the ``rcp`` schedules.
 
     Returns:
         A ``CompiledKernel`` with MLIR text and compile metrics.

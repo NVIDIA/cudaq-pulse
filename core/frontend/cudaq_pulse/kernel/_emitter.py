@@ -63,8 +63,8 @@ _PULSE_OP_NAMES = frozenset(OP_TABLE.keys()) | frozenset(_ALLOC_OPS.keys())
 _RANGE_BOUNDS_MESSAGE = "range() bounds must be compile-time integers in pulse kernels"
 _PACKED_BRANCH_MESSAGE = (
     "measurement-conditioned branches are retained in kernel IR (call the kernel "
-    "or lower it with the Program passes), but compile() writes a packed program "
-    "for the MLIR pipeline, which cannot represent them yet"
+    "to inspect it), but compile() writes a packed program for the MLIR "
+    "pipeline, which cannot represent them yet"
 )
 _REJOIN_MESSAGE = (
     "both branches of a measurement-conditioned if must continue after it; "

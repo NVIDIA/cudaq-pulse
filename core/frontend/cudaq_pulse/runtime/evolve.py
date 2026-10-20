@@ -9,19 +9,14 @@
 
 from __future__ import annotations
 
+import math
+import struct
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
-from ..passes.canonicalize import run_canonicalize as _run_canonicalize
-from ..passes.fusion import run_fusion as _run_fusion
-from ..passes.loop_passes import run_licm as _run_licm
-from ..passes.scheduling import schedule_alap as _schedule_alap
-from ..passes.to_pulse_mlir import program_to_pulse_mlir as _program_to_pulse_mlir
-from ..passes.verify import verify as _verify_pass
-from ..passes.virtual_z import run_virtual_z as _run_virtual_z
 from .jit import compile_and_run_pulse
 
 _VALID_INTEGRATORS = frozenset(
@@ -57,19 +52,16 @@ def evolve(
 ) -> EvolveResult:
     """Run a pulse program through the full compilation pipeline and evolve.
 
-    The default path uses the MLIR lowering stack:
-      1. verify (linearity, monotone time, drive exclusivity)
-      2. canonicalize + virtual-z + fusion + LICM
-      3. schedule (ALAP)
-      4. program_to_pulse_mlir() (emit pulse dialect MLIR)
-      5. pulse-to-qop -> qop-to-cudm -> cudm-to-llvm (MLIR passes)
-      6. JIT compile & execute on GPU
+    The kernel call that produced *program* is compiled with
+    ``cudaq_pulse.compile()`` (verify, canonicalize, virtual-Z, fusion and an
+    ALAP schedule), annotated with the target's calibration, lowered
+    pulse -> qop -> cudm -> LLVM, and JIT-executed on the GPU.
 
     Parameters
     ----------
     program:
-        A ``PythonIRBuilder`` (from calling a ``@cudaq_pulse.kernel``) or
-        a ``Program`` (from ``to_program()``).
+        The IR returned by calling a ``@cudaq_pulse.kernel`` with concrete
+        arguments.
     target:
         A ``Target`` providing the Hamiltonian, decoherence, and connectivity.
     t_start, t_end:
@@ -118,93 +110,109 @@ def evolve(
             "preview; evolve the state and evaluate observables explicitly"
         )
 
-    ir_program = _extract_program(program, target=target, clock_ghz=clock_ghz)
-
-    return _evolve_mlir(
-        ir_program,
-        target=target,
-        t_start=t_start,
-        t_end=t_end,
-        num_steps=num_steps,
-        integrator=integrator,
-        observables=observables,
-    )
-
-
-def _evolve_mlir(
-    ir_program: Any,
-    *,
-    target: Any,
-    t_start: float,
-    t_end: float,
-    num_steps: int,
-    integrator: str,
-    observables: dict[str, Any] | None,
-) -> EvolveResult:
-    """MLIR lowering path: pulse -> qop -> cudm -> LLVM -> GPU."""
-    from ..passes.ir_types import Program
-
-    if isinstance(ir_program, Program):
-        _run_verify_suite(ir_program)
-        ir_program = _run_canonicalize(ir_program)
-        ir_program = _run_virtual_z(ir_program)
-        ir_program = _run_fusion(ir_program)
-        ir_program = _run_licm(ir_program)
-        _events, _metrics = _schedule_alap(ir_program)
-
-        n_qubits = max(ir_program.qubit_freq_hz, default=0) + 1
-        pulse_mlir = _program_to_pulse_mlir(
-            ir_program,
-            target=target,
+    compiled = _compile_for(program, target=target, clock_ghz=clock_ghz)
+    compiled.module.set_attributes(
+        _target_attributes(
+            target,
+            compiled._qubits,
+            compiled._n_qubits,
             t_start=t_start,
             t_end=t_end,
             num_steps=num_steps,
             integrator=integrator,
         )
-    else:
-        raise TypeError(f"Expected a Program, got {type(ir_program).__name__}")
-
-    results = compile_and_run_pulse(pulse_mlir, entry="main", n_qubits=n_qubits)
-
+    )
+    pulse_mlir = compiled.module.print()
+    results = compile_and_run_pulse(pulse_mlir, entry="main", n_qubits=compiled._n_qubits)
     if not results:
         raise RuntimeError("JIT execution returned no results.")
 
     times = np.linspace(t_start, t_end, num_steps + 1)
-    final_state = results[0].to_numpy()
-
-    return EvolveResult(final_state=final_state, times=times)
+    return EvolveResult(final_state=results[0].to_numpy(), times=times)
 
 
-def _extract_program(program: Any, *, target: Any, clock_ghz: float) -> Any:
-    """Extract the IR program, dispatching on type."""
+_EVOLVE_PASSES = ("verify", "canonicalize", "virtual_z", "fusion")
+
+
+def _compile_for(program: Any, *, target: Any, clock_ghz: float) -> Any:
+    """Compile the kernel call that produced *program* for *target*."""
+    from ..compile import compile as compile_kernel
     from ..kernel.ir_builder import PythonIRBuilder
-    from ..lower import _to_program
-    from ..passes.ir_types import Program
 
-    if isinstance(program, PythonIRBuilder):
-        return _to_program(program, clock_ghz=clock_ghz, qubit_freq_hz=target.frequencies)
-    if isinstance(program, Program):
-        return program
-
-    emitter = getattr(program, "__cudaq_pulse_emitter__", None)
-    if emitter is not None:
-        if not isinstance(emitter, PythonIRBuilder):
-            raise TypeError("compiled kernel emitter is not a PythonIRBuilder")
-        return _to_program(emitter, clock_ghz=clock_ghz, qubit_freq_hz=target.frequencies)
-
-    raise TypeError(
-        f"Expected a PythonIRBuilder, Program, or compiled @cudaq_pulse.kernel, "
-        f"got {type(program).__name__}. Call the kernel to build its IR first."
+    if not isinstance(program, PythonIRBuilder) or program.source is None:
+        raise TypeError(
+            "Expected the IR returned by calling a @cudaq_pulse.kernel, got "
+            f"{type(program).__name__}. Call the kernel to build its IR first."
+        )
+    kernel_fn, args = program.source
+    frequencies = target.frequencies
+    compiled = compile_kernel(
+        kernel_fn,
+        list(args),
+        clock_ghz=clock_ghz,
+        qubit_freq_hz=frequencies,
+        passes=_EVOLVE_PASSES,
     )
+    missing = [q for q in compiled._qubits if q not in frequencies]
+    if missing:
+        raise ValueError(f"target {target.name!r} does not define active qubits {missing}")
+    return compiled
 
 
-def _run_verify_suite(program: Any) -> None:
-    """Run the verification pass suite. Raises on failure."""
-    from ..passes.ir_types import Program
+def _f64_literal(value: float) -> str:
+    value = float(value)
+    if math.isfinite(value):
+        return format(value, ".17e")
+    return f"0x{struct.unpack('<Q', struct.pack('<d', value))[0]:016X}"
 
-    if isinstance(program, Program):
-        issues = _verify_pass(program)
-        errors = [i for i in issues if i.severity == "error"]
-        if errors:
-            msg = "\n".join(f"  {e}" for e in errors)
-            raise RuntimeError(f"Verification failed with {len(errors)} error(s):\n{msg}")
+
+def _f64(value: float) -> str:
+    return f"{_f64_literal(value)} : f64"
+
+
+def _f64_array(values: list[float]) -> str:
+    return "array<f64: " + ", ".join(_f64_literal(v) for v in values) + ">"
+
+
+def _target_attributes(
+    target: Any,
+    qubits: tuple[int, ...],
+    n_qubits: int,
+    *,
+    t_start: float,
+    t_end: float,
+    num_steps: int,
+    integrator: str,
+) -> str:
+    """Module attributes, in MLIR syntax, that the cuDensityMat lowering reads."""
+    t1_ns = [0.0] * n_qubits
+    t2_ns = [0.0] * n_qubits
+    drive_scales = [1.0] * n_qubits
+    for qi in qubits:
+        qubit = target.qubits[qi]
+        t1_ns[qi] = max(0.0, float(qubit.t1_us)) * 1.0e3
+        t2_ns[qi] = max(0.0, float(qubit.t2_star_us)) * 1.0e3
+        drive_scales[qi] = target.drive_amplitude_scale(qi)
+    attrs = [
+        f"qop.n_qubits = {n_qubits} : i64",
+        f"qop.t_start = {_f64(t_start)}",
+        f"qop.t_end = {_f64(t_end)}",
+        f"qop.num_steps = {int(num_steps)} : i64",
+        f'qop.integrator = "{integrator}"',
+        "pulse.t1_times = [" + ", ".join(_f64(v) for v in t1_ns) + "]",
+        "pulse.t2_times = [" + ", ".join(_f64(v) for v in t2_ns) + "]",
+        f"pulse.drive_scale_rad_per_ns = {_f64_array(drive_scales)}",
+    ]
+    active = set(qubits)
+    for kind, entries, strength in (
+        ("coupling", target.couplings, "coupling_strength_hz"),
+        ("crosstalk", target.crosstalk, "static_zz_hz"),
+    ):
+        entries = [e for e in entries if e.qubit_a in active and e.qubit_b in active]
+        if entries:
+            pairs = ", ".join(f"{e.qubit_a}, {e.qubit_b}" for e in entries)
+            attrs.append(f"pulse.{kind}_pairs = array<i64: {pairs}>")
+            attrs.append(
+                f"pulse.{kind}_strength_hz = " + _f64_array([getattr(e, strength) for e in entries])
+            )
+    return "{" + ", ".join(attrs) + "}"

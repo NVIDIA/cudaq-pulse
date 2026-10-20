@@ -29,7 +29,6 @@ except ImportError as _e:
     ) from _e
 
 from .kernel.ir_builder import Parameter
-from .passes.scheduling import MachineModel, ScheduleMetrics
 
 if TYPE_CHECKING:
     from .runtime.jit import JITResult
@@ -56,6 +55,32 @@ DEFAULT_PASSES: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class MachineModel:
+    """Hardware resource limits for the ``rcp`` and ``alap_rcp`` schedules."""
+
+    max_concurrent_drives: int = 4
+    max_concurrent_readouts: int = 2
+    readout_latency_vtu: int = 0
+    line_switch_penalty_vtu: int = 0
+
+
+@dataclass(frozen=True)
+class ScheduledEvent:
+    """One timed operation of a compiled kernel.
+
+    ``line`` numbers the kernel's drive and readout lines in allocation order.
+    ``start_vtu`` and ``duration_vtu`` are ``None`` until the kernel is
+    scheduled (a parametric kernel is scheduled when it is evaluated).
+    """
+
+    kind: str
+    line: int
+    qubit: int
+    start_vtu: int | None
+    duration_vtu: int | None
+
+
 @dataclass()
 class CompileMetrics:
     """Per-stage timing breakdown (all values in milliseconds)."""
@@ -70,7 +95,6 @@ class CompileMetrics:
     capture_ms: float = 0.0
     lower_ms: float = 0.0
     mlir_emit_ms: float = 0.0
-    schedule_metrics: ScheduleMetrics | None = None
 
 
 @dataclass()
@@ -92,6 +116,7 @@ class CompiledKernel:
     _schedule: str = field(default="alap", repr=False)
     _machine: MachineModel = field(default_factory=MachineModel, repr=False)
     _n_qubits: int = field(default=1, repr=False)
+    _qubits: tuple[int, ...] = field(default=(), repr=False)
 
     @property
     def mlir(self) -> str:
@@ -113,6 +138,10 @@ class CompiledKernel:
     @property
     def is_parametric(self) -> bool:
         return bool(self._param_names)
+
+    def events(self) -> list[ScheduledEvent]:
+        """The drives, readouts and waits of the kernel with their timing."""
+        return [ScheduledEvent(*event) for event in self._pulse_module.events()]
 
     def __call__(self, *args: Any, **kwargs: Any) -> CompiledKernel:
         """Evaluate a parametric kernel at concrete values.
@@ -156,6 +185,7 @@ class CompiledKernel:
             _schedule=self._schedule,
             _machine=self._machine,
             _n_qubits=self._n_qubits,
+            _qubits=self._qubits,
         )
 
     def _resolve_args(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> list[Any]:
@@ -304,7 +334,8 @@ def compile(
 
     # Step 1: Trace kernel directly into packed buffer
     t0 = time.perf_counter()
-    buf, n_qubits, freq_arr, op_count = _trace_to_packed(kernel_fn, args, clock_ghz, freq)
+    buf, n_qubits, qubits, freq_arr, op_count = _trace_to_packed(kernel_fn, args, clock_ghz, freq)
+    name = getattr(getattr(kernel_fn, "__wrapped__", kernel_fn), "__name__", "kernel")
     metrics.trace_ms = (time.perf_counter() - t0) * 1000
     metrics.capture_ms = metrics.trace_ms
     metrics.op_count = op_count
@@ -312,7 +343,7 @@ def compile(
     # Step 2: Single FFI call -- build in-memory MLIR module
     t0 = time.perf_counter()
     builder = PulseModuleBuilder()
-    pulse_module = builder.build_from_packed(buf, clock_ghz, n_qubits, freq_arr)
+    pulse_module = builder.build_from_packed(buf, clock_ghz, n_qubits, freq_arr, name=name)
     metrics.ffi_ms = (time.perf_counter() - t0) * 1000
     metrics.mlir_emit_ms = metrics.ffi_ms
 
@@ -342,6 +373,7 @@ def compile(
         _schedule=schedule,
         _machine=machine,
         _n_qubits=n_qubits,
+        _qubits=qubits,
     )
 
 
@@ -406,7 +438,7 @@ def _compile_parametric(
     mlir_builder = PulseModuleBuilder()
     param_names = [parameter.name for parameter in missing_params]
     pulse_module = mlir_builder.build_from_packed(
-        buf, clock_ghz, n_qubits, freq_arr, param_names, param_types
+        buf, clock_ghz, n_qubits, freq_arr, param_names, param_types, name=name
     )
     metrics.ffi_ms = (time.perf_counter() - t0) * 1000
     metrics.mlir_emit_ms = metrics.ffi_ms
@@ -429,15 +461,16 @@ def _compile_parametric(
         _schedule=schedule,
         _machine=machine,
         _n_qubits=n_qubits,
+        _qubits=builder.qubits,
     )
 
 
 def _trace_to_packed(
     kernel_fn: Callable[..., Any], args: Sequence[Any], clock_ghz: float, freq: dict[int, float]
-) -> tuple[Any, int, Any, int]:
+) -> tuple[Any, int, tuple[int, ...], Any, int]:
     """Trace the kernel into a packed int64 numpy buffer.
 
-    Returns (buffer, n_qubits, freq_array).
+    Returns (buffer, n_qubits, allocated qubits, freq_array, op_count).
     """
     from .kernel.bytecode_bridge import _trace_kernel_with_builder
     from .kernel.packed_ir_builder import PackedIRBuilder
@@ -457,4 +490,10 @@ def _trace_to_packed(
 
     _trace_kernel_with_builder(fn, builder, args)
 
-    return (builder.get_buffer(), builder.n_qubits, builder.get_freq_array(), builder.op_count)
+    return (
+        builder.get_buffer(),
+        builder.n_qubits,
+        builder.qubits,
+        builder.get_freq_array(),
+        builder.op_count,
+    )

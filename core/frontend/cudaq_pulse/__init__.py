@@ -31,6 +31,8 @@ __version__ = "0.1.0"
 
 from .compile import CompiledKernel as CompiledKernel
 from .compile import CompileMetrics as CompileMetrics
+from .compile import MachineModel as MachineModel
+from .compile import ScheduledEvent as ScheduledEvent
 from .compile import compile as compile
 from .kernel import kernel as kernel
 from .kernel.decorator import QuditRef as QuditRef
@@ -100,6 +102,8 @@ __all__: list[str] = [
     "compile",
     "CompiledKernel",
     "CompileMetrics",
+    "MachineModel",
+    "ScheduledEvent",
     "Parameter",
     "CompilationError",
     "EvolveResult",

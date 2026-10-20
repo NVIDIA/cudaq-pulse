@@ -8,8 +8,8 @@
 """Shared IR types and builder for the pulse kernel compiler.
 
 This module contains the core data structures used by the bytecode
-compiler and downstream passes: Op, IRValue, Parameter, PythonIRBuilder,
-OP_TABLE, LINEAR_TYPES, and CompilationError.
+compiler: Op, IRValue, Parameter, PythonIRBuilder, OP_TABLE, LINEAR_TYPES,
+and CompilationError.
 """
 
 from __future__ import annotations
@@ -247,6 +247,9 @@ OP_TABLE: dict[str, tuple[int, tuple[str, ...], tuple[str, ...] | None]] = {
 }
 
 
+_UNCOUNTED_OPS = frozenset({"pulse.qudit_arg", "scf.yield"})
+
+
 class PythonIRBuilder:
     """Lightweight in-memory IR builder (swap for real MLIR bindings)."""
 
@@ -257,6 +260,9 @@ class PythonIRBuilder:
         self.name = name
         self.ops: list[Op] = []
         self._next_id = 0
+        # The kernel function and arguments that produced this IR, so that
+        # evolve() can compile the same call.
+        self.source: tuple[Any, tuple[Any, ...]] | None = None
 
     def _mk(self, vtype: str, name: str = "") -> IRValue:
         v = IRValue(self._next_id, vtype, name)
@@ -277,6 +283,10 @@ class PythonIRBuilder:
     def insert(self, index: int, kind: str, operands: tuple[IRValue, ...]) -> None:
         """Insert a result-less op before ``ops[index]``."""
         self.ops.insert(index, Op(kind, operands, (), {}))
+
+    def op_count(self) -> int:
+        """Pulse-program ops, not counting qudit binding or region yields."""
+        return sum(op.kind not in _UNCOUNTED_OPS for op in self.ops)
 
     def checkpoint(self) -> tuple[int, int]:
         return len(self.ops), self._next_id
