@@ -112,14 +112,41 @@ static int64_t durationOf(mlir::Operation *op) {
   return getWaitDuration(mlir::cast<pulse::WaitOp>(op));
 }
 
-/// Lines and measurement results: the values that become available at a time.
+/// Lines, tones and measurement results: the values that become available
+/// at a time. A tone is busy while a drive or readout plays on it, so pulses
+/// that share a tone run in the order the tone is threaded through them.
 static bool isTimedType(mlir::Type type) {
   return mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                   pulse::MeasurementType>(type);
+                   pulse::ToneType, pulse::MeasurementType>(type);
 }
 
 static bool isLineType(mlir::Type type) {
   return mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType>(type);
+}
+
+/// How a loop-carried value takes part in the steady-state test.
+enum class Carried : uint8_t {
+  Untimed,
+  /// Must advance by the loop's period every iteration.
+  Timed,
+  /// A tone that no pulse in the body plays on keeps its time.
+  Tone,
+};
+
+static mlir::Value toneOperand(mlir::Operation *op) {
+  if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op))
+    return drive.getTone();
+  if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
+    return readout.getTone();
+  return {};
+}
+
+static mlir::Value toneResult(mlir::Operation *op) {
+  if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op))
+    return drive.getUpdatedTone();
+  if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
+    return readout.getUpdatedTone();
+  return {};
 }
 
 /// The measurement results a branch condition is computed from.
@@ -209,13 +236,14 @@ private:
     return mlir::success();
   }
 
-  /// All carried lines advanced by the same `period`, twice in a row.
+  /// All carried timed values advanced by the same `period`; tones may also
+  /// stay where they were.
   static bool uniformShift(llvm::ArrayRef<int64_t> before,
                            llvm::ArrayRef<int64_t> after,
-                           llvm::ArrayRef<bool> isLine, int64_t &period) {
+                           llvm::ArrayRef<Carried> kinds, int64_t &period) {
     std::optional<int64_t> shift;
-    for (auto [b, a, line] : llvm::zip(before, after, isLine)) {
-      if (!line)
+    for (auto [b, a, kind] : llvm::zip(before, after, kinds)) {
+      if (kind == Carried::Untimed || (kind == Carried::Tone && a == b))
         continue;
       if (shift && *shift != a - b)
         return false;
@@ -225,6 +253,21 @@ private:
       return false;
     period = *shift;
     return true;
+  }
+
+  /// Advance the carried values that move with the loop by `distance`.
+  static void extrapolate(llvm::MutableArrayRef<int64_t> carried,
+                          llvm::ArrayRef<int64_t> previous,
+                          llvm::ArrayRef<Carried> kinds, int64_t distance) {
+    for (auto [time, before, kind] : llvm::zip(carried, previous, kinds))
+      if (kind == Carried::Timed || (kind == Carried::Tone && time != before))
+        time += distance;
+  }
+
+  static Carried carriedKind(mlir::Type type, bool timed) {
+    if (mlir::isa<pulse::ToneType>(type))
+      return Carried::Tone;
+    return timed ? Carried::Timed : Carried::Untimed;
   }
 
   // ── Forward (ASAP) ────────────────────────────────────────────────────
@@ -242,6 +285,8 @@ private:
       readyAt[readout.getResult()] = end + resources.readoutLatency;
     }
     readyAt[op->getResult(0)] = lineEnd;
+    if (mlir::Value tone = toneResult(op))
+      readyAt[tone] = end;
     noteEnd(lineEnd);
   }
 
@@ -260,6 +305,8 @@ private:
   mlir::LogicalResult forwardOp(mlir::Operation *op) {
     if (isTimedOp(op)) {
       int64_t start = std::max(ready(op->getOperand(0)), floor);
+      if (mlir::Value tone = toneOperand(op))
+        start = std::max(start, ready(tone));
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op)) {
         auto &lanes = mlir::isa<pulse::DriveOp>(op) ? driveLanes : readoutLanes;
         auto lane = std::min_element(lanes.begin(), lanes.end());
@@ -300,10 +347,10 @@ private:
     auto args = loop.getRegionIterArgs();
     auto yield =
         mlir::cast<mlir::scf::YieldOp>(loop.getBody()->getTerminator());
-    llvm::SmallVector<bool> isLine;
+    llvm::SmallVector<Carried> kinds;
     llvm::SmallVector<int64_t> carried;
     for (mlir::Value init : loop.getInitArgs()) {
-      isLine.push_back(isTimedType(init.getType()));
+      kinds.push_back(carriedKind(init.getType(), isTimedType(init.getType())));
       carried.push_back(ready(init));
     }
     // Times the body reads from outside the loop; like the enclosing floor,
@@ -333,19 +380,19 @@ private:
       iterationEnd = std::max(savedEnd, iterationEnd);
 
       int64_t shift;
-      bool steady = !resources.enabled &&
-                    uniformShift(carried, next, isLine, shift) &&
-                    lastShift == shift && shift >= 0 &&
-                    llvm::all_of(next, [&](int64_t t) { return t >= outside; });
-      lastShift = uniformShift(carried, next, isLine, shift)
-                      ? std::optional<int64_t>(shift)
-                      : std::nullopt;
+      bool shifted = uniformShift(carried, next, kinds, shift);
+      bool steady =
+          !resources.enabled && shifted && lastShift == shift && shift >= 0;
+      for (auto [before, after, kind] : llvm::zip(carried, next, kinds))
+        if (kind == Carried::Timed ||
+            (kind == Carried::Tone && after != before))
+          steady = steady && after >= outside;
+      lastShift = shifted ? std::optional<int64_t>(shift) : std::nullopt;
+      llvm::SmallVector<int64_t> previous = std::move(carried);
       carried = std::move(next);
       if (steady && k + 1 < count) {
         int64_t remaining = count - 1 - k;
-        for (auto [time, line] : llvm::zip(carried, isLine))
-          if (line)
-            time += remaining * shift;
+        extrapolate(carried, previous, kinds, remaining * shift);
         noteEnd(thisEnd + remaining * shift);
         extrapolations.push_back({loop, shift});
         break;
@@ -427,6 +474,8 @@ private:
         if (needed != kNever)
           end = std::min(end, needed - latency);
       }
+      if (mlir::Value tone = toneResult(op))
+        end = std::min(end, late(tone));
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op)) {
         auto &lanes = isReadout ? readoutLanes : driveLanes;
         auto lane = std::max_element(lanes.begin(), lanes.end());
@@ -437,6 +486,8 @@ private:
       record(op, start);
       armStart = std::min(armStart, start);
       bound(op->getOperand(0), start);
+      if (mlir::Value tone = toneOperand(op))
+        bound(tone, start);
       return mlir::success();
     }
     if (auto sync = mlir::dyn_cast<pulse::SyncOp>(op)) {
@@ -479,10 +530,11 @@ private:
           for (mlir::Value arg : nested.getArguments())
             bodyValues.push_back(arg);
     });
-    llvm::SmallVector<bool> isLine;
+    llvm::SmallVector<Carried> kinds;
     llvm::SmallVector<int64_t> carried;
     for (mlir::Value result : loop.getResults()) {
-      isLine.push_back(isLineType(result.getType()));
+      kinds.push_back(
+          carriedKind(result.getType(), isLineType(result.getType())));
       carried.push_back(late(result));
     }
 
@@ -503,15 +555,14 @@ private:
         next.push_back(late(arg));
 
       int64_t shift;
-      bool shifted = uniformShift(carried, next, isLine, shift);
+      bool shifted = uniformShift(carried, next, kinds, shift);
       bool steady =
           !resources.enabled && shifted && lastShift == shift && shift <= 0;
       lastShift = shifted ? std::optional<int64_t>(shift) : std::nullopt;
+      llvm::SmallVector<int64_t> previous = std::move(carried);
       carried = std::move(next);
       if (steady && k > 0) {
-        for (auto [time, line] : llvm::zip(carried, isLine))
-          if (line)
-            time += k * shift;
+        extrapolate(carried, previous, kinds, k * shift);
         extrapolations.push_back({loop, -shift});
         break;
       }

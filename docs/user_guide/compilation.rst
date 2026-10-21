@@ -57,7 +57,8 @@ Parameters
 ``schedule`` *(str, default "alap")*
    Scheduling policy. Options: ``"asap"``, ``"alap"``, ``"rcp"``,
    ``"alap_rcp"``. ASAP and ALAP preserve data and physical-line
-   dependencies; RCP variants also enforce ``MachineModel`` resource limits.
+   dependencies, including the order of pulses that play on the same tone;
+   RCP variants also enforce ``MachineModel`` resource limits.
 
 ``passes`` *(sequence of str, optional)*
    Optimization passes to run. Defaults to ``("verify", "virtual_z", "fusion")``.
