@@ -26,15 +26,17 @@ def test_module_builder_exposes_only_the_packed_decoder():
     assert _public(native.PulseModuleBuilder) == {"build_from_packed"}
 
 
-def test_pulse_module_methods_return_results():
+def test_pulse_module_methods():
     compiled = pulse.compile(_x, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9})
     module = compiled.module
     assert module.is_parametric()
     assert module.param_names() == ["amplitude"]
-    assert "pulse.drive" in module.run_passes(["pulse-verify"])
+    assert module.run_passes(["pulse-verify"]) is None
+    assert "pulse.drive" in module.print()
     concrete = module.specialize([0.1], [], "alap")
     assert not concrete.is_parametric()
-    assert "start_vtu = 0" in concrete.schedule("asap")
+    assert concrete.schedule("asap") is None
+    assert "start_vtu = 0" in concrete.print()
     assert "llvm.func" in concrete.run_full_lowering()
 
 

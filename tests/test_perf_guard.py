@@ -160,3 +160,26 @@ def test_building_the_module_costs_less_than_tracing_the_kernel():
 def test_retained_loop_compile_time_is_flat(ratios):
     assert ratios["dd_loop_n512"] < ratios["dd_loop_n8"] * FLAT_LOOP_LIMIT
     assert ratios["dd_loop_n512_compile"] < ratios["dd_loop_n8_compile"] * FLAT_LOOP_LIMIT
+
+
+def _half_unused(n_qubits: int):
+    @pulse.kernel
+    def kernel(qubits):
+        for q in range(n_qubits):
+            line, tone = get_drive_line(qubits[q])
+            if q % 2 == 0:
+                drive(line, square(20, 0.1), tone)
+
+    return kernel
+
+
+def test_verify_time_is_linear_in_unused_lines():
+    def verify_ms(n_qubits: int) -> float:
+        kernel = _half_unused(n_qubits)
+        return min(
+            pulse.compile(kernel, [pulse.qvec_ref(n_qubits)], passes=("verify",)).metrics.passes_ms
+            for _ in range(5)
+        )
+
+    small, large = verify_ms(500), verify_ms(2000)
+    assert large < small * 4 * FLAT_LOOP_LIMIT, (small, large)

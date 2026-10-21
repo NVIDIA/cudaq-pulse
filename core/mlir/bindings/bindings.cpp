@@ -224,7 +224,7 @@ public:
     return result;
   }
 
-  std::string run_passes(const std::vector<std::string> &pipeline) {
+  void run_passes(const std::vector<std::string> &pipeline) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     mlir::PassManager pm(ctx_.get());
     for (auto &name : pipeline) {
@@ -255,7 +255,6 @@ public:
         throw std::runtime_error("Unknown pass: " + name);
     }
     runPipeline(pm, *module_, "MLIR pass pipeline failed");
-    return print();
   }
 
   std::string run_full_lowering() {
@@ -278,9 +277,9 @@ public:
     return result;
   }
 
-  std::string schedule(const std::string &policy, int64_t maxDrives = 4,
-                       int64_t maxReadouts = 2, int64_t readoutLatency = 0,
-                       int64_t switchPenalty = 0) {
+  void schedule(const std::string &policy, int64_t maxDrives = 4,
+                int64_t maxReadouts = 2, int64_t readoutLatency = 0,
+                int64_t switchPenalty = 0) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     mlir::PassManager pm(ctx_.get());
     if (policy == "asap")
@@ -296,7 +295,6 @@ public:
     else
       throw std::invalid_argument("unknown schedule policy: " + policy);
     runPipeline(pm, *module_, "pulse scheduling failed");
-    return print();
   }
 
   using Event = std::tuple<std::string, int64_t, int64_t,

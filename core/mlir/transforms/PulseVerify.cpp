@@ -236,14 +236,23 @@ struct PulseVerifyPass
     auto module = getOperation();
     bool hadError = false;
 
-    // Check 1: Linearity -- lines must be consumed.
+    // Check 1: Linearity -- lines must be consumed. The warning names the
+    // qubit instead of attaching the op: printing an op numbers every value
+    // of its function, which is linear in the program per warning.
+    auto warnUnused = [](mlir::Operation *op, mlir::Value line,
+                         llvm::StringRef kind) {
+      if (!line.use_empty())
+        return;
+      auto diagnostic = mlir::emitWarning(op->getLoc())
+                        << kind << " line allocated but never used";
+      if (auto qubit = op->getAttrOfType<mlir::IntegerAttr>("qubit"))
+        diagnostic << " (qubit " << qubit.getInt() << ")";
+    };
     module.walk([&](pulse::GetDriveLineOp op) {
-      if (op.getLine().use_empty())
-        op.emitWarning("drive line allocated but never used");
+      warnUnused(op, op.getLine(), "drive");
     });
     module.walk([&](pulse::GetReadoutLineOp op) {
-      if (op.getLine().use_empty())
-        op.emitWarning("readout line allocated but never used");
+      warnUnused(op, op.getLine(), "readout");
     });
     // A line or tone is consumed at most once on every path: its uses must
     // lie in different arms of a conditional, and none inside a loop that
