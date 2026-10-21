@@ -14,6 +14,8 @@ from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from tests.property_settings import examples
+
 _DURATIONS = (20, 40, 60, 100)
 _LINE = "!pulse.drive_line"
 _TONE = "!pulse.tone"
@@ -167,7 +169,7 @@ def _timeline(text, policy, drives, latency, penalty):
 
 @pytest.mark.parametrize("policy", ["asap", "alap", "rcp", "alap_rcp"])
 @given(case=_case(), drives=st.integers(1, 3), penalty=st.integers(0, 5))
-@settings(max_examples=60, deadline=None, derandomize=True)
+@settings(max_examples=examples(60))
 def test_retained_loop_schedules_like_its_unrolling(policy, case, drives, penalty):
     rolled, unrolled = _programs(*case)
     assert _timeline(rolled, policy, drives, 0, penalty) == _timeline(

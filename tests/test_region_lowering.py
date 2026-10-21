@@ -16,6 +16,7 @@ from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline, evaluate_callb
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from tests.property_settings import examples
 from tests.test_region_scheduling import _DURATIONS, _programs
 
 _TRAIN = 0x100
@@ -70,7 +71,7 @@ def _case(draw):
 
 
 @given(case=_case(), policy=st.sampled_from(["asap", "alap"]))
-@settings(max_examples=80, deadline=None, derandomize=True)
+@settings(max_examples=examples(80))
 def test_retained_loop_lowers_like_its_unrolling(case, policy):
     rolled, unrolled = _programs(*case)
     a = _hamiltonian(rolled, case[0], policy)

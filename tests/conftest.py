@@ -9,6 +9,8 @@
 import pytest
 from cudaq_pulse.runtime.gpu import GpuRuntimeError, require_gpu_runtime
 
+import tests.property_settings  # noqa: F401  (loads the hypothesis profile)
+
 
 def pytest_addoption(parser):
     parser.addoption(

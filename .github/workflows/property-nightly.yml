@@ -1,0 +1,87 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+
+# Randomized property tests. Pull requests run the same tests derandomized
+# (the `ci` hypothesis profile); this job explores new inputs every night on
+# staging with a seed logged in the job summary and the example database
+# kept between runs, so a failure replays first on the next run.
+
+name: property-nightly
+
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hypothesis:
+    name: hypothesis (py${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.15"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: staging
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked
+      - uses: ./.github/actions/mlir-toolchain
+
+      - name: Build
+        run: |
+          uv run --no-sync cmake -S . -B build/dev -G Ninja \
+            -DCUDAQ_PULSE_BUILD_TESTS=ON \
+            -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
+          uv run --no-sync cmake --build build/dev
+
+      - name: Restore the example database
+        uses: actions/cache/restore@v6
+        with:
+          path: .hypothesis
+          key: hypothesis-py${{ matrix.python }}-${{ github.run_id }}
+          restore-keys: hypothesis-py${{ matrix.python }}-
+
+      - name: Randomized property tests
+        env:
+          HYPOTHESIS_PROFILE: nightly
+          PYTHONPATH: build/dev/python
+          SEED: ${{ github.run_id }}
+        run: |
+          {
+            echo "### Hypothesis seed (py${{ matrix.python }}): \`$SEED\`"
+            echo
+            echo "Replay locally with \`HYPOTHESIS_PROFILE=nightly pytest <test> --hypothesis-seed=$SEED\`"
+            echo "or paste the \`@reproduce_failure\` line printed below above the test."
+          } >> "$GITHUB_STEP_SUMMARY"
+          uv run --no-sync python -m pytest -m "not gpu" \
+            tests/test_property.py tests/test_region_lowering.py \
+            tests/test_region_scheduling.py \
+            --hypothesis-seed="$SEED" --hypothesis-show-statistics
+
+      - name: Save the example database
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: .hypothesis
+          key: hypothesis-py${{ matrix.python }}-${{ github.run_id }}
+
+      - name: Upload the example database
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hypothesis-db-py${{ matrix.python }}
+          path: .hypothesis
+          include-hidden-files: true

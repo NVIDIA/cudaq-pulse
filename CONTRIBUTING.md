@@ -51,6 +51,13 @@ python examples/01_single_qubit_rabi.py
 Python sources are staged as symlinks, so edits to `core/frontend/` take
 effect without rebuilding; C++ changes need `cmake --build build/dev`.
 
+The property tests use hypothesis profiles (`tests/property_settings.py`),
+chosen with `HYPOTHESIS_PROFILE`: `ci`, the default, is derandomized so every
+run checks the same examples; `dev` draws new examples; `nightly` draws ten
+times as many. A failure prints a `@reproduce_failure` line; a nightly
+failure also gives its seed in the job summary, replayed with
+`HYPOTHESIS_PROFILE=nightly pytest <test> --hypothesis-seed=<seed>`.
+
 ## Writing passes
 
 Compiler passes are C++ MLIR passes in `core/mlir/transforms/`. To try one
@@ -170,6 +177,11 @@ but leaves committing the printed lock file to you.
   dispatched run with `gpu` enabled also runs the GPU tests from the wheels on
   the `GPU_RUNNER` runner.
 - `docs.yml`: Sphinx with warnings as errors; deploys `main` to GitHub Pages.
+- `property-nightly.yml`: the property tests with random examples on
+  staging every night (and on manual dispatch), with the seed in the job
+  summary and the example database kept in the Actions cache. GitHub runs
+  scheduled workflows from the default branch, so the nightly schedule takes
+  effect once this file is on `main`; until then, dispatch it manually.
 
 ## Releases
 
