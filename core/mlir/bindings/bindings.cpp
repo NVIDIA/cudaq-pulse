@@ -673,28 +673,57 @@ private:
 // PulseModuleBuilder: decode a packed int64 buffer into in-memory Pulse IR
 // -----------------------------------------------------------------------
 /// Loading the dialects into a new context costs about 0.4 ms, so builders
-/// share a context. A context keeps every attribute it ever uniqued, so it
-/// is retired after kModulesPerContext builders and freed with its last
-/// module.
-std::shared_ptr<mlir::MLIRContext> sharedContext() {
-  constexpr int64_t kModulesPerContext = 256;
-  static std::mutex lock;
+/// share a context. A context keeps every attribute it ever uniqued (each
+/// compile with new qubit frequencies, for instance, adds a few hundred bytes
+/// per qubit), so it is retired after kModulesPerContext builders or once
+/// the programs built in it reach kWordsPerContext packed words, and freed
+/// with its last module.
+class SharedContextPool {
+public:
+  static std::shared_ptr<mlir::MLIRContext> acquire() {
+    constexpr int64_t kModulesPerContext = 256;
+    constexpr int64_t kWordsPerContext = 1 << 20;
+    std::lock_guard<std::mutex> guard(lock());
+    auto &pool = state();
+    if (!pool.current || ++pool.uses > kModulesPerContext ||
+        pool.words > kWordsPerContext) {
+      pool.current = std::make_shared<mlir::MLIRContext>(makeRegistry());
+      pool.current->loadAllAvailableDialects();
+      pool.uses = 1;
+      pool.words = 0;
+    }
+    return pool.current;
+  }
+
+  /// Count a program of `words` packed words against `context`'s budget.
+  static void charge(const mlir::MLIRContext *context, int64_t words) {
+    std::lock_guard<std::mutex> guard(lock());
+    auto &pool = state();
+    if (pool.current.get() == context)
+      pool.words += words;
+  }
+
+private:
+  struct State {
+    std::shared_ptr<mlir::MLIRContext> current;
+    int64_t uses = 0;
+    int64_t words = 0;
+  };
+  static std::mutex &lock() {
+    static std::mutex mutex;
+    return mutex;
+  }
   // Never destroyed: the last context must not be torn down during static
   // destruction, after LLVM's own statics.
-  static auto *current = new std::shared_ptr<mlir::MLIRContext>();
-  static int64_t uses = 0;
-  std::lock_guard<std::mutex> guard(lock);
-  if (!*current || ++uses > kModulesPerContext) {
-    *current = std::make_shared<mlir::MLIRContext>(makeRegistry());
-    (*current)->loadAllAvailableDialects();
-    uses = 1;
+  static State &state() {
+    static auto *pool = new State();
+    return *pool;
   }
-  return *current;
-}
+};
 
 class PulseModuleBuilder {
 public:
-  PulseModuleBuilder() : ctx_(sharedContext()) {
+  PulseModuleBuilder() : ctx_(SharedContextPool::acquire()) {
     builder_ = std::make_unique<mlir::OpBuilder>(ctx_.get());
   }
 
@@ -710,6 +739,7 @@ public:
 
     const int64_t *d = stream.data();
     const size_t len = stream.shape(0);
+    SharedContextPool::charge(ctx_.get(), static_cast<int64_t>(len));
     auto loc = builder_->getUnknownLoc();
 
     if (clock_ghz <= 0.0)
