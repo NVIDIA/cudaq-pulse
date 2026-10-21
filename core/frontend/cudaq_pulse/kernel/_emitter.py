@@ -671,7 +671,7 @@ class PulseIREmitter:
         self.locals.clear()
         self.locals.update(saved_locals)
         for obj, copy in containers:
-            _restore_container(obj, copy)
+            self._restore_container(obj, copy)
         else_index = builder.mark()
         builder.emit("scf.else", (), ())
         else_locals, else_slots = self._trace_arm(
@@ -726,8 +726,10 @@ class PulseIREmitter:
         )
         for (name, _, _), out in zip(results, outs):
             merged[name] = out
-        for (obj, i, _, _), out in zip(slot_results, outs[len(results) :]):
+        for (obj, i, a, b), out in zip(slot_results, outs[len(results) :]):
             obj[i] = out
+            self._slots.pop(id(a), None)
+            self._slots.pop(id(b), None)
             self._slots[id(out)] = (obj, i, out)
         self.locals.clear()
         self.locals.update(merged)
@@ -823,7 +825,7 @@ class PulseIREmitter:
             self.locals.clear()
             self.locals.update(saved_locals)
             for obj, copy in containers:
-                _restore_container(obj, copy)
+                self._restore_container(obj, copy)
             return False
 
         delta = self._ir_delta(snap)
@@ -1190,9 +1192,23 @@ class PulseIREmitter:
                         self.locals[name] = res
                     if slot is not None:
                         slot[0][slot[1]] = res
+                        slots.pop(id(op_val), None)
                         slots[id(res)] = (slot[0], slot[1], res)
                     claimed.add(i)
                     break
+
+    def _restore_container(self, obj: list[Any] | dict[Any, Any], copy: Any) -> None:
+        """Undo a traced arm or loop body's changes to a list or dict.
+
+        Restored lists hold values whose slots the undone code consumed, so
+        their slots are tracked again.
+        """
+        if isinstance(obj, list):
+            obj[:] = copy
+            self._track_slots(obj, 0)
+        else:
+            obj.clear()
+            obj.update(copy)
 
     def _track_slots(self, items: list[Any], start: int) -> None:
         """Remember the list slots from *start* on that hold lines or tones."""
@@ -1208,10 +1224,14 @@ class PulseIREmitter:
         name = self._find_local_name(old)
         if name is not None:
             self.locals[name] = new
-        slot = self._slots.get(id(old))
+        slots = self._slots
+        slot = slots.get(id(old))
         if slot is not None and slot[2] is old and slot[0][slot[1]] is old:
             slot[0][slot[1]] = new
-            self._slots[id(new)] = (slot[0], slot[1], new)
+            # The consumed value is dead: dropping its entry keeps the table,
+            # and the values it holds, the size of the live lists.
+            del slots[id(old)]
+            slots[id(new)] = (slot[0], slot[1], new)
 
     def _find_local_name(self, val: IRValue) -> str | None:
         """Find the local variable name bound to a given IRValue."""
@@ -1265,14 +1285,6 @@ def _container_unchanged(obj: list[Any] | dict[Any, Any], copy: Any) -> bool:
     if isinstance(obj, list):
         return all(a is b for a, b in zip(obj, copy))
     return all(k in copy and obj[k] is copy[k] for k in obj)
-
-
-def _restore_container(obj: list[Any] | dict[Any, Any], copy: Any) -> None:
-    if isinstance(obj, list):
-        obj[:] = copy
-    else:
-        obj.clear()
-        obj.update(copy)
 
 
 _SIGNATURES: dict[int, tuple[Any, inspect.Signature]] = {}

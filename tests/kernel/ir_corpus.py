@@ -66,7 +66,6 @@ def dump_packed(b: PackedIRBuilder) -> list[str]:
         f"packed n_qubits={b.n_qubits} op_count={b.op_count}",
         "words " + " ".join(str(w) for w in b.get_buffer().tolist()),
         "freq " + _canon(b.get_freq_array().tolist()),
-        "waveforms " + _canon(b._wf_attrs),
     ]
 
 

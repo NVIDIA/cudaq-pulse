@@ -163,7 +163,6 @@ class PackedIRBuilder:
         self._next_qubit = 0
         self._op_count = 0
         self._qref_to_qubit: dict[int, int] = {}
-        self._wf_attrs: dict[int, dict[str, Any]] = {}
         self._param_vids: dict[int, int] = {}  # Parameter.index → vid
         self._param_names: dict[int, str] = {}  # Parameter.index → name
         # Key by the expression object itself, not id(expression): temporary
@@ -235,15 +234,6 @@ class PackedIRBuilder:
             rv = results[0].vid
             dur_raw = a.get("duration", 0)
             dur = dur_raw if is_symbolic(dur_raw) else _as_i64(dur_raw, f"{wf_name} duration")
-            wf_attrs: dict[str, Any] = {"waveform_type": wf_name}
-            if not is_symbolic(dur):
-                wf_attrs["duration_vtu"] = dur
-            if "amplitude" in a:
-                wf_attrs["amplitude"] = a["amplitude"]
-            for k, v in a.items():
-                if k not in ("duration", "amplitude"):
-                    wf_attrs[k] = v
-            self._wf_attrs[rv] = wf_attrs
 
             if wf_code == _WF_GAUSSIAN:
                 amp_raw = a.get("amplitude", 0.0)
@@ -570,9 +560,8 @@ class PackedIRBuilder:
         self._cur, self._next_id, self._next_qubit, self._op_count, regions = checkpoint
         self._regions = regions
         live = self._next_id
-        for table in (self._qref_to_qubit, self._wf_attrs):
-            for vid in [vid for vid in table if vid >= live]:
-                del table[vid]
+        for vid in [vid for vid in self._qref_to_qubit if vid >= live]:
+            del self._qref_to_qubit[vid]
         for index in [i for i, vid in self._param_vids.items() if vid >= live]:
             del self._param_vids[index]
             self._param_names.pop(index, None)
