@@ -91,6 +91,11 @@ alters op counts on purpose, regenerate it with `--write-baseline` and
 explain the change in the pull request. Timing is only gated when you pass
 `--gate FACTOR`; it is too noisy on shared runners to gate in CI.
 
+`benchmarks/compiler/mlir_pipeline_bench.py` breaks compile time down by
+stage and by pass and reports IR sizes; `benchmarks/simulation/qec_scaling.py`
+shows how compile time grows with surface-code distance. CI runs both at a
+small size to keep them working.
+
 ## GPU builds
 
 GPU support is off by default and, when requested, mandatory: configuration

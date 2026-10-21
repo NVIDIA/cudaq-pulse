@@ -87,6 +87,13 @@ jobs:
           benchmarks/compiler/compile_time.py --iterations 5
           --baseline benchmarks/baselines/compile_time.json
 
+      - name: Pipeline and QEC scaling benchmarks (smoke)
+        env:
+          PYTHONPATH: build/dev/python
+        run: |
+          uv run --no-sync python benchmarks/compiler/mlir_pipeline_bench.py --repeats 2
+          uv run --no-sync python benchmarks/simulation/qec_scaling.py --distances 3 5 --repeats 1
+
       # Timing on shared runners is noisy; report regressions without failing.
       - name: Compile-time perf guard (non-blocking)
         continue-on-error: true
