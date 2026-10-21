@@ -577,13 +577,32 @@ static std::optional<NotAffine>
 writeTiming(mlir::Operation *op, llvm::ArrayRef<Sample> samples,
             llvm::ArrayRef<Extrapolation> extrapolations) {
   auto loops = pulse::enclosingLoops(op);
-  auto i64 = mlir::IntegerType::get(op->getContext(), 64);
+  mlir::MLIRContext *context = op->getContext();
+  auto i64 = mlir::IntegerType::get(context, 64);
   int64_t duration = durationOf(op);
+  // One attribute-dictionary rebuild per op.
+  auto write = [&](std::optional<int64_t> start,
+                   llvm::ArrayRef<int64_t> periods) {
+    mlir::NamedAttrList attributes(op->getAttrDictionary());
+    if (start)
+      attributes.set("start_vtu", mlir::IntegerAttr::get(i64, *start));
+    else
+      attributes.erase("start_vtu");
+    attributes.set("duration_vtu", mlir::IntegerAttr::get(i64, duration));
+    if (periods.empty())
+      attributes.erase("period_vtu");
+    else
+      attributes.set("period_vtu",
+                     mlir::DenseI64ArrayAttr::get(context, periods));
+    op->setAttrs(attributes.getDictionary(context));
+  };
   if (samples.empty()) {
     // Never executed (inside a zero-trip loop).
-    op->removeAttr("start_vtu");
-    op->removeAttr("period_vtu");
-    op->setAttr("duration_vtu", mlir::IntegerAttr::get(i64, duration));
+    write(std::nullopt, {});
+    return std::nullopt;
+  }
+  if (loops.empty() && samples.size() == 1) {
+    write(samples.front().start, {});
     return std::nullopt;
   }
 
@@ -654,13 +673,7 @@ writeTiming(mlir::Operation *op, llvm::ArrayRef<Sample> samples,
       if (e.loop == loop && periods[level] != e.period)
         return NotAffine{loop, false, false};
 
-  op->setAttr("start_vtu", mlir::IntegerAttr::get(i64, base));
-  op->setAttr("duration_vtu", mlir::IntegerAttr::get(i64, duration));
-  if (loops.empty())
-    op->removeAttr("period_vtu");
-  else
-    op->setAttr("period_vtu",
-                mlir::DenseI64ArrayAttr::get(op->getContext(), periods));
+  write(base, periods);
   return std::nullopt;
 }
 
@@ -778,17 +791,19 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
     if (mlir::failed(scheduler.forward()))
       return mlir::failure();
     if (isAlap) {
-      Scheduler backward(function, resources);
-      if (mlir::failed(backward.forward()) || mlir::failed(backward.backward()))
+      if (mlir::failed(scheduler.backward()))
         return mlir::failure();
       // Handing out resources in reverse program order can need time before
       // zero; the forward resource schedule is always feasible.
-      bool feasible = llvm::all_of(backward.samples, [](const auto &entry) {
+      bool feasible = llvm::all_of(scheduler.samples, [](const auto &entry) {
         return llvm::all_of(entry.second,
                             [](const Sample &s) { return s.start >= 0; });
       });
-      if (feasible)
-        scheduler = std::move(backward);
+      if (!feasible) {
+        scheduler = Scheduler(function, resources);
+        if (mlir::failed(scheduler.forward()))
+          return mlir::failure();
+      }
     }
 
     std::optional<NotAffine> problem;
