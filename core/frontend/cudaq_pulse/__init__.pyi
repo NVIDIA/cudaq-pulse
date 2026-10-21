@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, Union
 
 Numeric = Union[int, float, "Parameter"]
@@ -69,6 +69,7 @@ class QvecRef:
     def __init__(self, size: int) -> None: ...
     def __len__(self) -> int: ...
     def __getitem__(self, index: int) -> QuditRef: ...
+    def __iter__(self) -> Iterator[QuditRef]: ...
 
 def qudit_ref(index: int | None = None) -> QuditRef:
     """Create a qudit reference, optionally bound to a physical index."""

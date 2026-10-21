@@ -585,18 +585,15 @@ class TestErrors:
         with pytest.raises(CompilationError):
             emitter(qudit_ref())
 
-    def test_for_list_not_supported(self):
-        """for i in [1,2,3] is not range-based, should fail gracefully."""
-
+    def test_for_over_a_non_iterable_names_its_type(self):
         def bad_loop(q0):
             d0, t0 = get_drive_line(q0)
-            for i in [1, 2, 3]:
+            for i in 3.5:
                 wait(d0, 10)
 
         emitter = compile_kernel_bytecode(bad_loop)
-        q = qudit_ref()
-        with pytest.raises((CompilationError, TypeError)):
-            emitter(q)
+        with pytest.raises(CompilationError, match="cannot iterate over float"):
+            emitter(qudit_ref())
 
 
 # ── Decorator integration ────────────────────────────────────────────

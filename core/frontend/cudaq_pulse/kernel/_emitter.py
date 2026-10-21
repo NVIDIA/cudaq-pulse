@@ -16,7 +16,9 @@ bounds resolve exactly as Python would; pulse operations (``drive``,
 A ``for ... in range(n)`` loop whose induction variable is never read is
 emitted once as a structured ``scf.for`` when the builder supports regions.
 Every other loop, and every loop whose body turns out to carry Python state
-from one iteration to the next, is unrolled.
+from one iteration to the next, is unrolled. Loops over any other concrete
+Python iterable (lists, tuples, dicts, ``enumerate``, ``zip``, a qubit
+vector, ...) run as Python runs them, one traced iteration per element.
 """
 
 from __future__ import annotations
@@ -54,6 +56,8 @@ from .ir_builder import (
     UNDEFINED_VID,
     CompilationError,
     IRValue,
+    Parameter,
+    ParameterExpression,
     PythonIRBuilder,
     is_symbolic,
 )
@@ -61,7 +65,8 @@ from .ir_builder import (
 _ALLOC_OPS = {"qudit_ref": "pulse.qudit_alloc", "qvec_ref": "pulse.qvec_alloc"}
 _PULSE_OP_NAMES = frozenset(OP_TABLE.keys()) | frozenset(_ALLOC_OPS.keys())
 
-_RANGE_BOUNDS_MESSAGE = "range() bounds must be compile-time integers in pulse kernels"
+# Loops over Python iterables are unrolled; this bounds a runaway iterator.
+MAX_UNROLLED_ITERATIONS = 1_000_000
 _PACKED_BRANCH_MESSAGE = "measurement-conditioned branches need an IR builder that supports regions"
 _REJOIN_MESSAGE = (
     "both branches of a measurement-conditioned if must continue after it; "
@@ -166,14 +171,56 @@ class _RegionDone:
 _REGION_DONE = _RegionDone()
 
 
-class _BadIter:
-    """Iterator over anything but a compile-time ``range()``."""
+class _Unrolled:
+    """Iterator state of a ``for`` loop over a concrete Python iterable."""
 
-    __slots__ = ()
+    __slots__ = ("it", "count")
+
+    def __init__(self, it: Any):
+        self.it = it
+        self.count = 0
 
 
-_BAD_ITER = _BadIter()
 _MISSING = object()
+
+
+def _parameter_names(value: Any) -> list[str]:
+    """Names of the kernel parameters a symbolic value depends on."""
+    if isinstance(value, Parameter):
+        return [value.name]
+    if isinstance(value, ParameterExpression):
+        return _parameter_names(value.lhs) + _parameter_names(value.rhs)
+    return []
+
+
+def _range_error(args: list[Any]) -> CompilationError:
+    names = sorted({n for a in args for n in _parameter_names(a)})
+    if names:
+        return CompilationError(
+            "range() bound depends on kernel parameter "
+            + ", ".join(repr(n) for n in names)
+            + "; pass a concrete value for it to compile()"
+        )
+    kinds = ", ".join(type(a).__name__ for a in args)
+    return CompilationError(f"range() bounds must be integers known at compile time; got ({kinds})")
+
+
+def _iterate(value: Any) -> Any:
+    """``iter(value)`` for a ``for`` loop, with a kernel-specific error."""
+    if isinstance(value, IRValue):
+        raise CompilationError(
+            f"cannot iterate over a pulse {value.vtype} value; for loops "
+            "in pulse kernels run over Python values known at compile time"
+        )
+    if is_symbolic(value):
+        names = ", ".join(repr(n) for n in _parameter_names(value))
+        raise CompilationError(f"cannot iterate over kernel parameter {names}")
+    try:
+        return iter(value)
+    except TypeError:
+        raise CompilationError(
+            f"cannot iterate over {type(value).__name__} in a pulse kernel"
+        ) from None
 
 
 class _Loop:
@@ -391,8 +438,23 @@ class PulseIREmitter:
 
                 elif op is _for_iter:
                     loop = stack[-_iter_slots]
-                    if type(loop) is not _Loop:
-                        raise CompilationError(_RANGE_BOUNDS_MESSAGE)
+                    if type(loop) is _Unrolled:
+                        value = next(loop.it, _MISSING)
+                        if value is _MISSING:
+                            del stack[-_iter_slots:]
+                            pc = self._jump(arg[0], lo, hi, header)
+                            if pc < 0:
+                                return None
+                            continue
+                        loop.count += 1
+                        if loop.count > MAX_UNROLLED_ITERATIONS:
+                            raise CompilationError(
+                                f"for loop did not finish after {MAX_UNROLLED_ITERATIONS} "
+                                "iterations; loops over Python iterables are unrolled, "
+                                "so they must be finite"
+                            )
+                        push(value)
+                        continue
                     exit_idx, var_is_read = arg
                     if loop.rolled is None:
                         loop.rolled = (
@@ -411,7 +473,7 @@ class PulseIREmitter:
 
                 elif op is _get_iter:
                     value = pop()
-                    push(_Loop(value) if isinstance(value, range) else _BAD_ITER)
+                    push(_Loop(value) if type(value) is range else _Unrolled(_iterate(value)))
                     if _iter_slots > 1:
                         stack.extend([None] * (_iter_slots - 1))
 
@@ -922,13 +984,14 @@ class PulseIREmitter:
         raise CompilationError(f"cannot call: {callable_val!r}")
 
     def _push_range(self, call_args: list[StackVal]) -> None:
-        if 1 <= len(call_args) <= 3 and all(isinstance(a, int) for a in call_args):
-            try:
-                self.stack.append(range(*call_args))
-            except ValueError as exc:
-                raise CompilationError(str(exc)) from exc
-        else:
-            self.stack.append(_BAD_ITER)
+        if not 1 <= len(call_args) <= 3:
+            raise CompilationError(f"range() takes 1 to 3 arguments, got {len(call_args)}")
+        if not all(isinstance(a, int) for a in call_args):
+            raise _range_error(call_args)
+        try:
+            self.stack.append(range(*call_args))
+        except ValueError as exc:
+            raise CompilationError(str(exc)) from exc
 
     def _inline_helper(
         self,

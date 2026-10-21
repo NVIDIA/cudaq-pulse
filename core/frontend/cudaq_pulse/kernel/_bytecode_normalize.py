@@ -255,8 +255,7 @@ _UNSUPPORTED: dict[str, str] = {
 }
 
 _WHILE_MESSAGE = (
-    "unsupported control flow: while loops are not supported in "
-    "@cudaq_pulse.kernel; use for loops over range()"
+    "unsupported control flow: while loops are not supported in @cudaq_pulse.kernel; use a for loop"
 )
 
 _PY_MINOR = sys.version_info[1]

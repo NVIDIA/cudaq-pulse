@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import functools
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
 _next_vid = 0
@@ -46,8 +46,8 @@ class QuditRef:
 class QvecRef:
     """A fixed-size vector of qudit references.
 
-    Created via ``cudaq_pulse.qvec_ref(n)``.  Supports ``len()`` and
-    integer indexing to access individual ``QuditRef`` elements.
+    Created via ``cudaq_pulse.qvec_ref(n)``.  Supports ``len()``, integer
+    indexing and iteration over its ``QuditRef`` elements.
     """
 
     def __init__(self, n: int):
@@ -63,6 +63,9 @@ class QvecRef:
         if not 0 <= idx < self._n:
             raise IndexError(f"qudit index {idx} out of range [0, {self._n})")
         return self._qudits[idx]
+
+    def __iter__(self) -> Iterator[QuditRef]:
+        return iter(self._qudits)
 
 
 def qudit_ref(index: int | None = None) -> QuditRef:

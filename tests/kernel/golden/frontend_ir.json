@@ -548,7 +548,7 @@
   ]
  },
  "while_loop": {
-  "error": "CompilationError: unsupported control flow: while loops are not supported in @cudaq_pulse.kernel; use for loops over range()",
+  "error": "CompilationError: unsupported control flow: while loops are not supported in @cudaq_pulse.kernel; use a for loop",
   "code": "while_loop",
   "span": [
    4,

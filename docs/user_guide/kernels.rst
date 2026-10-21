@@ -130,6 +130,30 @@ exactly at trace time. ``cudaq_pulse.compile()`` keeps the same loops as an
 scheduler times every iteration. Symbolic or runtime-dependent loop bounds,
 and ``while`` loops, are rejected.
 
+**For loops over Python values** known when the kernel is traced: lists,
+tuples, dictionaries, ``enumerate()``, ``zip()``, ``reversed()``, a qubit
+vector, or any other finite iterable. These loops are always unrolled, one
+traced iteration per element, with ``break``, ``continue`` and ``else``
+behaving as in Python. Lines and tones held in lists stay threaded through
+the loop:
+
+.. :spellcheck-disable:
+
+.. code-block:: python
+
+   @pulse.kernel
+   def sweep(qubits):
+       lines, tones = [], []
+       for q in qubits:
+           line, tone = get_drive_line(q)
+           lines.append(line)
+           tones.append(tone)
+       for amplitude in [0.1, 0.2, 0.3]:
+           for line, tone in zip(lines, tones):
+               drive(line, square(40, amplitude), tone)
+
+.. :spellcheck-enable:
+
 **If/else** with compile-time conditions:
 
 .. :spellcheck-disable:
