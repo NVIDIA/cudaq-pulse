@@ -584,8 +584,8 @@ struct PulseToQOpPass
         driveScale = scales.asArrayRef()[qubitIdx];
       }
 
-      for (auto [quadrature, kind] :
-           llvm::enumerate(ArrayRef<StringRef>{"spin_x", "spin_y"})) {
+      static constexpr llvm::StringLiteral quadratures[] = {"spin_x", "spin_y"};
+      for (auto [quadrature, kind] : llvm::enumerate(quadratures)) {
         SmallVector<WaveformCallbackData> callbacks;
         for (const pulse::Occurrence &occurrence : occurrences) {
           auto callback = getWaveformCallbackData(
