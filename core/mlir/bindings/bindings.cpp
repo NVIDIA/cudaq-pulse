@@ -674,13 +674,29 @@ private:
 // -----------------------------------------------------------------------
 // PulseModuleBuilder: decode a packed int64 buffer into in-memory Pulse IR
 // -----------------------------------------------------------------------
+/// Loading the dialects into a new context costs about 0.4 ms, so builders
+/// share a context. A context keeps every attribute it ever uniqued, so it
+/// is retired after kModulesPerContext builders and freed with its last
+/// module.
+std::shared_ptr<mlir::MLIRContext> sharedContext() {
+  constexpr int64_t kModulesPerContext = 256;
+  static std::mutex lock;
+  // Never destroyed: the last context must not be torn down during static
+  // destruction, after LLVM's own statics.
+  static auto *current = new std::shared_ptr<mlir::MLIRContext>();
+  static int64_t uses = 0;
+  std::lock_guard<std::mutex> guard(lock);
+  if (!*current || ++uses > kModulesPerContext) {
+    *current = std::make_shared<mlir::MLIRContext>(makeRegistry());
+    (*current)->loadAllAvailableDialects();
+    uses = 1;
+  }
+  return *current;
+}
+
 class PulseModuleBuilder {
 public:
-  PulseModuleBuilder() {
-    auto reg = makeRegistry();
-    ctx_ = std::make_shared<mlir::MLIRContext>();
-    ctx_->appendDialectRegistry(reg);
-    ctx_->loadAllAvailableDialects();
+  PulseModuleBuilder() : ctx_(sharedContext()) {
     builder_ = std::make_unique<mlir::OpBuilder>(ctx_.get());
   }
 

@@ -147,6 +147,16 @@ def test_compile_time_within_baseline(ratios, request):
     assert not slow, f"slower than {TOLERANCE}x the baseline ratio: {slow}"
 
 
+def test_building_the_module_costs_less_than_tracing_the_kernel():
+    kernel, n_qubits, freq = _compile_time_workloads()["bell"]
+    best = {"trace_ms": float("inf"), "ffi_ms": float("inf")}
+    for _ in range(50):
+        metrics = _compile(kernel, n_qubits, freq)().metrics
+        for stage in best:
+            best[stage] = min(best[stage], getattr(metrics, stage))
+    assert best["ffi_ms"] < best["trace_ms"], best
+
+
 def test_retained_loop_compile_time_is_flat(ratios):
     assert ratios["dd_loop_n512"] < ratios["dd_loop_n8"] * FLAT_LOOP_LIMIT
     assert ratios["dd_loop_n512_compile"] < ratios["dd_loop_n8_compile"] * FLAT_LOOP_LIMIT
