@@ -89,3 +89,11 @@ def test_a_dd_loop_lowers_to_one_train_per_quadrature():
     program = _hamiltonian(rolled, 1, "asap")
     kinds = [kind for _, _, kind, _, _ in program[1] if kind]
     assert len(kinds) == 2 and all(kind & _TRAIN for kind in kinds)
+
+
+def test_abutting_square_pulses_in_a_loop_lower_to_one_square_pulse():
+    rolled, _ = _programs(1, [], 512, [("drive", 0, 40)], [])
+    program = _hamiltonian(rolled, 1, "asap")
+    drives = [(kind, params) for _, _, kind, params, _ in program[1] if kind]
+    assert [kind for kind, _ in drives] == [1, 1]
+    assert all(params[1] == 512 * 20.0 for _, params in drives)

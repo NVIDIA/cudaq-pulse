@@ -68,6 +68,37 @@ struct WaveformCallbackData {
   SmallVector<double> parameters;
 };
 
+/// The phase attributes that virtual-Z folding leaves on a drive.
+static double phaseOffsetOf(Operation *drive) {
+  double offset = 0.0;
+  for (StringRef name : {"phase_offset", "frame_phase_offset"})
+    if (auto attribute = drive->getAttrOfType<FloatAttr>(name))
+      offset += attribute.getValueAsDouble();
+  return offset;
+}
+
+/// The parts of a drive occurrence's callback that vary between occurrences
+/// of the same op.
+struct DriveTiming {
+  double startNs, durationNs, phase, detuning;
+};
+
+static DriveTiming driveTiming(const pulse::Occurrence &occurrence,
+                               double clockGHz, double qubitFrequencyHz,
+                               double phaseOffset) {
+  const double scale = 1.0 / clockGHz;
+  const double startNs = static_cast<double>(occurrence.startVtu) * scale;
+  const pulse::ToneState &tone = occurrence.tone;
+  return {startNs, static_cast<double>(occurrence.durationVtu) * scale,
+          tone.phase +
+              2.0 * M_PI * (tone.frequencyHz - tone.frameFrequencyHz) * 1.0e-9 *
+                  (startNs - tone.timeNs) +
+              2.0 * M_PI * (tone.frameFrequencyHz - qubitFrequencyHz) * 1.0e-9 *
+                  startNs +
+              phaseOffset,
+          2.0 * M_PI * (tone.frequencyHz - qubitFrequencyHz) * 1.0e-9};
+}
+
 /// The callback of one drive occurrence for one quadrature.
 static std::optional<WaveformCallbackData>
 getWaveformCallbackData(const pulse::Occurrence &occurrence, double clockGHz,
@@ -79,33 +110,15 @@ getWaveformCallbackData(const pulse::Occurrence &occurrence, double clockGHz,
     return std::nullopt;
 
   const double scale = 1.0 / clockGHz;
-  const double startNs = static_cast<double>(occurrence.startVtu) * scale;
-  const double durationNs = static_cast<double>(occurrence.durationVtu) * scale;
-  const pulse::ToneState &tone = occurrence.tone;
-  const double phaseOffset =
-      drive->getAttrOfType<FloatAttr>("phase_offset")
-          ? drive->getAttrOfType<FloatAttr>("phase_offset").getValueAsDouble()
-          : 0.0;
-  const double framePhaseOffset =
-      drive->getAttrOfType<FloatAttr>("frame_phase_offset")
-          ? drive->getAttrOfType<FloatAttr>("frame_phase_offset")
-                .getValueAsDouble()
-          : 0.0;
-  const double phase = tone.phase +
-                       2.0 * M_PI * (tone.frequencyHz - tone.frameFrequencyHz) *
-                           1.0e-9 * (startNs - tone.timeNs) +
-                       2.0 * M_PI * (tone.frameFrequencyHz - qubitFrequencyHz) *
-                           1.0e-9 * startNs +
-                       phaseOffset + framePhaseOffset;
-  const double detuning =
-      2.0 * M_PI * (tone.frequencyHz - qubitFrequencyHz) * 1.0e-9;
+  const DriveTiming timing =
+      driveTiming(occurrence, clockGHz, qubitFrequencyHz, phaseOffsetOf(drive));
   // Common layout: start, duration, real amplitude, imaginary amplitude,
   // sigma, beta, rise/fall, phase-at-start, quadrature, detuning (rad/ns),
   // followed by sample data.
-  WaveformCallbackData result{0,
-                              {startNs, durationNs, 0.0, 0.0, 0.0, 0.0, 0.0,
-                               phase, static_cast<double>(quadrature),
-                               detuning}};
+  WaveformCallbackData result{
+      0,
+      {timing.startNs, timing.durationNs, 0.0, 0.0, 0.0, 0.0, 0.0, timing.phase,
+       static_cast<double>(quadrature), timing.detuning}};
   auto set = [&](int32_t kind, Value amplitude, Value sigma = {},
                  Value beta = {}) -> bool {
     auto amplitudeValue = constantNumber(amplitude);
@@ -267,64 +280,95 @@ private:
 
 /// One callback for every occurrence of a drive op, when each occurrence
 /// differs from the first only by a fixed start period and phase step per
-/// enclosing loop and every iteration plays.
+/// enclosing loop and every iteration plays. `callback` is the first
+/// occurrence's; the other occurrences of the same op can differ from it
+/// only in their timing.
 static std::optional<WaveformCallbackData>
 pulseTrain(ArrayRef<pulse::Occurrence> occurrences,
-           ArrayRef<WaveformCallbackData> callbacks) {
+           const WaveformCallbackData &callback, double clockGHz,
+           double qubitFrequencyHz) {
   Operation *op = occurrences.front().op;
   auto loops = pulse::enclosingLoops(op);
   if (loops.empty())
     return std::nullopt;
+  const size_t depth = loops.size();
   int64_t total = 1;
-  SmallVector<int64_t> counts;
+  SmallVector<int64_t> counts, strides(depth, 1);
   for (auto loop : loops) {
     counts.push_back(pulse::constantTripCount(loop).value_or(0));
     total *= counts.back();
   }
   if (static_cast<int64_t>(occurrences.size()) != total || total < 2)
     return std::nullopt;
+  for (size_t level = depth - 1; level > 0; --level)
+    strides[level - 1] = strides[level] * counts[level];
 
-  std::map<std::vector<int64_t>, size_t> at;
-  for (auto [index, occurrence] : llvm::enumerate(occurrences))
-    at[occurrence.iteration] = index;
-  const auto &first = callbacks.front().parameters;
-  std::vector<int64_t> zero(loops.size(), 0);
-  if (!at.count(zero) || at[zero] != 0)
-    return std::nullopt;
-  SmallVector<double> periods(loops.size(), 0.0), steps(loops.size(), 0.0);
-  for (size_t level = 0; level < loops.size(); ++level) {
+  // The occurrences must come in iteration order, one per iteration.
+  const double offset = phaseOffsetOf(op);
+  SmallVector<DriveTiming> timing;
+  timing.reserve(occurrences.size());
+  std::vector<int64_t> expected(depth, 0);
+  for (const pulse::Occurrence &occurrence : occurrences) {
+    if (occurrence.iteration != expected)
+      return std::nullopt;
+    timing.push_back(
+        driveTiming(occurrence, clockGHz, qubitFrequencyHz, offset));
+    for (size_t level = depth; level-- > 0;) {
+      if (++expected[level] < counts[level])
+        break;
+      expected[level] = 0;
+    }
+  }
+
+  const DriveTiming &base = timing.front();
+  SmallVector<double> periods(depth, 0.0), steps(depth, 0.0);
+  for (size_t level = 0; level < depth; ++level) {
     if (counts[level] < 2)
       continue;
-    std::vector<int64_t> unit = zero;
-    unit[level] = 1;
-    const auto &next = callbacks[at[unit]].parameters;
-    periods[level] = next[0] - first[0];
-    steps[level] = next[7] - first[7];
+    const DriveTiming &next = timing[strides[level]];
+    periods[level] = next.startNs - base.startNs;
+    steps[level] = next.phase - base.phase;
     if (periods[level] <= 0.0)
       return std::nullopt;
   }
-  for (auto [occurrence, callback] : llvm::zip(occurrences, callbacks)) {
-    const auto &p = callback.parameters;
-    if (callback.kind != callbacks.front().kind || p.size() != first.size())
-      return std::nullopt;
-    double start = first[0], phase = first[7];
+  for (auto [occurrence, t] : llvm::zip(occurrences, timing)) {
+    double start = base.startNs, phase = base.phase;
     for (auto [k, period, step] :
          llvm::zip(occurrence.iteration, periods, steps)) {
       start += k * period;
       phase += k * step;
     }
-    if (std::abs(p[0] - start) > 1e-9 || std::abs(p[7] - phase) > 1e-9)
+    if (std::abs(t.startNs - start) > 1e-9 ||
+        std::abs(t.phase - phase) > 1e-9 || t.durationNs != base.durationNs ||
+        t.detuning != base.detuning)
       return std::nullopt;
-    for (size_t i = 1; i < p.size(); ++i)
-      if (i != 7 && p[i] != first[i])
-        return std::nullopt;
   }
-  WaveformCallbackData train{callbacks.front().kind | cudaq_pulse::kTrainFlag,
-                             {}};
-  train.parameters.append(first.begin(),
-                          first.begin() + cudaq_pulse::kWaveformHeader);
-  train.parameters.push_back(static_cast<double>(loops.size()));
-  for (size_t level = 0; level < loops.size(); ++level) {
+  const auto &first = callback.parameters;
+  SmallVector<double> header(first.begin(),
+                             first.begin() + cudaq_pulse::kWaveformHeader);
+  // Square pulses that abut with a continuous carrier phase are one longer
+  // square pulse; fold such innermost levels into the duration.
+  size_t levels = loops.size();
+  auto near = [](double a, double b) {
+    return std::abs(a - b) <= 1e-9 * std::max(1.0, std::abs(b));
+  };
+  while (callback.kind == 1 && levels > 0) {
+    size_t level = levels - 1;
+    if (counts[level] >= 2 && (!near(periods[level], header[1]) ||
+                               !near(steps[level], header[9] * header[1])))
+      break;
+    header[1] *= static_cast<double>(counts[level]);
+    --levels;
+  }
+  if (levels == 0) {
+    WaveformCallbackData square{callback.kind, header};
+    square.parameters.append(first.begin() + cudaq_pulse::kWaveformHeader,
+                             first.end());
+    return square;
+  }
+  WaveformCallbackData train{callback.kind | cudaq_pulse::kTrainFlag, header};
+  train.parameters.push_back(static_cast<double>(levels));
+  for (size_t level = 0; level < levels; ++level) {
     train.parameters.push_back(periods[level]);
     train.parameters.push_back(static_cast<double>(counts[level]));
     train.parameters.push_back(steps[level]);
@@ -587,21 +631,28 @@ struct PulseToQOpPass
       static constexpr llvm::StringLiteral quadratures[] = {"spin_x", "spin_y"};
       for (auto [quadrature, kind] : llvm::enumerate(quadratures)) {
         SmallVector<WaveformCallbackData> callbacks;
-        for (const pulse::Occurrence &occurrence : occurrences) {
+        auto append = [&](const pulse::Occurrence &occurrence) {
           auto callback = getWaveformCallbackData(
               occurrence, clockGHz, qubitFrequency->second, driveScale,
               static_cast<int32_t>(quadrature));
-          if (!callback) {
-            op->emitError(
-                "waveform cannot be lowered to a cuDensityMat callback; "
-                "schedule the program, specialize all numeric values, "
-                "and use a built-in or custom_samples waveform");
-            return signalPassFailure();
-          }
-          callbacks.push_back(std::move(*callback));
+          if (callback)
+            callbacks.push_back(std::move(*callback));
+          return callback.has_value();
+        };
+        if (!append(occurrences.front())) {
+          op->emitError(
+              "waveform cannot be lowered to a cuDensityMat callback; "
+              "schedule the program, specialize all numeric values, "
+              "and use a built-in or custom_samples waveform");
+          return signalPassFailure();
         }
-        if (auto train = pulseTrain(occurrences, callbacks))
+        if (auto train = pulseTrain(occurrences, callbacks.front(), clockGHz,
+                                    qubitFrequency->second))
           callbacks.assign({std::move(*train)});
+        else
+          for (const pulse::Occurrence &occurrence :
+               llvm::drop_begin(occurrences))
+            append(occurrence);
         for (auto [index, callback] : llvm::enumerate(callbacks)) {
           std::string name = "drive_envelope_" + std::to_string(driveIdx) +
                              (callbacks.size() > 1 ? "_" + std::to_string(index)
