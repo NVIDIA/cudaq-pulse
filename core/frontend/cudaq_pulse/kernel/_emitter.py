@@ -67,6 +67,7 @@ _WAVEFORMS = frozenset(
     {"gaussian", "square", "drag", "cosine", "tanh_ramp", "gaussian_square", "custom"}
 )
 _WAVEFORM_ARITHMETIC = frozenset({"wf_add", "wf_sub", "wf_mul", "wf_scale", "wf_neg"})
+_MAKES_WAVEFORM = _WAVEFORMS | _WAVEFORM_ARITHMETIC | {"custom_samples"}
 _PULSE_OP_NAMES = frozenset(OP_TABLE.keys()) | frozenset(_ALLOC_OPS.keys())
 
 # Loops over Python iterables are unrolled; this bounds a runaway iterator.
@@ -1109,14 +1110,22 @@ class PulseIREmitter:
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
 
         op_name = _ALLOC_OPS.get(fname, f"pulse.{fname}")
-        duration = self._waveform_duration(fname, operands, attrs)
-        results: tuple[IRValue, ...] = self.b.emit(op_name, operands, out_types, attrs)
-        if fname in _WAVEFORMS or fname in _WAVEFORM_ARITHMETIC or fname == "custom_samples":
+        results: tuple[IRValue, ...]
+        if fname in _MAKES_WAVEFORM:
+            if fname in _WAVEFORMS:
+                duration = attrs.get("duration")
+                if duration.__class__ is not int:
+                    duration = None
+            else:
+                duration = self._waveform_duration(fname, operands, attrs)
+            results = self.b.emit(op_name, operands, out_types, attrs)
             # A rolled-back loop body can leave an entry for a reused vid.
             if duration is None:
                 self._durations.pop(results[0].vid, None)
             else:
                 self._durations[results[0].vid] = duration
+        else:
+            results = self.b.emit(op_name, operands, out_types, attrs)
 
         self._rebind_linear(fname, call_args, results)
 
@@ -1125,8 +1134,9 @@ class PulseIREmitter:
     def _waveform_duration(
         self, fname: str, operands: tuple[IRValue, ...], attrs: dict[str, Any]
     ) -> int | None:
-        """The duration of the waveform *fname* makes, if known; rejects
-        arithmetic on waveforms of different durations."""
+        """The duration of the waveform arithmetic or ``custom_samples`` call
+        *fname* makes, if known; rejects arithmetic on waveforms of different
+        durations."""
         if fname in _WAVEFORM_ARITHMETIC:
             for operand in operands:
                 if not (operand.__class__ is IRValue and operand.vtype == "waveform"):
@@ -1150,8 +1160,7 @@ class PulseIREmitter:
                 return len(attrs["samples"])
             except TypeError:
                 return None
-        duration = attrs.get("duration")
-        return duration if type(duration) is int and fname in _WAVEFORMS else None
+        return None
 
     def _rebind_linear(
         self,
