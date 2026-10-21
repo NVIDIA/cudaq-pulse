@@ -7,7 +7,7 @@
 # ============================================================================ #
 """Synthetic bug corpus: 100 programs across 4 bug classes + positive controls.
 
-Bug classes (paper Section 5): unintentional_overlap, backward_time_travel,
+Bug classes: unintentional_overlap, backward_time_travel,
 phase_bookkeeping, cross_resonance_miscalibration.
 """
 

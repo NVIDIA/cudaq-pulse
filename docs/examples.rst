@@ -43,7 +43,7 @@ Core Examples
      - ``03_t1_t2_dissipator.py``
      - T1, Ramsey and Hahn-echo experiment kernels
    * - 04
-     - ``04_echo_paper.py``
+     - ``04_hahn_echo.py``
      - Canonical Hahn spin-echo sequence (pi/2 - tau - pi - tau - pi/2)
    * - 05
      - ``05_waveform_gallery.py``

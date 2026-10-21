@@ -9,7 +9,7 @@
 """Microbenchmark: bytecode kernel capture latency.
 
 Measures the time to compile a pulse kernel into IR using the bytecode
-backend across the 6 canonical workloads from the paper benchmarks.
+backend across the 6 canonical workloads.
 """
 
 from __future__ import annotations
