@@ -208,9 +208,11 @@ def _simulate_compiled(
             if count and total > 0
             else np.zeros(len(weights), dtype=np.int64)
         )
+        # A measurement that ends before t_start projects the initial state;
+        # evolution still starts at t_start.
         for k, (branch, w) in enumerate(zip(projected, weights)):
             if w > _NEGLIGIBLE * norm:
-                run([*path, (key, k)], branch, end, int(counts[k]))
+                run([*path, (key, k)], branch, max(end, t), int(counts[k]))
 
     norm = engine.weight(state)
     run([], state, t_start, shots or 0)
@@ -389,6 +391,11 @@ class _GpuBackend(_Backend):
 
         self.compiler = JITCompiler()
         self.integrator = integrator
+        # Collapse operators depend on the target alone. A program that
+        # measures lowers only along a measurement path over a window, so ask
+        # along the empty path over an empty window at 0 ns, which ends before
+        # any measurement; every segment then sets its own path and window.
+        module.set_attributes(_segment_attributes([], 0.0, 0.0, 1))
         _, _, collapse, *_ = module.operator_program()
         self.dissipative = bool(collapse)
 
@@ -404,6 +411,10 @@ class _GpuBackend(_Backend):
         if mixed and not self.dissipative:
             attributes += ", qop.mixed_state"
         self.module.set_attributes(attributes + "}")
+        return self._execute(state, mixed)
+
+    def _execute(self, state: Any, mixed: bool) -> Any:
+        """Run the module's current segment on the GPU from *state*."""
         text = self.module.print()
         jit_module = self.compiler.compile_pulse_mlir(text)
         # cuDensityMat stores a density matrix with the ket index fastest.

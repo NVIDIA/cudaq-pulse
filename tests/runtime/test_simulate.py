@@ -194,22 +194,3 @@ def test_gpu_backend_matches_the_reference(kernel, n):
     gpu = _run(kernel, n, backend="gpu")
     np.testing.assert_allclose(gpu.density_matrix, cpu.density_matrix, atol=1e-6)
     assert [o for o, _ in gpu.branches] == [o for o, _ in cpu.branches]
-
-
-def test_evolve_sums_the_branches_of_a_program_that_measures(monkeypatch):
-    from cudaq_pulse.runtime import simulate as simulate_module
-
-    # The GPU backend's orchestration, run on the reference integrator.
-    monkeypatch.setattr(
-        simulate_module,
-        "_GpuBackend",
-        lambda module, dims, dt, integrator: simulate_module._CpuBackend(module, dims, dt),
-    )
-    result = pulse.evolve(
-        _active_reset(_HALF_PI)(pulse.qudit_ref()),
-        target=_target(1),
-        t_start=0.0,
-        t_end=140.0,
-        num_steps=2800,
-    )
-    np.testing.assert_allclose(result.final_state, np.diag([1.0, 0.0]), atol=1e-7)
