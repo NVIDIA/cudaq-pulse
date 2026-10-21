@@ -63,6 +63,10 @@ from .ir_builder import (
 )
 
 _ALLOC_OPS = {"qudit_ref": "pulse.qudit_alloc", "qvec_ref": "pulse.qvec_alloc"}
+_WAVEFORMS = frozenset(
+    {"gaussian", "square", "drag", "cosine", "tanh_ramp", "gaussian_square", "custom"}
+)
+_WAVEFORM_ARITHMETIC = frozenset({"wf_add", "wf_sub", "wf_mul", "wf_scale", "wf_neg"})
 _PULSE_OP_NAMES = frozenset(OP_TABLE.keys()) | frozenset(_ALLOC_OPS.keys())
 
 # Loops over Python iterables are unrolled; this bounds a runaway iterator.
@@ -250,6 +254,7 @@ class PulseIREmitter:
         "_builtins",
         "_can_roll",
         "_slots",
+        "_durations",
     )
 
     def __init__(
@@ -268,6 +273,8 @@ class PulseIREmitter:
         # id(line or tone) -> (list, index, value) for values read out of a
         # list, so the op that consumes one can rebind the list slot.
         self._slots: dict[int, tuple[list[Any], int, IRValue]] = {}
+        # Waveform vid -> duration in clock cycles, when known at trace time.
+        self._durations: dict[int, int] = {}
         if not _PULSE_FUNCTIONS:
             _load_pulse_functions()
 
@@ -1015,6 +1022,7 @@ class PulseIREmitter:
             fn_closures=_extract_closures(fn),
         )
         helper._slots = self._slots
+        helper._durations = self._durations
         helper.locals.update(zip(params, call_args))
         result = helper.run(code)
 
@@ -1099,11 +1107,49 @@ class PulseIREmitter:
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
 
         op_name = _ALLOC_OPS.get(fname, f"pulse.{fname}")
+        duration = self._waveform_duration(fname, operands, attrs)
         results: tuple[IRValue, ...] = self.b.emit(op_name, operands, out_types, attrs)
+        if fname in _WAVEFORMS or fname in _WAVEFORM_ARITHMETIC or fname == "custom_samples":
+            # A rolled-back loop body can leave an entry for a reused vid.
+            if duration is None:
+                self._durations.pop(results[0].vid, None)
+            else:
+                self._durations[results[0].vid] = duration
 
         self._rebind_linear(fname, call_args, results)
 
         return results
+
+    def _waveform_duration(
+        self, fname: str, operands: tuple[IRValue, ...], attrs: dict[str, Any]
+    ) -> int | None:
+        """The duration of the waveform *fname* makes, if known; rejects
+        arithmetic on waveforms of different durations."""
+        if fname in _WAVEFORM_ARITHMETIC:
+            for operand in operands:
+                if not (operand.__class__ is IRValue and operand.vtype == "waveform"):
+                    raise CompilationError(
+                        f"{fname}() takes waveforms, got {type(operand).__name__}"
+                        + ("; call it as wf_scale(waveform, scalar)" if fname == "wf_scale" else "")
+                    )
+            known = self._durations
+            left = known.get(operands[0].vid)
+            if len(operands) == 2:
+                right = known.get(operands[1].vid)
+                if left is not None and right is not None and left != right:
+                    raise CompilationError(
+                        f"{fname}() operands have durations {left} and {right}; "
+                        "waveform arithmetic needs equal durations"
+                    )
+                return left if left is not None else right
+            return left
+        if fname == "custom_samples":
+            try:
+                return len(attrs["samples"])
+            except TypeError:
+                return None
+        duration = attrs.get("duration")
+        return duration if type(duration) is int and fname in _WAVEFORMS else None
 
     def _rebind_linear(
         self,

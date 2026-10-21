@@ -59,12 +59,10 @@ pulse-fusion
 
 **Source:** ``core/mlir/transforms/Fusion.cpp``
 
-Merges adjacent ``pulse.drive`` operations on the same line into a
-single drive with a combined waveform (using ``pulse.wf_add``).
-This reduces operation count and can improve scheduling density.
-
-Fusion is only applied when both drives use the same tone and have
-compatible timing.
+Merges back-to-back ``pulse.drive`` operations on the same line and tone
+whose waveforms are square pulses of the same amplitude into a single
+drive of the summed duration. This reduces the operation count without
+changing the program.
 
 pulse-schedule-alap
 -------------------

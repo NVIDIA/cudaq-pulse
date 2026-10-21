@@ -346,7 +346,7 @@ def wf_mul(left: Waveform, right: Waveform) -> Waveform:
     """Multiply two waveforms element-wise."""
     ...
 
-def wf_scale(scalar: float, waveform: Waveform) -> Waveform:
+def wf_scale(waveform: Waveform, scalar: float) -> Waveform:
     """Scale a waveform by a constant factor."""
     ...
 

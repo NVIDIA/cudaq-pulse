@@ -118,7 +118,7 @@ Waveforms can be combined algebraically inside kernels:
        envelope_a = gaussian(64, 0.5, 16.0)
        envelope_b = gaussian(64, 0.3, 10.0)
        combined = wf_add(envelope_a, envelope_b)
-       scaled = wf_scale(0.5, envelope_a)
+       scaled = wf_scale(envelope_a, 0.5)
        inverted = wf_neg(envelope_a)
 
 .. :spellcheck-enable:
@@ -135,10 +135,14 @@ Waveforms can be combined algebraically inside kernels:
      - ``left - right``
    * - ``wf_mul(left, right)``
      - ``left * right`` (element-wise)
-   * - ``wf_scale(scalar, waveform)``
+   * - ``wf_scale(waveform, scalar)``
      - ``scalar * waveform``
    * - ``wf_neg(waveform)``
      - ``-waveform``
 
-Waveform algebra is available in the compiler IR, but the GPU execution
-lowering does not yet evaluate algebra nodes and rejects them explicitly.
+The operands of ``wf_add``, ``wf_sub`` and ``wf_mul`` must have the same
+duration; a mismatch is a compile error. For simulation and execution, a
+sum, difference, scaling or negation lowers exactly: the drive Hamiltonian
+is linear in the envelope, so each term plays as its own envelope. A
+product is not linear and is sampled once per clock cycle into
+piecewise-constant samples, as ``custom_samples`` would be.

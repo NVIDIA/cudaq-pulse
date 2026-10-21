@@ -219,11 +219,48 @@ void IsSetOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
   patterns.add<OutcomeNonzeroToIsSet>(ctx);
 }
 
-LogicalResult PulseAddOp::verify() { return success(); }
+/// The duration of a waveform in clock cycles, when it is a constant.
+static std::optional<int64_t> waveformDuration(Value waveform) {
+  Operation *definition = waveform.getDefiningOp();
+  if (!definition)
+    return std::nullopt;
+  return TypeSwitch<Operation *, std::optional<int64_t>>(definition)
+      .Case<GaussianPulseOp, SquarePulseOp, DRAGPulseOp, CosinePulseOp,
+            TanhRampOp, GaussianSquarePulseOp, CustomOp>(
+          [](auto op) { return getConstantI64(op.getDuration()); })
+      .Case([](CustomSamplesOp op) {
+        return std::optional<int64_t>(op.getSamples().size());
+      })
+      .Case<PulseAddOp, PulseSubOp, PulseMulOp>(
+          [](auto op) { return waveformDuration(op.getLhs()); })
+      .Case<PulseScaleOp, PulseNegOp>(
+          [](auto op) { return waveformDuration(op.getPulse()); })
+      .Default([](Operation *) { return std::nullopt; });
+}
 
-LogicalResult PulseSubOp::verify() { return success(); }
+/// Waveform arithmetic is element-wise, so both operands must have the same
+/// duration; otherwise one would be silently truncated.
+static LogicalResult verifyEqualDurations(Operation *op, Value lhs, Value rhs) {
+  auto left = waveformDuration(lhs);
+  auto right = waveformDuration(rhs);
+  if (left && right && *left != *right)
+    return op->emitOpError("operands have durations ")
+           << *left << " and " << *right
+           << "; waveform arithmetic needs equal durations";
+  return success();
+}
 
-LogicalResult PulseMulOp::verify() { return success(); }
+LogicalResult PulseAddOp::verify() {
+  return verifyEqualDurations(*this, getLhs(), getRhs());
+}
+
+LogicalResult PulseSubOp::verify() {
+  return verifyEqualDurations(*this, getLhs(), getRhs());
+}
+
+LogicalResult PulseMulOp::verify() {
+  return verifyEqualDurations(*this, getLhs(), getRhs());
+}
 
 LogicalResult AtomicOp::verify() {
   // The body must receive the same number of lines as produced

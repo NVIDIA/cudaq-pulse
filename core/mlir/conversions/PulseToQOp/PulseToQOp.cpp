@@ -55,6 +55,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
+#include <functional>
 #include <optional>
 
 using namespace mlir;
@@ -99,33 +101,29 @@ static DriveTiming driveTiming(const pulse::Occurrence &occurrence,
           2.0 * M_PI * (tone.frequencyHz - qubitFrequencyHz) * 1.0e-9};
 }
 
-/// The callback of one drive occurrence for one quadrature.
+/// The callback of `waveform`, a built-in or custom_samples op, played with
+/// `timing` and multiplied by `coefficient`.
 static std::optional<WaveformCallbackData>
-getWaveformCallbackData(const pulse::Occurrence &occurrence, double clockGHz,
-                        double qubitFrequencyHz, double driveScale,
-                        int32_t quadrature) {
-  Operation *drive = occurrence.op;
-  auto *waveform = drive->getOperand(1).getDefiningOp();
-  if (!waveform)
-    return std::nullopt;
-
+leafCallback(Operation *waveform, const DriveTiming &timing, double clockGHz,
+             double driveScale, int32_t quadrature,
+             std::complex<double> coefficient) {
   const double scale = 1.0 / clockGHz;
-  const DriveTiming timing =
-      driveTiming(occurrence, clockGHz, qubitFrequencyHz, phaseOffsetOf(drive));
+  const double gain = std::abs(coefficient) * driveScale;
   // Common layout: start, duration, real amplitude, imaginary amplitude,
   // sigma, beta, rise/fall, phase-at-start, quadrature, detuning (rad/ns),
-  // followed by sample data.
-  WaveformCallbackData result{
-      0,
-      {timing.startNs, timing.durationNs, 0.0, 0.0, 0.0, 0.0, 0.0, timing.phase,
-       static_cast<double>(quadrature), timing.detuning}};
+  // followed by sample data. A complex coefficient advances the phase.
+  WaveformCallbackData result{0,
+                              {timing.startNs, timing.durationNs, 0.0, 0.0, 0.0,
+                               0.0, 0.0, timing.phase + std::arg(coefficient),
+                               static_cast<double>(quadrature),
+                               timing.detuning}};
   auto set = [&](int32_t kind, Value amplitude, Value sigma = {},
                  Value beta = {}) -> bool {
     auto amplitudeValue = constantNumber(amplitude);
     if (!amplitudeValue)
       return false;
     result.kind = kind;
-    result.parameters[2] = *amplitudeValue * driveScale;
+    result.parameters[2] = *amplitudeValue * gain;
     if (sigma) {
       auto sigmaValue = constantNumber(sigma);
       if (!sigmaValue)
@@ -147,8 +145,8 @@ getWaveformCallbackData(const pulse::Occurrence &occurrence, double clockGHz,
     if (!real || !imag)
       return std::nullopt;
     result.kind = 1;
-    result.parameters[2] = *real * driveScale;
-    result.parameters[3] = *imag * driveScale;
+    result.parameters[2] = *real * gain;
+    result.parameters[3] = *imag * gain;
   } else if (auto op = dyn_cast<pulse::GaussianPulseOp>(waveform)) {
     if (!set(2, op.getAmplitude(), op.getSigma()))
       return std::nullopt;
@@ -174,12 +172,140 @@ getWaveformCallbackData(const pulse::Occurrence &occurrence, double clockGHz,
       auto value = dyn_cast<FloatAttr>(sample);
       if (!value)
         return std::nullopt;
-      result.parameters.push_back(value.getValueAsDouble() * driveScale);
+      result.parameters.push_back(value.getValueAsDouble() * gain);
     }
   } else {
     return std::nullopt;
   }
   return result;
+}
+
+/// The complex envelope of `waveform` at `time` ns after it starts, before
+/// the carrier and the drive scale are applied.
+static std::optional<std::complex<double>>
+envelopeAt(Value waveform, double time, double durationNs, double clockGHz) {
+  Operation *op = waveform.getDefiningOp();
+  if (!op)
+    return std::nullopt;
+  auto binary = [&](Value lhs, Value rhs,
+                    auto combine) -> std::optional<std::complex<double>> {
+    auto left = envelopeAt(lhs, time, durationNs, clockGHz);
+    auto right = envelopeAt(rhs, time, durationNs, clockGHz);
+    if (!left || !right)
+      return std::nullopt;
+    return combine(*left, *right);
+  };
+  if (auto add = dyn_cast<pulse::PulseAddOp>(op))
+    return binary(add.getLhs(), add.getRhs(), std::plus<>());
+  if (auto sub = dyn_cast<pulse::PulseSubOp>(op))
+    return binary(sub.getLhs(), sub.getRhs(), std::minus<>());
+  if (auto mul = dyn_cast<pulse::PulseMulOp>(op))
+    return binary(mul.getLhs(), mul.getRhs(), std::multiplies<>());
+  if (auto neg = dyn_cast<pulse::PulseNegOp>(op)) {
+    auto value = envelopeAt(neg.getPulse(), time, durationNs, clockGHz);
+    return value ? std::optional(-*value) : std::nullopt;
+  }
+  if (auto scaled = dyn_cast<pulse::PulseScaleOp>(op)) {
+    auto factor = constantNumber(scaled.getScale());
+    auto value = envelopeAt(scaled.getPulse(), time, durationNs, clockGHz);
+    if (!factor || !value)
+      return std::nullopt;
+    return *factor * *value;
+  }
+  // With no carrier, the X and Y callbacks are half the envelope's real and
+  // imaginary parts.
+  const DriveTiming local{0.0, durationNs, 0.0, 0.0};
+  double parts[2];
+  for (int32_t quadrature : {0, 1}) {
+    auto callback = leafCallback(op, local, clockGHz, 1.0, quadrature, 1.0);
+    if (!callback || cudaq_pulse::evaluateWaveform(
+                         callback->kind, callback->parameters.data(),
+                         callback->parameters.size(), time, parts[quadrature]))
+      return std::nullopt;
+  }
+  return std::complex<double>(2.0 * parts[0], 2.0 * parts[1]);
+}
+
+/// A waveform as a linear combination of terms: built-in waveforms, and
+/// products, which are sampled.
+struct WaveformTerm {
+  Operation *waveform;
+  std::complex<double> coefficient;
+};
+
+static bool collectTerms(Value waveform, std::complex<double> coefficient,
+                         SmallVectorImpl<WaveformTerm> &terms) {
+  Operation *op = waveform.getDefiningOp();
+  if (!op)
+    return false;
+  if (auto add = dyn_cast<pulse::PulseAddOp>(op))
+    return collectTerms(add.getLhs(), coefficient, terms) &&
+           collectTerms(add.getRhs(), coefficient, terms);
+  if (auto sub = dyn_cast<pulse::PulseSubOp>(op))
+    return collectTerms(sub.getLhs(), coefficient, terms) &&
+           collectTerms(sub.getRhs(), -coefficient, terms);
+  if (auto neg = dyn_cast<pulse::PulseNegOp>(op))
+    return collectTerms(neg.getPulse(), -coefficient, terms);
+  if (auto scaled = dyn_cast<pulse::PulseScaleOp>(op)) {
+    auto factor = constantNumber(scaled.getScale());
+    return factor &&
+           collectTerms(scaled.getPulse(), coefficient * *factor, terms);
+  }
+  terms.push_back({op, coefficient});
+  return true;
+}
+
+/// The callbacks of one drive occurrence for one quadrature: one per term
+/// of its waveform. The control Hamiltonian is linear in the envelope, so a
+/// sum of waveforms is exactly a sum of callbacks. A product is sampled once
+/// per clock cycle into piecewise-constant samples, its real and imaginary
+/// parts as two callbacks.
+static std::optional<SmallVector<WaveformCallbackData>>
+getWaveformCallbacks(const pulse::Occurrence &occurrence, double clockGHz,
+                     double qubitFrequencyHz, double driveScale,
+                     int32_t quadrature) {
+  Operation *drive = occurrence.op;
+  SmallVector<WaveformTerm> terms;
+  if (!collectTerms(drive->getOperand(1), 1.0, terms))
+    return std::nullopt;
+  const DriveTiming timing =
+      driveTiming(occurrence, clockGHz, qubitFrequencyHz, phaseOffsetOf(drive));
+  SmallVector<WaveformCallbackData> callbacks;
+  for (const WaveformTerm &term : terms) {
+    if (!isa<pulse::PulseMulOp>(term.waveform)) {
+      auto callback = leafCallback(term.waveform, timing, clockGHz, driveScale,
+                                   quadrature, term.coefficient);
+      if (!callback)
+        return std::nullopt;
+      callbacks.push_back(std::move(*callback));
+      continue;
+    }
+    const auto count = occurrence.durationVtu;
+    SmallVector<double> real, imaginary;
+    for (int64_t k = 0; k < count; ++k) {
+      auto value = envelopeAt(term.waveform->getResult(0), (k + 0.5) / clockGHz,
+                              timing.durationNs, clockGHz);
+      if (!value)
+        return std::nullopt;
+      real.push_back(value->real());
+      imaginary.push_back(value->imag());
+    }
+    auto samples = [&](ArrayRef<double> values, double phase) {
+      const double gain = std::abs(term.coefficient) * driveScale;
+      WaveformCallbackData callback{
+          7,
+          {timing.startNs, timing.durationNs, 0.0, 0.0, 0.0, 0.0, 0.0,
+           timing.phase + std::arg(term.coefficient) + phase,
+           static_cast<double>(quadrature), timing.detuning}};
+      for (double value : values)
+        callback.parameters.push_back(value * gain);
+      callbacks.push_back(std::move(callback));
+    };
+    samples(real, 0.0);
+    if (llvm::any_of(imaginary, [](double v) { return v != 0.0; }))
+      samples(imaginary, M_PI / 2.0);
+  }
+  return callbacks;
 }
 
 /// Leaf operators on qudit `target`: Pauli spin handlers for two levels,
@@ -630,29 +756,43 @@ struct PulseToQOpPass
 
       static constexpr llvm::StringLiteral quadratures[] = {"spin_x", "spin_y"};
       for (auto [quadrature, kind] : llvm::enumerate(quadratures)) {
-        SmallVector<WaveformCallbackData> callbacks;
-        auto append = [&](const pulse::Occurrence &occurrence) {
-          auto callback = getWaveformCallbackData(
-              occurrence, clockGHz, qubitFrequency->second, driveScale,
-              static_cast<int32_t>(quadrature));
-          if (callback)
-            callbacks.push_back(std::move(*callback));
-          return callback.has_value();
+        auto lower = [&](const pulse::Occurrence &occurrence) {
+          return getWaveformCallbacks(occurrence, clockGHz,
+                                      qubitFrequency->second, driveScale,
+                                      static_cast<int32_t>(quadrature));
         };
-        if (!append(occurrences.front())) {
+        auto first = lower(occurrences.front());
+        if (!first) {
           op->emitError(
               "waveform cannot be lowered to a cuDensityMat callback; "
               "schedule the program, specialize all numeric values, "
-              "and use a built-in or custom_samples waveform");
+              "and use built-in or custom_samples waveforms and their "
+              "arithmetic");
           return signalPassFailure();
         }
-        if (auto train = pulseTrain(occurrences, callbacks.front(), clockGHz,
-                                    qubitFrequency->second))
-          callbacks.assign({std::move(*train)});
-        else
+        // Each term of the waveform becomes one pulse train if every term
+        // can; otherwise every occurrence is lowered on its own.
+        SmallVector<WaveformCallbackData> callbacks;
+        for (const WaveformCallbackData &term : *first) {
+          auto train =
+              pulseTrain(occurrences, term, clockGHz, qubitFrequency->second);
+          if (!train)
+            break;
+          callbacks.push_back(std::move(*train));
+        }
+        if (callbacks.size() != first->size()) {
+          callbacks = std::move(*first);
           for (const pulse::Occurrence &occurrence :
-               llvm::drop_begin(occurrences))
-            append(occurrence);
+               llvm::drop_begin(occurrences)) {
+            auto more = lower(occurrence);
+            if (!more) {
+              op->emitError("waveform cannot be lowered to a cuDensityMat "
+                            "callback");
+              return signalPassFailure();
+            }
+            llvm::append_range(callbacks, *more);
+          }
+        }
         for (auto [index, callback] : llvm::enumerate(callbacks)) {
           std::string name = "drive_envelope_" + std::to_string(driveIdx) +
                              (callbacks.size() > 1 ? "_" + std::to_string(index)
