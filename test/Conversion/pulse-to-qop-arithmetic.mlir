@@ -46,4 +46,3 @@ func.func @main() {
       -> !pulse.drive_line, !pulse.tone
   return
 }
-
