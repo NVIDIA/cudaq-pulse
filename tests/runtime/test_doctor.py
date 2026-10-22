@@ -26,6 +26,8 @@ compiler_only = pytest.mark.skipif(
 def _fresh_guard(monkeypatch):
     monkeypatch.delenv("CUDM_RUNTIME_LIB", raising=False)
     monkeypatch.delenv("CUDAQ_PULSE_CUDA", raising=False)
+    monkeypatch.delenv("CUDAQ_PULSE_CONTEXT_MAX_MODULES", raising=False)
+    monkeypatch.delenv("CUDAQ_PULSE_CONTEXT_MAX_WORDS", raising=False)
     monkeypatch.setattr(gpu, "_runtime", None)
 
 
@@ -101,3 +103,23 @@ def test_exit_codes(monkeypatch, outcome, installed, flags, expected):
     )
     assert code == expected
     assert lines[-1].startswith("Result: ")
+
+
+@compiler_only
+def test_reports_the_mlir_context_limits(monkeypatch):
+    code, output = _run("--allow-no-gpu")
+    assert code == 0
+    assert "MLIR context reuse: up to 256 modules or 1048576 packed words" in output
+    monkeypatch.setenv("CUDAQ_PULSE_CONTEXT_MAX_MODULES", "8")
+    code, output = _run("--allow-no-gpu")
+    assert code == 0
+    assert "up to 8 modules" in output
+    assert "CUDAQ_PULSE_CONTEXT_MAX_MODULES=8" in output
+
+
+def test_invalid_mlir_context_limits_fail(monkeypatch):
+    monkeypatch.setenv("CUDAQ_PULSE_CONTEXT_MAX_WORDS", "lots")
+    code, output = _run("--allow-no-gpu")
+    assert code == 1
+    assert "MLIR context reuse: INVALID" in output
+    assert "CUDAQ_PULSE_CONTEXT_MAX_WORDS=lots is not valid" in output

@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import importlib.metadata
+import os
 import platform
 import sys
 from collections.abc import Callable, Sequence
@@ -69,6 +70,28 @@ def _check_compiler() -> str | None:
     if answer != 42:
         return f"the JIT-compiled check returned {answer}, expected 42"
     return None
+
+
+def _context_budget(write: Callable[[str], None]) -> bool:
+    """Print the shared MLIR context limits; return False if they are invalid."""
+    from ._native import _cudaq_pulse_native as native
+
+    try:
+        modules, words = native.shared_context_budget()
+    except ValueError as error:
+        write("MLIR context reuse: INVALID")
+        write(f"  {error}")
+        return False
+    sources = [
+        f"{name}={os.environ[name]}"
+        for name in ("CUDAQ_PULSE_CONTEXT_MAX_MODULES", "CUDAQ_PULSE_CONTEXT_MAX_WORDS")
+        if os.environ.get(name)
+    ]
+    write(
+        f"MLIR context reuse: up to {modules} modules or {words} packed words per "
+        f"context ({', '.join(sources) if sources else 'defaults'})"
+    )
+    return True
 
 
 def _installed_extras() -> list[str]:
@@ -211,6 +234,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     write(f"Compiler (MLIR JIT): {'ok' if compiler_error is None else 'FAILED'}")
     if compiler_error is not None:
         write(f"  {compiler_error}")
+    if not _context_budget(write) and compiler_error is None:
+        compiler_error = "invalid MLIR context limits"
 
     outcome = _diagnose_gpu(write)
     if compiler_error is not None:

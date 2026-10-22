@@ -16,6 +16,8 @@
 #include <nanobind/stl/vector.h>
 
 #include <bit>
+#include <charconv>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <mutex>
@@ -675,22 +677,38 @@ private:
 /// Loading the dialects into a new context costs about 0.4 ms, so builders
 /// share a context. A context keeps every attribute it ever uniqued (each
 /// compile with new qubit frequencies, for instance, adds a few hundred bytes
-/// per qubit), so it is retired after kModulesPerContext builders or once
-/// the programs built in it reach kWordsPerContext packed words, and freed
-/// with its last module.
+/// per qubit), so it is retired after a number of builders or once the
+/// programs built in it reach a number of packed words, whichever comes
+/// first, and freed with its last module. Both limits can be set with
+/// environment variables, read whenever a builder takes a context.
 class SharedContextPool {
 public:
+  struct Budget {
+    int64_t modules;
+    int64_t words;
+  };
+
+  static constexpr const char *kModulesVariable =
+      "CUDAQ_PULSE_CONTEXT_MAX_MODULES";
+  static constexpr const char *kWordsVariable = "CUDAQ_PULSE_CONTEXT_MAX_WORDS";
+
+  /// The limits in effect; throws std::invalid_argument for a malformed
+  /// environment variable.
+  static Budget budget() {
+    return {limit(kModulesVariable, 256), limit(kWordsVariable, 1 << 20)};
+  }
+
   static std::shared_ptr<mlir::MLIRContext> acquire() {
-    constexpr int64_t kModulesPerContext = 256;
-    constexpr int64_t kWordsPerContext = 1 << 20;
+    const Budget limits = budget();
     std::lock_guard<std::mutex> guard(lock());
     auto &pool = state();
-    if (!pool.current || ++pool.uses > kModulesPerContext ||
-        pool.words > kWordsPerContext) {
+    if (!pool.current || ++pool.uses > limits.modules ||
+        pool.words >= limits.words) {
       pool.current = std::make_shared<mlir::MLIRContext>(makeRegistry());
       pool.current->loadAllAvailableDialects();
       pool.uses = 1;
       pool.words = 0;
+      ++pool.created;
     }
     return pool.current;
   }
@@ -703,12 +721,38 @@ public:
       pool.words += words;
   }
 
+  /// (contexts created, builders on the current one, its packed words).
+  static std::tuple<int64_t, int64_t, int64_t> stats() {
+    std::lock_guard<std::mutex> guard(lock());
+    auto &pool = state();
+    return {pool.created, pool.current ? pool.uses : 0, pool.words};
+  }
+
 private:
   struct State {
     std::shared_ptr<mlir::MLIRContext> current;
     int64_t uses = 0;
     int64_t words = 0;
+    int64_t created = 0;
   };
+
+  static int64_t limit(const char *variable, int64_t fallback) {
+    constexpr int64_t kMaximum = int64_t{1} << 40;
+    const char *text = std::getenv(variable);
+    if (!text || !*text)
+      return fallback;
+    int64_t value = 0;
+    const char *end = text + std::strlen(text);
+    auto [stop, error] = std::from_chars(text, end, value);
+    if (error != std::errc() || stop != end || value < 1 || value > kMaximum)
+      throw std::invalid_argument(
+          std::string(variable) + "=" + text +
+          " is not valid; it must be a whole number from 1 to " +
+          std::to_string(kMaximum) + " (default " + std::to_string(fallback) +
+          ")");
+    return value;
+  }
+
   static std::mutex &lock() {
     static std::mutex mutex;
     return mutex;
@@ -1674,6 +1718,19 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::arg("param_names") = std::vector<std::string>{},
            nb::arg("param_types") = std::vector<std::string>{},
            nb::arg("name") = "main");
+
+  m.def(
+      "shared_context_budget",
+      [] {
+        auto limits = SharedContextPool::budget();
+        return std::make_tuple(limits.modules, limits.words);
+      },
+      "(modules, packed words) a shared MLIR context serves before it is "
+      "retired, from CUDAQ_PULSE_CONTEXT_MAX_MODULES and "
+      "CUDAQ_PULSE_CONTEXT_MAX_WORDS");
+  m.def("shared_context_stats", &SharedContextPool::stats,
+        "(contexts created, builders on the current context, its packed "
+        "words)");
 
   m.def(
       "evaluate_callback",

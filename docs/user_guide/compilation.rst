@@ -127,6 +127,38 @@ evaluated at different parameter values, and lowered from several Python
 threads at once. Calls on one ``CompiledKernel`` are serialized; tracing a
 kernel is Python and holds the GIL.
 
+Long Sessions and Memory
+------------------------
+
+Compiled kernels share an MLIR context, which keeps every attribute it has
+created (constants, qubit frequencies, timing) until it is freed. A context
+is retired, and freed once its last kernel is gone, after it has built a
+number of modules or a number of packed program words, whichever comes
+first. The limits are read from the environment each time a kernel is
+compiled:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 15 45
+
+   * - Variable
+     - Default
+     - Meaning
+   * - ``CUDAQ_PULSE_CONTEXT_MAX_MODULES``
+     - 256
+     - Modules built in one context before it is retired.
+   * - ``CUDAQ_PULSE_CONTEXT_MAX_WORDS``
+     - 1048576
+     - Packed program words (8 bytes each) built in one context before it
+       is retired.
+
+Each must be a whole number from 1 to 2\ :sup:`40`; any other value makes
+``compile()`` raise ``ValueError`` naming the variable. Lower values bound
+the memory a long session keeps (a loop that recompiles a large program
+with new qubit frequencies, for example) at the cost of creating contexts
+more often, about 0.4 ms each. ``python -m cudaq_pulse.doctor`` prints the
+limits in effect.
+
 Customizing the Pass Pipeline
 -----------------------------
 
