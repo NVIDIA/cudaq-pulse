@@ -5,12 +5,12 @@ package built on MLIR. It provides a Python kernel DSL, pulse and operator
 dialects, compiler passes, and an experimental GPU execution path on NVIDIA
 cuDensityMat.
 
-> [!WARNING]
-> CUDA-Q pulse is **research-preview software**. It is not production software
-> and is not a product-supported CUDA-Q feature. Its Python APIs, MLIR
-> dialects, runtime interfaces, build options, numerical behavior, and file
-> layout may change incompatibly or be removed without notice. No stability,
-> compatibility, performance, or production-readiness guarantee is provided.
+**Warning:** CUDA-Q pulse is **research-preview software**. It is not
+production software and is not a product-supported CUDA-Q feature. Its Python
+APIs, MLIR dialects, runtime interfaces, build options, numerical behavior,
+and file layout may change incompatibly or be removed without notice. No
+stability, compatibility, performance, or production-readiness guarantee is
+provided.
 
 `cudaq-pulse` does not depend on CUDA-Q. The wheel contains its own statically
 linked MLIR, so `pip` is the only installer you need.
@@ -100,10 +100,11 @@ selected transformations, and emits scheduled MLIR. The wheel also installs
 cudaq-pulse-opt --pulse-to-qop kernel.mlir
 ```
 
-The [user guide](docs/index.rst) covers the kernel model, operations,
-compilation, custom passes, and GPU execution. [`examples/`](examples) has
-runnable programs, and [`examples/custom_passes/`](examples/custom_passes)
-shows how to write passes in Python and as C++ plugins.
+The [user guide](https://nvidia.github.io/cudaq-pulse/) covers the kernel
+model, operations, compilation, custom passes, and GPU execution.
+[`examples/`](https://github.com/NVIDIA/cudaq-pulse/tree/main/examples) has runnable programs, and
+[`examples/custom_passes/`](https://github.com/NVIDIA/cudaq-pulse/tree/main/examples/custom_passes) shows how to write
+passes in Python and as C++ plugins.
 
 ## Run the test suite against your installation
 
@@ -124,7 +125,7 @@ immediately with the reason, instead of skipping them.
 
 ## Build from source
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). In short, `pip install .` from a
+See [CONTRIBUTING.md](https://github.com/NVIDIA/cudaq-pulse/blob/main/CONTRIBUTING.md). In short, `pip install .` from a
 clone builds a wheel locally against the pinned, checksum-verified MLIR
 toolchain, which CMake downloads on supported platforms (or set `MLIR_DIR` to
 your own MLIR 22 build). Nothing else is built from source. Each GitHub
@@ -141,9 +142,11 @@ release carries the wheels and the source distribution.
   evolved between measurements as an exact ensemble over outcomes, on the GPU
   or with a NumPy reference (`pulse.simulate`).
 - GPU evolution supports the `rk1`, `rk2`, `rk4`, `magnus`, and
-  `crank_nicolson` integrators. Observable evaluation, neutral-atom models,
-  unspecialized parameters, arbitrary Python waveform callbacks, and waveform
-  algebra are rejected explicitly by the execution lowering.
+  `crank_nicolson` integrators. Waveform sums, differences, scaling, and
+  negation are lowered exactly; products are sampled once per clock cycle.
+  Observable evaluation, neutral-atom models, unspecialized parameters, and
+  arbitrary Python waveform callbacks are rejected explicitly by the execution
+  lowering.
 - GPU numerical results are research regression coverage, with no production
   compatibility or accuracy commitment.
 
@@ -164,4 +167,12 @@ release carries the wheels and the source distribution.
 
 ## License
 
-[Apache License 2.0](LICENSE).
+cudaq-pulse is licensed under the [Apache License 2.0](https://github.com/NVIDIA/cudaq-pulse/blob/main/LICENSE). The
+wheels also contain third-party software (LLVM and MLIR, nanobind,
+robin-map) under the licenses listed in [NOTICE](https://github.com/NVIDIA/cudaq-pulse/blob/main/NOTICE), with their texts
+in [LICENSES/](https://github.com/NVIDIA/cudaq-pulse/tree/main/LICENSES).
+
+## Security
+
+Report security vulnerabilities to NVIDIA as described in
+[SECURITY.md](https://github.com/NVIDIA/cudaq-pulse/blob/main/SECURITY.md), not through GitHub issues.

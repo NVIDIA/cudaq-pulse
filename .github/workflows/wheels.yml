@@ -77,6 +77,11 @@ jobs:
           sys.exit(1 if oversized or not rows else 0)
           EOF
 
+      - name: Check wheel contents, licenses and metadata
+        run: |
+          python3 tools/check-wheel-contents.py wheelhouse/*.whl
+          pipx run --spec 'twine>=6' twine check --strict wheelhouse/*.whl
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheels-${{ matrix.platform }}
@@ -92,6 +97,10 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - run: uv build --sdist
+      - name: Check the sdist's licenses and metadata
+        run: |
+          python3 tools/check-wheel-contents.py dist/*.tar.gz
+          uvx --from 'twine>=6' twine check --strict dist/*.tar.gz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sdist

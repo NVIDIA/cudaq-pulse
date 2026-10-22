@@ -30,17 +30,31 @@ license = "Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BS
 license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
 requires-python = ">=3.12"
 dependencies = ["numpy>=1.24"]
+keywords = ["quantum", "pulse", "quantum control", "MLIR", "compiler", "CUDA-Q", "cuDensityMat"]
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Intended Audience :: Science/Research",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
+    "Programming Language :: C++",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3.15",
     "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Software Development :: Compilers",
+    "Typing :: Typed",
 ]
+
+[project.urls]
+Homepage = "https://github.com/NVIDIA/cudaq-pulse"
+Documentation = "https://nvidia.github.io/cudaq-pulse/"
+Repository = "https://github.com/NVIDIA/cudaq-pulse"
+Issues = "https://github.com/NVIDIA/cudaq-pulse/issues"
+Changelog = "https://github.com/NVIDIA/cudaq-pulse/releases"
 
 [project.optional-dependencies]
 # Every shared library libcudm-runtime-cuNN.so loads, transitively, except the
