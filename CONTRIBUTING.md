@@ -166,6 +166,11 @@ but leaves committing the printed lock file to you.
 
 ## Continuous integration
 
+Workflows use third-party actions pinned by full commit SHA, with the release
+in a trailing comment, and container images pinned by digest;
+`tools/check-workflow-pins.py` (a pre-commit hook) rejects tags, and
+Dependabot proposes weekly updates for actions and `uv.lock`.
+
 - `ci.yml`: ruff and pre-commit; build, lit, pytest, mypy, and the benchmark
   baseline on Linux x86_64, Linux aarch64, and macOS. A manually dispatched
   run with `gpu` enabled also builds with GPU support on the runner named by
