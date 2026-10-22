@@ -78,6 +78,9 @@ jobs:
       - name: check-pulse (lit + pytest)
         run: uv run --no-sync cmake --build build/dev --target check-pulse
 
+      - name: Native exports, sizes and import time
+        run: uv run --no-sync python tools/check-native-exports.py build/dev/python
+
       - name: mypy
         run: MYPYPATH=build/dev/python uv run --no-sync mypy -p cudaq_pulse
 
