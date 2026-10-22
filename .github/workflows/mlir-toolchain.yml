@@ -127,7 +127,9 @@ jobs:
           gh release view "$tag" >/dev/null 2>&1 ||
             gh release create "$tag" --title "$tag" \
               --notes "Prebuilt MLIR toolchain used to build cudaq-pulse." --prerelease
-          gh release upload "$tag" dist/*.tar.xz dist/*.sha256 --clobber
+          # Write-once: released sdists build against these exact archives, so
+          # an existing asset is never replaced (gh refuses without --clobber).
+          gh release upload "$tag" dist/*.tar.xz dist/*.sha256
           echo "Published $tag with these checksums:"
           cat "$RUNNER_TEMP/mlir-toolchain.lock.json"
 

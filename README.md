@@ -127,8 +127,8 @@ immediately with the reason, instead of skipping them.
 See [CONTRIBUTING.md](CONTRIBUTING.md). In short, `pip install .` from a
 clone builds a wheel locally against the pinned, checksum-verified MLIR
 toolchain, which CMake downloads on supported platforms (or set `MLIR_DIR` to
-your own MLIR 22 build). Nothing else is built from source. PyPI carries
-wheels only; the source distribution is attached to each GitHub release.
+your own MLIR 22 build). Nothing else is built from source. Each GitHub
+release carries the wheels and the source distribution.
 
 ## Current scope and limitations
 

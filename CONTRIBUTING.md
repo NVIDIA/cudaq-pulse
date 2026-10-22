@@ -191,17 +191,20 @@ Dependabot proposes weekly updates for actions and `uv.lock`.
 ## Releases
 
 Work lands on `staging`, where every workflow runs but nothing is published.
+Releases are GitHub releases only for now: nothing is uploaded to PyPI or
+TestPyPI.
 
-1. Tag a release candidate on `staging`, for example `v0.1.0rc1`. Tags
-   containing `rc` publish the wheels to TestPyPI; check them on a clean
-   machine with
-   `pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "cudaq-pulse[cu12]"`.
+1. Tag a release candidate, for example `v0.1.0rc1`. `wheels.yml` builds and
+   tests the wheels and the sdist and publishes them as a GitHub pre-release.
 2. Squash `staging` into one commit on `main`, with the `staging` workflow
    triggers removed and the toolchain checksums in the lock file.
-3. Tag `v0.1.0` on `main`. Other `v*` tags publish the wheels to PyPI.
+3. Tag `v0.1.0` on `main`.
 
-Both publish jobs use trusted publishing (environments `testpypi` and `pypi`)
-and upload wheels only. Every `v*` tag also gets a GitHub release with the
-wheels and the sdist attached; the sdist is not uploaded to PyPI, so
-unsupported platforms get "no matching distribution" instead of a long
-source build.
+Before anything is released, the `release-meta` job checks the tag with
+`tools/release-meta.py`: it must name a version `X.Y.Z` or `X.Y.Z{a,b,rc}N`
+that the setuptools-scm `tag_regex` accepts, a final version must be on
+`main`, and the release must not exist yet. The release is created as a
+draft, every built file's version is checked against the tag, the assets are
+uploaded once (never replaced), and only then is the release published. The
+MLIR toolchain assets are write-once too. The end of `wheels.yml` records how
+PyPI and TestPyPI uploads will be re-enabled with trusted publishing.
