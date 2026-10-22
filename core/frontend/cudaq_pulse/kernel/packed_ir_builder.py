@@ -7,18 +7,17 @@
 # ============================================================================ #
 """PackedIRBuilder -- fused tracer-to-packed-buffer emitter.
 
-Writes directly into a flat numpy int64 array during kernel tracing,
+Writes directly into a flat int64 array during kernel tracing,
 producing a buffer that ``PulseModuleBuilder.build_from_packed()``
 consumes via zero-copy FFI.
 """
 
 from __future__ import annotations
 
+import numbers
 import struct
+from array import array
 from typing import Any
-
-import numpy as np
-import numpy.typing as npt
 
 from .ir_builder import (
     UNDEFINED_VID,
@@ -110,26 +109,40 @@ def _real(val: Any) -> float:
 
 def _complex_parts(val: Any) -> tuple[float, float]:
     """``(re, im)`` of an amplitude: a number, or ``[re]`` / ``[re, im]``."""
-    if isinstance(val, (complex, np.complexfloating)):
+    if val.__class__ is float or val.__class__ is int:
+        return (float(val), 0.0)
+    if isinstance(val, numbers.Complex) and not isinstance(val, numbers.Real):
         return (float(val.real), float(val.imag))
-    if isinstance(val, (list, tuple, np.ndarray)):
-        parts = np.asarray(val, dtype=float).ravel() if len(val) else np.zeros(0)
-        if parts.size not in (1, 2):
+    if isinstance(val, (list, tuple)) or hasattr(val, "__array__"):
+        # Array-likes (NumPy included) without importing NumPy.
+        items = val.tolist() if hasattr(val, "tolist") else list(val)
+        parts = list(_flatten(items))
+        if len(parts) not in (1, 2):
             raise CompilationError(
                 f"an amplitude sequence must be [re] or [re, im], got {len(parts)} values"
             )
-        return (float(parts[0]), float(parts[1]) if parts.size == 2 else 0.0)
+        return (float(parts[0]), float(parts[1]) if len(parts) == 2 else 0.0)
     return (float(val), 0.0)
+
+
+def _flatten(items: Any) -> Any:
+    for item in items if isinstance(items, (list, tuple)) else [items]:
+        if isinstance(item, (list, tuple)):
+            yield from _flatten(item)
+        else:
+            yield item
 
 
 def _as_i64(value: Any, description: str) -> int:
     """Convert an integer-valued Python number without silent truncation."""
+    if value.__class__ is int:
+        return value
     if isinstance(value, bool):
         raise CompilationError(f"{description} must be an integer, got bool")
-    if isinstance(value, (int, np.integer)):
+    if isinstance(value, numbers.Integral):
         return int(value)
-    if isinstance(value, (float, np.floating)) and float(value).is_integer():
-        return int(value)
+    if isinstance(value, numbers.Real) and float(value).is_integer():
+        return int(float(value))
     raise CompilationError(
         f"{description} must be an integer number of virtual time units, got {value!r}"
     )
@@ -141,7 +154,7 @@ class PackedIRBuilder:
     Implements the same ``emit()`` interface as ``PythonIRBuilder`` so it
     can be dropped into the ``PulseIREmitter`` unchanged.  Instead of
     accumulating Python objects, it writes packed int64 records into a
-    pre-allocated numpy buffer.
+    pre-allocated ``array('q')`` buffer, so tracing does not import NumPy.
     """
 
     # Loops and measurement-conditioned branches become region records.
@@ -157,7 +170,7 @@ class PackedIRBuilder:
         self.name = name
         self.clock_ghz = clock_ghz
         self._freq_hz = qubit_freq_hz or {}
-        self._buf: npt.NDArray[np.int64] = np.empty(8192, dtype=np.int64)
+        self._buf = array("q", bytes(8 * 8192))
         self._cur = 0
         self._next_id = 0
         self._next_qubit = 0
@@ -178,7 +191,7 @@ class PackedIRBuilder:
 
     def _ensure(self, n: int) -> None:
         while self._cur + n >= len(self._buf):
-            self._buf = np.resize(self._buf, len(self._buf) * 2)
+            self._buf.frombytes(bytes(8 * len(self._buf)))
 
     def _w(self, val: int) -> None:
         self._buf[self._cur] = val
@@ -757,14 +770,13 @@ class PackedIRBuilder:
     def has_parameters(self) -> bool:
         return bool(self._param_vids)
 
-    def get_buffer(self) -> npt.NDArray[np.int64]:
-        """Return the trimmed packed buffer."""
-        trimmed: npt.NDArray[np.int64] = self._buf[: self._cur].copy()
-        return trimmed
+    def get_buffer(self) -> array[int]:
+        """Return the trimmed packed buffer (int64 words)."""
+        return self._buf[: self._cur]
 
-    def get_freq_array(self) -> npt.NDArray[np.float64]:
-        """Return qubit frequencies as a float64 array indexed by qubit."""
-        arr = np.zeros(self._next_qubit, dtype=np.float64)
+    def get_freq_array(self) -> array[float]:
+        """Return qubit frequencies as float64 values indexed by qubit."""
+        arr = array("d", bytes(8 * self._next_qubit))
         for q, f in self._freq_hz.items():
             if q < self._next_qubit:
                 arr[q] = f

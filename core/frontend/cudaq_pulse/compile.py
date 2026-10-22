@@ -430,9 +430,10 @@ def _compile_parametric(
             "concrete values to compile()."
         )
 
-    buf = builder.get_buffer()
+    # The extension reads the buffers through the buffer protocol.
+    buf: Any = builder.get_buffer()
     n_qubits = builder.n_qubits
-    freq_arr = builder.get_freq_array()
+    freq_arr: Any = builder.get_freq_array()
     metrics.trace_ms = (time.perf_counter() - t0) * 1000
     metrics.capture_ms = metrics.trace_ms
     metrics.op_count = builder.op_count
@@ -472,7 +473,7 @@ def _compile_parametric(
 def _trace_to_packed(
     kernel_fn: Callable[..., Any], args: Sequence[Any], clock_ghz: float, freq: dict[int, float]
 ) -> tuple[Any, int, tuple[int, ...], Any, int]:
-    """Trace the kernel into a packed int64 numpy buffer.
+    """Trace the kernel into a packed int64 buffer.
 
     Returns (buffer, n_qubits, allocated qubits, freq_array, op_count).
     """

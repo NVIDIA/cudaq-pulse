@@ -66,10 +66,31 @@ from .ops import wf_mul as wf_mul
 from .ops import wf_neg as wf_neg
 from .ops import wf_scale as wf_scale
 from .ops import wf_sub as wf_sub
-from .runtime.evolve import EvolveResult as EvolveResult
-from .runtime.evolve import evolve as evolve
-from .runtime.simulate import SimulationResult as SimulationResult
-from .runtime.simulate import simulate as simulate
+
+# Simulation and GPU execution load NumPy and the GPU runtime discovery, which
+# compiling does not need: import them on first use.
+_LAZY_EXPORTS = {
+    "EvolveResult": ".runtime.evolve",
+    "evolve": ".runtime.evolve",
+    "SimulationResult": ".runtime.simulate",
+    "simulate": ".runtime.simulate",
+}
+
+
+def __getattr__(name: str) -> object:
+    module = _LAZY_EXPORTS.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    value = getattr(importlib.import_module(module, __name__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))
+
 
 # DSL names that get injected into the importing module's globals.
 _DSL_EXPORTS: list[str] = [

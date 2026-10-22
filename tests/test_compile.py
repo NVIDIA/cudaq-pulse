@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import array
 import math
 
 import cudaq_pulse as pulse
@@ -141,7 +142,6 @@ def test_compile_no_args_raises():
 
 def test_packed_ir_builder_basic():
     """PackedIRBuilder produces valid int64 buffer."""
-    import numpy as np
     from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
     b = PackedIRBuilder(clock_ghz=2.0, qubit_freq_hz={0: 5e9})
@@ -153,8 +153,8 @@ def test_packed_ir_builder_basic():
     b.emit("pulse.drive", (dl, wf, t), ("drive_line", "tone"))
 
     buf = b.get_buffer()
-    assert isinstance(buf, np.ndarray)
-    assert buf.dtype == np.int64
+    assert isinstance(buf, array.array)
+    assert buf.typecode == "q" and buf.itemsize == 8
     assert len(buf) > 0
     assert b.n_qubits == 1
 
