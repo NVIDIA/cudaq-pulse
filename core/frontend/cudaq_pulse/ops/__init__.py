@@ -332,7 +332,7 @@ def wf_mul(left: Waveform, right: Waveform) -> Waveform:
     return _require_context("wf_mul")
 
 
-def wf_scale(waveform: Waveform, scalar: Numeric) -> Waveform:
+def wf_scale(waveform: Waveform, scalar: Numeric, /) -> Waveform:
     """Scale a waveform by a constant factor.
 
     Args:

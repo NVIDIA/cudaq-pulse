@@ -11,9 +11,9 @@ from __future__ import annotations
 
 try:
     from ._cudaq_pulse_native import *  # noqa: F401,F403
-except ImportError as error:
+except ImportError as _error:
     raise ImportError(
         "The cudaq-pulse native extension (_cudaq_pulse_native) could not be "
         "imported. Install the cudaq-pulse wheel, or build from source with "
         "`pip install .` (see CONTRIBUTING.md)."
-    ) from error
+    ) from _error

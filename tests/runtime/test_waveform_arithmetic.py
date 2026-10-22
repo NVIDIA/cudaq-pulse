@@ -176,3 +176,13 @@ def test_scale_takes_the_waveform_first():
 
     with pytest.raises(CompilationError, match=r"wf_scale\(waveform, scalar\)"):
         swapped(pulse.qudit_ref())
+
+
+def test_scale_arguments_are_positional_only():
+    @pulse.kernel
+    def by_keyword(q0):
+        d0, t0 = get_drive_line(q0)
+        drive(d0, wf_scale(waveform=gaussian(80, 0.03, 20.0), scalar=2.0), t0)
+
+    with pytest.raises(CompilationError, match="wf_scale"):
+        by_keyword(pulse.qudit_ref())

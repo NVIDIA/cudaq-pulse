@@ -25,6 +25,8 @@ The compiler recognizes the kernel DSL vocabulary (``drive``, ``gaussian``,
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 __version__ = "0.1.0"
 
 # ── Infrastructure (accessed via pulse.*) ────────────────────────────────
@@ -69,6 +71,12 @@ from .ops import wf_sub as wf_sub
 
 # Simulation and GPU execution load NumPy and the GPU runtime discovery, which
 # compiling does not need: import them on first use.
+if TYPE_CHECKING:
+    from .runtime.evolve import EvolveResult as EvolveResult
+    from .runtime.evolve import evolve as evolve
+    from .runtime.simulate import SimulationResult as SimulationResult
+    from .runtime.simulate import simulate as simulate
+
 _LAZY_EXPORTS = {
     "EvolveResult": ".runtime.evolve",
     "evolve": ".runtime.evolve",
@@ -138,5 +146,4 @@ __all__: list[str] = [
     "QuditRef",
     "QvecRef",
     # kernel DSL ops
-    *_DSL_EXPORTS,
 ]
