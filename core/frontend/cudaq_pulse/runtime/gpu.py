@@ -280,9 +280,25 @@ def _preload_cuda_wheels(major: int) -> list[str]:
     return missing
 
 
+def _declare_prototypes(library: ctypes.CDLL) -> None:
+    """Set the ctypes prototypes of the runtime's C API once, at load.
+
+    The library object is shared by every thread, so the prototypes are not
+    reassigned per call.
+    """
+    library.cudm_set_initial_state.argtypes = [ctypes.c_void_p, ctypes.c_int64]
+    library.cudm_set_initial_state.restype = ctypes.c_int
+    library.cudm_last_result_size.argtypes = []
+    library.cudm_last_result_size.restype = ctypes.c_int64
+    library.cudm_last_result_copy.argtypes = [ctypes.c_void_p, ctypes.c_int64]
+    library.cudm_last_result_copy.restype = ctypes.c_int
+    library.cudm_last_error_message.argtypes = []
+    library.cudm_last_error_message.restype = ctypes.c_char_p
+
+
 def _load(path: Path, not_in_wheels: Sequence[str], major: int | None = None) -> ctypes.CDLL:
     try:
-        return ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
+        library = ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
     except OSError as error:
         detail = ""
         if not_in_wheels:
@@ -297,6 +313,13 @@ def _load(path: Path, not_in_wheels: Sequence[str], major: int | None = None) ->
             f"cudaq-pulse could not load its GPU runtime {path}: {error}.{detail} "
             f"Install the GPU dependencies with {hint}."
         ) from error
+    try:
+        _declare_prototypes(library)
+    except AttributeError as error:
+        raise GpuRuntimeLoadError(
+            f"{path} is not a cudaq-pulse GPU runtime: {error}. Reinstall cudaq-pulse."
+        ) from error
+    return library
 
 
 def _driver_version() -> int | None:

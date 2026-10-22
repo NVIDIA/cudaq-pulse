@@ -72,6 +72,9 @@ struct WaveformCallback {
   std::vector<double> parameters;
 };
 
+// cuDensityMat callbacks are plain function pointers, so each envelope gets
+// one of a fixed set of trampolines; the table is shared by every thread and
+// every evolution in flight, and guarded by the mutex.
 constexpr size_t callbackCapacity = 1024;
 std::array<WaveformCallback, callbackCapacity> waveformCallbacks;
 std::mutex waveformCallbackMutex;
@@ -836,7 +839,9 @@ CudmStatus cudm_op_term_append(CudmHandle handle, CudmOpTerm term,
                                         callbackParameterCount);
     if (!callbackSlot)
       return fail(CUDM_ERROR_INTERNAL,
-                  "could not allocate a waveform callback slot");
+                  "all waveform callback slots are in use: the drives of "
+                  "the programs evolving at once in this process need more "
+                  "than 1024 envelope callbacks");
     wrappedCallback.callback = waveformCallbackTable[*callbackSlot];
     wrappedCallback.device = CUDENSITYMAT_CALLBACK_DEVICE_CPU;
     wrappedCallback.wrapper = nullptr;

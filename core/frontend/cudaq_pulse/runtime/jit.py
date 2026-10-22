@@ -28,25 +28,15 @@ from .gpu import GpuRuntime, require_gpu_runtime
 
 @dataclass(frozen=True)
 class JITResult:
-    """Container for values returned from JIT-compiled code."""
+    """A state returned from JIT-compiled code, owned by this object."""
 
-    raw_ptr: int
     shape: tuple[int, ...]
     dtype: np.dtype[Any]
-    _array: npt.NDArray[Any] | None = field(default=None, repr=False, compare=False)
+    _array: npt.NDArray[Any] = field(repr=False, compare=False)
 
     def to_numpy(self) -> npt.NDArray[Any]:
-        """Interpret the raw device-to-host copy as a NumPy array."""
-        result: npt.NDArray[Any]
-        if self._array is not None:
-            result = self._array.reshape(self.shape).copy()
-            return result
-        n_elements = 1
-        for s in self.shape:
-            n_elements *= s
-        buf = (ctypes.c_double * (n_elements * 2)).from_address(self.raw_ptr)
-        flat = np.ctypeslib.as_array(buf).view(np.complex128)
-        result = flat.reshape(self.shape).copy()
+        """A copy of the state as a NumPy array of ``shape``."""
+        result: npt.NDArray[Any] = self._array.reshape(self.shape).copy()
         return result
 
 
@@ -74,21 +64,23 @@ class JITCompiler:
         entry: str = "main",
         args: Sequence[Any] | None = None,
         n_qubits: int = 1,
+        state_dim: int | None = None,
     ) -> list[JITResult]:
-        """Invoke a JIT-compiled entry point and collect its result state."""
-        runtime = self._runtime.library
-        runtime.cudm_last_result_size.argtypes = []
-        runtime.cudm_last_result_size.restype = ctypes.c_int64
-        runtime.cudm_last_result_copy.argtypes = [ctypes.c_void_p, ctypes.c_int64]
-        runtime.cudm_last_result_copy.restype = ctypes.c_int
-        runtime.cudm_last_error_message.argtypes = []
-        runtime.cudm_last_error_message.restype = ctypes.c_char_p
+        """Invoke a JIT-compiled entry point and collect its result state.
 
-        c_args = _marshal_args(args or [])
+        ``state_dim`` is the Hilbert-space dimension (``2**n_qubits`` by
+        default); a result larger than a density matrix of that dimension is
+        rejected.
+        """
+        runtime = self._runtime.library
+        c_args, keep_alive = _marshal_args(args or [])
         func_type = ctypes.CFUNCTYPE(None, *(type(a) for a in c_args))
         func = func_type(module.lookup(entry))
         func(*c_args)
+        del keep_alive
 
+        hilbert_dim = state_dim if state_dim is not None else 2**n_qubits
+        itemsize = np.dtype(np.complex128).itemsize
         byte_count = runtime.cudm_last_result_size()
         if byte_count <= 0:
             raw_message = runtime.cudm_last_error_message()
@@ -98,27 +90,23 @@ class JITCompiler:
                 else "unknown cuDensityMat error"
             )
             raise RuntimeError(f"cuDensityMat execution failed: {message}")
-        if byte_count % np.dtype(np.complex128).itemsize:
+        if byte_count % itemsize or byte_count > itemsize * hilbert_dim * hilbert_dim:
             raise RuntimeError(
-                f"cuDensityMat returned {byte_count} bytes, which is not a complex128 state buffer"
+                f"cuDensityMat returned {byte_count} bytes, which is not a complex128 state "
+                f"of dimension {hilbert_dim}"
             )
         buffer = (ctypes.c_byte * byte_count)()
         status = runtime.cudm_last_result_copy(buffer, byte_count)
         if status != 0:
             raise RuntimeError("could not copy the cuDensityMat result buffer")
         array = np.frombuffer(buffer, dtype=np.complex128).copy()
-        hilbert_dim = 2**n_qubits
         if array.size == hilbert_dim:
             shape: tuple[int, ...] = (hilbert_dim,)
         elif array.size == hilbert_dim * hilbert_dim:
             shape = (hilbert_dim, hilbert_dim)
         else:
             shape = (array.size,)
-        return [
-            JITResult(
-                raw_ptr=array.ctypes.data, shape=shape, dtype=np.dtype(np.complex128), _array=array
-            )
-        ]
+        return [JITResult(shape=shape, dtype=np.dtype(np.complex128), _array=array)]
 
     def compile_and_run(
         self,
@@ -134,19 +122,40 @@ class JITCompiler:
         return self.load_and_run(module, entry=entry, n_qubits=n_qubits)
 
 
-def _marshal_args(args: Sequence[Any]) -> list[Any]:
-    """Convert Python arguments to ctypes-compatible values."""
+_ARRAY_DTYPES = (np.dtype(np.float64), np.dtype(np.complex128), np.dtype(np.int64))
+
+
+def _marshal_args(args: Sequence[Any]) -> tuple[list[Any], list[Any]]:
+    """Convert Python arguments to ctypes values.
+
+    Integers become ``int64``, floats ``double``, and float64, complex128 or
+    int64 NumPy arrays a pointer to C-contiguous data. Returns the ctypes
+    values and the arrays they point into, which the caller keeps alive for
+    the call.
+    """
     c_args: list[Any] = []
-    for a in args:
+    keep_alive: list[Any] = []
+    for index, a in enumerate(args):
+        if isinstance(a, (bool, np.bool_)):
+            raise TypeError(f"argument {index}: booleans are not JIT arguments")
         if isinstance(a, (int, np.integer)):
             c_args.append(ctypes.c_int64(int(a)))
         elif isinstance(a, (float, np.floating)):
             c_args.append(ctypes.c_double(float(a)))
         elif isinstance(a, np.ndarray):
-            c_args.append(a.ctypes.data_as(ctypes.c_void_p))
+            if a.dtype not in _ARRAY_DTYPES:
+                raise TypeError(
+                    f"argument {index}: arrays must be float64, complex128 or int64, got {a.dtype}"
+                )
+            contiguous = np.ascontiguousarray(a)
+            keep_alive.append(contiguous)
+            c_args.append(contiguous.ctypes.data_as(ctypes.c_void_p))
         else:
-            c_args.append(ctypes.c_void_p(id(a)))
-    return c_args
+            raise TypeError(
+                f"argument {index}: {type(a).__name__} is not a JIT argument; "
+                "use an int, a float or a NumPy array"
+            )
+    return c_args, keep_alive
 
 
 def compile_and_run(

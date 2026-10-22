@@ -24,7 +24,6 @@ by the cuDensityMat runtime (``backend="gpu"``), from the projected state.
 
 from __future__ import annotations
 
-import ctypes
 import math
 from dataclasses import dataclass, field
 from typing import Any
@@ -420,11 +419,11 @@ class _GpuBackend(_Backend):
         # cuDensityMat stores a density matrix with the ket index fastest.
         buffer = np.ascontiguousarray(state.ravel(order="F") if mixed else state)
         library = self.compiler._runtime.library
-        library.cudm_set_initial_state.argtypes = [ctypes.c_void_p, ctypes.c_int64]
-        library.cudm_set_initial_state.restype = ctypes.c_int
         if library.cudm_set_initial_state(buffer.ctypes.data, buffer.nbytes) != 0:
             raise RuntimeError("could not set the cuDensityMat initial state")
-        results = self.compiler.load_and_run(jit_module, n_qubits=len(self.dims))
+        results = self.compiler.load_and_run(
+            jit_module, n_qubits=len(self.dims), state_dim=self.dim
+        )
         values = results[0].to_numpy().ravel()
         if mixed:
             return values.reshape((self.dim, self.dim), order="F")
