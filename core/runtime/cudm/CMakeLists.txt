@@ -39,6 +39,12 @@ foreach(_major IN LISTS CUDAQ_PULSE_CUDA_MAJORS)
     INSTALL_RPATH "${_cudm_runtime_cu${_major}_install_rpath}"
   )
 
+  target_link_options(${_target} PRIVATE
+    "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/exports.linux.map"
+    "LINKER:--exclude-libs,ALL")
+  set_property(TARGET ${_target} APPEND PROPERTY LINK_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/exports.linux.map")
+
   install(TARGETS ${_target}
     LIBRARY DESTINATION cudaq_pulse/lib
     COMPONENT CudaqPulse

@@ -45,6 +45,27 @@ set_target_properties(_cudaq_pulse_native PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python/cudaq_pulse/_native"
 )
 
+# Export only PyInit__cudaq_pulse_native. Exporting the embedded LLVM/MLIR
+# (about 60k symbols, many weak) made dyld bind and coalesce each of them
+# at import, which took over a second on macOS, and let them interpose with
+# any other LLVM in the process. HandleLLVMOptions links every module with a
+# flat namespace and dynamic lookup of undefined symbols, for plugins; the
+# extension uses the two-level namespace, and nanobind's linker response file
+# leaves only the Python C API to resolve at load time.
+string(REPLACE "-Wl,-flat_namespace -Wl,-undefined -Wl,dynamic_lookup" ""
+  CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS}")
+if(APPLE)
+  target_link_options(_cudaq_pulse_native PRIVATE
+    "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports.darwin.txt")
+else()
+  target_link_options(_cudaq_pulse_native PRIVATE
+    "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/exports.linux.map"
+    "LINKER:--exclude-libs,ALL")
+endif()
+set_property(TARGET _cudaq_pulse_native APPEND PROPERTY LINK_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/exports.darwin.txt"
+  "${CMAKE_CURRENT_SOURCE_DIR}/exports.linux.map")
+
 set(_native_dir "${CMAKE_BINARY_DIR}/python/cudaq_pulse/_native")
 nanobind_add_stub(
   _cudaq_pulse_native_stub
