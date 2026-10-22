@@ -23,8 +23,11 @@ dynamic = ["version"]
 description = "Pulse-level MLIR dialect and programming model for quantum control"
 readme = "README.md"
 authors = [{ name = "NVIDIA Corporation" }]
-license = "Apache-2.0"
-license-files = ["LICENSE"]
+# cudaq-pulse itself is Apache-2.0; the wheels statically link LLVM/MLIR
+# (with the parts of LLVM's Support library under their own terms), nanobind
+# and robin-map, listed in NOTICE with their license texts in LICENSES/.
+license = "Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND MIT AND Spencer-94 AND (CC0-1.0 OR Apache-2.0) AND Unicode-DFS-2015"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
 requires-python = ">=3.12"
 dependencies = ["numpy>=1.24"]
 classifiers = [

@@ -161,6 +161,12 @@ for binary in "${prefix}"/bin/*; do
   fi
 done
 
+# The archive redistributes LLVM and MLIR, so it must carry their license.
+[[ -s "${prefix}/LICENSE.TXT" ]] || {
+  echo "error: ${prefix}/LICENSE.TXT is missing; the archive must include it" >&2
+  exit 1
+}
+
 archive="${out_dir}/${name}.tar.xz"
 echo "Packaging ${archive}"
 tar -C "$work_dir" -cf - "$name" | xz -T0 -6 >"${archive}.part"
