@@ -12,8 +12,8 @@ The default target is the 17-qubit device from:
     Distance-Three Surface Code", PRX 12, 021049 (2022).
     arXiv:2112.03708
 
-Device parameters extracted from calibration data in the cudaq-qlx-cal
-repository (Dialect/Cal/Krinner/*.mlir).
+The parameters below are representative values for that device's layout
+and characterization, not a calibration of any particular chip.
 """
 
 from __future__ import annotations
