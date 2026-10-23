@@ -11,12 +11,16 @@
 // Loops run every iteration. A measurement-conditioned `scf.if` takes the
 // arm that the path's outcome for that measurement selects. Each tone's
 // frame (frequency and phase) is tracked as frame changes and drives
-// execute, so every drive occurrence sees the frame it plays in.
+// execute, so every drive occurrence sees the frame it plays in. Frame
+// values are affine in the entry function's float arguments (Affine.h), so a
+// program whose frequencies and phases are kernel arguments walks without
+// binding them.
 //
 // Include after the Pulse dialect op and type headers.
 
 #pragma once
 
+#include "cudaq-pulse/Analysis/Affine.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
 
@@ -37,9 +41,9 @@ namespace pulse {
 /// A tone's rotating frame. `phase` is the frame phase at `timeNs`;
 /// between drives a tone detuned from its frame frequency accrues phase.
 struct ToneState {
-  double frequencyHz = 0.0;
-  double frameFrequencyHz = 0.0;
-  double phase = 0.0;
+  Affine frequencyHz = 0.0;
+  Affine frameFrequencyHz = 0.0;
+  Affine phase = 0.0;
   double timeNs = 0.0;
 };
 
@@ -124,9 +128,9 @@ private:
                       frequency.getValueAsDouble(), 0.0, 0.0};
       else if (root->getName().getStringRef() == "pulse.tone" &&
                root->getNumOperands() == 2) {
-        double frequency = constantNumber(root->getOperand(0)).value_or(0.0);
+        Affine frequency = affineNumber(root->getOperand(0)).value_or(0.0);
         it->second = {frequency, frequency,
-                      constantNumber(root->getOperand(1)).value_or(0.0), 0.0};
+                      affineNumber(root->getOperand(1)).value_or(0.0), 0.0};
       }
     }
     return it->second;
@@ -169,7 +173,7 @@ private:
       double endNs =
           static_cast<double>(occurrence.startVtu + occurrence.durationVtu) /
           clockGHz;
-      tone.phase += 2.0 * M_PI * (tone.frequencyHz - tone.frameFrequencyHz) *
+      tone.phase += (tone.frequencyHz - tone.frameFrequencyHz) * (2.0 * M_PI) *
                     1.0e-9 * (endNs - tone.timeNs);
       tone.timeNs = endNs;
       return true;
@@ -190,10 +194,10 @@ private:
     }
     if (name == "pulse.shift_phase" || name == "pulse.set_phase" ||
         name == "pulse.shift_frequency" || name == "pulse.set_frequency") {
-      auto value = constantNumber(op->getOperand(1));
+      auto value = affineNumber(op->getOperand(1));
       if (!value)
-        return fail(op, "frame change is not a constant; specialize all "
-                        "numeric values first");
+        return fail(op, "frame change is neither a constant nor affine in the "
+                        "kernel's float arguments");
       ToneState &tone = toneOf(op->getOperand(0));
       if (name == "pulse.shift_phase")
         tone.phase += *value;

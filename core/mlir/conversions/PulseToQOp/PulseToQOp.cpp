@@ -63,12 +63,28 @@ using namespace mlir;
 
 namespace {
 
+using pulse::Affine;
+using pulse::affineNumber;
 using pulse::constantNumber;
 
+/// A drive callback's kind and parameters. A parameter is affine in the
+/// program's float arguments; a constant parameter has no argument terms.
 struct WaveformCallbackData {
   int32_t kind;
-  SmallVector<double> parameters;
+  SmallVector<Affine> parameters;
 };
+
+/// The parameters of `callback` if none depends on the arguments.
+static std::optional<SmallVector<double>>
+constantParameters(const WaveformCallbackData &callback) {
+  SmallVector<double> values;
+  for (const Affine &parameter : callback.parameters) {
+    if (!parameter.isConstant())
+      return std::nullopt;
+    values.push_back(parameter.constant);
+  }
+  return values;
+}
 
 /// The phase attributes that virtual-Z folding leaves on a drive.
 static double phaseOffsetOf(Operation *drive) {
@@ -82,7 +98,8 @@ static double phaseOffsetOf(Operation *drive) {
 /// The parts of a drive occurrence's callback that vary between occurrences
 /// of the same op.
 struct DriveTiming {
-  double startNs, durationNs, phase, detuning;
+  double startNs, durationNs;
+  Affine phase, detuning;
 };
 
 static DriveTiming driveTiming(const pulse::Occurrence &occurrence,
@@ -91,22 +108,23 @@ static DriveTiming driveTiming(const pulse::Occurrence &occurrence,
   const double scale = 1.0 / clockGHz;
   const double startNs = static_cast<double>(occurrence.startVtu) * scale;
   const pulse::ToneState &tone = occurrence.tone;
+  const Affine qubitFrequency(qubitFrequencyHz);
   return {startNs, static_cast<double>(occurrence.durationVtu) * scale,
           tone.phase +
-              2.0 * M_PI * (tone.frequencyHz - tone.frameFrequencyHz) * 1.0e-9 *
-                  (startNs - tone.timeNs) +
-              2.0 * M_PI * (tone.frameFrequencyHz - qubitFrequencyHz) * 1.0e-9 *
+              (tone.frequencyHz - tone.frameFrequencyHz) * (2.0 * M_PI) *
+                  1.0e-9 * (startNs - tone.timeNs) +
+              (tone.frameFrequencyHz - qubitFrequency) * (2.0 * M_PI) * 1.0e-9 *
                   startNs +
-              phaseOffset,
-          2.0 * M_PI * (tone.frequencyHz - qubitFrequencyHz) * 1.0e-9};
+              Affine(phaseOffset),
+          (tone.frequencyHz - qubitFrequency) * (2.0 * M_PI) * 1.0e-9};
 }
 
 /// The callback of `waveform`, a built-in or custom_samples op, played with
-/// `timing` and multiplied by `coefficient`.
+/// `timing` and multiplied by `coefficient` times the real `factor`.
 static std::optional<WaveformCallbackData>
 leafCallback(Operation *waveform, const DriveTiming &timing, double clockGHz,
              double driveScale, int32_t quadrature,
-             std::complex<double> coefficient) {
+             std::complex<double> coefficient, const Affine &factor = 1.0) {
   const double scale = 1.0 / clockGHz;
   const double gain = std::abs(coefficient) * driveScale;
   // Common layout: start, duration, real amplitude, imaginary amplitude,
@@ -117,21 +135,30 @@ leafCallback(Operation *waveform, const DriveTiming &timing, double clockGHz,
                                0.0, 0.0, timing.phase + std::arg(coefficient),
                                static_cast<double>(quadrature),
                                timing.detuning}};
+  auto scaled = [&](Value value) -> std::optional<Affine> {
+    auto number = affineNumber(value);
+    if (!number)
+      return std::nullopt;
+    auto product = number->times(factor);
+    if (!product)
+      return std::nullopt;
+    return *product * gain;
+  };
   auto set = [&](int32_t kind, Value amplitude, Value sigma = {},
                  Value beta = {}) -> bool {
-    auto amplitudeValue = constantNumber(amplitude);
+    auto amplitudeValue = scaled(amplitude);
     if (!amplitudeValue)
       return false;
     result.kind = kind;
-    result.parameters[2] = *amplitudeValue * gain;
+    result.parameters[2] = *amplitudeValue;
     if (sigma) {
-      auto sigmaValue = constantNumber(sigma);
+      auto sigmaValue = affineNumber(sigma);
       if (!sigmaValue)
         return false;
       result.parameters[4] = *sigmaValue * scale;
     }
     if (beta) {
-      auto betaValue = constantNumber(beta);
+      auto betaValue = affineNumber(beta);
       if (!betaValue)
         return false;
       result.parameters[5] = *betaValue;
@@ -140,13 +167,13 @@ leafCallback(Operation *waveform, const DriveTiming &timing, double clockGHz,
   };
 
   if (auto op = dyn_cast<pulse::SquarePulseOp>(waveform)) {
-    auto real = constantNumber(op.getAmpReal());
-    auto imag = constantNumber(op.getAmpImag());
+    auto real = scaled(op.getAmpReal());
+    auto imag = scaled(op.getAmpImag());
     if (!real || !imag)
       return std::nullopt;
     result.kind = 1;
-    result.parameters[2] = *real * gain;
-    result.parameters[3] = *imag * gain;
+    result.parameters[2] = *real;
+    result.parameters[3] = *imag;
   } else if (auto op = dyn_cast<pulse::GaussianPulseOp>(waveform)) {
     if (!set(2, op.getAmplitude(), op.getSigma()))
       return std::nullopt;
@@ -172,7 +199,8 @@ leafCallback(Operation *waveform, const DriveTiming &timing, double clockGHz,
       auto value = dyn_cast<FloatAttr>(sample);
       if (!value)
         return std::nullopt;
-      result.parameters.push_back(value.getValueAsDouble() * gain);
+      auto product = factor.times(value.getValueAsDouble());
+      result.parameters.push_back(*product * gain);
     }
   } else {
     return std::nullopt;
@@ -181,7 +209,8 @@ leafCallback(Operation *waveform, const DriveTiming &timing, double clockGHz,
 }
 
 /// The complex envelope of `waveform` at `time` ns after it starts, before
-/// the carrier and the drive scale are applied.
+/// the carrier and the drive scale are applied. Sampled waveforms take
+/// constant parameters only.
 static std::optional<std::complex<double>>
 envelopeAt(Value waveform, double time, double durationNs, double clockGHz) {
   Operation *op = waveform.getDefiningOp();
@@ -218,40 +247,50 @@ envelopeAt(Value waveform, double time, double durationNs, double clockGHz) {
   double parts[2];
   for (int32_t quadrature : {0, 1}) {
     auto callback = leafCallback(op, local, clockGHz, 1.0, quadrature, 1.0);
-    if (!callback || cudaq_pulse::evaluateWaveform(
-                         callback->kind, callback->parameters.data(),
-                         callback->parameters.size(), time, parts[quadrature]))
+    auto parameters = callback ? constantParameters(*callback) : std::nullopt;
+    if (!parameters || cudaq_pulse::evaluateWaveform(
+                           callback->kind, parameters->data(),
+                           parameters->size(), time, parts[quadrature]))
       return std::nullopt;
   }
   return std::complex<double>(2.0 * parts[0], 2.0 * parts[1]);
 }
 
 /// A waveform as a linear combination of terms: built-in waveforms, and
-/// products, which are sampled.
+/// products, which are sampled. A term's weight is a constant complex
+/// coefficient times a real factor that may depend on the arguments.
 struct WaveformTerm {
   Operation *waveform;
   std::complex<double> coefficient;
+  Affine factor;
 };
 
 static bool collectTerms(Value waveform, std::complex<double> coefficient,
+                         const Affine &factor,
                          SmallVectorImpl<WaveformTerm> &terms) {
   Operation *op = waveform.getDefiningOp();
   if (!op)
     return false;
   if (auto add = dyn_cast<pulse::PulseAddOp>(op))
-    return collectTerms(add.getLhs(), coefficient, terms) &&
-           collectTerms(add.getRhs(), coefficient, terms);
+    return collectTerms(add.getLhs(), coefficient, factor, terms) &&
+           collectTerms(add.getRhs(), coefficient, factor, terms);
   if (auto sub = dyn_cast<pulse::PulseSubOp>(op))
-    return collectTerms(sub.getLhs(), coefficient, terms) &&
-           collectTerms(sub.getRhs(), -coefficient, terms);
+    return collectTerms(sub.getLhs(), coefficient, factor, terms) &&
+           collectTerms(sub.getRhs(), -coefficient, factor, terms);
   if (auto neg = dyn_cast<pulse::PulseNegOp>(op))
-    return collectTerms(neg.getPulse(), -coefficient, terms);
+    return collectTerms(neg.getPulse(), -coefficient, factor, terms);
   if (auto scaled = dyn_cast<pulse::PulseScaleOp>(op)) {
-    auto factor = constantNumber(scaled.getScale());
-    return factor &&
-           collectTerms(scaled.getPulse(), coefficient * *factor, terms);
+    auto scale = affineNumber(scaled.getScale());
+    if (!scale)
+      return false;
+    if (scale->isConstant())
+      return collectTerms(scaled.getPulse(), coefficient * scale->constant,
+                          factor, terms);
+    auto product = factor.times(*scale);
+    return product &&
+           collectTerms(scaled.getPulse(), coefficient, *product, terms);
   }
-  terms.push_back({op, coefficient});
+  terms.push_back({op, coefficient, factor});
   return true;
 }
 
@@ -266,7 +305,7 @@ getWaveformCallbacks(const pulse::Occurrence &occurrence, double clockGHz,
                      int32_t quadrature) {
   Operation *drive = occurrence.op;
   SmallVector<WaveformTerm> terms;
-  if (!collectTerms(drive->getOperand(1), 1.0, terms))
+  if (!collectTerms(drive->getOperand(1), 1.0, 1.0, terms))
     return std::nullopt;
   const DriveTiming timing =
       driveTiming(occurrence, clockGHz, qubitFrequencyHz, phaseOffsetOf(drive));
@@ -274,7 +313,7 @@ getWaveformCallbacks(const pulse::Occurrence &occurrence, double clockGHz,
   for (const WaveformTerm &term : terms) {
     if (!isa<pulse::PulseMulOp>(term.waveform)) {
       auto callback = leafCallback(term.waveform, timing, clockGHz, driveScale,
-                                   quadrature, term.coefficient);
+                                   quadrature, term.coefficient, term.factor);
       if (!callback)
         return std::nullopt;
       callbacks.push_back(std::move(*callback));
@@ -298,7 +337,7 @@ getWaveformCallbacks(const pulse::Occurrence &occurrence, double clockGHz,
            timing.phase + std::arg(term.coefficient) + phase,
            static_cast<double>(quadrature), timing.detuning}};
       for (double value : values)
-        callback.parameters.push_back(value * gain);
+        callback.parameters.push_back(term.factor * (value * gain));
       callbacks.push_back(std::move(callback));
     };
     samples(real, 0.0);
@@ -391,8 +430,25 @@ public:
         b, loc, qop::ScalarType::get(b.getContext()),
         FlatSymbolRefAttr::get(b.getContext(), callbackName));
     scalar->setAttr("cudm.callback_kind", b.getI32IntegerAttr(callback.kind));
-    scalar->setAttr("cudm.callback_params",
-                    b.getDenseF64ArrayAttr(callback.parameters));
+    // A parameter that depends on the program's float arguments is its
+    // constant part plus (slot, argument) pairs with their coefficients.
+    SmallVector<double> constants, coefficients;
+    SmallVector<int64_t> arguments;
+    for (auto [slot, parameter] : llvm::enumerate(callback.parameters)) {
+      constants.push_back(parameter.constant);
+      for (auto [argument, coefficient] : parameter.coefficients()) {
+        arguments.push_back(static_cast<int64_t>(slot));
+        arguments.push_back(argument);
+        coefficients.push_back(coefficient);
+      }
+    }
+    scalar->setAttr("cudm.callback_params", b.getDenseF64ArrayAttr(constants));
+    if (!arguments.empty()) {
+      scalar->setAttr("cudm.callback_param_arguments",
+                      b.getDenseI64ArrayAttr(arguments));
+      scalar->setAttr("cudm.callback_param_coefficients",
+                      b.getDenseF64ArrayAttr(coefficients));
+    }
     return qop::MakeProductOp::create(b, loc,
                                       qop::ProductType::get(b.getContext()),
                                       scalar, ValueRange{leaf(qudit, kind)});
@@ -447,7 +503,8 @@ pulseTrain(ArrayRef<pulse::Occurrence> occurrences,
   }
 
   const DriveTiming &base = timing.front();
-  SmallVector<double> periods(depth, 0.0), steps(depth, 0.0);
+  SmallVector<double> periods(depth, 0.0);
+  SmallVector<Affine> steps(depth, 0.0);
   for (size_t level = 0; level < depth; ++level) {
     if (counts[level] < 2)
       continue;
@@ -458,32 +515,33 @@ pulseTrain(ArrayRef<pulse::Occurrence> occurrences,
       return std::nullopt;
   }
   for (auto [occurrence, t] : llvm::zip(occurrences, timing)) {
-    double start = base.startNs, phase = base.phase;
+    double start = base.startNs;
+    Affine phase = base.phase;
     for (auto [k, period, step] :
          llvm::zip(occurrence.iteration, periods, steps)) {
       start += k * period;
-      phase += k * step;
+      phase += step * static_cast<double>(k);
     }
-    if (std::abs(t.startNs - start) > 1e-9 ||
-        std::abs(t.phase - phase) > 1e-9 || t.durationNs != base.durationNs ||
-        t.detuning != base.detuning)
+    if (std::abs(t.startNs - start) > 1e-9 || !t.phase.near(phase, 1e-9) ||
+        t.durationNs != base.durationNs || t.detuning != base.detuning)
       return std::nullopt;
   }
   const auto &first = callback.parameters;
-  SmallVector<double> header(first.begin(),
+  SmallVector<Affine> header(first.begin(),
                              first.begin() + cudaq_pulse::kWaveformHeader);
   // Square pulses that abut with a continuous carrier phase are one longer
   // square pulse; fold such innermost levels into the duration.
   size_t levels = loops.size();
-  auto near = [](double a, double b) {
-    return std::abs(a - b) <= 1e-9 * std::max(1.0, std::abs(b));
-  };
+  auto tolerance = [](double b) { return 1e-9 * std::max(1.0, std::abs(b)); };
   while (callback.kind == 1 && levels > 0) {
     size_t level = levels - 1;
-    if (counts[level] >= 2 && (!near(periods[level], header[1]) ||
-                               !near(steps[level], header[9] * header[1])))
+    const double duration = header[1].constant;
+    const Affine advance = header[9] * duration;
+    if (counts[level] >= 2 &&
+        (std::abs(periods[level] - duration) > tolerance(duration) ||
+         !steps[level].near(advance, tolerance(advance.constant))))
       break;
-    header[1] *= static_cast<double>(counts[level]);
+    header[1] = header[1] * static_cast<double>(counts[level]);
     --levels;
   }
   if (levels == 0) {
@@ -765,9 +823,10 @@ struct PulseToQOpPass
         if (!first) {
           op->emitError(
               "waveform cannot be lowered to a cuDensityMat callback; "
-              "schedule the program, specialize all numeric values, "
-              "and use built-in or custom_samples waveforms and their "
-              "arithmetic");
+              "schedule the program, use built-in or custom_samples "
+              "waveforms and their arithmetic, and keep float arguments "
+              "affine (products of two arguments, and arguments in sampled "
+              "waveform products, need the arguments bound)");
           return signalPassFailure();
         }
         // Each term of the waveform becomes one pulse train if every term

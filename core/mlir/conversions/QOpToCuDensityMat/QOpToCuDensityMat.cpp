@@ -71,6 +71,17 @@ struct QOpToCuDensityMatPass
       module.emitError("no @main function found");
       return signalPassFailure();
     }
+    // The runtime takes constant callback parameters.
+    auto symbolic = module.walk([&](qop::CallbackScalarOp callback) {
+      if (!callback->hasAttr("cudm.callback_param_arguments"))
+        return WalkResult::advance();
+      callback.emitError("drive callback depends on the program's float "
+                         "arguments; bind them before lowering to "
+                         "cuDensityMat");
+      return WalkResult::interrupt();
+    });
+    if (symbolic.wasInterrupted())
+      return signalPassFailure();
 
     auto &block = mainFunc.getBody().front();
     Operation *returnOp = block.getTerminator();
