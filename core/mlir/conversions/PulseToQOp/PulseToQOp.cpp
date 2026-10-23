@@ -57,6 +57,7 @@
 #include <cmath>
 #include <complex>
 #include <functional>
+#include <limits>
 #include <optional>
 
 using namespace mlir;
@@ -349,7 +350,8 @@ getWaveformCallbacks(const pulse::Occurrence &occurrence, double clockGHz,
 
 /// Leaf operators on qudit `target`: Pauli spin handlers for two levels,
 /// otherwise d x d matrices built from the ladder operator a, with
-/// X = a + a^dagger, Y = i (a^dagger - a), Z = 1 - 2 n.
+/// X = a + a^dagger, Y = i (a^dagger - a), Z = 1 - 2 n. The number and
+/// anharmonic operators are matrices at every d.
 class QuditOperators {
 public:
   QuditOperators(OpBuilder &b, Location loc,
@@ -364,8 +366,8 @@ public:
   Value leaf(int64_t qudit, StringRef kind) {
     auto handlerTy = qop::HandlerType::get(b.getContext());
     int64_t d = levelsOf(qudit);
-    if (d == 2) {
-      auto parsed = qop::symbolizeHandlerKind(kind);
+    auto parsed = qop::symbolizeHandlerKind(kind);
+    if (d == 2 && parsed) {
       auto target =
           arith::ConstantOp::create(b, loc, b.getI64IntegerAttr(qudit));
       return qop::SpinOp::create(
@@ -426,6 +428,13 @@ public:
 
   Value drive(int64_t qudit, StringRef kind, StringRef callbackName,
               const WaveformCallbackData &callback) {
+    return timed({{qudit, kind}}, callbackName, callback);
+  }
+
+  /// The product of `factors` with the time-dependent coefficient of
+  /// `callback`.
+  Value timed(ArrayRef<std::pair<int64_t, StringRef>> factors,
+              StringRef callbackName, const WaveformCallbackData &callback) {
     auto scalar = qop::CallbackScalarOp::create(
         b, loc, qop::ScalarType::get(b.getContext()),
         FlatSymbolRefAttr::get(b.getContext(), callbackName));
@@ -449,9 +458,11 @@ public:
       scalar->setAttr("cudm.callback_param_coefficients",
                       b.getDenseF64ArrayAttr(coefficients));
     }
-    return qop::MakeProductOp::create(b, loc,
-                                      qop::ProductType::get(b.getContext()),
-                                      scalar, ValueRange{leaf(qudit, kind)});
+    SmallVector<Value> leaves;
+    for (auto [qudit, kind] : factors)
+      leaves.push_back(leaf(qudit, kind));
+    return qop::MakeProductOp::create(
+        b, loc, qop::ProductType::get(b.getContext()), scalar, leaves);
   }
 
 private:
@@ -736,9 +747,10 @@ struct PulseToQOpPass
     // Evolution uses one rotating frame per qubit. Bare qubit frequencies are
     // therefore removed from H; tone detuning is encoded in each drive
     // callback below. This avoids a numerically stiff multi-GHz lab-frame ODE.
-    auto appendInteractions = [&](StringRef pairAttrName,
-                                  StringRef strengthAttrName,
-                                  StringRef spinKind) -> LogicalResult {
+    auto appendInteractions =
+        [&](StringRef pairAttrName, StringRef strengthAttrName,
+            function_ref<void(int64_t, int64_t, double)> append)
+        -> LogicalResult {
       auto pairs = module->getAttrOfType<DenseI64ArrayAttr>(pairAttrName);
       auto strengths =
           module->getAttrOfType<DenseF64ArrayAttr>(strengthAttrName);
@@ -752,22 +764,63 @@ struct PulseToQOpPass
       for (auto [index, strength] : llvm::enumerate(strengths.asArrayRef())) {
         int64_t first = pairs[2 * index];
         int64_t second = pairs[2 * index + 1];
-        if (first < 0 || second < 0 || !qubitFreqHz.count(first) ||
-            !qubitFreqHz.count(second)) {
+        if (first < 0 || second < 0 || first == second ||
+            !qubitFreqHz.count(first) || !qubitFreqHz.count(second)) {
           module.emitError("interaction references an inactive qubit in ")
               << pairAttrName;
           return failure();
         }
-        allProducts.push_back(
-            ops.product({{first, spinKind}, {second, spinKind}},
-                        strength * 2.0 * M_PI * 1.0e-9));
+        append(first, second, strength * 2.0 * M_PI * 1.0e-9);
       }
       return success();
     };
+    // An exchange coupling g (a^dagger b + a b^dagger) between qudits whose
+    // frames rotate at w_a and w_b turns at w_a - w_b in those frames:
+    //   g (e^{i D t} a^dagger b + h.c.)
+    //     = g/2 [cos(D t) (X X + Y Y) + sin(D t) (Y X - X Y)],
+    // with D = w_a - w_b. The counter-rotating terms a b and a^dagger
+    // b^dagger turn at w_a + w_b and are dropped.
+    int couplingIdx = 0;
+    auto exchange = [&](int64_t a, int64_t b, double g) {
+      const double detuning =
+          (qubitFreqHz[a] - qubitFreqHz[b]) * 2.0 * M_PI * 1.0e-9;
+      if (detuning == 0.0) {
+        allProducts.push_back(
+            ops.product({{a, "spin_x"}, {b, "spin_x"}}, g / 2));
+        allProducts.push_back(
+            ops.product({{a, "spin_y"}, {b, "spin_y"}}, g / 2));
+        return;
+      }
+      // A square callback from t = 0 that never ends is
+      // (amplitude / 2) cos(D t), or sin(D t) in the Y quadrature.
+      auto rotating = [&](double amplitude, int32_t quadrature) {
+        return WaveformCallbackData{
+            1,
+            {0.0, std::numeric_limits<double>::max(), amplitude, 0.0, 0.0, 0.0,
+             0.0, 0.0, static_cast<double>(quadrature), detuning}};
+      };
+      const std::string name = "coupling_" + std::to_string(couplingIdx++);
+      const std::pair<int64_t, StringRef> terms[][2] = {
+          {{a, "spin_x"}, {b, "spin_x"}},
+          {{a, "spin_y"}, {b, "spin_y"}},
+          {{a, "spin_y"}, {b, "spin_x"}},
+          {{a, "spin_x"}, {b, "spin_y"}}};
+      const double amplitudes[] = {g, g, g, -g};
+      for (auto [index, factors] : llvm::enumerate(terms))
+        allProducts.push_back(
+            ops.timed(factors, name + "_" + std::to_string(index),
+                      rotating(amplitudes[index], index / 2)));
+    };
+    // Residual ZZ of rate zeta, E11 - E10 - E01 + E00 = zeta, as the
+    // cross-Kerr term zeta n_a n_b, which leaves the frequencies with the
+    // other qudit in |0> unchanged.
+    auto crossKerr = [&](int64_t a, int64_t b, double zeta) {
+      allProducts.push_back(ops.product({{a, "number"}, {b, "number"}}, zeta));
+    };
     if (failed(appendInteractions("pulse.coupling_pairs",
-                                  "pulse.coupling_strength_hz", "spin_x")) ||
+                                  "pulse.coupling_strength_hz", exchange)) ||
         failed(appendInteractions("pulse.crosstalk_pairs",
-                                  "pulse.crosstalk_strength_hz", "spin_z")))
+                                  "pulse.crosstalk_strength_hz", crossKerr)))
       return signalPassFailure();
 
     // A multilevel transmon's anharmonicity, (alpha / 2) n (n - 1).

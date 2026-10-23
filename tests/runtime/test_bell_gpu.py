@@ -49,12 +49,12 @@ def test_bell_mlir_structure():
 
 @gpu
 def test_bell_gpu_execution():
-    """XX evolution produces (|00> - i|11>) / sqrt(2)."""
+    """Resonant exchange takes |10> to (|10> - i|01>) / sqrt(2) in pi / (4 g)."""
 
     qubits = {
         index: Qubit(
             index=index,
-            frequency_hz=(5.0 + 0.1 * index) * 1.0e9,
+            frequency_hz=5.0e9,
             anharmonicity_hz=-200.0e6,
             t1_us=0.0,
             t2_star_us=0.0,
@@ -76,10 +76,18 @@ def test_bell_gpu_execution():
         sync(d0, d1)
 
     ir = (bell_xx, pulse.qudit_ref(), pulse.qudit_ref())
-    result = evolve(on(target, *ir), t_start=0.0, t_end=25.0, num_steps=250, integrator="rk4")
+    # Qudit 0 is the least significant digit: index 1 is q0 excited.
+    result = evolve(
+        on(target, *ir),
+        t_start=0.0,
+        t_end=25.0,
+        num_steps=250,
+        integrator="rk4",
+        initial_state=[0.0, 1.0, 0.0, 0.0],
+    )
 
     state = result.final_state
-    expected = np.array([1.0, 0.0, 0.0, -1.0j]) / math.sqrt(2.0)
+    expected = np.array([0.0, 1.0, -1.0j, 0.0]) / math.sqrt(2.0)
     fidelity = abs(np.vdot(expected, state)) ** 2
     assert state.shape == (4,)
     assert fidelity > 0.999

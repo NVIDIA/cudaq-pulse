@@ -164,10 +164,10 @@ def _simulate_lowered(
             f"({', '.join(lowered.parameters)}); lower it with their values first"
         )
     target = lowered.target.target
-    if backend == "gpu" and getattr(target, "architecture", None) != "transmon":
+    if getattr(target, "architecture", None) != "transmon":
         raise NotImplementedError(
-            "GPU evolution supports transmon targets; neutral-atom target "
-            "lowering is not implemented"
+            "simulation supports transmon targets; the neutral-atom Hamiltonian "
+            "(Rabi drive, detuning and C6 / r^6 n n interactions) is not lowered"
         )
     return _simulate_compiled(
         lowered,

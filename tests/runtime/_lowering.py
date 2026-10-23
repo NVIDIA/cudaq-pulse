@@ -40,11 +40,12 @@ def on(target, kernel, *args, passes=EVOLVE_PASSES):
     return pulse.compile(kernel, passes=passes).lower(*_handles(dev, args))
 
 
-def evolve(lowered, *, t_start, t_end, num_steps, integrator="rk4", levels=2):
+def evolve(lowered, *, t_start, t_end, num_steps, integrator="rk4", levels=2, initial_state=None):
     """GPU evolution over ``[t_start, t_end]`` in *num_steps* steps."""
     result = _simulate_lowered(
         lowered,
         levels=levels,
+        initial_state=initial_state,
         backend="gpu",
         t_start=t_start,
         t_end=t_end,

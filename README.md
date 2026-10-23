@@ -140,7 +140,7 @@ release carries the wheels and the source distribution.
   primary research surface.
 - GPU evolution models transmons in per-qubit rotating frames, as qubits or
   with any number of levels (including their anharmonicity). Target T1/T2
-  data, XX couplings, residual ZZ terms, and calibrated drive-amplitude
+  data, exchange couplings, residual ZZ terms, and calibrated drive-amplitude
   scaling are supported. Programs that measure and branch on the result are
   evolved between measurements as an exact ensemble over outcomes, on the GPU
   or with a NumPy reference (`pulse.simulate`).

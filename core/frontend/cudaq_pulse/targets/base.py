@@ -45,7 +45,11 @@ class Qubit:
 
 @dataclass(frozen=True)
 class Coupling:
-    """Coupling edge between two qubits."""
+    """Coupling edge between two qubits.
+
+    ``coupling_strength_hz`` is g / 2 pi of the exchange coupling
+    g (a^dagger b + a b^dagger).
+    """
 
     qubit_a: int
     qubit_b: int
@@ -62,7 +66,11 @@ class Coupling:
 
 @dataclass(frozen=True)
 class CrosstalkEntry:
-    """Residual ZZ or other parasitic coupling between qubit pairs."""
+    """Residual ZZ or other parasitic coupling between qubit pairs.
+
+    ``static_zz_hz`` is the ZZ rate zeta / 2 pi, zeta = E11 - E10 - E01 + E00,
+    modeled as zeta n_a n_b in addition to what the couplings produce.
+    """
 
     qubit_a: int
     qubit_b: int
@@ -180,6 +188,10 @@ class Target:
         ``anharmonicity_hz`` is calibration metadata for leakage models and is
         intentionally not emitted into this two-level spin Hamiltonian. A
         faithful anharmonicity term requires a three-or-more-level mode.
+
+        The terms are in the lab frame: ``static_z`` is (omega / 2) Z,
+        ``coupling_xx`` is g X X (the exchange coupling with its
+        counter-rotating terms), and ``crosstalk_zz`` is zeta n_a n_b.
         """
         terms: list[dict[str, Any]] = []
 
