@@ -91,10 +91,11 @@ def main():
 
     print("=== the same check on a kernel ===")
     try:
-        pulse.compile(zero_length, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9})
+        pulse.compile(zero_length, device=dev).lower(dev.qudit_handles[0])
     except RuntimeError as error:
         print(error)
 
 
 if __name__ == "__main__":
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     main()

@@ -8,9 +8,11 @@
 # ============================================================================ #
 """Specialize benchmark: measure specialize() vs full recompile at QEC scales.
 
-Proves the performance claim: compiled(new_params) is dramatically faster
-than pulse.compile(kernel, concrete_args) because it skips Python tracing,
-FFI marshalling, and only does C++ clone + substitute + schedule.
+Compares a fresh compile (trace, build, passes, schedule) with a new value of
+a float parameter on an already compiled kernel. Float parameters stay
+function arguments of the scheduled module, so a new value is a cache hit
+that binds the value; substituting it (for MLIR text or the GPU) happens
+only when needed.
 
 Usage:
     python benchmarks/compiler/specialize_bench.py
@@ -22,6 +24,8 @@ import statistics
 import time
 
 import cudaq_pulse as pulse
+
+_QUBIT = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).qudit_handles[0]
 
 
 def _build_qec_kernel(d: int):
@@ -41,7 +45,7 @@ def _build_qec_kernel(d: int):
 
     def make_kernel(n_q, n_anc, d_val):
         @pulse.kernel
-        def k(q0, amp):
+        def k(q0, amp: float):
             d0, t0 = get_drive_line(q0)
             wf = gaussian(40, amp, 10.0)
             drive(d0, wf, t0)
@@ -57,13 +61,13 @@ def _make_scaled_kernel(n_drives: int):
     """Create a kernel with n_drives sequential drives, amplitude parameterized."""
 
     @pulse.kernel
-    def k1(q, amp):
+    def k1(q, amp: float):
         d, t = get_drive_line(q)
         wf = gaussian(40, amp, 10.0)
         drive(d, wf, t)
 
     @pulse.kernel
-    def k2(q, amp):
+    def k2(q, amp: float):
         d, t = get_drive_line(q)
         wf = gaussian(40, amp, 10.0)
         drive(d, wf, t)
@@ -71,7 +75,7 @@ def _make_scaled_kernel(n_drives: int):
         drive(d, wf2, t)
 
     @pulse.kernel
-    def k5(q, amp):
+    def k5(q, amp: float):
         d, t = get_drive_line(q)
         wf = gaussian(40, amp, 10.0)
         drive(d, wf, t)
@@ -85,14 +89,14 @@ def _make_scaled_kernel(n_drives: int):
         drive(d, wf5, t)
 
     @pulse.kernel
-    def k10(q, amp):
+    def k10(q, amp: float):
         d, t = get_drive_line(q)
         for _ in range(10):
             wf = gaussian(40, amp, 10.0)
             drive(d, wf, t)
 
     @pulse.kernel
-    def k20(q, amp):
+    def k20(q, amp: float):
         d, t = get_drive_line(q)
         for _ in range(20):
             wf = gaussian(40, amp, 10.0)
@@ -113,7 +117,7 @@ def bench_specialize_vs_compile():
     """Main benchmark: specialize vs full recompile at various op scales."""
 
     print("=" * 85)
-    print("Parameterized Pulse Kernels: specialize() vs compile() Benchmark")
+    print("Parameterized Pulse Kernels: new float value vs compile Benchmark")
     print("=" * 85)
     print()
 
@@ -131,7 +135,7 @@ def bench_specialize_vs_compile():
 
     header = (
         f"  {'d':>3s}  {'Drives':>6s}  "
-        f"{'compile(ms)':>11s}  {'specialize(ms)':>14s}  "
+        f"{'compile(ms)':>11s}  {'new value(ms)':>14s}  "
         f"{'speedup':>8s}  {'ops/ms':>8s}"
     )
     sep = "  " + "-" * len(header.strip())
@@ -144,26 +148,26 @@ def bench_specialize_vs_compile():
 
         # --- Full compile timing ---
         for _ in range(n_warmup):
-            pulse.compile(kern, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9})
+            pulse.compile(kern).lower(_QUBIT, 0.5)
 
         compile_times = []
         for _ in range(n_iters):
             t0 = time.perf_counter()
-            pulse.compile(kern, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9})
+            pulse.compile(kern).lower(_QUBIT, 0.5)
             compile_times.append((time.perf_counter() - t0) * 1000)
         compile_ms = statistics.median(compile_times)
 
         # --- Parametric: compile once, specialize many ---
-        compiled = pulse.compile(kern, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9})
+        compiled = pulse.compile(kern)
 
         for _ in range(n_warmup):
-            compiled(amp=0.5)
+            compiled.lower(_QUBIT, amp=0.5)
 
         spec_times = []
         for i in range(n_iters):
             amp_val = 0.01 * (i + 1)
             t0 = time.perf_counter()
-            compiled(amp=amp_val)
+            compiled.lower(_QUBIT, amp=amp_val)
             spec_times.append((time.perf_counter() - t0) * 1000)
         spec_ms = statistics.median(spec_times)
 
@@ -184,28 +188,28 @@ def bench_specialize_vs_compile():
     print("-" * 60)
 
     @pulse.kernel
-    def sweep_kern(q, amp):
+    def sweep_kern(q, amp: float):
         d, t = get_drive_line(q)
         wf = gaussian(40, amp, 10.0)
         drive(d, wf, t)
 
-    compiled = pulse.compile(sweep_kern, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9})
+    compiled = pulse.compile(sweep_kern)
 
     # Sweep via specialize
     t0 = time.perf_counter()
     for i in range(100):
-        compiled(amp=0.01 * (i + 1))
+        compiled.lower(_QUBIT, amp=0.01 * (i + 1))
     sweep_spec_ms = (time.perf_counter() - t0) * 1000
 
     # Sweep via full recompile
     t0 = time.perf_counter()
     for i in range(100):
-        pulse.compile(sweep_kern, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9})
+        pulse.compile(sweep_kern).lower(_QUBIT, 0.01 * (i + 1))
     sweep_compile_ms = (time.perf_counter() - t0) * 1000
 
     sweep_speedup = sweep_compile_ms / sweep_spec_ms if sweep_spec_ms > 0 else float("inf")
     print(
-        f"  100 specialize() calls:  {sweep_spec_ms:8.2f} ms  ({sweep_spec_ms / 100:.3f} ms/eval)"
+        f"  100 new-value calls:      {sweep_spec_ms:8.2f} ms  ({sweep_spec_ms / 100:.3f} ms/eval)"
     )
     print(
         f"  100 compile() calls:     {sweep_compile_ms:8.2f} ms  "

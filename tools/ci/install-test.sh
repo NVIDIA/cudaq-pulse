@@ -103,14 +103,14 @@ assert package.is_relative_to(Path(sys.prefix).resolve()), f"not installed: {pac
 
 
 @pulse.kernel
-def rabi(duration, amplitude):
-    qubit = pulse.qudit_ref()
+def rabi(qubit, duration: int, amplitude: float):
     drive_line, tone = get_drive_line(qubit)
     drive(drive_line, square(duration, amplitude), tone)
 
 
-compiled = pulse.compile(rabi, [100, 0.5], qubit_freq_hz={0: 5e9})
-assert compiled.mlir.strip(), "compile produced no MLIR"
+device = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+compiled = pulse.compile(rabi).lower(device.qudit_handles[0], 100, 0.5)
+assert compiled.mlir().strip(), "compile produced no MLIR"
 print(f"compiled from {package.parent} in {compiled.metrics.total_ms:.3f} ms")
 EOF
 

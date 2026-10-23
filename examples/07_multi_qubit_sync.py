@@ -121,29 +121,26 @@ def staggered_readout():
 
 
 if __name__ == "__main__":
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     print("=== Two-qubit simultaneous drive (internal alloc) ===")
-    compiled_kernel = pulse.compile(two_qubit_simultaneous, [], qubit_freq_hz={0: 5e9, 1: 5.1e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(two_qubit_simultaneous, device=dev).lower()
+    print(compiled_kernel.mlir())
 
     print("\n=== Parametric pi/2 (external alloc) ===")
-    compiled_kernel = pulse.compile(
-        parametric_pi_half,
-        [pulse.qudit_ref(), pulse.qudit_ref(), 0.25, 0.28],
-        qubit_freq_hz={0: 5e9, 1: 5.1e9},
+    compiled_kernel = pulse.compile(parametric_pi_half, device=dev).lower(
+        dev.qudit_handles[0], dev.qudit_handles[1], 0.25, 0.28
     )
-    print(compiled_kernel.mlir)
+    print(compiled_kernel.mlir())
 
     print("\n=== qvec simultaneous drive ===")
-    compiled_kernel = pulse.compile(
-        qvec_simultaneous_drive, [4, 0.3], qubit_freq_hz={i: 5e9 + i * 0.1e9 for i in range(4)}
-    )
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(qvec_simultaneous_drive, device=dev).lower(4, 0.3)
+    print(compiled_kernel.mlir())
 
     print("\n=== Sync after asymmetric ops ===")
-    compiled_kernel = pulse.compile(sync_after_asymmetric_ops, [], qubit_freq_hz={0: 5e9, 1: 5.1e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(sync_after_asymmetric_ops, device=dev).lower()
+    print(compiled_kernel.mlir())
 
     print("\n=== Staggered readout ===")
-    compiled_kernel = pulse.compile(staggered_readout, [], qubit_freq_hz={0: 5e9, 1: 5.1e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(staggered_readout, device=dev).lower()
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

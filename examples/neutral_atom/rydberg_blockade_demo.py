@@ -74,14 +74,12 @@ def blockade_2atom(qubit_0, qubit_1):
     wait(drive_line_1, 100)
 
 
-compiled_kernel = pulse.compile(
-    blockade_2atom,
-    [pulse.qudit_ref(), pulse.qudit_ref()],
-    clock_ghz=1.0,
-    qubit_freq_hz={0: RABI_MHZ * 1e6, 1: RABI_MHZ * 1e6},
+dev = pulse.device({"target": "rydberg_chain:2"})
+compiled_kernel = pulse.compile(blockade_2atom, device=dev).lower(
+    dev.qudit_handles[0], dev.qudit_handles[1]
 )
 
-print(compiled_kernel.mlir)
+print(compiled_kernel.mlir())
 
 metrics = compiled_kernel.metrics
 print("\n=== Compile metrics ===")

@@ -297,12 +297,9 @@ def surface_code_cycle(
     drive(drive_line_8, x_echo, tone_8)
 
 
-compiled = pulse.compile(
-    surface_code_cycle,
-    [pulse.qudit_ref() for _ in range(17)],
-    qubit_freq_hz={qi: target.qubits[qi].frequency_hz for qi in all_qubits},
-)
-total_ns = max(e.start_vtu + e.duration_vtu for e in compiled.events()) / 2.0
+dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+compiled = pulse.compile(surface_code_cycle, device=dev).lower(*dev.qudit_handles[:17])
+total_ns = max(e.start_vtu + e.duration_vtu for e in compiled.schedule) / 2.0
 print(
     f"\nCompiled and verified: {compiled.metrics.op_count} ops, "
     f"total = {total_ns:.0f} ns ({total_ns / 1000:.1f} us)"

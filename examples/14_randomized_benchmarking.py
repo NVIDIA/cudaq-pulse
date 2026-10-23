@@ -90,17 +90,18 @@ def rb_depth_sweep():
 
 
 if __name__ == "__main__":
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     print("=== RB Clifford sequence (depth=10) ===")
-    compiled_kernel = pulse.compile(clifford_sequence, [10, 42], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(clifford_sequence, device=dev).lower(10, 42)
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== Depth sweep ===")
     for depth in [1, 5, 10, 20]:
-        compiled_kernel = pulse.compile(clifford_sequence, [depth, 0], qubit_freq_hz={0: 5e9})
+        compiled_kernel = pulse.compile(clifford_sequence, device=dev).lower(depth, 0)
         print(f"  depth={depth:3d}: compiled in {compiled_kernel.metrics.total_ms:.3f} ms")
 
     print("\n=== RB depth sweep (depths 0-4 in one kernel) ===")
-    compiled_kernel = pulse.compile(rb_depth_sweep, [], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(rb_depth_sweep, device=dev).lower()
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

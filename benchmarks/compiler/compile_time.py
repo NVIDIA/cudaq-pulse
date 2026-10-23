@@ -11,7 +11,7 @@ Usage:
     python benchmarks/compiler/compile_time.py [--iterations N]
         [--baseline FILE [--gate FACTOR]] [--write-baseline FILE]
 
-Compiles each of the 6 canonical workloads with ``pulse.compile()`` (verify,
+Compiles each of the 6 canonical workloads with ``pulse.compile(k).lower(...)`` (verify,
 virtual-Z, fusion, ALAP schedule). The op count is that of the traced kernel
 IR, with loops retained. With --baseline, exits 1 if any op count differs
 from the baseline; adding --gate also fails any workload slower than its
@@ -29,6 +29,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import cudaq_pulse as pulse
+
+
+def _device(frequencies: dict[int, float]) -> pulse.Device:
+    """A device with these drive frequencies, indexed by qudit."""
+    from cudaq_pulse.targets import Qubit, Target
+
+    qubits = {q: Qubit(q, f, -300e6, 50.0, 30.0) for q, f in frequencies.items()}
+    return pulse.device({"target": Target(name="bench", qubits=qubits)})
 
 
 @dataclass
@@ -237,12 +245,14 @@ WORKLOADS = [
 
 
 def _bench(kernel_fn, n_qubits: int, freq_dict: dict, iterations: int) -> tuple[float, int]:
-    op_count = kernel_fn(*[pulse.qudit_ref() for _ in range(n_qubits)]).op_count()
+    device = _device(freq_dict)
+    qubits = device.qudit_handles[:n_qubits]
+    op_count = pulse.compile(kernel_fn).lower(*qubits).metrics.op_count
     total = 0.0
     for _ in range(iterations):
         t0 = time.monotonic()
-        qubits = [pulse.qudit_ref() for _ in range(n_qubits)]
-        pulse.compile(kernel_fn, qubits, qubit_freq_hz=freq_dict)
+        # A fresh compiled kernel holds no specializations: this compiles.
+        pulse.compile(kernel_fn).lower(*qubits)
         total += time.monotonic() - t0
     return (total / iterations) * 1000.0, op_count
 

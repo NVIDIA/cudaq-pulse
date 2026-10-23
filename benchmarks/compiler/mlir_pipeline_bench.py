@@ -8,7 +8,7 @@
 # ============================================================================ #
 """Benchmarks for the cudaq-pulse MLIR pipeline.
 
-Measures the median wall-clock time of each stage of ``pulse.compile()``:
+Measures the median wall-clock time of each stage of compiling a kernel:
   1. trace: kernel to packed buffer
   2. build: packed buffer to in-memory MLIR module (one FFI call)
   3. passes: the default pipeline, and each pass on its own
@@ -31,6 +31,15 @@ from collections.abc import Callable
 from typing import Any
 
 import cudaq_pulse as pulse
+
+
+def _device(frequencies: dict[int, float]) -> pulse.Device:
+    """A device with these drive frequencies, indexed by qudit."""
+    from cudaq_pulse.targets import Qubit, Target
+
+    qubits = {q: Qubit(q, f, -300e6, 50.0, 30.0) for q, f in frequencies.items()}
+    return pulse.device({"target": Target(name="bench", qubits=qubits)})
+
 
 _STAGES = ("trace_ms", "ffi_ms", "passes_ms", "schedule_ms", "total_ms")
 _PASSES = ("verify", "canonicalize", "virtual_z", "fusion", "licm")
@@ -89,10 +98,10 @@ BENCHMARKS = [
 ]
 
 
-def _compile(kernel, n_qubits: int, **kwargs: Any) -> pulse.CompiledKernel:
-    freq = {i: 5.0e9 + i * 0.1e9 for i in range(n_qubits)}
-    args = [pulse.qudit_ref() for _ in range(n_qubits)]
-    return pulse.compile(kernel, args, qubit_freq_hz=freq, **kwargs)
+def _compile(kernel, n_qubits: int, **kwargs: Any) -> pulse.Lowered:
+    device = _device({i: 5.0e9 + i * 0.1e9 for i in range(n_qubits)})
+    # A fresh compiled kernel holds no specializations: this compiles.
+    return pulse.compile(kernel, **kwargs).lower(*device.qudit_handles[:n_qubits])
 
 
 def bench_stages(kernel, n_qubits: int, repeats: int) -> dict[str, float]:
@@ -135,14 +144,14 @@ def main() -> None:
     print("\n--- Lowering to LLVM Dialect (median ms) ---")
     for name, kernel, n in BENCHMARKS:
         compiled = _compile(kernel, n)
-        ms = _median_ms(compiled.lower_to_llvm, args.repeats)
+        ms = _median_ms(lambda: compiled.mlir("llvm"), args.repeats)
         print(f"  {name:16s}  {ms:9.3f}")
 
     print("\n--- IR Size ---")
     for name, kernel, n in BENCHMARKS:
         compiled = _compile(kernel, n)
-        mlir = compiled.mlir
-        llvm = compiled.lower_to_llvm()
+        mlir = compiled.mlir()
+        llvm = compiled.mlir("llvm")
         print(
             f"  {name:16s}  pulse: {mlir.count(chr(10)):5d} lines, {len(mlir):7d} chars"
             f"   llvm: {llvm.count(chr(10)):5d} lines, {len(llvm):7d} chars"
@@ -151,7 +160,7 @@ def main() -> None:
     print("\n--- Program Statistics ---")
     for name, kernel, n in BENCHMARKS:
         compiled = _compile(kernel, n)
-        events = compiled.events()
+        events = compiled.schedule
         makespan = max(e.start_vtu + e.duration_vtu for e in events)
         print(
             f"  {name:16s}  {compiled.metrics.op_count:3d} ops, {n} qubits, "

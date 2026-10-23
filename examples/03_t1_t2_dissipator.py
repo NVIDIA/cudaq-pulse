@@ -8,7 +8,7 @@
 """T1/T2 measurement with Lindblad dissipator.
 
 Prepares a qubit, applies a wait period, and measures, compiling each
-experiment with ``pulse.compile()``. ``pulse.evolve()`` adds Lindblad
+experiment with ``pulse.compile()``. ``pulse.simulate()`` adds Lindblad
 dissipators from a target's T1/T2 calibration when it lowers a kernel.
 
 NOTE: Requires cudaq-pulse native C++ bindings (see README for build
@@ -76,18 +76,19 @@ def t2_echo(tau):
 
 
 if __name__ == "__main__":
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     print("=== T1 experiment (sweep wait times) ===")
     for tau in [100, 500, 1000, 5000, 10000]:
-        compiled_kernel = pulse.compile(t1_experiment, [tau], qubit_freq_hz={0: 5e9})
+        compiled_kernel = pulse.compile(t1_experiment, device=dev).lower(tau)
         print(f"  tau={tau:6d} VTU: compiled in {compiled_kernel.metrics.total_ms:.3f} ms")
 
     print("\n=== T2* Ramsey (tau=500) ===")
-    compiled_kernel = pulse.compile(t2_ramsey, [500], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(t2_ramsey, device=dev).lower(500)
+    print(compiled_kernel.mlir())
 
     print("\n=== T2 Echo (tau=1000) ===")
-    compiled_kernel = pulse.compile(t2_echo, [1000], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(t2_echo, device=dev).lower(1000)
+    print(compiled_kernel.mlir())
 
-    # pulse.evolve(..., target=...) adds the target's T1/T2 Lindblad
+    # pulse.simulate(...) adds the device's T1/T2 Lindblad
     # dissipators when it lowers a kernel; see examples/transmon/krinner_evolve_gpu.py.

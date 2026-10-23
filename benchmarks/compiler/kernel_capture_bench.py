@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass
 
 import cudaq_pulse as pulse
+from cudaq_pulse.kernel.bytecode_bridge import compile_kernel_bytecode
 
 # ── Canonical workloads ──────────────────────────────────────────────
 
@@ -148,12 +149,13 @@ class BenchResult:
 
 def bench_one(name: str, fn, n_qubits: int, iterations: int = 200) -> BenchResult:
     qubits = [pulse.qudit_ref() for _ in range(n_qubits)]
+    trace = compile_kernel_bytecode(fn.__wrapped__)
 
     for _ in range(5):
-        fn(*qubits)
+        trace(*qubits)
     t0 = time.perf_counter_ns()
     for _ in range(iterations):
-        ir = fn(*qubits)
+        ir = trace(*qubits)
     bc_ns = (time.perf_counter_ns() - t0) / iterations
 
     return BenchResult(name=name, bc_us=bc_ns / 1000, ops=len(ir.ops))

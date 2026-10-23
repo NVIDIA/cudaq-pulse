@@ -13,8 +13,8 @@ HARDWARE REQUIREMENT: This example requires an NVIDIA GPU and
 naming which one -- no silent fallback.
 
 Pipeline:
-  @pulse.kernel -> pulse.evolve(target=...) -> native MLIR lowering
-                -> JIT compile -> cuDensityMat GPU execution
+  @pulse.kernel -> kernel.lower(handles) -> pulse.simulate(backend="gpu")
+                -> native MLIR lowering -> JIT compile -> cuDensityMat GPU execution
 """
 
 import math
@@ -22,11 +22,11 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 from cudaq_pulse.runtime.gpu import require_gpu_runtime
-from cudaq_pulse.targets import transmon_krinner_17q
 
 require_gpu_runtime()
 
-target = transmon_krinner_17q()
+dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+target = dev.target
 
 qubit_0_info = target.qubits[0]
 qubit_1_info = target.qubits[1]
@@ -60,20 +60,12 @@ def krinner_evolve(qubit_0, qubit_1):
     drive(drive_line_1, x_echo, tone_1)
 
 
-ir = krinner_evolve(pulse.qudit_ref(), pulse.qudit_ref())
-
+lowered = krinner_evolve.lower(dev.qudit_handles[0], dev.qudit_handles[1])
 # This sequence is shorter than 128 ns. The remaining interval evolves under
 # the target's always-on coupling and T1/T2 model.
-result = pulse.evolve(
-    ir,
-    target=target,
-    t_start=0.0,
-    t_end=128.0,
-    num_steps=512,
-    integrator="rk4",
-)
+result = pulse.simulate(lowered, backend="gpu", t_end=128.0, dt_ns=0.25, integrator="rk4")
 
-state = result.final_state
+state = result.density_matrix
 print(f"=== Final state shape: {state.shape} ===")
 if state.ndim == 2:
     populations = np.real(np.diag(state))

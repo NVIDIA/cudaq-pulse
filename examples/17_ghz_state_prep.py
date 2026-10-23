@@ -101,12 +101,13 @@ def ghz_n(qubit_count):
 
 
 if __name__ == "__main__":
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     print("=== 3-qubit GHZ (explicit) ===")
-    compiled_kernel = pulse.compile(ghz_3, [], qubit_freq_hz={0: 5e9, 1: 5.1e9, 2: 5.2e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(ghz_3, device=dev).lower()
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== N-qubit GHZ (loop-based, N=5) ===")
-    compiled_kernel = pulse.compile(ghz_n, [5], qubit_freq_hz={0: 5e9, 1: 5.1e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(ghz_n, device=dev).lower(5)
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

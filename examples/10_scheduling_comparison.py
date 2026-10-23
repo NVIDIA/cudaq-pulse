@@ -28,10 +28,10 @@ def four_qubit(qs):
         drive(lines[i], gaussian(40 + 20 * i, 0.25, 10.0), tones[i])
 
 
-def print_timeline(compiled: pulse.CompiledKernel, label: str) -> int:
+def print_timeline(compiled: pulse.Lowered, label: str) -> int:
     """Pretty-print the scheduled drives and return the makespan."""
     print(f"\n  --- {label} ---")
-    events = sorted(compiled.events(), key=lambda e: (e.start_vtu, e.line))
+    events = sorted(compiled.schedule, key=lambda e: (e.start_vtu, e.line))
     for ev in events:
         end = ev.start_vtu + ev.duration_vtu
         print(f"    [{ev.start_vtu:5d} - {end:5d}]  line {ev.line}  {ev.kind}")
@@ -39,13 +39,12 @@ def print_timeline(compiled: pulse.CompiledKernel, label: str) -> int:
 
 
 def main():
-    args = [pulse.qvec_ref(4)]
-    freq = {i: (5.0 + 0.1 * i) * 1e9 for i in range(4)}
+    args = [dev.qudit_handles[:4]]
     machine = pulse.MachineModel(max_concurrent_drives=2, line_switch_penalty_vtu=5)
     totals = {}
     for policy in ("asap", "alap", "rcp"):
-        compiled = pulse.compile(
-            four_qubit, args, qubit_freq_hz=freq, schedule=policy, machine=machine
+        compiled = pulse.compile(four_qubit, schedule=policy, machine=machine, device=dev).lower(
+            *args
         )
         label = policy.upper()
         if policy == "rcp":
@@ -58,4 +57,5 @@ def main():
 
 
 if __name__ == "__main__":
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     main()

@@ -12,7 +12,7 @@
          -> QOp (operator algebra) -> CuDensityMat -> LLVM
 
 Prints the intermediate representations of the native lowering stack.
-``pulse.evolve`` runs the same stack, adding the target's calibration
+``pulse.simulate(..., backend="gpu")`` runs the same stack, adding the target's calibration
 (drive scales, couplings, T1/T2) as module attributes, and executes it.
 """
 
@@ -57,21 +57,18 @@ def krinner_bell(qubit_0, qubit_1):
 
 
 print("=== Stage 1: compile (verify, virtual-Z, fusion, ALAP schedule) ===")
-compiled = pulse.compile(
-    krinner_bell,
-    [pulse.qudit_ref(), pulse.qudit_ref()],
-    qubit_freq_hz={0: qubit_0_info.frequency_hz, 1: qubit_1_info.frequency_hz},
-)
-total_vtu = max(e.start_vtu + e.duration_vtu for e in compiled.events())
+dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+compiled = pulse.compile(krinner_bell, device=dev).lower(dev.qudit_handles[0], dev.qudit_handles[1])
+total_vtu = max(e.start_vtu + e.duration_vtu for e in compiled.schedule)
 print(f"  {compiled.metrics.op_count} ops, {total_vtu / 2.0:.0f} ns total")
 
 print("\n=== Stage 2: scheduled Pulse MLIR ===")
-print(compiled.mlir)
+print(compiled.mlir())
 
 print("=== Stage 3: operator (QOp) lowering ===")
-qop = MLIRPipeline().run_pulse_to_qop(compiled.mlir)
+qop = MLIRPipeline().run_pulse_to_qop(compiled.mlir())
 print(f"  {qop.count('qop.callback_scalar')} time-dependent drive terms")
 
 print("\n=== Stage 4: LLVM IR for the cuDensityMat runtime ===")
-llvm = compiled.lower_to_llvm()
+llvm = compiled.mlir("llvm")
 print(f"  {llvm.count('llvm.call')} runtime calls")

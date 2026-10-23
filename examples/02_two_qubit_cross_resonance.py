@@ -62,14 +62,15 @@ def echoed_cr_internal():
 
 
 if __name__ == "__main__":
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     print("=== External allocation ===")
-    compiled_kernel = pulse.compile(
-        echoed_cr_external, [pulse.qudit_ref(), pulse.qudit_ref()], qubit_freq_hz={0: 5e9, 1: 5.1e9}
+    compiled_kernel = pulse.compile(echoed_cr_external, device=dev).lower(
+        dev.qudit_handles[0], dev.qudit_handles[1]
     )
-    print(compiled_kernel.mlir)
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== Internal allocation ===")
-    compiled_kernel = pulse.compile(echoed_cr_internal, [], qubit_freq_hz={0: 5e9, 1: 5.1e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(echoed_cr_internal, device=dev).lower()
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

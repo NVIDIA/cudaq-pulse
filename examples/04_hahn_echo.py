@@ -81,24 +81,23 @@ def main():
     tau = 500  # VTU
 
     print("=== Hahn Echo ===")
-    compiled_kernel = pulse.compile(
-        hahn_echo, [sigma, amp_half_pi, amp_pi, tau], qubit_freq_hz={0: 5e9}
-    )
+    compiled_kernel = pulse.compile(hahn_echo, device=dev).lower(sigma, amp_half_pi, amp_pi, tau)
     total_hahn = 2 * int(4 * sigma) + int(4 * sigma) + 2 * tau
     print(f"  Expected duration: {total_hahn} VTU")
-    print(compiled_kernel.mlir)
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== CPMG-4 Echo ===")
     n_refocus = 4
-    compiled_kernel = pulse.compile(
-        cpmg_echo, [sigma, amp_half_pi, amp_pi, tau, n_refocus], qubit_freq_hz={0: 5e9}
+    compiled_kernel = pulse.compile(cpmg_echo, device=dev).lower(
+        sigma, amp_half_pi, amp_pi, tau, n_refocus
     )
     total_cpmg = 2 * int(4 * sigma) + n_refocus * (int(4 * sigma) + 2 * tau)
     print(f"  Expected duration: {total_cpmg} VTU")
-    print(compiled_kernel.mlir)
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
 
 if __name__ == "__main__":
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     main()

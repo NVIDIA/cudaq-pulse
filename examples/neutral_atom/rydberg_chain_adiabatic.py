@@ -91,15 +91,11 @@ def rydberg_adiabatic(qubit_0, qubit_1, qubit_2, qubit_3, qubit_4, qubit_5, qubi
 
 
 frequency = chain.global_rabi_mhz * 1e6
-compiled_kernel = pulse.compile(
-    rydberg_adiabatic,
-    [pulse.qudit_ref() for _ in range(N_ATOMS)],
-    clock_ghz=1.0,
-    qubit_freq_hz={i: frequency for i in range(N_ATOMS)},
-)
+dev = pulse.device({"target": f"rydberg_chain:{N_ATOMS}"})
+compiled_kernel = pulse.compile(rydberg_adiabatic, device=dev).lower(*dev.qudit_handles[:N_ATOMS])
 
 print(f"\nSweep time: {RAMP_STEPS * STEP_DURATION} VTU")
-print(compiled_kernel.mlir)
+print(compiled_kernel.mlir())
 
 metrics = compiled_kernel.metrics
 print("\n=== Compile metrics ===")

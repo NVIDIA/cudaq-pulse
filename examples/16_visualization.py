@@ -51,22 +51,20 @@ def print_ascii_timeline(events: list[pulse.ScheduledEvent], width: int = 70) ->
 
 
 def main():
-    args = [pulse.qudit_ref() for _ in range(3)]
-    freq = {0: 5.0e9, 1: 5.1e9, 2: 5.2e9}
+    args = list(dev.qudit_handles[:3])
     for policy in ("asap", "alap"):
-        compiled = pulse.compile(vis_demo, args, qubit_freq_hz=freq, schedule=policy)
+        compiled = pulse.compile(vis_demo, schedule=policy, device=dev).lower(*args)
         print(f"\n=== {policy.upper()} schedule ===")
-        print_ascii_timeline(compiled.events())
+        print_ascii_timeline(compiled.schedule)
 
     try:
-        from cudaq_pulse.viz.timeline import plot_schedule
-
-        plot_schedule(compiled, title="ALAP schedule (3 qubits)")
+        compiled.timeline(title="ALAP schedule (3 qubits)")
         print("\n  matplotlib figure created successfully.")
-        print("  Call save_schedule(compiled, 'output.png') to save to file.")
+        print("  Save it with compiled.timeline().savefig('output.png').")
     except ImportError:
         print("\n  matplotlib not installed. Install with: pip install matplotlib")
 
 
 if __name__ == "__main__":
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     main()

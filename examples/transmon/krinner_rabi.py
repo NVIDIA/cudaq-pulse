@@ -54,11 +54,10 @@ def rabi_d5(qubit):
         wait(drive_line, 100)
 
 
-compiled = pulse.compile(
-    rabi_d5, [pulse.qudit_ref(qubit_idx)], qubit_freq_hz={qubit_idx: qubit_d5.frequency_hz}
-)
-total_vtu = max(e.start_vtu + e.duration_vtu for e in compiled.events())
+dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+compiled = pulse.compile(rabi_d5, device=dev).lower(dev.qudit_handles[qubit_idx])
+total_vtu = max(e.start_vtu + e.duration_vtu for e in compiled.schedule)
 print(f"\nCompiled {compiled.metrics.op_count} ops, total length = {total_vtu / 2.0:.1f} ns")
 
-qop = MLIRPipeline().run_pulse_to_qop(compiled.mlir)
+qop = MLIRPipeline().run_pulse_to_qop(compiled.mlir())
 print(f"Operator program: {qop.count('qop.callback_scalar')} time-dependent drive terms")

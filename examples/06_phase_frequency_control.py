@@ -98,20 +98,21 @@ def sideband_modulation():
 
 
 if __name__ == "__main__":
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     print("=== Phase Rotation (4 x pi/2 = full circle) ===")
-    compiled_kernel = pulse.compile(phase_rotation_demo, [], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(phase_rotation_demo, device=dev).lower()
+    print(compiled_kernel.mlir())
 
     print("\n=== set_phase vs shift_phase ===")
-    compiled_kernel = pulse.compile(set_phase_vs_shift_phase, [], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(set_phase_vs_shift_phase, device=dev).lower()
+    print(compiled_kernel.mlir())
 
     print("\n=== Chirped Drive (10 steps, 50 MHz sweep) ===")
-    compiled_kernel = pulse.compile(chirped_drive, [10, 50e6], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(chirped_drive, device=dev).lower(10, 50e6)
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== Sideband Modulation ===")
-    compiled_kernel = pulse.compile(sideband_modulation, [], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(sideband_modulation, device=dev).lower()
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

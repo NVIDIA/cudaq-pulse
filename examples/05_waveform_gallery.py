@@ -108,16 +108,17 @@ def derivative_pulse(sigma, amplitude, beta):
 
 
 if __name__ == "__main__":
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     print("=== Waveform Showcase ===")
-    compiled_kernel = pulse.compile(waveform_showcase, [], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(waveform_showcase, device=dev).lower()
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== Waveform Algebra ===")
-    compiled_kernel = pulse.compile(waveform_algebra, [], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(waveform_algebra, device=dev).lower()
+    print(compiled_kernel.mlir())
 
     print("\n=== Derivative Pulse ===")
-    compiled_kernel = pulse.compile(derivative_pulse, [10.0, 0.3, 0.5], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(derivative_pulse, device=dev).lower(10.0, 0.3, 0.5)
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

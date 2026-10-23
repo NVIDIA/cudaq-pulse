@@ -7,7 +7,7 @@
 # ============================================================================ #
 """A custom check written in Python, run on a compiled kernel's schedule.
 
-``CompiledKernel.events()`` lists every drive, readout and wait with its
+``Lowered.schedule`` lists every drive, readout and wait with its
 line, qubit and scheduled time, so a pass that inspects the schedule is a
 plain Python function. This one enforces a hardware limit the scheduler
 does not know about: at most ``max_drives`` drive lines may play at once.
@@ -19,12 +19,10 @@ into ``cudaq-pulse-opt`` as plugins; see ``cpp/DriveCount.cpp``.
 import cudaq_pulse as pulse
 
 
-def concurrent_drive_violations(
-    compiled: pulse.CompiledKernel, max_drives: int
-) -> list[tuple[int, int]]:
+def concurrent_drive_violations(compiled: pulse.Lowered, max_drives: int) -> list[tuple[int, int]]:
     """Return (time, active drives) wherever more than *max_drives* overlap."""
     edges = []
-    for event in compiled.events():
+    for event in compiled.schedule:
         if event.kind == "drive" and event.duration_vtu:
             edges.append((event.start_vtu, 1))
             edges.append((event.start_vtu + event.duration_vtu, -1))
@@ -47,23 +45,19 @@ def parallel_x(qs):
 
 
 def main() -> None:
-    args = [pulse.qvec_ref(4)]
-    freq = {i: 5.0e9 + 0.1e9 * i for i in range(4)}
+    args = [dev.qudit_handles[:4]]
 
-    asap = pulse.compile(parallel_x, args, qubit_freq_hz=freq, schedule="asap")
+    asap = pulse.compile(parallel_x, schedule="asap", device=dev).lower(*args)
     print("ASAP violations of a 2-drive limit:", concurrent_drive_violations(asap, 2))
 
     rcp = pulse.compile(
-        parallel_x,
-        args,
-        qubit_freq_hz=freq,
-        schedule="rcp",
-        machine=pulse.MachineModel(max_concurrent_drives=2),
-    )
+        parallel_x, schedule="rcp", machine=pulse.MachineModel(max_concurrent_drives=2)
+    ).lower(*args)
     violations = concurrent_drive_violations(rcp, 2)
     print("RCP violations of a 2-drive limit:", violations)
     assert not violations
 
 
 if __name__ == "__main__":
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     main()

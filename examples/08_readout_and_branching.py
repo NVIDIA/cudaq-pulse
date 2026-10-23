@@ -43,7 +43,7 @@ def measure_single_qubit():
 def active_reset():
     """Active reset: measure, and if excited, apply an X pulse.
 
-    The ``if`` becomes an scf.if region: compile() keeps it as a branch on
+    The ``if`` becomes an scf.if region: compiling keeps it as a branch on
     pulse.is_set and schedules it for the longer arm.
     """
     qubit = pulse.qudit_ref()
@@ -107,14 +107,14 @@ def ramsey_with_readout(tau):
 
 
 if __name__ == "__main__":
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     print("=== Measure single qubit ===")
-    compiled_kernel = pulse.compile(measure_single_qubit, [], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(measure_single_qubit, device=dev).lower()
+    print(compiled_kernel.mlir())
 
     print("\n=== Active reset (measurement-conditioned branch) ===")
-    print(active_reset().pretty())
-    compiled_kernel = pulse.compile(active_reset, [], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(active_reset, device=dev).lower()
+    print(compiled_kernel.mlir())
 
     print("\n=== Simulating it (CPU reference) ===")
     from cudaq_pulse.targets import Qubit, Target
@@ -127,18 +127,18 @@ if __name__ == "__main__":
     )
     # Start in (|0> + |1>) / sqrt(2): each outcome is equally likely, and
     # either way the qubit ends in |0>.
-    result = pulse.simulate(
-        active_reset(), target=target, initial_state=[2**-0.5, 2**-0.5], shots=1000, seed=7
-    )
+    reset_demo = pulse.device({"target": target})
+    lowered = pulse.compile(active_reset, device=reset_demo).lower()
+    result = pulse.simulate(lowered, initial_state=[2**-0.5, 2**-0.5], shots=1000, seed=7)
     for outcomes, probability in result.branches:
         print(f"  measured {outcomes}: p = {probability:.3f}")
     print(f"  final |0> population: {result.density_matrix[0, 0].real:.4f}")
 
     print("\n=== Repeated measurement (5 shots) ===")
-    compiled_kernel = pulse.compile(repeated_measurement, [5], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(repeated_measurement, device=dev).lower(5)
+    print(compiled_kernel.mlir())
 
     print("\n=== Ramsey with readout (tau=200) ===")
-    compiled_kernel = pulse.compile(ramsey_with_readout, [200], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(ramsey_with_readout, device=dev).lower(200)
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

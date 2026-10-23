@@ -135,29 +135,28 @@ def knill_dd(sigma, amplitude_pi, tau):
 
 
 if __name__ == "__main__":
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     sigma = 10.0
     amplitude_pi = 0.50
     amplitude_half_pi = 0.25
     tau = 200
 
     print("=== XY4 (4 cycles) ===")
-    compiled_kernel = pulse.compile(xy4, [sigma, amplitude_pi, tau, 4], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(xy4, device=dev).lower(sigma, amplitude_pi, tau, 4)
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== Uhrig DD (8 pulses, T=5000 VTU) ===")
-    compiled_kernel = pulse.compile(
-        uhrig_dd, [sigma, amplitude_pi, 5000, 8], qubit_freq_hz={0: 5e9}
-    )
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(uhrig_dd, device=dev).lower(sigma, amplitude_pi, 5000, 8)
+    print(compiled_kernel.mlir())
 
     print("\n=== CPMG (8 refocusing pulses) ===")
-    compiled_kernel = pulse.compile(
-        cpmg, [sigma, amplitude_half_pi, amplitude_pi, tau, 8], qubit_freq_hz={0: 5e9}
+    compiled_kernel = pulse.compile(cpmg, device=dev).lower(
+        sigma, amplitude_half_pi, amplitude_pi, tau, 8
     )
-    print(compiled_kernel.mlir)
+    print(compiled_kernel.mlir())
 
     print("\n=== KDD (Knill DD) ===")
-    compiled_kernel = pulse.compile(knill_dd, [sigma, amplitude_pi, tau], qubit_freq_hz={0: 5e9})
-    print(compiled_kernel.mlir)
+    compiled_kernel = pulse.compile(knill_dd, device=dev).lower(sigma, amplitude_pi, tau)
+    print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

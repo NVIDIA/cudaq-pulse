@@ -7,9 +7,10 @@
 # ============================================================================ #
 """Full compilation pipeline walkthrough.
 
-Demonstrates the ``pulse.compile()`` API — the single entry point that
-captures a kernel, runs all optimization passes, and produces a
-``pulse.CompiledKernel`` containing lowered MLIR.
+Demonstrates ``pulse.compile()``, which compiles a kernel ahead of its
+call, and ``lower()``, which traces it for given arguments, runs the
+optimization passes and the scheduler, and returns the MLIR module of the
+call with its timing breakdown.
 """
 
 import math
@@ -46,30 +47,25 @@ def pipeline_demo(qubit_0, qubit_1):
 
 
 def main():
-    compiled_kernel = pulse.compile(
-        pipeline_demo,
-        [pulse.qudit_ref(), pulse.qudit_ref()],
-        clock_ghz=1.0,
-        qubit_freq_hz={0: 5.0e9, 1: 5.1e9},
-        schedule="alap",
+    compiled_kernel = pulse.compile(pipeline_demo, schedule="alap", device=dev).lower(
+        dev.qudit_handles[0], dev.qudit_handles[1]
     )
 
     print("=== Compiled MLIR (first 30 lines) ===")
-    for line in compiled_kernel.mlir.splitlines()[:30]:
+    for line in compiled_kernel.mlir().splitlines()[:30]:
         print(f"  {line}")
 
     metrics = compiled_kernel.metrics
     print("\n=== Compile metrics ===")
-    print(f"  Capture   : {metrics.capture_ms:.3f} ms")
-    print(f"  Lower     : {metrics.lower_ms:.3f} ms")
+    print(f"  Trace     : {metrics.trace_ms:.3f} ms")
     print(f"  Passes    : {metrics.passes_ms:.3f} ms")
     print(f"  Schedule  : {metrics.schedule_ms:.3f} ms")
-    print(f"  MLIR emit : {metrics.mlir_emit_ms:.3f} ms")
+    print(f"  MLIR build: {metrics.ffi_ms:.3f} ms")
     print(f"  Total     : {metrics.total_ms:.3f} ms")
 
     # Lower to LLVM IR in process with the native MLIR binding.
     try:
-        llvm_ir = compiled_kernel.lower_to_llvm()
+        llvm_ir = compiled_kernel.mlir("llvm")
         print(f"\n=== LLVM IR ({len(llvm_ir)} chars, first 10 lines) ===")
         for line in llvm_ir.splitlines()[:10]:
             print(f"  {line}")
@@ -78,4 +74,5 @@ def main():
 
 
 if __name__ == "__main__":
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     main()
