@@ -292,6 +292,16 @@ struct PulseVerifyPass
           for (mlir::Value arg : block.getArguments())
             checkLinear(arg, op);
     });
+    // Timing and lowering identify a line by the op that acquires it, so an
+    // acquisition in a loop body cannot stand for a new line per iteration.
+    module.walk([&](mlir::Operation *op) {
+      if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op) ||
+          !op->getParentOfType<mlir::scf::ForOp>())
+        return;
+      op->emitError("a line cannot be acquired inside an scf.for; acquire it "
+                    "before the loop and carry it through iter_args");
+      hadError = true;
+    });
 
     // Check 2: Waveform validity -- trace SSA duration to constant, skip
     // parametric (block arg) values which are checked at evaluation time.

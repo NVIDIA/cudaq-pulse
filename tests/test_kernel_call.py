@@ -497,9 +497,14 @@ def pulse_once(q, amp: float):
 
 def test_a_kernel_called_in_a_range_loop_keeps_the_loop_rolled():
     @pulse.kernel
+    def play(d, t, amp: float):
+        drive(d, square(8, amp), t)
+
+    @pulse.kernel
     def train(q, n: int):
+        d, t = get_drive_line(q)
         for _ in range(n):
-            pulse_once(q, 0.01)
+            play(d, t, 0.01)
 
     q = _device().qudit_handles[0]
     small, large = train.lower(q, 4), train.lower(q, 64)

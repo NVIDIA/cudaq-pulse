@@ -108,3 +108,34 @@ func.func @loop_iterations_overlap(%x: !pulse.waveform, %w: !pulse.duration) {
   }
   return
 }
+
+// -----
+
+// A line acquired in a loop body is one allocation for every iteration.
+// CHECK: error: a line cannot be acquired inside an scf.for; acquire it before the loop and carry it through iter_args
+func.func @line_acquired_in_loop(%x: !pulse.waveform) {
+  %q = pulse.qudit_alloc : !pulse.qref
+  %lb = arith.constant 0 : index
+  %ub = arith.constant 2 : index
+  %step = arith.constant 1 : index
+  scf.for %i = %lb to %ub step %step {
+    %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+    %d, %t = pulse.drive %d0, %x, %t0 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+  }
+  return
+}
+
+// -----
+
+// CHECK: error: a line cannot be acquired inside an scf.for
+func.func @readout_line_acquired_in_loop(%x: !pulse.waveform) {
+  %q = pulse.qudit_alloc : !pulse.qref
+  %lb = arith.constant 0 : index
+  %ub = arith.constant 2 : index
+  %step = arith.constant 1 : index
+  scf.for %i = %lb to %ub step %step {
+    %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+    %r1, %rt1, %m = pulse.readout %r0, %x, %rt0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  }
+  return
+}

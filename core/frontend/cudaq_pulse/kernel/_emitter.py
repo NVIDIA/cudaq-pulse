@@ -73,6 +73,14 @@ _PULSE_OP_NAMES = frozenset(OP_TABLE.keys()) | frozenset(_ALLOC_OPS.keys())
 
 # Loops over Python iterables are unrolled; this bounds a runaway iterator.
 MAX_UNROLLED_ITERATIONS = 1_000_000
+# Kernel and helper calls are inlined; this bounds a runaway recursion.
+MAX_INLINE_DEPTH = 64
+# Methods of these containers change them unless listed in _READ_METHODS.
+_CONTAINERS = frozenset({list, dict, set})
+_READ_METHODS = frozenset({"copy", "count", "index", "get", "keys", "values", "items"})
+# A rolled body that acquires a line or a qudit would acquire one for all
+# iterations instead of one per iteration, so it is unrolled.
+_ACQUIRES = frozenset({"get_drive_line", "get_readout_line", "qudit_ref", "qvec_ref"})
 _PACKED_BRANCH_MESSAGE = "measurement-conditioned branches need an IR builder that supports regions"
 _REJOIN_MESSAGE = (
     "both branches of a measurement-conditioned if must continue after it; "
@@ -283,6 +291,9 @@ class PulseIREmitter:
         "_can_roll",
         "_slots",
         "_durations",
+        "_mutated",
+        "_depth",
+        "_acquired",
     )
 
     def __init__(
@@ -303,6 +314,13 @@ class PulseIREmitter:
         self._slots: dict[int, tuple[list[Any], int, IRValue]] = {}
         # Waveform vid -> duration in clock cycles, when known at trace time.
         self._durations: dict[int, int] = {}
+        # While a rolled loop body or a branch arm is traced: id -> (container,
+        # contents before) for each list, dict or set a Python call changed.
+        self._mutated: dict[int, tuple[Any, Any]] | None = None
+        # Number of enclosing inlined kernel and helper calls.
+        self._depth = 0
+        # Lines and qudits acquired so far, counted across inlined calls.
+        self._acquired = [0]
         if not _PULSE_FUNCTIONS:
             _load_pulse_functions()
 
@@ -531,6 +549,7 @@ class PulseIREmitter:
                     else:
                         push(items)
                         self._track_slots(items, 0)
+                        self._note_fresh(items)
 
                 elif op is bc.LIST_APPEND or op is bc.LIST_EXTEND:
                     val = pop()
@@ -599,6 +618,7 @@ class PulseIREmitter:
                     index = pop()
                     obj = pop()
                     value = pop()
+                    self._note_mutation(obj)
                     obj[index] = value
 
                 elif op is bc.BUILD_CONST_KEY_MAP:
@@ -606,11 +626,13 @@ class PulseIREmitter:
                     vals = stack[-arg:] if arg else []
                     del stack[len(stack) - arg :]
                     push(dict(zip(keys, vals)))
+                    self._note_fresh(stack[-1])
 
                 elif op is bc.BUILD_MAP:
                     items = stack[len(stack) - 2 * arg :]
                     del stack[len(stack) - 2 * arg :]
                     push(dict(zip(items[::2], items[1::2])))
+                    self._note_fresh(stack[-1])
 
                 elif op is bc.BUILD_STRING:
                     parts = stack[-arg:] if arg else []
@@ -779,10 +801,18 @@ class PulseIREmitter:
         # An arm may only move forward from the branch, except that a join at
         # an enclosing loop header (both arms continue) ends the arm.
         header = join if join < branch else -1
+        outer = self._mutated
+        mutated: dict[int, tuple[Any, Any]] = {}
+        self._mutated = mutated
         try:
             outcome = self._loop(view, start, branch, len(view.instrs), header)
         except _NotRollableError:
             raise CompilationError(_REJOIN_MESSAGE) from None
+        finally:
+            self._mutated = outer
+            if outer is not None:
+                for key, entry in mutated.items():
+                    outer.setdefault(key, entry)
         if header >= 0 and outcome is None:
             outcome = _REGION_DONE
         if returns:
@@ -791,7 +821,7 @@ class PulseIREmitter:
         elif outcome is not _REGION_DONE or len(self.stack) != len(saved_stack):
             raise CompilationError(_REJOIN_MESSAGE)
         slots = _slot_changes(containers)
-        if slots is None:
+        if slots is None or not _only_containers(mutated, containers):
             raise CompilationError(
                 "a measurement-conditioned branch may only change list entries that "
                 "hold lines or tones"
@@ -814,9 +844,9 @@ class PulseIREmitter:
 
         The body is traced once. Rolling is kept only if that iteration
         returned to the loop header and left every Python-level value
-        (non-IR locals and the lists and dicts they hold) unchanged, so all
-        iterations would trace identically. Otherwise the emitted ops are
-        rolled back.
+        (non-IR locals and the lists and dicts they hold, and any container
+        a called kernel or helper reaches) unchanged, so all iterations would
+        trace identically. Otherwise the emitted ops are rolled back.
         """
         rng = loop.rng
         stack = self.stack
@@ -836,6 +866,10 @@ class PulseIREmitter:
 
         # The iterator stays below the loop value, where ``break`` pops it.
         stack.append(rng[0] if count else 0)
+        outer = self._mutated
+        mutated: dict[int, tuple[Any, Any]] = {}
+        self._mutated = mutated
+        acquired = self._acquired[0]
         try:
             self._loop(prog, for_idx + 1, for_idx, exit_idx, for_idx)
             slot_changes = _slot_changes(containers)
@@ -843,11 +877,21 @@ class PulseIREmitter:
                 len(stack) == len(saved_stack)
                 and self._python_state_unchanged(saved_locals)
                 and slot_changes is not None
+                and _only_containers(mutated, containers)
+                and self._acquired[0] == acquired
             )
         except _NotRollableError:
             ok = False
+        finally:
+            self._mutated = outer
+            if outer is not None:
+                for key, entry in mutated.items():
+                    outer.setdefault(key, entry)
 
         if not ok:
+            for obj, copy in mutated.values():
+                if copy is not None:
+                    self._restore_container(obj, copy)
             self.b.rollback(checkpoint)
             stack[:] = saved_stack
             self.locals.clear()
@@ -890,6 +934,17 @@ class PulseIREmitter:
         else:
             self.locals.pop(var, None)
         return True
+
+    def _note_mutation(self, obj: Any) -> None:
+        """Remember what *obj* held before a rolled body or branch arm changed it."""
+        mutated = self._mutated
+        if mutated is not None and obj.__class__ in _CONTAINERS and id(obj) not in mutated:
+            mutated[id(obj)] = (obj, obj.copy())
+
+    def _note_fresh(self, obj: Any) -> None:
+        """Mark a container built by the body or arm being traced as free to change."""
+        if self._mutated is not None:
+            self._mutated.setdefault(id(obj), (obj, None))
 
     def _slot_label(self, obj: list[Any], index: int) -> str:
         name = next((n for n, v in self.locals.items() if v is obj), "")
@@ -1022,12 +1077,18 @@ class PulseIREmitter:
                     self.b.impure = True
                 except AttributeError:
                     pass
+            owner = getattr(callable_val, "__self__", None)
+            if owner.__class__ in _CONTAINERS and fname not in _READ_METHODS:
+                self._note_mutation(owner)
             try:
                 result = callable_val(*call_args, **(kwargs or {}))
             except _EVALUATION_ERRORS as e:
                 raise CompilationError(f"failed to evaluate {fname}({call_args!r}): {e}") from e
             self.stack.append(result)
-            owner = getattr(callable_val, "__self__", None)
+            if (callable_val.__class__ is type and callable_val in _CONTAINERS) or (
+                owner.__class__ in _CONTAINERS and fname == "copy"
+            ):
+                self._note_fresh(result)
             if owner.__class__ is list and fname in ("append", "extend", "insert"):
                 self._track_slots(owner, len(owner) - 1 if fname == "append" else 0)
             return
@@ -1052,6 +1113,16 @@ class PulseIREmitter:
     ) -> None:
         """Emit a pulse-aware Python helper into the current IR builder."""
         code = fn.__code__
+        if code.co_flags & (inspect.CO_VARARGS | inspect.CO_VARKEYWORDS):
+            raise CompilationError(
+                f"{fn.__name__}: kernels and helpers called from a kernel do not "
+                "support *args or **kwargs parameters"
+            )
+        if self._depth >= MAX_INLINE_DEPTH:
+            raise CompilationError(
+                f"{fn.__name__}: kernel calls nest more than {MAX_INLINE_DEPTH} deep; "
+                "a recursive kernel must stop at a condition known at compile time"
+            )
         params = list(code.co_varnames[: code.co_argcount])
         if kwargs or fn.__defaults__:
             call_args = _bind_positional(fn, call_args, kwargs or {})
@@ -1067,6 +1138,9 @@ class PulseIREmitter:
         )
         helper._slots = self._slots
         helper._durations = self._durations
+        helper._mutated = self._mutated
+        helper._depth = self._depth + 1
+        helper._acquired = self._acquired
         helper.locals.update(zip(params, call_args))
         result = helper.run(code)
 
@@ -1108,6 +1182,7 @@ class PulseIREmitter:
         if fname == "qvec_ref":
             if len(call_args) == 1 and isinstance(call_args[0], int):
                 n = call_args[0]
+                self._acquired[0] += 1
                 ir_vals = []
                 for i in range(n):
                     (v,) = self.b.emit("pulse.qudit_alloc", (), ("qref",), {"index": i})
@@ -1135,6 +1210,8 @@ class PulseIREmitter:
             raise CompilationError(f"unknown pulse op: {fname}")
 
         n_val, attr_names, rtypes = entry
+        if fname in _ACQUIRES:
+            self._acquired[0] += 1
 
         if n_val == -1:
             operands = tuple(v for v in call_args if isinstance(v, IRValue))
@@ -1327,6 +1404,17 @@ def _slot_changes(
                 return None
             changes.append((obj, i, new))
     return changes
+
+
+def _only_containers(
+    mutated: dict[int, tuple[Any, Any]], containers: list[tuple[Any, Any]]
+) -> bool:
+    """Whether every container in *mutated* was built while tracing, or is one
+    of the snapshotted *containers*."""
+    if not mutated:
+        return True
+    known = {id(obj) for obj, _ in containers}
+    return all(copy is None or key in known for key, (_, copy) in mutated.items())
 
 
 def _container_unchanged(obj: list[Any] | dict[Any, Any], copy: Any) -> bool:
