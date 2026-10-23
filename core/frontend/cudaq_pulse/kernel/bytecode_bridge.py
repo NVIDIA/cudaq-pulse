@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from .._device import Qudit, Register
 from ._bytecode_normalize import DecodedCode, decode
 from ._emitter import PulseIREmitter, _extract_closures
 from .decorator import QuditRef, QvecRef
@@ -67,8 +68,6 @@ def _trace(
     closures = _extract_closures(fn) if fn.__closure__ else {}
     emitter = PulseIREmitter(builder, fn.__globals__, closures)
     local_vars = emitter.locals
-    from .._device import Qudit, Register
-
     for name, val in zip(params, args):
         if type(val) is Qudit:
             (ir_val,) = builder.emit(qudit_op, (), ("qref",), {"index": val.index})
