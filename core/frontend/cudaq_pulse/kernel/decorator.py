@@ -8,9 +8,11 @@
 
 from __future__ import annotations
 
-import functools
-from collections.abc import Callable, Iterator, Sequence
-from typing import Any
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Any, overload
+
+if TYPE_CHECKING:
+    from ._kernel import Kernel
 
 _next_vid = 0
 
@@ -71,10 +73,10 @@ class QvecRef:
 def qudit_ref(index: int | None = None) -> QuditRef:
     """Allocate a single qudit reference.
 
-    Use as an argument when calling or compiling a ``@kernel`` function::
+    Use as an argument when calling a ``@kernel`` function::
 
         q = cudaq_pulse.qudit_ref()
-        ck = cudaq_pulse.compile(my_kernel, [q], ...)
+        my_kernel(q)
 
     Pass an index to bind a kernel argument to a specific physical qubit,
     for example ``cudaq_pulse.qudit_ref(4)``.
@@ -95,7 +97,7 @@ def qvec_ref(n: int) -> QvecRef:
     Example::
 
         qubits = cudaq_pulse.qvec_ref(4)
-        ck = cudaq_pulse.compile(my_kernel, [qubits[0], qubits[1]], ...)
+        my_kernel(qubits[0], qubits[1])
 
     Args:
         n: Number of qudits.
@@ -106,54 +108,45 @@ def qvec_ref(n: int) -> QvecRef:
     return QvecRef(n)
 
 
-def kernel(fn: Callable[..., Any]) -> Callable[..., Any]:
-    """Decorator that marks a Python function as a pulse kernel.
+@overload
+def kernel(fn: Callable[..., Any], /) -> Kernel: ...
+@overload
+def kernel(
+    fn: None = None, /, *, cache_size: int | None = None
+) -> Callable[[Callable[..., Any]], Kernel]: ...
 
-    The decorated function is traced via bytecode capture when called,
-    producing an intermediate representation that can be compiled to
-    MLIR with ``cudaq_pulse.compile()``.
+
+def kernel(
+    fn: Callable[..., Any] | None = None, /, *, cache_size: int | None = None
+) -> Kernel | Callable[[Callable[..., Any]], Kernel]:
+    """Decorator that makes a Python function a pulse kernel.
+
+    Calling the kernel compiles it on first use and runs it on the device of
+    its qudit handles, returning what the kernel returns. Parameters annotated
+    ``float`` stay symbolic in the compiled module; the kernel is
+    specialized on every other parameter, and up to *cache_size*
+    specializations are kept (``CUDAQ_PULSE_CACHE_SIZE``, 32 by default).
 
     Supported control flow inside the kernel:
 
-    - ``for i in range(N)`` (compile-time bound)
-    - ``if`` / ``else`` with compile-time conditions
+    - ``for i in range(N)`` (bound known at compile time)
+    - ``if`` / ``else`` on values known at compile time, or on a measurement
 
     Example::
 
         @cudaq_pulse.kernel
-        def my_kernel(q):
+        def rabi(q, amp: float):
             d, t = get_drive_line(q)
-            drive(d, gaussian(40, 0.3, 10.0), t)
+            drive(d, gaussian(40, amp, 10.0), t)
 
-    Args:
-        fn: A plain Python function using ``cudaq_pulse`` ops.
-
-    Returns:
-        A wrapped callable that performs bytecode tracing on each call.
+        rabi(cudaq_pulse.qudit_ref(), 0.3)
     """
     from ._bytecode_normalize import check_interpreter
+    from ._kernel import Kernel
 
     check_interpreter()
 
-    _cache_key: list[Any] = [None]
+    def wrap(f: Callable[..., Any]) -> Kernel:
+        return Kernel(f, cache_size=cache_size)  # type: ignore[arg-type]
 
-    def call(*args: Any, **kwargs: Any) -> Any:
-        key = (fn.__code__, fn.__module__)
-        if _cache_key[0] != key or wrapper.__cudaq_pulse_emitter__ is None:
-            from .bytecode_bridge import compile_kernel_bytecode
-
-            wrapper.__cudaq_pulse_emitter__ = compile_kernel_bytecode(fn)
-            _cache_key[0] = key
-        return wrapper.__cudaq_pulse_emitter__(*args, **kwargs)
-
-    def _trace_with_builder(builder: Any, args: Sequence[Any]) -> None:
-        """Re-trace the kernel using a custom IR builder (e.g. MLIRIRBuilder)."""
-        from .bytecode_bridge import _trace_kernel_with_builder
-
-        _trace_kernel_with_builder(fn, builder, args)
-
-    wrapper: Any = functools.update_wrapper(call, fn)
-    wrapper.__wrapped__ = fn
-    wrapper.__cudaq_pulse_emitter__ = None
-    wrapper._trace_with_builder = _trace_with_builder
-    return call
+    return wrap if fn is None else wrap(fn)

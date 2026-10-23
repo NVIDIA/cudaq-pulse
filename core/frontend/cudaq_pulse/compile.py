@@ -5,19 +5,20 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""Public compile entry point for cudaq-pulse.
+"""Lowering a traced kernel to a scheduled MLIR module, and its inspection.
 
-``cudaq_pulse.compile()`` is the single public way to turn a
-``@cudaq_pulse.kernel`` into a scheduled, MLIR-backed compilation
-artifact.  Native bindings are **required** -- there is no fallback.
+``cudaq_pulse.compile(k)`` returns a callable ``CompiledKernel`` (see
+``kernel/kernel.py``); this module holds what it is built from: the options
+that pick passes and a schedule, the native build of one specialization, and
+``Lowered``, the read-only view of one compiled module.
 """
 
 from __future__ import annotations
 
-import inspect
+import threading
 import time
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -28,10 +29,13 @@ except ImportError as _e:
         "or build from source with `pip install .`; see CONTRIBUTING.md."
     ) from _e
 
-from .kernel.ir_builder import Parameter
+from .kernel.ir_builder import CompilationError
 
 if TYPE_CHECKING:
-    from .runtime.jit import JITResult
+    from matplotlib.figure import Figure
+
+    from ._device import Device
+    from .kernel._kernel import CompiledKernel, Kernel
 
 _VALID_SCHEDULES = frozenset({"asap", "alap", "rcp", "alap_rcp"})
 
@@ -50,9 +54,7 @@ DEFAULT_PASSES: tuple[str, ...] = (
     "fusion",
 )
 
-# ---------------------------------------------------------------------------
-# CompiledKernel
-# ---------------------------------------------------------------------------
+_STAGES = ("pulse", "llvm")
 
 
 @dataclass(frozen=True)
@@ -71,7 +73,8 @@ class ScheduledEvent:
 
     ``line`` numbers the kernel's drive and readout lines in allocation order.
     ``start_vtu`` and ``duration_vtu`` are ``None`` until the kernel is
-    scheduled (a parametric kernel is scheduled when it is evaluated).
+    scheduled (a kernel with float parameters is scheduled when it is called
+    with their values).
     """
 
     kind: str
@@ -83,7 +86,7 @@ class ScheduledEvent:
 
 @dataclass()
 class CompileMetrics:
-    """Per-stage timing breakdown (all values in milliseconds)."""
+    """Per-stage timing of one compilation (milliseconds) and its size."""
 
     trace_ms: float = 0.0
     ffi_ms: float = 0.0
@@ -91,414 +94,305 @@ class CompileMetrics:
     schedule_ms: float = 0.0
     total_ms: float = 0.0
     op_count: int = 0
-    # Legacy fields for backward compat with benchmarks
-    capture_ms: float = 0.0
-    lower_ms: float = 0.0
-    mlir_emit_ms: float = 0.0
+    target: str = ""
 
 
-@dataclass()
-class CompiledKernel:
-    """Result of ``cudaq_pulse.compile()``.
+@dataclass(frozen=True)
+class CompileOptions:
+    """Passes, schedule policy and machine model of a compilation."""
 
-    Holds an in-memory ``PulseModule`` (MLIR ModuleOp) and provides
-    access to MLIR text, lowering, and GPU execution.
+    schedule: str = "alap"
+    passes: tuple[str, ...] = DEFAULT_PASSES
+    machine: MachineModel = MachineModel()
 
-    For parametric kernels, call the instance to evaluate at concrete
-    values: ``compiled(amplitude=0.5)`` or ``compiled(0.5)``.
+    @staticmethod
+    def make(
+        schedule: str = "alap",
+        passes: Sequence[str] | None = None,
+        machine: MachineModel | None = None,
+    ) -> CompileOptions:
+        if schedule not in _VALID_SCHEDULES:
+            raise ValueError(
+                f"Unknown schedule policy {schedule!r}. "
+                f"Choose from: {', '.join(sorted(_VALID_SCHEDULES))}"
+            )
+        passes = DEFAULT_PASSES if passes is None else tuple(passes)
+        unknown = sorted(set(passes) - set(_PASS_MAP))
+        if unknown:
+            raise ValueError("Unknown pulse passes: " + ", ".join(unknown))
+        machine = machine or MachineModel()
+        if machine.max_concurrent_drives <= 0:
+            raise ValueError("machine.max_concurrent_drives must be positive")
+        if machine.max_concurrent_readouts <= 0:
+            raise ValueError("machine.max_concurrent_readouts must be positive")
+        if machine.readout_latency_vtu < 0:
+            raise ValueError("machine.readout_latency_vtu cannot be negative")
+        if machine.line_switch_penalty_vtu < 0:
+            raise ValueError("machine.line_switch_penalty_vtu cannot be negative")
+        return CompileOptions(schedule, passes, machine)
+
+    def schedule_args(self) -> tuple[str, int, int, int, int]:
+        m = self.machine
+        return (
+            self.schedule,
+            m.max_concurrent_drives,
+            m.max_concurrent_readouts,
+            int(m.readout_latency_vtu),
+            int(m.line_switch_penalty_vtu),
+        )
+
+
+class Lowered:
+    """One compiled module of a kernel: read-only text, schedule and metrics.
+
+    ``kernel.lower(*args)`` and ``compiled.lower(*args)`` return the module
+    of one call. Float parameters stay function arguments of the module, and
+    the call's values are kept beside it in ``arguments``, so a call with new
+    values shares the module; ``generic`` is the module without values.
+    ``mlir()`` of a call shows its values substituted.
     """
 
-    _pulse_module: Any = field(default=None, repr=False)
-    _mlir_text: str | None = field(default=None, repr=False)
-    metrics: CompileMetrics = field(default_factory=CompileMetrics)
-    _param_names: list[str] = field(default_factory=list, repr=False)
-    _param_types: list[str] = field(default_factory=list, repr=False)
-    _schedule: str = field(default="alap", repr=False)
-    _machine: MachineModel = field(default_factory=MachineModel, repr=False)
-    _n_qubits: int = field(default=1, repr=False)
-    _qubits: tuple[int, ...] = field(default=(), repr=False)
+    __slots__ = (
+        "_module",
+        "_text",
+        "_lock",
+        "_concrete_module",
+        "target",
+        "metrics",
+        "parameters",
+        "arguments",
+        "n_qudits",
+        "qudits",
+        "options",
+        "scheduled",
+        "generic",
+    )
+
+    def __init__(
+        self,
+        module: Any,
+        *,
+        target: Device,
+        metrics: CompileMetrics,
+        parameters: tuple[str, ...],
+        n_qudits: int,
+        qudits: tuple[int, ...],
+        options: CompileOptions,
+        scheduled: bool = True,
+    ) -> None:
+        self._module = module
+        self._text: str | None = None
+        self._lock = threading.Lock()
+        self._concrete_module: Any = None
+        self.target = target
+        self.metrics = metrics
+        self.parameters = parameters
+        self.arguments: tuple[float, ...] = ()
+        self.n_qudits = n_qudits
+        self.qudits = qudits
+        self.options = options
+        self.scheduled = scheduled
+        self.generic: Lowered | None = None
+
+    def bind(self, values: Sequence[float]) -> Lowered:
+        """This module with values for its float parameters, sharing it."""
+        view = Lowered.__new__(Lowered)
+        view._module = self._module
+        view._text = None
+        view._lock = self._lock
+        view._concrete_module = None
+        view.target = self.target
+        view.metrics = self.metrics
+        view.parameters = ()
+        view.arguments = tuple(values)
+        view.n_qudits = self.n_qudits
+        view.qudits = self.qudits
+        view.options = self.options
+        view.scheduled = self.scheduled
+        view.generic = self
+        return view
+
+    def _concrete(self) -> Any:
+        """The module with the values substituted (a private copy), or the
+        module itself when there are no values."""
+        if not self.arguments:
+            return self._module
+        if self._concrete_module is None:
+            with self._lock:
+                module = self._module.specialize(
+                    list(self.arguments), [], *self.options.schedule_args()
+                )
+            self._concrete_module = module
+        return self._concrete_module
+
+    def mlir(self, stage: str = "pulse") -> str:
+        """The module as MLIR text: ``"pulse"`` (scheduled pulse dialect) or
+        ``"llvm"`` (after the full pulse -> qop -> cudm -> LLVM lowering)."""
+        if stage == "pulse":
+            if self._text is None:
+                module = self._concrete()
+                with self._lock:
+                    self._text = module.print()
+            return self._text
+        if stage == "llvm":
+            if self.parameters:
+                raise ValueError(
+                    "the module has float parameters "
+                    f"({', '.join(self.parameters)}); lower it with their values first"
+                )
+            module = self._concrete()
+            with self._lock:
+                text: str = module.run_full_lowering()
+            return text
+        raise ValueError(f"unknown stage {stage!r}; choose from {', '.join(_STAGES)}")
 
     @property
-    def mlir(self) -> str:
-        """Pulse-dialect MLIR text."""
-        if self._mlir_text is None and self._pulse_module is not None:
-            self._mlir_text = self._pulse_module.print()
-        return self._mlir_text or ""
-
-    @property
-    def module(self) -> Any:
-        """The in-memory PulseModule."""
-        return self._pulse_module
-
-    @property
-    def parameters(self) -> list[str]:
-        """Names of symbolic parameters (empty for concrete kernels)."""
-        return list(self._param_names)
-
-    @property
-    def is_parametric(self) -> bool:
-        return bool(self._param_names)
-
-    def events(self) -> list[ScheduledEvent]:
-        """The drives, readouts and waits of the kernel with their timing.
+    def schedule(self) -> list[ScheduledEvent]:
+        """The drives, readouts and waits with their timing.
 
         Ops in a loop are listed once per iteration; both arms of a
         measurement-conditioned branch are listed.
         """
-        return [ScheduledEvent(*event) for event in self._pulse_module.events()]
+        module = self._module if self.scheduled else self._concrete()
+        with self._lock:
+            events = module.events()
+        return [ScheduledEvent(*event) for event in events]
 
-    def __call__(self, *args: Any, **kwargs: Any) -> CompiledKernel:
-        """Evaluate a parametric kernel at concrete values.
+    def timeline(self, **kwargs: Any) -> Figure:
+        """Plot the schedule, one row per line (needs matplotlib)."""
+        from .viz.timeline import plot_schedule
 
-        Accepts positional or keyword arguments matching the parameter names.
-        Returns a new fully-scheduled ``CompiledKernel`` with concrete MLIR.
+        return plot_schedule(self.schedule, **kwargs)
 
-        Raises ``TypeError`` for non-parametric kernels or argument mismatches.
-        """
-        if not self._param_names:
-            raise TypeError(
-                "This kernel has no parameters. "
-                "Only parametric kernels can be evaluated with (...)."
-            )
+    def __repr__(self) -> str:
+        params = f", parameters={list(self.parameters)}" if self.parameters else ""
+        return f"<Lowered {self.metrics.op_count} ops on {self.target.name}{params}>"
 
-        values = self._resolve_args(args, kwargs)
 
-        f64_vals: list[float] = []
-        i64_vals: list[int] = []
-        for val, dtype in zip(values, self._param_types):
-            if dtype == "i64":
-                i64_vals.append(int(val))
-            else:
-                f64_vals.append(float(val))
+def build(
+    fn: Any,
+    trace_args: Sequence[Any],
+    parameters: tuple[str, ...],
+    target: Device,
+    options: CompileOptions,
+) -> tuple[Lowered, Any]:
+    """Trace *fn* and build its module on *target*.
 
-        t0 = time.perf_counter()
-        new_module = self._pulse_module.specialize(
-            f64_vals,
-            i64_vals,
-            self._schedule,
-            self._machine.max_concurrent_drives,
-            self._machine.max_concurrent_readouts,
-            int(self._machine.readout_latency_vtu),
-            int(self._machine.line_switch_penalty_vtu),
+    *trace_args* holds a ``Parameter`` sentinel for every float parameter
+    named in *parameters*; those stay function arguments of the module.
+    Returns the module and the builder, whose record of readouts and host
+    calls the caller needs.
+    """
+    from .kernel.bytecode_bridge import _trace_kernel_with_builder
+    from .kernel.packed_ir_builder import PackedIRBuilder
+
+    metrics = CompileMetrics(target=target.name)
+    name = getattr(fn, "__name__", "kernel")
+    t0 = time.perf_counter()
+    builder = PackedIRBuilder(
+        name=name, clock_ghz=target.clock_ghz, qubit_freq_hz=dict(target.frequencies)
+    )
+    builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
+    qudits = builder.qubits
+    missing = [q for q in qudits if q not in target.frequencies]
+    if missing:
+        defined = sorted(target.frequencies)
+        span = f"{defined[0]}..{defined[-1]}" if defined else "none"
+        raise CompilationError(
+            f"{name}() uses qudit {', '.join(map(str, missing))}, which target "
+            f"{target.name!r} does not define (it defines qudits {span})"
         )
-        specialize_ms = (time.perf_counter() - t0) * 1000
+    buf: Any = builder.get_buffer()
+    freq: Any = builder.get_freq_array()
+    metrics.trace_ms = (time.perf_counter() - t0) * 1000
+    metrics.op_count = builder.op_count
 
-        return CompiledKernel(
-            _pulse_module=new_module,
-            metrics=CompileMetrics(schedule_ms=specialize_ms, total_ms=specialize_ms),
-            _schedule=self._schedule,
-            _machine=self._machine,
-            _n_qubits=self._n_qubits,
-            _qubits=self._qubits,
+    t0 = time.perf_counter()
+    if parameters:
+        module = PulseModuleBuilder().build_from_packed(
+            buf,
+            target.clock_ghz,
+            builder.n_qubits,
+            freq,
+            list(parameters),
+            ["f64"] * len(parameters),
+            name=name,
         )
+    else:
+        module = PulseModuleBuilder().build_from_packed(
+            buf, target.clock_ghz, builder.n_qubits, freq, name=name
+        )
+    metrics.ffi_ms = (time.perf_counter() - t0) * 1000
 
-    def _resolve_args(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> list[Any]:
-        """Merge positional and keyword args into an ordered value list."""
-        if args and kwargs:
-            raise TypeError(
-                "Cannot mix positional and keyword arguments. "
-                "Use either compiled(0.5, 64) or compiled(amplitude=0.5, duration=64)."
-            )
-        if kwargs:
-            values = []
-            for name in self._param_names:
-                if name not in kwargs:
-                    raise TypeError(
-                        f"Missing parameter {name!r}. Required: {', '.join(self._param_names)}"
-                    )
-                values.append(kwargs[name])
-            extra = set(kwargs) - set(self._param_names)
-            if extra:
-                raise TypeError(
-                    f"Unknown parameters: {', '.join(sorted(extra))}. "
-                    f"Available: {', '.join(self._param_names)}"
-                )
-            return values
-        if len(args) != len(self._param_names):
-            raise TypeError(
-                f"Expected {len(self._param_names)} arguments "
-                f"({', '.join(self._param_names)}), got {len(args)}"
-            )
-        return list(args)
+    t0 = time.perf_counter()
+    cpp_passes = [_PASS_MAP[p] for p in options.passes]
+    if cpp_passes:
+        module.run_passes(cpp_passes)
+    metrics.passes_ms = (time.perf_counter() - t0) * 1000
 
-    def lower_to_llvm(self) -> str:
-        """Run full MLIR lowering (pulse -> qop -> cudm -> llvm)."""
-        if self._pulse_module is not None:
-            lowered: str = self._pulse_module.run_full_lowering()
-            return lowered
-        raise RuntimeError("No PulseModule available")
+    # Durations never depend on a float parameter (a float that reaches one
+    # is specialized on), so the module schedules with them symbolic.
+    t0 = time.perf_counter()
+    scheduled = True
+    try:
+        module.schedule(*options.schedule_args())
+    except Exception:
+        if not parameters:
+            raise
+        scheduled = False
+    metrics.schedule_ms = (time.perf_counter() - t0) * 1000
+    metrics.total_ms = metrics.trace_ms + metrics.ffi_ms + metrics.passes_ms + metrics.schedule_ms
 
-    def run(self, *, entry: str = "main", n_qubits: int | None = None) -> list[JITResult]:
-        """JIT-compile and execute on GPU via cuDensityMat."""
-        from .runtime.jit import compile_and_run_pulse
-
-        if n_qubits is not None and n_qubits <= 0:
-            raise ValueError("n_qubits must be positive")
-        return compile_and_run_pulse(self.mlir, entry=entry, n_qubits=n_qubits or self._n_qubits)
-
-
-# ---------------------------------------------------------------------------
-# compile()
-# ---------------------------------------------------------------------------
+    lowered = Lowered(
+        module,
+        target=target,
+        metrics=metrics,
+        parameters=parameters,
+        n_qudits=builder.n_qubits,
+        qudits=qudits,
+        options=options,
+        scheduled=scheduled,
+    )
+    return lowered, builder
 
 
 def compile(
-    kernel_fn: Callable[..., Any],
-    args: Sequence[Any] | None = None,
+    kernel: Kernel,
+    /,
     *,
-    clock_ghz: float = 2.0,
-    qubit_freq_hz: dict[int, float] | None = None,
     schedule: str = "alap",
     passes: Sequence[str] | None = None,
     machine: MachineModel | None = None,
+    device: Device | None = None,
 ) -> CompiledKernel:
-    """Compile a ``@cudaq_pulse.kernel`` into a scheduled MLIR module.
+    """Compile a ``@cudaq_pulse.kernel`` without its arguments.
 
-    This is the only public compilation entry point.  It traces the kernel
-    directly into a packed int64 buffer, sends it to C++ in a single
-    zero-copy FFI call, and runs all passes on the in-memory MLIR module.
+    Returns a ``CompiledKernel``, a family of specializations. Calling it
+    with the kernel's arguments runs the kernel on the device of the qudit
+    handles passed and returns what the kernel returns. Float parameters
+    stay symbolic: the module takes them as function arguments, so calls
+    with new values never recompile. Parameters of any other type (qudits,
+    ints) shape the program; each distinct value, on each device, is
+    compiled on first use and kept for the life of the compiled object.
 
     Parameters
     ----------
-    kernel_fn:
-        A ``@cudaq_pulse.kernel``-decorated function.
-    args:
-        Arguments (typically ``qudit_ref()`` objects).
-    clock_ghz:
-        System clock frequency in GHz.
-    qubit_freq_hz:
-        Mapping from qubit index to frequency in Hz.
+    kernel:
+        A ``@cudaq_pulse.kernel``.
     schedule:
         Scheduling policy: ``"asap"``, ``"alap"``, ``"rcp"``, ``"alap_rcp"``.
     passes:
-        Optimization passes to run.  Default is ``DEFAULT_PASSES``.
-        Pass ``()`` to skip.
+        Optimization passes, ``DEFAULT_PASSES`` by default; ``()`` for none.
     machine:
         Machine model for resource-constrained scheduling.
+    device:
+        Pin the compiled kernel to one device: a call with handles of
+        another raises ``DeviceMismatchError``, and a call without handles
+        runs on it. A pinned kernel without static parameters is built now.
     """
-    if schedule not in _VALID_SCHEDULES:
-        raise ValueError(
-            f"Unknown schedule policy {schedule!r}. "
-            f"Choose from: {', '.join(sorted(_VALID_SCHEDULES))}"
-        )
+    from .kernel._kernel import CompiledKernel, Kernel
 
-    if passes is None:
-        passes = DEFAULT_PASSES
-    unknown_passes = sorted(set(passes) - set(_PASS_MAP))
-    if unknown_passes:
-        raise ValueError("Unknown pulse passes: " + ", ".join(unknown_passes))
-
-    freq = qubit_freq_hz or {}
-    metrics = CompileMetrics()
-    machine = machine or MachineModel()
-    if machine.max_concurrent_drives <= 0:
-        raise ValueError("machine.max_concurrent_drives must be positive")
-    if machine.max_concurrent_readouts <= 0:
-        raise ValueError("machine.max_concurrent_readouts must be positive")
-    if machine.readout_latency_vtu < 0:
-        raise ValueError("machine.readout_latency_vtu cannot be negative")
-    if machine.line_switch_penalty_vtu < 0:
-        raise ValueError("machine.line_switch_penalty_vtu cannot be negative")
-
-    if not callable(kernel_fn):
-        raise TypeError(f"Expected a @cudaq_pulse.kernel function; got {type(kernel_fn).__name__}")
-
-    if args is None:
-        raise TypeError(
-            "compile() requires args= when passing a kernel function. "
-            "e.g. compile(my_kernel, [qudit_ref(), qudit_ref()], ...)"
-        )
-
-    # ``args`` binds the leading Python parameters positionally. Any omitted
-    # trailing parameters are compiled symbolically.
-    fn = getattr(kernel_fn, "__wrapped__", kernel_fn)
-    signature = inspect.signature(fn)
-    parameters = list(signature.parameters.values())
-    unsupported = [
-        p.name
-        for p in parameters
-        if p.kind
-        not in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-    ]
-    if unsupported:
-        raise TypeError(
-            "Pulse kernels do not support variadic or keyword-only "
-            "parameters: " + ", ".join(unsupported)
-        )
-    if len(args) > len(parameters):
-        raise TypeError(
-            f"{fn.__name__}() takes {len(parameters)} arguments, but compile() received {len(args)}"
-        )
-    missing_params = parameters[len(args) :]
-
-    if missing_params:
-        return _compile_parametric(
-            fn, list(args), missing_params, clock_ghz, freq, passes, schedule, machine, metrics
-        )
-
-    # Step 1: Trace kernel directly into packed buffer
-    t0 = time.perf_counter()
-    buf, n_qubits, qubits, freq_arr, op_count = _trace_to_packed(kernel_fn, args, clock_ghz, freq)
-    name = getattr(getattr(kernel_fn, "__wrapped__", kernel_fn), "__name__", "kernel")
-    metrics.trace_ms = (time.perf_counter() - t0) * 1000
-    metrics.capture_ms = metrics.trace_ms
-    metrics.op_count = op_count
-
-    # Step 2: Single FFI call -- build in-memory MLIR module
-    t0 = time.perf_counter()
-    builder = PulseModuleBuilder()
-    pulse_module = builder.build_from_packed(buf, clock_ghz, n_qubits, freq_arr, name=name)
-    metrics.ffi_ms = (time.perf_counter() - t0) * 1000
-    metrics.mlir_emit_ms = metrics.ffi_ms
-
-    # Step 3: Run C++ passes on the in-memory module
-    t0 = time.perf_counter()
-    cpp_passes = [_PASS_MAP[p] for p in passes if p in _PASS_MAP]
-    if cpp_passes:
-        pulse_module.run_passes(cpp_passes)
-    metrics.passes_ms = (time.perf_counter() - t0) * 1000
-
-    # Step 4: Schedule via C++ pass
-    t0 = time.perf_counter()
-    pulse_module.schedule(
-        schedule,
-        machine.max_concurrent_drives,
-        machine.max_concurrent_readouts,
-        int(machine.readout_latency_vtu),
-        int(machine.line_switch_penalty_vtu),
-    )
-    metrics.schedule_ms = (time.perf_counter() - t0) * 1000
-
-    metrics.total_ms = metrics.trace_ms + metrics.ffi_ms + metrics.passes_ms + metrics.schedule_ms
-
-    return CompiledKernel(
-        _pulse_module=pulse_module,
-        metrics=metrics,
-        _schedule=schedule,
-        _machine=machine,
-        _n_qubits=n_qubits,
-        _qubits=qubits,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Internal
-# ---------------------------------------------------------------------------
-
-
-def _compile_parametric(
-    fn: Callable[..., Any],
-    bound_args: list[Any],
-    missing_params: list[inspect.Parameter],
-    clock_ghz: float,
-    freq: dict[int, float],
-    passes: Sequence[str],
-    schedule: str,
-    machine: MachineModel,
-    metrics: CompileMetrics,
-) -> CompiledKernel:
-    """Compile a parametric kernel (compile-once, evaluate-many)."""
-    from .kernel.bytecode_bridge import _trace_kernel_with_builder
-    from .kernel.packed_ir_builder import PackedIRBuilder
-
-    # Create Parameter sentinels for each non-qudit argument
-    param_sentinels = []
-    for i, parameter in enumerate(missing_params):
-        annotation = parameter.annotation
-        dtype = "unknown"
-        if annotation is int or annotation == "int":
-            dtype = "i64"
-        elif annotation is float or annotation == "float":
-            dtype = "f64"
-        param_sentinels.append(Parameter(parameter.name, i, dtype))
-
-    # Trace with Parameter sentinels in place of concrete values
-    t0 = time.perf_counter()
-    name = getattr(fn, "__name__", "kernel")
-    builder = PackedIRBuilder(name=name, clock_ghz=clock_ghz, qubit_freq_hz=freq)
-
-    trace_args = list(bound_args) + param_sentinels
-    _trace_kernel_with_builder(fn, builder, trace_args)
-
-    param_types = [parameter.dtype for parameter in param_sentinels]
-    unresolved = [parameter.name for parameter in param_sentinels if parameter.dtype == "unknown"]
-    if unresolved:
-        raise TypeError(
-            "Cannot infer types for unused symbolic parameters: "
-            + ", ".join(unresolved)
-            + ". Add int/float annotations or provide "
-            "concrete values to compile()."
-        )
-
-    # The extension reads the buffers through the buffer protocol.
-    buf: Any = builder.get_buffer()
-    n_qubits = builder.n_qubits
-    freq_arr: Any = builder.get_freq_array()
-    metrics.trace_ms = (time.perf_counter() - t0) * 1000
-    metrics.capture_ms = metrics.trace_ms
-    metrics.op_count = builder.op_count
-
-    # Build parametric MLIR module (func.func with block args)
-    t0 = time.perf_counter()
-    mlir_builder = PulseModuleBuilder()
-    param_names = [parameter.name for parameter in missing_params]
-    pulse_module = mlir_builder.build_from_packed(
-        buf, clock_ghz, n_qubits, freq_arr, param_names, param_types, name=name
-    )
-    metrics.ffi_ms = (time.perf_counter() - t0) * 1000
-    metrics.mlir_emit_ms = metrics.ffi_ms
-
-    # Run structural passes (no scheduling -- deferred to evaluate)
-    t0 = time.perf_counter()
-    cpp_passes = [_PASS_MAP[p] for p in passes if p in _PASS_MAP]
-    if cpp_passes:
-        pulse_module.run_passes(cpp_passes)
-    metrics.passes_ms = (time.perf_counter() - t0) * 1000
-
-    # Do NOT schedule parametric kernels -- scheduling needs concrete durations
-    metrics.total_ms = metrics.trace_ms + metrics.ffi_ms + metrics.passes_ms
-
-    return CompiledKernel(
-        _pulse_module=pulse_module,
-        metrics=metrics,
-        _param_names=[parameter.name for parameter in missing_params],
-        _param_types=param_types,
-        _schedule=schedule,
-        _machine=machine,
-        _n_qubits=n_qubits,
-        _qubits=builder.qubits,
-    )
-
-
-def _trace_to_packed(
-    kernel_fn: Callable[..., Any], args: Sequence[Any], clock_ghz: float, freq: dict[int, float]
-) -> tuple[Any, int, tuple[int, ...], Any, int]:
-    """Trace the kernel into a packed int64 buffer.
-
-    Returns (buffer, n_qubits, allocated qubits, freq_array, op_count).
-    """
-    from .kernel.bytecode_bridge import _trace_kernel_with_builder
-    from .kernel.packed_ir_builder import PackedIRBuilder
-
-    if not callable(kernel_fn):
-        raise TypeError(f"Expected a @cudaq_pulse.kernel function; got {type(kernel_fn).__name__}")
-
-    if args is None:
-        raise TypeError(
-            "compile() requires args= when passing a kernel function. "
-            "e.g. compile(my_kernel, [qudit_ref(), qudit_ref()], ...)"
-        )
-
-    fn = getattr(kernel_fn, "__wrapped__", kernel_fn)
-    name = getattr(fn, "__name__", "kernel")
-    builder = PackedIRBuilder(name=name, clock_ghz=clock_ghz, qubit_freq_hz=freq)
-
-    _trace_kernel_with_builder(fn, builder, args)
-
-    return (
-        builder.get_buffer(),
-        builder.n_qubits,
-        builder.qubits,
-        builder.get_freq_array(),
-        builder.op_count,
-    )
+    if not isinstance(kernel, Kernel):
+        raise TypeError(f"compile() expects a @cudaq_pulse.kernel, got {type(kernel).__name__}")
+    options = CompileOptions.make(schedule, passes, machine)
+    return CompiledKernel(kernel, options, device)

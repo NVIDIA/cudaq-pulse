@@ -26,6 +26,7 @@ from .ir_builder import (
     Parameter,
     ParameterExpression,
     is_symbolic,
+    parameter_names,
 )
 
 _pack_d = struct.Struct("=d")
@@ -183,6 +184,16 @@ class PackedIRBuilder:
         self._numeric_vids: dict[tuple[ParameterExpression, str], int] = {}
         # Open regions, innermost last: the yields seen so far in each.
         self._regions: list[dict[str, tuple[int, ...]]] = []
+        # Measurement vid -> readout ordinal, for readouts outside any region.
+        self.readouts: dict[int, int] = {}
+        self._n_readouts = 0
+        # Set by the emitter when the trace evaluated an impure host call.
+        self.impure = False
+        # What the traced kernel returned.
+        self.returned: Any = None
+        # Float arguments that reached an integer (a duration, a cast to
+        # int): the schedule needs their values, so they are specialized on.
+        self.structural: set[str] = set()
 
     def _mk(self, vtype: str, name: str = "") -> IRValue:
         v = IRValue(self._next_id, vtype, name)
@@ -338,6 +349,9 @@ class PackedIRBuilder:
             self._w(rlv)
             self._w(rtv)
             self._w(mv)
+            if not self._regions:
+                self.readouts[mv] = self._n_readouts
+            self._n_readouts += 1
             return results
 
         # --- sync ---
@@ -430,6 +444,11 @@ class PackedIRBuilder:
             tv = operands[0].vid
             rtv = results[0].vid
             val_raw = a.get("freq_hz", 0.0)
+            if isinstance(val_raw, IRValue):
+                raise CompilationError(
+                    "a frequency must be a number; time-varying frequencies "
+                    "(a waveform as a frequency) are reserved and not supported yet"
+                )
             if is_symbolic(val_raw):
                 pvid = self._get_numeric_vid(val_raw, "f64")
                 self._ensure(4)
@@ -451,6 +470,11 @@ class PackedIRBuilder:
             tv = operands[0].vid
             rtv = results[0].vid
             val_raw = a.get("freq_hz", 0.0)
+            if isinstance(val_raw, IRValue):
+                raise CompilationError(
+                    "a frequency must be a number; time-varying frequencies "
+                    "(a waveform as a frequency) are reserved and not supported yet"
+                )
             if is_symbolic(val_raw):
                 pvid = self._get_numeric_vid(val_raw, "f64")
                 self._ensure(4)
@@ -567,12 +591,22 @@ class PackedIRBuilder:
             self._next_qubit,
             self._op_count,
             [dict(region) for region in self._regions],
+            self._n_readouts,
         )
 
     def rollback(self, checkpoint: tuple[Any, ...]) -> None:
-        self._cur, self._next_id, self._next_qubit, self._op_count, regions = checkpoint
+        (
+            self._cur,
+            self._next_id,
+            self._next_qubit,
+            self._op_count,
+            regions,
+            self._n_readouts,
+        ) = checkpoint
         self._regions = regions
         live = self._next_id
+        for vid in [vid for vid in self.readouts if vid >= live]:
+            del self.readouts[vid]
         for vid in [vid for vid in self._qref_to_qubit if vid >= live]:
             del self._qref_to_qubit[vid]
         for index in [i for i, vid in self._param_vids.items() if vid >= live]:
@@ -601,6 +635,15 @@ class PackedIRBuilder:
         """Materialize a symbolic or literal number as an SSA value record."""
         if expected_dtype not in _NUMERIC_TYPE:
             raise CompilationError(f"unsupported numeric type {expected_dtype}")
+        if is_symbolic(value) and (
+            expected_dtype == "i64"
+            or (
+                isinstance(value, ParameterExpression)
+                and value.op == "cast"
+                and value.dtype == "i64"
+            )
+        ):
+            self.structural.update(parameter_names(value))
 
         if isinstance(value, Parameter):
             base = self._get_parameter_base_vid(value, expected_dtype)

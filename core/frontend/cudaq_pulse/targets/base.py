@@ -16,7 +16,9 @@ It can generate Hamiltonian and Lindblad dissipator terms for the
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 _SECONDS_PER_NANOSECOND = 1.0e-9
@@ -33,8 +35,12 @@ class Qubit:
     t1_us: float
     t2_star_us: float
     label: str = ""
-    drive_params: dict[str, float] = field(default_factory=dict)
-    readout_params: dict[str, float] = field(default_factory=dict)
+    drive_params: Mapping[str, float] = field(default_factory=dict)
+    readout_params: Mapping[str, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "drive_params", MappingProxyType(dict(self.drive_params)))
+        object.__setattr__(self, "readout_params", MappingProxyType(dict(self.readout_params)))
 
 
 @dataclass(frozen=True)
@@ -48,7 +54,10 @@ class Coupling:
     gate_duration_ns: float = 98.0
     gate_buffer_ns: float = 15.0
     gate_fidelity: float = 0.985
-    gate_params: dict[str, float] = field(default_factory=dict)
+    gate_params: Mapping[str, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "gate_params", MappingProxyType(dict(self.gate_params)))
 
 
 @dataclass(frozen=True)
@@ -62,16 +71,29 @@ class CrosstalkEntry:
     freq_delta_hz: float
 
 
-@dataclass()
+@dataclass(frozen=True, eq=False)
 class Target:
-    """Full description of a quantum processing unit."""
+    """Full description of a quantum processing unit.
+
+    A target is read-only once built: ``qubits`` is a read-only mapping and
+    ``couplings`` and ``crosstalk`` are tuples. ``clock_ghz`` is the pulse
+    clock that converts nanoseconds to clock cycles.
+    """
 
     name: str
-    qubits: dict[int, Qubit] = field(default_factory=dict)
-    couplings: list[Coupling] = field(default_factory=list)
-    crosstalk: list[CrosstalkEntry] = field(default_factory=list)
+    qubits: Mapping[int, Qubit] = field(default_factory=dict)
+    couplings: Sequence[Coupling] = ()
+    crosstalk: Sequence[CrosstalkEntry] = ()
     architecture: str = "transmon"
     attribution: str = ""
+    clock_ghz: float = 2.0
+
+    def __post_init__(self) -> None:
+        if not self.clock_ghz > 0:
+            raise ValueError(f"clock_ghz must be positive, got {self.clock_ghz}")
+        object.__setattr__(self, "qubits", MappingProxyType(dict(self.qubits)))
+        object.__setattr__(self, "couplings", tuple(self.couplings))
+        object.__setattr__(self, "crosstalk", tuple(self.crosstalk))
 
     @property
     def n_qubits(self) -> int:

@@ -25,14 +25,19 @@ by the cuDensityMat runtime (``backend="gpu"``), from the projected state.
 from __future__ import annotations
 
 import math
+import re as _re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
 
 from .._native._cudaq_pulse_native import evaluate_callback
-from .evolve import _compile_for, _f64, _level_attributes, _target_attributes
+from ..compile import ScheduledEvent
+from ._attributes import _VALID_INTEGRATORS, _f64, _level_attributes, _target_attributes
+
+if TYPE_CHECKING:
+    from ..compile import Lowered
 
 # Branches whose weight falls below this fraction of the initial state's are
 # not followed.
@@ -71,9 +76,8 @@ class SimulationResult:
 
 
 def simulate(
-    program: Any,
+    lowered: Lowered,
     *,
-    target: Any,
     levels: int | dict[int, int] = 2,
     initial_state: npt.ArrayLike | None = None,
     shots: int | None = None,
@@ -82,17 +86,14 @@ def simulate(
     t_end: float | None = None,
     dt_ns: float = 0.05,
     integrator: str = "rk4",
-    clock_ghz: float = 2.0,
 ) -> SimulationResult:
-    """Simulate the kernel call that produced *program* on *target*.
+    """Simulate one compiled kernel call on the target it was compiled for.
 
     Parameters
     ----------
-    program:
-        The IR returned by calling a ``@cudaq_pulse.kernel`` with concrete
-        arguments.
-    target:
-        The device: frequencies, drive calibration, couplings and T1/T2.
+    lowered:
+        The module of one call, from ``kernel.lower(*args)`` or
+        ``compiled.lower(*args)``.
     levels:
         Levels per qudit (an int for all, or a dict by qudit index). A
         transmon with three or more levels includes its anharmonicity.
@@ -110,30 +111,77 @@ def simulate(
     dt_ns:
         Integration step.
     integrator:
-        cuDensityMat integrator for the GPU backend.
-    clock_ghz:
-        Pulse virtual-clock rate in GHz.
+        cuDensityMat integrator for the GPU backend: ``"rk1"``, ``"rk2"``,
+        ``"rk4"``, ``"magnus"`` or ``"crank_nicolson"``.
     """
+    from ..compile import Lowered
+
+    if not isinstance(lowered, Lowered):
+        raise TypeError(
+            "simulate() expects the module of one kernel call, from "
+            f"kernel.lower(*args); got {type(lowered).__name__}"
+        )
+    return _simulate_lowered(
+        lowered,
+        levels=levels,
+        initial_state=initial_state,
+        shots=shots,
+        seed=seed,
+        backend=backend,
+        t_end=t_end,
+        dt_ns=dt_ns,
+        integrator=integrator,
+    )
+
+
+def _simulate_lowered(
+    lowered: Lowered,
+    *,
+    levels: int | dict[int, int] = 2,
+    initial_state: npt.ArrayLike | None = None,
+    shots: int | None = None,
+    seed: int | None = None,
+    backend: str = "cpu",
+    t_start: float = 0.0,
+    t_end: float | None = None,
+    dt_ns: float = 0.05,
+    integrator: str = "rk4",
+) -> SimulationResult:
     if backend not in ("cpu", "gpu"):
         raise ValueError(f"unknown backend {backend!r}; choose 'cpu' or 'gpu'")
     if dt_ns <= 0:
         raise ValueError("dt_ns must be positive")
     if shots is not None and shots < 0:
         raise ValueError("shots must not be negative")
-    compiled = _compile_for(program, target=target, clock_ghz=clock_ghz)
+    if integrator not in _VALID_INTEGRATORS:
+        raise ValueError(
+            f"Unknown integrator {integrator!r}. "
+            f"Choose from: {', '.join(sorted(_VALID_INTEGRATORS))}"
+        )
+    if lowered.parameters:
+        raise ValueError(
+            "the module has float parameters "
+            f"({', '.join(lowered.parameters)}); lower it with their values first"
+        )
+    target = lowered.target.target
+    if backend == "gpu" and getattr(target, "architecture", None) != "transmon":
+        raise NotImplementedError(
+            "GPU evolution supports transmon targets; neutral-atom target "
+            "lowering is not implemented"
+        )
     return _simulate_compiled(
-        compiled,
+        lowered,
         target,
         levels=levels,
         initial_state=initial_state,
         shots=shots,
         seed=seed,
         backend=backend,
-        t_start=0.0,
+        t_start=t_start,
         t_end=t_end,
         dt_ns=dt_ns,
         integrator=integrator,
-        clock_ghz=clock_ghz,
+        clock_ghz=lowered.target.clock_ghz,
     )
 
 
@@ -152,22 +200,34 @@ def _simulate_compiled(
     integrator: str,
     clock_ghz: float,
 ) -> SimulationResult:
-    module = compiled.module
-    n = compiled._n_qubits
-    dims, extra = _level_attributes(target, compiled._qubits, n, levels)
+    # A cached specialization's module is shared by every call of it, from
+    # any thread: a segment sets the module attributes it lowers with and
+    # reads the lowering under the module's lock, in one step. The GPU path
+    # binds the float arguments into a private copy of the module.
+    lock = compiled._lock
+    arguments = list(compiled.arguments)
+    module = compiled._concrete() if backend == "gpu" else compiled._module
+    n = compiled.n_qudits
+    dims, extra = _level_attributes(target, compiled.qudits, n, levels)
     attributes = _target_attributes(
         target,
-        compiled._qubits,
+        compiled.qudits,
         n,
         t_start=t_start,
         t_end=t_start + 1.0,
         num_steps=1,
         integrator=integrator,
     )
-    module.set_attributes(attributes[:-1] + ", " + extra + "}")
+    # Segments set their own window.
+    base = _re.sub(r"qop\.(t_start|t_end|num_steps) = [^,]+, ", "", attributes[1:-1]) + ", " + extra
 
     if t_end is None:
-        ends = [e.start_vtu + e.duration_vtu for e in compiled.events() if e.start_vtu is not None]
+        events = [ScheduledEvent(*e) for e in module.events()]
+        ends = [
+            e.start_vtu + e.duration_vtu
+            for e in events
+            if e.start_vtu is not None and e.duration_vtu is not None
+        ]
         t_end = max(ends, default=0) / clock_ghz
     if t_end < t_start:
         raise ValueError(f"t_end ({t_end}) must not precede t_start ({t_start})")
@@ -176,9 +236,9 @@ def _simulate_compiled(
     state = _initial_state(initial_state, dim)
     engine: _Backend
     if backend == "cpu":
-        engine = _CpuBackend(module, dims, dt_ns)
+        engine = _CpuBackend(module, dims, dt_ns, base, lock, arguments)
     else:
-        engine = _GpuBackend(module, dims, dt_ns, integrator)
+        engine = _GpuBackend(module, dims, dt_ns, base, lock, integrator)
     state = engine.prepare(state)
 
     rng = np.random.default_rng(seed)
@@ -270,13 +330,25 @@ def _segment_attributes(entries: list[list[int]], t0: float, t1: float, steps: i
 
 
 class _Backend:
-    """Segment evolution and projection for one state representation."""
+    """Segment evolution and projection for one state representation.
 
-    def __init__(self, module: Any, dims: tuple[int, ...], dt_ns: float):
+    *base* holds the module attributes of the target and levels, in MLIR
+    syntax without braces; every segment sets them along with its own.
+    """
+
+    def __init__(
+        self, module: Any, dims: tuple[int, ...], dt_ns: float, base: str, lock: Any
+    ) -> None:
         self.module = module
         self.dims = dims
         self.dim = math.prod(dims)
         self.dt_ns = dt_ns
+        self.base = base
+        self.lock = lock
+
+    def _attributes_for(self, attributes: str) -> str:
+        """The module attributes of one segment (*attributes* in braces)."""
+        return "{" + self.base + ", " + attributes[1:]
 
     def steps(self, t0: float, t1: float) -> int:
         return max(1, math.ceil((t1 - t0) / self.dt_ns - 1e-9))
@@ -321,15 +393,34 @@ def _full_operator(factors: list[Any], dims: tuple[int, ...]) -> npt.NDArray[np.
 
 
 class _CpuBackend(_Backend):
-    """Fixed-step RK4 on the density matrix: the reference for the GPU path."""
+    """Fixed-step RK4 on the density matrix: the reference for the GPU path.
+
+    The lowering takes the float arguments as values, so a call with new
+    values lowers no differently from the last one.
+    """
+
+    def __init__(
+        self,
+        module: Any,
+        dims: tuple[int, ...],
+        dt_ns: float,
+        base: str,
+        lock: Any,
+        arguments: list[float],
+    ) -> None:
+        super().__init__(module, dims, dt_ns, base, lock)
+        self.arguments = arguments
 
     def prepare(self, state: npt.NDArray[np.complex128]) -> Any:
         return self.density(state)
 
     def evolve(self, state: Any, entries: list[list[int]], t0: float, t1: float) -> Any:
         steps = self.steps(t0, t1)
-        self.module.set_attributes(_segment_attributes(entries, t0, t1, steps))
-        _, hamiltonian, collapse, *_ = self.module.operator_program()
+        with self.lock:
+            self.module.set_attributes(
+                self._attributes_for(_segment_attributes(entries, t0, t1, steps))
+            )
+            _, hamiltonian, collapse, *_ = self.module.operator_program(self.arguments)
         static = np.zeros((self.dim, self.dim), dtype=np.complex128)
         driven = []
         for re, im, kind, params, factors in hamiltonian:
@@ -384,8 +475,16 @@ class _CpuBackend(_Backend):
 class _GpuBackend(_Backend):
     """Each segment is lowered and JIT-run by the cuDensityMat runtime."""
 
-    def __init__(self, module: Any, dims: tuple[int, ...], dt_ns: float, integrator: str):
-        super().__init__(module, dims, dt_ns)
+    def __init__(
+        self,
+        module: Any,
+        dims: tuple[int, ...],
+        dt_ns: float,
+        base: str,
+        lock: Any,
+        integrator: str,
+    ) -> None:
+        super().__init__(module, dims, dt_ns, base, lock)
         from .jit import JITCompiler
 
         self.compiler = JITCompiler()
@@ -394,8 +493,9 @@ class _GpuBackend(_Backend):
         # measures lowers only along a measurement path over a window, so ask
         # along the empty path over an empty window at 0 ns, which ends before
         # any measurement; every segment then sets its own path and window.
-        module.set_attributes(_segment_attributes([], 0.0, 0.0, 1))
-        _, _, collapse, *_ = module.operator_program()
+        with lock:
+            module.set_attributes(self._attributes_for(_segment_attributes([], 0.0, 0.0, 1)))
+            _, _, collapse, *_ = module.operator_program()
         self.dissipative = bool(collapse)
 
     def prepare(self, state: npt.NDArray[np.complex128]) -> Any:
@@ -406,15 +506,16 @@ class _GpuBackend(_Backend):
     def evolve(self, state: Any, entries: list[list[int]], t0: float, t1: float) -> Any:
         mixed = state.ndim == 2
         attributes = _segment_attributes(entries, t0, t1, self.steps(t0, t1))
-        attributes = attributes[:-1] + f', qop.integrator = "{self.integrator}"'
+        attributes = attributes[:-1]
         if mixed and not self.dissipative:
             attributes += ", qop.mixed_state"
-        self.module.set_attributes(attributes + "}")
-        return self._execute(state, mixed)
+        with self.lock:
+            self.module.set_attributes(self._attributes_for(attributes + "}"))
+            text = self.module.print()
+        return self._execute(text, state, mixed)
 
-    def _execute(self, state: Any, mixed: bool) -> Any:
-        """Run the module's current segment on the GPU from *state*."""
-        text = self.module.print()
+    def _execute(self, text: str, state: Any, mixed: bool) -> Any:
+        """Run one segment, the module *text*, on the GPU from *state*."""
         jit_module = self.compiler.compile_pulse_mlir(text)
         # cuDensityMat stores a density matrix with the ket index fastest.
         buffer = np.ascontiguousarray(state.ravel(order="F") if mixed else state)

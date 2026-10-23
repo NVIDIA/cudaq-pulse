@@ -12,12 +12,14 @@ Usage::
     import cudaq_pulse as pulse
 
     @pulse.kernel
-    def rabi(qubit):
+    def rabi(qubit, amplitude: float):
         drive_line, tone = get_drive_line(qubit)
-        drive(drive_line, gaussian(64, 0.5, 16.0), tone)
+        drive(drive_line, gaussian(64, amplitude, 16.0), tone)
 
-    compiled_kernel = pulse.compile(rabi, [pulse.qudit_ref()],
-                                    qubit_freq_hz={0: 5.0e9})
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    rabi(dev.qudit_handles[0], 0.5)            # compile on first call, then run
+    lowered = rabi.lower(dev.qudit_handles[0], 0.5)
+    print(lowered.mlir())
 
 The compiler recognizes the kernel DSL vocabulary (``drive``, ``gaussian``,
 ``get_drive_line``, etc.) as bare names inside ``@pulse.kernel`` functions.
@@ -31,12 +33,23 @@ __version__ = "0.1.0"
 
 # ── Infrastructure (accessed via pulse.*) ────────────────────────────────
 
-from .compile import CompiledKernel as CompiledKernel
+from ._device import Device as Device
+from ._device import DeviceMismatchError as DeviceMismatchError
+from ._device import NoDeviceError as NoDeviceError
+from ._device import Qudit as Qudit
+from ._device import Register as Register
+from ._device import Target as Target
+from ._device import device as device
+from ._device import get_device as get_device
+from .compile import DEFAULT_PASSES as DEFAULT_PASSES
 from .compile import CompileMetrics as CompileMetrics
+from .compile import Lowered as Lowered
 from .compile import MachineModel as MachineModel
 from .compile import ScheduledEvent as ScheduledEvent
 from .compile import compile as compile
 from .kernel import kernel as kernel
+from .kernel._kernel import CompiledKernel as CompiledKernel
+from .kernel._kernel import Kernel as Kernel
 from .kernel.decorator import QuditRef as QuditRef
 from .kernel.decorator import QvecRef as QvecRef
 from .kernel.decorator import qudit_ref as qudit_ref
@@ -68,18 +81,15 @@ from .ops import wf_mul as wf_mul
 from .ops import wf_neg as wf_neg
 from .ops import wf_scale as wf_scale
 from .ops import wf_sub as wf_sub
+from .targets._registry import NoTargetError as NoTargetError
 
 # Simulation and GPU execution load NumPy and the GPU runtime discovery, which
 # compiling does not need: import them on first use.
 if TYPE_CHECKING:
-    from .runtime.evolve import EvolveResult as EvolveResult
-    from .runtime.evolve import evolve as evolve
     from .runtime.simulate import SimulationResult as SimulationResult
     from .runtime.simulate import simulate as simulate
 
 _LAZY_EXPORTS = {
-    "EvolveResult": ".runtime.evolve",
-    "evolve": ".runtime.evolve",
     "SimulationResult": ".runtime.simulate",
     "simulate": ".runtime.simulate",
 }
@@ -130,15 +140,25 @@ _DSL_EXPORTS: list[str] = [
 __all__: list[str] = [
     # infrastructure
     "kernel",
+    "Kernel",
     "compile",
     "CompiledKernel",
+    "Lowered",
     "CompileMetrics",
     "MachineModel",
     "ScheduledEvent",
+    "DEFAULT_PASSES",
     "Parameter",
     "CompilationError",
-    "EvolveResult",
-    "evolve",
+    "device",
+    "get_device",
+    "Device",
+    "Qudit",
+    "Register",
+    "Target",
+    "NoDeviceError",
+    "NoTargetError",
+    "DeviceMismatchError",
     "SimulationResult",
     "simulate",
     "qudit_ref",

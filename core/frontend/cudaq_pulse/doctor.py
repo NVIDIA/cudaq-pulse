@@ -94,6 +94,39 @@ def _context_budget(write: Callable[[str], None]) -> bool:
     return True
 
 
+def _kernel_settings(write: Callable[[str], None]) -> bool:
+    """Print the process target and cache size; return False if either is invalid."""
+    from .kernel._kernel import CACHE_SIZE_ENV, _cache_size
+    from .targets._registry import ENV_VAR, available_targets, current_target
+
+    ok = True
+    write(f"Targets available: {', '.join(available_targets())}")
+    if not os.environ.get(ENV_VAR):
+        write(f"Process target: none ({ENV_VAR} is not set; kernels run on their qudits' device)")
+    else:
+        try:
+            device = current_target()
+        except Exception as error:
+            write("Process target: INVALID")
+            write(f"  {error}")
+            ok = False
+        else:
+            write(f"Process target: {device.name} ({device.source}, {len(device.layout)} qudits)")
+    try:
+        size = _cache_size(None)
+    except ValueError as error:
+        write("Kernel cache: INVALID")
+        write(f"  {error}")
+        return False
+    source = (
+        f"{CACHE_SIZE_ENV}={os.environ[CACHE_SIZE_ENV]}"
+        if os.environ.get(CACHE_SIZE_ENV)
+        else "default"
+    )
+    write(f"Kernel cache: {size} specializations per kernel ({source})")
+    return ok
+
+
 def _installed_extras() -> list[str]:
     installed = []
     for major in gpu._SUPPORTED_MAJORS:
@@ -236,10 +269,13 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         write(f"  {compiler_error}")
     if not _context_budget(write) and compiler_error is None:
         compiler_error = "invalid MLIR context limits"
+    if not _kernel_settings(write) and compiler_error is None:
+        compiler_error = "invalid kernel settings"
 
     outcome = _diagnose_gpu(write)
     if compiler_error is not None:
-        write("Result: FAILED, the compiler does not work.")
+        settings = compiler_error.startswith("invalid ")
+        write(f"Result: FAILED, {compiler_error if settings else 'the compiler does not work'}.")
         return 1
     return _exit_code(
         outcome,

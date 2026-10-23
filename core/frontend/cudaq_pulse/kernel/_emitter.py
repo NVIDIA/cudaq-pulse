@@ -59,6 +59,7 @@ from .ir_builder import (
     Parameter,
     ParameterExpression,
     PythonIRBuilder,
+    SymbolicValueError,
     is_symbolic,
 )
 
@@ -140,10 +141,13 @@ def _uses_pulse_ops(fn: types.FunctionType, seen: set[int] | None = None) -> boo
         return False
     seen.add(id(fn))
 
-    for name in fn.__code__.co_names:
+    closures = _extract_closures(fn) if fn.__closure__ else {}
+    for name in (*fn.__code__.co_names, *fn.__code__.co_freevars):
         if name in _PULSE_OP_NAMES:
             return True
-        value = fn.__globals__.get(name)
+        value = closures.get(name, fn.__globals__.get(name))
+        if getattr(value, "__pulse_kernel_fn__", None) is not None:
+            return True
         if isinstance(value, types.FunctionType) and _uses_pulse_ops(value, seen):
             return True
     return False
@@ -188,6 +192,25 @@ class _Unrolled:
 
 _MISSING = object()
 
+# Host calls evaluated at trace time whose result depends only on their
+# arguments; any other C-level callable (``random.random``, ``time.time``)
+# makes the trace impure, so its cached compilation is never reused.
+_PURE_MODULES = frozenset({"math", "cmath", "builtins", "operator", "functools", "itertools"})
+
+
+def _is_pure_host_call(fn: Any) -> bool:
+    if isinstance(fn, (type, types.FunctionType)):
+        return True
+    if isinstance(fn, types.MethodType):
+        return isinstance(fn.__func__, types.FunctionType)
+    owner = getattr(fn, "__self__", None)
+    if owner is not None and not isinstance(owner, types.ModuleType):
+        return type(owner).__module__ == "builtins"
+    module = getattr(fn, "__module__", None) or ""
+    if module in _PURE_MODULES:
+        return True
+    return module.split(".")[0] == "numpy" and not module.startswith("numpy.random")
+
 
 def _parameter_names(value: Any) -> list[str]:
     """Names of the kernel parameters a symbolic value depends on."""
@@ -201,10 +224,12 @@ def _parameter_names(value: Any) -> list[str]:
 def _range_error(args: list[Any]) -> CompilationError:
     names = sorted({n for a in args for n in _parameter_names(a)})
     if names:
-        return CompilationError(
+        return SymbolicValueError(
             "range() bound depends on kernel parameter "
             + ", ".join(repr(n) for n in names)
-            + "; pass a concrete value for it to compile()"
+            + "; a float parameter stays symbolic, so annotate it as int to "
+            "specialize the kernel on its value",
+            tuple(names),
         )
     kinds = ", ".join(type(a).__name__ for a in args)
     return CompilationError(f"range() bounds must be integers known at compile time; got ({kinds})")
@@ -218,8 +243,10 @@ def _iterate(value: Any) -> Any:
             "in pulse kernels run over Python values known at compile time"
         )
     if is_symbolic(value):
-        names = ", ".join(repr(n) for n in _parameter_names(value))
-        raise CompilationError(f"cannot iterate over kernel parameter {names}")
+        names = _parameter_names(value)
+        raise SymbolicValueError(
+            f"cannot iterate over kernel parameter {', '.join(map(repr, names))}", tuple(names)
+        )
     try:
         return iter(value)
     except TypeError:
@@ -945,6 +972,11 @@ class PulseIREmitter:
                 self._push_pulse_results(op_name, call_args)
             return
 
+        inner = getattr(callable_val, "__pulse_kernel_fn__", None)
+        if inner is not None:
+            self._inline_helper(inner, call_args, kwargs)
+            return
+
         fname = getattr(callable_val, "__name__", "")
         if callable_val is range:
             if kwargs:
@@ -976,11 +1008,20 @@ class PulseIREmitter:
             if any(is_symbolic(a) for a in call_args) or (
                 kwargs and any(is_symbolic(v) for v in kwargs.values())
             ):
-                raise CompilationError(
+                names = [
+                    n for a in [*call_args, *(kwargs or {}).values()] for n in _parameter_names(a)
+                ]
+                raise SymbolicValueError(
                     f"Cannot call {fname}() with symbolic parameter "
                     "expressions. Only int(), float(), arithmetic, and pulse "
-                    "numeric arguments are supported."
+                    "numeric arguments are supported.",
+                    tuple(dict.fromkeys(names)),
                 )
+            if not _is_pure_host_call(callable_val):
+                try:
+                    self.b.impure = True
+                except AttributeError:
+                    pass
             try:
                 result = callable_val(*call_args, **(kwargs or {}))
             except _EVALUATION_ERRORS as e:

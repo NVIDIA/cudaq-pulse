@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
-    from ..compile import CompiledKernel, ScheduledEvent
+    from ..compile import Lowered, ScheduledEvent
 
 _DRIVE_COLOR = "#4C72B0"
 _READOUT_COLOR = "#DD8452"
@@ -26,25 +26,27 @@ _WAIT_COLOR = "#CCCCCC"
 
 
 def plot_schedule(
-    schedule: CompiledKernel | list[ScheduledEvent],
+    schedule: Lowered | list[ScheduledEvent],
     figsize: tuple[float, float] = (14, 4),
     title: str | None = None,
 ) -> Figure:
     """Plot a pulse schedule timeline, one row per drive or readout line.
 
     Args:
-        schedule: A scheduled ``CompiledKernel`` or its ``events()``.
+        schedule: A compiled kernel call (``kernel.lower(...)``) or its ``schedule``.
         figsize: Figure size (width, height).
         title: Optional figure title.
 
     Returns:
         matplotlib Figure.
     """
-    events = schedule if isinstance(schedule, list) else schedule.events()
+    events = schedule if isinstance(schedule, list) else schedule.schedule
     spans: list[tuple[str, int, int, int]] = []
     for ev in events:
         if ev.start_vtu is None or ev.duration_vtu is None:
-            raise ValueError("the kernel is not scheduled; evaluate its parameters first")
+            raise ValueError(
+                "the module is not scheduled; lower the kernel with its float arguments"
+            )
         spans.append((ev.kind, ev.line, ev.start_vtu, ev.duration_vtu))
     import matplotlib.patches as mpatches
     import matplotlib.pyplot as plt
@@ -120,7 +122,7 @@ def plot_schedule(
 
 
 def save_schedule(
-    schedule: CompiledKernel | list[ScheduledEvent],
+    schedule: Lowered | list[ScheduledEvent],
     path: str,
     **kwargs: Any,
 ) -> None:

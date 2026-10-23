@@ -24,6 +24,29 @@ class CompilationError(Exception):
     pass
 
 
+class SymbolicValueError(CompilationError):
+    """Python code needed the value of a runtime ``float`` argument.
+
+    ``names`` lists the arguments involved. A kernel call specializes on
+    the value of such an argument instead of keeping it symbolic.
+    """
+
+    def __init__(self, message: str, names: tuple[str, ...]):
+        super().__init__(message)
+        self.names = names
+
+
+def parameter_names(value: Any) -> tuple[str, ...]:
+    """Names of the kernel parameters a symbolic value depends on."""
+    if isinstance(value, Parameter):
+        return (value.name,)
+    if isinstance(value, ParameterExpression):
+        return parameter_names(value.lhs) + parameter_names(value.rhs)
+    if isinstance(value, UndecidableComparison):
+        return parameter_names(value.lhs) + parameter_names(value.rhs)
+    return ()
+
+
 class UndecidableComparison:
     """A comparison whose outcome is only known when the program runs.
 
@@ -47,10 +70,10 @@ class UndecidableComparison:
                 f"{self.rhs!r}); branch on a measurement result directly with "
                 "`if result:` or `if not result:`"
             )
-        raise CompilationError(
-            f"cannot decide {self.lhs!r} {self.op} {self.rhs!r} at trace time: symbolic "
-            "parameters have no value until the compiled kernel is evaluated; pass a "
-            "concrete value to compile() to branch on it"
+        raise SymbolicValueError(
+            f"cannot decide {self.lhs!r} {self.op} {self.rhs!r} at trace time: a float "
+            "argument has no value while the kernel compiles",
+            parameter_names(self),
         )
 
     def __repr__(self) -> str:
@@ -144,9 +167,10 @@ class _SymbolicNumber(_UndecidableComparisons):
         return ParameterExpression("cast", self, dtype=dtype)
 
     def _not_concrete(self, operation: str) -> NoReturn:
-        raise CompilationError(
+        raise SymbolicValueError(
             f"Cannot evaluate symbolic parameter expression with {operation}. "
-            "Use it in a supported pulse numeric argument."
+            "Use it in a supported pulse numeric argument.",
+            parameter_names(self),
         )
 
     def __bool__(self) -> bool:
@@ -157,6 +181,12 @@ class _SymbolicNumber(_UndecidableComparisons):
 
     def __int__(self) -> int:
         self._not_concrete("int()")
+
+    def __complex__(self) -> complex:
+        self._not_concrete("complex()")
+
+    def __index__(self) -> int:
+        self._not_concrete("an index")
 
 
 class Parameter(_SymbolicNumber):
@@ -263,9 +293,8 @@ class PythonIRBuilder:
         self.name = name
         self.ops: list[Op] = []
         self._next_id = 0
-        # The kernel function and arguments that produced this IR, so that
-        # evolve() can compile the same call.
-        self.source: tuple[Any, tuple[Any, ...]] | None = None
+        # What the traced kernel returned.
+        self.result: Any = None
 
     def _mk(self, vtype: str, name: str = "") -> IRValue:
         v = IRValue(self._next_id, vtype, name)

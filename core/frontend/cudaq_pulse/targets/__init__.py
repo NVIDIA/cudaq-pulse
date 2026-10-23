@@ -7,6 +7,7 @@
 # ============================================================================ #
 """QPU target definitions: Hamiltonians, decoherence models, connectivity."""
 
+from ._registry import available_targets, register_target
 from .base import Coupling, CrosstalkEntry, Qubit, Target
 from .rydberg import RydbergAtom, RydbergTarget, rydberg_chain, rydberg_square
 from .transmon import transmon_generic, transmon_krinner_17q
@@ -22,4 +23,6 @@ __all__ = [
     "RydbergTarget",
     "rydberg_chain",
     "rydberg_square",
+    "register_target",
+    "available_targets",
 ]

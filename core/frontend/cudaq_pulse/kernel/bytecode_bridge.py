@@ -37,22 +37,20 @@ def compile_kernel_bytecode(fn: Callable[..., Any]) -> Callable[..., PythonIRBui
             raise CompilationError("keyword arguments not supported in pulse kernels")
         builder = PythonIRBuilder(name=fn.__name__)
         _trace(fn, builder, args, "pulse.qudit_arg", prog, params)
-        builder.source = (fn, args)
         return builder
 
     return _emit
 
 
-def _trace_kernel_with_builder(fn: Callable[..., Any], builder: Any, args: Sequence[Any]) -> None:
+def _trace_kernel_with_builder(fn: Callable[..., Any], builder: Any, args: Sequence[Any]) -> Any:
     """Re-trace *fn* using *builder* (any object with an ``emit()`` method).
 
-    This allows ``compile()`` to inject a ``PackedIRBuilder`` that writes
-    directly to a packed buffer instead of a ``PythonIRBuilder``.
+    *args* gives every parameter, positional then keyword-only, in signature
+    order. Returns the kernel's traced return value.
     """
     code = fn.__code__
-    _trace(
-        fn, builder, args, "pulse.qudit_alloc", decode(code), code.co_varnames[: code.co_argcount]
-    )
+    names = code.co_varnames[: code.co_argcount + code.co_kwonlyargcount]
+    return _trace(fn, builder, args, "pulse.qudit_alloc", decode(code), names)
 
 
 def _trace(
@@ -62,15 +60,24 @@ def _trace(
     qudit_op: str,
     prog: DecodedCode,
     params: tuple[str, ...],
-) -> None:
+) -> Any:
     if len(args) != len(params):
         raise CompilationError(f"{fn.__name__}: expected {len(params)} args, got {len(args)}")
 
     closures = _extract_closures(fn) if fn.__closure__ else {}
     emitter = PulseIREmitter(builder, fn.__globals__, closures)
     local_vars = emitter.locals
+    from .._device import Qudit, Register
+
     for name, val in zip(params, args):
-        if isinstance(val, QuditRef):
+        if type(val) is Qudit:
+            (ir_val,) = builder.emit(qudit_op, (), ("qref",), {"index": val.index})
+            local_vars[name] = ir_val
+        elif type(val) is Register:
+            local_vars[name] = [
+                builder.emit(qudit_op, (), ("qref",), {"index": q.index})[0] for q in val
+            ]
+        elif isinstance(val, QuditRef):
             attrs = {"index": val.index} if val.index is not None else {}
             (ir_val,) = builder.emit(qudit_op, (), ("qref",), attrs)
             local_vars[name] = ir_val
@@ -83,4 +90,4 @@ def _trace(
         else:
             local_vars[name] = val
 
-    emitter._loop(prog, 0, -1, len(prog.instrs), -1)
+    return emitter._loop(prog, 0, -1, len(prog.instrs), -1)
