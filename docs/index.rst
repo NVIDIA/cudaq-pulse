@@ -12,7 +12,8 @@ cudaq-pulse
 quantum control. Its Python DSL drives an MLIR-based compiler pipeline:
 
 1. Write a pulse kernel with the ``@pulse.kernel`` DSL.
-2. Compile it to Pulse-dialect MLIR with ``pulse.compile()``.
+2. Call it, or compile it to Pulse-dialect MLIR with ``kernel.lower()`` or
+   ``pulse.compile()``.
 3. Inspect the schedule, or extend the pipeline with custom passes.
 4. Lower the module to LLVM and simulate it on the GPU.
 
@@ -38,6 +39,7 @@ quantum control. Its Python DSL drives an MLIR-based compiler pipeline:
    user_guide/kernels
    user_guide/operations
    user_guide/compilation
+   user_guide/devices
    user_guide/custom_passes
 
 .. toctree::

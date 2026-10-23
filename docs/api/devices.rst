@@ -1,0 +1,32 @@
+..
+   Copyright (c) 2026 NVIDIA Corporation & Affiliates.
+   All rights reserved.
+
+   This source code and the accompanying materials are made available under
+   the terms of the Apache License 2.0 which accompanies this distribution.
+
+Device API
+==========
+
+.. autofunction:: cudaq_pulse.device
+
+.. autofunction:: cudaq_pulse.get_device
+
+.. autoclass:: cudaq_pulse.Target
+   :members:
+   :undoc-members:
+
+.. autoclass:: cudaq_pulse.Device
+   :members:
+
+.. autoclass:: cudaq_pulse.Qudit
+   :members:
+
+.. autoclass:: cudaq_pulse.Register
+   :members:
+
+.. autoexception:: cudaq_pulse.NoDeviceError
+
+.. autoexception:: cudaq_pulse.NoTargetError
+
+.. autoexception:: cudaq_pulse.DeviceMismatchError

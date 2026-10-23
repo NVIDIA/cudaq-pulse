@@ -5,14 +5,12 @@
    This source code and the accompanying materials are made available under
    the terms of the Apache License 2.0 which accompanies this distribution.
 
-Compilation
-===========
+Calling and Compiling Kernels
+=============================
 
-``pulse.compile()`` is the single public entry point for compiling
-a ``@pulse.kernel`` function into a scheduled, optimized MLIR module.
-
-Basic Usage
------------
+A ``@pulse.kernel`` is called like a Python function. The first call with
+new arguments compiles the kernel; later calls reuse the compilation and
+only run it.
 
 .. :spellcheck-disable:
 
@@ -21,111 +19,155 @@ Basic Usage
    import cudaq_pulse as pulse
 
    @pulse.kernel
-   def my_kernel(qubit):
+   def rabi(qubit, amplitude: float):
        drive_line, tone = get_drive_line(qubit)
-       drive(drive_line, gaussian(40, 0.3, 10.0), tone)
+       drive(drive_line, gaussian(40, amplitude, 10.0), tone)
 
-   compiled_kernel = pulse.compile(my_kernel, [pulse.qudit_ref()],
-                                   qubit_freq_hz={0: 5.0e9})
+   dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+   q = dev.qudit_handles[0]
+
+   rabi(q, 0.3)                    # compiles, then runs; returns None
+   rabi(q, 0.4)                    # same compilation, new amplitude
+   lowered = rabi.lower(q, 0.3)    # compiles (or reuses), does not run
+   print(lowered.mlir())
 
 .. :spellcheck-enable:
 
-The ``compile()`` Function
---------------------------
+Arguments
+---------
 
-.. autofunction:: cudaq_pulse.compile
-   :noindex:
+Arguments bind exactly as for a Python function: positional and keyword
+arguments, defaults, keyword-only parameters, and ``TypeError`` for a call
+that does not match the signature. Kernels cannot take ``*args`` or
+``**kwargs``.
 
-Parameters
-~~~~~~~~~~
+Annotations decide what a compilation depends on:
 
-``kernel_fn``
-   A ``@pulse.kernel``-decorated function.
+- A parameter annotated ``float`` is a *runtime* value. It stays a function
+  argument of the compiled MLIR module, wherever it flows (an amplitude, a
+  phase, a tone frequency), so calling with a new value never recompiles.
+- Every other parameter (qudit handles, ``int``, anything unannotated) is
+  *static*: the kernel is specialized on its value.
+- A ``float`` the program needs while it compiles -- one that sets a
+  duration, goes through ``int()``, decides an ``if`` or bounds a loop -- is
+  specialized on as well. ``kernel.static_parameters`` and
+  ``kernel.runtime_parameters`` show the split.
 
-``args``
-   Positional arguments -- typically ``pulse.qudit_ref()`` objects matching
-   the kernel's parameters.
+Return values
+-------------
 
-``clock_ghz`` *(float, default 2.0)*
-   System clock frequency in GHz. Determines the physical time
-   corresponding to one clock cycle.
+A call returns what the kernel returns: ``None`` without a ``return``, a
+measurement's outcome (0, 1, ...) for a measurement made at the top level of
+the kernel, values known at compile time, or tuples and lists of these.
+Returning a value computed from a ``float`` parameter is an error.
 
-``qubit_freq_hz`` *(dict[int, float], optional)*
-   Mapping from qubit index to qubit frequency in Hz. Used for
-   rotating-frame calculations and scheduling.
+Devices
+-------
+
+A kernel runs on the device of the qudit handles it is called with; see
+:doc:`devices`. One kernel serves every device it is called with, each with
+its own specializations. A call without handles runs on the process target
+(``CUDAQ_PULSE_TARGET``) if one is set, and raises ``NoDeviceError``
+otherwise. Qudit frequencies and the pulse clock come from the device.
+
+Caching and Python semantics
+----------------------------
+
+Each kernel keeps up to 32 specializations, least recently used first out;
+set ``CUDAQ_PULSE_CACHE_SIZE`` or ``@pulse.kernel(cache_size=N)`` to change
+that. ``kernel.cache_info()`` reports the specializations held, compiled
+and evicted.
+
+Globals and closure variables behave as in Python: the values a kernel read
+while it compiled (module globals, closure cells, attribute chains such as
+``cfg.amplitude``, the contents of lists and dicts it read) are checked on
+every call, and a change compiles the kernel again. A kernel that calls a
+host function whose result can change between calls (``random.random()``)
+compiles on every call.
+
+``pulse.compile``
+-----------------
+
+``pulse.compile(kernel)`` compiles ahead of the call and takes no kernel
+arguments. It returns a ``CompiledKernel``: calling it runs the kernel and
+returns what the kernel returns, and it has the same ``lower`` as the
+kernel. Its specializations are kept for as long as the object lives and are
+never evicted.
+
+.. :spellcheck-disable:
+
+.. code-block:: python
+
+   sweep = pulse.compile(rabi)
+   for amplitude in (0.1, 0.2, 0.3):
+       sweep(q, amplitude)          # one compilation for the whole sweep
+
+   pinned = pulse.compile(rabi, device=dev, schedule="asap")
+
+.. :spellcheck-enable:
+
+Options, all keyword-only:
 
 ``schedule`` *(str, default "alap")*
-   Scheduling policy. Options: ``"asap"``, ``"alap"``, ``"rcp"``,
-   ``"alap_rcp"``. ASAP and ALAP preserve data and physical-line
-   dependencies, including the order of pulses that play on the same tone;
-   RCP variants also enforce ``MachineModel`` resource limits.
+   Scheduling policy: ``"asap"``, ``"alap"``, ``"rcp"`` or ``"alap_rcp"``.
+   ASAP and ALAP preserve data and physical-line dependencies, including the
+   order of pulses that play on the same tone; the RCP variants also enforce
+   ``MachineModel`` resource limits.
 
 ``passes`` *(sequence of str, optional)*
-   Optimization passes to run. Defaults to ``("verify", "virtual_z", "fusion")``.
-   Pass an empty tuple ``()`` to skip all passes.
-
-   Available passes: ``"verify"``, ``"canonicalize"``, ``"virtual_z"``,
-   ``"fusion"``, ``"licm"``.
+   Optimization passes, ``("verify", "virtual_z", "fusion")`` by default;
+   ``()`` runs none. Available: ``"verify"``, ``"canonicalize"``,
+   ``"virtual_z"``, ``"fusion"``, ``"licm"``.
 
 ``machine`` *(MachineModel, optional)*
-   Resource limits for the RCP schedules: ``pulse.MachineModel(
-   max_concurrent_drives=4, max_concurrent_readouts=2, readout_latency_vtu=0,
-   line_switch_penalty_vtu=0)``.
+   Resource limits for the RCP schedules.
 
-CompiledKernel
---------------
+``device`` *(Device, optional)*
+   Pin the compiled kernel to one device. A call with handles of another
+   device raises ``DeviceMismatchError``; a call without handles runs on it.
+   A pinned kernel whose parameters are all ``float`` is built when it is
+   compiled, so ``.mlir()``, ``.schedule`` and ``.metrics`` work on the
+   compiled kernel itself.
 
-``pulse.compile()`` returns a ``CompiledKernel`` object:
+Calling the kernel directly always uses the defaults: ``k(...)`` takes only
+the kernel's own arguments.
 
-.. autoclass:: cudaq_pulse.CompiledKernel
-   :noindex:
-   :members:
-   :undoc-members:
+Inspecting a compilation
+------------------------
 
-Key properties and methods:
+``kernel.lower(*args)`` and ``compiled.lower(*args)`` return a ``Lowered``,
+the module of one call:
 
-``.mlir``
-   The Pulse-dialect MLIR text representation (lazily rendered).
+``.mlir(stage="pulse")``
+   MLIR text: ``"pulse"`` for the scheduled pulse dialect (with the call's
+   float values substituted), ``"llvm"`` after the full Pulse -> QOp ->
+   CuDensityMat -> LLVM lowering.
 
-``.module``
-   The in-memory ``PulseModule`` (MLIR ``ModuleOp``).
+``.schedule``
+   The drives, readouts and waits with their start and duration in clock
+   cycles (``ScheduledEvent``).
+
+``.timeline(**kwargs)``
+   A matplotlib figure of the schedule, one row per line.
 
 ``.metrics``
-   A ``CompileMetrics`` dataclass with per-stage timing.
+   A ``CompileMetrics`` with per-stage timing in milliseconds (``trace_ms``,
+   ``ffi_ms``, ``passes_ms``, ``schedule_ms``, ``total_ms``), ``op_count``
+   and the device name.
 
-``.lower_to_llvm()``
-   Run the full MLIR lowering pipeline (Pulse -> QOp -> CuDensityMat -> LLVM).
-
-``.run()``
-   JIT-compile and execute the unitary, two-level lowering on GPU via
-   cuDensityMat. Use :func:`cudaq_pulse.evolve` for target-aware T1/T2,
-   coupling, crosstalk, and drive-calibration metadata.
-
-CompileMetrics
---------------
-
-.. autoclass:: cudaq_pulse.CompileMetrics
-   :noindex:
-   :members:
-   :undoc-members:
-
-Fields (all in milliseconds):
-
-- ``trace_ms`` -- bytecode tracing and packed buffer construction
-- ``ffi_ms`` -- C++ MLIR module construction from packed buffer
-- ``passes_ms`` -- optimization pass execution time
-- ``schedule_ms`` -- scheduling pass time
-- ``total_ms`` -- sum of all stages
-- ``op_count`` -- number of MLIR operations in the module
+``.arguments`` and ``.generic``
+   The call's float values, and the module without them, in which the float
+   parameters are function arguments.
 
 Threads
 -------
 
-The native stages (module construction, passes, scheduling, specialization,
-lowering and JIT compilation) release the GIL, so kernels can be compiled,
-evaluated at different parameter values, and lowered from several Python
-threads at once. Calls on one ``CompiledKernel`` are serialized; tracing a
-kernel is Python and holds the GIL.
+Calls and cache hits take no lock, and the first call for new static
+arguments compiles once even when many threads make it at the same time.
+The native stages (module construction, passes, scheduling, lowering and JIT
+compilation) release the GIL. Simulations of one specialization from several
+threads are safe: each sets the module attributes it lowers with and reads
+the lowering in one step.
 
 Long Sessions and Memory
 ------------------------
@@ -153,41 +195,8 @@ compiled:
        is retired.
 
 Each must be a whole number from 1 to 2\ :sup:`40`; any other value makes
-``compile()`` raise ``ValueError`` naming the variable. Lower values bound
-the memory a long session keeps (a loop that recompiles a large program
-with new qubit frequencies, for example) at the cost of creating contexts
-more often, about 0.4 ms each. ``python -m cudaq_pulse.doctor`` prints the
-limits in effect.
-
-Customizing the Pass Pipeline
------------------------------
-
-To run a custom set of passes:
-
-.. :spellcheck-disable:
-
-.. code-block:: python
-
-   compiled_kernel = pulse.compile(
-       my_kernel,
-       [pulse.qudit_ref()],
-       qubit_freq_hz={0: 5e9},
-       passes=("verify", "canonicalize", "virtual_z", "fusion", "licm"),
-   )
-
-.. :spellcheck-enable:
-
-To skip passes entirely (useful for benchmarking):
-
-.. :spellcheck-disable:
-
-.. code-block:: python
-
-   compiled_kernel = pulse.compile(
-       my_kernel,
-       [pulse.qudit_ref()],
-       qubit_freq_hz={0: 5e9},
-       passes=(),
-   )
-
-.. :spellcheck-enable:
+compiling raise ``ValueError`` naming the variable. Lower values bound the
+memory a long session keeps (a loop that compiles a large program for many
+devices, for example) at the cost of creating contexts more often, about
+0.4 ms each. ``python -m cudaq_pulse.doctor`` prints the limits in effect,
+the process target and the kernel cache size.

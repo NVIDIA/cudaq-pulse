@@ -12,8 +12,9 @@ Compilation API
 
 .. autoclass:: cudaq_pulse.CompiledKernel
    :members:
-   :undoc-members:
-   :show-inheritance:
+
+.. autoclass:: cudaq_pulse.Lowered
+   :members:
 
 .. autoclass:: cudaq_pulse.MachineModel
    :members:
@@ -26,4 +27,3 @@ Compilation API
 .. autoclass:: cudaq_pulse.CompileMetrics
    :members:
    :undoc-members:
-   :show-inheritance:

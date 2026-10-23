@@ -8,14 +8,14 @@
 Writing Custom Passes
 =====================
 
-``pulse.compile()`` runs the built-in pipeline (verify, virtual-Z, fusion and
+Compiling a kernel runs the built-in pipeline (verify, virtual-Z, fusion and
 a schedule) on an in-memory Pulse-dialect MLIR module. You can extend it in
 two ways, each shown by a runnable example in ``examples/custom_passes/``.
 
 Checks in Python
 ----------------
 
-A compiled kernel exposes its schedule as a list of
+The module of a kernel call exposes its schedule as a list of
 :class:`~cudaq_pulse.ScheduledEvent` records (kind, line, qubit, start and
 duration), so a pass that inspects the schedule is a plain Python function:
 
@@ -25,8 +25,8 @@ duration), so a pass that inspects the schedule is a plain Python function:
 
    import cudaq_pulse as pulse
 
-   def total_drive_time(compiled: pulse.CompiledKernel) -> int:
-       return sum(e.duration_vtu for e in compiled.events() if e.kind == "drive")
+   def total_drive_time(lowered: pulse.Lowered) -> int:
+       return sum(e.duration_vtu for e in lowered.schedule if e.kind == "drive")
 
 .. :spellcheck-enable:
 
@@ -53,4 +53,4 @@ from a plugin library with ``--load-pass-plugin``:
 class plus the ``mlirGetPassPluginInfo`` entry point that registers it. Its
 ``CMakeLists.txt`` builds it against the same MLIR toolchain as cudaq-pulse,
 either as part of the cudaq-pulse build or on its own. Get a kernel's MLIR
-from ``CompiledKernel.mlir`` to run plugin passes on it.
+from ``Lowered.mlir()`` to run plugin passes on it.

@@ -47,7 +47,7 @@ Stage 1: Bytecode Tracing
 --------------------------
 
 The ``@kernel`` decorator captures the decorated function's CPython
-bytecode. When ``compile()`` is called, a ``PackedIRBuilder`` traces
+bytecode. When a kernel compiles, a ``PackedIRBuilder`` traces
 the bytecode and writes each operation into a flat ``numpy.ndarray``
 of ``int64`` values. This packed buffer encodes operation types,
 arguments, and waveform attributes in a compact binary format.

@@ -59,7 +59,7 @@ Core Examples
      - Readout channels and measurement-conditioned branching
    * - 09
      - ``09_compilation_pipeline.py``
-     - Full ``pulse.compile()`` API walkthrough with pass customization
+     - ``pulse.compile()`` and ``lower()`` walkthrough with pass customization
    * - 10
      - ``10_scheduling_comparison.py``
      - Side-by-side ASAP, ALAP, and RCP scheduling on a 4-qubit kernel
@@ -91,7 +91,7 @@ Hardware Target Examples
    * - File
      - Description
    * - ``python_pass.py``
-     - A schedule check written in Python over ``CompiledKernel.events()``
+     - A schedule check written in Python over ``Lowered.schedule``
    * - ``cpp/DriveCount.cpp``
      - An MLIR pass plugin loaded with ``cudaq-pulse-opt --load-pass-plugin``
 
@@ -110,7 +110,7 @@ See :doc:`user_guide/custom_passes`.
    * - ``krinner_full_pipeline.py``
      - Each stage of the native lowering: Pulse MLIR, QOp, and LLVM IR
    * - ``krinner_evolve_gpu.py``
-     - Public ``pulse.evolve`` GPU path for the Krinner target
+     - ``pulse.simulate(..., backend="gpu")`` on the Krinner target
    * - ``krinner_surface_code_cycle.py``
      - Surface code stabilizer cycle on the Krinner lattice
 

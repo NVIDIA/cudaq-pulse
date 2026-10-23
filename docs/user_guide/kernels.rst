@@ -39,8 +39,8 @@ Infrastructure stays behind the ``pulse.`` prefix:
        drive_line, tone = get_drive_line(qubit)
        drive(drive_line, gaussian(64, 0.5, 16.0), tone)
 
-   compiled_kernel = pulse.compile(rabi_oscillation, [pulse.qudit_ref()],
-                                   qubit_freq_hz={0: 5.0e9})
+   dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+   rabi_oscillation(dev.qudit_handles[0])
 
 .. :spellcheck-enable:
 
@@ -61,42 +61,30 @@ Defining a Kernel
 
 .. :spellcheck-enable:
 
-Kernel arguments are **qudit references** -- opaque handles representing
-quantum degrees of freedom. They are created outside the kernel using
-``pulse.qudit_ref()`` or ``pulse.qvec_ref(n)`` and passed in when compiling.
-
-Qudit Allocation
-----------------
-
-**Single qudit:**
+Qudit arguments are **qudit handles** of a device: ``dev.qudit_handles[i]``
+for one qudit, and ``dev.qudit_handles[0:4]`` or ``dev.qudit_handles[[0, 2]]``
+for a register, which a kernel indexes and iterates like a list. The kernel
+runs on the device of its handles; see :doc:`devices`. How arguments bind,
+which of them the kernel is specialized on, and what a call returns are
+described in :doc:`compilation`.
 
 .. :spellcheck-disable:
 
 .. code-block:: python
 
-   qubit = pulse.qudit_ref()
+   @pulse.kernel
+   def two(q0, q1, amplitude: float):
+       ...
+
+   reg = dev.qudit_handles[0:2]
+   two(reg[0], reg[1], 0.3)
 
 .. :spellcheck-enable:
 
-Bind an argument to a specific physical target index when needed:
-
-.. :spellcheck-disable:
-
-.. code-block:: python
-
-   target_qubit_4 = pulse.qudit_ref(4)
-
-.. :spellcheck-enable:
-
-**Vector of qudits:**
-
-.. :spellcheck-disable:
-
-.. code-block:: python
-
-   qubits = pulse.qvec_ref(4)
-   qubit_0 = qubits[0]
-   qubit_1 = qubits[1]
+``pulse.qudit_ref()`` and ``pulse.qvec_ref(n)`` are qudit references not
+tied to a device: positional (``qudit_ref()``) or at a physical index
+(``qudit_ref(4)``). A call with them runs on the process target, and a
+kernel may allocate them in its body.
 
 .. :spellcheck-enable:
 
@@ -125,10 +113,10 @@ A loop whose induction variable is never read, like the one above, is
 captured once as a structured ``scf.for`` in the kernel IR, so the IR size
 does not depend on the trip count. Loops that read the induction variable,
 or that carry Python state from one iteration to the next, are unrolled
-exactly at trace time. ``cudaq_pulse.compile()`` keeps the same loops as an
-``scf.for`` that carries the lines and tones its body advances; the
-scheduler times every iteration. Symbolic or runtime-dependent loop bounds,
-and ``while`` loops, are rejected.
+exactly at trace time. Compiling keeps the same loops as an ``scf.for`` that
+carries the lines and tones its body advances; the scheduler times every
+iteration. A loop bound given by a ``float`` argument specializes the kernel
+on its value; ``while`` loops are rejected.
 
 **For loops over Python values** known when the kernel is traced: lists,
 tuples, dictionaries, ``enumerate()``, ``zip()``, ``reversed()``, a qubit
@@ -191,8 +179,8 @@ the loop:
 
 Both branches are traced, and lines and tones they rebind become the
 results of the region. Both branches must continue after the ``if``, and
-other Python values must not differ between them. ``cudaq_pulse.compile()``
-keeps the branch as an ``scf.if`` on ``pulse.is_set`` (whether the readout
+other Python values must not differ between them. Compiling keeps the
+branch as an ``scf.if`` on ``pulse.is_set`` (whether the readout
 observed a nonzero level), whose arms yield the lines and tones they
 advance; both arms start once the measurement completes, and the code after
 the ``if`` waits for the longer arm.
@@ -207,12 +195,12 @@ and will raise ``CompilationError``:
 - Lambdas and function definitions inside the kernel body
 - List comprehensions or generator expressions
 - ``try`` / ``except`` and ``with`` blocks
-- Dynamic loop bounds (bounds must be known at trace time)
 - ``if`` conditions on anything that is only known at runtime other than a
-  measurement result, including comparisons of symbolic parameters
+  measurement result
 
-Kernels may read variables captured from an enclosing scope; captured values
-are read again on every call. Calls to ``cudaq_pulse`` ops are emitted as IR.
-Helper functions that take IR values or call ``cudaq_pulse`` ops are inlined.
-Any other Python call, such as ``math.sin`` or ``len``, is evaluated at trace
-time on concrete values.
+Kernels may read globals and variables captured from an enclosing scope; a
+change to one is seen on the next call. Calls to ``cudaq_pulse`` ops are
+emitted as IR. Other kernels, and helper functions that take IR values, call
+``cudaq_pulse`` ops or call a kernel, are inlined, inside loops too. Any other
+Python call, such as ``math.sin`` or ``len``, is evaluated at trace time on
+concrete values.

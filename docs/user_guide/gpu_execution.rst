@@ -119,21 +119,20 @@ they work in every installation.
 Pipeline Overview
 -----------------
 
-The target-aware public execution path is:
+The public execution path is:
 
-1. Call a ``@pulse.kernel`` to produce traced pulse IR.
-2. ``pulse.evolve(..., target=...)`` verifies, optimizes, and schedules it.
-3. The native pipeline lowers Pulse -> QOp -> CuDensityMat -> LLVM IR.
-4. MLIR's ExecutionEngine compiles the LLVM IR in process and executes it
+1. ``kernel.lower(*args)`` verifies, optimizes and schedules the kernel for
+   the device of its qudit handles.
+2. ``pulse.simulate(lowered, backend="gpu")`` annotates the module with the
+   device's calibration (drive scales, couplings, crosstalk, T1/T2) and the
+   native pipeline lowers it Pulse -> QOp -> CuDensityMat -> LLVM IR.
+3. MLIR's ExecutionEngine compiles the LLVM IR in process and executes it
    against the cuDensityMat runtime library; no external compiler or LLVM
    tool is involved.
 
-``pulse.compile()`` also returns a ``CompiledKernel`` whose
-``lower_to_llvm()`` and ``run()`` methods expose the native pipeline directly.
-That path has no ``Target`` parameter and therefore represents unitary,
-two-level execution with pulse amplitudes already expressed in radians per
-nanosecond. Use ``pulse.evolve`` when target calibration, coupling, or T1/T2
-metadata matters.
+Float arguments stay symbolic through the Pulse -> QOp lowering; the GPU
+runtime takes constants, so the GPU path substitutes the call's values into
+a private copy of the module first.
 
 MLIR Lowering
 -------------
@@ -146,9 +145,8 @@ To inspect the lowered LLVM IR:
 
    import cudaq_pulse as pulse
 
-   compiled_kernel = pulse.compile(my_kernel, [pulse.qudit_ref()],
-                                   qubit_freq_hz={0: 5e9})
-   llvm_ir = compiled_kernel.lower_to_llvm()
+   dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+   llvm_ir = my_kernel.lower(dev.qudit_handles[0]).mlir("llvm")
    print(llvm_ir)
 
 .. :spellcheck-enable:
@@ -202,21 +200,16 @@ To execute on a GPU (requires cuDensityMat runtime):
        # 40 virtual units at 2 GHz is 20 ns.
        drive(drive_line, square(40, math.pi / 20.0), tone)
 
-   ir = x_gate(pulse.qudit_ref())
-   result = pulse.evolve(
-       ir,
-       target=target,
-       t_start=0.0,
-       t_end=20.0,
-       num_steps=200,
-       integrator="rk4",
-   )
-   print(result.final_state)
+   dev = pulse.device({"target": target})
+   lowered = x_gate.lower(dev.qudit_handles[0])
+   result = pulse.simulate(lowered, backend="gpu", t_end=20.0, dt_ns=0.1, integrator="rk4")
+   print(result.density_matrix)
 
 .. :spellcheck-enable:
 
-``t_start`` and ``t_end`` are in nanoseconds. The ``integrator`` argument
-selects the time-evolution scheme used by the cuDensityMat runtime path:
+``t_end`` and ``dt_ns`` are in nanoseconds; ``t_end`` defaults to the end of
+the schedule. The ``integrator`` argument selects the time-evolution scheme
+used by the cuDensityMat runtime path:
 
 - ``rk1``, ``rk2``, ``rk4`` -- fixed-step explicit Runge-Kutta methods.
 - ``magnus`` -- a fixed-step Magnus expansion evaluated as a truncated Taylor
@@ -250,7 +243,7 @@ Unsupported Execution Features
 ------------------------------
 
 The execution lowering fails explicitly for observables, neutral-atom
-targets, unspecialized numeric parameters, arbitrary Python waveform
+targets on the GPU, products of two float arguments, arbitrary Python waveform
 callbacks, and waveform-algebra nodes. Built-in waveforms and
 ``custom_samples`` are supported. The callback runtime holds 1024 drive
 coefficients per evolution, two per drive op; a drive repeated by a loop
@@ -263,13 +256,13 @@ in a source build) covers single-qubit drives, T1 decay, idle evolution,
 two-qubit coupling, frame and I/Q modulation, an eight-qubit ladder register,
 closed-system physics validation, quantum-algorithm building blocks,
 integrator parity across ``rk4``/``magnus``/``crank_nicolson``, and the public
-compile/JIT path. Source builds also run a cuDensityMat link check as part of
+lowering and JIT path. Source builds also run a cuDensityMat link check as part of
 ``check-pulse``. Selecting the GPU tests where the runtime is unusable is an
 error, not a skip. These tests provide research regression coverage; they do
 not establish production numerical accuracy.
 
-The ``run()`` method and returned state representation are experimental and
-will evolve with the lowering and runtime implementation.
+The returned state representation is experimental and may change with the
+lowering and runtime implementation.
 
 .. _measurement-simulation:
 
@@ -294,8 +287,8 @@ of the outcomes from the same branch probabilities.
 
 .. code-block:: python
 
-   result = pulse.simulate(active_reset(pulse.qudit_ref()), target=target,
-                           shots=1000, backend="cpu")
+   lowered = active_reset.lower(dev.qudit_handles[0])
+   result = pulse.simulate(lowered, shots=1000, backend="cpu")
    result.density_matrix   # ensemble state at the end
    result.branches         # [(outcomes, probability), ...]
    result.records          # one row of outcomes per shot
@@ -305,6 +298,4 @@ of the outcomes from the same branch probabilities.
 ``backend="cpu"`` integrates the same lowered operator with a NumPy RK4
 reference; ``backend="gpu"`` evolves each segment with cuDensityMat, starting
 from the projected state. ``levels`` gives qudits more than two levels; a
-transmon target then includes its anharmonicity. ``pulse.evolve()`` uses
-the GPU path for programs that measure and returns the ensemble density
-matrix.
+transmon target then includes its anharmonicity.

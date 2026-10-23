@@ -62,7 +62,7 @@ installation).
 Without a usable GPU, everything except execution still works. Execution fails
 with a specific error rather than degrading:
 
-| Situation | Error raised by `pulse.evolve` / `CompiledKernel.run` |
+| Situation | Error raised by `pulse.simulate(..., backend="gpu")` |
 | --- | --- |
 | Wheel without GPU support (macOS, or a compiler-only source build) | `GpuSupportNotBuiltError` |
 | GPU support built in, but no CUDA extra, both extras, or a library fails to load | `GpuRuntimeLoadError` |
@@ -79,21 +79,24 @@ import cudaq_pulse as pulse
 
 
 @pulse.kernel
-def rabi_oscillation(qubit):
+def rabi_oscillation(qubit, amplitude: float):
     drive_line, tone = get_drive_line(qubit)
-    drive(drive_line, gaussian(64, 0.5, 16.0), tone)
+    drive(drive_line, gaussian(64, amplitude, 16.0), tone)
 
 
-compiled_kernel = pulse.compile(
-    rabi_oscillation,
-    [pulse.qudit_ref()],
-    qubit_freq_hz={0: 5.0e9},
-)
-print(compiled_kernel.mlir)
+dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+qubit = dev.qudit_handles[0]
+
+rabi_oscillation(qubit, 0.5)  # compile on first call, then run (CPU reference)
+print(rabi_oscillation.lower(qubit, 0.5).mlir())
 ```
 
-The compiler traces the Python kernel, builds Pulse dialect IR, applies the
-selected transformations, and emits scheduled MLIR. The wheel also installs
+Calling a kernel compiles it for the device of its qudit handles, with
+frequencies from the device, and runs it; `kernel.lower(...)` stops before
+running and `pulse.compile(kernel)` compiles ahead of the call. A `float`
+parameter stays symbolic, so a sweep over it compiles once. The compiler
+traces the Python kernel, builds Pulse dialect IR, applies the selected
+transformations, and emits scheduled MLIR. The wheel also installs
 `cudaq-pulse-opt`, the MLIR driver for the pulse dialects:
 
 ```bash

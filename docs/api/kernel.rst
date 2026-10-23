@@ -10,16 +10,15 @@ Kernel API
 
 .. autofunction:: cudaq_pulse.kernel
 
+.. autoclass:: cudaq_pulse.Kernel
+   :members:
+
 .. autofunction:: cudaq_pulse.qudit_ref
 
 .. autofunction:: cudaq_pulse.qvec_ref
 
-.. autoclass:: cudaq_pulse.kernel.decorator.QuditRef
+.. autoclass:: cudaq_pulse.QuditRef
    :members:
-   :undoc-members:
-   :show-inheritance:
 
-.. autoclass:: cudaq_pulse.kernel.decorator.QvecRef
+.. autoclass:: cudaq_pulse.QvecRef
    :members:
-   :undoc-members:
-   :show-inheritance:

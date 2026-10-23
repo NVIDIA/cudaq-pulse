@@ -80,14 +80,14 @@ Define a pulse kernel, compile it, and inspect the generated MLIR:
    import cudaq_pulse as pulse
 
    @pulse.kernel
-   def rabi_oscillation(qubit):
+   def rabi_oscillation(qubit, amplitude: float):
        drive_line, tone = get_drive_line(qubit)
-       drive(drive_line, gaussian(64, 0.5, 16.0), tone)
+       drive(drive_line, gaussian(64, amplitude, 16.0), tone)
 
-   compiled_kernel = pulse.compile(rabi_oscillation, [pulse.qudit_ref()],
-                                   qubit_freq_hz={0: 5.0e9})
-   print(compiled_kernel.mlir)
-   print(f"Compiled in {compiled_kernel.metrics.total_ms:.1f} ms")
+   dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+   lowered = rabi_oscillation.lower(dev.qudit_handles[0], 0.5)
+   print(lowered.mlir())
+   print(f"Compiled in {lowered.metrics.total_ms:.1f} ms")
 
 .. :spellcheck-enable:
 
@@ -98,14 +98,16 @@ cudaq-pulse is a Python-first compiler pipeline with four stages:
 
 1. **Write a kernel in Python** -- the ``@pulse.kernel`` DSL
    (``get_drive_line``, ``drive``, ``gaussian``, ``wait``, ``sync``, ...).
-2. **Compile to MLIR** -- ``pulse.compile()`` returns a ``CompiledKernel``
-   whose ``.mlir`` is the scheduled Pulse dialect. See :doc:`user_guide/compilation`.
-3. **Extend the pipeline** -- check a compiled kernel's ``events()`` in
+2. **Compile to MLIR** -- calling a kernel compiles it on first use and runs
+   it; ``kernel.lower(*args)`` returns the compiled module, whose
+   ``.mlir()`` is the scheduled Pulse dialect, and ``pulse.compile(kernel)``
+   compiles ahead of the call. See :doc:`user_guide/compilation`.
+3. **Extend the pipeline** -- check a compiled module's ``schedule`` in
    Python, or load your own MLIR passes into ``cudaq-pulse-opt`` as plugins.
    See :doc:`user_guide/custom_passes`.
-4. **Lower and simulate** -- ``CompiledKernel.lower_to_llvm()`` and
-   ``pulse.evolve()`` run the native Pulse -> QOp -> CuDensityMat -> LLVM
-   lowering.
+4. **Lower and simulate** -- ``lowered.mlir("llvm")`` and
+   ``pulse.simulate(lowered)`` run the native Pulse -> QOp -> CuDensityMat ->
+   LLVM lowering.
 
 GPU simulation via NVIDIA cuDensityMat is a preview capability; see
 :doc:`user_guide/gpu_execution`.

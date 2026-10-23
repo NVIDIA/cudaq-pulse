@@ -12,6 +12,7 @@ API Reference
    :maxdepth: 2
 
    compile
-   evolve
+   simulation
+   devices
    kernel
    ops
