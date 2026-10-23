@@ -12,6 +12,7 @@ from __future__ import annotations
 import cudaq_pulse as pulse
 import pytest
 
+from tests._ir import python_ir
 from tests.workloads.bug_corpus import CORRECT, BugCase
 
 
@@ -39,8 +40,8 @@ def test_workload_compiles_and_schedules(name):
 
     module = importlib.import_module(f"tests.workloads.{name}")
     n = module.NUM_QUBITS
-    compiled = pulse.compile(module.build, _make_qubits(n), qubit_freq_hz=_freq(n), schedule="asap")
-    events = compiled.events()
+    compiled = pulse.compile(module.build, schedule="asap").lower(*_make_qubits(n))
+    events = compiled.schedule
     assert compiled.metrics.op_count > 0
     assert max(e.start_vtu + e.duration_vtu for e in events) > 0
     for line in {e.line for e in events}:
@@ -53,10 +54,8 @@ def test_workload_compiles_and_schedules(name):
 def test_cross_resonance_pulses_wait_for_the_target_tone(policy):
     from tests.workloads import w1_bell
 
-    compiled = pulse.compile(
-        w1_bell.build, _make_qubits(2), qubit_freq_hz=_freq(2), schedule=policy
-    )
-    drives = [e for e in compiled.events() if e.kind == "drive"]
+    compiled = pulse.compile(w1_bell.build, schedule=policy).lower(*_make_qubits(2))
+    drives = [e for e in compiled.schedule if e.kind == "drive"]
     # Program order: sx on q0, then sx(q1), CR, x(q0), CR-, sx(q1). The CR
     # pulses play on line 0 at q1's tone, between the two pulses on line 1.
     _, sx_first, cr, _, cr_neg, sx_last = drives
@@ -92,7 +91,7 @@ def test_correct_corpus_compiles(case: BugCase):
         pytest.skip("not a kernel")
 
     nargs = fn_or_kern.__wrapped__.__code__.co_argcount
-    compiled = pulse.compile(fn_or_kern, _make_qubits(nargs), qubit_freq_hz=_freq(nargs))
+    compiled = fn_or_kern.lower(*_make_qubits(nargs))
     assert compiled.metrics.op_count > 0
 
 
@@ -105,8 +104,8 @@ def test_workload_compiles_on_the_packed_path(name):
 
     module = importlib.import_module(f"tests.workloads.{name}")
     n = module.NUM_QUBITS
-    ir = module.build(*_make_qubits(n))
-    compiled = pulse.compile(module.build, _make_qubits(n), qubit_freq_hz=_freq(n))
+    ir = python_ir(module.build, *_make_qubits(n))
+    compiled = module.build.lower(*_make_qubits(n))
     assert compiled.metrics.op_count == ir.op_count()
 
 

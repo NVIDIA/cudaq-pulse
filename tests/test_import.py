@@ -37,7 +37,8 @@ def test_import_and_compile_do_not_load_numpy_or_the_gpu_runtime(tmp_path):
         "def k(q):\n"
         "    d, t = get_drive_line(q)\n"
         "    drive(d, square(40, 0.1), t)\n"
-        "p.compile(k, [p.qudit_ref()], qubit_freq_hz={0: 5e9})\n"
+        "dev = p.get_device(p.Target.TRANSMON_KRINNER_17Q)\n"
+        "p.compile(k).lower(dev.qudit_handles[0])\n"
         "print(sorted(m for m in ('numpy', 'cudaq_pulse.runtime.gpu',"
         " 'cudaq_pulse.runtime.jit', 'importlib.metadata') if m in sys.modules))",
         tmp_path,
@@ -51,10 +52,10 @@ def test_simulation_exports_load_on_first_use(tmp_path):
         "before = 'cudaq_pulse.runtime.simulate' in sys.modules\n"
         "f = p.simulate\n"
         "print(before, 'cudaq_pulse.runtime.simulate' in sys.modules, f.__name__,"
-        " p.EvolveResult.__name__, 'simulate' in dir(p))",
+        " p.SimulationResult.__name__, 'simulate' in dir(p))",
         tmp_path,
     )
-    assert out == "False True simulate EvolveResult True"
+    assert out == "False True simulate SimulationResult True"
 
 
 def test_unknown_attribute_is_an_attribute_error():
@@ -72,6 +73,6 @@ def test_numpy_scalars_and_arrays_are_accepted_without_numpy_in_the_tracer():
         drive(d, gaussian(np.int32(40), np.float32(0.25), 10.0), t)
         drive(d, custom_samples(np.linspace(0.0, 0.1, 8)), t)
 
-    text = pulse.compile(k, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9}, passes=()).mlir
+    text = pulse.compile(k, passes=()).lower(pulse.qudit_ref()).mlir()
     assert text.count("= pulse.drive ") == 5
     assert "2.000000e-01" in text

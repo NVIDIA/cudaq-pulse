@@ -27,9 +27,9 @@ def test_single_qubit_full_pipeline():
         wf2 = gaussian(40, 0.3, 10.0)
         drive(d, wf2, t)
 
-    ck = pulse.compile(k, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9})
-    assert isinstance(ck, pulse.CompiledKernel)
-    assert "pulse.drive" in ck.mlir
+    ck = k.lower(pulse.qudit_ref())
+    assert isinstance(ck, pulse.Lowered)
+    assert "pulse.drive" in ck.mlir()
     assert ck.metrics.total_ms > 0
     assert ck.metrics.trace_ms > 0
 
@@ -42,8 +42,8 @@ def test_full_lowering_reaches_llvm_dialect():
         drive_line, tone = get_drive_line(q)
         drive(drive_line, gaussian(8, 0.2, 2.0), tone)
 
-    ck = pulse.compile(k, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9})
-    llvm_ir = ck.lower_to_llvm()
+    ck = k.lower(pulse.qudit_ref())
+    llvm_ir = ck.mlir("llvm")
 
     assert "llvm.func @main" in llvm_ir
     assert "llvm.call @cudm_init" in llvm_ir
@@ -52,8 +52,8 @@ def test_full_lowering_reaches_llvm_dialect():
     assert "\n    pulse." not in llvm_ir
     assert "\n    qop." not in llvm_ir
     assert "\n    cudm." not in llvm_ir
-    assert "pulse.drive" in ck.mlir
-    assert "llvm.call" not in ck.mlir
+    assert "pulse.drive" in ck.mlir()
+    assert "llvm.call" not in ck.mlir()
 
 
 def test_two_qubit_full_pipeline():
@@ -68,13 +68,9 @@ def test_two_qubit_full_pipeline():
         sync(d0, d1)
         drive(d1, wf, t1)
 
-    ck = pulse.compile(
-        k,
-        [pulse.qudit_ref(), pulse.qudit_ref()],
-        qubit_freq_hz={0: 5e9, 1: 5.1e9},
-    )
-    assert isinstance(ck, pulse.CompiledKernel)
-    assert "pulse.drive" in ck.mlir
+    ck = k.lower(pulse.qudit_ref(), pulse.qudit_ref())
+    assert isinstance(ck, pulse.Lowered)
+    assert "pulse.drive" in ck.mlir()
     assert ck.metrics.total_ms > 0
 
 
@@ -89,9 +85,9 @@ def test_loop_full_pipeline():
             drive(d, wf, t)
             wait(d, 20)
 
-    ck = pulse.compile(k, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9})
-    assert isinstance(ck, pulse.CompiledKernel)
-    assert "pulse.drive" in ck.mlir
+    ck = k.lower(pulse.qudit_ref())
+    assert isinstance(ck, pulse.Lowered)
+    assert "pulse.drive" in ck.mlir()
     assert ck.metrics.total_ms > 0
 
 
@@ -110,13 +106,8 @@ def test_scheduling_pipeline():
         drive(d0, wf, t0)
         drive(d1, wf, t1)
 
-    ck = pulse.compile(
-        k,
-        [pulse.qudit_ref(), pulse.qudit_ref()],
-        qubit_freq_hz={0: 5e9, 1: 5.1e9},
-        schedule="alap",
-    )
-    assert isinstance(ck, pulse.CompiledKernel)
-    assert "pulse.drive" in ck.mlir
+    ck = pulse.compile(k, schedule="alap").lower(pulse.qudit_ref(), pulse.qudit_ref())
+    assert isinstance(ck, pulse.Lowered)
+    assert "pulse.drive" in ck.mlir()
     assert ck.metrics.total_ms > 0
     assert ck.metrics.schedule_ms >= 0

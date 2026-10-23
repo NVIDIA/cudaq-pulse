@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from cudaq_pulse.targets import Coupling, Qubit, Target
 
-from tests.runtime._lowering import pulse_mlir
+from tests.runtime._lowering import evolve, on, pulse_mlir
 
 gpu = pytest.mark.gpu
 
@@ -37,7 +37,7 @@ def test_bell_mlir_structure():
         # pi/2 X on q1
         drive(d1, x90, t1)
 
-    ir = bell_cr(pulse.qudit_ref(), pulse.qudit_ref())
+    ir = (bell_cr, pulse.qudit_ref(), pulse.qudit_ref())
     mlir = pulse_mlir(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9, 1: 5.1e9})
 
     assert mlir.count("pulse.qudit_alloc") == 2
@@ -75,10 +75,8 @@ def test_bell_gpu_execution():
         wait(d1, 50)
         sync(d0, d1)
 
-    ir = bell_xx(pulse.qudit_ref(), pulse.qudit_ref())
-    result = pulse.evolve(
-        ir, target=target, t_start=0.0, t_end=25.0, num_steps=250, integrator="rk4"
-    )
+    ir = (bell_xx, pulse.qudit_ref(), pulse.qudit_ref())
+    result = evolve(on(target, *ir), t_start=0.0, t_end=25.0, num_steps=250, integrator="rk4")
 
     state = result.final_state
     expected = np.array([1.0, 0.0, 0.0, -1.0j]) / math.sqrt(2.0)

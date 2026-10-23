@@ -13,23 +13,22 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.kernel.ir_builder import CompilationError
 
+from tests._ir import python_ir
 from tests.kernel.ir_corpus import active_reset, feedback_in_loop, negated_feedback
 
 _FREQ = {0: 5.0e9, 1: 5.1e9}
 
 
 def _compile(kernel, n_qubits=1, **kwargs):
-    return pulse.compile(
-        kernel, [pulse.qudit_ref() for _ in range(n_qubits)], qubit_freq_hz=_FREQ, **kwargs
-    )
+    return pulse.compile(kernel, **kwargs).lower(*[pulse.qudit_ref() for _ in range(n_qubits)])
 
 
 def _makespan(compiled):
-    return max(e.start_vtu + e.duration_vtu for e in compiled.events())
+    return max(e.start_vtu + e.duration_vtu for e in compiled.schedule)
 
 
 def test_active_reset_retains_the_conditional():
-    ir = active_reset(pulse.qudit_ref())
+    ir = python_ir(active_reset, pulse.qudit_ref())
     kinds = [op.kind for op in ir.ops]
     start = kinds.index("scf.if")
     assert kinds[start:] == [
@@ -50,7 +49,7 @@ def test_active_reset_retains_the_conditional():
 
 
 def test_negation_swaps_the_arms():
-    ir = negated_feedback(pulse.qudit_ref(), pulse.qudit_ref())
+    ir = python_ir(negated_feedback, pulse.qudit_ref(), pulse.qudit_ref())
     kinds = [op.kind for op in ir.ops]
     then_arm = kinds[kinds.index("scf.if") + 1 : kinds.index("scf.else")]
     else_arm = kinds[kinds.index("scf.else") + 1 : kinds.index("scf.if_end")]
@@ -61,8 +60,8 @@ def test_negation_swaps_the_arms():
 def test_compiled_feedback_verifies():
     for kernel, n in ((active_reset, 1), (negated_feedback, 2), (feedback_in_loop, 1)):
         compiled = _compile(kernel, n)
-        assert "pulse.is_set" in compiled.mlir
-        compiled.module.run_passes(["pulse-verify"])
+        assert "pulse.is_set" in compiled.mlir()
+        compiled._module.run_passes(["pulse-verify"])
 
 
 @pytest.mark.parametrize("schedule", ["asap", "alap"])
@@ -75,18 +74,18 @@ def test_schedule_allows_for_the_longer_arm(schedule):
 
 
 def test_conditional_waits_for_the_measurement():
-    events = _compile(active_reset, schedule="asap").events()
+    events = _compile(active_reset, schedule="asap").schedule
     readout = next(e for e in events if e.kind == "readout")
     drive = next(e for e in events if e.kind == "drive")
     assert drive.start_vtu >= readout.start_vtu + readout.duration_vtu
 
 
 def test_feedback_inside_a_retained_loop():
-    ir = feedback_in_loop(pulse.qudit_ref())
+    ir = python_ir(feedback_in_loop, pulse.qudit_ref())
     kinds = [op.kind for op in ir.ops]
     assert kinds.count("scf.for") == 1 and kinds.count("scf.if") == 1
     compiled = _compile(feedback_in_loop, schedule="asap")
-    assert compiled.mlir.count("scf.for") == 1
+    assert compiled.mlir().count("scf.for") == 1
     # Each readout may start while the previous iteration's conditional
     # drive is still playing on the drive line.
     assert _makespan(compiled) == 5 * 300 + 40

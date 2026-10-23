@@ -24,7 +24,7 @@ from typing import Any
 
 import cudaq_pulse as pulse
 import numpy as np
-from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder
+from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder, compile_kernel_bytecode
 from cudaq_pulse.kernel.ir_builder import Parameter, PythonIRBuilder
 from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
@@ -394,7 +394,7 @@ def trace(case: Case) -> dict[str, Any]:
     args = case.args()
     try:
         if case.path == "python":
-            ir = case.kernel(*args)
+            ir = compile_kernel_bytecode(fn)(*args)
             lines = dump_python(ir)
             n_ops = len(ir.ops)
         else:

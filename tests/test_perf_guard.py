@@ -30,6 +30,7 @@ from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder
 from cudaq_pulse.kernel.ir_builder import Parameter
 from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
+from tests._ir import python_ir
 from tests.kernel.ir_corpus import bicycle_syndrome, dd_loop, parametric, surface_syndrome
 
 pytestmark = pytest.mark.benchmark
@@ -74,18 +75,16 @@ def _compile_time_workloads():
 
 
 def _kernel_ir(kernel, n_qubits: int) -> Callable[[], object]:
-    return lambda: kernel(*[pulse.qudit_ref() for _ in range(n_qubits)])
+    return lambda: python_ir(kernel, *[pulse.qudit_ref() for _ in range(n_qubits)])
 
 
-def _compile(kernel, n_qubits: int, freq: dict[int, float]) -> Callable[[], object]:
-    return lambda: pulse.compile(
-        kernel, [pulse.qudit_ref() for _ in range(n_qubits)], qubit_freq_hz=freq
-    )
+# A fresh compiled kernel holds no specializations, so these compile.
+def _compile(kernel, n_qubits: int) -> Callable[[], object]:
+    return lambda: pulse.compile(kernel).lower(*[pulse.qudit_ref() for _ in range(n_qubits)])
 
 
 def _fused(kernel, n: int) -> Callable[[], object]:
-    freq = {i: 5e9 + 1e5 * i for i in range(n)}
-    return lambda: pulse.compile(kernel, [pulse.qvec_ref(n)], qubit_freq_hz=freq, passes=())
+    return lambda: pulse.compile(kernel, passes=()).lower(pulse.qvec_ref(n))
 
 
 def _packed_trace(kernel, n: int) -> Callable[[], object]:
@@ -103,21 +102,19 @@ def _cases() -> dict[str, Callable[[], object]]:
     workloads = _compile_time_workloads()
     cases = {}
     for name in ("bell", "qaoa4", "dd_cpmg8", "vqe_hea"):
-        kernel, n_qubits, freq = workloads[name]
+        kernel, n_qubits, _ = workloads[name]
         cases[f"tier1_{name}_trace"] = _kernel_ir(kernel, n_qubits)
-        cases[f"tier1_{name}_compile"] = _compile(kernel, n_qubits, freq)
+        cases[f"tier1_{name}_compile"] = _compile(kernel, n_qubits)
     for n in (8, 512):
         cases[f"dd_loop_n{n}"] = _kernel_ir(dd_loop(n), 1)
-        cases[f"dd_loop_n{n}_compile"] = _compile(dd_loop(n), 1, {0: 5e9})
+        cases[f"dd_loop_n{n}_compile"] = _compile(dd_loop(n), 1)
     surface5, n5 = surface_syndrome(5)
     surface9, n9 = surface_syndrome(9)
     bicycle, nb = bicycle_syndrome(6, 6)
     cases["surface_d5_compile"] = _fused(surface5, n5)
     cases["surface_d9_trace"] = _packed_trace(surface9, n9)
     cases["bicycle_6x6_compile"] = _fused(bicycle, nb)
-    cases["parametric_compile"] = lambda: pulse.compile(
-        parametric, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9}
-    )
+    cases["parametric_compile"] = lambda: pulse.compile(parametric).lower(pulse.qudit_ref(), 0.5, 2)
     cases["parametric_trace"] = lambda: _trace_kernel_with_builder(
         parametric.__wrapped__,
         PackedIRBuilder(name="p", clock_ghz=2.0, qubit_freq_hz={0: 5e9}),
@@ -148,10 +145,10 @@ def test_compile_time_within_baseline(ratios, request):
 
 
 def test_building_the_module_costs_less_than_tracing_the_kernel():
-    kernel, n_qubits, freq = _compile_time_workloads()["bell"]
+    kernel, n_qubits, _ = _compile_time_workloads()["bell"]
     best = {"trace_ms": float("inf"), "ffi_ms": float("inf")}
     for _ in range(50):
-        metrics = _compile(kernel, n_qubits, freq)().metrics
+        metrics = _compile(kernel, n_qubits)().metrics
         for stage in best:
             best[stage] = min(best[stage], getattr(metrics, stage))
     assert best["ffi_ms"] < best["trace_ms"], best
@@ -177,7 +174,9 @@ def test_verify_time_is_linear_in_unused_lines():
     def verify_ms(n_qubits: int) -> float:
         kernel = _half_unused(n_qubits)
         return min(
-            pulse.compile(kernel, [pulse.qvec_ref(n_qubits)], passes=("verify",)).metrics.passes_ms
+            pulse.compile(kernel, passes=("verify",))
+            .lower(pulse.qvec_ref(n_qubits))
+            .metrics.passes_ms
             for _ in range(5)
         )
 

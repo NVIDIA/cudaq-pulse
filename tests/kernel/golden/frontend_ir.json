@@ -504,7 +504,7 @@
   ]
  },
  "compare_symbolic": {
-  "error": "CompilationError: cannot decide Parameter('amp', idx=0, f64) > 0.5 at trace time: symbolic parameters have no value until the compiled kernel is evaluated; pass a concrete value to compile() to branch on it",
+  "error": "SymbolicValueError: cannot decide Parameter('amp', idx=0, f64) > 0.5 at trace time: a float argument has no value while the kernel compiles",
   "code": "compare_symbolic",
   "span": [
    3,

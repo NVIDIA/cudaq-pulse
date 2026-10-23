@@ -13,8 +13,7 @@ mypy must report, and --warn-unused-ignores fails if it stops reporting it.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any, assert_type
+from typing import assert_type
 
 import cudaq_pulse as pulse
 from cudaq_pulse.ops import Waveform
@@ -31,19 +30,42 @@ pulse.wf_scale(0.5, wave)  # type: ignore[arg-type]
 pulse.wf_scale(waveform=wave, scalar=0.5)  # type: ignore[call-arg]
 assert_type(pulse.wf_add(wave, wave), Waveform)
 
+dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+assert_type(dev, pulse.Device)
+assert_type(pulse.device({"target": "transmon_krinner_17q"}), pulse.Device)
+assert_type(dev.qudit_handles[0], pulse.Qudit)
+assert_type(dev.qudit_handles[0:2], pulse.Register)
+assert_type(dev.qudit_handles[[0, 1]], pulse.Register)
+assert_type(dev.qudit_handles[0:2][0], pulse.Qudit)
 
-def compile_one(kernel: Callable[..., Any]) -> None:
-    compiled = pulse.compile(kernel, [qubit], qubit_freq_hz={0: 5e9})
-    assert_type(compiled, pulse.CompiledKernel)
-    assert_type(compiled.mlir, str)
-    assert_type(compiled.metrics, pulse.CompileMetrics)
-    assert_type(compiled.events(), list[pulse.ScheduledEvent])
+
+@pulse.kernel
+def rabi(q: pulse.Qudit, amp: float) -> None:
+    pass
 
 
-def simulate_one(program: Any, target: Any) -> None:
-    # Loaded lazily at runtime, but fully typed for checkers.
-    assert_type(pulse.simulate(program, target=target), pulse.SimulationResult)
-    assert_type(
-        pulse.evolve(program, target=target, t_start=0.0, t_end=1.0, num_steps=1),
-        pulse.EvolveResult,
-    )
+@pulse.kernel(cache_size=4)
+def idle(q: pulse.Qudit) -> None:
+    pass
+
+
+assert_type(rabi, pulse.Kernel)
+assert_type(idle, pulse.Kernel)
+assert_type(rabi.cache_info().size, int)
+
+lowered = rabi.lower(dev.qudit_handles[0], 0.5)
+assert_type(lowered, pulse.Lowered)
+assert_type(lowered.mlir(), str)
+assert_type(lowered.mlir("llvm"), str)
+assert_type(lowered.metrics, pulse.CompileMetrics)
+assert_type(lowered.schedule, list[pulse.ScheduledEvent])
+assert_type(lowered.arguments, tuple[float, ...])
+
+compiled = pulse.compile(rabi, schedule="asap", device=dev)
+assert_type(compiled, pulse.CompiledKernel)
+assert_type(compiled.lower(dev.qudit_handles[0], 0.5), pulse.Lowered)
+assert_type(compiled.parameters, tuple[str, ...])
+pulse.compile(rabi, schedule=1)  # type: ignore[arg-type]
+
+# Loaded lazily at runtime, but fully typed for checkers.
+assert_type(pulse.simulate(lowered, shots=10), pulse.SimulationResult)

@@ -21,6 +21,8 @@ import pytest
 from cudaq_pulse.kernel.ir_builder import CompilationError
 from cudaq_pulse.targets import Qubit, Target
 
+from tests.runtime._lowering import on
+
 CLOCK_GHZ = 2.0
 
 
@@ -41,7 +43,7 @@ def _target():
 
 
 def _simulate(kernel):
-    result = pulse.simulate(kernel(pulse.qudit_ref()), target=_target())
+    result = pulse.simulate(on(_target(), kernel, pulse.qudit_ref()))
     return np.asarray(result.density_matrix)
 
 
@@ -154,7 +156,7 @@ def test_retained_loop_of_sums_lowers_like_its_unrolling():
             drive(d0, wf_add(gaussian(40, 0.02, 10.0), gaussian(40, 0.03, 8.0)), t0)
             wait(d0, 20 + 0 * i)
 
-    assert "scf.for" in pulse.compile(rolled, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9}).mlir
+    assert "scf.for" in rolled.lower(pulse.qudit_ref()).mlir()
     np.testing.assert_allclose(_simulate(rolled), _simulate(unrolled), atol=1e-12)
 
 

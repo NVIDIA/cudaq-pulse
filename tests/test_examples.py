@@ -20,6 +20,8 @@ _SCRIPTS = sorted(p for p in _EXAMPLES.rglob("*.py") if p.name not in _GPU_ONLY)
 @pytest.mark.parametrize("path", _SCRIPTS, ids=lambda p: str(p.relative_to(_EXAMPLES)))
 def test_example_runs(path, monkeypatch, capsys):
     monkeypatch.setenv("MPLBACKEND", "Agg")
+    # Examples choose their devices themselves.
+    monkeypatch.delenv("CUDAQ_PULSE_TARGET", raising=False)
     monkeypatch.syspath_prepend(str(path.parent))
     runpy.run_path(str(path), run_name="__main__")
     assert capsys.readouterr().out

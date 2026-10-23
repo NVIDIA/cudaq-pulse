@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 from cudaq_pulse.targets import Qubit, Target
 
-from tests.runtime._lowering import pulse_mlir
+from tests.runtime._lowering import evolve, on, pulse_mlir
 
 gpu = pytest.mark.gpu
 
@@ -32,7 +32,7 @@ def test_rabi_mlir_structure():
         wf = gaussian(100, 0.1, 25.0)
         drive(d0, wf, t0)
 
-    ir = rabi(pulse.qudit_ref())
+    ir = (rabi, pulse.qudit_ref())
     mlir = pulse_mlir(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
 
     assert "module @rabi" in mlir
@@ -66,10 +66,8 @@ def test_rabi_gpu_execution():
         wf = square(40, math.pi / 20.0)
         drive(d0, wf, t0)
 
-    ir = rabi(pulse.qudit_ref())
-    result = pulse.evolve(
-        ir, target=target, t_start=0.0, t_end=20.0, num_steps=200, integrator="rk4"
-    )
+    ir = (rabi, pulse.qudit_ref())
+    result = evolve(on(target, *ir), t_start=0.0, t_end=20.0, num_steps=200, integrator="rk4")
 
     state = result.final_state
     assert state.shape == (2,)
@@ -107,10 +105,8 @@ def test_rabi_gpu_integrator_parity(integrator):
         wf = square(40, math.pi / 20.0)
         drive(d0, wf, t0)
 
-    ir = rabi(pulse.qudit_ref())
-    result = pulse.evolve(
-        ir, target=target, t_start=0.0, t_end=20.0, num_steps=200, integrator=integrator
-    )
+    ir = (rabi, pulse.qudit_ref())
+    result = evolve(on(target, *ir), t_start=0.0, t_end=20.0, num_steps=200, integrator=integrator)
 
     state = result.final_state
     assert state.shape == (2,)

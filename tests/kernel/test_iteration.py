@@ -15,21 +15,23 @@ import pytest
 from cudaq_pulse.kernel import _emitter
 from cudaq_pulse.kernel.ir_builder import CompilationError
 
+from tests._ir import python_ir
+
 AMPS = [0.1, 0.2, 0.3]
 DURS = (16, 32, 48)
 
 
 def _text(kernel, n_qubits=1):
     args = [pulse.qvec_ref(n_qubits)] if n_qubits > 1 else [pulse.qudit_ref()]
-    compiled = pulse.compile(kernel, args, qubit_freq_hz={i: 5e9 for i in range(n_qubits)})
-    return re.sub(r"module @\w+", "module", compiled.mlir)
+    compiled = kernel.lower(*args)
+    return re.sub(r"module @\w+", "module", compiled.mlir())
 
 
 def _same(a, b, n_qubits=1):
     ta, tb = _text(a, n_qubits), _text(b, n_qubits)
     assert ta == tb
     args = [pulse.qvec_ref(n_qubits)] if n_qubits > 1 else [pulse.qudit_ref()]
-    assert a(*args).op_count() == b(*args).op_count()
+    assert python_ir(a, *args).op_count() == python_ir(b, *args).op_count()
 
 
 def test_list_and_tuple():
@@ -188,7 +190,7 @@ def test_range_loops_are_still_retained():
         for _ in range(512):
             drive(d, square(16, 0.1), t)
 
-    ir = rolled(pulse.qudit_ref())
+    ir = python_ir(rolled, pulse.qudit_ref())
     assert [op.kind for op in ir.ops].count("scf.for") == 1
     assert ir.op_count() == 5
 
@@ -248,13 +250,16 @@ def test_range_errors_name_their_cause():
         float_bound(pulse.qudit_ref())
 
     @pulse.kernel
-    def symbolic_bound(q, n: int):
+    def symbolic_bound(q, n: float):
         d, t = get_drive_line(q)
         for _ in range(n):
             wait(d, 4)
 
-    with pytest.raises(CompilationError, match="depends on kernel parameter 'n'"):
-        pulse.compile(symbolic_bound, [pulse.qudit_ref()])
+    # A float loop bound is specialized on, and range() of a float fails as
+    # it does in Python.
+    with pytest.raises(CompilationError, match=r"integers known at compile time; got \(float\)"):
+        symbolic_bound.lower(pulse.qudit_ref(), 3.0)
+    assert symbolic_bound.static_parameters == ("q", "n")
 
 
 def test_while_loops_point_at_for_loops():

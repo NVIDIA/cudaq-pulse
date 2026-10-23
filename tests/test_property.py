@@ -30,11 +30,11 @@ def _random_kernel(amplitudes, durations, waits, phases):
 
 
 def _compile(kernel, **kwargs):
-    return pulse.compile(kernel, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9}, **kwargs)
+    return pulse.compile(kernel, **kwargs).lower(pulse.qudit_ref())
 
 
 def _makespan(compiled):
-    return max((e.start_vtu + e.duration_vtu for e in compiled.events()), default=0)
+    return max((e.start_vtu + e.duration_vtu for e in compiled.schedule), default=0)
 
 
 _amplitudes = st.lists(
@@ -54,7 +54,7 @@ def test_schedules_are_back_to_back_on_one_line(amplitudes, durations, waits, ph
     expected = sum(durations) + sum(waits[: len(durations)])
     for policy in ("asap", "alap"):
         compiled = _compile(kernel, schedule=policy, passes=())
-        events = compiled.events()
+        events = compiled.schedule
         assert _makespan(compiled) == expected
         for before, after in zip(events, events[1:]):
             assert after.start_vtu == before.start_vtu + before.duration_vtu
@@ -72,8 +72,10 @@ def test_default_passes_preserve_the_schedule(amplitudes, durations, phases):
 def test_virtual_z_is_idempotent(durations, phases):
     kernel = _random_kernel([0.3], durations, [], phases)
     once = _compile(kernel, passes=("virtual_z",))
-    once.module.run_passes(["pulse-virtual-z"])
-    assert once.module.print() == _compile(kernel, passes=("virtual_z", "virtual_z")).module.print()
+    once._module.run_passes(["pulse-virtual-z"])
+    assert (
+        once._module.print() == _compile(kernel, passes=("virtual_z", "virtual_z"))._module.print()
+    )
 
 
 @given(amplitudes=_amplitudes, durations=_durations)
@@ -94,7 +96,7 @@ def test_iterating_a_list_traces_like_indexing_it(amplitudes, durations):
             drive(d0, square(pairs[i][0], pairs[i][1]), t0)
 
     def text(kernel):
-        return _compile(kernel).module.print().split("\n", 1)[1]
+        return _compile(kernel)._module.print().split("\n", 1)[1]
 
     assert text(iterated) == text(indexed)
 

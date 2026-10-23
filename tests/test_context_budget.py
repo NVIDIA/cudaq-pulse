@@ -28,7 +28,9 @@ def _pulse(q0):
 
 
 def _compile():
-    return pulse.compile(_pulse, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9})
+    # Every call builds a module: a cached specialization would not.
+    _pulse.cache_clear()
+    return _pulse.lower(pulse.qudit_ref())
 
 
 def _created():
@@ -52,7 +54,7 @@ def test_a_module_limit_retires_the_context(monkeypatch):
     kept = [_compile() for _ in range(6)]
     assert _created() - before == 3
     # Modules built in a retired context stay usable.
-    assert all("pulse.drive" in compiled.mlir for compiled in kept)
+    assert all("pulse.drive" in compiled.mlir() for compiled in kept)
 
 
 def test_a_word_limit_retires_the_context(monkeypatch):

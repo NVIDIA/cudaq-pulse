@@ -39,12 +39,10 @@ def test_constant_loop_is_retained_and_scheduled_per_iteration():
         for _ in range(5):
             drive(line, waveform, tone)
 
-    compiled = pulse.compile(
-        kernel, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9}, schedule="asap", passes=()
-    )
-    assert compiled.mlir.count("= pulse.drive ") == 1
-    assert "scf.for" in compiled.mlir
-    assert [(e.start_vtu, e.duration_vtu) for e in compiled.events()] == [
+    compiled = pulse.compile(kernel, schedule="asap", passes=()).lower(pulse.qudit_ref())
+    assert compiled.mlir().count("= pulse.drive ") == 1
+    assert "scf.for" in compiled.mlir()
+    assert [(e.start_vtu, e.duration_vtu) for e in compiled.schedule] == [
         (0, 10),
         (10, 10),
         (20, 10),
@@ -61,10 +59,10 @@ def test_range_start_stop_step_values_are_preserved():
         for index in range(2, 9, 3):
             shift_phase(tone, float(index))
 
-    compiled = pulse.compile(kernel, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9}, passes=())
-    assert compiled.mlir.count("pulse.shift_phase") == 3
+    compiled = pulse.compile(kernel, passes=()).lower(pulse.qudit_ref())
+    assert compiled.mlir().count("pulse.shift_phase") == 3
     for value in (2.0, 5.0, 8.0):
-        assert f"{value:.6e}" in compiled.mlir
+        assert f"{value:.6e}" in compiled.mlir()
 
 
 def test_compile_keeps_a_measurement_dependent_branch():
@@ -76,9 +74,9 @@ def test_compile_keeps_a_measurement_dependent_branch():
         if result:
             wait(line, 10)
 
-    compiled = pulse.compile(kernel, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9})
-    assert "pulse.is_set" in compiled.mlir and "scf.if" in compiled.mlir
-    compiled.module.run_passes(["pulse-verify"])
+    compiled = kernel.lower(pulse.qudit_ref())
+    assert "pulse.is_set" in compiled.mlir() and "scf.if" in compiled.mlir()
+    compiled._module.run_passes(["pulse-verify"])
 
 
 def test_documented_waveforms_and_algebra_lower_to_typed_ops():
@@ -94,13 +92,13 @@ def test_documented_waveforms_and_algebra_lower_to_typed_ops():
         negated = wf_neg(scaled)
         drive(line, negated, tone)
 
-    compiled = pulse.compile(kernel, [], qubit_freq_hz={0: 5.0e9}, passes=(), schedule="asap")
-    assert "pulse.cosine" in compiled.mlir
-    assert "pulse.custom_samples" in compiled.mlir
-    assert "pulse.add" in compiled.mlir
-    assert "pulse.scale" in compiled.mlir
-    assert "pulse.neg" in compiled.mlir
-    assert _drive_timings(compiled.mlir) == [(0, 4)]
+    compiled = pulse.compile(kernel, passes=(), schedule="asap").lower()
+    assert "pulse.cosine" in compiled.mlir()
+    assert "pulse.custom_samples" in compiled.mlir()
+    assert "pulse.add" in compiled.mlir()
+    assert "pulse.scale" in compiled.mlir()
+    assert "pulse.neg" in compiled.mlir()
+    assert _drive_timings(compiled.mlir()) == [(0, 4)]
 
 
 def test_custom_waveform_preserves_callback_symbol():
@@ -111,8 +109,8 @@ def test_custom_waveform_preserves_callback_symbol():
         line, tone = get_drive_line(q)
         drive(line, custom(8, "calibrated_envelope"), tone)
 
-    compiled = pulse.compile(kernel, [], qubit_freq_hz={0: 5.0e9}, passes=())
-    assert "@calibrated_envelope" in compiled.mlir
+    compiled = pulse.compile(kernel, passes=()).lower()
+    assert "@calibrated_envelope" in compiled.mlir()
 
 
 def test_concrete_numeric_arguments_are_not_made_symbolic():
@@ -123,24 +121,27 @@ def test_concrete_numeric_arguments_are_not_made_symbolic():
         line, tone = get_drive_line(q)
         drive(line, gaussian(duration, amplitude, 5.0), tone)
 
-    compiled = pulse.compile(kernel, [20, 0.4], qubit_freq_hz={0: 5.0e9})
-    assert not compiled.is_parametric
-    assert _drive_timings(compiled.mlir) == [(0, 20)]
+    compiled = kernel.lower(20, 0.4)
+    assert compiled.parameters == ()
+    assert _drive_timings(compiled.mlir()) == [(0, 20)]
 
 
-def test_symbolic_type_is_inferred_from_use_not_name():
+def test_an_unannotated_parameter_specializes_the_kernel():
 
     @pulse.kernel
     def kernel(q, tau):
         line, _ = get_drive_line(q)
         wait(line, tau)
 
-    compiled = pulse.compile(kernel, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9})
-    assert "%arg0: i64" in compiled.mlir
-    assert compiled(tau=17).mlir.count("duration_vtu = 17") == 1
+    compiled = pulse.compile(kernel)
+    lowered = compiled.lower(pulse.qudit_ref(), tau=17)
+    assert "%arg0" not in lowered.mlir()
+    assert lowered.mlir().count("duration_vtu = 17") == 1
+    compiled.lower(pulse.qudit_ref(), tau=18)
+    assert compiled.cache_info().compiled == 2
 
 
-def test_symbolic_arithmetic_and_explicit_cast_are_lowered():
+def test_a_float_that_sets_a_duration_is_specialized_on():
 
     @pulse.kernel
     def kernel(q, sigma: float, delay: int):
@@ -149,12 +150,13 @@ def test_symbolic_arithmetic_and_explicit_cast_are_lowered():
         drive(line, waveform, tone)
         wait(line, delay * 2 + 1)
 
-    compiled = pulse.compile(kernel, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9}, schedule="asap")
-    assert "arith.mulf" in compiled.mlir
-    assert "arith.fptosi" in compiled.mlir
-    specialized = compiled(sigma=5.0, delay=7)
-    assert _drive_timings(specialized.mlir) == [(0, 20)]
-    assert "duration_vtu = 15" in specialized.mlir
+    # sigma sets a duration, so the kernel is specialized on its value.
+    specialized = pulse.compile(kernel, schedule="asap").lower(
+        pulse.qudit_ref(), sigma=5.0, delay=7
+    )
+    assert kernel.static_parameters == ("q", "sigma", "delay")
+    assert _drive_timings(specialized.mlir()) == [(0, 20)]
+    assert "duration_vtu = 15" in specialized.mlir()
 
 
 def test_unknown_pass_is_rejected():
@@ -164,7 +166,7 @@ def test_unknown_pass_is_rejected():
         pass
 
     with pytest.raises(ValueError, match="Unknown pulse passes"):
-        pulse.compile(kernel, [], passes=("typo",))
+        pulse.compile(kernel, passes=("typo",)).lower()
 
 
 def test_asap_and_alap_have_distinct_correct_placement():
@@ -177,11 +179,10 @@ def test_asap_and_alap_have_distinct_correct_placement():
         drive(line1, square(100, 0.2), tone1)
 
     args = [pulse.qudit_ref(), pulse.qudit_ref()]
-    frequencies = {0: 5.0e9, 1: 5.1e9}
-    asap = pulse.compile(kernel, args, qubit_freq_hz=frequencies, schedule="asap", passes=())
-    alap = pulse.compile(kernel, args, qubit_freq_hz=frequencies, schedule="alap", passes=())
-    assert _drive_timings(asap.mlir) == [(0, 40), (0, 100)]
-    assert _drive_timings(alap.mlir) == [(60, 40), (0, 100)]
+    asap = pulse.compile(kernel, schedule="asap", passes=()).lower(*args)
+    alap = pulse.compile(kernel, schedule="alap", passes=()).lower(*args)
+    assert _drive_timings(asap.mlir()) == [(0, 40), (0, 100)]
+    assert _drive_timings(alap.mlir()) == [(60, 40), (0, 100)]
 
 
 def test_compile_uses_resource_machine_for_overlapping_intervals():
@@ -194,14 +195,9 @@ def test_compile_uses_resource_machine_for_overlapping_intervals():
         drive(line1, square(40, 0.2), tone1)
 
     compiled = pulse.compile(
-        kernel,
-        [pulse.qudit_ref(), pulse.qudit_ref()],
-        qubit_freq_hz={0: 5.0e9, 1: 5.1e9},
-        schedule="rcp",
-        passes=(),
-        machine=MachineModel(max_concurrent_drives=1),
-    )
-    assert _drive_timings(compiled.mlir) == [(0, 100), (100, 40)]
+        kernel, schedule="rcp", passes=(), machine=MachineModel(max_concurrent_drives=1)
+    ).lower(pulse.qudit_ref(), pulse.qudit_ref())
+    assert _drive_timings(compiled.mlir()) == [(0, 100), (100, 40)]
 
 
 def test_scheduler_tracks_line_lineage_and_resource_intervals():
@@ -211,10 +207,8 @@ def test_scheduler_tracks_line_lineage_and_resource_intervals():
         for duration in range(10, 40, 10):
             drive(line, square(duration, 0.2), tone)
 
-    compiled = pulse.compile(
-        lineage, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9}, passes=(), schedule="asap"
-    )
-    assert [e.start_vtu for e in compiled.events()] == [0, 10, 30]
+    compiled = pulse.compile(lineage, passes=(), schedule="asap").lower(pulse.qudit_ref())
+    assert [e.start_vtu for e in compiled.schedule] == [0, 10, 30]
 
     @pulse.kernel
     def resources(qs):
@@ -223,14 +217,9 @@ def test_scheduler_tracks_line_lineage_and_resource_intervals():
             drive(line, square(100, 0.2), tone)
 
     compiled = pulse.compile(
-        resources,
-        [pulse.qvec_ref(3)],
-        qubit_freq_hz={i: 5e9 + i * 1e8 for i in range(3)},
-        passes=(),
-        schedule="rcp",
-        machine=MachineModel(max_concurrent_drives=2),
-    )
-    assert [e.start_vtu for e in compiled.events()] == [0, 0, 100]
+        resources, passes=(), schedule="rcp", machine=MachineModel(max_concurrent_drives=2)
+    ).lower(pulse.qvec_ref(3))
+    assert [e.start_vtu for e in compiled.schedule] == [0, 0, 100]
 
 
 def test_alap_delays_independent_shorter_operation():
@@ -241,10 +230,8 @@ def test_alap_delays_independent_shorter_operation():
         drive(line0, square(40, 0.2), tone0)
         drive(line1, square(100, 0.2), tone1)
 
-    compiled = pulse.compile(
-        k, [pulse.qudit_ref(), pulse.qudit_ref()], qubit_freq_hz={0: 5e9, 1: 5.1e9}, passes=()
-    )
-    assert [(e.line, e.start_vtu) for e in compiled.events()] == [(0, 60), (1, 0)]
+    compiled = pulse.compile(k, passes=()).lower(pulse.qudit_ref(), pulse.qudit_ref())
+    assert [(e.line, e.start_vtu) for e in compiled.schedule] == [(0, 60), (1, 0)]
 
 
 def test_packed_decoder_rejects_truncated_and_unknown_records():
@@ -263,9 +250,10 @@ def test_qudit_ref_can_bind_a_physical_target_index():
         line, _tone = get_drive_line(qubit)
         wait(line, 10)
 
-    compiled = pulse.compile(kernel, [pulse.qudit_ref(4)], qubit_freq_hz={4: 5.2e9}, passes=())
-    assert "qubit = 4 : i64" in compiled.mlir
-    assert "frequency_hz = 5.200000e+09 : f64" in compiled.mlir
+    compiled = pulse.compile(kernel, passes=()).lower(pulse.qudit_ref(4))
+    assert "qubit = 4 : i64" in compiled.mlir()
+    # The test target puts qudit i at 5 GHz + i * 100 MHz.
+    assert "frequency_hz = 5.400000e+09 : f64" in compiled.mlir()
 
     with pytest.raises(ValueError, match="non-negative"):
         pulse.qudit_ref(-1)
@@ -279,7 +267,7 @@ def test_virtual_time_arguments_are_not_silently_truncated():
         drive(line, square(10.5, 0.2), tone)
 
     with pytest.raises(CompilationError, match="must be an integer"):
-        pulse.compile(kernel, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9})
+        kernel.lower(pulse.qudit_ref())
 
 
 def test_alap_rcp_never_schedules_before_time_zero():
@@ -296,10 +284,8 @@ def test_alap_rcp_never_schedules_before_time_zero():
     kernel, n, freq = workloads["qaoa4"]
     compiled = pulse.compile(
         kernel,
-        [pulse.qudit_ref() for _ in range(n)],
-        qubit_freq_hz=freq,
         schedule="alap_rcp",
         machine=MachineModel(max_concurrent_drives=2, max_concurrent_readouts=1),
-    )
-    assert min(e.start_vtu for e in compiled.events()) >= 0
-    compiled.module.run_passes(["pulse-verify"])
+    ).lower(*[pulse.qudit_ref() for _ in range(n)])
+    assert min(e.start_vtu for e in compiled.schedule) >= 0
+    compiled._module.run_passes(["pulse-verify"])

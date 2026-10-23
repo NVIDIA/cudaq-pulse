@@ -27,8 +27,9 @@ def test_module_builder_exposes_only_the_packed_decoder():
 
 
 def test_pulse_module_methods():
-    compiled = pulse.compile(_x, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9})
-    module = compiled.module
+    # The cached specialization keeps ``amplitude`` a function argument.
+    compiled = _x._dispatch.lookup((pulse.qudit_ref(), 0.0)).lowered
+    module = compiled._module
     assert module.is_parametric()
     assert module.param_names() == ["amplitude"]
     assert module.run_passes(["pulse-verify"]) is None
@@ -41,7 +42,7 @@ def test_pulse_module_methods():
 
 
 def test_pipeline_methods_return_results():
-    text = pulse.compile(_x, [pulse.qudit_ref(), 0.1], qubit_freq_hz={0: 5e9}).mlir
+    text = _x.lower(pulse.qudit_ref(), 0.1).mlir()
     pipeline = native.MLIRPipeline()
     assert "pulse.drive" in pipeline.parse_and_print(text)
     assert "pulse.drive" in pipeline.parse_to_module(text).print()
@@ -76,6 +77,6 @@ def test_pass_failures_carry_the_diagnostics():
 
 
 def test_compiled_module_is_named_after_the_kernel():
-    compiled = pulse.compile(_x, [pulse.qudit_ref(), 0.1], qubit_freq_hz={0: 5e9})
-    assert compiled.mlir.startswith("module @_x")
-    assert "pulse.qubit_freq_hz = array<f64: 5.000000e+09>" in compiled.mlir
+    compiled = _x.lower(pulse.qudit_ref(), 0.1)
+    assert compiled.mlir().startswith("module @_x")
+    assert "pulse.qubit_freq_hz = array<f64: 5.000000e+09>" in compiled.mlir()

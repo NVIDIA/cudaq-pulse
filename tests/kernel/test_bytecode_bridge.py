@@ -34,6 +34,8 @@ from cudaq_pulse.ops import (
     wait,
 )
 
+from tests._ir import python_ir
+
 
 def _helper_waveform():
     return gaussian(32, 0.2, 8.0)
@@ -608,7 +610,7 @@ class TestDecoratorIntegration:
             wf = gaussian(40, 0.3, 10.0)
             drive(d0, wf, t0)
 
-        ir = my_kernel(qudit_ref())
+        ir = python_ir(my_kernel, qudit_ref())
         assert ir is not None
         kinds = [op.kind for op in ir.ops]
         assert "pulse.drive" in kinds
@@ -619,11 +621,9 @@ class TestDecoratorIntegration:
         def cached(q0):
             pass
 
-        cached(qudit_ref())
-        e1 = cached.__cudaq_pulse_emitter__
-        cached(qudit_ref())
-        e2 = cached.__cudaq_pulse_emitter__
-        assert e1 is e2
+        cached.lower(qudit_ref())
+        cached.lower(qudit_ref())
+        assert cached.cache_info().compiled == 1
 
     def test_kernel_internal_alloc(self):
 
@@ -632,6 +632,6 @@ class TestDecoratorIntegration:
             q = qudit_ref()
             d0, t0 = get_drive_line(q)
 
-        ir = internal()
+        ir = python_ir(internal)
         kinds = [op.kind for op in ir.ops]
         assert "pulse.qudit_alloc" in kinds

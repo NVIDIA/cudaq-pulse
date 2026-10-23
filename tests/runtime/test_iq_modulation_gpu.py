@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 from cudaq_pulse.targets import Qubit, Target
 
-from tests.runtime._lowering import pulse_mlir
+from tests.runtime._lowering import evolve, on, pulse_mlir
 
 gpu = pytest.mark.gpu
 
@@ -43,9 +43,8 @@ def _target():
 
 
 def _evolve(kernel):
-    return pulse.evolve(
-        kernel(pulse.qudit_ref()),
-        target=_target(),
+    return evolve(
+        on(_target(), kernel, pulse.qudit_ref()),
         t_start=0.0,
         t_end=20.0,
         num_steps=200,
@@ -62,7 +61,7 @@ def test_iq_modulation_mlir_structure():
         shift_phase(t0, math.pi / 2)
         drive(d0, square(40, math.pi / 20.0), t0)
 
-    mlir = pulse_mlir(q_drive(pulse.qudit_ref()), clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
+    mlir = pulse_mlir((q_drive, pulse.qudit_ref()), clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
     assert "pulse.square" in mlir
 
 

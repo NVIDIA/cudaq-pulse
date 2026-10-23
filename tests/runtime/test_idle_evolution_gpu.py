@@ -19,7 +19,7 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.targets import Qubit, Target
 
-from tests.runtime._lowering import pulse_mlir
+from tests.runtime._lowering import evolve, on, pulse_mlir
 
 gpu = pytest.mark.gpu
 
@@ -65,9 +65,8 @@ def _p1_after_wait(wait_ns):
             drive(d0, square(40, math.pi / 20.0), t0)
 
     t_end = 20.0 + wait_ns
-    result = pulse.evolve(
-        kernel(pulse.qudit_ref()),
-        target=_target(),
+    result = evolve(
+        on(_target(), kernel, pulse.qudit_ref()),
         t_start=0.0,
         t_end=t_end,
         num_steps=max(1, int(round(t_end))),
@@ -85,7 +84,7 @@ def test_idle_evolution_mlir_structure():
         drive(d0, square(40, math.pi / 20.0), t0)
         wait(d0, 1000)
 
-    mlir = pulse_mlir(kernel(pulse.qudit_ref()), clock_ghz=_CLOCK_GHZ, qubit_freq_hz={0: 5.0e9})
+    mlir = pulse_mlir((kernel, pulse.qudit_ref()), clock_ghz=_CLOCK_GHZ, qubit_freq_hz={0: 5.0e9})
     assert "pulse.wait" in mlir
 
 
@@ -133,9 +132,8 @@ def test_split_idle_matches_single_idle():
         wait(d0, 400)  # 5 x 200 ns == 1000 ns total
 
     def _run(kernel):
-        result = pulse.evolve(
-            kernel(pulse.qudit_ref()),
-            target=_target(),
+        result = evolve(
+            on(_target(), kernel, pulse.qudit_ref()),
             t_start=0.0,
             t_end=1020.0,
             num_steps=1020,

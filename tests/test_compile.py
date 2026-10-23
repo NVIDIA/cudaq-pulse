@@ -5,7 +5,7 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""Tests for cudaq_pulse.compile() public API."""
+"""Tests for compiling kernels: ``pulse.compile`` and ``kernel.lower``."""
 
 from __future__ import annotations
 
@@ -38,21 +38,14 @@ _FREQ_2Q = {0: 5.0e9, 1: 5.1e9}
 
 
 def test_compile_returns_compiled_kernel():
-    ck = pulse.compile(
-        _bell,
-        [pulse.qudit_ref(), pulse.qudit_ref()],
-        qubit_freq_hz=_FREQ_2Q,
-    )
+    ck = pulse.compile(_bell)
     assert isinstance(ck, pulse.CompiledKernel)
+    assert isinstance(ck.lower(pulse.qudit_ref(), pulse.qudit_ref()), pulse.Lowered)
 
 
 def test_compile_produces_mlir():
-    ck = pulse.compile(
-        _bell,
-        [pulse.qudit_ref(), pulse.qudit_ref()],
-        qubit_freq_hz=_FREQ_2Q,
-    )
-    mlir = ck.mlir
+    ck = _bell.lower(pulse.qudit_ref(), pulse.qudit_ref())
+    mlir = ck.mlir()
     assert "module @" in mlir
     assert "func.func @main()" in mlir
     assert "pulse.gaussian" in mlir
@@ -60,11 +53,7 @@ def test_compile_produces_mlir():
 
 
 def test_compile_metrics():
-    ck = pulse.compile(
-        _bell,
-        [pulse.qudit_ref(), pulse.qudit_ref()],
-        qubit_freq_hz=_FREQ_2Q,
-    )
+    ck = _bell.lower(pulse.qudit_ref(), pulse.qudit_ref())
     m = ck.metrics
     assert isinstance(m, pulse.CompileMetrics)
     assert m.total_ms > 0
@@ -73,14 +62,9 @@ def test_compile_metrics():
 
 
 def test_compile_no_passes():
-    ck = pulse.compile(
-        _bell,
-        [pulse.qudit_ref(), pulse.qudit_ref()],
-        qubit_freq_hz=_FREQ_2Q,
-        passes=(),
-    )
-    assert ck.mlir is not None
-    assert "pulse.drive" in ck.mlir
+    ck = pulse.compile(_bell, passes=()).lower(pulse.qudit_ref(), pulse.qudit_ref())
+    assert ck.mlir() is not None
+    assert "pulse.drive" in ck.mlir()
 
 
 def test_compile_single_qubit():
@@ -91,8 +75,8 @@ def test_compile_single_qubit():
         wf = gaussian(40, 0.3, 10.0)
         drive(d, wf, t)
 
-    ck = pulse.compile(k, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9})
-    assert "pulse.drive" in ck.mlir
+    ck = k.lower(pulse.qudit_ref())
+    assert "pulse.drive" in ck.mlir()
 
 
 def test_compile_with_virtual_z():
@@ -104,8 +88,8 @@ def test_compile_with_virtual_z():
         wf = gaussian(40, 0.3, 10.0)
         drive(d, wf, t)
 
-    ck = pulse.compile(k, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9})
-    assert ck.mlir is not None
+    ck = k.lower(pulse.qudit_ref())
+    assert ck.mlir() is not None
     assert ck.metrics.total_ms > 0
 
 
@@ -119,20 +103,18 @@ def test_compile_with_fusion():
         sq2 = square(50, 0.2)
         drive(d, sq2, t)
 
-    ck = pulse.compile(k, [pulse.qudit_ref()], qubit_freq_hz={0: 5.0e9})
-    assert ck.mlir is not None
+    ck = k.lower(pulse.qudit_ref())
+    assert ck.mlir() is not None
 
 
 def test_compile_bad_schedule_raises():
     with pytest.raises(ValueError, match="Unknown schedule"):
-        pulse.compile(
-            _bell, [pulse.qudit_ref(), pulse.qudit_ref()], qubit_freq_hz=_FREQ_2Q, schedule="bogus"
-        )
+        pulse.compile(_bell, schedule="bogus").lower(pulse.qudit_ref(), pulse.qudit_ref())
 
 
-def test_compile_no_args_raises():
-    with pytest.raises(TypeError, match="requires args"):
-        pulse.compile(_bell, qubit_freq_hz=_FREQ_2Q)
+def test_lower_binds_arguments_like_python():
+    with pytest.raises(TypeError, match=r"_bell\(\) missing 2 required positional arguments"):
+        _bell.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -191,10 +173,6 @@ def test_packed_ir_builder_sync():
 
 def test_compile_module_available():
     """compile() produces an in-memory PulseModule."""
-    ck = pulse.compile(
-        _bell,
-        [pulse.qudit_ref(), pulse.qudit_ref()],
-        qubit_freq_hz=_FREQ_2Q,
-    )
-    assert ck.module is not None
-    assert ck.mlir is not None
+    ck = _bell.lower(pulse.qudit_ref(), pulse.qudit_ref())
+    assert ck._module is not None
+    assert ck.mlir() is not None

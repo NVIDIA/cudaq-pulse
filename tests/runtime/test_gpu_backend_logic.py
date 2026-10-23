@@ -23,8 +23,9 @@ import numpy as np
 import pytest
 from cudaq_pulse.runtime import jit
 from cudaq_pulse.runtime import simulate as simulate_module
-from cudaq_pulse.runtime.evolve import _compile_for
 from cudaq_pulse.targets import Qubit, Target
+
+from tests.runtime._lowering import evolve, on
 
 _PI = math.pi / 20.0
 _HALF_PI = math.pi / 40.0
@@ -37,8 +38,10 @@ class _CpuStandIn(simulate_module._GpuBackend):
         self._segment = (entries, t0, t1)
         return super().evolve(state, entries, t0, t1)
 
-    def _execute(self, state, mixed):
-        header = self.module.print().split("\n", 1)[0]
+    arguments: list[float] = []
+
+    def _execute(self, text, state, mixed):
+        header = text.split("\n", 1)[0]
         assert ("qop.mixed_state" in header) == (mixed and not self.dissipative)
         assert mixed == (state.ndim == 2)
         rho = simulate_module._CpuBackend.evolve(self, self.density(state), *self._segment)
@@ -172,8 +175,8 @@ CASES = {
 def _simulate(kernel, n, backend, kwargs):
     kwargs = dict(kwargs)
     target = kwargs.pop("target", None) or _target(n)
-    program = kernel(*[pulse.qudit_ref() for _ in range(n)])
-    return pulse.simulate(program, target=target, backend=backend, seed=7, **kwargs)
+    program = (kernel, *[pulse.qudit_ref() for _ in range(n)])
+    return pulse.simulate(on(target, *program), backend=backend, seed=7, **kwargs)
 
 
 def _weights(result):
@@ -209,35 +212,22 @@ def test_the_gpu_backend_simulates_a_program_that_measures(name, gpu_on_cpu):
 @pytest.mark.parametrize("t_start", [0.0, 130.0, 500.0])
 @pytest.mark.parametrize("t1_us", [0.0, 0.5])
 def test_gpu_setup_lowers_a_program_that_measures_at_any_start(t_start, t1_us, gpu_on_cpu):
-    program = _active_reset(_PI)(pulse.qudit_ref())
+    program = (_active_reset(_PI), pulse.qudit_ref())
     target = _target(1, t1_us)
-    compiled = _compile_for(program, target=target, clock_ghz=2.0)
-    result = simulate_module._simulate_compiled(
-        compiled,
-        target,
-        levels=2,
-        initial_state=None,
-        shots=None,
-        seed=None,
+    result = simulate_module._simulate_lowered(
+        on(target, *program),
         backend="gpu",
         t_start=t_start,
         t_end=t_start + 200.0,
-        dt_ns=0.05,
-        integrator="rk4",
-        clock_ghz=2.0,
     )
     assert np.trace(result.density_matrix).real == pytest.approx(1.0, abs=1e-9)
 
 
 def test_evolve_of_a_program_that_measures_runs_the_gpu_backend(gpu_on_cpu):
-    result = pulse.evolve(
-        _active_reset(_HALF_PI)(pulse.qudit_ref()),
-        target=_target(1),
-        t_start=0.0,
-        t_end=140.0,
-        num_steps=2800,
-    )
-    np.testing.assert_allclose(result.final_state, np.diag([1.0, 0.0]), atol=1e-7)
+    lowered = on(_target(1), _active_reset(_HALF_PI), pulse.qudit_ref())
+    state = evolve(lowered, t_start=0.0, t_end=140.0, num_steps=2800).final_state
+    rho = np.outer(state, state.conj()) if state.ndim == 1 else state
+    np.testing.assert_allclose(rho, np.diag([1.0, 0.0]), atol=1e-7)
 
 
 @pulse.kernel
@@ -254,20 +244,11 @@ def test_a_late_start_evolves_from_the_start_not_the_measurement(backend, gpu_on
     # The readout ends at 100 ns and the pi pulse plays over [100, 120] ns.
     # Started at 120 ns, the evolution must not replay the pulse.
     target = _target(1)
-    compiled = _compile_for(measure_then_flip(pulse.qudit_ref()), target=target, clock_ghz=2.0)
-    result = simulate_module._simulate_compiled(
-        compiled,
-        target,
-        levels=2,
-        initial_state=None,
-        shots=None,
-        seed=None,
+    result = simulate_module._simulate_lowered(
+        on(target, measure_then_flip, pulse.qudit_ref()),
         backend=backend,
         t_start=120.0,
         t_end=140.0,
-        dt_ns=0.05,
-        integrator="rk4",
-        clock_ghz=2.0,
     )
     np.testing.assert_allclose(result.density_matrix, np.diag([1.0, 0.0]), atol=1e-12)
     assert result.times_ns == (120.0, 140.0)

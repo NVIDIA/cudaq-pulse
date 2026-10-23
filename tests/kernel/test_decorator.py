@@ -9,6 +9,8 @@
 
 import cudaq_pulse as pulse
 
+from tests._ir import python_ir
+
 
 def test_kernel_basic_decoration():
 
@@ -16,7 +18,8 @@ def test_kernel_basic_decoration():
     def my_kernel(q0):
         pass
 
-    assert hasattr(my_kernel, "__cudaq_pulse_emitter__")
+    assert isinstance(my_kernel, pulse.Kernel)
+    assert my_kernel.__wrapped__.__name__ == "my_kernel"
 
 
 def test_kernel_caching():
@@ -26,12 +29,9 @@ def test_kernel_caching():
         pass
 
     q = pulse.qudit_ref()
-    my_kernel(q)
-    emitter1 = my_kernel.__cudaq_pulse_emitter__
-    my_kernel(q)
-    emitter2 = my_kernel.__cudaq_pulse_emitter__
-    assert emitter1 is not None
-    assert emitter1 is emitter2
+    first = my_kernel.lower(q)
+    assert my_kernel.lower(q) is first
+    assert my_kernel.cache_info().compiled == 1
 
 
 def test_qudit_ref_creation():
@@ -66,7 +66,7 @@ def test_kernel_invocation():
         pass
 
     q = pulse.qudit_ref()
-    result = echo(q)
+    result = python_ir(echo, q)
     assert result is not None
 
 
@@ -79,7 +79,7 @@ def test_kernel_internal_qudit_alloc():
         q = cudaq_pulse.qudit_ref()
         d0, t0 = cudaq_pulse.get_drive_line(q)
 
-    program = internal()
+    program = python_ir(internal)
     assert program is not None
     op_kinds = [op.kind for op in program.ops]
     assert "pulse.qudit_alloc" in op_kinds
@@ -94,6 +94,6 @@ def test_kernel_internal_bare_qudit_ref():
         q = qudit_ref()
         d0, t0 = get_drive_line(q)
 
-    program = internal()
+    program = python_ir(internal)
     op_kinds = [op.kind for op in program.ops]
     assert "pulse.qudit_alloc" in op_kinds

@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 from cudaq_pulse.targets import Coupling, Qubit, Target
 
-from tests.runtime._lowering import pulse_mlir
+from tests.runtime._lowering import evolve, on, pulse_mlir
 
 gpu = pytest.mark.gpu
 
@@ -48,7 +48,7 @@ def test_physics_validation_mlir_structure():
         d0, t0 = get_drive_line(q0)
         drive(d0, square(40, math.pi / 20.0), t0)
 
-    mlir = pulse_mlir(rabi(pulse.qudit_ref()), clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
+    mlir = pulse_mlir((rabi, pulse.qudit_ref()), clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
     assert "pulse.square" in mlir
 
 
@@ -61,9 +61,8 @@ def test_free_drift_stays_ground():
         d0, _t0 = get_drive_line(q0)
         wait(d0, 40)  # 20 ns free evolution
 
-    result = pulse.evolve(
-        idle(pulse.qudit_ref()),
-        target=_single_qubit_target(),
+    result = evolve(
+        on(_single_qubit_target(), idle, pulse.qudit_ref()),
         t_start=0.0,
         t_end=20.0,
         num_steps=200,
@@ -83,9 +82,8 @@ def test_rabi_half_pi_pulse():
         d0, t0 = get_drive_line(q0)
         drive(d0, square(40, math.pi / 40.0), t0)  # angle = pi/2
 
-    result = pulse.evolve(
-        half_pi(pulse.qudit_ref()),
-        target=_single_qubit_target(),
+    result = evolve(
+        on(_single_qubit_target(), half_pi, pulse.qudit_ref()),
         t_start=0.0,
         t_end=20.0,
         num_steps=200,
@@ -104,9 +102,8 @@ def test_rabi_pi_pulse():
         d0, t0 = get_drive_line(q0)
         drive(d0, square(40, math.pi / 20.0), t0)  # angle = pi
 
-    result = pulse.evolve(
-        pi_pulse(pulse.qudit_ref()),
-        target=_single_qubit_target(),
+    result = evolve(
+        on(_single_qubit_target(), pi_pulse, pulse.qudit_ref()),
         t_start=0.0,
         t_end=20.0,
         num_steps=200,
@@ -132,9 +129,8 @@ def test_two_qubit_selective_drive():
         wait(d1, 40)
         sync(d0, d1)
 
-    result = pulse.evolve(
-        drive_q0(pulse.qudit_ref(), pulse.qudit_ref()),
-        target=target,
+    result = evolve(
+        on(target, drive_q0, pulse.qudit_ref(), pulse.qudit_ref()),
         t_start=0.0,
         t_end=20.0,
         num_steps=200,
@@ -169,9 +165,8 @@ def test_xx_coupling_transfers_excitation():
         wait(d0, 40)  # let XX coupling swap population
         wait(d1, 40)
 
-    result = pulse.evolve(
-        excite_and_exchange(pulse.qudit_ref(), pulse.qudit_ref()),
-        target=target,
+    result = evolve(
+        on(target, excite_and_exchange, pulse.qudit_ref(), pulse.qudit_ref()),
         t_start=0.0,
         t_end=40.0,
         num_steps=400,

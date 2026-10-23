@@ -25,6 +25,8 @@ import numpy as np
 import pytest
 from cudaq_pulse.targets import Coupling, Qubit, Target
 
+from tests.runtime._lowering import evolve, on
+
 _HORIZONTAL = [(0, 1), (1, 2), (2, 3), (4, 5), (5, 6), (6, 7)]
 _VERTICAL = [(0, 4), (1, 5), (2, 6), (3, 7)]
 _LADDER_EDGES = _HORIZONTAL + _VERTICAL
@@ -91,8 +93,8 @@ def test_8qubit_single_qubit_excitation():
         drive(d0, square(40, math.pi / 20.0), t0)
 
     refs = [pulse.qudit_ref() for _ in range(8)]
-    result = pulse.evolve(
-        excite_q0(*refs), target=target, t_start=0.0, t_end=20.0, num_steps=200, integrator="rk4"
+    result = evolve(
+        on(target, excite_q0, *refs), t_start=0.0, t_end=20.0, num_steps=200, integrator="rk4"
     )
 
     state = result.final_state

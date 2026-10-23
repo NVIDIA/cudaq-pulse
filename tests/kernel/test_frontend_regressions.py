@@ -28,6 +28,8 @@ from cudaq_pulse.kernel.ir_builder import (
 )
 from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
+from tests._ir import python_ir
+
 # ── Closures are read on every call ──────────────────────────────────
 
 
@@ -50,7 +52,7 @@ def test_closure_rebinding_takes_effect_on_the_next_call():
     k, rebind = _amplitude_kernel()
 
     def amp():
-        ir = k(pulse.qudit_ref())
+        ir = python_ir(k, pulse.qudit_ref())
         return next(op.attrs["amplitude"] for op in ir.ops if op.kind == "pulse.square")
 
     assert amp() == 0.1
@@ -60,9 +62,9 @@ def test_closure_rebinding_takes_effect_on_the_next_call():
 
 def test_closure_rebinding_takes_effect_in_compile():
     k, rebind = _amplitude_kernel()
-    first = pulse.compile(k, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9}, passes=()).mlir
+    first = pulse.compile(k, passes=()).lower(pulse.qudit_ref()).mlir()
     rebind(0.4)
-    second = pulse.compile(k, [pulse.qudit_ref()], qubit_freq_hz={0: 5e9}, passes=()).mlir
+    second = pulse.compile(k, passes=()).lower(pulse.qudit_ref()).mlir()
     assert first != second
 
 
@@ -95,7 +97,7 @@ def test_user_function_named_like_an_op_is_evaluated_as_python():
         d0, t0 = get_drive_line(q0)
         drive(d0, gaussian(10, 0.2, 3.0), t0)
 
-    kinds = [op.kind for op in k(pulse.qudit_ref()).ops]
+    kinds = [op.kind for op in python_ir(k, pulse.qudit_ref()).ops]
     assert "pulse.square" in kinds
     assert "pulse.gaussian" not in kinds
 
@@ -113,7 +115,7 @@ def test_qualified_and_bare_op_names_trace_identically():
         pulse.drive(d0, pulse.gaussian(40, 0.3, 10.0), t0)
 
     def kinds(k):
-        return [(op.kind, op.attrs) for op in k(pulse.qudit_ref()).ops]
+        return [(op.kind, op.attrs) for op in python_ir(k, pulse.qudit_ref()).ops]
 
     assert kinds(bare) == kinds(qualified)
 
@@ -154,7 +156,11 @@ def test_stack_copies_are_executed():
 
     ops = [bc.OP_NAMES[op] for op, _ in bc.decode(k.__wrapped__.__code__).instrs]
     assert "COPY" in ops
-    waits = [op.attrs["duration"] for op in k(pulse.qudit_ref()).ops if op.kind == "pulse.wait"]
+    waits = [
+        op.attrs["duration"]
+        for op in python_ir(k, pulse.qudit_ref()).ops
+        if op.kind == "pulse.wait"
+    ]
     assert waits == [10, 20, 2]
 
 
