@@ -67,11 +67,20 @@ def test_frequency_bands_and_anharmonicities(target):
     )
 
 
+def edges_of(target, c):
+    return _label(target, c.qubit_a), _label(target, c.qubit_b)
+
+
 def test_couplings_are_the_stabilizer_supports(target):
     edges = {(_label(target, c.qubit_a), _label(target, c.qubit_b)) for c in target.couplings}
     assert len(target.couplings) == 24
     assert edges == {(a, d) for a, data in _STABILIZERS.items() for d in data}
-    assert all(c.coupling_strength_hz == 7.0e6 for c in target.couplings)
+    # The published 7 MHz (7.4 MHz measured on X2-D4) is the |11> <-> |20>
+    # coupling, sqrt(2) J_qq.
+    for c in target.couplings:
+        g_11_20 = 7.4e6 if edges_of(target, c) == ("X2", "D4") else 7.0e6
+        assert c.gate_params["coupling_11_20_hz"] == g_11_20
+        assert c.coupling_strength_hz == pytest.approx(g_11_20 / math.sqrt(2.0))
     assert not target.crosstalk
 
 
@@ -111,10 +120,10 @@ def test_idle_zz_is_a_few_kilohertz(target):
     zz = krinner_idle_zz_hz()
     assert set(zz) == {(c.qubit_a, c.qubit_b) for c in target.couplings}
     # Calculated idle ZZ "lower than ~8 kHz" (Methods A).
-    assert all(-10e3 < v < -5e3 for v in zz.values())
+    assert all(-5e3 < v < -2.5e3 for v in zz.values())
 
 
-@pytest.mark.parametrize("pair", [("X2", "D2"), ("Z1", "D1")])
+@pytest.mark.parametrize("pair", [("X2", "D2"), ("Z1", "D1"), ("X2", "D4")])
 def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
     index = {q.label: i for i, q in target.qubits.items()}
     a, d = (index[label] for label in pair)
@@ -122,8 +131,9 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
         k: Qubit(k, q.frequency_hz, q.anharmonicity_hz, 0.0, 0.0)
         for k, q in enumerate((target.qubits[a], target.qubits[d]))
     }
+    (g_hz,) = (c.coupling_strength_hz for c in target.couplings if (c.qubit_a, c.qubit_b) == (a, d))
     pair_target = Target(
-        name="krinner-pair", qubits=qubits, couplings=[Coupling(0, 1, coupling_strength_hz=7.0e6)]
+        name="krinner-pair", qubits=qubits, couplings=[Coupling(0, 1, coupling_strength_hz=g_hz)]
     )
 
     @pulse.kernel

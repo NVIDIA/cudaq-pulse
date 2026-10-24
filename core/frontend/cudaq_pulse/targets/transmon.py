@@ -32,10 +32,13 @@ def transmon_krinner_17q() -> Target:
 
     Data qubits idle at 3.74-4.14 GHz (their lower sweet spot) and
     auxiliary qubits at 5.89-6.33 GHz (their upper one), with idle
-    frequencies, anharmonicities, T1 and Ramsey T2* from Tab. I. Every
-    coupling is the device-wide J / 2 pi ~ 7 MHz (Methods A). Each carries
-    its CZ time step, interaction frequency (``gate_params``) and measured
-    gate fidelity; the gate takes 98 ns on average, with 15 ns buffers.
+    frequencies, anharmonicities, T1 and Ramsey T2* from Tab. I. The paper's
+    device-wide J / 2 pi ~ 7 MHz (Methods A) is the |11> <-> |20> coupling
+    of the CZ, so each coupling is the exchange J_qq = 7 MHz / sqrt(2) =
+    4.95 MHz, or the measured value where one is published (X2-D4: 7.4 MHz
+    for |11> <-> |20>). Each carries its CZ time step, interaction
+    frequency and |11> <-> |20> coupling (``gate_params``) and measured gate
+    fidelity; the gate takes 98 ns on average, with 15 ns buffers.
     Drives are the published 40 ns DRAG pulses with sigma = 10 ns; their
     amplitudes are not published, so amplitudes are angular rates in
     rad/ns. Readout parameters are those of Tab. I and App. F1.
@@ -43,7 +46,7 @@ def transmon_krinner_17q() -> Target:
     No residual ZZ is listed: the paper gives no per-pair values, only
     that the calculated idle ZZ is below about 8 kHz. Simulated with three
     or more levels, the couplings produce it; ``krinner_idle_zz_hz`` gives
-    its second-order value.
+    its second-order value, -2.8 to -4.9 kHz.
     """
     qubits = {}
     for index, q in enumerate(_k.QUBITS):
@@ -73,7 +76,7 @@ def transmon_krinner_17q() -> Target:
         Coupling(
             _k.INDEX[e.auxiliary],
             _k.INDEX[e.data],
-            coupling_strength_hz=_k.COUPLING_HZ,
+            coupling_strength_hz=_k.exchange_coupling_hz(e.auxiliary, e.data),
             gate_type="cz",
             gate_duration_ns=_k.CZ_DURATION_NS,
             gate_buffer_ns=_k.CZ_BUFFER_NS,
@@ -81,6 +84,7 @@ def transmon_krinner_17q() -> Target:
             gate_params={
                 "cz_step": float(e.cz_step),
                 "interaction_frequency_hz": e.interaction_frequency_hz,
+                "coupling_11_20_hz": _k.coupling_11_20_hz(e.auxiliary, e.data),
             },
         )
         for e in _k.EDGES
@@ -97,10 +101,12 @@ def transmon_krinner_17q() -> Target:
 def krinner_idle_zz_hz() -> dict[tuple[int, int], float]:
     """Second-order idle ZZ rate of each coupled pair of the Krinner target.
 
-    zeta = 2 J^2 (a_a + a_d) / ((D + a_d)(D - a_a)), with D the data minus
-    the auxiliary idle frequency and a_a, a_d their anharmonicities: a value
-    derived from the published J, frequencies and anharmonicities, keyed by
-    the coupling's (auxiliary, data) qudit indices.
+    zeta = 2 J^2 (a_a + a_d) / ((D + a_d)(D - a_a)), with J the pair's
+    exchange coupling J_qq (the published |11> <-> |20> coupling over
+    sqrt(2)), D the data minus the auxiliary idle frequency and a_a, a_d
+    their anharmonicities, keyed by the coupling's (auxiliary, data) qudit
+    indices. The values are -2.8 to -4.9 kHz, below the paper's "below about
+    8 kHz".
     """
     zz = {}
     for e in _k.EDGES:
@@ -110,7 +116,7 @@ def krinner_idle_zz_hz() -> dict[tuple[int, int], float]:
         alpha_a, alpha_d = aux.anharmonicity_hz, data.anharmonicity_hz
         zz[(a, d)] = (
             2.0
-            * _k.COUPLING_HZ**2
+            * _k.exchange_coupling_hz(e.auxiliary, e.data) ** 2
             * (alpha_a + alpha_d)
             / ((detuning + alpha_d) * (detuning - alpha_a))
         )

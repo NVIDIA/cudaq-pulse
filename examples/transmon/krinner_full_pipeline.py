@@ -31,7 +31,8 @@ index = {q.label: q.index for q in target.qubits.values()}
 auxiliary, data = index["X1"], index["D2"]
 coupling = next(c for c in target.couplings if {c.qubit_a, c.qubit_b} == {auxiliary, data})
 print(
-    f"X1-D2: J/2pi = {coupling.coupling_strength_hz / 1e6:.0f} MHz, CZ step "
+    f"X1-D2: J_qq/2pi = {coupling.coupling_strength_hz / 1e6:.2f} MHz "
+    f"(|11>-|20>: {coupling.gate_params['coupling_11_20_hz'] / 1e6:.0f} MHz), CZ step "
     f"{coupling.gate_params['cz_step']:.0f} at "
     f"{coupling.gate_params['interaction_frequency_hz'] / 1e9:.2f} GHz, "
     f"{coupling.gate_duration_ns:.0f} ns"
