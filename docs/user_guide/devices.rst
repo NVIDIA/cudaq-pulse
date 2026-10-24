@@ -78,4 +78,10 @@ uses the process target; without one it raises ``NoDeviceError``.
 Registered names are ``transmon_krinner_17q``, ``transmon_generic:N``,
 ``rydberg_chain:N`` and ``rydberg_square:RxC``;
 ``cudaq_pulse.targets.register_target`` adds more.
+
+``transmon_krinner_17q`` is the distance-three surface-code device of
+Krinner et al., Nature 605, 669 (2022), built from the values the paper
+publishes. Its qudits 0-16 are D1-D9, X1-X4 and Z1-Z4 (``Qubit.label``), and
+its 24 couplings are the auxiliary-data pairs of the stabilizers, each with
+its CZ time step and interaction frequency.
 ``python -m cudaq_pulse.doctor`` lists them and reports the process target.

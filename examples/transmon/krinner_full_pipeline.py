@@ -11,9 +11,13 @@
   kernel -> pulse.compile (verify, virtual-Z, fusion, ALAP) -> Pulse MLIR
          -> QOp (operator algebra) -> CuDensityMat -> LLVM
 
-Prints the intermediate representations of the native lowering stack.
-``pulse.simulate(..., backend="gpu")`` runs the same stack, adding the target's calibration
-(drive scales, couplings, T1/T2) as module attributes, and executes it.
+Prints the intermediate representations of the native lowering stack for a
+coupled pair, auxiliary X1 and data qubit D2. ``pulse.simulate(..., backend="gpu")``
+runs the same stack, adding the target's calibration (drive scales,
+couplings, T1/T2) as module attributes, and executes it.
+
+The device's CZ is a flux pulse; flux lines are not modeled yet, so the
+gate's 98 ns slot is left idle here.
 """
 
 import math
@@ -23,44 +27,51 @@ from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from cudaq_pulse.targets import transmon_krinner_17q
 
 target = transmon_krinner_17q()
+index = {q.label: q.index for q in target.qubits.values()}
+auxiliary, data = index["X1"], index["D2"]
+coupling = next(c for c in target.couplings if {c.qubit_a, c.qubit_b} == {auxiliary, data})
+print(
+    f"X1-D2: J/2pi = {coupling.coupling_strength_hz / 1e6:.0f} MHz, CZ step "
+    f"{coupling.gate_params['cz_step']:.0f} at "
+    f"{coupling.gate_params['interaction_frequency_hz'] / 1e9:.2f} GHz, "
+    f"{coupling.gate_duration_ns:.0f} ns"
+)
 
-qubit_0_info = target.qubits[0]
-qubit_1_info = target.qubits[1]
-drive_params_0 = target.get_drive_params(0)
-drive_params_1 = target.get_drive_params(1)
+# The published 40 ns, sigma = 10 ns pulse; amplitudes are rates in rad/ns.
+drive_params = target.get_drive_params(data)
+clock_ghz = target.clock_ghz
+duration_ns, sigma_ns = drive_params["x_dur"], drive_params["x_sigma"]
+area_ns = sigma_ns * math.sqrt(2 * math.pi) * math.erf(duration_ns / (2 * math.sqrt(2) * sigma_ns))
+duration, sigma = round(duration_ns * clock_ghz), sigma_ns * clock_ghz
+pi_amplitude = math.pi / area_ns
+cz_slot = round(coupling.gate_duration_ns * clock_ghz)
 
 
 @pulse.kernel
-def krinner_bell(qubit_0, qubit_1):
-    drive_line_0, tone_0 = get_drive_line(qubit_0)
-    drive_line_1, tone_1 = get_drive_line(qubit_1)
+def krinner_pair(qubit_aux, qubit_data):
+    drive_line_aux, tone_aux = get_drive_line(qubit_aux)
+    drive_line_data, tone_data = get_drive_line(qubit_data)
 
-    # Hadamard on Q0
-    shift_phase(tone_0, math.pi / 2)
-    sx_pulse = drag(
-        20, drive_params_0["x_amp"], drive_params_0["x_sigma"], drive_params_0["x_beta"]
-    )
-    drive(drive_line_0, sx_pulse, tone_0)
-    shift_phase(tone_0, math.pi / 2)
+    # pi/2 on the auxiliary qubit, pi on the data qubit
+    drive(drive_line_aux, drag(duration, pi_amplitude / 2, sigma, 0.0), tone_aux)
+    drive(drive_line_data, drag(duration, pi_amplitude, sigma, 0.0), tone_data)
+    sync(drive_line_aux, drive_line_data)
 
-    # Sync
-    sync(drive_line_0, drive_line_1)
+    # The CZ slot
+    wait(drive_line_aux, cz_slot)
+    wait(drive_line_data, cz_slot)
+    sync(drive_line_aux, drive_line_data)
 
-    # Echoed CR (CZ-like)
-    cr = gaussian(98, 0.32, 24.0)
-    drive(drive_line_0, cr, tone_1)
-    x_echo = drag(20, drive_params_1["x_amp"], drive_params_1["x_sigma"], drive_params_1["x_beta"])
-    drive(drive_line_1, x_echo, tone_1)
-    cr_neg = gaussian(98, -0.32, 24.0)
-    drive(drive_line_0, cr_neg, tone_1)
-    drive(drive_line_1, x_echo, tone_1)
+    drive(drive_line_aux, drag(duration, pi_amplitude / 2, sigma, 0.0), tone_aux)
 
 
 print("=== Stage 1: compile (verify, virtual-Z, fusion, ALAP schedule) ===")
 dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
-compiled = pulse.compile(krinner_bell, device=dev).lower(dev.qudit_handles[0], dev.qudit_handles[1])
+compiled = pulse.compile(krinner_pair, device=dev).lower(
+    dev.qudit_handles[auxiliary], dev.qudit_handles[data]
+)
 total_vtu = max(e.start_vtu + e.duration_vtu for e in compiled.schedule)
-print(f"  {compiled.metrics.op_count} ops, {total_vtu / 2.0:.0f} ns total")
+print(f"  {compiled.metrics.op_count} ops, {total_vtu / clock_ghz:.0f} ns total")
 
 print("\n=== Stage 2: scheduled Pulse MLIR ===")
 print(compiled.mlir())

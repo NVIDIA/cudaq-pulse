@@ -116,7 +116,7 @@ See :doc:`user_guide/custom_passes`.
    * - ``krinner_evolve_gpu.py``
      - ``pulse.simulate(..., backend="gpu")`` on the Krinner target
    * - ``krinner_surface_code_cycle.py``
-     - Surface code stabilizer cycle on the Krinner lattice
+     - Timeline of one error correction cycle from the Krinner lattice and CZ schedule
 
 **Neutral Atom** (``examples/neutral_atom/``):
 
