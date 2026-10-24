@@ -232,12 +232,15 @@ def is_symbolic(value: Any) -> bool:
 
 
 class IRValue(_UndecidableComparisons):
-    __slots__ = ("vid", "vtype", "name")
+    __slots__ = ("vid", "vtype", "name", "chan")
 
     def __init__(self, vid: int, vtype: str, name: str = ""):
         self.vid = vid
         self.vtype = vtype
         self.name = name
+        # (holder, index) of the qudit channel this line or tone value is, or
+        # was, a version of; set by the tracer.
+        self.chan: Any = None
 
     def __repr__(self) -> str:
         return f"{self.name or f'%v{self.vid}'}:{self.vtype}"

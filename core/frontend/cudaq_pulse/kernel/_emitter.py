@@ -210,11 +210,13 @@ _LINE_OPS = frozenset({"get_drive_line", "get_readout_line"})
 class _Held(list):  # type: ignore[type-arg]
     """The current (line, tone) of one qudit's drive or readout channel."""
 
-    __slots__ = ("label",)
+    __slots__ = ("label", "shared")
 
     def __init__(self, values: list[IRValue], label: str) -> None:
         super().__init__(values)
         self.label = label
+        # Handed out more than once: names holding old values may be stale.
+        self.shared = False
 
 
 class _Lines:
@@ -223,19 +225,18 @@ class _Lines:
     ``get_drive_line(q)`` returns the one drive channel of ``q`` for the
     whole program: the first call acquires it, later calls, in the kernel or
     in a kernel it calls, return its current line and tone, so pulses on it
-    play one after another. ``owner`` maps each current value to its
-    channel. ``shared`` holds the channels handed out more than once, and
-    ``history`` every value such a channel has held, so that a name left
-    holding an old value can be brought up to date.
+    play one after another. Each value a channel takes records the channel
+    in ``IRValue.chan``, so an op that consumes it moves the channel to the
+    op's result, and a name left holding an old value of a shared channel
+    can be brought up to date.
     """
 
-    __slots__ = ("held", "owner", "history", "shared", "log")
+    __slots__ = ("held", "shared", "log")
 
     def __init__(self) -> None:
         self.held: dict[tuple[int, str], _Held] = {}
-        self.owner: dict[int, tuple[_Held, int, IRValue]] = {}
-        self.history: dict[int, tuple[_Held, int, IRValue]] = {}
-        self.shared: set[int] = set()
+        # Whether any channel was handed out more than once.
+        self.shared = False
         # Acquisitions while a rolled loop body is traced, to hoist.
         self.log: list[tuple[str, IRValue]] | None = None
 
@@ -243,64 +244,62 @@ class _Lines:
         held = _Held(list(values), f"{key[1].removeprefix('get_')}{key[0]}")
         self.held[key] = held
         for i, v in enumerate(held):
-            self.owner[v.vid] = (held, i, v)
+            v.chan = (held, i)
 
     def share(self, held: _Held) -> None:
-        """Hand *held* out again: from now on, record the values it takes."""
-        if id(held) not in self.shared:
-            self.shared.add(id(held))
-            for i, v in enumerate(held):
-                self.history[v.vid] = (held, i, v)
+        held.shared = True
+        self.shared = True
 
-    def current(self, value: IRValue) -> IRValue | None:
+    @staticmethod
+    def current(value: IRValue) -> IRValue | None:
         """The channel value now standing for *value*, if it is a channel's."""
-        entry = self.history.get(value.vid)
-        if entry is None or entry[2] is not value:
+        chan = value.chan
+        if chan is None:
             return None
-        current: IRValue = entry[0][entry[1]]
+        current: IRValue = chan[0][chan[1]]
         return current
 
+    @staticmethod
     def advance(
-        self, call_args: list[StackVal], results: tuple[IRValue, ...]
+        call_args: list[StackVal], results: tuple[IRValue, ...]
     ) -> list[tuple[IRValue, IRValue]]:
         """Move each channel whose value an op consumed to the op's result.
 
         Returns the (old, new) pairs of channels handed out more than once.
         """
-        owner = self.owner
         shared: list[tuple[IRValue, IRValue]] = []
         if len(results) == 2 and len(call_args) == 3 and results[0].vtype == "drive_line":
             # drive(line, waveform, tone) -> (line, tone): the common case.
-            for a, res in ((call_args[0], results[0]), (call_args[2], results[1])):
-                entry = owner.get(a.vid)
-                if entry is not None and entry[2] is a:
-                    del owner[a.vid]
-                    held, index, _ = entry
-                    held[index] = res
-                    owner[res.vid] = record = (held, index, res)
-                    if id(held) in self.shared:
-                        self.history[res.vid] = record
-                        shared.append((a, res))
-            return shared
-        claimed: set[int] = set()
-        for res in results:
-            if res.vtype not in LINEAR_TYPES:
-                continue
-            for i, a in enumerate(call_args):
-                if i in claimed or a.__class__ is not IRValue or a.vtype != res.vtype:
+            pairs: Any = ((call_args[0], results[0]), (call_args[2], results[1]))
+        elif (
+            len(results) == 1
+            and call_args
+            and call_args[0].__class__ is IRValue
+            and call_args[0].vtype == results[0].vtype
+        ):
+            # shift_phase(tone, ...), wait(line, ...): the first operand.
+            pairs = ((call_args[0], results[0]),)
+        else:
+            pairs = []
+            claimed: set[int] = set()
+            for res in results:
+                if res.vtype not in LINEAR_TYPES:
                     continue
-                claimed.add(i)
-                entry = owner.pop(a.vid, None)
-                if entry is not None and entry[2] is a:
-                    held, index, _ = entry
+                for i, a in enumerate(call_args):
+                    if i in claimed or a.__class__ is not IRValue or a.vtype != res.vtype:
+                        continue
+                    claimed.add(i)
+                    pairs.append((a, res))
+                    break
+        for a, res in pairs:
+            chan = a.chan
+            if chan is not None:
+                held, index = chan
+                if held[index] is a:
                     held[index] = res
-                    owner[res.vid] = record = (held, index, res)
-                    if id(held) in self.shared:
-                        self.history[res.vid] = record
+                    res.chan = chan
+                    if held.shared:
                         shared.append((a, res))
-                elif entry is not None:
-                    owner[a.vid] = entry
-                break
         return shared
 
     def snapshot(self) -> tuple[dict[tuple[int, str], _Held], list[tuple[_Held, list[IRValue]]]]:
@@ -314,17 +313,13 @@ class _Lines:
         self.held.update(held)
         for h, values in contents:
             h[:] = values
-        self.resync()
+        # The snapshot's values still name their channels.
 
     def resync(self) -> None:
-        """Re-own the channels' values after their holders were rewritten."""
-        self.owner = {}
+        """Mark the channels' values after their holders were rewritten."""
         for h in self.held.values():
-            shared = id(h) in self.shared
             for i, v in enumerate(h):
-                self.owner[v.vid] = record = (h, i, v)
-                if shared:
-                    self.history[v.vid] = record
+                v.chan = (h, i)
 
 
 # Host calls evaluated at trace time whose result depends only on their
@@ -924,16 +919,18 @@ class PulseIREmitter:
             merged[name] = out
         for (obj, i, a, b), out in zip(slot_results, outs[len(results) :]):
             obj[i] = out
+            if isinstance(obj, _Held):
+                out.chan = (obj, i)
             self._slots.pop(id(a), None)
             self._slots.pop(id(b), None)
             if not isinstance(obj, _Held):
                 self._slots[id(out)] = (obj, i, out)
         for obj, i, alias in aliases:
             obj[i] = merged[alias]
+            merged[alias].chan = (obj, i)
         # A channel first acquired in one arm is not held after the if.
         lines.held.clear()
         lines.held.update(lines_snap[0])
-        lines.resync()
         self.locals.clear()
         self.locals.update(merged)
         stack[:] = saved_stack
@@ -1114,11 +1111,13 @@ class PulseIREmitter:
                 self.locals[n] = r
             for (obj, i, _), r in zip(slot_changes, results[len(names) :]):
                 obj[i] = r
+                if isinstance(obj, _Held):
+                    r.chan = (obj, i)
                 if not isinstance(obj, _Held):
                     self._slots[id(r)] = (obj, i, r)
             for obj, i, alias in aliases:
                 obj[i] = self.locals[alias]
-            lines.resync()
+                self.locals[alias].chan = (obj, i)
         else:
             self.b.emit("scf.for_end", (), ())
 
@@ -1464,7 +1463,7 @@ class PulseIREmitter:
         self._rebind_linear(fname, call_args, results)
         if fname in _LINE_OPS and call_args and call_args[0].__class__ is IRValue:
             lines.add((call_args[0].vid, fname), results)
-        elif lines.owner and fname not in _MAKES_WAVEFORM:
+        elif lines.held and fname not in _MAKES_WAVEFORM:
             for old, new in lines.advance(call_args, results):
                 for name, value in self.locals.items():
                     if value is old:
