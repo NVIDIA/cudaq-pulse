@@ -938,15 +938,28 @@ struct PulseToQOpPass
     auto t1AttrRaw = module->getAttrOfType<ArrayAttr>("pulse.t1_times");
     if (!t1AttrRaw)
       t1AttrRaw = module->getAttrOfType<ArrayAttr>("t1_times");
+    // A qudit with thermal excited-state population p relaxes down at
+    // (1 - p) / T1 and up at p / T1 (detailed balance): populations relax
+    // to p at the measured rate 1 / T1.
+    auto thermal =
+        module->getAttrOfType<DenseF64ArrayAttr>("pulse.thermal_populations");
     if (auto t1Attr = t1AttrRaw) {
       for (int64_t qi = 0; qi < (int64_t)t1Attr.size(); qi++) {
         double t1 = cast<FloatAttr>(t1Attr[qi]).getValueAsDouble();
         if (t1 > 0) {
           double gamma = 1.0 / t1;
-          auto lowering =
-              ops.product({{qi, "spin_lowering"}}, std::sqrt(gamma));
+          double p =
+              thermal && qi < (int64_t)thermal.size() ? thermal[qi] : 0.0;
+          auto lowering = ops.product({{qi, "spin_lowering"}},
+                                      std::sqrt((1.0 - p) * gamma));
           collapseOps.push_back(
               qop::MakeSumOp::create(b, loc, opTy, ValueRange{lowering}));
+          if (p > 0) {
+            auto raising =
+                ops.product({{qi, "spin_raising"}}, std::sqrt(p * gamma));
+            collapseOps.push_back(
+                qop::MakeSumOp::create(b, loc, opTy, ValueRange{raising}));
+          }
         }
       }
     }

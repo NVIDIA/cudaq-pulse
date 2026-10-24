@@ -66,15 +66,25 @@ def _target_attributes(
     t_end: float,
     num_steps: int,
     integrator: str,
+    dephasing: str = "t2_star",
 ) -> str:
-    """Module attributes, in MLIR syntax, that the cuDensityMat lowering reads."""
+    """Module attributes, in MLIR syntax, that the cuDensityMat lowering reads.
+
+    Qudits dephase at their Ramsey T2* (*dephasing* ``"t2_star"``) or their
+    Hahn-echo T2 (``"t2_echo"``).
+    """
     t1_ns = [0.0] * n_qubits
     t2_ns = [0.0] * n_qubits
+    thermal = [0.0] * n_qubits
     drive_scales = [1.0] * n_qubits
     for qi in qubits:
         qubit = target.qubits[qi]
+        t2_us = qubit.t2_star_us if dephasing == "t2_star" else qubit.t2_echo_us
+        if t2_us is None:
+            raise ValueError(f"qudit {qi} has no Hahn-echo T2 to dephase at")
         t1_ns[qi] = max(0.0, float(qubit.t1_us)) * 1.0e3
-        t2_ns[qi] = max(0.0, float(qubit.t2_star_us)) * 1.0e3
+        t2_ns[qi] = max(0.0, float(t2_us)) * 1.0e3
+        thermal[qi] = float(qubit.thermal_population)
         drive_scales[qi] = target.drive_amplitude_scale(qi)
     attrs = [
         f"qop.n_qubits = {n_qubits} : i64",
@@ -86,6 +96,8 @@ def _target_attributes(
         "pulse.t2_times = [" + ", ".join(_f64(v) for v in t2_ns) + "]",
         f"pulse.drive_scale_rad_per_ns = {_f64_array(drive_scales)}",
     ]
+    if any(thermal):
+        attrs.append(f"pulse.thermal_populations = {_f64_array(thermal)}")
     active = set(qubits)
     for kind, entries, strength in (
         ("coupling", target.couplings, "coupling_strength_hz"),

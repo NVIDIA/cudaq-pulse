@@ -235,6 +235,12 @@ rotating-frame detuning and quadrature. A target may supply
 calibrated Gaussian/DRAG pi-pulse parameters when available.
 
 Target relaxation and dephasing data produce Lindblad collapse operators.
+A qudit whose ``thermal_population`` p is nonzero starts in its thermal
+mixture (the excited level holds p, and higher levels follow the same
+Boltzmann ratio p / (1 - p) per level) unless ``initial_state`` is given,
+and relaxes towards it: down at (1 - p) / T1 and up at p / T1, so
+populations relax at the measured 1 / T1. Qudits dephase at their Ramsey
+T2*, or at their Hahn-echo T2 with ``simulate(..., dephasing="t2_echo")``.
 A coupling edge is an exchange coupling g (a^dagger b + a b^dagger); in the
 qudits' own frames it turns at their detuning, so detuned qudits exchange
 little and coupled transmons with three or more levels acquire the

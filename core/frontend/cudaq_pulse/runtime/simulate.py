@@ -86,6 +86,7 @@ def simulate(
     t_end: float | None = None,
     dt_ns: float | None = None,
     integrator: str = "rk4",
+    dephasing: str = "t2_star",
 ) -> SimulationResult:
     """Simulate one compiled kernel call on the target it was compiled for.
 
@@ -98,7 +99,12 @@ def simulate(
         Levels per qudit (an int for all, or a dict by qudit index). A
         transmon with three or more levels includes its anharmonicity.
     initial_state:
-        A state vector or density matrix; ``|0...0>`` by default.
+        A state vector or density matrix. By default each qudit starts in
+        its thermal mixture: its excited level holds the target's
+        ``thermal_population`` p, and higher levels follow the same
+        Boltzmann ratio p / (1 - p) per level (``|0...0>`` when every p is
+        0). T1 then relaxes it back there, with downward and upward rates
+        (1 - p) / T1 and p / T1, whatever the initial state.
     shots:
         Sample this many per-shot measurement records.
     seed:
@@ -116,6 +122,10 @@ def simulate(
     integrator:
         cuDensityMat integrator for the GPU backend: ``"rk1"``, ``"rk2"``,
         ``"rk4"``, ``"magnus"`` or ``"crank_nicolson"``.
+    dephasing:
+        Dephase at each qudit's Ramsey T2* (``"t2_star"``, the default) or
+        its Hahn-echo T2 (``"t2_echo"``), which every simulated qudit must
+        have.
     """
     from ..compile import Lowered
 
@@ -134,6 +144,7 @@ def simulate(
         t_end=t_end,
         dt_ns=dt_ns,
         integrator=integrator,
+        dephasing=dephasing,
     )
 
 
@@ -149,9 +160,12 @@ def _simulate_lowered(
     t_end: float | None = None,
     dt_ns: float | None = None,
     integrator: str = "rk4",
+    dephasing: str = "t2_star",
 ) -> SimulationResult:
     if backend not in ("cpu", "gpu"):
         raise ValueError(f"unknown backend {backend!r}; choose 'cpu' or 'gpu'")
+    if dephasing not in ("t2_star", "t2_echo"):
+        raise ValueError(f"unknown dephasing {dephasing!r}; choose 't2_star' or 't2_echo'")
     if dt_ns is None:
         dt_ns = _default_step(lowered)
     elif dt_ns <= 0:
@@ -187,6 +201,7 @@ def _simulate_lowered(
         dt_ns=dt_ns,
         integrator=integrator,
         clock_ghz=lowered.target.clock_ghz,
+        dephasing=dephasing,
     )
 
 
@@ -230,6 +245,7 @@ def _simulate_compiled(
     dt_ns: float,
     integrator: str,
     clock_ghz: float,
+    dephasing: str = "t2_star",
 ) -> SimulationResult:
     # A cached specialization's module is shared by every call of it, from
     # any thread: a segment sets the module attributes it lowers with and
@@ -248,6 +264,7 @@ def _simulate_compiled(
         t_end=t_start + 1.0,
         num_steps=1,
         integrator=integrator,
+        dephasing=dephasing,
     )
     # Segments set their own window.
     base = _re.sub(r"qop\.(t_start|t_end|num_steps) = [^,]+, ", "", attributes[1:-1]) + ", " + extra
@@ -265,6 +282,8 @@ def _simulate_compiled(
 
     dim = math.prod(dims)
     state = _initial_state(initial_state, dim)
+    if initial_state is None:
+        state = _thermal_state(target, compiled.qudits, dims, state)
     engine: _Backend
     if backend == "cpu":
         engine = _CpuBackend(module, dims, dt_ns, base, lock, arguments)
@@ -344,6 +363,24 @@ def _initial_state(state: npt.ArrayLike | None, dim: int) -> npt.NDArray[np.comp
     if array.shape not in ((dim,), (dim, dim)):
         raise ValueError(f"initial_state must have shape ({dim},) or ({dim}, {dim})")
     return array
+
+
+def _thermal_state(
+    target: Any,
+    qudits: tuple[int, ...],
+    dims: tuple[int, ...],
+    cold: npt.NDArray[np.complex128],
+) -> npt.NDArray[np.complex128]:
+    """The product of the qudits' thermal mixtures, or *cold* if none is hot."""
+    populations = {q: float(target.qubits[q].thermal_population) for q in qudits}
+    if not any(populations.values()):
+        return cold
+    diagonal: npt.NDArray[Any] = np.ones(1)
+    for q in reversed(range(len(dims))):
+        p = populations.get(q, 0.0)
+        weights = (p / (1.0 - p)) ** np.arange(dims[q], dtype=float)
+        diagonal = np.kron(diagonal, weights / weights.sum())
+    return np.diag(diagonal).astype(np.complex128)
 
 
 def _level_mask(dims: tuple[int, ...], qudit: int, level: int) -> npt.NDArray[np.bool_]:

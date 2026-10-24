@@ -37,9 +37,9 @@ class Qubit:
     label: str = ""
     drive_params: Mapping[str, float] = field(default_factory=dict)
     readout_params: Mapping[str, float] = field(default_factory=dict)
-    # Hahn-echo T2 (us), and the excited-state population at equilibrium
-    # (a fraction). Recorded for the device; the simulation does not use
-    # them yet: it starts from |0...0> and dephases at T2*.
+    # Hahn-echo T2 (us), which the simulation dephases at on request, and
+    # the excited-state population at equilibrium (a fraction), from which
+    # it starts and towards which T1 relaxes.
     t2_echo_us: float | None = None
     thermal_population: float = 0.0
 
@@ -255,14 +255,24 @@ class Target:
 
         for q in self.qubits.values():
             if q.t1_us > 0:
+                # Detailed balance: down at (1 - p) / T1 and up at p / T1.
                 gamma1 = 1.0 / (q.t1_us * _NANOSECONDS_PER_MICROSECOND)
+                p = q.thermal_population
                 terms.append(
                     {
                         "kind": "dissipator_t1",
                         "qubit_indices": (q.index,),
-                        "coefficient": complex(math.sqrt(gamma1), 0),
+                        "coefficient": complex(math.sqrt((1.0 - p) * gamma1), 0),
                     }
                 )
+                if p > 0:
+                    terms.append(
+                        {
+                            "kind": "dissipator_thermal",
+                            "qubit_indices": (q.index,),
+                            "coefficient": complex(math.sqrt(p * gamma1), 0),
+                        }
+                    )
             if q.t2_star_us > 0:
                 gamma_phi = 1.0 / (q.t2_star_us * _NANOSECONDS_PER_MICROSECOND)
                 if q.t1_us > 0:
