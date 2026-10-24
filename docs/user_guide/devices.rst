@@ -86,15 +86,17 @@ its 24 couplings are the auxiliary-data pairs of the stabilizers, each with
 its CZ time step and interaction frequency.
 ``python -m cudaq_pulse.doctor`` lists them and reports the process target.
 
-The paper's J / 2 pi ~ 7 MHz is the |11> <-> |20> coupling of the CZ,
+The paper's J / 2 pi ~ 7 MHz is the ``|11> <-> |20>`` coupling of the CZ,
 sqrt(2) times the exchange coupling (Lacroix, PhD thesis, ETH Zurich (2025),
 on the same device). The target simulates the exchange J_qq = 7 MHz /
-sqrt(2) = 4.95 MHz on every pair, and the measured |11> <-> |20> coupling of
-7.4 MHz on X2-D4 (Hellings et al., arXiv:2503.04610); each coupling records
-its |11> <-> |20> value in ``gate_params["coupling_11_20_hz"]``. With three
-levels the couplings give an idle ZZ of -2.8 to -4.9 kHz at second order
+sqrt(2) = 4.95 MHz on every pair except X2-D4, whose measured
+``|11> <-> |20>`` coupling is 7.4 MHz (Hellings et al., arXiv:2503.04610);
+each coupling records its ``|11> <-> |20>`` value in
+``gate_params["coupling_11_20_hz"]``. With three levels the couplings give
+an idle ZZ of -2.8 to -4.9 kHz at second order
 (``cudaq_pulse.targets.transmon.krinner_idle_zz_hz``), below the paper's
-"below about 8 kHz". Each qubit
-also records its Hahn-echo T2 and thermal excited-state population from
-Tab. I (``Target.t2_echo_times``, ``Target.thermal_populations``); the
-simulation does not use them yet.
+"below about 8 kHz". Each qubit also records its Hahn-echo T2 and thermal
+excited-state population from Tab. I (``Target.t2_echo_times``,
+``Target.thermal_populations``): a simulation starts each qubit in its
+thermal mixture and relaxes it there, and dephases at the Hahn-echo T2 with
+``simulate(..., dephasing="t2_echo")``.
