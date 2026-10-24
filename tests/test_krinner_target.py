@@ -17,6 +17,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.targets import Coupling, Qubit, Target, transmon_krinner_17q
+from cudaq_pulse.targets import _krinner17 as _k
 from cudaq_pulse.targets.transmon import krinner_idle_zz_hz
 
 from tests.runtime._lowering import on
@@ -145,3 +146,55 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
         assert rho[1 + levels * k, 1 + levels * k].real == pytest.approx(0.5, abs=5e-4)
     zeta = (phases[1] - phases[0]) / (2.0 * math.pi * t_ns * 1e-9)
     assert zeta == pytest.approx(krinner_idle_zz_hz()[(a, d)], rel=2e-2)
+
+
+def test_echo_t2_and_thermal_populations_are_on_the_target():
+    target = transmon_krinner_17q()
+    echo = target.t2_echo_times
+    thermal = target.thermal_populations
+    assert all(t is not None and t > 0 for t in echo.values())
+    assert all(0.0 <= p < 0.1 for p in thermal.values())
+    assert echo[0] == _k.QUBITS[0].t2_echo_us
+    assert thermal[0] == _k.QUBITS[0].thermal_population
+
+
+def test_the_time_step_resolves_the_fastest_coupled_detuning():
+    from cudaq_pulse.runtime.simulate import _default_step
+
+    # X1 and D2 with their published frequencies and coupling, as qudits 0 and 1.
+    x1, d2 = _k.QUBITS[_k.INDEX["X1"]], _k.QUBITS[_k.INDEX["D2"]]
+    detuning = x1.idle_frequency_hz - d2.idle_frequency_hz
+    assert detuning > 2.0e9
+    pair = Target(
+        name="x1-d2",
+        qubits={
+            i: Qubit(i, q.idle_frequency_hz, q.anharmonicity_hz, 0.0, 0.0)
+            for i, q in enumerate((x1, d2))
+        },
+        couplings=[Coupling(0, 1, _k.COUPLING_HZ)],
+    )
+    dev = pulse.device({"target": pair})
+
+    @pulse.kernel
+    def flip_and_idle(qa, qb):
+        da, ta = get_drive_line(qa)
+        db, tb = get_drive_line(qb)
+        drive(da, square(40, math.pi / 20), ta)
+        sync(da, db)
+        wait(da, 400)
+
+    lowered = flip_and_idle.lower(dev.qudit_handles[0], dev.qudit_handles[1])
+    step = _default_step(lowered)
+    assert step <= 1e9 / (20 * detuning) and (0.5 / step) == pytest.approx(round(0.5 / step))
+    # One qudit alone keeps the default step.
+    assert _default_step(x90_alone.lower(dev.qudit_handles[0])) == pytest.approx(0.05)
+    automatic = pulse.simulate(lowered).density_matrix
+    fine = pulse.simulate(lowered, dt_ns=0.0125).density_matrix
+    coarse = pulse.simulate(lowered, dt_ns=0.05).density_matrix
+    assert np.abs(automatic - fine).max() < np.abs(coarse - fine).max() / 10
+
+
+@pulse.kernel
+def x90_alone(q):
+    d, t = get_drive_line(q)
+    drive(d, square(40, 0.02), t)

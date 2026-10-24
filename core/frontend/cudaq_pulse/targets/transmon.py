@@ -53,6 +53,8 @@ def transmon_krinner_17q() -> Target:
             anharmonicity_hz=q.anharmonicity_hz,
             t1_us=q.t1_us,
             t2_star_us=q.t2_ramsey_us,
+            t2_echo_us=q.t2_echo_us,
+            thermal_population=q.thermal_population,
             label=q.label,
             drive_params={"x_dur": _k.DRIVE_DURATION_NS, "x_sigma": _k.DRIVE_SIGMA_NS},
             readout_params={

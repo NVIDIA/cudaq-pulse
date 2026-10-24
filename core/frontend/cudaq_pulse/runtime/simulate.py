@@ -84,7 +84,7 @@ def simulate(
     seed: int | None = None,
     backend: str = "cpu",
     t_end: float | None = None,
-    dt_ns: float = 0.05,
+    dt_ns: float | None = None,
     integrator: str = "rk4",
 ) -> SimulationResult:
     """Simulate one compiled kernel call on the target it was compiled for.
@@ -109,7 +109,10 @@ def simulate(
     t_end:
         End of the simulation in ns; the end of the schedule by default.
     dt_ns:
-        Integration step.
+        Integration step in ns. By default 0.05 ns, or shorter when coupled
+        qudits are far detuned: a coupling turns at their detuning, and the
+        step resolves it with 20 steps per period (0.024 ns at 2.1 GHz),
+        a whole fraction of a clock cycle.
     integrator:
         cuDensityMat integrator for the GPU backend: ``"rk1"``, ``"rk2"``,
         ``"rk4"``, ``"magnus"`` or ``"crank_nicolson"``.
@@ -144,12 +147,14 @@ def _simulate_lowered(
     backend: str = "cpu",
     t_start: float = 0.0,
     t_end: float | None = None,
-    dt_ns: float = 0.05,
+    dt_ns: float | None = None,
     integrator: str = "rk4",
 ) -> SimulationResult:
     if backend not in ("cpu", "gpu"):
         raise ValueError(f"unknown backend {backend!r}; choose 'cpu' or 'gpu'")
-    if dt_ns <= 0:
+    if dt_ns is None:
+        dt_ns = _default_step(lowered)
+    elif dt_ns <= 0:
         raise ValueError("dt_ns must be positive")
     if shots is not None and shots < 0:
         raise ValueError("shots must not be negative")
@@ -183,6 +188,32 @@ def _simulate_lowered(
         integrator=integrator,
         clock_ghz=lowered.target.clock_ghz,
     )
+
+
+_DEFAULT_STEP_NS = 0.05
+_STEPS_PER_COUPLING_PERIOD = 20
+
+
+def _default_step(lowered: Lowered) -> float:
+    """The integration step: 0.05 ns, or 20 steps per period of the fastest
+    coupling between the program's qudits, which turns at their detuning,
+    rounded down to a whole fraction of a clock cycle."""
+    target = lowered.target.target
+    active = set(lowered.qudits)
+    detuning = max(
+        (
+            abs(target.qubits[c.qubit_a].frequency_hz - target.qubits[c.qubit_b].frequency_hz)
+            for c in target.couplings
+            if c.qubit_a in active and c.qubit_b in active
+        ),
+        default=0.0,
+    )
+    step = _DEFAULT_STEP_NS
+    if detuning > 0:
+        step = min(step, 1e9 / (_STEPS_PER_COUPLING_PERIOD * detuning))
+    # A whole number of steps per clock cycle keeps pulse edges on the grid.
+    cycle = 1.0 / lowered.target.clock_ghz
+    return cycle / math.ceil(cycle / step - 1e-9)
 
 
 def _simulate_compiled(

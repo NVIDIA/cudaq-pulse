@@ -85,3 +85,12 @@ publishes. Its qudits 0-16 are D1-D9, X1-X4 and Z1-Z4 (``Qubit.label``), and
 its 24 couplings are the auxiliary-data pairs of the stabilizers, each with
 its CZ time step and interaction frequency.
 ``python -m cudaq_pulse.doctor`` lists them and reports the process target.
+
+The couplings keep the published J / 2 pi = 7 MHz. With three levels they
+give an idle ZZ of 5.7-9.9 kHz at second order
+(``cudaq_pulse.targets.transmon.krinner_idle_zz_hz``), which exceeds the
+paper's statement that the calculated idle ZZ is below about 8 kHz on some
+pairs; the paper gives no per-pair values to reconcile it with. Each qubit
+also records its Hahn-echo T2 and thermal excited-state population from
+Tab. I (``Target.t2_echo_times``, ``Target.thermal_populations``); the
+simulation does not use them yet.

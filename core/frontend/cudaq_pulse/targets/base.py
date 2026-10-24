@@ -37,6 +37,11 @@ class Qubit:
     label: str = ""
     drive_params: Mapping[str, float] = field(default_factory=dict)
     readout_params: Mapping[str, float] = field(default_factory=dict)
+    # Hahn-echo T2 (us), and the excited-state population at equilibrium
+    # (a fraction). Recorded for the device; the simulation does not use
+    # them yet: it starts from |0...0> and dephases at T2*.
+    t2_echo_us: float | None = None
+    thermal_population: float = 0.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "drive_params", MappingProxyType(dict(self.drive_params)))
@@ -128,6 +133,16 @@ class Target:
     def t2_times(self) -> dict[int, float]:
         """T2* in microseconds, keyed by qubit index."""
         return {q.index: q.t2_star_us for q in self.qubits.values()}
+
+    @property
+    def t2_echo_times(self) -> dict[int, float | None]:
+        """Hahn-echo T2 in microseconds, keyed by qubit index (None if unknown)."""
+        return {q.index: q.t2_echo_us for q in self.qubits.values()}
+
+    @property
+    def thermal_populations(self) -> dict[int, float]:
+        """Equilibrium excited-state population, keyed by qubit index."""
+        return {q.index: q.thermal_population for q in self.qubits.values()}
 
     @property
     def coupling_map(self) -> list[tuple[int, int]]:

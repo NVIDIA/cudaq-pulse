@@ -65,6 +65,8 @@ def _fingerprint(target: TargetDescription, layout: tuple[int, ...]) -> str:
             q.anharmonicity_hz,
             q.t1_us,
             q.t2_star_us,
+            q.t2_echo_us,
+            q.thermal_population,
             sorted(q.drive_params.items()),
             sorted(q.readout_params.items()),
         )

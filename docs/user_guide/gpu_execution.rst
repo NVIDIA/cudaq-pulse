@@ -208,7 +208,10 @@ To execute on a GPU (requires cuDensityMat runtime):
 .. :spellcheck-enable:
 
 ``t_end`` and ``dt_ns`` are in nanoseconds; ``t_end`` defaults to the end of
-the schedule. The ``integrator`` argument selects the time-evolution scheme
+the schedule. ``dt_ns`` defaults to 0.05 ns, or to 20 steps per period of the
+fastest coupling between the program's qudits, which turns at their
+detuning, rounded to a whole fraction of a clock cycle: 0.024 ns for a pair
+2.1 GHz apart, where 0.05 ns drifts by about 3e-5 per microsecond. The ``integrator`` argument selects the time-evolution scheme
 used by the cuDensityMat runtime path:
 
 - ``rk1``, ``rk2``, ``rk4`` -- fixed-step explicit Runge-Kutta methods.
