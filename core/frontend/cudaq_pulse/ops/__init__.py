@@ -52,8 +52,12 @@ def _require_context(op_name: str) -> NoReturn:
 def get_drive_line(qubit: Any) -> tuple[Line, Tone]:
     """Obtain the drive line and tone for a qubit.
 
+    A qubit has one drive channel for the whole program: later calls, also
+    from called kernels, return its current line and tone, so pulses on it
+    play in sequence.
+
     Args:
-        qubit: A ``QuditRef`` identifying the target qubit.
+        qubit: The qudit whose drive channel to use.
 
     Returns:
         A ``(line, tone)`` tuple used by ``drive()`` and phase/frequency ops.
@@ -64,8 +68,11 @@ def get_drive_line(qubit: Any) -> tuple[Line, Tone]:
 def get_readout_line(qubit: Any) -> tuple[Line, Tone]:
     """Obtain the readout line and tone for a qubit.
 
+    Like the drive channel, a qubit has one readout channel for the whole
+    program.
+
     Args:
-        qubit: A ``QuditRef`` identifying the target qubit.
+        qubit: The qudit whose readout channel to use.
 
     Returns:
         A ``(line, tone)`` tuple used by ``readout()``.

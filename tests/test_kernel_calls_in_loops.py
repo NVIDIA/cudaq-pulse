@@ -29,6 +29,7 @@ import pytest
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from cudaq_pulse.kernel.ir_builder import CompilationError
 from cudaq_pulse.targets import Qubit, Target
+
 from tests._ir import python_ir
 
 FREQ_HZ = 5.0e9
@@ -700,11 +701,11 @@ def test_a_callee_that_acquires_its_own_line_each_iteration():
         t = shift_phase(t, 0.5)
         drive(d, square(16, AMP), t)
 
-    # Every get_drive_line is a new line with its own timeline and tone, so
-    # the loop unrolls: one rolled acquisition would stand for both.
-    ops, compiled = check(looped, unrolled, loops=0)
-    assert _kinds(ops)["pulse.get_drive_line"] == 2
-    assert _schedule(compiled) == [("drive", 0, 0, 16), ("drive", 0, 0, 16)]
+    # get_drive_line returns the qudit's one drive channel: it is acquired
+    # once, before the loop, and the pulses play one after the other.
+    ops, compiled = check(looped, unrolled, loops=1)
+    assert _kinds(ops)["pulse.get_drive_line"] == 1
+    assert _schedule(compiled) == [("drive", 0, 0, 16), ("drive", 0, 16, 16)]
 
 
 def test_a_callee_that_allocates_a_qudit_each_iteration():
@@ -1106,7 +1107,7 @@ def test_keyword_and_default_arguments_bind():
     check(looped, unrolled, loops=1)
 
 
-def test_lines_packed_in_a_tuple_are_rejected():
+def test_lines_packed_in_a_tuple_reach_the_callee():
     @pulse.kernel
     def from_pair(pair):
         d, t = pair
@@ -1119,10 +1120,9 @@ def test_lines_packed_in_a_tuple_are_rejected():
         for _ in range(2):
             from_pair((d, t))
 
-    # The callee's rebinding cannot reach the caller's names, so the second
-    # iteration reuses a consumed tone; the verifier rejects it.
-    with pytest.raises(RuntimeError, match="carry it through iter_args"):
-        _compile(looped)
+    # The callee advances the qudit's drive channel, which the loop carries,
+    # so the second iteration plays after the first.
+    assert [e[2] for e in _schedule(_compile(looped))] == [0, 16]
 
 
 def test_symbolic_kernel_parameters_reach_the_callee():

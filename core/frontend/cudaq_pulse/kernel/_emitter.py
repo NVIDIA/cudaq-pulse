@@ -13,6 +13,10 @@ concretely, so compile-time conditions, short-circuit operators and loop
 bounds resolve exactly as Python would; pulse operations (``drive``,
 ``gaussian``, ...) are emitted as IR operations instead of being called.
 
+``get_drive_line(q)`` and ``get_readout_line(q)`` return the qudit's one
+channel of that kind for the whole trace (``_Lines``), threaded linearly
+through every op and inlined call that advances it.
+
 A ``for ... in range(n)`` loop whose induction variable is never read is
 emitted once as a structured ``scf.for`` when the builder supports regions.
 Every other loop, and every loop whose body turns out to carry Python state
@@ -200,6 +204,129 @@ class _Unrolled:
 
 _MISSING = object()
 
+_LINE_OPS = frozenset({"get_drive_line", "get_readout_line"})
+
+
+class _Held(list):  # type: ignore[type-arg]
+    """The current (line, tone) of one qudit's drive or readout channel."""
+
+    __slots__ = ("label",)
+
+    def __init__(self, values: list[IRValue], label: str) -> None:
+        super().__init__(values)
+        self.label = label
+
+
+class _Lines:
+    """The drive and readout channels acquired so far in one trace.
+
+    ``get_drive_line(q)`` returns the one drive channel of ``q`` for the
+    whole program: the first call acquires it, later calls, in the kernel or
+    in a kernel it calls, return its current line and tone, so pulses on it
+    play one after another. ``owner`` maps each current value to its
+    channel. ``shared`` holds the channels handed out more than once, and
+    ``history`` every value such a channel has held, so that a name left
+    holding an old value can be brought up to date.
+    """
+
+    __slots__ = ("held", "owner", "history", "shared", "log")
+
+    def __init__(self) -> None:
+        self.held: dict[tuple[int, str], _Held] = {}
+        self.owner: dict[int, tuple[_Held, int, IRValue]] = {}
+        self.history: dict[int, tuple[_Held, int, IRValue]] = {}
+        self.shared: set[int] = set()
+        # Acquisitions while a rolled loop body is traced, to hoist.
+        self.log: list[tuple[str, IRValue]] | None = None
+
+    def add(self, key: tuple[int, str], values: tuple[IRValue, ...]) -> None:
+        held = _Held(list(values), f"{key[1].removeprefix('get_')}{key[0]}")
+        self.held[key] = held
+        for i, v in enumerate(held):
+            self.owner[v.vid] = (held, i, v)
+
+    def share(self, held: _Held) -> None:
+        """Hand *held* out again: from now on, record the values it takes."""
+        if id(held) not in self.shared:
+            self.shared.add(id(held))
+            for i, v in enumerate(held):
+                self.history[v.vid] = (held, i, v)
+
+    def current(self, value: IRValue) -> IRValue | None:
+        """The channel value now standing for *value*, if it is a channel's."""
+        entry = self.history.get(value.vid)
+        if entry is None or entry[2] is not value:
+            return None
+        current: IRValue = entry[0][entry[1]]
+        return current
+
+    def advance(
+        self, call_args: list[StackVal], results: tuple[IRValue, ...]
+    ) -> list[tuple[IRValue, IRValue]]:
+        """Move each channel whose value an op consumed to the op's result.
+
+        Returns the (old, new) pairs of channels handed out more than once.
+        """
+        owner = self.owner
+        shared: list[tuple[IRValue, IRValue]] = []
+        if len(results) == 2 and len(call_args) == 3 and results[0].vtype == "drive_line":
+            # drive(line, waveform, tone) -> (line, tone): the common case.
+            for a, res in ((call_args[0], results[0]), (call_args[2], results[1])):
+                entry = owner.get(a.vid)
+                if entry is not None and entry[2] is a:
+                    del owner[a.vid]
+                    held, index, _ = entry
+                    held[index] = res
+                    owner[res.vid] = record = (held, index, res)
+                    if id(held) in self.shared:
+                        self.history[res.vid] = record
+                        shared.append((a, res))
+            return shared
+        claimed: set[int] = set()
+        for res in results:
+            if res.vtype not in LINEAR_TYPES:
+                continue
+            for i, a in enumerate(call_args):
+                if i in claimed or a.__class__ is not IRValue or a.vtype != res.vtype:
+                    continue
+                claimed.add(i)
+                entry = owner.pop(a.vid, None)
+                if entry is not None and entry[2] is a:
+                    held, index, _ = entry
+                    held[index] = res
+                    owner[res.vid] = record = (held, index, res)
+                    if id(held) in self.shared:
+                        self.history[res.vid] = record
+                        shared.append((a, res))
+                elif entry is not None:
+                    owner[a.vid] = entry
+                break
+        return shared
+
+    def snapshot(self) -> tuple[dict[tuple[int, str], _Held], list[tuple[_Held, list[IRValue]]]]:
+        return dict(self.held), [(h, list(h)) for h in self.held.values()]
+
+    def restore(
+        self, snap: tuple[dict[tuple[int, str], _Held], list[tuple[_Held, list[IRValue]]]]
+    ) -> None:
+        held, contents = snap
+        self.held.clear()
+        self.held.update(held)
+        for h, values in contents:
+            h[:] = values
+        self.resync()
+
+    def resync(self) -> None:
+        """Re-own the channels' values after their holders were rewritten."""
+        self.owner = {}
+        for h in self.held.values():
+            shared = id(h) in self.shared
+            for i, v in enumerate(h):
+                self.owner[v.vid] = record = (h, i, v)
+                if shared:
+                    self.history[v.vid] = record
+
+
 # Host calls evaluated at trace time whose result depends only on their
 # arguments; any other C-level callable (``random.random``, ``time.time``)
 # makes the trace impure, so its cached compilation is never reused.
@@ -294,6 +421,7 @@ class PulseIREmitter:
         "_mutated",
         "_depth",
         "_acquired",
+        "_lines",
     )
 
     def __init__(
@@ -321,6 +449,7 @@ class PulseIREmitter:
         self._depth = 0
         # Lines and qudits acquired so far, counted across inlined calls.
         self._acquired = [0]
+        self._lines = _Lines()
         if not _PULSE_FUNCTIONS:
             _load_pulse_functions()
 
@@ -713,6 +842,10 @@ class PulseIREmitter:
             if isinstance(v, (list, dict))
         ]
 
+        lines = self._lines
+        lines_snap = lines.snapshot()
+        containers += lines_snap[1]
+
         builder.emit("scf.if", (value,), ())
         then_locals, then_slots = self._trace_arm(
             view, index, join, then_start, saved_stack, containers
@@ -722,6 +855,7 @@ class PulseIREmitter:
         self.locals.update(saved_locals)
         for obj, copy in containers:
             self._restore_container(obj, copy)
+        lines.restore(lines_snap)
         else_index = builder.mark()
         builder.emit("scf.else", (), ())
         else_locals, else_slots = self._trace_arm(
@@ -762,6 +896,18 @@ class PulseIREmitter:
             if a is not b:
                 slot_results.append((obj, key[1], a, b))
 
+        # A channel whose arms' values a name also carries is not carried twice.
+        aliases: list[tuple[list[Any], int, str]] = []
+        if any(isinstance(obj, _Held) for obj, _, _, _ in slot_results):
+            by_pair = {(id(a), id(b)): name for name, a, b in results}
+            kept = []
+            for obj, i, a, b in slot_results:
+                alias = by_pair.get((id(a), id(b))) if isinstance(obj, _Held) else None
+                if alias is None:
+                    kept.append((obj, i, a, b))
+                else:
+                    aliases.append((obj, i, alias))
+            slot_results = kept
         labels = [name for name, _, _ in results]
         labels += [self._slot_label(obj, i) for obj, i, _, _ in slot_results]
         then_vals = tuple(a for _, a, _ in results) + tuple(a for _, _, a, _ in slot_results)
@@ -780,7 +926,14 @@ class PulseIREmitter:
             obj[i] = out
             self._slots.pop(id(a), None)
             self._slots.pop(id(b), None)
-            self._slots[id(out)] = (obj, i, out)
+            if not isinstance(obj, _Held):
+                self._slots[id(out)] = (obj, i, out)
+        for obj, i, alias in aliases:
+            obj[i] = merged[alias]
+        # A channel first acquired in one arm is not held after the if.
+        lines.held.clear()
+        lines.held.update(lines_snap[0])
+        lines.resync()
         self.locals.clear()
         self.locals.update(merged)
         stack[:] = saved_stack
@@ -839,7 +992,9 @@ class PulseIREmitter:
 
     # ── Structured loops ─────────────────────────────────────────────
 
-    def _roll(self, loop: _Loop, prog: bc.DecodedCode, for_idx: int, exit_idx: int) -> bool:
+    def _roll(
+        self, loop: _Loop, prog: bc.DecodedCode, for_idx: int, exit_idx: int, hoisted: bool = False
+    ) -> bool:
         """Emit *loop* as one ``scf.for``; return False to unroll it instead.
 
         The body is traced once. Rolling is kept only if that iteration
@@ -857,6 +1012,12 @@ class PulseIREmitter:
             for v in saved_locals.values()
             if isinstance(v, (list, dict))
         ]
+        lines = self._lines
+        lines_snap = lines.snapshot()
+        containers += lines_snap[1]
+        outer_log = lines.log
+        log: list[tuple[str, IRValue]] = []
+        lines.log = log
         checkpoint = self.b.checkpoint()
 
         snap = self._ir_snapshot()
@@ -870,6 +1031,7 @@ class PulseIREmitter:
         mutated: dict[int, tuple[Any, Any]] = {}
         self._mutated = mutated
         acquired = self._acquired[0]
+        hoist = False
         try:
             self._loop(prog, for_idx + 1, for_idx, exit_idx, for_idx)
             slot_changes = _slot_changes(containers)
@@ -878,11 +1040,21 @@ class PulseIREmitter:
                 and self._python_state_unchanged(saved_locals)
                 and slot_changes is not None
                 and _only_containers(mutated, containers)
-                and self._acquired[0] == acquired
             )
+            if ok and self._acquired[0] != acquired:
+                ok = False
+                # Channels of qudits that exist before the loop are acquired
+                # once, before it, and the body is traced again.
+                first = checkpoint[1]
+                hoist = (
+                    not hoisted
+                    and len(log) == self._acquired[0] - acquired
+                    and all(q.vid < first for _, q in log)
+                )
         except _NotRollableError:
             ok = False
         finally:
+            lines.log = outer_log
             self._mutated = outer
             if outer is not None:
                 for key, entry in mutated.items():
@@ -898,10 +1070,29 @@ class PulseIREmitter:
             self.locals.update(saved_locals)
             for obj, copy in containers:
                 self._restore_container(obj, copy)
+            lines.restore(lines_snap)
+            # Acquisitions the undone body made did not happen.
+            self._acquired[0] = acquired
+            if hoist:
+                for fname, q in dict.fromkeys(log):
+                    self._emit_pulse_call(fname, [q])
+                return self._roll(loop, prog, for_idx, exit_idx, hoisted=True)
             return False
 
         delta = self._ir_delta(snap)
         assert slot_changes is not None
+        # A channel whose value a name also carries is not carried twice.
+        aliases: list[tuple[list[Any], int, str]] = []
+        if any(isinstance(obj, _Held) for obj, _, _ in slot_changes):
+            by_value = {id(v): n for n, v in delta.items()}
+            kept = []
+            for obj, i, new in slot_changes:
+                alias = by_value.get(id(new)) if isinstance(obj, _Held) else None
+                if alias is None:
+                    kept.append((obj, i, new))
+                else:
+                    aliases.append((obj, i, alias))
+            slot_changes = kept
         if delta or slot_changes:
             names = sorted(delta)
             vals = tuple(delta[n] for n in names) + tuple(new for _, _, new in slot_changes)
@@ -923,7 +1114,11 @@ class PulseIREmitter:
                 self.locals[n] = r
             for (obj, i, _), r in zip(slot_changes, results[len(names) :]):
                 obj[i] = r
-                self._slots[id(r)] = (obj, i, r)
+                if not isinstance(obj, _Held):
+                    self._slots[id(r)] = (obj, i, r)
+            for obj, i, alias in aliases:
+                obj[i] = self.locals[alias]
+            lines.resync()
         else:
             self.b.emit("scf.for_end", (), ())
 
@@ -947,6 +1142,8 @@ class PulseIREmitter:
             self._mutated.setdefault(id(obj), (obj, None))
 
     def _slot_label(self, obj: list[Any], index: int) -> str:
+        if isinstance(obj, _Held):
+            return f"{obj.label}[{index}]"
         name = next((n for n, v in self.locals.items() if v is obj), "")
         return f"{name}[{index}]"
 
@@ -1141,8 +1338,11 @@ class PulseIREmitter:
         helper._mutated = self._mutated
         helper._depth = self._depth + 1
         helper._acquired = self._acquired
+        helper._lines = self._lines
         helper.locals.update(zip(params, call_args))
         result = helper.run(code)
+        if self._lines.shared:
+            self._refresh_lines()
 
         # Propagate rebindings of directly passed linear values back to the
         # caller, then leave the helper's return value on the caller stack.
@@ -1210,6 +1410,15 @@ class PulseIREmitter:
             raise CompilationError(f"unknown pulse op: {fname}")
 
         n_val, attr_names, rtypes = entry
+        lines = self._lines
+        if fname in _LINE_OPS and call_args and call_args[0].__class__ is IRValue:
+            key = (call_args[0].vid, fname)
+            held = lines.held.get(key)
+            if held is not None:
+                lines.share(held)
+                return tuple(held)
+            if lines.log is not None:
+                lines.log.append((fname, call_args[0]))
         if fname in _ACQUIRES:
             self._acquired[0] += 1
 
@@ -1246,8 +1455,25 @@ class PulseIREmitter:
             results = self.b.emit(op_name, operands, out_types, attrs)
 
         self._rebind_linear(fname, call_args, results)
+        if fname in _LINE_OPS and call_args and call_args[0].__class__ is IRValue:
+            lines.add((call_args[0].vid, fname), results)
+        elif lines.owner and fname not in _MAKES_WAVEFORM:
+            for old, new in lines.advance(call_args, results):
+                for name, value in self.locals.items():
+                    if value is old:
+                        self.locals[name] = new
 
         return results
+
+    def _refresh_lines(self) -> None:
+        """Bring names holding an old value of a shared channel up to date."""
+        lines = self._lines
+        local_vars = self.locals
+        for name, value in local_vars.items():
+            if value.__class__ is IRValue and value.vtype in LINEAR_TYPES:
+                current = lines.current(value)
+                if current is not None and current is not value:
+                    local_vars[name] = current
 
     def _waveform_duration(
         self, fname: str, operands: tuple[IRValue, ...], attrs: dict[str, Any]
@@ -1330,7 +1556,9 @@ class PulseIREmitter:
         Restored lists hold values whose slots the undone code consumed, so
         their slots are tracked again.
         """
-        if isinstance(obj, list):
+        if isinstance(obj, _Held):
+            obj[:] = copy
+        elif isinstance(obj, list):
             obj[:] = copy
             self._track_slots(obj, 0)
         else:

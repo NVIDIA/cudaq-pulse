@@ -21,9 +21,18 @@ Channel Access
    the *line* is passed to ``drive()``, ``wait()``, and ``sync()``; the
    *tone* is passed to phase and frequency ops.
 
+   A qubit has one drive channel for the whole program. The first call
+   acquires it; every later call, in the kernel or in a kernel it calls,
+   returns the channel's current line and tone. Pulses on it play one after
+   another, and phase and frequency changes carry over: ``x90(q); x90(q)``,
+   where ``x90`` calls ``get_drive_line(q)`` itself, plays two pulses in
+   sequence. A loop whose body acquires the channel of a qubit that exists
+   before the loop acquires it once, before the loop, and stays rolled.
+
 .. function:: get_readout_line(qubit) -> (line, tone)
 
-   Obtain the readout channel for a qubit. Same return convention.
+   Obtain the readout channel for a qubit. Same return convention, and the
+   same one channel per qubit.
 
 Scheduling Operations
 ---------------------

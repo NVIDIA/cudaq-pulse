@@ -577,3 +577,78 @@ def test_a_helper_that_calls_a_kernel_is_inlined():
     assert (
         sum(e.kind == "drive" for e in via_helper.lower(_device().qudit_handles[0]).schedule) == 1
     )
+
+
+# ── One drive channel per qudit ──────────────────────────────────────────
+
+
+@pulse.kernel
+def x90(q):
+    d, t = get_drive_line(q)
+    drive(d, square(16, 0.02), t)
+
+
+def test_two_calls_that_acquire_the_same_drive_line_play_in_sequence():
+    @pulse.kernel
+    def twice(q):
+        x90(q)
+        x90(q)
+
+    # Without fusion, which would merge the two pulses into one.
+    lowered = pulse.compile(twice, passes=()).lower(_device().qudit_handles[0])
+    assert [(e.start_vtu, e.duration_vtu) for e in lowered.schedule] == [(0, 16), (16, 16)]
+    assert lowered.mlir().count("pulse.get_drive_line") == 1
+
+
+def test_a_callee_shares_the_line_its_caller_holds():
+    @pulse.kernel
+    def outer(q):
+        d, t = get_drive_line(q)
+        t = shift_phase(t, 0.5)
+        drive(d, square(8, 0.02), t)
+        x90(q)
+        drive(d, square(8, 0.02), t)
+
+    lowered = pulse.compile(outer, passes=()).lower(_device().qudit_handles[0])
+    assert [e.start_vtu for e in lowered.schedule] == [0, 8, 24]
+    # The callee's pulse carries the caller's phase.
+    assert lowered.mlir().count("pulse.shift_phase") == 1
+
+
+def test_two_names_for_one_line_stay_in_step():
+    @pulse.kernel
+    def aliased(q):
+        d1, t1 = get_drive_line(q)
+        d2, t2 = get_drive_line(q)
+        drive(d1, square(8, 0.02), t1)
+        drive(d2, square(8, 0.02), t2)
+        drive(d1, square(8, 0.02), t1)
+
+    lowered = pulse.compile(aliased, passes=()).lower(_device().qudit_handles[0])
+    assert [e.start_vtu for e in lowered.schedule] == [0, 8, 16]
+
+
+def test_a_callee_acquiring_the_line_in_a_rolled_loop_is_hoisted():
+    @pulse.kernel
+    def train(q, n: int):
+        for _ in range(n):
+            x90(q)
+
+    q = _device().qudit_handles[0]
+    small, large = train.lower(q, 4), train.lower(q, 64)
+    assert small.metrics.op_count == large.metrics.op_count
+    text = large.mlir()
+    assert text.count("scf.for") == 1 and text.count("pulse.get_drive_line") == 1
+    assert text.index("pulse.get_drive_line") < text.index("scf.for")
+    assert [e.start_vtu for e in large.schedule] == [16 * i for i in range(64)]
+
+
+def test_a_qudit_allocated_in_a_loop_body_still_unrolls():
+    @pulse.kernel
+    def fresh_each(n: int):
+        for _ in range(n):
+            x90(pulse.qudit_ref())
+
+    lowered = pulse.compile(fresh_each, device=_device()).lower(3)
+    assert "scf.for" not in lowered.mlir()
+    assert len({e.line for e in lowered.schedule}) == 3
