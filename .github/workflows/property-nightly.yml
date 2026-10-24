@@ -9,7 +9,8 @@
 # Randomized property tests. Pull requests run the same tests derandomized
 # (the `ci` hypothesis profile); this job explores new inputs every night on
 # staging with a seed logged in the job summary and the example database
-# kept between runs, so a failure replays first on the next run.
+# kept between runs, so a failure replays first on the next run. It also
+# runs the slow physics checks (marked `nightly`).
 
 name: property-nightly
 
@@ -71,6 +72,12 @@ jobs:
             tests/test_property.py tests/test_region_lowering.py \
             tests/test_region_scheduling.py \
             --hypothesis-seed="$SEED" --hypothesis-show-statistics
+
+      - name: Slow physics checks
+        if: always()
+        env:
+          PYTHONPATH: build/dev/python
+        run: uv run --no-sync python -m pytest -m "physics and not gpu" --run-nightly tests/physics
 
       - name: Save the example database
         if: always()

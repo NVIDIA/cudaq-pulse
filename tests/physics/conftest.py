@@ -25,6 +25,7 @@ def ref(entry_id: str) -> dict:
     return _BY_ID[entry_id]
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(items):
     here = Path(__file__).parent
     for item in items:

@@ -36,6 +36,11 @@ def pytest_addoption(parser):
         help="run the timing tests marked `benchmark` (skipped by default)",
     )
     parser.addoption(
+        "--run-nightly",
+        action="store_true",
+        help="run the slow physics checks marked `nightly` (skipped by default)",
+    )
+    parser.addoption(
         "--update-perf-baseline",
         action="store_true",
         help="rewrite benchmarks/baselines/frontend_perf.json from this run",
@@ -54,6 +59,11 @@ def pytest_collection_modifyitems(config, items):
         skip = pytest.mark.skip(reason="timing test; pass --run-benchmarks")
         for item in items:
             if item.get_closest_marker("benchmark"):
+                item.add_marker(skip)
+    if not config.getoption("--run-nightly"):
+        skip = pytest.mark.skip(reason="slow physics check; pass --run-nightly")
+        for item in items:
+            if item.get_closest_marker("nightly"):
                 item.add_marker(skip)
     if not any(item.get_closest_marker("gpu") for item in items):
         return

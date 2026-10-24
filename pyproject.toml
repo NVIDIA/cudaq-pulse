@@ -217,4 +217,5 @@ markers = [
     "slow: long-running tests",
     "benchmark: timing guard, skipped unless --run-benchmarks is given",
     "physics: physics verification against reference values (tests/physics)",
+    "nightly: slow physics check, skipped unless --run-nightly is given",
 ]
