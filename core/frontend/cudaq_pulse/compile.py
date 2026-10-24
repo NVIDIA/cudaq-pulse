@@ -29,6 +29,7 @@ except ImportError as _e:
         "or build from source with `pip install .`; see CONTRIBUTING.md."
     ) from _e
 
+from .kernel._schedule_blocks import check_root_schedule, root_schedule
 from .kernel.ir_builder import CompilationError
 
 if TYPE_CHECKING:
@@ -104,12 +105,14 @@ class CompileOptions:
     schedule: str = "alap"
     passes: tuple[str, ...] = DEFAULT_PASSES
     machine: MachineModel = MachineModel()
+    flatten_schedules: bool = False
 
     @staticmethod
     def make(
         schedule: str = "alap",
         passes: Sequence[str] | None = None,
         machine: MachineModel | None = None,
+        flatten_schedules: bool = False,
     ) -> CompileOptions:
         if schedule not in _VALID_SCHEDULES:
             raise ValueError(
@@ -129,7 +132,7 @@ class CompileOptions:
             raise ValueError("machine.readout_latency_vtu cannot be negative")
         if machine.line_switch_penalty_vtu < 0:
             raise ValueError("machine.line_switch_penalty_vtu cannot be negative")
-        return CompileOptions(schedule, passes, machine)
+        return CompileOptions(schedule, passes, machine, bool(flatten_schedules))
 
     def schedule_args(self) -> tuple[str, int, int, int, int]:
         m = self.machine
@@ -290,9 +293,13 @@ def build(
     name = getattr(fn, "__name__", "kernel")
     t0 = time.perf_counter()
     builder = PackedIRBuilder(
-        name=name, clock_ghz=target.clock_ghz, qubit_freq_hz=dict(target.frequencies)
+        name=name,
+        clock_ghz=target.clock_ghz,
+        qubit_freq_hz=dict(target.frequencies),
+        flatten_schedules=options.flatten_schedules,
     )
     builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
+    check_root_schedule(options.schedule, builder)
     qudits = builder.qubits
     missing = [q for q in qudits if q not in target.frequencies]
     if missing:
@@ -360,10 +367,11 @@ def compile(
     kernel: Kernel,
     /,
     *,
-    schedule: str = "alap",
+    schedule: str | None = None,
     passes: Sequence[str] | None = None,
     machine: MachineModel | None = None,
     device: Device | None = None,
+    flatten_schedules: bool = False,
 ) -> CompiledKernel:
     """Compile a ``@cudaq_pulse.kernel`` without its arguments.
 
@@ -380,11 +388,16 @@ def compile(
     kernel:
         A ``@cudaq_pulse.kernel``.
     schedule:
-        Scheduling policy: ``"asap"``, ``"alap"``, ``"rcp"``, ``"alap_rcp"``.
+        Scheduling policy of *kernel* itself: ``"asap"``, ``"alap"``,
+        ``"rcp"``, ``"alap_rcp"``; by default the kernel's own
+        ``schedule=``, else ``"alap"``. Kernels it calls keep their own.
     passes:
         Optimization passes, ``DEFAULT_PASSES`` by default; ``()`` for none.
     machine:
         Machine model for resource-constrained scheduling.
+    flatten_schedules:
+        Ignore the ``schedule=`` of every called kernel and schedule the whole
+        program with *schedule*.
     device:
         Pin the compiled kernel to one device: a call with handles of
         another raises ``DeviceMismatchError``, and a call without handles
@@ -394,5 +407,7 @@ def compile(
 
     if not isinstance(kernel, Kernel):
         raise TypeError(f"compile() expects a @cudaq_pulse.kernel, got {type(kernel).__name__}")
-    options = CompileOptions.make(schedule, passes, machine)
+    options = CompileOptions.make(
+        root_schedule(kernel.schedule, schedule), passes, machine, flatten_schedules
+    )
     return CompiledKernel(kernel, options, device)

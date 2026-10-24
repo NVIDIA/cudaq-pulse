@@ -67,6 +67,9 @@ _FOR_END = 30
 _IF_BEGIN = 31
 _ELSE = 32
 _IF_END = 33
+_BLOCK_BEGIN = 34
+_BLOCK_END = 35
+_BLOCK_POLICY = {"asap": 0, "alap": 1}
 
 _NUMERIC_TYPE = {"i64": 0, "f64": 1}
 _BINARY_OP = {
@@ -167,8 +170,12 @@ class PackedIRBuilder:
         *,
         clock_ghz: float = 2.0,
         qubit_freq_hz: dict[int, float] | None = None,
+        flatten_schedules: bool = False,
     ):
         self.name = name
+        # Called kernels with their own policy become schedule blocks.
+        self.schedule_blocks = not flatten_schedules
+        self.schedule_block_count = 0
         self.clock_ghz = clock_ghz
         self._freq_hz = qubit_freq_hz or {}
         self._buf = array("q", bytes(8 * 8192))
@@ -574,6 +581,21 @@ class PackedIRBuilder:
         else:
             raise CompilationError(f"unsupported structured control flow op {kind!r}")
         return results
+
+    def begin_schedule_block(self, policy: str, callee: str) -> None:
+        """Open a block whose ops are scheduled on their own with *policy*.
+
+        The extension makes the lines, tones and measurements the block uses
+        from outside its operands, and the ones it leaves its results.
+        """
+        encoded = callee.encode("utf-8")
+        padded = encoded + b"\0" * ((8 - len(encoded) % 8) % 8)
+        words = [_unpack_q.unpack(padded[i : i + 8])[0] for i in range(0, len(padded), 8)]
+        self._record(_BLOCK_BEGIN, [_BLOCK_POLICY[policy], len(encoded), *words])
+        self.schedule_block_count += 1
+
+    def end_schedule_block(self) -> None:
+        self._record(_BLOCK_END, [])
 
     def mark(self) -> int:
         return self._cur

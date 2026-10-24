@@ -37,6 +37,7 @@ from .._device import Device, DeviceMismatchError, NoDeviceError, Qudit, Registe
 from ..compile import CompileOptions, Lowered, build
 from ..targets._registry import NoTargetError, current_target
 from ._guard import Guard, build_guard
+from ._schedule_blocks import root_schedule, validate_kernel_schedule
 from .decorator import QuditRef, QvecRef
 from .ir_builder import CompilationError, IRValue, Parameter, SymbolicValueError, is_symbolic
 
@@ -356,7 +357,13 @@ class Kernel:
     __name__: str
     __qualname__: str
 
-    def __init__(self, fn: types.FunctionType, *, cache_size: int | None = None) -> None:
+    def __init__(
+        self,
+        fn: types.FunctionType,
+        *,
+        cache_size: int | None = None,
+        schedule: str | None = None,
+    ) -> None:
         if not isinstance(fn, types.FunctionType):
             raise TypeError(f"@kernel expects a function, got {type(fn).__name__}")
         code = fn.__code__
@@ -364,6 +371,9 @@ class Kernel:
             raise TypeError(f"pulse kernel {fn.__name__}() cannot take *args or **kwargs")
         self.__wrapped__ = fn
         self.__pulse_kernel_fn__ = fn
+        # Called from another kernel, the kernel is scheduled on its own with
+        # this policy; None schedules it with its caller.
+        self.schedule = validate_kernel_schedule(schedule)
         for attr in ("__module__", "__name__", "__qualname__", "__doc__"):
             setattr(self, attr, getattr(fn, attr))
         signature = inspect.signature(fn)
@@ -378,7 +388,11 @@ class Kernel:
         self._split = (tuple(i for i in range(len(names)) if i not in runtime), runtime)
         self._promote_lock = threading.Lock()
         self._bind = _make_binder(fn)
-        self._dispatch = _Dispatcher(self, CompileOptions(), _cache_size(cache_size))
+        self._dispatch = _Dispatcher(
+            self,
+            CompileOptions(schedule=root_schedule(self.schedule, None)),
+            _cache_size(cache_size),
+        )
 
     @property
     def runtime_parameters(self) -> tuple[str, ...]:

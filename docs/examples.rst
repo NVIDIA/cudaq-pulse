@@ -78,6 +78,10 @@ Core Examples
    * - 17
      - ``17_ghz_state_prep.py``
      - N-qubit GHZ state preparation using echoed cross-resonance CNOTs
+   * - 18
+     - ``18_per_kernel_schedules.py``
+     - Per-kernel ASAP and ALAP policies in a stabilizer cycle with
+       dynamical decoupling, compared with one flat schedule
 
 Hardware Target Examples
 ------------------------

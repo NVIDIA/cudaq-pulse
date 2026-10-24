@@ -1226,7 +1226,14 @@ class PulseIREmitter:
 
         inner = getattr(callable_val, "__pulse_kernel_fn__", None)
         if inner is not None:
-            self._inline_helper(inner, call_args, kwargs)
+            # A kernel with its own policy is scheduled on its own, in a block.
+            policy = getattr(callable_val, "schedule", None)
+            if policy is not None and getattr(self.b, "schedule_blocks", False):
+                self.b.begin_schedule_block(policy, inner.__name__)
+                self._inline_helper(inner, call_args, kwargs)
+                self.b.end_schedule_block()
+            else:
+                self._inline_helper(inner, call_args, kwargs)
             return
 
         fname = getattr(callable_val, "__name__", "")

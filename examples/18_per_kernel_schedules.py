@@ -1,0 +1,129 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+"""Per-kernel scheduling policies in a surface-code-style stabilizer cycle.
+
+One ancilla measures the parity of four data qubits, round after round:
+
+  1. a layer of single-qubit pulses on the data qubits,
+  2. four cross-resonance pulses from the ancilla, one per data qubit,
+  3. the same single-qubit layer again,
+  4. readout of the ancilla, with a conditional reset,
+  5. dynamical decoupling (XY4) on the data qubits while they wait.
+
+Each step is a kernel. ``single_qubit_layer`` and ``xy4`` are declared with
+``schedule="asap"``, and ``measure_and_reset`` with ``schedule="alap"``:
+each is scheduled on its own with that policy, then placed whole by the
+cycle's ALAP schedule. So the layer's pulses always start together, the
+decoupling sequence keeps its spacing, and the readout ends where the reset
+begins, wherever the cycle puts them. ``cross_resonance`` sets no policy and
+is scheduled together with the cycle.
+
+``compile(..., flatten_schedules=True)`` schedules the same program as one
+ALAP schedule, for comparison: the layer's pulses are then pushed apart, each
+up to the cross-resonance pulse that needs its tone.
+"""
+
+import cudaq_pulse as pulse
+
+ROUNDS = 2
+DATA_QUBITS = 4
+
+
+@pulse.kernel(schedule="asap")
+def single_qubit_layer(lines, tones):
+    """A sqrt(X) on every data qubit, all starting together."""
+    for i in range(len(lines)):
+        drive(lines[i], drag(40, 0.25, 10.0, 0.5), tones[i])
+
+
+@pulse.kernel
+def cross_resonance(control, target_tone):
+    """Drive the control qubit at the target's frequency."""
+    drive(control, gaussian_square(200, 0.05, 10.0, 160), target_tone)
+
+
+@pulse.kernel(schedule="alap")
+def measure_and_reset(drive_line, tone, readout_line, readout_tone):
+    """Read the ancilla out, then flip it back to 0 if it was 1."""
+    sync(drive_line, readout_line)
+    result = readout(readout_line, square(800, 0.05), readout_tone)
+    if result:
+        drive(drive_line, drag(40, 0.5, 10.0, 0.5), tone)
+    return result
+
+
+@pulse.kernel(schedule="asap")
+def xy4(line, tone, tau):
+    """X, Y, X, Y pi pulses, each followed by an idle of tau."""
+    for phase in (0.0, 1.5708, 0.0, 1.5708):
+        shift_phase(tone, phase)
+        drive(line, drag(40, 0.5, 10.0, 0.5), tone)
+        shift_phase(tone, -phase)
+        wait(line, tau)
+
+
+@pulse.kernel
+def stabilizer_cycle(qubits):
+    ancilla, ancilla_tone = get_drive_line(qubits[0])
+    readout_line, readout_tone = get_readout_line(qubits[0])
+    lines, tones = [], []
+    for q in qubits[1:]:
+        line, tone = get_drive_line(q)
+        lines.append(line)
+        tones.append(tone)
+
+    for _ in range(ROUNDS):
+        single_qubit_layer(lines, tones)
+        for i in range(DATA_QUBITS):
+            cross_resonance(ancilla, tones[i])
+        single_qubit_layer(lines, tones)
+        measure_and_reset(ancilla, ancilla_tone, readout_line, readout_tone)
+        for i in range(DATA_QUBITS):
+            xy4(lines[i], tones[i], 120)
+
+
+def first_round(compiled: pulse.Lowered) -> dict[int, list[tuple[str, int, int]]]:
+    """The first round's (kind, start, duration) on each line."""
+    per_line: dict[int, list[tuple[str, int, int]]] = {}
+    for event in compiled.schedule:
+        per_line.setdefault(event.line, []).append(
+            (event.kind, event.start_vtu, event.duration_vtu)
+        )
+    events_per_round = {line: len(events) // ROUNDS for line, events in per_line.items()}
+    return {line: events[: events_per_round[line]] for line, events in per_line.items()}
+
+
+def report(label: str, compiled: pulse.Lowered) -> None:
+    timeline = first_round(compiled)
+    data_lines = sorted(timeline)[2:]
+    makespan = max(e.start_vtu + e.duration_vtu for e in compiled.schedule)
+    print(f"\n  --- {label} ---")
+    print(f"    makespan: {makespan} VTU")
+    layer = [timeline[line][0][1] for line in data_lines]
+    print(f"    first layer starts on the data lines: {layer}")
+    readout = next(e for e in timeline[1] if e[0] == "readout")
+    print(f"    ancilla readout: [{readout[1]}, {readout[1] + readout[2]}]")
+    dd = [start for kind, start, _ in timeline[data_lines[0]][2:] if kind == "drive"]
+    print(f"    XY4 pulses on the first data line: {dd}")
+
+
+def main():
+    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    qubits = [dev.qudit_handles[: 1 + DATA_QUBITS]]
+    report(
+        "per-kernel schedules",
+        stabilizer_cycle.lower(*qubits),
+    )
+    report(
+        "flattened into one ALAP schedule",
+        pulse.compile(stabilizer_cycle, flatten_schedules=True).lower(*qubits),
+    )
+
+
+if __name__ == "__main__":
+    main()

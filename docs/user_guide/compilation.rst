@@ -108,11 +108,17 @@ never evicted.
 
 Options, all keyword-only:
 
-``schedule`` *(str, default "alap")*
-   Scheduling policy: ``"asap"``, ``"alap"``, ``"rcp"`` or ``"alap_rcp"``.
-   ASAP and ALAP preserve data and physical-line dependencies, including the
-   order of pulses that play on the same tone; the RCP variants also enforce
-   ``MachineModel`` resource limits.
+``schedule`` *(str, optional)*
+   Scheduling policy of the compiled kernel itself: ``"asap"``, ``"alap"``,
+   ``"rcp"`` or ``"alap_rcp"``; by default the kernel's own ``schedule=``,
+   else ``"alap"``. ASAP and ALAP preserve data and physical-line
+   dependencies, including the order of pulses that play on the same tone;
+   the RCP variants also enforce ``MachineModel`` resource limits. Kernels
+   it calls keep their own ``schedule=`` (see `Per-kernel schedules`_).
+
+``flatten_schedules`` *(bool, default False)*
+   Ignore the ``schedule=`` of every called kernel and schedule the whole
+   program with ``schedule``, for comparison.
 
 ``passes`` *(sequence of str, optional)*
    Optimization passes, ``("verify", "virtual_z", "fusion")`` by default;
@@ -131,6 +137,21 @@ Options, all keyword-only:
 
 Calling the kernel directly always uses the defaults: ``k(...)`` takes only
 the kernel's own arguments.
+
+Per-kernel schedules
+--------------------
+
+A kernel declared with ``@pulse.kernel(schedule="asap")`` or
+``schedule="alap"`` and called from another kernel is scheduled on its own
+with that policy, then placed whole by its caller's policy, so its internal
+timing is the same wherever it is called -- also inside a rolled loop. A
+called kernel without ``schedule=`` is scheduled together with its caller.
+``rcp`` and ``alap_rcp`` apply to a whole program: they are accepted only by
+``pulse.compile``, and not yet for programs that call kernels with their own
+``schedule=`` (compile with ``flatten_schedules=True`` instead). A kernel's
+policy is part of what it is, so a compiled kernel's specializations depend
+on its own policy, ``flatten_schedules`` and the policies of the kernels it
+calls.
 
 Inspecting a compilation
 ------------------------
