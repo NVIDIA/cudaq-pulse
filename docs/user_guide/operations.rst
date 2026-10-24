@@ -106,7 +106,11 @@ Each constructor returns a waveform value that can be passed to
    * - ``square(duration, amplitude)``
      - Constant-amplitude (flat-top) envelope
    * - ``drag(duration, amplitude, sigma, beta)``
-     - DRAG pulse for leakage suppression
+     - DRAG pulse for leakage suppression: ``G + i beta dG/dt`` for the
+       Gaussian ``G``, with *beta* in clock cycles like *sigma*. Leakage of a
+       transmon is smallest near ``beta = -1 / alpha``, for the
+       anharmonicity ``alpha`` in radians per clock cycle (``2 pi f_alpha /
+       f_clock``, negative for a transmon).
    * - ``cosine(duration, amplitude)``
      - Raised-cosine envelope
    * - ``tanh_ramp(duration, amplitude, sigma)``

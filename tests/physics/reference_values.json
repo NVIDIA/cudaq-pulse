@@ -7,7 +7,7 @@
   "transmon": "H_0 = (alpha/2) n (n-1) per qudit in its frame; coupling g (a^dag b + a b^dag), RWA",
   "dissipation": "T1: sqrt(1/T1) a; dephasing gamma_phi = 1/T2 - 1/(2 T1), jump sqrt(2 gamma_phi) n (coherence j,k decays at gamma_phi (j-k)^2)",
   "ordering": "qudit 0 is the least significant digit of the state index",
-  "clock": "2 GHz pulse clock: durations and sigma in kernels are in clock cycles (2 per ns)",
+  "clock": "2 GHz pulse clock: durations, sigma and drag beta in kernels are in clock cycles (2 per ns); beta_ns values here are converted by the tests",
   "kinds": {
    "analytic": "closed-form expression",
    "first_principles": "exact diagonalization or exponentiation of a small matrix written from the Hamiltonian above in plain numpy",

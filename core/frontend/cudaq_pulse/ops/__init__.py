@@ -214,11 +214,16 @@ def drag(
 ) -> Waveform:
     """Create a DRAG (Derivative Removal by Adiabatic Gate) waveform.
 
+    The envelope is ``G(t) + i beta dG/dt`` with ``G`` the Gaussian (Motzoi
+    et al., PRL 103, 110501 (2009)). Leakage to the second excited level of
+    a transmon with anharmonicity ``alpha`` is smallest near
+    ``beta = -1 / alpha``, with ``alpha`` in radians per clock cycle.
+
     Args:
         duration: Pulse duration in clock cycles.
         amplitude: Peak amplitude in ``[-1, 1]``.
         sigma: Gaussian standard deviation in clock cycles.
-        beta: DRAG correction coefficient.
+        beta: DRAG coefficient in clock cycles.
 
     Returns:
         Waveform value.

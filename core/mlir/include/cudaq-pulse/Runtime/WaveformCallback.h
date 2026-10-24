@@ -11,7 +11,7 @@
 // coefficients.
 //
 // Parameters: start (ns), duration (ns), real and imaginary amplitude,
-// sigma (ns), beta, rise/fall (ns), envelope phase at start, quadrature
+// sigma (ns), beta (ns), rise/fall (ns), envelope phase at start, quadrature
 // (0 for the X term, 1 for Y), envelope rotation rate (rad/ns: w_q - w_tone
 // for a drive), then for a pulse train (kind has
 // kTrainFlag) the number of levels L and (period ns, count, phase step) per

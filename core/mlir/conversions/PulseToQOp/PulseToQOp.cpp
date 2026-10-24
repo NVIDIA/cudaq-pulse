@@ -168,7 +168,7 @@ leafCallback(Operation *waveform, const DriveTiming &timing, double clockGHz,
       auto betaValue = affineNumber(beta);
       if (!betaValue)
         return false;
-      result.parameters[5] = *betaValue;
+      result.parameters[5] = *betaValue * scale;
     }
     return true;
   };
