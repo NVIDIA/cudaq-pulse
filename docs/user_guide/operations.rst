@@ -61,11 +61,17 @@ These operations modify the rotating frame of a tone channel.
 
 .. function:: shift_phase(tone, phase)
 
-   Add a relative phase offset (radians) to the tone.
+   Advance the tone's frame phase by *phase* (radians): a virtual Z rotation
+   by *phase*, in the convention of McKay et al., PRA 96, 022330 (2017). A
+   pulse played after it turns about an axis rotated by ``-phase``, so
+   ``shift_phase(t, pi / 2)`` followed by an X90 pulse is an X90 about the
+   -Y axis. It takes no time, and the virtual-Z pass folds it into the next
+   drive.
 
 .. function:: set_phase(tone, phase)
 
-   Set the absolute phase (radians) of the tone.
+   Set the tone's frame phase (radians), with the same sign as
+   ``shift_phase``.
 
 .. function:: shift_frequency(tone, frequency)
 
@@ -73,7 +79,15 @@ These operations modify the rotating frame of a tone channel.
 
 .. function:: set_frequency(tone, frequency)
 
-   Set the absolute frequency (Hz) of the tone.
+   Set the absolute frequency (Hz) of the tone. The phase carries over
+   continuously.
+
+In the qudit's frame, which rotates at its 0-1 frequency, a tone at
+``w_tone`` drives with ``H = (A/2)(E a^dagger + E^* a)`` and
+``E(t) = envelope(t) exp(-i theta(t))``, where the frame phase
+``theta(t) = theta_0 + (w_tone - w_q) t``: a tone above the qudit runs ahead of
+its frame. The 1-2 transition of a transmon is driven resonantly by a tone at
+``w_q + alpha``.
 
 Waveform Constructors
 ---------------------

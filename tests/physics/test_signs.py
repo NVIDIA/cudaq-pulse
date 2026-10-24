@@ -5,7 +5,8 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""Sign conventions: drive detuning, the 1-2 transition and cross resonance."""
+"""Sign conventions: drive detuning, the 1-2 transition, cross resonance and
+shift_phase."""
 
 import math
 
@@ -15,10 +16,7 @@ import pytest
 from tests.physics._sim import basis, cycles, device, population, run
 from tests.physics.conftest import ref
 
-SIGN = pytest.mark.xfail(strict=True, reason="drive detuning sign is mirrored")
 
-
-@SIGN
 @pytest.mark.parametrize("tone", ["plus", "minus"])
 def test_ef_rabi_sign(tone):
     entry = ref("ef_rabi_sign")
@@ -42,7 +40,6 @@ def test_ef_rabi_sign(tone):
     )
 
 
-@SIGN
 @pytest.mark.parametrize("control", [0, 1])
 def test_cr_target_excitation(control):
     entry = ref("cr_target_excitation")
@@ -71,7 +68,6 @@ def test_cr_target_excitation(control):
     )
 
 
-@SIGN
 @pytest.mark.parametrize(("theta", "x"), [(0.5 * math.pi, -1.0), (-0.5 * math.pi, 1.0)])
 @pytest.mark.parametrize("passes", [(), ("verify", "virtual_z")])
 def test_shift_phase_is_a_mckay_virtual_z(theta, x, passes):

@@ -134,7 +134,10 @@ def sync(*targets: Line) -> None:
 
 
 def shift_phase(tone: Tone, phase: Numeric) -> Tone:
-    """Add a relative phase offset to a tone's rotating frame.
+    """Advance a tone's frame phase: a virtual Z rotation by *phase*.
+
+    Following McKay et al., PRA 96, 022330 (2017), a pulse played after it
+    turns about an axis rotated by ``-phase``.
 
     Args:
         tone: Tone handle (second element of ``get_drive_line()``).
@@ -144,7 +147,7 @@ def shift_phase(tone: Tone, phase: Numeric) -> Tone:
 
 
 def set_phase(tone: Tone, phase: Numeric) -> Tone:
-    """Set the absolute phase of a tone's rotating frame.
+    """Set the frame phase of a tone, with the sign of ``shift_phase``.
 
     Args:
         tone: Tone handle.

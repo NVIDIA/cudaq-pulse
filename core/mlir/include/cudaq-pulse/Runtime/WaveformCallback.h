@@ -11,8 +11,9 @@
 // coefficients.
 //
 // Parameters: start (ns), duration (ns), real and imaginary amplitude,
-// sigma (ns), beta, rise/fall (ns), phase at start, quadrature (0 for the
-// X term, 1 for Y), detuning (rad/ns), then for a pulse train (kind has
+// sigma (ns), beta, rise/fall (ns), envelope phase at start, quadrature
+// (0 for the X term, 1 for Y), envelope rotation rate (rad/ns: w_q - w_tone
+// for a drive), then for a pulse train (kind has
 // kTrainFlag) the number of levels L and (period ns, count, phase step) per
 // level, outermost first, then any samples. A train plays the pulse at
 // start + sum_l k_l * period_l with phase advanced by sum_l k_l * step_l.

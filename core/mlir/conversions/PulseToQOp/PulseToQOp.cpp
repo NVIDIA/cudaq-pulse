@@ -103,6 +103,12 @@ struct DriveTiming {
   Affine phase, detuning;
 };
 
+/// In the qudit's frame a tone at w_tone drives a^dagger with
+/// E(t) = envelope e^{-i theta(t)}, theta(t) = theta_0 + (w_tone - w_q) t:
+/// the tone runs ahead of the frame at the detuning. theta_0 holds the
+/// tone's frame phase, which shift_phase(theta) advances by theta, so a
+/// shift_phase(theta) before a pulse is a virtual Z(theta) (McKay et al.,
+/// PRA 96, 022330 (2017)): the pulse turns about an axis at -theta.
 static DriveTiming driveTiming(const pulse::Occurrence &occurrence,
                                double clockGHz, double qubitFrequencyHz,
                                double phaseOffset) {
@@ -110,14 +116,14 @@ static DriveTiming driveTiming(const pulse::Occurrence &occurrence,
   const double startNs = static_cast<double>(occurrence.startVtu) * scale;
   const pulse::ToneState &tone = occurrence.tone;
   const Affine qubitFrequency(qubitFrequencyHz);
-  return {startNs, static_cast<double>(occurrence.durationVtu) * scale,
-          tone.phase +
-              (tone.frequencyHz - tone.frameFrequencyHz) * (2.0 * M_PI) *
-                  1.0e-9 * (startNs - tone.timeNs) +
-              (tone.frameFrequencyHz - qubitFrequency) * (2.0 * M_PI) * 1.0e-9 *
-                  startNs +
-              Affine(phaseOffset),
-          (tone.frequencyHz - qubitFrequency) * (2.0 * M_PI) * 1.0e-9};
+  const Affine theta = tone.phase +
+                       (tone.frequencyHz - tone.frameFrequencyHz) *
+                           (2.0 * M_PI) * 1.0e-9 * (startNs - tone.timeNs) +
+                       (tone.frameFrequencyHz - qubitFrequency) * (2.0 * M_PI) *
+                           1.0e-9 * startNs +
+                       Affine(phaseOffset);
+  return {startNs, static_cast<double>(occurrence.durationVtu) * scale, -theta,
+          (qubitFrequency - tone.frequencyHz) * (2.0 * M_PI) * 1.0e-9};
 }
 
 /// The callback of `waveform`, a built-in or custom_samples op, played with
