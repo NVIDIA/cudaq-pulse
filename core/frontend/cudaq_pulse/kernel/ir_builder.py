@@ -238,8 +238,8 @@ class IRValue(_UndecidableComparisons):
         self.vid = vid
         self.vtype = vtype
         self.name = name
-        # (holder, index) of the qudit channel this line or tone value is, or
-        # was, a version of; set by the tracer.
+        # The qudit channel cell this line or tone value is, or was, a
+        # version of; set by the tracer.
         self.chan: Any = None
 
     def __repr__(self) -> str:

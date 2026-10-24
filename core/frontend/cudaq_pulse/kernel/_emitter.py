@@ -30,6 +30,7 @@ from __future__ import annotations
 import builtins as _builtins_mod
 import inspect
 import types
+from collections.abc import Iterator
 from typing import Any
 
 from . import _bytecode_normalize as bc
@@ -74,6 +75,7 @@ _WAVEFORMS = frozenset(
 _WAVEFORM_ARITHMETIC = frozenset({"wf_add", "wf_sub", "wf_mul", "wf_scale", "wf_neg"})
 _MAKES_WAVEFORM = _WAVEFORMS | _WAVEFORM_ARITHMETIC | {"custom_samples"}
 _PULSE_OP_NAMES = frozenset(OP_TABLE.keys()) | frozenset(_ALLOC_OPS.keys())
+_OP_NAMES = {name: _ALLOC_OPS.get(name, f"pulse.{name}") for name in OP_TABLE}
 
 # Loops over Python iterables are unrolled; this bounds a runaway iterator.
 MAX_UNROLLED_ITERATIONS = 1_000_000
@@ -207,16 +209,47 @@ _MISSING = object()
 _LINE_OPS = frozenset({"get_drive_line", "get_readout_line"})
 
 
-class _Held(list):  # type: ignore[type-arg]
-    """The current (line, tone) of one qudit's drive or readout channel."""
+class _Chan:
+    """The current value of a channel's line (index 0) or of its tone (1)."""
 
-    __slots__ = ("key", "shared")
+    __slots__ = ("value", "shared", "held", "index")
 
-    def __init__(self, values: list[IRValue], key: tuple[int, str]) -> None:
-        super().__init__(values)
-        self.key = key
+    def __init__(self, value: IRValue, held: _Held, index: int) -> None:
+        self.value = value
+        value.chan = self
         # Handed out more than once: names holding old values may be stale.
         self.shared = False
+        self.held = held
+        self.index = index
+
+
+class _Held:
+    """The current (line, tone) of one qudit's drive or readout channel.
+
+    Indexing reads and writes the line (0) and the tone (1); a value written
+    records the channel in ``IRValue.chan``.
+    """
+
+    __slots__ = ("cells", "key")
+
+    def __init__(self, values: tuple[IRValue, ...], key: tuple[int, str]) -> None:
+        line, tone = values
+        self.cells = (_Chan(line, self, 0), _Chan(tone, self, 1))
+        self.key = key
+
+    def __getitem__(self, index: int) -> IRValue:
+        return self.cells[index].value
+
+    def __setitem__(self, index: int, value: IRValue) -> None:
+        cell = self.cells[index]
+        cell.value = value
+        value.chan = cell
+
+    def __iter__(self) -> Iterator[IRValue]:
+        return (cell.value for cell in self.cells)
+
+    def __len__(self) -> int:
+        return len(self.cells)
 
     @property
     def label(self) -> str:
@@ -241,33 +274,23 @@ class _Lines:
         self.held: dict[tuple[int, str], _Held] = {}
         # Whether any channel was handed out more than once.
         self.shared = False
-        # Acquisitions while a rolled loop body is traced, to hoist.
-        self.log: list[tuple[str, IRValue]] | None = None
+        # Line acquisitions, in order: those a rolled loop body makes are
+        # hoisted before the loop.
+        self.log: list[tuple[str, IRValue]] = []
 
     def add(self, key: tuple[int, str], values: tuple[IRValue, ...]) -> None:
-        held = _Held(list(values), key)
-        self.held[key] = held
-        for i, v in enumerate(held):
-            v.chan = (held, i)
+        self.held[key] = _Held(values, key)
 
     def share(self, held: _Held) -> None:
-        held.shared = True
+        for cell in held.cells:
+            cell.shared = True
         self.shared = True
 
     @staticmethod
     def current(value: IRValue) -> IRValue | None:
         """The channel value now standing for *value*, if it is a channel's."""
-        chan = value.chan
-        if chan is None:
-            return None
-        current: IRValue = chan[0][chan[1]]
-        return current
-
-    def resync(self) -> None:
-        """Mark the channels' values after their holders were rewritten."""
-        for h in self.held.values():
-            for i, v in enumerate(h):
-                v.chan = (h, i)
+        chan: _Chan | None = value.chan
+        return None if chan is None else chan.value
 
 
 # Host calls evaluated at trace time whose result depends only on their
@@ -804,23 +827,22 @@ class PulseIREmitter:
             if isinstance(v, (list, dict))
         ]
 
-        # Each channel's (holder, line, tone) entering the branch.
+        # Each channel value entering the branch, as (cell, value).
         held = self._lines.held
-        held_keys = dict(held) if held else None
-        held_vals = [(h, h[0], h[1]) for h in held.values()] if held else ()
+        n_held = len(held)
+        entering = _channel_values(held) if n_held else ()
 
         builder.emit("scf.if", (value,), ())
         then_locals, then_slots = self._trace_arm(
             view, index, join, then_start, saved_stack, containers
         )
-        then_held = [(h[0], h[1]) for h, _, _ in held_vals]
+        then_held = [cell.value for cell, _ in entering]
         stack[:] = saved_stack
         self.locals.clear()
         self.locals.update(saved_locals)
         for obj, copy in containers:
             self._restore_container(obj, copy)
-        for h, line, tone in held_vals:
-            h[0], h[1] = line, tone
+        _restore_channels(held, n_held, entering)
         else_index = builder.mark()
         builder.emit("scf.else", (), ())
         else_locals, else_slots = self._trace_arm(
@@ -847,7 +869,7 @@ class PulseIREmitter:
                     "arms of a measurement-conditioned if"
                 )
         # List slots holding lines or tones that either arm rebound.
-        slot_results: list[tuple[list[Any], int, IRValue, IRValue]] = []
+        slot_results: list[tuple[Any, int, IRValue, IRValue]] = []
         originals = {id(obj): copy for obj, copy in containers}
         keys: dict[tuple[int, int], list[Any]] = {}
         for obj, i, _ in then_slots + else_slots:
@@ -863,20 +885,19 @@ class PulseIREmitter:
 
         # Channels either arm advanced become results too, unless a name
         # carries the same pair of values.
-        aliases: list[tuple[list[Any], int, str]] = []
+        aliases: list[tuple[_Chan, str]] = []
         by_pair: dict[tuple[int, int], str] | None = None
-        for (h, line, tone), then_pair in zip(held_vals, then_held):
-            for i, before in ((0, line), (1, tone)):
-                a, b = then_pair[i], h[i]
-                if a is before and b is before:
-                    continue
-                if by_pair is None:
-                    by_pair = {(id(x), id(y)): name for name, x, y in results}
-                alias = by_pair.get((id(a), id(b)))
-                if alias is None:
-                    slot_results.append((h, i, a, b))
-                else:
-                    aliases.append((h, i, alias))
+        for (cell, before), a in zip(entering, then_held):
+            b = cell.value
+            if a is before and b is before:
+                continue
+            if by_pair is None:
+                by_pair = {(id(x), id(y)): name for name, x, y in results}
+            alias = by_pair.get((id(a), id(b)))
+            if alias is None:
+                slot_results.append((cell.held, cell.index, a, b))
+            else:
+                aliases.append((cell, alias))
         labels = [name for name, _, _ in results]
         labels += [self._slot_label(obj, i) for obj, i, _, _ in slot_results]
         then_vals = tuple(a for _, a, _ in results) + tuple(a for _, _, a, _ in slot_results)
@@ -893,20 +914,17 @@ class PulseIREmitter:
             merged[name] = out
         for (obj, i, a, b), out in zip(slot_results, outs[len(results) :]):
             obj[i] = out
-            if isinstance(obj, _Held):
-                out.chan = (obj, i)
             self._slots.pop(id(a), None)
             self._slots.pop(id(b), None)
             if not isinstance(obj, _Held):
                 self._slots[id(out)] = (obj, i, out)
-        for obj, i, alias in aliases:
-            obj[i] = merged[alias]
-            merged[alias].chan = (obj, i)
+        for cell, alias in aliases:
+            out = merged[alias]
+            cell.value = out
+            out.chan = cell
         # A channel first acquired in one arm is not held after the if.
-        if held_keys is not None or held:
-            held.clear()
-            if held_keys is not None:
-                held.update(held_keys)
+        if len(held) != n_held:
+            _restore_channels(held, n_held, ())
         self.locals.clear()
         self.locals.update(merged)
         stack[:] = saved_stack
@@ -986,13 +1004,12 @@ class PulseIREmitter:
             if isinstance(v, (list, dict))
         ]
         lines = self._lines
-        # Each channel's (holder, line, tone) entering the loop.
+        # Each channel value entering the loop, as (cell, value).
         held = lines.held
-        held_keys = dict(held) if held else None
-        held_vals = [(h, h[0], h[1]) for h in held.values()] if held else ()
-        outer_log = lines.log
-        log: list[tuple[str, IRValue]] = []
-        lines.log = log
+        n_held = len(held)
+        entering = _channel_values(held) if n_held else ()
+        log = lines.log
+        mark = len(log)
         checkpoint = self.b.checkpoint()
 
         snap = self._ir_snapshot()
@@ -1014,7 +1031,7 @@ class PulseIREmitter:
                 len(stack) == len(saved_stack)
                 and self._python_state_unchanged(saved_locals)
                 and slot_changes is not None
-                and _only_containers(mutated, containers)
+                and (not mutated or _only_containers(mutated, containers))
             )
             if ok and self._acquired[0] != acquired:
                 ok = False
@@ -1023,13 +1040,12 @@ class PulseIREmitter:
                 first = checkpoint[1]
                 hoist = (
                     not hoisted
-                    and len(log) == self._acquired[0] - acquired
-                    and all(q.vid < first for _, q in log)
+                    and len(log) - mark == self._acquired[0] - acquired
+                    and all(q.vid < first for _, q in log[mark:])
                 )
         except _NotRollableError:
             ok = False
         finally:
-            lines.log = outer_log
             self._mutated = outer
             if outer is not None:
                 for key, entry in mutated.items():
@@ -1045,16 +1061,13 @@ class PulseIREmitter:
             self.locals.update(saved_locals)
             for obj, copy in containers:
                 self._restore_container(obj, copy)
-            if held_keys is not None or held:
-                held.clear()
-                if held_keys is not None:
-                    held.update(held_keys)
-                for h, line, tone in held_vals:
-                    h[0], h[1] = line, tone
+            _restore_channels(held, n_held, entering)
             # Acquisitions the undone body made did not happen.
             self._acquired[0] = acquired
+            undone = log[mark:]
+            del log[mark:]
             if hoist:
-                for fname, q in dict.fromkeys(log):
+                for fname, q in dict.fromkeys(undone):
                     self._emit_pulse_call(fname, [q])
                 return self._roll(loop, prog, for_idx, exit_idx, hoisted=True)
             return False
@@ -1063,22 +1076,22 @@ class PulseIREmitter:
         assert slot_changes is not None
         # Channels the body advanced are carried, unless a name carries the
         # same value; a channel first acquired in the body was hoisted.
-        aliases: list[tuple[list[Any], int, str]] = []
+        aliases: list[tuple[_Chan, str]] = []
         originals = {id(obj): copy for obj, copy in containers}
         by_value: dict[int, str] | None = None
-        for h, line, tone in held_vals:
-            for i, before in ((0, line), (1, tone)):
-                new = h[i]
-                if new is before:
-                    continue
-                if by_value is None:
-                    by_value = {id(v): n for n, v in delta.items()}
-                alias = by_value.get(id(new))
-                if alias is None:
-                    slot_changes.append((h, i, new))
-                    originals[id(h)] = [line, tone]
-                else:
-                    aliases.append((h, i, alias))
+        for cell, before in entering:
+            new = cell.value
+            if new is before:
+                continue
+            if by_value is None:
+                by_value = {id(v): n for n, v in delta.items()}
+            alias = by_value.get(id(new))
+            if alias is None:
+                h = cell.held
+                slot_changes.append((h, cell.index, new))
+                originals.setdefault(id(h), [None, None])[cell.index] = before
+            else:
+                aliases.append((cell, alias))
         if delta or slot_changes:
             names = sorted(delta)
             vals = tuple(delta[n] for n in names) + tuple(new for _, _, new in slot_changes)
@@ -1099,15 +1112,14 @@ class PulseIREmitter:
                 self.locals[n] = r
             for (obj, i, _), r in zip(slot_changes, results[len(names) :]):
                 obj[i] = r
-                if isinstance(obj, _Held):
-                    r.chan = (obj, i)
-                else:
+                if not isinstance(obj, _Held):
                     self._slots[id(r)] = (obj, i, r)
         else:
             self.b.emit("scf.for_end", (), ())
-        for obj, i, alias in aliases:
-            obj[i] = self.locals[alias]
-            self.locals[alias].chan = (obj, i)
+        for cell, alias in aliases:
+            carried = self.locals[alias]
+            cell.value = carried
+            carried.chan = cell
 
         if count:
             self.locals[var] = rng[-1]
@@ -1128,7 +1140,7 @@ class PulseIREmitter:
         if self._mutated is not None:
             self._mutated.setdefault(id(obj), (obj, None))
 
-    def _slot_label(self, obj: list[Any], index: int) -> str:
+    def _slot_label(self, obj: Any, index: int) -> str:
         if isinstance(obj, _Held):
             return f"{obj.label}[{index}]"
         name = next((n for n, v in self.locals.items() if v is obj), "")
@@ -1407,9 +1419,9 @@ class PulseIREmitter:
                 held = lines.held.get((call_args[0].vid, fname))
                 if held is not None:
                     lines.share(held)
-                    return tuple(held)
-                if lines.log is not None:
-                    lines.log.append((fname, call_args[0]))
+                    line, tone = held.cells
+                    return line.value, tone.value
+                lines.log.append((fname, call_args[0]))
                 line_op = True
             self._acquired[0] += 1
 
@@ -1427,7 +1439,7 @@ class PulseIREmitter:
             attrs = dict(zip(attr_names, attr_vals))
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
 
-        op_name = _ALLOC_OPS.get(fname, f"pulse.{fname}")
+        op_name = _OP_NAMES[fname]
         results: tuple[IRValue, ...]
         if fname in _MAKES_WAVEFORM:
             if fname in _WAVEFORMS:
@@ -1531,11 +1543,10 @@ class PulseIREmitter:
                 ):
                     continue
                 if op_val.vtype == res.vtype:
-                    if chan is not None and chan[0][chan[1]] is op_val:
-                        held = chan[0]
-                        held[chan[1]] = res
+                    if chan is not None and chan.value is op_val:
+                        chan.value = res
                         res.chan = chan
-                        if held.shared:
+                        if chan.shared:
                             for other, value in self.locals.items():
                                 if value is op_val:
                                     self.locals[other] = res
@@ -1548,14 +1559,15 @@ class PulseIREmitter:
                     claimed.add(i)
                     break
 
-    def _restore_container(self, obj: list[Any] | dict[Any, Any], copy: Any) -> None:
+    def _restore_container(self, obj: Any, copy: Any) -> None:
         """Undo a traced arm or loop body's changes to a list or dict.
 
         Restored lists hold values whose slots the undone code consumed, so
         their slots are tracked again.
         """
         if isinstance(obj, _Held):
-            obj[:] = copy
+            for i, value in enumerate(copy):
+                obj[i] = value
         elif isinstance(obj, list):
             obj[:] = copy
             self._track_slots(obj, 0)
@@ -1575,11 +1587,10 @@ class PulseIREmitter:
         if old.__class__ is not IRValue or old.vtype != new.vtype:
             return
         chan = old.chan
-        if chan is not None and chan[0][chan[1]] is old:
-            held = chan[0]
-            held[chan[1]] = new
+        if chan is not None and chan.value is old:
+            chan.value = new
             new.chan = chan
-            if held.shared:
+            if chan.shared:
                 # Every name for the channel's old value moves with it.
                 local_vars = self.locals
                 for other, value in local_vars.items():
@@ -1619,9 +1630,9 @@ class PulseIREmitter:
 
 def _slot_changes(
     containers: list[tuple[Any, Any]],
-) -> list[tuple[list[Any], int, IRValue]] | None:
+) -> list[tuple[Any, int, IRValue]] | None:
     """List slots whose linear value was replaced, or None for any other change."""
-    changes: list[tuple[list[Any], int, IRValue]] = []
+    changes: list[tuple[Any, int, IRValue]] = []
     for obj, copy in containers:
         if len(obj) != len(copy):
             return None
@@ -1641,6 +1652,26 @@ def _slot_changes(
                 return None
             changes.append((obj, i, new))
     return changes
+
+
+def _channel_values(held: dict[tuple[int, str], _Held]) -> list[tuple[_Chan, IRValue]]:
+    """Each channel's line and tone now, as (cell, value)."""
+    return [(cell, cell.value) for h in held.values() for cell in h.cells]
+
+
+def _restore_channels(
+    held: dict[tuple[int, str], _Held],
+    n_held: int,
+    entering: Any,
+) -> None:
+    """Drop the channels acquired after the first *n_held*, and give the
+    others back their *entering* values."""
+    if len(held) != n_held:
+        for key in list(held)[n_held:]:
+            del held[key]
+    for cell, value in entering:
+        cell.value = value
+        value.chan = cell
 
 
 def _only_containers(

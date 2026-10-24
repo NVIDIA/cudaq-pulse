@@ -643,6 +643,21 @@ def test_a_callee_acquiring_the_line_in_a_rolled_loop_is_hoisted():
     assert [e.start_vtu for e in large.schedule] == [16 * i for i in range(64)]
 
 
+def test_each_arm_of_a_branch_acquires_a_line_it_first_uses():
+    @pulse.kernel
+    def feedback(q0, q1):
+        r, rt = get_readout_line(q0)
+        if readout(r, square(20, 0.05), rt):
+            x90(q1)
+        else:
+            x90(q1)
+            x90(q1)
+
+    h = _device().qudit_handles
+    lowered = pulse.compile(feedback, passes=()).lower(h[0], h[1])
+    assert lowered.mlir().count("pulse.get_drive_line") == 2
+
+
 def test_a_qudit_allocated_in_a_loop_body_still_unrolls():
     @pulse.kernel
     def fresh_each(n: int):
