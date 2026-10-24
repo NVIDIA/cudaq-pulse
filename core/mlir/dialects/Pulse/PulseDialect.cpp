@@ -9,6 +9,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Bytecode/BytecodeOpInterface.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"

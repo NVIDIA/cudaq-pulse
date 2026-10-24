@@ -66,6 +66,7 @@ std::unique_ptr<mlir::Pass> createVirtualZPass();
 std::unique_ptr<mlir::Pass> createPulseFusionPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleAsapPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleAlapPass();
+std::unique_ptr<mlir::Pass> createPulseInlineScheduleBlocksPass();
 } // namespace pulse
 
 int main(int argc, char **argv) {
@@ -92,6 +93,7 @@ int main(int argc, char **argv) {
   mlir::registerPass(pulse::createPulseFusionPass);
   mlir::registerPass(pulse::createPulseScheduleAsapPass);
   mlir::registerPass(pulse::createPulseScheduleAlapPass);
+  mlir::registerPass(pulse::createPulseInlineScheduleBlocksPass);
 
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "cudaq-pulse MLIR optimizer\n", registry));

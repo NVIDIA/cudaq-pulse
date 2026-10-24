@@ -273,6 +273,57 @@ LogicalResult AtomicOp::verify() {
 
 LogicalResult YieldOp::verify() { return success(); }
 
+static bool isTimedValueType(Type type) {
+  return isa<DriveLineType, ReadoutLineType, ToneType, MeasurementType>(type);
+}
+
+LogicalResult ScheduleBlockOp::verify() {
+  if (getPolicy() != "asap" && getPolicy() != "alap")
+    return emitOpError("policy must be \"asap\" or \"alap\", got \"")
+           << getPolicy() << "\"";
+  return success();
+}
+
+LogicalResult ScheduleBlockOp::verifyRegions() {
+  // RegionBranchOpInterface checks that the operands match the block
+  // arguments and the yielded values the results.
+  Block &body = getBody().front();
+  if (body.empty() || !isa<YieldOp>(body.back()))
+    return emitOpError("body must end in pulse.yield");
+  // Lines, tones and measurements reach the body only as block arguments,
+  // so the boundary lists every timed value that crosses it.
+  Operation *self = getOperation();
+  WalkResult walk = getBody().walk([&](Operation *inner) {
+    for (Value operand : inner->getOperands()) {
+      if (!isTimedValueType(operand.getType()))
+        continue;
+      Region *region = operand.getParentRegion();
+      if (region && self->isProperAncestor(region->getParentOp()))
+        continue;
+      if (region == &getBody())
+        continue;
+      inner->emitOpError("uses a line, tone or measurement from outside its "
+                         "pulse.schedule_block; pass it as an operand");
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return failure(walk.wasInterrupted());
+}
+
+void ScheduleBlockOp::getSuccessorRegions(
+    RegionBranchPoint point, SmallVectorImpl<RegionSuccessor> &regions) {
+  if (point.isParent()) {
+    regions.push_back(RegionSuccessor(&getBody(), getBody().getArguments()));
+    return;
+  }
+  regions.push_back(RegionSuccessor(getOperation(), getOutputs()));
+}
+
+OperandRange ScheduleBlockOp::getEntrySuccessorOperands(RegionSuccessor) {
+  return getInputs();
+}
+
 // ===----------------------------------------------------------------------===//
 // Folders — fold away no-op operations (zero shift, scale by 1, double neg).
 //

@@ -31,13 +31,17 @@ inline bool isLinearPulseType(mlir::Type type) {
 ///   operand.
 /// - An `scf.if` result continues the matching `then` yield operand; the
 ///   `else` arm yields a version of the same allocation.
+/// - A `pulse.schedule_block` argument continues its operand, and a result
+///   continues the value the body yields for it.
 /// - Result `k` of type `T` of any other op continues its `k`-th operand of
 ///   type `T` (a drive's line result continues its line operand, a sync's
 ///   third line continues its third input line).
 inline mlir::Value linearPredecessor(mlir::Value value) {
   if (auto argument = mlir::dyn_cast<mlir::BlockArgument>(value)) {
-    auto loop = mlir::dyn_cast_or_null<mlir::scf::ForOp>(
-        argument.getOwner()->getParentOp());
+    mlir::Operation *parent = argument.getOwner()->getParentOp();
+    if (auto block = mlir::dyn_cast_or_null<ScheduleBlockOp>(parent))
+      return block.getInputs()[argument.getArgNumber()];
+    auto loop = mlir::dyn_cast_or_null<mlir::scf::ForOp>(parent);
     if (!loop || argument.getArgNumber() == 0)
       return {};
     return loop.getInitArgs()[argument.getArgNumber() - 1];
@@ -49,6 +53,9 @@ inline mlir::Value linearPredecessor(mlir::Value value) {
     return loop.getInitArgs()[index];
   if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op))
     return branch.thenYield().getOperand(index);
+  // A schedule block result continues the value its body yields.
+  if (auto block = mlir::dyn_cast<ScheduleBlockOp>(op))
+    return block.getBody().front().getTerminator()->getOperand(index);
   if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(op))
     return {};
   mlir::Type type = value.getType();

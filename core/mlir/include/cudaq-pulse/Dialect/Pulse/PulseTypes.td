@@ -123,4 +123,11 @@ def AnyLineType : Type<
   "any pulse line type"
 >;
 
+// Values that become available at a time: lines, tones and measurements.
+def AnyTimedType : Type<
+  Or<[DriveLineType.predicate, ReadoutLineType.predicate,
+      ToneType.predicate, MeasurementType.predicate]>,
+  "a pulse line, tone or measurement"
+>;
+
 #endif // CUDAQ_PULSE_DIALECT_PULSE_TYPES

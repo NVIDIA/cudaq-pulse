@@ -20,6 +20,12 @@
 // ops in loops (see Analysis/Timing.h). When an op's start is not affine in
 // its iteration (a loop's first or last iterations behave differently), that
 // iteration is peeled off the loop and the function is scheduled again.
+//
+// A `pulse.schedule_block` is scheduled first, innermost first, on its own
+// with its own policy. Its shape (length, and when each operand is first
+// needed and each result is available) makes it one rigid op for the
+// enclosing schedule. Once that is placed, the block's ops are moved to
+// their place in it and the block is inlined.
 
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -27,6 +33,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 
 #include <algorithm>
@@ -104,7 +111,33 @@ static bool isTimedOp(mlir::Operation *op) {
   return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op);
 }
 
+/// The shape a scheduled `pulse.schedule_block` presents to its parent, in
+/// the block's local time. An offset of -1 marks an operand nothing in the
+/// block waits for, or a result that passes operand `source` through.
+struct BlockShape {
+  int64_t length = 0;
+  llvm::SmallVector<int64_t> in, out, source;
+};
+
+static BlockShape shapeOf(pulse::ScheduleBlockOp block) {
+  BlockShape shape;
+  auto array = [&](llvm::StringRef name) {
+    llvm::SmallVector<int64_t> values;
+    if (auto attr = block->getAttrOfType<mlir::DenseI64ArrayAttr>(name))
+      values.assign(attr.asArrayRef().begin(), attr.asArrayRef().end());
+    return values;
+  };
+  if (auto length = block->getAttrOfType<mlir::IntegerAttr>("length_vtu"))
+    shape.length = length.getInt();
+  shape.in = array("in_offset_vtu");
+  shape.out = array("out_offset_vtu");
+  shape.source = array("out_source");
+  return shape;
+}
+
 static int64_t durationOf(mlir::Operation *op) {
+  if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op))
+    return shapeOf(block).length;
   if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op))
     return getWaveformDuration(drive.getPulse());
   if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
@@ -122,6 +155,21 @@ static bool isTimedType(mlir::Type type) {
 
 static bool isLineType(mlir::Type type) {
   return mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType>(type);
+}
+
+/// Visit the timed ops and schedule blocks of `region`, but not the ops in
+/// those blocks: they carry a schedule local to their block.
+template <typename Fn>
+static void forEachScheduled(mlir::Region &region, Fn &&fn) {
+  region.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation *op) {
+    if (mlir::isa<pulse::ScheduleBlockOp>(op)) {
+      fn(op);
+      return mlir::WalkResult::skip();
+    }
+    if (isTimedOp(op))
+      fn(op);
+    return mlir::WalkResult::advance();
+  });
 }
 
 /// How a loop-carried value takes part in the steady-state test.
@@ -191,14 +239,16 @@ struct Extrapolation {
   int64_t period;
 };
 
+/// Schedules one region: a function body, or a schedule block's body with
+/// every block argument available at time 0.
 class Scheduler {
 public:
-  Scheduler(mlir::func::FuncOp function, Resources resources)
-      : function(function), resources(resources) {}
+  Scheduler(mlir::Region &region, Resources resources)
+      : region(&region), resources(resources) {}
 
   mlir::LogicalResult forward() {
     resetLanes(0);
-    if (mlir::failed(forwardBlock(function.getBody().front())))
+    if (mlir::failed(forwardBlock(region->front())))
       return mlir::failure();
     return mlir::success();
   }
@@ -207,7 +257,7 @@ public:
     samples.clear();
     extrapolations.clear();
     resetLanes(makespan);
-    return backwardBlock(function.getBody().front());
+    return backwardBlock(region->front());
   }
 
   int64_t makespan = 0;
@@ -316,6 +366,10 @@ private:
       place(op, start);
       return mlir::success();
     }
+    if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op)) {
+      forwardScheduleBlock(block);
+      return mlir::success();
+    }
     if (auto sync = mlir::dyn_cast<pulse::SyncOp>(op)) {
       int64_t time = floor;
       for (mlir::Value line : sync.getLines())
@@ -338,6 +392,21 @@ private:
       if (isTimedType(result.getType()))
         readyAt[result] = time;
     return mlir::success();
+  }
+
+  /// Start the block once every operand is there when the block needs it.
+  void forwardScheduleBlock(pulse::ScheduleBlockOp block) {
+    BlockShape shape = shapeOf(block);
+    auto inputs = block.getInputs();
+    int64_t start = floor;
+    for (auto [input, offset] : llvm::zip(inputs, shape.in))
+      if (offset >= 0)
+        start = std::max(start, ready(input) - offset);
+    record(block, start);
+    for (auto [result, offset, source] :
+         llvm::zip(block.getOutputs(), shape.out, shape.source))
+      readyAt[result] = offset >= 0 ? start + offset : ready(inputs[source]);
+    noteEnd(start + shape.length);
   }
 
   mlir::LogicalResult forwardLoop(mlir::scf::ForOp loop) {
@@ -490,6 +559,10 @@ private:
         bound(tone, start);
       return mlir::success();
     }
+    if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op)) {
+      backwardScheduleBlock(block);
+      return mlir::success();
+    }
     if (auto sync = mlir::dyn_cast<pulse::SyncOp>(op)) {
       int64_t time = makespan;
       for (mlir::Value result : sync.getResults())
@@ -512,6 +585,28 @@ private:
         if (isTimedType(operand.getType()))
           bound(operand, time);
     return mlir::success();
+  }
+
+  /// Start the block as late as every result's consumer allows.
+  void backwardScheduleBlock(pulse::ScheduleBlockOp block) {
+    BlockShape shape = shapeOf(block);
+    auto inputs = block.getInputs();
+    int64_t start = makespan - shape.length;
+    for (auto [result, offset, source] :
+         llvm::zip(block.getOutputs(), shape.out, shape.source)) {
+      int64_t needed = late(result);
+      if (needed == kNever)
+        continue;
+      if (offset >= 0)
+        start = std::min(start, needed - offset);
+      else
+        bound(inputs[source], needed);
+    }
+    record(block, start);
+    armStart = std::min(armStart, start);
+    for (auto [input, offset] : llvm::zip(inputs, shape.in))
+      if (offset >= 0)
+        bound(input, start + offset);
   }
 
   mlir::LogicalResult backwardLoop(mlir::scf::ForOp loop) {
@@ -604,7 +699,7 @@ private:
     return mlir::success();
   }
 
-  mlir::func::FuncOp function;
+  mlir::Region *region;
   Resources resources;
   llvm::DenseMap<mlir::Value, int64_t> readyAt;
   llvm::DenseMap<mlir::Value, int64_t> lateAt;
@@ -625,9 +720,10 @@ struct NotAffine {
 };
 
 static std::optional<NotAffine>
-writeTiming(mlir::Operation *op, llvm::ArrayRef<Sample> samples,
+writeTiming(mlir::Operation *op, mlir::Operation *root,
+            llvm::ArrayRef<Sample> samples,
             llvm::ArrayRef<Extrapolation> extrapolations) {
-  auto loops = pulse::enclosingLoops(op);
+  auto loops = pulse::enclosingLoops(op, root);
   mlir::MLIRContext *context = op->getContext();
   auto i64 = mlir::IntegerType::get(context, 64);
   int64_t duration = durationOf(op);
@@ -809,36 +905,334 @@ static void unrollFully(mlir::scf::ForOp loop) {
 /// A loop in which two ops on one physical line move by different periods
 /// per iteration. Each op's timing is affine, but the line's timeline is not
 /// one pattern repeated, which happens when the first iteration differs.
-static std::optional<NotAffine> periodMismatch(mlir::func::FuncOp function) {
+static std::optional<NotAffine> periodMismatch(mlir::Region &region,
+                                               mlir::Operation *root) {
   std::optional<NotAffine> problem;
-  function.walk([&](mlir::scf::ForOp loop) {
-    if (problem)
-      return;
-    size_t level = pulse::enclosingLoops(loop).size();
+  region.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation *op) {
+    if (problem || mlir::isa<pulse::ScheduleBlockOp>(op))
+      return mlir::WalkResult::skip();
+    auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op);
+    if (!loop)
+      return mlir::WalkResult::advance();
+    size_t level = pulse::enclosingLoops(loop, root).size();
     llvm::DenseMap<mlir::Operation *, int64_t> periodOf;
-    loop.getBody()->walk([&](mlir::Operation *op) {
-      auto periods = op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_vtu");
-      if (problem || !isTimedOp(op) || !periods || periods.size() <= level)
-        return;
-      mlir::Operation *line = pulse::traceAllocation(op->getOperand(0));
-      auto [it, inserted] = periodOf.try_emplace(line, periods[level]);
-      if (!inserted && it->second != periods[level])
+    auto check = [&](mlir::Value line, int64_t period) {
+      auto [it, inserted] =
+          periodOf.try_emplace(pulse::traceAllocation(line), period);
+      if (!inserted && it->second != period)
         problem = NotAffine{loop, true, false};
+    };
+    forEachScheduled(loop.getRegion(), [&](mlir::Operation *timed) {
+      auto periods =
+          timed->getAttrOfType<mlir::DenseI64ArrayAttr>("period_vtu");
+      if (problem || !periods || static_cast<size_t>(periods.size()) <= level)
+        return;
+      if (!mlir::isa<pulse::ScheduleBlockOp>(timed))
+        return check(timed->getOperand(0), periods[level]);
+      for (mlir::Value input : timed->getOperands())
+        if (isLineType(input.getType()))
+          check(input, periods[level]);
     });
+    return mlir::WalkResult::advance();
   });
   return problem;
 }
 
-static mlir::LogicalResult schedule(mlir::func::FuncOp function,
-                                    Resources resources, bool isAlap) {
-  if (resources.enabled &&
-      (resources.maxDrives <= 0 || resources.maxReadouts <= 0))
-    return function.emitError("resource limits must be positive");
+// ── Schedule blocks ──────────────────────────────────────────────────────
+
+/// The schedule blocks in `region` that no other block in it encloses.
+static llvm::SmallVector<pulse::ScheduleBlockOp>
+outermostBlocks(mlir::Region &region) {
+  llvm::SmallVector<pulse::ScheduleBlockOp> blocks;
+  region.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation *op) {
+    if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op)) {
+      blocks.push_back(block);
+      return mlir::WalkResult::skip();
+    }
+    return mlir::WalkResult::advance();
+  });
+  return blocks;
+}
+
+/// When a value from outside a block is first needed in it: the earliest
+/// local start of a timed op that depends on it, or of a branch arm
+/// conditioned on it.
+class FirstUse {
+public:
+  explicit FirstUse(pulse::ScheduleBlockOp block) : block(block) {}
+
+  int64_t of(mlir::Value value) {
+    earliest = kNever;
+    visited.clear();
+    visitUses(value);
+    return earliest;
+  }
+
+private:
+  void visitUses(mlir::Value value) {
+    for (mlir::OpOperand &use : value.getUses())
+      visit(use);
+  }
+
+  void note(mlir::Operation *op) {
+    if (auto start = op->getAttrOfType<mlir::IntegerAttr>("start_vtu"))
+      earliest = std::min(earliest, start.getInt());
+  }
+
+  void visit(mlir::OpOperand &use) {
+    mlir::Operation *op = use.getOwner();
+    if (op->getParentOp() == block &&
+        op->hasTrait<mlir::OpTrait::IsTerminator>())
+      return;
+    if (!visited.insert(&use).second)
+      return;
+    // Later ops in the chain start no earlier than this one.
+    if (isTimedOp(op))
+      return note(op);
+    unsigned index = use.getOperandNumber();
+    if (auto yield = mlir::dyn_cast<mlir::scf::YieldOp>(op)) {
+      mlir::Operation *parent = yield->getParentOp();
+      visitUses(parent->getResult(index));
+      if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(parent))
+        visitUses(loop.getRegionIterArgs()[index]);
+      return;
+    }
+    if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+      if (index >= loop.getNumControlOperands())
+        visitUses(
+            loop.getRegionIterArgs()[index - loop.getNumControlOperands()]);
+      return;
+    }
+    if (op->getNumRegions() > 0) {
+      // A branch condition: both arms wait for it.
+      op->walk([&](mlir::Operation *inner) {
+        if (isTimedOp(inner))
+          note(inner);
+      });
+      return;
+    }
+    for (mlir::Value result : op->getResults())
+      visitUses(result);
+  }
+
+  pulse::ScheduleBlockOp block;
+  llvm::DenseSet<mlir::OpOperand *> visited;
+  int64_t earliest = kNever;
+};
+
+/// When each value in a scheduled block becomes available, in local time,
+/// or which operand it passes through unchanged.
+class Availability {
+public:
+  struct State {
+    int64_t time = 0;
+    int source = -1;
+  };
+
+  Availability(pulse::ScheduleBlockOp block,
+               llvm::MutableArrayRef<int64_t> firstUse)
+      : block(block), firstUse(firstUse) {
+    for (auto [index, arg] : llvm::enumerate(block.getBody().getArguments()))
+      state[arg] = State{0, static_cast<int>(index)};
+  }
+
+  void run() { visitBlock(block.getBody().front()); }
+
+  State of(mlir::Value value) const { return state.lookup(value); }
+
+  /// The local time every op of the block is done by.
+  int64_t length = 0;
+
+private:
+  /// The latest of `states`: the source they all pass through, else a
+  /// time. An operand reached here is needed by now if nothing needs it
+  /// earlier.
+  State join(llvm::ArrayRef<State> states) {
+    if (!states.empty() && llvm::all_of(states, [&](const State &s) {
+          return s.source >= 0 && s.source == states.front().source;
+        }))
+      return states.front();
+    int64_t time = 0;
+    for (const State &s : states)
+      time = std::max(time, s.source >= 0
+                                ? std::max<int64_t>(firstUse[s.source], 0)
+                                : s.time);
+    for (const State &s : states)
+      if (s.source >= 0 && firstUse[s.source] < 0)
+        firstUse[s.source] = time;
+    return State{time, -1};
+  }
+
+  State joinValues(mlir::ValueRange values) {
+    llvm::SmallVector<State> states;
+    for (mlir::Value value : values)
+      if (isTimedType(value.getType()))
+        states.push_back(state.lookup(value));
+    return join(states);
+  }
+
+  void visitBlock(mlir::Block &body) {
+    for (mlir::Operation &op : body.without_terminator())
+      visitOp(&op);
+  }
+
+  void visitOp(mlir::Operation *op) {
+    if (isTimedOp(op)) {
+      auto start = pulse::scheduledStart(op, iteration);
+      if (!start) {
+        State through = joinValues(op->getOperands());
+        for (mlir::Value result : op->getResults())
+          state[result] = through;
+        return;
+      }
+      int64_t end = *start + durationOf(op);
+      length = std::max(length, end);
+      for (mlir::Value result : op->getResults())
+        state[result] = State{end, -1};
+      return;
+    }
+    if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+      int64_t trips = pulse::constantTripCount(loop).value_or(0);
+      llvm::SmallVector<State> carried;
+      for (mlir::Value init : loop.getInitArgs())
+        carried.push_back(state.lookup(init));
+      // The first iteration, then the last from what the first carries:
+      // the ops that run in every iteration override what it carries.
+      llvm::SmallVector<int64_t, 2> runs;
+      if (trips > 0)
+        runs.push_back(0);
+      if (trips > 1)
+        runs.push_back(trips - 1);
+      iteration.push_back(0);
+      for (int64_t k : runs) {
+        iteration.back() = k;
+        for (auto [arg, s] : llvm::zip(loop.getRegionIterArgs(), carried))
+          state[arg] = s;
+        visitBlock(*loop.getBody());
+        for (auto [s, value] :
+             llvm::zip(carried, loop.getBody()->getTerminator()->getOperands()))
+          s = state.lookup(value);
+      }
+      iteration.pop_back();
+      for (auto [result, s] : llvm::zip(loop.getResults(), carried))
+        state[result] = s;
+      return;
+    }
+    if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
+      visitBlock(*branch.thenBlock());
+      llvm::SmallVector<State> results;
+      for (mlir::Value value : branch.thenYield().getOperands())
+        results.push_back(state.lookup(value));
+      if (!branch.getElseRegion().empty()) {
+        visitBlock(*branch.elseBlock());
+        for (auto [s, value] :
+             llvm::zip(results, branch.elseYield().getOperands()))
+          s = join({s, state.lookup(value)});
+      }
+      for (auto [result, s] : llvm::zip(branch.getResults(), results))
+        state[result] = s;
+      return;
+    }
+    State through = joinValues(op->getOperands());
+    for (mlir::Value result : op->getResults())
+      if (isTimedType(result.getType()))
+        state[result] = through;
+  }
+
+  pulse::ScheduleBlockOp block;
+  llvm::MutableArrayRef<int64_t> firstUse;
+  llvm::DenseMap<mlir::Value, State> state;
+  llvm::SmallVector<int64_t, 2> iteration;
+};
+
+/// Record the shape of `block`, whose body has a local schedule.
+static void writeShape(pulse::ScheduleBlockOp block) {
+  FirstUse firstUse(block);
+  llvm::SmallVector<int64_t> in;
+  for (mlir::Value arg : block.getBody().getArguments()) {
+    int64_t first = firstUse.of(arg);
+    in.push_back(first == kNever ? -1 : first);
+  }
+  Availability availability(block, in);
+  availability.run();
+  llvm::SmallVector<int64_t> out, source;
+  int64_t length = availability.length;
+  for (mlir::Value value :
+       block.getBody().front().getTerminator()->getOperands()) {
+    Availability::State s = availability.of(value);
+    out.push_back(s.source >= 0 ? -1 : s.time);
+    source.push_back(s.source);
+    length = std::max(length, s.source >= 0 ? 0 : s.time);
+  }
+  mlir::MLIRContext *context = block.getContext();
+  block->setAttr(
+      "length_vtu",
+      mlir::IntegerAttr::get(mlir::IntegerType::get(context, 64), length));
+  block->setAttr("in_offset_vtu", mlir::DenseI64ArrayAttr::get(context, in));
+  block->setAttr("out_offset_vtu", mlir::DenseI64ArrayAttr::get(context, out));
+  block->setAttr("out_source", mlir::DenseI64ArrayAttr::get(context, source));
+}
+
+/// Replace `block` by its body.
+static void inlineBody(pulse::ScheduleBlockOp block) {
+  mlir::Block &body = block.getBody().front();
+  mlir::Operation *yield = body.getTerminator();
+  llvm::SmallVector<mlir::Value> results(yield->getOperands());
+  yield->erase();
+  mlir::IRRewriter rewriter(block.getContext());
+  rewriter.inlineBlockBefore(&body, block, block.getInputs());
+  rewriter.replaceOp(block, results);
+}
+
+/// Move the ops of the placed `block` to its start and period, then inline
+/// it.
+static void inlineScheduleBlock(pulse::ScheduleBlockOp block) {
+  mlir::MLIRContext *context = block.getContext();
+  auto start = block->getAttrOfType<mlir::IntegerAttr>("start_vtu");
+  llvm::SmallVector<int64_t> outer;
+  if (auto periods =
+          block->getAttrOfType<mlir::DenseI64ArrayAttr>("period_vtu"))
+    outer.assign(periods.asArrayRef().begin(), periods.asArrayRef().end());
+  block.getBody().walk([&](mlir::Operation *op) {
+    if (!isTimedOp(op))
+      return;
+    auto local = op->getAttrOfType<mlir::IntegerAttr>("start_vtu");
+    if (!start || !local) {
+      // The block or this op never runs.
+      op->removeAttr("start_vtu");
+      op->removeAttr("period_vtu");
+      return;
+    }
+    op->setAttr("start_vtu",
+                mlir::IntegerAttr::get(local.getType(),
+                                       start.getInt() + local.getInt()));
+    llvm::SmallVector<int64_t> periods = outer;
+    if (auto inner = op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_vtu"))
+      periods.append(inner.asArrayRef().begin(), inner.asArrayRef().end());
+    if (periods.empty())
+      op->removeAttr("period_vtu");
+    else
+      op->setAttr("period_vtu", mlir::DenseI64ArrayAttr::get(context, periods));
+  });
+  inlineBody(block);
+}
+
+// ── Driver ───────────────────────────────────────────────────────────────
+
+static mlir::LogicalResult scheduleRegion(mlir::Region &region,
+                                          mlir::Operation *root,
+                                          Resources resources, bool isAlap) {
+  for (pulse::ScheduleBlockOp block : outermostBlocks(region)) {
+    if (mlir::failed(scheduleRegion(block.getBody(), block, Resources{},
+                                    block.getPolicy() == "alap")))
+      return mlir::failure();
+    writeShape(block);
+  }
 
   // Each round either writes an affine schedule or removes an iteration from
   // a loop, so this terminates.
   while (true) {
-    Scheduler scheduler(function, resources);
+    Scheduler scheduler(region, resources);
     if (mlir::failed(scheduler.forward()))
       return mlir::failure();
     if (isAlap) {
@@ -851,26 +1245,26 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
                             [](const Sample &s) { return s.start >= 0; });
       });
       if (!feasible) {
-        scheduler = Scheduler(function, resources);
+        scheduler = Scheduler(region, resources);
         if (mlir::failed(scheduler.forward()))
           return mlir::failure();
       }
     }
 
     std::optional<NotAffine> problem;
-    function.walk([&](mlir::Operation *op) {
-      if (!isTimedOp(op) || problem)
+    forEachScheduled(region, [&](mlir::Operation *op) {
+      if (problem)
         return;
       auto it = scheduler.samples.find(op);
       llvm::ArrayRef<Sample> samples;
       if (it != scheduler.samples.end())
         samples = it->second;
-      problem = writeTiming(op, samples, scheduler.extrapolations);
+      problem = writeTiming(op, root, samples, scheduler.extrapolations);
     });
     if (!problem)
-      problem = periodMismatch(function);
+      problem = periodMismatch(region, root);
     if (!problem)
-      return mlir::success();
+      break;
     if (problem->peelFront)
       peelFront(problem->loop);
     else if (problem->peelBack)
@@ -878,6 +1272,27 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
     else
       unrollFully(problem->loop);
   }
+
+  // Peeling may have copied blocks, so collect them again.
+  for (pulse::ScheduleBlockOp block : outermostBlocks(region))
+    inlineScheduleBlock(block);
+  return mlir::success();
+}
+
+static mlir::LogicalResult schedule(mlir::func::FuncOp function,
+                                    Resources resources, bool isAlap) {
+  if (resources.enabled &&
+      (resources.maxDrives <= 0 || resources.maxReadouts <= 0))
+    return function.emitError("resource limits must be positive");
+  if (resources.enabled) {
+    auto blocks = outermostBlocks(function.getBody());
+    if (!blocks.empty())
+      return blocks.front().emitError(
+          "resource-constrained scheduling (rcp, alap_rcp) does not support "
+          "kernels with their own schedule yet; drop schedule= from the "
+          "called kernels, or flatten them with flatten_schedules=True");
+  }
+  return scheduleRegion(function.getBody(), function, resources, isAlap);
 }
 
 template <bool IsAlap>
@@ -932,6 +1347,28 @@ struct PulseScheduleRcpPass
   bool isAlap;
 };
 
+/// Drop every schedule block, so that its ops are scheduled with the
+/// enclosing ones.
+struct PulseInlineScheduleBlocksPass
+    : public mlir::PassWrapper<PulseInlineScheduleBlocksPass,
+                               mlir::OperationPass<mlir::func::FuncOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PulseInlineScheduleBlocksPass)
+
+  llvm::StringRef getArgument() const override {
+    return "pulse-inline-schedule-blocks";
+  }
+  llvm::StringRef getDescription() const override {
+    return "Inline pulse.schedule_block ops, ignoring their policies";
+  }
+  void runOnOperation() override {
+    llvm::SmallVector<pulse::ScheduleBlockOp> blocks;
+    getOperation().walk(
+        [&](pulse::ScheduleBlockOp block) { blocks.push_back(block); });
+    for (pulse::ScheduleBlockOp block : blocks)
+      inlineBody(block);
+  }
+};
+
 } // namespace
 
 namespace pulse {
@@ -950,5 +1387,9 @@ std::unique_ptr<mlir::Pass> createPulseScheduleRcpPass(int64_t maxDrives,
                                                        bool isAlap) {
   return std::make_unique<PulseScheduleRcpPass>(
       maxDrives, maxReadouts, readoutLatency, switchPenalty, isAlap);
+}
+
+std::unique_ptr<mlir::Pass> createPulseInlineScheduleBlocksPass() {
+  return std::make_unique<PulseInlineScheduleBlocksPass>();
 }
 } // namespace pulse

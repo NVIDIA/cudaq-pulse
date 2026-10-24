@@ -82,6 +82,36 @@ struct RemoveRedundantSync : public mlir::OpRewritePattern<pulse::SyncOp> {
   }
 };
 
+/// A schedule block without drives, readouts or waits has no duration and
+/// schedules the same inlined.
+struct InlineUntimedScheduleBlock
+    : public mlir::OpRewritePattern<pulse::ScheduleBlockOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(pulse::ScheduleBlockOp block,
+                  mlir::PatternRewriter &rewriter) const override {
+    bool timed =
+        block.getBody()
+            .walk([](mlir::Operation *op) {
+              return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(
+                         op)
+                         ? mlir::WalkResult::interrupt()
+                         : mlir::WalkResult::advance();
+            })
+            .wasInterrupted();
+    if (timed)
+      return mlir::failure();
+    mlir::Block &body = block.getBody().front();
+    mlir::Operation *yield = body.getTerminator();
+    llvm::SmallVector<mlir::Value> results(yield->getOperands());
+    rewriter.eraseOp(yield);
+    rewriter.inlineBlockBefore(&body, block, block.getInputs());
+    rewriter.replaceOp(block, results);
+    return mlir::success();
+  }
+};
+
 struct PulseCanonicalizePass
     : public mlir::PassWrapper<PulseCanonicalizePass,
                                mlir::OperationPass<mlir::func::FuncOp>> {
@@ -97,6 +127,7 @@ struct PulseCanonicalizePass
     mlir::RewritePatternSet patterns(&getContext());
     patterns.add<RemoveSingleOperandSync>(&getContext());
     patterns.add<RemoveRedundantSync>(&getContext());
+    patterns.add<InlineUntimedScheduleBlock>(&getContext());
     // Branch on pulse.is_set, and inline or drop loops that run once or
     // never. scf.if patterns are left out: they may turn a branch over
     // lines and tones into arith.select.

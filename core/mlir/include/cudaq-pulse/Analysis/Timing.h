@@ -41,11 +41,12 @@ inline std::optional<int64_t> constantTripCount(mlir::scf::ForOp loop) {
   return *ub > *lb ? (*ub - *lb + *step - 1) / *step : 0;
 }
 
-/// The `scf.for` ops enclosing `op`, outermost first.
+/// The `scf.for` ops enclosing `op`, outermost first; with `root`, only
+/// those inside it.
 inline llvm::SmallVector<mlir::scf::ForOp, 2>
-enclosingLoops(mlir::Operation *op) {
+enclosingLoops(mlir::Operation *op, mlir::Operation *root = nullptr) {
   llvm::SmallVector<mlir::scf::ForOp, 2> loops;
-  for (mlir::Operation *parent = op->getParentOp(); parent;
+  for (mlir::Operation *parent = op->getParentOp(); parent && parent != root;
        parent = parent->getParentOp())
     if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(parent))
       loops.insert(loops.begin(), loop);

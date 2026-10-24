@@ -445,11 +445,57 @@ def AtomicOp : PulseOp<"atomic", [RecursiveMemoryEffects, NoTerminator]> {
   let hasVerifier = 1;
 }
 
-def YieldOp : PulseOp<"yield", [Pure, Terminator]> {
+def YieldOp : PulseOp<"yield", [Pure, Terminator, ReturnLike]> {
   let summary = "Yield from a pulse region";
-  let arguments = (ins Variadic<AnyLineType>:$lines);
-  let assemblyFormat = "attr-dict (`(` $lines^ `:` type($lines) `)`)?";
+  let arguments = (ins Variadic<AnyTimedType>:$values);
+  let assemblyFormat = "attr-dict ($values^ `:` type($values))?";
   let hasVerifier = 1;
+}
+
+def ScheduleBlockOp : PulseOp<"schedule_block", [
+    RecursiveMemoryEffects, SingleBlock,
+    DeclareOpInterfaceMethods<RegionBranchOpInterface,
+                              ["getEntrySuccessorOperands"]>]> {
+  let summary = "A subroutine scheduled on its own, then placed as one unit";
+  let description = [{
+    The body is scheduled in isolation with its own `policy` ("asap" or
+    "alap"), every input available at local time 0. The enclosing schedule
+    then places the whole block at one start time, so the relative timing of
+    the ops inside is the same wherever the block appears.
+
+    Lines, tones and measurements cross the boundary explicitly, as with
+    `scf.for` iteration arguments: each operand is passed to the matching
+    block argument, and the `pulse.yield` operands become the results. A
+    line or tone that enters the block continues as one of its results.
+    Values of other types (waveforms, constants) may be used from the
+    enclosing region directly.
+
+    ```mlir
+    %d1, %t1 = pulse.schedule_block "asap" (%d0, %t0)
+        : (!pulse.drive_line, !pulse.tone) -> (!pulse.drive_line, !pulse.tone) {
+    ^bb0(%d: !pulse.drive_line, %t: !pulse.tone):
+      %d2, %t2 = pulse.drive %d, %x, %t : ...
+      pulse.yield %d2, %t2 : !pulse.drive_line, !pulse.tone
+    }
+    ```
+
+    Scheduling inlines the block, so later passes see flat IR. Before that,
+    the scheduler records the block's shape on it: `length_vtu`, for each
+    operand the local time it is first needed (`in_offset_vtu`, -1 if no
+    timed op depends on it), and for each result the local time it is
+    available (`out_offset_vtu`), or -1 with `out_source` naming the operand
+    it passes through unchanged.
+  }];
+  let arguments = (ins StrAttr:$policy, Variadic<AnyTimedType>:$inputs,
+                       OptionalAttr<StrAttr>:$callee);
+  let results = (outs Variadic<AnyTimedType>:$outputs);
+  let regions = (region SizedRegion<1>:$body);
+  let assemblyFormat = [{
+    $policy `(` $inputs `)` attr-dict `:` functional-type($inputs, $outputs)
+    $body
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//

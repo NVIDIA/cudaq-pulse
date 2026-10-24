@@ -145,6 +145,8 @@ constexpr int kOpForEnd = 30;
 constexpr int kOpIfBegin = 31;
 constexpr int kOpElse = 32;
 constexpr int kOpIfEnd = 33;
+constexpr int kOpBlockBegin = 34;
+constexpr int kOpBlockEnd = 35;
 // A payload length of 0xFF means the length is in the next word.
 constexpr int kExtendedPayload = 0xFF;
 
@@ -831,6 +833,82 @@ private:
   }
 };
 
+bool isTimedPulseType(mlir::Type type) {
+  return mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
+                   pulse::ToneType, pulse::MeasurementType>(type);
+}
+
+/// Whether `value` is defined in `body` or in a region nested in it.
+bool definedIn(mlir::Value value, mlir::Block *body) {
+  for (mlir::Block *block = value.getParentBlock(); block;) {
+    if (block == body)
+      return true;
+    mlir::Operation *parent = block->getParentOp();
+    if (!parent)
+      return false;
+    block = parent->getBlock();
+  }
+  return false;
+}
+
+/// Wrap the ops traced into `body` in a `pulse.schedule_block` at the
+/// builder's insertion point. The lines, tones and measurements the body
+/// uses from outside become its operands; the latest version of every line
+/// and tone it holds, and every measurement it takes, become its results.
+pulse::ScheduleBlockOp buildScheduleBlock(mlir::OpBuilder &builder,
+                                          mlir::Location loc,
+                                          std::unique_ptr<mlir::Block> body,
+                                          llvm::StringRef policy,
+                                          llvm::StringRef callee) {
+  // Untimed values (waveforms, constants) may be used after the block, so
+  // they are defined before it.
+  mlir::Block *parent = builder.getInsertionBlock();
+  for (mlir::Operation &op : llvm::make_early_inc_range(*body)) {
+    bool untimed = op.getNumRegions() == 0 &&
+                   llvm::none_of(op.getOperandTypes(), isTimedPulseType) &&
+                   llvm::none_of(op.getResultTypes(), isTimedPulseType) &&
+                   llvm::none_of(op.getOperands(), [&](mlir::Value operand) {
+                     return operand.getParentBlock() == body.get();
+                   });
+    if (untimed)
+      op.moveBefore(parent, parent->end());
+  }
+
+  llvm::SmallVector<mlir::Value> inputs;
+  llvm::DenseSet<mlir::Value> seen;
+  body->walk([&](mlir::Operation *op) {
+    for (mlir::Value operand : op->getOperands())
+      if (isTimedPulseType(operand.getType()) &&
+          !definedIn(operand, body.get()) && seen.insert(operand).second)
+        inputs.push_back(operand);
+  });
+  llvm::SmallVector<mlir::Value> outputs;
+  for (mlir::Operation &op : *body)
+    for (mlir::Value result : op.getResults())
+      if (mlir::isa<pulse::MeasurementType>(result.getType()) ||
+          (pulse::isLinearPulseType(result.getType()) && result.use_empty()))
+        outputs.push_back(result);
+
+  llvm::SmallVector<mlir::Type> types;
+  for (mlir::Value output : outputs)
+    types.push_back(output.getType());
+  auto block = pulse::ScheduleBlockOp::create(
+      builder, loc, types, builder.getStringAttr(policy), inputs,
+      callee.empty() ? mlir::StringAttr() : builder.getStringAttr(callee));
+  block.getBody().push_back(body.release());
+  mlir::Block *inner = &block.getBody().front();
+  for (mlir::Value input : inputs) {
+    mlir::BlockArgument arg = inner->addArgument(input.getType(), loc);
+    input.replaceUsesWithIf(arg, [&](mlir::OpOperand &use) {
+      return block->isProperAncestor(use.getOwner());
+    });
+  }
+  mlir::OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPointToEnd(inner);
+  pulse::YieldOp::create(builder, loc, outputs);
+  return block;
+}
+
 class PulseModuleBuilder {
 public:
   PulseModuleBuilder() : ctx_(SharedContextPool::acquire()) {
@@ -912,8 +990,17 @@ public:
 
     llvm::DenseMap<int64_t, mlir::Value> ssa;
     llvm::DenseMap<int64_t, mlir::Value> qubitSSA;
+    // The open schedule blocks as (policy, callee), innermost last, and the
+    // ids of the values bound inside them, so that a block's results can
+    // take them over when it closes.
+    std::vector<std::pair<std::string, std::string>> blocks;
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<int64_t, 1>> blockVids;
 
-    auto bind = [&](int64_t vid, mlir::Value v) { ssa[vid] = v; };
+    auto bind = [&](int64_t vid, mlir::Value v) {
+      ssa[vid] = v;
+      if (!blocks.empty())
+        blockVids[v].push_back(vid);
+    };
     auto look = [&](int64_t vid) -> mlir::Value {
       auto it = ssa.find(vid);
       if (it == ssa.end())
@@ -932,6 +1019,10 @@ public:
       std::unique_ptr<mlir::Block> elseBody;
     };
     std::vector<Region> regions;
+    // A schedule block is a region with neither loop bounds nor a condition.
+    auto isBlock = [](const Region &region) {
+      return !region.isLoop && !region.condition;
+    };
 
     auto getQubit = [&](int64_t q) -> mlir::Value {
       if (q < 0 || q >= n_qubits)
@@ -1083,14 +1174,16 @@ public:
       }
       case kOpElse: {
         requirePayload(0);
-        if (regions.empty() || regions.back().isLoop || regions.back().elseBody)
+        if (regions.empty() || regions.back().isLoop ||
+            isBlock(regions.back()) || regions.back().elseBody)
           throw std::invalid_argument("packed: else outside an if");
         regions.back().elseBody = std::make_unique<mlir::Block>();
         builder_->setInsertionPointToEnd(regions.back().elseBody.get());
         break;
       }
       case kOpIfEnd: {
-        if (regions.empty() || regions.back().isLoop || plen < 1 || p[0] < 0 ||
+        if (regions.empty() || regions.back().isLoop ||
+            isBlock(regions.back()) || plen < 1 || p[0] < 0 ||
             plen != 1 + 3 * p[0])
           throw std::invalid_argument("packed: malformed if end");
         Region region = std::move(regions.back());
@@ -1122,6 +1215,50 @@ public:
         fill(branch.elseBlock(), region.elseBody.get(), elseValues);
         for (int64_t i = 0; i < n; ++i)
           bind(p[1 + 2 * n + i], branch.getResult(i));
+        break;
+      }
+      case kOpBlockBegin: {
+        // [policy (0 = asap, 1 = alap), callee name bytes, name words...]
+        if (plen < 2 || p[0] < 0 || p[0] > 1 || p[1] < 0 ||
+            plen != 2 + (p[1] + 7) / 8)
+          throw std::invalid_argument("packed: malformed schedule block");
+        Region region{false,
+                      0,
+                      0,
+                      1,
+                      {},
+                      builder_->getBlock(),
+                      std::make_unique<mlir::Block>(),
+                      nullptr};
+        blocks.emplace_back(p[0] == 0 ? "asap" : "alap",
+                            std::string(reinterpret_cast<const char *>(p + 2),
+                                        static_cast<size_t>(p[1])));
+        builder_->setInsertionPointToEnd(region.body.get());
+        regions.push_back(std::move(region));
+        break;
+      }
+      case kOpBlockEnd: {
+        requirePayload(0);
+        if (regions.empty() || !isBlock(regions.back()))
+          throw std::invalid_argument(
+              "packed: schedule block end without a begin");
+        Region region = std::move(regions.back());
+        regions.pop_back();
+        auto [policy, callee] = std::move(blocks.back());
+        blocks.pop_back();
+        builder_->setInsertionPointToEnd(region.parent);
+        auto block = buildScheduleBlock(*builder_, loc, std::move(region.body),
+                                        policy, callee);
+        auto yielded = block.getBody().front().getTerminator()->getOperands();
+        for (auto [inner, result] : llvm::zip(yielded, block.getResults())) {
+          auto it = blockVids.find(inner);
+          if (it == blockVids.end())
+            continue;
+          for (int64_t vid : it->second)
+            bind(vid, result);
+        }
+        if (blocks.empty())
+          blockVids.clear();
         break;
       }
 

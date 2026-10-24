@@ -106,6 +106,72 @@ struct SinkShiftPhaseThroughIf
   }
 };
 
+/// A frame change on a tone that a schedule block takes next applies at the
+/// start of the block: move it in, next to the drive that may absorb it.
+struct SinkShiftPhaseIntoBlock
+    : public mlir::OpRewritePattern<pulse::ShiftPhaseOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(pulse::ShiftPhaseOp op,
+                  mlir::PatternRewriter &rewriter) const override {
+    mlir::Value tone = op.getResult();
+    if (!tone.hasOneUse())
+      return mlir::failure();
+    mlir::OpOperand &use = *tone.use_begin();
+    auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(use.getOwner());
+    if (!block)
+      return mlir::failure();
+    unsigned index = use.getOperandNumber();
+    mlir::BlockArgument arg = block.getBody().getArgument(index);
+    rewriter.setInsertionPointToStart(&block.getBody().front());
+    auto moved = pulse::ShiftPhaseOp::create(
+        rewriter, op.getLoc(), op.getType(), arg, op.getPhaseRad());
+    rewriter.replaceAllUsesExcept(arg, moved.getResult(), moved);
+    rewriter.modifyOpInPlace(block,
+                             [&] { block->setOperand(index, op.getTone()); });
+    rewriter.eraseOp(op);
+    return mlir::success();
+  }
+};
+
+/// A constant frame change that ends a schedule block applies right after
+/// it: move it out, next to the drive that may absorb it.
+struct HoistShiftPhaseOutOfBlock
+    : public mlir::OpRewritePattern<pulse::ShiftPhaseOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(pulse::ShiftPhaseOp op,
+                  mlir::PatternRewriter &rewriter) const override {
+    mlir::Value tone = op.getResult();
+    if (!tone.hasOneUse())
+      return mlir::failure();
+    mlir::OpOperand &use = *tone.use_begin();
+    auto yield = mlir::dyn_cast<pulse::YieldOp>(use.getOwner());
+    auto block =
+        yield ? mlir::dyn_cast<pulse::ScheduleBlockOp>(yield->getParentOp())
+              : pulse::ScheduleBlockOp();
+    auto constant =
+        op.getPhaseRad().getDefiningOp<mlir::arith::ConstantFloatOp>();
+    if (!block || !constant)
+      return mlir::failure();
+    unsigned index = use.getOperandNumber();
+    rewriter.modifyOpInPlace(yield,
+                             [&] { yield->setOperand(index, op.getTone()); });
+    rewriter.setInsertionPointAfter(block);
+    mlir::Value phase = op.getPhaseRad();
+    if (block->isAncestor(constant))
+      phase = rewriter.clone(*constant)->getResult(0);
+    mlir::Value result = block.getResult(index);
+    auto moved = pulse::ShiftPhaseOp::create(rewriter, op.getLoc(),
+                                             op.getType(), result, phase);
+    rewriter.replaceAllUsesExcept(result, moved.getResult(), moved);
+    rewriter.eraseOp(op);
+    return mlir::success();
+  }
+};
+
 struct VirtualZPass
     : public mlir::PassWrapper<VirtualZPass,
                                mlir::OperationPass<mlir::func::FuncOp>> {
@@ -119,7 +185,8 @@ struct VirtualZPass
 
   void runOnOperation() override {
     mlir::RewritePatternSet patterns(&getContext());
-    patterns.add<FoldShiftPhaseIntoDrive, SinkShiftPhaseThroughIf>(
+    patterns.add<FoldShiftPhaseIntoDrive, SinkShiftPhaseThroughIf,
+                 SinkShiftPhaseIntoBlock, HoistShiftPhaseOutOfBlock>(
         &getContext());
     mlir::GreedyRewriteConfig config;
     if (mlir::failed(mlir::applyPatternsGreedily(getOperation(),
