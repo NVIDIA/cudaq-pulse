@@ -1,0 +1,1195 @@
+{
+ "schema": "cudaq-pulse reference values v0 (analytic, first-principles and paper-sourced only)",
+ "conventions": {
+  "units": "time ns, angular rates rad/ns, frequencies Hz unless *_MHz/*_GHz",
+  "frame": "one rotating frame per qudit at its bare 0-1 frequency (cudaq-pulse convention)",
+  "drive": "H_d = (A/2)(E a^dag + E^* a), E = envelope * exp(-i (w_tone - w_q) t + i phi) [physical sign]; amplitude_scale_rad_per_ns = 1 so A is the Rabi rate",
+  "transmon": "H_0 = (alpha/2) n (n-1) per qudit in its frame; coupling g (a^dag b + a b^dag), RWA",
+  "dissipation": "T1: sqrt(1/T1) a; dephasing gamma_phi = 1/T2 - 1/(2 T1), jump sqrt(2 gamma_phi) n (coherence j,k decays at gamma_phi (j-k)^2)",
+  "ordering": "qudit 0 is the least significant digit of the state index",
+  "clock": "2 GHz pulse clock: durations and sigma in kernels are in clock cycles (2 per ns)",
+  "kinds": {
+   "analytic": "closed-form expression",
+   "first_principles": "exact diagonalization or exponentiation of a small matrix written from the Hamiltonian above in plain numpy",
+   "paper": "number published in the cited paper (verified against arXiv text)"
+  }
+ },
+ "entries": [
+  {
+   "id": "rabi_resonant",
+   "kind": "analytic",
+   "citation": "I. I. Rabi, Phys. Rev. 51, 652 (1937), doi:10.1103/PhysRev.51.652",
+   "formula": "P1 = sin^2(A T / 2)",
+   "params": {
+    "levels": 2,
+    "f_q_hz": 5000000000.0,
+    "cases": [
+     {
+      "A": 0.15707963267948966,
+      "T_ns": 20
+     },
+     {
+      "A": 0.07853981633974483,
+      "T_ns": 20
+     },
+     {
+      "A": 0.03,
+      "T_ns": 20
+     }
+    ]
+   },
+   "expected": [
+    1.0,
+    0.5,
+    0.08733219254516084
+   ],
+   "tolerance": {
+    "abs": 1e-08,
+    "dt_ns": 0.05,
+    "integrator": "rk4"
+   },
+   "features": [
+    "square",
+    "drive",
+    "CPU/GPU simulate"
+   ]
+  },
+  {
+   "id": "rabi_detuned",
+   "kind": "analytic",
+   "citation": "Rabi (1937); e.g. Krantz et al., Appl. Phys. Rev. 6, 021318 (2019), arXiv:1904.06560",
+   "formula": "P1 = (A/W)^2 sin^2(W T / 2), W = sqrt(A^2 + delta^2), delta = w_tone - w_q",
+   "params": {
+    "levels": 2,
+    "f_q_hz": 5000000000.0,
+    "A_rad_per_ns": 0.06283185307179587,
+    "T_ns": 40,
+    "delta_MHz": [
+     0,
+     5,
+     10,
+     -10
+    ]
+   },
+   "expected": [
+    0.9045084971874736,
+    0.7782003709375112,
+    0.479008935581451,
+    0.479008935581451
+   ],
+   "tolerance": {
+    "abs": 1e-08,
+    "dt_ns": 0.02
+   },
+   "features": [
+    "set_frequency",
+    "square"
+   ],
+   "note": "insensitive to the sign of delta; pair with ef_rabi_sign for the sign"
+  },
+  {
+   "id": "ef_rabi_sign",
+   "kind": "first_principles",
+   "citation": "transmon level structure: Koch et al., PRA 76, 042319 (2007), arXiv:cond-mat/0703002",
+   "formula": "from |1>, tone at w_q + alpha drives 1-2 resonantly: P2 ~ sin^2(sqrt(2) A T / 2)",
+   "params": {
+    "levels": 3,
+    "f_q_hz": 5000000000.0,
+    "alpha_hz": -200000000.0,
+    "A_rad_per_ns": 0.06283185307179587,
+    "T_ns": 35.5,
+    "initial": "|1>"
+   },
+   "expected": {
+    "tone_at_wq_plus_alpha_P2": 0.9992871300742846,
+    "tone_at_wq_minus_alpha_P2": 0.00044815362093425775,
+    "analytic_resonant_two_level_P2": 0.9999586927454677
+   },
+   "tolerance": {
+    "abs": 1e-06,
+    "dt_ns": 0.01
+   },
+   "features": [
+    "levels=3",
+    "set_frequency",
+    "anharmonicity",
+    "initial_state"
+   ]
+  },
+  {
+   "id": "drag_leakage_vs_beta",
+   "kind": "first_principles",
+   "citation": "Motzoi et al., PRL 103, 110501 (2009), doi:10.1103/PhysRevLett.103.110501, arXiv:0901.0534; Gambetta et al., PRA 83, 012308 (2011), doi:10.1103/PhysRevA.83.012308, arXiv:1011.1949",
+   "formula": "first order: leakage from |1> ~ |1 + beta alpha|^2 -> beta* = -1/alpha; phase-error optimum near -1/(2 alpha)",
+   "params": {
+    "levels": 3,
+    "f_q_hz": 5000000000.0,
+    "alpha_hz": -250000000.0,
+    "duration_ns": 16,
+    "sigma_ns": 2,
+    "area": 3.141592653589793,
+    "amplitude_rad_per_ns": 0.626696765187452,
+    "envelope": "E = G(t) + i beta dG/dt, G truncated (not lifted) Gaussian"
+   },
+   "expected": {
+    "points": [
+     {
+      "beta_ns": -0.3,
+      "P2": 0.0020046392687740103,
+      "P1": 0.8938720841774983
+     },
+     {
+      "beta_ns": 0.0,
+      "P2": 0.0007138386414858669,
+      "P1": 0.9718010558181366
+     },
+     {
+      "beta_ns": 0.2,
+      "P2": 0.0002721282183938057,
+      "P1": 0.9960681861878575
+     },
+     {
+      "beta_ns": 0.3183098861837907,
+      "P2": 0.00012553436479071227,
+      "P1": 0.9995171150185312
+     },
+     {
+      "beta_ns": 0.45,
+      "P2": 3.635248957634739e-05,
+      "P1": 0.9938799117636636
+     },
+     {
+      "beta_ns": 0.6366197723675814,
+      "P2": 1.6389076420674658e-06,
+      "P1": 0.9694138869521172
+     },
+     {
+      "beta_ns": 0.8,
+      "P2": 2.128903558345536e-05,
+      "P1": 0.9332662783479398
+     },
+     {
+      "beta_ns": 1.0,
+      "P2": 6.664193192852891e-05,
+      "P1": 0.8726183067580481
+     }
+    ],
+    "leakage_min_beta_ns": 0.625,
+    "P1_max_beta_ns": 0.30000000000000004,
+    "motzoi_beta_ns": 0.6366197723675814,
+    "half_drag_beta_ns": 0.3183098861837907
+   },
+   "tolerance": {
+    "abs": 1e-08,
+    "dt_ns": 0.005,
+    "beta_grid_ns": 0.025
+   },
+   "features": [
+    "drag",
+    "levels=3"
+   ],
+   "note": "a 4-sigma window (8 ns) moves the leakage minimum to beta ~ -0.1 ns: edge truncation dominates; use >= 8 sigma"
+  },
+  {
+   "id": "exchange_d2_detuning_0MHz",
+   "kind": "analytic",
+   "citation": "Krantz et al. (2019) arXiv:1904.06560; Blais et al., RMP 93, 025005 (2021), arXiv:2005.12667",
+   "formula": "from |10>: P01 = (2g/W)^2 sin^2(W T/2), W = sqrt(4 g^2 + D^2)",
+   "params": {
+    "levels": 2,
+    "f_hz": [
+     5000000000.0,
+     5000000000.0
+    ],
+    "alpha_hz": [
+     -250000000.0,
+     -230000000.0
+    ],
+    "g_hz": 5000000.0,
+    "T_ns": 50
+   },
+   "expected": 1.0,
+   "tolerance": {
+    "abs": 1e-08,
+    "dt_ns": 0.02
+   },
+   "features": [
+    "Coupling",
+    "wait",
+    "initial_state"
+   ]
+  },
+  {
+   "id": "exchange_d2_detuning_20MHz",
+   "kind": "analytic",
+   "citation": "Krantz et al. (2019) arXiv:1904.06560; Blais et al., RMP 93, 025005 (2021), arXiv:2005.12667",
+   "formula": "from |10>: P01 = (2g/W)^2 sin^2(W T/2), W = sqrt(4 g^2 + D^2)",
+   "params": {
+    "levels": 2,
+    "f_hz": [
+     5000000000.0,
+     5020000000.0
+    ],
+    "alpha_hz": [
+     -250000000.0,
+     -230000000.0
+    ],
+    "g_hz": 5000000.0,
+    "T_ns": 50
+   },
+   "expected": 0.026263112192168033,
+   "tolerance": {
+    "abs": 1e-08,
+    "dt_ns": 0.02
+   },
+   "features": [
+    "Coupling",
+    "wait",
+    "initial_state"
+   ]
+  },
+  {
+   "id": "exchange_d3_detuning_0MHz",
+   "kind": "analytic",
+   "citation": "Krantz et al. (2019) arXiv:1904.06560; Blais et al., RMP 93, 025005 (2021), arXiv:2005.12667",
+   "formula": "from |10>: P01 = (2g/W)^2 sin^2(W T/2), W = sqrt(4 g^2 + D^2)",
+   "params": {
+    "levels": 3,
+    "f_hz": [
+     5000000000.0,
+     5000000000.0
+    ],
+    "alpha_hz": [
+     -250000000.0,
+     -230000000.0
+    ],
+    "g_hz": 5000000.0,
+    "T_ns": 50
+   },
+   "expected": 1.0,
+   "tolerance": {
+    "abs": 1e-08,
+    "dt_ns": 0.02
+   },
+   "features": [
+    "Coupling",
+    "wait",
+    "initial_state"
+   ]
+  },
+  {
+   "id": "exchange_d3_detuning_20MHz",
+   "kind": "analytic",
+   "citation": "Krantz et al. (2019) arXiv:1904.06560; Blais et al., RMP 93, 025005 (2021), arXiv:2005.12667",
+   "formula": "from |10>: P01 = (2g/W)^2 sin^2(W T/2), W = sqrt(4 g^2 + D^2)",
+   "params": {
+    "levels": 3,
+    "f_hz": [
+     5000000000.0,
+     5020000000.0
+    ],
+    "alpha_hz": [
+     -250000000.0,
+     -230000000.0
+    ],
+    "g_hz": 5000000.0,
+    "T_ns": 50
+   },
+   "expected": 0.026263112192168033,
+   "tolerance": {
+    "abs": 1e-08,
+    "dt_ns": 0.02
+   },
+   "features": [
+    "Coupling",
+    "wait",
+    "initial_state"
+   ]
+  },
+  {
+   "id": "chevron_11_20",
+   "kind": "first_principles",
+   "citation": "DiCarlo et al., Nature 460, 240 (2009), doi:10.1038/nature08121, arXiv:0903.2030; Martinis & Geller, PRA 90, 022307 (2014), arXiv:1402.5467",
+   "formula": "|11> <-> |20> resonant when w_b = w_a + alpha_a; P20 = sin^2(sqrt(2) g T)",
+   "params": {
+    "levels": 3,
+    "f_a_hz": 5000000000.0,
+    "alpha_a_hz": -250000000.0,
+    "alpha_b_hz": -230000000.0,
+    "g_hz": 5000000.0,
+    "T_ns": 35.5,
+    "initial": "|11>"
+   },
+   "expected": {
+    "resonant_P20": 0.9996908759964644,
+    "mirrored_P20": 0.0005845775913705357
+   },
+   "tolerance": {
+    "abs": 1e-07,
+    "dt_ns": 0.01
+   },
+   "features": [
+    "Coupling",
+    "levels=3"
+   ],
+   "note": "static detuning stands in for a flux pulse until flux lines land"
+  },
+  {
+   "id": "static_zz_detuned_qutrits",
+   "kind": "first_principles",
+   "citation": "perturbative formula: Magesan & Gambetta, PRA 101, 052308 (2020), arXiv:1804.04073 (Eq. 4.27)",
+   "formula": "zeta = E11 - E10 - E01 + E00 (ED); PT: 2 J^2 (a1 + a2)/((D + a1)(D - a2)), D = w1 - w2",
+   "params": {
+    "fa_hz": 5000000000.0,
+    "fb_hz": 5100000000.0,
+    "alpha_a_hz": -300000000.0,
+    "alpha_b_hz": -250000000.0,
+    "g_hz": 5000000.0,
+    "T_ns": 400.0
+   },
+   "expected": {
+    "zeta_ED_MHz": 0.4571777648553927,
+    "zeta_PT_MHz": 0.45833333333333337,
+    "conditional_phase_400ns_rad": 1.1466779373498497
+   },
+   "tolerance": {
+    "conditional_phase_abs_rad": 1e-06,
+    "dt_ns": 0.02,
+    "zeta_PT_rel": 0.005
+   },
+   "features": [
+    "Coupling (time-dependent rotating terms)",
+    "levels=3",
+    "density-matrix phases"
+   ],
+   "note": "unequal anharmonicities make this sensitive to the sign of the rotating coupling term"
+  },
+  {
+   "id": "cr_target_excitation",
+   "kind": "first_principles",
+   "citation": "Rigetti & Devoret, PRB 81, 134507 (2010); Chow et al., PRL 107, 080502 (2011), arXiv:1106.0553",
+   "formula": "exact exp(-i H T) of the static drive-frame Hamiltonian; target P1 summed over control levels",
+   "params": {
+    "fc_hz": 5000000000.0,
+    "ft_hz": 4900000000.0,
+    "alpha_c_hz": -330000000.0,
+    "alpha_t_hz": -320000000.0,
+    "g_hz": 3000000.0,
+    "drive_rad_per_ns": 0.12566370614359174,
+    "T_ns": 100.0,
+    "levels": 3,
+    "waveform": "square",
+    "tone": "control drive line at f_t"
+   },
+   "expected": {
+    "control0_P_target1": 0.03159750590023931,
+    "control1_P_target1": 0.11382679358321461
+   },
+   "tolerance": {
+    "abs": 1e-07,
+    "dt_ns": 0.01
+   },
+   "features": [
+    "set_frequency on another qudit's line",
+    "Coupling",
+    "levels=3"
+   ]
+  },
+  {
+   "id": "cr_effective_hamiltonian_sheldon2016",
+   "kind": "first_principles",
+   "citation": "Magesan & Gambetta, PRA 101, 052308 (2020), doi:10.1103/PhysRevA.101.052308, arXiv:1804.04073 (method); parameters from Sheldon et al., PRA 93, 060302(R) (2016), doi:10.1103/PhysRevA.93.060302, arXiv:1603.04821",
+   "formula": "per-control-state least-action block diagonalization (4 levels each); leading order ZX = -J Omega alpha / (Delta (Delta + alpha)), IX = -J Omega / (Delta + alpha)",
+   "params": {
+    "fc_GHz": 5.114,
+    "ft_GHz": 4.914,
+    "alpha_MHz": -330,
+    "J_MHz": 3.8,
+    "levels": 4
+   },
+   "convention": "H_eff = sum_AB (omega_AB/2) A(x)B (control (x) target); drive (Omega/2)(a+a^dag) on control at f_t",
+   "expected": {
+    "rows": [
+     {
+      "Omega_over_2pi_MHz": 5,
+      "ZX_over_2pi_MHz": -0.2404875273409506,
+      "IX_over_2pi_MHz": 0.14538218412924084,
+      "ZZ_over_2pi_kHz": 138.19010459808516,
+      "IY_over_2pi_MHz": 0.0,
+      "ZY_over_2pi_MHz": 0.0,
+      "ZX_leading_order_over_2pi_MHz": -0.2411538461538461
+     },
+     {
+      "Omega_over_2pi_MHz": 10,
+      "ZX_over_2pi_MHz": -0.47976980290256827,
+      "IX_over_2pi_MHz": 0.2887254601029671,
+      "ZZ_over_2pi_kHz": 138.53970851221894,
+      "IY_over_2pi_MHz": 0.0,
+      "ZY_over_2pi_MHz": 0.0,
+      "ZX_leading_order_over_2pi_MHz": -0.4823076923076922
+     },
+     {
+      "Omega_over_2pi_MHz": 20,
+      "ZX_over_2pi_MHz": -0.9502683985147116,
+      "IX_over_2pi_MHz": 0.5616326649270524,
+      "ZZ_over_2pi_kHz": 139.8930798698704,
+      "IY_over_2pi_MHz": 0.0,
+      "ZY_over_2pi_MHz": 0.0,
+      "ZX_leading_order_over_2pi_MHz": -0.9646153846153844
+     },
+     {
+      "Omega_over_2pi_MHz": 30,
+      "ZX_over_2pi_MHz": -1.4040042949136264,
+      "IX_over_2pi_MHz": 0.8053501702130078,
+      "ZZ_over_2pi_kHz": 141.98859982647406,
+      "IY_over_2pi_MHz": 0.0,
+      "ZY_over_2pi_MHz": 0.0,
+      "ZX_leading_order_over_2pi_MHz": -1.4469230769230765
+     },
+     {
+      "Omega_over_2pi_MHz": 40,
+      "ZX_over_2pi_MHz": -1.8362356878878978,
+      "IX_over_2pi_MHz": 1.0106490602142364,
+      "ZZ_over_2pi_kHz": 144.5873083518563,
+      "IY_over_2pi_MHz": 0.0,
+      "ZY_over_2pi_MHz": 0.0,
+      "ZX_leading_order_over_2pi_MHz": -1.9292307692307689
+     },
+     {
+      "Omega_over_2pi_MHz": 50,
+      "ZX_over_2pi_MHz": -2.2448306764088017,
+      "IX_over_2pi_MHz": 1.1730792582071345,
+      "ZZ_over_2pi_kHz": 147.36099074343088,
+      "IY_over_2pi_MHz": 0.0,
+      "ZY_over_2pi_MHz": 0.0,
+      "ZX_leading_order_over_2pi_MHz": -2.4115384615384605
+     },
+     {
+      "Omega_over_2pi_MHz": 60,
+      "ZX_over_2pi_MHz": -2.629315859147132,
+      "IX_over_2pi_MHz": 1.2927167146785767,
+      "ZZ_over_2pi_kHz": 149.90770262505785,
+      "IY_over_2pi_MHz": 0.0,
+      "ZY_over_2pi_MHz": 0.0,
+      "ZX_leading_order_over_2pi_MHz": -2.893846153846153
+     }
+    ],
+    "Omega_for_ZX_3p01MHz_MHz": 70.6427274729742
+   },
+   "tolerance": {
+    "rate_abs_MHz": 0.002,
+    "note": "block rates cross-checked by exact evolution to < 1 kHz (cr_check2.py)"
+   },
+   "features": [
+    "CR tone",
+    "levels>=3",
+    "Hamiltonian tomography kernel (needs observables/readout of <X>,<Y>)"
+   ]
+  },
+  {
+   "id": "static_zz_sheldon2016",
+   "kind": "first_principles",
+   "citation": "Sheldon et al. (2016) arXiv:1603.04821 parameters; formula as static_zz_detuned_qutrits",
+   "params": {
+    "f_c_GHz": 5.114,
+    "f_t_GHz": 4.914,
+    "alpha_MHz": -330,
+    "J_MHz": 3.8,
+    "levels": 4
+   },
+   "expected": {
+    "zeta_ED_kHz": 276.14513838298075,
+    "zeta_PT_kHz": 276.6444121915819
+   },
+   "tolerance": {
+    "rel": 0.0001
+   },
+   "features": [
+    "Coupling",
+    "levels=4"
+   ]
+  },
+  {
+   "id": "t1_qubit",
+   "kind": "analytic",
+   "citation": "Bloch-Redfield / Lindblad; Krantz et al. (2019) Sec. 2; Bylander et al., Nat. Phys. 7, 565 (2011), arXiv:1101.4707",
+   "formula": "P1 = exp(-t/T1)",
+   "params": {
+    "f_q_hz": 5000000000.0,
+    "alpha_hz": -200000000.0,
+    "T1_us": 20,
+    "T2_us": 15,
+    "T_ns": 10000.0
+   },
+   "expected": {
+    "T_ns": 10000.0,
+    "T1_us": 20.0,
+    "T2_us": 15.0,
+    "analytic_P1": 0.6065306597126334
+   },
+   "tolerance": {
+    "rel": 1e-06,
+    "dt_ns": 1.0,
+    "caution": "RK4 needs |alpha| dt << 1 with levels >= 3: dt=1 ns damps rho02 to 1e-50"
+   },
+   "features": [
+    "t1_us/t2_star_us collapse operators",
+    "levels"
+   ]
+  },
+  {
+   "id": "t2_qubit",
+   "kind": "analytic",
+   "citation": "Bloch-Redfield / Lindblad; Krantz et al. (2019) Sec. 2; Bylander et al., Nat. Phys. 7, 565 (2011), arXiv:1101.4707",
+   "formula": "|rho01| = exp(-t/T2)/2",
+   "params": {
+    "f_q_hz": 5000000000.0,
+    "alpha_hz": -200000000.0,
+    "T1_us": 20,
+    "T2_us": 15,
+    "T_ns": 10000.0
+   },
+   "expected": {
+    "T_ns": 10000.0,
+    "T1_us": 20.0,
+    "T2_us": 15.0,
+    "analytic_abs_rho01": 0.256708559516296
+   },
+   "tolerance": {
+    "rel": 1e-06,
+    "dt_ns": 1.0,
+    "caution": "RK4 needs |alpha| dt << 1 with levels >= 3: dt=1 ns damps rho02 to 1e-50"
+   },
+   "features": [
+    "t1_us/t2_star_us collapse operators",
+    "levels"
+   ]
+  },
+  {
+   "id": "t1_qutrit_from_2",
+   "kind": "analytic",
+   "citation": "Bloch-Redfield / Lindblad; Krantz et al. (2019) Sec. 2; Bylander et al., Nat. Phys. 7, 565 (2011), arXiv:1101.4707",
+   "formula": "harmonic ladder (jump a): P2 = exp(-2 t/T1)",
+   "params": {
+    "f_q_hz": 5000000000.0,
+    "alpha_hz": -200000000.0,
+    "T1_us": 20,
+    "T2_us": 15,
+    "T_ns": 5000.0
+   },
+   "expected": {
+    "T_ns": 5000.0,
+    "T1_us": 20.0,
+    "T2_us": 15.0,
+    "harmonic_ladder_P2": 0.6065306597126334,
+    "two_level_rate_P2": 0.7788007830714049
+   },
+   "tolerance": {
+    "rel": 1e-06,
+    "dt_ns": 0.05,
+    "caution": "RK4 needs |alpha| dt << 1 with levels >= 3: dt=1 ns damps rho02 to 1e-50"
+   },
+   "features": [
+    "t1_us/t2_star_us collapse operators",
+    "levels"
+   ]
+  },
+  {
+   "id": "t2_qutrit_02",
+   "kind": "analytic",
+   "citation": "Bloch-Redfield / Lindblad; Krantz et al. (2019) Sec. 2; Bylander et al., Nat. Phys. 7, 565 (2011), arXiv:1101.4707",
+   "formula": "|rho02| = exp(-(1/T1 + 4 gamma_phi) t)/2",
+   "params": {
+    "f_q_hz": 5000000000.0,
+    "alpha_hz": -200000000.0,
+    "T1_us": 20,
+    "T2_us": 15,
+    "T_ns": 5000.0
+   },
+   "expected": {
+    "T_ns": 5000.0,
+    "T1_us": 20.0,
+    "T2_us": 15.0,
+    "n_dephasing_abs_rho02": 0.16923271255337108
+   },
+   "tolerance": {
+    "rel": 1e-06,
+    "dt_ns": 0.05,
+    "caution": "RK4 needs |alpha| dt << 1 with levels >= 3: dt=1 ns damps rho02 to 1e-50"
+   },
+   "features": [
+    "t1_us/t2_star_us collapse operators",
+    "levels"
+   ]
+  },
+  {
+   "id": "ramsey_echo_delta1.0MHz_tau100",
+   "kind": "first_principles",
+   "citation": "N. F. Ramsey, Phys. Rev. 78, 695 (1950); E. L. Hahn, Phys. Rev. 80, 580 (1950)",
+   "formula": "finite square pulses (20 ns pi/2, 40 ns pi) with a tone detuned by delta; exact piecewise exponentials",
+   "params": {
+    "levels": 2,
+    "f_q_hz": 5000000000.0,
+    "delta_MHz": 1.0,
+    "tau_ns": 100,
+    "A_rad_per_ns": 0.07853981633974483
+   },
+   "expected": {
+    "ramsey_P1": 0.8525351559283179,
+    "echo_P1": 0.0029506388967557085
+   },
+   "tolerance": {
+    "abs": 1e-08,
+    "dt_ns": 0.05
+   },
+   "features": [
+    "set_frequency",
+    "wait",
+    "phase continuity of the tone across waits"
+   ]
+  },
+  {
+   "id": "ramsey_echo_delta1.0MHz_tau250",
+   "kind": "first_principles",
+   "citation": "N. F. Ramsey, Phys. Rev. 78, 695 (1950); E. L. Hahn, Phys. Rev. 80, 580 (1950)",
+   "formula": "finite square pulses (20 ns pi/2, 40 ns pi) with a tone detuned by delta; exact piecewise exponentials",
+   "params": {
+    "levels": 2,
+    "f_q_hz": 5000000000.0,
+    "delta_MHz": 1.0,
+    "tau_ns": 250,
+    "A_rad_per_ns": 0.07853981633974483
+   },
+   "expected": {
+    "ramsey_P1": 0.42036430500937405,
+    "echo_P1": 0.006040399765222501
+   },
+   "tolerance": {
+    "abs": 1e-08,
+    "dt_ns": 0.05
+   },
+   "features": [
+    "set_frequency",
+    "wait",
+    "phase continuity of the tone across waits"
+   ]
+  },
+  {
+   "id": "ramsey_echo_delta2.5MHz_tau100",
+   "kind": "first_principles",
+   "citation": "N. F. Ramsey, Phys. Rev. 78, 695 (1950); E. L. Hahn, Phys. Rev. 80, 580 (1950)",
+   "formula": "finite square pulses (20 ns pi/2, 40 ns pi) with a tone detuned by delta; exact piecewise exponentials",
+   "params": {
+    "levels": 2,
+    "f_q_hz": 5000000000.0,
+    "delta_MHz": 2.5,
+    "tau_ns": 100,
+    "A_rad_per_ns": 0.07853981633974483
+   },
+   "expected": {
+    "ramsey_P1": 0.30561910138002574,
+    "echo_P1": 0.03153094982234434
+   },
+   "tolerance": {
+    "abs": 1e-08,
+    "dt_ns": 0.05
+   },
+   "features": [
+    "set_frequency",
+    "wait",
+    "phase continuity of the tone across waits"
+   ]
+  },
+  {
+   "id": "ramsey_echo_delta2.5MHz_tau250",
+   "kind": "first_principles",
+   "citation": "N. F. Ramsey, Phys. Rev. 78, 695 (1950); E. L. Hahn, Phys. Rev. 80, 580 (1950)",
+   "formula": "finite square pulses (20 ns pi/2, 40 ns pi) with a tone detuned by delta; exact piecewise exponentials",
+   "params": {
+    "levels": 2,
+    "f_q_hz": 5000000000.0,
+    "delta_MHz": 2.5,
+    "tau_ns": 250,
+    "A_rad_per_ns": 0.07853981633974483
+   },
+   "expected": {
+    "ramsey_P1": 0.3116604693935853,
+    "echo_P1": 0.0356885922741938
+   },
+   "tolerance": {
+    "abs": 1e-08,
+    "dt_ns": 0.05
+   },
+   "features": [
+    "set_frequency",
+    "wait",
+    "phase continuity of the tone across waits"
+   ]
+  },
+  {
+   "id": "quasistatic_ramsey_vs_echo",
+   "kind": "analytic",
+   "citation": "Cywinski et al., PRB 77, 174509 (2008), arXiv:0712.2225",
+   "formula": "Ramsey <P0> = (1 + exp(-sigma^2 t^2/2))/2; echo <P0> = 1 for quasi-static Gaussian detuning",
+   "params": {
+    "sigma_over_2pi_MHz": 0.5,
+    "t_ns": 400
+   },
+   "expected": {
+    "ramsey_P0": 0.7270203693636226,
+    "echo_P0": 1.0
+   },
+   "tolerance": {
+    "abs": 1e-06,
+    "quadrature": "40-node Gauss-Hermite over tone detuning (user-side loop)"
+   },
+   "features": [
+    "set_frequency sweep as a stand-in for detuning noise",
+    "needs: ensemble/noise API for a native version"
+   ]
+  },
+  {
+   "id": "landau_zener",
+   "kind": "analytic",
+   "citation": "C. Zener, Proc. R. Soc. A 137, 696 (1932); Shevchenko et al., Phys. Rep. 492, 1 (2010), arXiv:0911.1917",
+   "formula": "H = (v t/2) sz + (Delta/2) sx; P_diabatic = exp(-pi Delta^2 / (2 v))",
+   "params": [
+    {
+     "Delta_over_2pi_MHz": 5.0,
+     "sweep_rate_over_2pi_MHz_per_ns": 1.0,
+     "T_half_window_ns": 400.0,
+     "analytic_P_diabatic": 0.7813437305474442,
+     "numeric_finite_window_P_diabatic": 0.7861123869388332
+    },
+    {
+     "Delta_over_2pi_MHz": 10.0,
+     "sweep_rate_over_2pi_MHz_per_ns": 1.0,
+     "T_half_window_ns": 600.0,
+     "analytic_P_diabatic": 0.37270783885343794,
+     "numeric_finite_window_P_diabatic": 0.364688372646416
+    },
+    {
+     "Delta_over_2pi_MHz": 10.0,
+     "sweep_rate_over_2pi_MHz_per_ns": 4.0,
+     "T_half_window_ns": 300.0,
+     "analytic_P_diabatic": 0.7813437305474442,
+     "numeric_finite_window_P_diabatic": 0.7843498099686785
+    }
+   ],
+   "expected": [
+    {
+     "asymptotic": 0.7813437305474442,
+     "finite_window": 0.7861123869388332
+    },
+    {
+     "asymptotic": 0.37270783885343794,
+     "finite_window": 0.364688372646416
+    },
+    {
+     "asymptotic": 0.7813437305474442,
+     "finite_window": 0.7843498099686785
+    }
+   ],
+   "tolerance": {
+    "finite_window_abs": 0.0001,
+    "asymptotic_abs": 0.01
+   },
+   "features": [
+    "needs: chirped tone or flux detuning waveform"
+   ]
+  },
+  {
+   "id": "bloch_siegert",
+   "kind": "analytic",
+   "citation": "F. Bloch & A. Siegert, Phys. Rev. 57, 522 (1940)",
+   "formula": "delta_BS = Omega_R^2 / (4 omega_0)",
+   "params": {
+    "omega0_over_2pi_GHz": 5.0,
+    "OmegaR_over_2pi_MHz": 50.0,
+    "delta_BS_over_2pi_kHz": 125.0
+   },
+   "expected": 125.0,
+   "tolerance": {
+    "rel": 0.05
+   },
+   "features": [
+    "needs: non-RWA (counter-rotating) drive option"
+   ]
+  },
+  {
+   "id": "ac_stark_two_level",
+   "kind": "analytic",
+   "citation": "Krantz et al. (2019) arXiv:1904.06560",
+   "formula": "generalized Rabi W = sqrt(A^2 + delta^2) ~ |delta| + A^2/(2|delta|) (AC Stark shift A^2/(2 delta))",
+   "params": {
+    "levels": 2
+   },
+   "expected": "see rabi_detuned",
+   "tolerance": {
+    "abs": 1e-08
+   },
+   "features": [
+    "set_frequency"
+   ]
+  },
+  {
+   "id": "dispersive_shift_chi",
+   "kind": "first_principles",
+   "citation": "Koch et al., PRA 76, 042319 (2007), arXiv:cond-mat/0703002; Blais et al., RMP 93, 025005 (2021)",
+   "formula": "chi = g^2 alpha / (Delta (Delta + alpha)), Delta = w_q - w_r (Koch et al. 2007, Eq. 3.8 family); chi = half the qubit-state-dependent resonator shift (ED, 5 transmon x 12 resonator levels)",
+   "params": {
+    "fq_GHz": 6.0,
+    "alpha_MHz": -250,
+    "fr_GHz": 7.0,
+    "g_MHz": 80
+   },
+   "expected": {
+    "chi_ED_MHz": -1.253701785862221,
+    "chi_formula_MHz": -1.28
+   },
+   "tolerance": {
+    "ED_rel": 0.0001,
+    "formula_vs_ED_rel": 0.03
+   },
+   "features": [
+    "needs: resonator (bosonic) modes"
+   ]
+  },
+  {
+   "id": "vacuum_rabi_wallraff2004",
+   "kind": "paper",
+   "citation": "Wallraff et al., Nature 431, 162 (2004), doi:10.1038/nature02851, arXiv:cond-mat/0407325",
+   "params": {
+    "nu_r_GHz": 6.044,
+    "vacuum_rabi_MHz": 11.6,
+    "kappa_over_2pi_MHz": 0.8,
+    "gamma_over_2pi_MHz": 0.7
+   },
+   "formula": "resonant JC splitting 2g",
+   "expected": {
+    "splitting_MHz": 11.6,
+    "g_over_2pi_MHz": 5.8
+   },
+   "tolerance": {
+    "abs_MHz": 0.1
+   },
+   "features": [
+    "needs: resonator modes, spectroscopy (transmission) observable"
+   ]
+  },
+  {
+   "id": "levine2019_time_optimal_cz",
+   "kind": "paper",
+   "citation": "Levine et al., PRL 123, 170503 (2019), doi:10.1103/PhysRevLett.123.170503, arXiv:1908.06101 (Supplement Eqs. 6-8)",
+   "params": {
+    "Delta_over_Omega": 0.377371,
+    "xi_rad": 3.90242,
+    "Omega_tau_per_pulse": 4.29268,
+    "total_time": "2 tau ~ 2.732 pi / Omega",
+    "Omega_over_2pi_MHz_experiment": 3.5,
+    "bell_fidelity_min": 0.95,
+    "cz_fidelity_min": 0.974
+   },
+   "formula": "two global pulses of length tau, second with phase jump xi; perfect blockade",
+   "expected": {
+    "return_prob_01": 1.0,
+    "return_prob_11": 1.0,
+    "phi11_minus_2phi01_minus_pi_rad": 0.0,
+    "first_principles_check": {
+     "return_prob_01": 0.9999999999965359,
+     "return_prob_11": 0.9999999999991811,
+     "phi11_minus_2phi01_minus_pi_rad": 1.8829908414730312e-06
+    }
+   },
+   "tolerance": {
+    "abs": 1e-05
+   },
+   "features": [
+    "Rydberg target simulation (currently disabled)",
+    "global drive",
+    "phase jump"
+   ],
+   "note": "relative sign of Delta and xi matters: one convention closes both trajectories, the other leaves P01 = 0.525"
+  },
+  {
+   "id": "molmer_sorensen",
+   "kind": "analytic",
+   "citation": "Sorensen & Molmer, PRL 82, 1971 (1999), doi:10.1103/PhysRevLett.82.1971, arXiv:quant-ph/9810039",
+   "formula": "bichromatic detuning delta, Lamb-Dicke eta, carrier Omega: gate time t = 2 pi K / delta, maximal entanglement for delta = 2 eta Omega sqrt(K) (K loops)",
+   "params": {},
+   "expected": null,
+   "tolerance": null,
+   "features": [
+    "out of scope: no ion target"
+   ]
+  },
+  {
+   "id": "paper_sheldon2016_cr",
+   "kind": "paper",
+   "citation": "Sheldon et al., PRA 93, 060302(R) (2016), arXiv:1603.04821",
+   "params": {
+    "f_t_GHz": 4.914,
+    "f_c_GHz": 5.114,
+    "alpha_MHz": -330,
+    "J_MHz": 3.8,
+    "cr_pulse": "flat-top Gaussian, 3 sigma rise, sigma = 5 ns",
+    "echo_pi": "20 ns DRAG + two 10 ns buffers",
+    "T1_us": [
+     38,
+     41
+    ],
+    "T2_us": [
+     50,
+     61
+    ]
+   },
+   "expected": {
+    "echoed_cr_gate_ns": 160,
+    "gate_fidelity": 0.991,
+    "gate_fidelity_err": 0.002,
+    "predicted_entangling_time_ns": 83,
+    "coherence_limit": 0.996,
+    "single_qubit_fidelity": [
+     0.9991,
+     0.9992
+    ]
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_chow2011_cr",
+   "kind": "paper",
+   "citation": "Chow et al., PRL 107, 080502 (2011), arXiv:1106.0553",
+   "params": {},
+   "expected": {
+    "concurrence": 0.88,
+    "process_fidelity": 0.81
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_arute2019_sycamore",
+   "kind": "paper",
+   "citation": "Arute et al., Nature 574, 505 (2019), doi:10.1038/s41586-019-1666-5, arXiv:1910.11333",
+   "params": {},
+   "expected": {
+    "fsim_theta_deg": 90,
+    "fsim_phi_deg": 30,
+    "two_qubit_gate_ns": 12
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_foxen2020_fsim",
+   "kind": "paper",
+   "citation": "Foxen et al., PRL 125, 120504 (2020), arXiv:2001.08343",
+   "params": {},
+   "expected": {
+    "mean_pauli_error_per_fsim": 0.0038,
+    "n_fsim_gates": 525
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_barends2014",
+   "kind": "paper",
+   "citation": "Barends et al., Nature 508, 500 (2014), arXiv:1402.4848",
+   "params": {},
+   "expected": {
+    "single_qubit_fidelity": 0.9992,
+    "cz_fidelity": 0.994
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_rol2019_netzero",
+   "kind": "paper",
+   "citation": "Rol et al., PRL 123, 120502 (2019), arXiv:1903.02492",
+   "params": {},
+   "expected": {
+    "cz_fidelity": 0.991,
+    "leakage": 0.001,
+    "cz_ns": 40
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_negirneac2021_snz",
+   "kind": "paper",
+   "citation": "Negirneac et al., PRL 126, 220502 (2021), arXiv:2008.07411",
+   "params": {},
+   "expected": {
+    "cz_fidelity": 0.9993,
+    "cz_fidelity_err": 0.0024,
+    "leakage": 0.001,
+    "leakage_err": 0.0002
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_sung2021_coupler",
+   "kind": "paper",
+   "citation": "Sung et al., PRX 11, 021058 (2021), arXiv:2011.01261",
+   "params": {},
+   "expected": {
+    "cz_fidelity": 0.9976,
+    "iswap_fidelity": 0.9987
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_mckay2017_virtualz",
+   "kind": "paper",
+   "citation": "McKay et al., PRA 96, 022330 (2017), arXiv:1612.00858",
+   "params": {},
+   "expected": {
+    "x90_ns": 13.3,
+    "x90_error": 0.000195,
+    "x90_leakage": 3.1e-06
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_chen2016_leakage",
+   "kind": "paper",
+   "citation": "Chen et al., PRL 116, 020501 (2016), arXiv:1509.05470",
+   "params": {},
+   "expected": {
+    "gate_error_below": 0.001,
+    "leakage_rate_order": 1e-05
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_morvan2021_qutrit_rb",
+   "kind": "paper",
+   "citation": "Morvan et al., PRL 126, 210504 (2021), arXiv:2008.09134",
+   "params": {},
+   "expected": {
+    "single_qutrit_infidelity": 0.00238
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_ficheux2021_fluxonium_cz",
+   "kind": "paper",
+   "citation": "Ficheux et al., PRX 11, 021026 (2021), arXiv:2011.02634",
+   "params": {
+    "f_q_MHz": [
+     72.3,
+     136.3
+    ]
+   },
+   "expected": {
+    "cz_pulse_ns": 61.6,
+    "cz_error": 0.008
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_bao2022_fluxonium",
+   "kind": "paper",
+   "citation": "Bao et al., PRL 129, 010502 (2022), arXiv:2111.13504",
+   "params": {},
+   "expected": {
+    "single_qubit_fidelity": 0.9997,
+    "two_qubit_fidelity": 0.9972
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_riste2012_feedback_reset",
+   "kind": "paper",
+   "citation": "Riste et al., PRL 109, 240502 (2012), arXiv:1207.2944",
+   "params": {},
+   "expected": {
+    "reset_error": 0.024,
+    "excitation_before": 0.16,
+    "excitation_after": 0.03
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_magnard2018_reset",
+   "kind": "paper",
+   "citation": "Magnard et al., PRL 121, 060502 (2018), arXiv:1801.07689",
+   "params": {},
+   "expected": {
+    "residual_excitation": 0.002,
+    "reset_ns_below": 500
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_egger2018_pulsed_reset",
+   "kind": "paper",
+   "citation": "Egger et al., PR Applied 10, 044030 (2018), arXiv:1802.08980",
+   "params": {},
+   "expected": {
+    "residual_excitation": 0.022,
+    "err": 0.008
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_walter2017_readout",
+   "kind": "paper",
+   "citation": "Walter et al., PR Applied 7, 054020 (2017), arXiv:1701.06933",
+   "params": {
+    "T1_us": 7.6
+   },
+   "expected": {
+    "fidelity_48ns": 0.9825,
+    "fidelity_88ns": 0.992
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_jeffrey2014_purcell",
+   "kind": "paper",
+   "citation": "Jeffrey et al., PRL 112, 190504 (2014), arXiv:1401.0257 (arXiv lists D. Sank first)",
+   "params": {},
+   "expected": {
+    "accuracy": 0.998,
+    "readout_ns": 140
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_heinsoo2018_multiplexed",
+   "kind": "paper",
+   "citation": "Heinsoo et al., PR Applied 10, 034040 (2018), arXiv:1801.07904",
+   "params": {},
+   "expected": {
+    "n_qubits": 5,
+    "readout_pulse_ns": 80,
+    "mean_assignment": 0.97
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_bernien2017_51atoms",
+   "kind": "paper",
+   "citation": "Bernien et al., Nature 551, 579 (2017), arXiv:1707.04344",
+   "params": {},
+   "expected": {
+    "max_atoms": 51
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  },
+  {
+   "id": "paper_levine2019",
+   "kind": "paper",
+   "citation": "Levine et al., PRL 123, 170503 (2019), arXiv:1908.06101",
+   "params": {
+    "Omega_over_2pi_MHz": 3.5,
+    "rydberg_state": "70S1/2"
+   },
+   "expected": {
+    "bell_fidelity_min": 0.95,
+    "cz_fidelity_min": 0.974
+   },
+   "tolerance": "reproduce within the published error bar where one is given"
+  }
+ ]
+}
