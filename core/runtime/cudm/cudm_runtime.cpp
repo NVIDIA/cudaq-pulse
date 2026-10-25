@@ -19,7 +19,6 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
-#include <mutex>
 #include <new>
 #include <optional>
 #include <string>
@@ -28,8 +27,19 @@
 
 namespace {
 
+struct WaveformCallback {
+  bool active = false;
+  int32_t kind = 0;
+  std::vector<double> parameters;
+};
+
+// One handle is one run: the JIT-compiled program creates it, builds its
+// operators on it, evolves and destroys it, all on the calling thread. The
+// run owns its drive envelopes, so concurrent runs share no callback state.
 struct HandleData {
   cudensitymatHandle_t native = nullptr;
+  std::vector<WaveformCallback> callbacks;
+  std::vector<size_t> freeCallbackSlots;
 };
 
 struct StateData {
@@ -66,28 +76,33 @@ struct OpTermData {
   std::vector<size_t> callbackSlots;
 };
 
-struct WaveformCallback {
-  bool active = false;
-  int32_t kind = 0;
-  std::vector<double> parameters;
-};
-
-// cuDensityMat callbacks are plain function pointers, so each envelope gets
-// one of a fixed set of trampolines; the table is shared by every thread and
-// every evolution in flight, and guarded by the mutex.
+// cuDensityMat scalar callbacks are plain function pointers with no user
+// data, so each envelope of a run gets one of a fixed set of trampolines, and
+// a trampoline finds its run through `activeRun`. cuDensityMat invokes CPU
+// callbacks synchronously on the thread computing the operator action, which
+// is the thread inside cudm_evolve for that run.
 constexpr size_t callbackCapacity = 1024;
-std::array<WaveformCallback, callbackCapacity> waveformCallbacks;
-std::mutex waveformCallbackMutex;
+thread_local const HandleData *activeRun = nullptr;
+
+class ActiveRunScope {
+public:
+  explicit ActiveRunScope(const HandleData *run) : previous_(activeRun) {
+    activeRun = run;
+  }
+  ~ActiveRunScope() { activeRun = previous_; }
+  ActiveRunScope(const ActiveRunScope &) = delete;
+  ActiveRunScope &operator=(const ActiveRunScope &) = delete;
+
+private:
+  const HandleData *previous_;
+};
 
 int32_t evaluateWaveformCallback(size_t slot, double time,
                                  cudaDataType_t dataType, void *scalarStorage) {
-  WaveformCallback callback;
-  {
-    std::lock_guard lock(waveformCallbackMutex);
-    if (slot >= waveformCallbacks.size() || !waveformCallbacks[slot].active)
-      return 1;
-    callback = waveformCallbacks[slot];
-  }
+  const HandleData *run = activeRun;
+  if (!run || slot >= run->callbacks.size() || !run->callbacks[slot].active)
+    return 1;
+  const WaveformCallback &callback = run->callbacks[slot];
   if (!scalarStorage)
     return 2;
   double value = 0.0;
@@ -122,29 +137,28 @@ constexpr auto makeWaveformCallbackTable(std::index_sequence<Slots...>) {
 constexpr auto waveformCallbackTable =
     makeWaveformCallbackTable(std::make_index_sequence<callbackCapacity>{});
 
-std::optional<size_t> allocateCallbackSlot(int32_t kind,
+std::optional<size_t> allocateCallbackSlot(HandleData *run, int32_t kind,
                                            const double *parameters,
                                            int32_t parameterCount) {
-  if (kind == 0)
+  size_t slot = run->callbacks.size();
+  if (!run->freeCallbackSlots.empty()) {
+    slot = run->freeCallbackSlots.back();
+    run->freeCallbackSlots.pop_back();
+  } else if (slot < callbackCapacity) {
+    run->callbacks.emplace_back();
+  } else {
     return std::nullopt;
-  if (!parameters || parameterCount < 10)
-    return std::nullopt;
-  std::lock_guard lock(waveformCallbackMutex);
-  for (size_t slot = 0; slot < waveformCallbacks.size(); ++slot) {
-    if (!waveformCallbacks[slot].active) {
-      waveformCallbacks[slot].active = true;
-      waveformCallbacks[slot].kind = kind;
-      waveformCallbacks[slot].parameters.assign(parameters,
-                                                parameters + parameterCount);
-      return slot;
-    }
   }
-  return std::nullopt;
+  WaveformCallback &callback = run->callbacks[slot];
+  callback.active = true;
+  callback.kind = kind;
+  callback.parameters.assign(parameters, parameters + parameterCount);
+  return slot;
 }
 
-void releaseCallbackSlot(size_t slot) {
-  std::lock_guard lock(waveformCallbackMutex);
-  waveformCallbacks[slot] = {};
+void releaseCallbackSlot(HandleData *run, size_t slot) {
+  run->callbacks[slot] = {};
+  run->freeCallbackSlots.push_back(slot);
 }
 
 thread_local std::vector<std::byte> lastResult;
@@ -835,13 +849,21 @@ CudmStatus cudm_op_term_append(CudmHandle handle, CudmOpTerm term,
       cudensitymatScalarCallbackNone;
   std::optional<size_t> callbackSlot;
   if (callbackKind != 0) {
-    callbackSlot = allocateCallbackSlot(callbackKind, callbackParameters,
+    if (!callbackParameters ||
+        callbackParameterCount <
+            static_cast<int32_t>(cudaq_pulse::kWaveformHeader))
+      return fail(CUDM_ERROR_INTERNAL,
+                  "operator term append received invalid waveform callback "
+                  "parameters");
+    if (termData->owner != owner)
+      return fail(CUDM_ERROR_INVALID_HANDLE,
+                  "operator term belongs to a different cuDensityMat handle");
+    callbackSlot = allocateCallbackSlot(owner, callbackKind, callbackParameters,
                                         callbackParameterCount);
     if (!callbackSlot)
       return fail(CUDM_ERROR_INTERNAL,
-                  "all waveform callback slots are in use: the drives of "
-                  "the programs evolving at once in this process need more "
-                  "than 1024 envelope callbacks");
+                  "the drives of this program need more than 1024 envelope "
+                  "callbacks");
     wrappedCallback.callback = waveformCallbackTable[*callbackSlot];
     wrappedCallback.device = CUDENSITYMAT_CALLBACK_DEVICE_CPU;
     wrappedCallback.wrapper = nullptr;
@@ -856,7 +878,7 @@ CudmStatus cudm_op_term_append(CudmHandle handle, CudmOpTerm term,
   if (status == CUDM_SUCCESS && callbackSlot)
     termData->callbackSlots.push_back(*callbackSlot);
   else if (callbackSlot)
-    releaseCallbackSlot(*callbackSlot);
+    releaseCallbackSlot(owner, *callbackSlot);
   return status;
 }
 
@@ -867,7 +889,7 @@ CudmStatus cudm_op_term_destroy(CudmOpTerm term) {
   auto status = checkCudm(cudensitymatDestroyOperatorTerm(data->native),
                           "cudensitymatDestroyOperatorTerm");
   for (size_t slot : data->callbackSlots)
-    releaseCallbackSlot(slot);
+    releaseCallbackSlot(data->owner, slot);
   delete data;
   return status;
 }
@@ -925,6 +947,7 @@ CudmStatus cudm_evolve(CudmHandle handle, CudmOperator op, CudmState stateIn,
   auto *input = static_cast<StateData *>(stateIn);
   auto *output = static_cast<StateData *>(stateOut);
   auto *workspaceData = static_cast<WorkspaceData *>(workspace);
+  const ActiveRunScope runScope(owner);
 
   std::vector<StateData *> scratch;
   scratch.reserve(7);
