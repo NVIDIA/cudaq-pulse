@@ -117,12 +117,45 @@ class GpuRuntime:
 
 _lock = threading.Lock()
 _runtime: GpuRuntime | None = None
+_forked_after_cuda_init = False
+
+
+def _after_fork_in_child() -> None:
+    """Reset the guard in a forked child.
+
+    The lock may have been held by a thread that does not exist in the
+    child. A runtime loaded by the parent has initialized CUDA, which a
+    forked child cannot use, so it is dropped and the child refuses GPU
+    work instead of failing inside the driver.
+    """
+    global _lock, _runtime, _forked_after_cuda_init
+    _lock = threading.Lock()
+    if _runtime is not None:
+        _runtime = None
+        _forked_after_cuda_init = True
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
 def require_gpu_runtime() -> GpuRuntime:
-    """Return the loaded GPU runtime, or raise a specific ``GpuRuntimeError``."""
+    """Return the loaded GPU runtime, or raise a specific ``GpuRuntimeError``.
+
+    A process forked after its parent used the GPU cannot use it: start GPU
+    workers with the ``spawn`` or ``forkserver`` multiprocessing method, or
+    fork before the first GPU simulation.
+    """
     global _runtime
     with _lock:
+        if _forked_after_cuda_init:
+            raise GpuDeviceUnavailableError(
+                "This process was forked from one that had already initialized "
+                "CUDA, and CUDA cannot be used in a forked child. Start GPU "
+                "workers with multiprocessing's 'spawn' or 'forkserver' method "
+                "(multiprocessing.get_context('spawn')), or fork before the "
+                "first GPU simulation."
+            )
         if _runtime is None:
             major, path = _resolve_runtime()
             not_in_wheels: list[str] = []

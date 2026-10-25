@@ -54,6 +54,7 @@
 #include "llvm/Support/TargetSelect.h"
 
 #include <dlfcn.h>
+#include <pthread.h>
 
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"
 
@@ -797,6 +798,24 @@ public:
     std::lock_guard<std::mutex> guard(lock());
     auto &pool = state();
     return {pool.created, pool.current ? pool.uses : 0, pool.words};
+  }
+
+  /// A forked child has only the forking thread. The pool's lock is held
+  /// across fork so the child inherits it unlocked, and the child starts a
+  /// new context: the current one's thread pool has no workers there. That
+  /// context is abandoned rather than destroyed, since destroying it would
+  /// wait for those workers.
+  static void handleForks() {
+    pthread_atfork([] { lock().lock(); }, [] { lock().unlock(); },
+                   [] {
+                     auto &pool = state();
+                     if (pool.current)
+                       new std::shared_ptr<mlir::MLIRContext>(
+                           std::move(pool.current));
+                     pool.uses = 0;
+                     pool.words = 0;
+                     lock().unlock();
+                   });
   }
 
 private:
@@ -1928,6 +1947,7 @@ private:
 
 NB_MODULE(_cudaq_pulse_native, m) {
   m.doc() = "cudaq-pulse native MLIR pipeline bindings";
+  SharedContextPool::handleForks();
 
   nb::class_<PulseModule>(m, "PulseModule")
       .def("print", &PulseModule::print,
