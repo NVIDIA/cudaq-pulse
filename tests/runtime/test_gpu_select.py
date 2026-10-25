@@ -144,6 +144,25 @@ def test_new_enough_driver_passes(monkeypatch, tmp_path, major, version):
     gpu._check_driver(major, tmp_path)
 
 
+def test_cuda_libraries_and_the_runtime_load_locally(monkeypatch, tmp_path):
+    modes = {}
+
+    class Recorder:
+        def __init__(self, path, mode):
+            modes[path] = mode
+
+        def __getattr__(self, name):
+            return self
+
+    found = [tmp_path / "libcudart.so.12", tmp_path / "libcudensitymat.so.0"]
+    monkeypatch.setattr(gpu, "_locate_cuda_wheel_libraries", lambda *_: (found, []))
+    monkeypatch.setattr(gpu.ctypes, "CDLL", Recorder)
+    assert gpu._preload_cuda_wheels(12) == []
+    gpu._load(tmp_path / "libcudm-runtime-cu12.so", [], 12)
+    assert len(modes) == 3
+    assert set(modes.values()) == {gpu.ctypes.RTLD_LOCAL}
+
+
 class _VersionedRuntime:
     def __init__(self, version):
         self.version = version

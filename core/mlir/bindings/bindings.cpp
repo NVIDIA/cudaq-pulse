@@ -48,9 +48,12 @@
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
 
+#include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/TargetSelect.h"
+
+#include <dlfcn.h>
 
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"
 
@@ -1670,10 +1673,50 @@ private:
 // -----------------------------------------------------------------------
 // JITModule: an LLVM-dialect module compiled in-process by ORC
 // -----------------------------------------------------------------------
+// Shared libraries a JIT module calls into, opened RTLD_LOCAL. MLIR's
+// sharedLibPaths opens them through llvm::sys::DynamicLibrary, which uses
+// RTLD_GLOBAL and so would add the GPU runtime and its CUDA dependencies to
+// the process's global symbol scope.
+class RuntimeLibraries {
+public:
+  explicit RuntimeLibraries(const std::vector<std::string> &paths) {
+    for (const auto &path : paths) {
+      void *handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+      if (!handle) {
+        const char *reason = dlerror();
+        close();
+        throw std::runtime_error("JIT could not load " + path + ": " +
+                                 (reason ? reason : "unknown error"));
+      }
+      handles_.push_back(handle);
+    }
+  }
+  ~RuntimeLibraries() { close(); }
+  RuntimeLibraries(const RuntimeLibraries &) = delete;
+  RuntimeLibraries &operator=(const RuntimeLibraries &) = delete;
+
+  void *lookup(const std::string &name) const {
+    for (void *handle : handles_)
+      if (void *symbol = dlsym(handle, name.c_str()))
+        return symbol;
+    return nullptr;
+  }
+
+private:
+  void close() {
+    for (void *handle : handles_)
+      dlclose(handle);
+    handles_.clear();
+  }
+
+  std::vector<void *> handles_;
+};
+
 class JITModule {
 public:
-  explicit JITModule(std::unique_ptr<mlir::ExecutionEngine> engine)
-      : engine_(std::move(engine)) {}
+  JITModule(std::unique_ptr<RuntimeLibraries> libraries,
+            std::unique_ptr<mlir::ExecutionEngine> engine)
+      : libraries_(std::move(libraries)), engine_(std::move(engine)) {}
 
   uintptr_t lookup(const std::string &name) {
     auto symbol = engine_->lookup(name);
@@ -1688,6 +1731,8 @@ public:
   }
 
 private:
+  // Declared first so the engine, whose code points into them, goes first.
+  std::unique_ptr<RuntimeLibraries> libraries_;
   std::unique_ptr<mlir::ExecutionEngine> engine_;
 };
 
@@ -1710,12 +1755,19 @@ JITModule createJITModule(mlir::ModuleOp module,
   if (!nativeTargetReady)
     throw std::runtime_error("LLVM native target initialization failed");
 
-  llvm::SmallVector<llvm::StringRef> libPaths(shared_libs.begin(),
-                                              shared_libs.end());
+  auto libraries = std::make_unique<RuntimeLibraries>(shared_libs);
+  std::vector<std::pair<std::string, void *>> resolved;
+  module.walk([&](mlir::LLVM::LLVMFuncOp function) {
+    if (!function.isExternal())
+      return;
+    std::string name = function.getName().str();
+    if (void *address = libraries->lookup(name))
+      resolved.emplace_back(std::move(name), address);
+  });
+
   mlir::ExecutionEngineOptions options;
   options.transformer = mlir::makeOptimizingTransformer(
       /*optLevel=*/2, /*sizeLevel=*/0, /*targetMachine=*/nullptr);
-  options.sharedLibPaths = libPaths;
   auto engine = mlir::ExecutionEngine::create(module, options);
   if (!engine) {
     std::string message;
@@ -1723,7 +1775,14 @@ JITModule createJITModule(mlir::ModuleOp module,
     os << engine.takeError();
     throw std::runtime_error("JIT compilation failed: " + message);
   }
-  return JITModule(std::move(*engine));
+  (*engine)->registerSymbols([&](llvm::orc::MangleAndInterner interner) {
+    llvm::orc::SymbolMap symbols;
+    for (const auto &[name, address] : resolved)
+      symbols[interner(name)] = {llvm::orc::ExecutorAddr::fromPtr(address),
+                                 llvm::JITSymbolFlags::Exported};
+    return symbols;
+  });
+  return JITModule(std::move(libraries), std::move(*engine));
 }
 
 // -----------------------------------------------------------------------

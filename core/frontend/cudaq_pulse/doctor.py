@@ -150,7 +150,7 @@ def _report_libraries(major: int, write: Callable[[str], None]) -> None:
             write(f"    {name:<24} not installed as a Python package")
             continue
         try:
-            ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
+            ctypes.CDLL(str(path), mode=ctypes.RTLD_LOCAL)
         except OSError as error:
             write(f"    {name:<24} FAILED: {error}")
         else:

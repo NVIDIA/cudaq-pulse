@@ -17,7 +17,11 @@ A build carries one runtime per CUDA major. The one used is chosen by which
 ``cudensitymat-cuNN`` distribution the ``[cu12]`` or ``[cu13]`` extra
 installed. Its CUDA libraries live in separate wheels whose directories are
 not all on cuDensityMat's RUNPATH, so they are loaded from those wheels
-first, in dependency order.
+first, in dependency order. Everything is loaded RTLD_LOCAL: a later
+library's dependencies resolve by soname to the copies already loaded,
+while nothing joins the process's global symbol scope, where it could
+interpose on another CUDA stack in the same process (another framework's
+cuBLAS, say).
 """
 
 from __future__ import annotations
@@ -272,7 +276,7 @@ def _preload_cuda_wheels(major: int) -> list[str]:
     )
     for library in found:
         try:
-            ctypes.CDLL(str(library), mode=ctypes.RTLD_GLOBAL)
+            ctypes.CDLL(str(library), mode=ctypes.RTLD_LOCAL)
         except OSError as error:
             raise GpuRuntimeLoadError(
                 f"cudaq-pulse could not load the CUDA {major} library {library}: "
@@ -301,7 +305,7 @@ def _declare_prototypes(library: ctypes.CDLL) -> None:
 
 def _load(path: Path, not_in_wheels: Sequence[str], major: int | None = None) -> ctypes.CDLL:
     try:
-        library = ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
+        library = ctypes.CDLL(str(path), mode=ctypes.RTLD_LOCAL)
     except OSError as error:
         detail = ""
         if not_in_wheels:
