@@ -8,7 +8,9 @@
 """Importing and compiling stay light; simulation loads its dependencies lazily."""
 
 import importlib
+import importlib.metadata
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -98,6 +100,20 @@ def test_runtime_exports_the_gpu_errors_without_loading_them(tmp_path):
         tmp_path,
     )
     assert out == "False True True"
+
+
+def test_version_comes_from_the_build():
+    from cudaq_pulse import _build_config
+
+    assert pulse.__version__ == _build_config.PACKAGE_VERSION
+    assert re.fullmatch(
+        r"\d+(\.\d+)+((a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?(\+[\w.]+)?", pulse.__version__
+    )
+    try:
+        installed = importlib.metadata.version("cudaq-pulse")
+    except importlib.metadata.PackageNotFoundError:
+        installed = None
+    assert installed in (None, pulse.__version__)
 
 
 def test_unknown_attribute_is_an_attribute_error():

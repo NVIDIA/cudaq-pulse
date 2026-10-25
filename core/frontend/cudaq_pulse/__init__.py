@@ -27,7 +27,9 @@ The compiler recognizes the kernel DSL vocabulary (``drive``, ``gaussian``,
 
 import typing as _typing
 
-__version__ = "0.1.0"
+from . import _build_config
+
+__version__: str = _build_config.PACKAGE_VERSION
 
 # ── Infrastructure (accessed via pulse.*) ────────────────────────────────
 
