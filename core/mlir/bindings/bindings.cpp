@@ -45,12 +45,9 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
-#include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
 
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
-#include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Module.h"
 #include "llvm/Support/TargetSelect.h"
 
 #include <dlfcn.h>
@@ -455,12 +452,6 @@ public:
       throw std::invalid_argument("expected an MLIR dictionary attribute");
     for (mlir::NamedAttribute entry : entries)
       module_->getOperation()->setAttr(entry.getName(), entry.getValue());
-  }
-
-  bool is_parametric() {
-    std::lock_guard<std::recursive_mutex> guard(*lock_);
-    auto funcOp = getFuncOp();
-    return funcOp && funcOp.getNumArguments() > 0;
   }
 
   std::vector<std::string> param_names() {
@@ -1838,54 +1829,6 @@ public:
     return createJITModule(*module, shared_libs);
   }
 
-  std::string parse_and_print(const std::string &mlir_text) {
-    mlir::MLIRContext ctx;
-    ctx.appendDialectRegistry(registry_);
-    ctx.loadAllAvailableDialects();
-    auto module = parseModule(mlir_text, &ctx, "Failed to parse MLIR text");
-    std::string result;
-    llvm::raw_string_ostream os(result);
-    module->print(os);
-    return result;
-  }
-
-  std::string run_full_pipeline(const std::string &pulse_mlir) {
-    mlir::MLIRContext ctx;
-    ctx.appendDialectRegistry(registry_);
-    ctx.loadAllAvailableDialects();
-    auto module =
-        parseModule(pulse_mlir, &ctx, "Failed to parse pulse MLIR text");
-    mlir::PassManager pm(&ctx);
-    addPulseLoweringPasses(pm);
-    runPipeline(pm, *module, "MLIR pass pipeline failed");
-    std::string result;
-    llvm::raw_string_ostream os(result);
-    module->print(os);
-    return result;
-  }
-
-  std::string run_full_pipeline_to_llvm_ir(const std::string &pulse_mlir) {
-    mlir::MLIRContext ctx;
-    ctx.appendDialectRegistry(registry_);
-    ctx.loadAllAvailableDialects();
-    mlir::registerBuiltinDialectTranslation(ctx);
-    mlir::registerLLVMDialectTranslation(ctx);
-    auto module =
-        parseModule(pulse_mlir, &ctx, "Failed to parse pulse MLIR text");
-    mlir::PassManager pm(&ctx);
-    addPulseLoweringPasses(pm);
-    runPipeline(pm, *module, "MLIR pass pipeline failed");
-
-    llvm::LLVMContext llvmContext;
-    auto llvmModule = mlir::translateModuleToLLVMIR(*module, llvmContext);
-    if (!llvmModule)
-      throw std::runtime_error("Failed to translate LLVM-dialect MLIR");
-    std::string result;
-    llvm::raw_string_ostream os(result);
-    llvmModule->print(os, nullptr);
-    return result;
-  }
-
   std::string run_pulse_to_qop(const std::string &pulse_mlir) {
     mlir::MLIRContext ctx;
     ctx.appendDialectRegistry(registry_);
@@ -1909,21 +1852,6 @@ public:
     mlir::PassManager pm(&ctx);
     pm.addPass(qop::createQOpToCuDensityMatPass());
     runPipeline(pm, *module, "qop-to-cudm pass failed");
-    std::string result;
-    llvm::raw_string_ostream os(result);
-    module->print(os);
-    return result;
-  }
-
-  std::string run_cudm_to_llvm(const std::string &cudm_mlir) {
-    mlir::MLIRContext ctx;
-    ctx.appendDialectRegistry(registry_);
-    ctx.loadAllAvailableDialects();
-    auto module =
-        parseModule(cudm_mlir, &ctx, "Failed to parse cudm MLIR text");
-    mlir::PassManager pm(&ctx);
-    pm.addPass(cudm::createCuDensityMatToLLVMPass());
-    runPipeline(pm, *module, "cudm-to-llvm pass failed");
     std::string result;
     llvm::raw_string_ostream os(result);
     module->print(os);
@@ -1979,9 +1907,6 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::call_guard<nb::gil_scoped_release>(),
            "Merge an MLIR dictionary attribute into the module attributes",
            nb::arg("dictionary"))
-      .def("is_parametric", &PulseModule::is_parametric,
-           nb::call_guard<nb::gil_scoped_release>(),
-           "True if the module has func.func block arguments (parameters)")
       .def("param_names", &PulseModule::param_names,
            nb::call_guard<nb::gil_scoped_release>(), "Get parameter names")
       .def("specialize", &PulseModule::specialize,
@@ -2050,25 +1975,12 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::call_guard<nb::gil_scoped_release>(),
            "JIT-compile an LLVM-dialect MLIR module in-process",
            nb::arg("mlir_text"), nb::arg("shared_libs"))
-      .def("parse_and_print", &MLIRPipeline::parse_and_print,
-           nb::call_guard<nb::gil_scoped_release>(),
-           "Parse MLIR text and print it back (roundtrip)")
-      .def("run_full_pipeline", &MLIRPipeline::run_full_pipeline,
-           nb::call_guard<nb::gil_scoped_release>(),
-           "Run full pipeline: pulse -> qop -> cudm -> llvm")
-      .def("run_full_pipeline_to_llvm_ir",
-           &MLIRPipeline::run_full_pipeline_to_llvm_ir,
-           nb::call_guard<nb::gil_scoped_release>(),
-           "Run the full pipeline and translate to textual LLVM IR")
       .def("run_pulse_to_qop", &MLIRPipeline::run_pulse_to_qop,
            nb::call_guard<nb::gil_scoped_release>(),
            "Run pulse-to-qop pass only")
       .def("run_qop_to_cudm", &MLIRPipeline::run_qop_to_cudm,
            nb::call_guard<nb::gil_scoped_release>(),
            "Run qop-to-cudm pass only")
-      .def("run_cudm_to_llvm", &MLIRPipeline::run_cudm_to_llvm,
-           nb::call_guard<nb::gil_scoped_release>(),
-           "Run cudm-to-llvm pass only")
       .def("parse_to_module", &MLIRPipeline::parse_to_module,
            nb::call_guard<nb::gil_scoped_release>(),
            "Parse MLIR text into a PulseModule");
