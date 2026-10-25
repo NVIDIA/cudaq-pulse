@@ -35,7 +35,7 @@ read-only.
 .. :spellcheck-enable:
 
 A config is a mapping (or a JSON file of one) with ``"target"``, a
-registered target name or a ``cudaq_pulse.targets.Target``, and optionally
+registered target name or a ``cudaq_pulse.targets.TargetDescription``, and optionally
 ``"layout"``. ``layout[i]`` is the carrier that qudit ``i`` names; by
 default every carrier of the target, in order.
 
@@ -58,8 +58,8 @@ argument stays symbolic, so a frequency sweep compiles once.
 The process target
 ------------------
 
-Scripts that do not name a device can run on a *process target*, chosen
-outside the script:
+A script can leave the choice of device to the command line with a *process
+target*:
 
 .. :spellcheck-disable:
 
@@ -71,9 +71,10 @@ outside the script:
 .. :spellcheck-enable:
 
 The launcher sets ``CUDAQ_PULSE_TARGET`` for the script and passes the
-script's own arguments through unparsed. A kernel call with no qudit handles
-uses the process target; without one it raises ``NoDeviceError``.
-``pulse.get_device()`` with no argument returns the process target's device.
+script's own arguments through unparsed. ``pulse.get_device()`` with no
+argument returns the process target's device, whose handles the script then
+passes to its kernels; a kernel call with no qudit handles always raises
+``NoDeviceError``.
 
 Registered names are ``transmon_krinner_17q``, ``transmon_generic:N``,
 ``rydberg_chain:N`` and ``rydberg_square:RxC``;
@@ -97,8 +98,8 @@ points is 4.4-5.7 MHz. The idle ZZ of the charge-coupled pairs is -3.1 to
 -5.9 kHz (``cudaq_pulse.targets.transmon.krinner_idle_zz_hz``), below the
 paper's "below about 8 kHz"; simulated with three levels, the couplings
 reproduce it within a few percent. Each qubit also records its Hahn-echo T2
-and thermal excited-state population from Tab. I (``Target.t2_echo_times``,
-``Target.thermal_populations``): a simulation starts each qubit in its
+and thermal excited-state population from Tab. I (``TargetDescription.t2_echo_times``,
+``TargetDescription.thermal_populations``): a simulation starts each qubit in its
 thermal mixture and relaxes it there, and dephases at the Hahn-echo T2 with
 ``simulate(..., dephasing="t2_echo")``.
 

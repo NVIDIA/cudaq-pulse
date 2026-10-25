@@ -8,7 +8,10 @@
 
 
 import cudaq_pulse as pulse
+import pytest
+from cudaq_pulse.kernel.ir_builder import CompilationError
 
+from tests._handles import Q
 from tests._ir import python_ir
 
 
@@ -28,35 +31,10 @@ def test_kernel_caching():
     def my_kernel(q0):
         pass
 
-    q = pulse.qudit_ref()
+    q = Q[0]
     first = my_kernel.lower(q)
     assert my_kernel.lower(q) is first
     assert my_kernel.cache_info().compiled == 1
-
-
-def test_qudit_ref_creation():
-    q = pulse.qudit_ref()
-    assert q is not None
-    from cudaq_pulse.kernel.decorator import QuditRef
-
-    assert isinstance(q, QuditRef)
-    assert hasattr(q, "_vid")
-
-
-def test_qvec_ref_creation():
-    qv = pulse.qvec_ref(4)
-    assert len(qv) == 4
-    from cudaq_pulse.kernel.decorator import QuditRef
-
-    q0 = qv[0]
-    assert isinstance(q0, QuditRef)
-    assert hasattr(q0, "_vid")
-
-
-def test_qvec_ref_indexing():
-    qv = pulse.qvec_ref(3)
-    for i in range(3):
-        assert qv[i] is not None
 
 
 def test_kernel_invocation():
@@ -65,35 +43,16 @@ def test_kernel_invocation():
     def echo(q0):
         pass
 
-    q = pulse.qudit_ref()
+    q = Q[0]
     result = python_ir(echo, q)
     assert result is not None
 
 
-def test_kernel_internal_qudit_alloc():
-    """qudit_ref() inside the kernel emits a pulse.qudit_alloc op."""
-    import cudaq_pulse
-
+def test_qudit_ref_is_not_a_kernel_op():
     @pulse.kernel
     def internal():
-        q = cudaq_pulse.qudit_ref()
-        d0, t0 = cudaq_pulse.get_drive_line(q)
-
-    program = python_ir(internal)
-    assert program is not None
-    op_kinds = [op.kind for op in program.ops]
-    assert "pulse.qudit_alloc" in op_kinds
-    assert "pulse.get_drive_line" in op_kinds
-
-
-def test_kernel_internal_bare_qudit_ref():
-    """qudit_ref() as a bare name inside the kernel also works."""
-
-    @pulse.kernel
-    def internal():
-        q = qudit_ref()
+        q = qudit_ref()  # noqa: F821
         d0, t0 = get_drive_line(q)
 
-    program = python_ir(internal)
-    op_kinds = [op.kind for op in program.ops]
-    assert "pulse.qudit_alloc" in op_kinds
+    with pytest.raises(CompilationError, match="unknown pulse op: qudit_ref"):
+        python_ir(internal)

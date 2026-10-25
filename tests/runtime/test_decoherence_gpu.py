@@ -13,7 +13,7 @@ config-sampling cases (``TransmonConfig::generate`` / ``create_ladder_8q``
 seeding) are intentionally dropped: parameter sampling is not part of the
 pulse frontend. The physics -- T1 decay, monotonicity, ground-state stability,
 trace preservation, and independent multi-qubit decay -- is preserved here
-through ``Target`` T1 Lindblad terms.
+through ``TargetDescription`` T1 Lindblad terms.
 """
 
 import math
@@ -21,15 +21,16 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Qubit, Target
+from cudaq_pulse.targets import Qubit, TargetDescription
 
+from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
 
 gpu = pytest.mark.gpu
 
 
 def _single_qubit_target(*, t1_us, t2_star_us=0.0, frequency_hz=5.0e9):
-    return Target(
+    return TargetDescription(
         name="decoherence-test",
         qubits={
             0: Qubit(
@@ -59,7 +60,7 @@ def _pi_pulse_then_wait(wait_vtu):
 
 def test_decoherence_mlir_structure():
     """A pi-pulse-plus-wait kernel lowers to structurally valid MLIR."""
-    ir = (_pi_pulse_then_wait(1000), pulse.qudit_ref())
+    ir = (_pi_pulse_then_wait(1000), Q[0])
     mlir = pulse_mlir(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
 
     assert "pulse.square" in mlir
@@ -70,7 +71,7 @@ def test_decoherence_mlir_structure():
 def test_t1_excited_state_decays():
     """After a pi pulse and a wait, the excited population damps toward |0>."""
     target = _single_qubit_target(t1_us=0.2)
-    ir = (_pi_pulse_then_wait(1000), pulse.qudit_ref())
+    ir = (_pi_pulse_then_wait(1000), Q[0])
     result = evolve(on(target, *ir), t_start=0.0, t_end=520.0, num_steps=520, integrator="rk4")
 
     rho = result.final_state
@@ -88,7 +89,7 @@ def test_t1_longer_wait_more_decay():
     target = _single_qubit_target(t1_us=0.2)
 
     def _run(wait_vtu, t_end):
-        ir = (_pi_pulse_then_wait(wait_vtu), pulse.qudit_ref())
+        ir = (_pi_pulse_then_wait(wait_vtu), Q[0])
         result = evolve(
             on(target, *ir), t_start=0.0, t_end=t_end, num_steps=int(t_end), integrator="rk4"
         )
@@ -110,7 +111,7 @@ def test_ground_state_stable_under_decoherence():
         d0, _t0 = get_drive_line(q0)
         wait(d0, 2000)  # 1000 ns of free evolution, no drive
 
-    ir = (idle, pulse.qudit_ref())
+    ir = (idle, Q[0])
     result = evolve(on(target, *ir), t_start=0.0, t_end=1000.0, num_steps=1000, integrator="rk4")
     rho = result.final_state
     assert rho.shape == (2, 2)
@@ -121,7 +122,7 @@ def test_ground_state_stable_under_decoherence():
 def test_decoherence_preserves_trace():
     """Lindblad evolution conserves the density-matrix trace."""
     target = _single_qubit_target(t1_us=0.2)
-    ir = (_pi_pulse_then_wait(4000), pulse.qudit_ref())
+    ir = (_pi_pulse_then_wait(4000), Q[0])
     result = evolve(on(target, *ir), t_start=0.0, t_end=2020.0, num_steps=2020, integrator="rk4")
     rho = result.final_state
     assert np.trace(rho).real == pytest.approx(1.0, abs=1.0e-3)
@@ -130,7 +131,7 @@ def test_decoherence_preserves_trace():
 @gpu
 def test_multiqubit_independent_decay():
     """Two qubits with distinct T1 both damp; the whole state stays physical."""
-    target = Target(
+    target = TargetDescription(
         name="two-qubit-decoherence",
         qubits={
             0: Qubit(
@@ -162,7 +163,7 @@ def test_multiqubit_independent_decay():
         wait(d0, 1000)
         wait(d1, 1000)
 
-    ir = (excite_both, pulse.qudit_ref(), pulse.qudit_ref())
+    ir = (excite_both, Q[0], Q[1])
     result = evolve(on(target, *ir), t_start=0.0, t_end=520.0, num_steps=520, integrator="rk4")
 
     rho = result.final_state

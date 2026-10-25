@@ -18,10 +18,10 @@ import math
 from typing import Any
 
 from . import _krinner17 as _k
-from .base import Coupling, Qubit, Target
+from .base import Coupling, Qubit, TargetDescription
 
 
-def transmon_krinner_17q(calibration: Any = "krinner17") -> Target:
+def transmon_krinner_17q(calibration: Any = "krinner17") -> TargetDescription:
     """17-qubit surface-code device of Krinner et al., Nature 605, 669 (2022).
 
     Qudits 0-16 are D1-D9, X1-X4, Z1-Z4, the column order of the paper's
@@ -63,10 +63,10 @@ def transmon_krinner_17q(calibration: Any = "krinner17") -> Target:
     return target if calibration is None else calibration.apply(target)
 
 
-_BUILT: dict[str | None, Target] = {}
+_BUILT: dict[str | None, TargetDescription] = {}
 
 
-def _calibrated_krinner(name: str) -> Target:
+def _calibrated_krinner(name: str) -> TargetDescription:
     from .calibration import shipped_calibration
 
     if name not in _BUILT:
@@ -74,13 +74,13 @@ def _calibrated_krinner(name: str) -> Target:
     return _BUILT[name]
 
 
-def _published_krinner() -> Target:
+def _published_krinner() -> TargetDescription:
     if None not in _BUILT:
         _BUILT[None] = _build_published_krinner()
     return _BUILT[None]
 
 
-def _build_published_krinner() -> Target:
+def _build_published_krinner() -> TargetDescription:
     qubits = {}
     for index, q in enumerate(_k.QUBITS):
         qubits[index] = Qubit(
@@ -122,7 +122,7 @@ def _build_published_krinner() -> Target:
         )
         for e in _k.EDGES
     ]
-    return Target(
+    return TargetDescription(
         name="transmon_krinner_17q",
         qubits=qubits,
         couplings=couplings,
@@ -162,7 +162,7 @@ def transmon_generic(
     t1_us: float = 25.0,
     t2_star_us: float = 15.0,
     topology: str = "linear",
-) -> Target:
+) -> TargetDescription:
     """Build a generic transmon target with configurable parameters.
 
     Parameters
@@ -217,7 +217,7 @@ def transmon_generic(
 
     couplings = [Coupling(a, b, coupling_strength_hz=coupling_strength_hz) for a, b in edges]
 
-    return Target(
+    return TargetDescription(
         name=f"transmon_generic_{n_qubits}q_{topology}",
         qubits=qubits,
         couplings=couplings,

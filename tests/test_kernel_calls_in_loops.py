@@ -28,8 +28,9 @@ import numpy as np
 import pytest
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets import Qubit, Target
+from cudaq_pulse.targets import Qubit, TargetDescription
 
+from tests._handles import Q
 from tests._ir import python_ir
 
 FREQ_HZ = 5.0e9
@@ -43,8 +44,9 @@ UNFUSED = ("verify", "virtual_z")
 # ── Call mechanics ───────────────────────────────────────────────────
 
 
-def _qubits(n, qvec):
-    return [pulse.qvec_ref(n)] if qvec else [pulse.qudit_ref() for _ in range(n)]
+def _qubits(n, qvec, dev=None):
+    handles = Q if dev is None else dev.qudit_handles
+    return [handles[0:n]] if qvec else [handles[i] for i in range(n)]
 
 
 def _device(n):
@@ -58,7 +60,8 @@ def _trace(kernel, n=1, qvec=False):
 
 def _compile(kernel, n=1, qvec=False, passes=None):
     """The compiled, scheduled kernel."""
-    return pulse.compile(kernel, passes=passes, device=_device(n)).lower(*_qubits(n, qvec))
+    dev = _device(n)
+    return pulse.compile(kernel, passes=passes, device=dev).lower(*_qubits(n, qvec, dev))
 
 
 def _compile_symbolic(kernel):
@@ -68,7 +71,7 @@ def _compile_symbolic(kernel):
 
 def _evaluate(compiled, *values):
     """The compiled kernel, lowered at concrete values of its other arguments."""
-    return compiled.lower(pulse.qudit_ref(), *values)
+    return compiled.lower(_device(1).qudit_handles[0], *values)
 
 
 def _simulate(kernel, n=1, qvec=False, **kwargs):
@@ -81,7 +84,7 @@ def _simulate(kernel, n=1, qvec=False, **kwargs):
 
 
 def _target(n):
-    return Target(
+    return TargetDescription(
         name="loop-calls",
         qubits={
             q: Qubit(
@@ -706,21 +709,6 @@ def test_a_callee_that_acquires_its_own_line_each_iteration():
     ops, compiled = check(looped, unrolled, loops=1)
     assert _kinds(ops)["pulse.get_drive_line"] == 1
     assert _schedule(compiled) == [("drive", 0, 0, 16), ("drive", 0, 16, 16)]
-
-
-def test_a_callee_that_allocates_a_qudit_each_iteration():
-    @pulse.kernel
-    def scratch():
-        on_qubit(qudit_ref())
-
-    @pulse.kernel
-    def looped(q):
-        for _ in range(2):
-            scratch()
-
-    ops = _trace(looped)
-    assert _kinds(ops)["scf.for"] == 0
-    assert _kinds(ops)["pulse.qudit_alloc"] == 2
 
 
 # ── sync across lines ────────────────────────────────────────────────

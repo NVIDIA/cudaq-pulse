@@ -39,10 +39,8 @@ def echoed_cr_external(qubit_ctrl, qubit_tgt):
 
 
 @pulse.kernel
-def echoed_cr_internal():
+def echoed_cr_internal(qubit_ctrl, qubit_tgt):
     """Echoed cross-resonance CNOT with internally allocated qudits."""
-    qubit_ctrl = pulse.qudit_ref()
-    qubit_tgt = pulse.qudit_ref()
 
     drive_line_ctrl, tone_ctrl = get_drive_line(qubit_ctrl)
     drive_line_tgt, tone_tgt = get_drive_line(qubit_tgt)
@@ -71,6 +69,8 @@ if __name__ == "__main__":
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== Internal allocation ===")
-    compiled_kernel = pulse.compile(echoed_cr_internal, device=dev).lower()
+    compiled_kernel = pulse.compile(echoed_cr_internal, device=dev).lower(
+        dev.qudit_handles[0], dev.qudit_handles[1]
+    )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

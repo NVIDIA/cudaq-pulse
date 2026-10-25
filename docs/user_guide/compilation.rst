@@ -66,9 +66,10 @@ Devices
 
 A kernel runs on the device of the qudit handles it is called with; see
 :doc:`devices`. One kernel serves every device it is called with, each with
-its own specializations. A call without handles runs on the process target
-(``CUDAQ_PULSE_TARGET``) if one is set, and raises ``NoDeviceError``
-otherwise. Qudit frequencies and the pulse clock come from the device.
+its own specializations. A call without handles raises ``NoDeviceError``,
+unless the kernel is compiled for one device (``device=`` below); the
+process target is never used for it. Qudit frequencies and the pulse clock
+come from the device.
 
 Caching and Python semantics
 ----------------------------

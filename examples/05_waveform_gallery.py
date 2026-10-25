@@ -20,9 +20,8 @@ import cudaq_pulse as pulse
 
 
 @pulse.kernel
-def waveform_showcase():
+def waveform_showcase(qubit):
     """Drive a qubit with each built-in waveform type sequentially."""
-    qubit = pulse.qudit_ref()
     drive_line, tone = get_drive_line(qubit)
 
     # Gaussian — the workhorse of single-qubit gates
@@ -54,9 +53,8 @@ def waveform_showcase():
 
 
 @pulse.kernel
-def waveform_algebra():
+def waveform_algebra(qubit):
     """Combine waveforms using the built-in algebraic operations."""
-    qubit = pulse.qudit_ref()
     drive_line, tone = get_drive_line(qubit)
 
     gaussian_envelope = gaussian(40, 0.3, 10.0)
@@ -87,12 +85,11 @@ def waveform_algebra():
 
 
 @pulse.kernel
-def derivative_pulse(sigma, amplitude, beta):
+def derivative_pulse(qubit, sigma, amplitude, beta):
     """DRAG-like pulse built manually: Gaussian + beta * d/dt(Gaussian).
 
     Shows how waveform algebra composes arbitrary envelopes from primitives.
     """
-    qubit = pulse.qudit_ref()
     drive_line, tone = get_drive_line(qubit)
     dur = 40
 
@@ -110,15 +107,17 @@ def derivative_pulse(sigma, amplitude, beta):
 if __name__ == "__main__":
     dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     print("=== Waveform Showcase ===")
-    compiled_kernel = pulse.compile(waveform_showcase, device=dev).lower()
+    compiled_kernel = pulse.compile(waveform_showcase, device=dev).lower(dev.qudit_handles[0])
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== Waveform Algebra ===")
-    compiled_kernel = pulse.compile(waveform_algebra, device=dev).lower()
+    compiled_kernel = pulse.compile(waveform_algebra, device=dev).lower(dev.qudit_handles[0])
     print(compiled_kernel.mlir())
 
     print("\n=== Derivative Pulse ===")
-    compiled_kernel = pulse.compile(derivative_pulse, device=dev).lower(10.0, 0.3, 0.5)
+    compiled_kernel = pulse.compile(derivative_pulse, device=dev).lower(
+        dev.qudit_handles[0], 10.0, 0.3, 0.5
+    )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

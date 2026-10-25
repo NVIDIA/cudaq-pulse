@@ -23,8 +23,9 @@ import numpy as np
 import pytest
 from cudaq_pulse.runtime import jit
 from cudaq_pulse.runtime import simulate as simulate_module
-from cudaq_pulse.targets import Qubit, Target
+from cudaq_pulse.targets import Qubit, TargetDescription
 
+from tests._handles import Q
 from tests.runtime._lowering import evolve, on
 
 _PI = math.pi / 20.0
@@ -59,7 +60,7 @@ def gpu_on_cpu(monkeypatch):
 
 
 def _target(n, t1_us=0.0):
-    return Target(
+    return TargetDescription(
         name="gpu-logic",
         qubits={
             q: Qubit(
@@ -175,7 +176,7 @@ CASES = {
 def _simulate(kernel, n, backend, kwargs):
     kwargs = dict(kwargs)
     target = kwargs.pop("target", None) or _target(n)
-    program = (kernel, *[pulse.qudit_ref() for _ in range(n)])
+    program = (kernel, *[Q[i] for i in range(n)])
     return pulse.simulate(on(target, *program), backend=backend, seed=7, **kwargs)
 
 
@@ -212,7 +213,7 @@ def test_the_gpu_backend_simulates_a_program_that_measures(name, gpu_on_cpu):
 @pytest.mark.parametrize("t_start", [0.0, 130.0, 500.0])
 @pytest.mark.parametrize("t1_us", [0.0, 0.5])
 def test_gpu_setup_lowers_a_program_that_measures_at_any_start(t_start, t1_us, gpu_on_cpu):
-    program = (_active_reset(_PI), pulse.qudit_ref())
+    program = (_active_reset(_PI), Q[0])
     target = _target(1, t1_us)
     result = simulate_module._simulate_lowered(
         on(target, *program),
@@ -224,7 +225,7 @@ def test_gpu_setup_lowers_a_program_that_measures_at_any_start(t_start, t1_us, g
 
 
 def test_evolve_of_a_program_that_measures_runs_the_gpu_backend(gpu_on_cpu):
-    lowered = on(_target(1), _active_reset(_HALF_PI), pulse.qudit_ref())
+    lowered = on(_target(1), _active_reset(_HALF_PI), Q[0])
     state = evolve(lowered, t_start=0.0, t_end=140.0, num_steps=2800).final_state
     rho = np.outer(state, state.conj()) if state.ndim == 1 else state
     np.testing.assert_allclose(rho, np.diag([1.0, 0.0]), atol=1e-7)
@@ -245,7 +246,7 @@ def test_a_late_start_evolves_from_the_start_not_the_measurement(backend, gpu_on
     # Started at 120 ns, the evolution must not replay the pulse.
     target = _target(1)
     result = simulate_module._simulate_lowered(
-        on(target, measure_then_flip, pulse.qudit_ref()),
+        on(target, measure_then_flip, Q[0]),
         backend=backend,
         t_start=120.0,
         t_end=140.0,

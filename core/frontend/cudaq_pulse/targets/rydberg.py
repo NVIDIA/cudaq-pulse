@@ -27,7 +27,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from .base import Coupling, Qubit, Target
+from .base import Coupling, Qubit, TargetDescription
 
 # Rb-87, |70S_1/2> Rydberg state
 _DEFAULT_C6_MHZ_UM6 = 862690.0  # Cyclic-frequency coefficient, MHz * um^6.
@@ -93,8 +93,8 @@ class RydbergTarget:
             raise ValueError(f"Atoms {a.index} and {b.index} are at the same position.")
         return self.c6 / (r**6)
 
-    def to_target(self) -> Target:
-        """Convert to a generic Target for the compilation pipeline."""
+    def to_target(self) -> TargetDescription:
+        """Convert to a generic TargetDescription for the compilation pipeline."""
         qubits: dict[int, Qubit] = {}
         for atom in self.atoms:
             qubits[atom.index] = Qubit(
@@ -121,7 +121,7 @@ class RydbergTarget:
                     )
                 )
 
-        return Target(
+        return TargetDescription(
             name="rydberg_array",
             qubits=qubits,
             couplings=couplings,

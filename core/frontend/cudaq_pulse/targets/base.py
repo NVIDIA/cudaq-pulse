@@ -7,7 +7,7 @@
 # ============================================================================ #
 """Architecture-neutral target API for QPU Hamiltonians and decoherence models.
 
-A ``Target`` fully describes a quantum device: qubit frequencies,
+A ``TargetDescription`` fully describes a quantum device: qubit frequencies,
 anharmonicities, coupling topology, decoherence parameters, and readout.
 It can generate Hamiltonian and Lindblad dissipator terms for the
 ``pulse_to_operator`` lowering pass.
@@ -85,7 +85,7 @@ class CrosstalkEntry:
 
 
 @dataclass(frozen=True, eq=False)
-class Target:
+class TargetDescription:
     """Full description of a quantum processing unit.
 
     A target is read-only once built: ``qubits`` is a read-only mapping and

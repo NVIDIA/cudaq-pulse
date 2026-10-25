@@ -28,6 +28,7 @@ from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder, compi
 from cudaq_pulse.kernel.ir_builder import Parameter, PythonIRBuilder
 from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
+from tests._handles import Q
 from tests.workloads import (
     w1_bell,
     w2_cnot_cr,
@@ -212,8 +213,7 @@ def python_expressions(q0):
 
 
 @pulse.kernel
-def readout_and_algebra():
-    q = pulse.qudit_ref()
+def readout_and_algebra(q):
     d0, t0 = get_drive_line(q)
     r0, rt = get_readout_line(q)
     a = cosine(16, 0.2)
@@ -330,11 +330,11 @@ class Case:
 
 
 def _qubits(n: int) -> Callable[[], list[Any]]:
-    return lambda: [pulse.qudit_ref() for _ in range(n)]
+    return lambda: [Q[i] for i in range(n)]
 
 
 def _qvec(n: int) -> Callable[[], list[Any]]:
-    return lambda: [pulse.qvec_ref(n)]
+    return lambda: [Q[0:n]]
 
 
 def _cases() -> list[Case]:
@@ -356,13 +356,13 @@ def _cases() -> list[Case]:
     cases.append(Case("closures_and_helpers", closures_and_helpers(0.8), _qubits(2), "python"))
     cases.append(Case("python_expressions", python_expressions, _qubits(1), "python"))
     cases.append(Case("python_expressions_packed", python_expressions, _qubits(1), "packed"))
-    cases.append(Case("readout_and_algebra", readout_and_algebra, lambda: [], "python"))
-    cases.append(Case("readout_and_algebra_packed", readout_and_algebra, lambda: [], "packed"))
+    cases.append(Case("readout_and_algebra", readout_and_algebra, _qubits(1), "python"))
+    cases.append(Case("readout_and_algebra_packed", readout_and_algebra, _qubits(1), "packed"))
     cases.append(
         Case(
             "parametric",
             parametric,
-            lambda: [pulse.qudit_ref(), Parameter("amp", 0, "f64"), Parameter("n", 1, "i64")],
+            lambda: [Q[0], Parameter("amp", 0, "f64"), Parameter("n", 1, "i64")],
             "packed",
         )
     )
@@ -375,7 +375,7 @@ def _cases() -> list[Case]:
         Case(
             "compare_symbolic",
             compare_symbolic,
-            lambda: [pulse.qudit_ref(), Parameter("amp", 0, "f64")],
+            lambda: [Q[1], Parameter("amp", 0, "f64")],
             "packed",
         )
     )

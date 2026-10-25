@@ -21,15 +21,16 @@ import math
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.targets import Qubit, Target
+from cudaq_pulse.targets import Qubit, TargetDescription
 
+from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
 
 gpu = pytest.mark.gpu
 
 
 def _target():
-    return Target(
+    return TargetDescription(
         name="frame-ops",
         qubits={
             0: Qubit(
@@ -46,7 +47,7 @@ def _target():
 
 def _evolve(kernel):
     return evolve(
-        on(_target(), kernel, pulse.qudit_ref()),
+        on(_target(), kernel, Q[0]),
         t_start=0.0,
         t_end=40.0,
         num_steps=400,
@@ -63,7 +64,7 @@ def test_frame_operations_mlir_structure():
         shift_phase(t0, math.pi / 2)
         drive(d0, square(40, math.pi / 20.0), t0)
 
-    mlir = pulse_mlir((phased, pulse.qudit_ref()), clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
+    mlir = pulse_mlir((phased, Q[0]), clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
     assert "pulse.shift_phase" in mlir or "phase" in mlir
 
 

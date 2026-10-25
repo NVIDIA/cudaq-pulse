@@ -20,6 +20,8 @@ from dataclasses import dataclass
 import cudaq_pulse as pulse
 from cudaq_pulse.kernel.bytecode_bridge import compile_kernel_bytecode
 
+DEVICE = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+
 # ── Canonical workloads ──────────────────────────────────────────────
 
 
@@ -148,7 +150,7 @@ class BenchResult:
 
 
 def bench_one(name: str, fn, n_qubits: int, iterations: int = 200) -> BenchResult:
-    qubits = [pulse.qudit_ref() for _ in range(n_qubits)]
+    qubits = [DEVICE.qudit_handles[i] for i in range(n_qubits)]
     trace = compile_kernel_bytecode(fn.__wrapped__)
 
     for _ in range(5):

@@ -30,6 +30,7 @@ from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder
 from cudaq_pulse.kernel.ir_builder import Parameter
 from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
+from tests._handles import Q
 from tests._ir import python_ir
 from tests.kernel.ir_corpus import bicycle_syndrome, dd_loop, parametric, surface_syndrome
 
@@ -75,16 +76,16 @@ def _compile_time_workloads():
 
 
 def _kernel_ir(kernel, n_qubits: int) -> Callable[[], object]:
-    return lambda: python_ir(kernel, *[pulse.qudit_ref() for _ in range(n_qubits)])
+    return lambda: python_ir(kernel, *[Q[i] for i in range(n_qubits)])
 
 
 # A fresh compiled kernel holds no specializations, so these compile.
 def _compile(kernel, n_qubits: int) -> Callable[[], object]:
-    return lambda: pulse.compile(kernel).lower(*[pulse.qudit_ref() for _ in range(n_qubits)])
+    return lambda: pulse.compile(kernel).lower(*[Q[i] for i in range(n_qubits)])
 
 
 def _fused(kernel, n: int) -> Callable[[], object]:
-    return lambda: pulse.compile(kernel, passes=()).lower(pulse.qvec_ref(n))
+    return lambda: pulse.compile(kernel, passes=()).lower(Q[0:n])
 
 
 def _packed_trace(kernel, n: int) -> Callable[[], object]:
@@ -93,7 +94,7 @@ def _packed_trace(kernel, n: int) -> Callable[[], object]:
 
     def run():
         builder = PackedIRBuilder(name="k", clock_ghz=2.0, qubit_freq_hz=freq)
-        _trace_kernel_with_builder(fn, builder, [pulse.qvec_ref(n)])
+        _trace_kernel_with_builder(fn, builder, [Q[0:n]])
 
     return run
 
@@ -114,11 +115,11 @@ def _cases() -> dict[str, Callable[[], object]]:
     cases["surface_d5_compile"] = _fused(surface5, n5)
     cases["surface_d9_trace"] = _packed_trace(surface9, n9)
     cases["bicycle_6x6_compile"] = _fused(bicycle, nb)
-    cases["parametric_compile"] = lambda: pulse.compile(parametric).lower(pulse.qudit_ref(), 0.5, 2)
+    cases["parametric_compile"] = lambda: pulse.compile(parametric).lower(Q[0], 0.5, 2)
     cases["parametric_trace"] = lambda: _trace_kernel_with_builder(
         parametric.__wrapped__,
         PackedIRBuilder(name="p", clock_ghz=2.0, qubit_freq_hz={0: 5e9}),
-        [pulse.qudit_ref(), Parameter("amp", 0, "f64"), Parameter("n", 1, "i64")],
+        [Q[0], Parameter("amp", 0, "f64"), Parameter("n", 1, "i64")],
     )
     return cases
 
@@ -174,9 +175,7 @@ def test_verify_time_is_linear_in_unused_lines():
     def verify_ms(n_qubits: int) -> float:
         kernel = _half_unused(n_qubits)
         return min(
-            pulse.compile(kernel, passes=("verify",))
-            .lower(pulse.qvec_ref(n_qubits))
-            .metrics.passes_ms
+            pulse.compile(kernel, passes=("verify",)).lower(Q[0:n_qubits]).metrics.passes_ms
             for _ in range(5)
         )
 

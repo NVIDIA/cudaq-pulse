@@ -11,24 +11,20 @@ from types import SimpleNamespace
 
 import cudaq_pulse as pulse
 import numpy as np
-from cudaq_pulse.kernel.decorator import QuditRef, QvecRef
 from cudaq_pulse.runtime.simulate import _simulate_lowered
-from cudaq_pulse.targets import Qubit, Target
+from cudaq_pulse.targets import Qubit, TargetDescription
 
 EVOLVE_PASSES = ("verify", "canonicalize", "virtual_z", "fusion")
 
 
 def _handles(dev, args):
-    """Map ``qudit_ref()`` arguments to the device's handles, in order."""
-    out, nxt = [], 0
+    """Map handles of another device to *dev*'s handles of the same qudits."""
+    out = []
     for a in args:
-        if isinstance(a, QuditRef):
-            index = nxt if a.index is None else a.index
-            nxt = max(nxt, index) + 1 if a.index is None else nxt
-            out.append(dev.qudit_handles[index])
-        elif isinstance(a, QvecRef):
-            out.append(dev.qudit_handles[nxt : nxt + len(a)])
-            nxt += len(a)
+        if isinstance(a, pulse.Qudit):
+            out.append(dev.qudit_handles[a.index])
+        elif isinstance(a, pulse.Register):
+            out.append(dev.qudit_handles[[q.index for q in a]])
         else:
             out.append(a)
     return out
@@ -62,7 +58,7 @@ def evolve(lowered, *, t_start, t_end, num_steps, integrator="rk4", levels=2, in
 
 
 def frequency_target(qubit_freq_hz, clock_ghz=2.0):
-    return Target(
+    return TargetDescription(
         name="frequencies",
         qubits={q: Qubit(q, f, -300e6, 50.0, 30.0) for q, f in qubit_freq_hz.items()},
         clock_ghz=clock_ghz,

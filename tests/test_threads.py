@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import cudaq_pulse as pulse
 
+from tests._handles import Q
 from tests.kernel.ir_corpus import active_reset, dd_loop, feedback_in_loop, parametric
 
 _FREQ = {i: 5e9 + 1e8 * i for i in range(4)}
@@ -31,7 +32,7 @@ def _many_drives(n):
 
 
 def _compile(kernel, schedule="alap"):
-    return pulse.compile(kernel, schedule=schedule).lower(pulse.qudit_ref())
+    return pulse.compile(kernel, schedule=schedule).lower(Q[0])
 
 
 def test_concurrent_compiles_match_sequential_ones():
@@ -44,7 +45,7 @@ def test_concurrent_compiles_match_sequential_ones():
 
 def test_concurrent_specializations_of_one_kernel():
     compiled = pulse.compile(parametric)
-    q = pulse.qudit_ref()
+    q = Q[0]
     values = [(0.1 * i, i % 3 + 1) for i in range(32)]
     expected = [compiled.lower(q, *v).mlir() for v in values]
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -55,7 +56,7 @@ def test_concurrent_specializations_of_one_kernel():
 def test_concurrent_first_calls_compile_once():
     kernel = _many_drives(50)
     with ThreadPoolExecutor(max_workers=8) as pool:
-        got = list(pool.map(lambda _: kernel.lower(pulse.qudit_ref()), range(64)))
+        got = list(pool.map(lambda _: kernel.lower(Q[0]), range(64)))
     assert kernel.cache_info().compiled == 1
     assert all(lowered is got[0] for lowered in got)
 

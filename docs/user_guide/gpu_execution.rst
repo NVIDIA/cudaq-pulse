@@ -178,9 +178,9 @@ To execute on a GPU (requires cuDensityMat runtime):
 
    import math
    import cudaq_pulse as pulse
-   from cudaq_pulse.targets import Qubit, Target
+   from cudaq_pulse.targets import Qubit, TargetDescription
 
-   target = Target(
+   target = TargetDescription(
        name="one-qubit-demo",
        qubits={
            0: Qubit(

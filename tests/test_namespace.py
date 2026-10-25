@@ -1,0 +1,131 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+"""The public namespace is frozen: these names, and only these."""
+
+import subprocess
+import sys
+
+import cudaq_pulse as pulse
+import pytest
+
+TOP_LEVEL = {
+    "kernel",
+    "Kernel",
+    "compile",
+    "CompiledKernel",
+    "Lowered",
+    "simulate",
+    "SimulationResult",
+    "device",
+    "get_device",
+    "Device",
+    "Qudit",
+    "Register",
+    "Target",
+    "CompilationError",
+    "NoTargetError",
+    "NoDeviceError",
+    "DeviceMismatchError",
+    "GpuRuntimeError",
+    "viz",
+    "__version__",
+}
+
+DSL = {
+    "get_drive_line",
+    "get_readout_line",
+    "drive",
+    "readout",
+    "wait",
+    "sync",
+    "shift_phase",
+    "set_phase",
+    "shift_frequency",
+    "set_frequency",
+    "gaussian",
+    "square",
+    "drag",
+    "cosine",
+    "tanh_ramp",
+    "gaussian_square",
+    "custom",
+    "custom_samples",
+    "wf_add",
+    "wf_sub",
+    "wf_mul",
+    "wf_scale",
+    "wf_neg",
+}
+
+
+def test_dir_is_exactly_the_public_names():
+    assert set(dir(pulse)) == TOP_LEVEL
+    assert set(pulse.__all__) == TOP_LEVEL - {"__version__"}
+
+
+def test_every_public_name_resolves():
+    for name in TOP_LEVEL:
+        assert getattr(pulse, name) is not None, name
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "qudit_ref",
+        "qvec_ref",
+        "QuditRef",
+        "QvecRef",
+        "drive",
+        "gaussian",
+        "CompileMetrics",
+        "ScheduledEvent",
+        "MachineModel",
+        "DEFAULT_PASSES",
+        "Parameter",
+    ],
+)
+def test_names_that_moved_or_went_are_not_top_level(name):
+    with pytest.raises(AttributeError):
+        getattr(pulse, name)
+
+
+def test_the_kernel_language_is_in_ops():
+    assert DSL <= set(dir(pulse.ops))
+    assert len(DSL) == 23
+
+
+def test_compiler_types_are_in_the_compiler_module():
+    from cudaq_pulse import compiler
+
+    for name in ("CompileMetrics", "ScheduledEvent", "MachineModel", "DEFAULT_PASSES"):
+        assert hasattr(compiler, name)
+
+
+def test_the_target_description_is_not_the_target_enum():
+    from cudaq_pulse.targets import TargetDescription
+
+    assert pulse.Target.TRANSMON_KRINNER_17Q.value == "transmon_krinner_17q"
+    assert not issubclass(TargetDescription, type(pulse.Target.TRANSMON_KRINNER_17Q))
+    import cudaq_pulse.targets as targets
+
+    assert not hasattr(targets, "Target")
+
+
+def test_viz_loads_on_first_use():
+    out = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys, cudaq_pulse as p; before = 'cudaq_pulse.viz' in sys.modules; "
+            "p.viz; print(before, 'cudaq_pulse.viz' in sys.modules)",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert out == "False True"

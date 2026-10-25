@@ -26,9 +26,9 @@ import sys
 import time
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import Qubit, Target
+from cudaq_pulse.targets import Qubit, TargetDescription
 
-TARGET = Target(
+TARGET = TargetDescription(
     name="one",
     qubits={0: Qubit(0, 5.0e9, -300e6, 0.0, 0.0, drive_params={"amplitude_scale_rad_per_ns": 1.0})},
 )

@@ -15,6 +15,7 @@ import pytest
 from cudaq_pulse.kernel import _emitter
 from cudaq_pulse.kernel.ir_builder import CompilationError
 
+from tests._handles import Q
 from tests._ir import python_ir
 
 AMPS = [0.1, 0.2, 0.3]
@@ -22,7 +23,7 @@ DURS = (16, 32, 48)
 
 
 def _text(kernel, n_qubits=1):
-    args = [pulse.qvec_ref(n_qubits)] if n_qubits > 1 else [pulse.qudit_ref()]
+    args = [Q[0:n_qubits]] if n_qubits > 1 else [Q[0]]
     compiled = kernel.lower(*args)
     return re.sub(r"module @\w+", "module", compiled.mlir())
 
@@ -30,7 +31,7 @@ def _text(kernel, n_qubits=1):
 def _same(a, b, n_qubits=1):
     ta, tb = _text(a, n_qubits), _text(b, n_qubits)
     assert ta == tb
-    args = [pulse.qvec_ref(n_qubits)] if n_qubits > 1 else [pulse.qudit_ref()]
+    args = [Q[0:n_qubits]] if n_qubits > 1 else [Q[0]]
     assert python_ir(a, *args).op_count() == python_ir(b, *args).op_count()
 
 
@@ -117,7 +118,7 @@ def test_lines_and_tones_from_lists_stay_threaded():
 
 
 def test_iterating_a_qubit_vector():
-    qubits = pulse.qvec_ref(3)
+    qubits = Q[0:3]
     assert list(qubits) == [qubits[i] for i in range(3)]
 
     @pulse.kernel
@@ -190,7 +191,7 @@ def test_range_loops_are_still_retained():
         for _ in range(512):
             drive(d, square(16, 0.1), t)
 
-    ir = python_ir(rolled, pulse.qudit_ref())
+    ir = python_ir(rolled, Q[0])
     assert [op.kind for op in ir.ops].count("scf.for") == 1
     assert ir.op_count() == 5
 
@@ -225,7 +226,7 @@ def test_an_endless_iterator_stops_at_the_unroll_limit(monkeypatch):
             wait(d, n)
 
     with pytest.raises(CompilationError, match="did not finish after 50 iterations"):
-        endless(pulse.qudit_ref())
+        endless(Q[0])
 
 
 def test_iterating_a_pulse_value_is_an_error():
@@ -236,7 +237,7 @@ def test_iterating_a_pulse_value_is_an_error():
             wait(d, 4)
 
     with pytest.raises(CompilationError, match="cannot iterate over a pulse drive_line value"):
-        over_line(pulse.qudit_ref())
+        over_line(Q[0])
 
 
 def test_range_errors_name_their_cause():
@@ -247,7 +248,7 @@ def test_range_errors_name_their_cause():
             wait(d, 4)
 
     with pytest.raises(CompilationError, match=r"integers known at compile time; got \(float\)"):
-        float_bound(pulse.qudit_ref())
+        float_bound(Q[0])
 
     @pulse.kernel
     def symbolic_bound(q, n: float):
@@ -258,7 +259,7 @@ def test_range_errors_name_their_cause():
     # A float loop bound is specialized on, and range() of a float fails as
     # it does in Python.
     with pytest.raises(CompilationError, match=r"integers known at compile time; got \(float\)"):
-        symbolic_bound.lower(pulse.qudit_ref(), 3.0)
+        symbolic_bound.lower(Q[0], 3.0)
     assert symbolic_bound.static_parameters == ("q", "n")
 
 
@@ -272,4 +273,4 @@ def test_while_loops_point_at_for_loops():
             n += 1
 
     with pytest.raises(CompilationError, match="use a for loop"):
-        spin(pulse.qudit_ref())
+        spin(Q[0])

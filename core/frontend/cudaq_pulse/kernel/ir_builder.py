@@ -278,8 +278,6 @@ OP_TABLE: dict[str, tuple[int, tuple[str, ...], tuple[str, ...] | None]] = {
     "wf_mul": (2, (), ("waveform",)),
     "wf_scale": (1, ("scale",), ("waveform",)),
     "wf_neg": (1, (), ("waveform",)),
-    "qudit_ref": (0, (), ("qref",)),
-    "qvec_ref": (0, ("size",), ("qref",)),
 }
 
 

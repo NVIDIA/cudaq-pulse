@@ -23,15 +23,16 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline, evaluate_callback
-from cudaq_pulse.targets import Coupling, CrosstalkEntry, Qubit, Target, rydberg_chain
+from cudaq_pulse.targets import Coupling, CrosstalkEntry, Qubit, TargetDescription, rydberg_chain
 
+from tests._handles import Q
 from tests.runtime._lowering import on
 
 _TWO_PI_GHZ = 2.0 * math.pi * 1.0e-9
 
 
 def _pair(f0, f1, *, g_hz=0.0, zz_hz=0.0, alphas=(-200.0e6, -180.0e6)):
-    return Target(
+    return TargetDescription(
         name="coupled-pair",
         qubits={
             q: Qubit(q, f, a, 0.0, 0.0, drive_params={"amplitude_scale_rad_per_ns": 1.0})
@@ -49,7 +50,7 @@ def _idle(q0, q1):
 
 
 def _lowered(target):
-    return on(target, _idle, pulse.qudit_ref(), pulse.qudit_ref())
+    return on(target, _idle, Q[0], Q[1])
 
 
 def _basis(d, n0, n1):
@@ -278,7 +279,7 @@ def test_gpu_lowering_builds_the_cpu_operator(levels):
         d0, t0 = get_drive_line(q0)
         drive(d0, gaussian(40, 0.05, 10.0), t0)
 
-    lowered = on(target, driven, pulse.qudit_ref(), pulse.qudit_ref())
+    lowered = on(target, driven, Q[0], Q[1])
     # A CPU run leaves the module with the attributes of its segment, which
     # the GPU backend lowers the same way.
     pulse.simulate(lowered, levels=levels, t_end=20.0)

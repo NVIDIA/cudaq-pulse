@@ -13,6 +13,7 @@ import cudaq_pulse as pulse
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from tests._handles import Q
 from tests.property_settings import examples
 
 
@@ -30,7 +31,7 @@ def _random_kernel(amplitudes, durations, waits, phases):
 
 
 def _compile(kernel, **kwargs):
-    return pulse.compile(kernel, **kwargs).lower(pulse.qudit_ref())
+    return pulse.compile(kernel, **kwargs).lower(Q[0])
 
 
 def _makespan(compiled):

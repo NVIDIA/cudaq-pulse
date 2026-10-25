@@ -15,6 +15,8 @@ import math
 import cudaq_pulse as pulse
 import pytest
 
+from tests._handles import Q
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -40,11 +42,11 @@ _FREQ_2Q = {0: 5.0e9, 1: 5.1e9}
 def test_compile_returns_compiled_kernel():
     ck = pulse.compile(_bell)
     assert isinstance(ck, pulse.CompiledKernel)
-    assert isinstance(ck.lower(pulse.qudit_ref(), pulse.qudit_ref()), pulse.Lowered)
+    assert isinstance(ck.lower(Q[0], Q[1]), pulse.Lowered)
 
 
 def test_compile_produces_mlir():
-    ck = _bell.lower(pulse.qudit_ref(), pulse.qudit_ref())
+    ck = _bell.lower(Q[0], Q[1])
     mlir = ck.mlir()
     assert "module @" in mlir
     assert "func.func @main()" in mlir
@@ -53,16 +55,16 @@ def test_compile_produces_mlir():
 
 
 def test_compile_metrics():
-    ck = _bell.lower(pulse.qudit_ref(), pulse.qudit_ref())
+    ck = _bell.lower(Q[0], Q[1])
     m = ck.metrics
-    assert isinstance(m, pulse.CompileMetrics)
+    assert isinstance(m, pulse.compiler.CompileMetrics)
     assert m.total_ms > 0
     assert m.trace_ms > 0
     assert m.ffi_ms > 0
 
 
 def test_compile_no_passes():
-    ck = pulse.compile(_bell, passes=()).lower(pulse.qudit_ref(), pulse.qudit_ref())
+    ck = pulse.compile(_bell, passes=()).lower(Q[0], Q[1])
     assert ck.mlir() is not None
     assert "pulse.drive" in ck.mlir()
 
@@ -75,7 +77,7 @@ def test_compile_single_qubit():
         wf = gaussian(40, 0.3, 10.0)
         drive(d, wf, t)
 
-    ck = k.lower(pulse.qudit_ref())
+    ck = k.lower(Q[0])
     assert "pulse.drive" in ck.mlir()
 
 
@@ -88,7 +90,7 @@ def test_compile_with_virtual_z():
         wf = gaussian(40, 0.3, 10.0)
         drive(d, wf, t)
 
-    ck = k.lower(pulse.qudit_ref())
+    ck = k.lower(Q[0])
     assert ck.mlir() is not None
     assert ck.metrics.total_ms > 0
 
@@ -103,13 +105,13 @@ def test_compile_with_fusion():
         sq2 = square(50, 0.2)
         drive(d, sq2, t)
 
-    ck = k.lower(pulse.qudit_ref())
+    ck = k.lower(Q[0])
     assert ck.mlir() is not None
 
 
 def test_compile_bad_schedule_raises():
     with pytest.raises(ValueError, match="Unknown schedule"):
-        pulse.compile(_bell, schedule="bogus").lower(pulse.qudit_ref(), pulse.qudit_ref())
+        pulse.compile(_bell, schedule="bogus").lower(Q[0], Q[1])
 
 
 def test_lower_binds_arguments_like_python():
@@ -173,6 +175,6 @@ def test_packed_ir_builder_sync():
 
 def test_compile_module_available():
     """compile() produces an in-memory PulseModule."""
-    ck = _bell.lower(pulse.qudit_ref(), pulse.qudit_ref())
+    ck = _bell.lower(Q[0], Q[1])
     assert ck._module is not None
     assert ck.mlir() is not None

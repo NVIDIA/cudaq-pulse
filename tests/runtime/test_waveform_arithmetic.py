@@ -19,15 +19,16 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets import Qubit, Target
+from cudaq_pulse.targets import Qubit, TargetDescription
 
+from tests._handles import Q
 from tests.runtime._lowering import on
 
 CLOCK_GHZ = 2.0
 
 
 def _target():
-    return Target(
+    return TargetDescription(
         name="waveform-arithmetic",
         qubits={
             0: Qubit(
@@ -43,7 +44,7 @@ def _target():
 
 
 def _simulate(kernel):
-    result = pulse.simulate(on(_target(), kernel, pulse.qudit_ref()))
+    result = pulse.simulate(on(_target(), kernel, Q[0]))
     return np.asarray(result.density_matrix)
 
 
@@ -156,7 +157,7 @@ def test_retained_loop_of_sums_lowers_like_its_unrolling():
             drive(d0, wf_add(gaussian(40, 0.02, 10.0), gaussian(40, 0.03, 8.0)), t0)
             wait(d0, 20 + 0 * i)
 
-    assert "scf.for" in rolled.lower(pulse.qudit_ref()).mlir()
+    assert "scf.for" in rolled.lower(Q[0]).mlir()
     np.testing.assert_allclose(_simulate(rolled), _simulate(unrolled), atol=1e-12)
 
 
@@ -167,7 +168,7 @@ def test_mismatched_durations_are_rejected_when_tracing():
         drive(d0, wf_mul(gaussian(40, 0.05, 10.0), square(80, 0.5)), t0)
 
     with pytest.raises(CompilationError, match="durations 40 and 80"):
-        mismatched(pulse.qudit_ref())
+        mismatched(Q[0])
 
 
 def test_scale_takes_the_waveform_first():
@@ -177,7 +178,7 @@ def test_scale_takes_the_waveform_first():
         drive(d0, wf_scale(2.0, gaussian(80, 0.03, 20.0)), t0)
 
     with pytest.raises(CompilationError, match=r"wf_scale\(waveform, scalar\)"):
-        swapped(pulse.qudit_ref())
+        swapped(Q[0])
 
 
 def test_scale_arguments_are_positional_only():
@@ -187,4 +188,4 @@ def test_scale_arguments_are_positional_only():
         drive(d0, wf_scale(waveform=gaussian(80, 0.03, 20.0), scalar=2.0), t0)
 
     with pytest.raises(CompilationError, match="wf_scale"):
-        by_keyword(pulse.qudit_ref())
+        by_keyword(Q[0])

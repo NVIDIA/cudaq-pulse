@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import re
 
-import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse._native._cudaq_pulse_native import PulseModuleBuilder
 from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder
+from cudaq_pulse.kernel.ir_builder import Parameter
 from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
 from tests._ir import python_ir
@@ -71,7 +71,7 @@ def test_compile_builds_the_kernel_ir(case):
     ir = python_ir(case.kernel, *case.args())
     builder = PackedIRBuilder(name="k", qubit_freq_hz=_FREQ)
     _trace_kernel_with_builder(case.kernel.__wrapped__, builder, case.args())
-    params = [p for p in case.args() if isinstance(p, pulse.Parameter)]
+    params = [p for p in case.args() if isinstance(p, Parameter)]
     module = PulseModuleBuilder().build_from_packed(
         builder.get_buffer(),
         2.0,

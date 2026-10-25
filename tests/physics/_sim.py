@@ -8,7 +8,7 @@
 """Devices and runs in the reference conventions: amplitudes are Rabi rates."""
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import Coupling, Qubit, Target
+from cudaq_pulse.targets import Coupling, Qubit, TargetDescription
 
 PASSES = ("verify", "canonicalize", "virtual_z", "fusion")
 CLOCK_GHZ = 2.0
@@ -22,7 +22,7 @@ def cycles(ns: float) -> int:
 
 
 def device(freqs_hz, alphas_hz, couplings=(), t1_us=0.0, t2_us=0.0, **qubit):
-    target = Target(
+    target = TargetDescription(
         name="reference",
         qubits={
             i: Qubit(

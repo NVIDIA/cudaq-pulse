@@ -13,6 +13,8 @@ import math
 
 import cudaq_pulse as pulse
 
+from tests._handles import Q
+
 
 def test_single_qubit_full_pipeline():
     """Single qubit: kernel -> compile -> verify scheduled MLIR output."""
@@ -27,7 +29,7 @@ def test_single_qubit_full_pipeline():
         wf2 = gaussian(40, 0.3, 10.0)
         drive(d, wf2, t)
 
-    ck = k.lower(pulse.qudit_ref())
+    ck = k.lower(Q[0])
     assert isinstance(ck, pulse.Lowered)
     assert "pulse.drive" in ck.mlir()
     assert ck.metrics.total_ms > 0
@@ -42,7 +44,7 @@ def test_full_lowering_reaches_llvm_dialect():
         drive_line, tone = get_drive_line(q)
         drive(drive_line, gaussian(8, 0.2, 2.0), tone)
 
-    ck = k.lower(pulse.qudit_ref())
+    ck = k.lower(Q[0])
     llvm_ir = ck.mlir("llvm")
 
     assert "llvm.func @main" in llvm_ir
@@ -68,7 +70,7 @@ def test_two_qubit_full_pipeline():
         sync(d0, d1)
         drive(d1, wf, t1)
 
-    ck = k.lower(pulse.qudit_ref(), pulse.qudit_ref())
+    ck = k.lower(Q[0], Q[1])
     assert isinstance(ck, pulse.Lowered)
     assert "pulse.drive" in ck.mlir()
     assert ck.metrics.total_ms > 0
@@ -85,7 +87,7 @@ def test_loop_full_pipeline():
             drive(d, wf, t)
             wait(d, 20)
 
-    ck = k.lower(pulse.qudit_ref())
+    ck = k.lower(Q[0])
     assert isinstance(ck, pulse.Lowered)
     assert "pulse.drive" in ck.mlir()
     assert ck.metrics.total_ms > 0
@@ -106,7 +108,7 @@ def test_scheduling_pipeline():
         drive(d0, wf, t0)
         drive(d1, wf, t1)
 
-    ck = pulse.compile(k, schedule="alap").lower(pulse.qudit_ref(), pulse.qudit_ref())
+    ck = pulse.compile(k, schedule="alap").lower(Q[0], Q[1])
     assert isinstance(ck, pulse.Lowered)
     assert "pulse.drive" in ck.mlir()
     assert ck.metrics.total_ms > 0

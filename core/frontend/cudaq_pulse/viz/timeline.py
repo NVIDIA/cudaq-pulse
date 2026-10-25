@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
-    from ..compile import Lowered, ScheduledEvent
+    from ..compiler import Lowered, ScheduledEvent
 
 _DRIVE_COLOR = "#4C72B0"
 _READOUT_COLOR = "#DD8452"

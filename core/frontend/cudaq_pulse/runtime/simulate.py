@@ -33,11 +33,11 @@ import numpy as np
 import numpy.typing as npt
 
 from .._native._cudaq_pulse_native import evaluate_callback
-from ..compile import ScheduledEvent
+from ..compiler import ScheduledEvent
 from ._attributes import _VALID_INTEGRATORS, _f64, _level_attributes, _target_attributes
 
 if TYPE_CHECKING:
-    from ..compile import Lowered
+    from ..compiler import Lowered
 
 # Branches whose weight falls below this fraction of the initial state's are
 # not followed.
@@ -127,7 +127,7 @@ def simulate(
         its Hahn-echo T2 (``"t2_echo"``), which every simulated qudit must
         have.
     """
-    from ..compile import Lowered
+    from ..compiler import Lowered
 
     if not isinstance(lowered, Lowered):
         raise TypeError(

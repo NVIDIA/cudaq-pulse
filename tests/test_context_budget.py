@@ -11,6 +11,8 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse._native import _cudaq_pulse_native as native
 
+from tests._handles import Q
+
 MODULES = "CUDAQ_PULSE_CONTEXT_MAX_MODULES"
 WORDS = "CUDAQ_PULSE_CONTEXT_MAX_WORDS"
 
@@ -30,7 +32,7 @@ def _pulse(q0):
 def _compile():
     # Every call builds a module: a cached specialization would not.
     _pulse.cache_clear()
-    return _pulse.lower(pulse.qudit_ref())
+    return _pulse.lower(Q[0])
 
 
 def _created():

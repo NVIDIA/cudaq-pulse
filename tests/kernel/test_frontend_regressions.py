@@ -28,6 +28,7 @@ from cudaq_pulse.kernel.ir_builder import (
 )
 from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
+from tests._handles import Q
 from tests._ir import python_ir
 
 # ── Closures are read on every call ──────────────────────────────────
@@ -52,7 +53,7 @@ def test_closure_rebinding_takes_effect_on_the_next_call():
     k, rebind = _amplitude_kernel()
 
     def amp():
-        ir = python_ir(k, pulse.qudit_ref())
+        ir = python_ir(k, Q[0])
         return next(op.attrs["amplitude"] for op in ir.ops if op.kind == "pulse.square")
 
     assert amp() == 0.1
@@ -62,9 +63,9 @@ def test_closure_rebinding_takes_effect_on_the_next_call():
 
 def test_closure_rebinding_takes_effect_in_compile():
     k, rebind = _amplitude_kernel()
-    first = pulse.compile(k, passes=()).lower(pulse.qudit_ref()).mlir()
+    first = pulse.compile(k, passes=()).lower(Q[0]).mlir()
     rebind(0.4)
-    second = pulse.compile(k, passes=()).lower(pulse.qudit_ref()).mlir()
+    second = pulse.compile(k, passes=()).lower(Q[0]).mlir()
     assert first != second
 
 
@@ -81,7 +82,7 @@ def test_empty_closure_cell_raises():
         late = 0.1  # noqa: F841 - deliberately unreachable: the cell stays empty
 
     with pytest.raises(CompilationError, match="'late' is referenced before assignment"):
-        make()(pulse.qudit_ref())
+        make()(Q[0])
 
 
 # ── Ops are recognized by identity, not by name ──────────────────────
@@ -90,14 +91,14 @@ def test_empty_closure_cell_raises():
 def test_user_function_named_like_an_op_is_evaluated_as_python():
 
     def gaussian(duration, amplitude, sigma):
-        return pulse.square(duration, amplitude)
+        return pulse.ops.square(duration, amplitude)
 
     @pulse.kernel
     def k(q0):
         d0, t0 = get_drive_line(q0)
         drive(d0, gaussian(10, 0.2, 3.0), t0)
 
-    kinds = [op.kind for op in python_ir(k, pulse.qudit_ref()).ops]
+    kinds = [op.kind for op in python_ir(k, Q[0]).ops]
     assert "pulse.square" in kinds
     assert "pulse.gaussian" not in kinds
 
@@ -111,11 +112,11 @@ def test_qualified_and_bare_op_names_trace_identically():
 
     @pulse.kernel
     def qualified(q0):
-        d0, t0 = pulse.get_drive_line(q0)
-        pulse.drive(d0, pulse.gaussian(40, 0.3, 10.0), t0)
+        d0, t0 = pulse.ops.get_drive_line(q0)
+        pulse.ops.drive(d0, pulse.ops.gaussian(40, 0.3, 10.0), t0)
 
     def kinds(k):
-        return [(op.kind, op.attrs) for op in python_ir(k, pulse.qudit_ref()).ops]
+        return [(op.kind, op.attrs) for op in python_ir(k, Q[0]).ops]
 
     assert kinds(bare) == kinds(qualified)
 
@@ -156,11 +157,7 @@ def test_stack_copies_are_executed():
 
     ops = [bc.OP_NAMES[op] for op, _ in bc.decode(k.__wrapped__.__code__).instrs]
     assert "COPY" in ops
-    waits = [
-        op.attrs["duration"]
-        for op in python_ir(k, pulse.qudit_ref()).ops
-        if op.kind == "pulse.wait"
-    ]
+    waits = [op.attrs["duration"] for op in python_ir(k, Q[0]).ops if op.kind == "pulse.wait"]
     assert waits == [10, 20, 2]
 
 
@@ -195,7 +192,7 @@ def test_packed_param_names_are_recorded():
 
     builder = PackedIRBuilder(name="k")
     params = [Parameter("amp", 0, "f64"), Parameter("width", 1, "i64")]
-    _trace_kernel_with_builder(k.__wrapped__, builder, [pulse.qudit_ref(), *params])
+    _trace_kernel_with_builder(k.__wrapped__, builder, [Q[0], *params])
     assert builder.param_names == ["amp", "width"]
 
 
@@ -244,7 +241,7 @@ def test_evaluated_call_errors_are_chained():
         wait(d0, int(math.sqrt(-1.0)))
 
     with pytest.raises(CompilationError, match="failed to evaluate sqrt") as info:
-        k(pulse.qudit_ref())
+        k(Q[0])
     assert isinstance(info.value.__cause__, ValueError)
 
 
@@ -264,6 +261,6 @@ def test_unexpected_exceptions_propagate_unwrapped():
         wait(d0, _explode())
 
     with pytest.raises(_BoomError) as info:
-        k(pulse.qudit_ref())
+        k(Q[0])
     decoded, index = info.value.pulse_source
     assert decoded.location(index)[1] == k.__wrapped__.__code__.co_firstlineno + 3

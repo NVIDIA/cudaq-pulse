@@ -18,8 +18,9 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Coupling, Qubit, Target
+from cudaq_pulse.targets import Coupling, Qubit, TargetDescription
 
+from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
 
 gpu = pytest.mark.gpu
@@ -37,7 +38,7 @@ def _unitary_qubit(index, frequency_hz=5.0e9):
 
 
 def _single_qubit_target():
-    return Target(name="physics-1q", qubits={0: _unitary_qubit(0)})
+    return TargetDescription(name="physics-1q", qubits={0: _unitary_qubit(0)})
 
 
 def test_physics_validation_mlir_structure():
@@ -48,7 +49,7 @@ def test_physics_validation_mlir_structure():
         d0, t0 = get_drive_line(q0)
         drive(d0, square(40, math.pi / 20.0), t0)
 
-    mlir = pulse_mlir((rabi, pulse.qudit_ref()), clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
+    mlir = pulse_mlir((rabi, Q[0]), clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
     assert "pulse.square" in mlir
 
 
@@ -62,7 +63,7 @@ def test_free_drift_stays_ground():
         wait(d0, 40)  # 20 ns free evolution
 
     result = evolve(
-        on(_single_qubit_target(), idle, pulse.qudit_ref()),
+        on(_single_qubit_target(), idle, Q[0]),
         t_start=0.0,
         t_end=20.0,
         num_steps=200,
@@ -83,7 +84,7 @@ def test_rabi_half_pi_pulse():
         drive(d0, square(40, math.pi / 40.0), t0)  # angle = pi/2
 
     result = evolve(
-        on(_single_qubit_target(), half_pi, pulse.qudit_ref()),
+        on(_single_qubit_target(), half_pi, Q[0]),
         t_start=0.0,
         t_end=20.0,
         num_steps=200,
@@ -103,7 +104,7 @@ def test_rabi_pi_pulse():
         drive(d0, square(40, math.pi / 20.0), t0)  # angle = pi
 
     result = evolve(
-        on(_single_qubit_target(), pi_pulse, pulse.qudit_ref()),
+        on(_single_qubit_target(), pi_pulse, Q[0]),
         t_start=0.0,
         t_end=20.0,
         num_steps=200,
@@ -116,7 +117,7 @@ def test_rabi_pi_pulse():
 @gpu
 def test_two_qubit_selective_drive():
     """Driving q0 excites only q0; q1 remains in its ground state."""
-    target = Target(
+    target = TargetDescription(
         name="physics-2q",
         qubits={0: _unitary_qubit(0), 1: _unitary_qubit(1, 5.2e9)},
     )
@@ -130,7 +131,7 @@ def test_two_qubit_selective_drive():
         sync(d0, d1)
 
     result = evolve(
-        on(target, drive_q0, pulse.qudit_ref(), pulse.qudit_ref()),
+        on(target, drive_q0, Q[0], Q[1]),
         t_start=0.0,
         t_end=20.0,
         num_steps=200,
@@ -150,7 +151,7 @@ def test_two_qubit_selective_drive():
 @gpu
 def test_xx_coupling_transfers_excitation():
     """An XX coupling exchanges excitation between neighboring qubits."""
-    target = Target(
+    target = TargetDescription(
         name="physics-xx",
         qubits={0: _unitary_qubit(0), 1: _unitary_qubit(1, 5.0e9)},
         couplings=[Coupling(0, 1, coupling_strength_hz=25.0e6)],
@@ -166,7 +167,7 @@ def test_xx_coupling_transfers_excitation():
         wait(d1, 40)
 
     result = evolve(
-        on(target, excite_and_exchange, pulse.qudit_ref(), pulse.qudit_ref()),
+        on(target, excite_and_exchange, Q[0], Q[1]),
         t_start=0.0,
         t_end=40.0,
         num_steps=400,

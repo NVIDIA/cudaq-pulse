@@ -35,10 +35,10 @@ import cudaq_pulse as pulse
 
 def _device(frequencies: dict[int, float]) -> pulse.Device:
     """A device with these drive frequencies, indexed by qudit."""
-    from cudaq_pulse.targets import Qubit, Target
+    from cudaq_pulse.targets import Qubit, TargetDescription
 
     qubits = {q: Qubit(q, f, -300e6, 50.0, 30.0) for q, f in frequencies.items()}
-    return pulse.device({"target": Target(name="bench", qubits=qubits)})
+    return pulse.device({"target": TargetDescription(name="bench", qubits=qubits)})
 
 
 _STAGES = ("trace_ms", "ffi_ms", "passes_ms", "schedule_ms", "total_ms")

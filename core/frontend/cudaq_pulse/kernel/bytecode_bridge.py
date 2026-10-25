@@ -19,7 +19,6 @@ from typing import Any
 from .._device import Qudit, Register
 from ._bytecode_normalize import DecodedCode, decode
 from ._emitter import PulseIREmitter, _extract_closures
-from .decorator import QuditRef, QvecRef
 from .ir_builder import CompilationError, PythonIRBuilder
 
 
@@ -76,16 +75,6 @@ def _trace(
             local_vars[name] = [
                 builder.emit(qudit_op, (), ("qref",), {"index": q.index})[0] for q in val
             ]
-        elif isinstance(val, QuditRef):
-            attrs = {"index": val.index} if val.index is not None else {}
-            (ir_val,) = builder.emit(qudit_op, (), ("qref",), attrs)
-            local_vars[name] = ir_val
-        elif isinstance(val, QvecRef):
-            ir_vals = []
-            for i in range(len(val)):
-                (v,) = builder.emit(qudit_op, (), ("qref",), {"index": i})
-                ir_vals.append(v)
-            local_vars[name] = ir_vals
         else:
             local_vars[name] = val
 

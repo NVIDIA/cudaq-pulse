@@ -23,6 +23,7 @@ from pathlib import Path
 import cudaq_pulse as pulse
 import pytest
 
+from tests._handles import Q
 from tests._ir import python_ir
 from tests.kernel.ir_corpus import bicycle_syndrome, dd_loop, surface_syndrome
 
@@ -44,7 +45,7 @@ def _compile_time_workloads():
 
 @pytest.mark.parametrize("n", [1, 8, 32, 128, 512])
 def test_dd_loop_is_retained_with_constant_op_count(n):
-    ir = python_ir(dd_loop(n), pulse.qudit_ref())
+    ir = python_ir(dd_loop(n), Q[0])
     # get_drive_line, square, scf.for, drive, scf.for_end
     assert ir.op_count() == 5
     (loop,) = [op for op in ir.ops if op.kind == "scf.for"]
@@ -63,13 +64,13 @@ def test_compile_time_workload_op_counts():
     workloads = _compile_time_workloads()
     for name, count in expected.items():
         kernel, n_qubits, freq = workloads[name]
-        ir = python_ir(kernel, *[pulse.qudit_ref() for _ in range(n_qubits)])
+        ir = python_ir(kernel, *[Q[i] for i in range(n_qubits)])
         assert ir.op_count() == count, name
 
 
 @pytest.mark.parametrize("n", [1, 8, 512])
 def test_compile_retains_loops_in_the_packed_program(n):
-    ck = pulse.compile(dd_loop(n), passes=()).lower(pulse.qudit_ref())
+    ck = pulse.compile(dd_loop(n), passes=()).lower(Q[0])
     # get_drive_line, square, scf.for, drive, scf.for_end
     assert ck.metrics.op_count == 5
     assert ck.mlir().count("= pulse.drive ") == 1
@@ -97,7 +98,7 @@ def _surface_ops(d: int) -> int:
 @pytest.mark.parametrize("d", [3, 5, 7])
 def test_surface_code_op_count(d):
     kernel, n = surface_syndrome(d)
-    ck = pulse.compile(kernel, passes=()).lower(pulse.qvec_ref(n))
+    ck = pulse.compile(kernel, passes=()).lower(Q[0:n])
     assert ck.metrics.op_count == _surface_ops(d)
 
 
@@ -105,7 +106,7 @@ def test_surface_code_op_count(d):
 def test_bicycle_code_op_count(lm):
     l, m = lm  # noqa: E741
     kernel, n = bicycle_syndrome(l, m)
-    ck = pulse.compile(kernel, passes=()).lower(pulse.qvec_ref(n))
+    ck = pulse.compile(kernel, passes=()).lower(Q[0:n])
     # lines, two waveforms, and per check six (sync + two drives)
     assert ck.metrics.op_count == n + 2 + 2 * l * m * 6 * 3
 
@@ -123,7 +124,7 @@ def test_list_held_lines_are_rebound():
         drive(lines[0], x, tones[0])
         drive(lines[0], x, tones[0])
 
-    first, second = [op for op in python_ir(k, pulse.qudit_ref()).ops if op.kind == "pulse.drive"]
+    first, second = [op for op in python_ir(k, Q[0]).ops if op.kind == "pulse.drive"]
     assert second.operands[0] is first.results[0]
     assert second.operands[2] is first.results[1]
 
@@ -138,9 +139,9 @@ def test_loop_over_a_list_held_line_stays_rolled():
             drive(lines[0], x, tones[0])
         wait(lines[0], 10)
 
-    ir = python_ir(k, pulse.qudit_ref())
+    ir = python_ir(k, Q[0])
     assert [op.kind for op in ir.ops].count("scf.for") == 1
-    compiled = pulse.compile(k, schedule="asap").lower(pulse.qudit_ref())
+    compiled = pulse.compile(k, schedule="asap").lower(Q[0])
     assert max(e.start_vtu + e.duration_vtu for e in compiled.schedule) == 6 * 40 + 10
 
 
@@ -148,9 +149,9 @@ def test_compile_with_default_passes_accepts_list_indexed_kernels():
     workloads = _compile_time_workloads()
     for name in ("qaoa4", "syndrome", "vqe_hea"):
         kernel, n_qubits, freq = workloads[name]
-        kernel.lower(*[pulse.qudit_ref() for _ in range(n_qubits)])
+        kernel.lower(*[Q[i] for i in range(n_qubits)])
     for kernel, n in (surface_syndrome(3), bicycle_syndrome(3, 3)):
-        kernel.lower(pulse.qvec_ref(n))
+        kernel.lower(Q[0:n])
 
 
 # ── Closures, helpers, parameters ────────────────────────────────────
@@ -169,7 +170,7 @@ def test_closure_values_and_inlined_helpers():
         play(d0, t0)
         play(d0, t0, amp=shift)
 
-    ir = python_ir(k, pulse.qudit_ref())
+    ir = python_ir(k, Q[0])
     amps = [op.attrs["amplitude"] for op in ir.ops if op.kind == "pulse.square"]
     assert amps == [0.3, 0.25]
     phase = next(op for op in ir.ops if op.kind == "pulse.shift_phase")
@@ -184,7 +185,7 @@ def test_symbolic_parameters_compile_once():
         drive(d0, gaussian(40, amp, 10.0), t0)
 
     ck = pulse.compile(k)
-    q = pulse.qudit_ref()
+    q = Q[0]
     assert ck.parameters == ("amp",)
     assert ck.lower(q, amp=0.5).mlir() != ck.lower(q, amp=0.25).mlir()
     assert ck.cache_info().compiled == 1
@@ -199,7 +200,7 @@ def test_compile_retains_a_measurement_branch():
         if bit:
             wait(r0, 10)
 
-    ir = python_ir(k, pulse.qudit_ref())
-    compiled = k.lower(pulse.qudit_ref())
+    ir = python_ir(k, Q[0])
+    compiled = k.lower(Q[0])
     assert compiled.metrics.op_count == ir.op_count()
     assert compiled.mlir().count("scf.if") == 1

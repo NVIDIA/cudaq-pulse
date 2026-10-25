@@ -21,7 +21,7 @@ import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from .base import Target
+from .base import TargetDescription
 
 if TYPE_CHECKING:
     from .._device import Device
@@ -96,7 +96,7 @@ def register_target(name: str, factory: TargetFactory) -> None:
     """Make *factory* available as ``CUDAQ_PULSE_TARGET=name[:arg]``.
 
     *factory* receives the text after the colon, or ``None``, and returns a
-    ``Target`` (or an object with ``to_target()``). Registering only adds a
+    ``TargetDescription`` (or an object with ``to_target()``). Registering only adds a
     name: which target a process uses is still chosen by the environment.
     """
     if not name or ":" in name or name != name.strip():
@@ -113,7 +113,7 @@ def available_targets() -> list[str]:
     return sorted(_registry())
 
 
-def make_target(spec: str) -> Target:
+def make_target(spec: str) -> TargetDescription:
     """A fresh target from a registered name with its optional argument."""
     name, colon, arg = spec.partition(":")
     factory = _registry().get(name)
@@ -122,10 +122,12 @@ def make_target(spec: str) -> Target:
             f"no registered target {spec!r}. Available: {', '.join(available_targets())}"
         )
     target = factory(arg if colon else None)
-    if not isinstance(target, Target) and hasattr(target, "to_target"):
+    if not isinstance(target, TargetDescription) and hasattr(target, "to_target"):
         target = target.to_target()
-    if not isinstance(target, Target):
-        raise TypeError(f"target factory {name!r} returned {type(target).__name__}, not a Target")
+    if not isinstance(target, TargetDescription):
+        raise TypeError(
+            f"target factory {name!r} returned {type(target).__name__}, not a TargetDescription"
+        )
     return target
 
 
@@ -139,9 +141,9 @@ def current_target(kernel: str | None = None) -> Device:
         raise NoTargetError(_no_target_message(kernel))
     resolved = _resolved.get(spec)
     if resolved is None:
-        from .._device import Device
+        from .._device import _from_spec
 
-        fresh = Device(make_target(spec), name=spec, source=f"env {ENV_VAR}={spec}")
+        fresh = _from_spec(spec, f"env {ENV_VAR}={spec}")
         with _lock:
             resolved = _resolved.setdefault(spec, fresh)
     return resolved

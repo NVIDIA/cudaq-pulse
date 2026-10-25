@@ -12,12 +12,13 @@ from __future__ import annotations
 import cudaq_pulse as pulse
 import pytest
 
+from tests._handles import Q
 from tests._ir import python_ir
 from tests.workloads.bug_corpus import CORRECT, BugCase
 
 
 def _make_qubits(n):
-    return [pulse.qudit_ref() for _ in range(n)]
+    return [Q[i] for i in range(n)]
 
 
 def _freq(n):
@@ -120,7 +121,7 @@ def test_list_amplitude_packs_like_complex():
             drive(d0, square(40, amplitude), t0)
 
         builder = PackedIRBuilder(name="k", qubit_freq_hz={0: 5e9})
-        _trace_kernel_with_builder(k.__wrapped__, builder, [pulse.qudit_ref()])
+        _trace_kernel_with_builder(k.__wrapped__, builder, [Q[0]])
         return builder.get_buffer().tolist()
 
     assert words([0.047, 0.01]) == words(0.047 + 0.01j)

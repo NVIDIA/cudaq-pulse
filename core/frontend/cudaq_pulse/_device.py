@@ -27,7 +27,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, overload
 
 from .targets._registry import NoTargetError
-from .targets.base import Target as TargetDescription
+from .targets.base import TargetDescription
 
 
 class NoDeviceError(NoTargetError):
@@ -284,7 +284,7 @@ def _calibration(config: Mapping[str, Any]) -> Any:
 def device(config: Mapping[str, Any] | str | os.PathLike[str]) -> Device:
     """A device from a config: a mapping, or the path of a JSON file.
 
-    The config gives the target, by registered name or as a ``Target``
+    The config gives the target, by registered name or as a ``TargetDescription``
     description, and may give a layout and a calibration::
 
         {"target": "transmon_krinner_17q", "layout": [4, 5, 6],
@@ -325,7 +325,9 @@ def device(config: Mapping[str, Any] | str | os.PathLike[str]) -> Device:
             calibration=calibration,
         )
     if not isinstance(spec, str):
-        raise ValueError("device config needs 'target': a registered target name or a Target")
+        raise ValueError(
+            "device config needs 'target': a registered target name or a TargetDescription"
+        )
     return _from_spec(spec, source, config.get("layout"), calibration)
 
 

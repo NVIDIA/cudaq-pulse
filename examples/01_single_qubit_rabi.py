@@ -27,17 +27,15 @@ def rabi_external(qubit, duration: int, amplitude: float):
 
 
 @pulse.kernel
-def rabi_internal(duration: int, amplitude: float):
+def rabi_internal(qubit, duration: int, amplitude: float):
     """Rabi with qudit allocated inside the kernel."""
-    qubit = pulse.qudit_ref()
     drive_line, tone = get_drive_line(qubit)
     drive(drive_line, square(duration, amplitude), tone)
 
 
 @pulse.kernel
-def rabi_with_readout(duration, amplitude):
+def rabi_with_readout(qubit, duration, amplitude):
     """Rabi experiment with measurement — the full circuit."""
-    qubit = pulse.qudit_ref()
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
 
@@ -56,7 +54,7 @@ if __name__ == "__main__":
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== Internal allocation ===")
-    compiled_kernel = pulse.compile(rabi_internal, device=dev).lower(100, 0.5)
+    compiled_kernel = pulse.compile(rabi_internal, device=dev).lower(dev.qudit_handles[0], 100, 0.5)
     print(compiled_kernel.mlir())
 
     print("\n=== Amplitude sweep (Rabi oscillation) ===")
@@ -69,6 +67,8 @@ if __name__ == "__main__":
     print(f"  compiled {sweep.cache_info().compiled} time(s) for the whole sweep")
 
     print("\n=== With readout ===")
-    compiled_kernel = pulse.compile(rabi_with_readout, device=dev).lower(100, 0.5)
+    compiled_kernel = pulse.compile(rabi_with_readout, device=dev).lower(
+        dev.qudit_handles[0], 100, 0.5
+    )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

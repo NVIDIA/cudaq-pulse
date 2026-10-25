@@ -1,10 +1,10 @@
 {
  "dd_loop_n8": {
   "ops": 7,
-  "sha256": "e6530a6bd5c3a0483e3c5424d8df282dd50a3cd8be0d2cd9355055d323745a85",
+  "sha256": "4ff07900b0b47c045064ccaf043dc78d76557d467de799163c733f1df6260896",
   "dump": [
    "func @dd",
-   "%0:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
    "%1:drive_line, %2:tone = pulse.get_drive_line(%0) {}",
    "%3:waveform = pulse.square() {amplitude: (0.047+0j), duration: 40}",
    "= scf.for() {lb: 0, step: 1, ub: 8, var: '_'}",
@@ -15,10 +15,10 @@
  },
  "dd_loop_n32": {
   "ops": 7,
-  "sha256": "364baf5410964d001e7da27b56390fa9bd312dd2fce17abf0ddbd782d400c668",
+  "sha256": "460f352dd531fa7bb068e361e7f0c4f9257fbfdd3583001514c7952c6092e578",
   "dump": [
    "func @dd",
-   "%0:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
    "%1:drive_line, %2:tone = pulse.get_drive_line(%0) {}",
    "%3:waveform = pulse.square() {amplitude: (0.047+0j), duration: 40}",
    "= scf.for() {lb: 0, step: 1, ub: 32, var: '_'}",
@@ -29,10 +29,10 @@
  },
  "dd_loop_n128": {
   "ops": 7,
-  "sha256": "87aa642319c086b9996c7ec9f0aa8796f3e91f1b76ac427e602a55aa1349e6c7",
+  "sha256": "2ad8d4005d104835e266a34b52de423c9e06715c59804b41299192f755057819",
   "dump": [
    "func @dd",
-   "%0:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
    "%1:drive_line, %2:tone = pulse.get_drive_line(%0) {}",
    "%3:waveform = pulse.square() {amplitude: (0.047+0j), duration: 40}",
    "= scf.for() {lb: 0, step: 1, ub: 128, var: '_'}",
@@ -43,10 +43,10 @@
  },
  "dd_loop_n512": {
   "ops": 7,
-  "sha256": "c770e2651dd6fb1ad8d43ef19a8d4cfbe1a8c283ae9d7e60c64081b2280e91fa",
+  "sha256": "77ecc373479cb280fc28d34fa67b6274f075b0191425cddfeb03845d7d201961",
   "dump": [
    "func @dd",
-   "%0:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
    "%1:drive_line, %2:tone = pulse.get_drive_line(%0) {}",
    "%3:waveform = pulse.square() {amplitude: (0.047+0j), duration: 40}",
    "= scf.for() {lb: 0, step: 1, ub: 512, var: '_'}",
@@ -66,10 +66,10 @@
  },
  "cpmg_with_waits": {
   "ops": 10,
-  "sha256": "6d95a86b44a24d15d88ea520b7736e4555bd9e20bb8172c7fdb79eecfcdea48c",
+  "sha256": "ad22a3ccfcdad7682274887ce6e51121088e11c6090c3bb373b0500b5c9800b1",
   "dump": [
    "func @cpmg_with_waits",
-   "%0:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
    "%1:drive_line, %2:tone = pulse.get_drive_line(%0) {}",
    "%3:waveform = pulse.drag() {amplitude: 0.2, beta: 0.5, duration: 40, sigma: 10.0}",
    "%4:drive_line = pulse.wait(%1) {duration: 50}",
@@ -83,11 +83,11 @@
  },
  "workload_bell": {
   "ops": 23,
-  "sha256": "53a5d2db622b7edfef121addcafe1e33f2f537d08a26d73b2448f9e57e1fc802",
+  "sha256": "c6cf7777f8a3540c0825d9284fa2c55d115b825de9495c4aab984f6bacfca7d7",
   "dump": [
    "func @build",
-   "%0:qref = pulse.qudit_arg() {}",
-   "%1:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
+   "%1:qref = pulse.qudit_arg() {index: 1}",
    "%2:drive_line, %3:tone = pulse.get_drive_line(%0) {}",
    "%4:drive_line, %5:tone = pulse.get_drive_line(%1) {}",
    "%6:readout_line, %7:tone = pulse.get_readout_line(%0) {}",
@@ -113,11 +113,11 @@
  },
  "workload_cnot_cr": {
   "ops": 14,
-  "sha256": "c773498472ed06fe748e47cc2e2529c9edba8a080190c4aca1a95a237ddf2ee7",
+  "sha256": "58c8e83896a56aac991e065abaca36fa545cc5c1a6d79c11b6742a259d1f8c9b",
   "dump": [
    "func @build",
-   "%0:qref = pulse.qudit_arg() {}",
-   "%1:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
+   "%1:qref = pulse.qudit_arg() {index: 1}",
    "%2:drive_line, %3:tone = pulse.get_drive_line(%0) {}",
    "%4:drive_line, %5:tone = pulse.get_drive_line(%1) {}",
    "%6:drive_line, %7:drive_line = pulse.sync(%2, %4) {}",
@@ -134,18 +134,18 @@
  },
  "workload_qaoa4": {
   "ops": 109,
-  "sha256": "279cae7a361124bbcced5f0fc2cd7f5834811e1e041a2176ebdb061f0e08f472"
+  "sha256": "75a38dd024f758a9ef43ba1579777473c446705acdf4fef0962f1d752ac9b5ff"
  },
  "workload_syndrome": {
   "ops": 61,
-  "sha256": "734f42f68305a7b343c1cf5ae6bbd9dedb29b24de81a2b3d62d8f1c39b99a772",
+  "sha256": "b0a54728b5cf62153d3e42b7a1f6a0315d59fbaaa3285cbe7745371b8cafba22",
   "dump": [
    "func @build",
-   "%0:qref = pulse.qudit_arg() {}",
-   "%1:qref = pulse.qudit_arg() {}",
-   "%2:qref = pulse.qudit_arg() {}",
-   "%3:qref = pulse.qudit_arg() {}",
-   "%4:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
+   "%1:qref = pulse.qudit_arg() {index: 1}",
+   "%2:qref = pulse.qudit_arg() {index: 2}",
+   "%3:qref = pulse.qudit_arg() {index: 3}",
+   "%4:qref = pulse.qudit_arg() {index: 4}",
    "%5:drive_line, %6:tone = pulse.get_drive_line(%0) {}",
    "%7:drive_line, %8:tone = pulse.get_drive_line(%1) {}",
    "%9:drive_line, %10:tone = pulse.get_drive_line(%2) {}",
@@ -206,10 +206,10 @@
  },
  "workload_dd_cpmg8": {
   "ops": 9,
-  "sha256": "2ababb35074081c328f7c5dc15bac789a02f1f51bc894bce9813ac3c2cb70897",
+  "sha256": "805431d0396f0a19f19822551ff65d23830fd8886ebb3bca902df07ea999da90",
   "dump": [
    "func @build",
-   "%0:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
    "%1:drive_line, %2:tone = pulse.get_drive_line(%0) {}",
    "%3:waveform = pulse.square() {amplitude: [0.047, 0.0], duration: 40}",
    "%4:drive_line = pulse.wait(%1) {duration: 100}",
@@ -222,13 +222,13 @@
  },
  "workload_vqe_hea": {
   "ops": 59,
-  "sha256": "de711f247ecdf89eb07a2c8cd270efc8218b93441d6ad08b0c4dec64daf7ec98",
+  "sha256": "a86cd9af8d479ddf1d4812be78a610346cf54519f8171343e4070cc0eaea1452",
   "dump": [
    "func @build",
-   "%0:qref = pulse.qudit_arg() {}",
-   "%1:qref = pulse.qudit_arg() {}",
-   "%2:qref = pulse.qudit_arg() {}",
-   "%3:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
+   "%1:qref = pulse.qudit_arg() {index: 1}",
+   "%2:qref = pulse.qudit_arg() {index: 2}",
+   "%3:qref = pulse.qudit_arg() {index: 3}",
    "%4:drive_line, %5:tone = pulse.get_drive_line(%0) {}",
    "%6:drive_line, %7:tone = pulse.get_drive_line(%1) {}",
    "%8:drive_line, %9:tone = pulse.get_drive_line(%2) {}",
@@ -319,11 +319,11 @@
  },
  "closures_and_helpers": {
   "ops": 15,
-  "sha256": "239759a8250972cce5a47d855feaaf0d780343d6c374721ac36c62560177f712",
+  "sha256": "e0b036d46f2601cabe3e7a222984ca2cf2db45ad4e9ee392b3e237f8ec5ff60e",
   "dump": [
    "func @k",
-   "%0:qref = pulse.qudit_arg() {}",
-   "%1:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
+   "%1:qref = pulse.qudit_arg() {index: 1}",
    "%2:drive_line, %3:tone = pulse.get_drive_line(%0) {}",
    "%4:drive_line, %5:tone = pulse.get_drive_line(%1) {}",
    "%6:tone = pulse.shift_phase(%3) {phase_rad: 0.0}",
@@ -341,10 +341,10 @@
  },
  "python_expressions": {
   "ops": 12,
-  "sha256": "6d3e98cd552cd9f2e249581dd51faba60e6a7f39a803ae5914cc2bd985da9b23",
+  "sha256": "cf2707c5355e5a1298d837927423a785c9cffef43368c4c5d2ad999acb055066",
   "dump": [
    "func @python_expressions",
-   "%0:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
    "%1:drive_line, %2:tone = pulse.get_drive_line(%0) {}",
    "%3:waveform = pulse.square() {amplitude: 0.1, duration: 20}",
    "%4:drive_line, %5:tone = pulse.drive(%1, %3, %2) {}",
@@ -369,10 +369,10 @@
  },
  "readout_and_algebra": {
   "ops": 12,
-  "sha256": "777068afb08fd6fc6b72ae894661fe8ab92a0246a1973736a050f80fb75bc9a0",
+  "sha256": "d46fb00d01e50d395f74836a28978559208003dd229a00b8844fbd5e209ddf08",
   "dump": [
    "func @readout_and_algebra",
-   "%0:qref = pulse.qudit_alloc() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
    "%1:drive_line, %2:tone = pulse.get_drive_line(%0) {}",
    "%3:readout_line, %4:tone = pulse.get_readout_line(%0) {}",
    "%5:waveform = pulse.cosine() {amplitude: 0.2, duration: 16}",
@@ -415,10 +415,10 @@
  },
  "active_reset": {
   "ops": 14,
-  "sha256": "755d03413e1b22fdaa422721f846304fe0ad2f0f465d9a0056e7df8c49cd9835",
+  "sha256": "efadfc24f2d9879efc4bf8a460accb62567c79d571bd649656d2fc686a8792e4",
   "dump": [
    "func @active_reset",
-   "%0:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
    "%1:drive_line, %2:tone = pulse.get_drive_line(%0) {}",
    "%3:readout_line, %4:tone = pulse.get_readout_line(%0) {}",
    "%5:waveform = pulse.square() {amplitude: 0.1, duration: 40}",
@@ -436,11 +436,11 @@
  },
  "negated_feedback": {
   "ops": 19,
-  "sha256": "e2b7325e1a6f74d23c373fddefd4ece010b4389d62fc5271b511c74416f118b8",
+  "sha256": "21870a676dbe05933e071284bcf55ef3b0550de2f996be502040ae3a507c13fb",
   "dump": [
    "func @negated_feedback",
-   "%0:qref = pulse.qudit_arg() {}",
-   "%1:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
+   "%1:qref = pulse.qudit_arg() {index: 1}",
    "%2:drive_line, %3:tone = pulse.get_drive_line(%0) {}",
    "%4:drive_line, %5:tone = pulse.get_drive_line(%1) {}",
    "%6:readout_line, %7:tone = pulse.get_readout_line(%0) {}",
@@ -462,10 +462,10 @@
  },
  "feedback_in_loop": {
   "ops": 16,
-  "sha256": "2503f7d3a8a3dcd7222021aef4cd3bd7289862567a232df297d476e6a2f677b6",
+  "sha256": "b5ddfc87ae526d14cf1e62bdc606df01918cb92d08b840949d600ede8884e1cb",
   "dump": [
    "func @feedback_in_loop",
-   "%0:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
    "%1:drive_line, %2:tone = pulse.get_drive_line(%0) {}",
    "%3:readout_line, %4:tone = pulse.get_readout_line(%0) {}",
    "= scf.for() {lb: 0, step: 1, ub: 5, var: '_'}",
@@ -485,10 +485,10 @@
  },
  "feedback_both_return": {
   "ops": 13,
-  "sha256": "6ad2f9ac6b3ea8db91e070cb301c2e761199173eebc07174bbc39b0764f306c7",
+  "sha256": "b541dcbbeacc4ef4d1847c7411f6997f688a883d7e26866e5e68ea5f520a094b",
   "dump": [
    "func @feedback_both_return",
-   "%0:qref = pulse.qudit_arg() {}",
+   "%0:qref = pulse.qudit_arg() {index: 0}",
    "%1:drive_line, %2:tone = pulse.get_drive_line(%0) {}",
    "%3:readout_line, %4:tone = pulse.get_readout_line(%0) {}",
    "%5:waveform = pulse.square() {amplitude: 0.05, duration: 300}",

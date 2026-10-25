@@ -35,7 +35,7 @@ def vis_demo(q0, q1, q2):
     readout(r0, square(1000, 0.05), rt0)
 
 
-def print_ascii_timeline(events: list[pulse.ScheduledEvent], width: int = 70) -> None:
+def print_ascii_timeline(events: list[pulse.compiler.ScheduledEvent], width: int = 70) -> None:
     """Render a simple ASCII timeline for terminals without matplotlib."""
     max_t = max(ev.start_vtu + ev.duration_vtu for ev in events)
     for line in sorted({ev.line for ev in events}):

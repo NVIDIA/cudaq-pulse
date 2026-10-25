@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import subprocess
 import sys
@@ -20,14 +21,16 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets import Qubit, Target
+from cudaq_pulse.targets import Qubit, TargetDescription
 from cudaq_pulse.targets._registry import ENV_VAR
+
+from tests._handles import Q
 
 _PI_AMPLITUDE = np.pi / 20.0  # a square pulse of 40 cycles (20 ns) at this rate is a pi pulse
 
 
 def _device(n=4, **kwargs):
-    target = Target(
+    target = TargetDescription(
         name="call-test",
         qubits={
             i: Qubit(
@@ -100,18 +103,18 @@ def test_compile_takes_no_kernel_arguments_and_float_values_never_recompile():
     assert ck.cache_info().compiled == 2
 
 
-def test_a_pinned_static_free_kernel_is_built_by_compile():
+def test_a_call_without_qudit_handles_has_no_device():
     @pulse.kernel
-    def drive_all(amp: float):
-        q = pulse.qudit_ref()
+    def drive_amp(q, amp: float):
         d, t = get_drive_line(q)
         drive(d, square(40, amp), t)
 
-    dev = _device()
-    ck = pulse.compile(drive_all, device=dev)
-    assert ck.parameters == ("amp",)
-    assert "%arg0: f64" in ck.mlir()
-    assert ck.cache_info().compiled == 1
+    with pytest.raises(pulse.NoDeviceError, match="without qudit handles"):
+        drive_amp.lower(0, 0.1)
+    # The process target is not a fallback.
+    assert os.environ.get(ENV_VAR)
+    with pytest.raises(pulse.NoDeviceError):
+        drive_amp(0, 0.1)
 
 
 def test_compiled_kernel_without_a_specialization_explains_lower():
@@ -243,8 +246,8 @@ def test_a_pinned_compile_rejects_another_device():
 
 def test_a_call_without_a_device_raises(monkeypatch):
     monkeypatch.delenv(ENV_VAR)
-    with pytest.raises(pulse.NoDeviceError, match="needs a device"):
-        rabi.lower(pulse.qudit_ref(), 0.1)
+    with pytest.raises(pulse.NoDeviceError, match="without qudit handles"):
+        rabi.lower(0, 0.1)
 
 
 def test_registers_index_like_sequences():
@@ -300,8 +303,8 @@ def test_a_waveform_as_a_frequency_is_reserved():
 
 def test_a_qudit_the_target_lacks_is_an_error():
     dev = _device(n=2)
-    with pytest.raises(CompilationError, match="uses qudit 5, which target 'call-test' does not"):
-        pulse.compile(rabi, device=dev).lower(pulse.qudit_ref(5), 0.1)
+    with pytest.raises(pulse.DeviceMismatchError, match="'call-test' and got qudits of"):
+        pulse.compile(rabi, device=dev).lower(Q[5], 0.1)
 
 
 # ── Frequencies as float arguments ───────────────────────────────────────
@@ -656,14 +659,3 @@ def test_each_arm_of_a_branch_acquires_a_line_it_first_uses():
     h = _device().qudit_handles
     lowered = pulse.compile(feedback, passes=()).lower(h[0], h[1])
     assert lowered.mlir().count("pulse.get_drive_line") == 2
-
-
-def test_a_qudit_allocated_in_a_loop_body_still_unrolls():
-    @pulse.kernel
-    def fresh_each(n: int):
-        for _ in range(n):
-            x90(pulse.qudit_ref())
-
-    lowered = pulse.compile(fresh_each, device=_device()).lower(3)
-    assert "scf.for" not in lowered.mlir()
-    assert len({e.line for e in lowered.schedule}) == 3

@@ -12,13 +12,3 @@ Kernel API
 
 .. autoclass:: cudaq_pulse.Kernel
    :members:
-
-.. autofunction:: cudaq_pulse.qudit_ref
-
-.. autofunction:: cudaq_pulse.qvec_ref
-
-.. autoclass:: cudaq_pulse.QuditRef
-   :members:
-
-.. autoclass:: cudaq_pulse.QvecRef
-   :members:

@@ -13,7 +13,7 @@ constant folding, qudit allocation patterns, and error cases.
 
 import pytest
 from cudaq_pulse.kernel.bytecode_bridge import compile_kernel_bytecode
-from cudaq_pulse.kernel.decorator import kernel, qudit_ref
+from cudaq_pulse.kernel.decorator import kernel
 from cudaq_pulse.kernel.ir_builder import CompilationError
 from cudaq_pulse.ops import (
     cosine,
@@ -34,6 +34,7 @@ from cudaq_pulse.ops import (
     wait,
 )
 
+from tests._handles import Q
 from tests._ir import python_ir
 
 
@@ -54,7 +55,7 @@ class TestBasicCompilation:
         def empty(q0):
             pass
 
-        ir = compile_kernel_bytecode(empty)(qudit_ref())
+        ir = compile_kernel_bytecode(empty)(Q[0])
         assert ir.name == "empty"
         assert len(ir.ops) == 1  # just pulse.qudit_arg
 
@@ -63,7 +64,7 @@ class TestBasicCompilation:
         def my_special_name(q0):
             pass
 
-        ir = compile_kernel_bytecode(my_special_name)(qudit_ref())
+        ir = compile_kernel_bytecode(my_special_name)(Q[0])
         assert ir.name == "my_special_name"
 
     def test_drive_kernel(self):
@@ -73,7 +74,7 @@ class TestBasicCompilation:
             wf = gaussian(40, 0.3, 10.0)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(drive_test)(qudit_ref())
+        ir = compile_kernel_bytecode(drive_test)(Q[0])
         kinds = [op.kind for op in ir.ops]
         assert kinds == [
             "pulse.qudit_arg",
@@ -88,7 +89,7 @@ class TestBasicCompilation:
             d0, t0 = get_drive_line(q0)
             d1, t1 = get_drive_line(q1)
 
-        ir = compile_kernel_bytecode(two_qubit)(qudit_ref(), qudit_ref())
+        ir = compile_kernel_bytecode(two_qubit)(Q[0], Q[1])
         arg_ops = [op for op in ir.ops if op.kind == "pulse.qudit_arg"]
         assert len(arg_ops) == 2
 
@@ -99,7 +100,7 @@ class TestBasicCompilation:
             wf = _helper_waveform()
             _helper_drive(d0, t0, wf)
 
-        ir = compile_kernel_bytecode(helper_kernel)(qudit_ref())
+        ir = compile_kernel_bytecode(helper_kernel)(Q[0])
         kinds = [op.kind for op in ir.ops]
         assert kinds == [
             "pulse.qudit_arg",
@@ -124,7 +125,7 @@ class TestBasicCompilation:
 
         emitter = compile_kernel_bytecode(one_arg)
         with pytest.raises(CompilationError, match="keyword arguments"):
-            emitter(q0=qudit_ref())
+            emitter(q0=Q[0])
 
 
 # ── Waveform creation ────────────────────────────────────────────────
@@ -138,7 +139,7 @@ class TestWaveforms:
             wf = gaussian(40, 0.3, 10.0)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(wf_test)(qudit_ref())
+        ir = compile_kernel_bytecode(wf_test)(Q[0])
         wf_op = next(op for op in ir.ops if op.kind == "pulse.gaussian")
         assert wf_op.attrs == {"duration": 40, "amplitude": 0.3, "sigma": 10.0}
 
@@ -149,7 +150,7 @@ class TestWaveforms:
             wf = square(20, 0.5)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(wf_test)(qudit_ref())
+        ir = compile_kernel_bytecode(wf_test)(Q[0])
         wf_op = next(op for op in ir.ops if op.kind == "pulse.square")
         assert wf_op.attrs == {"duration": 20, "amplitude": 0.5}
 
@@ -160,7 +161,7 @@ class TestWaveforms:
             wf = drag(40, 0.435, 5.0, 0.75)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(wf_test)(qudit_ref())
+        ir = compile_kernel_bytecode(wf_test)(Q[0])
         wf_op = next(op for op in ir.ops if op.kind == "pulse.drag")
         assert wf_op.attrs == {
             "duration": 40,
@@ -176,7 +177,7 @@ class TestWaveforms:
             wf = cosine(100, 0.5)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(wf_test)(qudit_ref())
+        ir = compile_kernel_bytecode(wf_test)(Q[0])
         assert any(op.kind == "pulse.cosine" for op in ir.ops)
 
     def test_gaussian_square(self):
@@ -186,7 +187,7 @@ class TestWaveforms:
             wf = gaussian_square(200, 0.3, 10.0, 150.0)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(wf_test)(qudit_ref())
+        ir = compile_kernel_bytecode(wf_test)(Q[0])
         wf_op = next(op for op in ir.ops if op.kind == "pulse.gaussian_square")
         assert wf_op.attrs["width"] == 150.0
 
@@ -197,7 +198,7 @@ class TestWaveforms:
             wf = tanh_ramp(50, 0.4, 5.0)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(wf_test)(qudit_ref())
+        ir = compile_kernel_bytecode(wf_test)(Q[0])
         assert any(op.kind == "pulse.tanh_ramp" for op in ir.ops)
 
 
@@ -212,7 +213,7 @@ class TestReadout:
             wf = square(600, 0.1)
             readout(r0, wf, t0)
 
-        ir = compile_kernel_bytecode(ro_test)(qudit_ref())
+        ir = compile_kernel_bytecode(ro_test)(Q[0])
         ro_ops = [op for op in ir.ops if op.kind == "pulse.readout"]
         assert len(ro_ops) == 1
         assert len(ro_ops[0].results) == 3
@@ -231,7 +232,7 @@ class TestToneOps:
             wf = gaussian(40, 0.3, 10.0)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(phase_test)(qudit_ref())
+        ir = compile_kernel_bytecode(phase_test)(Q[0])
         sp = next(op for op in ir.ops if op.kind == "pulse.shift_phase")
         assert abs(sp.attrs["phase_rad"] - 1.5707) < 1e-10
 
@@ -243,7 +244,7 @@ class TestToneOps:
             wf = gaussian(40, 0.3, 10.0)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(phase_test)(qudit_ref())
+        ir = compile_kernel_bytecode(phase_test)(Q[0])
         assert any(op.kind == "pulse.set_phase" for op in ir.ops)
 
     def test_shift_frequency(self):
@@ -254,7 +255,7 @@ class TestToneOps:
             wf = gaussian(40, 0.3, 10.0)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(freq_test)(qudit_ref())
+        ir = compile_kernel_bytecode(freq_test)(Q[0])
         sf = next(op for op in ir.ops if op.kind == "pulse.shift_frequency")
         assert sf.attrs["freq_hz"] == 1e6
 
@@ -266,7 +267,7 @@ class TestToneOps:
             wf = gaussian(40, 0.3, 10.0)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(freq_test)(qudit_ref())
+        ir = compile_kernel_bytecode(freq_test)(Q[0])
         assert any(op.kind == "pulse.set_frequency" for op in ir.ops)
 
 
@@ -280,7 +281,7 @@ class TestWaitSync:
             d0, t0 = get_drive_line(q0)
             wait(d0, 100)
 
-        ir = compile_kernel_bytecode(wait_test)(qudit_ref())
+        ir = compile_kernel_bytecode(wait_test)(Q[0])
         w = next(op for op in ir.ops if op.kind == "pulse.wait")
         assert w.attrs["duration"] == 100
 
@@ -291,7 +292,7 @@ class TestWaitSync:
             d1, t1 = get_drive_line(q1)
             sync(d0, d1)
 
-        ir = compile_kernel_bytecode(sync_test)(qudit_ref(), qudit_ref())
+        ir = compile_kernel_bytecode(sync_test)(Q[0], Q[1])
         s = next(op for op in ir.ops if op.kind == "pulse.sync")
         assert len(s.operands) == 2
         assert all(o.vtype == "drive_line" for o in s.operands)
@@ -310,7 +311,7 @@ class TestLinearRebinding:
             drive(d0, wf1, t0)
             drive(d0, wf2, t0)
 
-        ir = compile_kernel_bytecode(rebind_test)(qudit_ref())
+        ir = compile_kernel_bytecode(rebind_test)(Q[0])
         drives = [op for op in ir.ops if op.kind == "pulse.drive"]
         assert len(drives) == 2
         assert drives[0].operands[0] is not drives[1].operands[0]
@@ -324,7 +325,7 @@ class TestLinearRebinding:
             wf = gaussian(40, 0.3, 10.0)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(rebind_test)(qudit_ref())
+        ir = compile_kernel_bytecode(rebind_test)(Q[0])
         w = next(op for op in ir.ops if op.kind == "pulse.wait")
         d = next(op for op in ir.ops if op.kind == "pulse.drive")
         assert w.operands[0] is not d.operands[0]
@@ -337,7 +338,7 @@ class TestLinearRebinding:
             wf = gaussian(40, 0.3, 10.0)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(phase_test)(qudit_ref())
+        ir = compile_kernel_bytecode(phase_test)(Q[0])
         sp = next(op for op in ir.ops if op.kind == "pulse.shift_phase")
         d = next(op for op in ir.ops if op.kind == "pulse.drive")
         assert sp.results[0] is d.operands[2]
@@ -355,7 +356,7 @@ class TestForLoop:
             for i in range(5):
                 drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(loop_test)(qudit_ref())
+        ir = compile_kernel_bytecode(loop_test)(Q[0])
         kinds = [op.kind for op in ir.ops]
         assert kinds.count("pulse.drive") == 1
         assert "scf.for_end" in kinds
@@ -370,7 +371,7 @@ class TestForLoop:
             for i in range(3):
                 drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(loop_yield)(qudit_ref())
+        ir = compile_kernel_bytecode(loop_yield)(Q[0])
         (yield_op,) = [op for op in ir.ops if op.kind == "scf.yield"]
         end = ir.ops[-1]
         assert end.kind == "scf.for_end"
@@ -384,7 +385,7 @@ class TestForLoop:
             for i in range(2, 9, 3):
                 shift_phase(t0, float(i))
 
-        ir = compile_kernel_bytecode(loop_test)(qudit_ref())
+        ir = compile_kernel_bytecode(loop_test)(Q[0])
         phases = [op.attrs["phase_rad"] for op in ir.ops if op.kind == "pulse.shift_phase"]
         assert phases == [2.0, 5.0, 8.0]
         assert not any(op.kind.startswith("scf.") for op in ir.ops)
@@ -398,7 +399,7 @@ class TestForLoop:
                 drive(d0, square(10, amp), t0)
                 amp = amp * 2
 
-        ir = compile_kernel_bytecode(loop_test)(qudit_ref())
+        ir = compile_kernel_bytecode(loop_test)(Q[0])
         amps = [op.attrs["amplitude"] for op in ir.ops if op.kind == "pulse.square"]
         assert amps == [0.1, 0.2, 0.4]
         assert not any(op.kind.startswith("scf.") for op in ir.ops)
@@ -413,7 +414,7 @@ class TestForLoop:
             for w in range(len(waves)):
                 drive(d0, waves[w], t0)
 
-        ir = compile_kernel_bytecode(loop_test)(qudit_ref())
+        ir = compile_kernel_bytecode(loop_test)(Q[0])
         kinds = [op.kind for op in ir.ops]
         assert kinds.count("pulse.square") == 3
         assert kinds.count("pulse.drive") == 3
@@ -427,7 +428,7 @@ class TestForLoop:
                 drive(d0, square(10, 0.1), t0)
                 break
 
-        ir = compile_kernel_bytecode(loop_test)(qudit_ref())
+        ir = compile_kernel_bytecode(loop_test)(Q[0])
         kinds = [op.kind for op in ir.ops]
         assert kinds.count("pulse.drive") == 1
         assert "scf.for" not in kinds
@@ -441,7 +442,7 @@ class TestForLoop:
                 for _ in range(4):
                     drive(d0, x, t0)
 
-        ir = compile_kernel_bytecode(loop_test)(qudit_ref())
+        ir = compile_kernel_bytecode(loop_test)(Q[0])
         kinds = [op.kind for op in ir.ops]
         assert kinds.count("scf.for") == 2
         assert kinds.count("pulse.drive") == 1
@@ -458,7 +459,7 @@ class TestForLoop:
                 if 0 < r and r < 3:
                     drive(d0, x, t0)
 
-        ir = compile_kernel_bytecode(loop_test)(qudit_ref())
+        ir = compile_kernel_bytecode(loop_test)(Q[0])
         assert [op.kind for op in ir.ops].count("pulse.drive") == 2
 
     def test_while_loop_rejected(self):
@@ -471,37 +472,22 @@ class TestForLoop:
                 n -= 1
 
         with pytest.raises(CompilationError, match="while loops"):
-            compile_kernel_bytecode(loop_test)(qudit_ref())
+            compile_kernel_bytecode(loop_test)(Q[0])
 
 
 # ── Qudit allocation patterns ────────────────────────────────────────
 
 
 class TestQuditAlloc:
-    def test_internal_qudit_ref(self):
-
-        def alloc_test():
-            q = qudit_ref()
-            d0, t0 = get_drive_line(q)
-            wf = gaussian(40, 0.3, 10.0)
-            drive(d0, wf, t0)
-
-        ir = compile_kernel_bytecode(alloc_test)()
-        kinds = [op.kind for op in ir.ops]
-        assert "pulse.qudit_alloc" in kinds
-        alloc = next(op for op in ir.ops if op.kind == "pulse.qudit_alloc")
-        assert alloc.results[0].vtype == "qref"
-
-    def test_attribute_style_alloc(self):
+    def test_attribute_style_op(self):
         import cudaq_pulse
 
-        def attr_alloc():
-            q = cudaq_pulse.qudit_ref()
-            d0, t0 = cudaq_pulse.get_drive_line(q)
+        def attr_alloc(q):
+            d0, t0 = cudaq_pulse.ops.get_drive_line(q)
 
-        ir = compile_kernel_bytecode(attr_alloc)()
+        ir = compile_kernel_bytecode(attr_alloc)(Q[0])
         kinds = [op.kind for op in ir.ops]
-        assert "pulse.qudit_alloc" in kinds
+        assert "pulse.qudit_arg" in kinds
         assert "pulse.get_drive_line" in kinds
 
 
@@ -516,7 +502,7 @@ class TestConstantFolding:
             wf = gaussian(20 + 20, 0.3, 10.0)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(arith_test)(qudit_ref())
+        ir = compile_kernel_bytecode(arith_test)(Q[0])
         wf = next(op for op in ir.ops if op.kind == "pulse.gaussian")
         assert wf.attrs["duration"] == 40
 
@@ -527,7 +513,7 @@ class TestConstantFolding:
             wf = gaussian(40, 0.3 * 2, 10.0)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(arith_test)(qudit_ref())
+        ir = compile_kernel_bytecode(arith_test)(Q[0])
         wf = next(op for op in ir.ops if op.kind == "pulse.gaussian")
         assert abs(wf.attrs["amplitude"] - 0.6) < 1e-10
 
@@ -538,7 +524,7 @@ class TestConstantFolding:
             wf = gaussian(40, 0.3, 20.0 / 2)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(arith_test)(qudit_ref())
+        ir = compile_kernel_bytecode(arith_test)(Q[0])
         wf = next(op for op in ir.ops if op.kind == "pulse.gaussian")
         assert abs(wf.attrs["sigma"] - 10.0) < 1e-10
 
@@ -549,7 +535,7 @@ class TestConstantFolding:
             wf = gaussian(40, -0.3, 10.0)
             drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(neg_test)(qudit_ref())
+        ir = compile_kernel_bytecode(neg_test)(Q[0])
         wf = next(op for op in ir.ops if op.kind == "pulse.gaussian")
         assert abs(wf.attrs["amplitude"] - (-0.3)) < 1e-10
 
@@ -568,7 +554,7 @@ class TestSourceless:
         exec(code, ns)
         fn = ns["f"]
 
-        ir = compile_kernel_bytecode(fn)(qudit_ref())
+        ir = compile_kernel_bytecode(fn)(Q[0])
         assert any(op.kind == "pulse.get_drive_line" for op in ir.ops)
 
 
@@ -585,7 +571,7 @@ class TestErrors:
 
         emitter = compile_kernel_bytecode(bad_kernel)
         with pytest.raises(CompilationError):
-            emitter(qudit_ref())
+            emitter(Q[0])
 
     def test_for_over_a_non_iterable_names_its_type(self):
         def bad_loop(q0):
@@ -595,7 +581,7 @@ class TestErrors:
 
         emitter = compile_kernel_bytecode(bad_loop)
         with pytest.raises(CompilationError, match="cannot iterate over float"):
-            emitter(qudit_ref())
+            emitter(Q[0])
 
 
 # ── Decorator integration ────────────────────────────────────────────
@@ -610,7 +596,7 @@ class TestDecoratorIntegration:
             wf = gaussian(40, 0.3, 10.0)
             drive(d0, wf, t0)
 
-        ir = python_ir(my_kernel, qudit_ref())
+        ir = python_ir(my_kernel, Q[0])
         assert ir is not None
         kinds = [op.kind for op in ir.ops]
         assert "pulse.drive" in kinds
@@ -621,17 +607,6 @@ class TestDecoratorIntegration:
         def cached(q0):
             pass
 
-        cached.lower(qudit_ref())
-        cached.lower(qudit_ref())
+        cached.lower(Q[0])
+        cached.lower(Q[0])
         assert cached.cache_info().compiled == 1
-
-    def test_kernel_internal_alloc(self):
-
-        @kernel
-        def internal():
-            q = qudit_ref()
-            d0, t0 = get_drive_line(q)
-
-        ir = python_ir(internal)
-        kinds = [op.kind for op in ir.ops]
-        assert "pulse.qudit_alloc" in kinds

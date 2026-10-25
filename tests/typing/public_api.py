@@ -16,19 +16,15 @@ from __future__ import annotations
 from typing import assert_type
 
 import cudaq_pulse as pulse
+from cudaq_pulse.compiler import CompileMetrics, ScheduledEvent
 from cudaq_pulse.ops import Waveform
 
-qubit = pulse.qudit_ref()
-assert_type(qubit, pulse.QuditRef)
-assert_type(pulse.qvec_ref(2)[0], pulse.QuditRef)
-assert_type(list(pulse.qvec_ref(2)), list[pulse.QuditRef])
-
-wave = pulse.gaussian(40, 0.1, 10.0)
+wave = pulse.ops.gaussian(40, 0.1, 10.0)
 assert_type(wave, Waveform)
-assert_type(pulse.wf_scale(wave, 0.5), Waveform)
-pulse.wf_scale(0.5, wave)  # type: ignore[arg-type]
-pulse.wf_scale(waveform=wave, scalar=0.5)  # type: ignore[call-arg]
-assert_type(pulse.wf_add(wave, wave), Waveform)
+assert_type(pulse.ops.wf_scale(wave, 0.5), Waveform)
+pulse.ops.wf_scale(0.5, wave)  # type: ignore[arg-type]
+pulse.ops.wf_scale(waveform=wave, scalar=0.5)  # type: ignore[call-arg]
+assert_type(pulse.ops.wf_add(wave, wave), Waveform)
 
 dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
 assert_type(dev, pulse.Device)
@@ -57,8 +53,8 @@ lowered = rabi.lower(dev.qudit_handles[0], 0.5)
 assert_type(lowered, pulse.Lowered)
 assert_type(lowered.mlir(), str)
 assert_type(lowered.mlir("llvm"), str)
-assert_type(lowered.metrics, pulse.CompileMetrics)
-assert_type(lowered.schedule, list[pulse.ScheduledEvent])
+assert_type(lowered.metrics, CompileMetrics)
+assert_type(lowered.schedule, list[ScheduledEvent])
 assert_type(lowered.arguments, tuple[float, ...])
 
 compiled = pulse.compile(rabi, schedule="asap", device=dev)

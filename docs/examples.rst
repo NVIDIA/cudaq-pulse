@@ -53,7 +53,7 @@ Core Examples
      - Phase and frequency manipulation primitives on tone channels
    * - 07
      - ``07_multi_qubit_sync.py``
-     - Multi-qubit programs with sync and ``pulse.qvec_ref()`` allocation
+     - Multi-qubit programs with sync and registers of qudit handles
    * - 08
      - ``08_readout_and_branching.py``
      - Readout channels and measurement-conditioned branching

@@ -12,8 +12,9 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Qubit, Target
+from cudaq_pulse.targets import Qubit, TargetDescription
 
+from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
 
 gpu = pytest.mark.gpu
@@ -31,7 +32,7 @@ def test_t1_mlir_structure():
         # wait for T1 decay
         wait(d0, 1000)
 
-    ir = (t1_decay, pulse.qudit_ref())
+    ir = (t1_decay, Q[0])
     mlir = pulse_mlir(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
 
     assert "pulse.gaussian" in mlir
@@ -43,7 +44,7 @@ def test_t1_mlir_structure():
 def test_t1_decay_gpu():
     """T1 decay: after exciting to |1> and waiting, population decays."""
 
-    target = Target(
+    target = TargetDescription(
         name="fast-decay-test",
         qubits={
             0: Qubit(
@@ -66,7 +67,7 @@ def test_t1_decay_gpu():
         drive(d0, pi_pulse, t0)
         wait(d0, 1000)
 
-    ir = (t1_decay, pulse.qudit_ref())
+    ir = (t1_decay, Q[0])
     result = evolve(on(target, *ir), t_start=0.0, t_end=520.0, num_steps=520, integrator="rk4")
 
     state = result.final_state

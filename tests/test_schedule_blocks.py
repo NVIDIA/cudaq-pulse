@@ -21,6 +21,8 @@ from pathlib import Path
 import cudaq_pulse as pulse
 import pytest
 
+from tests._handles import Q
+
 _ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -33,7 +35,7 @@ def _starts(compiled):
 
 
 def _qubits(n):
-    return [pulse.qudit_ref() for _ in range(n)]
+    return [Q[i] for i in range(n)]
 
 
 @pulse.kernel(schedule="asap")
@@ -82,7 +84,7 @@ def test_bare_and_called_decorator_forms_agree():
         d, t = get_drive_line(q)
         drive(d, square(40, 0.1), t)
 
-    q = pulse.qudit_ref()
+    q = Q[0]
     assert _timeline(called.lower(q)) == _timeline(bare.lower(q))
 
 
@@ -208,7 +210,7 @@ def test_block_in_a_rolled_loop_keeps_the_loop():
         for _ in range(8):
             echo(d, t)
 
-    compiled = pulse.compile(top, schedule="asap").lower(pulse.qudit_ref())
+    compiled = pulse.compile(top, schedule="asap").lower(Q[0])
     assert "scf.for" in compiled.mlir()
     assert [(e.kind, e.start_vtu) for e in compiled.schedule][:4] == [
         ("drive", 0),
@@ -297,7 +299,7 @@ def test_resource_constrained_programs_reject_blocks(policy):
 
 
 def test_native_scheduler_rejects_resource_limits_with_blocks():
-    from cudaq_pulse.compile import PulseModuleBuilder
+    from cudaq_pulse.compiler import PulseModuleBuilder
     from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder
     from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 

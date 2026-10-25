@@ -12,9 +12,9 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.kernel._unroll import DEFAULT_UNROLL_THRESHOLD, UNROLL_THRESHOLD_ENV
-from cudaq_pulse.targets import Coupling, Qubit, Target
+from cudaq_pulse.targets import Coupling, Qubit, TargetDescription
 
-TARGET = Target(
+TARGET = TargetDescription(
     name="unroll-pair",
     qubits={
         i: Qubit(

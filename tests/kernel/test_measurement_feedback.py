@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.kernel.ir_builder import CompilationError
+from cudaq_pulse.kernel.ir_builder import CompilationError, Parameter
 
+from tests._handles import Q
 from tests._ir import python_ir
 from tests.kernel.ir_corpus import active_reset, feedback_in_loop, negated_feedback
 
@@ -20,7 +21,7 @@ _FREQ = {0: 5.0e9, 1: 5.1e9}
 
 
 def _compile(kernel, n_qubits=1, **kwargs):
-    return pulse.compile(kernel, **kwargs).lower(*[pulse.qudit_ref() for _ in range(n_qubits)])
+    return pulse.compile(kernel, **kwargs).lower(*[Q[i] for i in range(n_qubits)])
 
 
 def _makespan(compiled):
@@ -28,7 +29,7 @@ def _makespan(compiled):
 
 
 def test_active_reset_retains_the_conditional():
-    ir = python_ir(active_reset, pulse.qudit_ref())
+    ir = python_ir(active_reset, Q[0])
     kinds = [op.kind for op in ir.ops]
     start = kinds.index("scf.if")
     assert kinds[start:] == [
@@ -49,7 +50,7 @@ def test_active_reset_retains_the_conditional():
 
 
 def test_negation_swaps_the_arms():
-    ir = python_ir(negated_feedback, pulse.qudit_ref(), pulse.qudit_ref())
+    ir = python_ir(negated_feedback, Q[0], Q[1])
     kinds = [op.kind for op in ir.ops]
     then_arm = kinds[kinds.index("scf.if") + 1 : kinds.index("scf.else")]
     else_arm = kinds[kinds.index("scf.else") + 1 : kinds.index("scf.if_end")]
@@ -81,7 +82,7 @@ def test_conditional_waits_for_the_measurement():
 
 
 def test_feedback_inside_a_retained_loop():
-    ir = python_ir(feedback_in_loop, pulse.qudit_ref())
+    ir = python_ir(feedback_in_loop, Q[0])
     kinds = [op.kind for op in ir.ops]
     assert kinds.count("scf.for") == 1 and kinds.count("scf.if") == 1
     compiled = _compile(feedback_in_loop, schedule="asap")
@@ -104,7 +105,7 @@ def test_python_state_cannot_depend_on_a_measurement():
         wait(d0, 10 * n)
 
     with pytest.raises(CompilationError, match="'n' would depend on a measurement result"):
-        k(pulse.qudit_ref())
+        k(Q[0])
 
 
 def test_one_armed_return_is_rejected():
@@ -120,7 +121,7 @@ def test_one_armed_return_is_rejected():
             wait(d0, 10)
 
     with pytest.raises(CompilationError, match="must continue after it"):
-        k(pulse.qudit_ref())
+        k(Q[0])
 
 
 def test_break_out_of_an_arm_is_rejected():
@@ -136,7 +137,7 @@ def test_break_out_of_an_arm_is_rejected():
             wait(d0, 10 + i)
 
     with pytest.raises(CompilationError, match="must continue after it"):
-        k(pulse.qudit_ref())
+        k(Q[0])
 
 
 @pytest.mark.parametrize("condition", ["amp == 0.5", "amp != 0.5", "amp < 1", "0 <= amp"])
@@ -151,7 +152,7 @@ def test_symbolic_comparison_raises(condition):
     exec(compile(source, "<symbolic>", "exec"), namespace)
     kernel = pulse.kernel(namespace["k"])
     with pytest.raises(CompilationError, match="cannot decide"):
-        kernel(pulse.qudit_ref(), pulse.Parameter("amp", 0, "f64"))
+        kernel(Q[0], Parameter("amp", 0, "f64"))
 
 
 def test_comparing_a_measurement_raises():
@@ -164,7 +165,7 @@ def test_comparing_a_measurement_raises():
             wait(r0, 10)
 
     with pytest.raises(CompilationError, match="branch on a measurement result directly"):
-        k(pulse.qudit_ref())
+        k(Q[0])
 
 
 def test_only_measurements_can_be_conditions():
@@ -176,4 +177,4 @@ def test_only_measurements_can_be_conditions():
             wait(d0, 10)
 
     with pytest.raises(CompilationError, match="only measurement results"):
-        k(pulse.qudit_ref())
+        k(Q[0])

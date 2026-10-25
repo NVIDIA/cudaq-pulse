@@ -19,12 +19,11 @@ import cudaq_pulse as pulse
 
 
 @pulse.kernel
-def t1_experiment(wait_time):
+def t1_experiment(qubit, wait_time):
     """T1 measurement: X pulse -> wait -> readout.
 
     The wait duration is parameterized to sweep T1 decay.
     """
-    qubit = pulse.qudit_ref()
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
 
@@ -38,9 +37,8 @@ def t1_experiment(wait_time):
 
 
 @pulse.kernel
-def t2_ramsey(tau):
+def t2_ramsey(qubit, tau):
     """T2* (Ramsey) measurement: pi/2 -> tau -> pi/2 -> readout."""
-    qubit = pulse.qudit_ref()
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
 
@@ -55,9 +53,8 @@ def t2_ramsey(tau):
 
 
 @pulse.kernel
-def t2_echo(tau):
+def t2_echo(qubit, tau):
     """T2 (Hahn echo) measurement: pi/2 -> tau/2 -> pi -> tau/2 -> pi/2 -> readout."""
-    qubit = pulse.qudit_ref()
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
 
@@ -79,15 +76,15 @@ if __name__ == "__main__":
     dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     print("=== T1 experiment (sweep wait times) ===")
     for tau in [100, 500, 1000, 5000, 10000]:
-        compiled_kernel = pulse.compile(t1_experiment, device=dev).lower(tau)
+        compiled_kernel = pulse.compile(t1_experiment, device=dev).lower(dev.qudit_handles[0], tau)
         print(f"  tau={tau:6d} VTU: compiled in {compiled_kernel.metrics.total_ms:.3f} ms")
 
     print("\n=== T2* Ramsey (tau=500) ===")
-    compiled_kernel = pulse.compile(t2_ramsey, device=dev).lower(500)
+    compiled_kernel = pulse.compile(t2_ramsey, device=dev).lower(dev.qudit_handles[0], 500)
     print(compiled_kernel.mlir())
 
     print("\n=== T2 Echo (tau=1000) ===")
-    compiled_kernel = pulse.compile(t2_echo, device=dev).lower(1000)
+    compiled_kernel = pulse.compile(t2_echo, device=dev).lower(dev.qudit_handles[0], 1000)
     print(compiled_kernel.mlir())
 
     # pulse.simulate(...) adds the device's T1/T2 Lindblad

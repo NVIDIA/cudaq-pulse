@@ -22,15 +22,12 @@ import cudaq_pulse as pulse
 
 
 @pulse.kernel
-def ghz_3():
+def ghz_3(qubit_0, qubit_1, qubit_2):
     """3-qubit GHZ state: H(qubit_0) - CNOT(0,1) - CNOT(1,2).
 
     Each CNOT is an echoed cross-resonance gate:
       SX(target) - CR(ctrl->tgt) - X(ctrl) - CR_neg(ctrl->tgt) - SX(target)
     """
-    qubit_0 = pulse.qudit_ref()
-    qubit_1 = pulse.qudit_ref()
-    qubit_2 = pulse.qudit_ref()
 
     drive_line_0, tone_0 = get_drive_line(qubit_0)
     drive_line_1, tone_1 = get_drive_line(qubit_1)
@@ -66,15 +63,13 @@ def ghz_3():
 
 
 @pulse.kernel
-def ghz_n(qubit_count):
+def ghz_n(qubit_0, qubit_1, qubit_count):
     """N-qubit GHZ state using a loop of CNOT gates.
 
     The outer structure: H on qubit_0, then CNOT chain.
     The for-loop demonstrates loop capture for repeated gate patterns.
     Qubit allocation is inside the kernel.
     """
-    qubit_0 = pulse.qudit_ref()
-    qubit_1 = pulse.qudit_ref()
 
     drive_line_0, tone_0 = get_drive_line(qubit_0)
     drive_line_1, tone_1 = get_drive_line(qubit_1)
@@ -103,11 +98,15 @@ def ghz_n(qubit_count):
 if __name__ == "__main__":
     dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     print("=== 3-qubit GHZ (explicit) ===")
-    compiled_kernel = pulse.compile(ghz_3, device=dev).lower()
+    compiled_kernel = pulse.compile(ghz_3, device=dev).lower(
+        dev.qudit_handles[0], dev.qudit_handles[1], dev.qudit_handles[2]
+    )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== N-qubit GHZ (loop-based, N=5) ===")
-    compiled_kernel = pulse.compile(ghz_n, device=dev).lower(5)
+    compiled_kernel = pulse.compile(ghz_n, device=dev).lower(
+        dev.qudit_handles[0], dev.qudit_handles[1], 5
+    )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

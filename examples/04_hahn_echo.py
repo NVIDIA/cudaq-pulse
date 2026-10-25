@@ -20,9 +20,8 @@ import numpy as np
 
 
 @pulse.kernel
-def hahn_echo(sigma, amp_half_pi, amp_pi, tau):
+def hahn_echo(qubit, sigma, amp_half_pi, amp_pi, tau):
     """Hahn echo: pi/2_X - tau - pi_X - tau - pi/2_X."""
-    qubit = pulse.qudit_ref()
     drive_line, tone = get_drive_line(qubit)
 
     dur_half_pi = int(4 * sigma)
@@ -48,9 +47,8 @@ def hahn_echo(sigma, amp_half_pi, amp_pi, tau):
 
 
 @pulse.kernel
-def cpmg_echo(sigma, amp_half_pi, amp_pi, tau, n_refocus):
+def cpmg_echo(qubit, sigma, amp_half_pi, amp_pi, tau, n_refocus):
     """CPMG dynamical decoupling: pi/2_X - [tau - pi_Y - tau]^n - pi/2_X."""
-    qubit = pulse.qudit_ref()
     drive_line, tone = get_drive_line(qubit)
 
     dur_half_pi = int(4 * sigma)
@@ -81,7 +79,9 @@ def main():
     tau = 500  # VTU
 
     print("=== Hahn Echo ===")
-    compiled_kernel = pulse.compile(hahn_echo, device=dev).lower(sigma, amp_half_pi, amp_pi, tau)
+    compiled_kernel = pulse.compile(hahn_echo, device=dev).lower(
+        dev.qudit_handles[0], sigma, amp_half_pi, amp_pi, tau
+    )
     total_hahn = 2 * int(4 * sigma) + int(4 * sigma) + 2 * tau
     print(f"  Expected duration: {total_hahn} VTU")
     print(compiled_kernel.mlir())
@@ -90,7 +90,7 @@ def main():
     print("\n=== CPMG-4 Echo ===")
     n_refocus = 4
     compiled_kernel = pulse.compile(cpmg_echo, device=dev).lower(
-        sigma, amp_half_pi, amp_pi, tau, n_refocus
+        dev.qudit_handles[0], sigma, amp_half_pi, amp_pi, tau, n_refocus
     )
     total_cpmg = 2 * int(4 * sigma) + n_refocus * (int(4 * sigma) + 2 * tau)
     print(f"  Expected duration: {total_cpmg} VTU")

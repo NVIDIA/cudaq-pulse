@@ -35,12 +35,10 @@ from dataclasses import replace
 from typing import Any, NamedTuple
 
 from .._device import Device, DeviceMismatchError, NoDeviceError, Qudit, Register
-from ..compile import CompileOptions, Lowered, build
-from ..targets._registry import NoTargetError, current_target
+from ..compiler import CompileOptions, Lowered, build
 from ._guard import Guard, build_guard
 from ._schedule_blocks import root_schedule, validate_kernel_schedule
 from ._unroll import resolve_unroll_threshold
-from .decorator import QuditRef, QvecRef
 from .ir_builder import CompilationError, IRValue, Parameter, SymbolicValueError, is_symbolic
 
 CACHE_SIZE_ENV = "CUDAQ_PULSE_CACHE_SIZE"
@@ -111,10 +109,6 @@ def _static_key(value: Any) -> Any:
         return (Qudit, value.carrier, value.index)
     if t is Register:
         return (Register, tuple((q.carrier, q.index) for q in value))
-    if t is QuditRef:
-        return (QuditRef, value.index)
-    if t is QvecRef:
-        return (QvecRef, len(value))
     if t in (int, bool, float, str, complex, type(None)):
         return (t, value)
     if t in (tuple, list):
@@ -292,10 +286,11 @@ class _Dispatcher:
             return pin
         if found is not None:
             return found
-        try:
-            return current_target(name)
-        except NoTargetError as e:
-            raise NoDeviceError(str(e)) from None
+        raise NoDeviceError(
+            f"{name}() was called without qudit handles, so it has no device: pass "
+            "handles of a device (dev.qudit_handles[i]), or compile it for one with "
+            "cudaq_pulse.compile(k, device=dev)"
+        )
 
     def lookup(self, values: tuple[Any, ...]) -> _Entry:
         kernel = self.kernel

@@ -69,14 +69,13 @@ from .ir_builder import (
     is_symbolic,
 )
 
-_ALLOC_OPS = {"qudit_ref": "pulse.qudit_alloc", "qvec_ref": "pulse.qvec_alloc"}
 _WAVEFORMS = frozenset(
     {"gaussian", "square", "drag", "cosine", "tanh_ramp", "gaussian_square", "custom"}
 )
 _WAVEFORM_ARITHMETIC = frozenset({"wf_add", "wf_sub", "wf_mul", "wf_scale", "wf_neg"})
 _MAKES_WAVEFORM = _WAVEFORMS | _WAVEFORM_ARITHMETIC | {"custom_samples"}
-_PULSE_OP_NAMES = frozenset(OP_TABLE.keys()) | frozenset(_ALLOC_OPS.keys())
-_OP_NAMES = {name: _ALLOC_OPS.get(name, f"pulse.{name}") for name in OP_TABLE}
+_PULSE_OP_NAMES = frozenset(OP_TABLE.keys())
+_OP_NAMES = {name: f"pulse.{name}" for name in OP_TABLE}
 
 # Loops over Python iterables are unrolled; this bounds a runaway iterator.
 MAX_UNROLLED_ITERATIONS = 1_000_000
@@ -85,9 +84,10 @@ MAX_INLINE_DEPTH = 64
 # Methods of these containers change them unless listed in _READ_METHODS.
 _CONTAINERS = frozenset({list, dict, set})
 _READ_METHODS = frozenset({"copy", "count", "index", "get", "keys", "values", "items"})
-# A rolled body that acquires a line or a qudit would acquire one for all
-# iterations instead of one per iteration, so it is unrolled.
-_ACQUIRES = frozenset({"get_drive_line", "get_readout_line", "qudit_ref", "qvec_ref"})
+# A rolled body that acquires a line would acquire one for all iterations
+# instead of one per iteration, so the acquisition is hoisted or the loop
+# unrolled.
+_ACQUIRES = frozenset({"get_drive_line", "get_readout_line"})
 _PACKED_BRANCH_MESSAGE = "measurement-conditioned branches need an IR builder that supports regions"
 _REJOIN_MESSAGE = (
     "both branches of a measurement-conditioned if must continue after it; "
@@ -141,10 +141,9 @@ _PULSE_FUNCTIONS: dict[Any, str] = {}
 def _load_pulse_functions() -> None:
     """Map each DSL function object, by identity, to its op name."""
     from .. import ops
-    from . import decorator
 
     for name in _PULSE_OP_NAMES:
-        op = getattr(ops, name, None) or getattr(decorator, name, None)
+        op = getattr(ops, name, None)
         if op is not None:
             _PULSE_FUNCTIONS[op] = name
 
@@ -437,7 +436,7 @@ class PulseIREmitter:
         self._mutated = None
         # Number of enclosing inlined kernel and helper calls.
         self._depth = 0
-        # Lines and qudits acquired so far, counted across inlined calls.
+        # Lines acquired so far, counted across inlined calls.
         self._acquired = [0]
         self._lines = _Lines()
         if not _PULSE_FUNCTIONS:
@@ -1217,7 +1216,7 @@ class PulseIREmitter:
                     if op_fn is None:
                         raise CompilationError(f"unknown pulse op: {name}")
                     call_args = _bind_positional(op_fn, call_args, kwargs)
-                if name in OP_TABLE or name in _ALLOC_OPS:
+                if name in OP_TABLE:
                     self._push_pulse_results(name, call_args)
                 elif name == "range":
                     self._push_range(call_args)
@@ -1235,11 +1234,7 @@ class PulseIREmitter:
         if op_name is not None:
             if kwargs:
                 call_args = _bind_positional(callable_val, call_args, kwargs)
-            # Qudit/qvec allocation (check before OP_TABLE so qvec_ref gets expanded)
-            if op_name in _ALLOC_OPS:
-                self._push_alloc_results(op_name, call_args)
-            else:
-                self._push_pulse_results(op_name, call_args)
+            self._push_pulse_results(op_name, call_args)
             return
 
         inner = getattr(callable_val, "__pulse_kernel_fn__", None)
@@ -1387,31 +1382,6 @@ class PulseIREmitter:
         elif fname in {"drive", "wait", "sync"}:
             self.stack.append(None)
         elif len(results) == 1:
-            self.stack.append(results[0])
-        elif len(results) > 1:
-            self.stack.append(results)
-        else:
-            self.stack.append(None)
-
-    def _push_alloc_results(
-        self,
-        fname: str,
-        call_args: list[StackVal],
-    ) -> None:
-        """Handle qudit_ref() and qvec_ref(n) allocation inside kernels."""
-        if fname == "qvec_ref":
-            if len(call_args) == 1 and isinstance(call_args[0], int):
-                n = call_args[0]
-                self._acquired[0] += 1
-                ir_vals = []
-                for i in range(n):
-                    (v,) = self.b.emit("pulse.qudit_alloc", (), ("qref",), {"index": i})
-                    ir_vals.append(v)
-                self.stack.append(ir_vals)
-                return
-        # qudit_ref() or fallback qvec_ref
-        results = self._emit_pulse_call(fname, call_args)
-        if len(results) == 1:
             self.stack.append(results[0])
         elif len(results) > 1:
             self.stack.append(results)

@@ -19,8 +19,9 @@ import math
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.targets import Qubit, Target
+from cudaq_pulse.targets import Qubit, TargetDescription
 
+from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
 
 gpu = pytest.mark.gpu
@@ -38,12 +39,12 @@ def _unitary_qubit(index, frequency_hz):
 
 
 def _single_qubit_target():
-    return Target(name="algo-1q", qubits={0: _unitary_qubit(0, 5.0e9)})
+    return TargetDescription(name="algo-1q", qubits={0: _unitary_qubit(0, 5.0e9)})
 
 
 def _evolve_1q(kernel):
     return evolve(
-        on(_single_qubit_target(), kernel, pulse.qudit_ref()),
+        on(_single_qubit_target(), kernel, Q[0]),
         t_start=0.0,
         t_end=40.0,
         num_steps=400,
@@ -66,7 +67,7 @@ def test_bell_schedule_mlir_structure():
         sync(d0, d1)
 
     mlir = pulse_mlir(
-        (bell, pulse.qudit_ref(), pulse.qudit_ref()),
+        (bell, Q[0], Q[1]),
         clock_ghz=2.0,
         qubit_freq_hz={0: 5.0e9, 1: 5.1e9},
     )
@@ -89,7 +90,7 @@ def test_ghz_schedule_mlir_structure():
         sync(d0, d1, d2)
 
     mlir = pulse_mlir(
-        (ghz, pulse.qudit_ref(), pulse.qudit_ref(), pulse.qudit_ref()),
+        (ghz, Q[0], Q[1], Q[2]),
         clock_ghz=2.0,
         qubit_freq_hz={0: 5.0e9, 1: 5.1e9, 2: 5.2e9},
     )

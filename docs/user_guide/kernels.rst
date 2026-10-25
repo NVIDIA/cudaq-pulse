@@ -81,10 +81,14 @@ described in :doc:`compilation`.
 
 .. :spellcheck-enable:
 
-``pulse.qudit_ref()`` and ``pulse.qvec_ref(n)`` are qudit references not
-tied to a device: positional (``qudit_ref()``) or at a physical index
-(``qudit_ref(4)``). A call with them runs on the process target, and a
-kernel may allocate them in its body.
+Qudits always come from a device: a kernel takes them as parameters, and a
+call passes the device's handles (``dev.qudit_handles[i]``, or a register
+``dev.qudit_handles[0:4]``). A call without handles raises
+``NoDeviceError``, unless the kernel was compiled for a device with
+``pulse.compile(k, device=dev)``.
+
+The kernel language (``get_drive_line``, ``drive``, ``gaussian``, ...) lives
+in ``cudaq_pulse.ops``; inside a kernel its names are used bare, as above.
 
 .. :spellcheck-enable:
 

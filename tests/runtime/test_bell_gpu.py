@@ -12,8 +12,9 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Coupling, Qubit, Target
+from cudaq_pulse.targets import Coupling, Qubit, TargetDescription
 
+from tests._handles import Q
 from tests.runtime._lowering import evolve, on, pulse_mlir
 
 gpu = pytest.mark.gpu
@@ -37,7 +38,7 @@ def test_bell_mlir_structure():
         # pi/2 X on q1
         drive(d1, x90, t1)
 
-    ir = (bell_cr, pulse.qudit_ref(), pulse.qudit_ref())
+    ir = (bell_cr, Q[0], Q[1])
     mlir = pulse_mlir(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9, 1: 5.1e9})
 
     assert mlir.count("pulse.qudit_alloc") == 2
@@ -61,7 +62,7 @@ def test_bell_gpu_execution():
         )
         for index in range(2)
     }
-    target = Target(
+    target = TargetDescription(
         name="xx-bell-test",
         qubits=qubits,
         couplings=[Coupling(0, 1, coupling_strength_hz=5.0e6)],
@@ -75,7 +76,7 @@ def test_bell_gpu_execution():
         wait(d1, 50)
         sync(d0, d1)
 
-    ir = (bell_xx, pulse.qudit_ref(), pulse.qudit_ref())
+    ir = (bell_xx, Q[0], Q[1])
     # Qudit 0 is the least significant digit: index 1 is q0 excited.
     result = evolve(
         on(target, *ir),

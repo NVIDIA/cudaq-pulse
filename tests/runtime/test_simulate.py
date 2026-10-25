@@ -18,8 +18,9 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Qubit, Target
+from cudaq_pulse.targets import Qubit, TargetDescription
 
+from tests._handles import Q
 from tests.runtime._lowering import on
 
 # 40 virtual units at 2 GHz is 20 ns; with H = amp X / 2 these amplitudes
@@ -29,7 +30,7 @@ _HALF_PI = math.pi / 40.0
 
 
 def _target(n=1, t1_us=0.0):
-    return Target(
+    return TargetDescription(
         name="simulate-test",
         qubits={
             q: Qubit(
@@ -78,7 +79,7 @@ def measure(q0):
 
 
 def _run(kernel, n=1, target=None, **kwargs):
-    lowered = on(target or _target(n), kernel, *[pulse.qudit_ref() for _ in range(n)])
+    lowered = on(target or _target(n), kernel, *[Q[i] for i in range(n)])
     return pulse.simulate(lowered, **kwargs)
 
 
@@ -153,7 +154,7 @@ def repeated_reset(q0):
 
 
 def test_resets_in_a_retained_loop():
-    assert "scf.for" in repeated_reset.lower(pulse.qudit_ref()).mlir()
+    assert "scf.for" in repeated_reset.lower(Q[0]).mlir()
     result = _run(repeated_reset, shots=500, seed=5)
     np.testing.assert_allclose(result.density_matrix, np.diag([1.0, 0.0]), atol=1e-7)
     # Three measurements, one per iteration; after the first reset every
@@ -181,7 +182,7 @@ def test_a_retained_loop_simulates_like_its_unrolling():
 
     a = _run(rolled).density_matrix
     b = _run(unrolled).density_matrix
-    assert "scf.for" in rolled.lower(pulse.qudit_ref()).mlir()
+    assert "scf.for" in rolled.lower(Q[0]).mlir()
     np.testing.assert_allclose(a, b, atol=1e-10)
 
 

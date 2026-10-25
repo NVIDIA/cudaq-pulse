@@ -37,12 +37,11 @@ CLIFFORD_DECOMPOSITIONS = [
 
 
 @pulse.kernel
-def clifford_sequence(sequence_length, seed):
+def clifford_sequence(qubit, sequence_length, seed):
     """Apply a sequence of single-qubit Cliffords + inversion + readout.
 
     The specific Cliffords are determined by `seed` at compile time.
     """
-    qubit = pulse.qudit_ref()
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
 
@@ -67,13 +66,12 @@ def clifford_sequence(sequence_length, seed):
 
 
 @pulse.kernel
-def rb_depth_sweep():
+def rb_depth_sweep(qubit):
     """Compile RB sequences at multiple depths in a single kernel.
 
     The outer loop over depths is unrolled at compile time; the inner
     Clifford loops use for-loop capture.
     """
-    qubit = pulse.qudit_ref()
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
 
@@ -92,16 +90,20 @@ def rb_depth_sweep():
 if __name__ == "__main__":
     dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
     print("=== RB Clifford sequence (depth=10) ===")
-    compiled_kernel = pulse.compile(clifford_sequence, device=dev).lower(10, 42)
+    compiled_kernel = pulse.compile(clifford_sequence, device=dev).lower(
+        dev.qudit_handles[0], 10, 42
+    )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== Depth sweep ===")
     for depth in [1, 5, 10, 20]:
-        compiled_kernel = pulse.compile(clifford_sequence, device=dev).lower(depth, 0)
+        compiled_kernel = pulse.compile(clifford_sequence, device=dev).lower(
+            dev.qudit_handles[0], depth, 0
+        )
         print(f"  depth={depth:3d}: compiled in {compiled_kernel.metrics.total_ms:.3f} ms")
 
     print("\n=== RB depth sweep (depths 0-4 in one kernel) ===")
-    compiled_kernel = pulse.compile(rb_depth_sweep, device=dev).lower()
+    compiled_kernel = pulse.compile(rb_depth_sweep, device=dev).lower(dev.qudit_handles[0])
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

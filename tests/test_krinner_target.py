@@ -16,10 +16,11 @@ import statistics
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Coupling, Qubit, Target, transmon_krinner_17q
+from cudaq_pulse.targets import Coupling, Qubit, TargetDescription, transmon_krinner_17q
 from cudaq_pulse.targets import _krinner17 as _k
 from cudaq_pulse.targets.transmon import krinner_idle_zz_hz
 
+from tests._handles import Q
 from tests.runtime._lowering import on
 
 # Tab. II: the data qubits of each stabilizer.
@@ -141,7 +142,7 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
         for k, q in enumerate((target.qubits[a], target.qubits[d]))
     }
     (g_hz,) = (c.coupling_strength_hz for c in target.couplings if (c.qubit_a, c.qubit_b) == (a, d))
-    pair_target = Target(
+    pair_target = TargetDescription(
         name="krinner-pair", qubits=qubits, couplings=[Coupling(0, 1, coupling_strength_hz=g_hz)]
     )
 
@@ -150,7 +151,7 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
         d0, t0 = get_drive_line(q0)
         drive(d0, square(2, 0.0), t0)
 
-    lowered = on(pair_target, idle, pulse.qudit_ref(), pulse.qudit_ref())
+    lowered = on(pair_target, idle, Q[0], Q[1])
     t_ns, levels = 1500.0, 3
     phases = []
     for k in (0, 1):
@@ -192,7 +193,7 @@ def test_the_time_step_resolves_the_fastest_coupled_detuning():
     x1, d2 = _k.QUBITS[_k.INDEX["X1"]], _k.QUBITS[_k.INDEX["D2"]]
     detuning = x1.idle_frequency_hz - d2.idle_frequency_hz
     assert detuning > 2.0e9
-    pair = Target(
+    pair = TargetDescription(
         name="x1-d2",
         qubits={
             i: Qubit(i, q.idle_frequency_hz, q.anharmonicity_hz, 0.0, 0.0)

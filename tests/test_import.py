@@ -16,6 +16,8 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 
+from tests._handles import Q
+
 _ROOT = str(Path(pulse.__file__).parent.parent)
 
 
@@ -73,6 +75,6 @@ def test_numpy_scalars_and_arrays_are_accepted_without_numpy_in_the_tracer():
         drive(d, gaussian(np.int32(40), np.float32(0.25), 10.0), t)
         drive(d, custom_samples(np.linspace(0.0, 0.1, 8)), t)
 
-    text = pulse.compile(k, passes=()).lower(pulse.qudit_ref()).mlir()
+    text = pulse.compile(k, passes=()).lower(Q[0]).mlir()
     assert text.count("= pulse.drive ") == 5
     assert "2.000000e-01" in text

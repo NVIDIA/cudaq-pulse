@@ -21,13 +21,12 @@ import cudaq_pulse as pulse
 
 
 @pulse.kernel
-def xy4(sigma, amplitude_pi, tau, n_cycles):
+def xy4(qubit, sigma, amplitude_pi, tau, n_cycles):
     """XY4 dynamical decoupling: [X - tau - Y - tau - X - tau - Y - tau]^n.
 
     Suppresses both dephasing and amplitude noise by alternating X and Y
     refocusing axes.
     """
-    qubit = pulse.qudit_ref()
     drive_line, tone = get_drive_line(qubit)
 
     dur_pi = int(4 * sigma)
@@ -56,7 +55,7 @@ def xy4(sigma, amplitude_pi, tau, n_cycles):
 
 
 @pulse.kernel
-def uhrig_dd(sigma, amplitude_pi, total_time, n_pulses):
+def uhrig_dd(qubit, sigma, amplitude_pi, total_time, n_pulses):
     """Uhrig dynamical decoupling (UDD).
 
     Places n refocusing pulses at non-uniform intervals:
@@ -65,7 +64,6 @@ def uhrig_dd(sigma, amplitude_pi, total_time, n_pulses):
     Optimal for pure dephasing from a soft-cutoff noise spectrum.
     The intervals are computed at compile time from n_pulses.
     """
-    qubit = pulse.qudit_ref()
     drive_line, tone = get_drive_line(qubit)
 
     dur_pi = int(4 * sigma)
@@ -87,12 +85,11 @@ def uhrig_dd(sigma, amplitude_pi, total_time, n_pulses):
 
 
 @pulse.kernel
-def cpmg(sigma, amplitude_half_pi, amplitude_pi, tau, n_refocus):
+def cpmg(qubit, sigma, amplitude_half_pi, amplitude_pi, tau, n_refocus):
     """Carr-Purcell-Meiboom-Gill: pi/2_X - [tau - pi_Y - tau]^n - pi/2_X.
 
     The standard multi-pulse echo for dephasing suppression.
     """
-    qubit = pulse.qudit_ref()
     drive_line, tone = get_drive_line(qubit)
 
     dur = int(4 * sigma)
@@ -112,14 +109,13 @@ def cpmg(sigma, amplitude_half_pi, amplitude_pi, tau, n_refocus):
 
 
 @pulse.kernel
-def knill_dd(sigma, amplitude_pi, tau):
+def knill_dd(qubit, sigma, amplitude_pi, tau):
     """Knill dynamical decoupling (KDD): a composite-pulse sequence.
 
     Uses 5 pi-pulses with carefully chosen phases to suppress both
     systematic over/under-rotation and dephasing.
     Phases: [pi/6, 0, pi/2, 0, pi/6]
     """
-    qubit = pulse.qudit_ref()
     drive_line, tone = get_drive_line(qubit)
 
     dur_pi = int(4 * sigma)
@@ -142,21 +138,27 @@ if __name__ == "__main__":
     tau = 200
 
     print("=== XY4 (4 cycles) ===")
-    compiled_kernel = pulse.compile(xy4, device=dev).lower(sigma, amplitude_pi, tau, 4)
+    compiled_kernel = pulse.compile(xy4, device=dev).lower(
+        dev.qudit_handles[0], sigma, amplitude_pi, tau, 4
+    )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
     print("\n=== Uhrig DD (8 pulses, T=5000 VTU) ===")
-    compiled_kernel = pulse.compile(uhrig_dd, device=dev).lower(sigma, amplitude_pi, 5000, 8)
+    compiled_kernel = pulse.compile(uhrig_dd, device=dev).lower(
+        dev.qudit_handles[0], sigma, amplitude_pi, 5000, 8
+    )
     print(compiled_kernel.mlir())
 
     print("\n=== CPMG (8 refocusing pulses) ===")
     compiled_kernel = pulse.compile(cpmg, device=dev).lower(
-        sigma, amplitude_half_pi, amplitude_pi, tau, 8
+        dev.qudit_handles[0], sigma, amplitude_half_pi, amplitude_pi, tau, 8
     )
     print(compiled_kernel.mlir())
 
     print("\n=== KDD (Knill DD) ===")
-    compiled_kernel = pulse.compile(knill_dd, device=dev).lower(sigma, amplitude_pi, tau)
+    compiled_kernel = pulse.compile(knill_dd, device=dev).lower(
+        dev.qudit_handles[0], sigma, amplitude_pi, tau
+    )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

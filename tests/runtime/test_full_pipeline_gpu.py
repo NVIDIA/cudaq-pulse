@@ -13,6 +13,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 
+from tests._handles import Q
 from tests.runtime._lowering import pulse_mlir
 
 gpu = pytest.mark.gpu
@@ -30,7 +31,7 @@ def test_full_pipeline_mlir():
         sync(d0, d1)
         drive(d1, wf, t1)
 
-    ir = (my_kernel, pulse.qudit_ref(), pulse.qudit_ref())
+    ir = (my_kernel, Q[0], Q[1])
     mlir = pulse_mlir(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9, 1: 5.1e9})
 
     assert "module @" in mlir
@@ -50,7 +51,7 @@ def test_full_pipeline_gpu():
         wf = square(40, math.pi / 20.0)
         drive(d0, wf, t0)
 
-    compiled = my_kernel.lower(pulse.qudit_ref())
+    compiled = my_kernel.lower(Q[0])
     results = compiled.run()
     state = results[0].to_numpy()
     assert state.shape == (2,)

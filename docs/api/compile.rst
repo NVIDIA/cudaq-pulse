@@ -16,14 +16,14 @@ Compilation API
 .. autoclass:: cudaq_pulse.Lowered
    :members:
 
-.. autoclass:: cudaq_pulse.MachineModel
+.. autoclass:: cudaq_pulse.compiler.MachineModel
    :members:
    :undoc-members:
 
-.. autoclass:: cudaq_pulse.ScheduledEvent
+.. autoclass:: cudaq_pulse.compiler.ScheduledEvent
    :members:
    :undoc-members:
 
-.. autoclass:: cudaq_pulse.CompileMetrics
+.. autoclass:: cudaq_pulse.compiler.CompileMetrics
    :members:
    :undoc-members:

@@ -10,7 +10,7 @@
 Ported from ``qpu/physics/test_8qubit_system.cpp``. The engine-specific
 calibration/dispersive-readout machinery (``SystemCalibration``,
 ``TransmonConfig::create_ladder_8q``, MLIR calibration files) is dropped;
-what survives is the ladder connectivity as a ``Target`` and a scalable
+what survives is the ladder connectivity as a ``TargetDescription`` and a scalable
 256-dimensional GPU evolution.
 
     q0 -- q1 -- q2 -- q3
@@ -23,8 +23,9 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Coupling, Qubit, Target
+from cudaq_pulse.targets import Coupling, Qubit, TargetDescription
 
+from tests._handles import Q
 from tests.runtime._lowering import evolve, on
 
 _HORIZONTAL = [(0, 1), (1, 2), (2, 3), (4, 5), (5, 6), (6, 7)]
@@ -48,7 +49,7 @@ def _ladder_8q_target(coupling_hz=1.0e6):
         for i in range(8)
     }
     couplings = [Coupling(a, b, coupling_strength_hz=coupling_hz) for a, b in _LADDER_EDGES]
-    return Target(name="ladder-8q", qubits=qubits, couplings=couplings)
+    return TargetDescription(name="ladder-8q", qubits=qubits, couplings=couplings)
 
 
 def test_ladder_topology_structure():
@@ -92,7 +93,7 @@ def test_8qubit_single_qubit_excitation():
         d0, t0 = get_drive_line(q0)
         drive(d0, square(40, math.pi / 20.0), t0)
 
-    refs = [pulse.qudit_ref() for _ in range(8)]
+    refs = [Q[i] for i in range(8)]
     result = evolve(
         on(target, excite_q0, *refs), t_start=0.0, t_end=20.0, num_steps=200, integrator="rk4"
     )

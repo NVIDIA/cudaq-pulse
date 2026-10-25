@@ -16,7 +16,7 @@ Checks in Python
 ----------------
 
 The module of a kernel call exposes its schedule as a list of
-:class:`~cudaq_pulse.ScheduledEvent` records (kind, line, qubit, start and
+:class:`~cudaq_pulse.compiler.ScheduledEvent` records (kind, line, qubit, start and
 duration), so a pass that inspects the schedule is a plain Python function:
 
 .. :spellcheck-disable:

@@ -9,8 +9,9 @@
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets.base import Qubit, Target
+from cudaq_pulse.targets.base import Qubit, TargetDescription
 
+from tests._handles import Q
 from tests.runtime._lowering import evolve, on
 
 
@@ -24,8 +25,8 @@ def _jit_test_kernel(q0):
 @pytest.mark.gpu
 def test_jit_executes_target_aware_program():
     """The direct JIT path executes scheduled, target-aware pulse MLIR."""
-    ir = (_jit_test_kernel, pulse.qudit_ref())
-    target = Target(
+    ir = (_jit_test_kernel, Q[0])
+    target = TargetDescription(
         name="jit-test",
         qubits={
             0: Qubit(
@@ -47,7 +48,7 @@ def test_jit_import():
 
 
 def _qubit_target(t1_us=50.0, t2_us=30.0):
-    return Target(
+    return TargetDescription(
         name="test",
         qubits={
             0: Qubit(
@@ -62,7 +63,7 @@ def _qubit_target(t1_us=50.0, t2_us=30.0):
 
 
 def test_simulate_annotates_the_module_with_the_target():
-    lowered = on(_qubit_target(), _jit_test_kernel, pulse.qudit_ref())
+    lowered = on(_qubit_target(), _jit_test_kernel, Q[0])
     pulse.simulate(lowered, dt_ns=0.5)
     mlir = lowered.mlir()
     assert "pulse.t1_times" in mlir
@@ -72,13 +73,13 @@ def test_simulate_annotates_the_module_with_the_target():
 @pytest.mark.parametrize("integrator", ["rk1", "rk2", "rk4", "magnus", "crank_nicolson"])
 def test_simulate_emits_the_selected_integrator(integrator):
     """Every supported integrator name lowers to its dialect attribute."""
-    lowered = on(_qubit_target(), _jit_test_kernel, pulse.qudit_ref())
+    lowered = on(_qubit_target(), _jit_test_kernel, Q[0])
     pulse.simulate(lowered, dt_ns=0.5, integrator=integrator)
     assert f'qop.integrator = "{integrator}"' in lowered.mlir()
 
 
 def test_simulate_rejects_an_unknown_integrator():
-    lowered = on(_qubit_target(), _jit_test_kernel, pulse.qudit_ref())
+    lowered = on(_qubit_target(), _jit_test_kernel, Q[0])
     with pytest.raises(ValueError, match="Unknown integrator"):
         pulse.simulate(lowered, integrator="magnus_cf4")
 
@@ -86,7 +87,7 @@ def test_simulate_rejects_an_unknown_integrator():
 def test_simulate_lowers_multilevel_transmons():
     from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 
-    lowered = on(_qubit_target(0.0, 0.0), _jit_test_kernel, pulse.qudit_ref())
+    lowered = on(_qubit_target(0.0, 0.0), _jit_test_kernel, Q[0])
     result = pulse.simulate(lowered, dt_ns=0.5, levels=3)
     assert result.density_matrix.shape == (3, 3)
     mlir = lowered.mlir()
