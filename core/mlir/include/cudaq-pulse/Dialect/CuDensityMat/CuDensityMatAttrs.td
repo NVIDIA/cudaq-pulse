@@ -24,9 +24,8 @@ def CUDM_StatePurity : I32EnumAttr<"StatePurity",
 def CUDM_StatePurityAttr : EnumAttr<CuDensityMatDialect, CUDM_StatePurity, "purity">;
 
 def CUDM_ComputeType : I32EnumAttr<"ComputeType",
-    "Floating-point compute precision",
+    "Floating-point compute precision; the runtime computes in complex128 only",
     [
-      I32EnumAttrCase<"F32", 4, "f32">,
       I32EnumAttrCase<"F64", 16, "f64">
     ]> {
   let cppNamespace = "::cudm";

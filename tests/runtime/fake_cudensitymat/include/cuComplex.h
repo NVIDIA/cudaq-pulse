@@ -19,14 +19,3 @@ struct cuDoubleComplex {
 inline cuDoubleComplex make_cuDoubleComplex(double real, double imaginary) {
   return {real, imaginary};
 }
-inline double cuCreal(cuDoubleComplex value) { return value.x; }
-inline double cuCimag(cuDoubleComplex value) { return value.y; }
-
-struct cuFloatComplex {
-  float x;
-  float y;
-};
-
-inline cuFloatComplex make_cuFloatComplex(float real, float imaginary) {
-  return {real, imaginary};
-}
