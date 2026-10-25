@@ -38,14 +38,28 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "core/frontend/cudaq_pulse/targets/calibrations/krinner17.json"
 
 # Fields that only describe the working file.
-_DROP = {"generated_by", "status", "todo", "redigitized_source", "recommended", "per_pair_status"}
+_DROP = {
+    "generated_by",
+    "status",
+    "todo",
+    "redigitized_source",
+    "recommended",
+    "per_pair_status",
+    "per_pair_files",
+}
 _SCRIPT = re.compile(r"(?<![\w.])[\w./-]+\.py\b")
 _NOTES = (
     (re.compile(r"\s*\(user decision[^)]*\)"), ""),
     (re.compile(r"\bdraft\b", re.IGNORECASE), ""),
     (re.compile(r" and the digitizer script"), ""),
+    (re.compile(r"\s*\((?:two_transmon|cz_pairs|cz_snz)[\w.]*\)"), ""),
+    (re.compile(r"chosen by the user \(\d{4}-\d{2}-\d{2}\)"), "chosen at calibration"),
 )
-_FORBIDDEN = re.compile(r"\.py\b|/Users/|_scratch|user decision|\bTODO\b|\bdraft\b", re.IGNORECASE)
+_FORBIDDEN = re.compile(
+    r"\.py\b|/Users/|_scratch|user decision|\bTODO\b|\bdraft\b|two_transmon|cz_pairs|cz_snz"
+    r"|calibration/|by the user",
+    re.IGNORECASE,
+)
 
 TITLE = "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708: device calibration"
 COUPLING_METHOD = (

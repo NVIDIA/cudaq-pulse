@@ -62,6 +62,9 @@ behavior may change in any 0.x release.
   the published `|11>`-`|20>` coupling, so the Krinner target's exchange
   (4.4-5.7 MHz) and idle ZZ (-3.1 to -5.9 kHz) depend on each pair's
   frequencies; calibrated qubits convert detunings to and from flux quanta.
+  It also holds in-model sudden-net-zero CZ knobs for all 24 pairs (mean
+  duration 65.0 +- 4.8 ns against the published 68(7) ns), each with its
+  predicted phase and leakage, flags and alternatives.
 - **Simulation.** `pulse.simulate` evolves a compiled call with T1, T2 or
   Hahn-echo dephasing, thermal populations, exchange couplings, residual ZZ
   and any number of transmon levels, either with a NumPy reference
