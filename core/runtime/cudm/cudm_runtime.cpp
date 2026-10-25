@@ -593,14 +593,6 @@ CudmStatus cudm_state_destroy(CudmState state) {
   return status;
 }
 
-CudmStatus cudm_state_init_zero(CudmHandle handle, CudmState state) {
-  if (!handle)
-    return fail(CUDM_ERROR_INVALID_HANDLE, "state init received null handle");
-  if (!state)
-    return fail(CUDM_ERROR_INVALID_STATE, "state init received null state");
-  return initializeBasisZero(static_cast<StateData *>(state));
-}
-
 CudmStatus cudm_state_capture(CudmState state) {
   // Generated LLVM currently continues into cleanup after a runtime call
   // fails. Preserve the first diagnostic and, critically, do not turn an
@@ -890,14 +882,6 @@ CudmStatus cudm_operator_append(CudmHandle handle, CudmOperator op,
                    "cudensitymatOperatorAppendTerm");
 }
 
-CudmStatus cudm_evolve_step(CudmHandle handle, CudmOperator op,
-                            CudmState stateIn, CudmState stateOut,
-                            CudmWorkspace workspace, double time, double dt,
-                            int32_t integrator) {
-  return cudm_evolve(handle, op, stateIn, stateOut, workspace, time, time + dt,
-                     1, integrator);
-}
-
 CudmStatus cudm_evolve(CudmHandle handle, CudmOperator op, CudmState stateIn,
                        CudmState stateOut, CudmWorkspace workspace,
                        double timeStart, double timeEnd, int64_t numSteps,
@@ -981,12 +965,6 @@ CudmStatus cudm_evolve(CudmHandle handle, CudmOperator op, CudmState stateIn,
   for (auto *allocated : scratch)
     cudm_state_destroy(allocated);
   return status;
-}
-
-CudmStatus cudm_observe(CudmHandle, CudmOperator, CudmState, CudmWorkspace,
-                        double, double *, double *) {
-  return fail(CUDM_ERROR_INTERNAL,
-              "cudm_observe is not implemented in this research preview");
 }
 
 } // extern "C"

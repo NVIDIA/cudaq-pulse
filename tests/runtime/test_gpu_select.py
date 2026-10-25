@@ -142,3 +142,26 @@ def test_driver_older_than_every_major(monkeypatch, tmp_path):
 def test_new_enough_driver_passes(monkeypatch, tmp_path, major, version):
     monkeypatch.setattr(gpu, "_driver_version", lambda: version)
     gpu._check_driver(major, tmp_path)
+
+
+class _VersionedRuntime:
+    def __init__(self, version):
+        self.version = version
+
+    def cudm_runtime_version(self):
+        return self.version
+
+
+@pytest.mark.parametrize(
+    ("built", "loaded"), [("0.7.0", 700), ("0.7.0", 702), ("1.2.0", 10300), ("", 500)]
+)
+def test_a_cudensitymat_with_the_built_abi_is_accepted(monkeypatch, tmp_path, built, loaded):
+    monkeypatch.setattr(_build_config, "CUDENSITYMAT_VERSIONS", {12: built})
+    gpu._check_cudensitymat_version(_VersionedRuntime(loaded), tmp_path, 12)
+
+
+@pytest.mark.parametrize(("built", "loaded"), [("0.7.0", 600), ("0.7.0", 800), ("1.2.0", 20000)])
+def test_a_cudensitymat_with_another_abi_is_refused(monkeypatch, tmp_path, built, loaded):
+    monkeypatch.setattr(_build_config, "CUDENSITYMAT_VERSIONS", {12: built})
+    with pytest.raises(gpu.GpuRuntimeLoadError, match=f"built against cuDensityMat {built}"):
+        gpu._check_cudensitymat_version(_VersionedRuntime(loaded), tmp_path, 12)

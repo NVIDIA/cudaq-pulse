@@ -126,6 +126,7 @@ def require_gpu_runtime() -> GpuRuntime:
                 not_in_wheels = _preload_cuda_wheels(major)
             library = _load(path, not_in_wheels, major)
             if major is not None:
+                _check_cudensitymat_version(library, path, major)
                 _check_driver(major, path)
             _runtime = GpuRuntime(
                 library=library,
@@ -286,6 +287,8 @@ def _declare_prototypes(library: ctypes.CDLL) -> None:
     The library object is shared by every thread, so the prototypes are not
     reassigned per call.
     """
+    library.cudm_runtime_version.argtypes = []
+    library.cudm_runtime_version.restype = ctypes.c_int64
     library.cudm_set_initial_state.argtypes = [ctypes.c_void_p, ctypes.c_int64]
     library.cudm_set_initial_state.restype = ctypes.c_int
     library.cudm_last_result_size.argtypes = []
@@ -320,6 +323,29 @@ def _load(path: Path, not_in_wheels: Sequence[str], major: int | None = None) ->
             f"{path} is not a cudaq-pulse GPU runtime: {error}. Reinstall cudaq-pulse."
         ) from error
     return library
+
+
+def _abi_version(major: int, minor: int) -> tuple[int, ...]:
+    """The part of a cuDensityMat version that fixes its ABI: before 1.0 the
+    minor version, afterwards the major version alone."""
+    return (major, minor) if major == 0 else (major,)
+
+
+def _check_cudensitymat_version(library: ctypes.CDLL, path: Path, major: int) -> None:
+    """Refuse a cuDensityMat whose ABI differs from the one the runtime was built with."""
+    built = _build_config.CUDENSITYMAT_VERSIONS.get(major, "")
+    try:
+        built_major, built_minor = (int(part) for part in built.split(".")[:2])
+    except ValueError:
+        return
+    version = int(library.cudm_runtime_version())
+    loaded = (version // 10000, version // 100 % 100, version % 100)
+    if _abi_version(*loaded[:2]) != _abi_version(built_major, built_minor):
+        raise GpuRuntimeLoadError(
+            f"The cudaq-pulse CUDA {major} runtime ({path}) was built against "
+            f"cuDensityMat {built}, but cuDensityMat {'.'.join(map(str, loaded))} "
+            f"is installed, and its ABI differs. Reinstall with {_extra_hint([major])}."
+        )
 
 
 def _driver_version() -> int | None:
