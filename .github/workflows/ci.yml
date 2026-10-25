@@ -29,6 +29,7 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,22 +42,31 @@ jobs:
       - run: uv run --no-sync ruff check .
       - run: uv run --no-sync ruff format --check .
       - run: uv run --no-sync pre-commit run --all-files --show-diff-on-failure
+      # pre-commit runs zizmor offline; online, it also checks that every
+      # pinned commit belongs to its action's repository.
+      - name: zizmor (online audits)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uvx zizmor==1.31.1 --no-progress --min-severity medium .github
 
   test:
     name: test (${{ matrix.platform }}, py${{ matrix.python }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         # Every supported interpreter: the kernel frontend decodes each
         # version's bytecode, and tests/kernel/test_ir_golden.py checks they
-        # all trace to the same IR.
+        # all trace to the same IR. The other platforms run the oldest and
+        # the newest.
         include:
           - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.12" }
           - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.13" }
           - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.14" }
           - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.15" }
           - { platform: linux-aarch64, runner: ubuntu-24.04-arm, python: "3.12" }
+          - { platform: linux-aarch64, runner: ubuntu-24.04-arm, python: "3.15" }
           - { platform: macos-aarch64, runner: macos-15, python: "3.12" }
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
@@ -120,6 +130,7 @@ jobs:
   gpu:
     if: github.event_name == 'workflow_dispatch' && inputs.gpu
     runs-on: ${{ vars.GPU_RUNNER }}
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

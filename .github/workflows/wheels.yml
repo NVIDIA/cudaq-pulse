@@ -33,6 +33,7 @@ jobs:
   wheels:
     name: wheels (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -90,6 +91,7 @@ jobs:
 
   sdist:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -115,6 +117,7 @@ jobs:
     needs: wheels
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.image }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -168,6 +171,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.gpu
     needs: wheels
     runs-on: ${{ vars.GPU_RUNNER }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -193,6 +197,7 @@ jobs:
   release-meta:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.meta.outputs.version }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
@@ -224,13 +229,19 @@ jobs:
 
   # Releases are GitHub-only for now: a draft is created with the notes from
   # CHANGELOG.md, every wheel and the sdist are uploaded once, their versions
-  # are checked against the tag, and only then is the release published.
-  # Nothing is overwritten.
+  # are checked against the tag, they get signed build-provenance
+  # attestations, and only then is the release published. Nothing is
+  # overwritten. Verify a download with
+  # `gh attestation verify <file> --repo NVIDIA/cudaq-pulse`.
   github-release:
     needs: [release-meta, wheels, sdist, install-test]
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -252,6 +263,12 @@ jobs:
             [[ "$name" == "cudaq_pulse-$VERSION-"* || "$name" == "cudaq_pulse-$VERSION.tar.gz" ]] ||
               { echo "::error::$name was not built as version $VERSION"; exit 1; }
           done
+      - name: Attest the build provenance of the wheels and the sdist
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
       - name: Create a draft, upload once, publish
         env:
           GH_TOKEN: ${{ github.token }}

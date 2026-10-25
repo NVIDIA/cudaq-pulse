@@ -5,6 +5,13 @@ resolution-markers = [
     "python_full_version >= '3.15'",
     "python_full_version < '3.15'",
 ]
+conflicts = [[
+    { package = "cudaq-pulse", extra = "cu12" },
+    { package = "cudaq-pulse", extra = "cu13" },
+], [
+    { package = "cudaq-pulse", extra = "cu13" },
+    { package = "cudaq-pulse", extra = "gpu" },
+]]
 
 [[package]]
 name = "accessible-pygments"
@@ -428,7 +435,7 @@ cu12 = [
     { name = "nvidia-nvjitlink-cu12" },
 ]
 cu13 = [
-    { name = "cuda-toolkit", extra = ["cublas", "cudart", "curand", "cusolver", "cusparse", "nvjitlink"] },
+    { name = "cuda-toolkit", extra = ["cublas", "cudart", "curand", "cusolver", "cusparse", "nvjitlink"], marker = "extra == 'extra-11-cudaq-pulse-cu13'" },
     { name = "cudensitymat-cu13" },
 ]
 gpu = [
@@ -1269,7 +1276,7 @@ version = "2.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ast-serialize" },
-    { name = "librt", marker = "platform_python_implementation != 'PyPy'" },
+    { name = "librt", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-11-cudaq-pulse-cu12' and extra == 'extra-11-cudaq-pulse-cu13') or (extra == 'extra-11-cudaq-pulse-cu13' and extra == 'extra-11-cudaq-pulse-gpu')" },
     { name = "mypy-extensions" },
     { name = "pathspec" },
     { name = "typing-extensions" },
@@ -1806,7 +1813,7 @@ name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-11-cudaq-pulse-cu12' and extra == 'extra-11-cudaq-pulse-cu13') or (extra == 'extra-11-cudaq-pulse-cu13' and extra == 'extra-11-cudaq-pulse-gpu')" },
     { name = "iniconfig" },
     { name = "packaging" },
     { name = "pluggy" },
@@ -2002,7 +2009,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "alabaster" },
     { name = "babel" },
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-11-cudaq-pulse-cu12' and extra == 'extra-11-cudaq-pulse-cu13') or (extra == 'extra-11-cudaq-pulse-cu13' and extra == 'extra-11-cudaq-pulse-gpu')" },
     { name = "docutils" },
     { name = "imagesize" },
     { name = "jinja2" },

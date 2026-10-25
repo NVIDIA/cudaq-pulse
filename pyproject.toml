@@ -118,6 +118,11 @@ default-groups = ["dev"]
 # `uv sync` installs tooling only. The package itself is built by CMake
 # (contributor loop) or by `pip install .` (wheel); see CONTRIBUTING.md.
 package = false
+# The CUDA 12 and CUDA 13 extras install into the same directories.
+conflicts = [
+    [{ extra = "cu12" }, { extra = "cu13" }],
+    [{ extra = "gpu" }, { extra = "cu13" }],
+]
 
 [tool.scikit-build]
 minimum-version = "build-system.requires"

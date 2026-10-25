@@ -8,6 +8,7 @@
 """The release tag checks and the workflow pin check (source tree only)."""
 
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -91,6 +92,21 @@ def test_release_notes_reject_an_empty_section():
 def test_the_changelog_has_notes_for_the_first_release_candidate():
     changelog = (_TOOLS.parent / "CHANGELOG.md").read_text()
     assert "### Added" in _load("release-notes").release_notes("0.1.0rc1", changelog)
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    sorted((_TOOLS.parent / ".github" / "workflows").glob("*.yml")),
+    ids=lambda p: p.name,
+)
+def test_every_workflow_job_has_a_timeout(workflow):
+    jobs = workflow.read_text().split("\njobs:\n", 1)[1]
+    blocks = re.split(r"^  (?=[\w-]+:\s*$)", jobs, flags=re.M)[1:]
+    assert blocks
+    missing = [
+        b.split(":", 1)[0] for b in blocks if not re.search(r"^    timeout-minutes:", b, re.M)
+    ]
+    assert not missing, f"{workflow.name}: jobs without timeout-minutes: {missing}"
 
 
 def test_workflow_pins(tmp_path):

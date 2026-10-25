@@ -174,10 +174,14 @@ but leaves committing the printed lock file to you.
 Workflows use third-party actions pinned by full commit SHA, with the release
 in a trailing comment, and container images pinned by digest;
 `tools/check-workflow-pins.py` (a pre-commit hook) rejects tags, and
-Dependabot proposes weekly updates for actions and `uv.lock`.
+Dependabot proposes weekly updates for actions and `uv.lock`, each a week
+after its release. [zizmor](https://docs.zizmor.sh/) audits the workflows
+(a pre-commit hook, and online in CI), and every job sets
+`timeout-minutes` (`tests/test_release_tools.py` checks it).
 
 - `ci.yml`: ruff and pre-commit; build, lit, pytest, mypy, and the benchmark
-  baseline on Linux x86_64, Linux aarch64, and macOS. A manually dispatched
+  baseline on Linux x86_64 (Python 3.12 to 3.15), Linux aarch64 (3.12 and
+  3.15), and macOS (3.12). A manually dispatched
   run with `gpu` enabled also builds with GPU support on the runner named by
   the `GPU_RUNNER` repository variable.
 - `wheels.yml`: cibuildwheel for `cp312-abi3` (3.12 and newer) on
@@ -262,7 +266,9 @@ Before anything is released, the `release-meta` job checks the tag with
 `X.Y.Z{a,b,rc}N` that the setuptools-scm `tag_regex` accepts, a final
 version must be on `main`, `CHANGELOG.md` must have a dated, non-empty
 section for it, and the release must not exist yet. The release is created as a
-draft, every built file's version is checked against the tag, the assets are
+draft, every built file's version is checked against the tag and gets a
+signed build-provenance attestation (check one with
+`gh attestation verify <file> --repo NVIDIA/cudaq-pulse`), the assets are
 uploaded once (never replaced), and only then is the release published. The
 MLIR toolchain assets are write-once too. The end of `wheels.yml` records how
 PyPI and TestPyPI uploads will be re-enabled with trusted publishing.
