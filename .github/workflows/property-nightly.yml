@@ -10,7 +10,8 @@
 # (the `ci` hypothesis profile); this job explores new inputs every night on
 # staging with a seed logged in the job summary and the example database
 # kept between runs, so a failure replays first on the next run. It also
-# runs the slow physics checks (marked `nightly`).
+# runs the slow physics checks (marked `nightly`) and checks that a new float
+# value on a compiled kernel stays far cheaper than a compile.
 
 name: property-nightly
 
@@ -78,6 +79,12 @@ jobs:
         env:
           PYTHONPATH: build/dev/python
         run: uv run --no-sync python -m pytest -m "physics and not gpu" --run-nightly tests/physics
+
+      - name: New parameter values against a compile
+        if: always()
+        env:
+          PYTHONPATH: build/dev/python
+        run: uv run --no-sync python benchmarks/compiler/specialize_bench.py
 
       - name: Save the example database
         if: always()
