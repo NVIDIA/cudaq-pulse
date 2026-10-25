@@ -54,7 +54,7 @@ Homepage = "https://github.com/NVIDIA/cudaq-pulse"
 Documentation = "https://nvidia.github.io/cudaq-pulse/"
 Repository = "https://github.com/NVIDIA/cudaq-pulse"
 Issues = "https://github.com/NVIDIA/cudaq-pulse/issues"
-Changelog = "https://github.com/NVIDIA/cudaq-pulse/releases"
+Changelog = "https://github.com/NVIDIA/cudaq-pulse/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # Every shared library libcudm-runtime-cuNN.so loads, transitively, except the
@@ -140,7 +140,7 @@ CUDAQ_PULSE_CUDA13_ROOT = { env = "CUDAQ_PULSE_CUDA13_ROOT", default = "" }
 # Only v* tags carry package versions; mlir-toolchain-* tags name toolchain
 # releases.
 [tool.setuptools_scm]
-tag_regex = '^v(?P<version>\d+(?:\.\d+)*(?:(?:a|b|rc)\d+)?)$'
+tag_regex = '^v(?P<version>\d+(?:\.\d+)*(?:(?:a|b|rc)\d+|\.post\d+)?)$'
 
 [tool.setuptools_scm.scm.git]
 describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "v*"]

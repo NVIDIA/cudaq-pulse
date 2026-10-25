@@ -27,18 +27,70 @@ def _load(name):
 
 @pytest.mark.parametrize(
     "tag, version, prerelease",
-    [("v0.1.0", "0.1.0", False), ("v0.1.0rc1", "0.1.0rc1", True), ("v2.0.3b4", "2.0.3b4", True)],
+    [
+        ("v0.1.0", "0.1.0", False),
+        ("v0.1.0rc1", "0.1.0rc1", True),
+        ("v2.0.3b4", "2.0.3b4", True),
+        ("v0.1.0.post1", "0.1.0.post1", False),
+    ],
 )
 def test_release_tags(tag, version, prerelease):
     assert _load("release-meta").release_version(tag) == (version, prerelease)
 
 
 @pytest.mark.parametrize(
-    "tag", ["0.1.0", "v0.1", "v0.1.0rc", "v0.1.0.dev1", "v0.1.0+local", "v0.1.0.post1"]
+    "tag",
+    ["0.1.0", "v0.1", "v0.1.0rc", "v0.1.0.dev1", "v0.1.0+local", "v0.1.0rc1.post1", "v0.1.0post1"],
 )
 def test_invalid_release_tags(tag):
     with pytest.raises(ValueError):
         _load("release-meta").release_version(tag)
+
+
+_CHANGELOG = """# Changelog
+
+## [Unreleased]
+
+- Next thing.
+
+## [0.2.0] - Unreleased
+
+### Added
+
+- Second thing.
+
+## [0.1.0] - 2026-11-02
+
+- First thing.
+
+[Unreleased]: https://example.invalid/compare
+[0.1.0]: https://example.invalid/v0.1.0
+"""
+
+
+def test_release_notes_come_from_the_version_section():
+    notes = _load("release-notes").release_notes
+    assert notes("0.1.0", _CHANGELOG) == "- First thing.\n"
+    assert notes("0.2.0rc1", _CHANGELOG) == "### Added\n\n- Second thing.\n"
+
+
+@pytest.mark.parametrize(
+    "version, message",
+    [("0.2.0", "must be dated"), ("0.3.0rc1", "no '## \\[0.3.0\\]'"), ("0.1.0.post1", "no")],
+)
+def test_release_notes_fail_closed(version, message):
+    with pytest.raises(ValueError, match=message):
+        _load("release-notes").release_notes(version, _CHANGELOG)
+
+
+def test_release_notes_reject_an_empty_section():
+    with pytest.raises(ValueError, match="empty"):
+        _load("release-notes").release_notes("0.1.0rc1", "## [0.1.0] - Unreleased\n\n## [0.0.1]\n")
+
+
+def test_the_changelog_has_notes_for_the_first_release_candidate():
+    changelog = (_TOOLS.parent / "CHANGELOG.md").read_text()
+    assert "### Added" in _load("release-notes").release_notes("0.1.0rc1", changelog)
 
 
 def test_workflow_pins(tmp_path):

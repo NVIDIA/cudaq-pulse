@@ -198,12 +198,20 @@ TestPyPI.
    tests the wheels and the sdist and publishes them as a GitHub pre-release.
 2. Squash `staging` into one commit on `main`, with the `staging` workflow
    triggers removed and the toolchain checksums in the lock file.
-3. Tag `v0.1.0` on `main`.
+3. Date the version's section in `CHANGELOG.md` (`## [0.1.0] - YYYY-MM-DD`)
+   and leave an empty `## [Unreleased]` section above it.
+4. Tag `v0.1.0` on `main`.
+
+Release notes come from `CHANGELOG.md`, not from the commit history:
+`tools/release-notes.py` prints the section for the version, and a
+pre-release uses the section of the release it precedes. Add user-visible
+changes under `## [Unreleased]` in the pull request that makes them.
 
 Before anything is released, the `release-meta` job checks the tag with
-`tools/release-meta.py`: it must name a version `X.Y.Z` or `X.Y.Z{a,b,rc}N`
-that the setuptools-scm `tag_regex` accepts, a final version must be on
-`main`, and the release must not exist yet. The release is created as a
+`tools/release-meta.py`: it must name a version `X.Y.Z`, `X.Y.Z.postN` or
+`X.Y.Z{a,b,rc}N` that the setuptools-scm `tag_regex` accepts, a final
+version must be on `main`, `CHANGELOG.md` must have a dated, non-empty
+section for it, and the release must not exist yet. The release is created as a
 draft, every built file's version is checked against the tag, the assets are
 uploaded once (never replaced), and only then is the release published. The
 MLIR toolchain assets are write-once too. The end of `wheels.yml` records how
