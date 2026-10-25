@@ -38,8 +38,11 @@ cmake -S . -B build/dev -G Ninja \
 cmake --build build/dev --target check-pulse
 ```
 
-`check-pulse` builds everything and runs the lit/FileCheck tests in `test/`
-and the non-GPU pytest suite in `tests/`. The staged package lives in
+`check-pulse` builds everything and runs the lit/FileCheck tests in `test/`,
+the non-GPU pytest suite in `tests/`, and `check-pulse-runtime`: the
+cuDensityMat runtime built against a host fake of cuDensityMat
+(`tests/runtime/fake_cudensitymat/`), so its callback table and integrators
+are tested without a GPU. The staged package lives in
 `build/dev/python`; to use it directly:
 
 ```bash
@@ -85,6 +88,21 @@ Apache-2.0 header used by their neighbors.
 
 mypy runs in strict mode against the staged package, because it needs the
 type stub that the build generates for the native extension.
+
+## Sanitizers
+
+`-DCUDAQ_PULSE_SANITIZERS="address;undefined"` (or `thread`) instruments
+cudaq-pulse's own C++; the prebuilt MLIR toolchain stays uninstrumented. The
+`sanitizers` workflow builds both variants on Linux. The address and
+undefined-behavior build runs `check-pulse-mlir`, `check-pulse-runtime` and
+the Python suite; the thread build runs `check-pulse-runtime`, whose GPU
+runtime host test evolves runs concurrently. For the Python suite, preload the
+runtimes into the uninstrumented interpreter:
+
+```bash
+LD_PRELOAD="$(gcc -print-file-name=libasan.so):$(gcc -print-file-name=libubsan.so)" \
+ASAN_OPTIONS=detect_leaks=0 PYTHONPATH=build/san/python python -m pytest tests -m "not gpu"
+```
 
 ## Benchmarks
 

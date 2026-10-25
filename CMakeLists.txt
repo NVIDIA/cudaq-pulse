@@ -130,6 +130,7 @@ include(HandleLLVMOptions)
 include(TableGen)
 include(AddLLVM)
 include(AddMLIR)
+include(CudaqPulseSanitizers)
 
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
 
@@ -153,7 +154,7 @@ include_directories(
 # Generate the three research-preview dialects.
 add_subdirectory(core/mlir/include/cudaq-pulse)
 
-# Build the dialects, transforms, conversions, C API, and optimizer driver.
+# Build the dialects, transforms, conversions, and optimizer driver.
 add_subdirectory(core/mlir)
 add_subdirectory(core/mlir/tools/cudaq-pulse-opt)
 
