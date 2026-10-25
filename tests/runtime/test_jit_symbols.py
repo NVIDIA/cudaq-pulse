@@ -74,3 +74,10 @@ def test_a_library_that_cannot_be_opened_is_reported(tmp_path):
     bogus.write_bytes(b"not a shared library")
     with pytest.raises(RuntimeError, match="libnot-a-library.so"):
         native.MLIRPipeline().jit_llvm_dialect(_ADDRESS_OF, [str(bogus)])
+
+
+def test_a_function_no_library_defines_is_named_in_the_error():
+    missing = _ADDRESS_OF.replace(_SYMBOL, "cudaq_pulse_missing_symbol")
+    module = native.MLIRPipeline().jit_llvm_dialect(missing, [native.__file__])
+    with pytest.raises(RuntimeError, match="libraries: cudaq_pulse_missing_symbol"):
+        module.lookup("address")

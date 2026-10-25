@@ -1725,8 +1725,10 @@ private:
 class JITModule {
 public:
   JITModule(std::unique_ptr<RuntimeLibraries> libraries,
-            std::unique_ptr<mlir::ExecutionEngine> engine)
-      : libraries_(std::move(libraries)), engine_(std::move(engine)) {}
+            std::unique_ptr<mlir::ExecutionEngine> engine,
+            std::vector<std::string> unresolved)
+      : libraries_(std::move(libraries)), engine_(std::move(engine)),
+        unresolved_(std::move(unresolved)) {}
 
   uintptr_t lookup(const std::string &name) {
     auto symbol = engine_->lookup(name);
@@ -1734,6 +1736,13 @@ public:
       std::string message;
       llvm::raw_string_ostream os(message);
       os << symbol.takeError();
+      // The missing symbols themselves go to the session's error reporter;
+      // name the external functions no given library defines.
+      if (!unresolved_.empty()) {
+        os << "; external functions in none of the given libraries:";
+        for (const std::string &external : unresolved_)
+          os << " " << external;
+      }
       throw std::runtime_error("JIT symbol lookup failed for '" + name +
                                "': " + message);
     }
@@ -1744,6 +1753,7 @@ private:
   // Declared first so the engine, whose code points into them, goes first.
   std::unique_ptr<RuntimeLibraries> libraries_;
   std::unique_ptr<mlir::ExecutionEngine> engine_;
+  std::vector<std::string> unresolved_;
 };
 
 void addPulseLoweringPasses(mlir::PassManager &pm) {
@@ -1767,12 +1777,15 @@ JITModule createJITModule(mlir::ModuleOp module,
 
   auto libraries = std::make_unique<RuntimeLibraries>(shared_libs);
   std::vector<std::pair<std::string, void *>> resolved;
+  std::vector<std::string> unresolved;
   module.walk([&](mlir::LLVM::LLVMFuncOp function) {
     if (!function.isExternal())
       return;
     std::string name = function.getName().str();
     if (void *address = libraries->lookup(name))
       resolved.emplace_back(std::move(name), address);
+    else
+      unresolved.push_back(std::move(name));
   });
 
   mlir::ExecutionEngineOptions options;
@@ -1792,7 +1805,8 @@ JITModule createJITModule(mlir::ModuleOp module,
                                  llvm::JITSymbolFlags::Exported};
     return symbols;
   });
-  return JITModule(std::move(libraries), std::move(*engine));
+  return JITModule(std::move(libraries), std::move(*engine),
+                   std::move(unresolved));
 }
 
 // -----------------------------------------------------------------------
