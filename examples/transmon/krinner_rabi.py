@@ -17,9 +17,10 @@ Demonstrates:
 """
 
 import math
+import shutil
+import subprocess
 
 import cudaq_pulse as pulse
-from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from cudaq_pulse.targets import transmon_krinner_17q
 
 target = transmon_krinner_17q()
@@ -63,5 +64,11 @@ compiled = pulse.compile(rabi_d5, device=dev).lower(dev.qudit_handles[qubit_idx]
 total_vtu = max(e.start_vtu + e.duration_vtu for e in compiled.schedule)
 print(f"\nCompiled {compiled.metrics.op_count} ops, total length = {total_vtu / clock_ghz:.1f} ns")
 
-qop = MLIRPipeline().run_pulse_to_qop(compiled.mlir())
+# cudaq-pulse-opt, installed with the package, runs any pass on MLIR text.
+tool = shutil.which("cudaq-pulse-opt")
+if tool is None:
+    raise SystemExit("cudaq-pulse-opt is not on PATH; it is installed with cudaq-pulse")
+qop = subprocess.run(
+    [tool, "--pulse-to-qop"], input=compiled.mlir(), capture_output=True, text=True, check=True
+).stdout
 print(f"Operator program: {qop.count('qop.callback_scalar')} time-dependent drive terms")

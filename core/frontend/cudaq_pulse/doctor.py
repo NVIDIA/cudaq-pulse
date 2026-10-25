@@ -29,6 +29,8 @@ from typing import TextIO
 from . import _build_config
 from .runtime import gpu
 
+__all__ = ["main"]
+
 _DISTRIBUTION = "cudaq-pulse"
 
 

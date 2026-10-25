@@ -107,10 +107,6 @@ def _header(opcode: int, payload_len: int, param_mask: int = 0) -> int:
     return opcode | (payload_len << 8) | (param_mask << 16)
 
 
-def _real(val: Any) -> float:
-    return val.real if isinstance(val, complex) else float(val)
-
-
 def _complex_parts(val: Any) -> tuple[float, float]:
     """``(re, im)`` of an amplitude: a number, or ``[re]`` / ``[re, im]``."""
     if val.__class__ is float or val.__class__ is int:
@@ -833,10 +829,6 @@ class PackedIRBuilder:
         """Names of the parameters referenced so far, in index order."""
         return [self._param_names[i] for i in sorted(self._param_names)]
 
-    @property
-    def has_parameters(self) -> bool:
-        return bool(self._param_vids)
-
     def get_buffer(self) -> array[int]:
         """Return the trimmed packed buffer (int64 words)."""
         return self._buf[: self._cur]
@@ -861,6 +853,3 @@ class PackedIRBuilder:
     @property
     def op_count(self) -> int:
         return self._op_count
-
-    def pretty(self) -> str:
-        return f"<PackedIRBuilder: {self._cur} words, {self._next_qubit} qubits>"

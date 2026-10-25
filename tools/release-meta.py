@@ -14,8 +14,10 @@ Usage:
 
 The tag must match ``[tool.setuptools_scm] tag_regex`` in pyproject.toml,
 so the version setuptools-scm builds from it is exactly the tag's version:
-final releases ``vX.Y.Z`` and pre-releases ``vX.Y.Z{a,b,rc}N``; no dev,
-post or local versions. Exits 1 with a message otherwise.
+final releases ``vX.Y.Z``, post releases ``vX.Y.Z.postN`` (packaging fixes;
+see the versioning policy in CONTRIBUTING.md) and pre-releases
+``vX.Y.Z{a,b,rc}N``; no dev or local versions. Exits 1 with a message
+otherwise.
 """
 
 from __future__ import annotations
@@ -34,8 +36,8 @@ def release_version(tag: str) -> tuple[str, bool]:
     if not match:
         raise ValueError(f"tag {tag!r} does not match tag_regex {pattern!r} in pyproject.toml")
     version = match.group("version")
-    if not re.fullmatch(r"\d+\.\d+\.\d+((a|b|rc)\d+)?", version):
-        raise ValueError(f"tag {tag!r} must name a version X.Y.Z or X.Y.Z{{a,b,rc}}N")
+    if not re.fullmatch(r"\d+\.\d+\.\d+((a|b|rc)\d+|\.post\d+)?", version):
+        raise ValueError(f"tag {tag!r} must name a version X.Y.Z, X.Y.Z.postN or X.Y.Z{{a,b,rc}}N")
     return version, bool(re.search(r"(a|b|rc)\d+$", version))
 
 

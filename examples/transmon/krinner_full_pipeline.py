@@ -21,9 +21,10 @@ gate's 98 ns slot is left idle here.
 """
 
 import math
+import shutil
+import subprocess
 
 import cudaq_pulse as pulse
-from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from cudaq_pulse.targets import transmon_krinner_17q
 
 target = transmon_krinner_17q()
@@ -77,8 +78,13 @@ print(f"  {compiled.metrics.op_count} ops, {total_vtu / clock_ghz:.0f} ns total"
 print("\n=== Stage 2: scheduled Pulse MLIR ===")
 print(compiled.mlir())
 
-print("=== Stage 3: operator (QOp) lowering ===")
-qop = MLIRPipeline().run_pulse_to_qop(compiled.mlir())
+print("=== Stage 3: operator (QOp) lowering, with cudaq-pulse-opt ===")
+tool = shutil.which("cudaq-pulse-opt")
+if tool is None:
+    raise SystemExit("cudaq-pulse-opt is not on PATH; it is installed with cudaq-pulse")
+qop = subprocess.run(
+    [tool, "--pulse-to-qop"], input=compiled.mlir(), capture_output=True, text=True, check=True
+).stdout
 print(f"  {qop.count('qop.callback_scalar')} time-dependent drive terms")
 
 print("\n=== Stage 4: LLVM IR for the cuDensityMat runtime ===")

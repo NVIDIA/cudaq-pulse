@@ -331,14 +331,3 @@ class PythonIRBuilder:
     def rollback(self, checkpoint: tuple[int, int]) -> None:
         n_ops, self._next_id = checkpoint
         del self.ops[n_ops:]
-
-    def pretty(self) -> str:
-        lines = [f"func.func @{self.name}() {{"]
-        for op in self.ops:
-            res = ", ".join(repr(r) for r in op.results)
-            ops_s = ", ".join(repr(o) for o in op.operands)
-            att = ", ".join(f"{k}={v!r}" for k, v in op.attrs.items())
-            parts = [s for s in (ops_s, att) if s]
-            lines.append(f"  {res} = {op.kind}({', '.join(parts)})")
-        lines.append("}")
-        return "\n".join(lines)

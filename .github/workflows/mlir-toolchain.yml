@@ -74,6 +74,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -82,6 +83,7 @@ jobs:
         with:
           ref: ${{ github.ref_type == 'tag' && 'staging' || github.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -137,6 +139,8 @@ jobs:
       # staging builds the wheels against these checksums.
       - name: Commit checksums to staging
         if: startsWith(github.ref, 'refs/tags/mlir-toolchain-')
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           cp "$RUNNER_TEMP/mlir-toolchain.lock.json" tools/mlir-toolchain.lock.json
           if git diff --quiet -- tools/mlir-toolchain.lock.json; then
@@ -148,4 +152,4 @@ jobs:
           git config user.email "41898729+github-actions[bot]@users.noreply.github.com"
           git add tools/mlir-toolchain.lock.json
           git commit -m "Pin MLIR toolchain $version checksums"
-          git push origin HEAD:staging
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:staging

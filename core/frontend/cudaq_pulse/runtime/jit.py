@@ -25,6 +25,8 @@ import numpy.typing as npt
 from .._native._cudaq_pulse_native import JITModule, MLIRPipeline
 from .gpu import GpuRuntime, require_gpu_runtime
 
+__all__ = ["JITCompiler", "JITResult"]
+
 
 @dataclass(frozen=True)
 class JITResult:

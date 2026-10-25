@@ -1,5 +1,10 @@
 # Contributing to cudaq-pulse
 
+Everyone taking part in the project follows the
+[Code of Conduct](CODE_OF_CONDUCT.md). [SUPPORT.md](SUPPORT.md) says where to
+ask questions and report bugs; report security vulnerabilities as described
+in [SECURITY.md](SECURITY.md), not in an issue.
+
 ## Prerequisites
 
 - [uv](https://docs.astral.sh/uv/) (it provides Python, CMake, Ninja, and
@@ -203,24 +208,85 @@ but leaves committing the printed lock file to you.
 Workflows use third-party actions pinned by full commit SHA, with the release
 in a trailing comment, and container images pinned by digest;
 `tools/check-workflow-pins.py` (a pre-commit hook) rejects tags, and
-Dependabot proposes weekly updates for actions and `uv.lock`.
+Dependabot proposes weekly updates for actions and `uv.lock`, each a week
+after its release. [zizmor](https://docs.zizmor.sh/) audits the workflows
+(a pre-commit hook, and online in CI), and every job sets
+`timeout-minutes` (`tests/test_release_tools.py` checks it).
 
 - `ci.yml`: ruff and pre-commit; build, lit, pytest, mypy, and the benchmark
-  baseline on Linux x86_64, Linux aarch64, and macOS. A manually dispatched
-  run with `gpu` enabled also builds with GPU support on the runner named by
-  the `GPU_RUNNER` repository variable.
+  baseline on Linux x86_64 (Python 3.12 to 3.15), Linux aarch64 (3.12 and
+  3.15), and macOS (3.12), and the lit and pytest suites on free-threaded
+  CPython 3.14t with the GIL off (configured with
+  `-DCUDAQ_PULSE_FREE_THREADED=ON`, which declares the extension safe
+  without the GIL; release wheels are not free-threaded yet). The `gpu` job
+  builds with GPU support and runs the GPU tests on the runner named by the
+  `GPU_RUNNER` repository variable: nightly once the variable is set, and on
+  a manual run with `gpu` enabled.
 - `wheels.yml`: cibuildwheel for `cp312-abi3` (3.12 and newer) on
   manylinux_2_28 (x86_64, aarch64, with the CUDA 12 and CUDA 13 runtimes) and
   macOS arm64 (compiler-only), plus an sdist. It then installs
-  the wheels in clean containers without a CUDA toolkit. A manually
-  dispatched run with `gpu` enabled also runs the GPU tests from the wheels on
-  the `GPU_RUNNER` runner.
+  the wheels in clean containers without a CUDA toolkit. `gpu-install-test`
+  runs the GPU tests from the wheels on the `GPU_RUNNER` runner, on every
+  release tag and on a manual run with `gpu` enabled, and gates the release
+  (see [Releases](#releases)).
+
+`GPU_RUNNER` is a runner label (`linux-gpu`) or a JSON list of labels
+(`["self-hosted", "linux", "x64", "gpu"]`). Only tag pushes, the nightly
+schedule and manual runs reach it, never pull requests, so a self-hosted
+runner does not run code from forks; it should still be ephemeral and
+isolated. While it is unset, every GPU job is skipped and the CPU jobs are
+unaffected.
 - `docs.yml`: Sphinx with warnings as errors; deploys `main` to GitHub Pages.
 - `property-nightly.yml`: the property tests with random examples on
   staging every night (and on manual dispatch), with the seed in the job
   summary and the example database kept in the Actions cache. GitHub runs
   scheduled workflows from the default branch, so the nightly schedule takes
   effect once this file is on `main`; until then, dispatch it manually.
+
+## Versioning and stability
+
+Versions follow [PEP 440](https://peps.python.org/pep-0440/) in the shape of
+[Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`, with
+pre-releases `X.Y.Z{a,b,rc}N` and post releases `X.Y.Z.postN`.
+
+- **What is covered.** The public API is the names in the `__all__` of
+  `cudaq_pulse` and of its documented submodules, their documented behavior,
+  the documented environment variables, and the `cudaq-pulse-opt` and
+  `python -m cudaq_pulse.doctor` command lines. Modules and names that start
+  with an underscore, the native extension, the C++ headers, and the textual
+  form of the MLIR dialects are internal and may change in any release.
+  Numerical results are covered by the tests' tolerances, not bit for bit.
+- **While the major version is 0** (the research preview), a minor release
+  may break the public API; a patch release fixes bugs and does not break it
+  on purpose. From 1.0, only a major release breaks it.
+- **Deprecation.** Where it is practical, a name or behavior that is going
+  away warns with `DeprecationWarning` for at least one minor release before
+  it is removed. Every break and deprecation is listed under **Changed**,
+  **Deprecated** or **Removed** in `CHANGELOG.md`.
+- **Python versions.** CPython 3.12 and newer. A new CPython is supported
+  from its first release, and dropping one happens only in a minor release.
+- **Post releases** (`X.Y.Z.postN`) fix packaging or metadata only, never
+  code; they need their own dated section in `CHANGELOG.md`.
+
+### Withdrawing a broken release
+
+Release assets are write-once and tags are never moved or deleted, so a
+broken release is withdrawn, not replaced:
+
+1. Open an issue that describes the problem and who is affected.
+2. Put a warning at the top of the GitHub release's notes that links the
+   issue and names the release to use instead. Keep the assets: deleting
+   them breaks pinned installs and reproducibility.
+3. Release the fix as a new version: `X.Y.(Z+1)` for a code fix, or
+   `X.Y.Z.postN` for a packaging-only fix, with a `CHANGELOG.md` entry that
+   names the withdrawn release.
+4. Once releases are on PyPI, also yank the broken version there
+   ([PEP 592](https://peps.python.org/pep-0592/)) with the issue link as
+   the reason. Yanking hides it from new resolutions but keeps exact pins
+   working; never delete files from PyPI.
+
+A vulnerability is handled through [SECURITY.md](SECURITY.md) first, and the
+withdrawal follows the coordinated disclosure.
 
 ## Releases
 
@@ -232,13 +298,48 @@ TestPyPI.
    tests the wheels and the sdist and publishes them as a GitHub pre-release.
 2. Squash `staging` into one commit on `main`, with the `staging` workflow
    triggers removed and the toolchain checksums in the lock file.
-3. Tag `v0.1.0` on `main`.
+3. Date the version's section in `CHANGELOG.md` (`## [0.1.0] - YYYY-MM-DD`)
+   and leave an empty `## [Unreleased]` section above it.
+4. Tag `v0.1.0` on `main`.
+
+Release notes come from `CHANGELOG.md`, not from the commit history:
+`tools/release-notes.py` prints the section for the version, and a
+pre-release uses the section of the release it precedes. Add user-visible
+changes under `## [Unreleased]` in the pull request that makes them.
 
 Before anything is released, the `release-meta` job checks the tag with
-`tools/release-meta.py`: it must name a version `X.Y.Z` or `X.Y.Z{a,b,rc}N`
-that the setuptools-scm `tag_regex` accepts, a final version must be on
-`main`, and the release must not exist yet. The release is created as a
-draft, every built file's version is checked against the tag, the assets are
+`tools/release-meta.py`: it must name a version `X.Y.Z`, `X.Y.Z.postN` or
+`X.Y.Z{a,b,rc}N` that the setuptools-scm `tag_regex` accepts, a final
+version must be on `main`, `CHANGELOG.md` must have a dated, non-empty
+section for it, and the release must not exist yet. The release is created as a
+draft, every built file's version is checked against the tag and gets a
+signed build-provenance attestation (check one with
+`gh attestation verify <file> --repo NVIDIA/cudaq-pulse`), the assets are
 uploaded once (never replaced), and only then is the release published. The
 MLIR toolchain assets are write-once too. The end of `wheels.yml` records how
 PyPI and TestPyPI uploads will be re-enabled with trusted publishing.
+
+### GPU verification
+
+No release is published without GPU verification of the tagged commit; the
+`gpu-gate` job in `wheels.yml` enforces it, and it fails closed:
+
+- **With a GPU runner** (`GPU_RUNNER` set), the tag's run executes
+  `gpu-install-test` and publishes only if it passes. A failed GPU run
+  cannot be overridden: fix the problem and tag a new version.
+- **Without a GPU runner**, the tag's run builds and tests everything else
+  and then stops at `gpu-gate`. To release it:
+  1. Run the GPU test suite on the tagged commit on a machine with an
+     NVIDIA GPU: build it as in [GPU builds](#gpu-builds) and run
+     `check-pulse` and `check-pulse-gpu`, or download the tag run's
+     `wheels-linux-x86_64` artifact into `wheelhouse/` in a checkout of the
+     tag and run `bash tools/ci/install-test.sh gpu`. Every test must pass,
+     with no GPU test skipped.
+  2. Run the `wheels` workflow manually on the tag (*Run workflow*, *Use
+     workflow from*: the tag) with `gpu-verified-sha` set to the full commit
+     SHA the tag points to (`git rev-parse vX.Y.Z^{commit}`). This is the
+     maintainer's attestation that step 1 passed on that commit; the run's
+     summary records who made it.
+
+  The attestation counts only on a manual run, only when it names the exact
+  commit being released, and only when `gpu-install-test` did not run.

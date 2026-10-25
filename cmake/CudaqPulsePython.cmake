@@ -27,11 +27,27 @@ add_dependencies(_cudaq_pulse_native CudaqPulsePythonStaging)
 
 set(CUDAQ_PULSE_PYTHONPATH "${CMAKE_BINARY_DIR}/python")
 
+# The version comes from the git tags through setuptools-scm, configured in
+# pyproject.toml, for wheels and plain CMake builds alike. A CMake build reads
+# it at configure time, so re-run configure after tagging.
 if(SKBUILD)
   set(CUDAQ_PULSE_PACKAGE_VERSION "${SKBUILD_PROJECT_VERSION_FULL}")
 else()
-  set(CUDAQ_PULSE_PACKAGE_VERSION "0.0.0+cmake")
+  execute_process(
+    COMMAND "${Python3_EXECUTABLE}" -m setuptools_scm
+      --root "${CUDAQ_PULSE_SOURCE_DIR}"
+      --config "${CUDAQ_PULSE_SOURCE_DIR}/pyproject.toml"
+    OUTPUT_VARIABLE CUDAQ_PULSE_PACKAGE_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE _cudaq_pulse_scm_result)
+  if(NOT _cudaq_pulse_scm_result EQUAL 0 OR CUDAQ_PULSE_PACKAGE_VERSION STREQUAL "")
+    message(STATUS "setuptools-scm could not determine the version (install the "
+      "`build` dependency group, or build from a git checkout); using 0.0.0+unknown")
+    set(CUDAQ_PULSE_PACKAGE_VERSION "0.0.0+unknown")
+  endif()
 endif()
+message(STATUS "cudaq-pulse version: ${CUDAQ_PULSE_PACKAGE_VERSION}")
 
 set(_cudaq_pulse_build_targets
   cudaq-pulse-opt

@@ -14,6 +14,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # A new release waits a week, so a compromised one is likelier caught first.
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
@@ -24,6 +27,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       python:
         patterns: ["*"]

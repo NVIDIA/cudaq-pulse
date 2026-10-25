@@ -32,8 +32,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-__version__ = "0.1.0"
-
+from . import _build_config
 from . import ops as ops
 from ._device import Device as Device
 from ._device import DeviceMismatchError as DeviceMismatchError
@@ -50,6 +49,8 @@ from .kernel._kernel import CompiledKernel as CompiledKernel
 from .kernel._kernel import Kernel as Kernel
 from .kernel.ir_builder import CompilationError as CompilationError
 from .targets._registry import NoTargetError as NoTargetError
+
+__version__: str = _build_config.PACKAGE_VERSION
 
 # Simulation, GPU execution and visualization load NumPy, the GPU runtime
 # discovery or plotting, which compiling does not need: import them on first
