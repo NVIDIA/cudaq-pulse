@@ -45,8 +45,9 @@ LogicalResult BosonOp::verify() {
   if (k != HandlerKind::BosonIdentity && k != HandlerKind::BosonCreate &&
       k != HandlerKind::BosonAnnihilate && k != HandlerKind::BosonNumber)
     return emitOpError("invalid handler kind for boson operator");
-  if (getDimension() < 2)
-    return emitOpError("boson dimension must be >= 2, got ") << getDimension();
+  const int64_t dimension = getDimensionAttr().getInt();
+  if (dimension < 2)
+    return emitOpError("boson dimension must be >= 2, got ") << dimension;
   return success();
 }
 
