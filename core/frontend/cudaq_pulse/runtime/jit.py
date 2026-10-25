@@ -69,8 +69,8 @@ class JITCompiler:
         """Invoke a JIT-compiled entry point and collect its result state.
 
         ``state_dim`` is the Hilbert-space dimension (``2**n_qubits`` by
-        default); a result larger than a density matrix of that dimension is
-        rejected.
+        default); a result that is neither a state vector nor a density
+        matrix of that dimension is rejected.
         """
         runtime = self._runtime.library
         c_args, keep_alive = _marshal_args(args or [])
@@ -90,22 +90,21 @@ class JITCompiler:
                 else "unknown cuDensityMat error"
             )
             raise RuntimeError(f"cuDensityMat execution failed: {message}")
-        if byte_count % itemsize or byte_count > itemsize * hilbert_dim * hilbert_dim:
+        shapes = {
+            itemsize * hilbert_dim: (hilbert_dim,),
+            itemsize * hilbert_dim * hilbert_dim: (hilbert_dim, hilbert_dim),
+        }
+        shape = shapes.get(byte_count)
+        if shape is None:
             raise RuntimeError(
                 f"cuDensityMat returned {byte_count} bytes, which is not a complex128 state "
-                f"of dimension {hilbert_dim}"
+                f"vector or density matrix of dimension {hilbert_dim}"
             )
         buffer = (ctypes.c_byte * byte_count)()
         status = runtime.cudm_last_result_copy(buffer, byte_count)
         if status != 0:
             raise RuntimeError("could not copy the cuDensityMat result buffer")
         array = np.frombuffer(buffer, dtype=np.complex128).copy()
-        if array.size == hilbert_dim:
-            shape: tuple[int, ...] = (hilbert_dim,)
-        elif array.size == hilbert_dim * hilbert_dim:
-            shape = (hilbert_dim, hilbert_dim)
-        else:
-            shape = (array.size,)
         return [JITResult(shape=shape, dtype=np.dtype(np.complex128), _array=array)]
 
     def compile_and_run(

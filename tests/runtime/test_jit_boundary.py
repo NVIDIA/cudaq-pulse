@@ -95,12 +95,30 @@ def test_a_density_matrix_result_is_shaped():
     np.testing.assert_allclose(result.to_numpy(), state)
 
 
-def test_results_larger_than_the_state_are_rejected():
-    too_big = np.zeros(4 * 4 + 1, dtype=np.complex128).tobytes()
-    with pytest.raises(RuntimeError, match="not a complex128 state of dimension 4"):
-        _run(too_big, n_qubits=2)
+def test_a_state_vector_result_is_shaped():
+    state = np.arange(4, dtype=np.complex128)
+    (result,) = _run(state.tobytes(), n_qubits=2)
+    assert result.shape == (4,)
+    np.testing.assert_array_equal(result.to_numpy(), state)
+
+
+@pytest.mark.parametrize("values", [4 * 4 + 1, 5, 4 * 4 - 1, 1])
+def test_results_of_another_size_are_rejected(values):
+    wrong = np.zeros(values, dtype=np.complex128).tobytes()
+    with pytest.raises(RuntimeError, match="not a complex128 state vector or density matrix"):
+        _run(wrong, n_qubits=2)
+
+
+def test_results_of_a_partial_value_are_rejected():
+    with pytest.raises(RuntimeError, match="returned 24 bytes"):
+        _run(b"\0" * 24, n_qubits=0)
+
+
+def test_the_state_dimension_overrides_the_qubit_count():
     (result,) = _run(np.zeros(9 * 9, dtype=np.complex128).tobytes(), n_qubits=2, state_dim=9)
     assert result.shape == (9, 9)
+    (result,) = _run(np.zeros(3, dtype=np.complex128).tobytes(), n_qubits=2, state_dim=3)
+    assert result.shape == (3,)
 
 
 def test_an_empty_result_reports_the_runtime_error():
