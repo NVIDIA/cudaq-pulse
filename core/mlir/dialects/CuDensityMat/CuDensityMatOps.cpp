@@ -72,7 +72,9 @@ LogicalResult AppendElementaryProductOp::verify() {
 LogicalResult OperatorAppendTermOp::verify() {
   int32_t d = getDuality();
   if (d != 0 && d != 1)
-    return emitOpError("duality must be 0 (bra) or 1 (ket), got ") << d;
+    return emitOpError("duality must be 0 (as built) or 1 (every mode "
+                       "action flipped between ket and bra), got ")
+           << d;
   return success();
 }
 

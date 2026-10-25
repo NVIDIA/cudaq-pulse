@@ -67,7 +67,7 @@ func.func @product_with_too_few_dualities(%h: !cudm.handle, %term: !cudm.op_term
 // -----
 
 func.func @term_of_an_unknown_duality(%h: !cudm.handle, %op: !cudm.operator, %term: !cudm.op_term) {
-  // expected-error @+1 {{'cudm.operator_append_term' op duality must be 0 (bra) or 1 (ket), got 2}}
+  // expected-error @+1 {{'cudm.operator_append_term' op duality must be 0 (as built) or 1 (every mode action flipped between ket and bra), got 2}}
   cudm.operator_append_term %h, %op, %term {duality = 2 : i32, coeff_real = 1.0 : f64, coeff_imag = 0.0 : f64} : !cudm.handle, !cudm.operator, !cudm.op_term
   return
 }
