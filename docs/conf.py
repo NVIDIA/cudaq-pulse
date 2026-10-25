@@ -8,6 +8,7 @@
 """Sphinx configuration for cudaq-pulse documentation."""
 
 from cudaq_pulse._build_config import PACKAGE_VERSION
+from pygments.lexers.special import TextLexer
 
 project = "cudaq-pulse"
 copyright = "2026, NVIDIA Corporation & Affiliates"
@@ -48,3 +49,9 @@ autodoc_default_options = {
 
 napoleon_google_docstring = True
 napoleon_numpy_docstring = True
+
+
+def setup(app):
+    # The generated dialect reference fences its examples as ```mlir, which
+    # Pygments has no lexer for.
+    app.add_lexer("mlir", TextLexer)

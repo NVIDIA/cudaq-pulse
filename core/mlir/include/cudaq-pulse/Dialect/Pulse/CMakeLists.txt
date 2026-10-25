@@ -19,3 +19,9 @@ mlir_tablegen(PulseEnums.h.inc -gen-enum-decls)
 mlir_tablegen(PulseEnums.cpp.inc -gen-enum-defs)
 
 add_public_tablegen_target(CudaqPulsePulseIncGen)
+
+# The dialect reference page, built for the documentation (pulse-docs).
+set(LLVM_TARGET_DEFINITIONS PulseOps.td)
+mlir_tablegen(PulseDialect.md -gen-dialect-doc -dialect=pulse)
+add_custom_target(CudaqPulsePulseDocGen
+  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/PulseDialect.md)

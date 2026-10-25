@@ -21,9 +21,12 @@ def CuDensityMatDialect : Dialect {
     generation targeting the cuDensityMat runtime API.
 
     Two tiers of operations:
-    - **Tier 1 (API ops)**: 1:1 wrappers around `cudensitymat*` C API functions
-    - **Tier 2 (Solver ops)**: Higher-level time-integration, SSE, and
-      decoherence ops that lower to Tier 1 via `cudm-expand-integration`
+    - **API ops**: wrappers around `cudensitymat*` C API functions, which
+      `cudm-to-llvm` lowers to calls into the cudaq-pulse cuDensityMat
+      runtime
+    - **Solver ops**: `cudm.evolve`, which the runtime integrates with its own
+      rk1, rk2, rk4, Magnus or Crank-Nicolson stepper, and the reserved
+      `cudm.sse_evolve` and `cudm.apply_decoherence`, which nothing lowers yet
   }];
   let cppNamespace = "::cudm";
   let useDefaultTypePrinterParser = 1;

@@ -23,3 +23,9 @@ mlir_tablegen(CuDensityMatEnums.h.inc -gen-enum-decls)
 mlir_tablegen(CuDensityMatEnums.cpp.inc -gen-enum-defs)
 
 add_public_tablegen_target(CudaqPulseCuDensityMatIncGen)
+
+# The dialect reference page, built for the documentation (pulse-docs).
+set(LLVM_TARGET_DEFINITIONS CuDensityMatOps.td)
+mlir_tablegen(CuDensityMatDialect.md -gen-dialect-doc -dialect=cudm)
+add_custom_target(CudaqPulseCuDensityMatDocGen
+  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/CuDensityMatDialect.md)
