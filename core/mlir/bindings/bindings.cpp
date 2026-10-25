@@ -45,12 +45,13 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
-#include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
 
-#include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Module.h"
+#include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/Support/TargetSelect.h"
+
+#include <dlfcn.h>
+#include <pthread.h>
 
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"
 
@@ -453,12 +454,6 @@ public:
       module_->getOperation()->setAttr(entry.getName(), entry.getValue());
   }
 
-  bool is_parametric() {
-    std::lock_guard<std::recursive_mutex> guard(*lock_);
-    auto funcOp = getFuncOp();
-    return funcOp && funcOp.getNumArguments() > 0;
-  }
-
   std::vector<std::string> param_names() {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     std::vector<std::string> names;
@@ -794,6 +789,24 @@ public:
     std::lock_guard<std::mutex> guard(lock());
     auto &pool = state();
     return {pool.created, pool.current ? pool.uses : 0, pool.words};
+  }
+
+  /// A forked child has only the forking thread. The pool's lock is held
+  /// across fork so the child inherits it unlocked, and the child starts a
+  /// new context: the current one's thread pool has no workers there. That
+  /// context is abandoned rather than destroyed, since destroying it would
+  /// wait for those workers.
+  static void handleForks() {
+    pthread_atfork([] { lock().lock(); }, [] { lock().unlock(); },
+                   [] {
+                     auto &pool = state();
+                     if (pool.current)
+                       new std::shared_ptr<mlir::MLIRContext>(
+                           std::move(pool.current));
+                     pool.uses = 0;
+                     pool.words = 0;
+                     lock().unlock();
+                   });
   }
 
 private:
@@ -1670,10 +1683,50 @@ private:
 // -----------------------------------------------------------------------
 // JITModule: an LLVM-dialect module compiled in-process by ORC
 // -----------------------------------------------------------------------
+// Shared libraries a JIT module calls into, opened RTLD_LOCAL. MLIR's
+// sharedLibPaths opens them through llvm::sys::DynamicLibrary, which uses
+// RTLD_GLOBAL and so would add the GPU runtime and its CUDA dependencies to
+// the process's global symbol scope.
+class RuntimeLibraries {
+public:
+  explicit RuntimeLibraries(const std::vector<std::string> &paths) {
+    for (const auto &path : paths) {
+      void *handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+      if (!handle) {
+        const char *reason = dlerror();
+        close();
+        throw std::runtime_error("JIT could not load " + path + ": " +
+                                 (reason ? reason : "unknown error"));
+      }
+      handles_.push_back(handle);
+    }
+  }
+  ~RuntimeLibraries() { close(); }
+  RuntimeLibraries(const RuntimeLibraries &) = delete;
+  RuntimeLibraries &operator=(const RuntimeLibraries &) = delete;
+
+  void *lookup(const std::string &name) const {
+    for (void *handle : handles_)
+      if (void *symbol = dlsym(handle, name.c_str()))
+        return symbol;
+    return nullptr;
+  }
+
+private:
+  void close() {
+    for (void *handle : handles_)
+      dlclose(handle);
+    handles_.clear();
+  }
+
+  std::vector<void *> handles_;
+};
+
 class JITModule {
 public:
-  explicit JITModule(std::unique_ptr<mlir::ExecutionEngine> engine)
-      : engine_(std::move(engine)) {}
+  JITModule(std::unique_ptr<RuntimeLibraries> libraries,
+            std::unique_ptr<mlir::ExecutionEngine> engine)
+      : libraries_(std::move(libraries)), engine_(std::move(engine)) {}
 
   uintptr_t lookup(const std::string &name) {
     auto symbol = engine_->lookup(name);
@@ -1688,6 +1741,8 @@ public:
   }
 
 private:
+  // Declared first so the engine, whose code points into them, goes first.
+  std::unique_ptr<RuntimeLibraries> libraries_;
   std::unique_ptr<mlir::ExecutionEngine> engine_;
 };
 
@@ -1710,12 +1765,19 @@ JITModule createJITModule(mlir::ModuleOp module,
   if (!nativeTargetReady)
     throw std::runtime_error("LLVM native target initialization failed");
 
-  llvm::SmallVector<llvm::StringRef> libPaths(shared_libs.begin(),
-                                              shared_libs.end());
+  auto libraries = std::make_unique<RuntimeLibraries>(shared_libs);
+  std::vector<std::pair<std::string, void *>> resolved;
+  module.walk([&](mlir::LLVM::LLVMFuncOp function) {
+    if (!function.isExternal())
+      return;
+    std::string name = function.getName().str();
+    if (void *address = libraries->lookup(name))
+      resolved.emplace_back(std::move(name), address);
+  });
+
   mlir::ExecutionEngineOptions options;
   options.transformer = mlir::makeOptimizingTransformer(
       /*optLevel=*/2, /*sizeLevel=*/0, /*targetMachine=*/nullptr);
-  options.sharedLibPaths = libPaths;
   auto engine = mlir::ExecutionEngine::create(module, options);
   if (!engine) {
     std::string message;
@@ -1723,7 +1785,14 @@ JITModule createJITModule(mlir::ModuleOp module,
     os << engine.takeError();
     throw std::runtime_error("JIT compilation failed: " + message);
   }
-  return JITModule(std::move(*engine));
+  (*engine)->registerSymbols([&](llvm::orc::MangleAndInterner interner) {
+    llvm::orc::SymbolMap symbols;
+    for (const auto &[name, address] : resolved)
+      symbols[interner(name)] = {llvm::orc::ExecutorAddr::fromPtr(address),
+                                 llvm::JITSymbolFlags::Exported};
+    return symbols;
+  });
+  return JITModule(std::move(libraries), std::move(*engine));
 }
 
 // -----------------------------------------------------------------------
@@ -1760,54 +1829,6 @@ public:
     return createJITModule(*module, shared_libs);
   }
 
-  std::string parse_and_print(const std::string &mlir_text) {
-    mlir::MLIRContext ctx;
-    ctx.appendDialectRegistry(registry_);
-    ctx.loadAllAvailableDialects();
-    auto module = parseModule(mlir_text, &ctx, "Failed to parse MLIR text");
-    std::string result;
-    llvm::raw_string_ostream os(result);
-    module->print(os);
-    return result;
-  }
-
-  std::string run_full_pipeline(const std::string &pulse_mlir) {
-    mlir::MLIRContext ctx;
-    ctx.appendDialectRegistry(registry_);
-    ctx.loadAllAvailableDialects();
-    auto module =
-        parseModule(pulse_mlir, &ctx, "Failed to parse pulse MLIR text");
-    mlir::PassManager pm(&ctx);
-    addPulseLoweringPasses(pm);
-    runPipeline(pm, *module, "MLIR pass pipeline failed");
-    std::string result;
-    llvm::raw_string_ostream os(result);
-    module->print(os);
-    return result;
-  }
-
-  std::string run_full_pipeline_to_llvm_ir(const std::string &pulse_mlir) {
-    mlir::MLIRContext ctx;
-    ctx.appendDialectRegistry(registry_);
-    ctx.loadAllAvailableDialects();
-    mlir::registerBuiltinDialectTranslation(ctx);
-    mlir::registerLLVMDialectTranslation(ctx);
-    auto module =
-        parseModule(pulse_mlir, &ctx, "Failed to parse pulse MLIR text");
-    mlir::PassManager pm(&ctx);
-    addPulseLoweringPasses(pm);
-    runPipeline(pm, *module, "MLIR pass pipeline failed");
-
-    llvm::LLVMContext llvmContext;
-    auto llvmModule = mlir::translateModuleToLLVMIR(*module, llvmContext);
-    if (!llvmModule)
-      throw std::runtime_error("Failed to translate LLVM-dialect MLIR");
-    std::string result;
-    llvm::raw_string_ostream os(result);
-    llvmModule->print(os, nullptr);
-    return result;
-  }
-
   std::string run_pulse_to_qop(const std::string &pulse_mlir) {
     mlir::MLIRContext ctx;
     ctx.appendDialectRegistry(registry_);
@@ -1837,21 +1858,6 @@ public:
     return result;
   }
 
-  std::string run_cudm_to_llvm(const std::string &cudm_mlir) {
-    mlir::MLIRContext ctx;
-    ctx.appendDialectRegistry(registry_);
-    ctx.loadAllAvailableDialects();
-    auto module =
-        parseModule(cudm_mlir, &ctx, "Failed to parse cudm MLIR text");
-    mlir::PassManager pm(&ctx);
-    pm.addPass(cudm::createCuDensityMatToLLVMPass());
-    runPipeline(pm, *module, "cudm-to-llvm pass failed");
-    std::string result;
-    llvm::raw_string_ostream os(result);
-    module->print(os);
-    return result;
-  }
-
   PulseModule parse_to_module(const std::string &mlir_text) {
     auto ctx = std::make_shared<mlir::MLIRContext>();
     ctx->appendDialectRegistry(registry_);
@@ -1869,6 +1875,7 @@ private:
 
 NB_MODULE(_cudaq_pulse_native, m) {
   m.doc() = "cudaq-pulse native MLIR pipeline bindings";
+  SharedContextPool::handleForks();
 
   nb::class_<PulseModule>(m, "PulseModule")
       .def("print", &PulseModule::print,
@@ -1900,9 +1907,6 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::call_guard<nb::gil_scoped_release>(),
            "Merge an MLIR dictionary attribute into the module attributes",
            nb::arg("dictionary"))
-      .def("is_parametric", &PulseModule::is_parametric,
-           nb::call_guard<nb::gil_scoped_release>(),
-           "True if the module has func.func block arguments (parameters)")
       .def("param_names", &PulseModule::param_names,
            nb::call_guard<nb::gil_scoped_release>(), "Get parameter names")
       .def("specialize", &PulseModule::specialize,
@@ -1971,25 +1975,12 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::call_guard<nb::gil_scoped_release>(),
            "JIT-compile an LLVM-dialect MLIR module in-process",
            nb::arg("mlir_text"), nb::arg("shared_libs"))
-      .def("parse_and_print", &MLIRPipeline::parse_and_print,
-           nb::call_guard<nb::gil_scoped_release>(),
-           "Parse MLIR text and print it back (roundtrip)")
-      .def("run_full_pipeline", &MLIRPipeline::run_full_pipeline,
-           nb::call_guard<nb::gil_scoped_release>(),
-           "Run full pipeline: pulse -> qop -> cudm -> llvm")
-      .def("run_full_pipeline_to_llvm_ir",
-           &MLIRPipeline::run_full_pipeline_to_llvm_ir,
-           nb::call_guard<nb::gil_scoped_release>(),
-           "Run the full pipeline and translate to textual LLVM IR")
       .def("run_pulse_to_qop", &MLIRPipeline::run_pulse_to_qop,
            nb::call_guard<nb::gil_scoped_release>(),
            "Run pulse-to-qop pass only")
       .def("run_qop_to_cudm", &MLIRPipeline::run_qop_to_cudm,
            nb::call_guard<nb::gil_scoped_release>(),
            "Run qop-to-cudm pass only")
-      .def("run_cudm_to_llvm", &MLIRPipeline::run_cudm_to_llvm,
-           nb::call_guard<nb::gil_scoped_release>(),
-           "Run cudm-to-llvm pass only")
       .def("parse_to_module", &MLIRPipeline::parse_to_module,
            nb::call_guard<nb::gil_scoped_release>(),
            "Parse MLIR text into a PulseModule");

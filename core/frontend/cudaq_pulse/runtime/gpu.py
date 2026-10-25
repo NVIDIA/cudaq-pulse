@@ -17,7 +17,11 @@ A build carries one runtime per CUDA major. The one used is chosen by which
 ``cudensitymat-cuNN`` distribution the ``[cu12]`` or ``[cu13]`` extra
 installed. Its CUDA libraries live in separate wheels whose directories are
 not all on cuDensityMat's RUNPATH, so they are loaded from those wheels
-first, in dependency order.
+first, in dependency order. Everything is loaded RTLD_LOCAL: a later
+library's dependencies resolve by soname to the copies already loaded,
+while nothing joins the process's global symbol scope, where it could
+interpose on another CUDA stack in the same process (another framework's
+cuBLAS, say).
 """
 
 from __future__ import annotations
@@ -113,12 +117,45 @@ class GpuRuntime:
 
 _lock = threading.Lock()
 _runtime: GpuRuntime | None = None
+_forked_after_cuda_init = False
+
+
+def _after_fork_in_child() -> None:
+    """Reset the guard in a forked child.
+
+    The lock may have been held by a thread that does not exist in the
+    child. A runtime loaded by the parent has initialized CUDA, which a
+    forked child cannot use, so it is dropped and the child refuses GPU
+    work instead of failing inside the driver.
+    """
+    global _lock, _runtime, _forked_after_cuda_init
+    _lock = threading.Lock()
+    if _runtime is not None:
+        _runtime = None
+        _forked_after_cuda_init = True
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
 def require_gpu_runtime() -> GpuRuntime:
-    """Return the loaded GPU runtime, or raise a specific ``GpuRuntimeError``."""
+    """Return the loaded GPU runtime, or raise a specific ``GpuRuntimeError``.
+
+    A process forked after its parent used the GPU cannot use it: start GPU
+    workers with the ``spawn`` or ``forkserver`` multiprocessing method, or
+    fork before the first GPU simulation.
+    """
     global _runtime
     with _lock:
+        if _forked_after_cuda_init:
+            raise GpuDeviceUnavailableError(
+                "This process was forked from one that had already initialized "
+                "CUDA, and CUDA cannot be used in a forked child. Start GPU "
+                "workers with multiprocessing's 'spawn' or 'forkserver' method "
+                "(multiprocessing.get_context('spawn')), or fork before the "
+                "first GPU simulation."
+            )
         if _runtime is None:
             major, path = _resolve_runtime()
             not_in_wheels: list[str] = []
@@ -126,6 +163,7 @@ def require_gpu_runtime() -> GpuRuntime:
                 not_in_wheels = _preload_cuda_wheels(major)
             library = _load(path, not_in_wheels, major)
             if major is not None:
+                _check_cudensitymat_version(library, path, major)
                 _check_driver(major, path)
             _runtime = GpuRuntime(
                 library=library,
@@ -271,7 +309,7 @@ def _preload_cuda_wheels(major: int) -> list[str]:
     )
     for library in found:
         try:
-            ctypes.CDLL(str(library), mode=ctypes.RTLD_GLOBAL)
+            ctypes.CDLL(str(library), mode=ctypes.RTLD_LOCAL)
         except OSError as error:
             raise GpuRuntimeLoadError(
                 f"cudaq-pulse could not load the CUDA {major} library {library}: "
@@ -286,6 +324,8 @@ def _declare_prototypes(library: ctypes.CDLL) -> None:
     The library object is shared by every thread, so the prototypes are not
     reassigned per call.
     """
+    library.cudm_runtime_version.argtypes = []
+    library.cudm_runtime_version.restype = ctypes.c_int64
     library.cudm_set_initial_state.argtypes = [ctypes.c_void_p, ctypes.c_int64]
     library.cudm_set_initial_state.restype = ctypes.c_int
     library.cudm_last_result_size.argtypes = []
@@ -298,7 +338,7 @@ def _declare_prototypes(library: ctypes.CDLL) -> None:
 
 def _load(path: Path, not_in_wheels: Sequence[str], major: int | None = None) -> ctypes.CDLL:
     try:
-        library = ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
+        library = ctypes.CDLL(str(path), mode=ctypes.RTLD_LOCAL)
     except OSError as error:
         detail = ""
         if not_in_wheels:
@@ -320,6 +360,29 @@ def _load(path: Path, not_in_wheels: Sequence[str], major: int | None = None) ->
             f"{path} is not a cudaq-pulse GPU runtime: {error}. Reinstall cudaq-pulse."
         ) from error
     return library
+
+
+def _abi_version(major: int, minor: int) -> tuple[int, ...]:
+    """The part of a cuDensityMat version that fixes its ABI: before 1.0 the
+    minor version, afterwards the major version alone."""
+    return (major, minor) if major == 0 else (major,)
+
+
+def _check_cudensitymat_version(library: ctypes.CDLL, path: Path, major: int) -> None:
+    """Refuse a cuDensityMat whose ABI differs from the one the runtime was built with."""
+    built = _build_config.CUDENSITYMAT_VERSIONS.get(major, "")
+    try:
+        built_major, built_minor = (int(part) for part in built.split(".")[:2])
+    except ValueError:
+        return
+    version = int(library.cudm_runtime_version())
+    loaded = (version // 10000, version // 100 % 100, version % 100)
+    if _abi_version(*loaded[:2]) != _abi_version(built_major, built_minor):
+        raise GpuRuntimeLoadError(
+            f"The cudaq-pulse CUDA {major} runtime ({path}) was built against "
+            f"cuDensityMat {built}, but cuDensityMat {'.'.join(map(str, loaded))} "
+            f"is installed, and its ABI differs. Reinstall with {_extra_hint([major])}."
+        )
 
 
 def _driver_version() -> int | None:

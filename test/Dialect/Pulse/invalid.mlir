@@ -1,0 +1,216 @@
+// ============================================================================ //
+// Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          //
+// All rights reserved.                                                         //
+//                                                                              //
+// This source code and the accompanying materials are made available under     //
+// the terms of the Apache License 2.0 which accompanies this distribution.     //
+// ============================================================================ //
+
+// RUN: cudaq-pulse-opt %s --split-input-file --verify-diagnostics
+
+// One case per diagnostic of the pulse op verifiers. Waveform arithmetic,
+// measurement sources (pulse.is_set) and schedule blocks have their own files.
+
+func.func @square_of_zero_duration() {
+  %d = arith.constant 0 : i64
+  %a = arith.constant 0.1 : f64
+  // expected-error @+1 {{'pulse.square' op duration must be positive, got 0}}
+  %w = pulse.square %d, %a, %a : i64, f64, f64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @gaussian_of_negative_duration() {
+  %d = arith.constant -4 : i64
+  %a = arith.constant 0.1 : f64
+  %s = arith.constant 2.0 : f64
+  // expected-error @+1 {{'pulse.gaussian' op duration must be positive, got -4}}
+  %w = pulse.gaussian %d, %a, %s : i64, f64, f64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @gaussian_of_zero_sigma() {
+  %d = arith.constant 40 : i64
+  %a = arith.constant 0.1 : f64
+  %s = arith.constant 0.0 : f64
+  // expected-error @+1 {{'pulse.gaussian' op sigma must be positive}}
+  %w = pulse.gaussian %d, %a, %s : i64, f64, f64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+// A duration that is a function argument is checked once it is a constant.
+func.func @gaussian_of_symbolic_duration(%d: i64) {
+  %a = arith.constant 0.1 : f64
+  %s = arith.constant 2.0 : f64
+  %w = pulse.gaussian %d, %a, %s : i64, f64, f64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @gaussian_square_of_zero_duration() {
+  %d = arith.constant 0 : i64
+  %a = arith.constant 0.1 : f64
+  %s = arith.constant 2.0 : f64
+  %r = arith.constant 4 : i64
+  // expected-error @+1 {{'pulse.gaussian_square' op duration must be positive, got 0}}
+  %w = pulse.gaussian_square %d, %a, %s, %r : i64, f64, f64, i64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @gaussian_square_of_negative_sigma() {
+  %d = arith.constant 40 : i64
+  %a = arith.constant 0.1 : f64
+  %s = arith.constant -1.0 : f64
+  %r = arith.constant 4 : i64
+  // expected-error @+1 {{'pulse.gaussian_square' op sigma must be positive}}
+  %w = pulse.gaussian_square %d, %a, %s, %r : i64, f64, f64, i64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @gaussian_square_of_zero_risefall() {
+  %d = arith.constant 40 : i64
+  %a = arith.constant 0.1 : f64
+  %s = arith.constant 2.0 : f64
+  %r = arith.constant 0 : i64
+  // expected-error @+1 {{'pulse.gaussian_square' op risefall must be positive, got 0}}
+  %w = pulse.gaussian_square %d, %a, %s, %r : i64, f64, f64, i64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @gaussian_square_edges_longer_than_the_pulse() {
+  %d = arith.constant 40 : i64
+  %a = arith.constant 0.1 : f64
+  %s = arith.constant 2.0 : f64
+  %r = arith.constant 21 : i64
+  // expected-error @+1 {{'pulse.gaussian_square' op 2*risefall (42) exceeds duration (40)}}
+  %w = pulse.gaussian_square %d, %a, %s, %r : i64, f64, f64, i64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @drag_of_zero_duration() {
+  %d = arith.constant 0 : i64
+  %a = arith.constant 0.1 : f64
+  %s = arith.constant 2.0 : f64
+  %b = arith.constant 0.5 : f64
+  // expected-error @+1 {{'pulse.drag' op duration must be positive, got 0}}
+  %w = pulse.drag %d, %a, %s, %b : i64, f64, f64, f64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @drag_of_zero_sigma() {
+  %d = arith.constant 40 : i64
+  %a = arith.constant 0.1 : f64
+  %s = arith.constant 0.0 : f64
+  %b = arith.constant 0.5 : f64
+  // expected-error @+1 {{'pulse.drag' op sigma must be positive}}
+  %w = pulse.drag %d, %a, %s, %b : i64, f64, f64, f64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @cosine_of_zero_duration() {
+  %d = arith.constant 0 : i64
+  %a = arith.constant 0.1 : f64
+  // expected-error @+1 {{'pulse.cosine' op duration must be positive, got 0}}
+  %w = pulse.cosine %d, %a : i64, f64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @tanh_ramp_of_zero_duration() {
+  %d = arith.constant 0 : i64
+  %a = arith.constant 0.1 : f64
+  %s = arith.constant 2.0 : f64
+  // expected-error @+1 {{'pulse.tanh_ramp' op duration must be positive, got 0}}
+  %w = pulse.tanh_ramp %d, %a, %s : i64, f64, f64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @tanh_ramp_of_zero_sigma() {
+  %d = arith.constant 40 : i64
+  %a = arith.constant 0.1 : f64
+  %s = arith.constant 0.0 : f64
+  // expected-error @+1 {{'pulse.tanh_ramp' op sigma must be positive}}
+  %w = pulse.tanh_ramp %d, %a, %s : i64, f64, f64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @custom_of_zero_duration() {
+  %d = arith.constant 0 : i64
+  // expected-error @+1 {{'pulse.custom' op duration must be positive, got 0}}
+  %w = pulse.custom @envelope, %d : i64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @custom_samples_without_samples() {
+  // expected-error @+1 {{'pulse.custom_samples' op samples array must not be empty}}
+  %w = pulse.custom_samples [] : !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @wait_that_changes_the_line_kind(%line: !pulse.drive_line, %dur: !pulse.duration) {
+  // expected-error @+1 {{'pulse.wait' op input and output line types must match}}
+  %r = pulse.wait %line, %dur : (!pulse.drive_line, !pulse.duration) -> !pulse.readout_line
+  return
+}
+
+// -----
+
+func.func @sync_of_one_line(%line: !pulse.drive_line) {
+  // expected-error @+1 {{'pulse.sync' op sync requires at least 2 lines, got 1}}
+  %s = pulse.sync %line : !pulse.drive_line -> !pulse.drive_line
+  return
+}
+
+// -----
+
+func.func @sync_that_drops_a_line(%a: !pulse.drive_line, %b: !pulse.readout_line) {
+  // expected-error @+1 {{'pulse.sync' op number of input lines (2) must match number of output lines (1)}}
+  %s = pulse.sync %a, %b : !pulse.drive_line, !pulse.readout_line -> !pulse.drive_line
+  return
+}
+
+// -----
+
+func.func @outcome_not_from_a_readout(%b: i1) -> i64 {
+  %m = builtin.unrealized_conversion_cast %b : i1 to !pulse.measurement
+  // expected-error @+1 {{'pulse.outcome' op measurement must be produced by pulse.readout, got builtin.unrealized_conversion_cast}}
+  %k = pulse.outcome %m : !pulse.measurement -> i64
+  return %k : i64
+}
+
+// -----
+
+func.func @atomic_that_drops_a_line(%a: !pulse.drive_line, %b: !pulse.drive_line) {
+  // expected-error @+1 {{'pulse.atomic' op number of input lines (2) must match number of output lines (1)}}
+  %r = pulse.atomic %a, %b : (!pulse.drive_line, !pulse.drive_line) -> !pulse.drive_line {
+    %c = arith.constant 0 : i64
+  }
+  return
+}

@@ -21,10 +21,6 @@ def _make_qubits(n):
     return [Q[i] for i in range(n)]
 
 
-def _freq(n):
-    return {i: 5.0e9 + i * 0.1e9 for i in range(n)}
-
-
 _WORKLOAD_MODULES = [
     "w1_bell",
     "w2_cnot_cr",

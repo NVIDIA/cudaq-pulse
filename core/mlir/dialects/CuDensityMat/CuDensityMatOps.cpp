@@ -72,14 +72,16 @@ LogicalResult AppendElementaryProductOp::verify() {
 LogicalResult OperatorAppendTermOp::verify() {
   int32_t d = getDuality();
   if (d != 0 && d != 1)
-    return emitOpError("duality must be 0 (bra) or 1 (ket), got ") << d;
+    return emitOpError("duality must be 0 (as built) or 1 (every mode "
+                       "action flipped between ket and bra), got ")
+           << d;
   return success();
 }
 
 LogicalResult OperatorPrepareActionOp::verify() {
-  if (getWorkspaceLimit() < 0)
-    return emitOpError("workspace_limit must be non-negative, got ")
-           << getWorkspaceLimit();
+  const int64_t limit = getWorkspaceLimitAttr().getInt();
+  if (limit < 0)
+    return emitOpError("workspace_limit must be non-negative, got ") << limit;
   return success();
 }
 
@@ -88,11 +90,12 @@ LogicalResult OperatorComputeActionOp::verify() { return success(); }
 LogicalResult ExpectationComputeOp::verify() { return success(); }
 
 LogicalResult SSEEvolveOp::verify() {
-  if (getNumTrajectories() < 1)
-    return emitOpError("num_trajectories must be >= 1, got ")
-           << getNumTrajectories();
-  if (getNumSteps() < 1)
-    return emitOpError("num_steps must be >= 1, got ") << getNumSteps();
+  const int64_t trajectories = getNumTrajectoriesAttr().getInt();
+  if (trajectories < 1)
+    return emitOpError("num_trajectories must be >= 1, got ") << trajectories;
+  const int64_t steps = getNumStepsAttr().getInt();
+  if (steps < 1)
+    return emitOpError("num_steps must be >= 1, got ") << steps;
   double tStart = getTStart().convertToDouble();
   double tEnd = getTEnd().convertToDouble();
   if (tEnd <= tStart)

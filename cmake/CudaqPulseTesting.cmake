@@ -60,8 +60,27 @@ add_custom_target(check-pulse-python
   COMMENT "Running cudaq-pulse Python tests"
   USES_TERMINAL)
 
+# The cuDensityMat runtime built against a host fake of cuDensityMat
+# (tests/runtime/fake_cudensitymat), so its callback table, state handling and
+# integrators are tested without CUDA.
+find_package(Threads REQUIRED)
+add_executable(cudaq-pulse-cudm-host-test
+  ${CUDAQ_PULSE_SOURCE_DIR}/core/runtime/cudm/cudm_runtime.cpp
+  ${CUDAQ_PULSE_SOURCE_DIR}/tests/runtime/fake_cudensitymat/fake_cudensitymat.cpp
+  ${CUDAQ_PULSE_SOURCE_DIR}/tests/runtime/cudm_callback_table_test.cpp)
+target_include_directories(cudaq-pulse-cudm-host-test BEFORE PRIVATE
+  ${CUDAQ_PULSE_SOURCE_DIR}/tests/runtime/fake_cudensitymat/include
+  ${CUDAQ_PULSE_SOURCE_DIR}/core/runtime/cudm)
+target_link_libraries(cudaq-pulse-cudm-host-test PRIVATE Threads::Threads)
+
+add_custom_target(check-pulse-runtime
+  COMMAND cudaq-pulse-cudm-host-test
+  DEPENDS cudaq-pulse-cudm-host-test
+  COMMENT "Running the cuDensityMat runtime host tests"
+  USES_TERMINAL)
+
 add_custom_target(check-pulse
-  DEPENDS check-pulse-mlir check-pulse-python)
+  DEPENDS check-pulse-mlir check-pulse-python check-pulse-runtime)
 
 add_test(NAME PulseMLIRTests COMMAND ${_cudaq_pulse_lit_command})
 set_tests_properties(PulseMLIRTests PROPERTIES LABELS "pulse;mlir")
@@ -69,6 +88,9 @@ set_tests_properties(PulseMLIRTests PROPERTIES LABELS "pulse;mlir")
 add_test(NAME PulsePythonUnitTests
   COMMAND ${_cudaq_pulse_pytest_command} -m "not gpu")
 set_tests_properties(PulsePythonUnitTests PROPERTIES LABELS "pulse;unit")
+
+add_test(NAME PulseCuDensityMatHostTests COMMAND cudaq-pulse-cudm-host-test)
+set_tests_properties(PulseCuDensityMatHostTests PROPERTIES LABELS "pulse;unit")
 
 if(NOT CUDAQ_PULSE_ENABLE_GPU)
   return()

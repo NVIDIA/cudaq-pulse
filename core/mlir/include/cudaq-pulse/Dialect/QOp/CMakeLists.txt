@@ -23,3 +23,9 @@ mlir_tablegen(QOpEnums.h.inc -gen-enum-decls)
 mlir_tablegen(QOpEnums.cpp.inc -gen-enum-defs)
 
 add_public_tablegen_target(CudaqPulseQOpIncGen)
+
+# The dialect reference page, built for the documentation (pulse-docs).
+set(LLVM_TARGET_DEFINITIONS QOpOps.td)
+mlir_tablegen(QOpDialect.md -gen-dialect-doc -dialect=qop)
+add_custom_target(CudaqPulseQOpDocGen
+  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/QOpDialect.md)

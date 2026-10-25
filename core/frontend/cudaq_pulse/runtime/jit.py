@@ -54,10 +54,6 @@ class JITCompiler:
         """Lower pulse MLIR and JIT-compile it against the GPU runtime."""
         return self._pipeline.jit_pulse(pulse_mlir, [str(self._runtime.path)])
 
-    def compile_module(self, mlir_text: str) -> JITModule:
-        """JIT-compile an LLVM-dialect MLIR module against the GPU runtime."""
-        return self._pipeline.jit_llvm_dialect(mlir_text, [str(self._runtime.path)])
-
     def load_and_run(
         self,
         module: JITModule,
@@ -69,8 +65,8 @@ class JITCompiler:
         """Invoke a JIT-compiled entry point and collect its result state.
 
         ``state_dim`` is the Hilbert-space dimension (``2**n_qubits`` by
-        default); a result larger than a density matrix of that dimension is
-        rejected.
+        default); a result that is neither a state vector nor a density
+        matrix of that dimension is rejected.
         """
         runtime = self._runtime.library
         c_args, keep_alive = _marshal_args(args or [])
@@ -90,36 +86,22 @@ class JITCompiler:
                 else "unknown cuDensityMat error"
             )
             raise RuntimeError(f"cuDensityMat execution failed: {message}")
-        if byte_count % itemsize or byte_count > itemsize * hilbert_dim * hilbert_dim:
+        shapes = {
+            itemsize * hilbert_dim: (hilbert_dim,),
+            itemsize * hilbert_dim * hilbert_dim: (hilbert_dim, hilbert_dim),
+        }
+        shape = shapes.get(byte_count)
+        if shape is None:
             raise RuntimeError(
                 f"cuDensityMat returned {byte_count} bytes, which is not a complex128 state "
-                f"of dimension {hilbert_dim}"
+                f"vector or density matrix of dimension {hilbert_dim}"
             )
         buffer = (ctypes.c_byte * byte_count)()
         status = runtime.cudm_last_result_copy(buffer, byte_count)
         if status != 0:
             raise RuntimeError("could not copy the cuDensityMat result buffer")
         array = np.frombuffer(buffer, dtype=np.complex128).copy()
-        if array.size == hilbert_dim:
-            shape: tuple[int, ...] = (hilbert_dim,)
-        elif array.size == hilbert_dim * hilbert_dim:
-            shape = (hilbert_dim, hilbert_dim)
-        else:
-            shape = (array.size,)
         return [JITResult(shape=shape, dtype=np.dtype(np.complex128), _array=array)]
-
-    def compile_and_run(
-        self,
-        pulse_mlir: str,
-        *,
-        entry: str = "main",
-        n_qubits: int = 1,
-    ) -> list[JITResult]:
-        """Compile a Pulse-MLIR module and execute it."""
-        if not isinstance(pulse_mlir, str):
-            raise TypeError("expected Pulse-MLIR text")
-        module = self.compile_pulse_mlir(pulse_mlir)
-        return self.load_and_run(module, entry=entry, n_qubits=n_qubits)
 
 
 _ARRAY_DTYPES = (np.dtype(np.float64), np.dtype(np.complex128), np.dtype(np.int64))
@@ -156,35 +138,3 @@ def _marshal_args(args: Sequence[Any]) -> tuple[list[Any], list[Any]]:
                 "use an int, a float or a NumPy array"
             )
     return c_args, keep_alive
-
-
-def compile_and_run(
-    module_text: str,
-    args: Sequence[Any] | None = None,
-    *,
-    entry: str = "main",
-    n_qubits: int = 1,
-) -> list[JITResult]:
-    """One-shot: JIT-compile an LLVM-dialect MLIR module and execute it.
-
-    Raises a ``GpuRuntimeError`` subclass if GPU execution is unavailable.
-    """
-    compiler = JITCompiler()
-    module = compiler.compile_module(module_text)
-    return compiler.load_and_run(module, entry=entry, args=args or [], n_qubits=n_qubits)
-
-
-def compile_and_run_pulse(
-    pulse_mlir: str,
-    *,
-    entry: str = "main",
-    n_qubits: int = 1,
-) -> list[JITResult]:
-    """One-shot: compile pulse MLIR through the full pipeline and execute.
-
-    Runs pulse -> qop -> cudm -> llvm -> JIT -> execute. Raises a
-    ``GpuRuntimeError`` subclass if GPU execution is unavailable.
-    """
-    compiler = JITCompiler()
-    module = compiler.compile_pulse_mlir(pulse_mlir)
-    return compiler.load_and_run(module, entry=entry, n_qubits=n_qubits)

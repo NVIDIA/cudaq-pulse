@@ -32,12 +32,11 @@ def test_pulse_module_methods():
     # The cached specialization keeps ``amplitude`` a function argument.
     compiled = _x._dispatch.lookup((Q[0], 0.0)).lowered
     module = compiled._module
-    assert module.is_parametric()
     assert module.param_names() == ["amplitude"]
     assert module.run_passes(["pulse-verify"]) is None
     assert "pulse.drive" in module.print()
     concrete = module.specialize([0.1], [], "alap")
-    assert not concrete.is_parametric()
+    assert "%arg0" not in concrete.print()
     assert concrete.schedule("asap") is None
     assert "start_vtu = 0" in concrete.print()
     assert "llvm.func" in concrete.run_full_lowering()
@@ -46,14 +45,20 @@ def test_pulse_module_methods():
 def test_pipeline_methods_return_results():
     text = _x.lower(Q[0], 0.1).mlir()
     pipeline = native.MLIRPipeline()
-    assert "pulse.drive" in pipeline.parse_and_print(text)
     assert "pulse.drive" in pipeline.parse_to_module(text).print()
     qop = pipeline.run_pulse_to_qop(text)
     assert "qop." in qop
-    cudm = pipeline.run_qop_to_cudm(qop)
-    assert "llvm.func" in pipeline.run_cudm_to_llvm(cudm) or "llvm." in cudm
-    assert "llvm.func" in pipeline.run_full_pipeline(text)
-    assert "define" in pipeline.run_full_pipeline_to_llvm_ir(text)
+    assert "cudm." in pipeline.run_qop_to_cudm(qop)
+
+
+def test_pipeline_exposes_only_the_live_entry_points():
+    assert _public(native.MLIRPipeline) == {
+        "jit_llvm_dialect",
+        "jit_pulse",
+        "parse_to_module",
+        "run_pulse_to_qop",
+        "run_qop_to_cudm",
+    }
 
 
 def test_pass_failures_carry_the_diagnostics():

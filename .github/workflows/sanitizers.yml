@@ -1,0 +1,86 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+
+# cudaq-pulse's C++ (dialects, passes, bindings and the cuDensityMat runtime,
+# the last against its host fake) built with sanitizers. The prebuilt MLIR
+# toolchain is not instrumented. address+undefined runs the lit suite, the
+# runtime host test and the Python suite; thread runs the runtime host test,
+# whose runs evolve concurrently.
+
+name: sanitizers
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sanitizers:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: address+undefined, sanitizers: "address;undefined" }
+          - { name: thread, sanitizers: "thread" }
+    env:
+      # Leaks are not checked: Python and MLIR keep process-lifetime state,
+      # and a forked child abandons its shared MLIR context on purpose.
+      ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:strict_string_checks=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      - uses: ./.github/actions/mlir-toolchain
+
+      # The runner kernel randomizes mmap with 32 bits, which leaves the
+      # sanitizer runtimes no room for their shadow memory.
+      - name: Narrow mmap randomization
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      - name: Configure
+        run: >
+          uv run --no-sync cmake -S . -B build/san -G Ninja
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCUDAQ_PULSE_BUILD_TESTS=ON
+          "-DCUDAQ_PULSE_SANITIZERS=${{ matrix.sanitizers }}"
+          -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
+
+      - name: cuDensityMat runtime host test
+        run: uv run --no-sync cmake --build build/san --target check-pulse-runtime
+
+      - name: lit
+        if: matrix.sanitizers != 'thread'
+        run: uv run --no-sync cmake --build build/san --target check-pulse-mlir
+
+      # The interpreter is not instrumented, so the sanitizer runtimes are
+      # preloaded for the extension module.
+      - name: Python suite
+        if: matrix.sanitizers != 'thread'
+        run: |
+          uv run --no-sync cmake --build build/san --target pulse
+          LD_PRELOAD="$(gcc -print-file-name=libasan.so):$(gcc -print-file-name=libubsan.so)" \
+          PYTHONPATH=build/san/python \
+            .venv/bin/python -m pytest tests -q -m "not gpu" -p no:cacheprovider

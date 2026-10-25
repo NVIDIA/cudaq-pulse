@@ -19,7 +19,6 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
-#include <mutex>
 #include <new>
 #include <optional>
 #include <string>
@@ -28,8 +27,19 @@
 
 namespace {
 
+struct WaveformCallback {
+  bool active = false;
+  int32_t kind = 0;
+  std::vector<double> parameters;
+};
+
+// One handle is one run: the JIT-compiled program creates it, builds its
+// operators on it, evolves and destroys it, all on the calling thread. The
+// run owns its drive envelopes, so concurrent runs share no callback state.
 struct HandleData {
   cudensitymatHandle_t native = nullptr;
+  std::vector<WaveformCallback> callbacks;
+  std::vector<size_t> freeCallbackSlots;
 };
 
 struct StateData {
@@ -39,8 +49,11 @@ struct StateData {
   std::vector<void *> buffers;
   std::vector<size_t> bufferSizes;
   int32_t purity = 0;
-  int32_t dataType = 16;
 };
+
+// The CuDensityMat dialect ComputeType::F64; the runtime computes in
+// complex128 only.
+constexpr int32_t complex128DataType = 16;
 
 struct WorkspaceData {
   HandleData *owner = nullptr;
@@ -66,28 +79,33 @@ struct OpTermData {
   std::vector<size_t> callbackSlots;
 };
 
-struct WaveformCallback {
-  bool active = false;
-  int32_t kind = 0;
-  std::vector<double> parameters;
-};
-
-// cuDensityMat callbacks are plain function pointers, so each envelope gets
-// one of a fixed set of trampolines; the table is shared by every thread and
-// every evolution in flight, and guarded by the mutex.
+// cuDensityMat scalar callbacks are plain function pointers with no user
+// data, so each envelope of a run gets one of a fixed set of trampolines, and
+// a trampoline finds its run through `activeRun`. cuDensityMat invokes CPU
+// callbacks synchronously on the thread computing the operator action, which
+// is the thread inside cudm_evolve for that run.
 constexpr size_t callbackCapacity = 1024;
-std::array<WaveformCallback, callbackCapacity> waveformCallbacks;
-std::mutex waveformCallbackMutex;
+thread_local const HandleData *activeRun = nullptr;
+
+class ActiveRunScope {
+public:
+  explicit ActiveRunScope(const HandleData *run) : previous_(activeRun) {
+    activeRun = run;
+  }
+  ~ActiveRunScope() { activeRun = previous_; }
+  ActiveRunScope(const ActiveRunScope &) = delete;
+  ActiveRunScope &operator=(const ActiveRunScope &) = delete;
+
+private:
+  const HandleData *previous_;
+};
 
 int32_t evaluateWaveformCallback(size_t slot, double time,
                                  cudaDataType_t dataType, void *scalarStorage) {
-  WaveformCallback callback;
-  {
-    std::lock_guard lock(waveformCallbackMutex);
-    if (slot >= waveformCallbacks.size() || !waveformCallbacks[slot].active)
-      return 1;
-    callback = waveformCallbacks[slot];
-  }
+  const HandleData *run = activeRun;
+  if (!run || slot >= run->callbacks.size() || !run->callbacks[slot].active)
+    return 1;
+  const WaveformCallback &callback = run->callbacks[slot];
   if (!scalarStorage)
     return 2;
   double value = 0.0;
@@ -95,14 +113,10 @@ int32_t evaluateWaveformCallback(size_t slot, double time,
           callback.kind, callback.parameters.data(), callback.parameters.size(),
           time, value))
     return status;
-  if (dataType == CUDA_C_32F)
-    *static_cast<cuFloatComplex *>(scalarStorage) =
-        make_cuFloatComplex(static_cast<float>(value), 0.0F);
-  else if (dataType == CUDA_C_64F)
-    *static_cast<cuDoubleComplex *>(scalarStorage) =
-        make_cuDoubleComplex(value, 0.0);
-  else
+  if (dataType != CUDA_C_64F)
     return 4;
+  *static_cast<cuDoubleComplex *>(scalarStorage) =
+      make_cuDoubleComplex(value, 0.0);
   return 0;
 }
 
@@ -122,29 +136,28 @@ constexpr auto makeWaveformCallbackTable(std::index_sequence<Slots...>) {
 constexpr auto waveformCallbackTable =
     makeWaveformCallbackTable(std::make_index_sequence<callbackCapacity>{});
 
-std::optional<size_t> allocateCallbackSlot(int32_t kind,
+std::optional<size_t> allocateCallbackSlot(HandleData *run, int32_t kind,
                                            const double *parameters,
                                            int32_t parameterCount) {
-  if (kind == 0)
+  size_t slot = run->callbacks.size();
+  if (!run->freeCallbackSlots.empty()) {
+    slot = run->freeCallbackSlots.back();
+    run->freeCallbackSlots.pop_back();
+  } else if (slot < callbackCapacity) {
+    run->callbacks.emplace_back();
+  } else {
     return std::nullopt;
-  if (!parameters || parameterCount < 10)
-    return std::nullopt;
-  std::lock_guard lock(waveformCallbackMutex);
-  for (size_t slot = 0; slot < waveformCallbacks.size(); ++slot) {
-    if (!waveformCallbacks[slot].active) {
-      waveformCallbacks[slot].active = true;
-      waveformCallbacks[slot].kind = kind;
-      waveformCallbacks[slot].parameters.assign(parameters,
-                                                parameters + parameterCount);
-      return slot;
-    }
   }
-  return std::nullopt;
+  WaveformCallback &callback = run->callbacks[slot];
+  callback.active = true;
+  callback.kind = kind;
+  callback.parameters.assign(parameters, parameters + parameterCount);
+  return slot;
 }
 
-void releaseCallbackSlot(size_t slot) {
-  std::lock_guard lock(waveformCallbackMutex);
-  waveformCallbacks[slot] = {};
+void releaseCallbackSlot(HandleData *run, size_t slot) {
+  run->callbacks[slot] = {};
+  run->freeCallbackSlots.push_back(slot);
 }
 
 thread_local std::vector<std::byte> lastResult;
@@ -174,14 +187,6 @@ CudmStatus checkCuda(cudaError_t status, const char *operation) {
   return status == cudaErrorNoDevice ? CUDM_ERROR_NO_GPU : CUDM_ERROR_CUDA;
 }
 
-cudaDataType_t toCudaDataType(int32_t dataType) {
-  return dataType == 4 ? CUDA_C_32F : CUDA_C_64F;
-}
-
-cudensitymatComputeType_t computeType(int32_t dataType) {
-  return dataType == 4 ? CUDENSITYMAT_COMPUTE_32F : CUDENSITYMAT_COMPUTE_64F;
-}
-
 CudmStatus initializeBasisZero(StateData *state) {
   auto status = checkCudm(cudensitymatStateInitializeZero(
                               state->owner->native, state->native, nullptr),
@@ -192,12 +197,6 @@ CudmStatus initializeBasisZero(StateData *state) {
     return fail(CUDM_ERROR_INVALID_STATE,
                 "cuDensityMat state has no component storage");
 
-  if (state->dataType == 4) {
-    const cuFloatComplex one = make_cuFloatComplex(1.0F, 0.0F);
-    return checkCuda(cudaMemcpy(state->buffers.front(), &one, sizeof(one),
-                                cudaMemcpyHostToDevice),
-                     "cudaMemcpy(initial state)");
-  }
   const cuDoubleComplex one = make_cuDoubleComplex(1.0, 0.0);
   return checkCuda(cudaMemcpy(state->buffers.front(), &one, sizeof(one),
                               cudaMemcpyHostToDevice),
@@ -210,15 +209,7 @@ CudmStatus setZero(StateData *state) {
                    "cudensitymatStateInitializeZero");
 }
 
-CudmStatus setFactor(void *deviceFactor, int32_t dataType,
-                     cuDoubleComplex value) {
-  if (dataType == 4) {
-    const cuFloatComplex converted = make_cuFloatComplex(
-        static_cast<float>(cuCreal(value)), static_cast<float>(cuCimag(value)));
-    return checkCuda(cudaMemcpy(deviceFactor, &converted, sizeof(converted),
-                                cudaMemcpyHostToDevice),
-                     "cudaMemcpy(state factor)");
-  }
+CudmStatus setFactor(void *deviceFactor, cuDoubleComplex value) {
   return checkCuda(
       cudaMemcpy(deviceFactor, &value, sizeof(value), cudaMemcpyHostToDevice),
       "cudaMemcpy(state factor)");
@@ -226,7 +217,7 @@ CudmStatus setFactor(void *deviceFactor, int32_t dataType,
 
 CudmStatus accumulate(StateData *source, StateData *destination,
                       void *deviceFactor, cuDoubleComplex factor) {
-  auto status = setFactor(deviceFactor, source->dataType, factor);
+  auto status = setFactor(deviceFactor, factor);
   if (status != CUDM_SUCCESS)
     return status;
   return checkCudm(cudensitymatStateComputeAccumulation(
@@ -249,7 +240,7 @@ CudmStatus prepareWorkspace(HandleData *handle, OperatorData *op,
                             WorkspaceData *workspace) {
   auto status = checkCudm(cudensitymatOperatorPrepareAction(
                               handle->native, op->native, stateIn->native,
-                              stateOut->native, computeType(stateIn->dataType),
+                              stateOut->native, CUDENSITYMAT_COMPUTE_64F,
                               std::numeric_limits<size_t>::max(),
                               workspace->native, nullptr),
                           "cudensitymatOperatorPrepareAction");
@@ -310,7 +301,7 @@ StateData *allocateLike(HandleData *handle, StateData *prototype) {
   CudmState state = nullptr;
   if (cudm_state_alloc(handle, &state, prototype->modeExtents.data(),
                        static_cast<int32_t>(prototype->modeExtents.size()),
-                       prototype->purity, prototype->dataType) != CUDM_SUCCESS)
+                       prototype->purity, complex128DataType) != CUDM_SUCCESS)
     return nullptr;
   auto *result = static_cast<StateData *>(state);
   if (setZero(result) != CUDM_SUCCESS) {
@@ -514,8 +505,9 @@ CudmStatus cudm_state_alloc(CudmHandle handle, CudmState *state,
   if (!handle || !state || !modeExtents || numModes <= 0)
     return fail(CUDM_ERROR_INVALID_HANDLE,
                 "cudm_state_alloc received invalid arguments");
-  if (dataType != 4 && dataType != 16)
-    return fail(CUDM_ERROR_INTERNAL, "unsupported cuDensityMat data type");
+  if (dataType != complex128DataType)
+    return fail(CUDM_ERROR_INTERNAL,
+                "cudm-runtime supports complex128 (f64) states only");
   auto *owner = static_cast<HandleData *>(handle);
   auto *data = new (std::nothrow) StateData{};
   if (!data)
@@ -523,13 +515,11 @@ CudmStatus cudm_state_alloc(CudmHandle handle, CudmState *state,
   data->owner = owner;
   data->modeExtents.assign(modeExtents, modeExtents + numModes);
   data->purity = purity;
-  data->dataType = dataType;
   auto nativePurity = purity == 0 ? CUDENSITYMAT_STATE_PURITY_PURE
                                   : CUDENSITYMAT_STATE_PURITY_MIXED;
   auto status = checkCudm(cudensitymatCreateState(owner->native, nativePurity,
                                                   numModes, modeExtents, 0,
-                                                  toCudaDataType(dataType),
-                                                  &data->native),
+                                                  CUDA_C_64F, &data->native),
                           "cudensitymatCreateState");
   int32_t numComponents = 0;
   if (status == CUDM_SUCCESS)
@@ -601,14 +591,6 @@ CudmStatus cudm_state_destroy(CudmState state) {
       cudaFree(buffer);
   delete data;
   return status;
-}
-
-CudmStatus cudm_state_init_zero(CudmHandle handle, CudmState state) {
-  if (!handle)
-    return fail(CUDM_ERROR_INVALID_HANDLE, "state init received null handle");
-  if (!state)
-    return fail(CUDM_ERROR_INVALID_STATE, "state init received null state");
-  return initializeBasisZero(static_cast<StateData *>(state));
 }
 
 CudmStatus cudm_state_capture(CudmState state) {
@@ -741,6 +723,9 @@ CudmStatus cudm_elementary_op_create(CudmHandle handle,
       !modeExtents || numModes <= 0)
     return fail(CUDM_ERROR_INVALID_HANDLE,
                 "elementary operator create received invalid arguments");
+  if (dataType != complex128DataType)
+    return fail(CUDM_ERROR_INTERNAL,
+                "cudm-runtime supports complex128 (f64) operators only");
   auto *data = new (std::nothrow) ElementaryOpData{};
   if (!data)
     return fail(CUDM_ERROR_INTERNAL,
@@ -754,14 +739,13 @@ CudmStatus cudm_elementary_op_create(CudmHandle handle,
         cudaMemcpy(data->tensorData, tensorData, bytes, cudaMemcpyHostToDevice),
         "cudaMemcpy(elementary tensor)");
   if (status == CUDM_SUCCESS)
-    status =
-        checkCudm(cudensitymatCreateElementaryOperator(
-                      data->owner->native, numModes, modeExtents,
-                      CUDENSITYMAT_OPERATOR_SPARSITY_NONE, 0, nullptr,
-                      toCudaDataType(dataType), data->tensorData,
-                      cudensitymatTensorCallbackNone,
-                      cudensitymatTensorGradientCallbackNone, &data->native),
-                  "cudensitymatCreateElementaryOperator");
+    status = checkCudm(
+        cudensitymatCreateElementaryOperator(
+            data->owner->native, numModes, modeExtents,
+            CUDENSITYMAT_OPERATOR_SPARSITY_NONE, 0, nullptr, CUDA_C_64F,
+            data->tensorData, cudensitymatTensorCallbackNone,
+            cudensitymatTensorGradientCallbackNone, &data->native),
+        "cudensitymatCreateElementaryOperator");
   if (status != CUDM_SUCCESS) {
     if (data->tensorData)
       cudaFree(data->tensorData);
@@ -835,13 +819,21 @@ CudmStatus cudm_op_term_append(CudmHandle handle, CudmOpTerm term,
       cudensitymatScalarCallbackNone;
   std::optional<size_t> callbackSlot;
   if (callbackKind != 0) {
-    callbackSlot = allocateCallbackSlot(callbackKind, callbackParameters,
+    if (!callbackParameters ||
+        callbackParameterCount <
+            static_cast<int32_t>(cudaq_pulse::kWaveformHeader))
+      return fail(CUDM_ERROR_INTERNAL,
+                  "operator term append received invalid waveform callback "
+                  "parameters");
+    if (termData->owner != owner)
+      return fail(CUDM_ERROR_INVALID_HANDLE,
+                  "operator term belongs to a different cuDensityMat handle");
+    callbackSlot = allocateCallbackSlot(owner, callbackKind, callbackParameters,
                                         callbackParameterCount);
     if (!callbackSlot)
       return fail(CUDM_ERROR_INTERNAL,
-                  "all waveform callback slots are in use: the drives of "
-                  "the programs evolving at once in this process need more "
-                  "than 1024 envelope callbacks");
+                  "the drives of this program need more than 1024 envelope "
+                  "callbacks");
     wrappedCallback.callback = waveformCallbackTable[*callbackSlot];
     wrappedCallback.device = CUDENSITYMAT_CALLBACK_DEVICE_CPU;
     wrappedCallback.wrapper = nullptr;
@@ -856,7 +848,7 @@ CudmStatus cudm_op_term_append(CudmHandle handle, CudmOpTerm term,
   if (status == CUDM_SUCCESS && callbackSlot)
     termData->callbackSlots.push_back(*callbackSlot);
   else if (callbackSlot)
-    releaseCallbackSlot(*callbackSlot);
+    releaseCallbackSlot(owner, *callbackSlot);
   return status;
 }
 
@@ -867,7 +859,7 @@ CudmStatus cudm_op_term_destroy(CudmOpTerm term) {
   auto status = checkCudm(cudensitymatDestroyOperatorTerm(data->native),
                           "cudensitymatDestroyOperatorTerm");
   for (size_t slot : data->callbackSlots)
-    releaseCallbackSlot(slot);
+    releaseCallbackSlot(data->owner, slot);
   delete data;
   return status;
 }
@@ -888,14 +880,6 @@ CudmStatus cudm_operator_append(CudmHandle handle, CudmOperator op,
                        cudensitymatScalarCallbackNone,
                        cudensitymatScalarGradientCallbackNone),
                    "cudensitymatOperatorAppendTerm");
-}
-
-CudmStatus cudm_evolve_step(CudmHandle handle, CudmOperator op,
-                            CudmState stateIn, CudmState stateOut,
-                            CudmWorkspace workspace, double time, double dt,
-                            int32_t integrator) {
-  return cudm_evolve(handle, op, stateIn, stateOut, workspace, time, time + dt,
-                     1, integrator);
 }
 
 CudmStatus cudm_evolve(CudmHandle handle, CudmOperator op, CudmState stateIn,
@@ -925,6 +909,7 @@ CudmStatus cudm_evolve(CudmHandle handle, CudmOperator op, CudmState stateIn,
   auto *input = static_cast<StateData *>(stateIn);
   auto *output = static_cast<StateData *>(stateOut);
   auto *workspaceData = static_cast<WorkspaceData *>(workspace);
+  const ActiveRunScope runScope(owner);
 
   std::vector<StateData *> scratch;
   scratch.reserve(7);
@@ -945,10 +930,8 @@ CudmStatus cudm_evolve(CudmHandle handle, CudmOperator op, CudmState stateIn,
   auto *k3 = scratch[5];
   auto *k4 = scratch[6];
 
-  const size_t factorSize =
-      input->dataType == 4 ? sizeof(cuFloatComplex) : sizeof(cuDoubleComplex);
   void *deviceFactor = nullptr;
-  auto status = checkCuda(cudaMalloc(&deviceFactor, factorSize),
+  auto status = checkCuda(cudaMalloc(&deviceFactor, sizeof(cuDoubleComplex)),
                           "cudaMalloc(integration factor)");
   if (status == CUDM_SUCCESS)
     status = copyState(input, current, deviceFactor);
@@ -982,12 +965,6 @@ CudmStatus cudm_evolve(CudmHandle handle, CudmOperator op, CudmState stateIn,
   for (auto *allocated : scratch)
     cudm_state_destroy(allocated);
   return status;
-}
-
-CudmStatus cudm_observe(CudmHandle, CudmOperator, CudmState, CudmWorkspace,
-                        double, double *, double *) {
-  return fail(CUDM_ERROR_INTERNAL,
-              "cudm_observe is not implemented in this research preview");
 }
 
 } // extern "C"

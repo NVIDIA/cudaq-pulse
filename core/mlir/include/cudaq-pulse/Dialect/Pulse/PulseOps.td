@@ -24,12 +24,22 @@ class PulseOp<string mnemonic, list<Trait> traits = []> :
 
 def QuditAllocOp : PulseOp<"qudit_alloc", [Pure]> {
   let summary = "Allocate a pulse-level qudit reference";
+  let description = [{
+    A reference to one qudit of the device. The frontend sets the `qubit`
+    attribute to the qudit's index on the target. Lines and tones are
+    obtained from the reference with `pulse.get_drive_line` and
+    `pulse.get_readout_line`.
+  }];
   let results = (outs QrefType:$qref);
   let assemblyFormat = "attr-dict `:` type($qref)";
 }
 
 def QvecAllocOp : PulseOp<"qvec_alloc", [Pure]> {
   let summary = "Allocate a vector of pulse-level qudit references";
+  let description = [{
+    `size` qudit references at once, one result each, as `size`
+    `pulse.qudit_alloc` ops would give.
+  }];
   let arguments = (ins I64Attr:$size);
   let results = (outs Variadic<QrefType>:$qrefs);
   let assemblyFormat = "$size attr-dict `:` type($qrefs)";
@@ -52,6 +62,12 @@ def GetDriveLineOp : PulseOp<"get_drive_line", [Pure]> {
 
 def GetReadoutLineOp : PulseOp<"get_readout_line", [Pure]> {
   let summary = "Get the readout line and tone for a qudit";
+  let description = [{
+    The readout line and readout tone of a qudit. As with
+    `pulse.get_drive_line`, the line starts at time 0 and is a linear
+    value: each op that uses it returns the updated line, which the next
+    op on the line consumes.
+  }];
   let arguments = (ins QrefType:$qudit);
   let results = (outs ReadoutLineType:$line, ToneType:$tone);
   let assemblyFormat = "$qudit attr-dict `:` functional-type(operands, results)";
@@ -63,6 +79,12 @@ def GetReadoutLineOp : PulseOp<"get_readout_line", [Pure]> {
 
 def ToneOp : PulseOp<"tone", [Pure]> {
   let summary = "Create a pulse tone with explicit frequency and phase";
+  let description = [{
+    A tone with an explicit carrier frequency (Hz) and frame phase
+    (radians), rather than the native tone of a line. Tones are linear
+    values: `pulse.drive`, `pulse.readout` and the phase and frequency
+    ops return the updated tone.
+  }];
   let arguments = (ins
     AnyFloat:$frequency_hz,
     AnyFloat:$phase_rad
@@ -78,6 +100,11 @@ def ToneOp : PulseOp<"tone", [Pure]> {
 
 def SquarePulseOp : PulseOp<"square", [Pure]> {
   let summary = "Create a constant-amplitude (square) pulse";
+  let description = [{
+    A constant envelope `amp_real + i amp_imag` over `duration` clock
+    cycles. A constant `duration` must be positive; one that is a function
+    argument is checked once it is specialized.
+  }];
   let arguments = (ins
     I64:$duration,
     AnyFloat:$amp_real,
@@ -90,6 +117,11 @@ def SquarePulseOp : PulseOp<"square", [Pure]> {
 
 def GaussianPulseOp : PulseOp<"gaussian", [Pure]> {
   let summary = "Create a Gaussian pulse";
+  let description = [{
+    A Gaussian envelope over `duration` clock cycles, centered in the
+    pulse, with peak `amplitude` and standard deviation `sigma` in clock
+    cycles. Constant `duration` and `sigma` must be positive.
+  }];
   let arguments = (ins
     I64:$duration,
     AnyFloat:$amplitude,
@@ -119,6 +151,14 @@ def GaussianSquarePulseOp : PulseOp<"gaussian_square", [Pure]> {
 
 def DRAGPulseOp : PulseOp<"drag", [Pure]> {
   let summary = "Create a DRAG pulse for reducing leakage";
+  let description = [{
+    A DRAG envelope, `G + i beta dG/dt` for the Gaussian `G` of
+    `pulse.gaussian`: the imaginary part is
+    `-beta (t - duration / 2) / sigma^2` times `G`. `sigma` and `beta` are
+    in clock cycles. Leakage of a transmon is smallest near
+    `beta = -1 / alpha`, for the anharmonicity `alpha` in radians per
+    clock cycle.
+  }];
   let arguments = (ins
     I64:$duration,
     AnyFloat:$amplitude,
@@ -132,6 +172,10 @@ def DRAGPulseOp : PulseOp<"drag", [Pure]> {
 
 def CosinePulseOp : PulseOp<"cosine", [Pure]> {
   let summary = "Create a raised-cosine envelope pulse";
+  let description = [{
+    A raised-cosine envelope `amplitude (1 - cos(2 pi t / duration)) / 2`
+    over `duration` clock cycles, zero at both ends.
+  }];
   let arguments = (ins
     I64:$duration,
     AnyFloat:$amplitude
@@ -159,6 +203,11 @@ def TanhRampOp : PulseOp<"tanh_ramp", [Pure]> {
 
 def CustomOp : PulseOp<"custom", [Pure]> {
   let summary = "Create a custom waveform via callback function";
+  let description = [{
+    A waveform whose envelope is the function `callee`, for compiler
+    experiments. Execution needs samples, so the GPU lowering rejects it
+    until a pass specializes it to `pulse.custom_samples`.
+  }];
   let arguments = (ins
     FlatSymbolRefAttr:$callee,
     I64:$duration
@@ -170,6 +219,11 @@ def CustomOp : PulseOp<"custom", [Pure]> {
 
 def CustomSamplesOp : PulseOp<"custom_samples", [Pure]> {
   let summary = "Create a waveform from raw sample data";
+  let description = [{
+    A waveform from explicit real samples, one per clock cycle and held
+    constant over that cycle, so its duration is the number of samples.
+    The array must not be empty.
+  }];
   let arguments = (ins
     F64ArrayAttr:$samples
   );
@@ -204,6 +258,14 @@ def DriveOp : PulseOp<"drive", []> {
 
 def ReadoutOp : PulseOp<"readout", []> {
   let summary = "Apply a readout pulse and produce a measurement result";
+  let description = [{
+    Plays `pulse` on a readout line at `tone` and measures the qudit,
+    returning the updated line and tone and a `!pulse.measurement`. The
+    measurement completes at the end of the pulse: `pulse.is_set` and
+    `pulse.outcome` read it, and `pulse-verify` checks that ops
+    conditioned on it start after it completes. `mode` names the
+    acquisition; the frontend emits `"iq"`.
+  }];
   let arguments = (ins
     ReadoutLineType:$line,
     WaveformType:$pulse,
@@ -282,6 +344,11 @@ def IsSetOp : PulseOp<"is_set", [Pure]> {
 
 def WaitOp : PulseOp<"wait", []> {
   let summary = "Idle a line for a specified duration";
+  let description = [{
+    Idles a drive or readout line for `duration` and returns the updated
+    line, of the same kind. The scheduler reads the length from a
+    `pulse.duration_from_int` of a constant.
+  }];
   let arguments = (ins
     AnyLineType:$line,
     DurationType:$duration
@@ -308,6 +375,10 @@ def SyncOp : PulseOp<"sync", []> {
 
 def GetCurrentTimeOp : PulseOp<"get_current_time", [Pure]> {
   let summary = "Get the current time of a line as a timepoint";
+  let description = [{
+    The time a line has reached, as a `!pulse.timepoint`. The line is not
+    consumed.
+  }];
   let arguments = (ins AnyLineType:$line);
   let results = (outs TimepointType:$time);
   let assemblyFormat = "$line attr-dict `:` qualified(type($line)) `->` qualified(type($time))";
@@ -315,6 +386,10 @@ def GetCurrentTimeOp : PulseOp<"get_current_time", [Pure]> {
 
 def TimepointToIntOp : PulseOp<"timepoint_to_int", [Pure]> {
   let summary = "Convert a timepoint to integer cycles";
+  let description = [{
+    A timepoint as a number of clock cycles from the start of the
+    program.
+  }];
   let arguments = (ins TimepointType:$time);
   let results = (outs I64:$time_in_cycles);
   let assemblyFormat = "$time attr-dict `:` qualified(type($time)) `->` qualified(type($time_in_cycles))";
@@ -322,6 +397,9 @@ def TimepointToIntOp : PulseOp<"timepoint_to_int", [Pure]> {
 
 def TimepointSubtractOp : PulseOp<"timepoint_subtract", [Pure]> {
   let summary = "Compute the duration between two timepoints";
+  let description = [{
+    The duration `lhs - rhs` between two timepoints.
+  }];
   let arguments = (ins TimepointType:$lhs, TimepointType:$rhs);
   let results = (outs DurationType:$duration);
   let assemblyFormat = "$lhs `,` $rhs attr-dict `:` functional-type(operands, results)";
@@ -329,6 +407,9 @@ def TimepointSubtractOp : PulseOp<"timepoint_subtract", [Pure]> {
 
 def DurationFromIntOp : PulseOp<"duration_from_int", [Pure]> {
   let summary = "Convert an integer to a duration";
+  let description = [{
+    A `!pulse.duration` of `cycles` clock cycles, as `pulse.wait` takes.
+  }];
   let arguments = (ins I64:$cycles);
   let results = (outs DurationType:$duration);
   let assemblyFormat = "$cycles attr-dict `:` functional-type(operands, results)";
@@ -336,6 +417,9 @@ def DurationFromIntOp : PulseOp<"duration_from_int", [Pure]> {
 
 def DurationToIntOp : PulseOp<"duration_to_int", [Pure]> {
   let summary = "Convert a duration to an integer";
+  let description = [{
+    The number of clock cycles of a duration.
+  }];
   let arguments = (ins DurationType:$duration);
   let results = (outs I64:$cycles);
   let assemblyFormat = "$duration attr-dict `:` functional-type(operands, results)";
@@ -347,6 +431,10 @@ def DurationToIntOp : PulseOp<"duration_to_int", [Pure]> {
 
 def ShiftFrequencyOp : PulseOp<"shift_frequency", []> {
   let summary = "Apply a relative frequency shift to a tone";
+  let description = [{
+    Adds `frequency_hz` to the tone's carrier frequency. The frame phase
+    stays continuous. It takes no time.
+  }];
   let arguments = (ins ToneType:$tone, F64:$frequency_hz);
   let results = (outs ToneType:$updated_tone);
   let assemblyFormat = "$tone `,` $frequency_hz attr-dict `:` qualified(type($tone)) `,` type($frequency_hz) `->` qualified(type($updated_tone))";
@@ -356,6 +444,12 @@ def ShiftFrequencyOp : PulseOp<"shift_frequency", []> {
 
 def ShiftPhaseOp : PulseOp<"shift_phase", []> {
   let summary = "Apply a relative phase shift to a tone (virtual Z gate)";
+  let description = [{
+    Advances the tone's frame phase by `phase_rad`: a virtual Z rotation,
+    in the convention of McKay et al., PRA 96, 022330 (2017). A pulse
+    played after it turns about an axis rotated by `-phase_rad`. It takes
+    no time, and `pulse-virtual-z` folds it into the next drive.
+  }];
   let arguments = (ins ToneType:$tone, F64:$phase_rad);
   let results = (outs ToneType:$updated_tone);
   let assemblyFormat = "$tone `,` $phase_rad attr-dict `:` qualified(type($tone)) `,` type($phase_rad) `->` qualified(type($updated_tone))";
@@ -365,6 +459,10 @@ def ShiftPhaseOp : PulseOp<"shift_phase", []> {
 
 def SetPhaseOp : PulseOp<"set_phase", []> {
   let summary = "Set absolute phase of a tone";
+  let description = [{
+    Sets the tone's frame phase to `phase_rad`, with the sign of
+    `pulse.shift_phase`. It takes no time.
+  }];
   let arguments = (ins ToneType:$tone, F64:$phase_rad);
   let results = (outs ToneType:$updated_tone);
   let assemblyFormat = "$tone `,` $phase_rad attr-dict `:` qualified(type($tone)) `,` type($phase_rad) `->` qualified(type($updated_tone))";
@@ -374,6 +472,10 @@ def SetPhaseOp : PulseOp<"set_phase", []> {
 
 def SetFrequencyOp : PulseOp<"set_frequency", []> {
   let summary = "Set absolute frequency of a tone";
+  let description = [{
+    Sets the tone's carrier frequency to `frequency_hz`. The frame phase
+    stays continuous. It takes no time.
+  }];
   let arguments = (ins ToneType:$tone, F64:$frequency_hz);
   let results = (outs ToneType:$updated_tone);
   let assemblyFormat = "$tone `,` $frequency_hz attr-dict `:` qualified(type($tone)) `,` type($frequency_hz) `->` qualified(type($updated_tone))";
@@ -387,6 +489,11 @@ def SetFrequencyOp : PulseOp<"set_frequency", []> {
 
 def PulseAddOp : PulseOp<"add", [Pure, Commutative]> {
   let summary = "Add two waveforms element-wise";
+  let description = [{
+    The element-wise sum of two waveforms. Both must have the same
+    duration when it is known; a mismatch is an error rather than a
+    truncation.
+  }];
   let arguments = (ins WaveformType:$lhs, WaveformType:$rhs);
   let results = (outs WaveformType:$result);
   let assemblyFormat = "$lhs `,` $rhs attr-dict `:` qualified(type($result))";
@@ -396,6 +503,10 @@ def PulseAddOp : PulseOp<"add", [Pure, Commutative]> {
 
 def PulseSubOp : PulseOp<"sub", [Pure]> {
   let summary = "Subtract two waveforms element-wise";
+  let description = [{
+    The element-wise difference `lhs - rhs` of two waveforms of the same
+    duration.
+  }];
   let arguments = (ins WaveformType:$lhs, WaveformType:$rhs);
   let results = (outs WaveformType:$result);
   let assemblyFormat = "$lhs `,` $rhs attr-dict `:` qualified(type($result))";
@@ -405,6 +516,11 @@ def PulseSubOp : PulseOp<"sub", [Pure]> {
 
 def PulseMulOp : PulseOp<"mul", [Pure, Commutative]> {
   let summary = "Multiply two waveforms element-wise";
+  let description = [{
+    The element-wise product of two waveforms of the same duration. The
+    drive is not linear in it, so execution samples it once per clock
+    cycle into piecewise-constant samples.
+  }];
   let arguments = (ins WaveformType:$lhs, WaveformType:$rhs);
   let results = (outs WaveformType:$result);
   let assemblyFormat = "$lhs `,` $rhs attr-dict `:` qualified(type($result))";
@@ -414,6 +530,9 @@ def PulseMulOp : PulseOp<"mul", [Pure, Commutative]> {
 
 def PulseScaleOp : PulseOp<"scale", [Pure]> {
   let summary = "Scale a waveform by a scalar factor";
+  let description = [{
+    The waveform `pulse` times a real or complex `scale`.
+  }];
   let arguments = (ins
     WaveformType:$pulse,
     AnyTypeOf<[AnyFloat, AnyComplex]>:$scale
@@ -425,6 +544,9 @@ def PulseScaleOp : PulseOp<"scale", [Pure]> {
 
 def PulseNegOp : PulseOp<"neg", [Pure]> {
   let summary = "Negate a waveform";
+  let description = [{
+    The waveform `pulse` negated.
+  }];
   let arguments = (ins WaveformType:$pulse);
   let results = (outs WaveformType:$result);
   let assemblyFormat = "$pulse attr-dict `:` qualified(type($result))";
@@ -438,6 +560,11 @@ def PulseNegOp : PulseOp<"neg", [Pure]> {
 
 def AtomicOp : PulseOp<"atomic", [RecursiveMemoryEffects, NoTerminator]> {
   let summary = "Atomic pulse scheduling region";
+  let description = [{
+    A region whose ops on the given lines are scheduled as one unit. It
+    takes the lines it uses and returns them updated, one result per
+    operand.
+  }];
   let arguments = (ins Variadic<AnyLineType>:$lines);
   let results = (outs Variadic<AnyLineType>:$updated_lines);
   let regions = (region SizedRegion<1>:$body);
@@ -447,6 +574,10 @@ def AtomicOp : PulseOp<"atomic", [RecursiveMemoryEffects, NoTerminator]> {
 
 def YieldOp : PulseOp<"yield", [Pure, Terminator, ReturnLike]> {
   let summary = "Yield from a pulse region";
+  let description = [{
+    Ends the body of a `pulse.schedule_block`, passing the lines, tones
+    and measurements that leave it to the block's results.
+  }];
   let arguments = (ins Variadic<AnyTimedType>:$values);
   let assemblyFormat = "attr-dict ($values^ `:` type($values))?";
   let hasVerifier = 1;
@@ -504,6 +635,10 @@ def ScheduleBlockOp : PulseOp<"schedule_block", [
 
 def IQAcquireOp : PulseOp<"iq_acquire", []> {
   let summary = "Acquire raw IQ data from a readout line";
+  let description = [{
+    Plays `pulse` on a readout line at `tone` and returns the raw
+    demodulated IQ point instead of a discriminated measurement.
+  }];
   let arguments = (ins
     ReadoutLineType:$line,
     WaveformType:$pulse,
@@ -519,6 +654,9 @@ def IQAcquireOp : PulseOp<"iq_acquire", []> {
 
 def ExtractIQOp : PulseOp<"extract_iq", [Pure]> {
   let summary = "Extract I and Q components from IQ data";
+  let description = [{
+    The in-phase and quadrature components of an IQ point.
+  }];
   let arguments = (ins IQDataType:$iq_data);
   let results = (outs F64:$i_value, F64:$q_value);
   let assemblyFormat = "$iq_data attr-dict `:` qualified(type($iq_data)) `->` type($i_value) `,` type($q_value)";
@@ -526,6 +664,9 @@ def ExtractIQOp : PulseOp<"extract_iq", [Pure]> {
 
 def CreateIQOp : PulseOp<"create_iq", [Pure]> {
   let summary = "Create IQ data from I and Q values";
+  let description = [{
+    An IQ point from its in-phase and quadrature components.
+  }];
   let arguments = (ins F64:$i_value, F64:$q_value);
   let results = (outs IQDataType:$iq_data);
   let assemblyFormat = "$i_value `,` $q_value attr-dict `:` type($i_value) `,` type($q_value) `->` qualified(type($iq_data))";
@@ -533,6 +674,9 @@ def CreateIQOp : PulseOp<"create_iq", [Pure]> {
 
 def IQMagnitudeOp : PulseOp<"iq_magnitude", [Pure]> {
   let summary = "Compute magnitude of IQ data: sqrt(I^2 + Q^2)";
+  let description = [{
+    The magnitude `sqrt(I^2 + Q^2)` of an IQ point.
+  }];
   let arguments = (ins IQDataType:$iq_data);
   let results = (outs F64:$magnitude);
   let assemblyFormat = "$iq_data attr-dict `:` qualified(type($iq_data)) `->` type($magnitude)";
@@ -540,6 +684,9 @@ def IQMagnitudeOp : PulseOp<"iq_magnitude", [Pure]> {
 
 def IQPhaseOp : PulseOp<"iq_phase", [Pure]> {
   let summary = "Compute phase of IQ data: atan2(Q, I)";
+  let description = [{
+    The phase `atan2(Q, I)` of an IQ point, in radians.
+  }];
   let arguments = (ins IQDataType:$iq_data);
   let results = (outs F64:$phase);
   let assemblyFormat = "$iq_data attr-dict `:` qualified(type($iq_data)) `->` type($phase)";

@@ -27,12 +27,20 @@ def PulseDialect : Dialect {
     - **Timing**: Current time tracked per line, explicit waits and syncs
     - **Waveform algebra**: Element-wise add/sub/mul/scale/neg on envelopes
 
+    Durations are in clock cycles of the target (the module's
+    `pulse.clock_ghz`); scheduling records each timed op's `start_vtu` and
+    `duration_vtu` in the same unit.
+
     Example:
     ```mlir
       %q0 = pulse.qudit_alloc : !pulse.qref
       %d0, %tone_q0 = pulse.get_drive_line %q0
           : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-      %wf = pulse.gaussian 40, 0.3, 10.0 : !pulse.waveform
+      %duration = arith.constant 40 : i64
+      %amplitude = arith.constant 0.3 : f64
+      %sigma = arith.constant 10.0 : f64
+      %wf = pulse.gaussian %duration, %amplitude, %sigma
+          : i64, f64, f64 -> !pulse.waveform
       %d0_out, %tone_out = pulse.drive %d0, %wf, %tone_q0
           : !pulse.drive_line, !pulse.waveform, !pulse.tone
           -> !pulse.drive_line, !pulse.tone

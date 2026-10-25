@@ -32,7 +32,9 @@ typedef enum {
   CUDM_ERROR_INTERNAL = 99,
 } CudmStatus;
 
-// Linked cuDensityMat library version (major * 10000 + minor * 100 + patch).
+// Loaded cuDensityMat library version (major * 10000 + minor * 100 + patch),
+// which the Python loader checks against the version this runtime was built
+// with.
 int64_t cudm_runtime_version(void);
 
 // Context management
@@ -44,7 +46,6 @@ CudmStatus cudm_state_alloc(CudmHandle handle, CudmState *state,
                             const int64_t *mode_extents, int32_t num_modes,
                             int32_t purity, int32_t data_type);
 CudmStatus cudm_state_destroy(CudmState state);
-CudmStatus cudm_state_init_zero(CudmHandle handle, CudmState state);
 CudmStatus cudm_state_capture(CudmState state);
 // Use `data` (`size` bytes, in the layout cudm_state_capture produces) as the
 // initial value of the next state allocated on this thread instead of |0>.
@@ -89,22 +90,12 @@ CudmStatus cudm_operator_append(CudmHandle handle, CudmOperator op,
                                 CudmOpTerm term, int32_t duality,
                                 double coeff_real, double coeff_imag);
 
-// Time evolution.
+// Time evolution over [t_start, t_end] in num_steps equal steps.
 // The `integrator` code matches the CuDensityMat dialect IntegratorKind enum:
 //   2 = rk1, 3 = rk2, 4 = rk4, 5 = magnus, 6 = crank_nicolson.
-CudmStatus cudm_evolve_step(CudmHandle handle, CudmOperator op,
-                            CudmState state_in, CudmState state_out,
-                            CudmWorkspace ws, double t, double dt,
-                            int32_t integrator);
-
-// Full evolve (high-level convenience)
 CudmStatus cudm_evolve(CudmHandle handle, CudmOperator op, CudmState state_in,
                        CudmState state_out, CudmWorkspace ws, double t_start,
                        double t_end, int64_t num_steps, int32_t integrator);
-
-// Expectation value
-CudmStatus cudm_observe(CudmHandle handle, CudmOperator op, CudmState state,
-                        CudmWorkspace ws, double t, double *real, double *imag);
 
 #ifdef __cplusplus
 }

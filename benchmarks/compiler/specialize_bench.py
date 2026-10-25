@@ -6,243 +6,100 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""Specialize benchmark: measure specialize() vs full recompile at QEC scales.
+"""A new float value on a compiled kernel against a fresh compile.
 
-Compares a fresh compile (trace, build, passes, schedule) with a new value of
-a float parameter on an already compiled kernel. Float parameters stay
-function arguments of the scheduled module, so a new value is a cache hit
-that binds the value; substituting it (for MLIR text or the GPU) happens
-only when needed.
+Float parameters stay function arguments of the scheduled module, so calling
+a compiled kernel with a new value is a cache hit that binds the value, while
+``pulse.compile(kernel)`` traces, builds, runs the passes and schedules again.
+For kernels of growing size, and for a sweep of 100 amplitudes, this prints
+the median time of each and exits 1 if a new value is not at least
+``--min-speedup`` times cheaper than a compile.
 
 Usage:
-    python benchmarks/compiler/specialize_bench.py
+    python benchmarks/compiler/specialize_bench.py [--iterations N] [--min-speedup X]
 """
 
 from __future__ import annotations
 
+import argparse
 import statistics
 import time
+from collections.abc import Callable
 
 import cudaq_pulse as pulse
 
 _QUBIT = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).qudit_handles[0]
+_DRIVE_COUNTS = (1, 2, 5, 10, 20)
 
 
-def _build_qec_kernel(d: int):
-    """Build a parameterized surface-code-like kernel at distance d.
+def _drives(count: int) -> pulse.Kernel:
+    """A kernel of ``count`` Gaussian drives whose amplitude is a parameter.
 
-    Layout: d^2 data qubits + (d^2-1)/2 ancilla X-type stabilizers.
-    Each ancilla drives a Gaussian on itself, then syncs with neighbors.
-    The gate amplitude is parameterized.
+    The widths depend on the loop index, so the loop unrolls and the module
+    grows with ``count``.
     """
-    n_data = d * d
-    n_ancilla = max(1, (d * d - 1) // 2)
-    n_total = n_data + n_ancilla
 
     @pulse.kernel
-    def surface_code_parametric(*args):
-        pass
-
-    def make_kernel(n_q, n_anc, d_val):
-        @pulse.kernel
-        def k(q0, amp: float):
-            d0, t0 = get_drive_line(q0)
-            wf = gaussian(40, amp, 10.0)
-            drive(d0, wf, t0)
-
-        return k
-
-    # Simpler approach: build a single-qubit kernel with amp parameter,
-    # but compile at different scales to measure specialize overhead
-    return n_total
-
-
-def _make_scaled_kernel(n_drives: int):
-    """Create a kernel with n_drives sequential drives, amplitude parameterized."""
-
-    @pulse.kernel
-    def k1(q, amp: float):
+    def drives(q, amp: float):
         d, t = get_drive_line(q)
-        wf = gaussian(40, amp, 10.0)
-        drive(d, wf, t)
+        for i in range(count):
+            drive(d, gaussian(40 + 4 * (i % 3), amp, 10.0), t)
 
-    @pulse.kernel
-    def k2(q, amp: float):
-        d, t = get_drive_line(q)
-        wf = gaussian(40, amp, 10.0)
-        drive(d, wf, t)
-        wf2 = gaussian(40, amp, 10.0)
-        drive(d, wf2, t)
-
-    @pulse.kernel
-    def k5(q, amp: float):
-        d, t = get_drive_line(q)
-        wf = gaussian(40, amp, 10.0)
-        drive(d, wf, t)
-        wf2 = gaussian(40, amp, 10.0)
-        drive(d, wf2, t)
-        wf3 = gaussian(40, amp, 10.0)
-        drive(d, wf3, t)
-        wf4 = gaussian(40, amp, 10.0)
-        drive(d, wf4, t)
-        wf5 = gaussian(40, amp, 10.0)
-        drive(d, wf5, t)
-
-    @pulse.kernel
-    def k10(q, amp: float):
-        d, t = get_drive_line(q)
-        for _ in range(10):
-            wf = gaussian(40, amp, 10.0)
-            drive(d, wf, t)
-
-    @pulse.kernel
-    def k20(q, amp: float):
-        d, t = get_drive_line(q)
-        for _ in range(20):
-            wf = gaussian(40, amp, 10.0)
-            drive(d, wf, t)
-
-    kernels = {1: k1, 2: k2, 5: k5, 10: k10, 20: k20}
-    return kernels.get(n_drives, k1)
+    return drives
 
 
-def _surface_code_ops(d: int) -> int:
-    """Approximate op count for a d-distance surface code cycle."""
-    n_ancilla = d * d - 1
-    ops_per_stabilizer = 4 * 2 + 2 * 3
-    return n_ancilla * ops_per_stabilizer
+def _median_ms(call: Callable[[int], object], iterations: int) -> float:
+    call(0)
+    times = []
+    for i in range(iterations):
+        start = time.perf_counter()
+        call(i)
+        times.append((time.perf_counter() - start) * 1000)
+    return statistics.median(times)
 
 
-def bench_specialize_vs_compile():
-    """Main benchmark: specialize vs full recompile at various op scales."""
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--iterations", type=int, default=20)
+    parser.add_argument("--min-speedup", type=float, default=10.0)
+    options = parser.parse_args()
 
-    print("=" * 85)
-    print("Parameterized Pulse Kernels: new float value vs compile Benchmark")
-    print("=" * 85)
-    print()
-
-    # Use increasing drive counts to simulate growing program size
-    configs = [
-        (3, 1),  # d=3 scale
-        (5, 2),  # d=5 scale
-        (7, 5),  # d=7 scale
-        (9, 10),  # d=9 scale
-        (11, 20),  # d=11 scale
-    ]
-
-    n_warmup = 3
-    n_iters = 20
-
-    header = (
-        f"  {'d':>3s}  {'Drives':>6s}  "
-        f"{'compile(ms)':>11s}  {'new value(ms)':>14s}  "
-        f"{'speedup':>8s}  {'ops/ms':>8s}"
-    )
-    sep = "  " + "-" * len(header.strip())
-    print(header)
-    print(sep)
-
-    rows = []
-    for d, n_drives in configs:
-        kern = _make_scaled_kernel(n_drives)
-
-        # --- Full compile timing ---
-        for _ in range(n_warmup):
-            pulse.compile(kern).lower(_QUBIT, 0.5)
-
-        compile_times = []
-        for _ in range(n_iters):
-            t0 = time.perf_counter()
-            pulse.compile(kern).lower(_QUBIT, 0.5)
-            compile_times.append((time.perf_counter() - t0) * 1000)
-        compile_ms = statistics.median(compile_times)
-
-        # --- Parametric: compile once, specialize many ---
-        compiled = pulse.compile(kern)
-
-        for _ in range(n_warmup):
-            compiled.lower(_QUBIT, amp=0.5)
-
-        spec_times = []
-        for i in range(n_iters):
-            amp_val = 0.01 * (i + 1)
-            t0 = time.perf_counter()
-            compiled.lower(_QUBIT, amp=amp_val)
-            spec_times.append((time.perf_counter() - t0) * 1000)
-        spec_ms = statistics.median(spec_times)
-
-        speedup = compile_ms / spec_ms if spec_ms > 0 else float("inf")
-        ops_per_ms = n_drives / spec_ms if spec_ms > 0 else 0
-
-        rows.append((d, n_drives, compile_ms, spec_ms, speedup, ops_per_ms))
-        print(
-            f"  {d:3d}  {n_drives:6d}  "
-            f"{compile_ms:11.3f}  {spec_ms:14.3f}  "
-            f"{speedup:7.1f}x  {ops_per_ms:8.1f}"
+    print(f"  {'drives':>6s}  {'compile (ms)':>12s}  {'new value (ms)':>14s}  {'speedup':>8s}")
+    speedups = []
+    for count in _DRIVE_COUNTS:
+        kernel = _drives(count)
+        compiled = pulse.compile(kernel)
+        compile_ms = _median_ms(
+            lambda i, k=kernel: pulse.compile(k).lower(_QUBIT, 0.5), options.iterations
         )
+        value_ms = _median_ms(
+            lambda i, c=compiled: c.lower(_QUBIT, amp=0.01 * (i + 1)), options.iterations
+        )
+        speedups.append((f"{count} drives", compile_ms / value_ms))
+        print(f"  {count:6d}  {compile_ms:12.3f}  {value_ms:14.3f}  {speedups[-1][1]:7.1f}x")
 
-    print()
-
-    # --- Sweep test ---
-    print("Sweep Test: compile once, evaluate at 100 amplitudes")
-    print("-" * 60)
-
-    @pulse.kernel
-    def sweep_kern(q, amp: float):
-        d, t = get_drive_line(q)
-        wf = gaussian(40, amp, 10.0)
-        drive(d, wf, t)
-
-    compiled = pulse.compile(sweep_kern)
-
-    # Sweep via specialize
-    t0 = time.perf_counter()
-    for i in range(100):
-        compiled.lower(_QUBIT, amp=0.01 * (i + 1))
-    sweep_spec_ms = (time.perf_counter() - t0) * 1000
-
-    # Sweep via full recompile
-    t0 = time.perf_counter()
-    for i in range(100):
-        pulse.compile(sweep_kern).lower(_QUBIT, 0.01 * (i + 1))
-    sweep_compile_ms = (time.perf_counter() - t0) * 1000
-
-    sweep_speedup = sweep_compile_ms / sweep_spec_ms if sweep_spec_ms > 0 else float("inf")
+    sweep = _drives(1)
+    compiled = pulse.compile(sweep)
+    amplitudes = [0.01 * (i + 1) for i in range(100)]
+    start = time.perf_counter()
+    for amp in amplitudes:
+        compiled.lower(_QUBIT, amp=amp)
+    value_ms = (time.perf_counter() - start) * 1000
+    start = time.perf_counter()
+    for amp in amplitudes:
+        pulse.compile(sweep).lower(_QUBIT, amp)
+    compile_ms = (time.perf_counter() - start) * 1000
+    speedups.append(("sweep of 100", compile_ms / value_ms))
     print(
-        f"  100 new-value calls:      {sweep_spec_ms:8.2f} ms  ({sweep_spec_ms / 100:.3f} ms/eval)"
+        f"\n  sweep of 100 amplitudes: {value_ms:.2f} ms with new values, "
+        f"{compile_ms:.2f} ms compiling each ({speedups[-1][1]:.1f}x)\n"
     )
-    print(
-        f"  100 compile() calls:     {sweep_compile_ms:8.2f} ms  "
-        f"({sweep_compile_ms / 100:.3f} ms/eval)"
-    )
-    print(f"  Sweep speedup:           {sweep_speedup:8.1f}x")
-    print()
 
-    # --- Assertions ---
-    print("Assertions:")
-    all_ok = True
-    for d, n_drives, comp_ms, spec_ms, speedup, ops_ms in rows:
-        if d >= 5:
-            ok = speedup >= 10.0
-            status = "PASS" if ok else "FAIL"
-            if not ok:
-                all_ok = False
-            print(f"  d={d}: speedup {speedup:.1f}x >= 10.0x ... {status}")
-
-    sweep_ok = sweep_speedup >= 10.0
-    status = "PASS" if sweep_ok else "FAIL"
-    if not sweep_ok:
-        all_ok = False
-    print(f"  Sweep: speedup {sweep_speedup:.1f}x >= 10.0x ... {status}")
-
-    if all_ok:
-        print("\n  All assertions PASSED.")
-    else:
-        print("\n  Some assertions FAILED.")
-
-    return all_ok
+    slow = [(name, s) for name, s in speedups if s < options.min_speedup]
+    for name, speedup in slow:
+        print(f"  FAIL {name}: a new value is only {speedup:.1f}x cheaper than a compile")
+    return 1 if slow else 0
 
 
 if __name__ == "__main__":
-    ok = bench_specialize_vs_compile()
-    raise SystemExit(0 if ok else 1)
+    raise SystemExit(main())

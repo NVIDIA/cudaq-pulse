@@ -24,36 +24,14 @@ def CUDM_StatePurity : I32EnumAttr<"StatePurity",
 def CUDM_StatePurityAttr : EnumAttr<CuDensityMatDialect, CUDM_StatePurity, "purity">;
 
 def CUDM_ComputeType : I32EnumAttr<"ComputeType",
-    "Floating-point compute precision",
+    "Floating-point compute precision; the runtime computes in complex128 only",
     [
-      I32EnumAttrCase<"F32", 4, "f32">,
       I32EnumAttrCase<"F64", 16, "f64">
     ]> {
   let cppNamespace = "::cudm";
   let genSpecializedAttr = 0;
 }
 def CUDM_ComputeTypeAttr : EnumAttr<CuDensityMatDialect, CUDM_ComputeType, "compute_type">;
-
-def CUDM_Memspace : I32EnumAttr<"Memspace",
-    "Memory space for workspace allocation",
-    [
-      I32EnumAttrCase<"Device", 0, "device">,
-      I32EnumAttrCase<"Host", 1, "host">
-    ]> {
-  let cppNamespace = "::cudm";
-  let genSpecializedAttr = 0;
-}
-def CUDM_MemspaceAttr : EnumAttr<CuDensityMatDialect, CUDM_Memspace, "memspace">;
-
-def CUDM_WorkspaceKind : I32EnumAttr<"WorkspaceKind",
-    "Kind of workspace memory buffer",
-    [
-      I32EnumAttrCase<"Scratch", 0, "scratch">
-    ]> {
-  let cppNamespace = "::cudm";
-  let genSpecializedAttr = 0;
-}
-def CUDM_WorkspaceKindAttr : EnumAttr<CuDensityMatDialect, CUDM_WorkspaceKind, "ws_kind">;
 
 def CUDM_Sparsity : I32EnumAttr<"Sparsity",
     "Elementary operator sparsity pattern",
@@ -65,30 +43,6 @@ def CUDM_Sparsity : I32EnumAttr<"Sparsity",
   let genSpecializedAttr = 0;
 }
 def CUDM_SparsityAttr : EnumAttr<CuDensityMatDialect, CUDM_Sparsity, "sparsity">;
-
-def CUDM_SpectrumKind : I32EnumAttr<"SpectrumKind",
-    "Which extreme eigenvalues to compute",
-    [
-      I32EnumAttrCase<"Largest", 0, "largest">,
-      I32EnumAttrCase<"Smallest", 1, "smallest">,
-      I32EnumAttrCase<"LargestReal", 2, "largest_real">,
-      I32EnumAttrCase<"SmallestReal", 3, "smallest_real">
-    ]> {
-  let cppNamespace = "::cudm";
-  let genSpecializedAttr = 0;
-}
-def CUDM_SpectrumKindAttr : EnumAttr<CuDensityMatDialect, CUDM_SpectrumKind, "spectrum_kind">;
-
-def CUDM_DistProvider : I32EnumAttr<"DistributedProvider",
-    "Distributed communication provider",
-    [
-      I32EnumAttrCase<"DistNone", 0, "none">,
-      I32EnumAttrCase<"MPI", 1, "mpi">
-    ]> {
-  let cppNamespace = "::cudm";
-  let genSpecializedAttr = 0;
-}
-def CUDM_DistProviderAttr : EnumAttr<CuDensityMatDialect, CUDM_DistProvider, "dist_provider">;
 
 def CUDM_IntegratorKind : I32EnumAttr<"IntegratorKind",
     "Time-integration strategy",

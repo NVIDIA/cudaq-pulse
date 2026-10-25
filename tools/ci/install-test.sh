@@ -14,8 +14,9 @@
 # Usage: tools/ci/install-test.sh [--python PY] [--wheelhouse DIR] MODE...
 #
 # Modes:
-#   base    install cudaq-pulse; compile a kernel, run cudaq-pulse-opt --help,
-#           the doctor (no GPU required), and pytest -m "not gpu"
+#   base    install cudaq-pulse; compile a kernel, run the installed
+#           cudaq-pulse-opt on it, the doctor (no GPU required), and
+#           pytest -m "not gpu"
 #   extras  install [cu12] and [cu13], each in its own environment; the doctor
 #           must load every library and report that no device is present
 #   gpu     install [cu12] and [cu13], each in its own environment; the doctor
@@ -111,8 +112,45 @@ def rabi(qubit, duration: int, amplitude: float):
 device = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
 compiled = pulse.compile(rabi).lower(device.qudit_handles[0], 100, 0.5)
 assert compiled.mlir().strip(), "compile produced no MLIR"
+Path("kernel.mlir").write_text(compiled.mlir())
 print(f"compiled from {package.parent} in {compiled.metrics.total_ms:.3f} ms")
 EOF
+
+cat >"${work}/invalid.mlir" <<'EOF'
+func.func @main() {
+  %d = arith.constant 0 : i64
+  %a = arith.constant 0.1 : f64
+  %w = pulse.square %d, %a, %a : i64, f64, f64 -> !pulse.waveform
+  return
+}
+EOF
+
+# expect_in FILE TEXT: fail unless FILE contains TEXT.
+expect_in() {
+  if ! grep -qF -- "$2" "${work}/$1"; then
+    echo "error: cudaq-pulse-opt output $1 lacks '$2'" >&2
+    exit 1
+  fi
+}
+
+# The installed cudaq-pulse-opt verifies, schedules and lowers the kernel
+# smoke_compile.py wrote, and rejects invalid IR with its diagnostic.
+opt_checks() {
+  in_venv cudaq-pulse-opt --pulse-verify kernel.mlir -o verified.mlir
+  expect_in verified.mlir "pulse.drive"
+  in_venv cudaq-pulse-opt --pulse-canonicalize --pulse-virtual-z --pulse-fusion \
+    --pulse-schedule-asap kernel.mlir -o scheduled.mlir
+  expect_in scheduled.mlir "start_vtu = 0"
+  in_venv cudaq-pulse-opt --pulse-to-qop --qop-to-cudm --cudm-to-llvm --canonicalize \
+    --convert-arith-to-llvm --convert-func-to-llvm --reconcile-unrealized-casts \
+    kernel.mlir -o lowered.mlir
+  expect_in lowered.mlir "llvm.call @cudm_evolve"
+  if in_venv cudaq-pulse-opt invalid.mlir -o /dev/null 2>"${work}/invalid.err"; then
+    echo "error: cudaq-pulse-opt accepted invalid.mlir" >&2
+    exit 1
+  fi
+  expect_in invalid.err "'pulse.square' op duration must be positive, got 0"
+}
 
 for mode in "${modes[@]}"; do
   case "$mode" in
@@ -120,6 +158,7 @@ for mode in "${modes[@]}"; do
       new_venv base "cudaq-pulse==${version}" "${test_requirements[@]}"
       in_venv python smoke_compile.py
       in_venv cudaq-pulse-opt --help >/dev/null
+      opt_checks
       in_venv python -m cudaq_pulse.doctor --allow-no-gpu
       run_pytest "not gpu"
       drop_venv
