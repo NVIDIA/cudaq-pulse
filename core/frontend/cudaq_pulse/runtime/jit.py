@@ -54,10 +54,6 @@ class JITCompiler:
         """Lower pulse MLIR and JIT-compile it against the GPU runtime."""
         return self._pipeline.jit_pulse(pulse_mlir, [str(self._runtime.path)])
 
-    def compile_module(self, mlir_text: str) -> JITModule:
-        """JIT-compile an LLVM-dialect MLIR module against the GPU runtime."""
-        return self._pipeline.jit_llvm_dialect(mlir_text, [str(self._runtime.path)])
-
     def load_and_run(
         self,
         module: JITModule,
@@ -107,19 +103,6 @@ class JITCompiler:
         array = np.frombuffer(buffer, dtype=np.complex128).copy()
         return [JITResult(shape=shape, dtype=np.dtype(np.complex128), _array=array)]
 
-    def compile_and_run(
-        self,
-        pulse_mlir: str,
-        *,
-        entry: str = "main",
-        n_qubits: int = 1,
-    ) -> list[JITResult]:
-        """Compile a Pulse-MLIR module and execute it."""
-        if not isinstance(pulse_mlir, str):
-            raise TypeError("expected Pulse-MLIR text")
-        module = self.compile_pulse_mlir(pulse_mlir)
-        return self.load_and_run(module, entry=entry, n_qubits=n_qubits)
-
 
 _ARRAY_DTYPES = (np.dtype(np.float64), np.dtype(np.complex128), np.dtype(np.int64))
 
@@ -155,35 +138,3 @@ def _marshal_args(args: Sequence[Any]) -> tuple[list[Any], list[Any]]:
                 "use an int, a float or a NumPy array"
             )
     return c_args, keep_alive
-
-
-def compile_and_run(
-    module_text: str,
-    args: Sequence[Any] | None = None,
-    *,
-    entry: str = "main",
-    n_qubits: int = 1,
-) -> list[JITResult]:
-    """One-shot: JIT-compile an LLVM-dialect MLIR module and execute it.
-
-    Raises a ``GpuRuntimeError`` subclass if GPU execution is unavailable.
-    """
-    compiler = JITCompiler()
-    module = compiler.compile_module(module_text)
-    return compiler.load_and_run(module, entry=entry, args=args or [], n_qubits=n_qubits)
-
-
-def compile_and_run_pulse(
-    pulse_mlir: str,
-    *,
-    entry: str = "main",
-    n_qubits: int = 1,
-) -> list[JITResult]:
-    """One-shot: compile pulse MLIR through the full pipeline and execute.
-
-    Runs pulse -> qop -> cudm -> llvm -> JIT -> execute. Raises a
-    ``GpuRuntimeError`` subclass if GPU execution is unavailable.
-    """
-    compiler = JITCompiler()
-    module = compiler.compile_pulse_mlir(pulse_mlir)
-    return compiler.load_and_run(module, entry=entry, n_qubits=n_qubits)
