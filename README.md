@@ -168,6 +168,13 @@ release carries the wheels and the source distribution.
 - `docs/` — user, API, and architecture documentation
 - `benchmarks/` — compiler and simulation benchmarks
 
+## Contributing and support
+
+[CONTRIBUTING.md](https://github.com/NVIDIA/cudaq-pulse/blob/main/CONTRIBUTING.md) covers building, testing and the
+versioning policy, [SUPPORT.md](https://github.com/NVIDIA/cudaq-pulse/blob/main/SUPPORT.md) where to ask for help, and
+[CHANGELOG.md](https://github.com/NVIDIA/cudaq-pulse/blob/main/CHANGELOG.md) what changed in each release. Everyone taking
+part follows the [Code of Conduct](https://github.com/NVIDIA/cudaq-pulse/blob/main/CODE_OF_CONDUCT.md).
+
 ## License
 
 cudaq-pulse is licensed under the [Apache License 2.0](https://github.com/NVIDIA/cudaq-pulse/blob/main/LICENSE). The

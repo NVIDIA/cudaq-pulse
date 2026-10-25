@@ -1,5 +1,10 @@
 # Contributing to cudaq-pulse
 
+Everyone taking part in the project follows the
+[Code of Conduct](CODE_OF_CONDUCT.md). [SUPPORT.md](SUPPORT.md) says where to
+ask questions and report bugs; report security vulnerabilities as described
+in [SECURITY.md](SECURITY.md), not in an issue.
+
 ## Prerequisites
 
 - [uv](https://docs.astral.sh/uv/) (it provides Python, CMake, Ninja, and
@@ -187,6 +192,51 @@ Dependabot proposes weekly updates for actions and `uv.lock`.
   summary and the example database kept in the Actions cache. GitHub runs
   scheduled workflows from the default branch, so the nightly schedule takes
   effect once this file is on `main`; until then, dispatch it manually.
+
+## Versioning and stability
+
+Versions follow [PEP 440](https://peps.python.org/pep-0440/) in the shape of
+[Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`, with
+pre-releases `X.Y.Z{a,b,rc}N` and post releases `X.Y.Z.postN`.
+
+- **What is covered.** The public API is the names in the `__all__` of
+  `cudaq_pulse` and of its documented submodules, their documented behavior,
+  the documented environment variables, and the `cudaq-pulse-opt` and
+  `python -m cudaq_pulse.doctor` command lines. Modules and names that start
+  with an underscore, the native extension, the C++ headers, and the textual
+  form of the MLIR dialects are internal and may change in any release.
+  Numerical results are covered by the tests' tolerances, not bit for bit.
+- **While the major version is 0** (the research preview), a minor release
+  may break the public API; a patch release fixes bugs and does not break it
+  on purpose. From 1.0, only a major release breaks it.
+- **Deprecation.** Where it is practical, a name or behavior that is going
+  away warns with `DeprecationWarning` for at least one minor release before
+  it is removed. Every break and deprecation is listed under **Changed**,
+  **Deprecated** or **Removed** in `CHANGELOG.md`.
+- **Python versions.** CPython 3.12 and newer. A new CPython is supported
+  from its first release, and dropping one happens only in a minor release.
+- **Post releases** (`X.Y.Z.postN`) fix packaging or metadata only, never
+  code; they need their own dated section in `CHANGELOG.md`.
+
+### Withdrawing a broken release
+
+Release assets are write-once and tags are never moved or deleted, so a
+broken release is withdrawn, not replaced:
+
+1. Open an issue that describes the problem and who is affected.
+2. Put a warning at the top of the GitHub release's notes that links the
+   issue and names the release to use instead. Keep the assets: deleting
+   them breaks pinned installs and reproducibility.
+3. Release the fix as a new version: `X.Y.(Z+1)` for a code fix, or
+   `X.Y.Z.postN` for a packaging-only fix, with a `CHANGELOG.md` entry that
+   names the withdrawn release.
+4. Once releases are on PyPI, also yank the broken version there
+   ([PEP 592](https://peps.python.org/pep-0592/)) with the issue link as
+   the reason. Yanking hides it from new resolutions but keeps exact pins
+   working; never delete files from PyPI.
+
+A vulnerability is handled through [SECURITY.md](SECURITY.md) first, and the
+withdrawal follows the coordinated disclosure.
 
 ## Releases
 
