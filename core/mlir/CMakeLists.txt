@@ -9,4 +9,3 @@
 add_subdirectory(dialects)
 add_subdirectory(transforms)
 add_subdirectory(conversions)
-add_subdirectory(capi)
