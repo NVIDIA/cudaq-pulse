@@ -14,10 +14,21 @@ if(SKBUILD_SABI_VERSION AND NOT TARGET Python::SABIModule)
     "but FindPython did not provide Development.SABIModule, so the extension "
     "would not be built against the stable ABI.")
 endif()
+# Off by default: on a free-threaded interpreter the module then re-enables
+# the GIL when imported. CI turns it on to test without the GIL; release
+# wheels stay GIL-only until their free-threaded layout is chosen.
+option(CUDAQ_PULSE_FREE_THREADED
+  "Declare the extension safe to run without the GIL (free-threaded CPython only)" OFF)
+set(_cudaq_pulse_free_threaded "")
+if(CUDAQ_PULSE_FREE_THREADED)
+  set(_cudaq_pulse_free_threaded FREE_THREADED)
+endif()
+
 nanobind_add_module(
   _cudaq_pulse_native
   NB_STATIC
   STABLE_ABI
+  ${_cudaq_pulse_free_threaded}
   bindings.cpp
 )
 

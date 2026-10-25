@@ -181,9 +181,13 @@ after its release. [zizmor](https://docs.zizmor.sh/) audits the workflows
 
 - `ci.yml`: ruff and pre-commit; build, lit, pytest, mypy, and the benchmark
   baseline on Linux x86_64 (Python 3.12 to 3.15), Linux aarch64 (3.12 and
-  3.15), and macOS (3.12). The `gpu` job builds with GPU support and runs
-  the GPU tests on the runner named by the `GPU_RUNNER` repository variable:
-  nightly once the variable is set, and on a manual run with `gpu` enabled.
+  3.15), and macOS (3.12), and the lit and pytest suites on free-threaded
+  CPython 3.14t with the GIL off (configured with
+  `-DCUDAQ_PULSE_FREE_THREADED=ON`, which declares the extension safe
+  without the GIL; release wheels are not free-threaded yet). The `gpu` job
+  builds with GPU support and runs the GPU tests on the runner named by the
+  `GPU_RUNNER` repository variable: nightly once the variable is set, and on
+  a manual run with `gpu` enabled.
 - `wheels.yml`: cibuildwheel for `cp312-abi3` (3.12 and newer) on
   manylinux_2_28 (x86_64, aarch64, with the CUDA 12 and CUDA 13 runtimes) and
   macOS arm64 (compiler-only), plus an sdist. It then installs

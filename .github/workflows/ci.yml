@@ -129,6 +129,48 @@ jobs:
           PYTHONPATH=build/dev/python uv run --no-sync python -m pytest
           tests/test_perf_guard.py --run-benchmarks -q
 
+  # Free-threaded CPython: the extension is built to run without the GIL and
+  # the whole CPU suite, tests/test_threads.py included, runs with the GIL
+  # off; any extension that turns it back on fails the job. Release wheels
+  # stay GIL-only until their free-threaded layout is chosen.
+  test-free-threaded:
+    name: test (linux-x86_64, py3.14t)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      PYTHONWARNINGS: "error:The global interpreter lock (GIL) has been enabled:RuntimeWarning"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.14t"
+      # The lint and docs tools are checked on the GIL build.
+      - run: uv sync --locked --no-default-groups --group build --group test --group bench
+      - uses: ./.github/actions/mlir-toolchain
+
+      - name: Configure and build
+        run: |
+          uv run --no-sync cmake -S . -B build/dev -G Ninja \
+            -DCUDAQ_PULSE_BUILD_TESTS=ON \
+            -DCUDAQ_PULSE_FREE_THREADED=ON \
+            -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
+          uv run --no-sync cmake --build build/dev
+
+      - name: Import without enabling the GIL
+        env:
+          PYTHONPATH: build/dev/python
+        run: >
+          .venv/bin/python -c "import sys, sysconfig, cudaq_pulse;
+          assert sysconfig.get_config_var('Py_GIL_DISABLED'), 'not a free-threaded interpreter';
+          assert not sys._is_gil_enabled(), 'importing cudaq_pulse enabled the GIL'"
+
+      - name: check-pulse (lit + pytest)
+        run: uv run --no-sync cmake --build build/dev --target check-pulse
+
   # Requires a runner with an NVIDIA GPU, a driver, and the CUDA 12.9 toolkit,
   # selected by the GPU_RUNNER repository variable (a label, or a JSON list of
   # labels; see wheels.yml). Runs nightly once the variable is set, and on
