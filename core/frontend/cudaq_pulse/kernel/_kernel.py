@@ -31,6 +31,7 @@ import threading
 import types
 import weakref
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any, NamedTuple
 
 from .._device import Device, DeviceMismatchError, NoDeviceError, Qudit, Register
@@ -38,6 +39,7 @@ from ..compile import CompileOptions, Lowered, build
 from ..targets._registry import NoTargetError, current_target
 from ._guard import Guard, build_guard
 from ._schedule_blocks import root_schedule, validate_kernel_schedule
+from ._unroll import resolve_unroll_threshold
 from .decorator import QuditRef, QvecRef
 from .ir_builder import CompilationError, IRValue, Parameter, SymbolicValueError, is_symbolic
 
@@ -299,7 +301,11 @@ class _Dispatcher:
         kernel = self.kernel
         target = self._device(values)
         static = kernel._split[0]
-        key = (target.fingerprint, static, *[_static_key(values[i]) for i in static])
+        options = self.options
+        unroll = options.unroll_threshold
+        if unroll is None:
+            unroll = resolve_unroll_threshold()
+        key = (target.fingerprint, unroll, static, *[_static_key(values[i]) for i in static])
         entry = self._entries.get(key)
         if entry is not None and entry.guard.check():
             entry.tick = next(_ticks)
@@ -308,11 +314,13 @@ class _Dispatcher:
             entry = self._entries.get(key)
             if entry is not None and entry.guard.check():
                 return entry
-            entry = kernel._specialize(values, target, self.options)
+            if options.unroll_threshold is None:
+                options = replace(options, unroll_threshold=unroll)
+            entry = kernel._specialize(values, target, options)
             self.misses += 1
             # Tracing may have made float parameters static.
             static = kernel._split[0]
-            key = (target.fingerprint, static, *[_static_key(values[i]) for i in static])
+            key = (target.fingerprint, unroll, static, *[_static_key(values[i]) for i in static])
             self._insert(key, entry)
         return entry
 
@@ -363,6 +371,7 @@ class Kernel:
         *,
         cache_size: int | None = None,
         schedule: str | None = None,
+        unroll_threshold: int | None = None,
     ) -> None:
         if not isinstance(fn, types.FunctionType):
             raise TypeError(f"@kernel expects a function, got {type(fn).__name__}")
@@ -374,6 +383,10 @@ class Kernel:
         # Called from another kernel, the kernel is scheduled on its own with
         # this policy; None schedules it with its caller.
         self.schedule = validate_kernel_schedule(schedule)
+        # None takes the environment's or the default threshold per call.
+        self.unroll_threshold = (
+            None if unroll_threshold is None else resolve_unroll_threshold(unroll_threshold)
+        )
         for attr in ("__module__", "__name__", "__qualname__", "__doc__"):
             setattr(self, attr, getattr(fn, attr))
         signature = inspect.signature(fn)
@@ -390,7 +403,10 @@ class Kernel:
         self._bind = _make_binder(fn)
         self._dispatch = _Dispatcher(
             self,
-            CompileOptions(schedule=root_schedule(self.schedule, None)),
+            CompileOptions(
+                schedule=root_schedule(self.schedule, None),
+                unroll_threshold=self.unroll_threshold,
+            ),
             _cache_size(cache_size),
         )
 

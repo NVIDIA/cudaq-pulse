@@ -111,12 +111,33 @@ at trace time:
 
 A loop whose induction variable is never read, like the one above, is
 captured once as a structured ``scf.for`` in the kernel IR, so the IR size
-does not depend on the trip count. Loops that read the induction variable,
+does not depend on the trip count, unless it is small: when the trip count
+times the number of calls in the body is at most the unroll threshold, the
+loop is unrolled while tracing (see below). Loops that read the induction variable,
 or that carry Python state from one iteration to the next, are unrolled
 exactly at trace time. Compiling keeps the same loops as an ``scf.for`` that
 carries the lines and tones its body advances; the scheduler times every
 iteration. A loop bound given by a ``float`` argument specializes the kernel
 on its value; ``while`` loops are rejected.
+
+**The unroll threshold** is ``pulse.compile(k, unroll_threshold=n)``,
+``@pulse.kernel(unroll_threshold=n)`` or the ``CUDAQ_PULSE_UNROLL_THRESHOLD``
+environment variable, in that order, and 8 by default; 0 keeps every such
+loop rolled. Both forms are the same program: without passes their
+schedules are identical, and with the default passes fusion may merge
+back-to-back pulses of the unrolled form, with the same evolution. The
+threshold is part of the cache key, so changing the variable recompiles.
+
+The default comes from timing both forms, on one transmon, of loops of 1 to
+512 iterations whose bodies hold 2, 3 or 6 calls: compiling (trace, lowering
+to MLIR, passes and schedule, a fresh ``pulse.compile`` each time) and
+simulating on the CPU backend. A rolled loop costs about 0.3-0.6 ms to
+compile at any size; unrolled, compiling costs about 7 us per call and
+simulating grows with the number of separate pulses (a rolled loop lowers to
+one pulse train). The unrolled form is up to 10 % faster below an estimated
+size of 6, even at 8-12, and slower beyond: 1.2-1.4x at 24, 2-3x at 96 and
+more than 20x at 1500, where simulation dominates. The default, 8, is the
+crossover; ``benchmarks/compiler/unroll_threshold.py`` repeats the measurement.
 
 **For loops over Python values** known when the kernel is traced: lists,
 tuples, dictionaries, ``enumerate()``, ``zip()``, ``reversed()``, a qubit

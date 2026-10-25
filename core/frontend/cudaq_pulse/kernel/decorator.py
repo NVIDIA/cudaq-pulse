@@ -112,7 +112,12 @@ def qvec_ref(n: int) -> QvecRef:
 def kernel(fn: Callable[..., Any], /) -> Kernel: ...
 @overload
 def kernel(
-    fn: None = None, /, *, cache_size: int | None = None, schedule: str | None = None
+    fn: None = None,
+    /,
+    *,
+    cache_size: int | None = None,
+    schedule: str | None = None,
+    unroll_threshold: int | None = None,
 ) -> Callable[[Callable[..., Any]], Kernel]: ...
 
 
@@ -122,6 +127,7 @@ def kernel(
     *,
     cache_size: int | None = None,
     schedule: str | None = None,
+    unroll_threshold: int | None = None,
 ) -> Kernel | Callable[[Callable[..., Any]], Kernel]:
     """Decorator that makes a Python function a pulse kernel.
 
@@ -151,15 +157,27 @@ def kernel(
     its internal timing is the same wherever it is called. Compiled or
     called on its own, the kernel uses its policy unless
     ``cudaq_pulse.compile(k, schedule=...)`` overrides it.
+
+    *unroll_threshold* sets which ``for ... in range(n)`` loops are unrolled
+    while tracing (see ``cudaq_pulse.compile``); by default
+    ``CUDAQ_PULSE_UNROLL_THRESHOLD``, else ``DEFAULT_UNROLL_THRESHOLD``.
     """
     from ._bytecode_normalize import check_interpreter
     from ._kernel import Kernel
     from ._schedule_blocks import validate_kernel_schedule
+    from ._unroll import resolve_unroll_threshold
 
     check_interpreter()
     validate_kernel_schedule(schedule)
+    if unroll_threshold is not None:
+        resolve_unroll_threshold(unroll_threshold)
 
     def wrap(f: Callable[..., Any]) -> Kernel:
-        return Kernel(f, cache_size=cache_size, schedule=schedule)  # type: ignore[arg-type]
+        return Kernel(
+            f,  # type: ignore[arg-type]
+            cache_size=cache_size,
+            schedule=schedule,
+            unroll_threshold=unroll_threshold,
+        )
 
     return wrap if fn is None else wrap(fn)

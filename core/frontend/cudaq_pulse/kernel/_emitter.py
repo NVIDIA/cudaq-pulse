@@ -55,6 +55,7 @@ from ._bytecode_normalize import (
     UNPACK_SEQUENCE,
     decode,
 )
+from ._unroll import resolve_unroll_threshold
 from .ir_builder import (
     LINEAR_TYPES,
     OP_TABLE,
@@ -388,6 +389,7 @@ class PulseIREmitter:
         "_depth",
         "_acquired",
         "_lines",
+        "_unroll",
     )
 
     _can_roll: bool
@@ -397,6 +399,7 @@ class PulseIREmitter:
     _depth: int
     _acquired: list[int]
     _lines: _Lines
+    _unroll: int
 
     def __init__(
         self,
@@ -420,8 +423,10 @@ class PulseIREmitter:
             self._depth = caller._depth + 1
             self._acquired = caller._acquired
             self._lines = caller._lines
+            self._unroll = caller._unroll
             return
         self._can_roll = getattr(builder, "supports_regions", False)
+        self._unroll = resolve_unroll_threshold(getattr(builder, "unroll_threshold", None))
         # id(line or tone) -> (list, index, value) for values read out of a
         # list, so the op that consumes one can rebind the list slot.
         self._slots = {}
@@ -627,6 +632,7 @@ class PulseIREmitter:
                         loop.rolled = (
                             self._can_roll
                             and not var_is_read
+                            and not self._unrolls(loop, prog, pc - 1, exit_idx)
                             and self._roll(loop, prog, pc - 1, exit_idx)
                         )
                     value = loop if loop.rolled else next(loop.it, loop)
@@ -1128,6 +1134,19 @@ class PulseIREmitter:
         else:
             self.locals.pop(var, None)
         return True
+
+    def _unrolls(self, loop: _Loop, prog: bc.DecodedCode, for_idx: int, exit_idx: int) -> bool:
+        """Whether *loop* is small enough to unroll: its trip count times the
+        calls in its body (at least one) is at most the unroll threshold."""
+        threshold = self._unroll
+        count = len(loop.rng)
+        if threshold == 0 or count > threshold:
+            return False
+        calls = 0
+        for op, _ in prog.instrs[for_idx + 1 : exit_idx]:
+            if op is CALL or op is bc.CALL_KW:
+                calls += 1
+        return count * max(calls, 1) <= threshold
 
     def _note_mutation(self, obj: Any) -> None:
         """Remember what *obj* held before a rolled body or branch arm changed it."""

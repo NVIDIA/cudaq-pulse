@@ -196,6 +196,8 @@ class PackedIRBuilder:
         self._n_readouts = 0
         # Set by the emitter when the trace evaluated an impure host call.
         self.impure = False
+        # The compilation's loop-unroll threshold; None for the default.
+        self.unroll_threshold: int | None = None
         # What the traced kernel returned.
         self.returned: Any = None
         # Float arguments that reached an integer (a duration, a cast to

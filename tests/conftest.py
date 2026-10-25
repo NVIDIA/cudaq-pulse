@@ -27,6 +27,9 @@ def ladder_target(n: int = 64) -> Target:
 # Kernels called with ``qudit_ref()`` arguments run on the process target.
 register_target("ladder", lambda arg: ladder_target(int(arg) if arg else 64))
 os.environ[ENV_VAR] = "ladder:8192"
+# Most tests check what a rolled loop does with loops of a few iterations,
+# which the default threshold would unroll; test_unroll_threshold.py sets it.
+os.environ.setdefault("CUDAQ_PULSE_UNROLL_THRESHOLD", "0")
 
 
 def pytest_addoption(parser):
