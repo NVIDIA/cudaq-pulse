@@ -16,10 +16,15 @@ pass rejects them with a diagnostic per violation:
   - Backward time travel and overlap on one physical line
   - Non-positive waveform durations (rejected by the op verifier as the
     MLIR is parsed)
+
+The hand-written programs go through ``cudaq-pulse-opt``, the MLIR driver
+installed with the package.
 """
 
+import shutil
+import subprocess
+
 import cudaq_pulse as pulse
-from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 
 _PRELUDE = """
   %q = pulse.qudit_alloc : !pulse.qref
@@ -68,13 +73,19 @@ PROGRAMS = {
 
 def check(body: str) -> str:
     text = "func.func @main() {" + _PRELUDE + body + "  return\n}\n"
-    try:
-        # Op verifiers run as the text is parsed; pulse-verify adds the
-        # checks that need the whole program.
-        MLIRPipeline().parse_to_module(text).run_passes(["pulse-verify"])
-    except RuntimeError as error:
-        return str(error)
-    return "verified"
+    tool = shutil.which("cudaq-pulse-opt")
+    if tool is None:
+        raise SystemExit("cudaq-pulse-opt is not on PATH; it is installed with cudaq-pulse")
+    # Op verifiers run as the text is parsed; pulse-verify adds the checks
+    # that need the whole program.
+    result = subprocess.run(
+        [tool, "--pulse-verify", "-o", "/dev/null"],
+        input=text,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stderr.strip() if result.returncode else "verified"
 
 
 @pulse.kernel

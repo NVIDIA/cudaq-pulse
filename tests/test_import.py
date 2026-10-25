@@ -7,6 +7,7 @@
 # ============================================================================ #
 """Importing and compiling stay light; simulation loads its dependencies lazily."""
 
+import importlib
 import os
 import subprocess
 import sys
@@ -56,6 +57,47 @@ def test_simulation_exports_load_on_first_use(tmp_path):
         tmp_path,
     )
     assert out == "False True simulate SimulationResult True"
+
+
+def test_dir_lists_no_internals():
+    names = set(dir(pulse))
+    leaked = {"_device", "_native", "_build_config", "annotations", "TYPE_CHECKING"}
+    assert not names & leaked
+    assert not {n for n in names if n.startswith("_") and not n.startswith("__")}
+    assert set(pulse.__all__) <= names
+    assert "__version__" in names
+    # Hidden, not removed.
+    assert pulse._device.Device is pulse.Device
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "cudaq_pulse",
+        "cudaq_pulse._device",
+        "cudaq_pulse.doctor",
+        "cudaq_pulse.runtime",
+        "cudaq_pulse.runtime.jit",
+        "cudaq_pulse.viz",
+    ],
+)
+def test_all_names_resolve(module):
+    mod = importlib.import_module(module)
+    assert mod.__all__
+    for name in mod.__all__:
+        assert getattr(mod, name) is not None, name
+
+
+def test_runtime_exports_the_gpu_errors_without_loading_them(tmp_path):
+    out = _run(
+        "import sys, cudaq_pulse.runtime as r\n"
+        "before = 'cudaq_pulse.runtime.gpu' in sys.modules\n"
+        "from cudaq_pulse.runtime import gpu\n"
+        "print(before, r.GpuRuntimeError is gpu.GpuRuntimeError,"
+        " issubclass(r.GpuSupportNotBuiltError, r.GpuRuntimeError))",
+        tmp_path,
+    )
+    assert out == "False True True"
 
 
 def test_unknown_attribute_is_an_attribute_error():

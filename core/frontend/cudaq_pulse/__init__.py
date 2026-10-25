@@ -25,9 +25,7 @@ The compiler recognizes the kernel DSL vocabulary (``drive``, ``gaussian``,
 ``get_drive_line``, etc.) as bare names inside ``@pulse.kernel`` functions.
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
+import typing as _typing
 
 __version__ = "0.1.0"
 
@@ -85,7 +83,7 @@ from .targets._registry import NoTargetError as NoTargetError
 
 # Simulation and GPU execution load NumPy and the GPU runtime discovery, which
 # compiling does not need: import them on first use.
-if TYPE_CHECKING:
+if _typing.TYPE_CHECKING:
     from .runtime.simulate import SimulationResult as SimulationResult
     from .runtime.simulate import simulate as simulate
 
@@ -107,35 +105,11 @@ def __getattr__(name: str) -> object:
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(_LAZY_EXPORTS))
+    # Private modules (_device, _native, _build_config) and helpers stay
+    # importable but are not listed.
+    names = set(globals()) | set(_LAZY_EXPORTS)
+    return sorted(n for n in names if not n.startswith("_") or n.startswith("__"))
 
-
-# DSL names that get injected into the importing module's globals.
-_DSL_EXPORTS: list[str] = [
-    "get_drive_line",
-    "get_readout_line",
-    "drive",
-    "readout",
-    "wait",
-    "sync",
-    "shift_phase",
-    "set_phase",
-    "shift_frequency",
-    "set_frequency",
-    "gaussian",
-    "square",
-    "drag",
-    "cosine",
-    "tanh_ramp",
-    "gaussian_square",
-    "custom",
-    "custom_samples",
-    "wf_add",
-    "wf_sub",
-    "wf_mul",
-    "wf_scale",
-    "wf_neg",
-]
 
 __all__: list[str] = [
     # infrastructure

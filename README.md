@@ -68,7 +68,7 @@ with a specific error rather than degrading:
 | GPU support built in, but no CUDA extra, both extras, or a library fails to load | `GpuRuntimeLoadError` |
 | Libraries load, but no device, or the driver is too old | `GpuDeviceUnavailableError` |
 
-All three derive from `cudaq_pulse.runtime.gpu.GpuRuntimeError`. The runtime
+All three derive from `cudaq_pulse.runtime.GpuRuntimeError`. The runtime
 for CUDA 12 or 13 is chosen from the installed extra; set
 `CUDAQ_PULSE_CUDA=12` or `CUDAQ_PULSE_CUDA=13` to choose it explicitly.
 

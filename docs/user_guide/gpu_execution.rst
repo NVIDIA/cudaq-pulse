@@ -78,7 +78,7 @@ From Python, the same check is:
 
 .. code-block:: python
 
-   from cudaq_pulse.runtime.gpu import require_gpu_runtime
+   from cudaq_pulse.runtime import require_gpu_runtime
 
    require_gpu_runtime()   # returns the loaded runtime or raises
 
@@ -95,7 +95,7 @@ GPU Runtime Errors
 
 Every execution path calls ``require_gpu_runtime()`` first. It either returns
 a runtime backed by a usable device or raises one of three errors, all
-subclasses of ``cudaq_pulse.runtime.gpu.GpuRuntimeError``:
+subclasses of ``cudaq_pulse.runtime.GpuRuntimeError``:
 
 ``GpuSupportNotBuiltError``
    This installation was built without the GPU runtime: a macOS wheel or a

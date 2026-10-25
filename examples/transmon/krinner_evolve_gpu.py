@@ -26,7 +26,7 @@ import math
 
 import cudaq_pulse as pulse
 import numpy as np
-from cudaq_pulse.runtime.gpu import require_gpu_runtime
+from cudaq_pulse.runtime import require_gpu_runtime
 
 require_gpu_runtime()
 

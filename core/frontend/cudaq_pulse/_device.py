@@ -29,6 +29,17 @@ from typing import Any, overload
 from .targets._registry import NoTargetError
 from .targets.base import Target as TargetDescription
 
+__all__ = [
+    "Device",
+    "DeviceMismatchError",
+    "NoDeviceError",
+    "Qudit",
+    "Register",
+    "Target",
+    "device",
+    "get_device",
+]
+
 
 class NoDeviceError(NoTargetError):
     """A kernel call has no device: no qudit handle, no pin, no process target."""
