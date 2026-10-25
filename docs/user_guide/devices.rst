@@ -86,17 +86,53 @@ its 24 couplings are the auxiliary-data pairs of the stabilizers, each with
 its CZ time step and interaction frequency.
 ``python -m cudaq_pulse.doctor`` lists them and reports the process target.
 
-The paper's J / 2 pi ~ 7 MHz is the ``|11> <-> |20>`` coupling of the CZ,
-sqrt(2) times the exchange coupling (Lacroix, PhD thesis, ETH Zurich (2025),
-on the same device). The target simulates the exchange J_qq = 7 MHz /
-sqrt(2) = 4.95 MHz on every pair except X2-D4, whose measured
-``|11> <-> |20>`` coupling is 7.4 MHz (Hellings et al., arXiv:2503.04610);
-each coupling records its ``|11> <-> |20>`` value in
-``gate_params["coupling_11_20_hz"]``. With three levels the couplings give
-an idle ZZ of -2.8 to -4.9 kHz at second order
-(``cudaq_pulse.targets.transmon.krinner_idle_zz_hz``), below the paper's
-"below about 8 kHz". Each qubit also records its Hahn-echo T2 and thermal
-excited-state population from Tab. I (``Target.t2_echo_times``,
+The paper's J / 2 pi ~ 7 MHz is the ``|11> <-> |20>`` coupling of the CZ at
+each pair's interaction point (Lacroix, PhD thesis, ETH Zurich (2025), on the
+same device); X2-D4's is measured, 7.4 MHz at 4.4 GHz (Hellings et al.,
+arXiv:2503.04610). Each coupling records it in
+``gate_params["coupling_11_20_hz"]``. The simulated exchange comes from the
+device's calibration (below): each pair's charge coupling g_c is anchored to
+that value, and the exchange J_qq = g_c <0|n_a|1> <0|n_d|1> at the idle
+points is 4.4-5.7 MHz. The idle ZZ of the charge-coupled pairs is -3.1 to
+-5.9 kHz (``cudaq_pulse.targets.transmon.krinner_idle_zz_hz``), below the
+paper's "below about 8 kHz"; simulated with three levels, the couplings
+reproduce it within a few percent. Each qubit also records its Hahn-echo T2
+and thermal excited-state population from Tab. I (``Target.t2_echo_times``,
 ``Target.thermal_populations``): a simulation starts each qubit in its
 thermal mixture and relaxes it there, and dephases at the Hahn-echo T2 with
 ``simulate(..., dephasing="t2_echo")``.
+
+Calibrations
+------------
+
+A calibration holds the values that are fitted rather than published, apart
+from the target: for the Krinner device, ``krinner17`` ships each qubit's
+circuit (E_C, E_J,max and the SQUID asymmetry d, fitted to Tab. I and the
+other sweet spot of Fig. 1c), each pair's charge coupling, the flux-line
+model of Hellings et al., the in-model CZ knobs of the pairs calibrated so
+far, crosstalk, defect bands and feedline groups. Every value records its
+``kind`` (``published``, ``digitized`` or ``fitted``), ``source``,
+``uncertainty`` and ``cooldown``, one of the file's cooldowns.
+
+.. code-block:: python
+
+   dev = pulse.device({"target": "transmon_krinner_17q",
+                       "calibration": "krinner17", "cooldown": "K22-main"})
+   cal = dev.calibration
+   cal.entry("qubits", "D4", "ec")        # value with its provenance
+   cal.exchange_hz("X2-D4")               # J_qq at the idle points
+   cal.exchange_hz("X2-D4", data_hz=4.4e9)  # ... with D4 tuned to 4.4 GHz
+   cal.idle_zz_hz("X2-D4")
+   cal.flux_for_detuning("D4", 500e6)     # flux quanta for a +500 MHz detuning
+   cal.detuning_for_flux("X2", 0.25)
+
+``"calibration"`` is a shipped name, the path of a calibration file or a
+``cudaq_pulse.targets.Calibration``; the Krinner target uses ``krinner17``
+by default. Its couplings replace the target's, so devices with different
+calibrations compile separately. Detunings are in Hz; for qubits whose
+circuit, including d, is calibrated (``Calibration.flux_qubits``, all 17
+here) ``flux_for_detuning`` and ``detuning_for_flux`` convert to and from
+flux quanta. ``tools/refresh-krinner-calibration.py`` rebuilds the shipped
+file from a working calibration file of the same schema: it recomputes the
+anchored charge couplings, copies the per-pair CZ knobs and refuses to write
+anything that is not derived from published sources.

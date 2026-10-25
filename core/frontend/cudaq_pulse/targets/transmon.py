@@ -14,11 +14,14 @@ values the paper publishes (``_krinner17``, with a citation for each).
 
 from __future__ import annotations
 
+import math
+from typing import Any
+
 from . import _krinner17 as _k
 from .base import Coupling, Qubit, Target
 
 
-def transmon_krinner_17q() -> Target:
+def transmon_krinner_17q(calibration: Any = "krinner17") -> Target:
     """17-qubit surface-code device of Krinner et al., Nature 605, 669 (2022).
 
     Qudits 0-16 are D1-D9, X1-X4, Z1-Z4, the column order of the paper's
@@ -32,13 +35,19 @@ def transmon_krinner_17q() -> Target:
 
     Data qubits idle at 3.74-4.14 GHz (their lower sweet spot) and
     auxiliary qubits at 5.89-6.33 GHz (their upper one), with idle
-    frequencies, anharmonicities, T1 and Ramsey T2* from Tab. I. The paper's
-    device-wide J / 2 pi ~ 7 MHz (Methods A) is the |11> <-> |20> coupling
-    of the CZ, so each coupling is the exchange J_qq = 7 MHz / sqrt(2) =
-    4.95 MHz, or the measured value where one is published (X2-D4: 7.4 MHz
-    for |11> <-> |20>). Each carries its CZ time step, interaction
-    frequency and |11> <-> |20> coupling (``gate_params``) and measured gate
-    fidelity; the gate takes 98 ns on average, with 15 ns buffers.
+    frequencies, anharmonicities, T1 and Ramsey T2* from Tab. I.
+
+    The paper's device-wide J / 2 pi ~ 7 MHz (Methods A) is the
+    ``|11> <-> |20>`` coupling of the CZ at each pair's interaction point (7.4
+    MHz measured on X2-D4 at 4.4 GHz, Hellings et al., arXiv:2503.04610).
+    *calibration* (a ``Calibration``, the name of a shipped one, or None)
+    supplies each pair's charge coupling g_c anchored to that value, and each
+    coupling is the exchange J_qq = g_c ``<0|n_a|1> <0|n_d|1>`` at the qubits'
+    idle points: 4.4-5.7 MHz with the shipped ``krinner17``. With
+    ``calibration=None`` it is the published value over sqrt(2), 4.95 MHz.
+    Each coupling carries its CZ time step, interaction frequency and
+    ``|11> <-> |20>`` coupling (``gate_params``) and measured gate fidelity; the
+    gate takes 98 ns on average, with 15 ns buffers.
     Drives are the published 40 ns DRAG pulses with sigma = 10 ns; their
     amplitudes are not published, so amplitudes are angular rates in
     rad/ns. Readout parameters are those of Tab. I and App. F1.
@@ -46,8 +55,32 @@ def transmon_krinner_17q() -> Target:
     No residual ZZ is listed: the paper gives no per-pair values, only
     that the calculated idle ZZ is below about 8 kHz. Simulated with three
     or more levels, the couplings produce it; ``krinner_idle_zz_hz`` gives
-    its second-order value, -2.8 to -4.9 kHz.
+    the charge model's value, -3.1 to -5.9 kHz with ``krinner17``.
     """
+    if isinstance(calibration, str):
+        return _calibrated_krinner(calibration)
+    target = _published_krinner()
+    return target if calibration is None else calibration.apply(target)
+
+
+_BUILT: dict[str | None, Target] = {}
+
+
+def _calibrated_krinner(name: str) -> Target:
+    from .calibration import shipped_calibration
+
+    if name not in _BUILT:
+        _BUILT[name] = shipped_calibration(name).apply(_published_krinner())
+    return _BUILT[name]
+
+
+def _published_krinner() -> Target:
+    if None not in _BUILT:
+        _BUILT[None] = _build_published_krinner()
+    return _BUILT[None]
+
+
+def _build_published_krinner() -> Target:
     qubits = {}
     for index, q in enumerate(_k.QUBITS):
         qubits[index] = Qubit(
@@ -76,7 +109,7 @@ def transmon_krinner_17q() -> Target:
         Coupling(
             _k.INDEX[e.auxiliary],
             _k.INDEX[e.data],
-            coupling_strength_hz=_k.exchange_coupling_hz(e.auxiliary, e.data),
+            coupling_strength_hz=_k.coupling_11_20_hz(e.auxiliary, e.data) / math.sqrt(2.0),
             gate_type="cz",
             gate_duration_ns=_k.CZ_DURATION_NS,
             gate_buffer_ns=_k.CZ_BUFFER_NS,
@@ -98,29 +131,25 @@ def transmon_krinner_17q() -> Target:
     )
 
 
-def krinner_idle_zz_hz() -> dict[tuple[int, int], float]:
-    """Second-order idle ZZ rate of each coupled pair of the Krinner target.
+def krinner_idle_zz_hz(calibration: Any = "krinner17") -> dict[tuple[int, int], float]:
+    """Idle ZZ of each coupled pair of the Krinner target, keyed by the
+    coupling's (auxiliary, data) qudit indices.
 
-    zeta = 2 J^2 (a_a + a_d) / ((D + a_d)(D - a_a)), with J the pair's
-    exchange coupling J_qq (the published |11> <-> |20> coupling over
-    sqrt(2)), D the data minus the auxiliary idle frequency and a_a, a_d
-    their anharmonicities, keyed by the coupling's (auxiliary, data) qudit
-    indices. The values are -2.8 to -4.9 kHz, below the paper's "below about
-    8 kHz".
+    zeta = E_11 - E_10 - E_01 + E_00 of the dressed levels of the
+    charge-coupled pair (charge basis, five levels each, no rotating-wave
+    approximation) at the idle sweet spots, with the circuits and couplings
+    of *calibration*: -3.1 to -5.9 kHz with the shipped ``krinner17``, below
+    the paper's "below about 8 kHz". The simulation's Duffing ladder with
+    exchange J_qq reproduces it within a few percent.
     """
-    zz = {}
-    for e in _k.EDGES:
-        a, d = _k.INDEX[e.auxiliary], _k.INDEX[e.data]
-        aux, data = _k.QUBITS[a], _k.QUBITS[d]
-        detuning = data.idle_frequency_hz - aux.idle_frequency_hz
-        alpha_a, alpha_d = aux.anharmonicity_hz, data.anharmonicity_hz
-        zz[(a, d)] = (
-            2.0
-            * _k.exchange_coupling_hz(e.auxiliary, e.data) ** 2
-            * (alpha_a + alpha_d)
-            / ((detuning + alpha_d) * (detuning - alpha_a))
-        )
-    return zz
+    from .calibration import shipped_calibration
+
+    if isinstance(calibration, str):
+        calibration = shipped_calibration(calibration)
+    return {
+        (_k.INDEX[e.auxiliary], _k.INDEX[e.data]): calibration.idle_zz_hz(f"{e.auxiliary}-{e.data}")
+        for e in _k.EDGES
+    }
 
 
 def transmon_generic(

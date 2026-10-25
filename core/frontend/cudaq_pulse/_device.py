@@ -191,6 +191,7 @@ class Device:
         name: str,
         layout: Sequence[int] | None = None,
         source: str = "",
+        calibration: Any = None,
     ) -> None:
         carriers = sorted(target.qubits)
         layout = tuple(carriers if layout is None else (int(i) for i in layout))
@@ -202,6 +203,8 @@ class Device:
         self.target = target
         self.name = name
         self.source = source
+        # The Calibration the target's fitted values came from, if any.
+        self.calibration = calibration
         self.layout = layout
         self.clock_ghz = float(target.clock_ghz)
         self.frequencies: Mapping[int, float] = target.frequencies
@@ -243,22 +246,56 @@ class Device:
         return f"<Device {self.name} ({len(self.layout)} qudits)>"
 
 
-def _from_spec(spec: str, source: str, layout: Sequence[int] | None = None) -> Device:
+def _from_spec(
+    spec: str, source: str, layout: Sequence[int] | None = None, calibration: Any = None
+) -> Device:
     from .targets._registry import make_target
 
-    return Device(make_target(spec), name=spec, layout=layout, source=source)
+    target = make_target(spec)
+    if calibration is not None:
+        target = calibration.apply(target)
+    elif spec == "transmon_krinner_17q":
+        from .targets.calibration import shipped_calibration
+
+        calibration = shipped_calibration("krinner17")
+    return Device(target, name=spec, layout=layout, source=source, calibration=calibration)
+
+
+def _calibration(config: Mapping[str, Any]) -> Any:
+    """The config's calibration: a Calibration, or a shipped name or a path,
+    for the config's ``cooldown`` (the file's default if absent)."""
+    from .targets.calibration import Calibration
+
+    given = config.get("calibration")
+    cooldown = config.get("cooldown")
+    if given is None:
+        if cooldown is not None:
+            raise ValueError("device config gives a 'cooldown' but no 'calibration'")
+        return None
+    if isinstance(given, Calibration):
+        if cooldown is not None and cooldown != given.cooldown:
+            raise ValueError(
+                f"device config asks for cooldown {cooldown!r} of a {given.cooldown!r} calibration"
+            )
+        return given
+    return Calibration.load(given, cooldown=cooldown)
 
 
 def device(config: Mapping[str, Any] | str | os.PathLike[str]) -> Device:
     """A device from a config: a mapping, or the path of a JSON file.
 
     The config gives the target, by registered name or as a ``Target``
-    description, and may give a layout::
+    description, and may give a layout and a calibration::
 
-        {"target": "transmon_krinner_17q", "layout": [4, 5, 6]}
+        {"target": "transmon_krinner_17q", "layout": [4, 5, 6],
+         "calibration": "krinner17", "cooldown": "K22-main"}
 
     ``layout[i]`` is the carrier that qudit ``i`` names; by default every
-    carrier of the target, in order.
+    carrier of the target, in order. ``calibration`` is a ``Calibration``,
+    the name of a shipped one or the path of a calibration file, and
+    ``cooldown`` one of its cooldowns; the calibration's couplings replace
+    the target's, and ``Device.calibration`` holds it. The Krinner target
+    uses the shipped ``krinner17`` calibration by default.
     """
     source = "config"
     if isinstance(config, (str, os.PathLike)):
@@ -273,15 +310,23 @@ def device(config: Mapping[str, Any] | str | os.PathLike[str]) -> Device:
             f"device config keys {', '.join(reserved)} are reserved: zones, sites and "
             "moves of carriers are not modeled yet"
         )
-    unknown = sorted(set(config) - {"target", "layout"})
+    unknown = sorted(set(config) - {"target", "layout", "calibration", "cooldown"})
     if unknown:
         raise ValueError(f"unknown device config keys: {', '.join(unknown)}")
     spec = config.get("target")
+    calibration = _calibration(config)
     if isinstance(spec, TargetDescription):
-        return Device(spec, name=spec.name, layout=config.get("layout"), source=source)
+        target = spec if calibration is None else calibration.apply(spec)
+        return Device(
+            target,
+            name=spec.name,
+            layout=config.get("layout"),
+            source=source,
+            calibration=calibration,
+        )
     if not isinstance(spec, str):
         raise ValueError("device config needs 'target': a registered target name or a Target")
-    return _from_spec(spec, source, config.get("layout"))
+    return _from_spec(spec, source, config.get("layout"), calibration)
 
 
 def get_device(target: Target | None = None) -> Device:

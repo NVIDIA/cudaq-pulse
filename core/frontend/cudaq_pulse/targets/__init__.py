@@ -9,6 +9,7 @@
 
 from ._registry import available_targets, register_target
 from .base import Coupling, CrosstalkEntry, Qubit, Target
+from .calibration import Calibration
 from .rydberg import RydbergAtom, RydbergTarget, rydberg_chain, rydberg_square
 from .transmon import transmon_generic, transmon_krinner_17q
 
@@ -17,6 +18,7 @@ __all__ = [
     "Qubit",
     "Coupling",
     "CrosstalkEntry",
+    "Calibration",
     "transmon_krinner_17q",
     "transmon_generic",
     "RydbergAtom",

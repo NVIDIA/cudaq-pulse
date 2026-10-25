@@ -62,6 +62,7 @@ def check_wheel(path: Path) -> list[str]:
         "cudaq_pulse/py.typed",
         "cudaq_pulse/_native/_cudaq_pulse_native.abi3.so",
         "cudaq_pulse/_native/_cudaq_pulse_native.pyi",
+        "cudaq_pulse/targets/calibrations/krinner17.json",
         *(f"{dist_info}/licenses/{license}" for license in _LICENSES),
     ]
     if linux:

@@ -76,12 +76,21 @@ def test_couplings_are_the_stabilizer_supports(target):
     assert len(target.couplings) == 24
     assert edges == {(a, d) for a, data in _STABILIZERS.items() for d in data}
     # The published 7 MHz (7.4 MHz measured on X2-D4) is the |11> <-> |20>
-    # coupling, sqrt(2) J_qq.
+    # coupling; the calibration's charge coupling makes the idle exchange
+    # frequency-dependent, near 7 MHz / sqrt(2).
     for c in target.couplings:
         g_11_20 = 7.4e6 if edges_of(target, c) == ("X2", "D4") else 7.0e6
         assert c.gate_params["coupling_11_20_hz"] == g_11_20
-        assert c.coupling_strength_hz == pytest.approx(g_11_20 / math.sqrt(2.0))
+        assert 4.3e6 < c.coupling_strength_hz < 5.8e6
+    assert len({round(c.coupling_strength_hz) for c in target.couplings}) == 24
     assert not target.crosstalk
+
+
+def test_without_a_calibration_the_exchange_is_the_published_value_over_sqrt2():
+    for c in transmon_krinner_17q(calibration=None).couplings:
+        assert c.coupling_strength_hz == pytest.approx(
+            c.gate_params["coupling_11_20_hz"] / math.sqrt(2.0)
+        )
 
 
 def test_stabilizers_and_logicals_commute_as_a_surface_code():
@@ -120,7 +129,7 @@ def test_idle_zz_is_a_few_kilohertz(target):
     zz = krinner_idle_zz_hz()
     assert set(zz) == {(c.qubit_a, c.qubit_b) for c in target.couplings}
     # Calculated idle ZZ "lower than ~8 kHz" (Methods A).
-    assert all(-5e3 < v < -2.5e3 for v in zz.values())
+    assert all(-6e3 < v < -3e3 for v in zz.values())
 
 
 @pytest.mark.parametrize("pair", [("X2", "D2"), ("Z1", "D1"), ("X2", "D4")])
@@ -155,7 +164,15 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
         # hybridization of |11> with |20> and |02>.
         assert rho[1 + levels * k, 1 + levels * k].real == pytest.approx(0.5, abs=5e-4)
     zeta = (phases[1] - phases[0]) / (2.0 * math.pi * t_ns * 1e-9)
-    assert zeta == pytest.approx(krinner_idle_zz_hz()[(a, d)], rel=2e-2)
+    # The simulation's Duffing ladder with exchange J reproduces the
+    # second-order zeta = 2 J^2 (a_a + a_d) / ((D + a_d)(D - a_a)), and the
+    # charge model within its n_12 / n_01 and counter-rotating corrections
+    # (2-6 % on these pairs).
+    alpha_a, alpha_d = (target.qubits[i].anharmonicity_hz for i in (a, d))
+    detuning = target.qubits[d].frequency_hz - target.qubits[a].frequency_hz
+    second_order = 2 * g_hz**2 * (alpha_a + alpha_d) / ((detuning + alpha_d) * (detuning - alpha_a))
+    assert zeta == pytest.approx(second_order, rel=2e-2)
+    assert zeta == pytest.approx(krinner_idle_zz_hz()[(a, d)], rel=7e-2)
 
 
 def test_echo_t2_and_thermal_populations_are_on_the_target():
@@ -181,7 +198,7 @@ def test_the_time_step_resolves_the_fastest_coupled_detuning():
             i: Qubit(i, q.idle_frequency_hz, q.anharmonicity_hz, 0.0, 0.0)
             for i, q in enumerate((x1, d2))
         },
-        couplings=[Coupling(0, 1, _k.COUPLING_HZ)],
+        couplings=[Coupling(0, 1, _k.COUPLING_11_20_HZ / math.sqrt(2.0))],
     )
     dev = pulse.device({"target": pair})
 

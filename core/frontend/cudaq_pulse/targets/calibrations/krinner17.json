@@ -1,0 +1,4777 @@
+{
+ "_schema": {
+  "title": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708: device calibration",
+  "readme": "Every leaf quantity is an object {value, units, kind, source, uncertainty, cooldown[, method]}. kind: 'published' (printed number in a paper), 'digitized' (read from a figure: the source names figure/panel/page), 'fitted' (computed by our numpy models: 'method' says how). uncertainty: {sigma, units[, basis/note]} as 1 sigma, or null when no estimate exists. cooldown: a key of 'cooldowns'. Units are SI (Hz, s); flux in flux quanta. Coupling convention: g_11_20 = sqrt(2) J_qq. Top-level sections: cooldowns, coupling, qubits (per-qubit circuit values, flux_quanta_capable flag), flux_line (Hellings 2025 distortion model), cz (per-pair published values + knobs), crosstalk, defects, readout. Published values here duplicate the target only where a calibration consumer needs them alongside fitted values; the target remains the source of truth for published numbers.",
+  "target": "transmon_krinner_17q",
+  "default_cooldown": "K22-main"
+ },
+ "cooldowns": {
+  "K22-main": "the cooldown of Krinner22 Tab. I (columns without superscript a) and the QEC data",
+  "K22-a": "the other cooldown of the same device marked (a) in Krinner22 Tab. I; also Fig. 10 (drive crosstalk)",
+  "K22-appE3": "Krinner22 App. E3 measurement-induced dephasing run (X1 parked at 4.429 GHz); cooldown not stated",
+  "HEL25": "the cooldown of Hellings 2025 (X2 tuning curve, flux-line model, X2 CZ at 4.4 GHz); same device",
+  "REMM25": "the later cooldown of Remm 2025 Tab. I (X1 at its lower sweet spot); same device",
+  "device": "cooldown-independent (design, wiring, circuit geometry)"
+ },
+ "coupling": {
+  "convention": "g_11_20 is the |11>-|20> matrix element at the interaction point (auxiliary first); J_qq = g_11_20 / sqrt(2) is the 0-1 exchange. Charge model: H_c = g_c n_A n_D.",
+  "device_default": {
+   "g_11_20": {
+    "value": 7000000.0,
+    "units": "Hz",
+    "kind": "published",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+    "uncertainty": {
+     "note": "'~' in source; device mean"
+    },
+    "cooldown": "K22-main"
+   },
+   "j_qq": {
+    "value": 4949747.468305833,
+    "units": "Hz",
+    "kind": "published",
+    "source": "derived: g_11_20 / sqrt(2)",
+    "uncertainty": {
+     "note": "inherits g_11_20"
+    },
+    "cooldown": "K22-main"
+   }
+  },
+  "overrides": {
+   "X2-D4": {
+    "g_11_20": {
+     "value": 7400000.0,
+     "units": "Hz",
+     "kind": "published",
+     "source": "Hellings et al., arXiv:2503.04610 (2025), App. J (chevron fit, J_2/2pi = 7.4 MHz)",
+     "uncertainty": {
+      "note": "no error bar printed"
+     },
+     "cooldown": "HEL25",
+     "at_interaction_frequency_hz": 4400000000.0,
+     "note": "Hellings' partner is 'a 3.88 GHz neighbour' of X2: D4 (3.878) or D1 (3.885); stored on X2-D4, applies equally if it was X2-D1. Measured at omega_int = 4.4 GHz, not the Fig. 6c 5.276 GHz"
+    }
+   }
+  },
+  "charge_coupling_g_c": {
+   "calibration_A": {
+    "value": 3121436.6758583123,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Hellings et al., arXiv:2503.04610 (2025) App. J J_2 = 7.4 MHz",
+    "uncertainty": null,
+    "cooldown": "HEL25",
+    "method": "device-wide g_c such that the X2-D4 |11>-|20> half-splitting at 4.4 GHz is 7.4 MHz (5 levels each, no RWA)"
+   },
+   "calibration_B": {
+    "value": 2612720.5391277033,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Methods A 'J ~ 7 MHz'",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "device-wide g_c such that the mean J_2 over the 24 published omega_int is 7.0 MHz"
+   },
+   "per_pair": {
+    "Z1-D1": {
+     "value": 2585358.5575379203,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 4885000000.0,
+     "idle_frequencies_hz": [
+      6328000000.000004,
+      3884999999.999999
+     ],
+     "idle_exchange_hz": 5025385.971978199
+    },
+    "Z2-D5": {
+     "value": 2751433.11643363,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 4676000000.0,
+     "idle_frequencies_hz": [
+      6191999999.999996,
+      3895000000.0
+     ],
+     "idle_exchange_hz": 5200097.898008551
+    },
+    "Z3-D3": {
+     "value": 2431987.8871778343,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 5293000000.0,
+     "idle_frequencies_hz": [
+      5956000000.000008,
+      3952000000.000002
+     ],
+     "idle_exchange_hz": 4538086.456509491
+    },
+    "Z1-D4": {
+     "value": 2639159.623477693,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 4785000000.0,
+     "idle_frequencies_hz": [
+      6328000000.000004,
+      3878000000.000001
+     ],
+     "idle_exchange_hz": 5125844.219228726
+    },
+    "Z2-D8": {
+     "value": 2407114.0433922005,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 5313000000.0,
+     "idle_frequencies_hz": [
+      6191999999.999996,
+      3993000000.000003
+     ],
+     "idle_exchange_hz": 4633571.811688768
+    },
+    "Z3-D5": {
+     "value": 2999444.353744274,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 4320000000.0,
+     "idle_frequencies_hz": [
+      5956000000.000008,
+      3895000000.0
+     ],
+     "idle_exchange_hz": 5520641.418521804
+    },
+    "Z2-D4": {
+     "value": 2671260.7163997553,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 4792000000.0,
+     "idle_frequencies_hz": [
+      6191999999.999996,
+      3878000000.000001
+     ],
+     "idle_exchange_hz": 5063064.278954454
+    },
+    "Z3-D2": {
+     "value": 2459746.678444788,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 5249000000.0,
+     "idle_frequencies_hz": [
+      5956000000.000008,
+      3993999999.999997
+     ],
+     "idle_exchange_hz": 4600403.5566305695
+    },
+    "Z4-D6": {
+     "value": 2665740.98083408,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 4815000000.0,
+     "idle_frequencies_hz": [
+      6037000000.000004,
+      3739999999.999998
+     ],
+     "idle_exchange_hz": 4886012.366363071
+    },
+    "Z2-D7": {
+     "value": 2940493.5606351625,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 4317000000.0,
+     "idle_frequencies_hz": [
+      6191999999.999996,
+      4056000000.000001
+     ],
+     "idle_exchange_hz": 5728285.19775742
+    },
+    "Z3-D6": {
+     "value": 2583837.653586496,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 4979000000.0,
+     "idle_frequencies_hz": [
+      5956000000.000008,
+      3739999999.999998
+     ],
+     "idle_exchange_hz": 4693171.494957334
+    },
+    "Z4-D9": {
+     "value": 2352353.285261857,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 5446000000.0,
+     "idle_frequencies_hz": [
+      6037000000.000004,
+      4142999999.999997
+     ],
+     "idle_exchange_hz": 4546535.667773784
+    },
+    "X2-D1": {
+     "value": 2395665.9995361636,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 5423000000.0,
+     "idle_frequencies_hz": [
+      5884999999.999996,
+      3884999999.999999
+     ],
+     "idle_exchange_hz": 4365256.951993743
+    },
+    "X3-D5": {
+     "value": 2880837.080256086,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 4487000000.0,
+     "idle_frequencies_hz": [
+      6022000000.0,
+      3895000000.0
+     ],
+     "idle_exchange_hz": 5344378.216527867
+    },
+    "X4-D7": {
+     "value": 2948999.5300617334,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 4336000000.0,
+     "idle_frequencies_hz": [
+      6049000000.0,
+      4056000000.000001
+     ],
+     "idle_exchange_hz": 5650857.664170728
+    },
+    "X2-D2": {
+     "value": 2367794.098759655,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 5495000000.0,
+     "idle_frequencies_hz": [
+      5884999999.999996,
+      3993999999.999997
+     ],
+     "idle_exchange_hz": 4368082.132030494
+    },
+    "X3-D6": {
+     "value": 2602785.0835885974,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 4931000000.0,
+     "idle_frequencies_hz": [
+      6022000000.0,
+      3739999999.999998
+     ],
+     "idle_exchange_hz": 4765069.805973308
+    },
+    "X4-D8": {
+     "value": 2951840.8561908742,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 4354000000.0,
+     "idle_frequencies_hz": [
+      6049000000.0,
+      3993000000.000003
+     ],
+     "idle_exchange_hz": 5589171.505815171
+    },
+    "X1-D3": {
+     "value": 2472008.321968629,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 5197000000.0,
+     "idle_frequencies_hz": [
+      6097000000.000004,
+      3952000000.000002
+     ],
+     "idle_exchange_hz": 4676357.351599114
+    },
+    "X2-D5": {
+     "value": 2669583.3564808853,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 4891000000.0,
+     "idle_frequencies_hz": [
+      5884999999.999996,
+      3895000000.0
+     ],
+     "idle_exchange_hz": 4846559.293448154
+    },
+    "X3-D9": {
+     "value": 2288270.204712446,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 5598000000.0,
+     "idle_frequencies_hz": [
+      6022000000.0,
+      4142999999.999997
+     ],
+     "idle_exchange_hz": 4417532.025881885
+    },
+    "X1-D2": {
+     "value": 2745870.5317386603,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 4693000000.0,
+     "idle_frequencies_hz": [
+      6097000000.000004,
+      3993999999.999997
+     ],
+     "idle_exchange_hz": 5206333.795512213
+    },
+    "X2-D4": {
+     "value": 3121549.9897362045,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Hellings et al., arXiv:2503.04610 (2025), App. J (chevron fit, J_2/2pi = 7.4 MHz)",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7400000.0,
+     "at_interaction_frequency_hz": 4400000000.0,
+     "idle_frequencies_hz": [
+      5884999999.999996,
+      3878000000.000001
+     ],
+     "idle_exchange_hz": 5683357.071147651
+    },
+    "X3-D8": {
+     "value": 2817987.354999312,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
+     "g_11_20_hz": 7000000.0,
+     "at_interaction_frequency_hz": 4560000000.0,
+     "idle_frequencies_hz": [
+      6022000000.0,
+      3993000000.000003
+     ],
+     "idle_exchange_hz": 5324565.804437621
+    }
+   },
+   "used": "per_pair"
+  },
+  "model_j2_at_interaction": {
+   "kind": "fitted",
+   "units": "Hz",
+   "cooldown": "K22-main",
+   "method": "calibration_A g_c, minimum |11>-|20> splitting / 2 at the published omega_int",
+   "values": {
+    "Z1-D1": 8451178.988956088,
+    "Z2-D5": 7941276.5051856125,
+    "Z3-D3": 8983904.401318021,
+    "Z1-D4": 8278970.826729903,
+    "Z2-D8": 9076639.932827923,
+    "Z3-D5": 7284849.900282886,
+    "Z2-D4": 8179525.3434275845,
+    "Z3-D2": 8882570.978234306,
+    "Z4-D6": 8196455.593712848,
+    "Z2-D7": 7405109.338034066,
+    "Z3-D6": 8456161.88557141,
+    "Z4-D9": 9287713.500416573,
+    "X2-D1": 9120018.959785981,
+    "X3-D5": 7584683.865449193,
+    "X4-D7": 7401998.834709822,
+    "X2-D2": 9227266.510697164,
+    "X3-D6": 8394628.543618944,
+    "X4-D8": 7402299.213714158,
+    "X1-D3": 8838527.612812009,
+    "X2-D5": 8184669.897761232,
+    "X3-D9": 9547536.41946926,
+    "X1-D2": 7957358.745256826,
+    "X2-D4": 8873715.165229611,
+    "X3-D8": 7753789.543326839
+   }
+  }
+ },
+ "qubits": {
+  "D1": {
+   "sweet_spot_idle": "lower",
+   "other_sweet_spot_f01": {
+    "value": 5692619500.226931,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of D1, digitized",
+    "uncertainty": {
+     "sigma": 20598268.068215597,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 165216557.47241178,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 26006261835.1497,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 182567220.970018,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.4790249377953073,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.0033628978611494054,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -177279084.79034227,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 169210530.0372447,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 12346659209.007158,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "digitized other sweet spot (Fig. 1c)",
+   "bound_check": {
+    "kind": "f_max >= max(omega_int, flux-assisted readout point)",
+    "bound_ghz": 5.423,
+    "margin_mhz": 269.6195002269306,
+    "satisfied": true
+   }
+  },
+  "D2": {
+   "sweet_spot_idle": "lower",
+   "other_sweet_spot_f01": {
+    "value": 5721005531.839321,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of D2, digitized",
+    "uncertainty": {
+     "sigma": 41196536.136431195,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 165710764.85113448,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 26184818333.62023,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 365840460.58353794,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.5002411799971491,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.006989786538908721,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -177782399.7841654,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 170303639.44275498,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 12964671415.306633,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "digitized other sweet spot (Fig. 1c)",
+   "bound_check": {
+    "kind": "f_max >= max(omega_int, flux-assisted readout point)",
+    "bound_ghz": 5.495,
+    "margin_mhz": 226.0055318393208,
+    "satisfied": true
+   }
+  },
+  "D3": {
+   "sweet_spot_idle": "lower",
+   "other_sweet_spot_f01": {
+    "value": 5800080905.616693,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of D3, digitized",
+    "uncertainty": {
+     "sigma": 20598268.068215597,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 164720159.92262083,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 27043950781.09888,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 186462046.41556886,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.4772585566906421,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.0032906700293740265,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -176457109.7957184,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 168490786.4324657,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 12797059460.914404,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "digitized other sweet spot (Fig. 1c)",
+   "bound_check": {
+    "kind": "f_max >= max(omega_int, flux-assisted readout point)",
+    "bound_ghz": 5.293,
+    "margin_mhz": 507.08090561669206,
+    "satisfied": true
+   }
+  },
+  "D4": {
+   "sweet_spot_idle": "lower",
+   "other_sweet_spot_f01": {
+    "value": 5710867663.406324,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of D4, digitized",
+    "uncertainty": {
+     "sigma": 20598268.068215597,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 165183889.27103812,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 26173117852.00784,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 183171290.5144407,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.47441924515102624,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.003320281127007607,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -177198092.45325813,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 168497385.1824906,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 12333231475.178875,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "digitized other sweet spot (Fig. 1c)",
+   "bound_check": {
+    "kind": "f_max >= max(omega_int, flux-assisted readout point)",
+    "bound_ghz": 5.276,
+    "margin_mhz": 434.8676634063242,
+    "satisfied": true
+   }
+  },
+  "D5": {
+   "sweet_spot_idle": "lower",
+   "other_sweet_spot_f01": {
+    "value": 5483779410.507205,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of D5, digitized",
+    "uncertainty": {
+     "sigma": 41196536.136431195,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 166861030.3026541,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 23964730281.133026,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 348744086.9555734,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.5177024893456946,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.0075346042096457455,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -179710366.324187,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 170054235.90865076,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 12327435118.67166,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "digitized other sweet spot (Fig. 1c)",
+   "bound_check": {
+    "kind": "f_max >= max(omega_int, flux-assisted readout point)",
+    "bound_ghz": 4.891,
+    "margin_mhz": 592.7794105072053,
+    "satisfied": true
+   }
+  },
+  "D6": {
+   "sweet_spot_idle": "lower",
+   "other_sweet_spot_f01": {
+    "value": 5860908116.21467,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of D6, digitized",
+    "uncertainty": {
+     "sigma": 20598268.068215597,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 164515295.15687475,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 27629761284.941208,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 188592139.00753248,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.42092025748848755,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.0028731372901893704,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -176085436.84936607,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 167898300.44420338,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 11553841377.018694,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "digitized other sweet spot (Fig. 1c)",
+   "bound_check": {
+    "kind": "f_max >= max(omega_int, flux-assisted readout point)",
+    "bound_ghz": 5.13,
+    "margin_mhz": 730.9081162146703,
+    "satisfied": true
+   }
+  },
+  "D7": {
+   "sweet_spot_idle": "lower",
+   "other_sweet_spot_f01": {
+    "value": 5864963263.58787,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of D7, digitized",
+    "uncertainty": {
+     "sigma": 20598268.068215597,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 163552760.82509235,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 27820314077.236103,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 189799653.26526126,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.49077143227093567,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.003348287556657503,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -174971167.7992849,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 168285602.38824484,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 13499662981.992657,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "digitized other sweet spot (Fig. 1c)",
+   "bound_check": {
+    "kind": "f_max >= max(omega_int, flux-assisted readout point)",
+    "bound_ghz": 4.395,
+    "margin_mhz": 1469.9632635878697,
+    "satisfied": true
+   }
+  },
+  "D8": {
+   "sweet_spot_idle": "lower",
+   "other_sweet_spot_f01": {
+    "value": 5907542311.0064535,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of D8, digitized",
+    "uncertainty": {
+     "sigma": 20598268.068215597,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 164901076.19609588,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 27996509622.393238,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 189619402.5931095,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.4697424736344745,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.00318162255450552,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -176426185.0877631,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 169141659.16439742,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 13028944049.828884,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "digitized other sweet spot (Fig. 1c)",
+   "bound_check": {
+    "kind": "f_max >= max(omega_int, flux-assisted readout point)",
+    "bound_ghz": 5.313,
+    "margin_mhz": 594.542311006454,
+    "satisfied": true
+   }
+  },
+  "D9": {
+   "sweet_spot_idle": "lower",
+   "other_sweet_spot_f01": {
+    "value": 5850770247.781673,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of D9, digitized",
+    "uncertainty": {
+     "sigma": 20598268.068215597,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 163906184.02462876,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 27633422831.61866,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 188955440.85344264,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.5135842339464568,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.0035119355456660895,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -175408017.23592025,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 168661701.4965363,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 14023274535.607502,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "digitized other sweet spot (Fig. 1c)",
+   "bound_check": {
+    "kind": "f_max >= max(omega_int, flux-assisted readout point)",
+    "bound_ghz": 5.598,
+    "margin_mhz": 252.77024778167333,
+    "satisfied": true
+   }
+  },
+  "X1": {
+   "sweet_spot_idle": "upper",
+   "other_sweet_spot_f01": {
+    "value": 4437551388.221983,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of X1, digitized",
+    "uncertainty": {
+     "sigma": 20598268.068215597,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 159613382.45254478,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 30699109344.85372,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 5035117.1633350365,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.5405667172300653,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.0048306276965444095,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -174500852.91359052,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 165421446.44127575,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 29909618316.023556,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "published other sweet spot",
+   "bound_check": {
+    "kind": "f_min <= lowest CZ operating f01 (omega_int + |alpha|)",
+    "bound_ghz": 4.8629999999999995,
+    "margin_mhz": 425.448611778017,
+    "satisfied": true
+   },
+   "published_other_sweet_spot_f01": {
+    "value": 4429000000.0,
+    "units": "Hz",
+    "kind": "published",
+    "source": "Remm 2025 Tab. I",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "basis": "last printed digit"
+    },
+    "cooldown": "REMM25"
+   },
+   "fit_with_published_other": {
+    "ej_max_hz": 30192190911.624588,
+    "ec_hz": 162448932.40247536,
+    "d": 0.5387616388060172,
+    "residuals_mhz": [
+     0.006343420147381096,
+     -3.228717198517389,
+     -0.012448885282623223,
+     3.0505615890889515
+    ],
+    "cooldown": "REMM25"
+   }
+  },
+  "X2": {
+   "sweet_spot_idle": "upper",
+   "other_sweet_spot_f01": {
+    "value": 4135442908.9186916,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of X2, digitized",
+    "uncertainty": {
+     "sigma": 20598268.068215597,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 162743779.50086534,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 28136487016.09633,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 4781051.319642537,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.5059320014993117,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.004832801204668613,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -179610414.0654151,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 166519313.650653,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 27708957394.06299,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "published other sweet spot",
+   "bound_check": {
+    "kind": "f_min <= lowest CZ operating f01 (omega_int + |alpha|)",
+    "bound_ghz": 5.065,
+    "margin_mhz": 929.5570910813087,
+    "satisfied": true
+   },
+   "published_other_sweet_spot_f01": {
+    "value": 4151000000.0,
+    "units": "Hz",
+    "kind": "published",
+    "source": "Hellings 2025 Tab. I",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "basis": "last printed digit"
+    },
+    "cooldown": "HEL25"
+   },
+   "fit_with_published_other": {
+    "ej_max_hz": 28136487016.09568,
+    "ec_hz": 162743779.50086954,
+    "d": 0.5095886428159888,
+    "residuals_mhz": [
+     -1.7763568394002505e-12,
+     7.605027718682322e-12,
+     -1.7763568394002505e-12
+    ],
+    "cooldown": "HEL25"
+   }
+  },
+  "X3": {
+   "sweet_spot_idle": "upper",
+   "other_sweet_spot_f01": {
+    "value": 4526764630.432351,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of X3, digitized",
+    "uncertainty": {
+     "sigma": 20598268.068215597,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 159487288.63239884,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 29990982520.554996,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 4980236.220616904,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.5753753076408374,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.005044537936753635,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -174010256.8428412,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 165628023.5306723,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 29174068936.874393,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "digitized other sweet spot (Fig. 1c)",
+   "bound_check": {
+    "kind": "f_min <= lowest CZ operating f01 (omega_int + |alpha|)",
+    "bound_ghz": 4.657,
+    "margin_mhz": 130.23536956764926,
+    "satisfied": true
+   }
+  },
+  "X4": {
+   "sweet_spot_idle": "upper",
+   "other_sweet_spot_f01": {
+    "value": 4514599188.312756,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of X4, digitized",
+    "uncertainty": {
+     "sigma": 20598268.068215597,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 159533034.05239087,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 30244955094.689304,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 4999992.5764075555,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.5674424966142803,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.004987804256478268,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -174110338.9446579,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 164455855.52807027,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 29599940051.100605,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "digitized other sweet spot (Fig. 1c)",
+   "bound_check": {
+    "kind": "f_min <= lowest CZ operating f01 (omega_int + |alpha|)",
+    "bound_ghz": 4.506,
+    "margin_mhz": -8.599188312754968,
+    "satisfied": true
+   }
+  },
+  "Z1": {
+   "sweet_spot_idle": "upper",
+   "other_sweet_spot_f01": {
+    "value": 4630170888.448914,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of Z1, digitized",
+    "uncertainty": {
+     "sigma": 20598268.068215597,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 153782127.4804761,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 34191236366.09627,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 5403166.303112559,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.5453118595165105,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.004684774508885603,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -166865519.20208183,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 163124889.91462535,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 32656394043.707733,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "digitized other sweet spot (Fig. 1c)",
+   "bound_check": {
+    "kind": "f_min <= lowest CZ operating f01 (omega_int + |alpha|)",
+    "bound_ghz": 4.948,
+    "margin_mhz": 317.8291115510872,
+    "satisfied": true
+   }
+  },
+  "Z2": {
+   "sweet_spot_idle": "upper",
+   "other_sweet_spot_f01": {
+    "value": 4504461319.879758,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of Z2, digitized",
+    "uncertainty": {
+     "sigma": 20598268.068215597,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 158005239.71346924,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 31942033390.610847,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 5158597.123806661,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.5397644779659176,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.00475658232777576,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -172320242.85544157,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 163693281.0343253,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 31128722425.37577,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "digitized other sweet spot (Fig. 1c)",
+   "bound_check": {
+    "kind": "f_min <= lowest CZ operating f01 (omega_int + |alpha|)",
+    "bound_ghz": 4.485,
+    "margin_mhz": -19.461319879757966,
+    "satisfied": true
+   }
+  },
+  "Z3": {
+   "sweet_spot_idle": "upper",
+   "other_sweet_spot_f01": {
+    "value": 4423358372.415789,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of Z3, digitized",
+    "uncertainty": {
+     "sigma": 20598268.068215597,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 160249989.91847154,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 29222905185.244343,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 4906464.940437264,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.5623087183155954,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.005039567199323525,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -175322194.45809183,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 166353038.53073278,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 28439869559.67134,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "digitized other sweet spot (Fig. 1c)",
+   "bound_check": {
+    "kind": "f_min <= lowest CZ operating f01 (omega_int + |alpha|)",
+    "bound_ghz": 4.4910000000000005,
+    "margin_mhz": 67.64162758421222,
+    "satisfied": true
+   }
+  },
+  "Z4": {
+   "sweet_spot_idle": "upper",
+   "other_sweet_spot_f01": {
+    "value": 4192214972.1434712,
+    "units": "Hz",
+    "kind": "digitized",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Fig. 1c (p. 2), bar end of Z4, digitized",
+    "uncertainty": {
+     "sigma": 20598268.068215597,
+     "units": "Hz",
+     "basis": "1 sigma: tick-fit rms + Tab. I dot scatter + X1/X2 anchor residual"
+    },
+    "cooldown": "K22-main"
+   },
+   "ec": {
+    "value": 159512752.0687674,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz",
+     "systematic": "resonator dressing raises E_C by 3-9 MHz (dressed value below)"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ej_max": {
+    "value": 30131946022.267715,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 4991211.863884002,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "asymmetry_d": {
+    "value": 0.4939749088486023,
+    "units": "1",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I (p. 10) + Fig. 1c",
+    "uncertainty": {
+     "sigma": 0.004661605339544295,
+     "units": "1"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing",
+    "definition": "d = (E_J2 - E_J1) / (E_J1 + E_J2)"
+   },
+   "alpha_other_sweet_spot": {
+    "value": -175401019.3375315,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "derived from the fit above",
+    "uncertainty": {
+     "sigma": 1500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "exact 3-point fit of a charge-basis Cooper-pair box (n in [-25, 25], numpy eigh) with E_J(Phi) = E_J,max sqrt(cos^2 + d^2 sin^2): Tab. I f01 and alpha at the idle sweet spot plus the Fig. 1c other sweet spot (script); bare transmon, no resonator dressing"
+   },
+   "ec_dressed": {
+    "value": 164862006.97774497,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I f01, alpha, omega_RO, g_Q-RR",
+    "uncertainty": {
+     "sigma": 500000.0,
+     "units": "Hz"
+    },
+    "cooldown": "K22-main",
+    "method": "transmon (6 levels) + readout resonator (5 photons), g_c n (a + a^dag) with g_c <0|n|1> = Tab. I g_Q-RR; bare resonator iterated to the published omega_RO"
+   },
+   "ej_idle_dressed": {
+    "value": 29431025679.19558,
+    "units": "Hz",
+    "kind": "fitted",
+    "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Tab. I",
+    "uncertainty": null,
+    "cooldown": "K22-main",
+    "method": "as ec_dressed; E_J at the idle sweet spot"
+   },
+   "flux_quanta_capable": true,
+   "d_basis": "digitized other sweet spot (Fig. 1c)",
+   "bound_check": {
+    "kind": "f_min <= lowest CZ operating f01 (omega_int + |alpha|)",
+    "bound_ghz": 4.985,
+    "margin_mhz": 792.7850278565289,
+    "satisfied": true
+   }
+  }
+ },
+ "flux_line": {
+  "source": "Hellings et al., arXiv:2503.04610 (2025), §III-V, App. C, D, G, I; same device",
+  "cooldown": "HEL25",
+  "model": "Programmed waveform -> [IIR predistortion (N exponentials) -> FIR predistortion (L taps)] -> AWG output amplifier (low-pass) -> cables -> bias tee (high-pass) -> base-plate low-pass -> qubit flux",
+  "bias_tee": {
+   "tau_hp": {
+    "value": 1.92e-05,
+    "units": "s",
+    "kind": "published",
+    "source": "Hellings et al., arXiv:2503.04610 (2025) App. C",
+    "uncertainty": {
+     "note": "3 dB at 8.3 kHz"
+    },
+    "cooldown": "device"
+   },
+   "c1": {
+    "value": 2e-07,
+    "units": "F",
+    "kind": "published",
+    "source": "Hellings et al., arXiv:2503.04610 (2025) App. C",
+    "uncertainty": null,
+    "cooldown": "device"
+   },
+   "c2": {
+    "value": 1.36e-05,
+    "units": "F",
+    "kind": "published",
+    "source": "Hellings et al., arXiv:2503.04610 (2025) App. C",
+    "uncertainty": null,
+    "cooldown": "device"
+   },
+   "r": {
+    "value": 1000.0,
+    "units": "Ohm",
+    "kind": "published",
+    "source": "Hellings et al., arXiv:2503.04610 (2025) App. C",
+    "uncertainty": null,
+    "cooldown": "device"
+   }
+  },
+  "low_pass_corners": {
+   "awg_output": {
+    "value": 300000000.0,
+    "units": "Hz",
+    "kind": "published",
+    "source": "Hellings et al., arXiv:2503.04610 (2025) App. C",
+    "uncertainty": null,
+    "cooldown": "device"
+   },
+   "base_plate": {
+    "value": 780000000.0,
+    "units": "Hz",
+    "kind": "published",
+    "source": "Hellings et al., arXiv:2503.04610 (2025) App. C",
+    "uncertainty": null,
+    "cooldown": "device"
+   }
+  },
+  "sample_rate": {
+   "value": 2400000000.0,
+   "units": "Sa/s",
+   "kind": "published",
+   "source": "Hellings et al., arXiv:2503.04610 (2025) App. C; Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 App. D",
+   "uncertainty": null,
+   "cooldown": "device"
+  },
+  "iir": {
+   "structure": "h(t) step response modelled as 1 + sum_{i=1..N} alpha_i exp(-t / tau_i); each term inverted as a first-order IIR, implemented as second-order sections in transposed direct form II (Hellings et al., arXiv:2503.04610 (2025) eqs. G8-G11)",
+   "n_exponentials": {
+    "value": 4,
+    "units": "1",
+    "kind": "published",
+    "source": "Hellings et al., arXiv:2503.04610 (2025) §IV; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.3 ('N = 4 typical')",
+    "uncertainty": null,
+    "cooldown": "HEL25"
+   },
+   "alpha_i": null,
+   "tau_i": null,
+   "coefficients_status": "unpublished"
+  },
+  "fir": {
+   "structure": "L-tap FIR at T_s, regularized least-squares fit (Tikhonov + exponential tail; Sobolev regularization for the inverse) to a Gaussian target response of sigma = 0.75 ns",
+   "taps": {
+    "value": 120,
+    "units": "1",
+    "kind": "published",
+    "source": "Hellings et al., arXiv:2503.04610 (2025) App. I",
+    "uncertainty": null,
+    "cooldown": "HEL25"
+   },
+   "sample_period": {
+    "value": 4.1666666666666673e-10,
+    "units": "s",
+    "kind": "published",
+    "source": "Hellings et al., arXiv:2503.04610 (2025) App. I (T_s = 0.4167 ns)",
+    "uncertainty": null,
+    "cooldown": "device"
+   },
+   "target_sigma": {
+    "value": 7.5e-10,
+    "units": "s",
+    "kind": "published",
+    "source": "Hellings et al., arXiv:2503.04610 (2025) App. I",
+    "uncertainty": null,
+    "cooldown": "HEL25"
+   },
+   "coefficients": null,
+   "coefficients_status": "unpublished"
+  },
+  "residual_after_compensation": {
+   "relative": {
+    "value": 0.001,
+    "units": "1",
+    "kind": "published",
+    "source": "Hellings et al., arXiv:2503.04610 (2025) §V (< 0.1 % of the step from 15 ns on)",
+    "uncertainty": {
+     "note": "upper bound"
+    },
+    "cooldown": "HEL25"
+   },
+   "overshoot_at_10ns": {
+    "value": 3000000.0,
+    "units": "Hz",
+    "kind": "published",
+    "source": "Hellings et al., arXiv:2503.04610 (2025) §V",
+    "uncertainty": null,
+    "cooldown": "HEL25"
+   },
+   "without_fir": {
+    "value": 0.01,
+    "units": "1",
+    "kind": "published",
+    "source": "Hellings et al., arXiv:2503.04610 (2025) §V (1 %, 8 MHz)",
+    "uncertainty": null,
+    "cooldown": "HEL25"
+   }
+  },
+  "default_for_simulation": "ideal (identity) residual kernel; optional residual LTI kernel = the structure above with coefficients to be fitted"
+ },
+ "cz": {
+  "knobs": {
+   "description": "Sudden-net-zero CZ (Negirneac et al., PRL 126, 220502 (2021)) as used on this device (N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.3.2; Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 App. C1): two plateaus of duration t_p, sign-flipped in flux (same frequency), joined by a transition section of duration t_mid at amplitude B; Gaussian-filtered edges sigma = 0.5 ns (Hellings et al., arXiv:2503.04610 (2025) App. J). Knobs: duration, transition amplitude, amplitude offset.",
+   "units_note": "amplitude offset is expressed as a detuning in Hz; B is a fraction of the plateau flux amplitude, meaningful because d is known for both qubits; Calibration.flux_for_detuning and detuning_for_flux convert detunings to flux quanta for qubits with flux_quanta_capable",
+   "published": {
+    "flux_pulse_mean": {
+     "value": 6.8e-08,
+     "units": "s",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 App. B (p. 9)",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "transition_section": {
+     "value": 2.5e-09,
+     "units": "s",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 App. C1 (p. 11), Fig. 6a caption",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "buffer": {
+     "value": 1.5e-08,
+     "units": "s",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 App. B (p. 9)",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "leakage_mean": {
+     "value": 0.0011,
+     "units": "1",
+     "kind": "published",
+     "source": "Hellings et al., arXiv:2503.04610 (2025) §V (0.0011(10) per gate, 24 pairs)",
+     "uncertainty": {
+      "sigma": 0.001,
+      "units": "1"
+     },
+     "cooldown": "HEL25"
+    },
+    "awg_sample_period": {
+     "value": 4.1666666666666673e-10,
+     "units": "s",
+     "kind": "published",
+     "source": "Hellings et al., arXiv:2503.04610 (2025) App. I; Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 App. D (2.4 GSa/s)",
+     "uncertainty": null,
+     "cooldown": "device"
+    }
+   },
+   "per_pair": {
+    "X2-D4": {
+     "duration_plateau": {
+      "value": 2.9583333333333337e-08,
+      "units": "s",
+      "kind": "fitted",
+      "source": "in-model calibration",
+      "uncertainty": {
+       "sigma": 0.0,
+       "units": "s",
+       "note": "exact grid multiple"
+      },
+      "cooldown": "K22-main",
+      "method": "closed-system 2-transmon (5 levels each, charge basis, g_c n n, no RWA) piecewise-exact propagation; SNZ frequency trajectories with sigma = 0.5 ns Gaussian edges; durations on the 0.4167 ns grid; step 1: fine detuning sweep (-3..+3 MHz, 0.5 MHz) at B = 0 for t_p = 68..75 samples; step 2: Nelder-Mead on (delta, B) for phi_c = 180 deg and minimum leakage from |11>; verified at dt = 2.5 ps. Calibration A coupling; D4 flux map from the Fig. 1c SQUID fit; ideal flux line, no decoherence, no spectators",
+      "samples": 71
+     },
+     "duration_transition": {
+      "value": 2.5e-09,
+      "units": "s",
+      "kind": "fitted",
+      "source": "fixed to the published 2.5 ns, on grid",
+      "uncertainty": null,
+      "cooldown": "K22-main",
+      "method": "closed-system 2-transmon (5 levels each, charge basis, g_c n n, no RWA) piecewise-exact propagation; SNZ frequency trajectories with sigma = 0.5 ns Gaussian edges; durations on the 0.4167 ns grid; step 1: fine detuning sweep (-3..+3 MHz, 0.5 MHz) at B = 0 for t_p = 68..75 samples; step 2: Nelder-Mead on (delta, B) for phi_c = 180 deg and minimum leakage from |11>; verified at dt = 2.5 ps. Calibration A coupling; D4 flux map from the Fig. 1c SQUID fit; ideal flux line, no decoherence, no spectators",
+      "samples": 6
+     },
+     "flux_pulse_total": {
+      "value": 6.166666666666668e-08,
+      "units": "s",
+      "kind": "fitted",
+      "source": "2 t_p + t_mid",
+      "uncertainty": null,
+      "cooldown": "K22-main",
+      "method": "closed-system 2-transmon (5 levels each, charge basis, g_c n n, no RWA) piecewise-exact propagation; SNZ frequency trajectories with sigma = 0.5 ns Gaussian edges; durations on the 0.4167 ns grid; step 1: fine detuning sweep (-3..+3 MHz, 0.5 MHz) at B = 0 for t_p = 68..75 samples; step 2: Nelder-Mead on (delta, B) for phi_c = 180 deg and minimum leakage from |11>; verified at dt = 2.5 ps. Calibration A coupling; D4 flux map from the Fig. 1c SQUID fit; ideal flux line, no decoherence, no spectators",
+      "samples": 148
+     },
+     "transition_amplitude_B": {
+      "value": 0.7750863706580514,
+      "units": "1 (fraction of plateau flux)",
+      "kind": "fitted",
+      "source": "in-model calibration",
+      "uncertainty": {
+       "sigma": 0.0007082884387396768,
+       "units": "1",
+       "note": "for +-1 deg of phi_c"
+      },
+      "cooldown": "K22-main",
+      "method": "closed-system 2-transmon (5 levels each, charge basis, g_c n n, no RWA) piecewise-exact propagation; SNZ frequency trajectories with sigma = 0.5 ns Gaussian edges; durations on the 0.4167 ns grid; step 1: fine detuning sweep (-3..+3 MHz, 0.5 MHz) at B = 0 for t_p = 68..75 samples; step 2: Nelder-Mead on (delta, B) for phi_c = 180 deg and minimum leakage from |11>; verified at dt = 2.5 ps. Calibration A coupling; D4 flux map from the Fig. 1c SQUID fit; ideal flux line, no decoherence, no spectators",
+      "d4_transition_f01_hz": 4945396794.202332
+     },
+     "amplitude_offset_detuning": {
+      "value": 2708689.73411115,
+      "units": "Hz",
+      "kind": "fitted",
+      "source": "in-model calibration",
+      "uncertainty": {
+       "note": "leakage < 1e-4 over at least [-1.0, 1.0] MHz around the value (scan edge); phi_c moves -10.6 deg/MHz, so delta and B must be iterated"
+      },
+      "cooldown": "K22-main",
+      "method": "closed-system 2-transmon (5 levels each, charge basis, g_c n n, no RWA) piecewise-exact propagation; SNZ frequency trajectories with sigma = 0.5 ns Gaussian edges; durations on the 0.4167 ns grid; step 1: fine detuning sweep (-3..+3 MHz, 0.5 MHz) at B = 0 for t_p = 68..75 samples; step 2: Nelder-Mead on (delta, B) for phi_c = 180 deg and minimum leakage from |11>; verified at dt = 2.5 ps. Calibration A coupling; D4 flux map from the Fig. 1c SQUID fit; ideal flux line, no decoherence, no spectators",
+      "definition": "f_X2,12 - f_D4,01 on the plateau, relative to omega_int = 5.276 GHz"
+     },
+     "predicted_phi_c": {
+      "value": 179.87857199625617,
+      "units": "deg",
+      "kind": "fitted",
+      "source": "model",
+      "uncertainty": null,
+      "cooldown": "K22-main",
+      "method": "closed-system 2-transmon (5 levels each, charge basis, g_c n n, no RWA) piecewise-exact propagation; SNZ frequency trajectories with sigma = 0.5 ns Gaussian edges; durations on the 0.4167 ns grid; step 1: fine detuning sweep (-3..+3 MHz, 0.5 MHz) at B = 0 for t_p = 68..75 samples; step 2: Nelder-Mead on (delta, B) for phi_c = 180 deg and minimum leakage from |11>; verified at dt = 2.5 ps. Calibration A coupling; D4 flux map from the Fig. 1c SQUID fit; ideal flux line, no decoherence, no spectators"
+     },
+     "predicted_leakage": {
+      "value": 9.235425354470195e-07,
+      "units": "1",
+      "kind": "fitted",
+      "source": "model (closed system, ideal flux line)",
+      "uncertainty": null,
+      "cooldown": "K22-main",
+      "method": "closed-system 2-transmon (5 levels each, charge basis, g_c n n, no RWA) piecewise-exact propagation; SNZ frequency trajectories with sigma = 0.5 ns Gaussian edges; durations on the 0.4167 ns grid; step 1: fine detuning sweep (-3..+3 MHz, 0.5 MHz) at B = 0 for t_p = 68..75 samples; step 2: Nelder-Mead on (delta, B) for phi_c = 180 deg and minimum leakage from |11>; verified at dt = 2.5 ps. Calibration A coupling; D4 flux map from the Fig. 1c SQUID fit; ideal flux line, no decoherence, no spectators"
+     },
+     "sensitivity": {
+      "dphi_dB_deg": 1411.8541900519972,
+      "t_p_pm1_sample": {
+       "70": {
+        "phi_deg": 179.83122373485674,
+        "leak": 0.0021680664521630533,
+        "f_mid": 4.945396794202331
+       },
+       "72": {
+        "phi_deg": 179.95756352111266,
+        "leak": 0.0021174120049761713,
+        "f_mid": 4.945396794202331
+       }
+      }
+     }
+    }
+   }
+  },
+  "edges": {
+   "Z1-D1": {
+    "cz_step": {
+     "value": 1,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 4885000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 4885399018.028436
+    },
+    "cz_error": {
+     "value": 0.012,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.1036778275771141e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 1",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "Z1",
+      "ratio_idle_over_int": 2.7672413793103487
+     },
+     "data": {
+      "value": 1.3216102417766449e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 1",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D1",
+      "ratio_idle_over_int": 2.7672413793103487
+     }
+    },
+    "model_t_half_initial": {
+     "value": 2.9583333333333337e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 29.58 ns rounded to the 0.4167 ns grid (71 samples); starting value for the duration knob"
+    }
+   },
+   "Z2-D5": {
+    "cz_step": {
+     "value": 1,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 4676000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 4676004631.216191
+    },
+    "cz_error": {
+     "value": 0.01,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 7.612126052635631e-06,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 12",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "Z2",
+      "ratio_idle_over_int": 4.4482758620689715
+     },
+     "data": {
+      "value": 1.4772762519191672e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 12",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D5",
+      "ratio_idle_over_int": 3.232758620689662
+     }
+    },
+    "model_t_half_initial": {
+     "value": 3.166666666666667e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 31.48 ns rounded to the 0.4167 ns grid (76 samples); starting value for the duration knob"
+    }
+   },
+   "Z3-D3": {
+    "cz_step": {
+     "value": 1,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 5293000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 5292869176.149557
+    },
+    "cz_error": {
+     "value": 0.034,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 3.7204757990725736e-06,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 14",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "Z3",
+      "ratio_idle_over_int": 13.08620689655173
+     },
+     "data": {
+      "value": 1.2282106356911314e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 14",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D3",
+      "ratio_idle_over_int": 2.87068965517242
+     }
+    },
+    "model_t_half_initial": {
+     "value": 2.791666666666667e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 27.83 ns rounded to the 0.4167 ns grid (67 samples); starting value for the duration knob"
+    }
+   },
+   "Z1-D4": {
+    "cz_step": {
+     "value": 2,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 4785000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 4776457343.808551
+    },
+    "cz_error": {
+     "value": 0.012,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.072544625548609e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 2",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "Z1",
+      "ratio_idle_over_int": 2.8189655172413843
+     },
+     "data": {
+      "value": 1.648508863075942e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 2",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D4",
+      "ratio_idle_over_int": 4.629310344827591
+     }
+    },
+    "model_t_half_initial": {
+     "value": 3.0000000000000004e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 30.20 ns rounded to the 0.4167 ns grid (72 samples); starting value for the duration knob"
+    }
+   },
+   "Z2-D8": {
+    "cz_step": {
+     "value": 2,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 5313000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 5312676753.280445
+    },
+    "cz_error": {
+     "value": 0.012,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.3994432468479061e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 16",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "Z2",
+      "ratio_idle_over_int": 2.4568965517241423
+     },
+     "data": {
+      "value": 1.1036778275771141e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 16",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D8",
+      "ratio_idle_over_int": 3.8534482758620747
+     }
+    },
+    "model_t_half_initial": {
+     "value": 2.75e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 27.54 ns rounded to the 0.4167 ns grid (66 samples); starting value for the duration knob"
+    }
+   },
+   "Z3-D5": {
+    "cz_step": {
+     "value": 2,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 4320000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 4319468242.8602085
+    },
+    "cz_error": {
+     "value": 0.019,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.5084094539476723e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 13",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "Z3",
+      "ratio_idle_over_int": 3.284482758620694
+     },
+     "data": {
+      "value": 1.6640754640901946e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 13",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D5",
+      "ratio_idle_over_int": 2.896551724137936
+     }
+    },
+    "model_t_half_initial": {
+     "value": 3.4166666666666675e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 34.32 ns rounded to the 0.4167 ns grid (82 samples); starting value for the duration knob"
+    }
+   },
+   "Z2-D4": {
+    "cz_step": {
+     "value": 3,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 4792000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 4800509401.7532015
+    },
+    "cz_error": {
+     "value": 0.013000000000000001,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 3.5648097889300486e-06,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 7",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "Z2",
+      "ratio_idle_over_int": 9.284482758620694
+     },
+     "data": {
+      "value": 1.5395426559761773e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 7",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D4",
+      "ratio_idle_over_int": 4.913793103448281
+     }
+    },
+    "model_t_half_initial": {
+     "value": 3.041666666666667e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 30.56 ns rounded to the 0.4167 ns grid (73 samples); starting value for the duration knob"
+    }
+   },
+   "Z3-D2": {
+    "cz_step": {
+     "value": 3,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 5249000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 5249009541.074019
+    },
+    "cz_error": {
+     "value": 0.016,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.4772762519191672e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 9",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "Z3",
+      "ratio_idle_over_int": 3.3362068965517295
+     },
+     "data": {
+      "value": 1.1970774336626277e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 9",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D2",
+      "ratio_idle_over_int": 1.2413793103448327
+     }
+    },
+    "model_t_half_initial": {
+     "value": 2.833333333333334e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 28.15 ns rounded to the 0.4167 ns grid (68 samples); starting value for the duration knob"
+    }
+   },
+   "Z4-D6": {
+    "cz_step": {
+     "value": 3,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 4815000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 4814657671.132407
+    },
+    "cz_error": {
+     "value": 0.018000000000000002,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 9.791450194630954e-06,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 23",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "Z4",
+      "ratio_idle_over_int": 3.025862068965523
+     },
+     "data": {
+      "value": 1.0102782214916004e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 23",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D6",
+      "ratio_idle_over_int": 7.8620689655172455
+     }
+    },
+    "model_t_half_initial": {
+     "value": 3.041666666666667e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 30.50 ns rounded to the 0.4167 ns grid (73 samples); starting value for the duration knob"
+    }
+   },
+   "Z2-D7": {
+    "cz_step": {
+     "value": 4,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 4317000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 4313808935.108527
+    },
+    "cz_error": {
+     "value": 0.01,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.1970774336626277e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 11",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "Z2",
+      "ratio_idle_over_int": 2.87068965517242
+     },
+     "data": {
+      "value": 1.990974085389493e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 11",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D7",
+      "ratio_idle_over_int": 3.8793103448275907
+     }
+    },
+    "model_t_half_initial": {
+     "value": 3.375e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 33.76 ns rounded to the 0.4167 ns grid (81 samples); starting value for the duration knob"
+    }
+   },
+   "Z3-D6": {
+    "cz_step": {
+     "value": 4,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 4979000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 4978777595.931191
+    },
+    "cz_error": {
+     "value": 0.012,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.3060436407623924e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 18",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "Z3",
+      "ratio_idle_over_int": 3.775862068965523
+     },
+     "data": {
+      "value": 1.1659442316341228e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 18",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D6",
+      "ratio_idle_over_int": 6.801724137931039
+     }
+    },
+    "model_t_half_initial": {
+     "value": 2.9583333333333337e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 29.56 ns rounded to the 0.4167 ns grid (71 samples); starting value for the duration knob"
+    }
+   },
+   "Z4-D9": {
+    "cz_step": {
+     "value": 4,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 5446000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 5445670485.444978
+    },
+    "cz_error": {
+     "value": 0.006999999999999999,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.632942262061691e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 24",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "Z4",
+      "ratio_idle_over_int": 1.8879310344827651
+     },
+     "data": {
+      "value": 1.3683100448194024e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 24",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D9",
+      "ratio_idle_over_int": 2.4310344827586263
+     }
+    },
+    "model_t_half_initial": {
+     "value": 2.7083333333333338e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 26.92 ns rounded to the 0.4167 ns grid (65 samples); starting value for the duration knob"
+    }
+   },
+   "X2-D1": {
+    "cz_step": {
+     "value": 5,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 5423000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 5423033254.438249
+    },
+    "cz_error": {
+     "value": 0.006,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 2.162206696546268e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 3",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "X2",
+      "ratio_idle_over_int": 0.7758620689655231
+     },
+     "data": {
+      "value": 1.4461430498906637e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 3",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D1",
+      "ratio_idle_over_int": 2.534482758620694
+     }
+    },
+    "model_t_half_initial": {
+     "value": 2.75e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 27.41 ns rounded to the 0.4167 ns grid (66 samples); starting value for the duration knob"
+    }
+   },
+   "X3-D5": {
+    "cz_step": {
+     "value": 5,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 4487000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 4486417821.534836
+    },
+    "cz_error": {
+     "value": 0.013999999999999999,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.3216102417766449e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 17",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "X3",
+      "ratio_idle_over_int": 1.6810344827586263
+     },
+     "data": {
+      "value": 1.632942262061691e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 17",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D5",
+      "ratio_idle_over_int": 2.9482758620689715
+     }
+    },
+    "model_t_half_initial": {
+     "value": 3.2916666666666674e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 32.96 ns rounded to the 0.4167 ns grid (79 samples); starting value for the duration knob"
+    }
+   },
+   "X4-D7": {
+    "cz_step": {
+     "value": 5,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 4336000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 4339275819.991097
+    },
+    "cz_error": {
+     "value": 0.009000000000000001,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.5395426559761773e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 15",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "X4",
+      "ratio_idle_over_int": 1.9913793103448327
+     },
+     "data": {
+      "value": 1.7886082722042132e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 15",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D7",
+      "ratio_idle_over_int": 4.293103448275868
+     }
+    },
+    "model_t_half_initial": {
+     "value": 3.375e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 33.77 ns rounded to the 0.4167 ns grid (81 samples); starting value for the duration knob"
+    }
+   },
+   "X2-D2": {
+    "cz_step": {
+     "value": 6,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 5495000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 5496604255.210117
+    },
+    "cz_error": {
+     "value": 0.008,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.0569780245343564e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 5",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "X2",
+      "ratio_idle_over_int": 1.4741379310344875
+     },
+     "data": {
+      "value": 1.1503776306198701e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 5",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D2",
+      "ratio_idle_over_int": 1.2931034482758683
+     }
+    },
+    "model_t_half_initial": {
+     "value": 2.7083333333333338e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 27.09 ns rounded to the 0.4167 ns grid (65 samples); starting value for the duration knob"
+    }
+   },
+   "X3-D6": {
+    "cz_step": {
+     "value": 6,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 4931000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 4930673480.041893
+    },
+    "cz_error": {
+     "value": 0.024,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.072544625548609e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 21",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "X3",
+      "ratio_idle_over_int": 2.0431034482758683
+     },
+     "data": {
+      "value": 1.041411423520104e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 21",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D6",
+      "ratio_idle_over_int": 7.603448275862075
+     }
+    },
+    "model_t_half_initial": {
+     "value": 2.9583333333333337e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 29.78 ns rounded to the 0.4167 ns grid (71 samples); starting value for the duration knob"
+    }
+   },
+   "X4-D8": {
+    "cz_step": {
+     "value": 6,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 4354000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 4353424089.370303
+    },
+    "cz_error": {
+     "value": 0.013000000000000001,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.5395426559761773e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 19",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "X4",
+      "ratio_idle_over_int": 1.9913793103448327
+     },
+     "data": {
+      "value": 1.7730416711899607e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 19",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D8",
+      "ratio_idle_over_int": 2.4310344827586263
+     }
+    },
+    "model_t_half_initial": {
+     "value": 3.375e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 33.77 ns rounded to the 0.4167 ns grid (81 samples); starting value for the duration knob"
+    }
+   },
+   "X1-D3": {
+    "cz_step": {
+     "value": 7,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 5197000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 5196660944.370959
+    },
+    "cz_error": {
+     "value": 0.054000000000000006,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 4.34313983964266e-06,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 10",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "X1",
+      "ratio_idle_over_int": 1.422413793103452
+     },
+     "data": {
+      "value": 1.2282106356911314e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 10",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D3",
+      "ratio_idle_over_int": 2.87068965517242
+     }
+    },
+    "model_t_half_initial": {
+     "value": 2.833333333333334e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 28.29 ns rounded to the 0.4167 ns grid (68 samples); starting value for the duration knob"
+    }
+   },
+   "X2-D5": {
+    "cz_step": {
+     "value": 7,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 4891000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 4891058325.780117
+    },
+    "cz_error": {
+     "value": 0.013999999999999999,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.2593438377196363e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 8",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "X2",
+      "ratio_idle_over_int": 1.2672413793103487
+     },
+     "data": {
+      "value": 1.0881112265628615e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 8",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D5",
+      "ratio_idle_over_int": 4.3448275862069
+     }
+    },
+    "model_t_half_initial": {
+     "value": 3.041666666666667e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 30.54 ns rounded to the 0.4167 ns grid (73 samples); starting value for the duration knob"
+    }
+   },
+   "X3-D9": {
+    "cz_step": {
+     "value": 7,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 5598000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 5598471794.740398
+    },
+    "cz_error": {
+     "value": 0.011000000000000001,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 2.3957057117600513e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 22",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "X3",
+      "ratio_idle_over_int": 0.9827586206896619
+     },
+     "data": {
+      "value": 1.430576448876411e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 22",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D9",
+      "ratio_idle_over_int": 2.3275862068965587
+     }
+    },
+    "model_t_half_initial": {
+     "value": 2.625e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 26.18 ns rounded to the 0.4167 ns grid (63 samples); starting value for the duration knob"
+    }
+   },
+   "X1-D2": {
+    "cz_step": {
+     "value": 8,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 4693000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 4692982554.471237
+    },
+    "cz_error": {
+     "value": 0.026000000000000002,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 2.786479738217437e-06,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 6",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "X1",
+      "ratio_idle_over_int": 2.172413793103452
+     },
+     "data": {
+      "value": 1.2749104387338889e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 6",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D2",
+      "ratio_idle_over_int": 1.1637931034482811
+     }
+    },
+    "model_t_half_initial": {
+     "value": 3.1250000000000005e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 31.42 ns rounded to the 0.4167 ns grid (75 samples); starting value for the duration knob"
+    }
+   },
+   "X2-D4": {
+    "cz_step": {
+     "value": 8,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 5276000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 5275891252.89451
+    },
+    "cz_error": {
+     "value": 0.009000000000000001,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.7263418681472047e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 4",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "X2",
+      "ratio_idle_over_int": 0.9568965517241423
+     },
+     "data": {
+      "value": 1.7419084691614558e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 4",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D4",
+      "ratio_idle_over_int": 4.37068965517242
+     }
+    },
+    "model_t_half_initial": {
+     "value": 2.833333333333334e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 28.17 ns rounded to the 0.4167 ns grid (68 samples); starting value for the duration knob"
+    }
+   },
+   "X3-D8": {
+    "cz_step": {
+     "value": 8,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11) edge labels",
+     "uncertainty": null,
+     "cooldown": "K22-main"
+    },
+    "interaction_frequency": {
+     "value": 4560000000.0,
+     "units": "Hz",
+     "kind": "digitized",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), line position; value in the target",
+     "uncertainty": {
+      "sigma": 10000000.0,
+      "units": "Hz"
+     },
+     "cooldown": "K22-main",
+     "redigitized_hz": 4559988822.306705
+    },
+    "cz_error": {
+     "value": 0.013000000000000001,
+     "units": "1",
+     "kind": "published",
+     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 5 (p. 9) printed labels; value in the target",
+     "uncertainty": {
+      "sigma": 0.0005,
+      "units": "1",
+      "basis": "printed rounding"
+     },
+     "cooldown": "K22-main"
+    },
+    "t2_star_at_interaction": {
+     "aux": {
+      "value": 1.1970774336626277e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 20",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "X3",
+      "ratio_idle_over_int": 1.8362068965517295
+     },
+     "data": {
+      "value": 1.29047703974814e-05,
+      "units": "s",
+      "kind": "digitized",
+      "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 8a (p. 13), slot 20",
+      "uncertainty": {
+       "sigma": 3.113320202850452e-07,
+       "units": "s"
+      },
+      "cooldown": "K22-main",
+      "qubit": "D8",
+      "ratio_idle_over_int": 3.3103448275862135
+     }
+    },
+    "model_t_half_initial": {
+     "value": 3.208333333333334e-08,
+     "units": "s",
+     "kind": "fitted",
+     "source": "model J_2 (calibration A)",
+     "uncertainty": null,
+     "cooldown": "K22-main",
+     "method": "1 / (4 J_2) = 32.24 ns rounded to the 0.4167 ns grid (77 samples); starting value for the duration knob"
+    }
+   }
+  }
+ },
+ "crosstalk": {
+  "drive_fig10": {
+   "kind": "digitized",
+   "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 10 (p. 15), printed cell labels read from the PDF text layer",
+   "cooldown": "K22-a",
+   "units": "log10(a_j / a_i)",
+   "uncertainty": {
+    "abs": 0.05,
+    "basis": "printed one-decimal rounding"
+   },
+   "threshold": "absent cells are < -1.6",
+   "matrix": {
+    "Z1": {
+     "Z1": 0.0,
+     "Z2": -1.4,
+     "X3": -1.4
+    },
+    "Z2": {
+     "Z1": -0.9,
+     "Z2": 0.0,
+     "X3": -1.2,
+     "X4": -1.4
+    },
+    "Z3": {
+     "Z3": 0.0,
+     "Z4": -1.0,
+     "X1": -1.5,
+     "X2": -1.5
+    },
+    "Z4": {
+     "Z3": -1.6,
+     "Z4": 0.0,
+     "X3": -1.5
+    },
+    "X1": {
+     "Z3": -1.0,
+     "Z4": -1.5,
+     "X1": 0.0,
+     "X2": -1.2
+    },
+    "X2": {
+     "Z1": -1.4,
+     "Z3": -1.4,
+     "X2": 0.0
+    },
+    "X3": {
+     "Z2": -1.4,
+     "Z4": -1.5,
+     "X3": 0.0,
+     "X4": -1.6
+    },
+    "X4": {
+     "Z1": -1.2,
+     "Z2": -1.0,
+     "X3": -1.0,
+     "X4": 0.0
+    },
+    "D1": {
+     "D1": 0.0
+    },
+    "D2": {
+     "D2": 0.0
+    },
+    "D3": {
+     "D2": -1.5,
+     "D3": 0.0,
+     "D6": -1.4
+    },
+    "D4": {
+     "D4": 0.0
+    },
+    "D5": {
+     "D1": -0.4,
+     "D4": -0.2,
+     "D5": 0.0
+    },
+    "D6": {
+     "D6": 0.0
+    },
+    "D7": {
+     "D4": -1.0,
+     "D7": 0.0
+    },
+    "D8": {
+     "D8": 0.0,
+     "D9": -1.3
+    },
+    "D9": {
+     "D9": 0.0
+    }
+   }
+  },
+  "measurement_induced_dephasing_fig12": {
+   "kind": "digitized",
+   "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 12 (p. 16), printed cell labels",
+   "cooldown": "K22-appE3",
+   "rows": "read-out auxiliary qubit",
+   "cols": "dephased qubit",
+   "uncertainty": {
+    "abs": 0.05,
+    "basis": "printed one-decimal rounding"
+   },
+   "phase_flip_percent": {
+    "Z1": {
+     "X1": 0.0,
+     "X2": 0.0,
+     "X3": 0.6,
+     "X4": 0.0,
+     "D1": 0.0,
+     "D2": 0.0,
+     "D3": 0.1,
+     "D4": 0.0,
+     "D5": 0.0,
+     "D6": 0.0,
+     "D7": 0.0,
+     "D8": 0.0,
+     "D9": 0.0
+    },
+    "Z2": {
+     "X1": 0.0,
+     "X2": 0.2,
+     "X3": 0.0,
+     "X4": 0.1,
+     "D1": 0.0,
+     "D2": 0.0,
+     "D3": 0.1,
+     "D4": 0.1,
+     "D5": 0.0,
+     "D6": 0.0,
+     "D7": 0.0,
+     "D8": 0.0,
+     "D9": 0.0
+    },
+    "Z3": {
+     "X1": 0.0,
+     "X2": 0.1,
+     "X3": 0.1,
+     "X4": 0.1,
+     "D1": 0.1,
+     "D2": 0.1,
+     "D3": 0.1,
+     "D4": 0.0,
+     "D5": 0.2,
+     "D6": 0.1,
+     "D7": 0.0,
+     "D8": 0.1,
+     "D9": 0.1
+    },
+    "Z4": {
+     "X1": 0.0,
+     "X2": 0.0,
+     "X3": 0.0,
+     "X4": 0.0,
+     "D1": 0.1,
+     "D2": 0.0,
+     "D3": 1.2,
+     "D4": 0.0,
+     "D5": 0.0,
+     "D6": 0.0,
+     "D7": 0.0,
+     "D8": 0.0,
+     "D9": 0.1
+    },
+    "X1": {
+     "Z1": 1.9,
+     "Z2": 0.0,
+     "Z3": 0.0,
+     "Z4": 0.0,
+     "D1": 0.0,
+     "D2": 0.0,
+     "D3": 0.1,
+     "D4": 0.0,
+     "D5": 0.0,
+     "D6": 0.0,
+     "D7": 0.0,
+     "D8": 0.0,
+     "D9": 0.1
+    },
+    "X2": {
+     "Z1": 0.1,
+     "Z2": 2.3,
+     "Z3": 0.0,
+     "Z4": 0.0,
+     "D1": 0.2,
+     "D2": 0.2,
+     "D3": 0.0,
+     "D4": 0.2,
+     "D5": 0.1,
+     "D6": 0.0,
+     "D7": 0.0,
+     "D8": 0.0,
+     "D9": 0.0
+    },
+    "X3": {
+     "Z1": 0.0,
+     "Z2": 0.0,
+     "Z3": 0.1,
+     "Z4": 0.0,
+     "D1": 0.0,
+     "D2": 0.0,
+     "D3": 0.0,
+     "D4": 0.0,
+     "D5": 0.1,
+     "D6": 0.0,
+     "D7": 0.0,
+     "D8": 0.1,
+     "D9": 0.1
+    },
+    "X4": {
+     "Z1": 0.0,
+     "Z2": 0.0,
+     "Z3": 0.0,
+     "Z4": 0.0,
+     "D1": 0.1,
+     "D2": 0.0,
+     "D3": 0.0,
+     "D4": 0.0,
+     "D5": 0.0,
+     "D6": 0.0,
+     "D7": 0.0,
+     "D8": 0.0,
+     "D9": 0.0
+    }
+   },
+   "phase_rotation_deg": {
+    "Z1": {
+     "X1": 0.5,
+     "X2": 0.1,
+     "X3": 2.0,
+     "X4": 0.1,
+     "D1": 0.2,
+     "D2": 0.4,
+     "D3": 0.1,
+     "D4": 0.6,
+     "D5": 0.1,
+     "D6": 0.4,
+     "D7": 0.3,
+     "D8": 0.2,
+     "D9": 0.3
+    },
+    "Z2": {
+     "X1": 0.3,
+     "X2": 0.5,
+     "X3": 0.2,
+     "X4": 0.2,
+     "D1": 0.5,
+     "D2": 0.2,
+     "D3": 0.3,
+     "D4": 1.1,
+     "D5": 0.4,
+     "D6": 0.3,
+     "D7": 0.1,
+     "D8": 0.1,
+     "D9": 0.3
+    },
+    "Z3": {
+     "X1": 0.3,
+     "X2": 0.4,
+     "X3": 0.3,
+     "X4": 0.2,
+     "D1": 0.4,
+     "D2": 0.4,
+     "D3": 0.3,
+     "D4": 0.3,
+     "D5": 1.8,
+     "D6": 4.2,
+     "D7": 0.3,
+     "D8": 0.1,
+     "D9": 0.4
+    },
+    "Z4": {
+     "X1": 0.5,
+     "X2": 0.5,
+     "X3": 0.3,
+     "X4": 0.2,
+     "D1": 0.2,
+     "D2": 0.3,
+     "D3": 1.3,
+     "D4": 0.2,
+     "D5": 0.2,
+     "D6": 0.3,
+     "D7": 0.3,
+     "D8": 0.3,
+     "D9": 0.3
+    },
+    "X1": {
+     "Z1": 2.7,
+     "Z2": 0.4,
+     "Z3": 0.3,
+     "Z4": 0.3,
+     "D1": 0.1,
+     "D2": 0.3,
+     "D3": 0.2,
+     "D4": 0.4,
+     "D5": 0.5,
+     "D6": 0.1,
+     "D7": 0.2,
+     "D8": 0.3,
+     "D9": 0.4
+    },
+    "X2": {
+     "Z1": 0.4,
+     "Z2": 13.4,
+     "Z3": 0.2,
+     "Z4": 0.1,
+     "D1": 0.3,
+     "D2": 0.6,
+     "D3": 0.3,
+     "D4": 0.3,
+     "D5": 0.3,
+     "D6": 0.3,
+     "D7": 0.4,
+     "D8": 0.3,
+     "D9": 0.3
+    },
+    "X3": {
+     "Z1": 0.1,
+     "Z2": 0.3,
+     "Z3": 0.5,
+     "Z4": 0.4,
+     "D1": 0.3,
+     "D2": 0.3,
+     "D3": 0.4,
+     "D4": 0.4,
+     "D5": 1.3,
+     "D6": 0.2,
+     "D7": 0.4,
+     "D8": 2.1,
+     "D9": 0.2
+    },
+    "X4": {
+     "Z1": 0.2,
+     "Z2": 0.2,
+     "Z3": 0.2,
+     "Z4": 0.2,
+     "D1": 0.3,
+     "D2": 0.2,
+     "D3": 0.4,
+     "D4": 0.2,
+     "D5": 0.5,
+     "D6": 0.2,
+     "D7": 0.3,
+     "D8": 0.4,
+     "D9": 0.3
+    }
+   }
+  }
+ },
+ "defects": {
+  "kind": "digitized",
+  "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1 Fig. 6c (p. 11), swap-spectroscopy loss",
+  "cooldown": "K22-main",
+  "note": "defects rearrange on every thermal cycle (Colao Zanuz 2024): valid for K22-main only",
+  "threshold_loss_percent": 10.0,
+  "uncertainty": {
+   "frequency_mhz": 5.673438384320487,
+   "loss_percent": 1.0,
+   "note": "frequency ±2 px; loss is clipped at 25 % (column width); rows within 3 px of a coloured line are masked, so a defect under a line is missed; scan_range_ghz_UNRELIABLE: zero-loss rows have no grey fill, so the trace extent is fragmented - use Fig. 1c for tuning ranges; broad comb-like loss (D7, X1) is reported only by its strongest peaks"
+  },
+  "bands": {
+   "Z1": [
+    {
+     "center_ghz": 6.182795320101591,
+     "lo_ghz": 6.174306358474068,
+     "hi_ghz": 6.196943589480797,
+     "peak_loss_percent": 16.758241758241756,
+     "saturated": false
+    },
+    {
+     "center_ghz": 5.730050699967011,
+     "lo_ghz": 5.698924507332759,
+     "hi_ghz": 5.738539661594534,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    },
+    {
+     "center_ghz": 5.447085312382898,
+     "lo_ghz": 5.438596350755375,
+     "hi_ghz": 5.455574274010422,
+     "peak_loss_percent": 15.659340659340659,
+     "saturated": false
+    }
+   ],
+   "D1": [],
+   "D4": [],
+   "X2": [
+    {
+     "center_ghz": 4.289756877163878,
+     "lo_ghz": 4.2558010306537835,
+     "hi_ghz": 4.301075492667242,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    }
+   ],
+   "D2": [
+    {
+     "center_ghz": 5.367855003859347,
+     "lo_ghz": 5.342388118976777,
+     "hi_ghz": 5.407470158121122,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    },
+    {
+     "center_ghz": 5.070741346896028,
+     "lo_ghz": 5.042444808137617,
+     "hi_ghz": 5.076400654647711,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    }
+   ],
+   "X1": [
+    {
+     "center_ghz": 6.086587088322993,
+     "lo_ghz": 6.044142280185376,
+     "hi_ghz": 6.089416742198834,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    }
+   ],
+   "D7": [
+    {
+     "center_ghz": 5.7130727767119645,
+     "lo_ghz": 5.605545929430002,
+     "hi_ghz": 5.772495508104628,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    },
+    {
+     "center_ghz": 5.571590082919908,
+     "lo_ghz": 5.568760429044067,
+     "hi_ghz": 5.574419736795749,
+     "peak_loss_percent": 10.326086956521738,
+     "saturated": false
+    },
+    {
+     "center_ghz": 5.42444808137617,
+     "lo_ghz": 4.711375304664205,
+     "hi_ghz": 5.435766696879534,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    }
+   ],
+   "Z2": [
+    {
+     "center_ghz": 5.056593077516823,
+     "lo_ghz": 5.019807577130888,
+     "hi_ghz": 5.065082039144347,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    }
+   ],
+   "D5": [
+    {
+     "center_ghz": 5.1528013092954215,
+     "lo_ghz": 5.113186155033645,
+     "hi_ghz": 5.161290270922945,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    },
+    {
+     "center_ghz": 4.813242844194486,
+     "lo_ghz": 4.8047538825669625,
+     "hi_ghz": 4.82173180582201,
+     "peak_loss_percent": 13.858695652173914,
+     "saturated": false
+    },
+    {
+     "center_ghz": 4.5500850337412615,
+     "lo_ghz": 4.535936764362056,
+     "hi_ghz": 4.558573995368785,
+     "peak_loss_percent": 14.130434782608695,
+     "saturated": false
+    }
+   ],
+   "Z3": [
+    {
+     "center_ghz": 4.6349746500164954,
+     "lo_ghz": 4.6038484573822425,
+     "hi_ghz": 4.640633957768177,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    }
+   ],
+   "D3": [
+    {
+     "center_ghz": 4.929258653103972,
+     "lo_ghz": 4.895302806593879,
+     "hi_ghz": 4.934917960855655,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    }
+   ],
+   "X4": [
+    {
+     "center_ghz": 5.7441989693462165,
+     "lo_ghz": 5.718732084463646,
+     "hi_ghz": 5.749858277097899,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    }
+   ],
+   "D8": [
+    {
+     "center_ghz": 5.820599623993926,
+     "lo_ghz": 5.7243913922153284,
+     "hi_ghz": 5.837577547248974,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    },
+    {
+     "center_ghz": 4.7934352670635985,
+     "lo_ghz": 4.77362768993271,
+     "hi_ghz": 4.79909457481528,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    }
+   ],
+   "X3": [
+    {
+     "center_ghz": 5.390492234866076,
+     "lo_ghz": 5.356536388355982,
+     "hi_ghz": 5.398981196493599,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    },
+    {
+     "center_ghz": 5.195246117433038,
+     "lo_ghz": 5.172608886426309,
+     "hi_ghz": 5.198075771308879,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    }
+   ],
+   "D6": [
+    {
+     "center_ghz": 4.083192144227475,
+     "lo_ghz": 4.0548956054690635,
+     "hi_ghz": 4.0860217981033164,
+     "peak_loss_percent": 25.0,
+     "saturated": true
+    },
+    {
+     "center_ghz": 4.01811010508313,
+     "lo_ghz": 4.009621143455606,
+     "hi_ghz": 4.023769412834811,
+     "peak_loss_percent": 13.043478260869565,
+     "saturated": false
+    }
+   ],
+   "D9": [],
+   "Z4": [
+    {
+     "center_ghz": 4.476514032969392,
+     "lo_ghz": 4.4651954174660275,
+     "hi_ghz": 4.482173340721074,
+     "peak_loss_percent": 13.858695652173914,
+     "saturated": false
+    }
+   ]
+  }
+ },
+ "readout": {
+  "feedlines": {
+   "kind": "digitized",
+   "source": "Krinner22 arXiv:2112.03708v1 Fig. 1b (page 2), false-colour micrograph; rasters png/fig1b_300.png and png/fig1b_tr_600.png",
+   "method": "Visual trace of the purple feedlines to the blue Purcell filters at 300/600 dpi (top-left feedline traced: Z1 and D4 filters directly, D7/Z2 filters by proximity), then the remaining qubits partitioned by chip quadrant and checked against Methods B: 4 feedlines of 4-5 qubits with readout resonators ~200 MHz apart within a feedline. Every in-feedline spacing in this partition is >= 150 MHz; uniqueness was checked only for X3 (X3 with Z3 would be 58 MHz apart).",
+   "cooldown": "device",
+   "groups": {
+    "top_left": {
+     "qubits": [
+      "D7",
+      "D4",
+      "Z1",
+      "Z2"
+     ],
+     "f_ro_ghz": [
+      6.91,
+      7.12,
+      7.316,
+      7.502
+     ],
+     "min_spacing_mhz": 186,
+     "confidence": "high for Z1, D4 (traced); medium for D7, Z2"
+    },
+    "top_right": {
+     "qubits": [
+      "D1",
+      "D2",
+      "D5",
+      "X1",
+      "X2"
+     ],
+     "f_ro_ghz": [
+      6.769,
+      6.979,
+      7.18,
+      7.372,
+      7.554
+     ],
+     "min_spacing_mhz": 182,
+     "confidence": "medium (X2-D5 published; rest by quadrant + spacing)"
+    },
+    "bottom_left": {
+     "qubits": [
+      "D9",
+      "D8",
+      "X3",
+      "X4"
+     ],
+     "f_ro_ghz": [
+      6.868,
+      7.075,
+      7.258,
+      7.461
+     ],
+     "min_spacing_mhz": 183,
+     "confidence": "medium (D9 published; rest by quadrant + spacing)"
+    },
+    "bottom_right": {
+     "qubits": [
+      "D3",
+      "D6",
+      "Z3",
+      "Z4"
+     ],
+     "f_ro_ghz": [
+      6.88,
+      7.032,
+      7.2,
+      7.412
+     ],
+     "min_spacing_mhz": 152,
+     "confidence": "medium (by quadrant + spacing)"
+    }
+   },
+   "cross_checks": [
+    "X2 and D5 share a feedline: Remm 2023 (TWPA, arXiv:2210.04799) App. F - satisfied",
+    "D9 is on the 'bottom-left' feedline: Swiadek 2024 (arXiv:2307.07765) Fig. 7 - satisfied (orientation as in Fig. 1b)"
+   ]
+  }
+ }
+}

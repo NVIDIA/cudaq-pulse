@@ -27,7 +27,6 @@ feed-line membership (Fig. 1b, drawing only) and the crosstalk matrices
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 CITATION = (
@@ -143,11 +142,10 @@ _EDGES = (
 
 # Methods A (p. 8): J / 2 pi ~ 7 MHz between auxiliary and data qubits at the
 # interaction point, for the device as a whole. That value is the
-# |11> <-> |20> matrix element of the CZ, sqrt(2) J_qq (C. Lacroix, PhD
-# thesis, ETH Zurich (2025), Sec. 3.2, on the same device), so the exchange
-# coupling J_qq that the target simulates is 7 MHz / sqrt(2) = 4.95 MHz.
+# |11> <-> |20> matrix element of the CZ, about sqrt(2) J_qq (C. Lacroix, PhD
+# thesis, ETH Zurich (2025), Sec. 3.2, on the same device). A calibration
+# anchors each pair's charge coupling to it.
 COUPLING_11_20_HZ = 7.0e6
-COUPLING_HZ = COUPLING_11_20_HZ / math.sqrt(2.0)
 
 # Pairs with a measured |11> <-> |20> coupling J_2: Hellings et al.,
 # arXiv:2503.04610 (2025), App. J, J_2 / 2 pi = 7.4 MHz for X2-D4.
@@ -157,11 +155,6 @@ COUPLING_11_20_OVERRIDES_HZ = {("X2", "D4"): 7.4e6}
 def coupling_11_20_hz(auxiliary: str, data: str) -> float:
     """The |11> <-> |20> coupling of a pair: measured if listed, else the mean."""
     return COUPLING_11_20_OVERRIDES_HZ.get((auxiliary, data), COUPLING_11_20_HZ)
-
-
-def exchange_coupling_hz(auxiliary: str, data: str) -> float:
-    """The exchange coupling J_qq of a pair, |11> <-> |20> over sqrt(2)."""
-    return coupling_11_20_hz(auxiliary, data) / math.sqrt(2.0)
 
 
 # Single-qubit gates, App. B (p. 9): DRAG pulses with a Gaussian envelope of

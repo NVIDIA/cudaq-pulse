@@ -30,3 +30,12 @@ Device API
 .. autoexception:: cudaq_pulse.NoTargetError
 
 .. autoexception:: cudaq_pulse.DeviceMismatchError
+
+Calibrations and the transmon circuit model
+-------------------------------------------
+
+.. autoclass:: cudaq_pulse.targets.Calibration
+   :members:
+
+.. automodule:: cudaq_pulse.targets.transmon_model
+   :members: TransmonCircuit, ChargeCoupledPair, anchored_charge_coupling_hz
