@@ -181,15 +181,23 @@ after its release. [zizmor](https://docs.zizmor.sh/) audits the workflows
 
 - `ci.yml`: ruff and pre-commit; build, lit, pytest, mypy, and the benchmark
   baseline on Linux x86_64 (Python 3.12 to 3.15), Linux aarch64 (3.12 and
-  3.15), and macOS (3.12). A manually dispatched
-  run with `gpu` enabled also builds with GPU support on the runner named by
-  the `GPU_RUNNER` repository variable.
+  3.15), and macOS (3.12). The `gpu` job builds with GPU support and runs
+  the GPU tests on the runner named by the `GPU_RUNNER` repository variable:
+  nightly once the variable is set, and on a manual run with `gpu` enabled.
 - `wheels.yml`: cibuildwheel for `cp312-abi3` (3.12 and newer) on
   manylinux_2_28 (x86_64, aarch64, with the CUDA 12 and CUDA 13 runtimes) and
   macOS arm64 (compiler-only), plus an sdist. It then installs
-  the wheels in clean containers without a CUDA toolkit. A manually
-  dispatched run with `gpu` enabled also runs the GPU tests from the wheels on
-  the `GPU_RUNNER` runner.
+  the wheels in clean containers without a CUDA toolkit. `gpu-install-test`
+  runs the GPU tests from the wheels on the `GPU_RUNNER` runner, on every
+  release tag and on a manual run with `gpu` enabled, and gates the release
+  (see [Releases](#releases)).
+
+`GPU_RUNNER` is a runner label (`linux-gpu`) or a JSON list of labels
+(`["self-hosted", "linux", "x64", "gpu"]`). Only tag pushes, the nightly
+schedule and manual runs reach it, never pull requests, so a self-hosted
+runner does not run code from forks; it should still be ephemeral and
+isolated. While it is unset, every GPU job is skipped and the CPU jobs are
+unaffected.
 - `docs.yml`: Sphinx with warnings as errors; deploys `main` to GitHub Pages.
 - `property-nightly.yml`: the property tests with random examples on
   staging every night (and on manual dispatch), with the seed in the job
@@ -272,3 +280,28 @@ signed build-provenance attestation (check one with
 uploaded once (never replaced), and only then is the release published. The
 MLIR toolchain assets are write-once too. The end of `wheels.yml` records how
 PyPI and TestPyPI uploads will be re-enabled with trusted publishing.
+
+### GPU verification
+
+No release is published without GPU verification of the tagged commit; the
+`gpu-gate` job in `wheels.yml` enforces it, and it fails closed:
+
+- **With a GPU runner** (`GPU_RUNNER` set), the tag's run executes
+  `gpu-install-test` and publishes only if it passes. A failed GPU run
+  cannot be overridden: fix the problem and tag a new version.
+- **Without a GPU runner**, the tag's run builds and tests everything else
+  and then stops at `gpu-gate`. To release it:
+  1. Run the GPU test suite on the tagged commit on a machine with an
+     NVIDIA GPU: build it as in [GPU builds](#gpu-builds) and run
+     `check-pulse` and `check-pulse-gpu`, or download the tag run's
+     `wheels-linux-x86_64` artifact into `wheelhouse/` in a checkout of the
+     tag and run `bash tools/ci/install-test.sh gpu`. Every test must pass,
+     with no GPU test skipped.
+  2. Run the `wheels` workflow manually on the tag (*Run workflow*, *Use
+     workflow from*: the tag) with `gpu-verified-sha` set to the full commit
+     SHA the tag points to (`git rev-parse vX.Y.Z^{commit}`). This is the
+     maintainer's attestation that step 1 passed on that commit; the run's
+     summary records who made it.
+
+  The attestation counts only on a manual run, only when it names the exact
+  commit being released, and only when `gpu-install-test` did not run.

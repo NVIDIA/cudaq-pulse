@@ -12,6 +12,9 @@ on:
   push:
     branches: [main, staging]
   pull_request:
+  # Nightly GPU build and tests, when the GPU_RUNNER variable names a runner.
+  schedule:
+    - cron: "41 6 * * *"
   workflow_dispatch:
     inputs:
       gpu:
@@ -20,7 +23,7 @@ on:
         default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'nightly' || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -28,6 +31,7 @@ permissions:
 
 jobs:
   lint:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -51,6 +55,7 @@ jobs:
 
   test:
     name: test (${{ matrix.platform }}, py${{ matrix.python }})
+    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -124,12 +129,17 @@ jobs:
           PYTHONPATH=build/dev/python uv run --no-sync python -m pytest
           tests/test_perf_guard.py --run-benchmarks -q
 
-  # Opt-in: requires a runner with an NVIDIA GPU, a driver, and the CUDA 12.9
-  # toolkit, selected by the GPU_RUNNER repository variable. Fails if any of
-  # those is missing; it never skips.
+  # Requires a runner with an NVIDIA GPU, a driver, and the CUDA 12.9 toolkit,
+  # selected by the GPU_RUNNER repository variable (a label, or a JSON list of
+  # labels; see wheels.yml). Runs nightly once the variable is set, and on
+  # manual runs with `gpu`; pull requests never reach it. Fails if any of
+  # those is missing; it never skips. Releases are gated by gpu-install-test
+  # in wheels.yml.
   gpu:
-    if: github.event_name == 'workflow_dispatch' && inputs.gpu
-    runs-on: ${{ vars.GPU_RUNNER }}
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.gpu) ||
+      (github.event_name == 'schedule' && vars.GPU_RUNNER != '')
+    runs-on: ${{ startsWith(vars.GPU_RUNNER, '[') && fromJSON(vars.GPU_RUNNER) || vars.GPU_RUNNER }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
