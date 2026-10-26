@@ -79,6 +79,29 @@ behavior may change in any 0.x release.
   clock cycles), cosine, tanh-ramp, Gaussian-square and sampled waveforms;
   waveform sums, differences, scaling and negation (exact) and products
   (sampled once per clock cycle).
+- **Editor support with no configuration.** The wheel installs
+  `__builtins__.pyi` at the root of site-packages, generated at build time
+  from `cudaq_pulse.ops.__all__`, so Pylance, Cursor, pyright and
+  basedpyright know the operations used by bare name inside kernels: no
+  undefined-name warnings, with completion, hover documentation and checked
+  arguments. The names are builtins in the whole environment, outside
+  kernels too; see the new Editor Support page. The getting-started advice
+  to add a `pyrightconfig.json` is gone.
+- `python -m cudaq_pulse.doctor --setup-editor` configures mypy and ruff,
+  which take no names from an installed package: it shows the change to the
+  project's mypy and ruff configuration and writes it when confirmed or
+  with `--yes`. The mypy change enables `cudaq_pulse.mypy_plugin`, which
+  types the operations in files that import cudaq_pulse; the ruff change
+  lists them as `builtins`.
+- `cudaq_pulse.ops.__all__` lists the kernel language.
+- `ScheduledEvent.start` and `ScheduledEvent.end`: an event's scheduled
+  times in clock cycles as `int`, raising `ValueError` on an event that is
+  not scheduled yet.
+- `Kernel` and `CompiledKernel` are generic in the decorated function's
+  parameters, so type checkers check `k(...)`, `k.lower(...)` and
+  `pulse.compile(k)(...)` against the kernel's signature.
+- `square()` is typed to take the complex and `[re, im]` amplitudes it
+  accepts, and `custom()` the envelope name it accepts besides a callable.
 - **Compilation.** Verification, virtual-Z folding and drive fusion by
   default; ASAP, ALAP and resource-constrained schedules
   (`cudaq_pulse.compiler.MachineModel`); per-kernel schedule policies and

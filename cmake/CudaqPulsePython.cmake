@@ -27,6 +27,19 @@ add_dependencies(_cudaq_pulse_native CudaqPulsePythonStaging)
 
 set(CUDAQ_PULSE_PYTHONPATH "${CMAKE_BINARY_DIR}/python")
 
+# The kernel language as builtins for type checkers, beside the package at
+# the root of site-packages (see cmake/write_builtins_stub.py).
+set(_cudaq_pulse_builtins_stub "${CMAKE_BINARY_DIR}/python/__builtins__.pyi")
+add_custom_command(
+  OUTPUT "${_cudaq_pulse_builtins_stub}"
+  COMMAND "${Python3_EXECUTABLE}" "${CUDAQ_PULSE_SOURCE_DIR}/cmake/write_builtins_stub.py"
+    "${CUDAQ_PULSE_FRONTEND_DIR}/ops/__init__.py" "${_cudaq_pulse_builtins_stub}"
+  DEPENDS "${CUDAQ_PULSE_SOURCE_DIR}/cmake/write_builtins_stub.py"
+    "${CUDAQ_PULSE_FRONTEND_DIR}/ops/__init__.py"
+  COMMENT "Generating __builtins__.pyi from cudaq_pulse.ops.__all__")
+add_custom_target(CudaqPulseBuiltinsStub DEPENDS "${_cudaq_pulse_builtins_stub}")
+add_dependencies(_cudaq_pulse_native CudaqPulseBuiltinsStub)
+
 # The version comes from the git tags through setuptools-scm, configured in
 # pyproject.toml, for wheels and plain CMake builds alike. A CMake build reads
 # it at configure time, so re-run configure after tagging.
@@ -93,4 +106,7 @@ install(DIRECTORY "${CUDAQ_PULSE_FRONTEND_DIR}"
   PATTERN "*.pyc" EXCLUDE)
 install(FILES "${CMAKE_BINARY_DIR}/python/cudaq_pulse/_build_config.py"
   DESTINATION cudaq_pulse
+  COMPONENT CudaqPulse)
+install(FILES "${_cudaq_pulse_builtins_stub}"
+  DESTINATION .
   COMPONENT CudaqPulse)

@@ -7,13 +7,9 @@
 # ============================================================================ #
 """GPU integration tests: T1 amplitude damping and multi-qubit decoherence.
 
-Ported from the research-preview ``qpu/physics/test_decoherence.cpp`` engine
-tests to the dialect-routed cuDensityMat runtime. The old parallel-engine
-config-sampling cases (``TransmonConfig::generate`` / ``create_ladder_8q``
-seeding) are intentionally dropped: parameter sampling is not part of the
-pulse frontend. The physics -- T1 decay, monotonicity, ground-state stability,
-trace preservation, and independent multi-qubit decay -- is preserved here
-through ``TargetDescription`` T1 Lindblad terms.
+Uses ``TargetDescription`` T1 Lindblad terms to check T1 decay, its
+monotonicity, ground-state stability, trace preservation, and independent
+decay of several qubits.
 """
 
 import math

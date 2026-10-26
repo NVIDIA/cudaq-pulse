@@ -99,6 +99,60 @@ def test_the_kernel_language_is_in_ops():
     assert len(DSL) == 23
 
 
+def test_ops_all_is_the_kernel_language_the_tracer_lowers():
+    from cudaq_pulse.kernel.ir_builder import OP_TABLE
+
+    assert set(pulse.ops.__all__) == DSL == set(OP_TABLE)
+    assert len(pulse.ops.__all__) == len(DSL)
+
+
+def test_ruff_builtins_are_the_kernel_language():
+    import tomllib
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    builtins = tomllib.loads(pyproject.read_text())["tool"]["ruff"]["builtins"]
+    assert sorted(builtins) == sorted(pulse.ops.__all__)
+
+
+def _stub_imports(stub):
+    return [ln for ln in stub.read_text().splitlines() if ln.startswith("from ")]
+
+
+def test_the_installed_builtins_stub_reexports_exactly_ops_all():
+    from pathlib import Path
+
+    # Beside the package, at the root of site-packages (or of build/*/python).
+    stub = Path(pulse.__file__).parent.parent / "__builtins__.pyi"
+    assert _stub_imports(stub) == [
+        f"from cudaq_pulse.ops import {n} as {n}" for n in pulse.ops.__all__
+    ]
+
+
+def test_builtins_stub_reexports_exactly_ops_all(tmp_path):
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    generator = root / "cmake" / "write_builtins_stub.py"
+    if not generator.exists():
+        pytest.skip("needs the source tree; a wheel's tests check the installed stub")
+    spec = importlib.util.spec_from_file_location("write_builtins_stub", generator)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    out = tmp_path / "__builtins__.pyi"
+    module.main(
+        [
+            "write_builtins_stub.py",
+            str(root / "core/frontend/cudaq_pulse/ops/__init__.py"),
+            str(out),
+        ]
+    )
+    assert _stub_imports(out) == [
+        f"from cudaq_pulse.ops import {n} as {n}" for n in pulse.ops.__all__
+    ]
+
+
 def test_compiler_types_are_in_the_compiler_module():
     from cudaq_pulse import compiler
 

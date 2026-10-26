@@ -7,11 +7,10 @@
 # ============================================================================ #
 """GPU integration tests: I/Q quadrature modulation.
 
-Ported (partially) from ``qpu/physics/test_iq_modulation.cpp``. The in-phase
-(I) quadrature drives an X rotation; the quadrature (Q) component -- realized
-here as a pi/2 frame phase shift before the drive -- drives a Y rotation. The
-pulse->operator lowering models these as amplitude*cos(phase) (X) and
-amplitude*sin(phase) (Y) control terms.
+The in-phase (I) quadrature drives an X rotation; the quadrature (Q)
+component -- realized here as a pi/2 frame phase shift before the drive --
+drives a Y rotation. The Pulse -> QOp lowering models these as
+amplitude*cos(phase) (X) and amplitude*sin(phase) (Y) control terms.
 """
 
 import math

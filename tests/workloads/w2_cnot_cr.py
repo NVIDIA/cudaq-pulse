@@ -7,9 +7,9 @@
 # ============================================================================ #
 """W2: CNOT via echo cross-resonance, standalone schedule.
 
-The hero program for Figure 1.  A single schedule that can be executed
-on any CR-compatible qubit pair by supplying the pair-specific tones
-at call time -- no IR-level recompilation required.
+A single schedule that can be executed on any CR-compatible qubit pair by
+supplying the pair-specific tones at call time -- no IR-level recompilation
+required.
 """
 
 import cudaq_pulse as pulse

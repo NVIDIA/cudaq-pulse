@@ -11,8 +11,13 @@
     python -m cudaq_pulse.doctor --allow-no-gpu      # exit 0 if the compiler works
     python -m cudaq_pulse.doctor --expect-no-device  # exit 0 if GPU libraries load
                                                      # but no device exists
+    python -m cudaq_pulse.doctor --setup-editor      # configure mypy and ruff for
+                                                     # the kernel language
 
 The compiler check always runs; any failure there exits non-zero.
+``--setup-editor`` instead shows the change to the mypy and ruff
+configuration of the project in the current directory (or ``--project``)
+and writes it only when confirmed, or with ``--yes``.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ import os
 import platform
 import sys
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import TextIO
 
 from . import _build_config
@@ -252,8 +258,37 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         help="succeed only if every GPU library loads and the sole problem is that "
         "no usable GPU device exists",
     )
+    modes.add_argument(
+        "--setup-editor",
+        action="store_true",
+        help="show the mypy and ruff configuration the kernel language needs, and "
+        "write it when confirmed (pyright-based editors need none)",
+    )
+    parser.add_argument(
+        "--project",
+        type=Path,
+        default=None,
+        help="project directory for --setup-editor (default: the current directory)",
+    )
+    parser.add_argument(
+        "--yes", action="store_true", help="with --setup-editor, write without asking"
+    )
     args = parser.parse_args(argv)
     stream = out if out is not None else sys.stdout
+    if (args.yes or args.project is not None) and not args.setup_editor:
+        parser.error("--yes and --project apply to --setup-editor")
+    if args.setup_editor:
+        from ._editor_setup import setup_editor
+
+        def confirm(prompt: str) -> bool:
+            return input(prompt).strip().lower() in ("y", "yes")
+
+        return setup_editor(
+            args.project if args.project is not None else Path.cwd(),
+            assume_yes=args.yes,
+            out=stream,
+            confirm=confirm if out is None and sys.stdin.isatty() else None,
+        )
 
     def write(line: str) -> None:
         print(line, file=stream)

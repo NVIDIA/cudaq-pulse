@@ -237,11 +237,12 @@ runner does not run code from forks; it should still be ephemeral and
 isolated. While it is unset, every GPU job is skipped and the CPU jobs are
 unaffected.
 - `docs.yml`: Sphinx with warnings as errors; deploys `main` to GitHub Pages.
-- `property-nightly.yml`: the property tests with random examples on
-  staging every night (and on manual dispatch), with the seed in the job
-  summary and the example database kept in the Actions cache. GitHub runs
-  scheduled workflows from the default branch, so the nightly schedule takes
-  effect once this file is on `main`; until then, dispatch it manually.
+- `property-nightly.yml`: the property tests with random examples, the
+  slow physics checks (`nightly`) and the perf guard, every night and on
+  manual dispatch, with the seed in the job summary and the example database
+  kept in the Actions cache. GitHub runs scheduled workflows from the default
+  branch, so the schedule tests `main`; a manual dispatch tests the branch it
+  is dispatched on.
 
 ## Versioning and stability
 

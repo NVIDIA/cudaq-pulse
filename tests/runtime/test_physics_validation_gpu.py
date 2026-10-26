@@ -7,10 +7,9 @@
 # ============================================================================ #
 """GPU integration tests: closed-system physics validation.
 
-Ported from ``qpu/physics/test_physics_validation.cpp``. Covers ground-state
-initialization, free drift, single-qubit Rabi rotation angles (pi/2 and pi),
-selective addressing of one qubit in a register, and XX-coupling excitation
-exchange.
+Covers ground-state initialization, free drift, single-qubit Rabi rotation
+angles (pi/2 and pi), selective addressing of one qubit in a register, and
+XX-coupling excitation exchange.
 """
 
 import math

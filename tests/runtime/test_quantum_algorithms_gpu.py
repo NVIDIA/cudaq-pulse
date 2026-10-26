@@ -7,12 +7,9 @@
 # ============================================================================ #
 """GPU integration tests: quantum-algorithm building blocks.
 
-Ported from ``qpu/physics/test_quantum_algorithms.cpp`` (whose entangling-gate
-cases were all ``DISABLED_`` upstream because pulse-calibrated Bell/GHZ/CNOT
-fidelity was not achievable on the parallel engine). Here the robust
-single-qubit rotations and gate-sequence identities run on GPU, while the
-multi-qubit entangling schedules are exercised as compile/lowering structure
-tests rather than fidelity assertions.
+Single-qubit rotations and gate-sequence identities run on the GPU. The
+multi-qubit entangling schedules are checked as compile and lowering
+structure tests, not as fidelity assertions.
 """
 
 import math

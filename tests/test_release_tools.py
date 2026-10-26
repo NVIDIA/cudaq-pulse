@@ -5,7 +5,8 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""The release tag checks and the workflow pin check (source tree only)."""
+"""The release tag checks, the workflow pin check and the release hygiene check
+(source tree only)."""
 
 import importlib.util
 import re
@@ -120,3 +121,21 @@ def test_workflow_pins(tmp_path):
         "      - uses: ./.github/actions/local\n"
     )
     assert len(check(bad)) == 3
+
+
+def test_release_hygiene(tmp_path):
+    check = _load("check-release-hygiene").check
+    assert check(_TOOLS.parent / "SECURITY.md") == []
+    # Assembled at run time so this file passes the check itself.
+    bad = [
+        "/" + "Users/someone/src",
+        "https://build." + "nvi" + "dia.com/x",
+        "10." + "1.2.3",
+        "-----BEGIN " + "RSA PRIVATE KEY-----",
+        "gh" + "p_" + "a" * 36,
+    ]
+    version = "10." + "4.4.72"
+    good = [f'version = "{version}"', f"nvidia_curand-{version}-py3", "www.nvidia.com/en-us"]
+    path = tmp_path / "f.txt"
+    path.write_text("\n".join(bad + good) + "\n")
+    assert [error.split(":")[1] for error in check(path)] == ["1", "2", "3", "4", "5"]

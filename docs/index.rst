@@ -41,6 +41,7 @@ quantum control. Its Python DSL drives an MLIR-based compiler pipeline:
    user_guide/compilation
    user_guide/devices
    user_guide/custom_passes
+   user_guide/editors
 
 .. toctree::
    :maxdepth: 2

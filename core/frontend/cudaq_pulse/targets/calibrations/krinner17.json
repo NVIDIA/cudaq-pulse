@@ -2146,7 +2146,7 @@
    },
    "alpha_i": null,
    "tau_i": null,
-   "coefficients_status": "unpublished"
+   "coefficients_status": "not given in the cited sources"
   },
   "fir": {
    "structure": "L-tap FIR at T_s, regularized least-squares fit (Tikhonov + exponential tail; Sobolev regularization for the inverse) to a Gaussian target response of sigma = 0.75 ns",
@@ -2175,7 +2175,7 @@
     "cooldown": "HEL25"
    },
    "coefficients": null,
-   "coefficients_status": "unpublished"
+   "coefficients_status": "not given in the cited sources"
   },
   "residual_after_compensation": {
    "relative": {

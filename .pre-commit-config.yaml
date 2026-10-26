@@ -48,6 +48,11 @@ repos:
         entry: python3 tools/check-license-headers.py
         language: system
         files: \.(py|pyi|cpp|h|td|mlir|cmake|sh|in|yml|yaml)$|(^|/)CMakeLists\.txt$
+      - id: release-hygiene
+        name: no local paths, internal hosts or credentials
+        entry: python3 tools/check-release-hygiene.py
+        language: system
+        types: [text]
       - id: workflow-pins
         name: actions and images pinned by commit or digest
         entry: python3 tools/check-workflow-pins.py

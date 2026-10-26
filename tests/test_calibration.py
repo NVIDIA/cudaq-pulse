@@ -52,7 +52,9 @@ def test_every_value_carries_its_kind_source_and_cooldown():
 
 def test_the_shipped_file_holds_no_local_paths_or_working_notes():
     text = (_SHIPPED / "krinner17.json").read_text()
-    assert not re.search(r"\.py\b|/Users/|_scratch|\bTODO\b|\bdraft\b", text, re.IGNORECASE)
+    assert not re.search(
+        r"\.py\b|/(?:Users|home)/|\bTODO\b|\bdraft\b|unpublished", text, re.IGNORECASE
+    )
 
 
 def test_cooldowns_and_provenance(cal):
