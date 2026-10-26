@@ -17,27 +17,39 @@ linked MLIR, so `pip` is the only installer you need.
 
 ## Install
 
+Releases are published on the
+[GitHub releases page](https://github.com/NVIDIA/cudaq-pulse/releases), not on
+PyPI. `pip` picks the wheel for your platform from the release:
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
+RELEASE=https://github.com/NVIDIA/cudaq-pulse/releases/expanded_assets/v0.1.0
 
-# Compiler only: compile kernels, inspect the MLIR, run cudaq-pulse-opt.
-pip install cudaq-pulse
+# Compiler and CPU simulation: compile kernels, inspect the MLIR, simulate
+# with the NumPy reference, run cudaq-pulse-opt.
+pip install "cudaq-pulse==0.1.0" --find-links "$RELEASE"
 
-# Compiler plus GPU simulation (Linux), with the CUDA 12 or CUDA 13 libraries.
-pip install "cudaq-pulse[cu12]"
-pip install "cudaq-pulse[cu13]"
+# Plus GPU simulation (Linux), with the CUDA 12 or CUDA 13 libraries.
+pip install "cudaq-pulse[cu12]==0.1.0" --find-links "$RELEASE"
+pip install "cudaq-pulse[cu13]==0.1.0" --find-links "$RELEASE"
 
 # Check what was installed and whether it works.
 python -m cudaq_pulse.doctor
 ```
+
+Keep the version pin: it stops `pip` from choosing a different package of
+the same name from PyPI. The CUDA libraries and the other dependencies come
+from PyPI. You can also download the wheel for your platform from the release
+and install the file, `pip install ./cudaq_pulse-0.1.0-<platform>.whl`, or
+`pip install "./cudaq_pulse-0.1.0-<platform>.whl[cu12]"` for GPU simulation.
 
 `[gpu]` is an alias for `[cu12]`. The `cu12` and `cu13` extras install into
 the same directories, so install only one of them per environment.
 
 | Platform | Python | What you get |
 | --- | --- | --- |
-| Linux x86_64 and aarch64, glibc 2.28+ | 3.12+ | Compiler; GPU execution with `[cu12]` or `[cu13]` |
-| macOS 11+ arm64 | 3.12+ | Compiler only |
+| Linux x86_64 and aarch64, glibc 2.28+ | 3.12+ | Compiler and CPU simulation; GPU simulation with `[cu12]` or `[cu13]` |
+| macOS 11+ arm64 | 3.12+ | Compiler and CPU simulation |
 
 GPU execution needs an NVIDIA GPU (compute capability 7.0 or newer) and a
 driver for the CUDA major you installed:
@@ -59,8 +71,9 @@ load error, and the driver version and device count. It exits non-zero if
 GPU execution does not work (`--allow-no-gpu` accepts a working compiler-only
 installation).
 
-Without a usable GPU, everything except execution still works. Execution fails
-with a specific error rather than degrading:
+Without a usable GPU, everything except GPU simulation still works, including
+the CPU reference (`pulse.simulate(..., backend="cpu")`, the default). GPU
+simulation fails with a specific error rather than degrading:
 
 | Situation | Error raised by `pulse.simulate(..., backend="gpu")` |
 | --- | --- |
@@ -87,13 +100,17 @@ def rabi_oscillation(qubit, amplitude: float):
 dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
 qubit = dev.qudit_handles[0]
 
-rabi_oscillation(qubit, 0.5)  # compile on first call, then run (CPU reference)
-print(rabi_oscillation.lower(qubit, 0.5).mlir())
+lowered = rabi_oscillation.lower(qubit, 0.5)  # compile for the qubit's device
+result = pulse.simulate(lowered)  # NumPy reference, no GPU needed
+print(f"P(1) = {result.density_matrix[1, 1].real:.3f}")  # P(1) = 0.973
+print(lowered.mlir())  # the scheduled Pulse MLIR
 ```
 
-Calling a kernel compiles it for the device of its qudit handles, with
-frequencies from the device, and runs it; `kernel.lower(...)` stops before
-running and `pulse.compile(kernel)` compiles ahead of the call. A `float`
+`kernel.lower(...)` compiles a kernel for the device of its qudit handles,
+with frequencies from the device, and `pulse.simulate` evolves the result;
+this pulse leaves the qubit almost fully excited. Calling the
+kernel, `rabi_oscillation(qubit, 0.5)`, compiles and runs it in one step, and
+`pulse.compile(kernel)` compiles ahead of the call. A `float`
 parameter stays symbolic, so a sweep over it compiles once. The compiler
 traces the Python kernel, builds Pulse dialect IR, applies the selected
 transformations, and emits scheduled MLIR. The wheel also installs

@@ -15,7 +15,7 @@ quantum control. Its Python DSL drives an MLIR-based compiler pipeline:
 2. Call it, or compile it to Pulse-dialect MLIR with ``kernel.lower()`` or
    ``pulse.compile()``.
 3. Inspect the schedule, or extend the pipeline with custom passes.
-4. Lower the module to LLVM and simulate it on the GPU.
+4. Simulate it with the NumPy reference on any machine, or on an NVIDIA GPU.
 
 .. warning::
 

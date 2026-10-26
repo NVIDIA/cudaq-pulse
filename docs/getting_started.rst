@@ -20,7 +20,9 @@ Installation
 
 cudaq-pulse requires Python 3.12 or newer and does not depend on CUDA-Q. Its
 wheels contain a statically linked MLIR, so ``pip`` is the only installer
-needed.
+needed. Releases are published on the `GitHub releases page
+<https://github.com/NVIDIA/cudaq-pulse/releases>`_, not on PyPI; ``pip``
+picks the wheel for your platform from the release:
 
 .. :spellcheck-disable:
 
@@ -28,18 +30,25 @@ needed.
 
    python -m venv .venv
    source .venv/bin/activate
+   RELEASE=https://github.com/NVIDIA/cudaq-pulse/releases/expanded_assets/v0.1.0
 
-   # Compiler only (Linux and macOS)
-   pip install cudaq-pulse
+   # Compiler and CPU simulation (Linux and macOS)
+   pip install "cudaq-pulse==0.1.0" --find-links "$RELEASE"
 
-   # Compiler plus GPU simulation (Linux), with CUDA 12 or CUDA 13 libraries
-   pip install "cudaq-pulse[cu12]"
-   pip install "cudaq-pulse[cu13]"
+   # Plus GPU simulation (Linux), with CUDA 12 or CUDA 13 libraries
+   pip install "cudaq-pulse[cu12]==0.1.0" --find-links "$RELEASE"
+   pip install "cudaq-pulse[cu13]==0.1.0" --find-links "$RELEASE"
 
    # Report what was installed and whether it works
    python -m cudaq_pulse.doctor
 
 .. :spellcheck-enable:
+
+Keep the version pin: it stops ``pip`` from choosing a different package of
+the same name from PyPI. The dependencies, CUDA libraries included, come from
+PyPI. A wheel downloaded from the release installs the same way, as
+``pip install ./cudaq_pulse-0.1.0-<platform>.whl`` (or
+``"./cudaq_pulse-0.1.0-<platform>.whl[cu12]"``).
 
 ``[gpu]`` is an alias for ``[cu12]``. Each CUDA extra installs cuDensityMat
 and the CUDA runtime libraries it needs from PyPI; the two extras write the
@@ -53,25 +62,28 @@ same files, so install only one of them per environment.
      - Capabilities
    * - Linux x86_64 and aarch64, glibc 2.28 or newer
      - 3.12+
-     - Compiler; GPU execution with ``[cu12]`` or ``[cu13]``
+     - Compiler and CPU simulation; GPU simulation with ``[cu12]`` or
+       ``[cu13]``
    * - macOS 11 or newer, arm64
      - 3.12+
-     - Compiler only
+     - Compiler and CPU simulation
 
-GPU execution additionally requires an NVIDIA GPU with compute capability 7.0
+GPU simulation additionally requires an NVIDIA GPU with compute capability 7.0
 or newer and a Linux driver of at least 525.60.13 for ``[cu12]`` or 580 for
 ``[cu13]``. The driver is the only system requirement: no CUDA toolkit or
 cuQuantum SDK installation is needed. See :doc:`user_guide/gpu_execution`.
 
-Every installation can trace, compile, transform, and inspect kernels, and
-ships the ``cudaq-pulse-opt`` MLIR driver. Only execution needs the GPU, and
-it never degrades silently; see :ref:`gpu-errors`. If something does not
+Every installation can trace, compile, transform, inspect and simulate
+kernels, the last with the NumPy reference, and ships the
+``cudaq-pulse-opt`` MLIR driver. Only GPU simulation needs the GPU, and it
+never degrades silently; see :ref:`gpu-errors`. If something does not
 work, run ``python -m cudaq_pulse.doctor`` first.
 
 Hello World
 -----------
 
-Define a pulse kernel, compile it, and inspect the generated MLIR:
+Define a pulse kernel, compile it, simulate it on the CPU, and inspect the
+generated MLIR:
 
 .. :spellcheck-disable:
 
@@ -86,6 +98,8 @@ Define a pulse kernel, compile it, and inspect the generated MLIR:
 
    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
    lowered = rabi_oscillation.lower(dev.qudit_handles[0], 0.5)
+   result = pulse.simulate(lowered)    # NumPy reference, no GPU needed
+   print(f"P(1) = {result.density_matrix[1, 1].real:.3f}")   # P(1) = 0.973
    print(lowered.mlir())
    print(f"Compiled in {lowered.metrics.total_ms:.1f} ms")
 
@@ -105,9 +119,10 @@ cudaq-pulse is a Python-first compiler pipeline with four stages:
 3. **Extend the pipeline** -- check a compiled module's ``schedule`` in
    Python, or load your own MLIR passes into ``cudaq-pulse-opt`` as plugins.
    See :doc:`user_guide/custom_passes`.
-4. **Lower and simulate** -- ``lowered.mlir("llvm")`` and
-   ``pulse.simulate(lowered)`` run the native Pulse -> QOp -> CuDensityMat ->
-   LLVM lowering.
+4. **Lower and simulate** -- ``pulse.simulate(lowered)`` evolves the
+   compiled module with the NumPy reference, and
+   ``pulse.simulate(lowered, backend="gpu")`` on the GPU, through the native
+   Pulse -> QOp -> CuDensityMat -> LLVM lowering (``lowered.mlir("llvm")``).
 
 GPU simulation via NVIDIA cuDensityMat is a preview capability; see
 :doc:`user_guide/gpu_execution`.

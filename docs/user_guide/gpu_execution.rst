@@ -24,8 +24,9 @@ Installation
 
 .. code-block:: bash
 
-   pip install "cudaq-pulse[cu12]"   # CUDA 12 libraries
-   pip install "cudaq-pulse[cu13]"   # CUDA 13 libraries
+   RELEASE=https://github.com/NVIDIA/cudaq-pulse/releases/expanded_assets/v0.1.0
+   pip install "cudaq-pulse[cu12]==0.1.0" --find-links "$RELEASE"   # CUDA 12 libraries
+   pip install "cudaq-pulse[cu13]==0.1.0" --find-links "$RELEASE"   # CUDA 13 libraries
 
 .. :spellcheck-enable:
 
@@ -33,7 +34,8 @@ The Linux wheels include a cuDensityMat runtime library for each of CUDA 12
 and CUDA 13. The ``cu12`` and ``cu13`` extras install cuDensityMat and the
 CUDA libraries for that major from PyPI; ``gpu`` is an alias for ``cu12``.
 The two extras write the same files, so an environment may contain only one
-of them. macOS wheels are compiler-only.
+of them. macOS wheels have no GPU runtime; they compile and simulate on the
+CPU (``backend="cpu"``).
 
 Execution needs an NVIDIA GPU with compute capability 7.0 or newer and a
 Linux driver new enough for the installed CUDA major. No CUDA toolkit is
