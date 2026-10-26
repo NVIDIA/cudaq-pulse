@@ -36,6 +36,7 @@ import numpy.typing as npt
 
 from .._native._cudaq_pulse_native import evaluate_callback
 from ..compiler import ScheduledEvent
+from . import _propagate
 from ._attributes import _VALID_INTEGRATORS, _f64, _level_attributes, _target_attributes
 
 if TYPE_CHECKING:
@@ -70,7 +71,10 @@ class SimulationResult:
     ``measurements`` lists every measurement any path made, in the order of
     their end times; ``branches`` gives each path's outcomes (one
     per entry of ``measurements``, -1 where that path did not measure) and
-    probability. ``records`` holds one such row per shot.
+    probability. ``records`` holds one such row per shot. With
+    ``paths="sampled"``, ``branches`` holds the paths the shots took, each
+    with the fraction of shots that took it, and the state is their
+    average.
     """
 
     density_matrix: npt.NDArray[np.complex128]
@@ -102,6 +106,7 @@ def simulate(
     readout: str = "ideal",
     latency_branching: bool = False,
     plant: Any = None,
+    paths: str = "all",
 ) -> SimulationResult:
     """Simulate one compiled kernel call on the target it was compiled for.
 
@@ -173,6 +178,15 @@ def simulate(
         probability of the function's latency model; by default, without
         shots, the answer is in time when the nominal latency is within the
         timeout. With shots the in-time outcome is always sampled.
+    paths:
+        ``"all"`` (the default) follows every outcome of every measurement,
+        so the state is the exact ensemble. ``"sampled"`` follows only the
+        outcomes the shots draw: at most ``shots`` paths, so a program that
+        measures many times inside one shot (an adaptive loop of readouts
+        and calls) costs time linear in its measurements, not exponential.
+        The state is then the average over the shots' paths, and
+        ``branches`` gives each path's share of the shots. It needs
+        ``shots``.
     """
     from ..compiler import Lowered
 
@@ -196,6 +210,7 @@ def simulate(
         readout=readout,
         latency_branching=latency_branching,
         plant=plant,
+        paths=paths,
     )
 
 
@@ -216,7 +231,12 @@ def _simulate_lowered(
     readout: str = "ideal",
     latency_branching: bool = False,
     plant: Any = None,
+    paths: str = "all",
 ) -> SimulationResult:
+    if paths not in ("all", "sampled"):
+        raise ValueError(f"unknown paths {paths!r}; choose 'all' or 'sampled'")
+    if paths == "sampled" and not shots:
+        raise ValueError("paths='sampled' follows the paths of the shots; pass shots >= 1")
     if backend not in ("cpu", "gpu"):
         raise ValueError(f"unknown backend {backend!r}; choose 'cpu' or 'gpu'")
     if dephasing not in ("t2_star", "t2_echo"):
@@ -265,6 +285,7 @@ def _simulate_lowered(
         readout=readout,
         latency_branching=latency_branching,
         plant=plant is not None,
+        sampled=paths == "sampled",
     )
 
 
@@ -325,6 +346,7 @@ def _simulate_compiled(
     readout: str = "ideal",
     latency_branching: bool = False,
     plant: bool = False,
+    sampled: bool = False,
 ) -> SimulationResult:
     # A cached specialization's module is shared by every call of it, from
     # any thread: a segment sets the module attributes it lowers with and
@@ -410,6 +432,7 @@ def _simulate_compiled(
             latency_branching,
             clock_ghz,
             mode,
+            sampled,
         )
     seen: dict[tuple[int, tuple[int, ...]], Measurement] = {}
     leaves: list[tuple[Any, list[tuple[tuple[int, tuple[int, ...]], int]], int]] = []
@@ -429,7 +452,8 @@ def _simulate_compiled(
         key = (index, tuple(iteration))
         seen[key] = Measurement(index, tuple(iteration), qudit, start, end)
         projected = [engine.project(state, dims, mode[qudit], k) for k in range(dims[mode[qudit]])]
-        weights = np.array([engine.weight(s) for s in projected])
+        # Exact propagation leaves an empty level at a trace of +-1e-17.
+        weights = np.maximum([engine.weight(s) for s in projected], 0.0)
         total = weights.sum()
         counts = (
             rng.multinomial(count, weights / total)
@@ -439,7 +463,12 @@ def _simulate_compiled(
         # A measurement that ends before t_start projects the initial state;
         # evolution still starts at t_start.
         for k, (branch, w) in enumerate(zip(projected, weights)):
-            if w > _NEGLIGIBLE * norm:
+            if sampled:
+                # A path of many measurements is improbable as a whole;
+                # each followed outcome is kept at unit weight instead.
+                if counts[k] and w > _NEGLIGIBLE * total:
+                    run([*path, (key, k)], branch / w, max(end, t), int(counts[k]))
+            elif w > _NEGLIGIBLE * norm:
                 run([*path, (key, k)], branch, max(end, t), int(counts[k]))
 
     norm = engine.weight(state)
@@ -452,6 +481,8 @@ def _simulate_compiled(
     rows = []
     for leaf, path, count in leaves:
         density = engine.density(leaf)
+        if sampled:
+            density = density * (count / (shots or 1) / float(np.real(np.trace(density))))
         rho += density
         outcomes = [-1] * len(measurements)
         for key, k in path:
@@ -491,6 +522,7 @@ def _simulate_tree(
     latency_branching: bool,
     clock_ghz: float,
     mode: Mapping[int, int],
+    sampled: bool = False,
 ) -> SimulationResult:
     """Simulate a program with classical calls or a readout model.
 
@@ -526,6 +558,7 @@ def _simulate_tree(
             if any(takes_iq(f) for f in functions)
             else None
         ),
+        sampled,
     )
     seen = {key: Measurement(*value) for key, value in seen_raw.items()}
     if t_end is None:
@@ -538,7 +571,11 @@ def _simulate_tree(
     rows = []
     calls = []
     for leaf in leaves:
-        density = leaf.weight * engine.density(leaf.state)
+        density = engine.density(leaf.state)
+        if sampled:
+            density = density * (leaf.count / (shots or 1) / float(np.real(np.trace(density))))
+        else:
+            density = leaf.weight * density
         rho += density
         outcomes = [-1] * len(measurements)
         for key, k in leaf.path:
@@ -670,6 +707,191 @@ def _full_operator(factors: list[Any], dims: tuple[int, ...]) -> npt.NDArray[np.
     return full
 
 
+def _step_times(t0: float, h: float, lo: int, hi: int) -> npt.NDArray[np.float64]:
+    """The start, middle and end of steps lo .. hi - 1, flattened.
+
+    Callbacks are right-continuous on half-open intervals: like the
+    cuDensityMat integrator, a step's end is sampled just inside the step so
+    that a pulse ending there is not lost."""
+    starts = t0 + h * np.arange(lo, hi)
+    ends = np.maximum(
+        starts,
+        starts
+        + h
+        - np.maximum(h * 1e-9, 8 * np.finfo(float).eps * np.maximum(1.0, np.abs(starts + h))),
+    )
+    return np.stack([starts, starts + 0.5 * h, ends], axis=1).ravel()
+
+
+def _active_ranges(
+    driven: list[tuple[int, Any, Any]], t0: float, h: float, steps: int
+) -> list[tuple[int, int]]:
+    """The ranges of steps, merged and in order, on which some drive term
+    can be nonzero; every coefficient is zero on the other steps."""
+    ranges = []
+    for _, params, _ in driven:
+        start, end = _propagate.support(params)
+        # Clamped as floats first: a term that plays throughout has a huge
+        # or infinite duration.
+        lo = int(math.floor(min(max((start - t0) / h - 1, 0.0), float(steps))))
+        hi = int(math.ceil(min(max((end - t0) / h + 1, 0.0), float(steps))))
+        if hi > lo:
+            ranges.append((lo, hi))
+    ranges.sort()
+    merged: list[tuple[int, int]] = []
+    for lo, hi in ranges:
+        if merged and lo <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
+        else:
+            merged.append((lo, hi))
+    return merged
+
+
+class _Stepper:
+    """Steps one segment's density matrix in order (see ``_propagate``):
+    exactly where the Lindbladian is constant, else with RK4, reusing kept
+    maps on small registers."""
+
+    def __init__(
+        self,
+        dims: tuple[int, ...],
+        static: npt.NDArray[np.complex128],
+        driven: list[tuple[int, Any, Any]],
+        jumps: list[npt.NDArray[np.complex128]],
+        decay: npt.NDArray[np.complex128],
+        h: float,
+    ) -> None:
+        self.dim = static.shape[0]
+        self.static = static
+        self.driven = driven
+        self.operators = (
+            np.stack([op for _, _, op in driven])
+            if driven
+            else np.zeros((0, self.dim, self.dim), dtype=np.complex128)
+        )
+        self.jumps = jumps
+        self.decay = decay
+        self.h = h
+        self.done = 0
+        self.key = (
+            dims,
+            h,
+            static.tobytes(),
+            b"".join(c.tobytes() for c in jumps),
+            self.operators.tobytes(),
+        )
+        self._dissipator: npt.NDArray[np.complex128] | None = None
+        self._terms: npt.NDArray[np.complex128] | None = None
+        # An exact propagator costs about (12 + log2 of its norm) products of
+        # (dim^2)^2 matrices; an RK4 step about 4 (4 + 2 jumps) products of
+        # dim^2 matrices and its Python overhead.
+        self._rk4_cost = 4 * (4 + 2 * len(jumps)) * self.dim**3 + 5e4
+        self._exact_base = float(self.dim) ** 6
+
+    def _exact_pays(self, n: int, hamiltonian: npt.NDArray[np.complex128]) -> bool:
+        if self.dim <= 8:
+            return True
+        norm = 2 * float(np.abs(hamiltonian).sum(axis=1).max()) + float(
+            np.abs(self.decay).sum(axis=1).max()
+        )
+        squarings = max(0.0, math.log2(max(norm * n * self.h, 1.0)))
+        return bool((12 + squarings) * self._exact_base < n * self._rk4_cost)
+
+    def idle(self, rho: Any, n: int) -> Any:
+        return self.constant(rho, n, np.zeros(len(self.driven))) if n > 0 else rho
+
+    def constant(self, rho: Any, n: int, values: npt.NDArray[np.float64]) -> Any:
+        """*n* steps with every drive coefficient at *values*."""
+        hamiltonian = self.static + np.tensordot(values, self.operators, axes=1)
+        self.done += n
+        if not self._exact_pays(n, hamiltonian):
+            hs = np.broadcast_to(hamiltonian, (n * 3, self.dim, self.dim))
+            return self._rk4(rho, hs)
+        key = (self.key, "exact", values.tobytes(), n)
+        propagator = _propagate.cached(key)
+        if propagator is None:
+            if self._dissipator is None:
+                self._dissipator = _propagate.dissipator(self.jumps, self.dim, self.key[3])
+            generator = _propagate.liouvillian(hamiltonian, self._dissipator)
+            propagator = _propagate.expm(generator * (n * self.h))
+            _propagate.keep(key, propagator)
+        return _propagate.apply(propagator, rho)
+
+    def play(self, rho: Any, t0: float, lo: int, hi: int) -> Any:
+        """Steps lo .. hi - 1 (``done`` is lo), where drive terms play."""
+        times = _step_times(t0, self.h, lo, hi).tolist()
+        values = np.array(
+            [evaluate_callback(kind, params, times) for kind, params, _ in self.driven],
+            dtype=float,
+        ).reshape(len(self.driven), hi - lo, 3)
+        flat = np.all(values[:, :, 0] == values[:, :, 1], axis=0) & np.all(
+            values[:, :, 1] == values[:, :, 2], axis=0
+        )
+        same = np.zeros(hi - lo, dtype=bool)
+        same[1:] = flat[1:] & flat[:-1] & np.all(values[:, 1:, 0] == values[:, :-1, 0], axis=0)
+        j = 0
+        pending = 0
+        count = hi - lo
+        while j < count:
+            k = j + 1
+            if flat[j]:
+                while k < count and same[k]:
+                    k += 1
+            if flat[j] and k - j >= 2:
+                if pending < j:
+                    rho = self._stretch(rho, values[:, pending:j, :])
+                rho = self.constant(rho, k - j, np.ascontiguousarray(values[:, j, 0]))
+                pending = k
+            j = k
+        if pending < count:
+            rho = self._stretch(rho, values[:, pending:, :])
+        return rho
+
+    def _stretch(self, rho: Any, values: npt.NDArray[np.float64]) -> Any:
+        """RK4 over steps whose coefficients (terms x steps x 3) vary."""
+        n = values.shape[1]
+        self.done += n
+        if self.dim > _propagate.MAX_MAPPED_DIM:
+            hs = self.static + np.tensordot(
+                values.reshape(len(self.driven), n * 3).T, self.operators, axes=1
+            )
+            return self._rk4(rho, hs)
+        key = (self.key, "rk4", np.round(values, 12).tobytes())
+        propagator = _propagate.cached(key)
+        if propagator is None:
+            if self._dissipator is None:
+                self._dissipator = _propagate.dissipator(self.jumps, self.dim, self.key[3])
+            if self._terms is None:
+                self._terms = _propagate.commutators(self.operators)
+            propagator = _propagate.rk4_map(
+                _propagate.liouvillian(self.static, self._dissipator), self._terms, values, self.h
+            )
+            _propagate.keep(key, propagator)
+        return _propagate.apply(propagator, rho)
+
+    def _rk4(self, rho: Any, hs: npt.NDArray[np.complex128]) -> Any:
+        h = self.h
+        jumps, decay = self.jumps, self.decay
+        adjoints = [c.conj().T for c in jumps]
+
+        def lindblad(r: Any, hm: Any) -> Any:
+            out = -1j * (hm @ r - r @ hm)
+            for c, ca in zip(jumps, adjoints):
+                out += c @ r @ ca
+            if jumps:
+                out -= 0.5 * (decay @ r + r @ decay)
+            return out
+
+        for step in range(len(hs) // 3):
+            h0, hm, h1 = hs[3 * step], hs[3 * step + 1], hs[3 * step + 2]
+            k1 = lindblad(rho, h0)
+            k2 = lindblad(rho + 0.5 * h * k1, hm)
+            k3 = lindblad(rho + 0.5 * h * k2, hm)
+            k4 = lindblad(rho + h * k3, h1)
+            rho = rho + (h / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+        return rho
+
+
 class _CpuBackend(_Backend):
     """Fixed-step RK4 on the density matrix: the reference for the GPU path.
 
@@ -709,45 +931,15 @@ class _CpuBackend(_Backend):
                 static += (re + 1j * im) * operator
         jumps = [(re + 1j * im) * _full_operator(f, self.dims) for re, im, _, _, f in collapse]
         decay = sum((c.conj().T @ c for c in jumps), np.zeros_like(static))
-
+        if t1 <= t0:
+            return state
         h = (t1 - t0) / steps
-        starts = t0 + h * np.arange(steps)
-        # Callbacks are right-continuous on half-open intervals: like the
-        # cuDensityMat integrator, sample a step's end just inside the step so
-        # that a pulse ending there is not lost.
-        ends = np.maximum(
-            starts,
-            starts
-            + h
-            - np.maximum(h * 1e-9, 8 * np.finfo(float).eps * np.maximum(1.0, np.abs(starts + h))),
-        )
-        times = np.stack([starts, starts + 0.5 * h, ends], axis=1).ravel()
-        coefficients = [np.asarray(evaluate_callback(k, p, times.tolist())) for k, p, _ in driven]
-
-        def hamiltonian_at(j: int) -> npt.NDArray[np.complex128]:
-            total = static.copy()
-            for c, (_, _, operator) in zip(coefficients, driven):
-                if c[j]:
-                    total += c[j] * operator
-            return total
-
-        def lindblad(rho: Any, hm: Any) -> Any:
-            out = -1j * (hm @ rho - rho @ hm)
-            for c in jumps:
-                out += c @ rho @ c.conj().T
-            if jumps:
-                out -= 0.5 * (decay @ rho + rho @ decay)
-            return out
-
+        stepper = _Stepper(self.dims, static, driven, jumps, decay, h)
         rho = state
-        for step in range(steps):
-            h0, hm, h1 = (hamiltonian_at(3 * step + i) for i in range(3))
-            k1 = lindblad(rho, h0)
-            k2 = lindblad(rho + 0.5 * h * k1, hm)
-            k3 = lindblad(rho + 0.5 * h * k2, hm)
-            k4 = lindblad(rho + h * k3, h1)
-            rho = rho + (h / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
-        return rho
+        for lo, hi in _active_ranges(driven, t0, h, steps):
+            rho = stepper.idle(rho, lo - stepper.done)
+            rho = stepper.play(rho, t0, lo, hi)
+        return stepper.idle(rho, steps - stepper.done)
 
 
 class _GpuBackend(_Backend):
