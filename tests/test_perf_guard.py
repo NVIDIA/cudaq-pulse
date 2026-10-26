@@ -232,3 +232,19 @@ def test_simulating_a_high_index_pair_takes_little_memory(tmp_path):
     growth = json.loads(out.stdout)
     assert {k: dims for k, (dims, _) in growth.items()} == {f"{a},{b}": [3, 3] for a, b in pairs}
     assert all(mb < SIMULATE_MEMORY_LIMIT_MB for _, mb in growth.values()), growth
+
+
+def test_the_events_of_a_long_line_are_listed_in_linear_time():
+    q = Q[0]
+
+    def program(n):
+        @pulse.kernel
+        def k(q):
+            d, t = get_drive_line(q)
+            for i in range(n):
+                drive(d, square(8 + 0 * i, 0.1), t)
+
+        return pulse.compile(k, unroll_threshold=100_000).lower(q)
+
+    times = {n: _best(lambda m=program(n): m.schedule, 3, 0) for n in (2000, 16000)}
+    assert times[16000] < 16 * times[2000], times

@@ -342,11 +342,11 @@ public:
     });
     std::vector<Event> result;
     llvm::SmallVector<int64_t, 2> iteration;
+    pulse::AllocationTracer trace;
     std::function<void(mlir::Block &)> collect = [&](mlir::Block &block) {
       for (mlir::Operation &op : block) {
         if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op)) {
-          mlir::Operation *allocation =
-              pulse::traceAllocation(op.getOperand(0));
+          mlir::Operation *allocation = trace(op.getOperand(0));
           int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
           int64_t qubit = -1;
           if (allocation)
@@ -509,6 +509,7 @@ public:
       if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
         lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
     });
+    pulse::AllocationTracer trace;
     llvm::SmallVector<int64_t, 2> iteration;
     std::function<void(mlir::Block &)> collect = [&](mlir::Block &block) {
       for (mlir::Operation &op : block) {
@@ -518,8 +519,7 @@ public:
           if (!start)
             continue;
           if (mlir::isa<pulse::WaitOp>(op)) {
-            mlir::Operation *allocation =
-                pulse::traceAllocation(op.getOperand(0));
+            mlir::Operation *allocation = trace(op.getOperand(0));
             boundaries.emplace_back(
                 "wait", allocation ? lineIndex.lookup(allocation) : -1, *start,
                 classical::intAttr(&op, "classical.min_vtu"),
@@ -700,6 +700,7 @@ public:
     double clockGHz = clock();
     std::optional<Measurement> next;
     pulse::ExecutionWalker walker(clockGHz, chosen);
+    pulse::AllocationTracer trace;
     walker.onReadout = [&](const pulse::Occurrence &occurrence,
                            const pulse::MeasurementKey &key) {
       if (chosen.count(key))
@@ -710,8 +711,7 @@ public:
       int64_t index =
           std::distance(readouts.begin(), llvm::find(readouts, occurrence.op));
       int64_t qubit = -1;
-      if (auto *allocation =
-              pulse::traceAllocation(occurrence.op->getOperand(0)))
+      if (auto *allocation = trace(occurrence.op->getOperand(0)))
         if (auto attr = allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
           qubit = attr.getInt();
       next = Measurement{index, key.iteration, qubit,

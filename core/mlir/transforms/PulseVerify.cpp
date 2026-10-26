@@ -93,6 +93,8 @@ static void conditionMeasurements(mlir::Value value,
 /// execution order. Loops are checked on their first two iterations and
 /// their last: with one period per line, those bound every iteration.
 class TimingChecker {
+  pulse::AllocationTracer trace;
+
 public:
   bool hadError = false;
 
@@ -135,7 +137,7 @@ private:
           << *start;
       hadError = true;
     }
-    mlir::Operation *physicalLine = pulse::traceAllocation(op->getOperand(0));
+    mlir::Operation *physicalLine = trace(op->getOperand(0));
     if (!physicalLine) {
       error(op, "cannot trace timed operation to a physical line");
       return;
@@ -191,7 +193,7 @@ private:
       int64_t period = periods[level];
       if (period < 0)
         return error(op, "period_vtu must not be negative");
-      mlir::Operation *line = pulse::traceAllocation(op->getOperand(0));
+      mlir::Operation *line = trace(op->getOperand(0));
       auto [it, inserted] = periodOf.try_emplace(line, period);
       if (!inserted && it->second != period)
         error(op, "operations on one line in a loop must share its period");
