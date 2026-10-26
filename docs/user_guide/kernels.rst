@@ -91,8 +91,6 @@ call passes the device's handles (``dev.qudit_handles[i]``, or a register
 The kernel language (``get_drive_line``, ``drive``, ``gaussian``, ...) lives
 in ``cudaq_pulse.ops``; inside a kernel its names are used bare, as above.
 
-.. :spellcheck-enable:
-
 Control Flow
 ------------
 
@@ -242,10 +240,6 @@ Besides the control flow above, a kernel body may use:
   so an operation always uses the channel's current line and tone, whichever
   copy of it the kernel passes. ``append``, ``insert``, ``extend``, ``pop``,
   ``remove`` and ``del xs[i]`` work on lists of lines.
-- list, dict and set comprehensions, nested and filtered ones included
-  (``[get_drive_line(q) for q in qubits]``, ``{i: 8 * i for i in range(4)}``),
-  and set displays. A comprehension runs while tracing, one iteration per
-  element, like a loop over a Python value.
 
 A ``float`` argument stays a runtime parameter, compiled once for every
 value, through ``+``, ``-``, ``*``, ``/`` and negation. Any other use that

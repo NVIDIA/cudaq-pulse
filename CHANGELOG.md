@@ -6,10 +6,8 @@ the [versioning policy](CONTRIBUTING.md#versioning-and-stability): while the
 major version is 0, a minor release may break the API.
 
 Each GitHub release takes its notes from the section for its version, so
-every change worth telling users about goes under **Unreleased** in the pull
-request that makes it.
-
-## [Unreleased]
+every change worth telling users about goes in the top section, the next
+release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
 ## [0.1.0] - Unreleased
 
@@ -60,9 +58,7 @@ behavior may change in any 0.x release.
   as an unsupported bytecode instruction. A `float` argument that tracing
   makes static, because `abs`, `min`, `math.*`, a comparison or a duration
   needs its value, warns once with a `RuntimeWarning` naming the argument
-  and the operation, since each new value then compiles the kernel again. List, dict and set comprehensions and set
-  displays trace on every supported Python; generator expressions, lambdas
-  and nested functions are rejected with what to write instead.
+  and the operation, since each new value then compiles the kernel again.
 - **Operations.** The kernel language lives in `cudaq_pulse.ops` and is
   used by bare name inside kernels. Drive and readout channels per qudit; `drive`, `readout`,
   `wait` and `sync`; phase and frequency control (`shift_phase` follows the
@@ -144,5 +140,4 @@ behavior may change in any 0.x release.
   (compiler only). The wheels link their own MLIR, so they need neither
   CUDA-Q nor an LLVM installation.
 
-[Unreleased]: https://github.com/NVIDIA/cudaq-pulse/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/NVIDIA/cudaq-pulse/releases/tag/v0.1.0

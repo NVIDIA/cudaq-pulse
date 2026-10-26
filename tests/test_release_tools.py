@@ -90,9 +90,34 @@ def test_release_notes_reject_an_empty_section():
         _load("release-notes").release_notes("0.1.0rc1", "## [0.1.0] - Unreleased\n\n## [0.0.1]\n")
 
 
-def test_the_changelog_has_notes_for_the_first_release_candidate():
+def _next_release(changelog):
+    """The version of the changelog's undated section and the section's lines."""
+    sections = re.split(r"^## ", changelog, flags=re.M)[1:]
+    undated = [s for s in sections if not re.match(r"\[[^\]]+\] - \d{4}-\d{2}-\d{2}\s", s)]
+    assert len(undated) == 1, "CHANGELOG.md needs exactly one undated section"
+    heading, *lines = undated[0].splitlines()
+    match = re.fullmatch(r"\[(\d+\.\d+\.\d+)\] - Unreleased", heading)
+    assert match, f"the undated section is '## {heading}', not '## [X.Y.Z] - Unreleased'"
+    return match.group(1), lines
+
+
+def test_the_release_notes_hold_every_unreleased_entry():
     changelog = (_TOOLS.parent / "CHANGELOG.md").read_text()
-    assert "### Added" in _load("release-notes").release_notes("0.1.0rc1", changelog)
+    version, lines = _next_release(changelog)
+    notes = _load("release-notes").release_notes(f"{version}rc1", changelog)
+    entries = [line for line in lines if line.startswith("- ")]
+    assert entries and "### Added" in notes
+    assert [line for line in entries if line not in notes.splitlines()] == []
+
+
+@pytest.mark.parametrize("page", ["README.md", "docs/getting_started.rst"])
+def test_the_install_commands_name_the_next_release(page):
+    version, _ = _next_release((_TOOLS.parent / "CHANGELOG.md").read_text())
+    text = (_TOOLS.parent / page).read_text()
+    assert f"releases/expanded_assets/v{version}" in text
+    pins = re.findall(r'pip install "cudaq-pulse(?:\[\w+\])?==([^"]+)"', text)
+    assert pins and set(pins) == {version}
+    assert not re.search(r"pip install (?:\"?)cudaq-pulse(?:\[\w+\])?(?:\"?)\s*$", text, re.M)
 
 
 @pytest.mark.parametrize(

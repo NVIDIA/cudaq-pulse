@@ -299,14 +299,17 @@ TestPyPI.
    tests the wheels and the sdist and publishes them as a GitHub pre-release.
 2. Squash `staging` into one commit on `main`, with the `staging` workflow
    triggers removed and the toolchain checksums in the lock file.
-3. Date the version's section in `CHANGELOG.md` (`## [0.1.0] - YYYY-MM-DD`)
-   and leave an empty `## [Unreleased]` section above it.
+3. Date the version's section in `CHANGELOG.md` (`## [0.1.0] - YYYY-MM-DD`).
+   The next release's section, `## [X.Y.Z] - Unreleased`, starts with the
+   first change after the tag.
 4. Tag `v0.1.0` on `main`.
 
 Release notes come from `CHANGELOG.md`, not from the commit history:
 `tools/release-notes.py` prints the section for the version, and a
 pre-release uses the section of the release it precedes. Add user-visible
-changes under `## [Unreleased]` in the pull request that makes them.
+changes to the top section, the next release's `## [X.Y.Z] - Unreleased`,
+in the pull request that makes them. It is the only undated section, so
+everything in it reaches the release notes.
 
 Before anything is released, the `release-meta` job checks the tag with
 `tools/release-meta.py`: it must name a version `X.Y.Z`, `X.Y.Z.postN` or
