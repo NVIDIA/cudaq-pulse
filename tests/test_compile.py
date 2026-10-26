@@ -54,6 +54,19 @@ def test_compile_produces_mlir():
     assert "pulse.drive" in mlir
 
 
+def test_scheduled_event_start_and_end():
+    events = _bell.lower(Q[0], Q[1]).schedule
+    assert events
+    for e in events:
+        assert e.start == e.start_vtu
+        assert e.end == e.start_vtu + e.duration_vtu
+    unscheduled = pulse.compiler.ScheduledEvent("drive", 0, 0, None, None)
+    with pytest.raises(ValueError, match="not scheduled"):
+        unscheduled.start
+    with pytest.raises(ValueError, match="not scheduled"):
+        unscheduled.end
+
+
 def test_compile_metrics():
     ck = _bell.lower(Q[0], Q[1])
     m = ck.metrics

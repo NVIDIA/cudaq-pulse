@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from ._device import Device
     from .kernel._kernel import CompiledKernel, Kernel
 
+
 _VALID_SCHEDULES = frozenset({"asap", "alap", "rcp", "alap_rcp"})
 
 # C++ pass names for the full pipeline
@@ -76,7 +77,8 @@ class ScheduledEvent:
     ``line`` numbers the kernel's drive and readout lines in allocation order.
     ``start_vtu`` and ``duration_vtu`` are ``None`` until the kernel is
     scheduled (a kernel with float parameters is scheduled when it is called
-    with their values).
+    with their values). ``start`` and ``end`` are the scheduled times in VTU,
+    and raise ``ValueError`` before then.
     """
 
     kind: str
@@ -84,6 +86,18 @@ class ScheduledEvent:
     qubit: int
     start_vtu: int | None
     duration_vtu: int | None
+
+    @property
+    def start(self) -> int:
+        if self.start_vtu is None:
+            raise ValueError(f"{self.kind} on line {self.line} is not scheduled")
+        return self.start_vtu
+
+    @property
+    def end(self) -> int:
+        if self.duration_vtu is None:
+            raise ValueError(f"{self.kind} on line {self.line} is not scheduled")
+        return self.start + self.duration_vtu
 
 
 @dataclass()
@@ -369,8 +383,8 @@ def build(
     return lowered, builder
 
 
-def compile(
-    kernel: Kernel,
+def compile[**P](
+    kernel: Kernel[P],
     /,
     *,
     schedule: str | None = None,
@@ -379,7 +393,7 @@ def compile(
     device: Device | None = None,
     flatten_schedules: bool = False,
     unroll_threshold: int | None = None,
-) -> CompiledKernel:
+) -> CompiledKernel[P]:
     """Compile a ``@cudaq_pulse.kernel`` without its arguments.
 
     Returns a ``CompiledKernel``, a family of specializations. Calling it

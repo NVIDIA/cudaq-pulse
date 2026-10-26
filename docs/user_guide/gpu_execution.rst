@@ -145,6 +145,11 @@ To inspect the lowered LLVM IR:
 
    import cudaq_pulse as pulse
 
+   @pulse.kernel
+   def my_kernel(qubit):
+       drive_line, tone = get_drive_line(qubit)
+       drive(drive_line, gaussian(40, 0.3, 10.0), tone)
+
    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
    llvm_ir = my_kernel.lower(dev.qudit_handles[0]).mlir("llvm")
    print(llvm_ir)
@@ -311,6 +316,15 @@ of the outcomes from the same branch probabilities.
 .. :spellcheck-disable:
 
 .. code-block:: python
+
+   @pulse.kernel
+   def active_reset(qubit):
+       drive_line, drive_tone = get_drive_line(qubit)
+       readout_line, readout_tone = get_readout_line(qubit)
+       result = readout(readout_line, square(1000, 0.05), readout_tone)
+       sync(drive_line, readout_line)
+       if result:
+           drive(drive_line, square(40, math.pi / 20.0), drive_tone)
 
    lowered = active_reset.lower(dev.qudit_handles[0])
    result = pulse.simulate(lowered, shots=1000, backend="cpu")

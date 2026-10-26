@@ -21,6 +21,32 @@ from typing import Any, NoReturn
 
 from ..kernel.ir_builder import Parameter
 
+__all__ = [
+    "cosine",
+    "custom",
+    "custom_samples",
+    "drag",
+    "drive",
+    "gaussian",
+    "gaussian_square",
+    "get_drive_line",
+    "get_readout_line",
+    "readout",
+    "set_frequency",
+    "set_phase",
+    "shift_frequency",
+    "shift_phase",
+    "square",
+    "sync",
+    "tanh_ramp",
+    "wait",
+    "wf_add",
+    "wf_mul",
+    "wf_neg",
+    "wf_scale",
+    "wf_sub",
+]
+
 Numeric = int | float | Parameter
 
 # ── Opaque type aliases (for IDE hover-docs, not enforced at runtime) ────
@@ -193,12 +219,13 @@ def gaussian(duration: Numeric, amplitude: Numeric, sigma: Numeric) -> Waveform:
     return _require_context("gaussian")
 
 
-def square(duration: Numeric, amplitude: Numeric) -> Waveform:
+def square(duration: Numeric, amplitude: Numeric | complex | Sequence[float]) -> Waveform:
     """Create a flat-top (square) envelope waveform.
 
     Args:
         duration: Pulse duration in clock cycles.
-        amplitude: Constant amplitude in ``[-1, 1]``.
+        amplitude: Constant amplitude in ``[-1, 1]``: a real number, a
+            complex number ``re + im*1j``, or ``[re, im]``.
 
     Returns:
         Waveform value.
@@ -280,12 +307,19 @@ def gaussian_square(
     return _require_context("gaussian_square")
 
 
-def custom(duration: int, envelope_fn: Callable[..., complex]) -> Waveform:
-    """Create a waveform from a callable envelope function.
+def custom(duration: Numeric, envelope_fn: str | Callable[..., complex]) -> Waveform:
+    """Create a waveform from a named or callable envelope.
+
+    Both forms are typed here. A name refers to an envelope callback the
+    runtime provides. A callable ``f(t) -> complex`` is passed to the
+    runtime by its ``__name__`` today; when ``custom`` samples a callable
+    while the kernel is traced, as ``custom_samples`` of its values, only
+    the behavior changes and this signature stays.
 
     Args:
         duration: Pulse duration in clock cycles.
-        envelope_fn: Callable ``f(t) -> complex`` defining the envelope.
+        envelope_fn: The name of an envelope callback, or a callable
+            ``f(t) -> complex`` defining the envelope.
 
     Returns:
         Waveform value.

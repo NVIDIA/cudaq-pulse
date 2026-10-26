@@ -37,7 +37,7 @@ z_auxiliaries = [i for i in range(n_qubits) if labels[i].startswith("Z")]
 x_auxiliaries = [i for i in range(n_qubits) if labels[i].startswith("X")]
 
 # The CZ gates of each time step, (auxiliary, data), and their slot.
-steps = {}
+steps: dict[int, list[tuple[int, int]]] = {}
 for c in target.couplings:
     steps.setdefault(int(c.gate_params["cz_step"]), []).append((c.qubit_a, c.qubit_b))
 z_steps = [[steps[1], steps[2]], [steps[3], steps[4]]]
@@ -103,7 +103,7 @@ def surface_code_cycle(qubits):
 
 dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
 compiled = pulse.compile(surface_code_cycle, device=dev).lower(dev.qudit_handles[:n_qubits])
-total_ns = max(e.start_vtu + e.duration_vtu for e in compiled.schedule) / clock_ghz
+total_ns = max(e.end for e in compiled.schedule) / clock_ghz
 print(
     f"\nCompiled and verified: {compiled.metrics.op_count} ops, "
     f"total = {total_ns:.0f} ns: 8 CZ steps of 98 ns and 6 single-qubit slots of 40 ns "

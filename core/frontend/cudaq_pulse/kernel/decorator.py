@@ -9,14 +9,20 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, Protocol, overload
 
 if TYPE_CHECKING:
     from ._kernel import Kernel
 
 
+class KernelDecorator(Protocol):
+    """``@kernel(...)`` with options: makes a kernel of the function it decorates."""
+
+    def __call__[**P](self, fn: Callable[P, Any], /) -> Kernel[P]: ...
+
+
 @overload
-def kernel(fn: Callable[..., Any], /) -> Kernel: ...
+def kernel[**P](fn: Callable[P, Any], /) -> Kernel[P]: ...
 @overload
 def kernel(
     fn: None = None,
@@ -25,17 +31,17 @@ def kernel(
     cache_size: int | None = None,
     schedule: str | None = None,
     unroll_threshold: int | None = None,
-) -> Callable[[Callable[..., Any]], Kernel]: ...
+) -> KernelDecorator: ...
 
 
-def kernel(
-    fn: Callable[..., Any] | None = None,
+def kernel[**P](
+    fn: Callable[P, Any] | None = None,
     /,
     *,
     cache_size: int | None = None,
     schedule: str | None = None,
     unroll_threshold: int | None = None,
-) -> Kernel | Callable[[Callable[..., Any]], Kernel]:
+) -> Kernel[P] | KernelDecorator:
     """Decorator that makes a Python function a pulse kernel.
 
     Calling the kernel compiles it on first use and runs it on the device of
@@ -80,9 +86,9 @@ def kernel(
     if unroll_threshold is not None:
         resolve_unroll_threshold(unroll_threshold)
 
-    def wrap(f: Callable[..., Any]) -> Kernel:
+    def wrap[**Q](f: Callable[Q, Any], /) -> Kernel[Q]:
         return Kernel(
-            f,  # type: ignore[arg-type]
+            f,
             cache_size=cache_size,
             schedule=schedule,
             unroll_threshold=unroll_threshold,

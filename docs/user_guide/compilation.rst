@@ -39,7 +39,9 @@ Arguments
 Arguments bind exactly as for a Python function: positional and keyword
 arguments, defaults, keyword-only parameters, and ``TypeError`` for a call
 that does not match the signature. Kernels cannot take ``*args`` or
-``**kwargs``.
+``**kwargs``. A kernel, ``kernel.lower`` and ``pulse.compile(kernel)`` keep
+the decorated function's signature for type checkers, so editors check each
+call against it.
 
 Annotations decide what a compilation depends on:
 
@@ -167,7 +169,9 @@ the module of one call:
 
 ``.schedule``
    The drives, readouts and waits with their start and duration in clock
-   cycles (``ScheduledEvent``).
+   cycles (``ScheduledEvent``). ``event.start`` and ``event.end`` are the
+   scheduled times as ``int``; they raise ``ValueError`` on an event that is
+   not scheduled yet, whose ``start_vtu`` and ``duration_vtu`` are ``None``.
 
 ``.timeline(**kwargs)``
    A matplotlib figure of the schedule, one row per line.

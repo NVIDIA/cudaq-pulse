@@ -24,8 +24,8 @@ def concurrent_drive_violations(compiled: pulse.Lowered, max_drives: int) -> lis
     edges = []
     for event in compiled.schedule:
         if event.kind == "drive" and event.duration_vtu:
-            edges.append((event.start_vtu, 1))
-            edges.append((event.start_vtu + event.duration_vtu, -1))
+            edges.append((event.start, 1))
+            edges.append((event.end, -1))
     active = 0
     violations = []
     # Ends sort before starts at the same instant, so back-to-back pulses

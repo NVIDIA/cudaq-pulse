@@ -92,7 +92,7 @@ def first_round(compiled: pulse.Lowered) -> dict[int, list[tuple[str, int, int]]
     per_line: dict[int, list[tuple[str, int, int]]] = {}
     for event in compiled.schedule:
         per_line.setdefault(event.line, []).append(
-            (event.kind, event.start_vtu, event.duration_vtu)
+            (event.kind, event.start, event.end - event.start)
         )
     events_per_round = {line: len(events) // ROUNDS for line, events in per_line.items()}
     return {line: events[: events_per_round[line]] for line, events in per_line.items()}
@@ -101,7 +101,7 @@ def first_round(compiled: pulse.Lowered) -> dict[int, list[tuple[str, int, int]]
 def report(label: str, compiled: pulse.Lowered) -> None:
     timeline = first_round(compiled)
     data_lines = sorted(timeline)[2:]
-    makespan = max(e.start_vtu + e.duration_vtu for e in compiled.schedule)
+    makespan = max(e.end for e in compiled.schedule)
     print(f"\n  --- {label} ---")
     print(f"    makespan: {makespan} VTU")
     layer = [timeline[line][0][1] for line in data_lines]

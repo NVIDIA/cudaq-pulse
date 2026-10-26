@@ -37,12 +37,12 @@ def vis_demo(q0, q1, q2):
 
 def print_ascii_timeline(events: list[pulse.compiler.ScheduledEvent], width: int = 70) -> None:
     """Render a simple ASCII timeline for terminals without matplotlib."""
-    max_t = max(ev.start_vtu + ev.duration_vtu for ev in events)
+    max_t = max(ev.end for ev in events)
     for line in sorted({ev.line for ev in events}):
         row = [" "] * width
         for ev in (ev for ev in events if ev.line == line):
-            start = int(ev.start_vtu / max_t * (width - 1))
-            end = int((ev.start_vtu + ev.duration_vtu) / max_t * (width - 1))
+            start = int(ev.start / max_t * (width - 1))
+            end = int(ev.end / max_t * (width - 1))
             char = "D" if ev.kind == "drive" else ("R" if ev.kind == "readout" else ".")
             for c in range(start, min(end + 1, width)):
                 row[c] = char
