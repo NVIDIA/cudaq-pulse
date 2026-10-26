@@ -85,3 +85,24 @@ def test_a_decoder_without_decode_needs_handlers():
         decoder.corrections_function.name,
         decoder.reset_function.name,
     }
+
+
+def test_a_mapped_enqueue_sends_its_mapping_row():
+    decoder = _decoder()
+    seen = []
+
+    @pulse.kernel
+    def rounds(q):
+        r, rt = get_readout_line(q)
+        ms = []
+        for _ in range(12):
+            ms.append(readout(r, square(100, 0.05), rt))
+        qec.enqueue_syndromes_mapped(decoder, ms, 4, 2)
+
+    def enqueue(decoder_id, round, mapping, count, bits):
+        seen.append((decoder_id, round, mapping, count))
+
+    dev = _device()
+    lowered = pulse.compile(rounds, device=dev).lower(dev.qudit_handles[0])
+    pulse.simulate(lowered, handlers={decoder.enqueue_function.name: enqueue}, shots=1, seed=0)
+    assert set(seen) == {(3, 4, 2, 12)}

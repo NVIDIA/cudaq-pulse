@@ -64,7 +64,7 @@ QEC decoders
 ------------
 
 .. automodule:: cudaq_pulse.classical.qec
-   :members: Decoder, enqueue_syndromes, get_corrections, reset_decoder
+   :members: Decoder, enqueue_syndromes, enqueue_syndromes_mapped, get_corrections, reset_decoder
 
 Emulation
 ---------

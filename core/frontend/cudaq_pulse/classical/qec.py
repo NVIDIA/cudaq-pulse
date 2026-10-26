@@ -42,7 +42,13 @@ from typing import Any
 
 from . import Bits, Byte, ClassicalFunction, Integer, function_id
 
-__all__ = ["Decoder", "enqueue_syndromes", "get_corrections", "reset_decoder"]
+__all__ = [
+    "Decoder",
+    "enqueue_syndromes",
+    "enqueue_syndromes_mapped",
+    "get_corrections",
+    "reset_decoder",
+]
 
 ENQUEUE_SYNDROMES_ID = function_id("enqueue_syndromes")
 GET_CORRECTIONS_ID = function_id("get_corrections")
@@ -154,6 +160,14 @@ def enqueue_syndromes(
     return decoder.enqueue_function.submit(
         decoder.decoder_id, round, mapping, decoder.syndromes, syndromes
     )
+
+
+def enqueue_syndromes_mapped(
+    decoder: Decoder, syndromes: Sequence[Any], round: Any, mapping: int
+) -> Any:
+    """``enqueue_syndromes`` with the syndrome-mapping row given, under the
+    name CUDA-QX uses for it."""
+    return enqueue_syndromes(decoder, syndromes, round, mapping)
 
 
 def get_corrections(decoder: Decoder, reset: bool = False) -> Any:
