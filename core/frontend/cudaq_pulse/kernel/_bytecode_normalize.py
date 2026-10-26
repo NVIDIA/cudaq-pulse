@@ -92,7 +92,8 @@ from typing import Any
     REGION_END,
     CALL_EX,
     DICT_MERGE,
-) = range(47)
+    DELETE_SUBSCR,
+) = range(48)
 
 OP_NAMES: tuple[str, ...] = tuple(
     (
@@ -103,7 +104,7 @@ OP_NAMES: tuple[str, ...] = tuple(
         "POP_TOP COPY SWAP JUMP JUMP_IF_FALSE JUMP_IF_TRUE JUMP_IF_NONE "
         "JUMP_IF_NOT_NONE GET_ITER "
         "FOR_ITER RETURN IMPORT_NAME IMPORT_FROM CONVERT FORMAT RAISE UNSUPPORTED "
-        "REGION_END CALL_EX DICT_MERGE"
+        "REGION_END CALL_EX DICT_MERGE DELETE_SUBSCR"
     ).split()
 )
 
@@ -156,6 +157,7 @@ _SIMPLE: dict[str, int] = {
     "CALL_KW": CALL_KW,
     "BINARY_SUBSCR": SUBSCR,
     "STORE_SUBSCR": STORE_SUBSCR,
+    "DELETE_SUBSCR": DELETE_SUBSCR,
     "BUILD_SLICE": BUILD_SLICE,
     "UNARY_NOT": NOT,
     "BUILD_TUPLE": BUILD_TUPLE,

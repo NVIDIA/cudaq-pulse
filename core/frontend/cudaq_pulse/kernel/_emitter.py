@@ -86,6 +86,8 @@ _VARIADIC = inspect.CO_VARARGS | inspect.CO_VARKEYWORDS
 # Methods of these containers change them unless listed in _READ_METHODS.
 _CONTAINERS = frozenset({list, dict, set})
 _READ_METHODS = frozenset({"copy", "count", "index", "get", "keys", "values", "items"})
+# List methods after which the list slots holding lines and tones are found again.
+_MOVES_SLOTS = frozenset({"append", "extend", "insert", "pop", "remove", "reverse", "sort"})
 # A rolled body that acquires a line would acquire one for all iterations
 # instead of one per iteration, so the acquisition is hoisted or the loop
 # unrolled.
@@ -356,6 +358,23 @@ def _iterate(value: Any) -> Any:
         raise CompilationError(
             f"cannot iterate over {type(value).__name__} in a pulse kernel"
         ) from None
+
+
+def _current(value: IRValue) -> IRValue:
+    """The current value of *value*'s channel, or *value* if it has none."""
+    chan = value.chan
+    return value if chan is None else chan.value  # type: ignore[no-any-return]
+
+
+def _slot_holds(slot: tuple[list[Any], int, IRValue], value: IRValue) -> bool:
+    """Whether the list slot recorded for *value* still holds it."""
+    obj, index, held = slot
+    if held is not value:
+        return False
+    try:
+        return obj[index] is value
+    except IndexError:  # the list shrank since the value was read
+        return False
 
 
 def _star_args(value: Any) -> list[Any]:
@@ -777,6 +796,19 @@ class PulseIREmitter:
                     self._note_mutation(obj)
                     obj[index] = value
 
+                elif op is bc.DELETE_SUBSCR:
+                    index = pop()
+                    obj = pop()
+                    self._note_mutation(obj)
+                    try:
+                        del obj[index]
+                    except (TypeError, IndexError, KeyError) as e:
+                        raise CompilationError(
+                            f"del failed: {type(obj).__name__}[{index!r}]: {e}"
+                        ) from e
+                    if obj.__class__ is list:
+                        self._track_slots(obj, 0)
+
                 elif op is bc.BUILD_CONST_KEY_MAP:
                     keys = pop()
                     vals = stack[-arg:] if arg else []
@@ -1138,9 +1170,12 @@ class PulseIREmitter:
             names = sorted(delta)
             vals = tuple(delta[n] for n in names) + tuple(new for _, _, new in slot_changes)
             # A name first bound in the body has no value entering the loop;
-            # the body binds it before reading it.
+            # the body binds it before reading it, unless it binds it to a
+            # channel's value read from a container: then it enters with
+            # the channel's value.
+            before_of = {id(cell): before for cell, before in entering}
             inits = tuple(
-                saved_locals[n] if n in saved_locals else IRValue(UNDEFINED_VID, delta[n].vtype)
+                saved_locals[n] if n in saved_locals else self._entering(delta[n], before_of)
                 for n in names
             ) + tuple(originals[id(obj)][i] for obj, i, _ in slot_changes)
             labels = names + [self._slot_label(obj, i) for obj, i, _ in slot_changes]
@@ -1170,6 +1205,13 @@ class PulseIREmitter:
         else:
             self.locals.pop(var, None)
         return True
+
+    @staticmethod
+    def _entering(value: IRValue, before_of: dict[int, IRValue]) -> IRValue:
+        """The value entering a rolled loop of a name the body first binds to *value*."""
+        chan = value.chan
+        before = None if chan is None else before_of.get(id(chan))
+        return IRValue(UNDEFINED_VID, value.vtype) if before is None else before
 
     def _unrolls(self, loop: _Loop, prog: bc.DecodedCode, for_idx: int, exit_idx: int) -> bool:
         """Whether *loop* is small enough to unroll: its trip count times the
@@ -1371,7 +1413,7 @@ class PulseIREmitter:
                 owner.__class__ in _CONTAINERS and fname == "copy"
             ):
                 self._note_fresh(result)
-            if owner.__class__ is list and fname in ("append", "extend", "insert"):
+            if owner.__class__ is list and fname in _MOVES_SLOTS:
                 self._track_slots(owner, len(owner) - 1 if fname == "append" else 0)
             return
 
@@ -1496,10 +1538,20 @@ class PulseIREmitter:
             self._acquired[0] += 1
 
         if n_val == -1:
-            operands = tuple(v for v in call_args if isinstance(v, IRValue))
+            call_args = [_current(v) for v in call_args if isinstance(v, IRValue)]
+            operands = tuple(call_args)
             attrs: dict[str, Any] = {}
             out_types = tuple(v.vtype for v in operands) if rtypes is None else rtypes
         else:
+            # A line or tone read from a container the tracer does not rebind
+            # (a tuple in a list, a dict) may be an old value of its channel;
+            # the op consumes the channel's current value.
+            for i in range(n_val):
+                v = call_args[i]
+                if v.__class__ is IRValue:
+                    chan = v.chan
+                    if chan is not None and chan.value is not v:
+                        call_args[i] = chan.value
             operands = tuple(call_args[:n_val])
             attr_vals = call_args[n_val:]
             if len(attr_vals) != len(attr_names):
@@ -1595,7 +1647,7 @@ class PulseIREmitter:
         for a in call_args:
             if a.__class__ is IRValue and a.vtype in LINEAR_TYPES:
                 slot = slots.get(id(a))
-                if slot is not None and (slot[2] is not a or slot[0][slot[1]] is not a):
+                if slot is not None and not _slot_holds(slot, a):
                     slot = None
                 arg_info.append((self._find_local_name(a), a, slot, a.chan))
             else:
@@ -1671,7 +1723,7 @@ class PulseIREmitter:
             self.locals[name] = new
         slots = self._slots
         slot = slots.get(id(old))
-        if slot is not None and slot[2] is old and slot[0][slot[1]] is old:
+        if slot is not None and _slot_holds(slot, old):
             slot[0][slot[1]] = new
             # The consumed value is dead: dropping its entry keeps the table,
             # and the values it holds, the size of the live lists.

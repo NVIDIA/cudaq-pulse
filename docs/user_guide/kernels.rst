@@ -218,6 +218,11 @@ Besides the control flow above, a kernel body may use:
 - calls with ``*args`` and ``**kwargs``, unpacked while tracing, so
   ``sync(*lines)`` synchronizes a list of lines built in a loop and
   ``helper(d, t, **opts)`` passes a dictionary of options.
+- lines and tones kept in any container: a list of ``(line, tone)`` pairs, a
+  dictionary or nested lists. A qudit has one drive and one readout channel,
+  so an operation always uses the channel's current line and tone, whichever
+  copy of it the kernel passes. ``append``, ``insert``, ``extend``, ``pop``,
+  ``remove`` and ``del xs[i]`` work on lists of lines.
 
 Unsupported Patterns
 --------------------

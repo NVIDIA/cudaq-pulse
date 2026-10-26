@@ -36,7 +36,10 @@ behavior may change in any 0.x release.
   while tracing, so `sync(*lines)` synchronizes a list of lines built in a
   loop. Helpers called from a kernel may take keyword-only, `*args` and
   `**kwargs` parameters; methods of helper objects, `functools.partial`
-  objects and decorated helpers that use pulse ops are inlined too.
+  objects and decorated helpers that use pulse ops are inlined too. Lines
+  and tones may be kept in any container, such as a list of `(line, tone)`
+  pairs or a dict, and lists of them support `pop`, `insert`, `extend`,
+  `remove` and `del xs[i]`.
 - **Operations.** The kernel language lives in `cudaq_pulse.ops` and is
   used by bare name inside kernels. Drive and readout channels per qudit; `drive`, `readout`,
   `wait` and `sync`; phase and frequency control (`shift_phase` follows the

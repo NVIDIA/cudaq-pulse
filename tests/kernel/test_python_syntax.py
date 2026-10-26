@@ -260,3 +260,105 @@ def test_a_pulse_op_in_code_run_as_python_is_a_compilation_error():
 
     with pytest.raises(CompilationError, match=r"list\(\) calls the pulse op square\(\) but ran"):
         python_ir(k, Q[0])
+
+
+# ── Lines and tones held in containers ───────────────────────────────
+
+
+def test_line_tone_pairs_in_a_list_from_the_friction_log():
+    @pulse.kernel
+    def k(q0, q1):
+        lines = []
+        for q in (q0, q1):
+            lines.append(get_drive_line(q))  # list of (line, tone) tuples
+        drive(lines[0][0], gaussian(40, 0.1, 10.0), lines[0][1])
+        drive(lines[0][0], gaussian(40, 0.1, 10.0), lines[0][1])
+        d, t = lines[0]
+        drive(d, gaussian(40, 0.1, 10.0), t)
+        d, t = lines[0]
+        drive(d, gaussian(40, 0.1, 10.0), t)
+
+    drives = [op for op in python_ir(k, Q[0], Q[1]).ops if op.kind == "pulse.drive"]
+    # Each drive consumes the line and tone the one before it produced.
+    for before, after in zip(drives, drives[1:]):
+        assert after.operands[0] is before.results[0]
+        assert after.operands[2] is before.results[1]
+    _compiles(k, Q[0], Q[1])
+
+
+def test_lines_in_dicts_and_nested_lists_stay_current():
+    @pulse.kernel
+    def k(qubits):
+        by_name = {}
+        nested = []
+        for i, q in enumerate(qubits):
+            by_name[f"q{i}"] = get_drive_line(q)
+            nested.append([get_drive_line(q)])
+        for _ in range(3):
+            d, t = by_name["q0"]
+            drive(d, square(8, 0.1), t)
+            drive(nested[1][0][0], square(8, 0.1), nested[1][0][1])
+
+    # Rolled: d and t enter the loop with the line and tone of the dict entry.
+    assert _kinds(k, Q[0:2]).count("scf.for") == 1
+    _compiles(k, Q[0:2])
+
+
+def test_a_rolled_loop_carries_a_line_read_from_a_tuple():
+    @pulse.kernel
+    def k(q):
+        pairs = [get_drive_line(q)]
+        for _ in range(20):
+            drive(pairs[0][0], square(8, 0.1), pairs[0][1])
+        drive(pairs[0][0], square(8, 0.2), pairs[0][1])
+
+    kinds = _kinds(k, Q[0])
+    assert kinds.count("scf.for") == 1
+    _compiles(k, Q[0])
+
+
+def test_pop_insert_extend_and_del_on_lists_of_lines_from_the_friction_log():
+    @pulse.kernel
+    def popped(q0, q1):
+        ds, ts = [], []
+        for q in (q0, q1):
+            d, t = get_drive_line(q)
+            ds.append(d)
+            ts.append(t)
+        d = ds.pop()
+        t = ts.pop()
+        drive(d, square(10, 0.1), t)
+        drive(ds[0], square(10, 0.1), ts[0])
+
+    @pulse.kernel
+    def reshaped(q0, q1, q2):
+        ds, ts = [], []
+        for q in (q0, q1):
+            d, t = get_drive_line(q)
+            ds.append(d)
+            ts.append(t)
+        d2, t2 = get_drive_line(q2)
+        ds.insert(0, d2)
+        ts.insert(0, t2)
+        for d, t in zip(ds, ts):
+            drive(d, square(10, 0.1), t)
+        ds.extend([ds.pop(0)])
+        ts.extend([ts.pop(0)])
+        del ds[0]
+        del ts[0]
+        for d, t in zip(ds, ts):
+            drive(d, square(10, 0.1), t)
+
+    _compiles(popped, Q[0], Q[1])
+    _compiles(reshaped, Q[0], Q[1], Q[2])
+    assert _kinds(reshaped, Q[0], Q[1], Q[2]).count("pulse.drive") == 5
+
+
+def test_del_errors_are_compilation_errors():
+    @pulse.kernel
+    def k(q):
+        xs = [1]
+        del xs[3]
+
+    with pytest.raises(CompilationError, match="del failed: list\\[3\\]"):
+        python_ir(k, Q[0])
