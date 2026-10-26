@@ -360,22 +360,42 @@ getWaveformCallbacks(const pulse::Occurrence &occurrence, double clockGHz,
 /// anharmonic operators are matrices at every d.
 class QuditOperators {
 public:
+  /// `modeOf` maps each simulated qudit to its mode; empty, mode and qudit
+  /// indices are the same.
   QuditOperators(OpBuilder &b, Location loc,
-                 const DenseMap<int64_t, int64_t> &levels)
-      : b(b), loc(loc), levels(levels) {}
+                 const DenseMap<int64_t, int64_t> &levels,
+                 const DenseMap<int64_t, int64_t> &modeOf)
+      : b(b), loc(loc), levels(levels), modeOf(modeOf) {}
 
   int64_t levelsOf(int64_t qudit) const {
     auto it = levels.find(qudit);
     return it == levels.end() ? 2 : it->second;
   }
 
+  bool simulated(int64_t qudit) const {
+    return modeOf.empty() || modeOf.count(qudit);
+  }
+
+  /// A qudit an operator acted on that is not simulated, if any.
+  std::optional<int64_t> unsimulated() const { return outside; }
+
   Value leaf(int64_t qudit, StringRef kind) {
     auto handlerTy = qop::HandlerType::get(b.getContext());
     int64_t d = levelsOf(qudit);
+    int64_t mode = qudit;
+    if (!modeOf.empty()) {
+      auto it = modeOf.find(qudit);
+      if (it == modeOf.end()) {
+        outside = qudit;
+        mode = 0;
+      } else {
+        mode = it->second;
+      }
+    }
     auto parsed = qop::symbolizeHandlerKind(kind);
     if (d == 2 && parsed) {
       auto target =
-          arith::ConstantOp::create(b, loc, b.getI64IntegerAttr(qudit));
+          arith::ConstantOp::create(b, loc, b.getI64IntegerAttr(mode));
       return qop::SpinOp::create(
           b, loc, handlerTy, target,
           qop::HandlerKindAttr::get(b.getContext(), *parsed));
@@ -416,7 +436,7 @@ public:
     auto tensor = arith::ConstantOp::create(
         b, loc, DenseFPElementsAttr::get(type, ArrayRef<double>(data)));
     return qop::MatrixLeafOp::create(b, loc, handlerTy,
-                                     b.getDenseI64ArrayAttr({qudit}), tensor,
+                                     b.getDenseI64ArrayAttr({mode}), tensor,
                                      b.getDenseI64ArrayAttr({d}));
   }
 
@@ -475,6 +495,8 @@ private:
   OpBuilder &b;
   Location loc;
   const DenseMap<int64_t, int64_t> &levels;
+  const DenseMap<int64_t, int64_t> &modeOf;
+  std::optional<int64_t> outside;
 };
 
 /// One callback for every occurrence of a drive op, when each occurrence
@@ -631,6 +653,23 @@ struct PulseToQOpPass
         }
         levels[static_cast<int64_t>(index)] = d;
       }
+    // The simulated qudits, one mode each in this order. Without it every
+    // qudit index up to the largest is a mode.
+    SmallVector<int64_t> modes;
+    DenseMap<int64_t, int64_t> modeOf;
+    if (auto attr = module->getAttrOfType<DenseI64ArrayAttr>("pulse.modes")) {
+      for (int64_t qudit : attr.asArrayRef()) {
+        if (qudit < 0 || !modeOf.try_emplace(qudit, modes.size()).second) {
+          module.emitError("pulse.modes must list distinct qudit indices");
+          return signalPassFailure();
+        }
+        modes.push_back(qudit);
+      }
+      if (modes.empty()) {
+        module.emitError("pulse.modes must list at least one qudit");
+        return signalPassFailure();
+      }
+    }
 
     // Readouts are numbered in walk order for `pulse.path`.
     SmallVector<Operation *> readouts;
@@ -743,7 +782,7 @@ struct PulseToQOpPass
       sourceOps.push_back(&op);
     b.setInsertionPoint(returnOp);
     auto loc = returnOp->getLoc();
-    QuditOperators ops(b, loc, levels);
+    QuditOperators ops(b, loc, levels, modeOf);
 
     auto opTy = qop::OpType::get(b.getContext());
     auto superOpTy = qop::SuperOpType::get(b.getContext());
@@ -776,6 +815,8 @@ struct PulseToQOpPass
               << pairAttrName;
           return failure();
         }
+        if (!ops.simulated(first) || !ops.simulated(second))
+          continue;
         append(first, second, strength * 2.0 * M_PI * 1.0e-9);
       }
       return success();
@@ -833,7 +874,7 @@ struct PulseToQOpPass
     if (auto anharmonicity =
             module->getAttrOfType<DenseF64ArrayAttr>("pulse.anharmonicity_hz"))
       for (auto [index, alpha] : llvm::enumerate(anharmonicity.asArrayRef()))
-        if (alpha != 0.0 && ops.levelsOf(index) > 2)
+        if (alpha != 0.0 && ops.levelsOf(index) > 2 && ops.simulated(index))
           allProducts.push_back(
               ops.product({{static_cast<int64_t>(index), "anharmonic"}},
                           0.5 * alpha * 2.0 * M_PI * 1.0e-9));
@@ -853,6 +894,11 @@ struct PulseToQOpPass
         return signalPassFailure();
       }
       int64_t qubitIdx = qubitAttr.getInt();
+      if (!ops.simulated(qubitIdx)) {
+        op->emitError("drive on qudit ")
+            << qubitIdx << ", which is not one of pulse.modes";
+        return signalPassFailure();
+      }
 
       auto qubitFrequency = qubitFreqHz.find(qubitIdx);
       if (qubitFrequency == qubitFreqHz.end()) {
@@ -928,8 +974,9 @@ struct PulseToQOpPass
       hamiltonian = qop::MakeSumOp::create(b, loc, opTy, allProducts);
     } else {
       // Trivial Hamiltonian: identity
+      int64_t first = modes.empty() ? 0 : modes.front();
       hamiltonian = qop::MakeSumOp::create(
-          b, loc, opTy, ValueRange{ops.product({{0, "spin_i"}}, 0.0)});
+          b, loc, opTy, ValueRange{ops.product({{first, "spin_i"}}, 0.0)});
     }
 
     // 4. Dissipators from module attributes (T1, T2)
@@ -946,7 +993,7 @@ struct PulseToQOpPass
     if (auto t1Attr = t1AttrRaw) {
       for (int64_t qi = 0; qi < (int64_t)t1Attr.size(); qi++) {
         double t1 = cast<FloatAttr>(t1Attr[qi]).getValueAsDouble();
-        if (t1 > 0) {
+        if (t1 > 0 && ops.simulated(qi)) {
           double gamma = 1.0 / t1;
           double p =
               thermal && qi < (int64_t)thermal.size() ? thermal[qi] : 0.0;
@@ -985,7 +1032,7 @@ struct PulseToQOpPass
           if (gammaPhi < 0)
             gammaPhi = 0;
         }
-        if (gammaPhi > 0) {
+        if (gammaPhi > 0 && ops.simulated(qi)) {
           // Off-diagonal elements between levels j and k decay at
           // gammaPhi (j - k)^2; for a qubit sqrt(gammaPhi / 2) Z is the same.
           auto dephase =
@@ -1000,8 +1047,18 @@ struct PulseToQOpPass
 
     // 5. Construct Lindblad super-operator
     qop::LindbladOp::create(b, loc, superOpTy, hamiltonian, collapseOps);
+    if (auto qudit = ops.unsimulated()) {
+      module.emitError("an operator acts on qudit ")
+          << *qudit << ", which is not one of pulse.modes";
+      return signalPassFailure();
+    }
 
-    if (!levels.empty()) {
+    if (!modes.empty()) {
+      SmallVector<int64_t> extents;
+      for (int64_t qudit : modes)
+        extents.push_back(ops.levelsOf(qudit));
+      module->setAttr("qop.mode_extents", b.getDenseI64ArrayAttr(extents));
+    } else if (!levels.empty()) {
       int64_t modes = 0;
       if (auto attr = module->getAttrOfType<IntegerAttr>("qop.n_qubits"))
         modes = attr.getInt();

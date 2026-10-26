@@ -227,6 +227,17 @@ constant pulse segments from being sampled across a discontinuity.
 Physical Model
 --------------
 
+The simulated space holds only the qudits the program uses: those it gets a
+drive or readout line on, one mode each in increasing order of device index.
+A pair at qudits 13 and 3 of the 17-qudit Krinner device is a 3 x 3 problem
+with three levels, not a 3^14 one. Couplings and crosstalk between those
+qudits keep their device values; the other qudits are left out, with their
+couplings, as classical spectators in their ground state. To simulate an
+idle qudit, get a line on it. ``result.qudits`` lists the device qudit of
+each mode: ``result.qudits[i]`` has ``result.dims[i]`` levels and is digit
+``i`` of the state index, least significant first. An ``initial_state``
+uses the same layout, and measurements report device qudits.
+
 The native execution lowering is a transmon model in one rotating frame per
 qudit, with two levels unless ``levels`` asks for more. Drive envelopes are converted to X/Y Hamiltonian
 coefficients in radians per nanosecond; tone frequency and phase determine the

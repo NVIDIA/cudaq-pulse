@@ -18,8 +18,9 @@ Pipeline:
 
 Auxiliary X1 and data qubit D2 are coupled, about 2.1 GHz apart: X1 gets a
 pi/2 pulse and D2 a pi pulse, then both idle for a CZ slot (flux pulses are
-not modeled yet) under the coupling and the T1/T2 of Tab. I. Every qudit
-up to X1 is simulated, the others idling in |0>.
+not modeled yet) under the coupling and the T1/T2 of Tab. I. Only X1 and
+D2 are simulated, a 4-dimensional space; the other 15 qudits are classical
+spectators.
 """
 
 import math
@@ -62,9 +63,11 @@ lowered = krinner_evolve.lower(dev.qudit_handles[auxiliary], dev.qudit_handles[d
 result = pulse.simulate(lowered, backend="gpu", dt_ns=0.025, integrator="rk4")
 
 state = result.density_matrix
-print(f"=== Final state: {len(result.dims)} qudits, shape {state.shape} ===")
+print(f"=== Final state: qudits {result.qudits}, shape {state.shape} ===")
 print(f"Density-matrix trace: {np.trace(state).real:.8f}")
 populations = np.real(np.diag(state))
 for label, qudit in (("X1", auxiliary), ("D2", data)):
-    excited = sum(p for i, p in enumerate(populations) if (i >> qudit) & 1)
+    # result.qudits[i] is digit i of the state index.
+    mode = result.qudits.index(qudit)
+    excited = sum(p for i, p in enumerate(populations) if (i >> mode) & 1)
     print(f"  P({label} excited) = {excited:.4f}")

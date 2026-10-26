@@ -46,7 +46,8 @@ _NEGLIGIBLE = 1e-14
 
 @dataclass(frozen=True)
 class Measurement:
-    """One execution of a readout: which one, on which qudit, and when."""
+    """One execution of a readout: which one, on which (device) qudit, and
+    when."""
 
     readout: int
     iteration: tuple[int, ...]
@@ -59,15 +60,20 @@ class Measurement:
 class SimulationResult:
     """The ensemble final state, and per-shot records if shots were taken.
 
-    ``density_matrix`` is indexed with qudit 0 as the least significant
-    digit. ``measurements`` lists every measurement any path made, in the
-    order of their end times; ``branches`` gives each path's outcomes (one
+    The state spans the qudits the program uses, ``qudits`` (device
+    indices, increasing), with ``dims[i]`` levels on ``qudits[i]``;
+    ``density_matrix`` is indexed with ``qudits[0]`` as the least
+    significant digit. Qudits the program does not use are left out, with
+    their couplings, as classical spectators in their ground state.
+    ``measurements`` lists every measurement any path made, in the order of
+    their end times; ``branches`` gives each path's outcomes (one
     per entry of ``measurements``, -1 where that path did not measure) and
     probability. ``records`` holds one such row per shot.
     """
 
     density_matrix: npt.NDArray[np.complex128]
     dims: tuple[int, ...]
+    qudits: tuple[int, ...]
     measurements: list[Measurement]
     branches: list[tuple[tuple[int, ...], float]]
     records: npt.NDArray[np.int64] | None = None
@@ -96,10 +102,12 @@ def simulate(
         The module of one call, from ``kernel.lower(*args)`` or
         ``compiled.lower(*args)``.
     levels:
-        Levels per qudit (an int for all, or a dict by qudit index). A
-        transmon with three or more levels includes its anharmonicity.
+        Levels per qudit (an int for all, or a dict by device qudit index).
+        A transmon with three or more levels includes its anharmonicity.
     initial_state:
-        A state vector or density matrix. By default each qudit starts in
+        A state vector or density matrix over ``lowered.qudits``, the
+        qudits the program uses, with the first the least significant
+        digit (the layout of ``SimulationResult.density_matrix``). By default each qudit starts in
         its thermal mixture: its excited level holds the target's
         ``thermal_population`` p, and higher levels follow the same
         Boltzmann ratio p / (1 - p) per level (``|0...0>`` when every p is
@@ -254,12 +262,14 @@ def _simulate_compiled(
     lock = compiled._lock
     arguments = list(compiled.arguments)
     module = compiled._concrete() if backend == "gpu" else compiled._module
-    n = compiled.n_qudits
-    dims, extra = _level_attributes(target, compiled.qudits, n, levels)
+    qudits = compiled.qudits
+    if not qudits:
+        raise ValueError("the program uses no qudits; there is nothing to simulate")
+    mode = {q: i for i, q in enumerate(qudits)}
+    dims, extra = _level_attributes(target, qudits, levels)
     attributes = _target_attributes(
         target,
-        compiled.qudits,
-        n,
+        qudits,
         t_start=t_start,
         t_end=t_start + 1.0,
         num_steps=1,
@@ -283,7 +293,7 @@ def _simulate_compiled(
     dim = math.prod(dims)
     state = _initial_state(initial_state, dim)
     if initial_state is None:
-        state = _thermal_state(target, compiled.qudits, dims, state)
+        state = _thermal_state(target, qudits, dims, state)
     engine: _Backend
     if backend == "cpu":
         engine = _CpuBackend(module, dims, dt_ns, base, lock, arguments)
@@ -309,7 +319,7 @@ def _simulate_compiled(
         index, iteration, qudit, start, end = found
         key = (index, tuple(iteration))
         seen[key] = Measurement(index, tuple(iteration), qudit, start, end)
-        projected = [engine.project(state, dims, qudit, k) for k in range(dims[qudit])]
+        projected = [engine.project(state, dims, mode[qudit], k) for k in range(dims[mode[qudit]])]
         weights = np.array([engine.weight(s) for s in projected])
         total = weights.sum()
         counts = (
@@ -346,6 +356,7 @@ def _simulate_compiled(
     return SimulationResult(
         density_matrix=rho,
         dims=dims,
+        qudits=qudits,
         measurements=measurements,
         branches=branches,
         records=records,
@@ -371,14 +382,15 @@ def _thermal_state(
     dims: tuple[int, ...],
     cold: npt.NDArray[np.complex128],
 ) -> npt.NDArray[np.complex128]:
-    """The product of the qudits' thermal mixtures, or *cold* if none is hot."""
-    populations = {q: float(target.qubits[q].thermal_population) for q in qudits}
-    if not any(populations.values()):
+    """The product of the thermal mixtures of *qudits* (*dims* levels each),
+    or *cold* if none is hot."""
+    populations = [float(target.qubits[q].thermal_population) for q in qudits]
+    if not any(populations):
         return cold
     diagonal: npt.NDArray[Any] = np.ones(1)
-    for q in reversed(range(len(dims))):
-        p = populations.get(q, 0.0)
-        weights = (p / (1.0 - p)) ** np.arange(dims[q], dtype=float)
+    for i in reversed(range(len(dims))):
+        p = populations[i]
+        weights = (p / (1.0 - p)) ** np.arange(dims[i], dtype=float)
         diagonal = np.kron(diagonal, weights / weights.sum())
     return np.diag(diagonal).astype(np.complex128)
 

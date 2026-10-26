@@ -25,21 +25,28 @@ _VALID_INTEGRATORS = frozenset(
 
 
 def _level_attributes(
-    target: Any, qubits: tuple[int, ...], n_qubits: int, levels: int | dict[int, int]
+    target: Any, qudits: tuple[int, ...], levels: int | dict[int, int]
 ) -> tuple[tuple[int, ...], str]:
-    """Levels per qudit, and the module attributes that model them."""
-    dims = tuple(
-        (levels.get(q, 2) if isinstance(levels, dict) else int(levels)) for q in range(n_qubits)
-    )
+    """Levels of each simulated qudit, in the order of *qudits*, and the
+    module attributes that model them (indexed by device qudit)."""
+    dims = tuple((levels.get(q, 2) if isinstance(levels, dict) else int(levels)) for q in qudits)
     if any(d < 2 for d in dims):
         raise ValueError("every qudit needs at least two levels")
-    attrs = [f"pulse.levels = array<i64: {', '.join(map(str, dims))}>"]
+    by_index = [2] * _extent(qudits)
+    for q, d in zip(qudits, dims):
+        by_index[q] = d
+    attrs = [f"pulse.levels = array<i64: {', '.join(map(str, by_index))}>"]
     if any(d > 2 for d in dims):
-        alphas = [0.0] * n_qubits
-        for q in qubits:
+        alphas = [0.0] * _extent(qudits)
+        for q in qudits:
             alphas[q] = float(target.qubits[q].anharmonicity_hz)
         attrs.append(f"pulse.anharmonicity_hz = {_f64_array(alphas)}")
     return dims, ", ".join(attrs)
+
+
+def _extent(qudits: tuple[int, ...]) -> int:
+    """The length of an attribute indexed by device qudit."""
+    return max(qudits) + 1
 
 
 def _f64_literal(value: float) -> str:
@@ -60,7 +67,6 @@ def _f64_array(values: list[float]) -> str:
 def _target_attributes(
     target: Any,
     qubits: tuple[int, ...],
-    n_qubits: int,
     *,
     t_start: float,
     t_end: float,
@@ -70,9 +76,12 @@ def _target_attributes(
 ) -> str:
     """Module attributes, in MLIR syntax, that the cuDensityMat lowering reads.
 
-    Qudits dephase at their Ramsey T2* (*dephasing* ``"t2_star"``) or their
-    Hahn-echo T2 (``"t2_echo"``).
+    *qubits* are the simulated qudits, one mode each in this order; the
+    others are left out, along with their couplings. Qudits dephase at their
+    Ramsey T2* (*dephasing* ``"t2_star"``) or their Hahn-echo T2
+    (``"t2_echo"``).
     """
+    n_qubits = _extent(qubits)
     t1_ns = [0.0] * n_qubits
     t2_ns = [0.0] * n_qubits
     thermal = [0.0] * n_qubits
@@ -87,7 +96,8 @@ def _target_attributes(
         thermal[qi] = float(qubit.thermal_population)
         drive_scales[qi] = target.drive_amplitude_scale(qi)
     attrs = [
-        f"qop.n_qubits = {n_qubits} : i64",
+        f"qop.n_qubits = {len(qubits)} : i64",
+        f"pulse.modes = array<i64: {', '.join(map(str, qubits))}>",
         f"qop.t_start = {_f64(t_start)}",
         f"qop.t_end = {_f64(t_end)}",
         f"qop.num_steps = {int(num_steps)} : i64",
