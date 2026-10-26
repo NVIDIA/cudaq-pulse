@@ -73,9 +73,20 @@ target_include_directories(cudaq-pulse-cudm-host-test BEFORE PRIVATE
   ${CUDAQ_PULSE_SOURCE_DIR}/core/runtime/cudm)
 target_link_libraries(cudaq-pulse-cudm-host-test PRIVATE Threads::Threads)
 
+# The runtime's per-run table of classical handlers.
+add_executable(cudaq-pulse-cudm-classical-test
+  ${CUDAQ_PULSE_SOURCE_DIR}/core/runtime/cudm/cudm_runtime.cpp
+  ${CUDAQ_PULSE_SOURCE_DIR}/tests/runtime/fake_cudensitymat/fake_cudensitymat.cpp
+  ${CUDAQ_PULSE_SOURCE_DIR}/tests/runtime/cudm_classical_table_test.cpp)
+target_include_directories(cudaq-pulse-cudm-classical-test BEFORE PRIVATE
+  ${CUDAQ_PULSE_SOURCE_DIR}/tests/runtime/fake_cudensitymat/include
+  ${CUDAQ_PULSE_SOURCE_DIR}/core/runtime/cudm)
+target_link_libraries(cudaq-pulse-cudm-classical-test PRIVATE Threads::Threads)
+
 add_custom_target(check-pulse-runtime
   COMMAND cudaq-pulse-cudm-host-test
-  DEPENDS cudaq-pulse-cudm-host-test
+  COMMAND cudaq-pulse-cudm-classical-test
+  DEPENDS cudaq-pulse-cudm-host-test cudaq-pulse-cudm-classical-test
   COMMENT "Running the cuDensityMat runtime host tests"
   USES_TERMINAL)
 
@@ -90,6 +101,8 @@ add_test(NAME PulsePythonUnitTests
 set_tests_properties(PulsePythonUnitTests PROPERTIES LABELS "pulse;unit")
 
 add_test(NAME PulseCuDensityMatHostTests COMMAND cudaq-pulse-cudm-host-test)
+add_test(NAME PulseCuDensityMatClassicalTests COMMAND cudaq-pulse-cudm-classical-test)
+set_tests_properties(PulseCuDensityMatClassicalTests PROPERTIES LABELS "pulse;unit")
 set_tests_properties(PulseCuDensityMatHostTests PROPERTIES LABELS "pulse;unit")
 
 if(NOT CUDAQ_PULSE_ENABLE_GPU)

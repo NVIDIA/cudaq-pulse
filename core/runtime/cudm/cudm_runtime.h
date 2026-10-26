@@ -90,6 +90,22 @@ CudmStatus cudm_operator_append(CudmHandle handle, CudmOperator op,
                                 CudmOpTerm term, int32_t duality,
                                 double coeff_real, double coeff_imag);
 
+// Classical calls. A run holds its own table of host handlers by function id
+// (the FNV-1a hash of the function's name), so concurrent runs answer their
+// calls independently. A handler reads a request (24-byte header, then the
+// arguments) and writes the answer (24-byte header, then the results); its
+// signature is that of a CUDA-Q Realtime host-call handler.
+typedef void (*CudmClassicalHandler)(const void *request, void *answer,
+                                     size_t slot_bytes);
+CudmStatus cudm_classical_register(CudmHandle handle, uint32_t function_id,
+                                   CudmClassicalHandler handler);
+// Send `request` to the run's handler for its function id and check the
+// answer it writes to `answer` (`answer_capacity` bytes): its magic, and the
+// request id echoed. The answer's size is written to `answer_bytes`.
+CudmStatus cudm_classical_call(CudmHandle handle, const void *request,
+                               int64_t request_bytes, void *answer,
+                               int64_t answer_capacity, int64_t *answer_bytes);
+
 // Time evolution over [t_start, t_end] in num_steps equal steps.
 // The `integrator` code matches the CuDensityMat dialect IntegratorKind enum:
 //   2 = rk1, 3 = rk2, 4 = rk4, 5 = magnus, 6 = crank_nicolson.

@@ -343,3 +343,51 @@ def test_calls_in_a_rolled_loop_are_bound_per_iteration():
     result = pulse.simulate(pulse.compile(k, device=dev).lower(dev.qudit_handles[0]))
     assert [c.answer for c in result.calls[0]] == [1.0, 2.0, 3.0, 4.0]
     assert result.density_matrix[1, 1].real == pytest.approx(1.0, abs=1e-6)
+
+
+@pulse.kernel
+def answered_wait(q, tau: float):
+    d, t = get_drive_line(q)
+    w = constant.submit(tau).result()
+    drive(d, square(40, PI_AMP), t)
+    wait(d, w)
+
+
+def test_whole_program_lowering_rejects_unanswered_calls():
+    dev = _device()
+    lowered = pulse.compile(answered_wait, device=dev).lower(dev.qudit_handles[0], 400.0)
+    with pytest.raises(RuntimeError, match="evolves in segments between their answers"):
+        lowered.mlir("llvm")
+
+
+def test_a_segment_with_bound_answers_lowers_to_llvm_without_classical_ops():
+    from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
+
+    dev = _device()
+    lowered = pulse.compile(decoded_reset, device=dev).lower(dev.qudit_handles[0])
+    module = lowered._concrete().simulation_module(*lowered.options.schedule_args())
+    segment = module.placeholders()
+    segment.set_attributes(
+        "{pulse.path = [array<i64: 0, 1>], qop.t_start = 0.0 : f64, "
+        "qop.t_end = 600.0 : f64, qop.num_steps = 10 : i64}"
+    )
+    qop = MLIRPipeline().run_pulse_to_qop(segment.print())
+    assert "classical" not in qop
+    assert MLIRPipeline().jit_pulse(segment.print(), []) is not None
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("case", ["decoded_reset", "variable_wait"])
+def test_gpu_simulation_of_calls_matches_the_cpu(case):
+    dev = _device(t1_us=5.0)
+    q = dev.qudit_handles[0]
+    if case == "decoded_reset":
+        lowered = pulse.compile(decoded_reset, device=dev).lower(q)
+        kwargs = {"initial_state": PLUS}
+    else:
+        lowered = pulse.compile(variable_t1, device=dev).lower(q, 4000.0)
+        kwargs = {}
+    cpu = pulse.simulate(lowered, backend="cpu", **kwargs)
+    gpu = pulse.simulate(lowered, backend="gpu", **kwargs)
+    assert _by_outcome(gpu) == pytest.approx(_by_outcome(cpu), abs=1e-6)
+    assert np.allclose(gpu.density_matrix, cpu.density_matrix, atol=1e-6)
