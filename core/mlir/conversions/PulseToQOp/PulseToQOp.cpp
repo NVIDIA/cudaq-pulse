@@ -686,6 +686,13 @@ struct PulseToQOpPass
       if (op->getName().getStringRef() == "pulse.iq_acquire")
         readouts.push_back(op);
     });
+    // The frequencies of the simulated qubits, where they differ from the
+    // device the program was compiled for (NaN: as compiled).
+    if (auto plant = module->getAttrOfType<DenseF64ArrayAttr>(
+            "pulse.plant_qubit_freq_hz"))
+      for (auto [index, frequency] : llvm::enumerate(plant.asArrayRef()))
+        if (!std::isnan(frequency))
+          qubitFreqHz[static_cast<int64_t>(index)] = frequency;
     Operation *unanswered = nullptr;
     module.walk([&](Operation *op) {
       if (op->getName().getStringRef() == "classical.wait" &&

@@ -47,6 +47,21 @@ class Qubit:
         object.__setattr__(self, "drive_params", MappingProxyType(dict(self.drive_params)))
         object.__setattr__(self, "readout_params", MappingProxyType(dict(self.readout_params)))
 
+    @property
+    def depletion_ns(self) -> float:
+        """How long the readout resonator takes to empty after a readout.
+
+        ``readout_params["depletion_ns"]`` if given; else the time for its
+        photons to fall to 1% at the decay rate ``kappa_eff_hz``,
+        ln(100) / kappa; else 0.
+        """
+        if "depletion_ns" in self.readout_params:
+            return float(self.readout_params["depletion_ns"])
+        kappa_hz = self.readout_params.get("kappa_eff_hz")
+        if kappa_hz:
+            return math.log(100.0) / (2 * math.pi * float(kappa_hz) * 1e-9)
+        return 0.0
+
 
 @dataclass(frozen=True)
 class Coupling:

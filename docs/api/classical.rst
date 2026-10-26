@@ -41,6 +41,8 @@ Types
 .. autoclass:: cudaq_pulse.classical.Integers
 .. autoclass:: cudaq_pulse.classical.Bytes
 
+.. autofunction:: cudaq_pulse.classical.random_index
+
 Reports
 -------
 
@@ -69,3 +71,21 @@ Emulation
 
 .. automodule:: cudaq_pulse.classical.emulation
    :members: export, manifest, emulate, Transport, InProcess, UdpChannel, serve_udp, EmulationResult, CallTrace
+
+Calibration
+-----------
+
+.. automodule:: cudaq_pulse.classical.calibration
+   :members:
+
+Loops between shots
+-------------------
+
+.. automodule:: cudaq_pulse.classical.loop
+   :members:
+
+Drifting devices
+----------------
+
+.. automodule:: cudaq_pulse.runtime.drift
+   :members:

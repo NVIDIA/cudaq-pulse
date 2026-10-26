@@ -34,8 +34,9 @@ Inside a kernel, ``.submit(...)`` sends a request and returns a future at
 once; pulses that do not need the answer keep playing. ``.result()`` is where
 the answer is taken: it is due the maximum latency after the request is sent,
 and the pulses whose amplitude, phase, frequency or branch condition come from
-it start no earlier. An answer can set numbers, never durations: the
-timeline is fixed before the program runs. Outside a kernel, calling the
+it start no earlier. An answer sets a duration only through a variable
+wait, ``wait(line, answer, bounds=(lo, hi))``, which begins a new epoch of
+the timeline. Outside a kernel, calling the
 function runs its body, its reference implementation, directly.
 
 The body is what simulation runs. On hardware the service registered under
@@ -67,6 +68,7 @@ __all__ = [
     "external",
     "function",
     "function_id",
+    "random_index",
 ]
 
 _LATENCY_MODES = ("bounded", "timeout", "blocking")
@@ -386,6 +388,8 @@ class ClassicalFunction:
             raise ValueError(f"{name}: id must be a 32-bit unsigned integer, got {id!r}")
         self.id = function_id(name) if id is None else id
         self.custom_id = id is not None
+        # For an on-device random source: how many equally likely values.
+        self.uniform: int | None = None
         if implementation is not None:
             self.__doc__ = implementation.__doc__
             self.__wrapped__ = implementation
@@ -463,6 +467,41 @@ def external(name: str, /, **options: Any) -> ClassicalFunction:
     that calls it needs a handler for it.
     """
     return ClassicalFunction(None, name=name, **options)
+
+
+def random_index(
+    n: int,
+    /,
+    *,
+    name: str = "random_index",
+    max_latency_ns: float = 0.0,
+    link: int | str = 0,
+    **options: Any,
+) -> ClassicalFunction:
+    """An on-device random source: a classical function of no arguments whose
+    answer is an integer drawn uniformly from ``0 .. n - 1``.
+
+    On hardware the controller's random number generator answers it (the
+    manifest marks it ``"random"``). Simulation without shots follows every
+    value, each with probability 1/n; with shots each shot draws one.
+    Emulation draws from its own seeded generator. Use it to pick a
+    randomized-benchmarking gate per shot, branching on the index.
+    """
+    if isinstance(n, bool) or not isinstance(n, int) or n < 2:
+        raise ValueError(f"random_index needs at least 2 values, got {n!r}")
+    import random
+
+    function = ClassicalFunction(
+        lambda: random.randrange(n),
+        name=name,
+        args=(),
+        results=(Integer(),),
+        max_latency_ns=max_latency_ns,
+        link=link,
+        **options,
+    )
+    function.uniform = n
+    return function
 
 
 class _ClassicalModule(types.ModuleType):

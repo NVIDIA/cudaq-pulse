@@ -87,6 +87,10 @@ Core Examples
      - Classical calls at QPU runtime: decoding with feed-forward and a
        timeout fallback, adaptive Bayesian T1 tracking with a variable wait,
        the call report, simulation, and the emulation export
+   * - 20
+     - ``20_adaptive_calibration.py``
+     - A frequency binary search inside one shot, and tracking a drifting
+       device's T1 and frequency between shots against its truth
 
 Hardware Target Examples
 ------------------------

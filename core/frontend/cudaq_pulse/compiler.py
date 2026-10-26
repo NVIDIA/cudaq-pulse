@@ -15,6 +15,7 @@ that pick passes and a schedule, the native build of one specialization, and
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from collections.abc import Mapping, Sequence
@@ -250,6 +251,13 @@ class ClassicalCall:
     answer, and ``deadline_vtu`` the latest due time the function's
     ``deadline_ns`` allows. ``epoch`` counts the blocking waits before it.
     ``link_name`` is the link's name in the machine model, if it has one.
+
+    ``exposed_vtu`` is how long the first use waits for the answer beyond
+    when it could start without the call: after its line is free and after
+    the readout resonator of the last readout before the call has depleted
+    (``Qubit.depletion_ns``), when pulses must wait anyway. The rest of the
+    budget, ``hidden_vtu``, overlaps that work. A latency within the
+    depletion time is hidden entirely.
     """
 
     function: str
@@ -263,6 +271,14 @@ class ClassicalCall:
     deadline_vtu: int | None
     epoch: int
     link_name: str | None = None
+    exposed_vtu: int | None = None
+
+    @property
+    def hidden_vtu(self) -> int | None:
+        """The part of the budget that overlaps other work."""
+        if self.exposed_vtu is None:
+            return None
+        return max(0, self.due_vtu - self.submit_vtu - self.exposed_vtu)
 
     @property
     def slack_vtu(self) -> int | None:
@@ -487,7 +503,9 @@ class Lowered:
         module = self._module if self.scheduled else self._concrete()
         with self._lock:
             calls = module.classical_calls()
+            events = module.events() if calls else []
         names = self.options.machine.link_name
+        exposed = _Exposure(self, events) if calls else None
         return [
             ClassicalCall(
                 name,
@@ -501,6 +519,7 @@ class Lowered:
                 limit,
                 epoch,
                 names(link),
+                None if exposed is None or use is None else exposed(start, use),
             )
             for name, link, iteration, start, length, due, taken, use, limit, epoch in calls
         ]
@@ -522,6 +541,57 @@ class Lowered:
     def __repr__(self) -> str:
         params = f", parameters={list(self.parameters)}" if self.parameters else ""
         return f"<Lowered {self.metrics.op_count} ops on {self.target.name}{params}>"
+
+
+class _Exposure:
+    """How long a call's first use waits beyond when it could start without
+    the call (see ``ClassicalCall.exposed_vtu``), in O(log n) per call."""
+
+    def __init__(self, lowered: Lowered, events: Sequence[Any]) -> None:
+        import bisect
+
+        self._bisect = bisect.bisect_right
+        clock = lowered.target.clock_ghz
+        qubits = lowered.target.target.qubits
+        ends: dict[int, list[int]] = {}
+        starting: dict[int, list[int]] = {}
+        readouts: list[tuple[int, int]] = []
+        holds: dict[int, int] = {}
+        for kind, line, qubit, start, duration in events:
+            if (kind != "drive" and kind != "readout") or start is None or duration is None:
+                continue
+            end = start + duration
+            ends.setdefault(line, []).append(end)
+            starting.setdefault(start, []).append(line)
+            if kind == "readout":
+                hold = holds.get(qubit)
+                if hold is None:
+                    q = qubits.get(qubit)
+                    hold = math.ceil(q.depletion_ns * clock) if q is not None else 0
+                    holds[qubit] = hold
+                readouts.append((end, end + hold))
+        for values in ends.values():
+            values.sort()
+        readouts.sort()
+        self._ends = ends
+        self._starting = starting
+        self._readout_ends = [end for end, _ in readouts]
+        self._holds = [hold for _, hold in readouts]
+
+    def __call__(self, submit_vtu: int, use_vtu: int) -> int | None:
+        lines = self._starting.get(use_vtu)
+        if not lines:
+            return None
+        free = 0
+        for line in lines:
+            ends = self._ends[line]
+            k = self._bisect(ends, use_vtu)
+            if k:
+                free = max(free, ends[k - 1])
+        k = self._bisect(self._readout_ends, submit_vtu)
+        if k:
+            free = max(free, self._holds[k - 1])
+        return max(0, use_vtu - max(free, submit_vtu))
 
 
 def build(

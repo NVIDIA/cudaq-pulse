@@ -21,7 +21,9 @@ function's worst-case latency between them, so pulses that depend on the
 answer start after it is due and pulses that do not are not delayed. It
 reports, for every call, how much slack the answer has.
 
-``examples/19_classical_calls.py`` uses everything on this page end to end;
+``examples/19_classical_calls.py`` uses everything on this page end to end,
+and ``examples/20_adaptive_calibration.py`` calibrates against a drifting
+device with the estimators described under "Calibrating while the QPU runs";
 see :doc:`../examples`.
 
 Declaring a function
@@ -170,7 +172,13 @@ same way:
 call, in clock cycles: when it is submitted (``submit_vtu``), when its answer
 is due (``due_vtu``) and taken, the first operation that uses it, its slack
 (``slack_vtu``, how much later the answer could arrive without delaying a
-pulse) and, with ``deadline_ns``, how far inside its deadline it is. The
+pulse) and, with ``deadline_ns``, how far inside its deadline it is.
+``exposed_vtu`` is how long the first use waits for the answer beyond when it
+could start anyway: after its line is free and after the readout resonator
+has depleted (``Qubit.depletion_ns``, from ``readout_params["depletion_ns"]``
+or from ``kappa_eff_hz``). The rest of the budget, ``hidden_vtu``, overlaps
+work that had to happen anyway, so a latency within the depletion time costs
+nothing. The
 timeline (``Lowered.timeline()``) draws each link as a row of its own,
 labelled with its name.
 
@@ -218,6 +226,11 @@ A whole program with unanswered calls does not lower to LLVM:
 ``Lowered.mlir("llvm")`` points to ``pulse.simulate``, which lowers each
 segment with its answers bound, on the CPU or the GPU.
 
+``plant=`` simulates another target description than the device the program
+was compiled for, keeping the program as compiled: its qubits' frequencies,
+T1, T2, drive strength and readout parameters apply. That is how a drifting
+device is simulated (see below).
+
 Native and QEC handlers
 -----------------------
 
@@ -263,6 +276,111 @@ timeout arm.
    print(run.late_fraction, run.calls_per_second)
 
 .. :spellcheck-enable:
+
+Calibrating while the QPU runs
+------------------------------
+
+``cudaq_pulse.classical.calibration`` holds estimators whose state goes in and
+comes back out, so the same function is the body of a classical function a
+kernel calls between measurements and runs between shots:
+
+- ``t1_update`` and ``t1_wait``: a gamma posterior over the decay rate,
+  updated from one "excite, wait, measure" shot, and the next wait.
+- ``frequency_update`` and ``ramsey_setting``: a Gaussian posterior over the
+  detuning, updated from one Ramsey shot, and the next wait and phase. The
+  estimators' Ramsey shot reports 1 with probability
+  ``(1 - cos(2 pi d t + phase)) / 2``; two pi/2 pulses with the second's
+  tone shifted by ``pi - phase`` give it.
+- ``three_point_decay`` and ``three_point_phase``: a decay time and a phase
+  error from three points, whatever the amplitude and offset.
+- ``golden_section_step`` and ``nelder_mead_step``: ask-and-tell searches;
+  each step takes the cost at the point the last one asked for and returns
+  the next point and whether the search has converged. Their states pack
+  into ``Floats`` for calls.
+
+.. :spellcheck-disable:
+
+.. code-block:: python
+
+   from cudaq_pulse.classical import calibration as cal
+
+   @pulse.classical(args=(Bits(1), Float(), Float(), Float()),
+                    results=(Float(), Float(), Float()),
+                    max_latency_ns=200, link="controller")
+   def t1_estimator(survived, alpha, beta, wait_vtu):
+       alpha, beta = cal.t1_update(alpha, beta, bool(survived[0]), wait_vtu / 2.0)
+       return alpha, beta, min(max(cal.t1_wait(alpha, beta) * 2.0, 200), 20000)
+
+.. :spellcheck-enable:
+
+**The converged pattern.** A kernel's trip counts are fixed when it
+compiles. To stop early, the estimator carries a converged flag in its state,
+keeps answering with its final point once converged, and the kernel gates its
+probe pulses on the flag; values cannot leave the arms of an ``if``, so the
+call stays outside it:
+
+.. :spellcheck-disable:
+
+.. code-block:: python
+
+   for _ in range(iterations):
+       if done < 0.5:
+           shift_frequency(t, x)
+           drive(d, probe, t)
+           shift_frequency(t, -x)
+       m = readout(r, ro, rt)
+       state, x, done = golden_step.submit([m], state).result()
+
+.. :spellcheck-enable:
+
+**Choosing among settings.** An integer answer selects among arms with
+``if i == 0: ... elif i == 1: ...``, or a balanced split, ``if i < 2:`` with
+nested tests, which needs fewer comparisons for many arms. Every arm is
+scheduled to end together, after the longest.
+
+**Randomness.** ``cudaq_pulse.classical.random_index(n)`` is an on-device
+random source: an answer drawn uniformly from ``0 .. n - 1`` by the
+controller (the manifest marks it ``"random"``). Simulation without shots
+follows every value with probability 1/n; with shots each shot draws one.
+Answers can be passed to later calls, for example to compute a
+randomized-benchmarking sequence's recovery gate.
+
+**Between shots.** A loop compiles once and runs with the current parameters
+each iteration. Amplitudes, phases and frequencies can be float parameters of
+the kernel. A quantity that shapes the timeline, such as a wait, is read at
+run time: ``ParameterStore.reader(name)`` (``cudaq_pulse.classical.loop``) is
+a classical function that answers with the store's current value, on
+hardware a read of a controller register, and a variable wait takes its
+length from it. ``EstimateLog`` records each estimate with what was true,
+when it is known.
+
+.. :spellcheck-disable:
+
+.. code-block:: python
+
+   store = ParameterStore(wait_vtu=4000.0)
+   read_wait = store.reader("wait_vtu", link="controller", bounds=(0.0, 40000.0))
+
+   @pulse.kernel
+   def shot(q, amplitude: float):
+       ...
+       wait(d, read_wait.submit().result(), bounds=(0, 40000))
+
+   compiled = pulse.compile(shot, device=dev, machine=machine)
+   for i in range(10_000):
+       lowered = compiled.lower(q, amplitude)   # no compiling after the first
+       ...
+       store.set("wait_vtu", next_wait, iteration=i)
+
+.. :spellcheck-enable:
+
+**A drifting device.** ``cudaq_pulse.runtime.drift.DriftingPlant`` moves one
+qubit's T1 (``TelegraphT1``, switching between two values), frequency and
+drive amplitude (``OrnsteinUhlenbeck``) as time advances, and records every
+state in ``plant.truth``. ``plant.target()`` is the device now, for
+``pulse.simulate(..., plant=...)``; ``p_survive``, ``p_ramsey`` and
+``p_rabi`` give the standard experiments' outcome probabilities directly, for
+loops of many iterations.
 
 Running on hardware
 -------------------

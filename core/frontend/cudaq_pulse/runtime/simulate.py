@@ -101,6 +101,7 @@ def simulate(
     handlers: Mapping[str, Callable[..., Any]] | None = None,
     readout: str = "ideal",
     latency_branching: bool = False,
+    plant: Any = None,
 ) -> SimulationResult:
     """Simulate one compiled kernel call on the target it was compiled for.
 
@@ -160,6 +161,13 @@ def simulate(
         amplitude (``IQModel``; with ``"model_with_decay"``, relaxation
         during the window too); it needs ``shots``, and each shot from the
         call on is simulated as its own trajectory.
+    plant:
+        A target description to simulate instead of the device the program
+        was compiled for: its qubits' frequencies, T1, T2, thermal
+        populations, drive strength and readout parameters apply, while the
+        program (its tones and pulses) stays as compiled. This is how a
+        drifting device is simulated without compiling again; see
+        ``cudaq_pulse.runtime.drift``.
     latency_branching:
         With a timeout, branch on whether the answer came in time with the
         probability of the function's latency model; by default, without
@@ -187,6 +195,7 @@ def simulate(
         handlers=handlers,
         readout=readout,
         latency_branching=latency_branching,
+        plant=plant,
     )
 
 
@@ -206,6 +215,7 @@ def _simulate_lowered(
     handlers: Mapping[str, Callable[..., Any]] | None = None,
     readout: str = "ideal",
     latency_branching: bool = False,
+    plant: Any = None,
 ) -> SimulationResult:
     if backend not in ("cpu", "gpu"):
         raise ValueError(f"unknown backend {backend!r}; choose 'cpu' or 'gpu'")
@@ -231,7 +241,7 @@ def _simulate_lowered(
             "the module has float parameters "
             f"({', '.join(lowered.parameters)}); lower it with their values first"
         )
-    target = lowered.target.target
+    target = lowered.target.target if plant is None else _check_plant(lowered, plant)
     if getattr(target, "architecture", None) != "transmon":
         raise NotImplementedError(
             "simulation supports transmon targets; the neutral-atom Hamiltonian "
@@ -254,7 +264,20 @@ def _simulate_lowered(
         handlers=handlers,
         readout=readout,
         latency_branching=latency_branching,
+        plant=plant is not None,
     )
+
+
+def _check_plant(lowered: Lowered, plant: Any) -> Any:
+    """*plant*, a target description that defines every qudit of *lowered*."""
+    from ..targets import TargetDescription
+
+    if not isinstance(plant, TargetDescription):
+        raise TypeError(f"plant must be a TargetDescription, got {type(plant).__name__}")
+    missing = [q for q in lowered.qudits if q not in plant.qubits]
+    if missing:
+        raise ValueError(f"the plant does not define qudits {missing} that the program uses")
+    return plant
 
 
 _DEFAULT_STEP_NS = 0.05
@@ -301,6 +324,7 @@ def _simulate_compiled(
     handlers: Mapping[str, Callable[..., Any]] | None = None,
     readout: str = "ideal",
     latency_branching: bool = False,
+    plant: bool = False,
 ) -> SimulationResult:
     # A cached specialization's module is shared by every call of it, from
     # any thread: a segment sets the module attributes it lowers with and
@@ -334,6 +358,15 @@ def _simulate_compiled(
     )
     # Segments set their own window.
     base = _re.sub(r"qop\.(t_start|t_end|num_steps) = [^,]+, ", "", attributes[1:-1]) + ", " + extra
+    if plant:
+        frequencies = [math.nan] * (max(qudits) + 1)
+        for q in qudits:
+            frequencies[q] = float(target.qubits[q].frequency_hz)
+        base += (
+            ", pulse.plant_qubit_freq_hz = array<f64: "
+            + ", ".join("0x7FF8000000000000" if math.isnan(f) else repr(f) for f in frequencies)
+            + ">"
+        )
 
     path_end = t_end is None and bool(functions)
     if t_end is None:

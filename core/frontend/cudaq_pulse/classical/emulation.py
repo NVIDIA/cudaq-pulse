@@ -69,6 +69,7 @@ def manifest(lowered: Any) -> dict[str, Any]:
             {
                 "name": fn.name,
                 "function_id": fn.id,
+                "random": fn.uniform,
                 "link": link_id,
                 "link_name": machine.link_name(link_id),
                 "schema": wire.schema(fn),
@@ -376,6 +377,15 @@ def emulate(
                         return model.sample(rng, qudit, known[key], frequency, amplitude, duration)
 
                 inputs = _call_inputs(fn, arguments, known, point)
+                if fn.uniform is not None:
+                    # An on-device source: the controller answers, not a link.
+                    value = int(rng.integers(fn.uniform))
+                    budget = _budget_ns(fn, timeout, machine.link(fn.link))
+                    traces.append(
+                        CallTrace(callee, start, fn.nominal_latency_ns, budget, True, (), value)
+                    )
+                    module = module.bind_call(index, [float(value)], *schedule_args)
+                    continue
                 request = wire.encode_request(fn, inputs, request_id)
                 request_id += 1
                 answer_bytes, service_ns = channel.call(fn, request)

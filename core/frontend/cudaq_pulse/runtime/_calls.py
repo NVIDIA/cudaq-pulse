@@ -213,10 +213,15 @@ class IQModel:
                 "eta": float(p.get("ro_efficiency", 0.5)),
                 "tau": float(p.get("ro_integration", math.nan)),
                 "t1": float(q.t1_us) * 1e3,
+                "depletion": float(p.get("depletion_ns", math.nan)),
             }
 
     def depletion_ns(self, qudit: int) -> float:
-        """The time the resonator takes to empty to 1% of its photons."""
+        """The time the resonator takes to empty to 1% of its photons
+        (``readout_params["depletion_ns"]`` if given)."""
+        explicit = self._params[qudit].get("depletion")
+        if explicit is not None and math.isfinite(explicit):
+            return explicit
         return math.log(100.0) / self._params[qudit]["kappa"]
 
     def center(
@@ -404,6 +409,27 @@ def simulate_tree(
             index, start, callee, arguments, answered, timeout = call
             function = by_name[callee]
             outcomes = {key: k for key, k in path}
+            if function.uniform is not None:
+                n = function.uniform
+                draws = (
+                    rng.multinomial(count, [1.0 / n] * n) if count else np.zeros(n, dtype=np.int64)
+                )
+                # Every value is followed, so the ensemble state stays exact.
+                for value, drawn in enumerate(draws):
+                    answer_call(
+                        current,
+                        path,
+                        truth,
+                        state,
+                        t,
+                        int(drawn),
+                        weight / n,
+                        calls,
+                        call,
+                        (),
+                        value,
+                    )
+                return
             if not takes_iq(function):
                 inputs = _call_inputs(function, arguments, outcomes)
                 answer = invoke(callee, inputs, calls)
