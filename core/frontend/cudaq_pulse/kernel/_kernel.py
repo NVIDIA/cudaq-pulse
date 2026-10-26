@@ -418,8 +418,8 @@ class Kernel[**P]:
         """Parameters the kernel is specialized on.
 
         Includes float parameters whose value the program needs while it
-        compiles: one that sets a duration, goes through ``int()`` or
-        decides Python control flow.
+        compiles: one that sets a waveform duration, goes through ``int()``
+        or decides Python control flow. A wait length is not one of them.
         """
         return tuple(self._names[i] for i in self._split[0])
 
@@ -470,16 +470,12 @@ class Kernel[**P]:
                 lowered, builder = build(
                     fn, trace_args, tuple(names[i] for i in runtime), target, options
                 )
-                needed = builder.structural
-                operation = "a value that must be an integer, such as a duration or a wait length"
+                break
             except SymbolicValueError as e:
-                needed = set(e.names)
-                if not any(names[i] in needed for i in runtime):
+                promote = {i for i in runtime if names[i] in e.names}
+                if not promote:
                     raise
                 operation = e.operation or "an operation that needs its value"
-            promote = {i for i in runtime if names[i] in needed}
-            if not promote:
-                break
             _warn_static(self.__name__, [names[i] for i in sorted(promote)], operation)
             self._promote(promote)
         returns = _return_spec(builder.returned, builder.readouts, self.__name__)

@@ -1848,10 +1848,14 @@ class PulseIREmitter:
             attrs: dict[str, Any] = {}
             out_types = tuple(v.vtype for v in operands) if rtypes is None else rtypes
         else:
+            bounds = None
             if len(call_args) != n_val + len(attr_names):
-                raise CompilationError(
-                    f"{fname}: expected {n_val + len(attr_names)} args, got {len(call_args)}"
-                )
+                if fname != "wait" or len(call_args) != 3:
+                    raise CompilationError(
+                        f"{fname}: expected {n_val + len(attr_names)} args, got {len(call_args)}"
+                    )
+                bounds = call_args[2]
+                call_args = call_args[:2]
             # Operands must have their op's types. A line or tone read from a
             # container the tracer does not rebind (a tuple in a list, a dict)
             # may be an old value of its channel; the op consumes the channel's
@@ -1894,6 +1898,8 @@ class PulseIREmitter:
                     call_args[i] = _current(v)
             operands = tuple(call_args[:n_val])
             attrs = dict(zip(attr_names, call_args[n_val:]))
+            if bounds is not None:
+                attrs["bounds"] = bounds
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
 
         op_name = _OP_NAMES[fname]

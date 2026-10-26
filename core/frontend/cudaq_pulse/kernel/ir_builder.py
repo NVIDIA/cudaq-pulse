@@ -14,6 +14,7 @@ and CompilationError.
 
 from __future__ import annotations
 
+import numbers
 from collections import namedtuple
 from typing import Any, NoReturn
 
@@ -233,6 +234,76 @@ class ParameterExpression(_SymbolicNumber):
 def is_symbolic(value: Any) -> bool:
     """Return whether *value* is a symbolic parameter or expression."""
     return isinstance(value, _SymbolicNumber)
+
+
+_ARITHMETIC = {"add": "+", "sub": "-", "mul": "*", "div": "/"}
+
+
+def is_arithmetic(value: Any) -> bool:
+    """Whether *value* is ``+ - * /`` and negation of parameters and numbers:
+    what ``arithmetic_source`` can compute."""
+    cls = value.__class__
+    if cls is Parameter or cls is float or cls is int:
+        return True
+    if cls is ParameterExpression:
+        op = value.op
+        if op in _ARITHMETIC:
+            return is_arithmetic(value.lhs) and is_arithmetic(value.rhs)
+        if op == "neg" or (op == "cast" and value.dtype == "f64"):
+            return is_arithmetic(value.lhs)
+        return False
+    return isinstance(value, numbers.Real)
+
+
+def arithmetic_source(value: Any) -> str | None:
+    """Python source that computes *value* from ``a``, the float arguments
+    in parameter order, with the f64 operations the module computes it with;
+    None unless it is ``+ - * /`` and negation of parameters and numbers."""
+    if isinstance(value, Parameter):
+        return f"a[{value.index}]"
+    if isinstance(value, ParameterExpression):
+        if value.op == "neg":
+            inner = arithmetic_source(value.lhs)
+            return None if inner is None else f"(-{inner})"
+        if value.op == "cast":
+            return arithmetic_source(value.lhs) if value.dtype == "f64" else None
+        symbol = _ARITHMETIC.get(value.op)
+        if symbol is None:
+            return None
+        lhs, rhs = arithmetic_source(value.lhs), arithmetic_source(value.rhs)
+        if lhs is None or rhs is None:
+            return None
+        return f"({lhs} {symbol} {rhs})"
+    if isinstance(value, numbers.Real):
+        return repr(float(value))
+    return None
+
+
+def arithmetic_text(value: Any) -> str:
+    """*value* as the user wrote it, roughly: ``tau / 2``, ``2.0 * tau + 40.0``."""
+    if isinstance(value, Parameter):
+        return value.name
+    if isinstance(value, ParameterExpression):
+        if value.op == "neg":
+            return f"-{_operand_text(value.lhs, 3)}"
+        if value.op == "cast":
+            return arithmetic_text(value.lhs)
+        symbol = _ARITHMETIC.get(value.op, value.op)
+        level = _PRECEDENCE.get(value.op, 3)
+        lhs = _operand_text(value.lhs, level)
+        rhs = _operand_text(value.rhs, level + (value.op in ("sub", "div")))
+        return f"{lhs} {symbol} {rhs}"
+    return repr(value)
+
+
+_PRECEDENCE = {"add": 1, "sub": 1, "mul": 2, "div": 2}
+
+
+def _operand_text(value: Any, level: int) -> str:
+    text = arithmetic_text(value)
+    if isinstance(value, ParameterExpression) and _PRECEDENCE.get(value.op, 3) < level:
+        return f"({text})"
+    return text
 
 
 class IRValue(_UndecidableComparisons):

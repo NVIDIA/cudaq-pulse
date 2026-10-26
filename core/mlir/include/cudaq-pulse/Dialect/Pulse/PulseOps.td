@@ -348,6 +348,14 @@ def WaitOp : PulseOp<"wait", []> {
     Idles a drive or readout line for `duration` and returns the updated
     line, of the same kind. The scheduler reads the length from a
     `pulse.duration_from_int` of a constant.
+
+    A wait marked `pulse.variable` takes its length from a value computed
+    from the function's float arguments, so it is known only when they are
+    bound. It carries `pulse.min_vtu` and, optionally, `pulse.max_vtu`: the
+    bounds of its length in clock cycles. Without bound arguments, the module
+    is scheduled with the wait at `pulse.min_vtu`; binding them folds the
+    length to a constant within the bounds, and scheduling again gives the
+    exact schedule.
   }];
   let arguments = (ins
     AnyLineType:$line,

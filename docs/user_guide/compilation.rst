@@ -47,12 +47,15 @@ Annotations decide what a compilation depends on:
 
 - A parameter annotated ``float`` is a *runtime* value. It stays a function
   argument of the compiled MLIR module, wherever it flows (an amplitude, a
-  phase, a tone frequency), so calling with a new value never recompiles.
+  phase, a tone frequency, the length of a ``wait``), so calling with a new
+  value never recompiles. A call whose values set a wait length schedules
+  the module again with them, without tracing it; see
+  :ref:`wait-lengths`.
 - Every other parameter (qudit handles, ``int``, anything unannotated) is
   *static*: the kernel is specialized on its value.
 - A ``float`` the program needs while it compiles -- one that sets a
-  duration, goes through ``int()``, decides an ``if`` or bounds a loop -- is
-  specialized on as well. ``kernel.static_parameters`` and
+  waveform duration, goes through ``int()``, decides an ``if`` or bounds a
+  loop -- is specialized on as well. ``kernel.static_parameters`` and
   ``kernel.runtime_parameters`` show the split.
 
 Return values

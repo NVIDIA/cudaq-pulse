@@ -208,6 +208,26 @@ def test_the_events_of_a_long_line_are_listed_in_linear_time():
     assert times[16000] < 8 * times[2000] * TOLERANCE, times
 
 
+@pytest.mark.scaling
+def test_a_wait_length_sweep_compiles_once():
+    @pulse.kernel
+    def t1(q, tau: float):
+        d, t = get_drive_line(q)
+        r, rt = get_readout_line(q)
+        drive(d, square(40, 0.1), t)
+        wait(d, tau)
+        sync(d, r)
+        readout(r, square(100, 0.05), rt)
+
+    compiled = pulse.compile(t1)
+    sweep = [float(4 * i + 1) for i in range(1000)]
+    # A new length binds like a cached one; a compile costs about 100x as much.
+    new = _best(lambda: [compiled.lower(Q[0], tau) for tau in sweep], 3, 0)
+    assert compiled.cache_info().compiled == 1
+    cached = _best(lambda: [compiled.lower(Q[0], sweep[0]) for _ in sweep], 3, 0)
+    assert new < cached * FLAT_LOOP_LIMIT, (new, cached)
+
+
 # Peak memory a simulation of two qutrits may add: their 9 x 9 density matrix
 # and operators are tiny, so this only fails if the space grows with the
 # qudits' indices (3^14 states for qudits 13 and 3).

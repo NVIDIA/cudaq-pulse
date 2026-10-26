@@ -242,11 +242,68 @@ Besides the control flow above, a kernel body may use:
   ``remove`` and ``del xs[i]`` work on lists of lines.
 
 A ``float`` argument stays a runtime parameter, compiled once for every
-value, through ``+``, ``-``, ``*``, ``/`` and negation. Any other use that
-needs its value while tracing, such as ``abs``, ``min``, ``math.sin``, a
-comparison, or a duration or wait length, makes it static, so each new
-value compiles the kernel again. The first such use warns once with a
-``RuntimeWarning`` that names the argument and the operation.
+value, through ``+``, ``-``, ``*``, ``/`` and negation, including as the length
+of a ``wait`` (see :ref:`wait-lengths`). Any other use that needs its value
+while tracing, such as ``abs``, ``min``, ``math.sin``, ``//``, a comparison,
+or a waveform duration, makes it static, so each new value compiles the
+kernel again. The first such use warns once with a ``RuntimeWarning`` that
+names the argument and the operation.
+
+.. _wait-lengths:
+
+Wait lengths
+~~~~~~~~~~~~
+
+A ``wait`` whose length is computed from ``float`` arguments keeps them
+runtime parameters, so a sweep over a delay compiles once:
+
+.. :spellcheck-disable:
+
+.. code-block:: python
+
+   import numpy as np
+
+   @pulse.kernel
+   def echo(qubit, tau: float):
+       d, t = get_drive_line(qubit)
+       r, rt = get_readout_line(qubit)
+       drive(d, drag(40, 0.25, 10.0, 0.5), t)
+       wait(d, tau / 2)
+       drive(d, drag(40, 0.5, 10.0, 0.5), t)
+       wait(d, tau / 2)
+       drive(d, drag(40, 0.25, 10.0, 0.5), t)
+       sync(d, r)
+       readout(r, square(1000, 0.05), rt)
+
+   q = dev.qudit_handles[0]
+   compiled_echo = pulse.compile(echo)
+   for tau in np.linspace(0, 20_000, 1000):
+       compiled_echo.lower(q, tau)  # one compilation for the whole sweep
+
+.. :spellcheck-enable:
+
+- The length is in clock cycles, like every wait. Each call computes it
+  from its values and rounds it to the nearest cycle, ties up
+  (``floor(x + 0.5)``): 99.5 cycles is 100, 99.49 is 99.
+- The call's schedule is exactly that of the kernel compiled with that
+  length: ``sync``, ALAP and ASAP placement, loops, branches and called
+  kernels see the rounded length, and other lines are not held back by the
+  wait. ``lower()`` only binds the values; the schedule, ``mlir()`` and the
+  simulation of a call come from the module with them bound and scheduled
+  again, which takes tens of microseconds, not a compile.
+- ``wait(line, length, bounds=(lowest, highest))`` bounds the length, in
+  cycles; ``highest`` may be ``None``, and without ``bounds`` the length
+  only has to be non-negative. A call whose length is not finite, is
+  negative or falls outside the bounds raises ``ValueError`` naming the
+  kernel, the expression and the value, before anything runs.
+- Without values (``pulse.compile(k, device=dev).schedule`` of a kernel that
+  only has float parameters, or ``lowered.generic``) the module is scheduled
+  with every such wait at its lowest length, 0 unless ``bounds`` says
+  otherwise.
+- A length that needs more than arithmetic (``int(tau)``, ``tau // 2``,
+  ``round(tau)``) still makes the parameter static, with the warning.
+  A literal or static length is not rounded: it must be a whole number of
+  cycles, and ``bounds`` checks it while tracing.
 
 Operations check their arguments when they are traced. Passing a tone
 where a line belongs, a number where a waveform belongs, or a readout line

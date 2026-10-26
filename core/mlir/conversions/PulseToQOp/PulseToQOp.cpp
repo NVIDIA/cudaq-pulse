@@ -686,6 +686,25 @@ struct PulseToQOpPass
       if (op->getName().getStringRef() == "pulse.iq_acquire")
         readouts.push_back(op);
     });
+    // Without its arguments, a variable wait stands at its lowest length.
+    Operation *unbound = nullptr;
+    module.walk([&](pulse::WaitOp wait) {
+      auto conversion =
+          wait.getDuration().getDefiningOp<pulse::DurationFromIntOp>();
+      IntegerAttr cycles;
+      if (!wait->hasAttr("pulse.variable") ||
+          (conversion &&
+           matchPattern(conversion.getCycles(), m_Constant(&cycles))))
+        return WalkResult::advance();
+      unbound = wait;
+      return WalkResult::interrupt();
+    });
+    if (unbound) {
+      unbound->emitError("the length of this wait depends on the program's "
+                         "float arguments; bind them (specialize the module) "
+                         "before lowering it");
+      return signalPassFailure();
+    }
     pulse::Path path;
     auto pathAttr = module->getAttrOfType<ArrayAttr>("pulse.path");
     if (!readouts.empty() && !pathAttr) {

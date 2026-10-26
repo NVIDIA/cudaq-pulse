@@ -29,7 +29,7 @@ def _lower_three(
     return [w for w in caught if w.category is RuntimeWarning], compiled.cache_info().compiled
 
 
-def test_a_wait_length_from_the_friction_log_warns_once():
+def test_a_wait_length_from_the_friction_log_compiles_once_without_a_warning():
     @pulse.kernel
     def t1_shot(q, wait_ns: float):
         d, t = get_drive_line(q)
@@ -37,13 +37,38 @@ def test_a_wait_length_from_the_friction_log_warns_once():
         wait(d, wait_ns)
 
     caught, compiled = _lower_three(t1_shot, 2000.0, step=40.0)
+    assert caught == []
+    assert compiled == 1
+    assert t1_shot.runtime_parameters == ("wait_ns",)
+
+
+def test_a_waveform_duration_warns_once():
+    @pulse.kernel
+    def k(q, width: float):
+        d, t = get_drive_line(q)
+        drive(d, square(width, 0.1), t)
+
+    caught, compiled = _lower_three(k, 40.0, step=8.0)
     assert compiled == 3
     (w,) = caught
     message = str(w.message)
-    assert "t1_shot(): float argument 'wait_ns'" in message
-    assert "must be an integer, such as a duration or a wait length" in message
-    assert "compiled again for every new value of 'wait_ns'" in message
+    assert "k(): float argument 'width'" in message
+    assert "must be an integer, such as a waveform duration" in message
+    assert "compiled again for every new value of 'width'" in message
     assert w.filename == __file__
+
+
+def test_a_wait_length_through_floor_division_still_warns():
+    @pulse.kernel
+    def k(q, tau: float):
+        d, t = get_drive_line(q)
+        drive(d, square(40, 0.1), t)
+        wait(d, tau // 2)
+
+    caught, compiled = _lower_three(k, 400.0, step=4.0)
+    assert compiled == 3
+    (w,) = caught
+    assert "float argument 'tau'" in str(w.message)
 
 
 @pytest.mark.parametrize(

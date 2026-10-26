@@ -45,9 +45,12 @@ Scheduling Operations
 
    Acquire a measurement through a readout line.
 
-.. function:: wait(line, duration)
+.. function:: wait(line, duration, bounds=None)
 
-   Insert an idle delay of *duration* clock cycles on a line.
+   Insert an idle delay of *duration* clock cycles on a line. A duration
+   computed from ``float`` parameters stays a runtime value, rounded to the
+   nearest cycle on each call; *bounds*, ``(lowest, highest)`` in cycles,
+   limits it. See :ref:`wait-lengths`.
 
 .. function:: sync(line1, line2, ...)
 

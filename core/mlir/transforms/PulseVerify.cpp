@@ -322,6 +322,20 @@ struct PulseVerifyPass
         [&](pulse::SquarePulseOp op) { checkDuration(op, op.getDuration()); });
     module.walk(
         [&](pulse::DRAGPulseOp op) { checkDuration(op, op.getDuration()); });
+    // A wait whose length is not a constant is scheduled at a placeholder
+    // length until its arguments are bound; only a variable wait, which
+    // carries its bounds, may be.
+    module.walk([&](pulse::WaitOp op) {
+      auto conversion =
+          op.getDuration().getDefiningOp<pulse::DurationFromIntOp>();
+      if (op->hasAttr("pulse.variable") ||
+          (conversion && traceConstantI64(conversion.getCycles())))
+        return;
+      op.emitError("a wait whose length is not a constant must be marked "
+                   "pulse.variable, with its bounds in pulse.min_vtu and "
+                   "pulse.max_vtu");
+      hadError = true;
+    });
 
     // Check 3: Monotone, non-overlapping time on each physical line, and no
     // conditional operation before its measurement. SSA line values change

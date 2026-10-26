@@ -257,11 +257,14 @@ def _simulate_compiled(
 ) -> SimulationResult:
     # A cached specialization's module is shared by every call of it, from
     # any thread: a segment sets the module attributes it lowers with and
-    # reads the lowering under the module's lock, in one step. The GPU path
-    # binds the float arguments into a private copy of the module.
+    # reads the lowering under the module's lock, in one step. The GPU path,
+    # and a call whose values set wait lengths, bind the float arguments into
+    # a private copy of the module.
     lock = compiled._lock
     arguments = list(compiled.arguments)
-    module = compiled._concrete() if backend == "gpu" else compiled._module
+    module = (
+        compiled._concrete() if backend == "gpu" or compiled.waits is not None else compiled._module
+    )
     qudits = compiled.qudits
     if not qudits:
         raise ValueError("the program uses no qudits; there is nothing to simulate")
