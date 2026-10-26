@@ -82,6 +82,11 @@ Core Examples
      - ``18_per_kernel_schedules.py``
      - Per-kernel ASAP and ALAP policies in a stabilizer cycle with
        dynamical decoupling, compared with one flat schedule
+   * - 19
+     - ``19_classical_calls.py``
+     - Classical calls at QPU runtime: decoding with feed-forward and a
+       timeout fallback, adaptive Bayesian T1 tracking with a variable wait,
+       the call report, simulation, and the emulation export
 
 Hardware Target Examples
 ------------------------
