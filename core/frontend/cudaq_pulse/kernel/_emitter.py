@@ -365,7 +365,7 @@ def _iterate(value: Any) -> Any:
 def _current(value: IRValue) -> IRValue:
     """The current value of *value*'s channel, or *value* if it has none."""
     chan = value.chan
-    return value if chan is None else chan.value  # type: ignore[no-any-return]
+    return value if chan is None else chan.value
 
 
 def _slot_holds(slot: tuple[list[Any], int, IRValue], value: IRValue) -> bool:
@@ -837,9 +837,9 @@ class PulseIREmitter:
                     raise CompilationError(f"kernel raised {exc!r}")
 
                 elif op is bc.CALL_EX:
-                    kwargs = pop() if arg else None
+                    star_kwargs = pop() if arg else None
                     star = pop()
-                    self._dispatch_call(pop(), _star_args(star), kwargs or None)
+                    self._dispatch_call(pop(), _star_args(star), star_kwargs or None)
 
                 elif op is bc.DICT_MERGE:
                     index, strict = arg
