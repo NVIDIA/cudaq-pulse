@@ -220,6 +220,9 @@ Besides the control flow above, a kernel body may use:
   tracing like the ``for`` loop it stands for, so
   ``[get_drive_line(q) for q in qubits]`` builds a list of ``(line, tone)``
   pairs and ``[readout(r, wf, t) for _ in range(12)]`` a list of results.
+- ``sync()`` over lines, lists or tuples of lines, nested too:
+  ``sync(lines)`` and ``sync([d0, d1], d2)`` synchronize every line they
+  hold.
 - calls with ``*args`` and ``**kwargs``, unpacked while tracing, so
   ``sync(*lines)`` synchronizes a list of lines built in a loop and
   ``helper(d, t, **opts)`` passes a dictionary of options.
@@ -232,6 +235,12 @@ Besides the control flow above, a kernel body may use:
   (``[get_drive_line(q) for q in qubits]``, ``{i: 8 * i for i in range(4)}``),
   and set displays. A comprehension runs while tracing, one iteration per
   element, like a loop over a Python value.
+
+Operations check their arguments when they are traced. Passing a tone
+where a line belongs, a number where a waveform belongs, or a readout line
+to ``drive`` raises a ``CompilationError`` that names the operation and
+the argument, such as ``drive(): argument 1 must be a drive line, got a
+tone``, before any MLIR is built.
 
 Unsupported Patterns
 --------------------

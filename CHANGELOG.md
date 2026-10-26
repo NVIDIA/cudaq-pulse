@@ -43,7 +43,10 @@ behavior may change in any 0.x release.
   objects and decorated helpers that use pulse ops are inlined too. Lines
   and tones may be kept in any container, such as a list of `(line, tone)`
   pairs or a dict, and lists of them support `pop`, `insert`, `extend`,
-  `remove` and `del xs[i]`. List, dict and set comprehensions and set
+  `remove` and `del xs[i]`. `sync()` takes lists and tuples of lines, as
+  in `sync(lines)`. A pulse op given the wrong kind of argument, such as a
+  tone where its line belongs, raises a `CompilationError` that names the
+  op and the argument when it is traced, not an MLIR verifier error. List, dict and set comprehensions and set
   displays trace on every supported Python; generator expressions, lambdas
   and nested functions are rejected with what to write instead.
 - **Operations.** The kernel language lives in `cudaq_pulse.ops` and is

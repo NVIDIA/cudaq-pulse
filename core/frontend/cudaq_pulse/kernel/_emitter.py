@@ -214,6 +214,109 @@ _UNBOUND = object()
 
 _LINE_OPS = frozenset({"get_drive_line", "get_readout_line"})
 
+_LINE_TYPES = ("drive_line", "readout_line")
+_QUDIT = ("qref",)
+_TONE = ("tone",)
+_WAVEFORM = ("waveform",)
+# The IR types each leading operand of a pulse op may have.
+_OPERAND_TYPES: dict[str, tuple[tuple[str, ...], ...]] = {
+    "get_drive_line": (_QUDIT,),
+    "get_readout_line": (_QUDIT,),
+    "drive": (("drive_line",), _WAVEFORM, _TONE),
+    "readout": (("readout_line",), _WAVEFORM, _TONE),
+    "wait": (_LINE_TYPES,),
+    "shift_phase": (_TONE,),
+    "set_phase": (_TONE,),
+    "shift_frequency": (_TONE,),
+    "set_frequency": (_TONE,),
+    "wf_add": (_WAVEFORM, _WAVEFORM),
+    "wf_sub": (_WAVEFORM, _WAVEFORM),
+    "wf_mul": (_WAVEFORM, _WAVEFORM),
+    "wf_scale": (_WAVEFORM,),
+    "wf_neg": (_WAVEFORM,),
+}
+_EMIT_TABLE = {
+    name: (n_val, attrs, rtypes, _OPERAND_TYPES.get(name, ()))
+    for name, (n_val, attrs, rtypes) in OP_TABLE.items()
+}
+_TYPE_WORDS = {
+    "qref": "qudit",
+    "drive_line": "drive line",
+    "readout_line": "readout line",
+    "tone": "tone",
+    "waveform": "waveform",
+    "measurement": "measurement result",
+}
+
+
+def _describe(value: Any) -> str:
+    """How an operand error names what the kernel passed."""
+    if value.__class__ is IRValue:
+        word = _TYPE_WORDS.get(value.vtype, value.vtype)
+        return f"an {word}" if word[0] in "aeiou" else f"a {word}"
+    if isinstance(value, (list, tuple)):
+        return f"a {type(value).__name__} of {len(value)}"
+    return f"{type(value).__name__} {value!r}"
+
+
+def _sync_lines(fname: str, call_args: list[Any]) -> list[IRValue]:
+    """The current values of the lines passed to *fname*, with lists and
+    tuples of lines flattened."""
+    lines: list[IRValue] = []
+    for v in call_args:
+        if v.__class__ is not IRValue or v.vtype not in _LINE_TYPES:
+            break
+        chan = v.chan
+        lines.append(v if chan is None else chan.value)
+    else:
+        if len(lines) >= 2:
+            return lines
+    lines = []
+
+    def add(value: Any, where: str) -> None:
+        if value.__class__ is IRValue and value.vtype in _LINE_TYPES:
+            lines.append(_current(value))
+        elif value.__class__ in (list, tuple):
+            for i, item in enumerate(value):
+                add(item, f"{where}[{i}]")
+        else:
+            message = f"{fname}(): {where} must be a line, got {_describe(value)}"
+            if value.__class__ is IRValue and value.vtype == "tone":
+                message += f"; pass the lines only, as in {fname}(*[line for line, _ in pairs])"
+            raise CompilationError(message)
+
+    for i, value in enumerate(call_args):
+        add(value, f"argument {i + 1}")
+    if len(lines) < 2:
+        raise CompilationError(f"{fname}() needs at least 2 lines, got {len(lines)}")
+    if len({id(v) for v in lines}) != len(lines):
+        raise CompilationError(f"{fname}(): a line is passed more than once")
+    return lines
+
+
+def _operand_error(fname: str, call_args: list[Any]) -> CompilationError:
+    """The error for the first operand of *fname* that is not of its type."""
+    index, want = 0, _OPERAND_TYPES[fname][0]
+    for index, (v, want) in enumerate(zip(call_args, _OPERAND_TYPES[fname])):
+        if v.__class__ is not IRValue or v.vtype not in want:
+            break
+    value = call_args[index]
+    wanted = " or ".join(_TYPE_WORDS[t] for t in want)
+    message = f"{fname}(): argument {index + 1} must be a {wanted}, got {_describe(value)}"
+    vtype = value.vtype if value.__class__ is IRValue else None
+    play = fname in ("drive", "readout")
+    if play and ((index == 0 and vtype == "tone") or (index == 2 and vtype in _LINE_TYPES)):
+        message += f"; the line comes first and the tone last: {fname}(line, waveform, tone)"
+    elif play and vtype in _LINE_TYPES:
+        message += "; drive() takes a drive line and readout() a readout line"
+    elif fname == "wf_scale":
+        message += "; call it as wf_scale(waveform, scalar)"
+    elif want is _WAVEFORM and vtype is None:
+        message += "; pass a waveform such as square(duration, amplitude)"
+    elif want is _QUDIT and vtype is None:
+        message += "; pass one of the kernel's qudit arguments"
+    return CompilationError(message)
+
 
 class _Chan:
     """The current value of a channel's line (index 0) or of its tone (1)."""
@@ -1560,11 +1663,11 @@ class PulseIREmitter:
         fname: str,
         call_args: list[StackVal],
     ) -> tuple[IRValue, ...]:
-        entry = OP_TABLE.get(fname)
+        entry = _EMIT_TABLE.get(fname)
         if entry is None:
             raise CompilationError(f"unknown pulse op: {fname}")
 
-        n_val, attr_names, rtypes = entry
+        n_val, attr_names, rtypes, operand_types = entry
         acquires = fname in _ACQUIRES
         line_op = False
         if acquires:
@@ -1580,27 +1683,57 @@ class PulseIREmitter:
             self._acquired[0] += 1
 
         if n_val == -1:
-            call_args = [_current(v) for v in call_args if isinstance(v, IRValue)]
+            call_args = _sync_lines(fname, call_args)
             operands = tuple(call_args)
             attrs: dict[str, Any] = {}
             out_types = tuple(v.vtype for v in operands) if rtypes is None else rtypes
         else:
-            # A line or tone read from a container the tracer does not rebind
-            # (a tuple in a list, a dict) may be an old value of its channel;
-            # the op consumes the channel's current value.
-            for i in range(n_val):
-                v = call_args[i]
-                if v.__class__ is IRValue:
-                    chan = v.chan
-                    if chan is not None and chan.value is not v:
-                        call_args[i] = chan.value
-            operands = tuple(call_args[:n_val])
-            attr_vals = call_args[n_val:]
-            if len(attr_vals) != len(attr_names):
+            if len(call_args) != n_val + len(attr_names):
                 raise CompilationError(
                     f"{fname}: expected {n_val + len(attr_names)} args, got {len(call_args)}"
                 )
-            attrs = dict(zip(attr_names, attr_vals))
+            # Operands must have their op's types. A line or tone read from a
+            # container the tracer does not rebind (a tuple in a list, a dict)
+            # may be an old value of its channel; the op consumes the channel's
+            # current value. Unrolled by arity: this runs for every op.
+            if n_val == 3:
+                a = call_args[0]
+                b = call_args[1]
+                c = call_args[2]
+                try:
+                    bad = (
+                        a.vtype not in operand_types[0]
+                        or b.vtype not in operand_types[1]
+                        or c.vtype not in operand_types[2]
+                    )
+                except AttributeError:
+                    bad = True
+                if bad:
+                    raise _operand_error(fname, call_args)
+                ca = a.chan
+                cc = c.chan
+                if (ca is not None and ca.value is not a) or (cc is not None and cc.value is not c):
+                    call_args[0] = _current(a)
+                    call_args[2] = _current(c)
+            elif n_val == 1:
+                a = call_args[0]
+                try:
+                    bad = a.vtype not in operand_types[0]
+                except AttributeError:
+                    bad = True
+                if bad:
+                    raise _operand_error(fname, call_args)
+                ca = a.chan
+                if ca is not None and ca.value is not a:
+                    call_args[0] = ca.value
+            elif n_val:
+                for i in range(n_val):
+                    v = call_args[i]
+                    if v.__class__ is not IRValue or v.vtype not in operand_types[i]:
+                        raise _operand_error(fname, call_args)
+                    call_args[i] = _current(v)
+            operands = tuple(call_args[:n_val])
+            attrs = dict(zip(attr_names, call_args[n_val:]))
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
 
         op_name = _OP_NAMES[fname]
@@ -1644,12 +1777,6 @@ class PulseIREmitter:
         *fname* makes, if known; rejects arithmetic on waveforms of different
         durations."""
         if fname in _WAVEFORM_ARITHMETIC:
-            for operand in operands:
-                if not (operand.__class__ is IRValue and operand.vtype == "waveform"):
-                    raise CompilationError(
-                        f"{fname}() takes waveforms, got {type(operand).__name__}"
-                        + ("; call it as wf_scale(waveform, scalar)" if fname == "wf_scale" else "")
-                    )
             known = self._durations
             left = known.get(operands[0].vid)
             if len(operands) == 2:
@@ -1747,11 +1874,11 @@ class PulseIREmitter:
             if v.__class__ is IRValue and v.vtype in LINEAR_TYPES:
                 slots[id(v)] = (items, i, v)
 
-    def _rebind_one(self, old: Any, new: IRValue) -> None:
-        if old.__class__ is not IRValue or old.vtype != new.vtype:
-            return
+    def _rebind_one(self, old: IRValue, new: IRValue) -> None:
+        """Rebind *old* to *new*, of its type; ``_emit_pulse_call`` checked
+        *old* and made it its channel's current value."""
         chan = old.chan
-        if chan is not None and chan.value is old:
+        if chan is not None:
             chan.value = new
             new.chan = chan
             if chan.shared:
@@ -1765,7 +1892,13 @@ class PulseIREmitter:
             self.locals[name] = new
         slots = self._slots
         slot = slots.get(id(old))
-        if slot is not None and _slot_holds(slot, old):
+        if slot is not None and slot[2] is old:
+            try:
+                holds = slot[0][slot[1]] is old
+            except IndexError:  # the list shrank since the value was read
+                holds = False
+            if not holds:
+                return
             slot[0][slot[1]] = new
             # The consumed value is dead: dropping its entry keeps the table,
             # and the values it holds, the size of the live lists.
