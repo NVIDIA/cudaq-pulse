@@ -13,7 +13,8 @@ over a small canonical instruction set whose semantics are identical on every
 supported interpreter (3.12 through 3.15):
 
 * calls are ``CALL n`` / ``CALL_KW n``; the implicit ``NULL`` slots are
-  dropped, and 3.12's ``KW_NAMES`` becomes an explicit constant
+  dropped, and 3.12's ``KW_NAMES`` becomes an explicit constant; a call
+  with ``*args`` or ``**kwargs`` is ``CALL_EX has_kwargs`` on every version
 * binary operators, comparisons and unary operators carry the Python
   ``operator`` function to apply, so no names are matched while tracing
 * jump targets are instruction indices, never byte offsets, so a jump to a
@@ -89,7 +90,9 @@ from typing import Any
     RAISE,
     UNSUPPORTED,
     REGION_END,
-) = range(45)
+    CALL_EX,
+    DICT_MERGE,
+) = range(47)
 
 OP_NAMES: tuple[str, ...] = tuple(
     (
@@ -100,7 +103,7 @@ OP_NAMES: tuple[str, ...] = tuple(
         "POP_TOP COPY SWAP JUMP JUMP_IF_FALSE JUMP_IF_TRUE JUMP_IF_NONE "
         "JUMP_IF_NOT_NONE GET_ITER "
         "FOR_ITER RETURN IMPORT_NAME IMPORT_FROM CONVERT FORMAT RAISE UNSUPPORTED "
-        "REGION_END"
+        "REGION_END CALL_EX DICT_MERGE"
     ).split()
 )
 
@@ -251,7 +254,6 @@ _UNSUPPORTED: dict[str, str] = {
     "LOAD_SPECIAL": _TRY_MESSAGE,
     "RETURN_GENERATOR": _not_supported("generators"),
     "YIELD_VALUE": _not_supported("generators"),
-    "CALL_FUNCTION_EX": _not_supported("star-argument calls"),
 }
 
 _WHILE_MESSAGE = (
@@ -384,8 +386,10 @@ def _decode(code: CodeType) -> DecodedCode:
     index_at: dict[int, int] = {}
     pending_kw_names = False
     cleanup = 0  # remaining loop-exit cleanup instructions to drop
+    previous = ""  # opname of the raw instruction before *ins*
 
     for ins in raw:
+        prev_name, previous = previous, ins.opname
         if len(positions) < len(out):
             positions.extend([pos] * (len(out) - len(positions)))
         pos = ins.positions
@@ -434,8 +438,16 @@ def _decode(code: CodeType) -> DecodedCode:
             out.append([SUBSCR, None])
         elif name in _UNARY_NAMES:
             out.append([UNARY, _UNARY_NAMES[name]])
-        elif name == "CALL_INTRINSIC_1" and ins.argval == "INTRINSIC_UNARY_POSITIVE":
+        elif name == "CALL_INTRINSIC_1" and ins.argrepr == "INTRINSIC_UNARY_POSITIVE":
             out.append([UNARY, _op.pos])
+        elif name == "CALL_INTRINSIC_1" and ins.argrepr == "INTRINSIC_LIST_TO_TUPLE":
+            out.append([UNARY, tuple])
+        elif name == "CALL_FUNCTION_EX":
+            # 3.14+ always has a kwargs slot, a pushed NULL when there are none.
+            has_kwargs = bool(iarg & 1) if _PY_MINOR < 14 else prev_name != "PUSH_NULL"
+            out.append([CALL_EX, has_kwargs])
+        elif name in ("DICT_MERGE", "DICT_UPDATE"):
+            out.append([DICT_MERGE, (iarg, name == "DICT_MERGE")])
         elif name == "COMPARE_OP":
             out.append([COMPARE, _compare_fn(ins)])
         elif name == "IS_OP":

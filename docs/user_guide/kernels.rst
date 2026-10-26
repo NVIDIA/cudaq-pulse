@@ -210,6 +210,15 @@ observed a nonzero level), whose arms yield the lines and tones they
 advance; both arms start once the measurement completes, and the code after
 the ``if`` waits for the longer arm.
 
+Python Inside Kernels
+---------------------
+
+Besides the control flow above, a kernel body may use:
+
+- calls with ``*args`` and ``**kwargs``, unpacked while tracing, so
+  ``sync(*lines)`` synchronizes a list of lines built in a loop and
+  ``helper(d, t, **opts)`` passes a dictionary of options.
+
 Unsupported Patterns
 --------------------
 

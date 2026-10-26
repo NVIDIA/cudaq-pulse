@@ -356,6 +356,31 @@ def _iterate(value: Any) -> Any:
         ) from None
 
 
+def _star_args(value: Any) -> list[Any]:
+    """The positional arguments of ``f(*value)``, unpacked at trace time."""
+    if value.__class__ is tuple or value.__class__ is list:
+        return list(value)
+    if isinstance(value, IRValue):
+        raise CompilationError(
+            f"cannot unpack a pulse {value.vtype} value with *; pass it as an argument"
+        )
+    return list(_iterate(value))
+
+
+def _merge_kwargs(target: dict[Any, Any], other: Any, strict: bool) -> None:
+    """``**other`` into the keyword arguments *target* of a call (or a dict display)."""
+    try:
+        keys = other.keys()
+    except AttributeError:
+        raise CompilationError(
+            f"argument after ** must be a mapping, not {type(other).__name__}"
+        ) from None
+    for key in keys:
+        if strict and key in target:
+            raise CompilationError(f"got multiple values for keyword argument {key!r}")
+        target[key] = other[key]
+
+
 class _Loop:
     """Iterator state of a ``for ... in range()`` loop on the stack."""
 
@@ -709,6 +734,16 @@ class PulseIREmitter:
                     n_pos = arg - len(names)
                     kwargs = dict(zip(names, values[n_pos:]))
                     self._dispatch_call(pop(), values[:n_pos], kwargs)
+
+                elif op is bc.CALL_EX:
+                    kwargs = pop() if arg else None
+                    star = pop()
+                    self._dispatch_call(pop(), _star_args(star), kwargs or None)
+
+                elif op is bc.DICT_MERGE:
+                    index, strict = arg
+                    other = pop()
+                    _merge_kwargs(stack[-index], other, strict)
 
                 elif op is bc.COPY:
                     push(stack[-arg])
@@ -1143,7 +1178,7 @@ class PulseIREmitter:
             return False
         calls = 0
         for op, _ in prog.instrs[for_idx + 1 : exit_idx]:
-            if op is CALL or op is bc.CALL_KW:
+            if op is CALL or op is bc.CALL_KW or op is bc.CALL_EX:
                 calls += 1
         return count * max(calls, 1) <= threshold
 
