@@ -756,3 +756,53 @@ class TestParameterType:
         assert (p + 1).op == "add"
         assert (p * 2).op == "mul"
         assert (p - 0.5).op == "sub"
+
+
+class TestExpressionsAcrossRegions:
+    """A float expression the tracer materialized inside a region (a rolled
+    loop, a branch arm, a schedule block) is not reused after it closes."""
+
+    def test_an_expression_used_in_a_rolled_loop_and_after_it(self):
+        @pulse.kernel
+        def k(q, amp: float):
+            d, t = get_drive_line(q)
+            doubled = amp * 2
+            for _ in range(4):
+                drive(d, square(40, doubled), t)
+            drive(d, square(40, doubled), t)
+
+        lowered = pulse.compile(k, unroll_threshold=0).lower(Q[0], 0.1)
+        assert "scf.for" in lowered.generic.mlir()
+        assert len(lowered.schedule) == 5
+
+    def test_an_expression_used_in_both_arms_and_after_the_branch(self):
+        @pulse.kernel
+        def k(q, phase: float):
+            d, t = get_drive_line(q)
+            r, rt = get_readout_line(q)
+            half = phase / 2
+            m = readout(r, square(40, 0.05), rt)
+            sync(d, r)
+            if m:
+                shift_phase(t, half)
+            else:
+                shift_phase(t, -half)
+            shift_phase(t, half)
+            drive(d, square(40, 0.1), t)
+
+        assert len(k.lower(Q[0], 0.4).schedule) == 2
+
+    def test_an_expression_used_in_a_called_kernel_with_its_own_schedule_and_after(self):
+        @pulse.kernel(schedule="asap")
+        def pulse_pair(line, tone, a):
+            drive(line, square(16, a), tone)
+            drive(line, square(16, a), tone)
+
+        @pulse.kernel
+        def k(q, amp: float):
+            d, t = get_drive_line(q)
+            scaled = amp * 0.5
+            pulse_pair(d, t, scaled)
+            drive(d, square(16, scaled), t)
+
+        assert sum(e.duration_vtu for e in k.lower(Q[0], 0.2).schedule) == 48

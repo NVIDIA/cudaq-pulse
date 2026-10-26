@@ -91,6 +91,7 @@ _WF_MAP = {
 }
 
 _UNSCHEDULED = -1
+_ZERO = (0,)
 
 
 def _f2i(x: float) -> int:
@@ -174,7 +175,8 @@ class PackedIRBuilder:
         self.schedule_block_count = 0
         self.clock_ghz = clock_ghz
         self._freq_hz = qubit_freq_hz or {}
-        self._buf = array("q", bytes(8 * 8192))
+        # Repeating one zero is twice as fast as converting a zeroed bytes.
+        self._buf = array("q", _ZERO) * 8192
         self._cur = 0
         self._next_id = 0
         self._next_qubit = 0
@@ -186,8 +188,11 @@ class PackedIRBuilder:
         # Key by the expression object itself, not id(expression): temporary
         # expressions may be collected and Python may reuse their integer IDs.
         self._numeric_vids: dict[tuple[ParameterExpression, str], int] = {}
-        # Open regions, innermost last: the yields seen so far in each.
-        self._regions: list[dict[str, tuple[int, ...]]] = []
+        # Open regions, innermost last: the yields seen so far in each, and
+        # under "cached" the size of _numeric_vids when it opened.
+        self._regions: list[dict[str, Any]] = []
+        # The size of _numeric_vids when each open schedule block opened.
+        self._block_marks: list[int] = []
         # Measurement vid -> readout ordinal, for readouts outside any region.
         self.readouts: dict[int, int] = {}
         self._n_readouts = 0
@@ -556,20 +561,26 @@ class PackedIRBuilder:
             ub = _as_i64(attrs.get("ub", 0), "loop upper bound")
             step = _as_i64(attrs.get("step", 1), "loop step")
             self._record(_FOR_BEGIN, [lb, ub, step])
-            self._regions.append({})
+            self._regions.append({"cached": len(self._numeric_vids)})
         elif kind == "scf.for_end":
             region = self._regions.pop()
+            if len(self._numeric_vids) > region["cached"]:
+                self._forget(region["cached"])
             inits = [v.vid if v.vid != UNDEFINED_VID else -1 for v in operands]
             yields = list(region.get("yield", ()))
             self._record(_FOR_END, [len(results), *inits, *yields, *(r.vid for r in results)])
         elif kind == "scf.if":
             self._record(_IF_BEGIN, [operands[0].vid])
-            self._regions.append({})
+            self._regions.append({"cached": len(self._numeric_vids)})
         elif kind == "scf.else":
             self._record(_ELSE, [])
             self._regions[-1]["else"] = ()
+            if len(self._numeric_vids) > self._regions[-1]["cached"]:
+                self._forget(self._regions[-1]["cached"])
         elif kind == "scf.if_end":
             region = self._regions.pop()
+            if len(self._numeric_vids) > region["cached"]:
+                self._forget(region["cached"])
             self._record(
                 _IF_END,
                 [
@@ -583,6 +594,14 @@ class PackedIRBuilder:
             raise CompilationError(f"unsupported structured control flow op {kind!r}")
         return results
 
+    def _forget(self, cached: int) -> None:
+        """Keep the first *cached* numbers materialized: the later ones are
+        defined in a region that has closed, which later uses must not reach
+        into. Every entry added since has a new id, and they are the newest."""
+        numeric = self._numeric_vids
+        while len(numeric) > cached:
+            numeric.popitem()
+
     def begin_schedule_block(self, policy: str, callee: str) -> None:
         """Open a block whose ops are scheduled on their own with *policy*.
 
@@ -594,9 +613,13 @@ class PackedIRBuilder:
         words = [_unpack_q.unpack(padded[i : i + 8])[0] for i in range(0, len(padded), 8)]
         self._record(_BLOCK_BEGIN, [_BLOCK_POLICY[policy], len(encoded), *words])
         self.schedule_block_count += 1
+        self._block_marks.append(len(self._numeric_vids))
 
     def end_schedule_block(self) -> None:
         self._record(_BLOCK_END, [])
+        cached = self._block_marks.pop()
+        if len(self._numeric_vids) > cached:
+            self._forget(cached)
 
     def mark(self) -> int:
         return self._cur
@@ -615,6 +638,7 @@ class PackedIRBuilder:
             self._op_count,
             [dict(region) for region in self._regions],
             self._n_readouts,
+            len(self._block_marks),
         )
 
     def rollback(self, checkpoint: tuple[Any, ...]) -> None:
@@ -625,8 +649,10 @@ class PackedIRBuilder:
             self._op_count,
             regions,
             self._n_readouts,
+            blocks,
         ) = checkpoint
         self._regions = regions
+        del self._block_marks[blocks:]
         live = self._next_id
         for vid in [vid for vid in self.readouts if vid >= live]:
             del self.readouts[vid]
@@ -690,7 +716,10 @@ class PackedIRBuilder:
                 result = self._emit_numeric_cast(source, source_dtype, target_dtype)
                 if target_dtype != expected_dtype:
                     result = self._emit_numeric_cast(result, target_dtype, expected_dtype)
-                self._numeric_vids[cache_key] = result
+                # A cast that emitted nothing is not cached: every entry is
+                # then newer than those before it, which _forget relies on.
+                if result != source:
+                    self._numeric_vids[cache_key] = result
                 return result
 
             dtype = "f64" if value.op == "div" else expected_dtype
