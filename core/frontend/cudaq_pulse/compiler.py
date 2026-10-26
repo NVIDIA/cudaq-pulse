@@ -281,6 +281,7 @@ class Lowered:
         "options",
         "scheduled",
         "generic",
+        "classical",
     )
 
     def __init__(
@@ -308,6 +309,8 @@ class Lowered:
         self.options = options
         self.scheduled = scheduled
         self.generic: Lowered | None = None
+        # The classical functions the program calls, in declaration order.
+        self.classical: tuple[Any, ...] = ()
 
     def bind(self, values: Sequence[float]) -> Lowered:
         """This module with values for its float parameters, sharing it."""
@@ -325,6 +328,7 @@ class Lowered:
         view.options = self.options
         view.scheduled = self.scheduled
         view.generic = self
+        view.classical = self.classical
         return view
 
     def _concrete(self) -> Any:
@@ -510,6 +514,7 @@ def build(
         options=options,
         scheduled=scheduled,
     )
+    lowered.classical = tuple(builder.classical)
     return lowered, builder
 
 

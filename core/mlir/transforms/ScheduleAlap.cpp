@@ -61,6 +61,7 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
 
+#include "cudaq-pulse/Analysis/Affine.h"
 #include "cudaq-pulse/Analysis/ClassicalTiming.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
@@ -165,9 +166,21 @@ static int64_t durationOf(mlir::Operation *op) {
     return classical::intAttr(op, "classical.submit_vtu", 1);
   if (mlir::isa<classical::WaitOp>(op))
     return 0;
-  // A variable wait is scheduled at its lowest length.
-  if (op->hasAttr("classical.variable"))
-    return classical::intAttr(op, "classical.min_vtu");
+  // A variable wait is scheduled at its lowest length, or at its length,
+  // clamped to its bounds, once an answer has been bound to it.
+  if (op->hasAttr("classical.variable")) {
+    int64_t lowest = classical::intAttr(op, "classical.min_vtu");
+    int64_t length = lowest;
+    if (auto conversion = mlir::cast<pulse::WaitOp>(op)
+                              .getDuration()
+                              .getDefiningOp<pulse::DurationFromIntOp>())
+      if (auto cycles = pulse::boundNumber(conversion.getCycles()))
+        length = std::max(lowest, static_cast<int64_t>(*cycles));
+    if (auto highest =
+            op->getAttrOfType<mlir::IntegerAttr>("classical.max_vtu"))
+      length = std::min(length, highest.getInt());
+    return length;
+  }
   return getWaitDuration(mlir::cast<pulse::WaitOp>(op));
 }
 
@@ -1661,9 +1674,60 @@ struct PulseInlineScheduleBlocksPass
   }
 };
 
+/// Whether `loop` holds a classical call or a variable wait.
+static bool holdsClassical(mlir::scf::ForOp loop) {
+  return loop.getBody()
+      ->walk([](mlir::Operation *op) {
+        if (op->getDialect() && op->getDialect()->getNamespace() == "classical")
+          return mlir::WalkResult::interrupt();
+        return mlir::WalkResult::advance();
+      })
+      .wasInterrupted();
+}
+
+/// Unroll every loop that holds classical calls, so each execution of a call
+/// is an op of its own: simulation binds answers one execution at a time.
+struct PulseUnrollClassicalLoopsPass
+    : public mlir::PassWrapper<PulseUnrollClassicalLoopsPass,
+                               mlir::OperationPass<mlir::func::FuncOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PulseUnrollClassicalLoopsPass)
+
+  llvm::StringRef getArgument() const override {
+    return "pulse-unroll-classical-loops";
+  }
+  llvm::StringRef getDescription() const override {
+    return "Fully unroll loops that hold classical calls";
+  }
+  void runOnOperation() override {
+    while (true) {
+      llvm::SmallVector<mlir::scf::ForOp> loops;
+      getOperation().walk<mlir::WalkOrder::PreOrder>(
+          [&](mlir::scf::ForOp loop) {
+            if (!holdsClassical(loop))
+              return mlir::WalkResult::advance();
+            loops.push_back(loop);
+            return mlir::WalkResult::skip();
+          });
+      if (loops.empty())
+        return;
+      for (mlir::scf::ForOp loop : loops) {
+        if (!pulse::constantTripCount(loop)) {
+          loop.emitError("cannot unroll a loop with non-constant bounds");
+          return signalPassFailure();
+        }
+        unrollFully(loop);
+      }
+    }
+  }
+};
+
 } // namespace
 
 namespace pulse {
+std::unique_ptr<mlir::Pass> createPulseUnrollClassicalLoopsPass() {
+  return std::make_unique<PulseUnrollClassicalLoopsPass>();
+}
+
 std::unique_ptr<mlir::Pass> createPulseScheduleAsapPass() {
   return std::make_unique<PulseSchedulePass<false>>();
 }

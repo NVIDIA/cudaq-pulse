@@ -98,6 +98,7 @@ std::unique_ptr<mlir::Pass> createPulseFusionPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleAsapPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleAlapPass();
 std::unique_ptr<mlir::Pass> createPulseClassicalCheckPass();
+std::unique_ptr<mlir::Pass> createPulseUnrollClassicalLoopsPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleRcpPass(int64_t maxDrives,
                                                        int64_t maxReadouts,
                                                        int64_t readoutLatency,
@@ -547,6 +548,144 @@ public:
     return boundaries;
   }
 
+  // ── Simulating classical calls ──────────────────────────────────────
+  //
+  // Simulation binds the answer of each call as a constant, one execution
+  // at a time along a measurement path, and schedules again: the timeline
+  // of a path is static once its answers are known.
+
+  /// This module with loops that hold calls unrolled and scheduled again
+  /// with `policy`, for simulation.
+  PulseModule simulation_module(const std::string &policy, int64_t maxDrives,
+                                int64_t maxReadouts, int64_t readoutLatency,
+                                int64_t switchPenalty) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto copy = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
+    mlir::PassManager pm(ctx_.get());
+    pm.addNestedPass<mlir::func::FuncOp>(
+        pulse::createPulseUnrollClassicalLoopsPass());
+    addSchedule(pm, policy, maxDrives, maxReadouts, readoutLatency,
+                switchPenalty);
+    runPipeline(pm, *copy, "simulation: unrolling classical loops failed");
+    return PulseModule(ctx_, std::move(copy));
+  }
+
+  /// One argument of a call: (kind, readout index, iteration, value), kind 0
+  /// for a measurement and 1 for a number.
+  using CallArgument =
+      std::tuple<int64_t, int64_t, std::vector<int64_t>, double>;
+  /// (submit index, start ns, callee, arguments, answered, timeout ns or -1)
+  using PendingCall = std::tuple<int64_t, double, std::string,
+                                 std::vector<CallArgument>, bool, double>;
+
+  /// The first call on `path` that has no answer bound yet, by start time.
+  std::optional<PendingCall>
+  next_call(const std::vector<std::vector<int64_t>> &path) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto readouts = readoutOps();
+    pulse::Path chosen = toPath(path, readouts);
+    llvm::DenseMap<mlir::Operation *, int64_t> indexOf;
+    module_->walk([&](classical::SubmitOp submit) {
+      indexOf.try_emplace(submit, static_cast<int64_t>(indexOf.size()));
+    });
+    double clockGHz = clock();
+    std::optional<PendingCall> next;
+    pulse::ExecutionWalker walker(clockGHz, chosen);
+    walker.onSubmit = [&](const pulse::Occurrence &occurrence) {
+      mlir::Operation *op = occurrence.op;
+      if (op->hasAttr("classical.bound"))
+        return false;
+      double start = occurrence.startVtu / clockGHz;
+      if (next && std::get<1>(*next) <= start)
+        return false;
+      auto submit = mlir::cast<classical::SubmitOp>(op);
+      std::vector<CallArgument> args;
+      for (mlir::Value operand : submit.getArgs()) {
+        if (auto key = walker.measurementKeyOf(operand)) {
+          int64_t index = std::distance(readouts.begin(),
+                                        llvm::find(readouts, key->readout));
+          args.emplace_back(0, index, key->iteration, 0.0);
+        } else if (auto value = pulse::ExecutionWalker::number(operand)) {
+          args.emplace_back(1, -1, std::vector<int64_t>{}, *value);
+        } else {
+          throw std::runtime_error(
+              "simulation: an argument of a classical call is neither a "
+              "measurement nor a number known on this path");
+        }
+      }
+      bool answered = false;
+      double timeout = -1.0;
+      for (mlir::Operation *user : submit.getFuture().getUsers())
+        if (auto wait = mlir::dyn_cast<classical::WaitOp>(user)) {
+          answered = true;
+          if (auto t = wait.getTimeoutNs())
+            timeout = t->convertToDouble();
+        }
+      next = PendingCall{indexOf.lookup(op), start,    submit.getCallee().str(),
+                         std::move(args),    answered, timeout};
+      return false;
+    };
+    auto function = getFuncOp();
+    if (!function)
+      throw std::runtime_error("no 'main' func in module");
+    if (!walker.run(function))
+      throw std::runtime_error(walker.error);
+    return next;
+  }
+
+  /// This module with the answer `values` bound to execution `index` of a
+  /// call (an empty `values` for a call whose answer is not taken), folded
+  /// and scheduled again with `policy`.
+  PulseModule bind_call(int64_t index, const std::vector<double> &values,
+                        const std::string &policy, int64_t maxDrives,
+                        int64_t maxReadouts, int64_t readoutLatency,
+                        int64_t switchPenalty) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto copy = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
+    classical::SubmitOp found;
+    int64_t seen = 0;
+    copy->walk([&](classical::SubmitOp submit) {
+      if (seen++ == index)
+        found = submit;
+    });
+    if (!found)
+      throw std::invalid_argument("bind_call: no call execution " +
+                                  std::to_string(index));
+    found->setAttr("classical.bound", mlir::UnitAttr::get(ctx_.get()));
+    bool rebound = false;
+    for (mlir::Operation *user :
+         llvm::make_early_inc_range(found.getFuture().getUsers()))
+      if (auto wait = mlir::dyn_cast<classical::WaitOp>(user)) {
+        if (wait.getValues().size() != values.size())
+          throw std::invalid_argument(
+              "bind_call: " + found.getCallee().str() + " answers " +
+              std::to_string(wait.getValues().size()) + " values, got " +
+              std::to_string(values.size()));
+        bindConstants(wait, values);
+        rebound = true;
+      }
+    PulseModule result(ctx_, std::move(copy));
+    if (rebound)
+      result.schedule(policy, maxDrives, maxReadouts, readoutLatency,
+                      switchPenalty);
+    return result;
+  }
+
+  /// This module with every answer not bound yet replaced by zeros, for
+  /// evolving up to the next call: those answers only affect what follows.
+  PulseModule placeholders() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto copy = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
+    llvm::SmallVector<classical::WaitOp> waits;
+    copy->walk([&](classical::WaitOp wait) {
+      if (!wait->hasAttr("classical.answers"))
+        waits.push_back(wait);
+    });
+    for (classical::WaitOp wait : waits)
+      bindConstants(wait, std::vector<double>(wait.getValues().size(), 0.0));
+    return PulseModule(ctx_, std::move(copy));
+  }
+
   using Measurement =
       std::tuple<int64_t, std::vector<int64_t>, int64_t, double, double>;
 
@@ -883,6 +1022,35 @@ private:
       program.integrator = attr.getValue().str();
     program.arguments = arguments;
     return program;
+  }
+
+  static void addSchedule(mlir::PassManager &pm, const std::string &policy,
+                          int64_t maxDrives, int64_t maxReadouts,
+                          int64_t readoutLatency, int64_t switchPenalty) {
+    if (policy == "asap")
+      pm.addNestedPass<mlir::func::FuncOp>(
+          pulse::createPulseScheduleAsapPass());
+    else if (policy == "alap")
+      pm.addNestedPass<mlir::func::FuncOp>(
+          pulse::createPulseScheduleAlapPass());
+    else if (policy == "rcp" || policy == "alap_rcp")
+      pm.addNestedPass<mlir::func::FuncOp>(pulse::createPulseScheduleRcpPass(
+          maxDrives, maxReadouts, readoutLatency, switchPenalty,
+          policy == "alap_rcp"));
+    else
+      throw std::invalid_argument("unknown schedule policy: " + policy);
+  }
+
+  /// Bind `values` to the results of `wait`: the wait stays, so what it
+  /// feeds keeps waiting for it, and its results read as the values.
+  void bindConstants(classical::WaitOp wait,
+                     const std::vector<double> &values) {
+    std::vector<double> rounded(values);
+    for (auto [value, type] : llvm::zip(rounded, wait.getValues().getTypes()))
+      if (!mlir::isa<mlir::FloatType>(type))
+        value = std::round(value);
+    wait->setAttr("classical.answers",
+                  mlir::DenseF64ArrayAttr::get(ctx_.get(), rounded));
   }
 
   llvm::SmallVector<mlir::Operation *> readoutOps() {
@@ -2317,6 +2485,14 @@ NB_MODULE(_cudaq_pulse_native, m) {
       .def("events", &PulseModule::events,
            nb::call_guard<nb::gil_scoped_release>(),
            "(kind, line, qubit, start_vtu, duration_vtu) of each timed op")
+      .def("simulation_module", &PulseModule::simulation_module,
+           "This module with loops holding calls unrolled, for simulation")
+      .def("next_call", &PulseModule::next_call, nb::arg("path"),
+           "The first call on a path whose answer is not bound yet")
+      .def("bind_call", &PulseModule::bind_call,
+           "This module with one call's answer bound, scheduled again")
+      .def("placeholders", &PulseModule::placeholders,
+           "This module with unbound answers set to zero")
       .def("epoch_boundaries", &PulseModule::epoch_boundaries,
            "The variable and blocking waits that start new epochs")
       .def("classical_calls", &PulseModule::classical_calls,

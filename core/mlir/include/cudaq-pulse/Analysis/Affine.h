@@ -129,6 +129,71 @@ private:
   llvm::SmallVector<Term, 1> terms;
 };
 
+/// The answer simulation bound to `value`, a result of a `classical.wait`
+/// that carries `classical.answers`: the wait stays in the program, so what
+/// it feeds keeps its timing, and its results read as these constants.
+inline std::optional<double> boundAnswer(mlir::Value value) {
+  auto result = mlir::dyn_cast<mlir::OpResult>(value);
+  if (!result)
+    return std::nullopt;
+  mlir::Operation *op = result.getOwner();
+  if (op->getName().getStringRef() != "classical.wait")
+    return std::nullopt;
+  auto answers =
+      op->getAttrOfType<mlir::DenseF64ArrayAttr>("classical.answers");
+  if (!answers || result.getResultNumber() >= answers.size())
+    return std::nullopt;
+  return answers[result.getResultNumber()];
+}
+
+/// A number computed from constants and bound answers alone.
+inline std::optional<double> boundNumber(mlir::Value value) {
+  mlir::Attribute attribute;
+  if (mlir::matchPattern(value, mlir::m_Constant(&attribute))) {
+    if (auto number = mlir::dyn_cast<mlir::FloatAttr>(attribute))
+      return number.getValueAsDouble();
+    if (auto number = mlir::dyn_cast<mlir::IntegerAttr>(attribute))
+      return static_cast<double>(number.getInt());
+    return std::nullopt;
+  }
+  if (auto answer = boundAnswer(value))
+    return answer;
+  mlir::Operation *def = value.getDefiningOp();
+  if (!def || def->getNumRegions() != 0)
+    return std::nullopt;
+  llvm::StringRef name = def->getName().getStringRef();
+  if (def->getNumOperands() == 1) {
+    auto x = boundNumber(def->getOperand(0));
+    if (!x)
+      return std::nullopt;
+    if (name == "arith.negf")
+      return -*x;
+    if (name == "arith.fptosi")
+      return std::trunc(*x);
+    if (name == "arith.sitofp" || name == "arith.extui" ||
+        name == "arith.extsi" || name == "arith.trunci" ||
+        name == "arith.index_cast")
+      return *x;
+    return std::nullopt;
+  }
+  if (def->getNumOperands() != 2)
+    return std::nullopt;
+  auto a = boundNumber(def->getOperand(0)), b = boundNumber(def->getOperand(1));
+  if (!a || !b)
+    return std::nullopt;
+  if (name == "arith.addf" || name == "arith.addi")
+    return *a + *b;
+  if (name == "arith.subf" || name == "arith.subi")
+    return *a - *b;
+  if (name == "arith.mulf" || name == "arith.muli")
+    return *a * *b;
+  if (name == "arith.divf")
+    return *a / *b;
+  if (name == "arith.divsi" && *b != 0)
+    return std::trunc(*a / *b);
+  return std::nullopt;
+}
+
 /// `value` as an affine function of the entry function's arguments, if it
 /// is a constant, an argument, or arithmetic on them that stays affine.
 inline std::optional<Affine> affineNumber(mlir::Value value) {
@@ -140,6 +205,8 @@ inline std::optional<Affine> affineNumber(mlir::Value value) {
       return Affine(static_cast<double>(number.getInt()));
     return std::nullopt;
   }
+  if (auto answer = boundAnswer(value))
+    return Affine(*answer);
   if (auto argument = mlir::dyn_cast<mlir::BlockArgument>(value)) {
     mlir::Block *owner = argument.getOwner();
     if (owner->isEntryBlock() &&

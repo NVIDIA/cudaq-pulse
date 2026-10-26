@@ -71,6 +71,8 @@ struct Occurrence {
 };
 
 inline std::optional<double> constantNumber(mlir::Value value) {
+  if (auto answer = boundAnswer(value))
+    return answer;
   mlir::Attribute attribute;
   if (!mlir::matchPattern(value, mlir::m_Constant(&attribute)))
     return std::nullopt;
@@ -100,6 +102,24 @@ public:
   std::function<void(const Occurrence &)> onDrive;
   /// Called for every readout occurrence; returning true ends the walk.
   std::function<bool(const Occurrence &, const MeasurementKey &)> onReadout;
+  /// Called for every `classical.submit` occurrence; returning true ends
+  /// the walk. A branch on an answer no constant stands for yet is skipped,
+  /// like one on a measurement without an outcome: its arms run after the
+  /// answer is due.
+  std::function<bool(const Occurrence &)> onSubmit;
+
+  /// The readout whose measurement `value` is, if the walk has seen it.
+  std::optional<MeasurementKey> measurementKeyOf(mlir::Value value) const {
+    auto it = measurementOf.find(value);
+    if (it == measurementOf.end())
+      return std::nullopt;
+    return it->second;
+  }
+
+  /// A number computed from constants and bound answers alone.
+  static std::optional<double> number(mlir::Value value) {
+    return boundNumber(value);
+  }
 
   /// Walk `function`; on failure `errorOp` and `error` say why.
   bool run(mlir::func::FuncOp function) {
@@ -192,12 +212,26 @@ private:
       Occurrence occurrence;
       return timed(op, occurrence);
     }
+    if (name == "classical.submit") {
+      Occurrence occurrence;
+      if (!timed(op, occurrence))
+        return false;
+      if (onSubmit && onSubmit(occurrence))
+        stopped = true;
+      return true;
+    }
+    if (name == "classical.wait")
+      return true;
     if (name == "pulse.shift_phase" || name == "pulse.set_phase" ||
         name == "pulse.shift_frequency" || name == "pulse.set_frequency") {
       auto value = affineNumber(op->getOperand(1));
-      if (!value)
+      if (!value) {
+        // An answer not bound yet: the change happens after it is due.
+        if (pendingAnswer(op->getOperand(1)))
+          return true;
         return fail(op, "frame change is neither a constant nor affine in the "
                         "kernel's float arguments");
+      }
       ToneState &tone = toneOf(op->getOperand(0));
       if (name == "pulse.shift_phase")
         tone.phase += *value;
@@ -242,6 +276,26 @@ private:
     return true;
   }
 
+  /// Whether `value` is computed from an answer of a classical call that no
+  /// constant stands for yet.
+  static bool pendingAnswer(mlir::Value value) {
+    llvm::SmallVector<mlir::Value> work{value};
+    llvm::DenseSet<mlir::Value> seen;
+    while (!work.empty()) {
+      mlir::Value v = work.pop_back_val();
+      if (!seen.insert(v).second)
+        continue;
+      mlir::Operation *def = v.getDefiningOp();
+      if (!def)
+        continue;
+      if (def->getName().getStringRef() == "classical.wait")
+        return !def->hasAttr("classical.answers");
+      if (def->getNumRegions() == 0)
+        work.append(def->getOperands().begin(), def->getOperands().end());
+    }
+    return false;
+  }
+
   /// The value of a branch condition, computed from measurement outcomes.
   std::optional<int64_t> evaluate(mlir::Value value) {
     if (auto number = constantNumber(value))
@@ -249,6 +303,34 @@ private:
     mlir::Operation *def = value.getDefiningOp();
     if (!def)
       return std::nullopt;
+    if (auto cmp = mlir::dyn_cast<mlir::arith::CmpFOp>(def)) {
+      auto a = number(cmp.getLhs()), b = number(cmp.getRhs());
+      if (!a || !b)
+        return std::nullopt;
+      using P = mlir::arith::CmpFPredicate;
+      switch (cmp.getPredicate()) {
+      case P::OEQ:
+      case P::UEQ:
+        return *a == *b;
+      case P::ONE:
+      case P::UNE:
+        return *a != *b;
+      case P::OLT:
+      case P::ULT:
+        return *a < *b;
+      case P::OLE:
+      case P::ULE:
+        return *a <= *b;
+      case P::OGT:
+      case P::UGT:
+        return *a > *b;
+      case P::OGE:
+      case P::UGE:
+        return *a >= *b;
+      default:
+        return std::nullopt;
+      }
+    }
     auto outcome = [&](mlir::Value measurement) -> std::optional<int64_t> {
       auto key = measurementOf.find(measurement);
       if (key == measurementOf.end())
@@ -306,7 +388,7 @@ private:
     size_t known = undecided.size();
     auto taken = evaluate(branch.getCondition());
     if (!taken) {
-      if (undecided.size() > known)
+      if (undecided.size() > known || pendingAnswer(branch.getCondition()))
         return true;
       return fail(branch, "cannot evaluate this branch condition from "
                           "measurement outcomes");
