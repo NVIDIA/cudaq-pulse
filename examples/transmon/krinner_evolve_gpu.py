@@ -9,7 +9,7 @@
 """End-to-end GPU time evolution on the Krinner 17-qubit target.
 
 HARDWARE REQUIREMENT: This example requires an NVIDIA GPU and
-`pip install "cudaq-pulse[gpu]"`. If either is missing it raises an error
+the `[cu12]` or `[cu13]` extra. If either is missing it raises an error
 naming which one -- no silent fallback.
 
 Pipeline:

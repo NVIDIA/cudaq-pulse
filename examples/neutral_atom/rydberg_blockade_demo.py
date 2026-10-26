@@ -16,13 +16,10 @@ Demonstrates:
 When atoms are within the blockade radius (R_b), the interaction energy
 V = C6/r^6 >> Omega, preventing both atoms from being excited to |r>.
 This is the basis for Rydberg quantum gates.
-
-NOTE: Requires cudaq-pulse native C++ bindings (see README for build
-instructions).
 """
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets.rydberg import rydberg_chain
+from cudaq_pulse.targets import rydberg_chain
 
 RABI_MHZ = 4.0
 

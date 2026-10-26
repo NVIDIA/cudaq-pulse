@@ -11,7 +11,7 @@ Shows how to use the viz module to plot per-line Gantt charts of
 compiled pulse kernels — useful for debugging timing, identifying
 idle gaps, and verifying sync alignment.
 
-Requires matplotlib: pip install matplotlib
+Plots need matplotlib, from the viz extra: pip install "cudaq-pulse[viz]".
 """
 
 import cudaq_pulse as pulse
@@ -62,7 +62,7 @@ def main():
         print("\n  matplotlib figure created successfully.")
         print("  Save it with compiled.timeline().savefig('output.png').")
     except ImportError:
-        print("\n  matplotlib not installed. Install with: pip install matplotlib")
+        print("\n  matplotlib not installed. Install it with the viz extra: cudaq-pulse[viz]")
 
 
 if __name__ == "__main__":

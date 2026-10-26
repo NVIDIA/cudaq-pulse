@@ -10,22 +10,16 @@
 Shows qudits passed one by one and as a register (a slice of the device's
 handles), the sync primitive for cross-line coordination, and patterns for
 building multi-qubit pulse programs.
-
-NOTE: Requires cudaq-pulse native C++ bindings (see README for build
-instructions).
 """
 
 import cudaq_pulse as pulse
 
-# ── 1. Explicit multi-qudit allocation ───────────────────────────────────────
+# ── 1. Qudits passed one by one ──────────────────────────────────────────────
 
 
 @pulse.kernel
 def two_qubit_simultaneous(qubit_0, qubit_1):
-    """Drive two qubits simultaneously, then sync them.
-
-    Each qudit is allocated individually inside the kernel.
-    """
+    """Drive two qubits simultaneously, then sync them."""
 
     drive_line_0, tone_0 = get_drive_line(qubit_0)
     drive_line_1, tone_1 = get_drive_line(qubit_1)
@@ -39,12 +33,12 @@ def two_qubit_simultaneous(qubit_0, qubit_1):
     drive(drive_line_1, gaussian(40, 0.30, 10.0), tone_1)
 
 
-# ── 2. External allocation — qudits passed as arguments ──────────────────────
+# ── 2. Qudits and amplitudes as parameters ───────────────────────────────────
 
 
 @pulse.kernel
 def parametric_pi_half(qubit_0, qubit_1, amplitude_0, amplitude_1):
-    """Calibration-friendly: pass external qudit refs and amplitudes in."""
+    """Calibration-friendly: pass the qudits and their amplitudes in."""
     drive_line_0, tone_0 = get_drive_line(qubit_0)
     drive_line_1, tone_1 = get_drive_line(qubit_1)
 

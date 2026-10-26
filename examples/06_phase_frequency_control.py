@@ -10,9 +10,6 @@
 Demonstrates shift_phase, set_phase, shift_frequency, set_frequency —
 the four tone-modification primitives that control the rotating frame
 of a drive or readout channel.
-
-NOTE: Requires cudaq-pulse native C++ bindings (see README for build
-instructions).
 """
 
 import math

@@ -10,9 +10,6 @@
 Implements the Hahn echo sequence: pi/2 - tau - pi - tau - pi/2,
 which refocuses dephasing due to static frequency detuning and
 low-frequency noise.
-
-NOTE: Requires cudaq-pulse native C++ bindings (see README for build
-instructions).
 """
 
 import cudaq_pulse as pulse

@@ -7,6 +7,7 @@
 # ============================================================================ #
 """Every example that needs no GPU runs to completion."""
 
+import ast
 import os
 import runpy
 from pathlib import Path
@@ -32,3 +33,37 @@ def test_example_runs(path, monkeypatch, capsys):
     monkeypatch.syspath_prepend(str(path.parent))
     runpy.run_path(str(path), run_name="__main__")
     assert capsys.readouterr().out
+
+
+_INDEXES = [_EXAMPLES / "README.md", _EXAMPLES.parent / "docs" / "examples.rst"]
+
+
+@pytest.mark.parametrize("index", _INDEXES, ids=lambda p: p.name)
+def test_the_example_indexes_list_every_example(index):
+    if not index.exists():
+        pytest.skip("needs the source tree")
+    text = index.read_text()
+    scripts = sorted(_EXAMPLES.rglob("*.py"))
+    assert scripts
+    assert [p.name for p in scripts if p.name not in text] == []
+
+
+def test_the_readme_says_which_examples_simulate_and_need_a_gpu():
+    readme = _EXAMPLES / "README.md"
+    if not readme.exists():
+        pytest.skip("needs the source tree")
+    rows = {}
+    for line in readme.read_text().splitlines():
+        if line.startswith("| [`") and line.count("|") == 4:
+            name = line.split("`")[1].rstrip("/")
+            rows[name] = line.rsplit("|", 2)[1]
+    for path in _EXAMPLES.rglob("*.py"):
+        calls = {
+            node.func.attr
+            for node in ast.walk(ast.parse(path.read_text()))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
+        row = rows[str(path.relative_to(_EXAMPLES))]
+        gpu = path.name in _GPU_ONLY
+        assert row.strip().startswith("GPU") == gpu, path.name
+        assert ("simulates" in row) == (not gpu and "simulate" in calls), path.name

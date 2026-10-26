@@ -5,17 +5,23 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""T1/T2 measurement with Lindblad dissipator.
+"""T1/T2 measurement with Lindblad dissipators.
 
-Prepares a qubit, applies a wait period, and measures, compiling each
-experiment with ``pulse.compile()``. ``pulse.simulate()`` adds Lindblad
-dissipators from a target's T1/T2 calibration when it lowers a kernel.
-
-NOTE: Requires cudaq-pulse native C++ bindings (see README for build
-instructions).
+Prepares a qubit, waits, and measures. ``pulse.simulate()`` evolves each
+compiled experiment with the Lindblad dissipators of the target's T1 and T2
+and the qubit's thermal population, on the CPU. The T1 sweep is simulated
+and compared with the exponential decay T1 predicts; the Ramsey and echo
+experiments are compiled and printed.
 """
 
+import math
+
 import cudaq_pulse as pulse
+
+# DRAG pulses of 40 clock cycles (20 ns) with sigma = 10 cycles, calibrated
+# for the 17-qubit transmon device's drive scale.
+PI_AMPLITUDE = 0.26
+HALF_PI_AMPLITUDE = 0.13
 
 
 @pulse.kernel
@@ -27,7 +33,7 @@ def t1_experiment(qubit, wait_time):
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
 
-    x_pulse = drag(40, 0.5, 10.0, 0.5)
+    x_pulse = drag(40, PI_AMPLITUDE, 10.0, 0.5)
     drive(drive_line, x_pulse, drive_tone)
 
     wait(drive_line, wait_time)
@@ -42,7 +48,7 @@ def t2_ramsey(qubit, tau):
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
 
-    half_pi = drag(40, 0.25, 10.0, 0.5)
+    half_pi = drag(40, HALF_PI_AMPLITUDE, 10.0, 0.5)
 
     drive(drive_line, half_pi, drive_tone)
     wait(drive_line, tau)
@@ -58,8 +64,8 @@ def t2_echo(qubit, tau):
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
 
-    half_pi = drag(40, 0.25, 10.0, 0.5)
-    pi_pulse = drag(40, 0.50, 10.0, 0.5)
+    half_pi = drag(40, HALF_PI_AMPLITUDE, 10.0, 0.5)
+    pi_pulse = drag(40, PI_AMPLITUDE, 10.0, 0.5)
     half_tau = tau / 2
 
     drive(drive_line, half_pi, drive_tone)
@@ -74,18 +80,31 @@ def t2_echo(qubit, tau):
 
 if __name__ == "__main__":
     dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
-    print("=== T1 experiment (sweep wait times) ===")
-    for tau in [100, 500, 1000, 5000, 10000]:
-        compiled_kernel = pulse.compile(t1_experiment, device=dev).lower(dev.qudit_handles[0], tau)
-        print(f"  tau={tau:6d} VTU: compiled in {compiled_kernel.metrics.total_ms:.3f} ms")
+    qubit = dev.qudit_handles[0]
+    spec = dev.target.qubits[0]
+    t1_ns = spec.t1_us * 1e3
+    print(f"=== T1 experiment on {spec.label} (T1 = {spec.t1_us:.1f} us), CPU simulation ===")
+    t1 = pulse.compile(t1_experiment, device=dev)
+    first = None
+    for wait_cycles in [0, 4000, 10000, 20000]:
+        # A 0.5 ns step (one clock cycle) resolves these pulses and keeps
+        # the long waits fast.
+        result = pulse.simulate(t1.lower(qubit, wait_cycles), dt_ns=0.5)
+        p1 = result.density_matrix[1, 1].real
+        readout_ns = result.measurements[0].start_ns
+        if first is None:
+            first = (readout_ns, p1)
+        p0 = spec.thermal_population
+        expected = p0 + (first[1] - p0) * math.exp(-(readout_ns - first[0]) / t1_ns)
+        print(
+            f"  wait={wait_cycles:6d} clock cycles: P(1) = {p1:.3f}"
+            f"  (T1 decay predicts {expected:.3f})"
+        )
 
     print("\n=== T2* Ramsey (tau=500) ===")
-    compiled_kernel = pulse.compile(t2_ramsey, device=dev).lower(dev.qudit_handles[0], 500)
+    compiled_kernel = pulse.compile(t2_ramsey, device=dev).lower(qubit, 500)
     print(compiled_kernel.mlir())
 
     print("\n=== T2 Echo (tau=1000) ===")
-    compiled_kernel = pulse.compile(t2_echo, device=dev).lower(dev.qudit_handles[0], 1000)
+    compiled_kernel = pulse.compile(t2_echo, device=dev).lower(qubit, 1000)
     print(compiled_kernel.mlir())
-
-    # pulse.simulate(...) adds the device's T1/T2 Lindblad
-    # dissipators when it lowers a kernel; see examples/transmon/krinner_evolve_gpu.py.

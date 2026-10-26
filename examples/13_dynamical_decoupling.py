@@ -10,9 +10,6 @@
 Each sequence uses a different refocusing pattern to suppress different
 noise spectra. All three use for-loops that capture as rolled scf.for ops
 in the IR — demonstrating the kernel's loop-capture capability.
-
-NOTE: Requires cudaq-pulse native C++ bindings (see README for build
-instructions).
 """
 
 import math

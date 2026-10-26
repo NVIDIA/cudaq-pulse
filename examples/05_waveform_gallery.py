@@ -9,10 +9,9 @@
 
 Demonstrates all 8 built-in waveform constructors and the 5 algebraic
 combinators (add, sub, mul, scale, neg) available inside a pulse kernel.
-
-NOTE: Requires cudaq-pulse native C++ bindings (see README for build
-instructions).
 """
+
+import math
 
 import cudaq_pulse as pulse
 
@@ -84,21 +83,38 @@ def waveform_algebra(qubit):
 # ── 3. Composing complex envelopes ───────────────────────────────────────────
 
 
-@pulse.kernel
-def derivative_pulse(qubit, sigma, amplitude, beta):
-    """DRAG-like pulse built manually: Gaussian + beta * d/dt(Gaussian).
+DERIVATIVE_DURATION = 40
+DERIVATIVE_SIGMA = 10.0
+DERIVATIVE_AMPLITUDE = 0.3
 
-    Shows how waveform algebra composes arbitrary envelopes from primitives.
+
+def gaussian_derivative_samples(duration, amplitude, sigma):
+    """d/dt of a Gaussian centered in *duration*, one sample per clock cycle."""
+    center = (duration - 1) / 2
+    return [
+        -amplitude * (t - center) / sigma**2 * math.exp(-((t - center) ** 2) / (2 * sigma**2))
+        for t in range(duration)
+    ]
+
+
+DERIVATIVE = gaussian_derivative_samples(
+    DERIVATIVE_DURATION, DERIVATIVE_AMPLITUDE, DERIVATIVE_SIGMA
+)
+
+
+@pulse.kernel
+def derivative_pulse(qubit, beta: float):
+    """A Gaussian plus beta times its time derivative, built by hand.
+
+    The derivative is sampled in Python and enters the kernel through
+    ``custom_samples``; waveform algebra adds it to the built-in Gaussian.
+    The sampled correction is in phase with the Gaussian; ``drag()`` puts
+    the same correction on the quadrature, as the DRAG scheme needs.
     """
     drive_line, tone = get_drive_line(qubit)
-    dur = 40
 
-    base = gaussian(dur, amplitude, sigma)
-    derivative_approx = wf_sub(
-        gaussian(dur, amplitude, sigma),
-        gaussian(dur, amplitude, sigma),
-    )
-    correction = wf_scale(derivative_approx, beta)
+    base = gaussian(DERIVATIVE_DURATION, DERIVATIVE_AMPLITUDE, DERIVATIVE_SIGMA)
+    correction = wf_scale(custom_samples(DERIVATIVE), beta)
     final_envelope = wf_add(base, correction)
 
     drive(drive_line, final_envelope, tone)
@@ -116,8 +132,6 @@ if __name__ == "__main__":
     print(compiled_kernel.mlir())
 
     print("\n=== Derivative Pulse ===")
-    compiled_kernel = pulse.compile(derivative_pulse, device=dev).lower(
-        dev.qudit_handles[0], 10.0, 0.3, 0.5
-    )
+    compiled_kernel = pulse.compile(derivative_pulse, device=dev).lower(dev.qudit_handles[0], 0.5)
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

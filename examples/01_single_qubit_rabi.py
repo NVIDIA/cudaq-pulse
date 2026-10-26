@@ -7,28 +7,18 @@
 # ============================================================================ #
 """Single-qubit Rabi oscillation.
 
-Drives a qubit with a square pulse of varying amplitude to trace out
-Rabi oscillations. The simplest end-to-end example: qudit handles from a
-device, a float parameter that stays symbolic across a sweep, and a kernel
-that allocates its qudit itself and is pinned to a device.
-
-NOTE: Requires cudaq-pulse native C++ bindings (see README for build
-instructions).
+Drives a qubit with a square pulse of varying amplitude and simulates each
+amplitude on the CPU to trace out the Rabi oscillation. The simplest
+end-to-end example: qudit handles from a device, a float parameter that stays
+symbolic across a sweep, and the same kernel compiled for a pinned device.
 """
 
 import cudaq_pulse as pulse
 
 
 @pulse.kernel
-def rabi_external(qubit, duration: int, amplitude: float):
-    """Rabi with qudit allocated externally and passed in."""
-    drive_line, tone = get_drive_line(qubit)
-    drive(drive_line, square(duration, amplitude), tone)
-
-
-@pulse.kernel
-def rabi_internal(qubit, duration: int, amplitude: float):
-    """Rabi with qudit allocated inside the kernel."""
+def rabi(qubit, duration: int, amplitude: float):
+    """Drive *qubit* with a square pulse."""
     drive_line, tone = get_drive_line(qubit)
     drive(drive_line, square(duration, amplitude), tone)
 
@@ -47,28 +37,23 @@ def rabi_with_readout(qubit, duration, amplitude):
 
 if __name__ == "__main__":
     dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
-    print("=== External allocation ===")
     qubit = dev.qudit_handles[0]
-    compiled_kernel = rabi_external.lower(qubit, 100, 0.5)
+
+    print("=== Compiled for the qubit's device ===")
+    compiled_kernel = rabi.lower(qubit, 100, 0.5)
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
-    print("\n=== Internal allocation ===")
-    compiled_kernel = pulse.compile(rabi_internal, device=dev).lower(dev.qudit_handles[0], 100, 0.5)
-    print(compiled_kernel.mlir())
-
-    print("\n=== Amplitude sweep (Rabi oscillation) ===")
-    sweep = pulse.compile(rabi_external)
-    for amplitude in [0.1, 0.2, 0.3, 0.4, 0.5]:
+    print("\n=== Amplitude sweep (Rabi oscillation, CPU simulation) ===")
+    # Pinning the device compiles for it ahead of the call.
+    sweep = pulse.compile(rabi, device=dev)
+    for amplitude in [0.0, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12]:
         compiled_kernel = sweep.lower(qubit, 100, amplitude)
-        print(
-            f"  amplitude={amplitude:.1f}: specialized in {compiled_kernel.metrics.total_ms:.3f} ms"
-        )
+        p1 = pulse.simulate(compiled_kernel).density_matrix[1, 1].real
+        print(f"  amplitude={amplitude:.2f}: P(1) = {p1:.3f}")
     print(f"  compiled {sweep.cache_info().compiled} time(s) for the whole sweep")
 
     print("\n=== With readout ===")
-    compiled_kernel = pulse.compile(rabi_with_readout, device=dev).lower(
-        dev.qudit_handles[0], 100, 0.5
-    )
+    compiled_kernel = rabi_with_readout.lower(qubit, 100, 0.5)
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

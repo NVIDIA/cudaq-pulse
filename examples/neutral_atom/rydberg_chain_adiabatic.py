@@ -17,13 +17,10 @@ Demonstrates:
 The adiabatic protocol starts with large negative detuning (all atoms in |g>),
 ramps through resonance, and ends at large positive detuning to prepare a
 many-body ordered state (Z2 antiferromagnet for appropriate spacing).
-
-NOTE: Requires cudaq-pulse native C++ bindings (see README for build
-instructions).
 """
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets.rydberg import rydberg_chain
+from cudaq_pulse.targets import rydberg_chain
 
 N_ATOMS = 7
 SPACING_UM = 6.0
@@ -50,51 +47,35 @@ print(f"Dissipators: {len(diss_terms)} terms")
 RAMP_STEPS = 20
 STEP_DURATION = 50
 amplitude = chain.global_rabi_mhz / 10.0
+# The detuning ramps linearly from -DETUNING_HZ to +DETUNING_HZ, in steps.
+DETUNING_HZ = 2.5 * chain.global_rabi_mhz * 1e6
+DETUNING_STEP_HZ = 2 * DETUNING_HZ / (RAMP_STEPS - 1)
 
 
 @pulse.kernel
-def rydberg_adiabatic(qubit_0, qubit_1, qubit_2, qubit_3, qubit_4, qubit_5, qubit_6):
-    drive_line_0, tone_0 = get_drive_line(qubit_0)
-    drive_line_1, tone_1 = get_drive_line(qubit_1)
-    drive_line_2, tone_2 = get_drive_line(qubit_2)
-    drive_line_3, tone_3 = get_drive_line(qubit_3)
-    drive_line_4, tone_4 = get_drive_line(qubit_4)
-    drive_line_5, tone_5 = get_drive_line(qubit_5)
-    drive_line_6, tone_6 = get_drive_line(qubit_6)
+def rydberg_adiabatic(atoms):
+    """Drive every atom of *atoms* while the detuning sweeps through resonance."""
+    lines = [get_drive_line(atom) for atom in atoms]
+
+    for _, tone in lines:
+        shift_frequency(tone, -DETUNING_HZ)
 
     for step in range(RAMP_STEPS):
-        pulse_0 = square(STEP_DURATION, complex(amplitude, 0))
-        drive(drive_line_0, pulse_0, tone_0)
-        pulse_1 = square(STEP_DURATION, complex(amplitude, 0))
-        drive(drive_line_1, pulse_1, tone_1)
-        pulse_2 = square(STEP_DURATION, complex(amplitude, 0))
-        drive(drive_line_2, pulse_2, tone_2)
-        pulse_3 = square(STEP_DURATION, complex(amplitude, 0))
-        drive(drive_line_3, pulse_3, tone_3)
-        pulse_4 = square(STEP_DURATION, complex(amplitude, 0))
-        drive(drive_line_4, pulse_4, tone_4)
-        pulse_5 = square(STEP_DURATION, complex(amplitude, 0))
-        drive(drive_line_5, pulse_5, tone_5)
-        pulse_6 = square(STEP_DURATION, complex(amplitude, 0))
-        drive(drive_line_6, pulse_6, tone_6)
-
+        for line, tone in lines:
+            drive(line, square(STEP_DURATION, complex(amplitude, 0)), tone)
         if step < RAMP_STEPS - 1:
-            sync(
-                drive_line_0,
-                drive_line_1,
-                drive_line_2,
-                drive_line_3,
-                drive_line_4,
-                drive_line_5,
-                drive_line_6,
-            )
+            sync(*[line for line, _ in lines])
+            for _, tone in lines:
+                shift_frequency(tone, DETUNING_STEP_HZ)
 
 
-frequency = chain.global_rabi_mhz * 1e6
 dev = pulse.device({"target": f"rydberg_chain:{N_ATOMS}"})
-compiled_kernel = pulse.compile(rydberg_adiabatic, device=dev).lower(*dev.qudit_handles[:N_ATOMS])
+compiled_kernel = pulse.compile(rydberg_adiabatic, device=dev).lower(dev.qudit_handles[:N_ATOMS])
 
-print(f"\nSweep time: {RAMP_STEPS * STEP_DURATION} VTU")
+print(
+    f"\nSweep: {RAMP_STEPS} steps of {STEP_DURATION} clock cycles, detuning "
+    f"{-DETUNING_HZ / 1e6:+.1f} MHz to {DETUNING_HZ / 1e6:+.1f} MHz"
+)
 print(compiled_kernel.mlir())
 
 metrics = compiled_kernel.metrics

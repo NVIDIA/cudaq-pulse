@@ -9,9 +9,6 @@
 
 Shows how to use readout channels and acquire IQ data, and how an ``if`` on a
 measurement result is kept as a conditional region in the kernel IR.
-
-NOTE: Requires cudaq-pulse native C++ bindings (see README for build
-instructions).
 """
 
 import math

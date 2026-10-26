@@ -8,12 +8,15 @@
 Examples
 ========
 
-cudaq-pulse includes a comprehensive set of examples demonstrating
-pulse-level quantum programming, from single-qubit Rabi oscillations
-to multi-qubit QEC circuits.
+The examples in the ``examples/`` directory cover pulse-level programming
+from single-qubit Rabi oscillations to multi-qubit error-correction cycles.
+Every example except ``transmon/krinner_evolve_gpu.py`` runs on a CPU-only
+machine, Linux or macOS, and the test suite runs each of them. Those marked
+*(simulates)* also evolve the program with the NumPy reference
+(``pulse.simulate``); the others compile kernels and print their MLIR,
+schedules or metrics. Numbers 11 and 15 were removed and are not reused.
 
-All examples are in the ``examples/`` directory and use the canonical
-import convention:
+All examples use the canonical import convention:
 
 .. :spellcheck-disable:
 
@@ -35,13 +38,13 @@ Core Examples
      - Description
    * - 01
      - ``01_single_qubit_rabi.py``
-     - Single-qubit Rabi oscillation with a square pulse of varying amplitude
+     - Rabi oscillation: an amplitude sweep that compiles once *(simulates)*
    * - 02
      - ``02_two_qubit_cross_resonance.py``
      - Two-qubit CNOT via echoed cross-resonance driving
    * - 03
      - ``03_t1_t2_dissipator.py``
-     - T1, Ramsey and Hahn-echo experiment kernels
+     - T1 decay against its prediction; Ramsey and Hahn-echo kernels *(simulates)*
    * - 04
      - ``04_hahn_echo.py``
      - Canonical Hahn spin-echo sequence (pi/2 - tau - pi - tau - pi/2)
@@ -56,10 +59,10 @@ Core Examples
      - Multi-qubit programs with sync and registers of qudit handles
    * - 08
      - ``08_readout_and_branching.py``
-     - Readout channels and measurement-conditioned branching
+     - Readout channels and measurement-conditioned branching *(simulates)*
    * - 09
      - ``09_compilation_pipeline.py``
-     - ``pulse.compile()`` and ``lower()`` walkthrough with pass customization
+     - ``pulse.compile()`` and ``lower()`` walkthrough of the compiler stages
    * - 10
      - ``10_scheduling_comparison.py``
      - Side-by-side ASAP, ALAP, and RCP scheduling on a 4-qubit kernel
@@ -71,10 +74,10 @@ Core Examples
      - XY4, Uhrig, and CPMG dynamical decoupling sequences
    * - 14
      - ``14_randomized_benchmarking.py``
-     - Single-qubit randomized benchmarking with Clifford decomposition
+     - Randomized benchmarking: random Cliffords and their inverse *(simulates)*
    * - 16
      - ``16_visualization.py``
-     - Pulse schedule visualization with matplotlib Gantt charts
+     - Schedule timelines; matplotlib plots with the ``[viz]`` extra
    * - 17
      - ``17_ghz_state_prep.py``
      - N-qubit GHZ state preparation using echoed cross-resonance CNOTs
@@ -83,10 +86,10 @@ Core Examples
      - Per-kernel ASAP and ALAP policies in a stabilizer cycle with
        dynamical decoupling, compared with one flat schedule
 
-Hardware Target Examples
-------------------------
+Custom Passes
+-------------
 
-**Custom passes** (``examples/custom_passes/``):
+``examples/custom_passes/``:
 
 .. list-table::
    :header-rows: 1
@@ -101,6 +104,9 @@ Hardware Target Examples
 
 See :doc:`user_guide/custom_passes`.
 
+Hardware Target Examples
+------------------------
+
 **Transmon** (``examples/transmon/``):
 
 .. list-table::
@@ -114,11 +120,13 @@ See :doc:`user_guide/custom_passes`.
    * - ``krinner_full_pipeline.py``
      - Each stage of the native lowering: Pulse MLIR, QOp, and LLVM IR
    * - ``krinner_evolve_gpu.py``
-     - ``pulse.simulate(..., backend="gpu")`` on the Krinner target
+     - ``pulse.simulate(..., backend="gpu")`` on the Krinner target (needs an
+       NVIDIA GPU and the ``[cu12]`` or ``[cu13]`` extra)
    * - ``krinner_surface_code_cycle.py``
      - Timeline of one error correction cycle from the Krinner lattice and CZ schedule
 
-**Neutral Atom** (``examples/neutral_atom/``):
+**Neutral Atom** (``examples/neutral_atom/``). The neutral-atom targets
+compile only; simulating them is not supported yet.
 
 .. list-table::
    :header-rows: 1
@@ -129,7 +137,7 @@ See :doc:`user_guide/custom_passes`.
    * - ``rydberg_blockade_demo.py``
      - Two-atom Rydberg blockade interaction
    * - ``rydberg_chain_adiabatic.py``
-     - Adiabatic sweep on a 1D Rydberg atom chain
+     - Adiabatic detuning sweep on a 1D Rydberg atom chain
 
 Running Examples
 ----------------

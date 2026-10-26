@@ -11,11 +11,8 @@ Creates the N-qubit GHZ state |000...0> + |111...1> using:
   1. A pi/2 pulse on qubit 0
   2. A chain of echoed cross-resonance CNOT gates: (0,1), (1,2), ..., (N-2,N-1)
 
-Demonstrates multi-qubit pulse programming with internal allocation,
-sync barriers, and the cross-resonance gate primitive.
-
-NOTE: Requires cudaq-pulse native C++ bindings (see README for build
-instructions).
+Demonstrates multi-qubit pulse programming with qudit handles, sync
+barriers, and the cross-resonance gate primitive.
 """
 
 import cudaq_pulse as pulse
@@ -68,7 +65,6 @@ def ghz_n(qubit_0, qubit_1, qubit_count):
 
     The outer structure: H on qubit_0, then CNOT chain.
     The for-loop demonstrates loop capture for repeated gate patterns.
-    Qubit allocation is inside the kernel.
     """
 
     drive_line_0, tone_0 = get_drive_line(qubit_0)
