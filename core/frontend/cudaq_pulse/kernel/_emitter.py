@@ -160,6 +160,9 @@ def _uses_pulse_ops(fn: types.FunctionType, seen: set[int] | None = None) -> boo
     seen.add(id(fn))
 
     closures = _extract_closures(fn) if fn.__closure__ else {}
+    # A helper that submits to a classical function emits IR when traced.
+    if "submit" in fn.__code__.co_names:
+        return True
     for name in (*fn.__code__.co_names, *fn.__code__.co_freevars):
         if name in _PULSE_OP_NAMES:
             return True

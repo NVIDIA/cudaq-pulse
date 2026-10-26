@@ -1,0 +1,33 @@
+{
+  "about": "Wire facts of the CUDA-Q Realtime messaging protocol and the CUDA-QX decoder messages, copied from public sources as test fixtures. cudaq-pulse does not depend on either project.",
+  "sources": {
+    "cuda-quantum": {"repository": "https://github.com/NVIDIA/cuda-quantum", "commit": "de8b70540bf0c9f2822a63b06b682ad0caf5ef5d",
+                     "files": ["realtime/include/cudaq/realtime/daemon/dispatcher/rpc_wire_format.h",
+                               "realtime/include/cudaq/realtime/daemon/dispatcher/cudaq_realtime.h",
+                               "realtime/docs/cudaq_realtime_message_protocol.md"]},
+    "cudaqx": {"repository": "https://github.com/NVIDIA/cudaqx", "commit": "d9f3870336d326af3dc4a929652150497092be2a",
+               "files": ["libs/qec/include/cudaq/qec/realtime/decoder_rpc_wire_format.h"]}
+  },
+  "header_bytes": 24,
+  "request_magic": 1129664850,
+  "response_magic": 1129664851,
+  "request_fields": ["magic:u32", "function_id:u32", "arg_len:u32", "request_id:u32", "ptp_timestamp:u64"],
+  "response_fields": ["magic:u32", "status:i32", "result_len:u32", "request_id:u32", "ptp_timestamp:u64"],
+  "payload_types": {"UINT8": 16, "INT32": 17, "INT64": 18, "FLOAT32": 19, "FLOAT64": 20,
+                    "ARRAY_UINT8": 32, "ARRAY_INT32": 33, "ARRAY_FLOAT32": 34, "ARRAY_FLOAT64": 35,
+                    "BIT_PACKED": 48},
+  "type_desc_bytes": 12,
+  "schema_limits": {"args": 8, "results": 4},
+  "protocol_examples": [
+    {"name": "process(int32 count, float threshold)", "arg_len": 8, "offsets": [24, 28]},
+    {"name": "decode(bits[128], uint32 num_bits)", "arg_len": 20, "offsets": [24, 40]},
+    {"name": "response uint8 = 3", "result_len": 1, "result_byte_24": 3},
+    {"name": "response uint8 + float32", "result_len": 5}
+  ],
+  "bit_packing": {"bits": [1, 0, 1, 1, 0, 0, 0, 1, 1, 1], "bytes": [141, 3]},
+  "cudaqx_decoder": {
+    "function_ids": {"enqueue_syndromes": 2128133762, "get_corrections": 2284673953, "reset_decoder": 2541377999},
+    "payload_bytes": {"enqueue_syndromes_header": 32, "get_corrections": 17, "reset_decoder": 8},
+    "status": {"OK": 0, "INVALID_DECODER": 1, "BAD_REQUEST": 2, "INTERNAL_ERROR": 3, "NOT_READY": 4, "BUSY": 5, "SYNDROMES_DROPPED": 6}
+  }
+}

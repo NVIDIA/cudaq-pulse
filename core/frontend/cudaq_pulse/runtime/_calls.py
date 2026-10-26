@@ -230,7 +230,10 @@ def simulate_tree(
                     f"no handler for classical function {callee!r}; "
                     f"pass handlers={{{callee!r}: ...}}"
                 )
-            answer = handler(*inputs)
+            if getattr(handler, "takes_history", False):
+                answer = handler(*inputs, history=calls)
+            else:
+                answer = handler(*inputs)
             if not answered:
                 calls_here = [*calls, CallRecord(callee, start, inputs, answer, True)]
                 run(
