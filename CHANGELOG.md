@@ -70,7 +70,11 @@ behavior may change in any 0.x release.
   and any number of transmon levels, either with a NumPy reference
   integrator (`backend="cpu"`) or on NVIDIA GPUs through cuDensityMat
   (`backend="gpu"`, Linux, experimental). Programs that measure and branch
-  are evolved as an exact ensemble over outcomes.
+  are evolved as an exact ensemble over outcomes. The simulated space holds
+  only the qudits the program gets a line on, whatever their device indices
+  (a pair at qudits 13 and 3 is a two-mode problem); `SimulationResult.qudits`
+  and `Lowered.qudits` give the device qudit of each mode, and the other
+  qudits are classical spectators.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
   `CompiledKernel`, `Lowered`, `simulate`, `SimulationResult`, `device`,
   `get_device`, `Device`, `Qudit`, `Register`, `Target`,

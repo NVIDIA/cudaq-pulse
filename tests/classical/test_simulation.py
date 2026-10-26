@@ -391,3 +391,18 @@ def test_gpu_simulation_of_calls_matches_the_cpu(case):
     gpu = pulse.simulate(lowered, backend="gpu", **kwargs)
     assert _by_outcome(gpu) == pytest.approx(_by_outcome(cpu), abs=1e-6)
     assert np.allclose(gpu.density_matrix, cpu.density_matrix, atol=1e-6)
+
+
+def test_calls_on_a_high_index_qudit_use_its_mode():
+    dev = _device(n=3, readout_params={"error_1to0": 0.1})
+    q = dev.qudit_handles[2]
+    a = pulse.simulate(pulse.compile(active_reset, device=dev).lower(q), initial_state=PLUS)
+    b = pulse.simulate(pulse.compile(decoded_reset, device=dev).lower(q), initial_state=PLUS)
+    assert b.qudits == (2,)
+    assert b.measurements[0].qudit == 2
+    assert _by_outcome(b) == pytest.approx(_by_outcome(a), abs=1e-9)
+    assert np.allclose(b.density_matrix, a.density_matrix, atol=1e-9)
+    modelled = pulse.simulate(
+        pulse.compile(decoded_reset, device=dev).lower(q), initial_state=PLUS, readout="model"
+    )
+    assert _by_outcome(modelled)[(0,)] == pytest.approx(0.5 + 0.5 * 0.1, abs=1e-6)

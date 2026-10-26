@@ -5,7 +5,7 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""Compile-time regression guard across the benchmark tiers.
+"""Compile-time and simulation-memory regression guard.
 
 Skipped unless ``--run-benchmarks`` is given. Each case is timed best-of-N
 and divided by a pure-Python calibration loop timed in the same process, so
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -183,3 +184,51 @@ def test_verify_time_is_linear_in_unused_lines():
 
     small, large = verify_ms(500), verify_ms(2000)
     assert large < small * 4 * FLAT_LOOP_LIMIT, (small, large)
+
+
+# Peak memory a simulation of two qutrits may add: their 9 x 9 density matrix
+# and operators are tiny, so this only fails if the space grows with the
+# qudits' indices (3^14 states for qudits 13 and 3).
+SIMULATE_MEMORY_LIMIT_MB = 64
+
+_SIMULATE_PAIRS = """
+import json, resource, sys
+import cudaq_pulse as pulse
+
+q = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).qudit_handles
+
+
+@pulse.kernel
+def pair(a, b):
+    da, ta = get_drive_line(a)
+    db, tb = get_drive_line(b)
+    drive(da, gaussian(40, 0.08, 10.0), ta)
+    drive(db, gaussian(40, 0.03, 10.0), tb)
+
+
+scale = 1 if sys.platform == "darwin" else 1024
+growth = {}
+for a, b in json.loads(sys.argv[1]):
+    lowered = pair.lower(q[a], q[b])
+    before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    result = pulse.simulate(lowered, levels=3, t_end=2.0)
+    after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    growth[f"{a},{b}"] = [list(result.dims), (after - before) * scale / 2**20]
+print(json.dumps(growth))
+"""
+
+
+def test_simulating_a_high_index_pair_takes_little_memory(tmp_path):
+    script = tmp_path / "simulate_pairs.py"
+    script.write_text(_SIMULATE_PAIRS)
+    pairs = [(13, 3), (16, 8), (9, 1)]
+    out = subprocess.run(
+        [sys.executable, str(script), json.dumps(pairs)],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=300,
+    )
+    growth = json.loads(out.stdout)
+    assert {k: dims for k, (dims, _) in growth.items()} == {f"{a},{b}": [3, 3] for a, b in pairs}
+    assert all(mb < SIMULATE_MEMORY_LIMIT_MB for _, mb in growth.values()), growth

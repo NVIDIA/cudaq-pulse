@@ -149,6 +149,7 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
     @pulse.kernel
     def idle(q0, q1):
         d0, t0 = get_drive_line(q0)
+        get_drive_line(q1)  # simulate the idle partner
         drive(d0, square(2, 0.0), t0)
 
     lowered = on(pair_target, idle, Q[0], Q[1])

@@ -181,8 +181,11 @@ def simulate_tree(
     readout: ReadoutModel | None,
     latency_branching: bool,
     clock_ghz: float,
+    modes: Mapping[int, int],
 ) -> tuple[list[_Leaf], dict[tuple[int, tuple[int, ...]], Any]]:
-    """Walk every path; returns the leaves and the measurements seen."""
+    """Walk every path; returns the leaves and the measurements seen.
+
+    *modes* gives the state's mode of each device qudit."""
     by_name = {f.name: f for f in functions}
     seen: dict[tuple[int, tuple[int, ...]], Any] = {}
     leaves: list[_Leaf] = []
@@ -289,7 +292,8 @@ def simulate_tree(
         index, iteration, qudit, start, end = found
         key = (index, tuple(iteration))
         seen[key] = (index, tuple(iteration), qudit, start, end)
-        projected = [engine.project(state, dims, qudit, k) for k in range(dims[qudit])]
+        m = modes[qudit]
+        projected = [engine.project(state, dims, m, k) for k in range(dims[m])]
         weights = np.array([engine.weight(s) for s in projected]) * weight
         branches: list[tuple[int, Any, float]] = []
         for k, (branch, w) in enumerate(zip(projected, weights)):
@@ -298,7 +302,7 @@ def simulate_tree(
             if readout is None:
                 branches.append((k, branch, 1.0))
             else:
-                for r, p in readout.reports(qudit, k):
+                for r, p in readout.reports(m, k):
                     branches.append((r, branch, p))
         probabilities = np.array(
             [engine.weight(b) * p * weight for _, b, p in branches], dtype=float

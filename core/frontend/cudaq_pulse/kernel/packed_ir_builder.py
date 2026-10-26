@@ -195,6 +195,7 @@ class PackedIRBuilder:
         self._next_qubit = 0
         self._op_count = 0
         self._qref_to_qubit: dict[int, int] = {}
+        self._line_qubit: dict[int, int] = {}  # line vid → qudit
         self._param_vids: dict[int, int] = {}  # Parameter.index → vid
         self._param_names: dict[int, str] = {}  # Parameter.index → name
         # Key by the expression object itself, not id(expression): temporary
@@ -263,6 +264,7 @@ class PackedIRBuilder:
         if kind == "pulse.get_drive_line":
             qref_vid = operands[0].vid if operands else None
             qubit = self._qref_to_qubit.get(qref_vid, 0) if qref_vid is not None else 0
+            self._line_qubit[results[0].vid] = qubit
             self._ensure(4)
             self._w(_header(_ALLOC_DRIVE, 3))
             self._w(qubit)
@@ -274,6 +276,7 @@ class PackedIRBuilder:
         if kind == "pulse.get_readout_line":
             qref_vid = operands[0].vid if operands else None
             qubit = self._qref_to_qubit.get(qref_vid, 0) if qref_vid is not None else 0
+            self._line_qubit[results[0].vid] = qubit
             self._ensure(4)
             self._w(_header(_ALLOC_READOUT, 3))
             self._w(qubit)
@@ -848,6 +851,8 @@ class PackedIRBuilder:
             del self.readouts[vid]
         for vid in [vid for vid in self._qref_to_qubit if vid >= live]:
             del self._qref_to_qubit[vid]
+        for vid in [vid for vid in self._line_qubit if vid >= live]:
+            del self._line_qubit[vid]
         for index in [i for i, vid in self._param_vids.items() if vid >= live]:
             del self._param_vids[index]
             self._param_names.pop(index, None)
@@ -1080,6 +1085,11 @@ class PackedIRBuilder:
     def qubits(self) -> tuple[int, ...]:
         """Indices of the allocated qudits."""
         return tuple(sorted(set(self._qref_to_qubit.values())))
+
+    @property
+    def used_qubits(self) -> tuple[int, ...]:
+        """Indices of the qudits the program gets a drive or readout line on."""
+        return tuple(sorted(set(self._line_qubit.values())))
 
     @property
     def op_count(self) -> int:

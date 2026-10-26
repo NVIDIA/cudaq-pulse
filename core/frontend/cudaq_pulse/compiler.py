@@ -265,6 +265,9 @@ class Lowered:
     the call's values are kept beside it in ``arguments``, so a call with new
     values shares the module; ``generic`` is the module without values.
     ``mlir()`` of a call shows its values substituted.
+
+    ``qudits`` holds the device qudits the program drives or measures (gets
+    a line on), in increasing order: the qudits ``simulate()`` models.
     """
 
     __slots__ = (
@@ -276,7 +279,6 @@ class Lowered:
         "metrics",
         "parameters",
         "arguments",
-        "n_qudits",
         "qudits",
         "options",
         "scheduled",
@@ -291,7 +293,6 @@ class Lowered:
         target: Device,
         metrics: CompileMetrics,
         parameters: tuple[str, ...],
-        n_qudits: int,
         qudits: tuple[int, ...],
         options: CompileOptions,
         scheduled: bool = True,
@@ -304,7 +305,6 @@ class Lowered:
         self.metrics = metrics
         self.parameters = parameters
         self.arguments: tuple[float, ...] = ()
-        self.n_qudits = n_qudits
         self.qudits = qudits
         self.options = options
         self.scheduled = scheduled
@@ -323,7 +323,6 @@ class Lowered:
         view.metrics = self.metrics
         view.parameters = ()
         view.arguments = tuple(values)
-        view.n_qudits = self.n_qudits
         view.qudits = self.qudits
         view.options = self.options
         view.scheduled = self.scheduled
@@ -517,8 +516,7 @@ def build(
         target=target,
         metrics=metrics,
         parameters=parameters,
-        n_qudits=builder.n_qubits,
-        qudits=qudits,
+        qudits=builder.used_qubits or qudits,
         options=options,
         scheduled=scheduled,
     )
