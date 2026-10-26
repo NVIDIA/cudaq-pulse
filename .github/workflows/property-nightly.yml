@@ -10,8 +10,9 @@
 # (the `ci` hypothesis profile); this job explores new inputs every night on
 # staging with a seed logged in the job summary and the example database
 # kept between runs, so a failure replays first on the next run. It also
-# runs the slow physics checks (marked `nightly`) and checks that a new float
-# value on a compiled kernel stays far cheaper than a compile.
+# runs the slow physics checks (marked `nightly`), checks that a new float
+# value on a compiled kernel stays far cheaper than a compile, and runs the
+# perf guard.
 
 name: property-nightly
 
@@ -86,6 +87,14 @@ jobs:
         env:
           PYTHONPATH: build/dev/python
         run: uv run --no-sync python benchmarks/compiler/specialize_bench.py
+
+      # Every perf guard, baselines included, on staging each night: a
+      # regression shows here even on a day without pushes.
+      - name: Perf guard
+        if: always()
+        env:
+          PYTHONPATH: build/dev/python
+        run: uv run --no-sync python -m pytest tests/test_perf_guard.py --run-benchmarks -q
 
       - name: Save the example database
         if: always()

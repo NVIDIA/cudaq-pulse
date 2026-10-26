@@ -13,6 +13,9 @@ the checked-in ratios transfer between machines and CI runners. A case fails
 only if it is several times slower, relative to the calibration, than the
 baseline in ``benchmarks/baselines/frontend_perf.json``. Refresh that file
 with ``--update-perf-baseline`` after an intentional change.
+
+Tests marked ``scaling`` compare two sizes of one program in one process
+(time or peak memory), so they hold on any machine; CI fails on them.
 """
 
 from __future__ import annotations
@@ -156,6 +159,7 @@ def test_building_the_module_costs_less_than_tracing_the_kernel():
     assert best["ffi_ms"] < best["trace_ms"], best
 
 
+@pytest.mark.scaling
 def test_retained_loop_compile_time_is_flat(ratios):
     assert ratios["dd_loop_n512"] < ratios["dd_loop_n8"] * FLAT_LOOP_LIMIT
     assert ratios["dd_loop_n512_compile"] < ratios["dd_loop_n8_compile"] * FLAT_LOOP_LIMIT
@@ -172,6 +176,7 @@ def _half_unused(n_qubits: int):
     return kernel
 
 
+@pytest.mark.scaling
 def test_verify_time_is_linear_in_unused_lines():
     wide = pulse.device({"target": ladder_target(2000)}).qudit_handles
 
@@ -186,6 +191,7 @@ def test_verify_time_is_linear_in_unused_lines():
     assert large < small * 4 * FLAT_LOOP_LIMIT, (small, large)
 
 
+@pytest.mark.scaling
 def test_the_events_of_a_long_line_are_listed_in_linear_time():
     def program(n: int):
         @pulse.kernel
@@ -234,6 +240,7 @@ print(json.dumps(growth))
 """
 
 
+@pytest.mark.scaling
 def test_simulating_a_high_index_pair_takes_little_memory(tmp_path):
     script = tmp_path / "simulate_pairs.py"
     script.write_text(_SIMULATE_PAIRS)
