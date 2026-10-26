@@ -242,6 +242,14 @@ to ``drive`` raises a ``CompilationError`` that names the operation and
 the argument, such as ``drive(): argument 1 must be a drive line, got a
 tone``, before any MLIR is built.
 
+An error raised while a kernel is traced carries a note with the kernel
+source lines that led to it, as a traceback shows them: the line in the
+kernel and, for an error inside a helper, the helper's line. A misspelled
+operation or attribute gets a suggestion, as in ``unknown pulse op:
+drvie; did you mean drive()?``. The kernel language is in
+``cudaq_pulse.ops``, so ``pulse.drive(...)`` fails with a message that says
+to write ``drive(...)`` or ``pulse.ops.drive(...)``.
+
 Unsupported Patterns
 --------------------
 

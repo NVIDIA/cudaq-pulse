@@ -46,7 +46,11 @@ behavior may change in any 0.x release.
   `remove` and `del xs[i]`. `sync()` takes lists and tuples of lines, as
   in `sync(lines)`. A pulse op given the wrong kind of argument, such as a
   tone where its line belongs, raises a `CompilationError` that names the
-  op and the argument when it is traced, not an MLIR verifier error. List, dict and set comprehensions and set
+  op and the argument when it is traced, not an MLIR verifier error.
+  Errors raised while tracing carry a note with the file, line and source
+  of the kernel line, and of each helper line, that raised them; a
+  misspelled op or attribute gets a "did you mean" suggestion, and
+  `pulse.drive(...)` says that the kernel language is in `cudaq_pulse.ops`. List, dict and set comprehensions and set
   displays trace on every supported Python; generator expressions, lambdas
   and nested functions are rejected with what to write instead.
 - **Operations.** The kernel language lives in `cudaq_pulse.ops` and is

@@ -28,8 +28,10 @@ vector, ...) run as Python runs them, one traced iteration per element.
 from __future__ import annotations
 
 import builtins as _builtins_mod
+import difflib
 import functools
 import inspect
+import linecache
 import types
 from collections.abc import Iterator
 from typing import Any
@@ -247,6 +249,73 @@ _TYPE_WORDS = {
     "waveform": "waveform",
     "measurement": "measurement result",
 }
+
+
+def _note_source(e: BaseException, prog: bc.DecodedCode, index: int) -> None:
+    """Record where tracing failed: ``pulse_source`` is the innermost
+    instruction, ``pulse_callers`` the calls that led to it, innermost
+    first."""
+    try:
+        source = getattr(e, "pulse_source", None)
+        if source is None:
+            e.pulse_source = (prog, index)  # type: ignore[attr-defined]
+        elif source[0] is not prog:
+            callers = getattr(e, "pulse_callers", None)
+            if callers is None:
+                callers = e.pulse_callers = []  # type: ignore[attr-defined]
+            if not callers or callers[-1][0] is not prog:
+                callers.append((prog, index))
+    except AttributeError:
+        pass
+
+
+def add_source_note(e: BaseException) -> None:
+    """Add a note to *e* with the kernel source lines that raised it, as a
+    traceback shows them: the kernel's own line first."""
+    source = getattr(e, "pulse_source", None)
+    if source is None or getattr(e, "pulse_noted", False):
+        return
+    frames = [source, *getattr(e, "pulse_callers", ())]
+    lines = ["while tracing the kernel:"]
+    for prog, index in reversed(frames):
+        filename, lineno, *_ = prog.location(index)
+        lines.append(f'  File "{filename}", line {lineno}, in {prog.code.co_name}')
+        text = linecache.getline(filename, lineno).strip() if lineno else ""
+        if text:
+            lines.append(f"    {text}")
+    try:
+        e.add_note("\n".join(lines))
+        e.pulse_noted = True  # type: ignore[attr-defined]
+    except AttributeError:
+        pass
+
+
+def _did_you_mean(name: str, candidates: Any, call: bool = False) -> str:
+    """``"; did you mean 'x'?"`` for the closest of *candidates*, or ``""``."""
+    names = [c for c in dict.fromkeys(candidates) if isinstance(c, str) and not c.startswith("__")]
+    close = difflib.get_close_matches(name, names, n=1)
+    if not close:
+        return ""
+    return f"; did you mean {close[0]}()?" if call else f"; did you mean {close[0]!r}?"
+
+
+def _attribute_error(obj: Any, attr: str) -> str:
+    """The error for ``obj.attr`` when *obj* has no attribute *attr*."""
+    if isinstance(obj, types.ModuleType):
+        module = obj.__name__
+        if module.split(".")[0] == "cudaq_pulse" and attr in OP_TABLE:
+            return (
+                f"module {module!r} has no attribute {attr!r}: the kernel language is in "
+                f"cudaq_pulse.ops; write {attr}(...) or cudaq_pulse.ops.{attr}(...)"
+            )
+        return f"cannot resolve attribute {attr!r} on module {module!r}" + _did_you_mean(
+            attr, dir(obj)
+        )
+    try:
+        names = dir(obj)
+    except Exception:  # a broken __dir__ only loses the suggestion
+        names = []
+    return f"cannot resolve attribute {attr!r} on {type(obj).__name__}" + _did_you_mean(attr, names)
 
 
 def _describe(value: Any) -> str:
@@ -712,9 +781,7 @@ class PulseIREmitter:
                         try:
                             push(getattr(obj, arg))
                         except (AttributeError, TypeError) as e:
-                            raise CompilationError(
-                                f"cannot resolve attribute {arg!r} on {type(obj).__name__}"
-                            ) from e
+                            raise CompilationError(_attribute_error(obj, arg)) from e
 
                 elif op is _subscr:
                     index = pop()
@@ -1002,11 +1069,7 @@ class PulseIREmitter:
         except _NotRollableError:
             raise
         except Exception as e:
-            if getattr(e, "pulse_source", None) is None:
-                try:
-                    e.pulse_source = (prog, pc - 1)  # type: ignore[attr-defined]
-                except AttributeError:
-                    pass
+            _note_source(e, prog, pc - 1)
             raise
 
     # ── Measurement-conditioned branches ─────────────────────────────
@@ -1419,6 +1482,11 @@ class PulseIREmitter:
             return self._builtins[name]
         return ("__unresolved__", name)
 
+    def _unknown_name(self, name: str) -> str:
+        """The error for calling *name*, which nothing in scope defines."""
+        known = [*OP_TABLE, *self.locals, *self._fn_globals, *self._fn_closures, *self._builtins]
+        return f"unknown pulse op: {name}" + _did_you_mean(name, known, call=True)
+
     # ── Call dispatch ────────────────────────────────────────────────
 
     def _dispatch_call(
@@ -1438,14 +1506,14 @@ class PulseIREmitter:
 
                     op_fn = getattr(ops, name, None) if name in _PULSE_OP_NAMES else None
                     if op_fn is None:
-                        raise CompilationError(f"unknown pulse op: {name}")
+                        raise CompilationError(self._unknown_name(name))
                     call_args = _bind_positional(op_fn, call_args, kwargs)
                 if name in OP_TABLE:
                     self._push_pulse_results(name, call_args)
                 elif name == "range":
                     self._push_range(call_args)
                 else:
-                    raise CompilationError(f"unknown pulse op: {name}")
+                    raise CompilationError(self._unknown_name(name))
                 return
 
         # Resolved callable: a DSL op only if it is the DSL function itself,

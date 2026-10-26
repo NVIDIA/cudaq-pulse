@@ -113,3 +113,85 @@ def test_sync_rejects_anything_but_lines(body, message):
     )
     with pytest.raises(CompilationError, match=message):
         python_ir(pulse.kernel(namespace["k"]), Q[0], Q[1])
+
+
+# ── Errors point at the kernel's source ──────────────────────────────
+
+
+def _note(excinfo) -> str:
+    return "\n".join(getattr(excinfo.value, "__notes__", ()))
+
+
+def _drive_swapped(d, t):
+    drive(t, square(8, 0.1), d)
+
+
+def test_a_misspelled_op_from_the_friction_log_names_the_file_and_line():
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        drvie(d, gaussian(40, 0.1, 10.0), t)  # noqa: F821
+
+    with pytest.raises(
+        CompilationError, match=r"unknown pulse op: drvie; did you mean drive\(\)\?"
+    ) as e:
+        pulse.compile(k).lower(Q[0])
+    note = _note(e)
+    assert f'File "{__file__}", line {k.__wrapped__.__code__.co_firstlineno + 3}, in k' in note
+    assert "drvie(d, gaussian(40, 0.1, 10.0), t)" in note
+
+
+def test_an_error_in_a_helper_shows_the_kernel_line_then_the_helper_line():
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        _drive_swapped(d, t)
+
+    with pytest.raises(CompilationError, match="argument 1 must be a drive line") as e:
+        python_ir(k, Q[0])
+    note = _note(e)
+    assert note.index("_drive_swapped(d, t)") < note.index("drive(t, square(8, 0.1), d)")
+    assert "in _drive_swapped" in note
+
+
+def test_an_unknown_name_far_from_any_suggests_nothing():
+    @pulse.kernel
+    def k(q):
+        zzzzqqq(q)  # noqa: F821
+
+    with pytest.raises(CompilationError) as e:
+        python_ir(k, Q[0])
+    assert str(e.value) == "unknown pulse op: zzzzqqq"
+
+
+def test_pulse_dot_drive_from_the_friction_log_points_at_ops():
+    @pulse.kernel
+    def k(q):
+        d, t = pulse.get_drive_line(q)
+        pulse.drive(d, pulse.gaussian(40, 0.1, 10.0), t)
+
+    message = (
+        r"module 'cudaq_pulse' has no attribute 'get_drive_line': the kernel language is in "
+        r"cudaq_pulse.ops; write get_drive_line\(...\) or cudaq_pulse.ops.get_drive_line\(...\)"
+    )
+    with pytest.raises(CompilationError, match=message):
+        python_ir(k, Q[0])
+
+    @pulse.kernel
+    def works(q):
+        d, t = pulse.ops.get_drive_line(q)
+        pulse.ops.drive(d, pulse.ops.gaussian(40, 0.1, 10.0), t)
+
+    python_ir(works, Q[0])
+
+
+def test_a_misspelled_attribute_suggests_the_right_one():
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        pulse.ops.drvie(d, square(8, 0.1), t)
+
+    with pytest.raises(
+        CompilationError, match=r"on module 'cudaq_pulse.ops'; did you mean 'drive'\?"
+    ):
+        python_ir(k, Q[0])
