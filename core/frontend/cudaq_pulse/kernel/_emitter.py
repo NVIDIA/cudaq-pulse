@@ -209,6 +209,11 @@ class _Unrolled:
         self.it = it
         self.count = 0
 
+    def __iter__(self) -> Any:
+        # What a generator expression returns is consumed by Python calls,
+        # such as sum(), as well as by loops that the tracer runs.
+        return self.it
+
 
 _MISSING = object()
 # What a comprehension saves for an iteration variable that was unbound.
@@ -579,6 +584,15 @@ def _merge_kwargs(target: dict[Any, Any], other: Any, strict: bool) -> None:
         target[key] = other[key]
 
 
+class _GenExpr:
+    """A generator expression, run all at once when it is called."""
+
+    __slots__ = ("code",)
+
+    def __init__(self, code: types.CodeType):
+        self.code = code
+
+
 class _Loop:
     """Iterator state of a ``for ... in range()`` loop on the stack."""
 
@@ -870,9 +884,9 @@ class PulseIREmitter:
                     if vt is range:
                         push(_Loop(value))
                     elif vt is _Unrolled or vt is _Loop:
-                        # 3.13 and 3.14 take iter() of a comprehension's iterator again.
+                        # iter() of an iterator: a comprehension's on 3.13 and
+                        # 3.14, a generator expression's result.
                         push(value)
-                        continue
                     else:
                         push(_Unrolled(_iterate(value)))
                     if _iter_slots > 1:
@@ -1089,6 +1103,21 @@ class PulseIREmitter:
                     self._track_slots(rest, 0)
                     self._note_fresh(rest)
                     stack.extend(reversed([*items[:before], rest, *items[len(items) - after :]]))
+
+                elif op is bc.MAKE_GENEXPR:
+                    code = pop()
+                    if arg:  # 3.12 passes the closure cells to MAKE_FUNCTION
+                        pop()
+                    push(_GenExpr(code))
+
+                elif op is bc.SET_FUNCATTR:
+                    fn = pop()
+                    pop()
+                    push(fn)
+
+                elif op is bc.GEN_YIELD:
+                    local_vars[".yielded"].append(pop())
+                    push(None)
 
                 elif op is bc.UNSUPPORTED:
                     raise CompilationError(arg)
@@ -1611,6 +1640,10 @@ class PulseIREmitter:
             self._inline_helper(callable_val.func, [*callable_val.args, *call_args], merged or None)
             return
 
+        if callable_val.__class__ is _GenExpr:
+            self._run_genexpr(callable_val.code, call_args)
+            return
+
         # Regular Python callable (int, float, len, abs, math.sin, etc.)
         # int()/float() on a symbolic value create an explicit IR cast.
         if callable(callable_val):
@@ -1664,6 +1697,26 @@ class PulseIREmitter:
             return
 
         raise CompilationError(f"cannot call: {callable_val!r}")
+
+    def _run_genexpr(self, code: types.CodeType, call_args: list[StackVal]) -> None:
+        """Run a generator expression to the end, and push an iterator over
+        what it yields: it is consumed where it is made, so it is evaluated
+        there, with its pulse ops in order."""
+        closures = {}
+        for name in code.co_freevars:
+            value = self.locals.get(name, _MISSING)
+            closures[name] = (
+                self._fn_closures.get(name, _EMPTY_CELL) if value is _MISSING else value
+            )
+        helper = PulseIREmitter(
+            self.b, fn_globals=self._fn_globals, fn_closures=closures, caller=self
+        )
+        yielded: list[Any] = []
+        helper.locals[".0"] = call_args[0]
+        helper.locals[".yielded"] = yielded
+        helper.run(code)
+        self._refresh_lines()
+        self.stack.append(_Unrolled(iter(yielded)))
 
     def _push_range(self, call_args: list[StackVal]) -> None:
         if not 1 <= len(call_args) <= 3:

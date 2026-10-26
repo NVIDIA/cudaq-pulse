@@ -101,7 +101,10 @@ from typing import Any
     SET_UPDATE,
     MAP_ADD,
     UNPACK_EX,
-) = range(55)
+    MAKE_GENEXPR,
+    SET_FUNCATTR,
+    GEN_YIELD,
+) = range(58)
 
 OP_NAMES: tuple[str, ...] = tuple(
     (
@@ -113,7 +116,8 @@ OP_NAMES: tuple[str, ...] = tuple(
         "JUMP_IF_NOT_NONE GET_ITER "
         "FOR_ITER RETURN IMPORT_NAME IMPORT_FROM CONVERT FORMAT RAISE UNSUPPORTED "
         "REGION_END CALL_EX DICT_MERGE DELETE_SUBSCR LOAD_FAST_AND_CLEAR "
-        "STORE_FAST_MAYBE BUILD_SET SET_ADD SET_UPDATE MAP_ADD UNPACK_EX"
+        "STORE_FAST_MAYBE BUILD_SET SET_ADD SET_UPDATE MAP_ADD UNPACK_EX "
+        "MAKE_GENEXPR SET_FUNCATTR GEN_YIELD"
     ).split()
 )
 
@@ -460,6 +464,18 @@ def _decode(code: CodeType) -> DecodedCode:
     # Variables a comprehension saves and restores; restoring stores the
     # saved value, or unbinds the name if it had none.
     cleared = {ins.argval for ins in raw if ins.opname == "LOAD_FAST_AND_CLEAR"}
+    genexpr_calls = _genexpr_calls(raw)
+    calls_with_iterator = set(genexpr_calls.values())
+    iterator_slots = {
+        raw[i].offset
+        for i in range(1, len(raw) - 1)
+        if raw[i].opname == "PUSH_NULL"
+        and raw[i - 1].offset in calls_with_iterator
+        and raw[i + 1].opname == "FOR_ITER"
+    }
+    # A generator expression's own code: its yields collect its values.
+    in_genexpr = code.co_name == "<genexpr>" and bool(code.co_flags & _CO_GENERATOR)
+    drop_pop = False
     next_protected = 0
 
     out: list[list[Any]] = []
@@ -496,7 +512,20 @@ def _decode(code: CodeType) -> DecodedCode:
             next_protected += 1
             out.append([UNSUPPORTED, _TRY_MESSAGE])
 
+        if name == "PUSH_NULL" and off in iterator_slots:
+            # 3.15 runs list(genexpr) inline: a FOR_ITER over the generator,
+            # whose second iterator slot this null fills.
+            out.append([LOAD_CONST, None])
+            continue
         if name in _SKIP:
+            continue
+
+        if drop_pop:
+            drop_pop = False
+            if name == "POP_TOP":
+                continue
+        if in_genexpr and name == "RETURN_GENERATOR":
+            drop_pop = True  # the None it pushes is popped next
             continue
 
         op = _SIMPLE.get(name)
@@ -504,6 +533,11 @@ def _decode(code: CodeType) -> DecodedCode:
             if op == CALL and pending_kw_names:
                 op = CALL_KW
                 pending_kw_names = False
+            elif op == CALL and off in calls_with_iterator:
+                # A generator expression is called with CALL 0, its iterable
+                # in the slot a method call's self takes.
+                out.append([CALL, 1])
+                continue
             elif op == STORE_FAST and ins.argval in cleared:
                 op = STORE_FAST_MAYBE
             out.append([op, ins.argval])
@@ -576,6 +610,13 @@ def _decode(code: CodeType) -> DecodedCode:
             out.append([CONVERT, iarg])
         elif name in ("FORMAT_SIMPLE", "FORMAT_WITH_SPEC"):
             out.append([FORMAT, name == "FORMAT_WITH_SPEC"])
+        elif name == "MAKE_FUNCTION" and off in genexpr_calls:
+            closure = _PY_MINOR == 12 and bool(iarg & 0x08)
+            out.append([MAKE_GENEXPR, closure])
+        elif name == "SET_FUNCTION_ATTRIBUTE":
+            out.append([SET_FUNCATTR, None])
+        elif in_genexpr and name == "YIELD_VALUE":
+            out.append([GEN_YIELD, None])
         elif name == "MAKE_FUNCTION":
             made = prev.argval if prev is not None and prev.opname == "LOAD_CONST" else None
             message = _NESTED_MESSAGES.get(getattr(made, "co_name", ""), _NESTED_MESSAGE)
@@ -611,7 +652,8 @@ def _decode(code: CodeType) -> DecodedCode:
             continue
         target = index_at.get(entry[1], end)
         if op == FOR_ITER:
-            entry[1] = (target, _loop_var_is_read(out, i, target))
+            # A yield in a rolled loop would run once: unroll a generator's loops.
+            entry[1] = (target, in_genexpr or _loop_var_is_read(out, i, target))
         elif target <= i and out[target][0] != FOR_ITER:
             # Only for-loops jump backwards to their FOR_ITER header.
             out[i] = [UNSUPPORTED, _WHILE_MESSAGE]
@@ -624,6 +666,57 @@ def _decode(code: CodeType) -> DecodedCode:
                 positions[i] = positions[i - 1]
 
     return DecodedCode(code, tuple((op, arg) for op, arg in out), tuple(positions))
+
+
+_CO_GENERATOR = 0x20
+_JUMP_OPCODES = (
+    frozenset(dis.hasjrel) | frozenset(dis.hasjabs) | frozenset(getattr(dis, "hasjump", ()))
+)
+_ENDS_FLOW = frozenset(
+    {"JUMP_FORWARD", "JUMP_BACKWARD", "JUMP_BACKWARD_NO_INTERRUPT", "RETURN_VALUE", "RETURN_CONST"}
+    | {"RAISE_VARARGS", "RERAISE"}
+)
+
+
+def _genexpr_calls(raw: list[dis.Instruction]) -> dict[int, int]:
+    """Map the offset of each MAKE_FUNCTION that makes a generator
+    expression to the offset of the CALL that runs it.
+
+    The call is the first ``CALL 0`` reached with the function and its
+    iterable on the stack; stack depths come from ``dis.stack_effect``.
+    A generator expression whose call is not found is left out, and is
+    rejected where it is made.
+    """
+    found: dict[int, int] = {}
+    for i, ins in enumerate(raw):
+        if ins.opname != "MAKE_FUNCTION" or i == 0 or raw[i - 1].opname != "LOAD_CONST":
+            continue
+        if getattr(raw[i - 1].argval, "co_name", "") != "<genexpr>":
+            continue
+        j = i + 1
+        while j < len(raw) and raw[j].opname == "SET_FUNCTION_ATTRIBUTE":
+            j += 1
+        depth = 1  # the function, above whatever the stack held before
+        at_target: dict[int, int] = {}
+        for k in range(j, len(raw)):
+            cur = raw[k]
+            if raw[k - 1].opname in _ENDS_FLOW:
+                if cur.offset not in at_target:
+                    break
+                depth = at_target[cur.offset]
+            if cur.opname == "CALL" and not cur.arg and depth == 2:
+                found[ins.offset] = cur.offset
+                break
+            oparg = cur.arg if cur.opcode >= dis.HAVE_ARGUMENT else None
+            try:
+                if cur.opcode in _JUMP_OPCODES:
+                    at_target[cur.argval] = depth + dis.stack_effect(cur.opcode, oparg, jump=True)
+                depth += dis.stack_effect(cur.opcode, oparg, jump=False)
+            except ValueError:
+                break
+            if depth < 1:
+                break
+    return found
 
 
 def _condition_rank(p: Any) -> tuple[int, bool, int]:

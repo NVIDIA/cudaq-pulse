@@ -445,12 +445,62 @@ def test_comprehension_inside_a_rolled_loop_and_over_range():
     _compiles(k, Q[0])
 
 
-def test_generator_expressions_and_lambdas_say_what_to_write_instead():
+def test_generator_expressions_from_the_friction_log():
     @pulse.kernel
-    def genexpr(q):
-        d, t = get_drive_line(q)
-        drive(d, square(sum(a for a in (8, 8)), 0.1), t)
+    def probe(qubits):
+        scale = 2
+        pairs = list(get_drive_line(q) for q in qubits)
+        sync(*(line for line, _ in pairs))
+        total = sum(a * scale for a in AMPS if a > 0.1)
+        longest = max(8 * (i + 1) for i in range(3))
+        for line, tone in pairs:
+            drive(line, square(longest, total), tone)
 
+    ops = python_ir(probe, Q[0:3]).ops
+    (sync_op,) = [op for op in ops if op.kind == "pulse.sync"]
+    assert len(sync_op.operands) == 3
+    squares = [op.attrs for op in ops if op.kind == "pulse.square"]
+    assert [s["duration"] for s in squares] == [24, 24, 24]
+    assert [round(s["amplitude"], 9) for s in squares] == [1.0, 1.0, 1.0]
+    _compiles(probe, Q[0:3])
+
+
+def test_generator_expressions_in_any_all_tuple_and_nested():
+    @pulse.kernel
+    def k(q, flip):
+        d, t = get_drive_line(q)
+        widths = tuple(8 * n for n in (1, 2))
+        nested = sum(sum(x for x in range(n)) for n in (2, 3))
+        if all(w > 4 for w in widths) and not any(w > 100 for w in widths):
+            drive(d, square(widths[1] + nested, 0.1), t)
+        stored = (w + 1 for w in (flip and widths or (40,)))
+        for w in stored:
+            drive(d, square(w, 0.1), t)
+
+    def durations(*args):
+        return [op.attrs["duration"] for op in python_ir(k, *args).ops if op.kind == "pulse.square"]
+
+    assert durations(Q[0], True) == [20, 9, 17]
+    assert durations(Q[0], False) == [20, 41]
+
+
+def test_generator_expressions_emit_pulses_in_order_and_collect_readouts():
+    @pulse.kernel
+    def rounds(q):
+        d, t = get_drive_line(q)
+        r, rt = get_readout_line(q)
+        ms = tuple(readout(r, square(100, 0.05), rt) for _ in range(3))
+        assert len(ms) == 3
+        for _ in range(20):
+            drive(d, square(sum(8 for _ in range(2)), 0.1), t)
+
+    kinds = _kinds(rounds, Q[0])
+    assert kinds.count("pulse.readout") == 3
+    assert kinds.count("scf.for") == 1
+    _compiles(rounds, Q[0])
+
+
+def test_lambdas_and_nested_functions_say_what_to_write_instead():
     @pulse.kernel
     def lam(q):
         d, t = get_drive_line(q)
@@ -464,8 +514,6 @@ def test_generator_expressions_and_lambdas_say_what_to_write_instead():
 
         d, t = get_drive_line(q)
 
-    with pytest.raises(CompilationError, match=r"generator expressions .*sum\(\[x for x in xs\]\)"):
-        python_ir(genexpr, Q[0])
     with pytest.raises(CompilationError, match="lambdas are not supported.*module level"):
         python_ir(lam, Q[0])
     with pytest.raises(CompilationError, match="nested functions are not supported.*module level"):

@@ -32,10 +32,11 @@ behavior may change in any 0.x release.
   the calls in its body) is at most the unroll threshold: 8 by default, the
   measured break-even point, set with `pulse.compile(k, unroll_threshold=)`,
   `@pulse.kernel(unroll_threshold=)` or `CUDAQ_PULSE_UNROLL_THRESHOLD`.
-- **Python in kernels.** List, dict and set comprehensions and set displays
-  are unrolled while tracing, so `[get_drive_line(q) for q in qubits]`
-  builds a list of lines; a generator expression, lambda or nested `def`
-  raises a `CompilationError` that says what to write instead. Calls with
+- **Python in kernels.** List, dict and set comprehensions, set displays
+  and generator expressions are unrolled while tracing, so
+  `[get_drive_line(q) for q in qubits]` builds a list of lines and
+  `sum(a for a in amps)` works; a lambda or nested `def` raises a
+  `CompilationError` that says what to write instead. Calls with
   `*args` and `**kwargs` are unpacked
   while tracing, so `sync(*lines)` synchronizes a list of lines built in a
   loop. Helpers called from a kernel may take keyword-only, `*args` and

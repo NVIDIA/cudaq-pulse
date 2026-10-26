@@ -220,6 +220,11 @@ Besides the control flow above, a kernel body may use:
   tracing like the ``for`` loop it stands for, so
   ``[get_drive_line(q) for q in qubits]`` builds a list of ``(line, tone)``
   pairs and ``[readout(r, wf, t) for _ in range(12)]`` a list of results.
+- generator expressions, such as ``sum(a for a in amps)`` or
+  ``sync(*(line for line, _ in pairs))``. A generator expression runs to
+  the end where it is written, as a list comprehension would, so pulses
+  it emits are emitted there, in order, even if what consumes it stops
+  early, as ``any()`` does.
 - starred assignment, such as ``first, *rest = lines``, and slice
   assignment, such as ``xs[1:3] = ys``.
 - ``assert`` and ``raise`` for checks while tracing: a failing
@@ -271,8 +276,7 @@ and will raise ``CompilationError``:
 - ``while`` loops
 - Lambdas and function definitions inside the kernel body; define the
   function at module level, where it is inlined
-- Generator expressions; pass a list comprehension instead, as in
-  ``sum([x for x in xs])``
+- Generator functions (``yield``)
 - ``try`` / ``except`` and ``with`` blocks
 - ``match`` with sequence, mapping or class patterns (literal and ``|``
   patterns work)
