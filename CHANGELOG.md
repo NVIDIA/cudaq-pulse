@@ -11,6 +11,18 @@ request that makes it.
 
 ## [Unreleased]
 
+### Added
+
+- `ScheduledEvent.start` and `ScheduledEvent.end`: an event's scheduled
+  times in clock cycles as `int`, raising `ValueError` on an event that is
+  not scheduled yet.
+
+### Changed
+
+- `Kernel` and `CompiledKernel` are generic in the decorated function's
+  parameters, so type checkers check `k(...)`, `k.lower(...)` and
+  `pulse.compile(k)(...)` against the kernel's signature.
+
 ## [0.1.0] - Unreleased
 
 The first public release, a research preview: APIs, dialects and numerical

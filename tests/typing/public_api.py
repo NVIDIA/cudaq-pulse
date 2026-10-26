@@ -45,9 +45,13 @@ def idle(q: pulse.Qudit) -> None:
     pass
 
 
-assert_type(rabi, pulse.Kernel)
-assert_type(idle, pulse.Kernel)
+# A kernel keeps the signature of its function: calls are checked against it.
+kernels: list[pulse.Kernel[...]] = [rabi, idle]
 assert_type(rabi.cache_info().size, int)
+rabi(dev.qudit_handles[0])  # type: ignore[call-arg]
+rabi(dev.qudit_handles[0], 0.5, 1)  # type: ignore[call-arg]
+rabi(dev.qudit_handles[0], amp="high")  # type: ignore[arg-type]
+rabi.lower(dev.qudit_handles[0], ampl=0.5)  # type: ignore[call-arg]
 
 lowered = rabi.lower(dev.qudit_handles[0], 0.5)
 assert_type(lowered, pulse.Lowered)
@@ -58,8 +62,9 @@ assert_type(lowered.schedule, list[ScheduledEvent])
 assert_type(lowered.arguments, tuple[float, ...])
 
 compiled = pulse.compile(rabi, schedule="asap", device=dev)
-assert_type(compiled, pulse.CompiledKernel)
+compiled_kernels: list[pulse.CompiledKernel[...]] = [compiled]
 assert_type(compiled.lower(dev.qudit_handles[0], 0.5), pulse.Lowered)
+compiled(dev.qudit_handles[0])  # type: ignore[call-arg]
 assert_type(compiled.parameters, tuple[str, ...])
 pulse.compile(rabi, schedule=1)  # type: ignore[arg-type]
 

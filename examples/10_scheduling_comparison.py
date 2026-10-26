@@ -31,11 +31,11 @@ def four_qubit(qs):
 def print_timeline(compiled: pulse.Lowered, label: str) -> int:
     """Pretty-print the scheduled drives and return the makespan."""
     print(f"\n  --- {label} ---")
-    events = sorted(compiled.schedule, key=lambda e: (e.start_vtu, e.line))
+    events = sorted(compiled.schedule, key=lambda e: (e.start, e.line))
     for ev in events:
-        end = ev.start_vtu + ev.duration_vtu
-        print(f"    [{ev.start_vtu:5d} - {end:5d}]  line {ev.line}  {ev.kind}")
-    return max(e.start_vtu + e.duration_vtu for e in events)
+        end = ev.end
+        print(f"    [{ev.start:5d} - {end:5d}]  line {ev.line}  {ev.kind}")
+    return max(e.end for e in events)
 
 
 def main():

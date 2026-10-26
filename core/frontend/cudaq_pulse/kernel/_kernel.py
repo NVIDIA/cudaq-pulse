@@ -46,6 +46,7 @@ DEFAULT_CACHE_SIZE = 32
 
 _ticks = itertools.count()
 
+
 # A kernel's guard holds its module globals, which hold the kernel: release
 # the compiled modules before the interpreter tears the extension down.
 _dispatchers: weakref.WeakSet[_Dispatcher] = weakref.WeakSet()
@@ -258,7 +259,7 @@ class _Entry:
 class _Dispatcher:
     """Binds a call, finds or builds its specialization, and runs it."""
 
-    def __init__(self, kernel: Kernel, options: CompileOptions, capacity: int | None) -> None:
+    def __init__(self, kernel: Kernel[Any], options: CompileOptions, capacity: int | None) -> None:
         self.kernel = kernel
         self.options = options
         self._capacity = capacity
@@ -350,11 +351,12 @@ class _Dispatcher:
             self._entries.clear()
 
 
-class Kernel:
+class Kernel[**P]:
     """A pulse kernel. ``k(*args)`` compiles on first use and runs it.
 
     ``k.lower(*args)`` returns the compiled module without running it.
-    ``cudaq_pulse.compile(k)`` compiles ahead of the call.
+    ``cudaq_pulse.compile(k)`` compiles ahead of the call. ``P`` is the
+    decorated function's signature, so calls are checked against it.
     """
 
     __name__: str
@@ -362,7 +364,7 @@ class Kernel:
 
     def __init__(
         self,
-        fn: types.FunctionType,
+        fn: Callable[P, Any],
         *,
         cache_size: int | None = None,
         schedule: str | None = None,
@@ -420,10 +422,10 @@ class Kernel:
         """
         return tuple(self._names[i] for i in self._split[0])
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Any:
         return self._dispatch.call(args, kwargs)
 
-    def lower(self, *args: Any, **kwargs: Any) -> Lowered:
+    def lower(self, *args: P.args, **kwargs: P.kwargs) -> Lowered:
         """Compile for these arguments without running; see ``Lowered``."""
         return self._dispatch.lower(args, kwargs)
 
@@ -491,7 +493,7 @@ class Kernel:
             )
 
 
-class CompiledKernel:
+class CompiledKernel[**P]:
     """A kernel compiled ahead of its call by ``cudaq_pulse.compile``.
 
     ``ck(*args)`` runs the kernel on the device of the qudit handles passed
@@ -501,7 +503,7 @@ class CompiledKernel:
     built when it is compiled.
     """
 
-    def __init__(self, kernel: Kernel, options: CompileOptions, device: Device | None) -> None:
+    def __init__(self, kernel: Kernel[P], options: CompileOptions, device: Device | None) -> None:
         if device is not None and not isinstance(device, Device):
             raise TypeError(f"device must be a cudaq_pulse device, got {type(device).__name__}")
         self.kernel = kernel
@@ -517,10 +519,10 @@ class CompiledKernel:
                 if not kernel._split[0]:
                     raise
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Any:
         return self._dispatch.call(args, kwargs)
 
-    def lower(self, *args: Any, **kwargs: Any) -> Lowered:
+    def lower(self, *args: P.args, **kwargs: P.kwargs) -> Lowered:
         """The module for these arguments, specialized and scheduled."""
         return self._dispatch.lower(args, kwargs)
 

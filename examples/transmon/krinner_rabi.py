@@ -61,7 +61,7 @@ def rabi_d5(qubit):
 
 dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
 compiled = pulse.compile(rabi_d5, device=dev).lower(dev.qudit_handles[qubit_idx])
-total_vtu = max(e.start_vtu + e.duration_vtu for e in compiled.schedule)
+total_vtu = max(e.end for e in compiled.schedule)
 print(f"\nCompiled {compiled.metrics.op_count} ops, total length = {total_vtu / clock_ghz:.1f} ns")
 
 # cudaq-pulse-opt, installed with the package, runs any pass on MLIR text.
