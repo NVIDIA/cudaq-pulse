@@ -46,6 +46,8 @@ def plot_schedule(
         matplotlib Figure.
     """
     events = schedule if isinstance(schedule, list) else schedule.schedule
+    names = {} if isinstance(schedule, list) else dict(schedule.options.machine.link_names)
+    link_label = {v: k for k, v in names.items()}
     # Rows are lines, then the links of classical calls.
     spans: list[tuple[str, tuple[bool, int], int, int]] = []
     for ev in events:
@@ -123,7 +125,9 @@ def plot_schedule(
             ax.add_patch(wait_rect)
 
     ax.set_yticks(range(n_rows))
-    ax.set_yticklabels([f"link {n}" if link else f"line {n}" for link, n in line_ids])
+    ax.set_yticklabels(
+        [(f"link {link_label.get(n, n)}" if link else f"line {n}") for link, n in line_ids]
+    )
     ax.set_xlabel("Time (VTU)")
     ax.set_ylim(-0.5, n_rows - 0.5)
 

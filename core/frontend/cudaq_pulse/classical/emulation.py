@@ -63,12 +63,14 @@ def manifest(lowered: Any) -> dict[str, Any]:
     machine = lowered.options.machine
     functions = []
     for fn in lowered.classical:
-        link = machine.links.get(fn.link, Link())
+        link = machine.link(fn.link)
+        link_id = machine.link_id(fn.link)
         functions.append(
             {
                 "name": fn.name,
                 "function_id": fn.id,
-                "link": fn.link,
+                "link": link_id,
+                "link_name": machine.link_name(link_id),
                 "schema": wire.schema(fn),
                 "argument_types": [a.descriptor for a in fn.args],
                 "result_types": [r.descriptor for r in fn.results],
@@ -120,7 +122,11 @@ def export(lowered: Any) -> dict[str, Any]:
         "format": FORMAT,
         "clock_ghz": lowered.target.clock_ghz,
         "links": {
-            str(fn.link): asdict(machine.links.get(fn.link, Link())) for fn in lowered.classical
+            str(machine.link_id(fn.link)): {
+                **asdict(machine.link(fn.link)),
+                "name": machine.link_name(machine.link_id(fn.link)),
+            }
+            for fn in lowered.classical
         },
         "epochs": [asdict(e) for e in epochs],
         "events": events,
@@ -289,7 +295,7 @@ def emulate(
     shots: int = 1,
     channel: Any = None,
     handlers: Mapping[str, Callable[..., Any]] | None = None,
-    transport: Transport | Mapping[int, Transport] | None = None,
+    transport: Transport | Mapping[int | str, Transport] | None = None,
     outcomes: Callable[[int, int, np.random.Generator], int] | None = None,
     service_time: str = "measured",
     seed: int | None = None,
@@ -298,7 +304,7 @@ def emulate(
 
     *channel* reaches the services (``InProcess`` of *handlers* by default,
     the functions' bodies unless given). *transport* models each link's
-    delay in each direction, per link id or for all. *outcomes* gives the
+    delay in each direction, per link (name or id) or for all. *outcomes* gives the
     level a readout reports, from its qudit and the shot's generator
     (uniform 0/1 by default); a call that takes IQ points gets them drawn
     at those levels from the target's dispersive readout model
@@ -327,7 +333,11 @@ def emulate(
             return Transport()
         if isinstance(transport, Transport):
             return transport
-        return transport.get(link, Transport())
+        found = transport.get(link)
+        if found is None:
+            name = machine.link_name(link)
+            found = transport.get(name) if name is not None else None
+        return found or Transport()
 
     def outcome_of(qudit: int) -> int:
         if outcomes is None:
@@ -372,8 +382,8 @@ def emulate(
                 status, _, answer = wire.decode_answer(fn, answer_bytes)
                 if status != 0:
                     raise RuntimeError(f"{callee} answered with status {status}")
-                link = machine.links.get(fn.link, Link())
-                path_transport = transport_of(fn.link)
+                link = machine.link(fn.link)
+                path_transport = transport_of(machine.link_id(fn.link))
                 latency = path_transport.delay_ns(len(request), rng) + path_transport.delay_ns(
                     len(answer_bytes), rng
                 )

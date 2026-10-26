@@ -66,8 +66,9 @@ due; others are not delayed.
 - Ops: ``classical.callable``, ``classical.get_link``, ``classical.submit``,
   ``classical.wait``.
 
+:doc:`../user_guide/classical_calls` describes the Python interface, and
 ``examples/19_classical_calls.py`` (see :doc:`../examples`) uses it end to
-end from Python: ``@pulse.classical`` functions on two links, a decoder with a
+end: ``@pulse.classical`` functions on two links, a decoder with a
 timeout fallback, an adaptive T1 estimator that sets a variable wait, the
 call report, simulation, and the emulation export.
 

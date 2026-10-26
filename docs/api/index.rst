@@ -13,6 +13,7 @@ API Reference
 
    compile
    simulation
+   classical
    devices
    kernel
    ops

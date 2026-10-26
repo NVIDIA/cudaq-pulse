@@ -319,7 +319,7 @@ class ClassicalFunction:
         timeout_ns: float | None = None,
         submit: str = "eager",
         deadline_ns: float | None = None,
-        link: int = 0,
+        link: int | str = 0,
         id: int | None = None,
     ) -> None:
         if name is None:
@@ -374,8 +374,13 @@ class ClassicalFunction:
         if deadline_ns is not None and not deadline_ns > 0:
             raise ValueError(f"{name}: deadline_ns must be positive, got {deadline_ns!r}")
         self.deadline_ns = None if deadline_ns is None else float(deadline_ns)
-        if isinstance(link, bool) or not isinstance(link, int) or link < 0:
-            raise ValueError(f"{name}: link must be a whole number >= 0, got {link!r}")
+        if isinstance(link, str):
+            if not link.isidentifier():
+                raise ValueError(f"{name}: a link name must be an identifier, got {link!r}")
+        elif isinstance(link, bool) or not isinstance(link, int) or link < 0:
+            raise ValueError(
+                f"{name}: link must be a link name or a whole number >= 0, got {link!r}"
+            )
         self.link = link
         if id is not None and not (isinstance(id, int) and 0 <= id <= 0xFFFFFFFF):
             raise ValueError(f"{name}: id must be a 32-bit unsigned integer, got {id!r}")
@@ -407,7 +412,7 @@ class ClassicalFunction:
     def __repr__(self) -> str:
         args = ", ".join(a.descriptor for a in self.args)
         results = ", ".join(r.descriptor for r in self.results)
-        return f"<classical function {self.name}({args}) -> ({results}) on link {self.link}>"
+        return f"<classical function {self.name}({args}) -> ({results}) on link {self.link!r}>"
 
 
 class Answer:
@@ -438,8 +443,9 @@ def function(implementation: Callable[..., Any] | None = None, /, **options: Any
     ``min_latency_ns``, ``nominal_latency_ns``, ``latency_mode``
     (``"bounded"``, ``"timeout"`` with ``timeout_ns``, or ``"blocking"``),
     ``submit`` (``"eager"`` or ``"lazy"``), ``deadline_ns``, ``link`` (the
-    id of the link its requests travel on; ``device`` is not used for it,
-    because a cudaq-pulse device is the QPU), ``name`` and ``id``.
+    link its requests travel on: a name from ``MachineModel.links``, such as
+    ``"controller"``, or a link id; default 0; ``device`` is not used for
+    it, because a cudaq-pulse device is the QPU), ``name`` and ``id``.
     """
     if implementation is not None:
         return ClassicalFunction(implementation, **options)

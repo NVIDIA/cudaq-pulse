@@ -19,6 +19,7 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -78,26 +79,107 @@ class MachineModel:
 
     The drive and readout limits, readout latency and switch penalty apply
     to the ``rcp`` and ``alap_rcp`` schedules. ``links`` describes the links
-    to classical devices by link id (see ``cudaq_pulse.classical.Link``);
-    their slots and latencies apply to every schedule, because they are
-    hardware. A link a program uses that is not listed gets ``Link()``.
+    to classical devices (see ``cudaq_pulse.classical.Link``), keyed by name
+    (``"decoder"``, ``"controller"``) or by link id; a named link gets the
+    lowest id no other link has, in the order given, so the first named
+    link of a model without ids is link 0, the default. A classical
+    function's ``link=`` names one or gives its id. Their slots and
+    latencies apply to every schedule, because they are hardware. A link id
+    a program uses that is not listed gets ``Link()``; an unknown name is an
+    error.
     """
 
     max_concurrent_drives: int = 4
     max_concurrent_readouts: int = 2
     readout_latency_vtu: int = 0
     line_switch_penalty_vtu: int = 0
-    links: Mapping[int, Link] = field(default_factory=dict)
+    links: Mapping[int | str, Link] = field(default_factory=dict)
+    link_names: Mapping[str, int] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        given = dict(self.links)
         links = _Links()
-        for key, value in dict(self.links).items():
-            if isinstance(key, bool) or not isinstance(key, int) or key < 0:
-                raise ValueError(f"MachineModel.links keys are link ids >= 0, got {key!r}")
+        names: list[str] = []
+        for key, value in given.items():
+            if isinstance(key, str):
+                if not key.isidentifier():
+                    raise ValueError(f"MachineModel.links names are identifiers, got {key!r}")
+                names.append(key)
+            elif isinstance(key, bool) or not isinstance(key, int) or key < 0:
+                raise ValueError(f"MachineModel.links keys are names or link ids >= 0, got {key!r}")
             if not isinstance(value, Link):
-                raise TypeError(f"MachineModel.links[{key}] must be a Link, got {value!r}")
-            dict.__setitem__(links, key, value)
+                raise TypeError(f"MachineModel.links[{key!r}] must be a Link, got {value!r}")
+            if isinstance(key, int):
+                dict.__setitem__(links, key, value)
+        by_name: dict[str, int] = {}
+        next_id = 0
+        for name in names:
+            while next_id in links:
+                next_id += 1
+            dict.__setitem__(links, next_id, given[name])
+            by_name[name] = next_id
         object.__setattr__(self, "links", links)
+        object.__setattr__(self, "link_names", MappingProxyType(by_name))
+        object.__setattr__(
+            self,
+            "_hash",
+            hash(
+                (
+                    self.max_concurrent_drives,
+                    self.max_concurrent_readouts,
+                    self.readout_latency_vtu,
+                    self.line_switch_penalty_vtu,
+                    self.links,
+                    tuple(sorted(by_name.items())),
+                )
+            ),
+        )
+
+    def __hash__(self) -> int:
+        return self._hash  # type: ignore[no-any-return,attr-defined]
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, MachineModel):
+            return NotImplemented
+        return (
+            self.max_concurrent_drives,
+            self.max_concurrent_readouts,
+            self.readout_latency_vtu,
+            self.line_switch_penalty_vtu,
+            dict(self.links),
+            dict(self.link_names),
+        ) == (
+            other.max_concurrent_drives,
+            other.max_concurrent_readouts,
+            other.readout_latency_vtu,
+            other.line_switch_penalty_vtu,
+            dict(other.links),
+            dict(other.link_names),
+        )
+
+    def link_id(self, link: int | str) -> int:
+        """The id of *link*, a link name of this model or a link id."""
+        if isinstance(link, str):
+            found = self.link_names.get(link)
+            if found is None:
+                known = ", ".join(repr(n) for n in self.link_names) or "none"
+                raise CompilationError(
+                    f"no link named {link!r} in the machine model (its named links: {known}); "
+                    "add it to MachineModel(links={...})"
+                )
+            return found
+        return link
+
+    def link_name(self, link_id: int) -> str | None:
+        """The name of the link with id *link_id*, if it has one."""
+        for name, found in self.link_names.items():
+            if found == link_id:
+                return name
+        return None
+
+    def link(self, link: int | str) -> Link:
+        """The ``Link`` of *link* (a name or an id; ``Link()`` if unlisted)."""
+        return self.links.get(self.link_id(link), Link())
 
     def links_attribute(self, used: Sequence[int]) -> str:
         """The module attribute ``classical.links`` for the links in *used*."""
@@ -167,6 +249,7 @@ class ClassicalCall:
     earliest start of a pulse whose amplitude, tone or branch comes from the
     answer, and ``deadline_vtu`` the latest due time the function's
     ``deadline_ns`` allows. ``epoch`` counts the blocking waits before it.
+    ``link_name`` is the link's name in the machine model, if it has one.
     """
 
     function: str
@@ -179,6 +262,7 @@ class ClassicalCall:
     first_use_vtu: int | None
     deadline_vtu: int | None
     epoch: int
+    link_name: str | None = None
 
     @property
     def slack_vtu(self) -> int | None:
@@ -403,9 +487,20 @@ class Lowered:
         module = self._module if self.scheduled else self._concrete()
         with self._lock:
             calls = module.classical_calls()
+        names = self.options.machine.link_name
         return [
             ClassicalCall(
-                name, link, tuple(iteration), start, length, due, taken, use, limit, epoch
+                name,
+                link,
+                tuple(iteration),
+                start,
+                length,
+                due,
+                taken,
+                use,
+                limit,
+                epoch,
+                names(link),
             )
             for name, link, iteration, start, length, due, taken, use, limit, epoch in calls
         ]
@@ -422,7 +517,7 @@ class Lowered:
         """Plot the schedule, one row per line (needs matplotlib)."""
         from .viz.timeline import plot_schedule
 
-        return plot_schedule(self.schedule, **kwargs)
+        return plot_schedule(self, **kwargs)
 
     def __repr__(self) -> str:
         params = f", parameters={list(self.parameters)}" if self.parameters else ""
@@ -456,6 +551,7 @@ def build(
         flatten_schedules=options.flatten_schedules,
     )
     builder.unroll_threshold = options.unroll_threshold
+    builder.link_id = options.machine.link_id
     builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
     check_root_schedule(options.schedule, builder)
     qudits = builder.qubits
@@ -469,7 +565,7 @@ def build(
         )
     buf: Any = builder.get_buffer()
     freq: Any = builder.get_freq_array()
-    links = [function.link for function in builder.classical]
+    links = [options.machine.link_id(function.link) for function in builder.classical]
     metrics.trace_ms = (time.perf_counter() - t0) * 1000
     metrics.op_count = builder.op_count
 

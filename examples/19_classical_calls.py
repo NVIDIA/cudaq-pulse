@@ -48,12 +48,12 @@ from cudaq_pulse.targets import Qubit, TargetDescription
 # H = amplitude * X / 2 this amplitude (rad/ns) rotates by pi.
 PI_AMP = math.pi / 20
 
-# Link 0 reaches a GPU decoder; link 1 is the controller's own FPGA logic.
-GPU_LINK, FPGA_LINK = 0, 1
+# Two links, by name: one to a GPU decoder, and the controller's own FPGA
+# logic. Functions name the link their requests travel on.
 MACHINE = MachineModel(
     links={
-        GPU_LINK: Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50),
-        FPGA_LINK: Link(fixed_ns=4, feedback_ns=8, max_in_flight=4),
+        "gpu": Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50),
+        "controller": Link(fixed_ns=4, feedback_ns=8, max_in_flight=4),
     }
 )
 
@@ -67,7 +67,7 @@ MACHINE = MachineModel(
     min_latency_ns=200,
     nominal_latency_ns=300,
     max_latency_ns=400,
-    link=GPU_LINK,
+    link="gpu",
 )
 def decode(syndrome):
     """A toy decoder: correct when the syndrome bit is set."""
@@ -103,7 +103,7 @@ CLOCK_GHZ = 2.0
     args=(Bits(1), Float(), Float(), Float()),
     results=(Float(), Float(), Float()),
     max_latency_ns=200,
-    link=FPGA_LINK,
+    link="controller",
 )
 def update_t1(survived, alpha, beta, last_wait):
     """One Bayesian update of a gamma posterior over the decay rate.
@@ -154,11 +154,11 @@ def print_report(lowered):
     """Each call's issue time, the time its answer is due, and its slack
     (how much later the answer could come without delaying a pulse)."""
     clock = lowered.target.clock_ghz
-    print(f"  {'function':<10} {'link':>4} {'issue ns':>9} {'ready ns':>9} {'slack ns':>9}")
+    print(f"  {'function':<10} {'link':>10} {'issue ns':>9} {'ready ns':>9} {'slack ns':>9}")
     for call in lowered.classical_report():
         slack = "-" if call.slack_vtu is None else f"{call.slack_vtu / clock:.1f}"
         print(
-            f"  {call.function:<10} {call.link:>4} {call.submit_vtu / clock:>9.1f} "
+            f"  {call.function:<10} {call.link_name:>10} {call.submit_vtu / clock:>9.1f} "
             f"{call.due_vtu / clock:>9.1f} {slack:>9}"
         )
 
@@ -174,7 +174,7 @@ def export(lowered, name, directory):
     )
     for entry in artifact["manifest"]["functions"]:
         print(
-            f"    {entry['name']}: id 0x{entry['function_id']:08x} on link {entry['link']}, "
+            f"    {entry['name']}: id 0x{entry['function_id']:08x} on {entry['link_name']}, "
             f"request {entry['request_bytes']} B, answer {entry['answer_bytes']} B"
         )
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 import numbers
 import struct
 from array import array
+from collections.abc import Callable
 from typing import Any
 
 from .ir_builder import (
@@ -106,6 +107,14 @@ _WF_MAP = {
 }
 
 _UNSCHEDULED = -1
+
+
+def _link_without_machine(link: Any) -> int:
+    if isinstance(link, str):
+        raise CompilationError(
+            f"link {link!r} is a name; compile with a MachineModel whose links name it"
+        )
+    return int(link)
 
 
 def _f2i(x: float) -> int:
@@ -218,6 +227,9 @@ class PackedIRBuilder:
         # Classical functions declared so far, in record order, and the
         # regions open now (ids), which bound where an answer is defined.
         self.classical: list[Any] = []
+        # Resolves a classical function's link (a name or an id) to its id;
+        # compile() sets it from the machine model.
+        self.link_id: Callable[[Any], int] = _link_without_machine
         self._classical_index: dict[int, int] = {}
         self._scope: list[int] = []
         # Loops and branch arms open now, as (id, is_loop): where a future
@@ -711,7 +723,7 @@ class PackedIRBuilder:
             [
                 index,
                 function.id,
-                function.link,
+                self.link_id(function.link),
                 flags,
                 _f2i(function.min_latency_ns),
                 _f2i(function.nominal_latency_ns),

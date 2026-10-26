@@ -19,7 +19,7 @@ decoding server unchanged:
 - ``reset_decoder(decoder)``: clear what was enqueued.
 
 In simulation the decoder is a Python function from the syndrome bits
-enqueued on a path to correction bits; each path keeps its own.
+enqueued on a path to correction bits; each path keeps its own::
 
     from cudaq_pulse.classical import qec
 
