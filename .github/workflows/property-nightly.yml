@@ -7,9 +7,11 @@
 # ============================================================================ #
 
 # Randomized property tests. Pull requests run the same tests derandomized
-# (the `ci` hypothesis profile); this job explores new inputs every night on
-# staging with a seed logged in the job summary and the example database
-# kept between runs, so a failure replays first on the next run. It also
+# (the `ci` hypothesis profile); this job explores new inputs every night
+# with a seed logged in the job summary and the example database kept
+# between runs, so a failure replays first on the next run. GitHub runs
+# schedules on the default branch only, so the nightly run tests `main`; a
+# manual dispatch tests the branch it is dispatched on. It also
 # runs the slow physics checks (marked `nightly`), checks that a new float
 # value on a compiled kernel stays far cheaper than a compile, and runs the
 # perf guard.
@@ -36,7 +38,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: staging
           fetch-depth: 0
           persist-credentials: false
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -88,8 +89,8 @@ jobs:
           PYTHONPATH: build/dev/python
         run: uv run --no-sync python benchmarks/compiler/specialize_bench.py
 
-      # Every perf guard, baselines included, on staging each night: a
-      # regression shows here even on a day without pushes.
+      # Every perf guard, baselines included, each night: a regression
+      # shows here even on a day without pushes.
       - name: Perf guard
         if: always()
         env:
