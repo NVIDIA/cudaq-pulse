@@ -154,7 +154,12 @@ def simulate(
         reports through each qubit's assignment errors (``readout_params``
         ``error_1to0`` and ``error_0to1``) and ``"model_with_decay"`` adds
         relaxation during the readout window; branches and calls see the
-        reported outcome, and the state is projected on the true one.
+        reported outcome, and the state is projected on the true one. A
+        call that takes ``IQ`` points gets points synthesized per shot at
+        each readout's true level, from its tone's frequency and its pulse's
+        amplitude (``IQModel``; with ``"model_with_decay"``, relaxation
+        during the window too); it needs ``shots``, and each shot from the
+        call on is simulated as its own trajectory.
     latency_branching:
         With a timeout, branch on whether the answer came in time with the
         probability of the function's latency model; by default, without
@@ -458,7 +463,7 @@ def _simulate_tree(
 
     Without *t_end* each path runs to the end of its own schedule, which
     variable waits make path-dependent."""
-    from ._calls import ReadoutModel, simulate_tree
+    from ._calls import IQModel, ReadoutModel, simulate_tree, takes_iq
 
     chosen = {f.name: f.implementation for f in functions if f.implementation is not None}
     chosen.update(handlers or {})
@@ -483,6 +488,11 @@ def _simulate_tree(
         latency_branching,
         clock_ghz,
         mode,
+        (
+            IQModel(target, compiled.qudits, decay=readout == "model_with_decay")
+            if any(takes_iq(f) for f in functions)
+            else None
+        ),
     )
     seen = {key: Measurement(*value) for key, value in seen_raw.items()}
     if t_end is None:

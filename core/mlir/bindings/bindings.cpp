@@ -726,6 +726,66 @@ public:
     return next;
   }
 
+  using ReadoutDrive =
+      std::tuple<int64_t, std::vector<int64_t>, double, double>;
+
+  /// Every readout on `path` as (readout index, iteration, tone frequency in
+  /// Hz, peak amplitude of its pulse); NaN where a value is not a number.
+  std::vector<ReadoutDrive>
+  readout_drives(const std::vector<std::vector<int64_t>> &path) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto readouts = readoutOps();
+    pulse::Path chosen = toPath(path, readouts);
+    std::vector<ReadoutDrive> result;
+    pulse::ExecutionWalker walker(clock(), chosen);
+    walker.readoutTones = true;
+    walker.onReadout = [&](const pulse::Occurrence &occurrence,
+                           const pulse::MeasurementKey &key) {
+      int64_t index =
+          std::distance(readouts.begin(), llvm::find(readouts, occurrence.op));
+      const pulse::Affine &frequency = occurrence.tone.frequencyHz;
+      double hz = frequency.isConstant()
+                      ? frequency.evaluate({})
+                      : std::numeric_limits<double>::quiet_NaN();
+      result.emplace_back(index, key.iteration, hz,
+                          peakAmplitude(occurrence.op->getOperand(1)));
+      return false;
+    };
+    auto function = getFuncOp();
+    if (!function)
+      throw std::runtime_error("no 'main' func in module");
+    if (!walker.run(function))
+      throw std::runtime_error(walker.error);
+    return result;
+  }
+
+  /// The peak amplitude of a built-in waveform (its operand 1), through
+  /// `pulse.scale` by a real number and `pulse.neg`.
+  static double peakAmplitude(mlir::Value waveform) {
+    double factor = 1.0;
+    for (mlir::Operation *op = waveform.getDefiningOp(); op;) {
+      llvm::StringRef name = op->getName().getStringRef();
+      if (name == "pulse.neg") {
+        op = op->getOperand(0).getDefiningOp();
+        continue;
+      }
+      if (name == "pulse.scale") {
+        auto scale = pulse::constantNumber(op->getOperand(1));
+        if (!scale)
+          break;
+        factor *= *scale;
+        op = op->getOperand(0).getDefiningOp();
+        continue;
+      }
+      if (op->getNumOperands() < 2)
+        break;
+      if (auto amplitude = pulse::constantNumber(op->getOperand(1)))
+        return std::abs(*amplitude * factor);
+      break;
+    }
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+
   using Factor = std::tuple<int64_t, int64_t, std::vector<double>>;
   using Term = std::tuple<double, double, int32_t, std::vector<double>,
                           std::vector<Factor>>;
@@ -2497,6 +2557,10 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "The variable and blocking waits that start new epochs")
       .def("classical_calls", &PulseModule::classical_calls,
            "Every execution of a classical call, with its timing")
+      .def("readout_drives", &PulseModule::readout_drives, nb::arg("path"),
+           nb::call_guard<nb::gil_scoped_release>(),
+           "Every readout on a path: (index, iteration, frequency Hz, "
+           "amplitude)")
       .def("next_measurement", &PulseModule::next_measurement,
            nb::call_guard<nb::gil_scoped_release>(),
            "The next measurement without an outcome on a path", nb::arg("path"))

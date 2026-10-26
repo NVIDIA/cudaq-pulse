@@ -130,6 +130,8 @@ def _unpack(specs: Sequence[ValueType], data: bytes) -> list[Any]:
             items: list[Any] = [(chunk[i // 8] >> (i % 8)) & 1 for i in range(spec.count)]
         else:
             items = list(struct.unpack("<" + fmt * elements, chunk))
+            if spec.descriptor.startswith("iq:"):
+                items = list(zip(items[0::2], items[1::2]))
         values.append(items[0] if spec.is_scalar else items)
     return values
 

@@ -36,7 +36,7 @@ from typing import Any
 
 import numpy as np
 
-from ..runtime._calls import _answer_values, _call_inputs
+from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
 from . import ClassicalFunction, Link, wire
 
 __all__ = [
@@ -300,7 +300,9 @@ def emulate(
     the functions' bodies unless given). *transport* models each link's
     delay in each direction, per link id or for all. *outcomes* gives the
     level a readout reports, from its qudit and the shot's generator
-    (uniform 0/1 by default). The answer's latency is the request's
+    (uniform 0/1 by default); a call that takes IQ points gets them drawn
+    at those levels from the target's dispersive readout model
+    (``IQModel``). The answer's latency is the request's
     transport delay, plus the service's time (``"measured"`` wall-clock, or
     ``"none"``), plus the answer's transport delay.
     """
@@ -314,6 +316,11 @@ def emulate(
     schedule_args = lowered.options.schedule_args()
     base = lowered._concrete().simulation_module(*schedule_args)
     clock = lowered.target.clock_ghz
+    iq_model = (
+        IQModel(lowered.target.target, lowered.qudits, decay=False)
+        if any(takes_iq(fn) for fn in functions)
+        else None
+    )
 
     def transport_of(link: int) -> Transport:
         if transport is None:
@@ -334,6 +341,7 @@ def emulate(
         path: list[tuple[tuple[int, tuple[int, ...]], int]] = []
         shot_outcomes: list[int] = []
         traces: list[CallTrace] = []
+        seen: dict[tuple[int, tuple[int, ...]], tuple[int, float]] = {}
         request_id = 0
         while True:
             entries = [[index, *iteration, k] for (index, iteration), k in path]
@@ -345,7 +353,19 @@ def emulate(
                 index, start, callee, arguments, answered, timeout = call
                 fn = by_name[callee]
                 known = {key: k for key, k in path}
-                inputs = _call_inputs(fn, arguments, known)
+                point = None
+                if iq_model is not None and takes_iq(fn):
+                    model = iq_model
+                    drives = {
+                        (i, tuple(it)): (f, a) for i, it, f, a in module.readout_drives(entries)
+                    }
+
+                    def point(key: tuple[int, tuple[int, ...]]) -> tuple[float, float]:
+                        qudit, duration = seen[key]
+                        frequency, amplitude = drives.get(key, (math.nan, math.nan))
+                        return model.sample(rng, qudit, known[key], frequency, amplitude, duration)
+
+                inputs = _call_inputs(fn, arguments, known, point)
                 request = wire.encode_request(fn, inputs, request_id)
                 request_id += 1
                 answer_bytes, service_ns = channel.call(fn, request)
@@ -373,8 +393,9 @@ def emulate(
                 continue
             if found is None:
                 break
-            ridx, iteration, qudit, _, _ = found
+            ridx, iteration, qudit, begin, finish = found
             level = outcome_of(qudit)
+            seen[(ridx, tuple(iteration))] = (qudit, finish - begin)
             path.append(((ridx, tuple(iteration)), level))
             shot_outcomes.append(level)
         ends = [s + d for _, _, _, s, d in module.events() if s is not None and d is not None]

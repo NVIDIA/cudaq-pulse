@@ -115,7 +115,7 @@ def test_round_trips():
     request = wire.encode_request(fn, args, request_id=9)
     rid, _, decoded = wire.decode_request(fn, request)
     assert rid == 9
-    assert decoded[:2] == [args[0], args[1]] and decoded[2] == [0.5, -0.5, 1.0, 2.0]
+    assert decoded[:2] == [args[0], args[1]] and decoded[2] == [(0.5, -0.5), (1.0, 2.0)]
     assert decoded[3:] == [3.25, -7, [1.5, 2.5]]
     answer = wire.encode_answer(fn, (0.125, [1, 1, 0]), request_id=9)
     assert wire.decode_answer(fn, answer) == (0, 9, (0.125, [1, 1, 0]))

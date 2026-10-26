@@ -66,7 +66,7 @@ struct Occurrence {
   std::vector<int64_t> iteration;
   int64_t startVtu = 0;
   int64_t durationVtu = 0;
-  /// For drives: the frame of the drive's tone as the drive starts.
+  /// For drives and readouts: the frame of the op's tone as it starts.
   ToneState tone;
 };
 
@@ -102,6 +102,8 @@ public:
   std::function<void(const Occurrence &)> onDrive;
   /// Called for every readout occurrence; returning true ends the walk.
   std::function<bool(const Occurrence &, const MeasurementKey &)> onReadout;
+  /// Give readout occurrences their tone's frame (drives always have it).
+  bool readoutTones = false;
   /// Called for every `classical.submit` occurrence; returning true ends
   /// the walk. A branch on an answer no constant stands for yet is skipped,
   /// like one on a measurement without an outcome: its arms run after the
@@ -202,6 +204,8 @@ private:
       Occurrence occurrence;
       if (!timed(op, occurrence))
         return false;
+      if (readoutTones)
+        occurrence.tone = toneOf(readout.getTone());
       MeasurementKey key{op, iteration};
       measurementOf[readout.getResult()] = key;
       if (onReadout && onReadout(occurrence, key))

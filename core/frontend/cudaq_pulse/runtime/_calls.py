@@ -20,6 +20,11 @@ functions of the path, so a call does not branch, except a timeout, which
 branches on whether the answer came in time, with the probability of the
 function's latency model. Branches that share a state share the array and
 carry a weight instead of copying it.
+
+A call that takes IQ points needs shots: each shot on the path from that
+call on is its own trajectory, with IQ points drawn for it from the
+``IQModel`` at the true level of each readout (the state stays shared until
+the answers differ).
 """
 
 from __future__ import annotations
@@ -65,30 +70,39 @@ def latency_in_time_probability(function: ClassicalFunction, timeout_ns: float) 
     return 1.0 - (hi - x) ** 2 / ((hi - lo) * (hi - mode))
 
 
+def takes_iq(function: ClassicalFunction) -> bool:
+    return any(spec.descriptor.startswith("iq") for spec in function.args)
+
+
 def _call_inputs(
     function: ClassicalFunction,
     arguments: Sequence[tuple[int, int, Sequence[int], float]],
     outcomes: Mapping[tuple[int, tuple[int, ...]], int],
+    iq: Callable[[tuple[int, tuple[int, ...]]], tuple[float, float]] | None = None,
 ) -> tuple[Any, ...]:
-    """The handler's arguments, grouped by the function's argument types."""
+    """The handler's arguments, grouped by the function's argument types.
+
+    *iq* gives the IQ point of a measurement, for IQ arguments."""
     values: list[Any] = []
+    keys: list[tuple[int, tuple[int, ...]]] = []
     for kind, readout, iteration, number in arguments:
-        if kind == 0:
-            values.append(outcomes[(readout, tuple(iteration))])
-        else:
-            values.append(number)
+        key = (readout, tuple(iteration))
+        keys.append(key)
+        values.append(outcomes[key] if kind == 0 else number)
     grouped: list[Any] = []
     cursor = 0
     for spec in function.args:
         part = values[cursor : cursor + spec.count]
+        part_keys = keys[cursor : cursor + spec.count]
         cursor += spec.count
         if spec.descriptor.startswith("bits"):
             part = [int(v != 0) for v in part]
         elif spec.descriptor.startswith("iq"):
-            raise NotImplementedError(
-                f"{function.name}: IQ arguments are drawn per shot; simulate with "
-                "trajectories=True and shots"
-            )
+            if iq is None:
+                raise ValueError(
+                    f"{function.name}: IQ points are drawn per shot; simulate with shots"
+                )
+            part = [iq(key) for key in part_keys]
         elif spec.source == "integer":
             part = [int(v) for v in part]
         grouped.append(part[0] if spec.is_scalar else list(part))
@@ -160,6 +174,90 @@ class ReadoutModel:
         return [(r, float(p)) for r, p in enumerate(column) if p > 0]
 
 
+class IQModel:
+    """Synthesized IQ points of readouts (dispersive readout, per qudit).
+
+    The resonator, at ``ro_freq`` (else at the readout tone, so the tone sits
+    midway between the pulled frequencies), is pulled by
+    ``chi_k = (2k - 1) chi`` for qudit level ``k`` (``chi_hz``, default
+    1 MHz). Driven at the readout tone's frequency ``f`` with field rate
+    ``epsilon`` it settles at
+
+        alpha_k = epsilon / (kappa / 2 - i 2 pi (f - f_r - chi_k)),
+
+    (``kappa_eff_hz``, default 2 MHz). ``epsilon`` scales with the readout
+    pulse's amplitude: at ``ro_amp`` (default: the amplitude played) driving
+    midway holds ``ro_photons`` photons (default 4). The integrated point
+    over ``ro_integration`` ns (else the readout's length) ``tau`` is
+
+        sqrt(eta kappa tau) alpha_k + noise,
+
+    with vacuum noise of variance 1/2 per quadrature and efficiency
+    ``ro_efficiency`` eta (default 0.5). With ``decay``, a qubit in ``|1>``
+    that relaxes at a time ``t`` drawn from its T1 within the window
+    integrates ``alpha_1`` for ``t`` and ``alpha_0`` after.
+    """
+
+    def __init__(self, target: Any, qudits: Sequence[int], decay: bool) -> None:
+        self.decay = decay
+        self._params: dict[int, dict[str, float]] = {}
+        for qudit in qudits:
+            q = target.qubits[qudit]
+            p = q.readout_params
+            self._params[qudit] = {
+                "chi": float(p.get("chi_hz", 1e6)),
+                "kappa": 2 * math.pi * float(p.get("kappa_eff_hz", 2e6)) * 1e-9,
+                "f_r": float(p.get("ro_freq", math.nan)),
+                "amp": float(p.get("ro_amp", math.nan)),
+                "photons": float(p.get("ro_photons", 4.0)),
+                "eta": float(p.get("ro_efficiency", 0.5)),
+                "tau": float(p.get("ro_integration", math.nan)),
+                "t1": float(q.t1_us) * 1e3,
+            }
+
+    def depletion_ns(self, qudit: int) -> float:
+        """The time the resonator takes to empty to 1% of its photons."""
+        return math.log(100.0) / self._params[qudit]["kappa"]
+
+    def center(
+        self, qudit: int, level: int, frequency_hz: float, amplitude: float, duration_ns: float
+    ) -> complex:
+        """The noiseless integrated IQ point of *level*."""
+        p = self._params[qudit]
+        kappa, chi = p["kappa"], p["chi"]
+        f_r = p["f_r"] if math.isfinite(p["f_r"]) else frequency_hz
+        if not math.isfinite(frequency_hz):
+            frequency_hz = f_r if math.isfinite(f_r) else 0.0
+            f_r = frequency_hz
+        reference = p["amp"] if math.isfinite(p["amp"]) else amplitude
+        scale = amplitude / reference if math.isfinite(amplitude) and reference else 1.0
+        epsilon = math.sqrt(p["photons"]) * abs(complex(kappa / 2, -2 * math.pi * chi * 1e-9))
+        tau = p["tau"] if math.isfinite(p["tau"]) else duration_ns
+        detuning = 2 * math.pi * (frequency_hz - f_r - (2 * level - 1) * chi) * 1e-9
+        alpha = epsilon * scale / complex(kappa / 2, -detuning)
+        return complex(math.sqrt(p["eta"] * kappa * tau) * alpha)
+
+    def sample(
+        self,
+        rng: np.random.Generator,
+        qudit: int,
+        level: int,
+        frequency_hz: float,
+        amplitude: float,
+        duration_ns: float,
+    ) -> tuple[float, float]:
+        point = self.center(qudit, level, frequency_hz, amplitude, duration_ns)
+        p = self._params[qudit]
+        if self.decay and level == 1 and p["t1"] > 0:
+            tau = p["tau"] if math.isfinite(p["tau"]) else duration_ns
+            t = rng.exponential(p["t1"])
+            if t < tau:
+                ground = self.center(qudit, 0, frequency_hz, amplitude, duration_ns)
+                point = (t * point + (tau - t) * ground) / tau
+        noise = rng.normal(0.0, math.sqrt(0.5), 2)
+        return (point.real + noise[0], point.imag + noise[1])
+
+
 def _schedule_end(module: Any, clock_ghz: float) -> float:
     """The end of a module's schedule, in ns."""
     ends = [s + d for _, _, _, s, d in module.events() if s is not None and d is not None]
@@ -182,6 +280,7 @@ def simulate_tree(
     latency_branching: bool,
     clock_ghz: float,
     modes: Mapping[int, int],
+    iq_model: IQModel | None = None,
 ) -> tuple[list[_Leaf], dict[tuple[int, tuple[int, ...]], Any]]:
     """Walk every path; returns the leaves and the measurements seen.
 
@@ -200,9 +299,88 @@ def simulate_tree(
             placeholder_cache[key] = cached
         return cached[1]
 
+    def invoke(callee: str, inputs: tuple[Any, ...], calls: list[CallRecord]) -> Any:
+        handler = handlers.get(callee)
+        if handler is None:
+            raise KeyError(
+                f"no handler for classical function {callee!r}; pass handlers={{{callee!r}: ...}}"
+            )
+        if getattr(handler, "takes_history", False):
+            return handler(*inputs, history=calls)
+        return handler(*inputs)
+
+    def answer_call(
+        current: Any,
+        path: list[tuple[tuple[int, tuple[int, ...]], int]],
+        truth: dict[tuple[int, tuple[int, ...]], int],
+        state: Any,
+        t: float,
+        count: int,
+        weight: float,
+        calls: list[CallRecord],
+        call: Any,
+        inputs: tuple[Any, ...],
+        answer: Any,
+    ) -> None:
+        index, start, callee, arguments, answered, timeout = call
+        function = by_name[callee]
+        if not answered:
+            calls_here = [*calls, CallRecord(callee, start, inputs, answer, True)]
+            run(
+                current.bind_call(index, [], *schedule_args),
+                path,
+                truth,
+                state,
+                t,
+                count,
+                weight,
+                calls_here,
+            )
+            return
+        values = _answer_values(function, answer)
+        limit = timeout if timeout >= 0 else function.timeout_ns
+        if limit is None:
+            run(
+                current.bind_call(index, values, *schedule_args),
+                path,
+                truth,
+                state,
+                t,
+                count,
+                weight,
+                [*calls, CallRecord(callee, start, inputs, answer, True)],
+            )
+            return
+        p_ok = latency_in_time_probability(function, limit)
+        if shots is None and not latency_branching:
+            p_ok = 1.0 if function.nominal_latency_ns <= limit else 0.0
+        outcomes_ok = [(True, p_ok), (False, 1.0 - p_ok)]
+        counts = (
+            rng.multinomial(count, [p_ok, 1.0 - p_ok]) if count else np.zeros(2, dtype=np.int64)
+        )
+        for (in_time, p), n in zip(outcomes_ok, counts):
+            if p <= 0:
+                continue
+            bound = [1.0, *values] if in_time else [0.0] * (1 + len(values))
+            run(
+                current.bind_call(index, bound, *schedule_args),
+                path,
+                truth,
+                state,
+                t,
+                int(n),
+                weight * p,
+                [
+                    *calls,
+                    CallRecord(callee, start, inputs, answer if in_time else None, in_time),
+                ],
+            )
+        return
+
     def run(
         current: Any,
         path: list[tuple[tuple[int, tuple[int, ...]], int]],
+        truth: dict[tuple[int, tuple[int, ...]], int],
         state: Any,
         t: float,
         count: int,
@@ -226,64 +404,47 @@ def simulate_tree(
             index, start, callee, arguments, answered, timeout = call
             function = by_name[callee]
             outcomes = {key: k for key, k in path}
-            inputs = _call_inputs(function, arguments, outcomes)
-            handler = handlers.get(callee)
-            if handler is None:
-                raise KeyError(
-                    f"no handler for classical function {callee!r}; "
-                    f"pass handlers={{{callee!r}: ...}}"
-                )
-            if getattr(handler, "takes_history", False):
-                answer = handler(*inputs, history=calls)
-            else:
-                answer = handler(*inputs)
-            if not answered:
-                calls_here = [*calls, CallRecord(callee, start, inputs, answer, True)]
-                run(
-                    current.bind_call(index, [], *schedule_args),
-                    path,
-                    state,
-                    t,
-                    count,
-                    weight,
-                    calls_here,
+            if not takes_iq(function):
+                inputs = _call_inputs(function, arguments, outcomes)
+                answer = invoke(callee, inputs, calls)
+                answer_call(
+                    current, path, truth, state, t, count, weight, calls, call, inputs, answer
                 )
                 return
-            values = _answer_values(function, answer)
-            limit = timeout if timeout >= 0 else function.timeout_ns
-            if limit is None:
-                run(
-                    current.bind_call(index, values, *schedule_args),
+            if shots is None or iq_model is None:
+                raise ValueError(f"{callee}: IQ points are drawn per shot; simulate with shots")
+            drives = {(i, tuple(it)): (f, a) for i, it, f, a in current.readout_drives(entries)}
+
+            def point(key: tuple[int, tuple[int, ...]]) -> tuple[float, float]:
+                _, _, qudit, begin, finish = seen[key]
+                frequency, amplitude = drives.get(key, (math.nan, math.nan))
+                return iq_model.sample(rng, qudit, truth[key], frequency, amplitude, finish - begin)
+
+            # Each shot draws its own points; a path that got no shots still
+            # draws one, for the ensemble state. What follows depends only on
+            # the answer, so shots with equal answers continue as one path
+            # (its record holds the first such shot's inputs).
+            n = max(count, 1)
+            groups: dict[tuple[float, ...], list[Any]] = {}
+            for _ in range(n):
+                inputs = _call_inputs(function, arguments, outcomes, point)
+                answer = invoke(callee, inputs, calls)
+                same = tuple(_answer_values(function, answer)) if answered else ()
+                group = groups.setdefault(same, [inputs, answer, 0])
+                group[2] += 1
+            for inputs, answer, k in groups.values():
+                answer_call(
+                    current,
                     path,
+                    truth,
                     state,
                     t,
-                    count,
-                    weight,
-                    [*calls, CallRecord(callee, start, inputs, answer, True)],
-                )
-                return
-            p_ok = latency_in_time_probability(function, limit)
-            if shots is None and not latency_branching:
-                p_ok = 1.0 if function.nominal_latency_ns <= limit else 0.0
-            outcomes_ok = [(True, p_ok), (False, 1.0 - p_ok)]
-            counts = (
-                rng.multinomial(count, [p_ok, 1.0 - p_ok]) if count else np.zeros(2, dtype=np.int64)
-            )
-            for (in_time, p), n in zip(outcomes_ok, counts):
-                if p <= 0:
-                    continue
-                bound = [1.0, *values] if in_time else [0.0] * (1 + len(values))
-                run(
-                    current.bind_call(index, bound, *schedule_args),
-                    path,
-                    state,
-                    t,
-                    int(n),
-                    weight * p,
-                    [
-                        *calls,
-                        CallRecord(callee, start, inputs, answer if in_time else None, in_time),
-                    ],
+                    k if count else 0,
+                    weight * k / n,
+                    calls,
+                    call,
+                    inputs,
+                    answer,
                 )
             return
         if found is None or found[4] > end_here:
@@ -295,17 +456,17 @@ def simulate_tree(
         m = modes[qudit]
         projected = [engine.project(state, dims, m, k) for k in range(dims[m])]
         weights = np.array([engine.weight(s) for s in projected]) * weight
-        branches: list[tuple[int, Any, float]] = []
+        branches: list[tuple[int, int, Any, float]] = []
         for k, (branch, w) in enumerate(zip(projected, weights)):
             if w <= _NEGLIGIBLE * norm:
                 continue
             if readout is None:
-                branches.append((k, branch, 1.0))
+                branches.append((k, k, branch, 1.0))
             else:
                 for r, p in readout.reports(m, k):
-                    branches.append((r, branch, p))
+                    branches.append((r, k, branch, p))
         probabilities = np.array(
-            [engine.weight(b) * p * weight for _, b, p in branches], dtype=float
+            [engine.weight(b) * p * weight for _, _, b, p in branches], dtype=float
         )
         total = probabilities.sum()
         counts = (
@@ -313,8 +474,17 @@ def simulate_tree(
             if count and total > 0
             else np.zeros(len(branches), dtype=np.int64)
         )
-        for (r, branch, p), n in zip(branches, counts):
-            run(current, [*path, (key, r)], branch, max(end, t), int(n), weight * p, calls)
+        for (r, k, branch, p), n in zip(branches, counts):
+            run(
+                current,
+                [*path, (key, r)],
+                {**truth, key: k},
+                branch,
+                max(end, t),
+                int(n),
+                weight * p,
+                calls,
+            )
 
-    run(module, [], state, t_start, shots or 0, 1.0, [])
+    run(module, [], {}, state, t_start, shots or 0, 1.0, [])
     return leaves, seen
