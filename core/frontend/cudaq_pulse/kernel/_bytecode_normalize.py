@@ -93,7 +93,13 @@ from typing import Any
     CALL_EX,
     DICT_MERGE,
     DELETE_SUBSCR,
-) = range(48)
+    LOAD_FAST_AND_CLEAR,
+    STORE_FAST_MAYBE,
+    BUILD_SET,
+    SET_ADD,
+    SET_UPDATE,
+    MAP_ADD,
+) = range(54)
 
 OP_NAMES: tuple[str, ...] = tuple(
     (
@@ -104,7 +110,8 @@ OP_NAMES: tuple[str, ...] = tuple(
         "POP_TOP COPY SWAP JUMP JUMP_IF_FALSE JUMP_IF_TRUE JUMP_IF_NONE "
         "JUMP_IF_NOT_NONE GET_ITER "
         "FOR_ITER RETURN IMPORT_NAME IMPORT_FROM CONVERT FORMAT RAISE UNSUPPORTED "
-        "REGION_END CALL_EX DICT_MERGE DELETE_SUBSCR"
+        "REGION_END CALL_EX DICT_MERGE DELETE_SUBSCR LOAD_FAST_AND_CLEAR "
+        "STORE_FAST_MAYBE BUILD_SET SET_ADD SET_UPDATE MAP_ADD"
     ).split()
 )
 
@@ -167,6 +174,11 @@ _SIMPLE: dict[str, int] = {
     "BUILD_STRING": BUILD_STRING,
     "LIST_APPEND": LIST_APPEND,
     "LIST_EXTEND": LIST_EXTEND,
+    "LOAD_FAST_AND_CLEAR": LOAD_FAST_AND_CLEAR,
+    "BUILD_SET": BUILD_SET,
+    "SET_ADD": SET_ADD,
+    "SET_UPDATE": SET_UPDATE,
+    "MAP_ADD": MAP_ADD,
     "UNPACK_SEQUENCE": UNPACK_SEQUENCE,
     "POP_TOP": POP_TOP,
     "POP_ITER": POP_TOP,
@@ -247,11 +259,17 @@ def _not_supported(what: str) -> str:
     return f"{what} are not supported in @cudaq_pulse.kernel"
 
 
-_NESTED_MESSAGE = _not_supported("lambdas, nested functions and comprehensions")
+_MODULE_LEVEL = (
+    "; define the function at module level, where helpers called from a kernel are inlined"
+)
+_NESTED_MESSAGES = {
+    "<genexpr>": _not_supported("generator expressions")
+    + "; use a list comprehension instead, as in sum([x for x in xs])",
+    "<lambda>": _not_supported("lambdas") + _MODULE_LEVEL,
+}
+_NESTED_MESSAGE = _not_supported("nested functions") + _MODULE_LEVEL
 _TRY_MESSAGE = _not_supported("try and with statements")
 _UNSUPPORTED: dict[str, str] = {
-    "MAKE_FUNCTION": _NESTED_MESSAGE,
-    "LOAD_FAST_AND_CLEAR": _NESTED_MESSAGE,
     "BEFORE_WITH": _TRY_MESSAGE,
     "LOAD_SPECIAL": _TRY_MESSAGE,
     "RETURN_GENERATOR": _not_supported("generators"),
@@ -366,12 +384,19 @@ class DecodedCode:
         return "\n".join(lines)
 
 
-def _protected_starts(code: CodeType) -> list[int]:
-    """Byte offsets where an exception-table range begins."""
+def _protected_starts(code: CodeType, raw: list[dis.Instruction]) -> list[int]:
+    """Byte offsets where a ``try`` or ``with`` block's exception-table range
+    begins.
+
+    An inlined comprehension (3.12+) has an entry too, whose handler restores
+    the iteration variable; ``try`` and ``with`` handlers start with
+    ``PUSH_EXC_INFO``.
+    """
     if not code.co_exceptiontable:
         return []
     entries = getattr(dis.Bytecode(code), "exception_entries", ())
-    return sorted({e.start for e in entries})
+    handlers = {ins.offset for ins in raw if ins.opname == "PUSH_EXC_INFO"}
+    return sorted({e.start for e in entries if e.target in handlers})
 
 
 def _decode(code: CodeType) -> DecodedCode:
@@ -379,7 +404,10 @@ def _decode(code: CodeType) -> DecodedCode:
     raw = list(dis.get_instructions(code))
 
     exit_offsets = {ins.argval for ins in raw if ins.opname == "FOR_ITER"}
-    protected = _protected_starts(code)
+    protected = _protected_starts(code, raw)
+    # Variables a comprehension saves and restores; restoring stores the
+    # saved value, or unbinds the name if it had none.
+    cleared = {ins.argval for ins in raw if ins.opname == "LOAD_FAST_AND_CLEAR"}
     next_protected = 0
 
     out: list[list[Any]] = []
@@ -388,10 +416,11 @@ def _decode(code: CodeType) -> DecodedCode:
     index_at: dict[int, int] = {}
     pending_kw_names = False
     cleanup = 0  # remaining loop-exit cleanup instructions to drop
-    previous = ""  # opname of the raw instruction before *ins*
+    previous: dis.Instruction | None = None  # the raw instruction before *ins*
 
     for ins in raw:
-        prev_name, previous = previous, ins.opname
+        prev, previous = previous, ins
+        prev_name = "" if prev is None else prev.opname
         if len(positions) < len(out):
             positions.extend([pos] * (len(out) - len(positions)))
         pos = ins.positions
@@ -422,6 +451,8 @@ def _decode(code: CodeType) -> DecodedCode:
             if op == CALL and pending_kw_names:
                 op = CALL_KW
                 pending_kw_names = False
+            elif op == STORE_FAST and ins.argval in cleared:
+                op = STORE_FAST_MAYBE
             out.append([op, ins.argval])
             continue
 
@@ -457,9 +488,10 @@ def _decode(code: CodeType) -> DecodedCode:
         elif name == "CONTAINS_OP":
             out.append([CONTAINS, bool(iarg)])
         elif name in _SUPERINSTRUCTIONS:
-            first, second = _SUPERINSTRUCTIONS[name]
-            out.append([first, ins.argval[0]])
-            out.append([second, ins.argval[1]])
+            for half, var in zip(_SUPERINSTRUCTIONS[name], ins.argval):
+                if half == STORE_FAST and var in cleared:
+                    half = STORE_FAST_MAYBE
+                out.append([half, var])
         elif name == "RETURN_CONST":
             out.append([LOAD_CONST, ins.argval])
             out.append([RETURN, None])
@@ -477,6 +509,10 @@ def _decode(code: CodeType) -> DecodedCode:
             out.append([CONVERT, iarg])
         elif name in ("FORMAT_SIMPLE", "FORMAT_WITH_SPEC"):
             out.append([FORMAT, name == "FORMAT_WITH_SPEC"])
+        elif name == "MAKE_FUNCTION":
+            made = prev.argval if prev is not None and prev.opname == "LOAD_CONST" else None
+            message = _NESTED_MESSAGES.get(getattr(made, "co_name", ""), _NESTED_MESSAGE)
+            out.append([UNSUPPORTED, message])
         elif name in _UNSUPPORTED:
             out.append([UNSUPPORTED, _UNSUPPORTED[name]])
         else:
@@ -528,7 +564,7 @@ def _loop_var_is_read(out: list[list[Any]], for_idx: int, exit_idx: int) -> bool
     name = store[1]
     for j in range(for_idx + 2, exit_idx):
         op, arg = out[j]
-        if arg == name and op in (LOAD_FAST, DELETE_FAST, LOAD_DEREF):
+        if arg == name and op in (LOAD_FAST, DELETE_FAST, LOAD_DEREF, LOAD_FAST_AND_CLEAR):
             return True
     return False
 

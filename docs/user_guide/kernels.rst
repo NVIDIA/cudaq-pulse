@@ -215,6 +215,11 @@ Python Inside Kernels
 
 Besides the control flow above, a kernel body may use:
 
+- list, dictionary and set comprehensions, nested and filtered ones too, and
+  set displays such as ``{8, 16}``. A comprehension is unrolled while
+  tracing like the ``for`` loop it stands for, so
+  ``[get_drive_line(q) for q in qubits]`` builds a list of ``(line, tone)``
+  pairs and ``[readout(r, wf, t) for _ in range(12)]`` a list of results.
 - calls with ``*args`` and ``**kwargs``, unpacked while tracing, so
   ``sync(*lines)`` synchronizes a list of lines built in a loop and
   ``helper(d, t, **opts)`` passes a dictionary of options.
@@ -223,6 +228,10 @@ Besides the control flow above, a kernel body may use:
   so an operation always uses the channel's current line and tone, whichever
   copy of it the kernel passes. ``append``, ``insert``, ``extend``, ``pop``,
   ``remove`` and ``del xs[i]`` work on lists of lines.
+- list, dict and set comprehensions, nested and filtered ones included
+  (``[get_drive_line(q) for q in qubits]``, ``{i: 8 * i for i in range(4)}``),
+  and set displays. A comprehension runs while tracing, one iteration per
+  element, like a loop over a Python value.
 
 Unsupported Patterns
 --------------------
@@ -231,8 +240,10 @@ The following Python constructs are **not** supported inside kernels
 and will raise ``CompilationError``:
 
 - ``while`` loops
-- Lambdas and function definitions inside the kernel body
-- List comprehensions or generator expressions
+- Lambdas and function definitions inside the kernel body; define the
+  function at module level, where it is inlined
+- Generator expressions; pass a list comprehension instead, as in
+  ``sum([x for x in xs])``
 - ``try`` / ``except`` and ``with`` blocks
 - ``if`` conditions on anything that is only known at runtime other than a
   measurement result

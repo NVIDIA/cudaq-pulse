@@ -209,6 +209,8 @@ class _Unrolled:
 
 
 _MISSING = object()
+# What a comprehension saves for an iteration variable that was unbound.
+_UNBOUND = object()
 
 _LINE_OPS = frozenset({"get_drive_line", "get_readout_line"})
 
@@ -691,7 +693,15 @@ class PulseIREmitter:
 
                 elif op is _get_iter:
                     value = pop()
-                    push(_Loop(value) if type(value) is range else _Unrolled(_iterate(value)))
+                    vt = type(value)
+                    if vt is range:
+                        push(_Loop(value))
+                    elif vt is _Unrolled or vt is _Loop:
+                        # 3.13 and 3.14 take iter() of a comprehension's iterator again.
+                        push(value)
+                        continue
+                    else:
+                        push(_Unrolled(_iterate(value)))
                     if _iter_slots > 1:
                         stack.extend([None] * (_iter_slots - 1))
 
@@ -723,8 +733,11 @@ class PulseIREmitter:
                         raise CompilationError(f"list update on non-list: {type(lst)}")
                     if op is bc.LIST_APPEND:
                         lst.append(val)
+                        if val.__class__ is IRValue and val.vtype in LINEAR_TYPES:
+                            self._slots[id(val)] = (lst, len(lst) - 1, val)
                     else:
                         lst.extend(val)
+                        self._track_slots(lst, 0)
 
                 elif op is bc.UNARY:
                     push(arg(pop()))
@@ -756,16 +769,6 @@ class PulseIREmitter:
                     kwargs = dict(zip(names, values[n_pos:]))
                     self._dispatch_call(pop(), values[:n_pos], kwargs)
 
-                elif op is bc.CALL_EX:
-                    kwargs = pop() if arg else None
-                    star = pop()
-                    self._dispatch_call(pop(), _star_args(star), kwargs or None)
-
-                elif op is bc.DICT_MERGE:
-                    index, strict = arg
-                    other = pop()
-                    _merge_kwargs(stack[-index], other, strict)
-
                 elif op is bc.COPY:
                     push(stack[-arg])
 
@@ -795,19 +798,6 @@ class PulseIREmitter:
                     value = pop()
                     self._note_mutation(obj)
                     obj[index] = value
-
-                elif op is bc.DELETE_SUBSCR:
-                    index = pop()
-                    obj = pop()
-                    self._note_mutation(obj)
-                    try:
-                        del obj[index]
-                    except (TypeError, IndexError, KeyError) as e:
-                        raise CompilationError(
-                            f"del failed: {type(obj).__name__}[{index!r}]: {e}"
-                        ) from e
-                    if obj.__class__ is list:
-                        self._track_slots(obj, 0)
 
                 elif op is bc.BUILD_CONST_KEY_MAP:
                     keys = pop()
@@ -845,6 +835,58 @@ class PulseIREmitter:
                 elif op is bc.RAISE:
                     exc = pop() if arg else None
                     raise CompilationError(f"kernel raised {exc!r}")
+
+                elif op is bc.CALL_EX:
+                    kwargs = pop() if arg else None
+                    star = pop()
+                    self._dispatch_call(pop(), _star_args(star), kwargs or None)
+
+                elif op is bc.DICT_MERGE:
+                    index, strict = arg
+                    other = pop()
+                    _merge_kwargs(stack[-index], other, strict)
+
+                elif op is bc.DELETE_SUBSCR:
+                    index = pop()
+                    obj = pop()
+                    self._note_mutation(obj)
+                    try:
+                        del obj[index]
+                    except (TypeError, IndexError, KeyError) as e:
+                        raise CompilationError(
+                            f"del failed: {type(obj).__name__}[{index!r}]: {e}"
+                        ) from e
+                    if obj.__class__ is list:
+                        self._track_slots(obj, 0)
+
+                elif op is bc.LOAD_FAST_AND_CLEAR:
+                    push(local_vars.pop(arg, _UNBOUND))
+
+                elif op is bc.STORE_FAST_MAYBE:
+                    value = pop()
+                    if value is _UNBOUND:
+                        local_vars.pop(arg, None)
+                    else:
+                        local_vars[arg] = value
+
+                elif op is bc.BUILD_SET:
+                    items = stack[len(stack) - arg :]
+                    del stack[len(stack) - arg :]
+                    push(set(items))
+                    self._note_fresh(stack[-1])
+
+                elif op is bc.SET_ADD:
+                    val = pop()
+                    stack[-arg].add(val)
+
+                elif op is bc.SET_UPDATE:
+                    val = pop()
+                    stack[-arg].update(val)
+
+                elif op is bc.MAP_ADD:
+                    val = pop()
+                    key = pop()
+                    stack[-arg][key] = val
 
                 elif op is bc.UNSUPPORTED:
                     raise CompilationError(arg)

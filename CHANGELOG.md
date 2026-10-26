@@ -32,14 +32,20 @@ behavior may change in any 0.x release.
   the calls in its body) is at most the unroll threshold: 8 by default, the
   measured break-even point, set with `pulse.compile(k, unroll_threshold=)`,
   `@pulse.kernel(unroll_threshold=)` or `CUDAQ_PULSE_UNROLL_THRESHOLD`.
-- **Python in kernels.** Calls with `*args` and `**kwargs` are unpacked
+- **Python in kernels.** List, dict and set comprehensions and set displays
+  are unrolled while tracing, so `[get_drive_line(q) for q in qubits]`
+  builds a list of lines; a generator expression, lambda or nested `def`
+  raises a `CompilationError` that says what to write instead. Calls with
+  `*args` and `**kwargs` are unpacked
   while tracing, so `sync(*lines)` synchronizes a list of lines built in a
   loop. Helpers called from a kernel may take keyword-only, `*args` and
   `**kwargs` parameters; methods of helper objects, `functools.partial`
   objects and decorated helpers that use pulse ops are inlined too. Lines
   and tones may be kept in any container, such as a list of `(line, tone)`
   pairs or a dict, and lists of them support `pop`, `insert`, `extend`,
-  `remove` and `del xs[i]`.
+  `remove` and `del xs[i]`. List, dict and set comprehensions and set
+  displays trace on every supported Python; generator expressions, lambdas
+  and nested functions are rejected with what to write instead.
 - **Operations.** The kernel language lives in `cudaq_pulse.ops` and is
   used by bare name inside kernels. Drive and readout channels per qudit; `drive`, `readout`,
   `wait` and `sync`; phase and frequency control (`shift_phase` follows the

@@ -362,3 +362,124 @@ def test_del_errors_are_compilation_errors():
 
     with pytest.raises(CompilationError, match="del failed: list\\[3\\]"):
         python_ir(k, Q[0])
+
+
+# ── Comprehensions and set displays ──────────────────────────────────
+
+ALL = (0, 1, 2)
+AMPS = (0.1, 0.2, 0.3)
+
+
+def test_comprehensions_from_the_friction_log():
+    @pulse.kernel
+    def probe(qubits):
+        lines = [get_drive_line(qubits[i]) for i in ALL]
+        sync(*[line for line, _ in lines])
+        amps = [0.1 * i for i in range(3)]
+        total = sum([a for a in AMPS])
+        widths = {i: 8 * (i + 1) for i in ALL}
+        for i, (line, tone) in enumerate(lines):
+            drive(line, square(widths[i], amps[i] + total), tone)
+
+    ops = python_ir(probe, Q[0:3]).ops
+    (sync_op,) = [op for op in ops if op.kind == "pulse.sync"]
+    assert len(sync_op.operands) == 3
+    drives = [op for op in ops if op.kind == "pulse.drive"]
+    assert [d.operands[0] for d in drives] == list(sync_op.results)
+    squares = [op.attrs for op in ops if op.kind == "pulse.square"]
+    assert [s["duration"] for s in squares] == [8, 16, 24]
+    assert [round(s["amplitude"], 9) for s in squares] == [0.6, 0.7, 0.8]
+    _compiles(probe, Q[0:3])
+
+
+def test_a_comprehension_collects_measurements():
+    @pulse.kernel
+    def rounds(q):
+        r, rt = get_readout_line(q)
+        ms = [readout(r, square(100, 0.05), rt) for _ in range(12)]
+        assert len(ms) == 12
+
+    kinds = _kinds(rounds, Q[0])
+    assert kinds.count("pulse.readout") == 12
+    assert "scf.for" not in kinds
+    _compiles(rounds, Q[0])
+
+
+def test_nested_filtered_set_and_dict_comprehensions():
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        grid = [[i * j for j in range(3)] for i in range(3)]
+        flat = [x for row in grid for x in row if x % 2 == 0]
+        unique = {x % 3 for x in flat}
+        pairs = {k: v for k, v in zip("ab", (8, 16))}
+        literal = {8, 16}
+        for n in sorted(unique | literal):
+            drive(d, square(n + pairs["a"], 0.1), t)
+
+    ops = python_ir(k, Q[0]).ops
+    assert [op.attrs["duration"] for op in ops if op.kind == "pulse.square"] == [8, 9, 10, 16, 24]
+
+
+def test_a_comprehension_restores_its_variable():
+    @pulse.kernel
+    def keeps(q):
+        d, t = get_drive_line(q)
+        x = 8
+        ys = [x for x in (16, 24)]
+        drive(d, square(x + len(ys), 0.1), t)
+
+    (sq,) = [op for op in python_ir(keeps, Q[0]).ops if op.kind == "pulse.square"]
+    assert sq.attrs["duration"] == 10
+
+
+def test_comprehension_inside_a_rolled_loop_and_over_range():
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        for _ in range(20):
+            ws = [8 for j in range(2)]
+            drive(d, square(ws[0], 0.1), t)
+
+    assert _kinds(k, Q[0]).count("scf.for") == 1
+    _compiles(k, Q[0])
+
+
+def test_generator_expressions_and_lambdas_say_what_to_write_instead():
+    @pulse.kernel
+    def genexpr(q):
+        d, t = get_drive_line(q)
+        drive(d, square(sum(a for a in (8, 8)), 0.1), t)
+
+    @pulse.kernel
+    def lam(q):
+        d, t = get_drive_line(q)
+        scale = lambda a: a * 2  # noqa: E731
+        drive(d, square(8, scale(0.1)), t)
+
+    @pulse.kernel
+    def nested(q):
+        def inner():
+            return 8
+
+        d, t = get_drive_line(q)
+
+    with pytest.raises(CompilationError, match=r"generator expressions .*sum\(\[x for x in xs\]\)"):
+        python_ir(genexpr, Q[0])
+    with pytest.raises(CompilationError, match="lambdas are not supported.*module level"):
+        python_ir(lam, Q[0])
+    with pytest.raises(CompilationError, match="nested functions are not supported.*module level"):
+        python_ir(nested, Q[0])
+
+
+def test_try_is_still_rejected_next_to_a_comprehension():
+    @pulse.kernel
+    def k(q):
+        xs = [i for i in range(2)]
+        try:
+            xs.append(get_drive_line(q))
+        except ValueError:
+            pass
+
+    with pytest.raises(CompilationError, match="try and with statements"):
+        python_ir(k, Q[0])
