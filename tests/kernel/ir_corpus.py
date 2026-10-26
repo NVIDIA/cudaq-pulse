@@ -188,6 +188,11 @@ def closures_and_helpers(gain: float) -> Callable[..., Any]:
     return k
 
 
+def _ramp(t):
+    """A sampled envelope for custom()."""
+    return 0.01 * t
+
+
 @pulse.kernel
 def python_expressions(q0):
     d0, t0 = get_drive_line(q0)
@@ -204,7 +209,9 @@ def python_expressions(q0):
             break
     flag = not (total >= 4 and len(amps) == 4)
     wait(d0, 10 if flag else total * 10)
-    w = custom(16, f"shape_{total}_{amps[-1]:.2f}")
+    shape = f"shape_{total}_{amps[-1]:.2f}"
+    assert shape.startswith("shape_"), shape
+    w = custom(16, _ramp)
     drive(d0, w, t0)
     shift_frequency(t0, frequency=1e6)
     if total:

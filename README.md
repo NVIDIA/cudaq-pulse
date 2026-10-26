@@ -164,9 +164,9 @@ release carries the wheels and the source distribution.
 - GPU evolution supports the `rk1`, `rk2`, `rk4`, `magnus`, and
   `crank_nicolson` integrators. Waveform sums, differences, scaling, and
   negation are lowered exactly; products are sampled once per clock cycle.
-  Observable evaluation, neutral-atom models, unspecialized parameters, and
-  arbitrary Python waveform callbacks are rejected explicitly by the execution
-  lowering.
+  Envelopes from Python functions (`custom`) are sampled once per clock
+  cycle while tracing. Observable evaluation, neutral-atom models and
+  unspecialized parameters are rejected explicitly by the execution lowering.
 - GPU numerical results are research regression coverage, with no production
   compatibility or accuracy commitment.
 

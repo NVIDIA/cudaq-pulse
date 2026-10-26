@@ -102,15 +102,15 @@ def test_documented_waveforms_and_algebra_lower_to_typed_ops():
     assert _drive_timings(compiled.mlir()) == [(0, 4)]
 
 
-def test_custom_waveform_preserves_callback_symbol():
+def test_custom_waveform_is_sampled_not_named():
 
     @pulse.kernel
     def kernel(q):
         line, tone = get_drive_line(q)
-        drive(line, custom(8, "calibrated_envelope"), tone)
+        drive(line, custom(8, abs), tone)
 
-    compiled = pulse.compile(kernel, passes=()).lower(Q[0])
-    assert "@calibrated_envelope" in compiled.mlir()
+    mlir = pulse.compile(kernel, passes=()).lower(Q[0]).mlir()
+    assert "pulse.custom_samples" in mlir and "@abs" not in mlir
 
 
 def test_concrete_numeric_arguments_are_not_made_symbolic():

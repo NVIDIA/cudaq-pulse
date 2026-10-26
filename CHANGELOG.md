@@ -98,7 +98,11 @@ behavior may change in any 0.x release.
   parameters, so type checkers check `k(...)`, `k.lower(...)` and
   `pulse.compile(k)(...)` against the kernel's signature.
 - `square()` is typed to take the complex and `[re, im]` amplitudes it
-  accepts, and `custom()` the envelope name it accepts besides a callable.
+  accepts.
+- `custom(duration, f)` samples the Python function `f` once per clock cycle
+  while the kernel is traced, so custom envelopes compile, schedule and
+  simulate like the built-in ones; it takes a callable, not an envelope
+  name, and up to 252 clock cycles, like `custom_samples`.
 - **Compilation.** Verification, virtual-Z folding and drive fusion by
   default; ASAP, ALAP and resource-constrained schedules
   (`cudaq_pulse.compiler.MachineModel`); per-kernel schedule policies and

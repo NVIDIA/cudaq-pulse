@@ -18,6 +18,11 @@ import cudaq_pulse as pulse
 # ── 1. Every waveform constructor ────────────────────────────────────────────
 
 
+def sine_envelope(t):
+    """Half a sine period over 40 clock cycles, for custom()."""
+    return 0.3 * math.sin(math.pi * t / 40)
+
+
 @pulse.kernel
 def waveform_showcase(qubit):
     """Drive a qubit with each built-in waveform type sequentially."""
@@ -41,10 +46,10 @@ def waveform_showcase(qubit):
     # Gaussian square — flat top with Gaussian rise/fall, used in echoed-CR
     drive(drive_line, gaussian_square(200, 0.1, 10.0, 160), tone)
 
-    # Custom — named envelope resolved at runtime from calibration DB
-    drive(drive_line, custom(40, "my_optimal_pulse"), tone)
+    # Custom — a Python function of time, sampled once per clock cycle
+    drive(drive_line, custom(40, sine_envelope), tone)
 
-    # Custom samples — arbitrary IQ envelope from pre-computed data
+    # Custom samples — an arbitrary real envelope from pre-computed data
     drive(drive_line, custom_samples([0.1, 0.3, 0.5, 0.3, 0.1]), tone)
 
 

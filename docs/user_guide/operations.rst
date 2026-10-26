@@ -121,17 +121,27 @@ Each constructor returns a waveform value that can be passed to
    * - ``gaussian_square(duration, amplitude, sigma, width)``
      - Flat-top pulse with Gaussian rise/fall edges
    * - ``custom(duration, envelope_fn)``
-     - Named user-defined envelope callback for compiler experimentation
+     - A Python function ``f(t)`` of the time in clock cycles, sampled while
+       tracing (below)
    * - ``custom_samples(samples)``
-     - Waveform from a non-empty sequence of at most 253 real-valued samples
+     - Waveform from a non-empty sequence of at most 252 real-valued samples
 
 For ``gaussian_square``, ``width`` is the flat-top width in virtual time units;
 ``duration - width`` must be a positive even integer so the two edges have the
 same integer duration.
 
-The GPU execution lowering supports the built-in constructors and
-``custom_samples``. Arbitrary ``custom`` callbacks must be specialized to
-samples by a future pass and are currently rejected before execution.
+``custom(duration, f)`` calls ``f`` once per clock cycle while the kernel is
+traced, at the middle of each cycle (``t = 0.5, 1.5, ..., duration - 0.5``),
+and holds each value for its cycle: the IR records the
+``custom_samples`` of those values, so a custom envelope compiles, schedules
+and simulates on the CPU and the GPU like the built-in ones. Built-in
+envelopes are evaluated continuously, so a function that reproduces one,
+such as a Gaussian for ``gaussian``, matches it up to that per-cycle
+sampling. ``f`` must be defined outside the kernel and return real numbers
+that do not depend on kernel parameters; scale the waveform by a parameter
+with ``wf_scale(custom(duration, f), amplitude)``. The duration must be known
+while tracing and at most 252 clock cycles, the length of one sample record;
+play a longer envelope as consecutive drives.
 
 Waveform Arithmetic
 -------------------

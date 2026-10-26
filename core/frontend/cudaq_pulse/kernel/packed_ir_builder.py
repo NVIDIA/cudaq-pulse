@@ -105,6 +105,9 @@ def _f2i(x: float) -> int:
 # whose payload grows with the values they carry, write 0xFF there and the
 # length in the next word.
 _MAX_PAYLOAD = 0xFF
+# One custom_samples record holds its result, its count and the samples, in
+# a payload shorter than the 0xFF that marks an extended length.
+MAX_CUSTOM_SAMPLES = _MAX_PAYLOAD - 3
 
 
 def _header(opcode: int, payload_len: int, param_mask: int = 0) -> int:
@@ -290,7 +293,7 @@ class PackedIRBuilder:
         # --- Waveform constructors ---
         wf_name = kind.removeprefix("pulse.")
         wf_code = _WF_MAP.get(wf_name)
-        if wf_code is not None or wf_name in ("custom", "custom_samples"):
+        if wf_code is not None or wf_name == "custom_samples":
             rv = results[0].vid
             dur_raw = a.get("duration", 0)
             dur = dur_raw if is_symbolic(dur_raw) else _as_i64(dur_raw, f"{wf_name} duration")
@@ -345,10 +348,8 @@ class PackedIRBuilder:
                 rf_raw = (dur - width_raw) // 2
                 vals = [dur, amp_raw, sig_raw, rf_raw]
                 self._emit_wf(_WF_GAUSS_SQUARE, rv, vals, ["i64", "f64", "f64", "i64"])
-            elif wf_name == "custom_samples":
-                self._emit_custom_samples(rv, a.get("samples", ()))
             else:
-                self._emit_custom(rv, dur, a.get("name", "custom"))
+                self._emit_custom_samples(rv, a.get("samples", ()))
             return results
 
         # --- drive ---
@@ -873,37 +874,14 @@ class PackedIRBuilder:
         for e in encoded:
             self._w(e)
 
-    def _emit_custom(self, rv: int, duration: Any, callback: Any) -> None:
-        name = callback if isinstance(callback, str) else getattr(callback, "__name__", "custom")
-        encoded = name.encode("utf-8")
-        if not encoded:
-            raise CompilationError("custom waveform callback name is empty")
-        padded = encoded + b"\0" * ((8 - len(encoded) % 8) % 8)
-        words = [struct.unpack("=q", padded[i : i + 8])[0] for i in range(0, len(padded), 8)]
-        if 3 + len(words) > 255:
-            raise CompilationError("custom waveform callback name is too long")
-        param_mask = 0
-        if is_symbolic(duration):
-            duration_word = self._get_numeric_vid(duration, "i64")
-            param_mask |= 1 << 1
-        else:
-            duration_word = _as_i64(duration, "custom waveform duration")
-        self._ensure(4 + len(words))
-        self._w(_header(_WF_CUSTOM, 3 + len(words), param_mask))
-        self._w(rv)
-        self._w(duration_word)
-        self._w(len(encoded))
-        for word in words:
-            self._w(word)
-
     def _emit_custom_samples(self, rv: int, samples: Any) -> None:
         try:
             sample_values = list(samples)
         except TypeError as exc:
             raise CompilationError("custom_samples() requires a finite sequence") from exc
-        if len(sample_values) > _MAX_PAYLOAD - 2:
+        if len(sample_values) > MAX_CUSTOM_SAMPLES:
             raise CompilationError(
-                f"custom_samples() supports at most {_MAX_PAYLOAD - 2} samples per waveform"
+                f"custom_samples() supports at most {MAX_CUSTOM_SAMPLES} samples per waveform"
             )
         if not sample_values:
             raise CompilationError("custom_samples() requires at least one sample")

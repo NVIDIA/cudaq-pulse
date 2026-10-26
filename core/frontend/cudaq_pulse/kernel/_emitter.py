@@ -32,6 +32,8 @@ import difflib
 import functools
 import inspect
 import linecache
+import math
+import operator
 import types
 from collections.abc import Iterator
 from typing import Any
@@ -71,6 +73,7 @@ from .ir_builder import (
     SymbolicValueError,
     is_symbolic,
 )
+from .packed_ir_builder import MAX_CUSTOM_SAMPLES
 
 _WAVEFORMS = frozenset(
     {"gaussian", "square", "drag", "cosine", "tanh_ramp", "gaussian_square", "custom"}
@@ -366,6 +369,65 @@ def _sync_lines(fname: str, call_args: list[Any]) -> list[IRValue]:
     if len({id(v) for v in lines}) != len(lines):
         raise CompilationError(f"{fname}(): a line is passed more than once")
     return lines
+
+
+def _sample_envelope(duration: Any, envelope: Any) -> list[float]:
+    """The samples of ``custom(duration, envelope)``: *envelope* called at the
+    middle of each clock cycle, ``t = k + 0.5`` for ``k`` in
+    ``range(duration)``, as ``wf_mul`` products are sampled."""
+    if isinstance(envelope, str):
+        raise CompilationError(
+            f"custom(): got the name {envelope!r}; pass a callable f(t) that returns "
+            "the envelope at t clock cycles, or the samples to custom_samples()"
+        )
+    if not callable(envelope):
+        raise CompilationError(
+            f"custom(): argument 2 must be a callable f(t), got {_describe(envelope)}"
+        )
+    if is_symbolic(duration):
+        raise CompilationError(
+            "custom(): the duration must be known while tracing, since the envelope "
+            "is sampled then; pass it as an int argument or a constant"
+        )
+    try:
+        count = operator.index(duration)
+    except TypeError:
+        raise CompilationError(
+            f"custom(): the duration must be an int number of clock cycles, got {duration!r}"
+        ) from None
+    if count <= 0:
+        raise CompilationError(f"custom(): the duration must be positive, got {count}")
+    if count > MAX_CUSTOM_SAMPLES:
+        raise CompilationError(
+            f"custom(): a duration of {count} clock cycles is over the limit of "
+            f"{MAX_CUSTOM_SAMPLES}, one sample per cycle; split the envelope into "
+            "consecutive drives of at most that length"
+        )
+    samples = []
+    for k in range(count):
+        t = k + 0.5
+        value = envelope(t)
+        if is_symbolic(value):
+            raise CompilationError(
+                "custom(): the envelope returned a value that depends on a kernel "
+                "parameter; scale the waveform by it instead, as "
+                "wf_scale(custom(duration, f), amplitude)"
+            )
+        try:
+            number = complex(value)
+        except (TypeError, ValueError):
+            raise CompilationError(
+                f"custom(): the envelope returned {_describe(value)} at t={t}, not a number"
+            ) from None
+        if number.imag != 0.0:
+            raise CompilationError(
+                f"custom(): the envelope returned {number} at t={t}; complex envelopes "
+                "are not supported yet, so return real values"
+            )
+        if not math.isfinite(number.real):
+            raise CompilationError(f"custom(): the envelope returned {number.real} at t={t}")
+        samples.append(number.real)
+    return samples
 
 
 def _operand_error(fname: str, call_args: list[Any]) -> CompilationError:
@@ -1907,7 +1969,11 @@ class PulseIREmitter:
         if fname in _MAKES_WAVEFORM:
             if fname in _WAVEFORMS:
                 duration = attrs.get("duration")
-                if duration.__class__ is not int:
+                if fname == "custom":
+                    attrs = {"samples": _sample_envelope(duration, attrs.get("name"))}
+                    op_name = _OP_NAMES["custom_samples"]
+                    duration = len(attrs["samples"])
+                elif duration.__class__ is not int:
                     duration = None
             else:
                 duration = self._waveform_duration(fname, operands, attrs)

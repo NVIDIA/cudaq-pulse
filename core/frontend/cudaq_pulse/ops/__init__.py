@@ -315,19 +315,30 @@ def gaussian_square(
     return _require_context("gaussian_square")
 
 
-def custom(duration: Numeric, envelope_fn: str | Callable[..., complex]) -> Waveform:
-    """Create a waveform from a named or callable envelope.
+def custom(duration: int, envelope_fn: Callable[[float], float]) -> Waveform:
+    """Create a waveform by sampling a Python function while the kernel is traced.
 
-    Both forms are typed here. A name refers to an envelope callback the
-    runtime provides. A callable ``f(t) -> complex`` is passed to the
-    runtime by its ``__name__`` today; when ``custom`` samples a callable
-    while the kernel is traced, as ``custom_samples`` of its values, only
-    the behavior changes and this signature stays.
+    *envelope_fn* is called once per clock cycle, at the middle of each cycle:
+    ``t = 0.5, 1.5, ..., duration - 0.5``, in clock cycles from the start of
+    the pulse. Each value is held for its cycle, like ``custom_samples`` of
+    the values (which is what the kernel's IR records), so the waveform
+    compiles, schedules and simulates like the built-in envelopes. A function
+    that matches a built-in envelope, such as
+    ``lambda t: a * math.exp(-((t - duration / 2) ** 2) / (2 * sigma**2))``
+    for ``gaussian(duration, a, sigma)``, gives the same waveform up to that
+    per-cycle sampling.
+
+    The duration must be known while tracing (an ``int`` argument or a
+    constant) and at most 252 clock cycles; play a longer envelope as
+    consecutive drives. The function must return real numbers that do not
+    depend on kernel parameters: scale the waveform by a parameter with
+    ``wf_scale(custom(duration, f), amplitude)``. Define the function outside
+    the kernel: a lambda or ``def`` in a kernel body raises
+    ``CompilationError``.
 
     Args:
         duration: Pulse duration in clock cycles.
-        envelope_fn: The name of an envelope callback, or a callable
-            ``f(t) -> complex`` defining the envelope.
+        envelope_fn: A function ``f(t) -> float`` of the time in clock cycles.
 
     Returns:
         Waveform value.
