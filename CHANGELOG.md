@@ -13,6 +13,18 @@ request that makes it.
 
 ### Added
 
+- **Controller backends.** `Lowered.export_controller()` exports a
+  scheduled kernel for an out-of-tree controller backend
+  (`cudaq-pulse.controller/1`): every drive, readout, wait and classical call
+  with its exact timing, waveform and parameters (and, with
+  `sample_rate_ghz=`, its samples), tone frequency and frame phase, and the
+  measurement-conditioned branches it lies in. `MachineModel(controller=
+  ControllerLimits(...))` states what a controller can play (clock, issue
+  spacing, waveform memory, tones, readout acquirers, feedback latency,
+  answer timeouts) and makes compilation fail with `ControllerLimitError`
+  when a program exceeds it. `cudaq_pulse.backends` finds backends
+  installed under the `cudaq_pulse.backends` entry-point group;
+  `examples/controller_backend/` is a toy one.
 - **Classical calls at QPU runtime.** `classical`, a classical real-time
   dialect for co-processing at QPU runtime: pulse programs call GPU, host or
   FPGA services (decoders, estimators, calibration updates) while the QPU

@@ -14,6 +14,7 @@ API Reference
    compile
    simulation
    classical
+   controller
    devices
    kernel
    ops

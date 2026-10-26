@@ -26,7 +26,10 @@ in ``cudaq_pulse.ops``; inside a ``@pulse.kernel`` its names are used bare.
 Compiler types (``CompileMetrics``, ``ScheduledEvent``, ``MachineModel``,
 ``DEFAULT_PASSES``) are in ``cudaq_pulse.compiler``, target descriptions and
 calibrations in ``cudaq_pulse.targets``. ``pulse.classical`` declares the
-classical functions a kernel calls while the QPU runs.
+classical functions a kernel calls while the QPU runs. ``pulse.controller``
+exports a compiled kernel to a controller and states a controller's limits,
+and ``pulse.backends`` finds the controller backends installed beside
+cudaq-pulse.
 """
 
 from __future__ import annotations
@@ -65,6 +68,8 @@ __version__: str = _build_config.PACKAGE_VERSION
 # discovery or plotting, which compiling does not need: import them on first
 # use.
 if TYPE_CHECKING:
+    from . import backends as backends
+    from . import controller as controller
     from . import viz as viz
     from .runtime.gpu import GpuRuntimeError as GpuRuntimeError
     from .runtime.simulate import SimulationResult as SimulationResult
@@ -75,7 +80,7 @@ _LAZY_EXPORTS = {
     "simulate": ".runtime.simulate",
     "GpuRuntimeError": ".runtime.gpu",
 }
-_LAZY_MODULES = {"viz": ".viz"}
+_LAZY_MODULES = {"viz": ".viz", "backends": ".backends", "controller": ".controller"}
 
 __all__ = [
     "kernel",
@@ -98,6 +103,8 @@ __all__ = [
     "GpuRuntimeError",
     "viz",
     "classical",
+    "controller",
+    "backends",
 ]
 
 

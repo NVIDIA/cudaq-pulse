@@ -1,0 +1,24 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+
+# A minimal controller backend, installed beside cudaq-pulse with
+# `pip install examples/controller_backend`; `cudaq_pulse.backends.get("toy")`
+# then finds it.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "toy-controller"
+version = "0.1.0"
+description = "A toy controller backend for cudaq-pulse"
+requires-python = ">=3.12"
+dependencies = ["cudaq-pulse"]
+
+[project.entry-points."cudaq_pulse.backends"]
+toy = "toy_controller:ToyBackend"

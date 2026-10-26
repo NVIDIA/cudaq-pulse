@@ -34,6 +34,8 @@ TOP_LEVEL = {
     "GpuRuntimeError",
     "viz",
     "classical",
+    "controller",
+    "backends",
     "__version__",
 }
 

@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -221,6 +222,294 @@ inline double i2f(int64_t bits) {
   return d;
 }
 
+/// The walk behind PulseModule::controller_events(): every timed op once
+/// per loop iteration, both arms of every branch, with the frame of its
+/// tone and the branches it lies in.
+struct ControllerWalk {
+  using WaveformNode =
+      std::tuple<std::string, std::vector<double>, std::vector<int64_t>>;
+  using Condition = std::tuple<int64_t, int64_t, std::vector<int64_t>,
+                               std::vector<int64_t>, std::string>;
+  using Event =
+      std::tuple<std::string, int64_t, int64_t, std::optional<int64_t>,
+                 std::optional<int64_t>, std::vector<int64_t>,
+                 std::vector<WaveformNode>, double, double,
+                 std::vector<Condition>, std::vector<int64_t>, std::string,
+                 std::string, double>;
+
+  struct Frame {
+    double frequencyHz = 0.0;
+    double frameFrequencyHz = 0.0;
+    double phase = 0.0;
+    double timeNs = 0.0;
+    /// Whether two arms leave the frame the same: without a detuning, the
+    /// time of the last drive does not matter.
+    bool operator==(const Frame &other) const {
+      auto same = [](double a, double b) {
+        return a == b || (std::isnan(a) && std::isnan(b));
+      };
+      return same(frequencyHz, other.frequencyHz) &&
+             same(frameFrequencyHz, other.frameFrequencyHz) &&
+             same(phase, other.phase) &&
+             (same(timeNs, other.timeNs) || frequencyHz == frameFrequencyHz);
+    }
+  };
+
+  explicit ControllerWalk(double clockGHz) : clockGHz(clockGHz) {}
+
+  double clockGHz;
+  llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
+  std::vector<Event> result;
+
+  static constexpr double kUnknown = std::numeric_limits<double>::quiet_NaN();
+
+  /// A number computed from constants alone, else NaN.
+  static double number(mlir::Value value) {
+    if (auto constant = pulse::constantNumber(value))
+      return *constant;
+    if (auto affine = pulse::affineNumber(value);
+        affine && affine->isConstant())
+      return affine->evaluate({});
+    return kUnknown;
+  }
+
+  pulse::AllocationTracer trace;
+  llvm::SmallVector<int64_t, 2> iteration;
+  std::vector<Condition> branches;
+  int64_t nextBranch = 0;
+  std::map<mlir::Operation *, Frame> frames;
+  // The event of the latest execution of each readout and classical wait.
+  llvm::DenseMap<mlir::Operation *, int64_t> latest;
+
+  /// The frame of a tone before any operation on it.
+  static Frame initialFrame(mlir::Operation *root) {
+    Frame frame;
+    if (!root)
+      return frame;
+    if (auto frequency = root->getAttrOfType<mlir::FloatAttr>("frequency_hz"))
+      frame = {frequency.getValueAsDouble(), frequency.getValueAsDouble(), 0.0,
+               0.0};
+    else if (root->getName().getStringRef() == "pulse.tone" &&
+             root->getNumOperands() == 2) {
+      double frequency = number(root->getOperand(0));
+      frame = {frequency, frequency, number(root->getOperand(1)), 0.0};
+    }
+    return frame;
+  }
+
+  Frame &frameOf(mlir::Value tone) {
+    mlir::Operation *root = pulse::toneRoot(tone);
+    auto [it, inserted] = frames.try_emplace(root);
+    if (inserted)
+      it->second = initialFrame(root);
+    return it->second;
+  }
+
+  static int64_t waveform(mlir::Value value, std::vector<WaveformNode> &nodes) {
+    mlir::Operation *def = value.getDefiningOp();
+    if (!def) {
+      nodes.emplace_back("argument", std::vector<double>{},
+                         std::vector<int64_t>{});
+      return static_cast<int64_t>(nodes.size()) - 1;
+    }
+    std::vector<double> numbers;
+    std::vector<int64_t> children;
+    for (mlir::Value operand : def->getOperands()) {
+      if (mlir::isa<pulse::WaveformType>(operand.getType()))
+        children.push_back(waveform(operand, nodes));
+      else
+        numbers.push_back(number(operand));
+    }
+    if (auto samples = def->getAttrOfType<mlir::ArrayAttr>("samples"))
+      for (mlir::Attribute sample : samples)
+        if (auto number = mlir::dyn_cast<mlir::FloatAttr>(sample))
+          numbers.push_back(number.getValueAsDouble());
+    std::string name = def->getName().stripDialect().str();
+    if (auto custom = def->getAttrOfType<mlir::StringAttr>("name"))
+      name += ":" + custom.getValue().str();
+    nodes.emplace_back(name, std::move(numbers), std::move(children));
+    return static_cast<int64_t>(nodes.size()) - 1;
+  }
+
+  /// The readout events and answer events `value` is computed from.
+  void inputs(mlir::Value value, std::vector<int64_t> &readouts,
+              std::vector<int64_t> &answers) {
+    llvm::SmallVector<mlir::Value> work{value};
+    llvm::DenseSet<mlir::Value> seen;
+    while (!work.empty()) {
+      mlir::Value v = work.pop_back_val();
+      if (!seen.insert(v).second)
+        continue;
+      mlir::Operation *def = v.getDefiningOp();
+      if (!def || mlir::isa<classical::SubmitOp>(def))
+        continue;
+      if (mlir::isa<pulse::ReadoutOp>(def) ||
+          def->getName().getStringRef() == "classical.wait") {
+        auto found = latest.find(def);
+        if (found != latest.end()) {
+          auto &list = mlir::isa<pulse::ReadoutOp>(def) ? readouts : answers;
+          if (llvm::find(list, found->second) == list.end())
+            list.push_back(found->second);
+        }
+        continue;
+      }
+      if (def->getNumRegions() == 0)
+        work.append(def->getOperands().begin(), def->getOperands().end());
+    }
+  }
+
+  void timed(mlir::Operation *op, llvm::StringRef kind, int64_t line,
+             int64_t qubit, std::vector<WaveformNode> nodes, double frequency,
+             double phase, std::vector<int64_t> refs, std::string callee,
+             std::string mode = "", double timeoutNs = kUnknown) {
+    result.emplace_back(
+        kind.str(), line, qubit, pulse::scheduledStart(op, iteration),
+        pulse::scheduledDuration(op),
+        std::vector<int64_t>(iteration.begin(), iteration.end()),
+        std::move(nodes), frequency, phase, branches, std::move(refs),
+        std::move(callee), std::move(mode), timeoutNs);
+  }
+
+  void block(mlir::Block &body) {
+    for (mlir::Operation &op : body)
+      step(&op);
+  }
+
+  void step(mlir::Operation *op) {
+    llvm::StringRef name = op->getName().getStringRef();
+    if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op)) {
+      mlir::Operation *allocation = trace(op->getOperand(0));
+      int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
+      int64_t qubit = -1;
+      if (allocation)
+        if (auto attr = allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
+          qubit = attr.getInt();
+      std::vector<WaveformNode> nodes;
+      double frequency = kUnknown, phase = kUnknown;
+      if (!mlir::isa<pulse::WaitOp>(op)) {
+        waveform(op->getOperand(1), nodes);
+        Frame &frame = frameOf(op->getOperand(2));
+        if (mlir::isa<pulse::DriveOp>(op))
+          if (auto offset =
+                  op->getAttrOfType<mlir::FloatAttr>("frame_phase_offset"))
+            frame.phase += offset.getValueAsDouble();
+        frequency = frame.frequencyHz;
+        phase = frame.phase;
+        if (mlir::isa<pulse::DriveOp>(op)) {
+          auto start = pulse::scheduledStart(op, iteration);
+          auto duration = pulse::scheduledDuration(op);
+          if (start && duration) {
+            double endNs = static_cast<double>(*start + *duration) / clockGHz;
+            frame.phase += (frame.frequencyHz - frame.frameFrequencyHz) *
+                           (2.0 * M_PI) * 1.0e-9 * (endNs - frame.timeNs);
+            frame.timeNs = endNs;
+          }
+        }
+      }
+      latest[op] = static_cast<int64_t>(result.size());
+      timed(op, op->getName().stripDialect(), line, qubit, std::move(nodes),
+            frequency, phase, {}, "");
+      return;
+    }
+    if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op)) {
+      bool submit = mlir::isa<classical::SubmitOp>(op);
+      std::vector<int64_t> refs, answers;
+      if (submit)
+        for (mlir::Value operand : op->getOperands())
+          inputs(operand, refs, answers);
+      std::string callee;
+      if (auto symbol = op->getAttrOfType<mlir::FlatSymbolRefAttr>("callee"))
+        callee = symbol.getValue().str();
+      else
+        for (mlir::NamedAttribute attr : op->getAttrs())
+          if (auto symbol =
+                  mlir::dyn_cast<mlir::FlatSymbolRefAttr>(attr.getValue()))
+            callee = symbol.getValue().str();
+      std::string mode;
+      double timeoutNs = kUnknown;
+      if (!submit) {
+        latest[op] = static_cast<int64_t>(result.size());
+        mode = op->hasAttr("classical.blocking") ? "blocking" : "bounded";
+        if (auto timeout = op->getAttrOfType<mlir::FloatAttr>("timeout_ns")) {
+          mode = "timeout";
+          timeoutNs = timeout.getValueAsDouble();
+        }
+      }
+      timed(op, submit ? "submit" : "answer",
+            classical::intAttr(op, "classical.device"), -1, {}, kUnknown,
+            kUnknown, std::move(refs), std::move(callee), std::move(mode),
+            timeoutNs);
+      return;
+    }
+    if (name == "pulse.shift_phase" || name == "pulse.set_phase" ||
+        name == "pulse.shift_frequency" || name == "pulse.set_frequency") {
+      double value = number(op->getOperand(1));
+      Frame &frame = frameOf(op->getOperand(0));
+      if (name == "pulse.shift_phase")
+        frame.phase += value;
+      else if (name == "pulse.set_phase")
+        frame.phase = value;
+      else if (name == "pulse.shift_frequency")
+        frame.frequencyHz += value;
+      else
+        frame.frequencyHz = value;
+      return;
+    }
+    if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+      int64_t trips = pulse::constantTripCount(loop).value_or(0);
+      iteration.push_back(0);
+      for (int64_t k = 0; k < trips; ++k) {
+        iteration.back() = k;
+        block(*loop.getBody());
+      }
+      iteration.pop_back();
+      return;
+    }
+    if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
+      std::vector<int64_t> readouts, answers;
+      mlir::Value condition = branch.getCondition();
+      inputs(condition, readouts, answers);
+      std::string test = "expression";
+      if (mlir::Operation *def = condition.getDefiningOp()) {
+        if (mlir::isa<pulse::IsSetOp>(def) && readouts.size() == 1)
+          test = "is_set";
+        else if (def->getName().getStringRef() == "classical.wait" &&
+                 answers.size() == 1)
+          test = "answer";
+      }
+      int64_t id = nextBranch++;
+      auto before = frames;
+      branches.emplace_back(id, 1, readouts, answers, test);
+      block(*branch.thenBlock());
+      auto afterThen = frames;
+      frames = before;
+      std::get<1>(branches.back()) = 0;
+      if (!branch.getElseRegion().empty())
+        block(*branch.elseBlock());
+      branches.pop_back();
+      // A tone only one arm used is, in the other, as it was before.
+      for (auto &[root, frame] : afterThen)
+        frames.try_emplace(root, before.count(root) ? before.at(root)
+                                                    : initialFrame(root));
+      for (auto &[root, frame] : frames) {
+        auto other = afterThen.find(root);
+        Frame then =
+            other != afterThen.end()
+                ? other->second
+                : (before.count(root) ? before.at(root) : initialFrame(root));
+        if (!(then == frame))
+          frame = {kUnknown, kUnknown, kUnknown, frame.timeNs};
+        else
+          frame.timeNs = std::max(frame.timeNs, then.timeNs);
+      }
+      return;
+    }
+    for (mlir::Region &region : op->getRegions())
+      for (mlir::Block &nested : region)
+        block(nested);
+  }
+};
+
 // -----------------------------------------------------------------------
 // PulseModule: opaque handle around an in-memory mlir::ModuleOp
 // -----------------------------------------------------------------------
@@ -380,6 +669,49 @@ public:
     };
     collect(*module_->getBody());
     return result;
+  }
+
+  /// One node of a waveform's expression: (op name without the dialect,
+  /// its numeric operands, or the samples of `custom_samples`, NaN where an
+  /// operand is not a number, and the indices of its waveform operands).
+  /// Children precede their parent; the last node is the root.
+  using WaveformNode =
+      std::tuple<std::string, std::vector<double>, std::vector<int64_t>>;
+  /// One measurement-conditioned branch an event lies in: (branch id, arm,
+  /// 1 for the then arm and 0 for the else arm, the indices of the readout
+  /// events and of the answer events the condition is computed from, and
+  /// "is_set" when the condition is one readout's `pulse.is_set`, "answer"
+  /// when it is one answer value as is, else "expression").
+  using Condition = std::tuple<int64_t, int64_t, std::vector<int64_t>,
+                               std::vector<int64_t>, std::string>;
+  using ControllerEvent =
+      std::tuple<std::string, int64_t, int64_t, std::optional<int64_t>,
+                 std::optional<int64_t>, std::vector<int64_t>,
+                 std::vector<WaveformNode>, double, double,
+                 std::vector<Condition>, std::vector<int64_t>, std::string,
+                 std::string, double>;
+
+  /// The timed ops of `events()`, in the same order, with what a controller
+  /// needs to play them: (kind, line, qubit, start_vtu, duration_vtu, loop
+  /// iteration, waveform, tone frequency in Hz and frame phase in radians
+  /// as the op starts, the branches it lies in, references, callee, wait
+  /// mode, timeout). The
+  /// frame is tracked through both arms of a branch; where the arms leave
+  /// it different, or a frame change is not a number, it is NaN from there
+  /// on. The references of a classical submit are the readout events whose
+  /// measurements it sends; the callee is its function. An answer's wait
+  /// is "bounded", "blocking" or "timeout", with its timeout in ns (NaN
+  /// for none).
+  std::vector<ControllerEvent> controller_events() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    ControllerWalk walk(clock());
+    module_->walk([&](mlir::Operation *op) {
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+        walk.lineIndex.try_emplace(op,
+                                   static_cast<int64_t>(walk.lineIndex.size()));
+    });
+    walk.block(*module_->getBody());
+    return std::move(walk.result);
   }
 
   /// (function, link, iteration, submit start, submit duration, due,
@@ -2545,6 +2877,10 @@ NB_MODULE(_cudaq_pulse_native, m) {
       .def("events", &PulseModule::events,
            nb::call_guard<nb::gil_scoped_release>(),
            "(kind, line, qubit, start_vtu, duration_vtu) of each timed op")
+      .def("controller_events", &PulseModule::controller_events,
+           nb::call_guard<nb::gil_scoped_release>(),
+           "Each timed op with its iteration, waveform, tone frame, "
+           "branches, references, callee and wait, for a controller")
       .def("simulation_module", &PulseModule::simulation_module,
            "This module with loops holding calls unrolled, for simulation")
       .def("next_call", &PulseModule::next_call, nb::arg("path"),

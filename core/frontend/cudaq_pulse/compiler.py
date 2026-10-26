@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
     from ._device import Device
+    from .controller import ControllerLimits
     from .kernel._kernel import CompiledKernel, Kernel
 
 _VALID_SCHEDULES = frozenset({"asap", "alap", "rcp", "alap_rcp"})
@@ -87,7 +88,9 @@ class MachineModel:
     function's ``link=`` names one or gives its id. Their slots and
     latencies apply to every schedule, because they are hardware. A link id
     a program uses that is not listed gets ``Link()``; an unknown name is an
-    error.
+    error. ``controller`` gives the limits of the controller the program is
+    for (``cudaq_pulse.controller.ControllerLimits``); every scheduled
+    program is checked against them.
     """
 
     max_concurrent_drives: int = 4
@@ -95,9 +98,17 @@ class MachineModel:
     readout_latency_vtu: int = 0
     line_switch_penalty_vtu: int = 0
     links: Mapping[int | str, Link] = field(default_factory=dict)
+    controller: ControllerLimits | None = None
     link_names: Mapping[str, int] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if self.controller is not None:
+            from .controller import ControllerLimits
+
+            if not isinstance(self.controller, ControllerLimits):
+                raise TypeError(
+                    f"MachineModel.controller must be a ControllerLimits, got {self.controller!r}"
+                )
         given = dict(self.links)
         links = _Links()
         names: list[str] = []
@@ -132,6 +143,7 @@ class MachineModel:
                     self.line_switch_penalty_vtu,
                     self.links,
                     tuple(sorted(by_name.items())),
+                    self.controller,
                 )
             ),
         )
@@ -149,6 +161,7 @@ class MachineModel:
             self.line_switch_penalty_vtu,
             dict(self.links),
             dict(self.link_names),
+            self.controller,
         ) == (
             other.max_concurrent_drives,
             other.max_concurrent_readouts,
@@ -156,6 +169,7 @@ class MachineModel:
             other.line_switch_penalty_vtu,
             dict(other.links),
             dict(other.link_names),
+            other.controller,
         )
 
     def link_id(self, link: int | str) -> int:
@@ -532,6 +546,15 @@ class Lowered:
 
         return export(self)
 
+    def export_controller(self, sample_rate_ghz: float | None = None) -> dict[str, Any]:
+        """The program for an out-of-tree controller backend: its lines and
+        every timed operation with its waveform, tone, frame and branches
+        (see ``cudaq_pulse.controller``); with *sample_rate_ghz*, each
+        envelope's samples too."""
+        from .controller import export
+
+        return export(self, sample_rate_ghz)
+
     def timeline(self, **kwargs: Any) -> Figure:
         """Plot the schedule, one row per line (needs matplotlib)."""
         from .viz.timeline import plot_schedule
@@ -687,6 +710,12 @@ def build(
         scheduled=scheduled,
     )
     lowered.classical = tuple(builder.classical)
+    if options.machine.controller is not None and scheduled:
+        from .controller import ControllerLimitError, check
+
+        violations = check(lowered)
+        if violations:
+            raise ControllerLimitError(violations)
     return lowered, builder
 
 
