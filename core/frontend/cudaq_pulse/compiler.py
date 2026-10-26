@@ -15,6 +15,7 @@ that pick passes and a schedule, the native build of one specialization, and
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from collections.abc import Sequence
@@ -31,7 +32,7 @@ except ImportError as _e:
 
 from .kernel._schedule_blocks import check_root_schedule, root_schedule
 from .kernel._unroll import resolve_unroll_threshold
-from .kernel.ir_builder import CompilationError
+from .kernel.ir_builder import CompilationError, SymbolicValueError
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
@@ -152,6 +153,82 @@ class CompileOptions:
         )
 
 
+# Longest wait a call may ask for: lengths stay exact in a float.
+_MAX_WAIT_CYCLES = 2**53
+
+
+class _WaitLength:
+    """A wait whose length the module computes from its float arguments.
+
+    The call's values give its length, rounded to the nearest cycle with ties
+    up as the module rounds it, and checked against its bounds before the
+    call runs.
+    """
+
+    __slots__ = ("source", "length", "lowest", "highest", "text", "kernel")
+
+    def __init__(self, expression: Any, lowest: int, highest: int, kernel: str) -> None:
+        from .kernel.ir_builder import arithmetic_source, arithmetic_text
+
+        self.source = arithmetic_source(expression)
+        self.length = eval(f"lambda a: {self.source}", {"__builtins__": {}})
+        self.lowest = lowest
+        self.highest = None if highest < 0 else highest
+        self.text = arithmetic_text(expression)
+        self.kernel = kernel
+
+    def check(self, values: Sequence[float]) -> None:
+        """Raise ``ValueError`` saying why the length is not allowed."""
+        try:
+            x = self.length(values)
+        except ZeroDivisionError:
+            x = math.nan
+        if not math.isfinite(x):
+            raise ValueError(
+                f"{self.kernel}(): the wait length {self.text} is {x!r}; it must be a "
+                "finite number of clock cycles"
+            )
+        cycles = math.floor(x + 0.5)
+        if cycles < 0 and self.lowest == 0:
+            raise ValueError(
+                f"{self.kernel}(): the wait length {self.text} = {x!r} rounds to "
+                f"{cycles} clock cycles; a wait cannot be negative"
+            )
+        highest = _MAX_WAIT_CYCLES if self.highest is None else self.highest
+        if not self.lowest <= cycles <= highest:
+            bounds = (self.lowest, self.highest)
+            raise ValueError(
+                f"{self.kernel}(): the wait length {self.text} = {x!r} rounds to "
+                f"{cycles} clock cycles, outside its bounds {bounds!r}"
+            )
+
+
+class _WaitLengths:
+    """The variable waits of a module, checked together on every call."""
+
+    __slots__ = ("ok", "waits")
+
+    def __init__(self, waits: Sequence[tuple[Any, int, int]], kernel: str) -> None:
+        self.waits = tuple(_WaitLength(*wait, kernel) for wait in waits)
+        # floor(x + 0.5) is in [lowest, highest] exactly when
+        # lowest <= x + 0.5 < highest + 1, which NaN fails.
+        tests = " and ".join(
+            f"{w.lowest} <= {w.source} + 0.5 < "
+            f"{(_MAX_WAIT_CYCLES if w.highest is None else w.highest) + 1}"
+            for w in self.waits
+        )
+        self.ok = eval(f"lambda a: {tests}", {"__builtins__": {}})
+
+    def check(self, values: Sequence[float]) -> None:
+        try:
+            if self.ok(values):
+                return
+        except ZeroDivisionError:
+            pass
+        for wait in self.waits:
+            wait.check(values)
+
+
 class Lowered:
     """One compiled module of a kernel: read-only text, schedule and metrics.
 
@@ -160,6 +237,11 @@ class Lowered:
     the call's values are kept beside it in ``arguments``, so a call with new
     values shares the module; ``generic`` is the module without values.
     ``mlir()`` of a call shows its values substituted.
+
+    A wait whose length is computed from float parameters keeps the module
+    generic too: without values it is scheduled at its lowest length, and a
+    call's schedule, text and simulation come from the module with the call's
+    values bound and scheduled again.
 
     ``qudits`` holds the device qudits the program drives or measures (gets
     a line on), in increasing order: the qudits ``simulate()`` models.
@@ -178,6 +260,7 @@ class Lowered:
         "options",
         "scheduled",
         "generic",
+        "waits",
     )
 
     def __init__(
@@ -190,6 +273,7 @@ class Lowered:
         qudits: tuple[int, ...],
         options: CompileOptions,
         scheduled: bool = True,
+        waits: _WaitLengths | None = None,
     ) -> None:
         self._module = module
         self._text: str | None = None
@@ -203,9 +287,16 @@ class Lowered:
         self.options = options
         self.scheduled = scheduled
         self.generic: Lowered | None = None
+        self.waits = waits
 
     def bind(self, values: Sequence[float]) -> Lowered:
-        """This module with values for its float parameters, sharing it."""
+        """This module with values for its float parameters, sharing it.
+
+        Raises ``ValueError`` if a wait length computed from them is not a
+        finite, non-negative number of cycles within the wait's bounds."""
+        waits = self.waits
+        if waits is not None:
+            waits.check(values)
         view = Lowered.__new__(Lowered)
         view._module = self._module
         view._text = None
@@ -219,7 +310,14 @@ class Lowered:
         view.options = self.options
         view.scheduled = self.scheduled
         view.generic = self
+        view.waits = waits
         return view
+
+    @property
+    def _retimed(self) -> bool:
+        """Whether the call's values move ops: its times come from the module
+        with them bound."""
+        return not self.scheduled or (self.waits is not None and bool(self.arguments))
 
     def _concrete(self) -> Any:
         """The module with the values substituted (a private copy), or the
@@ -260,9 +358,10 @@ class Lowered:
         """The drives, readouts and waits with their timing.
 
         Ops in a loop are listed once per iteration; both arms of a
-        measurement-conditioned branch are listed.
+        measurement-conditioned branch are listed. Without values, a wait
+        whose length a float parameter sets is listed at its lowest length.
         """
-        module = self._module if self.scheduled else self._concrete()
+        module = self._concrete() if self._retimed else self._module
         with self._lock:
             events = module.events()
         return [ScheduledEvent(*event) for event in events]
@@ -290,7 +389,9 @@ def build(
     *trace_args* holds a ``Parameter`` sentinel for every float parameter
     named in *parameters*; those stay function arguments of the module.
     Returns the module and the builder, whose record of readouts and host
-    calls the caller needs.
+    calls the caller needs. Raises ``SymbolicValueError`` naming the float
+    parameters an integer of the program (a waveform duration, a cast to
+    int) was computed from: the module needs their values.
     """
     from .kernel.bytecode_bridge import _trace_kernel_with_builder
     from .kernel.packed_ir_builder import PackedIRBuilder
@@ -306,6 +407,13 @@ def build(
     )
     builder.unroll_threshold = options.unroll_threshold
     builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
+    needed = tuple(sorted(builder.structural & set(parameters)))
+    if needed:
+        raise SymbolicValueError(
+            f"{name}(): {', '.join(needed)} must be known while the kernel compiles",
+            needed,
+            "a value that must be an integer, such as a waveform duration",
+        )
     check_root_schedule(options.schedule, builder)
     qudits = builder.qubits
     missing = [q for q in qudits if q not in target.frequencies]
@@ -344,8 +452,9 @@ def build(
         module.run_passes(cpp_passes)
     metrics.passes_ms = (time.perf_counter() - t0) * 1000
 
-    # Durations never depend on a float parameter (a float that reaches one
-    # is specialized on), so the module schedules with them symbolic.
+    # Waveform durations never depend on a float parameter (a float that
+    # reaches one is specialized on); a wait whose length does is scheduled at
+    # its lowest length, and again with each call's values.
     t0 = time.perf_counter()
     scheduled = True
     try:
@@ -365,6 +474,7 @@ def build(
         qudits=builder.used_qubits or qudits,
         options=options,
         scheduled=scheduled,
+        waits=_WaitLengths(builder.variable_waits, name) if builder.variable_waits else None,
     )
     return lowered, builder
 

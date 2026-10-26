@@ -148,6 +148,7 @@ constexpr int kOpElse = 32;
 constexpr int kOpIfEnd = 33;
 constexpr int kOpBlockBegin = 34;
 constexpr int kOpBlockEnd = 35;
+constexpr int kOpVariableWait = 40;
 // A payload length of 0xFF means the length is in the next word.
 constexpr int kExtendedPayload = 0xFF;
 
@@ -1599,6 +1600,22 @@ public:
             pulse::DurationFromIntOp::create(*builder_, loc, durTy, durCycles);
         auto waitOp = pulse::WaitOp::create(*builder_, loc, lineVal.getType(),
                                             lineVal, durOp.getResult());
+        bind(p[1], waitOp.getResult());
+        break;
+      }
+
+      case kOpVariableWait: {
+        // [line, result line, cycles id, lowest, highest (-1: none)]
+        requirePayload(5);
+        auto dur =
+            pulse::DurationFromIntOp::create(*builder_, loc, durTy, look(p[2]));
+        mlir::Value line = look(p[0]);
+        auto waitOp = pulse::WaitOp::create(*builder_, loc, line.getType(),
+                                            line, dur.getResult());
+        waitOp->setAttr("pulse.variable", builder_->getUnitAttr());
+        waitOp->setAttr("pulse.min_vtu", builder_->getI64IntegerAttr(p[3]));
+        if (p[4] >= 0)
+          waitOp->setAttr("pulse.max_vtu", builder_->getI64IntegerAttr(p[4]));
         bind(p[1], waitOp.getResult());
         break;
       }

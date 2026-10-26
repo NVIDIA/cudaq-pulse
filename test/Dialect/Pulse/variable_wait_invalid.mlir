@@ -1,0 +1,64 @@
+// ============================================================================ //
+// Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          //
+// All rights reserved.                                                         //
+//                                                                              //
+// This source code and the accompanying materials are made available under     //
+// the terms of the Apache License 2.0 which accompanies this distribution.     //
+// ============================================================================ //
+
+// RUN: cudaq-pulse-opt %s --split-input-file --verify-diagnostics
+
+// The bounds of a variable wait (pulse.variable, pulse.min_vtu, pulse.max_vtu).
+
+func.func @negative_lowest(%tau: f64, %d0: !pulse.drive_line) {
+  %n = arith.fptosi %tau : f64 to i64
+  %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
+  // expected-error @+1 {{'pulse.wait' op pulse.min_vtu must not be negative, got -1}}
+  %d1 = pulse.wait %d0, %len {pulse.variable, pulse.min_vtu = -1 : i64}
+      : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+  return
+}
+
+// -----
+
+func.func @highest_below_lowest(%tau: f64, %d0: !pulse.drive_line) {
+  %n = arith.fptosi %tau : f64 to i64
+  %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
+  // expected-error @+1 {{'pulse.wait' op pulse.max_vtu (4) is below pulse.min_vtu (8)}}
+  %d1 = pulse.wait %d0, %len {pulse.variable, pulse.min_vtu = 8 : i64, pulse.max_vtu = 4 : i64}
+      : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+  return
+}
+
+// -----
+
+func.func @no_lowest(%tau: f64, %d0: !pulse.drive_line) {
+  %n = arith.fptosi %tau : f64 to i64
+  %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
+  // expected-error @+1 {{'pulse.wait' op a pulse.variable wait needs pulse.min_vtu}}
+  %d1 = pulse.wait %d0, %len {pulse.variable}
+      : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+  return
+}
+
+// -----
+
+func.func @bounds_without_variable(%d0: !pulse.drive_line) {
+  %n = arith.constant 8 : i64
+  %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
+  // expected-error @+1 {{'pulse.wait' op pulse.min_vtu and pulse.max_vtu apply to a pulse.variable wait}}
+  %d1 = pulse.wait %d0, %len {pulse.min_vtu = 0 : i64}
+      : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+  return
+}
+
+// -----
+
+func.func @bound_length_outside_bounds(%d0: !pulse.drive_line) {
+  %n = arith.constant 5000 : i64
+  %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
+  // expected-error @+1 {{'pulse.wait' op a pulse.variable wait of 5000 cycles is outside its bounds [0, 4000]}}
+  %d1 = pulse.wait %d0, %len {pulse.variable, pulse.min_vtu = 0 : i64, pulse.max_vtu = 4000 : i64}
+      : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+  return
+}

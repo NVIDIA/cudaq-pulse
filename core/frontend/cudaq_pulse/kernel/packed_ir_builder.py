@@ -25,6 +25,7 @@ from .ir_builder import (
     IRValue,
     Parameter,
     ParameterExpression,
+    is_arithmetic,
     is_symbolic,
     parameter_names,
 )
@@ -70,6 +71,8 @@ _IF_END = 33
 _BLOCK_BEGIN = 34
 _BLOCK_END = 35
 _BLOCK_POLICY = {"asap": 0, "alap": 1}
+# 36-39 are reserved for classical-call records.
+_VARIABLE_WAIT = 40
 
 _NUMERIC_TYPE = {"i64": 0, "f64": 1}
 _BINARY_OP = {
@@ -149,6 +152,23 @@ def _as_i64(value: Any, description: str) -> int:
     )
 
 
+def _wait_bounds(bounds: Any) -> tuple[int, int]:
+    """``(lowest, highest)`` of ``wait(..., bounds=)`` in cycles; highest -1
+    for none."""
+    if bounds is None:
+        return 0, -1
+    if not (isinstance(bounds, (tuple, list)) and len(bounds) == 2):
+        raise CompilationError(f"bounds= takes (lowest, highest) in clock cycles, got {bounds!r}")
+    lo, hi = bounds
+    if is_symbolic(lo) or is_symbolic(hi):
+        raise CompilationError("the bounds of a wait must be known while the kernel compiles")
+    lowest = _as_i64(lo, "the lowest length of a wait")
+    highest = -1 if hi is None else _as_i64(hi, "the highest length of a wait")
+    if lowest < 0 or (hi is not None and highest < lowest):
+        raise CompilationError(f"bounds= must satisfy 0 <= lowest <= highest, got ({lo!r}, {hi!r})")
+    return lowest, highest
+
+
 class PackedIRBuilder:
     """Fused trace-to-buffer builder.
 
@@ -205,6 +225,9 @@ class PackedIRBuilder:
         # Float arguments that reached an integer (a duration, a cast to
         # int): the schedule needs their values, so they are specialized on.
         self.structural: set[str] = set()
+        # (length, lowest, highest or -1) of each wait whose length the
+        # module computes from float arguments, checked at call time.
+        self.variable_waits: list[tuple[Any, int, int]] = []
 
     def _mk(self, vtype: str, name: str = "") -> IRValue:
         v = IRValue(self._next_id, vtype, name)
@@ -394,7 +417,21 @@ class PackedIRBuilder:
             lv = operands[0].vid
             rlv = results[0].vid
             dur_raw = a.get("duration", 0)
-            if is_symbolic(dur_raw):
+            bounds = a.get("bounds")
+            symbolic = is_symbolic(dur_raw)
+            if bounds is not None or symbolic:
+                lowest, highest = (0, -1) if bounds is None else _wait_bounds(bounds)
+                if symbolic and is_arithmetic(dur_raw):
+                    self._variable_wait(lv, rlv, dur_raw, lowest, highest)
+                    return results
+                if not symbolic:
+                    dur = _as_i64(dur_raw, "wait duration")
+                    if dur < lowest or (highest >= 0 and dur > highest):
+                        top = highest if highest >= 0 else None
+                        raise CompilationError(
+                            f"wait duration {dur} is outside its bounds {(lowest, top)!r}"
+                        )
+            if symbolic:
                 pvid = self._get_numeric_vid(dur_raw, "i64")
                 self._ensure(4)
                 self._w(_header(_WAIT, 3, 1 << 2))
@@ -638,6 +675,7 @@ class PackedIRBuilder:
             self._op_count,
             [dict(region) for region in self._regions],
             self._n_readouts,
+            len(self.variable_waits),
             len(self._block_marks),
         )
 
@@ -649,9 +687,11 @@ class PackedIRBuilder:
             self._op_count,
             regions,
             self._n_readouts,
+            waits,
             blocks,
         ) = checkpoint
         self._regions = regions
+        del self.variable_waits[waits:]
         del self._block_marks[blocks:]
         live = self._next_id
         for vid in [vid for vid in self.readouts if vid >= live]:
@@ -682,16 +722,23 @@ class PackedIRBuilder:
         self._w(param.index)
         return vid
 
-    def _get_numeric_vid(self, value: Any, expected_dtype: str) -> int:
-        """Materialize a symbolic or literal number as an SSA value record."""
+    def _get_numeric_vid(self, value: Any, expected_dtype: str, specializes: bool = True) -> int:
+        """Materialize a symbolic or literal number as an SSA value record.
+
+        An integer computed from float arguments makes them static, unless
+        *specializes* is false: the schedule then takes it at call time."""
         if expected_dtype not in _NUMERIC_TYPE:
             raise CompilationError(f"unsupported numeric type {expected_dtype}")
-        if is_symbolic(value) and (
-            expected_dtype == "i64"
-            or (
-                isinstance(value, ParameterExpression)
-                and value.op == "cast"
-                and value.dtype == "i64"
+        if (
+            specializes
+            and is_symbolic(value)
+            and (
+                expected_dtype == "i64"
+                or (
+                    isinstance(value, ParameterExpression)
+                    and value.op == "cast"
+                    and value.dtype == "i64"
+                )
             )
         ):
             self.structural.update(parameter_names(value))
@@ -769,6 +816,24 @@ class PackedIRBuilder:
             _as_i64(value, "integer expression") if expected_dtype == "i64" else _f2i(float(value))
         )
         return result
+
+    def _variable_wait(
+        self, line: int, result: int, duration: Any, lowest: int, highest: int
+    ) -> None:
+        """A wait whose length the module computes from its float arguments,
+        rounded to the nearest cycle; it does not specialize on them."""
+        rounded = ParameterExpression(
+            "cast", ParameterExpression("add", duration, 0.5), dtype="i64"
+        )
+        cycles = self._get_numeric_vid(rounded, "i64", specializes=False)
+        self.variable_waits.append((duration, lowest, highest))
+        self._ensure(6)
+        self._w(_header(_VARIABLE_WAIT, 5))
+        self._w(line)
+        self._w(result)
+        self._w(cycles)
+        self._w(lowest)
+        self._w(highest)
 
     def _emit_numeric_cast(self, operand: int, source_dtype: str, target_dtype: str) -> int:
         if source_dtype == target_dtype:

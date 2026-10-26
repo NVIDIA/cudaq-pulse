@@ -100,10 +100,15 @@ static int64_t getWaveformDuration(mlir::Value waveform) {
   return traceConstantI64(duration).value_or(0);
 }
 
+/// A variable wait whose length is not bound yet is scheduled at its lowest
+/// length.
 static int64_t getWaitDuration(pulse::WaitOp wait) {
   if (auto conversion =
           wait.getDuration().getDefiningOp<pulse::DurationFromIntOp>())
-    return traceConstantI64(conversion.getCycles()).value_or(0);
+    if (auto cycles = traceConstantI64(conversion.getCycles()))
+      return *cycles;
+  if (auto lowest = wait->getAttrOfType<mlir::IntegerAttr>("pulse.min_vtu"))
+    return lowest.getInt();
   return 0;
 }
 

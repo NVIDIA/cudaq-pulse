@@ -32,6 +32,15 @@ behavior may change in any 0.x release.
   the calls in its body) is at most the unroll threshold: 8 by default, the
   measured break-even point, set with `pulse.compile(k, unroll_threshold=)`,
   `@pulse.kernel(unroll_threshold=)` or `CUDAQ_PULSE_UNROLL_THRESHOLD`.
+- **Runtime wait lengths.** A `wait` whose length is computed from `float`
+  parameters with `+`, `-`, `*` and `/` (`wait(d, tau)`, `wait(d, tau / 2)`)
+  keeps them runtime parameters: a T1, Ramsey or echo sweep compiles once,
+  and a call with a new length costs about as much as a cached call. Each
+  call rounds the length to the nearest clock cycle (ties up) and schedules
+  exactly as the kernel compiled with that length would. The optional
+  `wait(line, length, bounds=(lowest, highest))` bounds it in cycles; a
+  length that is not finite, is negative or is out of bounds raises
+  `ValueError` at the call.
 - **Python in kernels.** List, dict and set comprehensions, set displays
   and generator expressions are unrolled while tracing, so
   `[get_drive_line(q) for q in qubits]` builds a list of lines and
@@ -58,8 +67,8 @@ behavior may change in any 0.x release.
   support, such as a `match` class pattern or an assignment to a global,
   is named in the error, with what to write instead, rather than reported
   as an unsupported bytecode instruction. A `float` argument that tracing
-  makes static, because `abs`, `min`, `math.*`, a comparison or a duration
-  needs its value, warns once with a `RuntimeWarning` naming the argument
+  makes static, because `abs`, `min`, `math.*`, a comparison or a waveform
+  duration needs its value, warns once with a `RuntimeWarning` naming the argument
   and the operation, since each new value then compiles the kernel again. List, dict and set comprehensions and set
   displays trace on every supported Python; generator expressions, lambdas
   and nested functions are rejected with what to write instead.

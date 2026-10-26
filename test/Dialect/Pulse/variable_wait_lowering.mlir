@@ -1,0 +1,44 @@
+// ============================================================================ //
+// Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          //
+// All rights reserved.                                                         //
+//                                                                              //
+// This source code and the accompanying materials are made available under     //
+// the terms of the Apache License 2.0 which accompanies this distribution.     //
+// ============================================================================ //
+
+// RUN: not cudaq-pulse-opt --pulse-verify %s 2>&1 | FileCheck %s --check-prefix=UNMARKED
+// RUN: not cudaq-pulse-opt --pulse-schedule-alap --pulse-to-qop %s 2>&1 | FileCheck %s --check-prefix=UNBOUND
+
+// A wait whose length is not a constant must be a variable wait, and a
+// variable wait is lowered only once its arguments are bound: unbound, it
+// stands at its lowest length.
+
+// UNMARKED: error: a wait whose length is not a constant must be marked pulse.variable
+// UNBOUND: error: the length of this wait depends on the program's float arguments; bind them (specialize the module) before lowering it
+
+func.func @unmarked(%tau: f64) {
+  %q = pulse.qudit_alloc : !pulse.qref
+  %d0, %t0 = pulse.get_drive_line %q {qubit = 0 : i64}
+      : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %n = arith.fptosi %tau : f64 to i64
+  %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
+  %d1 = pulse.wait %d0, %len : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+  return
+}
+
+func.func @main(%tau: f64) {
+  %q = pulse.qudit_alloc : !pulse.qref
+  %d0, %t0 = pulse.get_drive_line %q {qubit = 0 : i64}
+      : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %c40 = arith.constant 40 : i64
+  %amp = arith.constant 0.3 : f64
+  %zero = arith.constant 0.0 : f64
+  %x = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !pulse.waveform
+  %n = arith.fptosi %tau : f64 to i64
+  %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
+  %d1 = pulse.wait %d0, %len {pulse.variable, pulse.min_vtu = 0 : i64}
+      : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+  %d2, %t1 = pulse.drive %d1, %x, %t0
+      : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+  return
+}
