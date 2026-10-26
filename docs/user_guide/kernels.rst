@@ -210,6 +210,63 @@ observed a nonzero level), whose arms yield the lines and tones they
 advance; both arms start once the measurement completes, and the code after
 the ``if`` waits for the longer arm.
 
+Python Inside Kernels
+---------------------
+
+Besides the control flow above, a kernel body may use:
+
+- list, dictionary and set comprehensions, nested and filtered ones too, and
+  set displays such as ``{8, 16}``. A comprehension is unrolled while
+  tracing like the ``for`` loop it stands for, so
+  ``[get_drive_line(q) for q in qubits]`` builds a list of ``(line, tone)``
+  pairs and ``[readout(r, wf, t) for _ in range(12)]`` a list of results.
+- generator expressions, such as ``sum(a for a in amps)`` or
+  ``sync(*(line for line, _ in pairs))``. A generator expression runs to
+  the end where it is written, as a list comprehension would, so pulses
+  it emits are emitted there, in order, even if what consumes it stops
+  early, as ``any()`` does.
+- starred assignment, such as ``first, *rest = lines``, and slice
+  assignment, such as ``xs[1:3] = ys``.
+- ``assert`` and ``raise`` for checks while tracing: a failing
+  ``assert n > 0, "msg"`` raises ``CompilationError("assertion failed in
+  kernel: msg")``.
+- ``sync()`` over lines, lists or tuples of lines, nested too:
+  ``sync(lines)`` and ``sync([d0, d1], d2)`` synchronize every line they
+  hold.
+- calls with ``*args`` and ``**kwargs``, unpacked while tracing, so
+  ``sync(*lines)`` synchronizes a list of lines built in a loop and
+  ``helper(d, t, **opts)`` passes a dictionary of options.
+- lines and tones kept in any container: a list of ``(line, tone)`` pairs, a
+  dictionary or nested lists. A qudit has one drive and one readout channel,
+  so an operation always uses the channel's current line and tone, whichever
+  copy of it the kernel passes. ``append``, ``insert``, ``extend``, ``pop``,
+  ``remove`` and ``del xs[i]`` work on lists of lines.
+- list, dict and set comprehensions, nested and filtered ones included
+  (``[get_drive_line(q) for q in qubits]``, ``{i: 8 * i for i in range(4)}``),
+  and set displays. A comprehension runs while tracing, one iteration per
+  element, like a loop over a Python value.
+
+A ``float`` argument stays a runtime parameter, compiled once for every
+value, through ``+``, ``-``, ``*``, ``/`` and negation. Any other use that
+needs its value while tracing, such as ``abs``, ``min``, ``math.sin``, a
+comparison, or a duration or wait length, makes it static, so each new
+value compiles the kernel again. The first such use warns once with a
+``RuntimeWarning`` that names the argument and the operation.
+
+Operations check their arguments when they are traced. Passing a tone
+where a line belongs, a number where a waveform belongs, or a readout line
+to ``drive`` raises a ``CompilationError`` that names the operation and
+the argument, such as ``drive(): argument 1 must be a drive line, got a
+tone``, before any MLIR is built.
+
+An error raised while a kernel is traced carries a note with the kernel
+source lines that led to it, as a traceback shows them: the line in the
+kernel and, for an error inside a helper, the helper's line. A misspelled
+operation or attribute gets a suggestion, as in ``unknown pulse op:
+drvie; did you mean drive()?``. The kernel language is in
+``cudaq_pulse.ops``, so ``pulse.drive(...)`` fails with a message that says
+to write ``drive(...)`` or ``pulse.ops.drive(...)``.
+
 Unsupported Patterns
 --------------------
 
@@ -217,15 +274,28 @@ The following Python constructs are **not** supported inside kernels
 and will raise ``CompilationError``:
 
 - ``while`` loops
-- Lambdas and function definitions inside the kernel body
-- List comprehensions or generator expressions
+- Lambdas and function definitions inside the kernel body; define the
+  function at module level, where it is inlined
+- Generator functions (``yield``)
 - ``try`` / ``except`` and ``with`` blocks
+- ``match`` with sequence, mapping or class patterns (literal and ``|``
+  patterns work)
+- Assignments to globals and to attributes (``obj.x = ...``), class
+  definitions, ``async`` code and star imports
 - ``if`` conditions on anything that is only known at runtime other than a
   measurement result
+
+The error names the construct and, where there is one, what to write
+instead.
 
 Kernels may read globals and variables captured from an enclosing scope; a
 change to one is seen on the next call. Calls to ``cudaq_pulse`` ops are
 emitted as IR. Other kernels, and helper functions that take IR values, call
-``cudaq_pulse`` ops or call a kernel, are inlined, inside loops too. Any other
+``cudaq_pulse`` ops or call a kernel, are inlined, inside loops too. So are
+methods of helper objects and ``functools.partial`` objects of such
+functions, and helpers wrapped by a decorator: the wrapper is inlined, and it
+calls the original. Helpers bind their arguments as Python does, including
+default, keyword-only, ``*args`` and ``**kwargs`` parameters. Any other
 Python call, such as ``math.sin`` or ``len``, is evaluated at trace time on
-concrete values.
+concrete values; if one of them calls a ``cudaq_pulse`` op, say through
+``map``, the error names the op and the call.

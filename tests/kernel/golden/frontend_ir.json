@@ -528,7 +528,7 @@
   ]
  },
  "bad_attribute": {
-  "error": "CompilationError: cannot resolve attribute 'not_a_function' on module",
+  "error": "CompilationError: cannot resolve attribute 'not_a_function' on module 'math'",
   "code": "bad_attribute",
   "span": [
    3,

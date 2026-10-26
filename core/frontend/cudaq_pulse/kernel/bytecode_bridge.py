@@ -18,7 +18,7 @@ from typing import Any
 
 from .._device import Qudit, Register
 from ._bytecode_normalize import DecodedCode, decode
-from ._emitter import PulseIREmitter, _extract_closures
+from ._emitter import PulseIREmitter, _extract_closures, add_source_note
 from .ir_builder import CompilationError, PythonIRBuilder
 
 
@@ -78,4 +78,8 @@ def _trace(
         else:
             local_vars[name] = val
 
-    return emitter._loop(prog, 0, -1, len(prog.instrs), -1)
+    try:
+        return emitter._loop(prog, 0, -1, len(prog.instrs), -1)
+    except Exception as e:
+        add_source_note(e)
+        raise

@@ -13,7 +13,8 @@ over a small canonical instruction set whose semantics are identical on every
 supported interpreter (3.12 through 3.15):
 
 * calls are ``CALL n`` / ``CALL_KW n``; the implicit ``NULL`` slots are
-  dropped, and 3.12's ``KW_NAMES`` becomes an explicit constant
+  dropped, and 3.12's ``KW_NAMES`` becomes an explicit constant; a call
+  with ``*args`` or ``**kwargs`` is ``CALL_EX has_kwargs`` on every version
 * binary operators, comparisons and unary operators carry the Python
   ``operator`` function to apply, so no names are matched while tracing
 * jump targets are instruction indices, never byte offsets, so a jump to a
@@ -36,6 +37,7 @@ running ``tests/kernel/test_ir_golden.py`` on it.
 from __future__ import annotations
 
 import dis
+import opcode
 import operator as _op
 import sys
 from types import CodeType
@@ -89,7 +91,20 @@ from typing import Any
     RAISE,
     UNSUPPORTED,
     REGION_END,
-) = range(45)
+    CALL_EX,
+    DICT_MERGE,
+    DELETE_SUBSCR,
+    LOAD_FAST_AND_CLEAR,
+    STORE_FAST_MAYBE,
+    BUILD_SET,
+    SET_ADD,
+    SET_UPDATE,
+    MAP_ADD,
+    UNPACK_EX,
+    MAKE_GENEXPR,
+    SET_FUNCATTR,
+    GEN_YIELD,
+) = range(58)
 
 OP_NAMES: tuple[str, ...] = tuple(
     (
@@ -100,7 +115,9 @@ OP_NAMES: tuple[str, ...] = tuple(
         "POP_TOP COPY SWAP JUMP JUMP_IF_FALSE JUMP_IF_TRUE JUMP_IF_NONE "
         "JUMP_IF_NOT_NONE GET_ITER "
         "FOR_ITER RETURN IMPORT_NAME IMPORT_FROM CONVERT FORMAT RAISE UNSUPPORTED "
-        "REGION_END"
+        "REGION_END CALL_EX DICT_MERGE DELETE_SUBSCR LOAD_FAST_AND_CLEAR "
+        "STORE_FAST_MAYBE BUILD_SET SET_ADD SET_UPDATE MAP_ADD UNPACK_EX "
+        "MAKE_GENEXPR SET_FUNCATTR GEN_YIELD"
     ).split()
 )
 
@@ -153,6 +170,7 @@ _SIMPLE: dict[str, int] = {
     "CALL_KW": CALL_KW,
     "BINARY_SUBSCR": SUBSCR,
     "STORE_SUBSCR": STORE_SUBSCR,
+    "DELETE_SUBSCR": DELETE_SUBSCR,
     "BUILD_SLICE": BUILD_SLICE,
     "UNARY_NOT": NOT,
     "BUILD_TUPLE": BUILD_TUPLE,
@@ -162,6 +180,11 @@ _SIMPLE: dict[str, int] = {
     "BUILD_STRING": BUILD_STRING,
     "LIST_APPEND": LIST_APPEND,
     "LIST_EXTEND": LIST_EXTEND,
+    "LOAD_FAST_AND_CLEAR": LOAD_FAST_AND_CLEAR,
+    "BUILD_SET": BUILD_SET,
+    "SET_ADD": SET_ADD,
+    "SET_UPDATE": SET_UPDATE,
+    "MAP_ADD": MAP_ADD,
     "UNPACK_SEQUENCE": UNPACK_SEQUENCE,
     "POP_TOP": POP_TOP,
     "POP_ITER": POP_TOP,
@@ -170,7 +193,6 @@ _SIMPLE: dict[str, int] = {
     "GET_ITER": GET_ITER,
     "IMPORT_NAME": IMPORT_NAME,
     "IMPORT_FROM": IMPORT_FROM,
-    "RAISE_VARARGS": RAISE,
     "RETURN_VALUE": RETURN,
 }
 
@@ -242,16 +264,70 @@ def _not_supported(what: str) -> str:
     return f"{what} are not supported in @cudaq_pulse.kernel"
 
 
-_NESTED_MESSAGE = _not_supported("lambdas, nested functions and comprehensions")
+_MODULE_LEVEL = (
+    "; define the function at module level, where helpers called from a kernel are inlined"
+)
+_NESTED_MESSAGES = {
+    "<genexpr>": _not_supported("generator expressions")
+    + "; use a list comprehension instead, as in sum([x for x in xs])",
+    "<lambda>": _not_supported("lambdas") + _MODULE_LEVEL,
+}
+_NESTED_MESSAGE = _not_supported("nested functions") + _MODULE_LEVEL
 _TRY_MESSAGE = _not_supported("try and with statements")
+_GENERATORS = _not_supported("generators")
+_ASYNC = _not_supported("await, async for and async with")
+_MATCH = (
+    _not_supported("match statements with sequence, mapping or class patterns")
+    + "; match literals and | alternatives, or use if/elif with ==, len() and isinstance()"
+)
+_GLOBAL = (
+    _not_supported("assignments to globals")
+    + "; keep the value in a local, or compute it before calling the kernel"
+)
+# What each opcode the tracer does not run stands for, with what to write instead.
 _UNSUPPORTED: dict[str, str] = {
-    "MAKE_FUNCTION": _NESTED_MESSAGE,
-    "LOAD_FAST_AND_CLEAR": _NESTED_MESSAGE,
     "BEFORE_WITH": _TRY_MESSAGE,
     "LOAD_SPECIAL": _TRY_MESSAGE,
-    "RETURN_GENERATOR": _not_supported("generators"),
-    "YIELD_VALUE": _not_supported("generators"),
-    "CALL_FUNCTION_EX": _not_supported("star-argument calls"),
+    "WITH_EXCEPT_START": _TRY_MESSAGE,
+    "PUSH_EXC_INFO": _TRY_MESSAGE,
+    "POP_EXCEPT": _TRY_MESSAGE,
+    "RERAISE": _TRY_MESSAGE,
+    "CHECK_EXC_MATCH": _TRY_MESSAGE,
+    "CHECK_EG_MATCH": _TRY_MESSAGE,
+    "RETURN_GENERATOR": _GENERATORS,
+    "YIELD_VALUE": _GENERATORS,
+    "GET_YIELD_FROM_ITER": _GENERATORS,
+    "SEND": _GENERATORS,
+    "END_SEND": _GENERATORS,
+    "CLEANUP_THROW": _GENERATORS,
+    "GET_AWAITABLE": _ASYNC,
+    "GET_AITER": _ASYNC,
+    "GET_ANEXT": _ASYNC,
+    "END_ASYNC_FOR": _ASYNC,
+    "BEFORE_ASYNC_WITH": _ASYNC,
+    "MATCH_SEQUENCE": _MATCH,
+    "MATCH_MAPPING": _MATCH,
+    "MATCH_KEYS": _MATCH,
+    "MATCH_CLASS": _MATCH,
+    "GET_LEN": _MATCH,
+    "STORE_GLOBAL": _GLOBAL,
+    "DELETE_GLOBAL": _GLOBAL,
+    "STORE_NAME": _GLOBAL,
+    "DELETE_NAME": _GLOBAL,
+    "DELETE_DEREF": _not_supported("del of a closure variable") + "; rebind it to None instead",
+    "STORE_ATTR": _not_supported("attribute assignments (obj.x = ...)")
+    + "; build a new object, or keep the value in a local",
+    "DELETE_ATTR": _not_supported("del of attributes"),
+    "LOAD_BUILD_CLASS": _not_supported("class definitions") + "; define the class at module level",
+    "LOAD_SUPER_ATTR": _not_supported("super() calls"),
+    "BUILD_TEMPLATE": _not_supported("template strings") + "; use an f-string",
+    "BUILD_INTERPOLATION": _not_supported("template strings") + "; use an f-string",
+}
+_INTRINSICS: dict[str, str] = {
+    "INTRINSIC_IMPORT_STAR": _not_supported("star imports (from m import *)")
+    + "; import the names the kernel uses at module level",
+    "INTRINSIC_STOPITERATION_ERROR": _GENERATORS,
+    "INTRINSIC_ASYNC_GEN_WRAP": _GENERATORS,
 }
 
 _WHILE_MESSAGE = (
@@ -259,6 +335,8 @@ _WHILE_MESSAGE = (
 )
 
 _PY_MINOR = sys.version_info[1]
+# What LOAD_COMMON_CONSTANT (3.14+) loads, by its argument.
+_COMMON_CONSTANTS: tuple[Any, ...] = tuple(getattr(opcode, "_common_constants", ()))
 
 # CPython minors whose bytecode this decoder has been verified against.
 SUPPORTED_MINORS = (12, 13, 14, 15)
@@ -362,12 +440,19 @@ class DecodedCode:
         return "\n".join(lines)
 
 
-def _protected_starts(code: CodeType) -> list[int]:
-    """Byte offsets where an exception-table range begins."""
+def _protected_starts(code: CodeType, raw: list[dis.Instruction]) -> list[int]:
+    """Byte offsets where a ``try`` or ``with`` block's exception-table range
+    begins.
+
+    An inlined comprehension (3.12+) has an entry too, whose handler restores
+    the iteration variable; ``try`` and ``with`` handlers start with
+    ``PUSH_EXC_INFO``.
+    """
     if not code.co_exceptiontable:
         return []
     entries = getattr(dis.Bytecode(code), "exception_entries", ())
-    return sorted({e.start for e in entries})
+    handlers = {ins.offset for ins in raw if ins.opname == "PUSH_EXC_INFO"}
+    return sorted({e.start for e in entries if e.target in handlers})
 
 
 def _decode(code: CodeType) -> DecodedCode:
@@ -375,7 +460,22 @@ def _decode(code: CodeType) -> DecodedCode:
     raw = list(dis.get_instructions(code))
 
     exit_offsets = {ins.argval for ins in raw if ins.opname == "FOR_ITER"}
-    protected = _protected_starts(code)
+    protected = _protected_starts(code, raw)
+    # Variables a comprehension saves and restores; restoring stores the
+    # saved value, or unbinds the name if it had none.
+    cleared = {ins.argval for ins in raw if ins.opname == "LOAD_FAST_AND_CLEAR"}
+    genexpr_calls = _genexpr_calls(raw)
+    calls_with_iterator = set(genexpr_calls.values())
+    iterator_slots = {
+        raw[i].offset
+        for i in range(1, len(raw) - 1)
+        if raw[i].opname == "PUSH_NULL"
+        and raw[i - 1].offset in calls_with_iterator
+        and raw[i + 1].opname == "FOR_ITER"
+    }
+    # A generator expression's own code: its yields collect its values.
+    in_genexpr = code.co_name == "<genexpr>" and bool(code.co_flags & _CO_GENERATOR)
+    drop_pop = False
     next_protected = 0
 
     out: list[list[Any]] = []
@@ -384,8 +484,12 @@ def _decode(code: CodeType) -> DecodedCode:
     index_at: dict[int, int] = {}
     pending_kw_names = False
     cleanup = 0  # remaining loop-exit cleanup instructions to drop
+    previous: dis.Instruction | None = None  # the raw instruction before *ins*
+    asserting = False  # an AssertionError was loaded and not yet raised
 
     for ins in raw:
+        prev, previous = previous, ins
+        prev_name = "" if prev is None else prev.opname
         if len(positions) < len(out):
             positions.extend([pos] * (len(out) - len(positions)))
         pos = ins.positions
@@ -408,7 +512,20 @@ def _decode(code: CodeType) -> DecodedCode:
             next_protected += 1
             out.append([UNSUPPORTED, _TRY_MESSAGE])
 
+        if name == "PUSH_NULL" and off in iterator_slots:
+            # 3.15 runs list(genexpr) inline: a FOR_ITER over the generator,
+            # whose second iterator slot this null fills.
+            out.append([LOAD_CONST, None])
+            continue
         if name in _SKIP:
+            continue
+
+        if drop_pop:
+            drop_pop = False
+            if name == "POP_TOP":
+                continue
+        if in_genexpr and name == "RETURN_GENERATOR":
+            drop_pop = True  # the None it pushes is popped next
             continue
 
         op = _SIMPLE.get(name)
@@ -416,6 +533,13 @@ def _decode(code: CodeType) -> DecodedCode:
             if op == CALL and pending_kw_names:
                 op = CALL_KW
                 pending_kw_names = False
+            elif op == CALL and off in calls_with_iterator:
+                # A generator expression is called with CALL 0, its iterable
+                # in the slot a method call's self takes.
+                out.append([CALL, 1])
+                continue
+            elif op == STORE_FAST and ins.argval in cleared:
+                op = STORE_FAST_MAYBE
             out.append([op, ins.argval])
             continue
 
@@ -432,10 +556,21 @@ def _decode(code: CodeType) -> DecodedCode:
         elif name == "BINARY_SLICE":
             out.append([BUILD_SLICE, 2])
             out.append([SUBSCR, None])
+        elif name == "STORE_SLICE":
+            out.append([BUILD_SLICE, 2])
+            out.append([STORE_SUBSCR, None])
         elif name in _UNARY_NAMES:
             out.append([UNARY, _UNARY_NAMES[name]])
-        elif name == "CALL_INTRINSIC_1" and ins.argval == "INTRINSIC_UNARY_POSITIVE":
+        elif name == "CALL_INTRINSIC_1" and ins.argrepr == "INTRINSIC_UNARY_POSITIVE":
             out.append([UNARY, _op.pos])
+        elif name == "CALL_INTRINSIC_1" and ins.argrepr == "INTRINSIC_LIST_TO_TUPLE":
+            out.append([UNARY, tuple])
+        elif name == "CALL_FUNCTION_EX":
+            # 3.14+ always has a kwargs slot, a pushed NULL when there are none.
+            has_kwargs = bool(iarg & 1) if _PY_MINOR < 14 else prev_name != "PUSH_NULL"
+            out.append([CALL_EX, has_kwargs])
+        elif name in ("DICT_MERGE", "DICT_UPDATE"):
+            out.append([DICT_MERGE, (iarg, name == "DICT_MERGE")])
         elif name == "COMPARE_OP":
             out.append([COMPARE, _compare_fn(ins)])
         elif name == "IS_OP":
@@ -443,9 +578,10 @@ def _decode(code: CodeType) -> DecodedCode:
         elif name == "CONTAINS_OP":
             out.append([CONTAINS, bool(iarg)])
         elif name in _SUPERINSTRUCTIONS:
-            first, second = _SUPERINSTRUCTIONS[name]
-            out.append([first, ins.argval[0]])
-            out.append([second, ins.argval[1]])
+            for half, var in zip(_SUPERINSTRUCTIONS[name], ins.argval):
+                if half == STORE_FAST and var in cleared:
+                    half = STORE_FAST_MAYBE
+                out.append([half, var])
         elif name == "RETURN_CONST":
             out.append([LOAD_CONST, ins.argval])
             out.append([RETURN, None])
@@ -453,20 +589,51 @@ def _decode(code: CodeType) -> DecodedCode:
             out.append([LOAD_CONST, code.co_consts[iarg]])
             pending_kw_names = True
         elif name in ("LOAD_ASSERTION_ERROR", "LOAD_COMMON_CONSTANT"):
-            value = AssertionError if name == "LOAD_ASSERTION_ERROR" else ins.argval
+            # 3.14's dis gives LOAD_COMMON_CONSTANT the table index, 3.15's the value.
+            value = AssertionError if name == "LOAD_ASSERTION_ERROR" else _COMMON_CONSTANTS[iarg]
             out.append([LOAD_CONST, value])
+            asserting = value is AssertionError
+        elif name == "RAISE_VARARGS":
+            # ``assert c, msg`` builds AssertionError(msg) with CALL 0: the
+            # message sits in the slot a method call's self takes.
+            if asserting and prev_name == "CALL" and out[-1] == [CALL, 0]:
+                out[-1][1] = 1
+            asserting = False
+            out.append([RAISE, ins.argval])
         elif name == "FORMAT_VALUE":
             if iarg & 0x3:
                 out.append([CONVERT, iarg & 0x3])
             out.append([FORMAT, bool(iarg & 0x4)])
+        elif name == "UNPACK_EX":
+            out.append([UNPACK_EX, (iarg & 0xFF, iarg >> 8)])
         elif name == "CONVERT_VALUE":
             out.append([CONVERT, iarg])
         elif name in ("FORMAT_SIMPLE", "FORMAT_WITH_SPEC"):
             out.append([FORMAT, name == "FORMAT_WITH_SPEC"])
+        elif name == "MAKE_FUNCTION" and off in genexpr_calls:
+            closure = _PY_MINOR == 12 and bool(iarg & 0x08)
+            out.append([MAKE_GENEXPR, closure])
+        elif name == "SET_FUNCTION_ATTRIBUTE":
+            out.append([SET_FUNCATTR, None])
+        elif in_genexpr and name == "YIELD_VALUE":
+            out.append([GEN_YIELD, None])
+        elif name == "MAKE_FUNCTION":
+            made = prev.argval if prev is not None and prev.opname == "LOAD_CONST" else None
+            message = _NESTED_MESSAGES.get(getattr(made, "co_name", ""), _NESTED_MESSAGE)
+            out.append([UNSUPPORTED, message])
         elif name in _UNSUPPORTED:
             out.append([UNSUPPORTED, _UNSUPPORTED[name]])
+        elif name == "CALL_INTRINSIC_1" and ins.argrepr in _INTRINSICS:
+            out.append([UNSUPPORTED, _INTRINSICS[ins.argrepr]])
         else:
-            out.append([UNSUPPORTED, f"unsupported bytecode instruction: {name}"])
+            what = f"{name} {ins.argrepr}" if ins.argrepr else name
+            out.append(
+                [
+                    UNSUPPORTED,
+                    f"this Python construct (bytecode {what}) is not supported in "
+                    f"@cudaq_pulse.kernel; please report it at {ISSUES_URL}",
+                ]
+            )
 
     positions.extend([pos] * (len(out) - len(positions)))
 
@@ -485,7 +652,8 @@ def _decode(code: CodeType) -> DecodedCode:
             continue
         target = index_at.get(entry[1], end)
         if op == FOR_ITER:
-            entry[1] = (target, _loop_var_is_read(out, i, target))
+            # A yield in a rolled loop would run once: unroll a generator's loops.
+            entry[1] = (target, in_genexpr or _loop_var_is_read(out, i, target))
         elif target <= i and out[target][0] != FOR_ITER:
             # Only for-loops jump backwards to their FOR_ITER header.
             out[i] = [UNSUPPORTED, _WHILE_MESSAGE]
@@ -498,6 +666,57 @@ def _decode(code: CodeType) -> DecodedCode:
                 positions[i] = positions[i - 1]
 
     return DecodedCode(code, tuple((op, arg) for op, arg in out), tuple(positions))
+
+
+_CO_GENERATOR = 0x20
+_JUMP_OPCODES = (
+    frozenset(dis.hasjrel) | frozenset(dis.hasjabs) | frozenset(getattr(dis, "hasjump", ()))
+)
+_ENDS_FLOW = frozenset(
+    {"JUMP_FORWARD", "JUMP_BACKWARD", "JUMP_BACKWARD_NO_INTERRUPT", "RETURN_VALUE", "RETURN_CONST"}
+    | {"RAISE_VARARGS", "RERAISE"}
+)
+
+
+def _genexpr_calls(raw: list[dis.Instruction]) -> dict[int, int]:
+    """Map the offset of each MAKE_FUNCTION that makes a generator
+    expression to the offset of the CALL that runs it.
+
+    The call is the first ``CALL 0`` reached with the function and its
+    iterable on the stack; stack depths come from ``dis.stack_effect``.
+    A generator expression whose call is not found is left out, and is
+    rejected where it is made.
+    """
+    found: dict[int, int] = {}
+    for i, ins in enumerate(raw):
+        if ins.opname != "MAKE_FUNCTION" or i == 0 or raw[i - 1].opname != "LOAD_CONST":
+            continue
+        if getattr(raw[i - 1].argval, "co_name", "") != "<genexpr>":
+            continue
+        j = i + 1
+        while j < len(raw) and raw[j].opname == "SET_FUNCTION_ATTRIBUTE":
+            j += 1
+        depth = 1  # the function, above whatever the stack held before
+        at_target: dict[int, int] = {}
+        for k in range(j, len(raw)):
+            cur = raw[k]
+            if raw[k - 1].opname in _ENDS_FLOW:
+                if cur.offset not in at_target:
+                    break
+                depth = at_target[cur.offset]
+            if cur.opname == "CALL" and not cur.arg and depth == 2:
+                found[ins.offset] = cur.offset
+                break
+            oparg = cur.arg if cur.opcode >= dis.HAVE_ARGUMENT else None
+            try:
+                if cur.opcode in _JUMP_OPCODES:
+                    at_target[cur.argval] = depth + dis.stack_effect(cur.opcode, oparg, jump=True)
+                depth += dis.stack_effect(cur.opcode, oparg, jump=False)
+            except ValueError:
+                break
+            if depth < 1:
+                break
+    return found
 
 
 def _condition_rank(p: Any) -> tuple[int, bool, int]:
@@ -514,7 +733,7 @@ def _loop_var_is_read(out: list[list[Any]], for_idx: int, exit_idx: int) -> bool
     name = store[1]
     for j in range(for_idx + 2, exit_idx):
         op, arg = out[j]
-        if arg == name and op in (LOAD_FAST, DELETE_FAST, LOAD_DEREF):
+        if arg == name and op in (LOAD_FAST, DELETE_FAST, LOAD_DEREF, LOAD_FAST_AND_CLEAR):
             return True
     return False
 

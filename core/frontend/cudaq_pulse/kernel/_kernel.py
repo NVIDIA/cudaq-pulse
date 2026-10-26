@@ -29,6 +29,7 @@ import itertools
 import os
 import threading
 import types
+import warnings
 import weakref
 from collections.abc import Callable
 from dataclasses import replace
@@ -468,13 +469,16 @@ class Kernel:
                     fn, trace_args, tuple(names[i] for i in runtime), target, options
                 )
                 needed = builder.structural
+                operation = "a value that must be an integer, such as a duration or a wait length"
             except SymbolicValueError as e:
                 needed = set(e.names)
                 if not any(names[i] in needed for i in runtime):
                     raise
+                operation = e.operation or "an operation that needs its value"
             promote = {i for i in runtime if names[i] in needed}
             if not promote:
                 break
+            _warn_static(self.__name__, [names[i] for i in sorted(promote)], operation)
             self._promote(promote)
         returns = _return_spec(builder.returned, builder.readouts, self.__name__)
         guard = build_guard(fn, impure=builder.impure)
@@ -489,6 +493,27 @@ class Kernel:
                 tuple(sorted({*static, *indices})),
                 tuple(i for i in runtime if i not in indices),
             )
+
+
+_PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _warn_static(kernel: str, params: list[str], operation: str) -> None:
+    """Warn that tracing made the float parameters *params* static. Each is
+    made static once per kernel, so this warns once per parameter."""
+    quoted = ", ".join(repr(p) for p in params)
+    one = len(params) == 1
+    warnings.warn(
+        f"pulse kernel {kernel}(): float argument{'' if one else 's'} {quoted} "
+        f"{'is' if one else 'are'} used in {operation}, which needs "
+        f"{'its value' if one else 'their values'} while tracing, so the kernel is "
+        f"compiled again for every new value of {quoted}. To keep "
+        f"{'it a runtime parameter' if one else 'them runtime parameters'}, compute "
+        "that value on the host and pass it in, or annotate the parameter as int to "
+        "make the specialization explicit.",
+        RuntimeWarning,
+        skip_file_prefixes=(_PACKAGE_DIR,),
+    )
 
 
 class CompiledKernel:

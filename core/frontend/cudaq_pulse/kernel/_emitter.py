@@ -28,7 +28,10 @@ vector, ...) run as Python runs them, one traced iteration per element.
 from __future__ import annotations
 
 import builtins as _builtins_mod
+import difflib
+import functools
 import inspect
+import linecache
 import types
 from collections.abc import Iterator
 from typing import Any
@@ -81,9 +84,12 @@ _OP_NAMES = {name: f"pulse.{name}" for name in OP_TABLE}
 MAX_UNROLLED_ITERATIONS = 1_000_000
 # Kernel and helper calls are inlined; this bounds a runaway recursion.
 MAX_INLINE_DEPTH = 64
+_VARIADIC = inspect.CO_VARARGS | inspect.CO_VARKEYWORDS
 # Methods of these containers change them unless listed in _READ_METHODS.
 _CONTAINERS = frozenset({list, dict, set})
 _READ_METHODS = frozenset({"copy", "count", "index", "get", "keys", "values", "items"})
+# List methods after which the list slots holding lines and tones are found again.
+_MOVES_SLOTS = frozenset({"append", "extend", "insert", "pop", "remove", "reverse", "sort"})
 # A rolled body that acquires a line would acquire one for all iterations
 # instead of one per iteration, so the acquisition is hoisted or the loop
 # unrolled.
@@ -203,10 +209,187 @@ class _Unrolled:
         self.it = it
         self.count = 0
 
+    def __iter__(self) -> Any:
+        # What a generator expression returns is consumed by Python calls,
+        # such as sum(), as well as by loops that the tracer runs.
+        return self.it
+
 
 _MISSING = object()
+# What a comprehension saves for an iteration variable that was unbound.
+_UNBOUND = object()
 
 _LINE_OPS = frozenset({"get_drive_line", "get_readout_line"})
+
+_LINE_TYPES = ("drive_line", "readout_line")
+_QUDIT = ("qref",)
+_TONE = ("tone",)
+_WAVEFORM = ("waveform",)
+# The IR types each leading operand of a pulse op may have.
+_OPERAND_TYPES: dict[str, tuple[tuple[str, ...], ...]] = {
+    "get_drive_line": (_QUDIT,),
+    "get_readout_line": (_QUDIT,),
+    "drive": (("drive_line",), _WAVEFORM, _TONE),
+    "readout": (("readout_line",), _WAVEFORM, _TONE),
+    "wait": (_LINE_TYPES,),
+    "shift_phase": (_TONE,),
+    "set_phase": (_TONE,),
+    "shift_frequency": (_TONE,),
+    "set_frequency": (_TONE,),
+    "wf_add": (_WAVEFORM, _WAVEFORM),
+    "wf_sub": (_WAVEFORM, _WAVEFORM),
+    "wf_mul": (_WAVEFORM, _WAVEFORM),
+    "wf_scale": (_WAVEFORM,),
+    "wf_neg": (_WAVEFORM,),
+}
+_EMIT_TABLE = {
+    name: (n_val, attrs, rtypes, _OPERAND_TYPES.get(name, ()))
+    for name, (n_val, attrs, rtypes) in OP_TABLE.items()
+}
+_TYPE_WORDS = {
+    "qref": "qudit",
+    "drive_line": "drive line",
+    "readout_line": "readout line",
+    "tone": "tone",
+    "waveform": "waveform",
+    "measurement": "measurement result",
+}
+
+
+def _note_source(e: BaseException, prog: bc.DecodedCode, index: int) -> None:
+    """Record where tracing failed: ``pulse_source`` is the innermost
+    instruction, ``pulse_callers`` the calls that led to it, innermost
+    first."""
+    try:
+        source = getattr(e, "pulse_source", None)
+        if source is None:
+            e.pulse_source = (prog, index)  # type: ignore[attr-defined]
+        elif source[0] is not prog:
+            callers = getattr(e, "pulse_callers", None)
+            if callers is None:
+                callers = e.pulse_callers = []  # type: ignore[attr-defined]
+            if not callers or callers[-1][0] is not prog:
+                callers.append((prog, index))
+    except AttributeError:
+        pass
+
+
+def add_source_note(e: BaseException) -> None:
+    """Add a note to *e* with the kernel source lines that raised it, as a
+    traceback shows them: the kernel's own line first."""
+    source = getattr(e, "pulse_source", None)
+    if source is None or getattr(e, "pulse_noted", False):
+        return
+    frames = [source, *getattr(e, "pulse_callers", ())]
+    lines = ["while tracing the kernel:"]
+    for prog, index in reversed(frames):
+        filename, lineno, *_ = prog.location(index)
+        lines.append(f'  File "{filename}", line {lineno}, in {prog.code.co_name}')
+        text = linecache.getline(filename, lineno).strip() if lineno else ""
+        if text:
+            lines.append(f"    {text}")
+    try:
+        e.add_note("\n".join(lines))
+        e.pulse_noted = True  # type: ignore[attr-defined]
+    except AttributeError:
+        pass
+
+
+def _did_you_mean(name: str, candidates: Any, call: bool = False) -> str:
+    """``"; did you mean 'x'?"`` for the closest of *candidates*, or ``""``."""
+    names = [c for c in dict.fromkeys(candidates) if isinstance(c, str) and not c.startswith("__")]
+    close = difflib.get_close_matches(name, names, n=1)
+    if not close:
+        return ""
+    return f"; did you mean {close[0]}()?" if call else f"; did you mean {close[0]!r}?"
+
+
+def _attribute_error(obj: Any, attr: str) -> str:
+    """The error for ``obj.attr`` when *obj* has no attribute *attr*."""
+    if isinstance(obj, types.ModuleType):
+        module = obj.__name__
+        if module.split(".")[0] == "cudaq_pulse" and attr in OP_TABLE:
+            return (
+                f"module {module!r} has no attribute {attr!r}: the kernel language is in "
+                f"cudaq_pulse.ops; write {attr}(...) or cudaq_pulse.ops.{attr}(...)"
+            )
+        return f"cannot resolve attribute {attr!r} on module {module!r}" + _did_you_mean(
+            attr, dir(obj)
+        )
+    try:
+        names = dir(obj)
+    except Exception:  # a broken __dir__ only loses the suggestion
+        names = []
+    return f"cannot resolve attribute {attr!r} on {type(obj).__name__}" + _did_you_mean(attr, names)
+
+
+def _describe(value: Any) -> str:
+    """How an operand error names what the kernel passed."""
+    if value.__class__ is IRValue:
+        word = _TYPE_WORDS.get(value.vtype, value.vtype)
+        return f"an {word}" if word[0] in "aeiou" else f"a {word}"
+    if isinstance(value, (list, tuple)):
+        return f"a {type(value).__name__} of {len(value)}"
+    return f"{type(value).__name__} {value!r}"
+
+
+def _sync_lines(fname: str, call_args: list[Any]) -> list[IRValue]:
+    """The current values of the lines passed to *fname*, with lists and
+    tuples of lines flattened."""
+    lines: list[IRValue] = []
+    for v in call_args:
+        if v.__class__ is not IRValue or v.vtype not in _LINE_TYPES:
+            break
+        chan = v.chan
+        lines.append(v if chan is None else chan.value)
+    else:
+        if len(lines) >= 2:
+            return lines
+    lines = []
+
+    def add(value: Any, where: str) -> None:
+        if value.__class__ is IRValue and value.vtype in _LINE_TYPES:
+            lines.append(_current(value))
+        elif value.__class__ in (list, tuple):
+            for i, item in enumerate(value):
+                add(item, f"{where}[{i}]")
+        else:
+            message = f"{fname}(): {where} must be a line, got {_describe(value)}"
+            if value.__class__ is IRValue and value.vtype == "tone":
+                message += f"; pass the lines only, as in {fname}(*[line for line, _ in pairs])"
+            raise CompilationError(message)
+
+    for i, value in enumerate(call_args):
+        add(value, f"argument {i + 1}")
+    if len(lines) < 2:
+        raise CompilationError(f"{fname}() needs at least 2 lines, got {len(lines)}")
+    if len({id(v) for v in lines}) != len(lines):
+        raise CompilationError(f"{fname}(): a line is passed more than once")
+    return lines
+
+
+def _operand_error(fname: str, call_args: list[Any]) -> CompilationError:
+    """The error for the first operand of *fname* that is not of its type."""
+    index, want = 0, _OPERAND_TYPES[fname][0]
+    for index, (v, want) in enumerate(zip(call_args, _OPERAND_TYPES[fname])):
+        if v.__class__ is not IRValue or v.vtype not in want:
+            break
+    value = call_args[index]
+    wanted = " or ".join(_TYPE_WORDS[t] for t in want)
+    message = f"{fname}(): argument {index + 1} must be a {wanted}, got {_describe(value)}"
+    vtype = value.vtype if value.__class__ is IRValue else None
+    play = fname in ("drive", "readout")
+    if play and ((index == 0 and vtype == "tone") or (index == 2 and vtype in _LINE_TYPES)):
+        message += f"; the line comes first and the tone last: {fname}(line, waveform, tone)"
+    elif play and vtype in _LINE_TYPES:
+        message += "; drive() takes a drive line and readout() a readout line"
+    elif fname == "wf_scale":
+        message += "; call it as wf_scale(waveform, scalar)"
+    elif want is _WAVEFORM and vtype is None:
+        message += "; pass a waveform such as square(duration, amplitude)"
+    elif want is _QUDIT and vtype is None:
+        message += "; pass one of the kernel's qudit arguments"
+    return CompilationError(message)
 
 
 class _Chan:
@@ -331,6 +514,7 @@ def _range_error(args: list[Any]) -> CompilationError:
             + "; a float parameter stays symbolic, so annotate it as int to "
             "specialize the kernel on its value",
             tuple(names),
+            "a range() bound",
         )
     kinds = ", ".join(type(a).__name__ for a in args)
     return CompilationError(f"range() bounds must be integers known at compile time; got ({kinds})")
@@ -346,7 +530,9 @@ def _iterate(value: Any) -> Any:
     if is_symbolic(value):
         names = _parameter_names(value)
         raise SymbolicValueError(
-            f"cannot iterate over kernel parameter {', '.join(map(repr, names))}", tuple(names)
+            f"cannot iterate over kernel parameter {', '.join(map(repr, names))}",
+            tuple(names),
+            "a for loop over it",
         )
     try:
         return iter(value)
@@ -354,6 +540,57 @@ def _iterate(value: Any) -> Any:
         raise CompilationError(
             f"cannot iterate over {type(value).__name__} in a pulse kernel"
         ) from None
+
+
+def _current(value: IRValue) -> IRValue:
+    """The current value of *value*'s channel, or *value* if it has none."""
+    chan = value.chan
+    return value if chan is None else chan.value
+
+
+def _slot_holds(slot: tuple[list[Any], int, IRValue], value: IRValue) -> bool:
+    """Whether the list slot recorded for *value* still holds it."""
+    obj, index, held = slot
+    if held is not value:
+        return False
+    try:
+        return obj[index] is value
+    except IndexError:  # the list shrank since the value was read
+        return False
+
+
+def _star_args(value: Any) -> list[Any]:
+    """The positional arguments of ``f(*value)``, unpacked at trace time."""
+    if value.__class__ is tuple or value.__class__ is list:
+        return list(value)
+    if isinstance(value, IRValue):
+        raise CompilationError(
+            f"cannot unpack a pulse {value.vtype} value with *; pass it as an argument"
+        )
+    return list(_iterate(value))
+
+
+def _merge_kwargs(target: dict[Any, Any], other: Any, strict: bool) -> None:
+    """``**other`` into the keyword arguments *target* of a call (or a dict display)."""
+    try:
+        keys = other.keys()
+    except AttributeError:
+        raise CompilationError(
+            f"argument after ** must be a mapping, not {type(other).__name__}"
+        ) from None
+    for key in keys:
+        if strict and key in target:
+            raise CompilationError(f"got multiple values for keyword argument {key!r}")
+        target[key] = other[key]
+
+
+class _GenExpr:
+    """A generator expression, run all at once when it is called."""
+
+    __slots__ = ("code",)
+
+    def __init__(self, code: types.CodeType):
+        self.code = code
 
 
 class _Loop:
@@ -561,9 +798,7 @@ class PulseIREmitter:
                         try:
                             push(getattr(obj, arg))
                         except (AttributeError, TypeError) as e:
-                            raise CompilationError(
-                                f"cannot resolve attribute {arg!r} on {type(obj).__name__}"
-                            ) from e
+                            raise CompilationError(_attribute_error(obj, arg)) from e
 
                 elif op is _subscr:
                     index = pop()
@@ -645,7 +880,15 @@ class PulseIREmitter:
 
                 elif op is _get_iter:
                     value = pop()
-                    push(_Loop(value) if type(value) is range else _Unrolled(_iterate(value)))
+                    vt = type(value)
+                    if vt is range:
+                        push(_Loop(value))
+                    elif vt is _Unrolled or vt is _Loop:
+                        # iter() of an iterator: a comprehension's on 3.13 and
+                        # 3.14, a generator expression's result.
+                        push(value)
+                    else:
+                        push(_Unrolled(_iterate(value)))
                     if _iter_slots > 1:
                         stack.extend([None] * (_iter_slots - 1))
 
@@ -677,8 +920,11 @@ class PulseIREmitter:
                         raise CompilationError(f"list update on non-list: {type(lst)}")
                     if op is bc.LIST_APPEND:
                         lst.append(val)
+                        if val.__class__ is IRValue and val.vtype in LINEAR_TYPES:
+                            self._slots[id(val)] = (lst, len(lst) - 1, val)
                     else:
                         lst.extend(val)
+                        self._track_slots(lst, 0)
 
                 elif op is bc.UNARY:
                     push(arg(pop()))
@@ -738,7 +984,14 @@ class PulseIREmitter:
                     obj = pop()
                     value = pop()
                     self._note_mutation(obj)
-                    obj[index] = value
+                    try:
+                        obj[index] = value
+                    except (TypeError, IndexError, KeyError, ValueError) as e:
+                        raise CompilationError(
+                            f"assignment failed: {type(obj).__name__}[{index!r}] = ...: {e}"
+                        ) from e
+                    if index.__class__ is slice and obj.__class__ is list:
+                        self._track_slots(obj, 0)
 
                 elif op is bc.BUILD_CONST_KEY_MAP:
                     keys = pop()
@@ -775,7 +1028,96 @@ class PulseIREmitter:
 
                 elif op is bc.RAISE:
                     exc = pop() if arg else None
+                    if exc is AssertionError or isinstance(exc, AssertionError):
+                        detail = f": {exc}" if isinstance(exc, AssertionError) and exc.args else ""
+                        raise CompilationError(f"assertion failed in kernel{detail}")
                     raise CompilationError(f"kernel raised {exc!r}")
+
+                elif op is bc.CALL_EX:
+                    star_kwargs = pop() if arg else None
+                    star = pop()
+                    self._dispatch_call(pop(), _star_args(star), star_kwargs or None)
+
+                elif op is bc.DICT_MERGE:
+                    index, strict = arg
+                    other = pop()
+                    _merge_kwargs(stack[-index], other, strict)
+
+                elif op is bc.DELETE_SUBSCR:
+                    index = pop()
+                    obj = pop()
+                    self._note_mutation(obj)
+                    try:
+                        del obj[index]
+                    except (TypeError, IndexError, KeyError) as e:
+                        raise CompilationError(
+                            f"del failed: {type(obj).__name__}[{index!r}]: {e}"
+                        ) from e
+                    if obj.__class__ is list:
+                        self._track_slots(obj, 0)
+
+                elif op is bc.LOAD_FAST_AND_CLEAR:
+                    push(local_vars.pop(arg, _UNBOUND))
+
+                elif op is bc.STORE_FAST_MAYBE:
+                    value = pop()
+                    if value is _UNBOUND:
+                        local_vars.pop(arg, None)
+                    else:
+                        local_vars[arg] = value
+
+                elif op is bc.BUILD_SET:
+                    items = stack[len(stack) - arg :]
+                    del stack[len(stack) - arg :]
+                    push(set(items))
+                    self._note_fresh(stack[-1])
+
+                elif op is bc.SET_ADD:
+                    val = pop()
+                    stack[-arg].add(val)
+
+                elif op is bc.SET_UPDATE:
+                    val = pop()
+                    stack[-arg].update(val)
+
+                elif op is bc.MAP_ADD:
+                    val = pop()
+                    key = pop()
+                    stack[-arg][key] = val
+
+                elif op is bc.UNPACK_EX:
+                    before, after = arg
+                    val = pop()
+                    if val.__class__ is IRValue:
+                        raise CompilationError(f"cannot unpack a pulse {val.vtype} value")
+                    try:
+                        items = list(val)
+                    except TypeError:
+                        raise CompilationError(f"cannot unpack {type(val).__name__}") from None
+                    if len(items) < before + after:
+                        raise CompilationError(
+                            f"not enough values to unpack: expected at least {before + after}, "
+                            f"got {len(items)}"
+                        )
+                    rest = items[before : len(items) - after]
+                    self._track_slots(rest, 0)
+                    self._note_fresh(rest)
+                    stack.extend(reversed([*items[:before], rest, *items[len(items) - after :]]))
+
+                elif op is bc.MAKE_GENEXPR:
+                    code = pop()
+                    if arg:  # 3.12 passes the closure cells to MAKE_FUNCTION
+                        pop()
+                    push(_GenExpr(code))
+
+                elif op is bc.SET_FUNCATTR:
+                    fn = pop()
+                    pop()
+                    push(fn)
+
+                elif op is bc.GEN_YIELD:
+                    local_vars[".yielded"].append(pop())
+                    push(None)
 
                 elif op is bc.UNSUPPORTED:
                     raise CompilationError(arg)
@@ -788,11 +1130,7 @@ class PulseIREmitter:
         except _NotRollableError:
             raise
         except Exception as e:
-            if getattr(e, "pulse_source", None) is None:
-                try:
-                    e.pulse_source = (prog, pc - 1)  # type: ignore[attr-defined]
-                except AttributeError:
-                    pass
+            _note_source(e, prog, pc - 1)
             raise
 
     # ── Measurement-conditioned branches ─────────────────────────────
@@ -1101,11 +1439,20 @@ class PulseIREmitter:
             names = sorted(delta)
             vals = tuple(delta[n] for n in names) + tuple(new for _, _, new in slot_changes)
             # A name first bound in the body has no value entering the loop;
-            # the body binds it before reading it.
-            inits = tuple(
-                saved_locals[n] if n in saved_locals else IRValue(UNDEFINED_VID, delta[n].vtype)
-                for n in names
-            ) + tuple(originals[id(obj)][i] for obj, i, _ in slot_changes)
+            # the body binds it before reading it, unless it binds it to a
+            # channel's value read from a container: then it enters with
+            # the channel's value.
+            before_of: dict[int, IRValue] | None = None
+            entering_vals = []
+            for n in names:
+                if n in saved_locals:
+                    entering_vals.append(saved_locals[n])
+                    continue
+                if before_of is None:
+                    before_of = {id(cell): before for cell, before in entering}
+                entering_vals.append(self._entering(delta[n], before_of))
+            entering_vals.extend(originals[id(obj)][i] for obj, i, _ in slot_changes)
+            inits = tuple(entering_vals)
             labels = names + [self._slot_label(obj, i) for obj, i, _ in slot_changes]
             self.b.emit("scf.yield", vals, ())
             # The body was traced with the values carried into the loop; its
@@ -1134,6 +1481,13 @@ class PulseIREmitter:
             self.locals.pop(var, None)
         return True
 
+    @staticmethod
+    def _entering(value: IRValue, before_of: dict[int, IRValue]) -> IRValue:
+        """The value entering a rolled loop of a name the body first binds to *value*."""
+        chan = value.chan
+        before = None if chan is None else before_of.get(id(chan))
+        return IRValue(UNDEFINED_VID, value.vtype) if before is None else before
+
     def _unrolls(self, loop: _Loop, prog: bc.DecodedCode, for_idx: int, exit_idx: int) -> bool:
         """Whether *loop* is small enough to unroll: its trip count times the
         calls in its body (at least one) is at most the unroll threshold."""
@@ -1143,7 +1497,7 @@ class PulseIREmitter:
             return False
         calls = 0
         for op, _ in prog.instrs[for_idx + 1 : exit_idx]:
-            if op is CALL or op is bc.CALL_KW:
+            if op is CALL or op is bc.CALL_KW or op is bc.CALL_EX:
                 calls += 1
         return count * max(calls, 1) <= threshold
 
@@ -1195,6 +1549,11 @@ class PulseIREmitter:
             return self._builtins[name]
         return ("__unresolved__", name)
 
+    def _unknown_name(self, name: str) -> str:
+        """The error for calling *name*, which nothing in scope defines."""
+        known = [*OP_TABLE, *self.locals, *self._fn_globals, *self._fn_closures, *self._builtins]
+        return f"unknown pulse op: {name}" + _did_you_mean(name, known, call=True)
+
     # ── Call dispatch ────────────────────────────────────────────────
 
     def _dispatch_call(
@@ -1214,14 +1573,14 @@ class PulseIREmitter:
 
                     op_fn = getattr(ops, name, None) if name in _PULSE_OP_NAMES else None
                     if op_fn is None:
-                        raise CompilationError(f"unknown pulse op: {name}")
+                        raise CompilationError(self._unknown_name(name))
                     call_args = _bind_positional(op_fn, call_args, kwargs)
                 if name in OP_TABLE:
                     self._push_pulse_results(name, call_args)
                 elif name == "range":
                     self._push_range(call_args)
                 else:
-                    raise CompilationError(f"unknown pulse op: {name}")
+                    raise CompilationError(self._unknown_name(name))
                 return
 
         # Resolved callable: a DSL op only if it is the DSL function itself,
@@ -1266,6 +1625,30 @@ class PulseIREmitter:
         ):
             self._inline_helper(callable_val, call_args, kwargs)
             return
+        # A method of a helper object is inlined the same way, with its object.
+        if (
+            callable_val.__class__ is types.MethodType
+            and callable_val.__func__.__class__ is types.FunctionType
+            and (
+                any(isinstance(arg, IRValue) for arg in call_args)
+                or (kwargs and any(isinstance(v, IRValue) for v in kwargs.values()))
+                or _uses_pulse_ops(callable_val.__func__)
+            )
+        ):
+            self._inline_helper(callable_val.__func__, [callable_val.__self__, *call_args], kwargs)
+            return
+        if (
+            callable_val.__class__ is functools.partial
+            and callable_val.func.__class__ is types.FunctionType
+            and _uses_pulse_ops(callable_val.func)
+        ):
+            merged = {**callable_val.keywords, **(kwargs or {})}
+            self._inline_helper(callable_val.func, [*callable_val.args, *call_args], merged or None)
+            return
+
+        if callable_val.__class__ is _GenExpr:
+            self._run_genexpr(callable_val.code, call_args)
+            return
 
         # Regular Python callable (int, float, len, abs, math.sin, etc.)
         # int()/float() on a symbolic value create an explicit IR cast.
@@ -1288,6 +1671,7 @@ class PulseIREmitter:
                     "expressions. Only int(), float(), arithmetic, and pulse "
                     "numeric arguments are supported.",
                     tuple(dict.fromkeys(names)),
+                    f"{fname}()",
                 )
             if not _is_pure_host_call(callable_val):
                 try:
@@ -1301,16 +1685,44 @@ class PulseIREmitter:
                 result = callable_val(*call_args, **(kwargs or {}))
             except _EVALUATION_ERRORS as e:
                 raise CompilationError(f"failed to evaluate {fname}({call_args!r}): {e}") from e
+            except NameError as e:
+                if e.name not in _PULSE_OP_NAMES:
+                    raise
+                raise CompilationError(
+                    f"{fname}() calls the pulse op {e.name}() but ran as plain Python: "
+                    "only functions, methods and kernels are inlined into a kernel; "
+                    f"call {e.name}() from a module-level function instead"
+                ) from e
             self.stack.append(result)
             if (callable_val.__class__ is type and callable_val in _CONTAINERS) or (
                 owner.__class__ in _CONTAINERS and fname == "copy"
             ):
                 self._note_fresh(result)
-            if owner.__class__ is list and fname in ("append", "extend", "insert"):
+            if owner.__class__ is list and fname in _MOVES_SLOTS:
                 self._track_slots(owner, len(owner) - 1 if fname == "append" else 0)
             return
 
         raise CompilationError(f"cannot call: {callable_val!r}")
+
+    def _run_genexpr(self, code: types.CodeType, call_args: list[StackVal]) -> None:
+        """Run a generator expression to the end, and push an iterator over
+        what it yields: it is consumed where it is made, so it is evaluated
+        there, with its pulse ops in order."""
+        closures = {}
+        for name in code.co_freevars:
+            value = self.locals.get(name, _MISSING)
+            closures[name] = (
+                self._fn_closures.get(name, _EMPTY_CELL) if value is _MISSING else value
+            )
+        helper = PulseIREmitter(
+            self.b, fn_globals=self._fn_globals, fn_closures=closures, caller=self
+        )
+        yielded: list[Any] = []
+        helper.locals[".0"] = call_args[0]
+        helper.locals[".yielded"] = yielded
+        helper.run(code)
+        self._refresh_lines()
+        self.stack.append(_Unrolled(iter(yielded)))
 
     def _push_range(self, call_args: list[StackVal]) -> None:
         if not 1 <= len(call_args) <= 3:
@@ -1330,23 +1742,23 @@ class PulseIREmitter:
     ) -> None:
         """Emit a pulse-aware Python helper into the current IR builder."""
         code = fn.__code__
-        if code.co_flags & (inspect.CO_VARARGS | inspect.CO_VARKEYWORDS):
-            raise CompilationError(
-                f"{fn.__name__}: kernels and helpers called from a kernel do not "
-                "support *args or **kwargs parameters"
-            )
         if self._depth >= MAX_INLINE_DEPTH:
             raise CompilationError(
                 f"{fn.__name__}: kernel calls nest more than {MAX_INLINE_DEPTH} deep; "
                 "a recursive kernel must stop at a condition known at compile time"
             )
-        params = list(code.co_varnames[: code.co_argcount])
-        if kwargs or fn.__defaults__:
-            call_args = _bind_positional(fn, call_args, kwargs or {})
-        if len(call_args) != len(params):
-            raise CompilationError(
-                f"{fn.__name__}: expected {len(params)} args, got {len(call_args)}"
-            )
+        general = code.co_kwonlyargcount or code.co_flags & _VARIADIC
+        if general:
+            # *args, **kwargs and keyword-only parameters bind as Python binds them.
+            bound = _bind_arguments(fn, call_args, kwargs or {})
+        else:
+            params = list(code.co_varnames[: code.co_argcount])
+            if kwargs or fn.__defaults__:
+                call_args = _bind_positional(fn, call_args, kwargs or {})
+            if len(call_args) != len(params):
+                raise CompilationError(
+                    f"{fn.__name__}: expected {len(params)} args, got {len(call_args)}"
+                )
 
         helper = PulseIREmitter(
             self.b,
@@ -1354,20 +1766,36 @@ class PulseIREmitter:
             fn_closures=_extract_closures(fn) if fn.__closure__ else {},
             caller=self,
         )
-        helper.locals.update(zip(params, call_args))
+        if general:
+            helper.locals.update(bound)
+        else:
+            helper.locals.update(zip(params, call_args))
         result = helper.run(code)
         if self._lines.shared:
             self._refresh_lines()
 
         # Propagate rebindings of directly passed linear values back to the
         # caller, then leave the helper's return value on the caller stack.
-        for name, original in zip(params, call_args):
-            updated = helper.locals.get(name)
-            if not isinstance(original, IRValue) or updated is original:
-                continue
-            for caller_name, caller_value in self.locals.items():
-                if caller_value is original:
-                    self.locals[caller_name] = updated
+        if general:
+            # Lines and tones may arrive packed in *args or **kwargs; their
+            # channels know their current values.
+            for original in (*call_args, *(kwargs or {}).values()):
+                if original.__class__ is not IRValue:
+                    continue
+                updated = _Lines.current(original)
+                if updated is None or updated is original:
+                    continue
+                for caller_name, caller_value in self.locals.items():
+                    if caller_value is original:
+                        self.locals[caller_name] = updated
+        else:
+            for name, original in zip(params, call_args):
+                updated = helper.locals.get(name)
+                if not isinstance(original, IRValue) or updated is original:
+                    continue
+                for caller_name, caller_value in self.locals.items():
+                    if caller_value is original:
+                        self.locals[caller_name] = updated
 
         self.stack.append(result)
 
@@ -1395,11 +1823,11 @@ class PulseIREmitter:
         fname: str,
         call_args: list[StackVal],
     ) -> tuple[IRValue, ...]:
-        entry = OP_TABLE.get(fname)
+        entry = _EMIT_TABLE.get(fname)
         if entry is None:
             raise CompilationError(f"unknown pulse op: {fname}")
 
-        n_val, attr_names, rtypes = entry
+        n_val, attr_names, rtypes, operand_types = entry
         acquires = fname in _ACQUIRES
         line_op = False
         if acquires:
@@ -1415,17 +1843,57 @@ class PulseIREmitter:
             self._acquired[0] += 1
 
         if n_val == -1:
-            operands = tuple(v for v in call_args if isinstance(v, IRValue))
+            call_args = _sync_lines(fname, call_args)
+            operands = tuple(call_args)
             attrs: dict[str, Any] = {}
             out_types = tuple(v.vtype for v in operands) if rtypes is None else rtypes
         else:
-            operands = tuple(call_args[:n_val])
-            attr_vals = call_args[n_val:]
-            if len(attr_vals) != len(attr_names):
+            if len(call_args) != n_val + len(attr_names):
                 raise CompilationError(
                     f"{fname}: expected {n_val + len(attr_names)} args, got {len(call_args)}"
                 )
-            attrs = dict(zip(attr_names, attr_vals))
+            # Operands must have their op's types. A line or tone read from a
+            # container the tracer does not rebind (a tuple in a list, a dict)
+            # may be an old value of its channel; the op consumes the channel's
+            # current value. Unrolled by arity: this runs for every op.
+            if n_val == 3:
+                a = call_args[0]
+                b = call_args[1]
+                c = call_args[2]
+                try:
+                    bad = (
+                        a.vtype not in operand_types[0]
+                        or b.vtype not in operand_types[1]
+                        or c.vtype not in operand_types[2]
+                    )
+                except AttributeError:
+                    bad = True
+                if bad:
+                    raise _operand_error(fname, call_args)
+                ca = a.chan
+                cc = c.chan
+                if (ca is not None and ca.value is not a) or (cc is not None and cc.value is not c):
+                    call_args[0] = _current(a)
+                    call_args[2] = _current(c)
+            elif n_val == 1:
+                a = call_args[0]
+                try:
+                    bad = a.vtype not in operand_types[0]
+                except AttributeError:
+                    bad = True
+                if bad:
+                    raise _operand_error(fname, call_args)
+                ca = a.chan
+                if ca is not None and ca.value is not a:
+                    call_args[0] = ca.value
+            elif n_val:
+                for i in range(n_val):
+                    v = call_args[i]
+                    if v.__class__ is not IRValue or v.vtype not in operand_types[i]:
+                        raise _operand_error(fname, call_args)
+                    call_args[i] = _current(v)
+            operands = tuple(call_args[:n_val])
+            attrs = dict(zip(attr_names, call_args[n_val:]))
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
 
         op_name = _OP_NAMES[fname]
@@ -1469,12 +1937,6 @@ class PulseIREmitter:
         *fname* makes, if known; rejects arithmetic on waveforms of different
         durations."""
         if fname in _WAVEFORM_ARITHMETIC:
-            for operand in operands:
-                if not (operand.__class__ is IRValue and operand.vtype == "waveform"):
-                    raise CompilationError(
-                        f"{fname}() takes waveforms, got {type(operand).__name__}"
-                        + ("; call it as wf_scale(waveform, scalar)" if fname == "wf_scale" else "")
-                    )
             known = self._durations
             left = known.get(operands[0].vid)
             if len(operands) == 2:
@@ -1514,7 +1976,7 @@ class PulseIREmitter:
         for a in call_args:
             if a.__class__ is IRValue and a.vtype in LINEAR_TYPES:
                 slot = slots.get(id(a))
-                if slot is not None and (slot[2] is not a or slot[0][slot[1]] is not a):
+                if slot is not None and not _slot_holds(slot, a):
                     slot = None
                 arg_info.append((self._find_local_name(a), a, slot, a.chan))
             else:
@@ -1572,11 +2034,11 @@ class PulseIREmitter:
             if v.__class__ is IRValue and v.vtype in LINEAR_TYPES:
                 slots[id(v)] = (items, i, v)
 
-    def _rebind_one(self, old: Any, new: IRValue) -> None:
-        if old.__class__ is not IRValue or old.vtype != new.vtype:
-            return
+    def _rebind_one(self, old: IRValue, new: IRValue) -> None:
+        """Rebind *old* to *new*, of its type; ``_emit_pulse_call`` checked
+        *old* and made it its channel's current value."""
         chan = old.chan
-        if chan is not None and chan.value is old:
+        if chan is not None:
             chan.value = new
             new.chan = chan
             if chan.shared:
@@ -1590,7 +2052,13 @@ class PulseIREmitter:
             self.locals[name] = new
         slots = self._slots
         slot = slots.get(id(old))
-        if slot is not None and slot[2] is old and slot[0][slot[1]] is old:
+        if slot is not None and slot[2] is old:
+            try:
+                holds = slot[0][slot[1]] is old
+            except IndexError:  # the list shrank since the value was read
+                holds = False
+            if not holds:
+                return
             slot[0][slot[1]] = new
             # The consumed value is dead: dropping its entry keeps the table,
             # and the values it holds, the size of the live lists.
@@ -1685,12 +2153,11 @@ def _container_unchanged(obj: list[Any] | dict[Any, Any], copy: Any) -> bool:
 _SIGNATURES: dict[int, tuple[Any, inspect.Signature]] = {}
 
 
-def _bind_positional(fn: Any, args: list[StackVal], kwargs: dict[str, StackVal]) -> list[StackVal]:
-    """Bind a keyword call to *fn*'s parameters as a positional list."""
+def _bound(fn: Any, args: list[StackVal], kwargs: dict[str, StackVal]) -> inspect.BoundArguments:
     hit = _SIGNATURES.get(id(fn))
     if hit is None or hit[0] is not fn:
         try:
-            hit = (fn, inspect.signature(fn))
+            hit = (fn, inspect.signature(fn, follow_wrapped=False))
         except (TypeError, ValueError) as e:
             raise CompilationError(f"cannot bind keyword arguments for {fn!r}") from e
         _SIGNATURES[id(fn)] = hit
@@ -1699,9 +2166,23 @@ def _bind_positional(fn: Any, args: list[StackVal], kwargs: dict[str, StackVal])
     except TypeError as e:
         raise CompilationError(f"{getattr(fn, '__name__', fn)}: {e}") from e
     bound.apply_defaults()
+    return bound
+
+
+def _bind_positional(fn: Any, args: list[StackVal], kwargs: dict[str, StackVal]) -> list[StackVal]:
+    """Bind a keyword call to *fn*'s parameters as a positional list."""
+    bound = _bound(fn, args, kwargs)
     if bound.kwargs:
         raise CompilationError(f"{getattr(fn, '__name__', fn)}: keyword-only parameters")
     return list(bound.args)
+
+
+def _bind_arguments(
+    fn: types.FunctionType, args: list[StackVal], kwargs: dict[str, StackVal]
+) -> dict[str, StackVal]:
+    """Bind a call to *fn* as Python does: each parameter name to its value,
+    ``*args`` to a tuple and ``**kwargs`` to a dict."""
+    return dict(_bound(fn, args, kwargs).arguments)
 
 
 __all__ = ["PulseIREmitter", "PythonIRBuilder"]

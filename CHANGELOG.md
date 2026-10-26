@@ -32,6 +32,37 @@ behavior may change in any 0.x release.
   the calls in its body) is at most the unroll threshold: 8 by default, the
   measured break-even point, set with `pulse.compile(k, unroll_threshold=)`,
   `@pulse.kernel(unroll_threshold=)` or `CUDAQ_PULSE_UNROLL_THRESHOLD`.
+- **Python in kernels.** List, dict and set comprehensions, set displays
+  and generator expressions are unrolled while tracing, so
+  `[get_drive_line(q) for q in qubits]` builds a list of lines and
+  `sum(a for a in amps)` works; a lambda or nested `def` raises a
+  `CompilationError` that says what to write instead. Calls with
+  `*args` and `**kwargs` are unpacked
+  while tracing, so `sync(*lines)` synchronizes a list of lines built in a
+  loop. Helpers called from a kernel may take keyword-only, `*args` and
+  `**kwargs` parameters; methods of helper objects, `functools.partial`
+  objects and decorated helpers that use pulse ops are inlined too. Lines
+  and tones may be kept in any container, such as a list of `(line, tone)`
+  pairs or a dict, and lists of them support `pop`, `insert`, `extend`,
+  `remove` and `del xs[i]`. `sync()` takes lists and tuples of lines, as
+  in `sync(lines)`. A pulse op given the wrong kind of argument, such as a
+  tone where its line belongs, raises a `CompilationError` that names the
+  op and the argument when it is traced, not an MLIR verifier error.
+  Errors raised while tracing carry a note with the file, line and source
+  of the kernel line, and of each helper line, that raised them; a
+  misspelled op or attribute gets a "did you mean" suggestion, and
+  `pulse.drive(...)` says that the kernel language is in `cudaq_pulse.ops`.
+  A failing `assert cond, "msg"` reports "assertion failed in kernel: msg".
+  Starred assignment, `first, *rest = xs`, works, and so does slice
+  assignment on every supported Python. A construct the tracer does not
+  support, such as a `match` class pattern or an assignment to a global,
+  is named in the error, with what to write instead, rather than reported
+  as an unsupported bytecode instruction. A `float` argument that tracing
+  makes static, because `abs`, `min`, `math.*`, a comparison or a duration
+  needs its value, warns once with a `RuntimeWarning` naming the argument
+  and the operation, since each new value then compiles the kernel again. List, dict and set comprehensions and set
+  displays trace on every supported Python; generator expressions, lambdas
+  and nested functions are rejected with what to write instead.
 - **Operations.** The kernel language lives in `cudaq_pulse.ops` and is
   used by bare name inside kernels. Drive and readout channels per qudit; `drive`, `readout`,
   `wait` and `sync`; phase and frequency control (`shift_phase` follows the
