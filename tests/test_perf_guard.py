@@ -186,6 +186,22 @@ def test_verify_time_is_linear_in_unused_lines():
     assert large < small * 4 * FLAT_LOOP_LIMIT, (small, large)
 
 
+def test_the_events_of_a_long_line_are_listed_in_linear_time():
+    def program(n: int):
+        @pulse.kernel
+        def kernel(q):
+            line, tone = get_drive_line(q)
+            for i in range(n):
+                drive(line, square(8 + 0 * i, 0.1), tone)
+
+        # Without fusion, every drive is an event of its own.
+        return pulse.compile(kernel, passes=("verify",), unroll_threshold=100_000).lower(Q[0])
+
+    # Eight times the drives: about 10x the time when linear, 64x when not.
+    times = {n: _best(lambda m=program(n): m.schedule, 3, 0) for n in (2000, 16000)}
+    assert times[16000] < 8 * times[2000] * TOLERANCE, times
+
+
 # Peak memory a simulation of two qutrits may add: their 9 x 9 density matrix
 # and operators are tiny, so this only fails if the space grows with the
 # qudits' indices (3^14 states for qudits 13 and 3).

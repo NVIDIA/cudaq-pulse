@@ -881,9 +881,10 @@ struct PulseToQOpPass
 
     // 2. Time-dependent drive terms
     int driveIdx = 0;
+    pulse::AllocationTracer trace;
     for (Operation *op : driveOrder) {
       auto &occurrences = drives[op];
-      auto *allocation = pulse::traceAllocation(op->getOperand(0));
+      auto *allocation = trace(op->getOperand(0));
       auto qubitAttr = allocation
                            ? allocation->getAttrOfType<IntegerAttr>("qubit")
                            : IntegerAttr();

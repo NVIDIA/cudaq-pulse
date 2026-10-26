@@ -13,6 +13,8 @@
 
 #pragma once
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
@@ -79,5 +81,36 @@ inline mlir::Operation *traceAllocation(mlir::Value value) {
   }
   return nullptr;
 }
+
+/// `traceAllocation` for walks that trace every op of a program: each value
+/// is traced once, so a line of n ops costs O(n) rather than O(n^2). The IR
+/// must not change while a tracer is in use.
+class AllocationTracer {
+public:
+  mlir::Operation *operator()(mlir::Value value) {
+    llvm::SmallVector<mlir::Value, 16> chain;
+    mlir::Operation *found = nullptr;
+    while (value) {
+      auto known = memo.find(value);
+      if (known != memo.end()) {
+        found = known->second;
+        break;
+      }
+      chain.push_back(value);
+      if (mlir::Operation *def = value.getDefiningOp())
+        if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(def)) {
+          found = def;
+          break;
+        }
+      value = linearPredecessor(value);
+    }
+    for (mlir::Value traced : chain)
+      memo[traced] = found;
+    return found;
+  }
+
+private:
+  llvm::DenseMap<mlir::Value, mlir::Operation *> memo;
+};
 
 } // namespace pulse

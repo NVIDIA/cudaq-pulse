@@ -908,6 +908,7 @@ static void unrollFully(mlir::scf::ForOp loop) {
 static std::optional<NotAffine> periodMismatch(mlir::Region &region,
                                                mlir::Operation *root) {
   std::optional<NotAffine> problem;
+  pulse::AllocationTracer trace;
   region.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation *op) {
     if (problem || mlir::isa<pulse::ScheduleBlockOp>(op))
       return mlir::WalkResult::skip();
@@ -917,8 +918,7 @@ static std::optional<NotAffine> periodMismatch(mlir::Region &region,
     size_t level = pulse::enclosingLoops(loop, root).size();
     llvm::DenseMap<mlir::Operation *, int64_t> periodOf;
     auto check = [&](mlir::Value line, int64_t period) {
-      auto [it, inserted] =
-          periodOf.try_emplace(pulse::traceAllocation(line), period);
+      auto [it, inserted] = periodOf.try_emplace(trace(line), period);
       if (!inserted && it->second != period)
         problem = NotAffine{loop, true, false};
     };
