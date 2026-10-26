@@ -58,10 +58,10 @@ behavior may change in any 0.x release.
   apart from the published target, and a device config takes `"calibration"`
   and `"cooldown"`. `cudaq_pulse.targets.transmon_model` computes
   flux-tunable transmon levels and charge-coupled pairs from circuit values.
-  The shipped `krinner17` calibration anchors each pair's charge coupling to
-  the published `|11>`-`|20>` coupling, so the Krinner target's exchange
-  (4.4-5.7 MHz) and idle ZZ (-3.1 to -5.9 kHz) depend on each pair's
-  frequencies; calibrated qubits convert detunings to and from flux quanta.
+  The shipped `krinner17` calibration has one device-wide charge coupling,
+  fitted to the measured `|11>`-`|20>` coupling of X2-D4, so the Krinner
+  target's exchange (5.67-6.08 MHz) and idle ZZ (-4.5 to -7.3 kHz) depend on
+  each pair's frequencies; calibrated qubits convert detunings to and from flux quanta.
   It also holds in-model sudden-net-zero CZ knobs for all 24 pairs (mean
   duration 65.0 +- 4.8 ns against the published 68(7) ns), each with its
   predicted phase and leakage, flags and alternatives.

@@ -72,393 +72,321 @@
     "cooldown": "K22-main",
     "method": "device-wide g_c such that the mean J_2 over the 24 published omega_int is 7.0 MHz"
    },
-   "per_pair": {
+   "used": "calibration_A",
+   "idle_exchange": {
     "Z1-D1": {
-     "value": 2585358.5575379203,
+     "value": 6067407.570041297,
      "units": "Hz",
      "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 4885000000.0,
-     "idle_frequencies_hz": [
-      6328000000.000004,
-      3884999999.999999
-     ],
-     "idle_exchange_hz": 5025385.971978199
-    },
-    "Z2-D5": {
-     "value": 2751433.11643363,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 4676000000.0,
-     "idle_frequencies_hz": [
-      6191999999.999996,
-      3895000000.0
-     ],
-     "idle_exchange_hz": 5200097.898008551
-    },
-    "Z3-D3": {
-     "value": 2431987.8871778343,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 5293000000.0,
-     "idle_frequencies_hz": [
-      5956000000.000008,
-      3952000000.000002
-     ],
-     "idle_exchange_hz": 4538086.456509491
-    },
-    "Z1-D4": {
-     "value": 2639159.623477693,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 4785000000.0,
-     "idle_frequencies_hz": [
-      6328000000.000004,
-      3878000000.000001
-     ],
-     "idle_exchange_hz": 5125844.219228726
-    },
-    "Z2-D8": {
-     "value": 2407114.0433922005,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 5313000000.0,
-     "idle_frequencies_hz": [
-      6191999999.999996,
-      3993000000.000003
-     ],
-     "idle_exchange_hz": 4633571.811688768
-    },
-    "Z3-D5": {
-     "value": 2999444.353744274,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 4320000000.0,
-     "idle_frequencies_hz": [
-      5956000000.000008,
-      3895000000.0
-     ],
-     "idle_exchange_hz": 5520641.418521804
-    },
-    "Z2-D4": {
-     "value": 2671260.7163997553,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 4792000000.0,
-     "idle_frequencies_hz": [
-      6191999999.999996,
-      3878000000.000001
-     ],
-     "idle_exchange_hz": 5063064.278954454
-    },
-    "Z3-D2": {
-     "value": 2459746.678444788,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 5249000000.0,
-     "idle_frequencies_hz": [
-      5956000000.000008,
-      3993999999.999997
-     ],
-     "idle_exchange_hz": 4600403.5566305695
-    },
-    "Z4-D6": {
-     "value": 2665740.98083408,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 4815000000.0,
-     "idle_frequencies_hz": [
-      6037000000.000004,
-      3739999999.999998
-     ],
-     "idle_exchange_hz": 4886012.366363071
-    },
-    "Z2-D7": {
-     "value": 2940493.5606351625,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 4317000000.0,
-     "idle_frequencies_hz": [
-      6191999999.999996,
-      4056000000.000001
-     ],
-     "idle_exchange_hz": 5728285.19775742
-    },
-    "Z3-D6": {
-     "value": 2583837.653586496,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 4979000000.0,
-     "idle_frequencies_hz": [
-      5956000000.000008,
-      3739999999.999998
-     ],
-     "idle_exchange_hz": 4693171.494957334
-    },
-    "Z4-D9": {
-     "value": 2352353.285261857,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 5446000000.0,
-     "idle_frequencies_hz": [
-      6037000000.000004,
-      4142999999.999997
-     ],
-     "idle_exchange_hz": 4546535.667773784
-    },
-    "X2-D1": {
-     "value": 2395665.9995361636,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 5423000000.0,
-     "idle_frequencies_hz": [
-      5884999999.999996,
-      3884999999.999999
-     ],
-     "idle_exchange_hz": 4365256.951993743
-    },
-    "X3-D5": {
-     "value": 2880837.080256086,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 4487000000.0,
-     "idle_frequencies_hz": [
-      6022000000.0,
-      3895000000.0
-     ],
-     "idle_exchange_hz": 5344378.216527867
-    },
-    "X4-D7": {
-     "value": 2948999.5300617334,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 4336000000.0,
-     "idle_frequencies_hz": [
-      6049000000.0,
-      4056000000.000001
-     ],
-     "idle_exchange_hz": 5650857.664170728
-    },
-    "X2-D2": {
-     "value": 2367794.098759655,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 5495000000.0,
-     "idle_frequencies_hz": [
-      5884999999.999996,
-      3993999999.999997
-     ],
-     "idle_exchange_hz": 4368082.132030494
-    },
-    "X3-D6": {
-     "value": 2602785.0835885974,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 4931000000.0,
-     "idle_frequencies_hz": [
-      6022000000.0,
-      3739999999.999998
-     ],
-     "idle_exchange_hz": 4765069.805973308
-    },
-    "X4-D8": {
-     "value": 2951840.8561908742,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 4354000000.0,
-     "idle_frequencies_hz": [
-      6049000000.0,
-      3993000000.000003
-     ],
-     "idle_exchange_hz": 5589171.505815171
-    },
-    "X1-D3": {
-     "value": 2472008.321968629,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 5197000000.0,
-     "idle_frequencies_hz": [
-      6097000000.000004,
-      3952000000.000002
-     ],
-     "idle_exchange_hz": 4676357.351599114
-    },
-    "X2-D5": {
-     "value": 2669583.3564808853,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 4891000000.0,
-     "idle_frequencies_hz": [
-      5884999999.999996,
-      3895000000.0
-     ],
-     "idle_exchange_hz": 4846559.293448154
-    },
-    "X3-D9": {
-     "value": 2288270.204712446,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 5598000000.0,
-     "idle_frequencies_hz": [
-      6022000000.0,
-      4142999999.999997
-     ],
-     "idle_exchange_hz": 4417532.025881885
-    },
-    "X1-D2": {
-     "value": 2745870.5317386603,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
-     "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 4693000000.0,
-     "idle_frequencies_hz": [
-      6097000000.000004,
-      3993999999.999997
-     ],
-     "idle_exchange_hz": 5206333.795512213
-    },
-    "X2-D4": {
-     "value": 3121549.9897362045,
-     "units": "Hz",
-     "kind": "fitted",
-     "source": "Hellings et al., arXiv:2503.04610 (2025), App. J (chevron fit, J_2/2pi = 7.4 MHz)",
+     "source": "derived from the circuits and the device-wide charge coupling",
      "uncertainty": null,
      "cooldown": "HEL25",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7400000.0,
-     "at_interaction_frequency_hz": 4400000000.0,
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      6328000000.000004,
+      3884999999.999999
+     ]
+    },
+    "Z2-D5": {
+     "value": 5899389.739822938,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      6191999999.999996,
+      3895000000.0
+     ]
+    },
+    "Z3-D3": {
+     "value": 5824597.062447787,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      5956000000.000008,
+      3952000000.000002
+     ]
+    },
+    "Z1-D4": {
+     "value": 6062535.209428985,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      6328000000.000004,
+      3878000000.000001
+     ]
+    },
+    "Z2-D8": {
+     "value": 6008606.460891305,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      6191999999.999996,
+      3993000000.000003
+     ]
+    },
+    "Z3-D5": {
+     "value": 5745174.960997328,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      5956000000.000008,
+      3895000000.0
+     ]
+    },
+    "Z2-D4": {
+     "value": 5916320.498231545,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      6191999999.999996,
+      3878000000.000001
+     ]
+    },
+    "Z3-D2": {
+     "value": 5837946.04186433,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      5956000000.000008,
+      3993999999.999997
+     ]
+    },
+    "Z4-D6": {
+     "value": 5721252.855666032,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      6037000000.000004,
+      3739999999.999998
+     ]
+    },
+    "Z2-D7": {
+     "value": 6080774.923443129,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      6191999999.999996,
+      4056000000.000001
+     ]
+    },
+    "Z3-D6": {
+     "value": 5669643.21853521,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      5956000000.000008,
+      3739999999.999998
+     ]
+    },
+    "Z4-D9": {
+     "value": 6032989.717319299,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      6037000000.000004,
+      4142999999.999997
+     ]
+    },
+    "X2-D1": {
+     "value": 5687718.217872153,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      5884999999.999996,
+      3884999999.999999
+     ]
+    },
+    "X3-D5": {
+     "value": 5790725.997335954,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      6022000000.0,
+      3895000000.0
+     ]
+    },
+    "X4-D7": {
+     "value": 5981280.832088942,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      6049000000.0,
+      4056000000.000001
+     ]
+    },
+    "X2-D2": {
+     "value": 5758394.185213888,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      5884999999.999996,
+      3993999999.999997
+     ]
+    },
+    "X3-D6": {
+     "value": 5714595.395975896,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      6022000000.0,
+      3739999999.999998
+     ]
+    },
+    "X4-D8": {
+     "value": 5910293.195286536,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      6049000000.0,
+      3993000000.000003
+     ]
+    },
+    "X1-D3": {
+     "value": 5904896.52359931,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      6097000000.000004,
+      3952000000.000002
+     ]
+    },
+    "X2-D5": {
+     "value": 5666887.266720692,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      5884999999.999996,
+      3895000000.0
+     ]
+    },
+    "X3-D9": {
+     "value": 6025969.509181797,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      6022000000.0,
+      4142999999.999997
+     ]
+    },
+    "X1-D2": {
+     "value": 5918429.535635205,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
+     "idle_frequencies_hz": [
+      6097000000.000004,
+      3993999999.999997
+     ]
+    },
+    "X2-D4": {
+     "value": 5683150.762348723,
+     "units": "Hz",
+     "kind": "fitted",
+     "source": "derived from the circuits and the device-wide charge coupling",
+     "uncertainty": null,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
      "idle_frequencies_hz": [
       5884999999.999996,
       3878000000.000001
-     ],
-     "idle_exchange_hz": 5683357.071147651
+     ]
     },
     "X3-D8": {
-     "value": 2817987.354999312,
+     "value": 5897931.00224776,
      "units": "Hz",
      "kind": "fitted",
-     "source": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708v1, Methods A (p. 8) 'J/2pi ~ 7 MHz'; N. Lacroix, PhD thesis, ETH Zurich (2025), Diss. ETH No. 31121 §3.2 'sqrt(2) J_qq / 2pi ~ 7 MHz'",
+     "source": "derived from the circuits and the device-wide charge coupling",
      "uncertainty": null,
-     "cooldown": "K22-main",
-     "method": "per pair: g_c such that half the smallest |11>-|20> splitting of the charge-coupled pair (charge basis, 5 levels each, g_c n_A n_D, no RWA) equals the published g_11_20 with the data qubit at the pair's interaction frequency and the auxiliary's 1-2 transition there (cudaq_pulse.targets.transmon_model.anchored_charge_coupling_hz)",
-     "g_11_20_hz": 7000000.0,
-     "at_interaction_frequency_hz": 4560000000.0,
+     "cooldown": "HEL25",
+     "method": "J_qq = g_c <0|n_a|1> <0|n_d|1> of the charge-coupled pair with the device-wide g_c (coupling.charge_coupling_g_c.calibration_A), at the qubits' idle sweet spots",
      "idle_frequencies_hz": [
       6022000000.0,
       3993000000.000003
-     ],
-     "idle_exchange_hz": 5324565.804437621
+     ]
     }
-   },
-   "used": "per_pair"
+   }
   },
   "model_j2_at_interaction": {
    "kind": "fitted",

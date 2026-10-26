@@ -41,9 +41,10 @@ def transmon_krinner_17q(calibration: Any = "krinner17") -> TargetDescription:
     ``|11> <-> |20>`` coupling of the CZ at each pair's interaction point (7.4
     MHz measured on X2-D4 at 4.4 GHz, Hellings et al., arXiv:2503.04610).
     *calibration* (a ``Calibration``, the name of a shipped one, or None)
-    supplies each pair's charge coupling g_c anchored to that value, and each
-    coupling is the exchange J_qq = g_c ``<0|n_a|1> <0|n_d|1>`` at the qubits'
-    idle points: 4.4-5.7 MHz with the shipped ``krinner17``. With
+    supplies the device-wide charge coupling g_c (fitted to the X2-D4
+    measurement, 3.12 MHz in ``krinner17``), and each coupling is the
+    exchange J_qq = g_c ``<0|n_a|1> <0|n_d|1>`` at the qubits' idle points:
+    5.67-6.08 MHz with the shipped ``krinner17``. With
     ``calibration=None`` it is the published value over sqrt(2), 4.95 MHz.
     Each coupling carries its CZ time step, interaction frequency and
     ``|11> <-> |20>`` coupling (``gate_params``) and measured gate fidelity; the
@@ -55,7 +56,7 @@ def transmon_krinner_17q(calibration: Any = "krinner17") -> TargetDescription:
     No residual ZZ is listed: the paper gives no per-pair values, only
     that the calculated idle ZZ is below about 8 kHz. Simulated with three
     or more levels, the couplings produce it; ``krinner_idle_zz_hz`` gives
-    the charge model's value, -3.1 to -5.9 kHz with ``krinner17``.
+    the charge model's value, -4.5 to -7.3 kHz with ``krinner17``.
     """
     if isinstance(calibration, str):
         return _calibrated_krinner(calibration)
@@ -138,7 +139,7 @@ def krinner_idle_zz_hz(calibration: Any = "krinner17") -> dict[tuple[int, int], 
     zeta = E_11 - E_10 - E_01 + E_00 of the dressed levels of the
     charge-coupled pair (charge basis, five levels each, no rotating-wave
     approximation) at the idle sweet spots, with the circuits and couplings
-    of *calibration*: -3.1 to -5.9 kHz with the shipped ``krinner17``, below
+    of *calibration*: -4.5 to -7.3 kHz with the shipped ``krinner17``, below
     the paper's "below about 8 kHz". The simulation's Duffing ladder with
     exchange J_qq reproduces it within a few percent.
     """
