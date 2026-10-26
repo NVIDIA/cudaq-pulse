@@ -33,6 +33,7 @@ TOP_LEVEL = {
     "DeviceMismatchError",
     "GpuRuntimeError",
     "viz",
+    "classical",
     "__version__",
 }
 

@@ -34,6 +34,7 @@
 #include "mlir/IR/SymbolTable.h"
 
 #include <cstdint>
+#include <optional>
 
 namespace classical {
 
@@ -100,13 +101,25 @@ inline int64_t submitVtu(CallableOp callable, const LinkModel &link,
 }
 
 /// From the end of a submission until its answer is due: the maximum
-/// latency (the timeout in timeout mode) and the link's feedback latency.
+/// latency (the timeout in timeout mode, or the timeout of the wait that
+/// takes the answer) and the link's feedback latency.
 inline int64_t budgetVtu(CallableOp callable, const LinkModel &link,
-                         double clockGHz) {
-  double latency = callable.getMode() == "timeout"
+                         double clockGHz,
+                         std::optional<double> waitTimeoutNs = std::nullopt) {
+  double latency = waitTimeoutNs ? *waitTimeoutNs
+                   : callable.getMode() == "timeout"
                        ? callable.getTimeoutNs()->convertToDouble()
                        : callable.getLatencyMaxNs().convertToDouble();
   return ceilVtu(latency, clockGHz) + ceilVtu(link.feedbackNs, clockGHz);
+}
+
+/// The timeout of the wait that takes the answer of `submit`, if it has one.
+inline std::optional<double> waitTimeoutNs(SubmitOp submit) {
+  for (mlir::Operation *user : submit.getFuture().getUsers())
+    if (auto wait = mlir::dyn_cast<WaitOp>(user))
+      if (auto timeout = wait.getTimeoutNs())
+        return timeout->convertToDouble();
+  return std::nullopt;
 }
 
 inline double moduleClockGHz(mlir::ModuleOp module) {
@@ -145,7 +158,8 @@ inline bool annotateClassicalCalls(mlir::func::FuncOp function) {
       attrs.set("classical.submit_vtu",
                 b.getI64IntegerAttr(submitVtu(callable, link, clock)));
       attrs.set("classical.budget_vtu",
-                b.getI64IntegerAttr(budgetVtu(callable, link, clock)));
+                b.getI64IntegerAttr(
+                    budgetVtu(callable, link, clock, waitTimeoutNs(submit))));
       attrs.set("classical.device", b.getI64IntegerAttr(callable.getDevice()));
       attrs.set("classical.max_in_flight",
                 b.getI64IntegerAttr(link.maxInFlight));

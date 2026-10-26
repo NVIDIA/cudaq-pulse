@@ -25,7 +25,8 @@ The kernel language (``drive``, ``gaussian``, ``get_drive_line``, ...) lives
 in ``cudaq_pulse.ops``; inside a ``@pulse.kernel`` its names are used bare.
 Compiler types (``CompileMetrics``, ``ScheduledEvent``, ``MachineModel``,
 ``DEFAULT_PASSES``) are in ``cudaq_pulse.compiler``, target descriptions and
-calibrations in ``cudaq_pulse.targets``.
+calibrations in ``cudaq_pulse.targets``. ``pulse.classical`` declares the
+classical functions a kernel calls while the QPU runs.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from . import _build_config
+from . import classical as classical
 from . import ops as ops
 from ._device import Device as Device
 from ._device import DeviceMismatchError as DeviceMismatchError
@@ -88,6 +90,7 @@ __all__ = [
     "DeviceMismatchError",
     "GpuRuntimeError",
     "viz",
+    "classical",
 ]
 
 

@@ -33,7 +33,9 @@ import types
 from collections.abc import Iterator
 from typing import Any
 
+from ..classical import ClassicalFunction
 from . import _bytecode_normalize as bc
+from . import _classical
 from ._bytecode_normalize import (
     BINARY,
     CALL,
@@ -136,6 +138,8 @@ def _extract_closures(fn: Any) -> dict[str, Any]:
 
 
 _PULSE_FUNCTIONS: dict[Any, str] = {}
+_SUBMIT = ClassicalFunction.submit
+_RESULT = _classical.Future.result
 
 
 def _load_pulse_functions() -> None:
@@ -590,6 +594,8 @@ class PulseIREmitter:
                 elif op is _jif or op is _jit:
                     cond = pop()
                     if cond.__class__ is not bool:
+                        if _classical.is_answer_condition(cond):
+                            cond = _classical.condition(self.b, cond)
                         if isinstance(cond, (IRValue, _NotMeasurement)):
                             pc = self._runtime_branch(prog, pc - 1, cond, op is _jit)
                             pc = self._jump(pc, lo, hi, header)
@@ -685,6 +691,8 @@ class PulseIREmitter:
 
                 elif op is bc.NOT:
                     value = pop()
+                    if _classical.is_answer_condition(value):
+                        value = _classical.condition(self.b, value)
                     if isinstance(value, IRValue):
                         push(_NotMeasurement(value))
                     elif isinstance(value, _NotMeasurement):
@@ -809,7 +817,7 @@ class PulseIREmitter:
         """
         negated = isinstance(cond, _NotMeasurement)
         value = cond.value if negated else cond
-        if value.vtype != "measurement":
+        if value.vtype not in ("measurement", "i1"):
             raise CompilationError(_BRANCH_TYPE_MESSAGE.format(value.vtype))
         if not self._can_roll:
             raise CompilationError(_PACKED_BRANCH_MESSAGE)
@@ -1236,6 +1244,21 @@ class PulseIREmitter:
                 call_args = _bind_positional(callable_val, call_args, kwargs)
             self._push_pulse_results(op_name, call_args)
             return
+
+        # Calls to classical functions: fn.submit(...) and future.result().
+        if callable_val.__class__ is types.MethodType:
+            owner = callable_val.__self__
+            if owner.__class__ is ClassicalFunction and callable_val.__func__ is _SUBMIT:
+                self.stack.append(_classical.submit(self.b, owner, call_args, kwargs))
+                return
+            if owner.__class__ is _classical.Future and callable_val.__func__ is _RESULT:
+                self.stack.append(_classical.take(self.b, owner, call_args, kwargs))
+                return
+        elif callable_val.__class__ is ClassicalFunction:
+            raise CompilationError(
+                f"in a kernel, call {callable_val.name}.submit(...) and take the answer "
+                f"with .result(); calling {callable_val.name}(...) runs it on the host"
+            )
 
         inner = getattr(callable_val, "__pulse_kernel_fn__", None)
         if inner is not None:

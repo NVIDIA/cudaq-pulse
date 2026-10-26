@@ -71,6 +71,7 @@
 #include "cudaq-pulse/Analysis/Execution.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
+#include "cudaq-pulse/Dialect/Classical/Answers.h"
 #include "cudaq-pulse/Runtime/WaveformCallback.h"
 
 #include "cudaq-pulse/Dialect/CuDensityMat/CuDensityMatDialect.h.inc"
@@ -157,6 +158,10 @@ constexpr int kOpElse = 32;
 constexpr int kOpIfEnd = 33;
 constexpr int kOpBlockBegin = 34;
 constexpr int kOpBlockEnd = 35;
+constexpr int kOpClassicalDeclare = 36;
+constexpr int kOpClassicalSubmit = 37;
+constexpr int kOpClassicalWait = 38;
+constexpr int kOpClassicalCompare = 39;
 // A payload length of 0xFF means the length is in the next word.
 constexpr int kExtendedPayload = 0xFF;
 
@@ -323,7 +328,9 @@ public:
 
   /// (kind, line, qubit, start_vtu, duration_vtu) for every drive, readout
   /// and wait, once per loop iteration and in program order. Both arms of a
-  /// conditional are listed. Lines are numbered in allocation order.
+  /// conditional are listed. Lines are numbered in allocation order. A
+  /// classical call adds a "submit" and an "answer" event, whose line is the
+  /// link id and whose qubit is -1.
   std::vector<Event> events() {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
@@ -347,6 +354,13 @@ public:
           result.emplace_back(op.getName().stripDialect().str(), line, qubit,
                               pulse::scheduledStart(&op, iteration),
                               pulse::scheduledDuration(&op));
+        } else if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op)) {
+          // A classical call's events are on its link; they have no qudit.
+          result.emplace_back(mlir::isa<classical::SubmitOp>(op) ? "submit"
+                                                                 : "answer",
+                              classical::intAttr(&op, "classical.device"), -1,
+                              pulse::scheduledStart(&op, iteration),
+                              pulse::scheduledDuration(&op));
         } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
           int64_t trips = pulse::constantTripCount(loop).value_or(0);
           iteration.push_back(0);
@@ -364,6 +378,113 @@ public:
     };
     collect(*module_->getBody());
     return result;
+  }
+
+  /// (function, link, iteration, submit start, submit duration, due,
+  /// taken, first use, deadline, epoch) for every execution of a classical
+  /// call, in program order; times in cycles. `taken` is the wait's start
+  /// (absent for an answer never taken), `first use` the earliest start of a
+  /// pulse computed from the answer, `deadline` the latest due time the
+  /// function's deadline allows, and `epoch` the number of blocking waits
+  /// before the submission.
+  using ClassicalCall =
+      std::tuple<std::string, int64_t, std::vector<int64_t>, int64_t, int64_t,
+                 int64_t, std::optional<int64_t>, std::optional<int64_t>,
+                 std::optional<int64_t>, int64_t>;
+
+  std::vector<ClassicalCall> classical_calls() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    std::vector<ClassicalCall> calls;
+    if (!classical::declaresClassicalCalls(*module_))
+      return calls;
+    double clock = classical::moduleClockGHz(*module_);
+    mlir::SymbolTable symbols(*module_);
+    // The timed ops computed from each wait's answer, found once.
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>>
+        consumers;
+    auto consumersOf = [&](classical::WaitOp wait) {
+      auto [it, inserted] = consumers.try_emplace(wait);
+      if (!inserted)
+        return it->second;
+      llvm::SmallVector<mlir::Value> work(wait.getValues().begin(),
+                                          wait.getValues().end());
+      llvm::DenseSet<mlir::Operation *> seen;
+      while (!work.empty()) {
+        mlir::Value value = work.pop_back_val();
+        for (mlir::Operation *user : value.getUsers()) {
+          if (!seen.insert(user).second)
+            continue;
+          if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
+                        classical::SubmitOp>(user)) {
+            it->second.push_back(user);
+          } else if (user->getNumRegions() > 0) {
+            user->walk([&](mlir::Operation *inner) {
+              if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
+                            classical::SubmitOp>(inner))
+                it->second.push_back(inner);
+            });
+          } else {
+            work.append(user->getResults().begin(), user->getResults().end());
+          }
+        }
+      }
+      return it->second;
+    };
+    auto startOf = [&](mlir::Operation *op, llvm::ArrayRef<int64_t> iteration) {
+      llvm::SmallVector<int64_t, 2> at(iteration.begin(), iteration.end());
+      at.resize(pulse::enclosingLoops(op).size(), 0);
+      return pulse::scheduledStart(op, at);
+    };
+    int64_t epoch = 0;
+    llvm::SmallVector<int64_t, 2> iteration;
+    std::function<void(mlir::Block &)> collect = [&](mlir::Block &block) {
+      for (mlir::Operation &op : block) {
+        if (auto submit = mlir::dyn_cast<classical::SubmitOp>(op)) {
+          auto start = pulse::scheduledStart(&op, iteration);
+          if (!start)
+            continue;
+          auto callable =
+              symbols.lookup<classical::CallableOp>(submit.getCallee());
+          int64_t duration = pulse::scheduledDuration(&op).value_or(1);
+          int64_t due = *start + duration +
+                        classical::intAttr(&op, "classical.budget_vtu");
+          std::optional<int64_t> taken, firstUse, deadline;
+          for (mlir::Operation *user : submit.getFuture().getUsers())
+            if (auto wait = mlir::dyn_cast<classical::WaitOp>(user)) {
+              taken = startOf(wait, iteration);
+              for (mlir::Operation *consumer : consumersOf(wait))
+                if (auto at = startOf(consumer, iteration))
+                  firstUse = firstUse ? std::min(*firstUse, *at) : *at;
+            }
+          if (callable)
+            if (auto limit = callable.getDeadlineNs())
+              deadline =
+                  *start + classical::ceilVtu(limit->convertToDouble(), clock);
+          calls.emplace_back(
+              submit.getCallee().str(),
+              classical::intAttr(&op, "classical.device"),
+              std::vector<int64_t>(iteration.begin(), iteration.end()), *start,
+              duration, due, taken, firstUse, deadline, epoch);
+        } else if (mlir::isa<classical::WaitOp>(op)) {
+          if (op.hasAttr("classical.blocking"))
+            ++epoch;
+        } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+          int64_t trips = pulse::constantTripCount(loop).value_or(0);
+          iteration.push_back(0);
+          for (int64_t k = 0; k < trips; ++k) {
+            iteration.back() = k;
+            collect(*loop.getBody());
+          }
+          iteration.pop_back();
+        } else {
+          for (mlir::Region &region : op.getRegions())
+            for (mlir::Block &nested : region)
+              collect(nested);
+        }
+      }
+    };
+    collect(*module_->getBody());
+    return calls;
   }
 
   using Measurement =
@@ -1046,6 +1167,9 @@ public:
       mlir::Block *parent;
       std::unique_ptr<mlir::Block> body;
       std::unique_ptr<mlir::Block> elseBody;
+      // The links of classical calls as the region began, and as its then
+      // arm ended: a link a region sends on is carried out of it.
+      std::map<int64_t, mlir::Value> linksBefore = {}, linksThen = {};
     };
     std::vector<Region> regions;
     // A schedule block is a region with neither loop bounds nor a condition.
@@ -1069,6 +1193,46 @@ public:
       auto v = alloc.getResult();
       qubitSSA[q] = v;
       return v;
+    };
+
+    // Classical calls: the declared functions by index, and the current
+    // version of each link, created at function entry when first used.
+    std::vector<classical::CallableOp> callables;
+    std::map<int64_t, mlir::Value> links;
+    auto linkOf = [&](int64_t device) -> mlir::Value {
+      auto it = links.find(device);
+      if (it != links.end())
+        return it->second;
+      mlir::OpBuilder::InsertionGuard guard(*builder_);
+      if (!regions.empty())
+        builder_->setInsertionPointToEnd(regions.front().parent);
+      auto get = classical::GetLinkOp::create(
+          *builder_, loc, classical::LinkType::get(ctx_.get()),
+          builder_->getI64IntegerAttr(device));
+      for (Region &open : regions)
+        open.linksBefore.try_emplace(device, get.getLink());
+      links[device] = get.getLink();
+      return get.getLink();
+    };
+    auto callableAt = [&](int64_t index) -> classical::CallableOp {
+      if (index < 0 || static_cast<size_t>(index) >= callables.size())
+        throw std::invalid_argument("packed: unknown classical function " +
+                                    std::to_string(index));
+      return callables[static_cast<size_t>(index)];
+    };
+    // The links one arm or body changed, as (device, before, after).
+    auto changedLinks = [](const std::map<int64_t, mlir::Value> &before,
+                           const std::map<int64_t, mlir::Value> &a,
+                           const std::map<int64_t, mlir::Value> &b) {
+      llvm::SmallVector<std::tuple<int64_t, mlir::Value, mlir::Value>> out;
+      for (auto &[device, value] : before) {
+        auto ia = a.find(device), ib = b.find(device);
+        mlir::Value va = ia == a.end() ? value : ia->second;
+        mlir::Value vb = ib == b.end() ? value : ib->second;
+        if (va != value || vb != value)
+          out.push_back({device, va, vb});
+      }
+      return out;
     };
 
     size_t cur = 0;
@@ -1129,6 +1293,7 @@ public:
                       nullptr};
         if (region.step <= 0)
           throw std::invalid_argument("packed: loop step must be positive");
+        region.linksBefore = links;
         builder_->setInsertionPointToEnd(region.body.get());
         regions.push_back(std::move(region));
         break;
@@ -1164,6 +1329,15 @@ public:
                                           *builder_, loc, next.getType()));
           yields.push_back(next);
         }
+        // Links the body sent on are carried by the loop.
+        llvm::SmallVector<std::pair<int64_t, size_t>> carriedLinks;
+        for (auto [device, after, unused] :
+             changedLinks(region.linksBefore, links, links)) {
+          (void)unused;
+          carriedLinks.push_back({device, inits.size()});
+          inits.push_back(region.linksBefore.at(device));
+          yields.push_back(after);
+        }
         auto index = [&](int64_t v) -> mlir::Value {
           return mlir::arith::ConstantIndexOp::create(*builder_, loc, v);
         };
@@ -1185,6 +1359,8 @@ public:
           });
         for (int64_t i = 0; i < n; ++i)
           bind(p[1 + 2 * n + i], loop.getResult(argOf[i]));
+        for (auto [device, index] : carriedLinks)
+          links[device] = loop.getResult(index);
         break;
       }
       case kOpIfBegin: {
@@ -1197,6 +1373,7 @@ public:
                       builder_->getBlock(),
                       std::make_unique<mlir::Block>(),
                       nullptr};
+        region.linksBefore = links;
         builder_->setInsertionPointToEnd(region.body.get());
         regions.push_back(std::move(region));
         break;
@@ -1207,6 +1384,8 @@ public:
             isBlock(regions.back()) || regions.back().elseBody)
           throw std::invalid_argument("packed: else outside an if");
         regions.back().elseBody = std::make_unique<mlir::Block>();
+        regions.back().linksThen = links;
+        links = regions.back().linksBefore;
         builder_->setInsertionPointToEnd(regions.back().elseBody.get());
         break;
       }
@@ -1226,8 +1405,23 @@ public:
           elseValues.push_back(look(p[1 + n + i]));
           types.push_back(thenValues.back().getType());
         }
-        auto condition = pulse::IsSetOp::create(
-            *builder_, loc, builder_->getI1Type(), region.condition);
+        // A link either arm sent on leaves the branch as a result.
+        const auto &thenLinks = region.elseBody ? region.linksThen : links;
+        const auto &elseLinks = region.elseBody ? links : region.linksBefore;
+        llvm::SmallVector<std::pair<int64_t, unsigned>> branchLinks;
+        for (auto [device, a, b] :
+             changedLinks(region.linksBefore, thenLinks, elseLinks)) {
+          branchLinks.push_back({device, static_cast<unsigned>(types.size())});
+          thenValues.push_back(a);
+          elseValues.push_back(b);
+          types.push_back(a.getType());
+        }
+        // A measurement is tested with pulse.is_set; an answer of a
+        // classical call is already a boolean.
+        mlir::Value condition = region.condition;
+        if (mlir::isa<pulse::MeasurementType>(condition.getType()))
+          condition = pulse::IsSetOp::create(*builder_, loc,
+                                             builder_->getI1Type(), condition);
         auto branch = mlir::scf::IfOp::create(*builder_, loc, types, condition,
                                               /*withElseRegion=*/true);
         auto fill = [&](mlir::Block *arm, mlir::Block *source,
@@ -1244,6 +1438,8 @@ public:
         fill(branch.elseBlock(), region.elseBody.get(), elseValues);
         for (int64_t i = 0; i < n; ++i)
           bind(p[1 + 2 * n + i], branch.getResult(i));
+        for (auto [device, index] : branchLinks)
+          links[device] = branch.getResult(index);
         break;
       }
       case kOpBlockBegin: {
@@ -1262,6 +1458,7 @@ public:
         blocks.emplace_back(p[0] == 0 ? "asap" : "alap",
                             std::string(reinterpret_cast<const char *>(p + 2),
                                         static_cast<size_t>(p[1])));
+        region.linksBefore = links;
         builder_->setInsertionPointToEnd(region.body.get());
         regions.push_back(std::move(region));
         break;
@@ -1279,6 +1476,13 @@ public:
         auto block = buildScheduleBlock(*builder_, loc, std::move(region.body),
                                         policy, callee);
         auto yielded = block.getBody().front().getTerminator()->getOperands();
+        // The last version of a link the block sent on is a block result.
+        for (auto &[device, value] : links)
+          for (auto [inner, result] : llvm::zip(yielded, block.getResults()))
+            if (inner == value) {
+              value = result;
+              break;
+            }
         for (auto [inner, result] : llvm::zip(yielded, block.getResults())) {
           auto it = blockVids.find(inner);
           if (it == blockVids.end())
@@ -1675,6 +1879,114 @@ public:
         break;
       }
 
+      case kOpClassicalDeclare: {
+        // [index, id, link, flags, min, nominal, max, timeout, deadline,
+        //  name length, args length, results length, text words...]
+        if (plen < 12)
+          throw std::invalid_argument("packed: malformed classical function");
+        int64_t lengths = p[9] + p[10] + p[11];
+        if (p[0] != static_cast<int64_t>(callables.size()) || p[9] <= 0 ||
+            p[10] < 0 || p[11] < 0 || plen != 12 + (lengths + 7) / 8)
+          throw std::invalid_argument("packed: malformed classical function");
+        std::string text(reinterpret_cast<const char *>(p + 12),
+                         static_cast<size_t>(lengths));
+        std::string symbol = text.substr(0, static_cast<size_t>(p[9]));
+        auto split = [&](llvm::StringRef list) {
+          llvm::SmallVector<llvm::StringRef> items;
+          if (!list.empty())
+            list.split(items, ',');
+          return builder_->getStrArrayAttr(items);
+        };
+        llvm::StringRef args = llvm::StringRef(text).substr(
+            static_cast<size_t>(p[9]), static_cast<size_t>(p[10]));
+        llvm::StringRef results = llvm::StringRef(text).substr(
+            static_cast<size_t>(p[9] + p[10]), static_cast<size_t>(p[11]));
+        int64_t flags = p[3];
+        static const char *modes[] = {"bounded", "timeout", "blocking"};
+        if ((flags & 3) > 2)
+          throw std::invalid_argument("packed: unknown latency mode");
+        mlir::OpBuilder::InsertionGuard guard(*builder_);
+        builder_->setInsertionPoint(funcOp);
+        auto callable = classical::CallableOp::create(
+            *builder_, loc, builder_->getStringAttr(symbol),
+            builder_->getI64IntegerAttr(p[1]),
+            builder_->getI64IntegerAttr(p[2]), split(args), split(results),
+            builder_->getF64FloatAttr(i2f(p[4])),
+            builder_->getF64FloatAttr(i2f(p[5])),
+            builder_->getF64FloatAttr(i2f(p[6])),
+            builder_->getStringAttr(modes[flags & 3]),
+            builder_->getStringAttr(flags & 4 ? "lazy" : "eager"),
+            flags & 16 ? builder_->getF64FloatAttr(i2f(p[7]))
+                       : mlir::FloatAttr(),
+            flags & 32 ? builder_->getF64FloatAttr(i2f(p[8]))
+                       : mlir::FloatAttr(),
+            flags & 8 ? builder_->getUnitAttr() : mlir::UnitAttr());
+        callables.push_back(callable);
+        break;
+      }
+      case kOpClassicalSubmit: {
+        // [function index, future id, n, argument ids...]
+        if (plen < 3 || p[2] < 0 || plen != 3 + p[2])
+          throw std::invalid_argument("packed: malformed classical submit");
+        auto callable = callableAt(p[0]);
+        llvm::SmallVector<mlir::Value> args;
+        for (int64_t i = 0; i < p[2]; ++i)
+          args.push_back(look(p[3 + i]));
+        int64_t device = callable.getDevice();
+        auto submit = classical::SubmitOp::create(
+            *builder_, loc, classical::LinkType::get(ctx_.get()),
+            classical::FutureType::get(ctx_.get()), linkOf(device),
+            mlir::FlatSymbolRefAttr::get(callable.getSymNameAttr()), args);
+        links[device] = submit.getUpdatedLink();
+        bind(p[1], submit.getFuture());
+        break;
+      }
+      case kOpClassicalWait: {
+        // [function index, future id, has timeout, timeout, n, result ids...]
+        if (plen < 5 || p[4] < 0 || plen != 5 + p[4])
+          throw std::invalid_argument("packed: malformed classical wait");
+        auto callable = callableAt(p[0]);
+        llvm::SmallVector<mlir::Type> types =
+            classical::answerTypes(callable, p[2] != 0);
+        if (static_cast<int64_t>(types.size()) != p[4])
+          throw std::invalid_argument("packed: classical wait expects " +
+                                      std::to_string(types.size()) +
+                                      " results");
+        auto wait = classical::WaitOp::create(
+            *builder_, loc, types, look(p[1]),
+            mlir::FlatSymbolRefAttr::get(callable.getSymNameAttr()),
+            p[2] ? builder_->getF64FloatAttr(i2f(p[3])) : mlir::FloatAttr());
+        for (int64_t i = 0; i < p[4]; ++i)
+          bind(p[5 + i], wait.getValues()[i]);
+        break;
+      }
+      case kOpClassicalCompare: {
+        // [result id, predicate (eq ne lt le gt ge), type (0 i64, 1 f64),
+        //  lhs, rhs]
+        requirePayload(5);
+        if (p[1] < 0 || p[1] > 5 || p[2] < 0 || p[2] > 1)
+          throw std::invalid_argument("packed: malformed classical compare");
+        mlir::Value lhs = look(p[3]), rhs = look(p[4]);
+        mlir::Value result;
+        if (p[2] == 1) {
+          static const mlir::arith::CmpFPredicate fp[] = {
+              mlir::arith::CmpFPredicate::OEQ, mlir::arith::CmpFPredicate::UNE,
+              mlir::arith::CmpFPredicate::OLT, mlir::arith::CmpFPredicate::OLE,
+              mlir::arith::CmpFPredicate::OGT, mlir::arith::CmpFPredicate::OGE};
+          result =
+              mlir::arith::CmpFOp::create(*builder_, loc, fp[p[1]], lhs, rhs);
+        } else {
+          static const mlir::arith::CmpIPredicate ip[] = {
+              mlir::arith::CmpIPredicate::eq,  mlir::arith::CmpIPredicate::ne,
+              mlir::arith::CmpIPredicate::slt, mlir::arith::CmpIPredicate::sle,
+              mlir::arith::CmpIPredicate::sgt, mlir::arith::CmpIPredicate::sge};
+          result =
+              mlir::arith::CmpIOp::create(*builder_, loc, ip[p[1]], lhs, rhs);
+        }
+        bind(p[0], result);
+        break;
+      }
+
       default:
         throw std::invalid_argument("packed: unknown opcode " +
                                     std::to_string(opcode));
@@ -1928,6 +2240,8 @@ NB_MODULE(_cudaq_pulse_native, m) {
       .def("events", &PulseModule::events,
            nb::call_guard<nb::gil_scoped_release>(),
            "(kind, line, qubit, start_vtu, duration_vtu) of each timed op")
+      .def("classical_calls", &PulseModule::classical_calls,
+           "Every execution of a classical call, with its timing")
       .def("next_measurement", &PulseModule::next_measurement,
            nb::call_guard<nb::gil_scoped_release>(),
            "The next measurement without an outcome on a path", nb::arg("path"))

@@ -21,10 +21,12 @@ from typing import Any
 
 from .ir_builder import (
     UNDEFINED_VID,
+    AnswerValue,
     CompilationError,
     IRValue,
     Parameter,
     ParameterExpression,
+    contains_answer,
     is_symbolic,
     parameter_names,
 )
@@ -70,6 +72,18 @@ _IF_END = 33
 _BLOCK_BEGIN = 34
 _BLOCK_END = 35
 _BLOCK_POLICY = {"asap": 0, "alap": 1}
+_CLASSICAL_DECLARE = 36
+_CLASSICAL_SUBMIT = 37
+_CLASSICAL_WAIT = 38
+_CLASSICAL_COMPARE = 39
+_LATENCY_MODE = {"bounded": 0, "timeout": 1, "blocking": 2}
+_COMPARE = {"==": 0, "!=": 1, "<": 2, "<=": 3, ">": 4, ">=": 5}
+
+_DURATION_FROM_ANSWER = (
+    "a duration cannot depend on the answer of a classical call: the answer "
+    "arrives while the program runs, after its timeline is fixed; branch on "
+    "the answer to choose between durations instead"
+)
 
 _NUMERIC_TYPE = {"i64": 0, "f64": 1}
 _BINARY_OP = {
@@ -199,6 +213,16 @@ class PackedIRBuilder:
         # Float arguments that reached an integer (a duration, a cast to
         # int): the schedule needs their values, so they are specialized on.
         self.structural: set[str] = set()
+        # Classical functions declared so far, in record order, and the
+        # regions open now (ids), which bound where an answer is defined.
+        self.classical: list[Any] = []
+        self._classical_index: dict[int, int] = {}
+        self._scope: list[int] = []
+        # Loops and branch arms open now, as (id, is_loop): where a future
+        # submitted in one may be waited on.
+        self._flow: list[tuple[int, bool]] = []
+        self._next_scope = 0
+        self._answer_integers = False
 
     def _mk(self, vtype: str, name: str = "") -> IRValue:
         v = IRValue(self._next_id, vtype, name)
@@ -554,7 +578,9 @@ class PackedIRBuilder:
             step = _as_i64(attrs.get("step", 1), "loop step")
             self._record(_FOR_BEGIN, [lb, ub, step])
             self._regions.append({})
+            self._open_scope(loop=True)
         elif kind == "scf.for_end":
+            self._close_scope()
             region = self._regions.pop()
             inits = [v.vid if v.vid != UNDEFINED_VID else -1 for v in operands]
             yields = list(region.get("yield", ()))
@@ -562,10 +588,14 @@ class PackedIRBuilder:
         elif kind == "scf.if":
             self._record(_IF_BEGIN, [operands[0].vid])
             self._regions.append({})
+            self._open_scope(loop=False)
         elif kind == "scf.else":
             self._record(_ELSE, [])
             self._regions[-1]["else"] = ()
+            self._close_scope()
+            self._open_scope(loop=False)
         elif kind == "scf.if_end":
+            self._close_scope()
             region = self._regions.pop()
             self._record(
                 _IF_END,
@@ -591,9 +621,146 @@ class PackedIRBuilder:
         words = [_unpack_q.unpack(padded[i : i + 8])[0] for i in range(0, len(padded), 8)]
         self._record(_BLOCK_BEGIN, [_BLOCK_POLICY[policy], len(encoded), *words])
         self.schedule_block_count += 1
+        self._open_scope()
 
     def end_schedule_block(self) -> None:
+        self._close_scope()
         self._record(_BLOCK_END, [])
+
+    def _open_scope(self, loop: bool | None = None) -> None:
+        """Open a region: a loop body, a branch arm, or (``None``) a block."""
+        self._scope.append(self._next_scope)
+        if loop is not None:
+            self._flow.append((self._next_scope, loop))
+        self._next_scope += 1
+
+    def _close_scope(self) -> None:
+        closed = self._scope.pop()
+        if self._flow and self._flow[-1][0] == closed:
+            self._flow.pop()
+
+    @property
+    def flow(self) -> tuple[tuple[int, bool], ...]:
+        """The loops and branch arms open now, outermost first."""
+        return tuple(self._flow)
+
+    def check_wait(self, flow: tuple[tuple[int, bool], ...], name: str) -> None:
+        """A future submitted under *flow* is waited on here: in the same
+        loop iteration, possibly in a branch arm inside it."""
+        here = self._flow
+        if tuple(here[: len(flow)]) != flow or any(loop for _, loop in here[len(flow) :]):
+            raise CompilationError(
+                f"the answer of {name} is taken in another loop iteration or outside "
+                "the branch arm that submitted it; take it in the same loop body, "
+                "after the submission"
+            )
+
+    @property
+    def scope(self) -> tuple[int, ...]:
+        """The regions open now, outermost first."""
+        return tuple(self._scope)
+
+    def check_scope(self, scope: tuple[int, ...], what: str) -> None:
+        """Reject a value taken in a region that has since closed."""
+        here = self._scope
+        if len(scope) > len(here) or tuple(here[: len(scope)]) != scope:
+            raise CompilationError(
+                f"{what} is used outside the loop, branch or kernel with its own "
+                "schedule= where it was taken; take it where it is used, or return "
+                "the future and take the answer after the kernel returns"
+            )
+
+    # ── Classical calls ───────────────────────────────────────────────────
+
+    def classical_function(self, function: Any) -> int:
+        """The record index of classical function *function*, declared once."""
+        index = self._classical_index.get(id(function))
+        if index is not None:
+            return index
+        for other in self.classical:
+            if other.name == function.name:
+                raise CompilationError(
+                    f"two different classical functions are named {function.name!r}"
+                )
+        index = len(self.classical)
+        mode = _LATENCY_MODE[function.latency_mode]
+        flags = mode | (4 if function.submit_policy == "lazy" else 0)
+        flags |= 8 if function.custom_id else 0
+        flags |= 16 if function.timeout_ns is not None else 0
+        flags |= 32 if function.deadline_ns is not None else 0
+        name = function.name.encode("utf-8")
+        args = ",".join(a.descriptor for a in function.args).encode("ascii")
+        results = ",".join(r.descriptor for r in function.results).encode("ascii")
+        text = name + args + results
+        padded = text + b"\0" * ((8 - len(text) % 8) % 8)
+        words = [_unpack_q.unpack(padded[i : i + 8])[0] for i in range(0, len(padded), 8)]
+        self._record(
+            _CLASSICAL_DECLARE,
+            [
+                index,
+                function.id,
+                function.link,
+                flags,
+                _f2i(function.min_latency_ns),
+                _f2i(function.nominal_latency_ns),
+                _f2i(function.max_latency_ns),
+                _f2i(function.timeout_ns or 0.0),
+                _f2i(function.deadline_ns or 0.0),
+                len(name),
+                len(args),
+                len(results),
+                *words,
+            ],
+        )
+        self.classical.append(function)
+        self._classical_index[id(function)] = index
+        return index
+
+    def classical_submit(self, index: int, operands: list[int]) -> int:
+        """Record a submission; returns the future's id."""
+        future = self._next_id
+        self._next_id += 1
+        self._op_count += 1
+        self._record(_CLASSICAL_SUBMIT, [index, future, len(operands), *operands])
+        return future
+
+    def classical_wait(
+        self, index: int, future: int, dtypes: list[str], timeout_ns: float | None
+    ) -> list[AnswerValue]:
+        """Record a wait; returns its answers, one per SSA result."""
+        vids = list(range(self._next_id, self._next_id + len(dtypes)))
+        self._next_id += len(dtypes)
+        self._op_count += 1
+        has_timeout = timeout_ns is not None
+        self._record(
+            _CLASSICAL_WAIT,
+            [index, future, int(has_timeout), _f2i(timeout_ns or 0.0), len(vids), *vids],
+        )
+        scope = self.scope
+        return [AnswerValue(v, t, scope) for v, t in zip(vids, dtypes)]
+
+    def classical_compare(self, predicate: str, lhs: Any, rhs: Any) -> int:
+        """Record a comparison of answers and numbers; returns the i1 id."""
+
+        def floating(v: Any) -> bool:
+            if isinstance(v, AnswerValue):
+                return v.dtype == "f64"
+            if isinstance(v, float):
+                return True
+            return is_symbolic(v) and getattr(v, "dtype", "f64") != "i64"
+
+        is_float = floating(lhs) or floating(rhs)
+        dtype = "f64" if is_float else "i64"
+        self._answer_integers = True
+        try:
+            a = self._get_numeric_vid(lhs, dtype)
+            b = self._get_numeric_vid(rhs, dtype)
+        finally:
+            self._answer_integers = False
+        result = self._next_id
+        self._next_id += 1
+        self._record(_CLASSICAL_COMPARE, [result, _COMPARE[predicate], int(is_float), a, b])
+        return result
 
     def mark(self) -> int:
         return self._cur
@@ -612,6 +779,10 @@ class PackedIRBuilder:
             self._op_count,
             [dict(region) for region in self._regions],
             self._n_readouts,
+            len(self.classical),
+            list(self._scope),
+            list(self._flow),
+            self._next_scope,
         )
 
     def rollback(self, checkpoint: tuple[Any, ...]) -> None:
@@ -622,8 +793,17 @@ class PackedIRBuilder:
             self._op_count,
             regions,
             self._n_readouts,
+            n_classical,
+            scope,
+            flow,
+            self._next_scope,
         ) = checkpoint
         self._regions = regions
+        self._scope = scope
+        self._flow = flow
+        for function in self.classical[n_classical:]:
+            del self._classical_index[id(function)]
+        del self.classical[n_classical:]
         live = self._next_id
         for vid in [vid for vid in self.readouts if vid >= live]:
             del self.readouts[vid]
@@ -655,6 +835,18 @@ class PackedIRBuilder:
         """Materialize a symbolic or literal number as an SSA value record."""
         if expected_dtype not in _NUMERIC_TYPE:
             raise CompilationError(f"unsupported numeric type {expected_dtype}")
+        if self.classical:
+            if expected_dtype == "i64" and not self._answer_integers and contains_answer(value):
+                raise CompilationError(_DURATION_FROM_ANSWER)
+            if isinstance(value, AnswerValue):
+                self.check_scope(value.scope, "an answer of a classical call")
+                if value.dtype == expected_dtype:
+                    return value.vid
+                if value.dtype == "i1":
+                    raise CompilationError(
+                        "an answer bit is a branch condition, not a number; use it as `if bit:`"
+                    )
+                return self._emit_numeric_cast(value.vid, value.dtype, expected_dtype)
         if is_symbolic(value) and (
             expected_dtype == "i64"
             or (

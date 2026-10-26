@@ -386,6 +386,31 @@ private:
     return it->second;
   }
 
+  /// Whether a loop whose iterations shift by `period` keeps every link's
+  /// requests within its slots in steady state, so that extrapolating it
+  /// cannot exceed them: per link, the submissions of one iteration stay in
+  /// flight for ceil(busy / period) iterations each.
+  bool slotsHoldSteadyState(mlir::scf::ForOp loop, int64_t period) {
+    if (!classical)
+      return true;
+    llvm::DenseMap<int64_t, std::pair<int64_t, int64_t>> perLink;
+    bool ok = true;
+    loop.getBody()->walk([&](classical::SubmitOp submit) {
+      mlir::Operation *op = submit;
+      int64_t busy = durationOf(op) + budgetOf(op);
+      if (period <= 0) {
+        ok = false;
+        return;
+      }
+      auto &[need, slots] = perLink[classical::intAttr(op, "classical.device")];
+      need += (busy + period - 1) / period;
+      slots = classical::intAttr(op, "classical.max_in_flight", 64);
+    });
+    for (auto &[device, entry] : perLink)
+      ok = ok && entry.first <= entry.second;
+    return ok;
+  }
+
   /// Take the earliest free slot of a link for a request starting no earlier
   /// than `start`; it is busy until the answer is due.
   int64_t takeSlot(mlir::Operation *submit, int64_t start, int64_t busy) {
@@ -584,7 +609,8 @@ private:
       int64_t shift;
       bool shifted = uniformShift(carried, next, kinds, shift);
       bool steady = !resources.enabled && !lanesBound && shifted &&
-                    lastShift == shift && shift >= 0;
+                    lastShift == shift && shift >= 0 &&
+                    slotsHoldSteadyState(loop, shift);
       for (auto [before, after, kind] : llvm::zip(carried, next, kinds))
         if (kind == Carried::Timed ||
             (kind == Carried::Tone && after != before))
@@ -874,7 +900,8 @@ private:
       int64_t shift;
       bool shifted = uniformShift(carried, next, kinds, shift);
       bool steady = !resources.enabled && !lanesBound && shifted &&
-                    lastShift == shift && shift <= 0;
+                    lastShift == shift && shift <= 0 &&
+                    slotsHoldSteadyState(loop, -shift);
       lastShift = shifted ? std::optional<int64_t>(shift) : std::nullopt;
       llvm::SmallVector<int64_t> previous = std::move(carried);
       carried = std::move(next);

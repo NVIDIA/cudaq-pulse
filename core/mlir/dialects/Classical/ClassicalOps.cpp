@@ -25,15 +25,12 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
 
+#include "cudaq-pulse/Dialect/Classical/Answers.h"
 #include "cudaq-pulse/Dialect/Classical/Schema.h"
 
 using namespace mlir;
 
 namespace classical {
-
-static bool isTimeoutMode(CallableOp callable) {
-  return callable.getMode() == "timeout";
-}
 
 LogicalResult CallableOp::verify() {
   if (getArgs().size() > cudaq_pulse::wire::kMaxArgs)
@@ -136,23 +133,6 @@ LogicalResult SubmitOp::verifySymbolUses(SymbolTableCollection &symbols) {
   return success();
 }
 
-/// The SSA types `classical.wait` gives for the results of `callable`.
-static SmallVector<Type> resultTypes(CallableOp callable) {
-  Builder b(callable.getContext());
-  SmallVector<Type> types;
-  if (isTimeoutMode(callable))
-    types.push_back(b.getI1Type());
-  for (Attribute entry : callable.getResults()) {
-    Descriptor desc = *parseDescriptor(cast<StringAttr>(entry).getValue());
-    Type element = desc.kind == Kind::Bits ? Type(b.getI1Type())
-                   : desc.isFloat()        ? Type(b.getF64Type())
-                                           : Type(b.getI64Type());
-    int64_t n = desc.kind == Kind::IQ ? 2 * desc.count : desc.count;
-    types.append(static_cast<size_t>(n), element);
-  }
-  return types;
-}
-
 LogicalResult WaitOp::verifySymbolUses(SymbolTableCollection &symbols) {
   CallableOp callable = lookupCallable(*this, getCalleeAttr(), symbols);
   if (!callable)
@@ -163,7 +143,11 @@ LogicalResult WaitOp::verifySymbolUses(SymbolTableCollection &symbols) {
       return emitOpError("waits for '")
              << getCallee() << "', but the future was submitted to '"
              << submit.getCallee() << "'";
-  SmallVector<Type> expected = resultTypes(callable);
+  if (auto timeout = getTimeoutNs())
+    if (!(timeout->convertToDouble() > 0.0))
+      return emitOpError("timeout_ns must be positive");
+  SmallVector<Type> expected =
+      answerTypes(callable, getTimeoutNs().has_value());
   if (expected.empty())
     return emitOpError("'")
            << getCallee() << "' returns nothing; there is nothing to wait for";

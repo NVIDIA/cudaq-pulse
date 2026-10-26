@@ -115,8 +115,13 @@ def Classical_WaitOp : ClassicalOp<"wait",
     budgeted latency (and the link's feedback latency). Pulses whose
     parameters, tones or branch conditions are computed from them start no
     earlier. Scheduling records that time as `start_vtu`.
+
+    With `timeout_ns` (or when the function's mode is `"timeout"`) the wait
+    gives a leading `i1`, false when no answer came within the timeout;
+    scheduling then budgets the timeout instead of the maximum latency.
   }];
-  let arguments = (ins Classical_FutureType:$future, FlatSymbolRefAttr:$callee);
+  let arguments = (ins Classical_FutureType:$future, FlatSymbolRefAttr:$callee,
+                       OptionalAttr<F64Attr>:$timeout_ns);
   let results = (outs Variadic<AnyType>:$values);
   let assemblyFormat = "$future `,` $callee attr-dict `:` type($values)";
 }

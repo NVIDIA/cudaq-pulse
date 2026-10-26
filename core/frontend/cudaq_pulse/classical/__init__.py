@@ -1,0 +1,469 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+"""Classical co-processing at QPU runtime.
+
+``classical`` is a classical real-time dialect for co-processing at QPU
+runtime: the GPU, host or FPGA services that a pulse program calls while the
+QPU runs, to decode syndromes, update calibrations or receive bulk readout
+data, and whose answers later pulses use.
+
+``pulse.classical`` is both this module and the decorator that declares such
+a function::
+
+    import cudaq_pulse as pulse
+    from cudaq_pulse.classical import Bits
+
+    @pulse.classical(args=(Bits(4),), results=(Bits(1),), max_latency_ns=3000)
+    def decode(syndromes):
+        return [syndromes[0] ^ syndromes[3]]
+
+    @pulse.kernel
+    def round(...):
+        ...
+        answer = decode.submit([m0, m1, m2, m3])   # send the request
+        fix = answer.result()                      # take the answer
+        if fix[0]:
+            drive(...)
+
+Inside a kernel, ``.submit(...)`` sends a request and returns a future at
+once; pulses that do not need the answer keep playing. ``.result()`` is where
+the answer is taken: it is due the maximum latency after the request is sent,
+and the pulses whose amplitude, phase, frequency or branch condition come from
+it start no earlier. An answer can set numbers, never durations: the
+timeline is fixed before the program runs. Outside a kernel, calling the
+function runs its body, its reference implementation, directly.
+
+The body is what simulation runs. On hardware the service registered under
+the function's id (the 32-bit FNV-1a hash of its name, as CUDA-Q Realtime
+uses) answers instead.
+"""
+
+from __future__ import annotations
+
+import math
+import sys
+import types
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import Any
+
+__all__ = [
+    "Bits",
+    "Byte",
+    "Bytes",
+    "ClassicalFunction",
+    "Float",
+    "Floats",
+    "IQ",
+    "Integer",
+    "Integers",
+    "Levels",
+    "Link",
+    "external",
+    "function",
+    "function_id",
+]
+
+_LATENCY_MODES = ("bounded", "timeout", "blocking")
+_SUBMIT_POLICIES = ("eager", "lazy")
+# The handler schema of the CUDA-Q Realtime dispatcher.
+_MAX_ARGS = 8
+_MAX_RESULTS = 4
+
+
+def function_id(name: str) -> int:
+    """The id of a function named *name* on the wire: 32-bit FNV-1a."""
+    value = 2166136261
+    for byte in name.encode("utf-8"):
+        value = ((value ^ byte) * 16777619) & 0xFFFFFFFF
+    return value
+
+
+# ── Argument and result types ────────────────────────────────────────────────
+
+
+class ValueType:
+    """The type of one argument or result of a classical function.
+
+    ``descriptor`` is its spelling in the IR, ``count`` how many values it
+    holds, ``source`` what a kernel passes for it (``"measurement"``,
+    ``"float"`` or ``"integer"``), and ``answer`` the type of the values a
+    kernel gets back for it (``"i1"``, ``"i64"`` or ``"f64"``).
+    """
+
+    __slots__ = ("count", "descriptor", "source", "answer", "answer_count", "wire_bytes")
+
+    def __init__(
+        self,
+        descriptor: str,
+        count: int,
+        source: str,
+        answer: str,
+        answer_count: int,
+        wire_bytes: int,
+    ) -> None:
+        self.descriptor = descriptor
+        self.count = count
+        self.source = source
+        self.answer = answer
+        self.answer_count = answer_count
+        self.wire_bytes = wire_bytes
+
+    @property
+    def is_scalar(self) -> bool:
+        return ":" not in self.descriptor and "[" not in self.descriptor
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, ValueType) and other.descriptor == self.descriptor
+
+    def __hash__(self) -> int:
+        return hash(self.descriptor)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.descriptor!r})"
+
+
+def _count(n: int, what: str) -> int:
+    if isinstance(n, bool) or not isinstance(n, int) or n <= 0:
+        raise ValueError(f"{what} needs a positive whole number of values, got {n!r}")
+    return n
+
+
+def _bits_width(bits: int, allowed: tuple[int, ...], what: str) -> int:
+    if bits not in allowed:
+        raise ValueError(f"{what} has {' or '.join(map(str, allowed))} bits, got {bits!r}")
+    return bits
+
+
+class Bits(ValueType):
+    """``n`` measurement results, sent as ``outcome != 0``, bit-packed.
+
+    As a result, ``n`` booleans: the answer's bits, which a kernel can
+    branch on.
+    """
+
+    __slots__ = ()
+
+    def __init__(self, n: int) -> None:
+        n = _count(n, "Bits")
+        super().__init__(f"bits:{n}", n, "measurement", "i1", n, (n + 7) // 8)
+
+
+class Levels(ValueType):
+    """``n`` measured levels, one byte each, for leakage-aware decoding.
+
+    As a result, ``n`` integers.
+    """
+
+    __slots__ = ()
+
+    def __init__(self, n: int) -> None:
+        n = _count(n, "Levels")
+        super().__init__(f"levels:{n}", n, "measurement", "i64", n, n)
+
+
+class IQ(ValueType):
+    """The IQ points of ``n`` readouts, as ``2n`` 32-bit floats (I, then Q).
+
+    As a result, ``2n`` floats.
+    """
+
+    __slots__ = ()
+
+    def __init__(self, n: int) -> None:
+        n = _count(n, "IQ")
+        super().__init__(f"iq:{n}", n, "measurement", "f64", 2 * n, 8 * n)
+
+
+class Float(ValueType):
+    """One floating-point number, of 64 bits (the default) or 32."""
+
+    __slots__ = ()
+
+    def __init__(self, bits: int = 64) -> None:
+        bits = _bits_width(bits, (64, 32), "Float")
+        super().__init__(f"f{bits}", 1, "float", "f64", 1, bits // 8)
+
+
+class Integer(ValueType):
+    """One signed integer, of 64 bits (the default) or 32."""
+
+    __slots__ = ()
+
+    def __init__(self, bits: int = 64) -> None:
+        bits = _bits_width(bits, (64, 32), "Integer")
+        super().__init__(f"i{bits}", 1, "integer", "i64", 1, bits // 8)
+
+
+class Byte(ValueType):
+    """One unsigned byte."""
+
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        super().__init__("u8", 1, "integer", "i64", 1, 1)
+
+
+class Floats(ValueType):
+    """``n`` floating-point numbers, of 64 bits (the default) or 32 each."""
+
+    __slots__ = ()
+
+    def __init__(self, n: int, bits: int = 64) -> None:
+        n = _count(n, "Floats")
+        bits = _bits_width(bits, (64, 32), "Floats")
+        super().__init__(f"f{bits}[{n}]", n, "float", "f64", n, n * bits // 8)
+
+
+class Integers(ValueType):
+    """``n`` signed 32-bit integers."""
+
+    __slots__ = ()
+
+    def __init__(self, n: int) -> None:
+        n = _count(n, "Integers")
+        super().__init__(f"i32[{n}]", n, "integer", "i64", n, 4 * n)
+
+
+class Bytes(ValueType):
+    """``n`` unsigned bytes."""
+
+    __slots__ = ()
+
+    def __init__(self, n: int) -> None:
+        n = _count(n, "Bytes")
+        super().__init__(f"u8[{n}]", n, "integer", "i64", n, n)
+
+
+def _value_type(value: Any, where: str) -> ValueType:
+    if isinstance(value, ValueType):
+        return value
+    if isinstance(value, type) and issubclass(value, (Float, Integer, Byte)):
+        return value()
+    raise TypeError(f"{where} must be a type such as Bits(4), Float() or Floats(8), got {value!r}")
+
+
+# ── Links ────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Link:
+    """What one link to a classical device costs, for scheduling.
+
+    ``fixed_ns`` is the fixed cost of sending a request and ``bytes_per_ns``
+    its bandwidth (0 for unlimited): a request holds the link for
+    ``fixed_ns + bytes / bytes_per_ns``, at least one clock cycle.
+    ``feedback_ns`` is added to every latency: the time from an answer
+    arriving to a pulse being able to use it. ``max_in_flight`` is how many
+    requests the link holds at once (its slots), and ``slot_bytes`` the
+    largest request or answer, its 24-byte header included.
+    """
+
+    fixed_ns: float = 0.0
+    bytes_per_ns: float = 0.0
+    feedback_ns: float = 0.0
+    max_in_flight: int = 64
+    slot_bytes: int = 1024
+
+    def __post_init__(self) -> None:
+        for name in ("fixed_ns", "bytes_per_ns", "feedback_ns"):
+            value = getattr(self, name)
+            if not (isinstance(value, (int, float)) and math.isfinite(value) and value >= 0):
+                raise ValueError(f"Link.{name} must be a finite number >= 0, got {value!r}")
+        if not isinstance(self.max_in_flight, int) or self.max_in_flight < 1:
+            raise ValueError(f"Link.max_in_flight must be at least 1, got {self.max_in_flight!r}")
+        if not isinstance(self.slot_bytes, int) or self.slot_bytes <= 24:
+            raise ValueError(
+                f"Link.slot_bytes must exceed the 24-byte header, got {self.slot_bytes!r}"
+            )
+
+    def attribute(self) -> str:
+        """The link as an entry of the module attribute ``classical.links``."""
+        return (
+            f"{{fixed_ns = {float(self.fixed_ns)!r} : f64, "
+            f"bytes_per_ns = {float(self.bytes_per_ns)!r} : f64, "
+            f"feedback_ns = {float(self.feedback_ns)!r} : f64, "
+            f"max_in_flight = {self.max_in_flight} : i64, "
+            f"slot_bytes = {self.slot_bytes} : i64}}"
+        )
+
+
+# ── Classical functions ──────────────────────────────────────────────────────
+
+
+class ClassicalFunction:
+    """A classical function a pulse kernel can call while the QPU runs.
+
+    Made by ``@pulse.classical(...)`` or ``pulse.classical.external(...)``.
+    In a kernel, ``.submit(*args)`` sends a request and returns a future
+    whose ``.result()`` takes the answer. Outside a kernel, calling it runs
+    its reference implementation.
+    """
+
+    def __init__(
+        self,
+        implementation: Callable[..., Any] | None,
+        *,
+        name: str | None = None,
+        args: Sequence[Any] = (),
+        results: Sequence[Any] = (),
+        max_latency_ns: float,
+        min_latency_ns: float = 0.0,
+        nominal_latency_ns: float | None = None,
+        latency_mode: str = "bounded",
+        timeout_ns: float | None = None,
+        submit: str = "eager",
+        deadline_ns: float | None = None,
+        link: int = 0,
+        id: int | None = None,
+    ) -> None:
+        if name is None:
+            if implementation is None:
+                raise TypeError("an external classical function needs a name")
+            name = implementation.__name__
+        if not name or not name.replace("_", "a").isalnum() or name[0].isdigit():
+            raise ValueError(f"a classical function name must be an identifier, got {name!r}")
+        self.name = name
+        self.implementation = implementation
+        self.args: tuple[ValueType, ...] = tuple(_value_type(a, "args entry") for a in args)
+        self.results: tuple[ValueType, ...] = tuple(
+            _value_type(r, "results entry") for r in results
+        )
+        if len(self.args) > _MAX_ARGS:
+            raise ValueError(f"{name}: at most {_MAX_ARGS} arguments, got {len(self.args)}")
+        if len(self.results) > _MAX_RESULTS:
+            raise ValueError(f"{name}: at most {_MAX_RESULTS} results, got {len(self.results)}")
+        nominal = max_latency_ns if nominal_latency_ns is None else nominal_latency_ns
+        for label, value in (
+            ("max_latency_ns", max_latency_ns),
+            ("min_latency_ns", min_latency_ns),
+            ("nominal_latency_ns", nominal),
+        ):
+            if not (isinstance(value, (int, float)) and math.isfinite(value) and value >= 0):
+                raise ValueError(f"{name}: {label} must be a finite number >= 0, got {value!r}")
+        if not min_latency_ns <= nominal <= max_latency_ns:
+            raise ValueError(
+                f"{name}: latencies must satisfy min <= nominal <= max, got "
+                f"{min_latency_ns}, {nominal}, {max_latency_ns}"
+            )
+        self.min_latency_ns = float(min_latency_ns)
+        self.nominal_latency_ns = float(nominal)
+        self.max_latency_ns = float(max_latency_ns)
+        if latency_mode not in _LATENCY_MODES:
+            raise ValueError(
+                f"{name}: latency_mode must be one of {', '.join(_LATENCY_MODES)}, "
+                f"got {latency_mode!r}"
+            )
+        if (latency_mode == "timeout") != (timeout_ns is not None):
+            raise ValueError(
+                f"{name}: timeout_ns goes with latency_mode='timeout' (or pass "
+                "timeout_ns to result() at the call)"
+            )
+        if timeout_ns is not None and not timeout_ns > 0:
+            raise ValueError(f"{name}: timeout_ns must be positive, got {timeout_ns!r}")
+        self.latency_mode = latency_mode
+        self.timeout_ns = None if timeout_ns is None else float(timeout_ns)
+        if submit not in _SUBMIT_POLICIES:
+            raise ValueError(f"{name}: submit must be 'eager' or 'lazy', got {submit!r}")
+        self.submit_policy = submit
+        if deadline_ns is not None and not deadline_ns > 0:
+            raise ValueError(f"{name}: deadline_ns must be positive, got {deadline_ns!r}")
+        self.deadline_ns = None if deadline_ns is None else float(deadline_ns)
+        if isinstance(link, bool) or not isinstance(link, int) or link < 0:
+            raise ValueError(f"{name}: link must be a whole number >= 0, got {link!r}")
+        self.link = link
+        if id is not None and not (isinstance(id, int) and 0 <= id <= 0xFFFFFFFF):
+            raise ValueError(f"{name}: id must be a 32-bit unsigned integer, got {id!r}")
+        self.id = function_id(name) if id is None else id
+        self.custom_id = id is not None
+        if implementation is not None:
+            self.__doc__ = implementation.__doc__
+            self.__wrapped__ = implementation
+
+    @property
+    def __name__(self) -> str:  # noqa: PLW3201
+        return self.name
+
+    def __call__(self, *args: Any) -> Any:
+        """Run the reference implementation on *args* (outside a kernel)."""
+        if self.implementation is None:
+            raise TypeError(
+                f"{self.name} is external and has no reference implementation; "
+                "simulate it with handlers={...}, or declare it with a body"
+            )
+        if len(args) != len(self.args):
+            raise TypeError(f"{self.name}() takes {len(self.args)} arguments, got {len(args)}")
+        return self.implementation(*args)
+
+    def submit(self, *args: Any) -> Answer:
+        """Call the function; outside a kernel this runs it at once."""
+        return Answer(self(*args), self)
+
+    def __repr__(self) -> str:
+        args = ", ".join(a.descriptor for a in self.args)
+        results = ", ".join(r.descriptor for r in self.results)
+        return f"<classical function {self.name}({args}) -> ({results}) on link {self.link}>"
+
+
+class Answer:
+    """The answer of a classical function called outside a kernel."""
+
+    __slots__ = ("_value", "_function")
+
+    def __init__(self, value: Any, function: ClassicalFunction) -> None:
+        self._value = value
+        self._function = function
+
+    def done(self) -> bool:
+        return True
+
+    def result(self, timeout_ns: float | None = None) -> Any:
+        if timeout_ns is not None:
+            if isinstance(self._value, tuple):
+                return (True, *self._value)
+            return (True, self._value)
+        return self._value
+
+
+def function(implementation: Callable[..., Any] | None = None, /, **options: Any) -> Any:
+    """Declare a classical function; ``pulse.classical`` is this decorator.
+
+    Keyword options: ``args`` and ``results`` (sequences of types such as
+    ``Bits(4)``, ``Float()``, ``Floats(8)``), ``max_latency_ns`` (required),
+    ``min_latency_ns``, ``nominal_latency_ns``, ``latency_mode``
+    (``"bounded"``, ``"timeout"`` with ``timeout_ns``, or ``"blocking"``),
+    ``submit`` (``"eager"`` or ``"lazy"``), ``deadline_ns``, ``link`` (the
+    id of the link its requests travel on; ``device`` is not used for it,
+    because a cudaq-pulse device is the QPU), ``name`` and ``id``.
+    """
+    if implementation is not None:
+        return ClassicalFunction(implementation, **options)
+
+    def decorate(fn: Callable[..., Any]) -> ClassicalFunction:
+        return ClassicalFunction(fn, **options)
+
+    return decorate
+
+
+def external(name: str, /, **options: Any) -> ClassicalFunction:
+    """A classical function with no reference implementation, by *name*.
+
+    It takes the keyword options of ``pulse.classical``. Simulating a program
+    that calls it needs a handler for it.
+    """
+    return ClassicalFunction(None, name=name, **options)
+
+
+class _ClassicalModule(types.ModuleType):
+    """This module, callable as the ``pulse.classical`` decorator."""
+
+    def __call__(self, implementation: Callable[..., Any] | None = None, /, **options: Any) -> Any:
+        return function(implementation, **options)
+
+
+sys.modules[__name__].__class__ = _ClassicalModule

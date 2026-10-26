@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -29,6 +29,7 @@ except ImportError as _e:
         "or build from source with `pip install .`; see CONTRIBUTING.md."
     ) from _e
 
+from .classical import Link
 from .kernel._schedule_blocks import check_root_schedule, root_schedule
 from .kernel._unroll import resolve_unroll_threshold
 from .kernel.ir_builder import CompilationError
@@ -59,14 +60,51 @@ DEFAULT_PASSES: tuple[str, ...] = (
 _STAGES = ("pulse", "llvm")
 
 
+class _Links(dict[int, Link]):
+    """The links of a machine model: a read-only, hashable mapping."""
+
+    def __hash__(self) -> int:  # type: ignore[override]
+        return hash(tuple(sorted(self.items(), key=lambda item: item[0])))
+
+    def _readonly(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("MachineModel.links is read-only")
+
+    __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = _readonly  # type: ignore[assignment]
+
+
 @dataclass(frozen=True)
 class MachineModel:
-    """Hardware resource limits for the ``rcp`` and ``alap_rcp`` schedules."""
+    """Hardware resource limits.
+
+    The drive and readout limits, readout latency and switch penalty apply
+    to the ``rcp`` and ``alap_rcp`` schedules. ``links`` describes the links
+    to classical devices by link id (see ``cudaq_pulse.classical.Link``);
+    their slots and latencies apply to every schedule, because they are
+    hardware. A link a program uses that is not listed gets ``Link()``.
+    """
 
     max_concurrent_drives: int = 4
     max_concurrent_readouts: int = 2
     readout_latency_vtu: int = 0
     line_switch_penalty_vtu: int = 0
+    links: Mapping[int, Link] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        links = _Links()
+        for key, value in dict(self.links).items():
+            if isinstance(key, bool) or not isinstance(key, int) or key < 0:
+                raise ValueError(f"MachineModel.links keys are link ids >= 0, got {key!r}")
+            if not isinstance(value, Link):
+                raise TypeError(f"MachineModel.links[{key}] must be a Link, got {value!r}")
+            dict.__setitem__(links, key, value)
+        object.__setattr__(self, "links", links)
+
+    def links_attribute(self, used: Sequence[int]) -> str:
+        """The module attribute ``classical.links`` for the links in *used*."""
+        entries = ", ".join(
+            f'"{link}" = {self.links.get(link, Link()).attribute()}' for link in sorted(set(used))
+        )
+        return f"{{classical.links = {{{entries}}}}}"
 
 
 @dataclass(frozen=True)
@@ -77,6 +115,10 @@ class ScheduledEvent:
     ``start_vtu`` and ``duration_vtu`` are ``None`` until the kernel is
     scheduled (a kernel with float parameters is scheduled when it is called
     with their values).
+
+    A call to a classical function adds a ``"submit"`` event, while the
+    request holds its link, and a zero-length ``"answer"`` event, when the
+    answer is taken. For those, ``line`` is the link id and ``qubit`` is -1.
     """
 
     kind: str
@@ -84,6 +126,46 @@ class ScheduledEvent:
     qubit: int
     start_vtu: int | None
     duration_vtu: int | None
+
+    @property
+    def link(self) -> int | None:
+        """The link of a classical call's event, else ``None``."""
+        return self.line if self.kind in ("submit", "answer") else None
+
+
+@dataclass(frozen=True)
+class ClassicalCall:
+    """One execution of a call to a classical function, from ``classical_report()``.
+
+    Times are in virtual time units (clock cycles). The request is sent from
+    ``submit_vtu`` for ``submit_duration_vtu``; its answer is due at
+    ``due_vtu`` (the budgeted latency after that) and taken at ``taken_vtu``
+    (``None`` if the kernel never takes it). ``first_use_vtu`` is the
+    earliest start of a pulse whose amplitude, tone or branch comes from the
+    answer, and ``deadline_vtu`` the latest due time the function's
+    ``deadline_ns`` allows. ``epoch`` counts the blocking waits before it.
+    """
+
+    function: str
+    link: int
+    iteration: tuple[int, ...]
+    submit_vtu: int
+    submit_duration_vtu: int
+    due_vtu: int
+    taken_vtu: int | None
+    first_use_vtu: int | None
+    deadline_vtu: int | None
+    epoch: int
+
+    @property
+    def slack_vtu(self) -> int | None:
+        """How long the answer could arrive later without delaying a pulse."""
+        return None if self.first_use_vtu is None else self.first_use_vtu - self.due_vtu
+
+    @property
+    def deadline_slack_vtu(self) -> int | None:
+        """How far the due time is inside the deadline (negative: missed)."""
+        return None if self.deadline_vtu is None else self.deadline_vtu - self.due_vtu
 
 
 @dataclass()
@@ -268,6 +350,21 @@ class Lowered:
             events = module.events()
         return [ScheduledEvent(*event) for event in events]
 
+    def classical_report(self) -> list[ClassicalCall]:
+        """Every call to a classical function, with its timing and slack.
+
+        Calls in a loop are listed once per iteration, in program order.
+        """
+        module = self._module if self.scheduled else self._concrete()
+        with self._lock:
+            calls = module.classical_calls()
+        return [
+            ClassicalCall(
+                name, link, tuple(iteration), start, length, due, taken, use, limit, epoch
+            )
+            for name, link, iteration, start, length, due, taken, use, limit, epoch in calls
+        ]
+
     def timeline(self, **kwargs: Any) -> Figure:
         """Plot the schedule, one row per line (needs matplotlib)."""
         from .viz.timeline import plot_schedule
@@ -319,6 +416,7 @@ def build(
         )
     buf: Any = builder.get_buffer()
     freq: Any = builder.get_freq_array()
+    links = [function.link for function in builder.classical]
     metrics.trace_ms = (time.perf_counter() - t0) * 1000
     metrics.op_count = builder.op_count
 
@@ -337,6 +435,8 @@ def build(
         module = PulseModuleBuilder().build_from_packed(
             buf, target.clock_ghz, builder.n_qubits, freq, name=name
         )
+    if links:
+        module.set_attributes(options.machine.links_attribute(links))
     metrics.ffi_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
