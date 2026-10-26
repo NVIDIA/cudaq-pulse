@@ -411,6 +411,14 @@ class Lowered:
             for name, link, iteration, start, length, due, taken, use, limit, epoch in calls
         ]
 
+    def export_emulation(self) -> dict[str, Any]:
+        """The program for a controller emulator: its schedule by epoch, its
+        calls and the manifest of its classical functions (see
+        ``cudaq_pulse.classical.emulation``)."""
+        from .classical.emulation import export
+
+        return export(self)
+
     def timeline(self, **kwargs: Any) -> Figure:
         """Plot the schedule, one row per line (needs matplotlib)."""
         from .viz.timeline import plot_schedule
