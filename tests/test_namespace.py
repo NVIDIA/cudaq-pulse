@@ -115,14 +115,29 @@ def test_ruff_builtins_are_the_kernel_language():
     assert sorted(builtins) == sorted(pulse.ops.__all__)
 
 
+def _stub_imports(stub):
+    return [ln for ln in stub.read_text().splitlines() if ln.startswith("from ")]
+
+
+def test_the_installed_builtins_stub_reexports_exactly_ops_all():
+    from pathlib import Path
+
+    # Beside the package, at the root of site-packages (or of build/*/python).
+    stub = Path(pulse.__file__).parent.parent / "__builtins__.pyi"
+    assert _stub_imports(stub) == [
+        f"from cudaq_pulse.ops import {n} as {n}" for n in pulse.ops.__all__
+    ]
+
+
 def test_builtins_stub_reexports_exactly_ops_all(tmp_path):
     import importlib.util
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    spec = importlib.util.spec_from_file_location(
-        "write_builtins_stub", root / "cmake" / "write_builtins_stub.py"
-    )
+    generator = root / "cmake" / "write_builtins_stub.py"
+    if not generator.exists():
+        pytest.skip("needs the source tree; a wheel's tests check the installed stub")
+    spec = importlib.util.spec_from_file_location("write_builtins_stub", generator)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     out = tmp_path / "__builtins__.pyi"
@@ -133,8 +148,9 @@ def test_builtins_stub_reexports_exactly_ops_all(tmp_path):
             str(out),
         ]
     )
-    lines = [ln for ln in out.read_text().splitlines() if ln.startswith("from ")]
-    assert lines == [f"from cudaq_pulse.ops import {n} as {n}" for n in pulse.ops.__all__]
+    assert _stub_imports(out) == [
+        f"from cudaq_pulse.ops import {n} as {n}" for n in pulse.ops.__all__
+    ]
 
 
 def test_compiler_types_are_in_the_compiler_module():
