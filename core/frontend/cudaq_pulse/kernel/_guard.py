@@ -144,6 +144,11 @@ def build_guard(fn: types.FunctionType, *, impure: bool = False) -> Guard:
                 f"if {var} is not {expected} and ({var}.__class__ is not "
                 f"{expected}.__class__ or {var} != {expected}): return False"
             )
+        elif isinstance(value, types.MethodType):
+            # A bound method is made anew on every attribute read; two are
+            # equal when they bind the same function to the same object.
+            env[expected] = value
+            lines.append(f"if {var} != {expected}: return False")
         else:
             env[expected] = value
             lines.append(f"if {var} is not {expected}: return False")

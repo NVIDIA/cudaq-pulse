@@ -180,6 +180,41 @@ def test_a_changed_global_is_seen_on_the_next_call():
     assert reads_globals.cache_info().compiled == 3
 
 
+class _Pulses:
+    def __init__(self, amplitude):
+        self.amplitude = amplitude
+
+    def scaled(self, factor):
+        return self.amplitude * factor
+
+
+PULSES = _Pulses(0.1)
+
+
+@pulse.kernel
+def calls_a_method(q):
+    d, t = get_drive_line(q)
+    drive(d, square(40, PULSES.scaled(1.0)), t)
+
+
+def test_a_method_of_a_global_is_cached_until_the_global_changes():
+    # A bound method is a new object on every read; the guard compares it
+    # by the function and object it binds.
+    global PULSES
+    q = _device().qudit_handles[0]
+    first = calls_a_method.lower(q)
+    for _ in range(5):
+        assert calls_a_method.lower(q) is first
+    assert calls_a_method.cache_info().compiled == 1
+    previous = PULSES
+    PULSES = _Pulses(0.2)
+    try:
+        assert "2.000000e-01" in calls_a_method.lower(q).mlir()
+    finally:
+        PULSES = previous
+    assert calls_a_method.cache_info().compiled == 2
+
+
 def test_a_changed_closure_cell_is_seen_on_the_next_call():
     amplitude = 0.1
 
