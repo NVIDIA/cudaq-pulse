@@ -36,7 +36,7 @@ add_custom_target(pulse-docs
           ${CUDAQ_PULSE_SPHINX_EXECUTABLE} -W --keep-going -b html
           ${_cudaq_pulse_docs_source}
           ${CUDAQ_PULSE_BINARY_DIR}/docs/html
-  DEPENDS pulse CudaqPulsePulseDocGen CudaqPulseQOpDocGen
+  DEPENDS pulse CudaqPulsePulseDocGen CudaqPulseClassicalDocGen CudaqPulseQOpDocGen
           CudaqPulseCuDensityMatDocGen
   COMMENT "Building cudaq-pulse documentation"
   USES_TERMINAL)

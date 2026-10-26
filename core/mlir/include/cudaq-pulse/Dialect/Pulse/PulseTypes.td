@@ -123,11 +123,13 @@ def AnyLineType : Type<
   "any pulse line type"
 >;
 
-// Values that become available at a time: lines, tones and measurements.
+// Values that become available at a time: lines, tones, measurements, and
+// the links and call handles of the classical dialect.
 def AnyTimedType : Type<
   Or<[DriveLineType.predicate, ReadoutLineType.predicate,
-      ToneType.predicate, MeasurementType.predicate]>,
-  "a pulse line, tone or measurement"
+      ToneType.predicate, MeasurementType.predicate,
+      CPred<"$_self.getDialect().getNamespace() == \"classical\"">]>,
+  "a pulse line, tone, measurement, link or call handle"
 >;
 
 #endif // CUDAQ_PULSE_DIALECT_PULSE_TYPES

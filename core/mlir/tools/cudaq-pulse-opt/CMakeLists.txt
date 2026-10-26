@@ -17,6 +17,7 @@ add_llvm_executable(cudaq-pulse-opt
 
 target_link_libraries(cudaq-pulse-opt PRIVATE
   CudaqPulsePulse
+  CudaqPulseClassical
   CudaqPulsePulseTransforms
   CudaqPulseQOp
   CudaqPulseCuDensityMat

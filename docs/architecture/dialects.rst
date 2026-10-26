@@ -8,9 +8,11 @@
 MLIR Dialects
 =============
 
-cudaq-pulse defines three MLIR dialects that form a layered IR stack. A kernel
+cudaq-pulse defines four MLIR dialects. Three form a layered IR stack. A kernel
 compiles to the ``pulse`` dialect; simulation lowers it through ``qop`` to
-``cudm`` and then to LLVM calls into the cuDensityMat runtime. Every op of
+``cudm`` and then to LLVM calls into the cuDensityMat runtime. The fourth, ``classical``, is a
+classical real-time dialect for co-processing at QPU runtime, used beside
+``pulse``. Every op of
 each dialect is listed in its reference page, generated from the ODS
 definitions in ``core/mlir/include/cudaq-pulse/Dialect/``.
 
@@ -18,6 +20,7 @@ definitions in ``core/mlir/include/cudaq-pulse/Dialect/``.
    :maxdepth: 1
 
    dialects/pulse
+   dialects/classical
    dialects/qop
    dialects/cudm
 
@@ -46,6 +49,22 @@ and scheduling records each timed op's ``start_vtu`` and ``duration_vtu``.
   ``pulse.sub``, ``pulse.mul``, ``pulse.scale`` and ``pulse.neg``.
 - Measurements: ``pulse.is_set`` and ``pulse.outcome``, which feedback
   branches on with ``scf.if``.
+
+Classical
+---------
+
+A classical real-time dialect for co-processing at QPU runtime: the GPU,
+host or FPGA services a pulse program calls while the QPU runs, for decoding,
+calibration and data transfer. ``classical.callable`` declares a function,
+with the types of its arguments and results and its latency. A call is two
+timed events: ``classical.submit`` sends the request on a link, a linear value
+like a line, and ``classical.wait`` is where the answer is needed. Pulses
+whose parameters or branch conditions come from the answer start after it is
+due; others are not delayed.
+
+- Types: ``!classical.link``, ``!classical.future``.
+- Ops: ``classical.callable``, ``classical.get_link``, ``classical.submit``,
+  ``classical.wait``.
 
 QOp
 ---

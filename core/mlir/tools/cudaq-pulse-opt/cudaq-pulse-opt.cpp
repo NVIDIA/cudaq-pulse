@@ -30,6 +30,12 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
 
+#include "cudaq-pulse/Dialect/Classical/ClassicalDialect.h.inc"
+#define GET_TYPEDEF_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalTypes.h.inc"
+#define GET_OP_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
+
 #include "cudaq-pulse/Dialect/QOp/QOpDialect.h.inc"
 #include "cudaq-pulse/Dialect/QOp/QOpEnums.h.inc"
 #define GET_ATTRDEF_CLASSES
@@ -73,6 +79,7 @@ int main(int argc, char **argv) {
   mlir::registerAllPasses();
   mlir::DialectRegistry registry;
   registry.insert<pulse::PulseDialect>();
+  registry.insert<classical::ClassicalDialect>();
   registry.insert<qop::QOpDialect>();
   registry.insert<cudm::CuDensityMatDialect>();
   registry.insert<mlir::func::FuncDialect>();

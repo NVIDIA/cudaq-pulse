@@ -19,8 +19,14 @@
 
 namespace pulse {
 
+/// A `classical` link or call handle: linear and timed, like a line.
+inline bool isClassicalType(mlir::Type type) {
+  return type.getDialect().getNamespace() == "classical";
+}
+
 inline bool isLinearPulseType(mlir::Type type) {
-  return mlir::isa<DriveLineType, ReadoutLineType, ToneType>(type);
+  return mlir::isa<DriveLineType, ReadoutLineType, ToneType>(type) ||
+         isClassicalType(type);
 }
 
 /// The value `value` is the next version of, or null when `value` comes

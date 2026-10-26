@@ -8,7 +8,7 @@
 
 # Script mode (cmake -P): copy the dialect reference pages mlir-tblgen wrote
 # under GENERATED_DIR into OUTPUT_DIR as the Sphinx sources
-# architecture/dialects/{pulse,qop,cudm}.md. The [TOC] marker is a Hugo
+# architecture/dialects/{pulse,classical,qop,cudm}.md. The [TOC] marker is a Hugo
 # feature that Sphinx would print as text; the page's own toctree replaces it.
 
 foreach(_variable GENERATED_DIR OUTPUT_DIR)
@@ -18,7 +18,7 @@ foreach(_variable GENERATED_DIR OUTPUT_DIR)
 endforeach()
 
 file(MAKE_DIRECTORY "${OUTPUT_DIR}")
-foreach(_pair IN ITEMS "Pulse:pulse" "QOp:qop" "CuDensityMat:cudm")
+foreach(_pair IN ITEMS "Pulse:pulse" "Classical:classical" "QOp:qop" "CuDensityMat:cudm")
   string(REPLACE ":" ";" _pair "${_pair}")
   list(GET _pair 0 _dialect)
   list(GET _pair 1 _page)

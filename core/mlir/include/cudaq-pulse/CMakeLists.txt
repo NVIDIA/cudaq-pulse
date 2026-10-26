@@ -7,5 +7,6 @@
 # ============================================================================ #
 
 add_subdirectory(Dialect/Pulse)
+add_subdirectory(Dialect/Classical)
 add_subdirectory(Dialect/QOp)
 add_subdirectory(Dialect/CuDensityMat)

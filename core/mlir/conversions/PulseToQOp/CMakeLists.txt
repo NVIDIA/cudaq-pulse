@@ -15,6 +15,7 @@ add_mlir_conversion_library(CudaqPulsePulseToQOp
 
   LINK_LIBS PUBLIC
   CudaqPulsePulse
+  CudaqPulseClassical
   CudaqPulseQOp
   MLIRArithDialect
   MLIRFuncDialect

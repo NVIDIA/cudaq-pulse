@@ -15,9 +15,11 @@ add_mlir_dialect_library(CudaqPulsePulseTransforms
 
   DEPENDS
   CudaqPulsePulseIncGen
+  CudaqPulseClassicalIncGen
 
   LINK_LIBS PUBLIC
   CudaqPulsePulse
+  CudaqPulseClassical
   MLIRIR
   MLIRPass
   MLIRSupport

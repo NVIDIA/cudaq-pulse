@@ -61,6 +61,12 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
 
+#include "cudaq-pulse/Dialect/Classical/ClassicalDialect.h.inc"
+#define GET_TYPEDEF_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalTypes.h.inc"
+#define GET_OP_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
+
 #include "cudaq-pulse/Analysis/Execution.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
@@ -101,6 +107,7 @@ namespace {
 mlir::DialectRegistry makeRegistry() {
   mlir::DialectRegistry reg;
   reg.insert<pulse::PulseDialect>();
+  reg.insert<classical::ClassicalDialect>();
   reg.insert<qop::QOpDialect>();
   reg.insert<cudm::CuDensityMatDialect>();
   reg.insert<mlir::arith::ArithDialect>();
@@ -848,7 +855,8 @@ private:
 
 bool isTimedPulseType(mlir::Type type) {
   return mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                   pulse::ToneType, pulse::MeasurementType>(type);
+                   pulse::ToneType, pulse::MeasurementType>(type) ||
+         pulse::isClassicalType(type);
 }
 
 /// Whether `value` is defined in `body` or in a region nested in it.
