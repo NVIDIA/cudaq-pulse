@@ -241,3 +241,25 @@ def test_raise_still_names_the_exception():
 
     with pytest.raises(CompilationError, match=r"kernel raised ValueError\('n must be positive'\)"):
         python_ir(k, 0)
+
+
+# ── Unsupported constructs are named, with what to write instead ─────
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ("match (1, 2):\n        case (a, b):\n            pass", "match statements with sequence"),
+        ("match {1: 2}:\n        case {1: v}:\n            pass", "use if/elif with =="),
+        ("global G\n    G = 1", r"assignments to globals are not supported.*keep the value"),
+        ("d.name = 'x'", r"attribute assignments \(obj.x = ...\) are not supported"),
+        ("class C:\n        pass", "class definitions are not supported.*module level"),
+        ("n = 0\n    while n < 2:\n        n += 1", "while loops are not supported"),
+    ],
+)
+def test_unsupported_constructs_say_what_they_are(body, message):
+    namespace: dict = {}
+    exec(f"def k(q):\n    d, t = get_drive_line(q)\n    {body}\n", namespace)
+    with pytest.raises(CompilationError, match=message) as e:
+        python_ir(pulse.kernel(namespace["k"]), Q[0])
+    assert "bytecode" not in str(e.value)

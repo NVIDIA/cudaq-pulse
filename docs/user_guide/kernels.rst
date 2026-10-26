@@ -220,7 +220,8 @@ Besides the control flow above, a kernel body may use:
   tracing like the ``for`` loop it stands for, so
   ``[get_drive_line(q) for q in qubits]`` builds a list of ``(line, tone)``
   pairs and ``[readout(r, wf, t) for _ in range(12)]`` a list of results.
-- starred assignment, such as ``first, *rest = lines``.
+- starred assignment, such as ``first, *rest = lines``, and slice
+  assignment, such as ``xs[1:3] = ys``.
 - ``assert`` and ``raise`` for checks while tracing: a failing
   ``assert n > 0, "msg"`` raises ``CompilationError("assertion failed in
   kernel: msg")``.
@@ -266,8 +267,15 @@ and will raise ``CompilationError``:
 - Generator expressions; pass a list comprehension instead, as in
   ``sum([x for x in xs])``
 - ``try`` / ``except`` and ``with`` blocks
+- ``match`` with sequence, mapping or class patterns (literal and ``|``
+  patterns work)
+- Assignments to globals and to attributes (``obj.x = ...``), class
+  definitions, ``async`` code and star imports
 - ``if`` conditions on anything that is only known at runtime other than a
   measurement result
+
+The error names the construct and, where there is one, what to write
+instead.
 
 Kernels may read globals and variables captured from an enclosing scope; a
 change to one is seen on the next call. Calls to ``cudaq_pulse`` ops are

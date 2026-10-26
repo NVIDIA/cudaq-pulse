@@ -137,7 +137,8 @@ def test_unknown_opcode_raises_when_executed(monkeypatch):
 
     monkeypatch.setattr(bc.dis, "get_instructions", renamed)
     prog = bc._decode(f.__code__)
-    assert (bc.UNSUPPORTED, "unsupported bytecode instruction: FROBNICATE") in prog.instrs
+    (message,) = [arg for op, arg in prog.instrs if op == bc.UNSUPPORTED]
+    assert "(bytecode FROBNICATE" in message and bc.ISSUES_URL in message
     emitter = _emitter.PulseIREmitter(PythonIRBuilder())
     with pytest.raises(CompilationError, match="FROBNICATE"):
         emitter._loop(prog, 0, -1, len(prog.instrs), -1)

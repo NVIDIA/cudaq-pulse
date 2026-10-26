@@ -52,7 +52,11 @@ behavior may change in any 0.x release.
   misspelled op or attribute gets a "did you mean" suggestion, and
   `pulse.drive(...)` says that the kernel language is in `cudaq_pulse.ops`.
   A failing `assert cond, "msg"` reports "assertion failed in kernel: msg".
-  Starred assignment, `first, *rest = xs`, works. List, dict and set comprehensions and set
+  Starred assignment, `first, *rest = xs`, works, and so does slice
+  assignment on every supported Python. A construct the tracer does not
+  support, such as a `match` class pattern or an assignment to a global,
+  is named in the error, with what to write instead, rather than reported
+  as an unsupported bytecode instruction. List, dict and set comprehensions and set
   displays trace on every supported Python; generator expressions, lambdas
   and nested functions are rejected with what to write instead.
 - **Operations.** The kernel language lives in `cudaq_pulse.ops` and is

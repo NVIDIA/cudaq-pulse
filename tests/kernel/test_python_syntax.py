@@ -531,3 +531,28 @@ def test_starred_assignment_errors():
         python_ir(short, Q[0])
     with pytest.raises(CompilationError, match="cannot unpack a pulse drive_line value"):
         python_ir(line, Q[0])
+
+
+def test_slice_assignment():
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        xs = [8, 8, 8, 8]
+        start = 1
+        xs[start:3] = [16]
+        xs[:1] = [24, 32]
+        for n in xs:
+            drive(d, square(n, 0.1), t)
+
+    ops = python_ir(k, Q[0]).ops
+    assert [op.attrs["duration"] for op in ops if op.kind == "pulse.square"] == [24, 32, 16, 8]
+
+
+def test_assigning_into_a_tuple_is_a_compilation_error():
+    @pulse.kernel
+    def k(q):
+        xs = (1, 2)
+        xs[0] = 3
+
+    with pytest.raises(CompilationError, match=r"assignment failed: tuple\[0\]"):
+        python_ir(k, Q[0])

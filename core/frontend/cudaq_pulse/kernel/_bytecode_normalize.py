@@ -270,11 +270,60 @@ _NESTED_MESSAGES = {
 }
 _NESTED_MESSAGE = _not_supported("nested functions") + _MODULE_LEVEL
 _TRY_MESSAGE = _not_supported("try and with statements")
+_GENERATORS = _not_supported("generators")
+_ASYNC = _not_supported("await, async for and async with")
+_MATCH = (
+    _not_supported("match statements with sequence, mapping or class patterns")
+    + "; match literals and | alternatives, or use if/elif with ==, len() and isinstance()"
+)
+_GLOBAL = (
+    _not_supported("assignments to globals")
+    + "; keep the value in a local, or compute it before calling the kernel"
+)
+# What each opcode the tracer does not run stands for, with what to write instead.
 _UNSUPPORTED: dict[str, str] = {
     "BEFORE_WITH": _TRY_MESSAGE,
     "LOAD_SPECIAL": _TRY_MESSAGE,
-    "RETURN_GENERATOR": _not_supported("generators"),
-    "YIELD_VALUE": _not_supported("generators"),
+    "WITH_EXCEPT_START": _TRY_MESSAGE,
+    "PUSH_EXC_INFO": _TRY_MESSAGE,
+    "POP_EXCEPT": _TRY_MESSAGE,
+    "RERAISE": _TRY_MESSAGE,
+    "CHECK_EXC_MATCH": _TRY_MESSAGE,
+    "CHECK_EG_MATCH": _TRY_MESSAGE,
+    "RETURN_GENERATOR": _GENERATORS,
+    "YIELD_VALUE": _GENERATORS,
+    "GET_YIELD_FROM_ITER": _GENERATORS,
+    "SEND": _GENERATORS,
+    "END_SEND": _GENERATORS,
+    "CLEANUP_THROW": _GENERATORS,
+    "GET_AWAITABLE": _ASYNC,
+    "GET_AITER": _ASYNC,
+    "GET_ANEXT": _ASYNC,
+    "END_ASYNC_FOR": _ASYNC,
+    "BEFORE_ASYNC_WITH": _ASYNC,
+    "MATCH_SEQUENCE": _MATCH,
+    "MATCH_MAPPING": _MATCH,
+    "MATCH_KEYS": _MATCH,
+    "MATCH_CLASS": _MATCH,
+    "GET_LEN": _MATCH,
+    "STORE_GLOBAL": _GLOBAL,
+    "DELETE_GLOBAL": _GLOBAL,
+    "STORE_NAME": _GLOBAL,
+    "DELETE_NAME": _GLOBAL,
+    "DELETE_DEREF": _not_supported("del of a closure variable") + "; rebind it to None instead",
+    "STORE_ATTR": _not_supported("attribute assignments (obj.x = ...)")
+    + "; build a new object, or keep the value in a local",
+    "DELETE_ATTR": _not_supported("del of attributes"),
+    "LOAD_BUILD_CLASS": _not_supported("class definitions") + "; define the class at module level",
+    "LOAD_SUPER_ATTR": _not_supported("super() calls"),
+    "BUILD_TEMPLATE": _not_supported("template strings") + "; use an f-string",
+    "BUILD_INTERPOLATION": _not_supported("template strings") + "; use an f-string",
+}
+_INTRINSICS: dict[str, str] = {
+    "INTRINSIC_IMPORT_STAR": _not_supported("star imports (from m import *)")
+    + "; import the names the kernel uses at module level",
+    "INTRINSIC_STOPITERATION_ERROR": _GENERATORS,
+    "INTRINSIC_ASYNC_GEN_WRAP": _GENERATORS,
 }
 
 _WHILE_MESSAGE = (
@@ -473,6 +522,9 @@ def _decode(code: CodeType) -> DecodedCode:
         elif name == "BINARY_SLICE":
             out.append([BUILD_SLICE, 2])
             out.append([SUBSCR, None])
+        elif name == "STORE_SLICE":
+            out.append([BUILD_SLICE, 2])
+            out.append([STORE_SUBSCR, None])
         elif name in _UNARY_NAMES:
             out.append([UNARY, _UNARY_NAMES[name]])
         elif name == "CALL_INTRINSIC_1" and ins.argrepr == "INTRINSIC_UNARY_POSITIVE":
@@ -530,8 +582,17 @@ def _decode(code: CodeType) -> DecodedCode:
             out.append([UNSUPPORTED, message])
         elif name in _UNSUPPORTED:
             out.append([UNSUPPORTED, _UNSUPPORTED[name]])
+        elif name == "CALL_INTRINSIC_1" and ins.argrepr in _INTRINSICS:
+            out.append([UNSUPPORTED, _INTRINSICS[ins.argrepr]])
         else:
-            out.append([UNSUPPORTED, f"unsupported bytecode instruction: {name}"])
+            what = f"{name} {ins.argrepr}" if ins.argrepr else name
+            out.append(
+                [
+                    UNSUPPORTED,
+                    f"this Python construct (bytecode {what}) is not supported in "
+                    f"@cudaq_pulse.kernel; please report it at {ISSUES_URL}",
+                ]
+            )
 
     positions.extend([pos] * (len(out) - len(positions)))
 

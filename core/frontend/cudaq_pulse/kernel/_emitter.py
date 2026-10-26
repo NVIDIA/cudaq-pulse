@@ -967,7 +967,14 @@ class PulseIREmitter:
                     obj = pop()
                     value = pop()
                     self._note_mutation(obj)
-                    obj[index] = value
+                    try:
+                        obj[index] = value
+                    except (TypeError, IndexError, KeyError, ValueError) as e:
+                        raise CompilationError(
+                            f"assignment failed: {type(obj).__name__}[{index!r}] = ...: {e}"
+                        ) from e
+                    if index.__class__ is slice and obj.__class__ is list:
+                        self._track_slots(obj, 0)
 
                 elif op is bc.BUILD_CONST_KEY_MAP:
                     keys = pop()
