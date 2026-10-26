@@ -235,6 +235,11 @@ and will raise ``CompilationError``:
 Kernels may read globals and variables captured from an enclosing scope; a
 change to one is seen on the next call. Calls to ``cudaq_pulse`` ops are
 emitted as IR. Other kernels, and helper functions that take IR values, call
-``cudaq_pulse`` ops or call a kernel, are inlined, inside loops too. Any other
+``cudaq_pulse`` ops or call a kernel, are inlined, inside loops too. So are
+methods of helper objects and ``functools.partial`` objects of such
+functions, and helpers wrapped by a decorator: the wrapper is inlined, and it
+calls the original. Helpers bind their arguments as Python does, including
+default, keyword-only, ``*args`` and ``**kwargs`` parameters. Any other
 Python call, such as ``math.sin`` or ``len``, is evaluated at trace time on
-concrete values.
+concrete values; if one of them calls a ``cudaq_pulse`` op, say through
+``map``, the error names the op and the call.

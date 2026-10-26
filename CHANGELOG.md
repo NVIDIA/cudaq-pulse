@@ -34,7 +34,9 @@ behavior may change in any 0.x release.
   `@pulse.kernel(unroll_threshold=)` or `CUDAQ_PULSE_UNROLL_THRESHOLD`.
 - **Python in kernels.** Calls with `*args` and `**kwargs` are unpacked
   while tracing, so `sync(*lines)` synchronizes a list of lines built in a
-  loop.
+  loop. Helpers called from a kernel may take keyword-only, `*args` and
+  `**kwargs` parameters; methods of helper objects, `functools.partial`
+  objects and decorated helpers that use pulse ops are inlined too.
 - **Operations.** The kernel language lives in `cudaq_pulse.ops` and is
   used by bare name inside kernels. Drive and readout channels per qudit; `drive`, `readout`,
   `wait` and `sync`; phase and frequency control (`shift_phase` follows the

@@ -118,3 +118,145 @@ def test_double_star_needs_a_mapping_and_distinct_keys():
         python_ir(not_a_mapping, Q[0])
     with pytest.raises(CompilationError, match="multiple values for keyword argument 'duration'"):
         python_ir(repeated, Q[0])
+
+
+# ── Helper signatures, decorated helpers and methods ─────────────────
+
+
+def _pulse_star(*lines, width=16):
+    sync(*lines)
+
+
+def _pulse_kwonly(d, t, *, n=20):
+    drive(d, square(n, 0.1), t)
+
+
+def _pulse_kwargs(d, t, **opts):
+    drive(d, square(opts["n"], opts.get("amp", 0.1)), t)
+
+
+def test_helpers_take_star_args_keyword_only_and_double_star_parameters():
+    @pulse.kernel
+    def k(q0, q1):
+        d0, t0 = get_drive_line(q0)
+        d1, t1 = get_drive_line(q1)
+        _pulse_kwonly(d0, t0, n=14)
+        _pulse_kwonly(d1, t1)
+        _pulse_star(d0, d1, width=8)
+        _pulse_kwargs(d0, t0, n=12, amp=0.3)
+        # The lines the helpers advanced are the caller's current lines.
+        wait(d0, 4)
+        wait(d1, 4)
+
+    ops = python_ir(k, Q[0], Q[1]).ops
+    squares = [
+        (op.attrs["duration"], op.attrs["amplitude"]) for op in ops if op.kind == "pulse.square"
+    ]
+    assert squares == [(14, 0.1), (20, 0.1), (12, 0.3)]
+    (sync_op,) = [op for op in ops if op.kind == "pulse.sync"]
+    waits = [op for op in ops if op.kind == "pulse.wait"]
+    assert waits[1].operands[0] is sync_op.results[1]
+    _compiles(k, Q[0], Q[1])
+
+
+def test_helper_binding_errors_name_the_helper():
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        _pulse_kwonly(d, t, 14)
+
+    with pytest.raises(CompilationError, match="_pulse_kwonly: too many positional arguments"):
+        python_ir(k, Q[0])
+
+
+def _passthrough(f):
+    import functools
+
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        return f(*args, **kwargs)
+
+    return wrapper
+
+
+@_passthrough
+def _decorated_x(d, t, n):
+    drive(d, square(n, 0.1), t)
+
+
+@_passthrough
+def _decorated_wave(n):
+    return square(n, 0.2)
+
+
+def test_decorated_helpers_from_the_friction_log_are_inlined():
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        _decorated_x(d, t, 14)
+        drive(d, _decorated_wave(10), t)
+
+    ops = python_ir(k, Q[0]).ops
+    assert [op.attrs["duration"] for op in ops if op.kind == "pulse.square"] == [14, 10]
+    _compiles(k, Q[0])
+
+
+class _Pulses:
+    amplitude = 0.25
+
+    def make(self, duration):
+        return square(duration, self.amplitude)
+
+    def play(self, d, t):
+        drive(d, self.make(8), t)
+
+    def scaled(self, x):
+        return self.amplitude * x
+
+
+PULSES = _Pulses()
+
+
+def test_methods_that_use_pulse_ops_are_inlined():
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        drive(d, PULSES.make(40), t)
+        PULSES.play(d, t)
+        drive(d, square(4, PULSES.scaled(2.0)), t)
+
+    ops = python_ir(k, Q[0]).ops
+    squares = [
+        (op.attrs["duration"], op.attrs["amplitude"]) for op in ops if op.kind == "pulse.square"
+    ]
+    assert squares == [(40, 0.25), (8, 0.25), (4, 0.5)]
+    _compiles(k, Q[0])
+
+
+def _make(duration, amplitude):
+    return square(duration, amplitude)
+
+
+def test_partials_of_pulse_helpers_are_inlined():
+    import functools
+
+    wave = functools.partial(_make, amplitude=0.1)
+
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        drive(d, wave(8), t)
+
+    (sq,) = [op for op in python_ir(k, Q[0]).ops if op.kind == "pulse.square"]
+    assert (sq.attrs["duration"], sq.attrs["amplitude"]) == (8, 0.1)
+
+
+def test_a_pulse_op_in_code_run_as_python_is_a_compilation_error():
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        waves = list(map(_make, [8], [0.1]))
+        drive(d, waves[0], t)
+
+    with pytest.raises(CompilationError, match=r"list\(\) calls the pulse op square\(\) but ran"):
+        python_ir(k, Q[0])

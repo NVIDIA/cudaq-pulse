@@ -28,6 +28,7 @@ vector, ...) run as Python runs them, one traced iteration per element.
 from __future__ import annotations
 
 import builtins as _builtins_mod
+import functools
 import inspect
 import types
 from collections.abc import Iterator
@@ -81,6 +82,7 @@ _OP_NAMES = {name: f"pulse.{name}" for name in OP_TABLE}
 MAX_UNROLLED_ITERATIONS = 1_000_000
 # Kernel and helper calls are inlined; this bounds a runaway recursion.
 MAX_INLINE_DEPTH = 64
+_VARIADIC = inspect.CO_VARARGS | inspect.CO_VARKEYWORDS
 # Methods of these containers change them unless listed in _READ_METHODS.
 _CONTAINERS = frozenset({list, dict, set})
 _READ_METHODS = frozenset({"copy", "count", "index", "get", "keys", "values", "items"})
@@ -1301,6 +1303,26 @@ class PulseIREmitter:
         ):
             self._inline_helper(callable_val, call_args, kwargs)
             return
+        # A method of a helper object is inlined the same way, with its object.
+        if (
+            callable_val.__class__ is types.MethodType
+            and callable_val.__func__.__class__ is types.FunctionType
+            and (
+                any(isinstance(arg, IRValue) for arg in call_args)
+                or (kwargs and any(isinstance(v, IRValue) for v in kwargs.values()))
+                or _uses_pulse_ops(callable_val.__func__)
+            )
+        ):
+            self._inline_helper(callable_val.__func__, [callable_val.__self__, *call_args], kwargs)
+            return
+        if (
+            callable_val.__class__ is functools.partial
+            and callable_val.func.__class__ is types.FunctionType
+            and _uses_pulse_ops(callable_val.func)
+        ):
+            merged = {**callable_val.keywords, **(kwargs or {})}
+            self._inline_helper(callable_val.func, [*callable_val.args, *call_args], merged or None)
+            return
 
         # Regular Python callable (int, float, len, abs, math.sin, etc.)
         # int()/float() on a symbolic value create an explicit IR cast.
@@ -1336,6 +1358,14 @@ class PulseIREmitter:
                 result = callable_val(*call_args, **(kwargs or {}))
             except _EVALUATION_ERRORS as e:
                 raise CompilationError(f"failed to evaluate {fname}({call_args!r}): {e}") from e
+            except NameError as e:
+                if e.name not in _PULSE_OP_NAMES:
+                    raise
+                raise CompilationError(
+                    f"{fname}() calls the pulse op {e.name}() but ran as plain Python: "
+                    "only functions, methods and kernels are inlined into a kernel; "
+                    f"call {e.name}() from a module-level function instead"
+                ) from e
             self.stack.append(result)
             if (callable_val.__class__ is type and callable_val in _CONTAINERS) or (
                 owner.__class__ in _CONTAINERS and fname == "copy"
@@ -1365,23 +1395,23 @@ class PulseIREmitter:
     ) -> None:
         """Emit a pulse-aware Python helper into the current IR builder."""
         code = fn.__code__
-        if code.co_flags & (inspect.CO_VARARGS | inspect.CO_VARKEYWORDS):
-            raise CompilationError(
-                f"{fn.__name__}: kernels and helpers called from a kernel do not "
-                "support *args or **kwargs parameters"
-            )
         if self._depth >= MAX_INLINE_DEPTH:
             raise CompilationError(
                 f"{fn.__name__}: kernel calls nest more than {MAX_INLINE_DEPTH} deep; "
                 "a recursive kernel must stop at a condition known at compile time"
             )
-        params = list(code.co_varnames[: code.co_argcount])
-        if kwargs or fn.__defaults__:
-            call_args = _bind_positional(fn, call_args, kwargs or {})
-        if len(call_args) != len(params):
-            raise CompilationError(
-                f"{fn.__name__}: expected {len(params)} args, got {len(call_args)}"
-            )
+        general = code.co_kwonlyargcount or code.co_flags & _VARIADIC
+        if general:
+            # *args, **kwargs and keyword-only parameters bind as Python binds them.
+            bound = _bind_arguments(fn, call_args, kwargs or {})
+        else:
+            params = list(code.co_varnames[: code.co_argcount])
+            if kwargs or fn.__defaults__:
+                call_args = _bind_positional(fn, call_args, kwargs or {})
+            if len(call_args) != len(params):
+                raise CompilationError(
+                    f"{fn.__name__}: expected {len(params)} args, got {len(call_args)}"
+                )
 
         helper = PulseIREmitter(
             self.b,
@@ -1389,20 +1419,36 @@ class PulseIREmitter:
             fn_closures=_extract_closures(fn) if fn.__closure__ else {},
             caller=self,
         )
-        helper.locals.update(zip(params, call_args))
+        if general:
+            helper.locals.update(bound)
+        else:
+            helper.locals.update(zip(params, call_args))
         result = helper.run(code)
         if self._lines.shared:
             self._refresh_lines()
 
         # Propagate rebindings of directly passed linear values back to the
         # caller, then leave the helper's return value on the caller stack.
-        for name, original in zip(params, call_args):
-            updated = helper.locals.get(name)
-            if not isinstance(original, IRValue) or updated is original:
-                continue
-            for caller_name, caller_value in self.locals.items():
-                if caller_value is original:
-                    self.locals[caller_name] = updated
+        if general:
+            # Lines and tones may arrive packed in *args or **kwargs; their
+            # channels know their current values.
+            for original in (*call_args, *(kwargs or {}).values()):
+                if original.__class__ is not IRValue:
+                    continue
+                updated = _Lines.current(original)
+                if updated is None or updated is original:
+                    continue
+                for caller_name, caller_value in self.locals.items():
+                    if caller_value is original:
+                        self.locals[caller_name] = updated
+        else:
+            for name, original in zip(params, call_args):
+                updated = helper.locals.get(name)
+                if not isinstance(original, IRValue) or updated is original:
+                    continue
+                for caller_name, caller_value in self.locals.items():
+                    if caller_value is original:
+                        self.locals[caller_name] = updated
 
         self.stack.append(result)
 
@@ -1720,12 +1766,11 @@ def _container_unchanged(obj: list[Any] | dict[Any, Any], copy: Any) -> bool:
 _SIGNATURES: dict[int, tuple[Any, inspect.Signature]] = {}
 
 
-def _bind_positional(fn: Any, args: list[StackVal], kwargs: dict[str, StackVal]) -> list[StackVal]:
-    """Bind a keyword call to *fn*'s parameters as a positional list."""
+def _bound(fn: Any, args: list[StackVal], kwargs: dict[str, StackVal]) -> inspect.BoundArguments:
     hit = _SIGNATURES.get(id(fn))
     if hit is None or hit[0] is not fn:
         try:
-            hit = (fn, inspect.signature(fn))
+            hit = (fn, inspect.signature(fn, follow_wrapped=False))
         except (TypeError, ValueError) as e:
             raise CompilationError(f"cannot bind keyword arguments for {fn!r}") from e
         _SIGNATURES[id(fn)] = hit
@@ -1734,9 +1779,23 @@ def _bind_positional(fn: Any, args: list[StackVal], kwargs: dict[str, StackVal])
     except TypeError as e:
         raise CompilationError(f"{getattr(fn, '__name__', fn)}: {e}") from e
     bound.apply_defaults()
+    return bound
+
+
+def _bind_positional(fn: Any, args: list[StackVal], kwargs: dict[str, StackVal]) -> list[StackVal]:
+    """Bind a keyword call to *fn*'s parameters as a positional list."""
+    bound = _bound(fn, args, kwargs)
     if bound.kwargs:
         raise CompilationError(f"{getattr(fn, '__name__', fn)}: keyword-only parameters")
     return list(bound.args)
+
+
+def _bind_arguments(
+    fn: types.FunctionType, args: list[StackVal], kwargs: dict[str, StackVal]
+) -> dict[str, StackVal]:
+    """Bind a call to *fn* as Python does: each parameter name to its value,
+    ``*args`` to a tuple and ``**kwargs`` to a dict."""
+    return dict(_bound(fn, args, kwargs).arguments)
 
 
 __all__ = ["PulseIREmitter", "PythonIRBuilder"]

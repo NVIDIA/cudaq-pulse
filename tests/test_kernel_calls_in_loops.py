@@ -1055,7 +1055,7 @@ def test_bounded_recursion_unrolls():
     assert _loop_bodies(ops)[0].count("pulse.drive") == 3
 
 
-def test_variadic_callee_is_an_error():
+def test_variadic_kernel_is_an_error_and_variadic_helper_is_inlined():
     with pytest.raises(TypeError, match=r"cannot take \*args"):
 
         @pulse.kernel
@@ -1063,16 +1063,22 @@ def test_variadic_callee_is_an_error():
             pass
 
     def spread(d, t, *amps):
-        drive(d, square(16, AMP), t)
+        for amp in amps:
+            drive(d, square(16, amp), t)
 
     @pulse.kernel
     def looped(q):
         d, t = get_drive_line(q)
         for _ in range(2):
-            spread(d, t, 0.1, 0.2)
+            spread(d, t, AMP, AMP)
 
-    with pytest.raises(CompilationError, match=r"do not support \*args"):
-        _trace(looped)
+    @pulse.kernel
+    def unrolled(q):
+        d, t = get_drive_line(q)
+        for _ in (0, 1, 2, 3):
+            drive(d, square(16, AMP), t)
+
+    check(looped, unrolled, loops=1)
 
 
 def test_keyword_and_default_arguments_bind():
