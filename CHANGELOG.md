@@ -21,6 +21,12 @@ request that makes it.
   arguments. The names are builtins in the whole environment, outside
   kernels too; see the new Editor Support page. The getting-started advice
   to add a `pyrightconfig.json` is gone.
+- `python -m cudaq_pulse.doctor --setup-editor` configures mypy and ruff,
+  which take no names from an installed package: it shows the change to the
+  project's mypy and ruff configuration and writes it when confirmed or
+  with `--yes`. The mypy change enables `cudaq_pulse.mypy_plugin`, which
+  types the operations in files that import cudaq_pulse; the ruff change
+  lists them as `builtins`.
 - `cudaq_pulse.ops.__all__` lists the kernel language.
 - `ScheduledEvent.start` and `ScheduledEvent.end`: an event's scheduled
   times in clock cycles as `int`, raising `ValueError` on an event that is

@@ -48,6 +48,39 @@ Two consequences of how the names are provided:
   installed one; add ``from cudaq_pulse.ops import *`` to it to keep the
   operations.
 
+mypy and ruff
+-------------
+
+mypy and ruff take no names from an installed package, so they report the
+bare names as undefined until they are told about them, once per project.
+In the directory that holds your configuration, run:
+
+.. :spellcheck-disable:
+
+.. code-block:: bash
+
+   python -m cudaq_pulse.doctor --setup-editor
+
+.. :spellcheck-enable:
+
+It finds the configuration each tool reads (``mypy.ini``, ``.mypy.ini``,
+``[tool.mypy]`` in ``pyproject.toml`` or ``[mypy]`` in ``setup.cfg`` for
+mypy; ``.ruff.toml``, ``ruff.toml`` or ``[tool.ruff]`` in ``pyproject.toml``
+for ruff), shows the change as a diff, and writes it only when you confirm,
+or with ``--yes``. A tool without a configuration is left alone, and a
+second run reports that both are set up. ``--project DIR`` names another
+directory. The change is:
+
+- **mypy:** ``plugins = ["cudaq_pulse.mypy_plugin"]``. For each file that
+  imports ``cudaq_pulse``, the plugin makes the operations the file does not
+  define itself known to mypy, with their types: misspelled names and wrong
+  arguments are still errors, and files that do not import cudaq-pulse are
+  unchanged.
+- **ruff:** ``builtins = [...]`` with the 23 operations, which ruff then
+  treats as defined everywhere in the project.
+
+Nothing is configured when cudaq-pulse is imported or installed.
+
 Other tools
 -----------
 
