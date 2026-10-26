@@ -483,3 +483,51 @@ def test_try_is_still_rejected_next_to_a_comprehension():
 
     with pytest.raises(CompilationError, match="try and with statements"):
         python_ir(k, Q[0])
+
+
+# ── Starred assignment ───────────────────────────────────────────────
+
+
+def test_starred_assignment_from_the_friction_log():
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        first, *rest = AMPS
+        a, *middle, z = (8, 16, 24, 32)
+        *init, last = [8]
+        drive(d, square(a + len(middle) + last, first + sum(rest)), t)
+        assert middle == [16, 24] and init == [] and z == 32
+
+    (sq,) = [op for op in python_ir(k, Q[0]).ops if op.kind == "pulse.square"]
+    assert sq.attrs["duration"] == 18
+    assert round(sq.attrs["amplitude"], 9) == 0.6
+
+
+def test_starred_assignment_of_lines_keeps_them_current():
+    @pulse.kernel
+    def k(qubits):
+        first, *others = [get_drive_line(q) for q in qubits]
+        d, t = first
+        drive(d, square(8, 0.1), t)
+        for line, tone in others:
+            drive(line, square(8, 0.1), tone)
+            drive(line, square(8, 0.1), tone)
+        drive(d, square(8, 0.1), t)
+
+    _compiles(k, Q[0:3])
+
+
+def test_starred_assignment_errors():
+    @pulse.kernel
+    def short(q):
+        _a, _b, *_rest = (1,)
+
+    @pulse.kernel
+    def line(q):
+        d, t = get_drive_line(q)
+        _a, *_rest = d
+
+    with pytest.raises(CompilationError, match="expected at least 2, got 1"):
+        python_ir(short, Q[0])
+    with pytest.raises(CompilationError, match="cannot unpack a pulse drive_line value"):
+        python_ir(line, Q[0])

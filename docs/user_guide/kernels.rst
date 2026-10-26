@@ -220,6 +220,7 @@ Besides the control flow above, a kernel body may use:
   tracing like the ``for`` loop it stands for, so
   ``[get_drive_line(q) for q in qubits]`` builds a list of ``(line, tone)``
   pairs and ``[readout(r, wf, t) for _ in range(12)]`` a list of results.
+- starred assignment, such as ``first, *rest = lines``.
 - ``assert`` and ``raise`` for checks while tracing: a failing
   ``assert n > 0, "msg"`` raises ``CompilationError("assertion failed in
   kernel: msg")``.

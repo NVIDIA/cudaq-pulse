@@ -100,7 +100,8 @@ from typing import Any
     SET_ADD,
     SET_UPDATE,
     MAP_ADD,
-) = range(54)
+    UNPACK_EX,
+) = range(55)
 
 OP_NAMES: tuple[str, ...] = tuple(
     (
@@ -112,7 +113,7 @@ OP_NAMES: tuple[str, ...] = tuple(
         "JUMP_IF_NOT_NONE GET_ITER "
         "FOR_ITER RETURN IMPORT_NAME IMPORT_FROM CONVERT FORMAT RAISE UNSUPPORTED "
         "REGION_END CALL_EX DICT_MERGE DELETE_SUBSCR LOAD_FAST_AND_CLEAR "
-        "STORE_FAST_MAYBE BUILD_SET SET_ADD SET_UPDATE MAP_ADD"
+        "STORE_FAST_MAYBE BUILD_SET SET_ADD SET_UPDATE MAP_ADD UNPACK_EX"
     ).split()
 )
 
@@ -517,6 +518,8 @@ def _decode(code: CodeType) -> DecodedCode:
             if iarg & 0x3:
                 out.append([CONVERT, iarg & 0x3])
             out.append([FORMAT, bool(iarg & 0x4)])
+        elif name == "UNPACK_EX":
+            out.append([UNPACK_EX, (iarg & 0xFF, iarg >> 8)])
         elif name == "CONVERT_VALUE":
             out.append([CONVERT, iarg])
         elif name in ("FORMAT_SIMPLE", "FORMAT_WITH_SPEC"):

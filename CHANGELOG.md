@@ -51,7 +51,8 @@ behavior may change in any 0.x release.
   of the kernel line, and of each helper line, that raised them; a
   misspelled op or attribute gets a "did you mean" suggestion, and
   `pulse.drive(...)` says that the kernel language is in `cudaq_pulse.ops`.
-  A failing `assert cond, "msg"` reports "assertion failed in kernel: msg". List, dict and set comprehensions and set
+  A failing `assert cond, "msg"` reports "assertion failed in kernel: msg".
+  Starred assignment, `first, *rest = xs`, works. List, dict and set comprehensions and set
   displays trace on every supported Python; generator expressions, lambdas
   and nested functions are rejected with what to write instead.
 - **Operations.** The kernel language lives in `cudaq_pulse.ops` and is

@@ -1061,6 +1061,25 @@ class PulseIREmitter:
                     key = pop()
                     stack[-arg][key] = val
 
+                elif op is bc.UNPACK_EX:
+                    before, after = arg
+                    val = pop()
+                    if val.__class__ is IRValue:
+                        raise CompilationError(f"cannot unpack a pulse {val.vtype} value")
+                    try:
+                        items = list(val)
+                    except TypeError:
+                        raise CompilationError(f"cannot unpack {type(val).__name__}") from None
+                    if len(items) < before + after:
+                        raise CompilationError(
+                            f"not enough values to unpack: expected at least {before + after}, "
+                            f"got {len(items)}"
+                        )
+                    rest = items[before : len(items) - after]
+                    self._track_slots(rest, 0)
+                    self._note_fresh(rest)
+                    stack.extend(reversed([*items[:before], rest, *items[len(items) - after :]]))
+
                 elif op is bc.UNSUPPORTED:
                     raise CompilationError(arg)
 
