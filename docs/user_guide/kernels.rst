@@ -267,6 +267,8 @@ runtime parameters, so a sweep over a delay compiles once:
 
 .. code-block:: python
 
+   import numpy as np
+
    @pulse.kernel
    def echo(qubit, tau: float):
        d, t = get_drive_line(qubit)
@@ -279,9 +281,10 @@ runtime parameters, so a sweep over a delay compiles once:
        sync(d, r)
        readout(r, square(1000, 0.05), rt)
 
-   sweep = pulse.compile(echo)
+   q = dev.qudit_handles[0]
+   compiled_echo = pulse.compile(echo)
    for tau in np.linspace(0, 20_000, 1000):
-       sweep.lower(q, tau)          # one compilation for the whole sweep
+       compiled_echo.lower(q, tau)  # one compilation for the whole sweep
 
 .. :spellcheck-enable:
 
