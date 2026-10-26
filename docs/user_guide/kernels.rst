@@ -241,6 +241,13 @@ Besides the control flow above, a kernel body may use:
   and set displays. A comprehension runs while tracing, one iteration per
   element, like a loop over a Python value.
 
+A ``float`` argument stays a runtime parameter, compiled once for every
+value, through ``+``, ``-``, ``*``, ``/`` and negation. Any other use that
+needs its value while tracing, such as ``abs``, ``min``, ``math.sin``, a
+comparison, or a duration or wait length, makes it static, so each new
+value compiles the kernel again. The first such use warns once with a
+``RuntimeWarning`` that names the argument and the operation.
+
 Operations check their arguments when they are traced. Passing a tone
 where a line belongs, a number where a waveform belongs, or a readout line
 to ``drive`` raises a ``CompilationError`` that names the operation and

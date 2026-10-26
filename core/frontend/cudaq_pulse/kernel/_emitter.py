@@ -509,6 +509,7 @@ def _range_error(args: list[Any]) -> CompilationError:
             + "; a float parameter stays symbolic, so annotate it as int to "
             "specialize the kernel on its value",
             tuple(names),
+            "a range() bound",
         )
     kinds = ", ".join(type(a).__name__ for a in args)
     return CompilationError(f"range() bounds must be integers known at compile time; got ({kinds})")
@@ -524,7 +525,9 @@ def _iterate(value: Any) -> Any:
     if is_symbolic(value):
         names = _parameter_names(value)
         raise SymbolicValueError(
-            f"cannot iterate over kernel parameter {', '.join(map(repr, names))}", tuple(names)
+            f"cannot iterate over kernel parameter {', '.join(map(repr, names))}",
+            tuple(names),
+            "a for loop over it",
         )
     try:
         return iter(value)
@@ -1629,6 +1632,7 @@ class PulseIREmitter:
                     "expressions. Only int(), float(), arithmetic, and pulse "
                     "numeric arguments are supported.",
                     tuple(dict.fromkeys(names)),
+                    f"{fname}()",
                 )
             if not _is_pure_host_call(callable_val):
                 try:

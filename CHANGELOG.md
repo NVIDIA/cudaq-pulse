@@ -56,7 +56,10 @@ behavior may change in any 0.x release.
   assignment on every supported Python. A construct the tracer does not
   support, such as a `match` class pattern or an assignment to a global,
   is named in the error, with what to write instead, rather than reported
-  as an unsupported bytecode instruction. List, dict and set comprehensions and set
+  as an unsupported bytecode instruction. A `float` argument that tracing
+  makes static, because `abs`, `min`, `math.*`, a comparison or a duration
+  needs its value, warns once with a `RuntimeWarning` naming the argument
+  and the operation, since each new value then compiles the kernel again. List, dict and set comprehensions and set
   displays trace on every supported Python; generator expressions, lambdas
   and nested functions are rejected with what to write instead.
 - **Operations.** The kernel language lives in `cudaq_pulse.ops` and is

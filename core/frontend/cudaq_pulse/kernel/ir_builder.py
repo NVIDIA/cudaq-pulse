@@ -27,13 +27,15 @@ class CompilationError(Exception):
 class SymbolicValueError(CompilationError):
     """Python code needed the value of a runtime ``float`` argument.
 
-    ``names`` lists the arguments involved. A kernel call specializes on
-    the value of such an argument instead of keeping it symbolic.
+    ``names`` lists the arguments involved, and ``operation`` what needed
+    the value. A kernel call specializes on the value of such an argument
+    instead of keeping it symbolic.
     """
 
-    def __init__(self, message: str, names: tuple[str, ...]):
+    def __init__(self, message: str, names: tuple[str, ...], operation: str = ""):
         super().__init__(message)
         self.names = names
+        self.operation = operation
 
 
 def parameter_names(value: Any) -> tuple[str, ...]:
@@ -74,6 +76,7 @@ class UndecidableComparison:
             f"cannot decide {self.lhs!r} {self.op} {self.rhs!r} at trace time: a float "
             "argument has no value while the kernel compiles",
             parameter_names(self),
+            f"the comparison {self.op}",
         )
 
     def __repr__(self) -> str:
@@ -171,6 +174,7 @@ class _SymbolicNumber(_UndecidableComparisons):
             f"Cannot evaluate symbolic parameter expression with {operation}. "
             "Use it in a supported pulse numeric argument.",
             parameter_names(self),
+            operation,
         )
 
     def __bool__(self) -> bool:
