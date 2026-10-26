@@ -115,20 +115,10 @@ GPU simulation via NVIDIA cuDensityMat is a preview capability; see
 IDE Setup
 ---------
 
-For the best experience, add a ``pyrightconfig.json`` to your project root:
-
-.. :spellcheck-disable:
-
-.. code-block:: json
-
-   {
-       "reportUndefinedVariable": "warning"
-   }
-
-.. :spellcheck-enable:
-
-This downgrades bare-name diagnostics inside ``@pulse.kernel`` functions
-from errors to warnings. See :doc:`user_guide/kernels` for details.
+None is needed. Pylance, Cursor, pyright and basedpyright know the
+operations used by bare name inside ``@pulse.kernel`` functions, with
+completion, hover documentation and checked arguments, as soon as
+cudaq-pulse is installed. See :doc:`user_guide/editors`.
 
 Running the Tests
 -----------------

@@ -12,7 +12,8 @@ Usage: python tools/check-wheel-contents.py DIST_FILE [DIST_FILE ...]
 
 For a wheel: the cp312-abi3 tag with a manylinux_2_28 (x86_64, aarch64) or
 macosx_11_0_arm64 platform; the package, py.typed, the native extension and
-its stub; LICENSE, NOTICE and every file of LICENSES/ under
+its stub, and __builtins__.pyi at the root re-exporting exactly
+cudaq_pulse.ops.__all__; LICENSE, NOTICE and every file of LICENSES/ under
 .dist-info/licenses and named in METADATA; on Linux both CUDA runtime
 libraries; and no bundled CUDA or cuQuantum libraries, byte code, tests or
 hand-written top-level stub. For an sdist: LICENSE, NOTICE and LICENSES/.
@@ -21,6 +22,7 @@ Exits 1 listing every problem.
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 import tarfile
@@ -40,6 +42,18 @@ _BUNDLED_CUDA = re.compile(
 )
 
 
+def _check_builtins_stub(stub: str, ops_source: str) -> list[str]:
+    """``__builtins__.pyi`` must re-export exactly ``cudaq_pulse.ops.__all__``."""
+    exported = re.findall(r"^from cudaq_pulse\.ops import (\w+) as \1$", stub, re.MULTILINE)
+    match = re.search(r"^__all__ = (\[.*?\])", ops_source, re.MULTILINE | re.DOTALL)
+    if match is None:
+        return ["cudaq_pulse/ops/__init__.py has no __all__"]
+    expected = ast.literal_eval(match.group(1))
+    if exported != expected:
+        return [f"__builtins__.pyi re-exports {exported}, expected cudaq_pulse.ops.__all__"]
+    return []
+
+
 def check_wheel(path: Path) -> list[str]:
     problems = []
     parts = path.name[: -len(".whl")].split("-")
@@ -56,8 +70,14 @@ def check_wheel(path: Path) -> list[str]:
         names = set(wheel.namelist())
         dist_info = f"{name}-{version}.dist-info"
         metadata = Parser().parsestr(wheel.read(f"{dist_info}/METADATA").decode())
+        if "__builtins__.pyi" in names and "cudaq_pulse/ops/__init__.py" in names:
+            problems += _check_builtins_stub(
+                wheel.read("__builtins__.pyi").decode(),
+                wheel.read("cudaq_pulse/ops/__init__.py").decode(),
+            )
 
     required = [
+        "__builtins__.pyi",
         "cudaq_pulse/__init__.py",
         "cudaq_pulse/py.typed",
         "cudaq_pulse/_native/_cudaq_pulse_native.abi3.so",

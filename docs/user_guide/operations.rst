@@ -139,6 +139,8 @@ Waveforms can be combined algebraically inside kernels:
 
 .. code-block:: python
 
+   import cudaq_pulse as pulse
+
    @pulse.kernel
    def combined_waveform(qubit):
        drive_line, tone = get_drive_line(qubit)

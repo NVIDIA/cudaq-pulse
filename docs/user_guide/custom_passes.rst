@@ -26,7 +26,7 @@ duration), so a pass that inspects the schedule is a plain Python function:
    import cudaq_pulse as pulse
 
    def total_drive_time(lowered: pulse.Lowered) -> int:
-       return sum(e.duration_vtu for e in lowered.schedule if e.kind == "drive")
+       return sum(e.end - e.start for e in lowered.schedule if e.kind == "drive")
 
 .. :spellcheck-enable:
 

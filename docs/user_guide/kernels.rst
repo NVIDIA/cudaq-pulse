@@ -27,7 +27,8 @@ A single import gives you everything:
 .. :spellcheck-enable:
 
 Inside ``@pulse.kernel`` functions, DSL operations (``drive``,
-``gaussian``, ``get_drive_line``, etc.) are used as bare names.
+``gaussian``, ``get_drive_line``, etc.) are used as bare names, which
+editors complete and check with no configuration (see :doc:`editors`).
 Infrastructure stays behind the ``pulse.`` prefix:
 
 .. :spellcheck-disable:

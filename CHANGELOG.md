@@ -13,6 +13,15 @@ request that makes it.
 
 ### Added
 
+- **Editor support with no configuration.** The wheel installs
+  `__builtins__.pyi` at the root of site-packages, generated at build time
+  from `cudaq_pulse.ops.__all__`, so Pylance, Cursor, pyright and
+  basedpyright know the operations used by bare name inside kernels: no
+  undefined-name warnings, with completion, hover documentation and checked
+  arguments. The names are builtins in the whole environment, outside
+  kernels too; see the new Editor Support page. The getting-started advice
+  to add a `pyrightconfig.json` is gone.
+- `cudaq_pulse.ops.__all__` lists the kernel language.
 - `ScheduledEvent.start` and `ScheduledEvent.end`: an event's scheduled
   times in clock cycles as `int`, raising `ValueError` on an event that is
   not scheduled yet.
@@ -22,6 +31,8 @@ request that makes it.
 - `Kernel` and `CompiledKernel` are generic in the decorated function's
   parameters, so type checkers check `k(...)`, `k.lower(...)` and
   `pulse.compile(k)(...)` against the kernel's signature.
+- `square()` is typed to take the complex and `[re, im]` amplitudes it
+  accepts, and `custom()` the envelope name it accepts besides a callable.
 
 ## [0.1.0] - Unreleased
 

@@ -190,7 +190,7 @@ extend-exclude = ["build", ".cache"]
 # bound at module scope.
 builtins = [
   "cosine", "custom", "custom_samples", "drag", "drive", "gaussian",
-  "gaussian_square", "get_drive_line", "get_readout_line", "qudit_ref",
+  "gaussian_square", "get_drive_line", "get_readout_line",
   "readout", "set_frequency", "set_phase", "shift_frequency", "shift_phase",
   "square", "sync", "tanh_ramp", "wait", "wf_add", "wf_mul", "wf_neg",
   "wf_scale", "wf_sub",
