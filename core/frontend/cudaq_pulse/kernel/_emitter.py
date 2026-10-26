@@ -1442,11 +1442,17 @@ class PulseIREmitter:
             # the body binds it before reading it, unless it binds it to a
             # channel's value read from a container: then it enters with
             # the channel's value.
-            before_of = {id(cell): before for cell, before in entering}
-            inits = tuple(
-                saved_locals[n] if n in saved_locals else self._entering(delta[n], before_of)
-                for n in names
-            ) + tuple(originals[id(obj)][i] for obj, i, _ in slot_changes)
+            before_of: dict[int, IRValue] | None = None
+            entering_vals = []
+            for n in names:
+                if n in saved_locals:
+                    entering_vals.append(saved_locals[n])
+                    continue
+                if before_of is None:
+                    before_of = {id(cell): before for cell, before in entering}
+                entering_vals.append(self._entering(delta[n], before_of))
+            entering_vals.extend(originals[id(obj)][i] for obj, i, _ in slot_changes)
+            inits = tuple(entering_vals)
             labels = names + [self._slot_label(obj, i) for obj, i, _ in slot_changes]
             self.b.emit("scf.yield", vals, ())
             # The body was traced with the values carried into the loop; its
