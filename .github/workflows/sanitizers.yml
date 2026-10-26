@@ -85,11 +85,13 @@ jobs:
         run: uv run --no-sync cmake --build build/san --target check-pulse-mlir
 
       # The interpreter is not instrumented, so the sanitizer runtimes are
-      # preloaded for the extension module.
+      # preloaded for the extension module. Output is captured at the Python
+      # level only, so a sanitizer or LLVM report that aborts the process
+      # reaches the log.
       - name: Python suite
         if: matrix.sanitizers != 'thread'
         run: |
           uv run --no-sync cmake --build build/san --target pulse
           LD_PRELOAD="$(gcc -print-file-name=libasan.so):$(gcc -print-file-name=libubsan.so)" \
           PYTHONPATH=build/san/python \
-            .venv/bin/python -m pytest tests -q -m "not gpu" -p no:cacheprovider
+            .venv/bin/python -m pytest tests -q -m "not gpu" -p no:cacheprovider --capture=sys
