@@ -366,9 +366,16 @@ struct PulseVerifyPass
           rejectDuration(op, w.getRisefall());
         } else if (auto w = mlir::dyn_cast<pulse::CustomOp>(op))
           rejectDuration(op, w.getDuration());
-        else if (auto d = mlir::dyn_cast<pulse::DurationFromIntOp>(op))
-          rejectDuration(op, d.getCycles());
-        else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op))
+        else if (auto d = mlir::dyn_cast<pulse::DurationFromIntOp>(op)) {
+          // A wait marked variable may take its length from an answer.
+          bool variable = !d->use_empty() &&
+                          llvm::all_of(d->getUsers(), [](mlir::Operation *u) {
+                            return mlir::isa<pulse::WaitOp>(u) &&
+                                   u->hasAttr("classical.variable");
+                          });
+          if (!variable)
+            rejectDuration(op, d.getCycles());
+        } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op))
           for (mlir::Value bound :
                {loop.getLowerBound(), loop.getUpperBound(), loop.getStep()})
             if (dependsOnAnswer(bound)) {
@@ -379,6 +386,22 @@ struct PulseVerifyPass
             }
       });
     }
+    // V2 for variable waits: a region whose length is known only at run time
+    // cannot sit in a schedule block or in one arm of a branch.
+    module.walk([&](pulse::WaitOp op) {
+      if (!op->hasAttr("classical.variable"))
+        return;
+      if (op->getParentOfType<pulse::ScheduleBlockOp>()) {
+        op.emitError("a variable wait cannot be inside a pulse.schedule_block, "
+                     "whose length is fixed; call the kernel without schedule= "
+                     "or move the wait out of it");
+        hadError = true;
+      } else if (op->getParentOfType<mlir::scf::IfOp>()) {
+        op.emitError("a variable wait cannot be inside one arm of an scf.if; "
+                     "let the answer be 0 where no wait is wanted");
+        hadError = true;
+      }
+    });
     // V2: a blocking wait stops the whole program until the answer arrives,
     // so it cannot sit in a schedule block, which has a fixed length, or in
     // one arm of a branch.

@@ -134,6 +134,29 @@ class ScheduledEvent:
 
 
 @dataclass(frozen=True)
+class Epoch:
+    """One epoch of a compiled kernel, from ``Lowered.epochs()``.
+
+    A variable wait (its length computed from a classical answer) or a
+    blocking classical wait is a barrier: every line syncs before it, and
+    everything after it shifts with its run-time length. Epoch 0 starts the
+    program; epoch k starts when the k-th barrier ends. ``start_vtu`` is the
+    epoch's start in the static schedule, which places every barrier at its
+    lowest length. At run time the epoch starts ``shift_vtu`` later, with
+    ``min_shift_vtu <= shift_vtu <= max_shift_vtu`` (``None``: unbounded).
+    ``opened_by`` is ``"start"``, ``"wait"`` (a variable wait on line
+    ``line``) or ``"answer"`` (a blocking wait on link ``line``).
+    """
+
+    index: int
+    opened_by: str
+    line: int
+    start_vtu: int
+    min_shift_vtu: int
+    max_shift_vtu: int | None
+
+
+@dataclass(frozen=True)
 class ClassicalCall:
     """One execution of a call to a classical function, from ``classical_report()``.
 
@@ -349,6 +372,25 @@ class Lowered:
         with self._lock:
             events = module.events()
         return [ScheduledEvent(*event) for event in events]
+
+    def epochs(self) -> list[Epoch]:
+        """The epochs of the program, separated by variable and blocking waits.
+
+        A program without such waits has one epoch.
+        """
+        module = self._module if self.scheduled else self._concrete()
+        with self._lock:
+            boundaries = module.epoch_boundaries()
+        epochs = [Epoch(0, "start", -1, 0, 0, 0)]
+        unbounded = False
+        extra = 0
+        for k, (kind, line, start, lowest, highest) in enumerate(boundaries, start=1):
+            if highest < 0:
+                unbounded = True
+            else:
+                extra += highest - lowest
+            epochs.append(Epoch(k, kind, line, start + lowest, 0, None if unbounded else extra))
+        return epochs
 
     def classical_report(self) -> list[ClassicalCall]:
         """Every call to a classical function, with its timing and slack.

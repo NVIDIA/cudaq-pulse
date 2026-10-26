@@ -165,6 +165,9 @@ static int64_t durationOf(mlir::Operation *op) {
     return classical::intAttr(op, "classical.submit_vtu", 1);
   if (mlir::isa<classical::WaitOp>(op))
     return 0;
+  // A variable wait is scheduled at its lowest length.
+  if (op->hasAttr("classical.variable"))
+    return classical::intAttr(op, "classical.min_vtu");
   return getWaitDuration(mlir::cast<pulse::WaitOp>(op));
 }
 
@@ -286,7 +289,8 @@ public:
     if (classical) {
       // Eager submissions and unused answers keep their forward times.
       for (auto &[op, list] : samples)
-        if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op))
+        if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op) ||
+            op->hasAttr("classical.variable"))
           for (const Sample &sample : list)
             forwardStarts[{op, sample.iteration}] = sample.start;
       forwardExtrapolations = extrapolations;
@@ -506,8 +510,12 @@ private:
       int64_t start = std::max(ready(op->getOperand(0)), floor);
       if (mlir::Value tone = toneOperand(op))
         start = std::max(start, ready(tone));
-      if (classical)
+      if (classical) {
         start = std::max(start, operandsReady(op));
+        // A variable wait is a barrier: every line is done before it.
+        if (op->hasAttr("classical.variable"))
+          start = std::max(start, makespan);
+      }
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op)) {
         auto &lanes = mlir::isa<pulse::DriveOp>(op) ? driveLanes : readoutLanes;
         auto lane = std::min_element(lanes.begin(), lanes.end());
@@ -515,6 +523,8 @@ private:
         *lane = start + durationOf(op) + resources.switchPenalty;
       }
       place(op, start);
+      if (classical && op->hasAttr("classical.variable"))
+        floor = std::max(floor, start + durationOf(op));
       return mlir::success();
     }
     if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op)) {
@@ -773,6 +783,15 @@ private:
         backwardWait(wait);
         return mlir::success();
       }
+    }
+    if (classical && op->hasAttr("classical.variable")) {
+      // A variable wait keeps its forward time; nothing before it ends later.
+      int64_t start = forwardStartOf(op);
+      record(op, start);
+      armStart = std::min(armStart, start);
+      bound(op->getOperand(0), start);
+      ceiling = std::min(ceiling, start);
+      return mlir::success();
     }
     if (isTimedOp(op)) {
       int64_t duration = durationOf(op);

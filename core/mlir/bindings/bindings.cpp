@@ -162,6 +162,7 @@ constexpr int kOpClassicalDeclare = 36;
 constexpr int kOpClassicalSubmit = 37;
 constexpr int kOpClassicalWait = 38;
 constexpr int kOpClassicalCompare = 39;
+constexpr int kOpVariableWait = 40;
 // A payload length of 0xFF means the length is in the next word.
 constexpr int kExtendedPayload = 0xFF;
 
@@ -465,8 +466,9 @@ public:
               classical::intAttr(&op, "classical.device"),
               std::vector<int64_t>(iteration.begin(), iteration.end()), *start,
               duration, due, taken, firstUse, deadline, epoch);
-        } else if (mlir::isa<classical::WaitOp>(op)) {
-          if (op.hasAttr("classical.blocking"))
+        } else if (mlir::isa<classical::WaitOp, pulse::WaitOp>(op)) {
+          if (op.hasAttr("classical.blocking") ||
+              op.hasAttr("classical.variable"))
             ++epoch;
         } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
           int64_t trips = pulse::constantTripCount(loop).value_or(0);
@@ -485,6 +487,64 @@ public:
     };
     collect(*module_->getBody());
     return calls;
+  }
+
+  /// The boundaries between epochs, in program order, once per loop
+  /// iteration: (kind, line or link, start, lowest, highest). A "wait" is a
+  /// variable wait on a line, whose length lies in [lowest, highest] cycles
+  /// (highest -1 if unbounded); an "answer" is a blocking wait on a link,
+  /// whose length is the answer's latency (lowest 0, highest -1). Each
+  /// boundary starts the next epoch when it ends.
+  using EpochBoundary =
+      std::tuple<std::string, int64_t, int64_t, int64_t, int64_t>;
+
+  std::vector<EpochBoundary> epoch_boundaries() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    std::vector<EpochBoundary> boundaries;
+    if (!classical::declaresClassicalCalls(*module_))
+      return boundaries;
+    llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
+    module_->walk([&](mlir::Operation *op) {
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+        lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
+    });
+    llvm::SmallVector<int64_t, 2> iteration;
+    std::function<void(mlir::Block &)> collect = [&](mlir::Block &block) {
+      for (mlir::Operation &op : block) {
+        if (op.hasAttr("classical.variable") ||
+            op.hasAttr("classical.blocking")) {
+          auto start = pulse::scheduledStart(&op, iteration);
+          if (!start)
+            continue;
+          if (mlir::isa<pulse::WaitOp>(op)) {
+            mlir::Operation *allocation =
+                pulse::traceAllocation(op.getOperand(0));
+            boundaries.emplace_back(
+                "wait", allocation ? lineIndex.lookup(allocation) : -1, *start,
+                classical::intAttr(&op, "classical.min_vtu"),
+                classical::intAttr(&op, "classical.max_vtu", -1));
+          } else {
+            boundaries.emplace_back("answer",
+                                    classical::intAttr(&op, "classical.device"),
+                                    *start, 0, -1);
+          }
+        } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+          int64_t trips = pulse::constantTripCount(loop).value_or(0);
+          iteration.push_back(0);
+          for (int64_t k = 0; k < trips; ++k) {
+            iteration.back() = k;
+            collect(*loop.getBody());
+          }
+          iteration.pop_back();
+        } else {
+          for (mlir::Region &region : op.getRegions())
+            for (mlir::Block &nested : region)
+              collect(nested);
+        }
+      }
+    };
+    collect(*module_->getBody());
+    return boundaries;
   }
 
   using Measurement =
@@ -1960,6 +2020,23 @@ public:
           bind(p[5 + i], wait.getValues()[i]);
         break;
       }
+      case kOpVariableWait: {
+        // [line, result line, cycles id, lowest, highest (-1: none)]
+        requirePayload(5);
+        auto cycles = look(p[2]);
+        auto dur =
+            pulse::DurationFromIntOp::create(*builder_, loc, durTy, cycles);
+        mlir::Value line = look(p[0]);
+        auto waitOp = pulse::WaitOp::create(*builder_, loc, line.getType(),
+                                            line, dur.getResult());
+        waitOp->setAttr("classical.variable", builder_->getUnitAttr());
+        waitOp->setAttr("classical.min_vtu", builder_->getI64IntegerAttr(p[3]));
+        if (p[4] >= 0)
+          waitOp->setAttr("classical.max_vtu",
+                          builder_->getI64IntegerAttr(p[4]));
+        bind(p[1], waitOp.getResult());
+        break;
+      }
       case kOpClassicalCompare: {
         // [result id, predicate (eq ne lt le gt ge), type (0 i64, 1 f64),
         //  lhs, rhs]
@@ -2240,6 +2317,8 @@ NB_MODULE(_cudaq_pulse_native, m) {
       .def("events", &PulseModule::events,
            nb::call_guard<nb::gil_scoped_release>(),
            "(kind, line, qubit, start_vtu, duration_vtu) of each timed op")
+      .def("epoch_boundaries", &PulseModule::epoch_boundaries,
+           "The variable and blocking waits that start new epochs")
       .def("classical_calls", &PulseModule::classical_calls,
            "Every execution of a classical call, with its timing")
       .def("next_measurement", &PulseModule::next_measurement,

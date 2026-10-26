@@ -407,13 +407,15 @@ def test_a_duration_cannot_come_from_an_answer():
         n = choose.submit([readout(r, square(10, 0.1), rt)]).result()
         drive(d, square(n, 0.1), t)
 
-    def wait_duration(q):
+    def gaussian_duration(q):
         d, t = get_drive_line(q)
         x = double.submit(0.5).result()
-        wait(d, x * 10)
+        drive(d, gaussian(x * 10, 0.1, 4.0), t)
 
+    # A wait may take its length from an answer (a variable wait); a
+    # waveform's length is structural.
     _compile_error(square_duration, "a duration cannot depend on the answer")
-    _compile_error(wait_duration, "a duration cannot depend on the answer")
+    _compile_error(gaussian_duration, "a duration cannot depend on the answer")
 
 
 def test_argument_errors():

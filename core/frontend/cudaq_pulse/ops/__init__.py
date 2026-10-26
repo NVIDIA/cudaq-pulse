@@ -108,12 +108,18 @@ def readout(line: Line, waveform: Waveform, tone: Tone) -> MeasurementResult:
     _require_context("readout")
 
 
-def wait(target: Line, duration: Numeric) -> None:
+def wait(target: Line, duration: Numeric, bounds: tuple[int, int | None] | None = None) -> None:
     """Insert an idle delay on a line.
 
     Args:
         target: Drive or readout line.
-        duration: Wait duration in clock cycles.
+        duration: Wait duration in clock cycles. When it is computed from the
+            answer of a classical call, the wait is a variable region: every
+            line syncs before it, and everything after it shifts with its
+            length, which is known only when the program runs.
+        bounds: For a variable wait, ``(lowest, highest)`` in clock cycles
+            (``highest`` may be ``None``). The length is rounded to the
+            nearest cycle and clamped to them; scheduling assumes ``lowest``.
     """
     _require_context("wait")
 

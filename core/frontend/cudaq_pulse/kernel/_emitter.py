@@ -1423,6 +1423,7 @@ class PulseIREmitter:
             raise CompilationError(f"unknown pulse op: {fname}")
 
         n_val, attr_names, rtypes = entry
+        attrs_extra: dict[str, Any] | None = None
         acquires = fname in _ACQUIRES
         line_op = False
         if acquires:
@@ -1444,11 +1445,19 @@ class PulseIREmitter:
         else:
             operands = tuple(call_args[:n_val])
             attr_vals = call_args[n_val:]
+            if fname == "wait" and len(attr_vals) == 2:
+                # The optional bounds of a variable wait.
+                bounds = attr_vals[1]
+                attr_vals = attr_vals[:1]
+                if bounds is not None:
+                    attrs_extra = {"bounds": bounds}
             if len(attr_vals) != len(attr_names):
                 raise CompilationError(
                     f"{fname}: expected {n_val + len(attr_names)} args, got {len(call_args)}"
                 )
             attrs = dict(zip(attr_names, attr_vals))
+            if attrs_extra:
+                attrs.update(attrs_extra)
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
 
         op_name = _OP_NAMES[fname]

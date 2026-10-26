@@ -76,6 +76,7 @@ _CLASSICAL_DECLARE = 36
 _CLASSICAL_SUBMIT = 37
 _CLASSICAL_WAIT = 38
 _CLASSICAL_COMPARE = 39
+_VARIABLE_WAIT = 40
 _LATENCY_MODE = {"bounded": 0, "timeout": 1, "blocking": 2}
 _COMPARE = {"==": 0, "!=": 1, "<": 2, "<=": 3, ">": 4, ">=": 5}
 
@@ -410,6 +411,14 @@ class PackedIRBuilder:
             lv = operands[0].vid
             rlv = results[0].vid
             dur_raw = a.get("duration", 0)
+            bounds = a.get("bounds")
+            if self.classical and contains_answer(dur_raw):
+                self._variable_wait(lv, rlv, dur_raw, bounds)
+                return results
+            if bounds is not None:
+                raise CompilationError(
+                    "bounds= applies to a wait whose length comes from a classical answer"
+                )
             if is_symbolic(dur_raw):
                 pvid = self._get_numeric_vid(dur_raw, "i64")
                 self._ensure(4)
@@ -715,6 +724,36 @@ class PackedIRBuilder:
         self.classical.append(function)
         self._classical_index[id(function)] = index
         return index
+
+    def _variable_wait(self, line: int, result: int, duration: Any, bounds: Any) -> None:
+        """A wait whose length is computed from answers: a variable region."""
+        lowest, highest = 0, -1
+        if bounds is not None:
+            if not (isinstance(bounds, (tuple, list)) and len(bounds) == 2):
+                raise CompilationError("bounds= takes (lowest, highest) in clock cycles")
+            lo, hi = bounds
+            lowest = _as_i64(lo, "the lowest length of a variable wait")
+            highest = -1 if hi is None else _as_i64(hi, "the highest length of a variable wait")
+            if lowest < 0 or (highest >= 0 and highest < lowest):
+                raise CompilationError(
+                    f"bounds= must satisfy 0 <= lowest <= highest, got ({lo!r}, {hi!r})"
+                )
+        # Round to the nearest cycle: the length is non-negative once clamped.
+        rounded = ParameterExpression(
+            "cast", ParameterExpression("add", duration, 0.5), dtype="i64"
+        )
+        self._answer_integers = True
+        try:
+            cycles = self._get_numeric_vid(rounded, "i64")
+        finally:
+            self._answer_integers = False
+        self._ensure(6)
+        self._w(_header(_VARIABLE_WAIT, 5))
+        self._w(line)
+        self._w(result)
+        self._w(cycles)
+        self._w(lowest)
+        self._w(highest)
 
     def classical_submit(self, index: int, operands: list[int]) -> int:
         """Record a submission; returns the future's id."""
