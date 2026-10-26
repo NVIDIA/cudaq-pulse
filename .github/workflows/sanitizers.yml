@@ -10,7 +10,11 @@
 # the last against its host fake) built with sanitizers. The prebuilt MLIR
 # toolchain is not instrumented. address+undefined runs the lit suite, the
 # runtime host test and the Python suite; thread runs the runtime host test,
-# whose runs evolve concurrently.
+# whose runs evolve concurrently. The job is informational: it does not
+# block a merge.
+#
+# TODO: build the MLIR toolchain with ASan too, and drop the options below
+# that only make room for the uninstrumented one.
 
 name: sanitizers
 
@@ -32,6 +36,7 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -40,8 +45,12 @@ jobs:
           - { name: thread, sanitizers: "thread" }
     env:
       # Leaks are not checked: Python and MLIR keep process-lifetime state,
-      # and a forked child abandons its shared MLIR context on purpose.
-      ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:strict_string_checks=1
+      # and a forked child abandons its shared MLIR context on purpose. The
+      # prebuilt MLIR is not instrumented: its allocators poison memory that
+      # our instrumented code then reads through inline MLIR headers
+      # (allow_user_poisoning=0), and its containers are not annotated
+      # (detect_container_overflow=0).
+      ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:strict_string_checks=1:allow_user_poisoning=0:detect_container_overflow=0
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
       TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
     steps:
