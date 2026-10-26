@@ -70,7 +70,7 @@ Emulation
 ---------
 
 .. automodule:: cudaq_pulse.classical.emulation
-   :members: export, manifest, emulate, Transport, InProcess, UdpChannel, serve_udp, EmulationResult, CallTrace
+   :members: export, manifest, emulate, Transport, InProcess, UdpChannel, serve_udp, EmulationResult, CallTrace, RealtimeChannel, device_call_text
 
 Calibration
 -----------

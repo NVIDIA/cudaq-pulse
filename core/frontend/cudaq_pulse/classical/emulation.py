@@ -41,6 +41,8 @@ from . import ClassicalFunction, Link, wire
 
 __all__ = [
     "CallTrace",
+    "RealtimeChannel",
+    "device_call_text",
     "EmulationResult",
     "InProcess",
     "Transport",
@@ -227,6 +229,31 @@ def serve_udp(
         sock.close()
 
     return thread, sock.getsockname(), stop
+
+
+class RealtimeChannel:
+    """A channel through the CUDA-Q Realtime host library, which dispatches
+    requests to registered GPU or host services. Not available yet: use
+    ``InProcess`` (with ``wire.native`` handlers for compiled code) or
+    ``UdpChannel``. The requests and answers are already in its wire
+    format, so a channel built on it drops in here."""
+
+    def __init__(self, library: str, *args: Any, **kwargs: Any) -> None:
+        raise NotImplementedError(
+            "a channel through the CUDA-Q Realtime host library is not available yet; "
+            "emulate with InProcess (wire.native handlers run compiled code) or UdpChannel"
+        )
+
+
+def device_call_text(lowered: Any) -> str:
+    """CUDA-Q kernel text that makes a compiled program's calls as
+    ``cc.device_call`` operations. Not available yet: export the program
+    with ``export`` (or ``Lowered.export_emulation()``), whose manifest holds
+    each function's wire id, payload types and link."""
+    raise NotImplementedError(
+        "exporting calls as CUDA-Q cc.device_call operations is not available yet; "
+        "use Lowered.export_emulation(), whose manifest lists every call"
+    )
 
 
 class UdpChannel:

@@ -392,3 +392,10 @@ amplitude updates from an answer; and, for variable waits, a wait whose
 length comes from a register, after which the rest of the epoch is released
 together. The emulation artifact gives every event its epoch and its time
 from the epoch's start for that purpose.
+
+Not available yet: a channel through the CUDA-Q Realtime host library
+(``emulation.RealtimeChannel``), exporting calls as CUDA-Q
+``cc.device_call`` operations (``emulation.device_call_text``), and lowering
+links to a controller dialect. The wire format, the manifest and the
+handler signature are those of CUDA-Q Realtime, so these slot in without
+changing programs.

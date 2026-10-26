@@ -116,3 +116,11 @@ def test_throughput_is_reported():
     low = pulse.compile(feedback).lower(Q[0])
     result = emulation.emulate(low, shots=50, seed=1)
     assert result.calls_per_second > 0
+
+
+def test_the_realtime_channel_and_device_call_export_are_seams():
+    with pytest.raises(NotImplementedError, match="InProcess"):
+        emulation.RealtimeChannel("libcudaq-realtime.so")
+    low = pulse.compile(feedback).lower(Q[0])
+    with pytest.raises(NotImplementedError, match="export_emulation"):
+        emulation.device_call_text(low)
