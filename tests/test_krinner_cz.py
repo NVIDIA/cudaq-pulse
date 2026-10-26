@@ -13,8 +13,8 @@ at that frequency plus the amplitude offset, for t_p each in two plateaus
 around a t_mid transition section in which the data qubit sits at the flux
 Phi_idle + B (Phi_A - Phi_idle) and the auxiliary at idle; Gaussian edges
 of sigma = 0.5 ns. Evolved with the charge-coupled pair of the transmon
-model and the coupling recorded with the knobs, it reproduces the
-calibrated conditional phase.
+model and the device's charge coupling, the one the knobs were fitted
+with, it reproduces the calibrated conditional phase.
 """
 
 import math
@@ -56,7 +56,14 @@ def test_every_pair_has_its_knobs_with_provenance(cal):
             assert entry["cooldown"] in cal.cooldowns, (pair, name)
         assert abs(record["predicted_phi_c"]["value"] - 180.0) <= 1.0, pair
         assert isinstance(record["flags"], list)
-        assert record["coupling_used"]["g_c_mhz"] > 0
+
+
+def test_every_cz_record_was_fitted_with_the_device_coupling(cal):
+    # Each pair's fit solved for the same g_c, to the root finder's 1e-7.
+    for pair, record in _knobs(cal).items():
+        assert record["coupling_used"]["g_c_mhz"] * 1e6 == pytest.approx(
+            cal.charge_coupling_hz(pair), rel=1e-7
+        ), pair
 
 
 def test_durations_reproduce_the_published_mean(cal):
@@ -106,7 +113,8 @@ def _conditional_phase(cal, pair, dt_ns=0.01):
     auxiliary, data = pair.split("-")
     record = _knobs(cal)[pair]
     aux, dat = _Table(cal.circuit(auxiliary)), _Table(cal.circuit(data))
-    g_c = record["coupling_used"]["g_c_mhz"] * 1e-3
+    g_c = cal.charge_coupling_hz(pair) * 1e-9
+    assert g_c == pytest.approx(record["coupling_used"]["g_c_mhz"] * 1e-3, rel=1e-7)
     w_int = cal.value("cz", "edges", pair, "interaction_frequency") * 1e-9
     t_p = record["duration_plateau"]["value"] * 1e9
     t_mid = record["duration_transition"]["value"] * 1e9

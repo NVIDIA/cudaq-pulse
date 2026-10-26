@@ -76,30 +76,39 @@ def test_every_qubit_has_a_circuit_that_reproduces_its_idle_frequency(cal):
         )
 
 
-@pytest.mark.parametrize("pair", ["X2-D4", "Z1-D1", "Z2-D7"])
-def test_each_charge_coupling_reproduces_its_anchor(cal, pair):
-    """g_c gives the published |11> <-> |20> coupling at the interaction
-    point (Z2 cannot reach Z2-D7's, so D7 is swept at Z2's sweet spot)."""
-    entry = cal.entry("coupling", "charge_coupling_g_c", "per_pair", pair)
-    auxiliary, data = pair.split("-")
+def test_the_device_coupling_reproduces_the_measured_x2_d4_coupling(cal):
+    """One charge coupling for the device, fitted so that X2-D4's
+    |11> <-> |20> coupling is Hellings et al.'s 7.4 MHz at 4.4 GHz."""
+    g_c = cal.value("coupling", "charge_coupling_g_c", "calibration_A")
+    assert {cal.charge_coupling_hz(p) for p in cal.pairs} == {g_c}
+    measured = cal.entry("coupling", "overrides", "X2-D4", "g_11_20")
     recomputed = anchored_charge_coupling_hz(
-        cal.circuit(data),
-        cal.circuit(auxiliary),
-        entry["g_11_20_hz"],
-        entry["at_interaction_frequency_hz"],
+        cal.circuit("D4"),
+        cal.circuit("X2"),
+        measured["value"],
+        measured["at_interaction_frequency_hz"],
     )
-    assert entry["value"] == pytest.approx(recomputed, rel=1e-9)
-    j2 = cal.pair(pair).j2_hz(entry["at_interaction_frequency_hz"])
-    assert j2 == pytest.approx(entry["g_11_20_hz"], rel=1e-9)
-    # The idle exchange stored with the pair, which devices use without numpy.
-    assert entry["idle_exchange_hz"] == pytest.approx(cal.exchange_hz(pair), rel=1e-9)
+    assert g_c == pytest.approx(recomputed, rel=1e-4)
+    # At each pair's own interaction point (Z2 cannot reach Z2-D7's, so D7
+    # is swept at Z2's sweet spot) J_2 is 7.3-9.6 MHz.
+    j2 = [
+        cal.pair(p).j2_hz(cal.value("cz", "edges", p, "interaction_frequency"))
+        for p in ("X2-D4", "Z1-D1", "Z2-D7")
+    ]
+    assert all(7.2e6 < j < 9.7e6 for j in j2)
+
+
+def test_the_stored_idle_exchange_is_the_derived_one(cal):
+    for pair in cal.pairs:
+        stored = cal.value("coupling", "charge_coupling_g_c", "idle_exchange", pair)
+        assert stored == pytest.approx(cal.exchange_hz(pair), rel=1e-9), pair
 
 
 def test_idle_exchange_and_zz_are_frequency_dependent(cal):
     exchange = [cal.exchange_hz(p) for p in cal.pairs]
     zz = [cal.idle_zz_hz(p) for p in cal.pairs]
-    assert 4.3e6 < min(exchange) and max(exchange) < 5.8e6
-    assert -6e3 < min(zz) and max(zz) < -3e3
+    assert 5.6e6 < min(exchange) and max(exchange) < 6.1e6
+    assert -7.5e3 < min(zz) and max(zz) < -4.4e3
     # Tuning the data qubit up towards the auxiliary raises J_qq.
     d4 = cal.circuit("D4")
     assert cal.exchange_hz("X2-D4", data_hz=d4.f01_hz(0.4)) > cal.exchange_hz("X2-D4")
@@ -122,12 +131,13 @@ def test_the_krinner_device_carries_the_shipped_calibration(cal):
 
 
 def test_a_device_loads_a_calibration_from_its_config(tmp_path, cal):
-    # A calibration whose X2-D4 anchor is 10 % higher strengthens that pair.
+    # A calibration whose charge coupling is 10 % higher strengthens every
+    # pair; without the stored idle exchange, the device computes it.
     data = json.loads((_SHIPPED / "krinner17.json").read_text())
-    entry = data["coupling"]["charge_coupling_g_c"]["per_pair"]["X2-D4"]
-    entry["value"] *= 1.1
-    # Without the stored idle exchange, the device computes it from g_c.
-    del entry["idle_exchange_hz"], entry["idle_frequencies_hz"]
+    couplings = data["coupling"]["charge_coupling_g_c"]
+    couplings["calibration_A"]["value"] *= 1.1
+    for entry in couplings["idle_exchange"].values():
+        del entry["idle_frequencies_hz"]
     path = tmp_path / "custom.json"
     path.write_text(json.dumps(data))
     base = pulse.device({"target": "transmon_krinner_17q"})

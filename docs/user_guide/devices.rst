@@ -92,10 +92,10 @@ each pair's interaction point (Lacroix, PhD thesis, ETH Zurich (2025), on the
 same device); X2-D4's is measured, 7.4 MHz at 4.4 GHz (Hellings et al.,
 arXiv:2503.04610). Each coupling records it in
 ``gate_params["coupling_11_20_hz"]``. The simulated exchange comes from the
-device's calibration (below): each pair's charge coupling g_c is anchored to
-that value, and the exchange J_qq = g_c <0|n_a|1> <0|n_d|1> at the idle
-points is 4.4-5.7 MHz. The idle ZZ of the charge-coupled pairs is -3.1 to
--5.9 kHz (``cudaq_pulse.targets.transmon.krinner_idle_zz_hz``), below the
+device's calibration (below): one device-wide charge coupling g_c, and the
+exchange J_qq = g_c <0|n_a|1> <0|n_d|1> at the idle points is 5.67-6.08 MHz.
+The idle ZZ of the charge-coupled pairs is -4.5 to -7.3 kHz
+(``cudaq_pulse.targets.transmon.krinner_idle_zz_hz``), below the
 paper's "below about 8 kHz"; simulated with three levels, the couplings
 reproduce it within a few percent. Each qubit also records its Hahn-echo T2
 and thermal excited-state population from Tab. I (``TargetDescription.t2_echo_times``,
@@ -138,10 +138,13 @@ file from a working calibration file of the same schema: it recomputes the
 anchored charge couplings, copies the per-pair CZ knobs and refuses to write
 anything that is not derived from published sources.
 
-The coupling is anchored per pair: each pair's charge coupling reproduces
-the published ``|11> <-> |20>`` coupling at its own interaction point, so the
-idle exchange is 4.4-5.7 MHz and the idle ZZ -3.1 to -5.9 kHz. (A single
-device-wide charge coupling fitted to X2-D4 would give -4.5 to -7.4 kHz.)
+The coupling is one device-wide charge coupling, g_c = 3.12 MHz
+(``coupling.charge_coupling_g_c.calibration_A``), fitted so that X2-D4's
+``|11> <-> |20>`` coupling is Hellings et al.'s measured 7.4 MHz at 4.4 GHz.
+At each pair's own interaction point it gives J_2 = 7.3-9.6 MHz, the idle
+exchange is 5.67-6.08 MHz and the idle ZZ -4.5 to -7.3 kHz. The CZ knobs
+are fitted with the same coupling, so the simulated device and its gates
+agree.
 
 The CZ knobs (``cz.knobs.per_pair``) are those of the sudden-net-zero pulse
 the device uses (Negirneac et al., PRL 126, 220502 (2021)): the plateau
@@ -150,10 +153,8 @@ amplitude offset, fitted in a closed two-transmon model (five levels each,
 no rotating-wave approximation, ideal flux line, no spectators) for a
 conditional phase of 180 degrees and the least leakage. Their mean
 duration, 2 t_p + t_mid, is 65.0 +- 4.8 ns against the published 68(7) ns.
-They were fitted with the device-wide coupling of each record's
-``coupling_used`` (g_c = 3.12 MHz, which reproduces Hellings et al.'s
-X2-D4 measurement), not the per-pair anchoring the simulated idle exchange
-uses. Each record keeps its predicted phase and leakage and its ``flags``:
+Each record names the coupling it was fitted with in ``coupling_used``,
+the device-wide g_c. Each record keeps its predicted phase and leakage and its ``flags``:
 nine pairs leak at least 1e-4, a floor set by the 0.417 ns time grid, and
 Z2-D7 defaults to an unphysical B = 1.934 (its data qubit moves only 261
 MHz), with the in-range alternatives in ``alternatives``.

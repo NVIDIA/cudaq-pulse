@@ -30,7 +30,7 @@ from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder
 from cudaq_pulse.kernel.ir_builder import Parameter
 from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
-from tests._handles import Q
+from tests._handles import Q, ladder_target
 from tests._ir import python_ir
 from tests.kernel.ir_corpus import bicycle_syndrome, dd_loop, parametric, surface_syndrome
 
@@ -172,10 +172,12 @@ def _half_unused(n_qubits: int):
 
 
 def test_verify_time_is_linear_in_unused_lines():
+    wide = pulse.device({"target": ladder_target(2000)}).qudit_handles
+
     def verify_ms(n_qubits: int) -> float:
         kernel = _half_unused(n_qubits)
         return min(
-            pulse.compile(kernel, passes=("verify",)).lower(Q[0:n_qubits]).metrics.passes_ms
+            pulse.compile(kernel, passes=("verify",)).lower(wide[0:n_qubits]).metrics.passes_ms
             for _ in range(5)
         )
 

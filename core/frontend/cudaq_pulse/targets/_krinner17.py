@@ -144,7 +144,7 @@ _EDGES = (
 # interaction point, for the device as a whole. That value is the
 # |11> <-> |20> matrix element of the CZ, about sqrt(2) J_qq (C. Lacroix, PhD
 # thesis, ETH Zurich (2025), Sec. 3.2, on the same device). A calibration
-# anchors each pair's charge coupling to it.
+# fits the device-wide charge coupling to the X2-D4 measurement below.
 COUPLING_11_20_HZ = 7.0e6
 
 # Pairs with a measured |11> <-> |20> coupling J_2: Hellings et al.,

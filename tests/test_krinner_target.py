@@ -82,7 +82,7 @@ def test_couplings_are_the_stabilizer_supports(target):
     for c in target.couplings:
         g_11_20 = 7.4e6 if edges_of(target, c) == ("X2", "D4") else 7.0e6
         assert c.gate_params["coupling_11_20_hz"] == g_11_20
-        assert 4.3e6 < c.coupling_strength_hz < 5.8e6
+        assert 5.6e6 < c.coupling_strength_hz < 6.1e6
     assert len({round(c.coupling_strength_hz) for c in target.couplings}) == 24
     assert not target.crosstalk
 
@@ -130,7 +130,7 @@ def test_idle_zz_is_a_few_kilohertz(target):
     zz = krinner_idle_zz_hz()
     assert set(zz) == {(c.qubit_a, c.qubit_b) for c in target.couplings}
     # Calculated idle ZZ "lower than ~8 kHz" (Methods A).
-    assert all(-6e3 < v < -3e3 for v in zz.values())
+    assert all(-7.5e3 < v < -4.4e3 for v in zz.values())
 
 
 @pytest.mark.parametrize("pair", [("X2", "D2"), ("Z1", "D1"), ("X2", "D4")])

@@ -138,15 +138,15 @@ class Calibration:
 
     @property
     def pairs(self) -> tuple[str, ...]:
-        """The coupled pairs with a charge coupling, auxiliary first."""
-        return tuple(self._couplings()["per_pair"])
+        """The coupled pairs, auxiliary first."""
+        return tuple(self._couplings()["idle_exchange"])
 
     def charge_coupling_hz(self, pair: str) -> float:
-        """g_c of *pair* (``"X2-D4"``)."""
-        try:
-            value: float = self._couplings()["per_pair"][pair]["value"]
-        except KeyError:
-            raise KeyError(f"calibration {self.name!r} has no coupling for pair {pair!r}") from None
+        """g_c of *pair* (``"X2-D4"``): the device-wide charge coupling."""
+        if pair not in self._couplings()["idle_exchange"]:
+            raise KeyError(f"calibration {self.name!r} has no coupling for pair {pair!r}")
+        couplings = self._couplings()
+        value: float = couplings[couplings["used"]]["value"]
         return value
 
     def pair(self, pair: str, n_levels: int = 5) -> ChargeCoupledPair:
@@ -209,10 +209,10 @@ class Calibration:
             name = f"{labels.get(c.qubit_a)}-{labels.get(c.qubit_b)}"
             if name in self.pairs:
                 at = (target.qubits[c.qubit_a].frequency_hz, target.qubits[c.qubit_b].frequency_hz)
-                entry = self._couplings()["per_pair"][name]
+                entry = self._couplings()["idle_exchange"][name]
                 stored = entry.get("idle_frequencies_hz")
                 if stored is not None and all(abs(f - g) < 1e3 for f, g in zip(at, stored)):
-                    strength = entry["idle_exchange_hz"]
+                    strength = entry["value"]
                 else:
                     strength = self.exchange_hz(name, *at)
                 c = replace(c, coupling_strength_hz=strength)
