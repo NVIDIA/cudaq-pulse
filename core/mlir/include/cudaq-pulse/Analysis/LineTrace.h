@@ -62,7 +62,8 @@ inline mlir::Value linearPredecessor(mlir::Value value) {
   // A schedule block result continues the value its body yields.
   if (auto block = mlir::dyn_cast<ScheduleBlockOp>(op))
     return block.getBody().front().getTerminator()->getOperand(index);
-  if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(op))
+  if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(op) ||
+      op->getName().getStringRef() == "classical.get_link")
     return {};
   mlir::Type type = value.getType();
   unsigned rank = 0;
@@ -75,11 +76,13 @@ inline mlir::Value linearPredecessor(mlir::Value value) {
 }
 
 /// The `pulse.get_drive_line` / `pulse.get_readout_line` op whose line or
-/// tone `value` is a version of, or null.
+/// tone `value` is a version of (or the `classical.get_link` of a link), or
+/// null.
 inline mlir::Operation *traceAllocation(mlir::Value value) {
   while (value) {
     if (mlir::Operation *def = value.getDefiningOp())
-      if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(def))
+      if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(def) ||
+          def->getName().getStringRef() == "classical.get_link")
         return def;
     value = linearPredecessor(value);
   }

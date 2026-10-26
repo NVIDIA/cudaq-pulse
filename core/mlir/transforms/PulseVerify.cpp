@@ -17,7 +17,10 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
+
+#include <functional>
 
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"
 
@@ -25,6 +28,12 @@
 #include "cudaq-pulse/Dialect/Pulse/PulseTypes.h.inc"
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
+
+#include "cudaq-pulse/Dialect/Classical/ClassicalDialect.h.inc"
+#define GET_TYPEDEF_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalTypes.h.inc"
+#define GET_OP_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
 
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
@@ -301,6 +310,93 @@ struct PulseVerifyPass
       op->emitError("a line cannot be acquired inside an scf.for; acquire it "
                     "before the loop and carry it through iter_args");
       hadError = true;
+    });
+
+    // Check 1b: classical calls. A line-like link cannot be acquired in a
+    // loop either (V1 and V2 of the classical-call rules follow).
+    module.walk([&](classical::GetLinkOp op) {
+      if (!op->getParentOfType<mlir::scf::ForOp>())
+        return;
+      op->emitError("a link cannot be acquired inside an scf.for; acquire it "
+                    "before the loop and carry it through iter_args");
+      hadError = true;
+    });
+    // V1: an answer that arrives while the program runs cannot change the
+    // timeline, so no duration or loop bound may be computed from one.
+    llvm::DenseMap<mlir::Value, bool> fromAnswer;
+    std::function<bool(mlir::Value)> dependsOnAnswer =
+        [&](mlir::Value value) -> bool {
+      auto [it, inserted] = fromAnswer.try_emplace(value, false);
+      if (!inserted)
+        return it->second;
+      mlir::Operation *def = value.getDefiningOp();
+      bool result = false;
+      if (def && mlir::isa<classical::WaitOp>(def))
+        result = true;
+      else if (def && def->getNumRegions() == 0)
+        result = llvm::any_of(def->getOperands(), dependsOnAnswer);
+      fromAnswer[value] = result;
+      return result;
+    };
+    bool hasAnswers = false;
+    module.walk([&](classical::WaitOp) { hasAnswers = true; });
+    if (hasAnswers) {
+      auto rejectDuration = [&](mlir::Operation *op, mlir::Value duration) {
+        if (!dependsOnAnswer(duration))
+          return;
+        op->emitError("a duration cannot depend on the answer of a classical "
+                      "call: the answer arrives while the program runs, after "
+                      "its timeline is fixed; branch on the answer to choose "
+                      "between durations instead");
+        hadError = true;
+      };
+      module.walk([&](mlir::Operation *op) {
+        if (auto w = mlir::dyn_cast<pulse::SquarePulseOp>(op))
+          rejectDuration(op, w.getDuration());
+        else if (auto w = mlir::dyn_cast<pulse::GaussianPulseOp>(op))
+          rejectDuration(op, w.getDuration());
+        else if (auto w = mlir::dyn_cast<pulse::DRAGPulseOp>(op))
+          rejectDuration(op, w.getDuration());
+        else if (auto w = mlir::dyn_cast<pulse::CosinePulseOp>(op))
+          rejectDuration(op, w.getDuration());
+        else if (auto w = mlir::dyn_cast<pulse::TanhRampOp>(op))
+          rejectDuration(op, w.getDuration());
+        else if (auto w = mlir::dyn_cast<pulse::GaussianSquarePulseOp>(op)) {
+          rejectDuration(op, w.getDuration());
+          rejectDuration(op, w.getRisefall());
+        } else if (auto w = mlir::dyn_cast<pulse::CustomOp>(op))
+          rejectDuration(op, w.getDuration());
+        else if (auto d = mlir::dyn_cast<pulse::DurationFromIntOp>(op))
+          rejectDuration(op, d.getCycles());
+        else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op))
+          for (mlir::Value bound :
+               {loop.getLowerBound(), loop.getUpperBound(), loop.getStep()})
+            if (dependsOnAnswer(bound)) {
+              loop.emitError("a loop bound cannot depend on the answer of a "
+                             "classical call");
+              hadError = true;
+              break;
+            }
+      });
+    }
+    // V2: a blocking wait stops the whole program until the answer arrives,
+    // so it cannot sit in a schedule block, which has a fixed length, or in
+    // one arm of a branch.
+    mlir::SymbolTableCollection symbols;
+    module.walk([&](classical::WaitOp op) {
+      auto callable = symbols.lookupNearestSymbolFrom<classical::CallableOp>(
+          op, op.getCalleeAttr());
+      if (!callable || callable.getMode() != "blocking")
+        return;
+      if (op->getParentOfType<pulse::ScheduleBlockOp>()) {
+        op.emitError("a blocking wait cannot be inside a pulse.schedule_block, "
+                     "whose length is fixed; wait after the block");
+        hadError = true;
+      } else if (op->getParentOfType<mlir::scf::IfOp>()) {
+        op.emitError("a blocking wait cannot be inside one arm of an scf.if; "
+                     "wait before or after the branch");
+        hadError = true;
+      }
     });
 
     // Check 2: Waveform validity -- trace SSA duration to constant, skip

@@ -12,6 +12,7 @@ add_mlir_dialect_library(CudaqPulsePulseTransforms
   VirtualZ.cpp
   Fusion.cpp
   ScheduleAlap.cpp
+  ClassicalCheck.cpp
 
   DEPENDS
   CudaqPulsePulseIncGen

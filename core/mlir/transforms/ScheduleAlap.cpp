@@ -21,6 +21,15 @@
 // its iteration (a loop's first or last iterations behave differently), that
 // iteration is peeled off the loop and the function is scheduled again.
 //
+// A classical call is a `classical.submit`, which holds its link for a few
+// cycles and makes a future available a budgeted latency after it ends, and a
+// `classical.wait`, a zero-length op at the time the answer is taken. In a
+// function that makes calls, every value carries the time it is available, so
+// a pulse whose amplitude, tone or branch condition is computed from an
+// answer starts after it; a function without calls skips that bookkeeping.
+// Eager submissions keep their ASAP time under ALAP. A blocking wait is a
+// barrier: nothing after it starts before it, nothing before it ends after.
+//
 // A `pulse.schedule_block` is scheduled first, innermost first, on its own
 // with its own policy. Its shape (length, and when each operand is first
 // needed and each result is available) makes it one rigid op for the
@@ -46,8 +55,17 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
 
+#include "cudaq-pulse/Dialect/Classical/ClassicalDialect.h.inc"
+#define GET_TYPEDEF_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalTypes.h.inc"
+#define GET_OP_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
+
+#include "cudaq-pulse/Analysis/ClassicalTiming.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
+
+#include <map>
 
 namespace {
 
@@ -108,7 +126,8 @@ static int64_t getWaitDuration(pulse::WaitOp wait) {
 }
 
 static bool isTimedOp(mlir::Operation *op) {
-  return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op);
+  return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
+                   classical::SubmitOp, classical::WaitOp>(op);
 }
 
 /// The shape a scheduled `pulse.schedule_block` presents to its parent, in
@@ -142,7 +161,16 @@ static int64_t durationOf(mlir::Operation *op) {
     return getWaveformDuration(drive.getPulse());
   if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
     return getWaveformDuration(readout.getPulse());
+  if (mlir::isa<classical::SubmitOp>(op))
+    return classical::intAttr(op, "classical.submit_vtu", 1);
+  if (mlir::isa<classical::WaitOp>(op))
+    return 0;
   return getWaitDuration(mlir::cast<pulse::WaitOp>(op));
+}
+
+/// From the end of a submission until its future is available.
+static int64_t budgetOf(mlir::Operation *submit) {
+  return classical::intAttr(submit, "classical.budget_vtu");
 }
 
 /// Lines, tones and measurement results: the values that become available
@@ -150,7 +178,8 @@ static int64_t durationOf(mlir::Operation *op) {
 /// that share a tone run in the order the tone is threaded through them.
 static bool isTimedType(mlir::Type type) {
   return mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                   pulse::ToneType, pulse::MeasurementType>(type);
+                   pulse::ToneType, pulse::MeasurementType>(type) ||
+         pulse::isClassicalType(type);
 }
 
 static bool isLineType(mlir::Type type) {
@@ -243,8 +272,8 @@ struct Extrapolation {
 /// every block argument available at time 0.
 class Scheduler {
 public:
-  Scheduler(mlir::Region &region, Resources resources)
-      : region(&region), resources(resources) {}
+  Scheduler(mlir::Region &region, Resources resources, bool classical = false)
+      : region(&region), resources(resources), classical(classical) {}
 
   mlir::LogicalResult forward() {
     resetLanes(0);
@@ -254,6 +283,14 @@ public:
   }
 
   mlir::LogicalResult backward() {
+    if (classical) {
+      // Eager submissions and unused answers keep their forward times.
+      for (auto &[op, list] : samples)
+        if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op))
+          for (const Sample &sample : list)
+            forwardStarts[{op, sample.iteration}] = sample.start;
+      forwardExtrapolations = extrapolations;
+    }
     samples.clear();
     extrapolations.clear();
     resetLanes(makespan);
@@ -268,6 +305,8 @@ private:
   // ── Shared state ──────────────────────────────────────────────────────
 
   void resetLanes(int64_t value) {
+    linkLanes.clear();
+    laneReset = value;
     if (!resources.enabled)
       return;
     driveLanes.assign(static_cast<size_t>(resources.maxDrives), value);
@@ -315,7 +354,8 @@ private:
   }
 
   static Carried carriedKind(mlir::Type type, bool timed) {
-    if (mlir::isa<pulse::ToneType>(type))
+    // A link, like a tone, keeps its time through a body that sends nothing.
+    if (mlir::isa<pulse::ToneType, classical::LinkType>(type))
       return Carried::Tone;
     return timed ? Carried::Timed : Carried::Untimed;
   }
@@ -323,6 +363,80 @@ private:
   // ── Forward (ASAP) ────────────────────────────────────────────────────
 
   int64_t ready(mlir::Value value) const { return readyAt.lookup(value); }
+
+  /// When every operand of `op` is available: data from answers included.
+  int64_t operandsReady(mlir::Operation *op) const {
+    int64_t time = 0;
+    for (mlir::Value operand : op->getOperands())
+      time = std::max(time, ready(operand));
+    return time;
+  }
+
+  /// The request slots of the link a submission uses: a heap of the times
+  /// they become free (forward, min-heap) or must be free from (backward,
+  /// max-heap). A link's slots bound every policy: they are hardware.
+  llvm::SmallVector<int64_t> &lanesOf(mlir::Operation *submit) {
+    int64_t device = classical::intAttr(submit, "classical.device");
+    auto [it, inserted] = linkLanes.try_emplace(device);
+    if (inserted)
+      it->second.assign(
+          static_cast<size_t>(std::max<int64_t>(
+              1, classical::intAttr(submit, "classical.max_in_flight", 64))),
+          laneReset);
+    return it->second;
+  }
+
+  /// Take the earliest free slot of a link for a request starting no earlier
+  /// than `start`; it is busy until the answer is due.
+  int64_t takeSlot(mlir::Operation *submit, int64_t start, int64_t busy) {
+    auto &heap = lanesOf(submit);
+    auto later = std::greater<int64_t>();
+    std::pop_heap(heap.begin(), heap.end(), later);
+    if (heap.back() > start) {
+      start = heap.back();
+      lanesBound = true;
+    }
+    heap.back() = start + busy;
+    std::push_heap(heap.begin(), heap.end(), later);
+    return start;
+  }
+
+  /// The backward mirror: the latest a request ending its slot by the slot's
+  /// bound may start, for one that is busy for `busy`.
+  int64_t takeSlotBackward(mlir::Operation *submit, int64_t start, int64_t busy,
+                           bool pinned) {
+    auto &heap = lanesOf(submit);
+    std::pop_heap(heap.begin(), heap.end());
+    if (!pinned && heap.back() - busy < start) {
+      start = heap.back() - busy;
+      lanesBound = true;
+    }
+    heap.back() = start;
+    std::push_heap(heap.begin(), heap.end());
+    return start;
+  }
+
+  void forwardSubmit(classical::SubmitOp submit) {
+    mlir::Operation *op = submit;
+    int64_t start =
+        std::max({ready(submit.getLink()), floor, operandsReady(op)});
+    int64_t duration = durationOf(op), budget = budgetOf(op);
+    start = takeSlot(op, start, duration + budget);
+    record(op, start);
+    readyAt[submit.getUpdatedLink()] = start + duration;
+    readyAt[submit.getFuture()] = start + duration + budget;
+    noteEnd(start + duration);
+  }
+
+  void forwardWait(classical::WaitOp wait) {
+    int64_t start = std::max(ready(wait.getFuture()), floor);
+    record(wait, start);
+    for (mlir::Value value : wait.getValues())
+      readyAt[value] = start;
+    if (wait->hasAttr("classical.blocking"))
+      floor = std::max(floor, start);
+    noteEnd(start);
+  }
 
   void place(mlir::Operation *op, int64_t start) {
     int64_t duration = durationOf(op);
@@ -353,10 +467,22 @@ private:
   }
 
   mlir::LogicalResult forwardOp(mlir::Operation *op) {
+    if (classical) {
+      if (auto submit = mlir::dyn_cast<classical::SubmitOp>(op)) {
+        forwardSubmit(submit);
+        return mlir::success();
+      }
+      if (auto wait = mlir::dyn_cast<classical::WaitOp>(op)) {
+        forwardWait(wait);
+        return mlir::success();
+      }
+    }
     if (isTimedOp(op)) {
       int64_t start = std::max(ready(op->getOperand(0)), floor);
       if (mlir::Value tone = toneOperand(op))
         start = std::max(start, ready(tone));
+      if (classical)
+        start = std::max(start, operandsReady(op));
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op)) {
         auto &lanes = mlir::isa<pulse::DriveOp>(op) ? driveLanes : readoutLanes;
         auto lane = std::min_element(lanes.begin(), lanes.end());
@@ -383,7 +509,14 @@ private:
       return forwardLoop(loop);
     if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op))
       return forwardIf(branch);
-    // Any other op releases its timed results when its timed operands are.
+    // Any other op releases its timed results when its timed operands are;
+    // with calls, every result is released when all its operands are.
+    if (classical) {
+      int64_t time = operandsReady(op);
+      for (mlir::Value result : op->getResults())
+        readyAt[result] = time;
+      return mlir::success();
+    }
     int64_t time = 0;
     for (mlir::Value operand : op->getOperands())
       if (isTimedType(operand.getType()))
@@ -450,8 +583,8 @@ private:
 
       int64_t shift;
       bool shifted = uniformShift(carried, next, kinds, shift);
-      bool steady =
-          !resources.enabled && shifted && lastShift == shift && shift >= 0;
+      bool steady = !resources.enabled && !lanesBound && shifted &&
+                    lastShift == shift && shift >= 0;
       for (auto [before, after, kind] : llvm::zip(carried, next, kinds))
         if (kind == Carried::Timed ||
             (kind == Carried::Tone && after != before))
@@ -477,6 +610,8 @@ private:
     int64_t savedFloor = floor;
     for (mlir::Value measurement : conditionMeasurements(branch.getCondition()))
       floor = std::max(floor, ready(measurement));
+    if (classical)
+      floor = std::max(floor, ready(branch.getCondition()));
 
     auto savedDrive = driveLanes, savedReadout = readoutLanes;
     if (mlir::failed(forwardBlock(*branch.thenBlock())))
@@ -513,8 +648,80 @@ private:
     auto it = lateAt.find(value);
     if (it != lateAt.end())
       return it->second;
-    return mlir::isa<pulse::MeasurementType>(value.getType()) ? kNever
-                                                              : makespan;
+    mlir::Type type = value.getType();
+    if (mlir::isa<pulse::MeasurementType>(type))
+      return kNever;
+    // Nothing waits for an unused future or untimed value; a line, tone or
+    // link may run until the makespan.
+    if (classical && !mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
+                                pulse::ToneType, classical::LinkType>(type))
+      return kNever;
+    return makespan;
+  }
+
+  /// The forward start of a call op in the current iteration, also for an
+  /// iteration the forward pass extrapolated.
+  int64_t forwardStartOf(mlir::Operation *op) const {
+    std::pair<mlir::Operation *, llvm::SmallVector<int64_t, 2>> key{op,
+                                                                    iteration};
+    auto it = forwardStarts.find(key);
+    if (it != forwardStarts.end())
+      return it->second;
+    // The latest simulated iteration before this one, shifted by the period
+    // of the innermost loop the forward pass extrapolated.
+    auto before = forwardStarts.lower_bound(key);
+    if (before == forwardStarts.begin())
+      return 0;
+    --before;
+    if (before->first.first != op || iteration.empty())
+      return 0;
+    const auto &seen = before->first.second;
+    auto loops = pulse::enclosingLoops(op, region->getParentOp());
+    for (int64_t level = static_cast<int64_t>(iteration.size()) - 1; level >= 0;
+         --level) {
+      if (level >= static_cast<int64_t>(loops.size()) ||
+          !std::equal(seen.begin(), seen.begin() + level, iteration.begin()))
+        continue;
+      for (const Extrapolation &e : forwardExtrapolations)
+        if (e.loop == loops[level])
+          return before->second + (iteration[level] - seen[level]) * e.period;
+    }
+    return before->second;
+  }
+
+  void backwardSubmit(classical::SubmitOp submit) {
+    mlir::Operation *op = submit;
+    int64_t duration = durationOf(op), budget = budgetOf(op);
+    int64_t start;
+    if (op->hasAttr("classical.eager")) {
+      start = forwardStartOf(op);
+    } else {
+      int64_t end = std::min(late(submit.getUpdatedLink()), ceiling);
+      int64_t needed = late(submit.getFuture());
+      if (needed != kNever)
+        end = std::min(end, needed - budget);
+      start = end - duration;
+    }
+    start = takeSlotBackward(op, start, duration + budget,
+                             op->hasAttr("classical.eager"));
+    record(op, start);
+    armStart = std::min(armStart, start);
+    for (mlir::Value operand : op->getOperands())
+      bound(operand, start);
+  }
+
+  void backwardWait(classical::WaitOp wait) {
+    int64_t start = kNever;
+    for (mlir::Value value : wait.getValues())
+      start = std::min(start, late(value));
+    if (start == kNever || wait->hasAttr("classical.blocking"))
+      start = forwardStartOf(wait);
+    start = std::min(start, ceiling);
+    record(wait, start);
+    armStart = std::min(armStart, start);
+    bound(wait.getFuture(), start);
+    if (wait->hasAttr("classical.blocking"))
+      ceiling = std::min(ceiling, start);
   }
 
   void bound(mlir::Value value, int64_t time) {
@@ -531,9 +738,21 @@ private:
   }
 
   mlir::LogicalResult backwardOp(mlir::Operation *op) {
+    if (classical) {
+      if (auto submit = mlir::dyn_cast<classical::SubmitOp>(op)) {
+        backwardSubmit(submit);
+        return mlir::success();
+      }
+      if (auto wait = mlir::dyn_cast<classical::WaitOp>(op)) {
+        backwardWait(wait);
+        return mlir::success();
+      }
+    }
     if (isTimedOp(op)) {
       int64_t duration = durationOf(op);
       int64_t end = late(op->getResult(0));
+      if (classical)
+        end = std::min(end, ceiling);
       bool isReadout = mlir::isa<pulse::ReadoutOp>(op);
       if (isReadout) {
         int64_t latency = resources.readoutLatency;
@@ -557,6 +776,9 @@ private:
       bound(op->getOperand(0), start);
       if (mlir::Value tone = toneOperand(op))
         bound(tone, start);
+      if (classical)
+        for (mlir::Value operand : op->getOperands())
+          bound(operand, start);
       return mlir::success();
     }
     if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op)) {
@@ -578,11 +800,11 @@ private:
       return backwardIf(branch);
     int64_t time = kNever;
     for (mlir::Value result : op->getResults())
-      if (isTimedType(result.getType()))
+      if (classical || isTimedType(result.getType()))
         time = std::min(time, late(result));
     if (time != kNever)
       for (mlir::Value operand : op->getOperands())
-        if (isTimedType(operand.getType()))
+        if (classical || isTimedType(operand.getType()))
           bound(operand, time);
     return mlir::success();
   }
@@ -651,8 +873,8 @@ private:
 
       int64_t shift;
       bool shifted = uniformShift(carried, next, kinds, shift);
-      bool steady =
-          !resources.enabled && shifted && lastShift == shift && shift <= 0;
+      bool steady = !resources.enabled && !lanesBound && shifted &&
+                    lastShift == shift && shift <= 0;
       lastShift = shifted ? std::optional<int64_t>(shift) : std::nullopt;
       llvm::SmallVector<int64_t> previous = std::move(carried);
       carried = std::move(next);
@@ -691,10 +913,13 @@ private:
       for (auto [a, b] : llvm::zip(readoutLanes, thenReadout))
         a = std::min(a, b);
     }
-    if (armStart != kNever)
+    if (armStart != kNever) {
       for (mlir::Value measurement :
            conditionMeasurements(branch.getCondition()))
         bound(measurement, armStart);
+      if (classical)
+        bound(branch.getCondition(), armStart);
+    }
     armStart = std::min(savedArmStart, armStart);
     return mlir::success();
   }
@@ -708,6 +933,20 @@ private:
   int64_t floor = 0;
   int64_t iterationEnd = 0;
   int64_t armStart = kNever;
+  // Classical calls.
+  bool classical = false;
+  /// Request slots per link id, each the time it is free (forward) or must
+  /// be free from (backward).
+  llvm::DenseMap<int64_t, llvm::SmallVector<int64_t>> linkLanes;
+  int64_t laneReset = 0;
+  /// A link's slots delayed a request: loop iterations may differ, so they
+  /// are all simulated.
+  bool lanesBound = false;
+  /// Under ALAP, nothing before a blocking wait ends after it.
+  int64_t ceiling = kNever;
+  std::map<std::pair<mlir::Operation *, llvm::SmallVector<int64_t, 2>>, int64_t>
+      forwardStarts;
+  llvm::SmallVector<Extrapolation> forwardExtrapolations;
 };
 
 // ── Writing the schedule ─────────────────────────────────────────────────
@@ -927,6 +1166,8 @@ static std::optional<NotAffine> periodMismatch(mlir::Region &region,
           timed->getAttrOfType<mlir::DenseI64ArrayAttr>("period_vtu");
       if (problem || !periods || static_cast<size_t>(periods.size()) <= level)
         return;
+      if (mlir::isa<classical::WaitOp>(timed))
+        return;
       if (!mlir::isa<pulse::ScheduleBlockOp>(timed))
         return check(timed->getOperand(0), periods[level]);
       for (mlir::Value input : timed->getOperands())
@@ -1089,6 +1330,8 @@ private:
       length = std::max(length, end);
       for (mlir::Value result : op->getResults())
         state[result] = State{end, -1};
+      if (auto submit = mlir::dyn_cast<classical::SubmitOp>(op))
+        state[submit.getFuture()] = State{end + budgetOf(op), -1};
       return;
     }
     if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
@@ -1221,10 +1464,11 @@ static void inlineScheduleBlock(pulse::ScheduleBlockOp block) {
 
 static mlir::LogicalResult scheduleRegion(mlir::Region &region,
                                           mlir::Operation *root,
-                                          Resources resources, bool isAlap) {
+                                          Resources resources, bool isAlap,
+                                          bool classical) {
   for (pulse::ScheduleBlockOp block : outermostBlocks(region)) {
     if (mlir::failed(scheduleRegion(block.getBody(), block, Resources{},
-                                    block.getPolicy() == "alap")))
+                                    block.getPolicy() == "alap", classical)))
       return mlir::failure();
     writeShape(block);
   }
@@ -1232,7 +1476,7 @@ static mlir::LogicalResult scheduleRegion(mlir::Region &region,
   // Each round either writes an affine schedule or removes an iteration from
   // a loop, so this terminates.
   while (true) {
-    Scheduler scheduler(region, resources);
+    Scheduler scheduler(region, resources, classical);
     if (mlir::failed(scheduler.forward()))
       return mlir::failure();
     if (isAlap) {
@@ -1245,7 +1489,7 @@ static mlir::LogicalResult scheduleRegion(mlir::Region &region,
                             [](const Sample &s) { return s.start >= 0; });
       });
       if (!feasible) {
-        scheduler = Scheduler(region, resources);
+        scheduler = Scheduler(region, resources, classical);
         if (mlir::failed(scheduler.forward()))
           return mlir::failure();
       }
@@ -1292,7 +1536,9 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
           "kernels with their own schedule yet; drop schedule= from the "
           "called kernels, or flatten them with flatten_schedules=True");
   }
-  return scheduleRegion(function.getBody(), function, resources, isAlap);
+  bool classical = classical::annotateClassicalCalls(function);
+  return scheduleRegion(function.getBody(), function, resources, isAlap,
+                        classical);
 }
 
 template <bool IsAlap>

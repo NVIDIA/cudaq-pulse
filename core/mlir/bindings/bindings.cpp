@@ -67,6 +67,7 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
 
+#include "cudaq-pulse/Analysis/ClassicalTiming.h"
 #include "cudaq-pulse/Analysis/Execution.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
@@ -95,6 +96,7 @@ std::unique_ptr<mlir::Pass> createVirtualZPass();
 std::unique_ptr<mlir::Pass> createPulseFusionPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleAsapPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleAlapPass();
+std::unique_ptr<mlir::Pass> createPulseClassicalCheckPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleRcpPass(int64_t maxDrives,
                                                        int64_t maxReadouts,
                                                        int64_t readoutLatency,
@@ -262,6 +264,8 @@ public:
       else if (name == "pulse-schedule-alap")
         pm.addNestedPass<mlir::func::FuncOp>(
             pulse::createPulseScheduleAlapPass());
+      else if (name == "pulse-classical-check")
+        pm.addPass(pulse::createPulseClassicalCheckPass());
       else if (name == "loop-invariant-code-motion")
         pm.addPass(mlir::createLoopInvariantCodeMotionPass());
       else
@@ -308,6 +312,8 @@ public:
           policy == "alap_rcp"));
     else
       throw std::invalid_argument("unknown schedule policy: " + policy);
+    if (classical::declaresClassicalCalls(*module_))
+      pm.addPass(pulse::createPulseClassicalCheckPass());
     programs_.clear();
     runPipeline(pm, *module_, "pulse scheduling failed");
   }
@@ -530,6 +536,8 @@ public:
     else
       throw std::invalid_argument("unsupported specialization schedule: " +
                                   schedule);
+    if (classical::declaresClassicalCalls(clonedModule))
+      pm.addPass(pulse::createPulseClassicalCheckPass());
     runPipeline(pm, clonedModule, "specialize: pass pipeline failed");
 
     auto owning = mlir::OwningOpRef<mlir::ModuleOp>(clonedModule);

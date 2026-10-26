@@ -73,6 +73,12 @@ std::unique_ptr<mlir::Pass> createPulseFusionPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleAsapPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleAlapPass();
 std::unique_ptr<mlir::Pass> createPulseInlineScheduleBlocksPass();
+std::unique_ptr<mlir::Pass> createPulseClassicalCheckPass();
+std::unique_ptr<mlir::Pass> createPulseScheduleRcpPass(int64_t maxDrives,
+                                                       int64_t maxReadouts,
+                                                       int64_t readoutLatency,
+                                                       int64_t switchPenalty,
+                                                       bool isAlap);
 } // namespace pulse
 
 int main(int argc, char **argv) {
@@ -101,6 +107,11 @@ int main(int argc, char **argv) {
   mlir::registerPass(pulse::createPulseScheduleAsapPass);
   mlir::registerPass(pulse::createPulseScheduleAlapPass);
   mlir::registerPass(pulse::createPulseInlineScheduleBlocksPass);
+  mlir::registerPass(pulse::createPulseClassicalCheckPass);
+  // Resource-constrained scheduling with the default machine model (4
+  // drives, 2 readouts, no readout latency or switch penalty).
+  mlir::registerPass(
+      [] { return pulse::createPulseScheduleRcpPass(4, 2, 0, 0, false); });
 
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "cudaq-pulse MLIR optimizer\n", registry));
