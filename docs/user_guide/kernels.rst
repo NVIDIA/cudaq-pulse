@@ -220,6 +220,9 @@ Besides the control flow above, a kernel body may use:
   tracing like the ``for`` loop it stands for, so
   ``[get_drive_line(q) for q in qubits]`` builds a list of ``(line, tone)``
   pairs and ``[readout(r, wf, t) for _ in range(12)]`` a list of results.
+- ``assert`` and ``raise`` for checks while tracing: a failing
+  ``assert n > 0, "msg"`` raises ``CompilationError("assertion failed in
+  kernel: msg")``.
 - ``sync()`` over lines, lists or tuples of lines, nested too:
   ``sync(lines)`` and ``sync([d0, d1], d2)`` synchronize every line they
   hold.

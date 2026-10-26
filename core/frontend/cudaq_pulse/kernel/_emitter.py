@@ -1004,6 +1004,9 @@ class PulseIREmitter:
 
                 elif op is bc.RAISE:
                     exc = pop() if arg else None
+                    if exc is AssertionError or isinstance(exc, AssertionError):
+                        detail = f": {exc}" if isinstance(exc, AssertionError) and exc.args else ""
+                        raise CompilationError(f"assertion failed in kernel{detail}")
                     raise CompilationError(f"kernel raised {exc!r}")
 
                 elif op is bc.CALL_EX:

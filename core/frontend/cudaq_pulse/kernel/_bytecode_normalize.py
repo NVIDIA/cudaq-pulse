@@ -37,6 +37,7 @@ running ``tests/kernel/test_ir_golden.py`` on it.
 from __future__ import annotations
 
 import dis
+import opcode
 import operator as _op
 import sys
 from types import CodeType
@@ -187,7 +188,6 @@ _SIMPLE: dict[str, int] = {
     "GET_ITER": GET_ITER,
     "IMPORT_NAME": IMPORT_NAME,
     "IMPORT_FROM": IMPORT_FROM,
-    "RAISE_VARARGS": RAISE,
     "RETURN_VALUE": RETURN,
 }
 
@@ -281,6 +281,8 @@ _WHILE_MESSAGE = (
 )
 
 _PY_MINOR = sys.version_info[1]
+# What LOAD_COMMON_CONSTANT (3.14+) loads, by its argument.
+_COMMON_CONSTANTS: tuple[Any, ...] = tuple(getattr(opcode, "_common_constants", ()))
 
 # CPython minors whose bytecode this decoder has been verified against.
 SUPPORTED_MINORS = (12, 13, 14, 15)
@@ -417,6 +419,7 @@ def _decode(code: CodeType) -> DecodedCode:
     pending_kw_names = False
     cleanup = 0  # remaining loop-exit cleanup instructions to drop
     previous: dis.Instruction | None = None  # the raw instruction before *ins*
+    asserting = False  # an AssertionError was loaded and not yet raised
 
     for ins in raw:
         prev, previous = previous, ins
@@ -499,8 +502,17 @@ def _decode(code: CodeType) -> DecodedCode:
             out.append([LOAD_CONST, code.co_consts[iarg]])
             pending_kw_names = True
         elif name in ("LOAD_ASSERTION_ERROR", "LOAD_COMMON_CONSTANT"):
-            value = AssertionError if name == "LOAD_ASSERTION_ERROR" else ins.argval
+            # 3.14's dis gives LOAD_COMMON_CONSTANT the table index, 3.15's the value.
+            value = AssertionError if name == "LOAD_ASSERTION_ERROR" else _COMMON_CONSTANTS[iarg]
             out.append([LOAD_CONST, value])
+            asserting = value is AssertionError
+        elif name == "RAISE_VARARGS":
+            # ``assert c, msg`` builds AssertionError(msg) with CALL 0: the
+            # message sits in the slot a method call's self takes.
+            if asserting and prev_name == "CALL" and out[-1] == [CALL, 0]:
+                out[-1][1] = 1
+            asserting = False
+            out.append([RAISE, ins.argval])
         elif name == "FORMAT_VALUE":
             if iarg & 0x3:
                 out.append([CONVERT, iarg & 0x3])

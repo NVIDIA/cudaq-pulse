@@ -195,3 +195,49 @@ def test_a_misspelled_attribute_suggests_the_right_one():
         CompilationError, match=r"on module 'cudaq_pulse.ops'; did you mean 'drive'\?"
     ):
         python_ir(k, Q[0])
+
+
+# ── assert ───────────────────────────────────────────────────────────
+
+
+def _unrewritten(source: str):
+    """A kernel from *source*, outside pytest's rewriting of assert."""
+    namespace: dict = {}
+    exec(source, namespace)
+    return pulse.kernel(namespace["k"])
+
+
+def test_assert_with_a_message_from_the_friction_log():
+    k = _unrewritten(
+        "def k(q, n_rounds: int):\n"
+        "    assert n_rounds > 0, 'boom'\n"
+        "    d, t = get_drive_line(q)\n"
+        "    drive(d, square(8 * n_rounds, 0.1), t)\n"
+    )
+    python_ir(k, Q[0], 2)
+    with pytest.raises(CompilationError) as e:
+        python_ir(k, Q[0], 0)
+    assert str(e.value) == "assertion failed in kernel: boom"
+
+
+def test_assert_messages_built_with_calls_and_bare_asserts():
+    formatted = _unrewritten(
+        "def k(n: int):\n    assert n > 0, f'{n} rounds, need {len([1, 2])}'\n"
+    )
+    bare = _unrewritten("def k(n: int):\n    assert n > 0\n")
+    with pytest.raises(CompilationError) as e:
+        python_ir(formatted, 0)
+    assert str(e.value) == "assertion failed in kernel: 0 rounds, need 2"
+    with pytest.raises(CompilationError) as e:
+        python_ir(bare, 0)
+    assert str(e.value) == "assertion failed in kernel"
+
+
+def test_raise_still_names_the_exception():
+    @pulse.kernel
+    def k(n: int):
+        if n < 1:
+            raise ValueError("n must be positive")
+
+    with pytest.raises(CompilationError, match=r"kernel raised ValueError\('n must be positive'\)"):
+        python_ir(k, 0)
