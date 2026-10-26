@@ -21,6 +21,9 @@ Functions and links
 .. autoclass:: cudaq_pulse.classical.ClassicalFunction
    :members: submit
 
+.. autoclass:: cudaq_pulse.classical.Pending
+   :members: result
+
 .. autoclass:: cudaq_pulse.classical.Link
    :members:
 

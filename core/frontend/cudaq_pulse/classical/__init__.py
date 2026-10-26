@@ -51,12 +51,13 @@ import sys
 import types
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol, Required, TypedDict, Unpack, overload
 
 __all__ = [
     "Bits",
     "Byte",
     "Bytes",
+    "ClassicalDecorator",
     "ClassicalFunction",
     "Float",
     "Floats",
@@ -65,6 +66,7 @@ __all__ = [
     "Integers",
     "Levels",
     "Link",
+    "Pending",
     "external",
     "function",
     "function_id",
@@ -250,6 +252,30 @@ def _value_type(value: Any, where: str) -> ValueType:
     raise TypeError(f"{where} must be a type such as Bits(4), Float() or Floats(8), got {value!r}")
 
 
+# What ``args`` and ``results`` entries may be: ``Float`` stands for ``Float()``.
+_TypeSpec = ValueType | type[Float] | type[Integer] | type[Byte]
+
+
+class _Options(TypedDict, total=False):
+    """The keyword options of ``pulse.classical`` and ``external``."""
+
+    args: Sequence[_TypeSpec]
+    results: Sequence[_TypeSpec]
+    max_latency_ns: Required[float]
+    min_latency_ns: float
+    nominal_latency_ns: float | None
+    latency_mode: str
+    timeout_ns: float | None
+    submit: str
+    deadline_ns: float | None
+    link: int | str
+    id: int | None
+
+
+class _NamedOptions(_Options, total=False):
+    name: str | None
+
+
 # ── Links ────────────────────────────────────────────────────────────────────
 
 
@@ -312,8 +338,8 @@ class ClassicalFunction:
         implementation: Callable[..., Any] | None,
         *,
         name: str | None = None,
-        args: Sequence[Any] = (),
-        results: Sequence[Any] = (),
+        args: Sequence[_TypeSpec] = (),
+        results: Sequence[_TypeSpec] = (),
         max_latency_ns: float,
         min_latency_ns: float = 0.0,
         nominal_latency_ns: float | None = None,
@@ -409,7 +435,7 @@ class ClassicalFunction:
             raise TypeError(f"{self.name}() takes {len(self.args)} arguments, got {len(args)}")
         return self.implementation(*args)
 
-    def submit(self, *args: Any) -> Answer:
+    def submit(self, *args: Any) -> Pending:
         """Call the function; outside a kernel this runs it at once."""
         return Answer(self(*args), self)
 
@@ -417,6 +443,17 @@ class ClassicalFunction:
         args = ", ".join(a.descriptor for a in self.args)
         results = ", ".join(r.descriptor for r in self.results)
         return f"<classical function {self.name}({args}) -> ({results}) on link {self.link!r}>"
+
+
+class Pending(Protocol):
+    """What ``fn.submit(...)`` returns: a future while a kernel is traced, an
+    answer already taken when called outside a kernel.
+
+    ``.result()`` gives the declared results; with ``timeout_ns`` it gives
+    ``(in_time, *results)``.
+    """
+
+    def result(self, timeout_ns: float | None = None) -> Any: ...
 
 
 class Answer:
@@ -439,7 +476,17 @@ class Answer:
         return self._value
 
 
-def function(implementation: Callable[..., Any] | None = None, /, **options: Any) -> Any:
+@overload
+def function(
+    implementation: Callable[..., Any], /, **options: Unpack[_NamedOptions]
+) -> ClassicalFunction: ...
+@overload
+def function(
+    implementation: None = None, /, **options: Unpack[_NamedOptions]
+) -> Callable[[Callable[..., Any]], ClassicalFunction]: ...
+def function(
+    implementation: Callable[..., Any] | None = None, /, **options: Any
+) -> ClassicalFunction | Callable[[Callable[..., Any]], ClassicalFunction]:
     """Declare a classical function; ``pulse.classical`` is this decorator.
 
     Keyword options: ``args`` and ``results`` (sequences of types such as
@@ -460,7 +507,7 @@ def function(implementation: Callable[..., Any] | None = None, /, **options: Any
     return decorate
 
 
-def external(name: str, /, **options: Any) -> ClassicalFunction:
+def external(name: str, /, **options: Unpack[_Options]) -> ClassicalFunction:
     """A classical function with no reference implementation, by *name*.
 
     It takes the keyword options of ``pulse.classical``. Simulating a program
@@ -502,6 +549,57 @@ def random_index(
     )
     function.uniform = n
     return function
+
+
+_Function = ClassicalFunction
+
+
+class _Declare(Protocol):
+    @overload
+    def __call__(
+        self, implementation: Callable[..., Any], /, **options: Unpack[_NamedOptions]
+    ) -> _Function: ...
+    @overload
+    def __call__(
+        self, implementation: None = None, /, **options: Unpack[_NamedOptions]
+    ) -> Callable[[Callable[..., Any]], _Function]: ...
+
+
+class _External(Protocol):
+    def __call__(self, name: str, /, **options: Unpack[_Options]) -> _Function: ...
+
+
+class ClassicalDecorator(_Declare, Protocol):
+    """What type checkers take ``pulse.classical`` to be: the decorator, with
+    this module's names as attributes.
+
+    A module can't be declared callable, so ``cudaq_pulse`` declares its
+    ``classical`` attribute with this type for checkers only; at run time it
+    is this module.
+    """
+
+    Bits: type[Bits]
+    Levels: type[Levels]
+    IQ: type[IQ]
+    Float: type[Float]
+    Integer: type[Integer]
+    Byte: type[Byte]
+    Floats: type[Floats]
+    Integers: type[Integers]
+    Bytes: type[Bytes]
+    Link: type[Link]
+    ClassicalFunction: type[_Function]
+    Pending: type[Pending]
+    function: _Declare
+    external: _External
+    function_id: Callable[[str], int]
+    random_index: Callable[..., _Function]
+    # Submodules, once imported.
+    calibration: types.ModuleType
+    emulation: types.ModuleType
+    loop: types.ModuleType
+    qec: types.ModuleType
+    wire: types.ModuleType
 
 
 class _ClassicalModule(types.ModuleType):

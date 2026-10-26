@@ -129,9 +129,10 @@ if __name__ == "__main__":
     print(f"  mean estimate over paths: {expected / 1e3:+.0f} kHz")
 
     print("\n=== 2. Tracking a drifting device between shots ===")
+    telegraph = TelegraphT1(qubit.t1_us / 4, qubit.t1_us, rate_hz=0.5)
     plant = DriftingPlant(
         target,
-        t1=TelegraphT1(qubit.t1_us / 4, qubit.t1_us, rate_hz=0.5),
+        t1=telegraph,
         frequency=OrnsteinUhlenbeck(100e3, correlation_s=5.0),
         seed=21,
     )
@@ -167,9 +168,9 @@ if __name__ == "__main__":
         plant.advance(1e-3)
     for e in log.series("t1_us")[:6]:
         print(f"  t = {e.time_s:5.2f} s  T1 estimate {e.value:5.1f} us  true {e.truth:5.1f} us")
-    split = (plant.t1.low_us + plant.t1.high_us) / 2
-    blocks = log.series("t1_us")
-    right = sum((e.value > split) == (e.truth > split) for e in blocks)
+    split = (telegraph.low_us + telegraph.high_us) / 2
+    blocks = [(e.value, e.truth) for e in log.series("t1_us") if e.truth is not None]
+    right = sum((value > split) == (truth > split) for value, truth in blocks)
     print(f"  T1 state right in {right} of {len(blocks)} blocks of {block} shots")
     print(f"  frequency tracking error (rms): {log.tracking_error('offset_hz') / 1e3:.1f} kHz")
     print(f"  store version {store.version} after {iterations} iterations")

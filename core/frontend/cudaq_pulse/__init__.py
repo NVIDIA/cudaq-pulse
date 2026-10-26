@@ -34,7 +34,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from . import _build_config
-from . import classical as classical
 from . import ops as ops
 from ._device import Device as Device
 from ._device import DeviceMismatchError as DeviceMismatchError
@@ -51,6 +50,14 @@ from .kernel._kernel import CompiledKernel as CompiledKernel
 from .kernel._kernel import Kernel as Kernel
 from .kernel.ir_builder import CompilationError as CompilationError
 from .targets._registry import NoTargetError as NoTargetError
+
+# A module can't be declared callable, so checkers see the decorator's type.
+if TYPE_CHECKING:
+    from .classical import ClassicalDecorator
+
+    classical: ClassicalDecorator
+else:
+    from . import classical as classical
 
 __version__: str = _build_config.PACKAGE_VERSION
 

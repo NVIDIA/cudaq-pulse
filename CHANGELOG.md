@@ -47,6 +47,10 @@ request that makes it.
 
 - A kernel that called a method of a global object (`fn.submit(...)`,
   `cfg.scaled(...)`) was compiled again on every call; it is now cached.
+- Type checkers and editors reported `@pulse.classical(...)` as "Module is
+  not callable" and `fn.submit` as unknown. They now see the decorator with
+  its keyword options, so a wrong option is reported where it is written,
+  and `.submit()` returns a `Pending`.
 
 ## [0.1.0] - Unreleased
 
