@@ -1788,9 +1788,12 @@ JITModule createJITModule(mlir::ModuleOp module,
       unresolved.push_back(std::move(name));
   });
 
-  mlir::ExecutionEngineOptions options;
-  options.transformer = mlir::makeOptimizingTransformer(
+  // ExecutionEngineOptions::transformer is a function_ref: the
+  // std::function it refers to must outlive ExecutionEngine::create.
+  auto transformer = mlir::makeOptimizingTransformer(
       /*optLevel=*/2, /*sizeLevel=*/0, /*targetMachine=*/nullptr);
+  mlir::ExecutionEngineOptions options;
+  options.transformer = transformer;
   auto engine = mlir::ExecutionEngine::create(module, options);
   if (!engine) {
     std::string message;
