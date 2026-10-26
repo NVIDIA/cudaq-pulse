@@ -7,10 +7,10 @@
 # ============================================================================ #
 """GPU integration tests: T1 decoherence during idle (wait) periods.
 
-Ported from ``qpu/physics/test_idle_evolution.cpp``. Verifies that free
-evolution under a T1 Lindblad term follows P(|1>, t) = P0 * exp(-t/T1), that
-short idles cause negligible decay, and that splitting an idle into several
-shorter waits yields the same decay (schedule/integrator consistency).
+Verifies that free evolution under a T1 Lindblad term follows
+P(|1>, t) = P0 * exp(-t/T1), that short idles cause negligible decay, and that
+splitting an idle into several shorter waits yields the same decay
+(schedule/integrator consistency).
 """
 
 import math

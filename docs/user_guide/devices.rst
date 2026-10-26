@@ -133,10 +133,9 @@ by default. Its couplings replace the target's, so devices with different
 calibrations compile separately. Detunings are in Hz; for qubits whose
 circuit, including d, is calibrated (``Calibration.flux_qubits``, all 17
 here) ``flux_for_detuning`` and ``detuning_for_flux`` convert to and from
-flux quanta. ``tools/refresh-krinner-calibration.py`` rebuilds the shipped
-file from a working calibration file of the same schema: it recomputes the
-anchored charge couplings, copies the per-pair CZ knobs and refuses to write
-anything that is not derived from published sources.
+flux quanta. Every value in the shipped file is published, digitized from a
+published figure, or fitted, and cites its source; fitted values also name
+the fitting method.
 
 The coupling is one device-wide charge coupling, g_c = 3.12 MHz
 (``coupling.charge_coupling_g_c.calibration_A``), fitted so that X2-D4's

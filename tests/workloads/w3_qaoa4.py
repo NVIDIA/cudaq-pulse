@@ -54,8 +54,8 @@ def build(q0, q1, q2, q3):
     beta = 0.7
 
     # Cost layer: ZZ rotation via CNOT-Rz(2*gamma)-CNOT on ring edges.
-    # Pulse kernels currently support static range loops; spell out this
-    # irregular edge list so the workload stays within that contract.
+    # The ring edges are spelled out one call per edge, which keeps the
+    # workload's baselined op counts fixed.
     _cost_edge(d0, d1, t0, t1, gamma)
     _cost_edge(d1, d2, t1, t2, gamma)
     _cost_edge(d2, d3, t2, t3, gamma)

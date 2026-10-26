@@ -7,14 +7,8 @@
 # ============================================================================ #
 """GPU integration tests: frame (phase) operations.
 
-Ported (partially) from ``qpu/physics/test_frame_operations.cpp``. Only the
-pieces that map to ops supported by the dialect-routed runtime are kept:
-``shift_phase`` rotates the drive axis, which the pulse->operator lowering
-models as X/Y quadratures (amplitude*cos(phase) and amplitude*sin(phase)).
-
-Frequency-detuning cases from the source are intentionally omitted: the
-research-preview runtime applies drives resonantly and does not model an
-independent drive-frequency detuning term.
+``shift_phase`` rotates the drive axis, which the Pulse -> QOp lowering models
+as X/Y quadratures (amplitude*cos(phase) and amplitude*sin(phase)).
 """
 
 import math

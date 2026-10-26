@@ -7,11 +7,8 @@
 # ============================================================================ #
 """GPU integration tests: 8-qubit ladder system.
 
-Ported from ``qpu/physics/test_8qubit_system.cpp``. The engine-specific
-calibration/dispersive-readout machinery (``SystemCalibration``,
-``TransmonConfig::create_ladder_8q``, MLIR calibration files) is dropped;
-what survives is the ladder connectivity as a ``TargetDescription`` and a scalable
-256-dimensional GPU evolution.
+The ladder connectivity is a ``TargetDescription``; the tests check a
+256-dimensional GPU evolution on it.
 
     q0 -- q1 -- q2 -- q3
     |     |     |     |

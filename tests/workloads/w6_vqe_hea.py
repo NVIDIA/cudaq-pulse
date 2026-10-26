@@ -53,8 +53,7 @@ def build(q0, q1, q2, q3):
         drive(lines[q], sx, tones[q])
         shift_phase(tones[q], math.pi / 2)
 
-    # Linear-chain CNOTs: 0->1, 1->2, 2->3. Pulse kernels currently support
-    # static range loops, so keep this irregular edge list explicit.
+    # Linear-chain CNOTs: 0->1, 1->2, 2->3, spelled out one pair at a time.
     sync(d0, d1)
     _cr_cnot(d0, d1, t0, t1)
     sync(d1, d2)
