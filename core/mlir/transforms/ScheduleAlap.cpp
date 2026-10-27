@@ -1108,9 +1108,8 @@ private:
   /// are all simulated.
   bool lanesBound = false;
   /// The requests of each block, by local start and by local end.
-  llvm::DenseMap<mlir::Operation *,
-                 std::pair<llvm::SmallVector<BlockRequest>,
-                           llvm::SmallVector<BlockRequest>>>
+  llvm::DenseMap<mlir::Operation *, std::pair<llvm::SmallVector<BlockRequest>,
+                                              llvm::SmallVector<BlockRequest>>>
       blockRequests;
   /// Under ALAP, nothing before a blocking wait ends after it.
   int64_t ceiling = kNever;
