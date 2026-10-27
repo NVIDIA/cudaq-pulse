@@ -7,11 +7,13 @@
 # ============================================================================ #
 """The process target, chosen outside user code.
 
-A kernel runs on the target named by the ``CUDAQ_PULSE_TARGET`` environment
-variable, which ``python -m cudaq_pulse --target NAME script.py`` sets for the
-script it runs. A name is a registered target, optionally with an argument
-after a colon (``transmon_generic:4``). There is no default: a kernel call
-without a target raises ``NoTargetError``.
+``get_device()`` with no argument returns the device of the target named by
+the ``CUDAQ_PULSE_TARGET`` environment variable, which
+``python -m cudaq_pulse --target NAME script.py`` sets for the script it
+runs. A name is a registered target, optionally with an argument after a
+colon (``transmon_generic:4``). There is no default: ``get_device()`` without
+one raises ``NoTargetError``. Kernel calls never read the process target;
+they run on the device of their qudit handles.
 """
 
 from __future__ import annotations
@@ -32,11 +34,13 @@ TargetFactory = Callable[[str | None], Any]
 
 
 class NoTargetError(RuntimeError):
-    """A kernel needs a target and none is configured."""
+    """``get_device()`` was called with no argument and ``CUDAQ_PULSE_TARGET``
+    names no process target."""
 
 
 class UnknownTargetError(LookupError):
-    """``CUDAQ_PULSE_TARGET`` names a target that is not registered."""
+    """A target name, in a device config or in ``CUDAQ_PULSE_TARGET``, is not
+    registered; the message lists the registered ones."""
 
 
 def _no_argument(name: str, factory: Callable[[], Any]) -> TargetFactory:
@@ -110,7 +114,9 @@ def register_target(name: str, factory: TargetFactory) -> None:
 
 def available_targets() -> list[str]:
     """Names that ``CUDAQ_PULSE_TARGET`` accepts."""
-    return sorted(_registry())
+    registry = _registry()
+    with _lock:
+        return sorted(registry)
 
 
 def make_target(spec: str) -> TargetDescription:
@@ -131,14 +137,14 @@ def make_target(spec: str) -> TargetDescription:
     return target
 
 
-def current_target(kernel: str | None = None) -> Device:
+def current_target() -> Device:
     """The device of the process target; ``NoTargetError`` if none is configured.
 
     Resolved once per distinct ``CUDAQ_PULSE_TARGET`` value.
     """
     spec = os.environ.get(ENV_VAR)
     if not spec:
-        raise NoTargetError(_no_target_message(kernel))
+        raise NoTargetError(_no_target_message())
     resolved = _resolved.get(spec)
     if resolved is None:
         from .._device import _from_spec
@@ -149,11 +155,11 @@ def current_target(kernel: str | None = None) -> Device:
     return resolved
 
 
-def _no_target_message(kernel: str | None) -> str:
-    who = f"{kernel}() needs" if kernel else "running a kernel needs"
+def _no_target_message() -> str:
     return (
-        f"{who} a device: pass qudit handles of one (dev.qudit_handles[i]), or "
-        "configure a process target. Set one of:\n"
+        "get_device() with no argument returns the process target, and none is "
+        "configured: name a target, as get_device(cudaq_pulse.Target.TRANSMON_KRINNER_17Q), "
+        "or set one of:\n"
         f"    {ENV_VAR}=transmon_krinner_17q python script.py\n"
         "    python -m cudaq_pulse --target transmon_krinner_17q script.py\n"
         f"Available targets: {', '.join(available_targets())}"

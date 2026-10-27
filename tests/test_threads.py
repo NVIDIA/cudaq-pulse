@@ -102,3 +102,68 @@ def test_lowering_runs_while_python_keeps_running():
         last = now
     worker.join()
     assert max(gaps) < 0.5 * elapsed[0]
+
+
+def _together(n, work):
+    """Run *work(i)* on *n* threads released at once; return the results."""
+    barrier = threading.Barrier(n)
+
+    def run(i):
+        barrier.wait()
+        return work(i)
+
+    with ThreadPoolExecutor(n) as pool:
+        return list(pool.map(run, range(n)))
+
+
+def test_concurrent_first_loads_build_each_target_and_calibration_once(monkeypatch):
+    from cudaq_pulse.targets import calibration, transmon
+
+    monkeypatch.setattr(transmon, "_BUILT", {})
+    monkeypatch.setattr(calibration, "_LOADED", {})
+    loads = []
+    load = calibration.Calibration.load
+    monkeypatch.setattr(
+        calibration.Calibration,
+        "load",
+        staticmethod(lambda *a, **k: loads.append(a) or load(*a, **k)),
+    )
+    targets = _together(16, lambda i: transmon.transmon_krinner_17q())
+    assert len(loads) == 1
+    assert all(t is targets[0] for t in targets)
+
+
+def test_registering_targets_while_others_resolve(monkeypatch):
+    from cudaq_pulse.targets import _registry
+
+    monkeypatch.setattr(_registry, "_factories", dict(_registry._registry()))
+    monkeypatch.setattr(_registry, "_resolved", {})
+
+    def work(i):
+        for round in range(200):
+            if i % 2:
+                _registry.register_target(f"stress_{i}_{round}", lambda arg: None)
+            else:
+                assert "transmon_generic" in pulse.targets.available_targets()
+                assert _registry.make_target("transmon_generic:2").n_qubits == 2
+
+    _together(8, work)
+    names = pulse.targets.available_targets()
+    assert all(f"stress_{i}_{r}" in names for i in (1, 3, 5, 7) for r in range(200))
+
+
+def test_concurrent_first_traces_see_every_pulse_operation(monkeypatch):
+    from cudaq_pulse.kernel import _emitter
+
+    monkeypatch.setattr(_emitter, "_PULSE_FUNCTIONS", {})
+    play = pulse.ops.drive
+
+    def work(i):
+        @pulse.kernel
+        def k(q):
+            line, tone = get_drive_line(q)
+            play(line, square(8 + i, 0.1), tone)
+
+        return k.lower(Q[0]).mlir().count("pulse.drive %")
+
+    assert _together(16, work) == [1] * 16

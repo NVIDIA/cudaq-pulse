@@ -814,6 +814,8 @@ def region_view(decoded: DecodedCode, join: int) -> DecodedCode:
     return view
 
 
+# Each read and write is one dict operation and a hit is checked by identity,
+# so threads share these without a lock: a race only decodes twice.
 _JOINS: dict[tuple[int, int], tuple[DecodedCode, int]] = {}
 _VIEWS: dict[tuple[int, int], tuple[DecodedCode, DecodedCode]] = {}
 _CACHE: dict[int, DecodedCode] = {}

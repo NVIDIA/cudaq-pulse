@@ -15,6 +15,7 @@ values the paper publishes (``_krinner17``, with a citation for each).
 from __future__ import annotations
 
 import math
+import threading
 from typing import Any
 
 from . import _krinner17 as _k
@@ -65,20 +66,30 @@ def transmon_krinner_17q(calibration: Any = "krinner17") -> TargetDescription:
 
 
 _BUILT: dict[str | None, TargetDescription] = {}
+# Reentrant: building a calibrated target builds the published one.
+_BUILT_LOCK = threading.RLock()
 
 
 def _calibrated_krinner(name: str) -> TargetDescription:
     from .calibration import shipped_calibration
 
-    if name not in _BUILT:
-        _BUILT[name] = shipped_calibration(name).apply(_published_krinner())
-    return _BUILT[name]
+    built = _BUILT.get(name)
+    if built is None:
+        with _BUILT_LOCK:
+            built = _BUILT.get(name)
+            if built is None:
+                built = _BUILT[name] = shipped_calibration(name).apply(_published_krinner())
+    return built
 
 
 def _published_krinner() -> TargetDescription:
-    if None not in _BUILT:
-        _BUILT[None] = _build_published_krinner()
-    return _BUILT[None]
+    built = _BUILT.get(None)
+    if built is None:
+        with _BUILT_LOCK:
+            built = _BUILT.get(None)
+            if built is None:
+                built = _BUILT[None] = _build_published_krinner()
+    return built
 
 
 def _build_published_krinner() -> TargetDescription:

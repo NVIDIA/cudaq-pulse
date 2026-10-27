@@ -151,10 +151,13 @@ def _load_pulse_functions() -> None:
     """Map each DSL function object, by identity, to its op name."""
     from .. import ops
 
+    loaded = {}
     for name in _PULSE_OP_NAMES:
         op = getattr(ops, name, None)
         if op is not None:
-            _PULSE_FUNCTIONS[op] = name
+            loaded[op] = name
+    # One update, so another thread never sees part of the map.
+    _PULSE_FUNCTIONS.update(loaded)
 
 
 def _uses_pulse_ops(fn: types.FunctionType, seen: set[int] | None = None) -> bool:

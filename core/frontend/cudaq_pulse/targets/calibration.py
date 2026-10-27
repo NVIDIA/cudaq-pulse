@@ -24,6 +24,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import threading
 from collections.abc import Mapping
 from dataclasses import replace
 from functools import cached_property
@@ -225,11 +226,16 @@ class Calibration:
 
 
 _LOADED: dict[tuple[str, str | None], Calibration] = {}
+_LOADED_LOCK = threading.Lock()
 
 
 def shipped_calibration(name: str, cooldown: str | None = None) -> Calibration:
     """A shipped calibration, loaded once."""
     key = (name, cooldown)
-    if key not in _LOADED:
-        _LOADED[key] = Calibration.load(name, cooldown=cooldown)
-    return _LOADED[key]
+    loaded = _LOADED.get(key)
+    if loaded is None:
+        with _LOADED_LOCK:
+            loaded = _LOADED.get(key)
+            if loaded is None:
+                loaded = _LOADED[key] = Calibration.load(name, cooldown=cooldown)
+    return loaded
