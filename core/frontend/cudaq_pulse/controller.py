@@ -324,8 +324,9 @@ def shape_key(node: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
     """A key equal for waveforms that differ only in overall amplitude.
 
     Scale and negation drop out, and so does the amplitude of a built-in
-    shape; custom samples are normalized to their largest magnitude.
-    ``None`` when the waveform is not built from numbers alone.
+    shape, known or not; custom samples are normalized to their largest
+    magnitude. ``None`` when a parameter other than the amplitude is not
+    known while the program compiles.
     """
     if node is None:
         return None
@@ -342,10 +343,11 @@ def shape_key(node: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
         if any(child is None for child in children):
             return None
         return (shape, tuple(node.get("values", ())), children)
-    if any(v is None for v in params.values()):
-        return None
     skip = {_PARAMETERS[shape][i] for i in _AMPLITUDES.get(shape, ())}
-    return (shape, node.get("name"), tuple((k, v) for k, v in params.items() if k not in skip))
+    kept = tuple((k, v) for k, v in params.items() if k not in skip)
+    if any(v is None for _, v in kept):
+        return None
+    return (shape, node.get("name"), kept)
 
 
 def sample_waveform(

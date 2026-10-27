@@ -286,6 +286,40 @@ def test_shape_key_ignores_overall_amplitude_only():
     assert shape_key(one) != shape_key(two)
 
 
+def test_shape_key_ignores_an_amplitude_not_known_while_compiling():
+    known = {
+        "shape": "drag",
+        "params": {"duration": 16.0, "amplitude": 0.5, "sigma": 4.0, "beta": 1.0},
+    }
+    unknown = {"shape": "drag", "params": {**known["params"], "amplitude": None}}
+    assert shape_key(unknown) == shape_key(known)
+    square = {
+        "shape": "square",
+        "params": {"duration": 8.0, "amplitude": None, "amplitude_imag": None},
+    }
+    assert shape_key(square) is not None
+    sigma = {"shape": "drag", "params": {**known["params"], "sigma": None}}
+    assert shape_key(sigma) is None
+
+
+@pulse.kernel
+def two_amplitudes(q, a: float, b: float):
+    d, t = get_drive_line(q)
+    drive(d, gaussian(40, a, 10.0), t)
+    drive(d, gaussian(40, b, 10.0), t)
+
+
+def test_waveforms_of_one_shape_at_float_amplitudes_share_waveform_memory():
+    machine = MachineModel(
+        controller=ControllerLimits(
+            waveform_samples=60, sample_rate_ghz=pulse.get_device().clock_ghz
+        )
+    )
+    lowered = pulse.compile(two_amplitudes, machine=machine).lower(Q[0], 0.5, 0.25)
+    assert check(lowered.generic) == []
+    assert len(lowered.export_controller()["events"]) == 2
+
+
 @pulse.kernel
 def two_readouts(q, r):
     ra = get_readout_line(q)
