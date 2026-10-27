@@ -422,6 +422,7 @@ def _walk(
     values: bool = True,
     own: _clocks.ControllerClock | None = None,
     waveforms: bool = True,
+    slots: list[int] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], Sequence[tuple[int, int, int]], list[str]]:
     """The lines and events of *lowered*, at the values of its call; without
     *values*, a module with float parameters has ``None`` where they reach.
@@ -430,12 +431,15 @@ def _walk(
     waveforms' too, with *waveforms*), what they compute at run time too
     (``_clocks.own_run_time``), and the line events off its grid are
     returned as (index, start, duration) in program cycles, with the
-    violations of what they compute at run time."""
+    violations of what they compute at run time. *slots* gets the
+    runtime-qudit slot of each line (-1 for none)."""
     if values and lowered.parameters:
         raise ValueError(
             "the module has float parameters "
             f"({', '.join(lowered.parameters)}); lower it with their values first"
         )
+    if values and lowered._role is not None and lowered._unbound():
+        raise InvalidValueError("the module has runtime qudits; lower it with handles first")
     # Waveforms and frames depend on the call's values, which only the
     # concrete module holds.
     module = lowered._concrete()
@@ -444,11 +448,17 @@ def _walk(
     problems: list[str] = []
     with lowered._lock:
         if own is None:
-            lines, events = module.controller_events(_PARAMETERS, _AMPLITUDES, epochs)
+            lines, events = module.controller_events(_PARAMETERS, _AMPLITUDES, epochs, slots)
         else:
             ratio = own.ratio
             lines, events, off_grid, ends = module.controller_events_on(
-                _PARAMETERS, _AMPLITUDES, epochs, ratio.numerator, ratio.denominator, own.grid
+                _PARAMETERS,
+                _AMPLITUDES,
+                epochs,
+                ratio.numerator,
+                ratio.denominator,
+                own.grid,
+                slots,
             )
     if own is not None:
         from . import _clocks
@@ -501,11 +511,13 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
     """
     from .classical.emulation import export as emulation
 
+    role = lowered._role
+    slots: list[int] | None = None if role is None else []
     limits = lowered.options.machine.controller
     clocks = (lowered._generic or lowered).clocks
     native = None if clocks is None else _native_clock(clocks)
     # In the controller's own cycles from here on.
-    lines, events, off, problems = _walk(lowered, own=native)
+    lines, events, off, problems = _walk(lowered, own=native, slots=slots)
     if limits is not None:
         violations = _violations(lowered, events, limits, lines, clocks, off, problems)
         if violations:
@@ -533,7 +545,7 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
                 raise ValueError(f"event {event['index']} ({event['kind']}): {e}") from None
             event["samples"] = {"re": samples.real.tolist(), "im": samples.imag.tolist()}
     base = emulation(lowered, False)
-    return {
+    exported = {
         "format": FORMAT,
         "target": lowered.target.name,
         "clock_ghz": clock,
@@ -549,6 +561,93 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
         "manifest": base["manifest"],
         "limits": None if limits is None else limits.as_dict(),
     }
+    if role is not None:
+        assert slots is not None
+        exported["program_id"] = role.program_id
+        exported["symbols"] = _symbols(lowered, role, slots)
+        _event_symbols(lowered, role, slots, events)
+    return exported
+
+
+_DEPENDENT_FIELDS = ("frequency_hz", "phase_rad", "waveform")
+
+
+def _event_symbols(
+    lowered: Lowered, role: Any, slots: Sequence[int], events: list[dict[str, Any]]
+) -> None:
+    """Give each event of a call the symbols its fields come from: its qudit's
+    slot, and those its tone frequency, frame phase and waveform depend on."""
+    dependencies = role.dependencies
+    if dependencies is None:
+        with lowered._lock:
+            found = lowered._module.controller_dependencies()
+        names = [name for name, kind, _, _ in role.symbols if kind != "slot"]
+        names += [f"s{k}.f01" for k in range(role.slots)]
+        dependencies = role.dependencies = [
+            {
+                field: [names[a] for a in arguments]
+                for field, arguments in zip(_DEPENDENT_FIELDS, item, strict=True)
+                if arguments
+            }
+            for item in found
+        ]
+    aligned = len(dependencies) == len(events)
+    for index, event in enumerate(events):
+        symbols: dict[str, Any] = {}
+        line = event["line"]
+        if (event["kind"] in _PLAYED or event["kind"] == "wait") and line is not None:
+            if 0 <= line < len(slots) and slots[line] >= 0:
+                symbols["qudit"] = f"s{slots[line]}"
+        if aligned:
+            symbols.update(dependencies[index])
+        if symbols:
+            event["symbols"] = symbols
+
+
+def _symbols(lowered: Lowered, role: Any, slots: Sequence[int]) -> list[dict[str, Any]]:
+    """Every symbol of a call's module, with its value in the call: its
+    float arguments, its slots (the carriers bound) and the native frequency
+    of each slot that gets a line."""
+    values = iter(lowered.arguments)
+    carriers = lowered.carriers
+    frequencies = lowered.target.frequencies
+    lined = set(slots)
+    found: list[dict[str, Any]] = []
+    named: set[str] = set()
+    for name, kind, parameter, position in role.symbols:
+        entry: dict[str, Any] = {"symbol": name, "kind": kind, "parameter": parameter}
+        if position is not None:
+            entry["position"] = position
+        if kind == "slot":
+            slot = int(name[1:])
+            entry["value"] = carriers[slot]
+            found.append(entry)
+            if slot in lined and f"{name}.f01" not in named:
+                named.add(f"{name}.f01")
+                found.append(
+                    {
+                        "symbol": f"{name}.f01",
+                        "kind": "frequency",
+                        "slot": name,
+                        "transition": [0, 1],
+                        "value": frequencies[carriers[slot]],
+                    }
+                )
+        elif kind == "frequency":
+            named.add(name)
+            found.append(
+                {
+                    "symbol": name,
+                    "kind": kind,
+                    "slot": parameter,
+                    "transition": [int(name[-2]), int(name[-1])],
+                    "value": next(values),
+                }
+            )
+        else:
+            entry["value"] = next(values)
+            found.append(entry)
+    return found
 
 
 # ── Checks ───────────────────────────────────────────────────────────────────
@@ -808,7 +907,8 @@ def _compile_check(lowered: Lowered, limits: ControllerLimits) -> tuple[list[str
     lines, events, off, problems = _walk(
         lowered, values=False, own=_native_clock(clocks), waveforms=False
     )
-    unresolved: list[str] | None = [] if lowered.parameters else None
+    slots = lowered._role is not None and lowered._role.slots > 0
+    unresolved: list[str] | None = [] if lowered.parameters or slots else None
     found = _violations(
         lowered,
         events,
@@ -820,6 +920,10 @@ def _compile_check(lowered: Lowered, limits: ControllerLimits) -> tuple[list[str
         waveforms=False,
         unresolved=unresolved,
     )
+    if slots and limits.acquirers:
+        assert unresolved is not None
+        # Acquirers are given per carrier, which each call binds.
+        unresolved.append("acquirers")
     if limits is not machine.controller:
         found.extend(_sample_rate_violations(lowered, limits, clocks, events))
     return found, not unresolved

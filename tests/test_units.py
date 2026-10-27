@@ -402,6 +402,19 @@ def test_a_float_parameter_in_nanoseconds_is_one_run_time_multiply():
         compiled(Q[0], 30 * ns)
 
 
+def test_a_list_float_element_can_be_a_duration_like_a_float_parameter():
+    @pulse.kernel
+    def k(q, widths: list[float]):
+        d, t = get_drive_line(q)
+        drive(d, square(widths[0], 0.1), t)
+        wait(d, widths[1])
+
+    with pytest.warns(pulse.PulseWarning, match="'widths'"):
+        assert _events(k.lower(Q[0], [16.0, 8.0])) == [("drive", 0, 16), ("wait", 16, 8)]
+    assert "widths" in k.static_parameters
+    assert _events(k.lower(Q[0], [12.0, 4.0])) == [("drive", 0, 12), ("wait", 12, 4)]
+
+
 def test_mixing_units_in_a_run_time_length_is_an_error():
     @pulse.kernel
     def k(q, tau: float):

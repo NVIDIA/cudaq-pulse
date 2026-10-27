@@ -10,12 +10,14 @@
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/array.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <bit>
 #include <charconv>
@@ -339,11 +341,73 @@ struct ControllerWalk {
     }
   };
 
-  explicit ControllerWalk(double clockGHz) : clockGHz(clockGHz) {}
+  explicit ControllerWalk(double clockGHz, bool track = false)
+      : clockGHz(clockGHz), track(track) {}
 
   double clockGHz;
   llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
   std::vector<Event> result;
+
+  /// With `track`, the arguments of `main` each event's tone frequency,
+  /// frame phase and waveform depend on, parallel to `result`. A qref
+  /// argument stands for its qudit's native frequency.
+  bool track;
+  using Dependencies = std::array<std::vector<int64_t>, 3>;
+  std::vector<Dependencies> dependencies;
+  /// What a tone's frequency, the frequency of its frame (where it
+  /// started) and its phase depend on.
+  struct FrameDependencies {
+    std::vector<int64_t> frequency, frame, phase;
+    bool retuned = false;
+  };
+  std::map<mlir::Operation *, FrameDependencies> frameDependencies;
+
+  /// The arguments of `main` *value* is computed from.
+  static void argumentsOf(mlir::Value value, std::vector<int64_t> &out) {
+    llvm::SmallVector<mlir::Value> work{value};
+    llvm::DenseSet<mlir::Value> seen;
+    while (!work.empty()) {
+      mlir::Value v = work.pop_back_val();
+      if (!seen.insert(v).second)
+        continue;
+      if (auto argument = mlir::dyn_cast<mlir::BlockArgument>(v)) {
+        mlir::Block *owner = argument.getOwner();
+        if (owner->isEntryBlock() &&
+            mlir::isa_and_nonnull<mlir::func::FuncOp>(owner->getParentOp()))
+          out.push_back(argument.getArgNumber());
+        continue;
+      }
+      mlir::Operation *def = v.getDefiningOp();
+      if (def && def->getNumRegions() == 0)
+        work.append(def->getOperands().begin(), def->getOperands().end());
+    }
+  }
+
+  static void merge(std::vector<int64_t> &into,
+                    const std::vector<int64_t> &from) {
+    into.insert(into.end(), from.begin(), from.end());
+    std::sort(into.begin(), into.end());
+    into.erase(std::unique(into.begin(), into.end()), into.end());
+  }
+
+  FrameDependencies &frameDependenciesOf(mlir::Value tone) {
+    mlir::Operation *root = toneRoots(tone);
+    auto [it, inserted] = frameDependencies.try_emplace(root);
+    if (inserted && root) {
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(root) &&
+          !root->hasAttr("frequency_hz"))
+        argumentsOf(root->getOperand(0), it->second.frequency);
+      else if (root->getName().getStringRef() == "pulse.tone" &&
+               root->getNumOperands() == 2) {
+        argumentsOf(root->getOperand(0), it->second.frequency);
+        argumentsOf(root->getOperand(1), it->second.phase);
+      }
+      merge(it->second.frequency, {});
+      merge(it->second.phase, {});
+      it->second.frame = it->second.frequency;
+    }
+    return it->second;
+  }
 
   static constexpr double kUnknown = std::numeric_limits<double>::quiet_NaN();
 
@@ -375,6 +439,9 @@ struct ControllerWalk {
     if (auto frequency = root->getAttrOfType<mlir::FloatAttr>("frequency_hz"))
       return {frequency.getValueAsDouble(), frequency.getValueAsDouble(), 0.0,
               0.0};
+    // A runtime qudit's line: its frequency is the carrier's.
+    if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(root))
+      return {kUnknown, kUnknown, 0.0, 0.0};
     if (root->getName().getStringRef() == "pulse.tone" &&
         root->getNumOperands() == 2) {
       double frequency = number(root->getOperand(0));
@@ -779,6 +846,22 @@ struct ControllerWalk {
         }
       }
     }
+    if (track) {
+      Dependencies found;
+      if (!mlir::isa<pulse::WaitOp>(op)) {
+        FrameDependencies &frame = frameDependenciesOf(op->getOperand(2));
+        found[0] = frame.frequency;
+        found[1] = frame.phase;
+        // A retuned tone gains phase at its detuning from the frame.
+        if (frame.retuned) {
+          merge(found[1], frame.frequency);
+          merge(found[1], frame.frame);
+        }
+        argumentsOf(op->getOperand(1), found[2]);
+        merge(found[2], {});
+      }
+      dependencies.push_back(std::move(found));
+    }
     if (mlir::isa<pulse::ReadoutOp>(op))
       latest[op] = static_cast<int64_t>(result.size());
     auto line = reached.try_emplace(allocation, 0).first;
@@ -875,6 +958,8 @@ struct ControllerWalk {
     if (time)
       for (mlir::Value value : op.getLines())
         reached[trace(value)] = time;
+    if (track)
+      dependencies.emplace_back();
     result.emplace_back(
         "sync", -1, -1, time,
         time ? std::optional<int64_t>(0) : std::optional<int64_t>(),
@@ -909,6 +994,8 @@ struct ControllerWalk {
     if constexpr (RunTime)
       if (auto request = mlir::dyn_cast<classical::SubmitOp>(op))
         submission(request);
+    if (track)
+      dependencies.emplace_back();
     result.emplace_back(
         submit ? "submit" : "answer",
         classical::intAttr(op, "classical.device"), -1,
@@ -936,6 +1023,17 @@ struct ControllerWalk {
     }
     if (name == "pulse.shift_phase" || name == "pulse.set_phase" ||
         name == "pulse.shift_frequency" || name == "pulse.set_frequency") {
+      if (track) {
+        FrameDependencies &frame = frameDependenciesOf(op->getOperand(0));
+        std::vector<int64_t> found;
+        argumentsOf(op->getOperand(1), found);
+        bool phase = name == "pulse.shift_phase" || name == "pulse.set_phase";
+        auto &field = phase ? frame.phase : frame.frequency;
+        if (name.starts_with("pulse.set_"))
+          field.clear();
+        merge(field, found);
+        frame.retuned |= !phase;
+      }
       double value = number(op->getOperand(1));
       Frame &frame = frameOf(op->getOperand(0));
       if constexpr (RunTime)
@@ -978,15 +1076,18 @@ struct ControllerWalk {
       bool tracking = RunTime && !tracked.empty();
       if (tracking)
         enterBranch();
+      auto dependenciesBefore = frameDependencies;
       branches.emplace_back(id, 1, std::move(readouts), std::move(answers),
                             std::move(test));
       block<RunTime>(*branch.thenBlock());
       auto framesThen = std::move(frames);
       auto reachedThen = std::move(reached);
+      auto dependenciesThen = std::move(frameDependencies);
       frames = std::move(framesBefore);
       reached = std::move(reachedBefore);
       if (tracking)
         enterElse();
+      frameDependencies = std::move(dependenciesBefore);
       std::get<1>(branches.back()) = 0;
       if (!branch.getElseRegion().empty())
         block<RunTime>(*branch.elseBlock());
@@ -994,6 +1095,14 @@ struct ControllerWalk {
         leaveBranch(branches.back());
       branches.pop_back();
       mergeFrames(framesThen);
+      // After the branch, a frame depends on what either arm set.
+      for (auto &[root, theirs] : dependenciesThen) {
+        auto &ours = frameDependencies[root];
+        merge(ours.frequency, theirs.frequency);
+        merge(ours.frame, theirs.frame);
+        merge(ours.phase, theirs.phase);
+        ours.retuned |= theirs.retuned;
+      }
       for (auto &[allocation, time] : reachedThen) {
         auto [it, inserted] = reached.try_emplace(allocation, time);
         if (inserted)
@@ -1056,7 +1165,8 @@ public:
     }
   }
 
-  nb::list lines(const std::vector<std::tuple<std::string, int64_t>> &lines) {
+  nb::list
+  lines(const std::vector<std::tuple<std::string, int64_t, int64_t>> &lines) {
     nb::list out = list(lines.size());
     for (size_t i = 0; i < lines.size(); ++i) {
       nb::object line = dict();
@@ -1556,6 +1666,14 @@ struct EpochWalk {
   llvm::SmallVector<int64_t, 2> iteration;
 };
 
+/// The carrier of each runtime-qudit slot of a specialization, and the
+/// device's frequencies by carrier, which the caller keeps alive.
+struct Slots {
+  std::vector<int64_t> carriers;
+  const double *frequencies = nullptr;
+  size_t count = 0;
+};
+
 // -----------------------------------------------------------------------
 // PulseModule: opaque handle around an in-memory mlir::ModuleOp
 // -----------------------------------------------------------------------
@@ -1765,9 +1883,25 @@ public:
     return result;
   }
 
-  using ControllerLine = std::tuple<std::string, int64_t>;
+  /// (role, qudit, slot): a runtime qudit's line has its slot and qudit -1.
+  using ControllerLine = std::tuple<std::string, int64_t, int64_t>;
 
-  /// The lines, (role, qubit) in allocation order, and the timed ops of
+  /// For each event of controller_events(), in the same order, the
+  /// arguments of `main` its tone frequency, frame phase and waveform are
+  /// computed from; a qref argument stands for its qudit's native frequency.
+  std::vector<ControllerWalk::Dependencies> controller_dependencies() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    ControllerWalk walk(clock(), /*track=*/true);
+    module_->walk([&](mlir::Operation *op) {
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+        walk.lineIndex.try_emplace(op,
+                                   static_cast<int64_t>(walk.lineIndex.size()));
+    });
+    walk.block<false>(*module_->getBody());
+    return std::move(walk.dependencies);
+  }
+
+  /// The lines, (role, qubit, slot) in allocation order, and the timed ops of
   /// `events()`, in the same order, every sync and every classical call,
   /// with what a controller needs to play them: (kind, line, qubit,
   /// start_cycles, duration_cycles, loop iteration, waveform, tone frequency in
@@ -1797,9 +1931,10 @@ public:
   /// Returned as controller.export() gives them: (lines, events), lists of
   /// dicts, with `parameters` the parameter names of each waveform shape,
   /// `amplitudes` the shapes with an overall amplitude and `epochs` each
-  /// event's epoch (empty: all 0).
+  /// event's epoch (empty: all 0). A list `slots` gets each line's
+  /// runtime-qudit slot (-1 for none).
   nb::tuple controller_events(nb::handle parameters, nb::handle amplitudes,
-                              nb::list epochs) {
+                              nb::list epochs, nb::object slots) {
     ControllerObjects objects(parameters, amplitudes);
     std::unique_ptr<ControllerWalk> walk;
     std::vector<ControllerLine> lines;
@@ -1807,7 +1942,19 @@ public:
       nb::gil_scoped_release release;
       walk = controllerWalk(lines);
     }
+    lineSlots(lines, slots);
     return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs));
+  }
+
+  /// Each line's runtime-qudit slot (-1 for none) into the list `slots`,
+  /// unless it is None.
+  static void lineSlots(const std::vector<ControllerLine> &lines,
+                        nb::handle slots) {
+    if (slots.is_none())
+      return;
+    auto out = nb::borrow<nb::list>(slots);
+    for (const ControllerLine &line : lines)
+      out.append(std::get<2>(line));
   }
 
   /// A ControllerWalk of the module, its lines in `lines`; without the GIL.
@@ -1834,11 +1981,21 @@ public:
                .try_emplace(op, static_cast<int64_t>(walk.lineIndex.size()))
                .second)
         return;
-      int64_t qubit = -1;
+      int64_t qubit = -1, slot = -1;
       if (auto attr = op->getAttrOfType<mlir::IntegerAttr>("qubit"))
         qubit = attr.getInt();
-      lines.emplace_back(
-          mlir::isa<pulse::GetDriveLineOp>(op) ? "drive" : "readout", qubit);
+      if (auto attr = op->getAttrOfType<mlir::IntegerAttr>("pulse.slot"))
+        slot = attr.getInt();
+      else if (auto arg =
+                   mlir::dyn_cast<mlir::BlockArgument>(op->getOperand(0)))
+        if (auto func = mlir::dyn_cast<mlir::func::FuncOp>(
+                arg.getOwner()->getParentOp()))
+          if (auto attr = func.getArgAttrOfType<mlir::IntegerAttr>(
+                  arg.getArgNumber(), "pulse.slot"))
+            slot = attr.getInt();
+      lines.emplace_back(mlir::isa<pulse::GetDriveLineOp>(op) ? "drive"
+                                                              : "readout",
+                         qubit, slot);
     });
     walk.block<RunTime>(*module_->getBody());
   }
@@ -1856,7 +2013,7 @@ public:
   /// events, off grid, ends).
   nb::tuple controller_events_on(nb::handle parameters, nb::handle amplitudes,
                                  nb::list epochs, int64_t num, int64_t den,
-                                 int64_t grid) {
+                                 int64_t grid, nb::object slots) {
     if (num < 1 || den < 1 || grid < 1)
       throw std::invalid_argument("controller_events_on: the ratio and grid "
                                   "must be positive");
@@ -1870,6 +2027,7 @@ public:
       walk = controllerWalk(lines);
       ownCycles(*walk, num, den, grid, offGrid, ends);
     }
+    lineSlots(lines, slots);
     return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs),
                           nb::cast(offGrid), nb::cast(ends));
   }
@@ -2388,25 +2546,41 @@ public:
   /// specialize(), built once per distinct arguments and shared: the latest
   /// few are kept, while neither this module nor the one kept has changed
   /// in place since. Called with the GIL held; it is released to build.
-  nb::object specialize_shared(const std::vector<double> &f64_args,
-                               const std::vector<int64_t> &i64_args,
-                               const std::string &schedule, int64_t maxDrives,
-                               int64_t maxReadouts, int64_t readoutLatency,
-                               int64_t switchPenalty) {
-    // By bits, so that -0.0 and 0.0, or two NaNs, are told apart.
+  nb::object specialize_shared(
+      const std::vector<double> &f64_args, const std::vector<int64_t> &i64_args,
+      const std::string &schedule, int64_t maxDrives, int64_t maxReadouts,
+      int64_t readoutLatency, int64_t switchPenalty,
+      const std::vector<int64_t> &carriers,
+      std::optional<nb::ndarray<const double, nb::ndim<1>, nb::c_contig>>
+          frequencies,
+      const std::string &device) {
+    Slots slots{carriers};
+    if (!carriers.empty()) {
+      if (!frequencies)
+        throw std::invalid_argument(
+            "specialize: carriers need the device's frequencies");
+      slots.frequencies = frequencies->data();
+      slots.count = frequencies->shape(0);
+    }
+    // By bits, so that -0.0 and 0.0, or two NaNs, are told apart. A device
+    // stands for the frequencies its carriers are bound with.
     std::string key;
-    key.reserve(8 * (f64_args.size() + i64_args.size() + 6) + schedule.size());
+    key.reserve(8 * (f64_args.size() + i64_args.size() + carriers.size() + 7) +
+                schedule.size() + device.size());
     auto put = [&key](const void *data, size_t size) {
       key.append(static_cast<const char *>(data), size);
     };
-    size_t counts[2] = {f64_args.size(), i64_args.size()};
+    size_t counts[3] = {f64_args.size(), i64_args.size(), carriers.size()};
     int64_t options[4] = {maxDrives, maxReadouts, readoutLatency,
                           switchPenalty};
     put(counts, sizeof counts);
     put(f64_args.data(), 8 * f64_args.size());
     put(i64_args.data(), 8 * i64_args.size());
+    put(carriers.data(), 8 * carriers.size());
     put(options, sizeof options);
     key += schedule;
+    if (!carriers.empty())
+      key += device;
 
     uint64_t version = version_.load();
     // Released outside the lock, before building, so that their memory can
@@ -2446,7 +2620,8 @@ public:
     {
       nb::gil_scoped_release release;
       built.emplace(specialize(f64_args, i64_args, schedule, maxDrives,
-                               maxReadouts, readoutLatency, switchPenalty));
+                               maxReadouts, readoutLatency, switchPenalty,
+                               slots));
     }
     nb::object result = nb::cast(std::move(*built), nb::rv_policy::move);
     if (specialized_.maxEntries == 0 || specialized_.maxOps == 0)
@@ -2481,22 +2656,100 @@ public:
             specialized_.maxOps};
   }
 
+  /// Bind each qref argument of *module* to its slot's carrier, as a static
+  /// qudit is allocated, and give its lines the carrier's frequency.
+  static void bindSlots(mlir::ModuleOp module, const Slots &slots) {
+    auto funcOp = module.lookupSymbol<mlir::func::FuncOp>("main");
+    if (!funcOp)
+      throw std::runtime_error("specialize: no 'main' func in module");
+    auto &entryBlock = funcOp.getBody().front();
+    mlir::OpBuilder builder(module.getContext());
+    builder.setInsertionPointToStart(&entryBlock);
+    int64_t n = 0;
+    if (auto attr = module->getAttrOfType<mlir::IntegerAttr>("pulse.n_qubits"))
+      n = attr.getInt();
+    for (unsigned i = 0; i < entryBlock.getNumArguments(); ++i) {
+      auto slot = funcOp.getArgAttrOfType<mlir::IntegerAttr>(i, "pulse.slot");
+      if (!slot)
+        continue;
+      int64_t k = slot.getInt();
+      if (k < 0 || k >= static_cast<int64_t>(slots.carriers.size()))
+        throw std::invalid_argument("specialize: no carrier for slot " +
+                                    std::to_string(k));
+      int64_t carrier = slots.carriers[k];
+      if (carrier < 0 || carrier >= static_cast<int64_t>(slots.count))
+        throw std::invalid_argument("specialize: carrier " +
+                                    std::to_string(carrier) +
+                                    " has no frequency");
+      n = std::max(n, carrier + 1);
+      auto arg = entryBlock.getArgument(i);
+      if (arg.use_empty())
+        continue;
+      auto qubit = builder.getI64IntegerAttr(carrier);
+      auto frequency = builder.getF64FloatAttr(slots.frequencies[carrier]);
+      for (mlir::Operation *user : arg.getUsers())
+        if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(user)) {
+          user->setAttr("qubit", qubit);
+          user->setAttr("frequency_hz", frequency);
+          user->setAttr("pulse.slot", slot);
+        }
+      auto alloc = pulse::QuditAllocOp::create(
+          builder, funcOp.getLoc(), pulse::QrefType::get(module.getContext()));
+      alloc->setAttr("qubit", qubit);
+      arg.replaceAllUsesWith(alloc.getResult());
+    }
+    module->setAttr("pulse.n_qubits", builder.getI64IntegerAttr(n));
+    module->setAttr("pulse.qubit_freq_hz",
+                    builder.getDenseF64ArrayAttr(llvm::ArrayRef<double>(
+                        slots.frequencies, static_cast<size_t>(n))));
+  }
+
+  /// Make `main` take no arguments, once every use of them is replaced.
+  static void dropArguments(mlir::ModuleOp module) {
+    auto funcOp = module.lookupSymbol<mlir::func::FuncOp>("main");
+    auto &entryBlock = funcOp.getBody().front();
+    while (entryBlock.getNumArguments() > 0)
+      entryBlock.eraseArgument(entryBlock.getNumArguments() - 1);
+    funcOp.setType(mlir::FunctionType::get(module.getContext(), {}, {}));
+    funcOp.removeArgAttrsAttr();
+  }
+
   PulseModule specialize(const std::vector<double> &f64_args,
                          const std::vector<int64_t> &i64_args,
                          const std::string &schedule = "alap",
                          int64_t maxDrives = 4, int64_t maxReadouts = 2,
-                         int64_t readoutLatency = 0,
-                         int64_t switchPenalty = 0) {
+                         int64_t readoutLatency = 0, int64_t switchPenalty = 0,
+                         const Slots &slots = {}) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     if (specialized_.ops.load() < 0) {
       int64_t ops = 0;
       source().walk([&](mlir::Operation *) { ++ops; });
       specialized_.ops.store(ops);
     }
+    bool placed = !slots.carriers.empty();
+    bool numeric = false;
+    if (auto main = module_->lookupSymbol<mlir::func::FuncOp>("main"))
+      for (mlir::Type type : main.getArgumentTypes())
+        numeric |= !mlir::isa<pulse::QrefType>(type);
+    if (placed && !numeric) {
+      // Carriers move no op: the schedule stands, and nothing folds.
+      auto owning = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
+      bindSlots(*owning, slots);
+      dropArguments(*owning);
+      PulseModule result(ctx_, std::move(owning));
+      if (source_) {
+        result.source_ = mlir::OwningOpRef<mlir::ModuleOp>(source_->clone());
+        bindSlots(*result.source_, slots);
+        dropArguments(*result.source_);
+      }
+      return result;
+    }
     auto clonedModule = source().clone();
     auto funcOp = clonedModule.lookupSymbol<mlir::func::FuncOp>("main");
     if (!funcOp)
       throw std::runtime_error("specialize: no 'main' func in module");
+    if (placed)
+      bindSlots(clonedModule, slots);
 
     auto &entryBlock = funcOp.getBody().front();
     auto loc = funcOp.getLoc();
@@ -2510,6 +2763,12 @@ public:
     for (unsigned i = 0; i < entryBlock.getNumArguments(); ++i) {
       auto arg = entryBlock.getArgument(i);
       mlir::Value replacement;
+      if (mlir::isa<pulse::QrefType>(arg.getType())) {
+        if (!arg.use_empty())
+          throw std::invalid_argument(
+              "specialize: runtime qudits need carriers");
+        continue;
+      }
       if (arg.getType().isInteger(64)) {
         if (i64Idx >= i64_args.size())
           throw std::runtime_error("specialize: not enough i64 arguments");
@@ -2525,10 +2784,7 @@ public:
       arg.replaceAllUsesWith(replacement);
     }
 
-    // Remove block arguments (make func take no args)
-    while (entryBlock.getNumArguments() > 0)
-      entryBlock.eraseArgument(entryBlock.getNumArguments() - 1);
-    funcOp.setType(builder.getFunctionType({}, {}));
+    dropArguments(clonedModule);
 
     // Fold parameter expressions before deriving concrete durations.
     foldBinding(clonedModule, bound);
@@ -3142,7 +3398,7 @@ public:
                     nb::ndarray<double, nb::ndim<1>, nb::c_contig> qubit_freqs,
                     std::vector<std::string> param_names = {},
                     std::vector<std::string> param_types = {},
-                    const std::string &name = "main") {
+                    const std::string &name = "main", int64_t n_slots = 0) {
     std::lock_guard<std::mutex> guard(lock_);
 
     const int64_t *d = stream.data();
@@ -3154,6 +3410,8 @@ public:
       throw std::invalid_argument("packed: clock_ghz must be positive");
     if (n_qubits < 0)
       throw std::invalid_argument("packed: n_qubits cannot be negative");
+    if (n_slots < 0)
+      throw std::invalid_argument("packed: n_slots cannot be negative");
     if (qubit_freqs.shape(0) != static_cast<size_t>(n_qubits))
       throw std::invalid_argument(
           "packed: qubit frequency count does not match n_qubits");
@@ -3188,8 +3446,16 @@ public:
                                     pt + "'");
     }
 
+    // Runtime qudits follow the numeric parameters: qref arguments with
+    // their slot, bound to carriers by specialize().
+    auto qrefTy = pulse::QrefType::get(ctx_.get());
+    const unsigned firstSlot = argTypes.size();
+    argTypes.append(static_cast<size_t>(n_slots), qrefTy);
     auto funcType = builder_->getFunctionType(argTypes, {});
     auto funcOp = mlir::func::FuncOp::create(loc, "main", funcType);
+    for (int64_t k = 0; k < n_slots; ++k)
+      funcOp.setArgAttr(firstSlot + k, "pulse.slot",
+                        builder_->getI64IntegerAttr(k));
     module.push_back(funcOp);
     auto *entryBlock = funcOp.addEntryBlock();
     builder_->setInsertionPointToStart(entryBlock);
@@ -3202,7 +3468,6 @@ public:
       module->setAttr("pulse.param_names", builder_->getArrayAttr(nameAttrs));
     }
 
-    auto qrefTy = pulse::QrefType::get(ctx_.get());
     auto driveTy = pulse::DriveLineType::get(ctx_.get());
     auto readoutTy = pulse::ReadoutLineType::get(ctx_.get());
     auto toneTy = pulse::ToneType::get(ctx_.get());
@@ -3254,7 +3519,10 @@ public:
       return !region.isLoop && !region.condition;
     };
 
+    // A negative index -1 - k is slot k.
     auto getQubit = [&](int64_t q) -> mlir::Value {
+      if (q < 0 && -1 - q < n_slots)
+        return entryBlock->getArgument(firstSlot + (-1 - q));
       if (q < 0 || q >= n_qubits)
         throw std::invalid_argument("packed: qubit index out of range: " +
                                     std::to_string(q));
@@ -3592,8 +3860,11 @@ public:
         auto qref = getQubit(p[0]);
         auto gdl = pulse::GetDriveLineOp::create(*builder_, loc, driveTy,
                                                  toneTy, qref);
-        gdl->setAttr("qubit", builder_->getI64IntegerAttr(p[0]));
-        gdl->setAttr("frequency_hz", builder_->getF64FloatAttr(freqVec[p[0]]));
+        if (p[0] >= 0) {
+          gdl->setAttr("qubit", builder_->getI64IntegerAttr(p[0]));
+          gdl->setAttr("frequency_hz",
+                       builder_->getF64FloatAttr(freqVec[p[0]]));
+        }
         bind(p[1], gdl.getLine());
         bind(p[2], gdl.getTone());
         break;
@@ -3604,8 +3875,11 @@ public:
         auto qref = getQubit(p[0]);
         auto grl = pulse::GetReadoutLineOp::create(*builder_, loc, readoutTy,
                                                    toneTy, qref);
-        grl->setAttr("qubit", builder_->getI64IntegerAttr(p[0]));
-        grl->setAttr("frequency_hz", builder_->getF64FloatAttr(freqVec[p[0]]));
+        if (p[0] >= 0) {
+          grl->setAttr("qubit", builder_->getI64IntegerAttr(p[0]));
+          grl->setAttr("frequency_hz",
+                       builder_->getF64FloatAttr(freqVec[p[0]]));
+        }
         bind(p[1], grl.getLine());
         bind(p[2], grl.getTone());
         break;
@@ -3727,8 +4001,7 @@ public:
         // Parameter reference: p[0] = vid, p[1] = param_index
         // The value comes from the func.func block argument
         int64_t paramIdx = p[1];
-        if (paramIdx < 0 ||
-            paramIdx >= static_cast<int64_t>(entryBlock->getNumArguments()))
+        if (paramIdx < 0 || paramIdx >= static_cast<int64_t>(firstSlot))
           throw std::invalid_argument("packed: parameter index out of range: " +
                                       std::to_string(paramIdx));
         bind(p[0], entryBlock->getArgument(paramIdx));
@@ -4422,13 +4695,19 @@ NB_MODULE(_cudaq_pulse_native, m) {
           "events", &PulseModule::events,
           nb::call_guard<nb::gil_scoped_release>(),
           "(kind, line, qubit, start_cycles, duration_cycles) of each timed op")
+      .def("controller_dependencies", &PulseModule::controller_dependencies,
+           "For each controller_events() event: the arguments its tone "
+           "frequency, frame phase and waveform depend on")
       .def("controller_events", &PulseModule::controller_events,
            nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
+           nb::arg("slots").none() = nb::none(),
            "The lines and events of the export for a controller, as "
-           "controller.export() gives them")
+           "controller.export() gives them; a list `slots` gets each line's "
+           "runtime-qudit slot")
       .def("controller_events_on", &PulseModule::controller_events_on,
            nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
            nb::arg("num"), nb::arg("den"), nb::arg("grid"),
+           nb::arg("slots").none() = nb::none(),
            "controller_events() in a controller's own cycles, num of them "
            "every den program cycles, with the line events off its grid of "
            "grid program cycles")
@@ -4470,14 +4749,33 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::arg("dictionary"))
       .def("param_names", &PulseModule::param_names,
            nb::call_guard<nb::gil_scoped_release>(), "Get parameter names")
-      .def("specialize", &PulseModule::specialize_shared,
-           "Clone module, substitute parameters with constants, fold, "
-           "schedule; built once per distinct arguments and shared while "
-           "neither module changes in place",
-           nb::arg("f64_args"), nb::arg("i64_args"),
-           nb::arg("schedule") = "alap", nb::arg("max_drives") = 4,
-           nb::arg("max_readouts") = 2, nb::arg("readout_latency") = 0,
-           nb::arg("switch_penalty") = 0)
+      .def(
+          "specialize",
+          [](PulseModule &self, const std::vector<double> &f64,
+             const std::vector<int64_t> &i64, const std::string &schedule,
+             int64_t maxDrives, int64_t maxReadouts, int64_t readoutLatency,
+             int64_t switchPenalty) {
+            return self.specialize_shared(f64, i64, schedule, maxDrives,
+                                          maxReadouts, readoutLatency,
+                                          switchPenalty, {}, std::nullopt, "");
+          },
+          "Clone module, substitute parameters with constants, fold, "
+          "schedule; built once per distinct arguments and shared while "
+          "neither module changes in place",
+          nb::arg("f64_args"), nb::arg("i64_args"),
+          nb::arg("schedule") = "alap", nb::arg("max_drives") = 4,
+          nb::arg("max_readouts") = 2, nb::arg("readout_latency") = 0,
+          nb::arg("switch_penalty") = 0)
+      // Separate from specialize, whose calls do not convert these.
+      .def("specialize_placed", &PulseModule::specialize_shared,
+           "specialize, with each runtime qudit (slot k) bound to carrier "
+           "carriers[k] of a device with the given 0-1 frequency of every "
+           "carrier; device (its fingerprint) is part of the key",
+           nb::arg("f64_args"), nb::arg("i64_args"), nb::arg("schedule"),
+           nb::arg("max_drives"), nb::arg("max_readouts"),
+           nb::arg("readout_latency"), nb::arg("switch_penalty"),
+           nb::arg("carriers"), nb::arg("frequencies").none(),
+           nb::arg("device"))
       .def(
           "serialize",
           [](PulseModule &self) {
@@ -4509,7 +4807,7 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::arg("qubit_freqs"),
            nb::arg("param_names") = std::vector<std::string>{},
            nb::arg("param_types") = std::vector<std::string>{},
-           nb::arg("name") = "main")
+           nb::arg("name") = "main", nb::arg("n_slots") = 0)
       .def(
           "load",
           [](PulseModuleBuilder &self, nb::bytes module, nb::bytes source,

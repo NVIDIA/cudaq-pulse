@@ -26,6 +26,7 @@ import dataclasses
 import hashlib
 import json
 import os
+from array import array
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, overload
 
@@ -73,6 +74,34 @@ _RESERVED_CONFIG = frozenset({"zones", "sites", "moves", "transport"})
 def _read_only(array: Any) -> Any:
     array.setflags(write=False)
     return array
+
+
+def _timebase_ghz(device: Device) -> float:
+    """The clock a program for *device* is timed in, in GHz."""
+    return device.clock_ghz
+
+
+def _transition_hz(device: Device, carrier: int, lower: int, upper: int) -> float:
+    """The frequency of carrier *carrier*'s transition between two levels,
+    by the target's model; a target without one has two levels."""
+    qubit = device.target.qubits[carrier]
+    model = device.target.model
+    if not isinstance(model, SimulationModel):
+        model = SimulationModel()
+    levels = model.levels_of(carrier)
+    if upper >= levels:
+        raise ValueError(
+            f"qudit {carrier} of {device.name!r} is modeled with {levels} levels; "
+            f"it has no transition {lower}-{upper}"
+        )
+    return model.transitions_hz(qubit, levels)[(lower, upper)]
+
+
+def _structure(device: Device) -> str:
+    """What a kernel whose qudits are runtime parameters depends on: not the
+    carriers or their calibration, which are bound per call."""
+    content = repr((device.target.model, _timebase_ghz(device))).encode()
+    return hashlib.blake2b(content, digest_size=16).hexdigest()
 
 
 def _fingerprint(target: TargetDescription, layout: tuple[int, ...], calibration: Any) -> str:
@@ -306,8 +335,20 @@ class Device:
         self.clock_ghz = float(target.clock_ghz)
         self.frequencies: Mapping[int, float] = target.frequencies
         self.fingerprint = _fingerprint(target, layout, calibration)
+        self._structure = _structure(self)
         self.qudit_handles = _Handles(tuple(Qudit(self, p, i) for i, p in enumerate(layout)))
         self._arrays: tuple[Any, Any] | None = None
+        self._table: array[float] | None = None
+
+    def _frequency_table(self) -> array[float]:
+        """The 0-1 frequency of every carrier, by carrier index (0 where the
+        target has none), as a compiled module records it."""
+        if self._table is None:
+            table = array("d", bytes(8 * (max(self.frequencies, default=-1) + 1)))
+            for carrier, frequency in self.frequencies.items():
+                table[carrier] = frequency
+            self._table = table
+        return self._table
 
     def _frequency_arrays(self) -> tuple[Any, Any]:
         if self._arrays is None:

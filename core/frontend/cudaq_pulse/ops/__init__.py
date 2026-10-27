@@ -156,6 +156,21 @@ def get_readout_line(qudit: Any) -> Line:
     return _require_context("get_readout_line")
 
 
+def frequency(qudit: Any, transition: tuple[int, int] = (0, 1)) -> float:
+    """The frequency of a qudit's transition between two levels, in Hz.
+
+    For a runtime qudit (a parameter annotated ``Qudit`` or ``Register``)
+    it is a symbol, bound to the carrier's frequency at each call, so the
+    kernel is not compiled again for another qudit or a recalibration.
+    Not exported yet: import it from ``cudaq_pulse.ops``.
+
+    Args:
+        qudit: The qudit.
+        transition: The two levels, ``(0, 1)`` by default.
+    """
+    return _require_context("frequency")
+
+
 # ── Scheduling ops ──────────────────────────────────────────────────────
 
 

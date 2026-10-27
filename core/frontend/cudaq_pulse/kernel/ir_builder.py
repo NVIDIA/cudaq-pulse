@@ -217,6 +217,25 @@ class Parameter(_SymbolicNumber):
         return f"Parameter({self.name!r}, idx={self.index}, {self.dtype})"
 
 
+class Slot:
+    """Sentinel for a runtime qudit while tracing: slot *index* of the
+    module, bound to a carrier per call."""
+
+    __slots__ = ("index",)
+
+    def __init__(self, index: int) -> None:
+        self.index = index
+
+    def __repr__(self) -> str:
+        return f"Slot({self.index})"
+
+
+class SlotRegister(tuple[Slot, ...]):
+    """Sentinel for a runtime register while tracing: consecutive slots."""
+
+    __slots__ = ()
+
+
 class ParameterExpression(_SymbolicNumber):
     """A symbolic arithmetic expression rooted in kernel parameters."""
 

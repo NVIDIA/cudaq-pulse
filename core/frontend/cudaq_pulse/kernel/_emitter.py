@@ -90,7 +90,9 @@ _WAVEFORMS = frozenset(
 )
 _WAVEFORM_ARITHMETIC = frozenset({"wf_add", "wf_sub", "wf_mul", "wf_scale", "wf_neg"})
 _MAKES_WAVEFORM = _WAVEFORMS | _WAVEFORM_ARITHMETIC | {"custom_samples"}
-_PULSE_OP_NAMES = frozenset(OP_TABLE.keys())
+# Ops that compute a number rather than emit an op; not exported yet.
+_VALUE_OPS = frozenset({"frequency"})
+_PULSE_OP_NAMES = frozenset(OP_TABLE.keys()) | _VALUE_OPS
 _OP_NAMES = {name: f"pulse.{name}" for name in OP_TABLE}
 
 # Loops over Python iterables are unrolled; this bounds a runaway iterator.
@@ -2511,7 +2513,7 @@ class PulseIREmitter:
                     from ._emit_errors import play_arity_error
 
                     raise play_arity_error(name, len(call_args))
-                if name in OP_TABLE:
+                if name in OP_TABLE or name in _VALUE_OPS:
                     self._push_pulse_results(name, call_args)
                 elif name == "range":
                     self._push_range(call_args)
@@ -2949,6 +2951,9 @@ class PulseIREmitter:
         fname: str,
         call_args: list[StackVal],
     ) -> None:
+        if fname in _VALUE_OPS:
+            self.stack.append(self._frequency(call_args))
+            return
         results = self._emit_pulse_call(fname, call_args)
         if fname == "readout":
             self.stack.append(results[-1])
@@ -2976,6 +2981,28 @@ class PulseIREmitter:
         article = "an" if word[0] in "aeiou" else "a"
         hint = "its attributes are" if value.vtype in _LINE_TYPES else "only a line has attributes,"
         raise CompilationError(f"{article} {word} has no attribute {name!r}; {hint} tone and tones")
+
+    def _frequency(self, call_args: list[StackVal]) -> Any:
+        if not 1 <= len(call_args) <= 2:
+            raise CompilationError(f"frequency: expected 1 or 2 args, got {len(call_args)}")
+        qudit = call_args[0]
+        if qudit.__class__ is not IRValue or qudit.vtype != "qref":
+            raise CompilationError(f"frequency() takes a qudit, got {_describe(qudit)}")
+        transition = call_args[1] if len(call_args) == 2 else (0, 1)
+        if (
+            not isinstance(transition, (tuple, list))
+            or len(transition) != 2
+            or not all(type(level) is int and level >= 0 for level in transition)
+            or transition[0] == transition[1]
+        ):
+            raise CompilationError(
+                f"frequency(): transition must be two different levels, got {transition!r}"
+            )
+        lower, upper = sorted(transition)
+        resolve = getattr(self.b, "frequency", None)
+        if resolve is None:
+            raise CompilationError("frequency() needs a compilation target")
+        return resolve(qudit, lower, upper)
 
     # ── Pulse IR emission ────────────────────────────────────────────
 

@@ -16,6 +16,7 @@ that pick passes and a schedule, the native build of one specialization, and
 from __future__ import annotations
 
 import difflib
+import functools
 import marshal
 import math
 import struct
@@ -28,6 +29,7 @@ from fractions import Fraction
 from types import FunctionType, MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from ._device import _transition_hz
 from ._errors import InvalidTypeError, InvalidValueError
 from ._native import PackedValueError, PulseModuleBuilder
 from ._units import Time, as_nanoseconds
@@ -598,6 +600,9 @@ class CompileOptions:
         )
 
 
+# Placements whose qudits a role remembers.
+_PLACEMENTS = 4096
+
 # Longest wait a call may ask for: lengths stay exact in a float.
 _MAX_WAIT_CYCLES = MAX_CYCLES
 
@@ -847,6 +852,11 @@ class Lowered:
     compiled it; another build raises ``UnsupportedError``. A call's view
     pickles its values with its generic module.
 
+    Qudit parameters annotated ``Qudit`` or ``Register`` are runtime qudits:
+    the module takes them as slots, numbered in parameter order, and a call
+    binds each slot to its handle's carrier (``carriers``), on the call's
+    device. Calls with other handles of the same shape share the module.
+
     The module with a call's values substituted is built once per distinct
     values and shared by every view with them, so exporting or lowering the
     same call again does not build it again. The latest few are kept per
@@ -880,6 +890,10 @@ class Lowered:
     fine_delays: Mapping[tuple[str, int], float] | None = None
     # How many values bind takes: set by a generic module's first bind.
     _arity: int
+    # A module with list or qudit parameters is a _Placed: what its calls
+    # share, and the carrier of each runtime qudit of a call, in slot order.
+    _role: _Role | None = None
+    carriers: tuple[int, ...] = ()
 
     def __init__(
         self,
@@ -1000,10 +1014,14 @@ class Lowered:
         with them bound."""
         return not self.scheduled or (self.waits is not None and bool(self.arguments))
 
+    def _unbound(self) -> bool:
+        """Whether the module has runtime qudits and no carriers for them."""
+        return self._role is not None and self._role.slots > 0 and not self.carriers
+
     def _concrete(self) -> Any:
-        """The module with the values substituted, shared by every view with
-        the same values, or the module itself when there are no values."""
-        if not self.arguments:
+        """The module with the values and carriers substituted, shared by
+        every view with the same ones, or the module itself without them."""
+        if not self.arguments and not self.carriers:
             return self._module
         if self._concrete_module is None:
             arguments: Sequence[float] = self.arguments
@@ -1012,7 +1030,19 @@ class Lowered:
                     arguments = self._checked_arguments()
                     break
             with self._lock:
-                module = self._module.specialize(list(arguments), [], *self.options.schedule_args())
+                if self.carriers:
+                    module = self._module.specialize_placed(
+                        list(arguments),
+                        [],
+                        *self.options.schedule_args(),
+                        list(self.carriers),
+                        self.target._frequency_table(),
+                        self.target.fingerprint,
+                    )
+                else:
+                    module = self._module.specialize(
+                        list(arguments), [], *self.options.schedule_args()
+                    )
             self._concrete_module = module
         return self._concrete_module
 
@@ -1049,6 +1079,8 @@ class Lowered:
                 "the module has float parameters "
                 f"({', '.join(self.parameters)}); lower it with their values first"
             )
+        if self._unbound():
+            raise InvalidValueError("the module has runtime qudits; lower it with handles first")
         if level == "llvm":
             module = self._concrete()
             with self._lock:
@@ -1085,7 +1117,7 @@ class Lowered:
         measurement-conditioned branch are listed. Without values, a wait
         whose length a float parameter sets is listed at its lowest length.
         """
-        module = self._concrete() if self._retimed else self._module
+        module = self._concrete() if self._retimed or self.carriers else self._module
         with self._lock:
             events = module.events()
         return [ScheduledEvent(*event) for event in events]
@@ -1127,7 +1159,7 @@ class Lowered:
 
         Calls in a loop are listed once per iteration, in program order.
         """
-        module = self._module if self.scheduled else self._concrete()
+        module = self._module if self.scheduled and not self.carriers else self._concrete()
         with self._lock:
             calls = module.classical_calls()
             events = module.events() if calls else []
@@ -1216,14 +1248,134 @@ def _lowered(
     module: Any,
     clocks: _clocks.ClockPlan | None,
     fine_delays: Mapping[tuple[str, int], float] | None,
+    role: _Role | None = None,
     **fields: Any,
 ) -> Lowered:
-    if clocks is None and fine_delays is None:
+    lowered: Lowered
+    if role is not None:
+        lowered = _Placed(module, role=role, **fields)
+    elif clocks is None and fine_delays is None:
         return Lowered(module, **fields)
-    lowered = _ClockedLowered(module, **fields)
+    else:
+        lowered = _ClockedLowered(module, **fields)
     lowered.clocks = clocks
     lowered.fine_delays = fine_delays
     return lowered
+
+
+class _Role:
+    """What the calls of a module with list or qudit parameters share: its
+    symbols, which slots and static qudits get a line, and a content hash of
+    the module without any call's values (``program_id``).
+
+    ``symbols`` holds ``(name, kind, parameter, position)`` for each float
+    argument of the module, in order (kind ``"float"``, or ``"vector"`` for a
+    list element), then for each slot (kind ``"slot"``); *position* is the
+    element's or qudit's index in its parameter, or ``None``.
+    """
+
+    __slots__ = (
+        "symbols",
+        "slots",
+        "lines",
+        "used",
+        "every",
+        "program_id",
+        "dependencies",
+        "frequencies",
+        "placed",
+    )
+
+    def __init__(self, symbols: tuple[tuple[str, str, str, int | None], ...]) -> None:
+        self.symbols = symbols
+        self.slots = 0
+        self.lines: tuple[int, ...] = ()
+        self.used: tuple[int, ...] = ()
+        self.every: tuple[int, ...] = ()
+        self.program_id = ""
+        # The symbols each exported event's fields depend on, once exported.
+        self.dependencies: list[dict[str, list[str]]] | None = None
+        # (slot, lower, upper) of each frequency() of a runtime qudit: float
+        # arguments after the call's.
+        self.frequencies: tuple[tuple[int, int, int], ...] = ()
+        # The qudits a call uses, by its carriers (at most _PLACEMENTS).
+        self.placed: dict[tuple[int, ...], tuple[int, ...]] = {}
+
+    @staticmethod
+    def identify(
+        buffer: Any, name: str, parameters: Sequence[str], target: Device, options: CompileOptions
+    ) -> str:
+        import hashlib
+
+        digest = hashlib.blake2b(digest_size=16)
+        digest.update(memoryview(buffer).cast("B"))
+        digest.update(repr((name, tuple(parameters), target._structure, options)).encode())
+        return digest.hexdigest()
+
+
+class _Placed(Lowered):
+    """A module with list or qudit parameters, or a call's view of one."""
+
+    __slots__ = ("_role", "carriers", "clocks", "fine_delays")
+
+    def __init__(self, *args: Any, role: _Role, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._role = role
+        self.carriers = ()
+        self.clocks = None
+        self.fine_delays = None
+
+    def bind(
+        self,
+        values: Sequence[float],
+        carriers: tuple[int, ...] = (),
+        target: Device | None = None,
+    ) -> Lowered:
+        """This module with values for its float parameters and, with
+        *carriers*, its runtime qudits bound on *target*, sharing it."""
+        return _place(self, values, carriers, target)
+
+
+def _place(
+    lowered: Lowered, values: Sequence[float], carriers: tuple[int, ...], target: Device | None
+) -> _Placed:
+    """``Lowered.bind`` of a module with list or qudit parameters."""
+    waits = lowered.waits
+    if waits is not None:
+        waits.check(values)
+    role = lowered._role
+    assert role is not None
+    view = _Placed.__new__(_Placed)
+    view._module = lowered._module
+    view._text = None
+    view._lock = lowered._lock
+    view._concrete_module = None
+    view.target = lowered.target
+    view.metrics = lowered.metrics
+    view.parameters = ()
+    view.arguments = tuple(values)
+    view.qudits = lowered.qudits
+    view.options = lowered.options
+    view.scheduled = lowered.scheduled
+    view._generic = lowered
+    view.waits = waits
+    view.classical = lowered.classical
+    view.runtime_selects = lowered.runtime_selects
+    view._role = role
+    view.carriers = carriers
+    view.clocks = lowered.clocks
+    view.fine_delays = lowered.fine_delays
+    if carriers:
+        assert target is not None
+        view.target = target
+        placed = role.placed.get(carriers)
+        if placed is None:
+            qudits = {*role.used, *(carriers[k] for k in role.lines)}
+            placed = tuple(sorted(qudits or {*role.every, *carriers}))
+            if len(role.placed) < _PLACEMENTS:
+                role.placed[carriers] = placed
+        view.qudits = placed
+    return view
 
 
 class _CheckedPerCall(Lowered):
@@ -1263,6 +1415,43 @@ class _CheckedPerCall(Lowered):
                 self._accepted.clear()
             self._accepted.add(key)
         return view
+
+    def _accept(self, view: Lowered, key: bytes) -> Lowered:
+        """*view*, once its values are within the limits (checked once per
+        distinct *key*)."""
+        if key not in self._accepted:
+            from .controller import ControllerLimitError, _call_violations
+
+            violations = _call_violations(view)
+            if violations:
+                raise ControllerLimitError(violations)
+            if len(self._accepted) >= _ACCEPTED_CALLS:
+                self._accepted.clear()
+            self._accepted.add(key)
+        return view
+
+
+class _CheckedPlaced(_CheckedPerCall):
+    """A ``_CheckedPerCall`` module with list or qudit parameters."""
+
+    __slots__ = ("_role", "carriers")
+
+    def __init__(self, lowered: Lowered) -> None:
+        super().__init__(lowered)
+        self._role = lowered._role
+        self.carriers = ()
+
+    def bind(
+        self,
+        values: Sequence[float],
+        carriers: tuple[int, ...] = (),
+        target: Device | None = None,
+    ) -> Lowered:
+        view = _place(self, values, carriers, target)
+        key = _bits(view.arguments)
+        if carriers:
+            key += _bits(tuple(map(float, carriers))) + view.target.fingerprint.encode()
+        return self._accept(view, key)
 
 
 class _Exposure:
@@ -1346,11 +1535,16 @@ def build(
     parameters: tuple[str, ...],
     target: Device,
     options: CompileOptions,
+    slots: int = 0,
+    role: _Role | None = None,
 ) -> tuple[Lowered, Any]:
     """Trace *fn* and build its module on *target*.
 
     *trace_args* holds a ``Parameter`` sentinel for every float parameter
-    named in *parameters*; those stay function arguments of the module.
+    named in *parameters*; those stay function arguments of the module, as
+    do the *slots* runtime qudits (``Slot`` sentinels). A *role* names the
+    symbols of a module with list or qudit parameters, and gets the rest of
+    what its calls share.
     Returns the module and the builder, whose record of readouts and host
     calls the caller needs. Raises ``SymbolicValueError`` naming the float
     parameters an integer of the program (a waveform duration, a cast to
@@ -1375,7 +1569,22 @@ def build(
     builder.locate_structural = frozenset(parameters)
     plain = machine._plain
     clocks = None if plain else _clocked_builder(builder, machine, target)
+    builder.parameter_count = len(parameters)
+    builder.transition_hz = functools.partial(_transition_hz, target)
     builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
+    if builder.slot_frequencies:
+        # Runtime qudits' frequencies read with frequency(): float arguments
+        # after the call's, which each call binds from its carriers.
+        assert role is not None
+        hidden = tuple(
+            f"s{slot}.f{lower}{upper}" for slot, lower, upper in builder.slot_frequencies
+        )
+        parameters = (*parameters, *hidden)
+        role.frequencies = tuple(builder.slot_frequencies)
+        floats = [s for s in role.symbols if s[1] != "slot"]
+        slotted = [s for s in role.symbols if s[1] == "slot"]
+        frequencies = [(name, "frequency", name.split(".")[0], None) for name in hidden]
+        role.symbols = (*floats, *frequencies, *slotted)
     needed = tuple(sorted(builder.structural & set(parameters)))
     if needed:
         error = SymbolicValueError(
@@ -1406,7 +1615,18 @@ def build(
 
     t0 = time.perf_counter()
     try:
-        if parameters:
+        if slots:
+            module = PulseModuleBuilder().build_from_packed(
+                buf,
+                target.clock_ghz,
+                builder.n_qubits,
+                freq,
+                list(parameters),
+                ["f64"] * len(parameters),
+                name=name,
+                n_slots=slots,
+            )
+        elif parameters:
             module = PulseModuleBuilder().build_from_packed(
                 buf,
                 target.clock_ghz,
@@ -1452,7 +1672,7 @@ def build(
     metrics.schedule_ms = (time.perf_counter() - t0) * 1000
     metrics.total_ms = metrics.trace_ms + metrics.ffi_ms + metrics.passes_ms + metrics.schedule_ms
 
-    if plain:
+    if plain and role is None:
         lowered = Lowered(
             module,
             target=target,
@@ -1468,6 +1688,7 @@ def build(
             module,
             clocks,
             fine_delays,
+            role,
             target=target,
             metrics=metrics,
             parameters=parameters,
@@ -1482,6 +1703,12 @@ def build(
         )
     lowered.classical = tuple(builder.classical)
     lowered.runtime_selects = runtime_selects
+    if role is not None:
+        role.slots = slots
+        role.lines = builder.used_slots
+        role.used = builder.used_qubits
+        role.every = qudits
+        role.program_id = role.identify(buf, name, parameters, target, options)
     if machine.controller is not None:
         lowered = _check_controller(lowered)
     return lowered, builder
@@ -1555,7 +1782,9 @@ def _check_controller(lowered: Lowered) -> Lowered:
         violations, exact = _compile_check(lowered, limits)
         if violations:
             raise ControllerLimitError(violations)
-    return lowered if exact else _CheckedPerCall(lowered)
+    if exact:
+        return lowered
+    return (_CheckedPerCall if lowered._role is None else _CheckedPlaced)(lowered)
 
 
 def with_line_delays(lowered: Lowered, options: CompileOptions, n_qudits: int) -> Lowered | None:
@@ -1563,7 +1792,10 @@ def with_line_delays(lowered: Lowered, options: CompileOptions, n_qudits: int) -
     *options*, which differ from its own only in ``machine.line_delays_ns``:
     its module before scheduling is kept, and only scheduling, the checks and
     the exports are done again. ``None`` when scheduling it again fails, for
-    a full compile to report."""
+    a full compile to report, and for a module with list or qudit
+    parameters, whose calls share what its own schedule gives them."""
+    if lowered._role is not None:
+        return None
     target = lowered.target
     clocks = lowered.clocks
     fine_delays = None

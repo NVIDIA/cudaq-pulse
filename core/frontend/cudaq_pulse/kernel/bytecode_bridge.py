@@ -20,7 +20,7 @@ from .._device import Qudit, Register
 from ._bytecode_normalize import DecodedCode, decode
 from ._emitter import PulseIREmitter, _extract_closures, add_source_note
 from ._unroll import resolve_unroll_threshold
-from .ir_builder import CompilationError, PythonIRBuilder
+from .ir_builder import CompilationError, PythonIRBuilder, Slot, SlotRegister
 
 
 def compile_kernel_bytecode(
@@ -80,6 +80,13 @@ def _trace(
         elif type(val) is Register:
             local_vars[name] = [
                 builder.emit(qudit_op, (), ("qref",), {"index": q.index})[0] for q in val
+            ]
+        elif type(val) is Slot:
+            (ir_val,) = builder.emit(qudit_op, (), ("qref",), {"slot": val.index})
+            local_vars[name] = ir_val
+        elif type(val) is SlotRegister:
+            local_vars[name] = [
+                builder.emit(qudit_op, (), ("qref",), {"slot": s.index})[0] for s in val
             ]
         else:
             local_vars[name] = val

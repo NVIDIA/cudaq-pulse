@@ -512,7 +512,7 @@ def _simulate_compiled(
     else:
         module = (
             compiled._concrete()
-            if backend == "gpu" or compiled.waits is not None
+            if backend == "gpu" or compiled.waits is not None or compiled.carriers
             else compiled._module
         )
     if compiled.runtime_selects:

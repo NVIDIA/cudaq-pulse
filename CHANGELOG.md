@@ -43,6 +43,15 @@ behavior may change in any 0.x release.
   `MachineModel.reference_clock_ghz` is checked against every controller
   clock and exported; the simulator samples generated waveforms at the
   line's controller clock.
+- **Runtime qudits.** A kernel parameter annotated `Qudit` or `Register`
+  (or `list[Qudit]`, `tuple[Qudit, ...]`) is bound at each call, like a
+  float: the kernel compiles once and runs on any qudits of a device with
+  the same structure, including a recalibrated one. `list[float]`
+  parameters are runtime vectors. Their controller exports carry a
+  `program_id`, shared by every call of one compile, and `symbols`: each
+  symbol's value in the call, and per event the symbols its qudit,
+  frequency, phase and waveform depend on. Kernels without such parameters
+  compile and export as before.
 - **Calibration on the controller.** `cudaq_pulse.classical.calibration`
   adds the estimators of millisecond on-controller calibration in controller
   form: adaptive T1 tracking with assignment errors (`adaptive_t1_update`,
