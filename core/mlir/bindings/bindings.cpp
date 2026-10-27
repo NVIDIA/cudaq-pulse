@@ -222,9 +222,9 @@ inline double i2f(int64_t bits) {
   return d;
 }
 
-/// The walk behind PulseModule::controller_events(): every timed op once
-/// per loop iteration, both arms of every branch, with the frame of its
-/// tone and the branches it lies in.
+/// The walk behind PulseModule::controller_events(): every timed op, sync
+/// and classical call once per loop iteration, both arms of every branch,
+/// with the frame of its tone and the branches it lies in.
 struct ControllerWalk {
   using WaveformNode =
       std::tuple<std::string, std::vector<double>, std::vector<int64_t>>;
@@ -234,14 +234,24 @@ struct ControllerWalk {
       std::tuple<std::string, int64_t, int64_t, std::optional<int64_t>,
                  std::optional<int64_t>, std::vector<int64_t>,
                  std::vector<WaveformNode>, double, double,
-                 std::vector<Condition>, std::vector<int64_t>, std::string,
-                 std::string, double>;
+                 std::vector<Condition>, std::vector<int64_t>,
+                 std::vector<int64_t>, std::string, std::string, double>;
 
+  /// A tone's frame as the simulator tracks it (pulse::ToneState): `phase`
+  /// at `timeNs`, the end of its latest drive; a tone detuned from its
+  /// frame frequency gains phase from there on.
   struct Frame {
     double frequencyHz = 0.0;
     double frameFrequencyHz = 0.0;
     double phase = 0.0;
     double timeNs = 0.0;
+
+    double phaseAt(double timeNs) const {
+      double detuning = frequencyHz - frameFrequencyHz;
+      if (detuning == 0.0)
+        return phase;
+      return phase + detuning * (2.0 * M_PI) * 1.0e-9 * (timeNs - this->timeNs);
+    }
     /// Whether two arms leave the frame the same: without a detuning, the
     /// time of the last drive does not matter.
     bool operator==(const Frame &other) const {
@@ -274,31 +284,57 @@ struct ControllerWalk {
   }
 
   pulse::AllocationTracer trace;
+  llvm::DenseMap<mlir::Value, mlir::Operation *> roots;
   llvm::SmallVector<int64_t, 2> iteration;
   std::vector<Condition> branches;
   int64_t nextBranch = 0;
   std::map<mlir::Operation *, Frame> frames;
+  // The time each line has reached (the end of its latest event), or none
+  // when an event on it is not scheduled.
+  std::map<mlir::Operation *, std::optional<int64_t>> reached;
   // The event of the latest execution of each readout and classical wait.
   llvm::DenseMap<mlir::Operation *, int64_t> latest;
 
-  /// The frame of a tone before any operation on it.
   static Frame initialFrame(mlir::Operation *root) {
-    Frame frame;
     if (!root)
-      return frame;
+      return {};
     if (auto frequency = root->getAttrOfType<mlir::FloatAttr>("frequency_hz"))
-      frame = {frequency.getValueAsDouble(), frequency.getValueAsDouble(), 0.0,
-               0.0};
-    else if (root->getName().getStringRef() == "pulse.tone" &&
-             root->getNumOperands() == 2) {
+      return {frequency.getValueAsDouble(), frequency.getValueAsDouble(), 0.0,
+              0.0};
+    if (root->getName().getStringRef() == "pulse.tone" &&
+        root->getNumOperands() == 2) {
       double frequency = number(root->getOperand(0));
-      frame = {frequency, frequency, number(root->getOperand(1)), 0.0};
+      return {frequency, frequency, number(root->getOperand(1)), 0.0};
     }
-    return frame;
+    return {};
+  }
+
+  /// pulse::toneRoot, with each value traced once.
+  mlir::Operation *toneRoot(mlir::Value tone) {
+    llvm::SmallVector<mlir::Value, 16> chain;
+    mlir::Value current = tone;
+    mlir::Operation *root = nullptr;
+    while (true) {
+      auto known = roots.find(current);
+      if (known != roots.end()) {
+        root = known->second;
+        break;
+      }
+      chain.push_back(current);
+      mlir::Value previous = pulse::linearPredecessor(current);
+      if (!previous) {
+        root = current.getDefiningOp();
+        break;
+      }
+      current = previous;
+    }
+    for (mlir::Value traced : chain)
+      roots[traced] = root;
+    return root;
   }
 
   Frame &frameOf(mlir::Value tone) {
-    mlir::Operation *root = pulse::toneRoot(tone);
+    mlir::Operation *root = toneRoot(tone);
     auto [it, inserted] = frames.try_emplace(root);
     if (inserted)
       it->second = initialFrame(root);
@@ -325,7 +361,7 @@ struct ControllerWalk {
         if (auto number = mlir::dyn_cast<mlir::FloatAttr>(sample))
           numbers.push_back(number.getValueAsDouble());
     std::string name = def->getName().stripDialect().str();
-    if (auto custom = def->getAttrOfType<mlir::StringAttr>("name"))
+    if (auto custom = def->getAttrOfType<mlir::FlatSymbolRefAttr>("callee"))
       name += ":" + custom.getValue().str();
     nodes.emplace_back(name, std::move(numbers), std::move(children));
     return static_cast<int64_t>(nodes.size()) - 1;
@@ -343,8 +379,7 @@ struct ControllerWalk {
       mlir::Operation *def = v.getDefiningOp();
       if (!def || mlir::isa<classical::SubmitOp>(def))
         continue;
-      if (mlir::isa<pulse::ReadoutOp>(def) ||
-          def->getName().getStringRef() == "classical.wait") {
+      if (mlir::isa<pulse::ReadoutOp, classical::WaitOp>(def)) {
         auto found = latest.find(def);
         if (found != latest.end()) {
           auto &list = mlir::isa<pulse::ReadoutOp>(def) ? readouts : answers;
@@ -358,16 +393,8 @@ struct ControllerWalk {
     }
   }
 
-  void timed(mlir::Operation *op, llvm::StringRef kind, int64_t line,
-             int64_t qubit, std::vector<WaveformNode> nodes, double frequency,
-             double phase, std::vector<int64_t> refs, std::string callee,
-             std::string mode = "", double timeoutNs = kUnknown) {
-    result.emplace_back(
-        kind.str(), line, qubit, pulse::scheduledStart(op, iteration),
-        pulse::scheduledDuration(op),
-        std::vector<int64_t>(iteration.begin(), iteration.end()),
-        std::move(nodes), frequency, phase, branches, std::move(refs),
-        std::move(callee), std::move(mode), timeoutNs);
+  int64_t lineOf(mlir::Operation *allocation) const {
+    return allocation ? lineIndex.lookup(allocation) : -1;
   }
 
   void block(mlir::Block &body) {
@@ -375,70 +402,124 @@ struct ControllerWalk {
       step(&op);
   }
 
+  void timed(mlir::Operation *op) {
+    mlir::Operation *allocation = trace(op->getOperand(0));
+    int64_t qubit = -1;
+    if (allocation)
+      if (auto attr = allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
+        qubit = attr.getInt();
+    auto start = pulse::scheduledStart(op, iteration);
+    auto duration = pulse::scheduledDuration(op);
+    std::vector<WaveformNode> nodes;
+    double frequency = kUnknown, phase = kUnknown;
+    if (!mlir::isa<pulse::WaitOp>(op)) {
+      waveform(op->getOperand(1), nodes);
+      Frame &frame = frameOf(op->getOperand(2));
+      bool drive = mlir::isa<pulse::DriveOp>(op);
+      double offset = 0.0;
+      if (drive) {
+        if (auto shift =
+                op->getAttrOfType<mlir::FloatAttr>("frame_phase_offset"))
+          frame.phase += shift.getValueAsDouble();
+        if (auto own = op->getAttrOfType<mlir::FloatAttr>("phase_offset"))
+          offset = own.getValueAsDouble();
+      }
+      frequency = frame.frequencyHz;
+      if (start)
+        phase = frame.phaseAt(static_cast<double>(*start) / clockGHz) + offset;
+      if (drive) {
+        if (start && duration) {
+          double endNs = static_cast<double>(*start + *duration) / clockGHz;
+          frame.phase = frame.phaseAt(endNs);
+          frame.timeNs = endNs;
+        } else {
+          frame = {kUnknown, kUnknown, kUnknown, frame.timeNs};
+        }
+      }
+    }
+    if (mlir::isa<pulse::ReadoutOp>(op))
+      latest[op] = static_cast<int64_t>(result.size());
+    auto line = reached.try_emplace(allocation, 0).first;
+    if (start && duration && line->second)
+      line->second = std::max(*line->second, *start + *duration);
+    else
+      line->second = std::nullopt;
+    result.emplace_back(
+        op->getName().stripDialect().str(), lineOf(allocation), qubit, start,
+        duration, std::vector<int64_t>(iteration.begin(), iteration.end()),
+        std::move(nodes), frequency, phase, branches, std::vector<int64_t>{},
+        std::vector<int64_t>{}, std::string(), std::string(), kUnknown);
+  }
+
+  void sync(pulse::SyncOp op) {
+    std::vector<int64_t> lines;
+    std::optional<int64_t> time = 0;
+    for (mlir::Value value : op.getLines()) {
+      mlir::Operation *allocation = trace(value);
+      lines.push_back(lineOf(allocation));
+      auto found = reached.find(allocation);
+      if (found == reached.end())
+        continue;
+      if (!found->second || !time)
+        time = std::nullopt;
+      else
+        time = std::max(*time, *found->second);
+    }
+    if (time)
+      for (mlir::Value value : op.getLines())
+        reached[trace(value)] = time;
+    result.emplace_back(
+        "sync", -1, -1, time,
+        time ? std::optional<int64_t>(0) : std::optional<int64_t>(),
+        std::vector<int64_t>(iteration.begin(), iteration.end()),
+        std::vector<WaveformNode>{}, kUnknown, kUnknown, branches,
+        std::move(lines), std::vector<int64_t>{}, std::string(), std::string(),
+        kUnknown);
+  }
+
+  /// A submission (with the readout events whose measurements it sends) or
+  /// the wait for its answer, on its link.
+  void call(mlir::Operation *op) {
+    bool submit = mlir::isa<classical::SubmitOp>(op);
+    std::vector<int64_t> refs, answers;
+    if (submit)
+      for (mlir::Value operand : op->getOperands())
+        inputs(operand, refs, answers);
+    std::string callee;
+    if (auto symbol = op->getAttrOfType<mlir::FlatSymbolRefAttr>("callee"))
+      callee = symbol.getValue().str();
+    std::string mode;
+    double timeoutNs = kUnknown;
+    if (!submit) {
+      latest[op] = static_cast<int64_t>(result.size());
+      mode = op->hasAttr("classical.blocking") ? "blocking" : "bounded";
+      if (auto timeout = op->getAttrOfType<mlir::FloatAttr>("timeout_ns")) {
+        mode = "timeout";
+        timeoutNs = timeout.getValueAsDouble();
+      }
+    }
+    result.emplace_back(
+        submit ? "submit" : "answer",
+        classical::intAttr(op, "classical.device"), -1,
+        pulse::scheduledStart(op, iteration), pulse::scheduledDuration(op),
+        std::vector<int64_t>(iteration.begin(), iteration.end()),
+        std::vector<WaveformNode>{}, kUnknown, kUnknown, branches,
+        std::vector<int64_t>{}, std::move(refs), std::move(callee),
+        std::move(mode), timeoutNs);
+  }
+
   void step(mlir::Operation *op) {
     llvm::StringRef name = op->getName().getStringRef();
     if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op)) {
-      mlir::Operation *allocation = trace(op->getOperand(0));
-      int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
-      int64_t qubit = -1;
-      if (allocation)
-        if (auto attr = allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
-          qubit = attr.getInt();
-      std::vector<WaveformNode> nodes;
-      double frequency = kUnknown, phase = kUnknown;
-      if (!mlir::isa<pulse::WaitOp>(op)) {
-        waveform(op->getOperand(1), nodes);
-        Frame &frame = frameOf(op->getOperand(2));
-        if (mlir::isa<pulse::DriveOp>(op))
-          if (auto offset =
-                  op->getAttrOfType<mlir::FloatAttr>("frame_phase_offset"))
-            frame.phase += offset.getValueAsDouble();
-        frequency = frame.frequencyHz;
-        phase = frame.phase;
-        if (mlir::isa<pulse::DriveOp>(op)) {
-          auto start = pulse::scheduledStart(op, iteration);
-          auto duration = pulse::scheduledDuration(op);
-          if (start && duration) {
-            double endNs = static_cast<double>(*start + *duration) / clockGHz;
-            frame.phase += (frame.frequencyHz - frame.frameFrequencyHz) *
-                           (2.0 * M_PI) * 1.0e-9 * (endNs - frame.timeNs);
-            frame.timeNs = endNs;
-          }
-        }
-      }
-      latest[op] = static_cast<int64_t>(result.size());
-      timed(op, op->getName().stripDialect(), line, qubit, std::move(nodes),
-            frequency, phase, {}, "");
+      timed(op);
+      return;
+    }
+    if (auto barrier = mlir::dyn_cast<pulse::SyncOp>(op)) {
+      sync(barrier);
       return;
     }
     if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op)) {
-      bool submit = mlir::isa<classical::SubmitOp>(op);
-      std::vector<int64_t> refs, answers;
-      if (submit)
-        for (mlir::Value operand : op->getOperands())
-          inputs(operand, refs, answers);
-      std::string callee;
-      if (auto symbol = op->getAttrOfType<mlir::FlatSymbolRefAttr>("callee"))
-        callee = symbol.getValue().str();
-      else
-        for (mlir::NamedAttribute attr : op->getAttrs())
-          if (auto symbol =
-                  mlir::dyn_cast<mlir::FlatSymbolRefAttr>(attr.getValue()))
-            callee = symbol.getValue().str();
-      std::string mode;
-      double timeoutNs = kUnknown;
-      if (!submit) {
-        latest[op] = static_cast<int64_t>(result.size());
-        mode = op->hasAttr("classical.blocking") ? "blocking" : "bounded";
-        if (auto timeout = op->getAttrOfType<mlir::FloatAttr>("timeout_ns")) {
-          mode = "timeout";
-          timeoutNs = timeout.getValueAsDouble();
-        }
-      }
-      timed(op, submit ? "submit" : "answer",
-            classical::intAttr(op, "classical.device"), -1, {}, kUnknown,
-            kUnknown, std::move(refs), std::move(callee), std::move(mode),
-            timeoutNs);
+      call(op);
       return;
     }
     if (name == "pulse.shift_phase" || name == "pulse.set_phase" ||
@@ -466,47 +547,61 @@ struct ControllerWalk {
       return;
     }
     if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
-      std::vector<int64_t> readouts, answers;
       mlir::Value condition = branch.getCondition();
+      std::vector<int64_t> readouts, answers;
       inputs(condition, readouts, answers);
       std::string test = "expression";
       if (mlir::Operation *def = condition.getDefiningOp()) {
         if (mlir::isa<pulse::IsSetOp>(def) && readouts.size() == 1)
           test = "is_set";
-        else if (def->getName().getStringRef() == "classical.wait" &&
-                 answers.size() == 1)
+        else if (mlir::isa<classical::WaitOp>(def) && answers.size() == 1)
           test = "answer";
       }
       int64_t id = nextBranch++;
-      auto before = frames;
-      branches.emplace_back(id, 1, readouts, answers, test);
+      auto framesBefore = frames;
+      auto reachedBefore = reached;
+      branches.emplace_back(id, 1, std::move(readouts), std::move(answers),
+                            std::move(test));
       block(*branch.thenBlock());
-      auto afterThen = frames;
-      frames = before;
+      auto framesThen = std::move(frames);
+      auto reachedThen = std::move(reached);
+      frames = std::move(framesBefore);
+      reached = std::move(reachedBefore);
       std::get<1>(branches.back()) = 0;
       if (!branch.getElseRegion().empty())
         block(*branch.elseBlock());
       branches.pop_back();
-      // A tone only one arm used is, in the other, as it was before.
-      for (auto &[root, frame] : afterThen)
-        frames.try_emplace(root, before.count(root) ? before.at(root)
-                                                    : initialFrame(root));
-      for (auto &[root, frame] : frames) {
-        auto other = afterThen.find(root);
-        Frame then =
-            other != afterThen.end()
-                ? other->second
-                : (before.count(root) ? before.at(root) : initialFrame(root));
-        if (!(then == frame))
-          frame = {kUnknown, kUnknown, kUnknown, frame.timeNs};
+      mergeFrames(framesThen);
+      for (auto &[allocation, time] : reachedThen) {
+        auto [it, inserted] = reached.try_emplace(allocation, time);
+        if (inserted)
+          continue;
+        if (!time || !it->second)
+          it->second = std::nullopt;
         else
-          frame.timeNs = std::max(frame.timeNs, then.timeNs);
+          it->second = std::max(*it->second, *time);
       }
       return;
     }
     for (mlir::Region &region : op->getRegions())
       for (mlir::Block &nested : region)
         block(nested);
+  }
+
+  /// The frames after a branch: those both arms leave the same, else
+  /// unknown from here on.
+  void mergeFrames(const std::map<mlir::Operation *, Frame> &other) {
+    for (auto &[root, frame] : other)
+      if (!frames.count(root))
+        frames[root] = initialFrame(root);
+    for (auto &[root, frame] : frames) {
+      auto found = other.find(root);
+      Frame theirs = found == other.end() ? initialFrame(root) : found->second;
+      if (!(theirs == frame))
+        frame = {kUnknown, kUnknown, kUnknown, frame.timeNs};
+      else
+        frame.timeNs = std::max(frame.timeNs, theirs.timeNs);
+    }
   }
 };
 
@@ -671,47 +766,49 @@ public:
     return result;
   }
 
-  /// One node of a waveform's expression: (op name without the dialect,
-  /// its numeric operands, or the samples of `custom_samples`, NaN where an
-  /// operand is not a number, and the indices of its waveform operands).
-  /// Children precede their parent; the last node is the root.
-  using WaveformNode =
-      std::tuple<std::string, std::vector<double>, std::vector<int64_t>>;
-  /// One measurement-conditioned branch an event lies in: (branch id, arm,
-  /// 1 for the then arm and 0 for the else arm, the indices of the readout
-  /// events and of the answer events the condition is computed from, and
-  /// "is_set" when the condition is one readout's `pulse.is_set`, "answer"
-  /// when it is one answer value as is, else "expression").
-  using Condition = std::tuple<int64_t, int64_t, std::vector<int64_t>,
-                               std::vector<int64_t>, std::string>;
-  using ControllerEvent =
-      std::tuple<std::string, int64_t, int64_t, std::optional<int64_t>,
-                 std::optional<int64_t>, std::vector<int64_t>,
-                 std::vector<WaveformNode>, double, double,
-                 std::vector<Condition>, std::vector<int64_t>, std::string,
-                 std::string, double>;
+  using ControllerLine = std::tuple<std::string, int64_t>;
+  using ControllerProgram = std::tuple<std::vector<ControllerLine>,
+                                       std::vector<ControllerWalk::Event>>;
 
-  /// The timed ops of `events()`, in the same order, with what a controller
-  /// needs to play them: (kind, line, qubit, start_vtu, duration_vtu, loop
-  /// iteration, waveform, tone frequency in Hz and frame phase in radians
-  /// as the op starts, the branches it lies in, references, callee, wait
-  /// mode, timeout). The
-  /// frame is tracked through both arms of a branch; where the arms leave
-  /// it different, or a frame change is not a number, it is NaN from there
-  /// on. The references of a classical submit are the readout events whose
-  /// measurements it sends; the callee is its function. An answer's wait
-  /// is "bounded", "blocking" or "timeout", with its timeout in ns (NaN
-  /// for none).
-  std::vector<ControllerEvent> controller_events() {
+  /// The lines, (role, qubit) in allocation order, and the timed ops of
+  /// `events()`, in the same order, every sync and every classical call,
+  /// with what a controller needs to play them: (kind, line, qubit,
+  /// start_vtu, duration_vtu, loop iteration, waveform, tone frequency in Hz
+  /// and frame phase in radians at the op's start, the branches it lies in,
+  /// the lines a sync joins, references, callee, wait mode, timeout). A
+  /// waveform is its expression's nodes, children before their parent: (op name
+  /// without the dialect, its numeric operands or the samples of
+  /// `custom_samples`, NaN where one is not a number, the indices of its
+  /// waveform operands). A branch is (branch id, 1 for the then arm and 0 for
+  /// the else arm, the readout events and the answer events the condition is
+  /// computed from, "is_set" when it is one readout's `pulse.is_set`, "answer"
+  /// when it is one answer, else "expression"). The frame is tracked through
+  /// both arms of a branch; where the arms leave it different, or a frame
+  /// change is not a number, it is NaN from there on. A sync starts when the
+  /// last of its lines is free and lasts 0 cycles. A classical call's line is
+  /// its link: the references of a submission are the readout events whose
+  /// measurements it sends, the callee is its function, and an answer's wait is
+  /// "bounded", "blocking" or "timeout", with its timeout in ns (NaN for
+  /// none).
+  ControllerProgram controller_events() {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     ControllerWalk walk(clock());
+    std::vector<ControllerLine> lines;
     module_->walk([&](mlir::Operation *op) {
-      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
-        walk.lineIndex.try_emplace(op,
-                                   static_cast<int64_t>(walk.lineIndex.size()));
+      if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+        return;
+      if (!walk.lineIndex
+               .try_emplace(op, static_cast<int64_t>(walk.lineIndex.size()))
+               .second)
+        return;
+      int64_t qubit = -1;
+      if (auto attr = op->getAttrOfType<mlir::IntegerAttr>("qubit"))
+        qubit = attr.getInt();
+      lines.emplace_back(
+          mlir::isa<pulse::GetDriveLineOp>(op) ? "drive" : "readout", qubit);
     });
     walk.block(*module_->getBody());
-    return std::move(walk.result);
+    return {std::move(lines), std::move(walk.result)};
   }
 
   /// (function, link, iteration, submit start, submit duration, due,

@@ -9,13 +9,18 @@
 
 ``Lowered.export_controller()`` (``export`` here) writes a scheduled kernel in
 the form an out-of-tree controller backend lowers to its own instructions,
-format ``cudaq-pulse.controller/1``: the lines and the qudits they belong to,
-and every drive, readout, wait and classical call with its exact start and
-duration, its waveform (the shape and its parameters, and optionally its
-samples), its tone's frequency and frame phase, the measurement-conditioned
-branches it lies in, and the epochs and calls of
+format ``FORMAT`` (``cudaq-pulse.controller/1``): the lines and the qudits
+they belong to, and every drive, readout, wait, sync and classical call with
+its exact start and end, its waveform (the shape and its parameters, and
+optionally its samples), its tone's frequency and frame phase, the
+measurement-conditioned branches it lies in, and the epochs and calls of
 ``Lowered.export_emulation()``. The schedule is final: a backend places each
 event at its ``start_vtu`` and does not schedule again.
+
+The number after the slash is the format's major version. Within one version,
+new keys and new event kinds may be added, so a backend ignores keys it does
+not know and refuses event kinds it does not know; a change that removes or
+changes the meaning of a key gets a new version.
 
 ``ControllerLimits`` states what a controller can play. Given to the
 machine model, ``MachineModel(controller=ControllerLimits(...))``, it makes
@@ -27,6 +32,7 @@ violations without raising.
 
 from __future__ import annotations
 
+import bisect
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
@@ -61,6 +67,7 @@ _PARAMETERS: Mapping[str, tuple[str, ...]] = MappingProxyType(
         "drag": ("duration", "amplitude", "sigma", "beta"),
         "cosine": ("duration", "amplitude"),
         "tanh_ramp": ("duration", "amplitude", "sigma"),
+        "custom": ("duration",),
         "scale": ("factor",),
     }
 )
@@ -75,6 +82,7 @@ _AMPLITUDES: Mapping[str, tuple[int, ...]] = MappingProxyType(
         "tanh_ramp": (1,),
     }
 )
+_PLAYED = frozenset({"drive", "readout"})
 
 
 class ControllerLimitError(CompilationError):
@@ -110,7 +118,7 @@ class ControllerLimits:
     answer after a timeout (``result(timeout_ns=...)``, ``latency_mode=
     "timeout"``); without, only waits that block or are budgeted are
     allowed.
-    ``max_events``: the timed operations of one program.
+    ``max_events``: the drives and readouts of one program.
     """
 
     clock_ghz: float | None = None
@@ -122,15 +130,14 @@ class ControllerLimits:
     acquirers: Mapping[int, int] = field(default_factory=dict)
     acquirer_hold_vtu: int = 0
     feedback_latency_vtu: int = 0
-    answer_timeouts: bool = True
     max_events: int | None = None
+    answer_timeouts: bool = True
 
     def __post_init__(self) -> None:
         if self.clock_ghz is not None and not self.clock_ghz > 0:
             raise ValueError(f"ControllerLimits.clock_ghz must be positive, got {self.clock_ghz}")
-        for name in ("issue_vtu",):
-            if getattr(self, name) < 1:
-                raise ValueError(f"ControllerLimits.{name} must be at least 1")
+        if self.issue_vtu < 1:
+            raise ValueError("ControllerLimits.issue_vtu must be at least 1")
         for name in ("min_wait_vtu", "acquirer_hold_vtu", "feedback_latency_vtu"):
             if getattr(self, name) < 0:
                 raise ValueError(f"ControllerLimits.{name} cannot be negative")
@@ -142,18 +149,9 @@ class ControllerLimits:
 
     def __hash__(self) -> int:
         return hash(
-            (
-                self.clock_ghz,
-                self.issue_vtu,
-                self.min_wait_vtu,
-                self.samples_per_vtu,
-                self.waveform_samples,
-                self.tones_per_line,
-                tuple(sorted(self.acquirers.items())),
-                self.acquirer_hold_vtu,
-                self.feedback_latency_vtu,
-                self.answer_timeouts,
-                self.max_events,
+            tuple(
+                tuple(sorted(value.items())) if isinstance(value, Mapping) else value
+                for value in (getattr(self, f.name) for f in fields(self))
             )
         )
 
@@ -167,13 +165,14 @@ class ControllerLimits:
 # ── Waveforms ────────────────────────────────────────────────────────────────
 
 
+def _number(value: float) -> float | None:
+    return None if math.isnan(value) else float(value)
+
+
 def _tree(nodes: Sequence[tuple[str, Sequence[float], Sequence[int]]]) -> dict[str, Any] | None:
     """The waveform expression of an event as nested dictionaries."""
     if not nodes:
         return None
-
-    def number(value: float) -> float | None:
-        return None if math.isnan(value) else float(value)
 
     def build(index: int) -> dict[str, Any]:
         name, numbers, children = nodes[index]
@@ -185,9 +184,9 @@ def _tree(nodes: Sequence[tuple[str, Sequence[float], Sequence[int]]]) -> dict[s
         if shape == "custom_samples":
             node["samples"] = [float(v) for v in numbers]
         elif names is not None and len(names) == len(numbers):
-            node["params"] = {k: number(v) for k, v in zip(names, numbers, strict=True)}
+            node["params"] = {k: _number(v) for k, v in zip(names, numbers, strict=True)}
         elif numbers:
-            node["values"] = [number(v) for v in numbers]
+            node["values"] = [_number(v) for v in numbers]
         if children:
             node["of"] = [build(child) for child in children]
         return node
@@ -207,10 +206,12 @@ def _amplitude(node: Mapping[str, Any] | None) -> complex | None:
     if shape == "neg":
         inner = _amplitude(node["of"][0])
         return None if inner is None else -inner
+    if shape == "custom_samples":
+        return complex(max(node["samples"], key=abs)) if node.get("samples") else None
+    if shape not in _AMPLITUDES:
+        return None
     params = node.get("params")
     if params is None:
-        if shape == "custom_samples" and node.get("samples"):
-            return complex(max(node["samples"], key=abs))
         return None
     real = params.get("amplitude")
     imag = params.get("amplitude_imag", 0.0)
@@ -240,12 +241,11 @@ def shape_key(node: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
         children = tuple(shape_key(child) for child in node.get("of", ()))
         if any(child is None for child in children):
             return None
-        values = tuple(node.get("values", ()))
-        return (shape, values, children)
+        return (shape, tuple(node.get("values", ())), children)
     if any(v is None for v in params.values()):
         return None
     skip = {_PARAMETERS[shape][i] for i in _AMPLITUDES.get(shape, ())}
-    return (shape, tuple((k, v) for k, v in params.items() if k not in skip))
+    return (shape, node.get("name"), tuple((k, v) for k, v in params.items() if k not in skip))
 
 
 def sample_waveform(
@@ -255,7 +255,9 @@ def sample_waveform(
 
     Sample ``k`` is the envelope at ``k / samples_per_vtu`` cycles from the
     start, with the definitions of the waveform ops (times in cycles), the
-    same the simulator plays.
+    same the simulator plays. Raises ``ValueError`` for a waveform the
+    export cannot evaluate: a ``pulse.custom`` op of hand-written IR, whose
+    samples the runtime computes, or one whose parameters are not numbers.
     """
     import numpy as np
 
@@ -282,7 +284,7 @@ def sample_waveform(
                 return np.zeros(count, complex)
             index = (t * len(values) / max(duration_vtu, 1)).astype(int)
             return values[np.minimum(index, len(values) - 1)].astype(complex)
-        if shape not in _PARAMETERS or any(v is None for v in params.values()):
+        if shape not in _AMPLITUDES or any(v is None for v in params.values()):
             raise ValueError(f"cannot sample a {shape!r} waveform without numeric parameters")
         d = params["duration"]
         a = params["amplitude"]
@@ -299,15 +301,13 @@ def sample_waveform(
             return (a * 0.5 * (1.0 - np.cos(2.0 * math.pi * t / d))).astype(complex)
         if shape == "tanh_ramp":
             return (a * 0.5 * (1.0 + np.tanh((t - d / 2.0) / params["sigma"]))).astype(complex)
-        if shape == "gaussian_square":
-            sigma, edge = params["sigma"], params["risefall"]
-            out = np.full(count, complex(a))
-            rise = t < edge
-            fall = t >= d - edge
-            out[rise] = a * np.exp(-0.5 * (t[rise] - edge) ** 2 / sigma**2)
-            out[fall] = a * np.exp(-0.5 * (t[fall] - (d - edge)) ** 2 / sigma**2)
-            return out
-        raise ValueError(f"cannot sample a {shape!r} waveform")
+        sigma, edge = params["sigma"], params["risefall"]
+        out = np.full(count, complex(a))
+        rise = t < edge
+        fall = t >= d - edge
+        out[rise] = a * np.exp(-0.5 * (t[rise] - edge) ** 2 / sigma**2)
+        out[fall] = a * np.exp(-0.5 * (t[fall] - (d - edge)) ** 2 / sigma**2)
+        return out
 
     return np.asarray(evaluate(node), dtype=complex)
 
@@ -315,25 +315,33 @@ def sample_waveform(
 # ── Export ───────────────────────────────────────────────────────────────────
 
 
-def _module(lowered: Lowered) -> Any:
+def _walk(
+    lowered: Lowered, values: bool = True
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The lines and events of *lowered*, at the values of its call; without
+    *values*, a module with float parameters has ``None`` where they reach."""
+    if values and lowered.parameters:
+        raise ValueError(
+            "the module has float parameters "
+            f"({', '.join(lowered.parameters)}); lower it with their values first"
+        )
     # Waveforms and frames depend on the call's values, which only the
     # concrete module holds.
-    if lowered.scheduled and not lowered.arguments:
-        return lowered._module
-    return lowered._concrete()
-
-
-def _events(lowered: Lowered) -> list[dict[str, Any]]:
-    module = _module(lowered)
+    module = lowered._concrete()
     with lowered._lock:
-        raw = module.controller_events()
-    starts = [e.start_vtu for e in lowered.epochs()]
+        raw_lines, raw_events = module.controller_events()
+    lines = [
+        {"line": index, "role": role, "qudit": qudit}
+        for index, (role, qudit) in enumerate(raw_lines)
+    ]
+    # Epoch k > 0 starts when the k-th barrier ends.
+    starts = [e.start_vtu for e in lowered.epochs()[1:]] if lowered.classical else []
     events = []
-    for index, item in enumerate(raw):
+    for index, item in enumerate(raw_events):
         (
             kind,
             line,
-            qubit,
+            qudit,
             start,
             duration,
             iteration,
@@ -341,24 +349,22 @@ def _events(lowered: Lowered) -> list[dict[str, Any]]:
             frequency,
             phase,
             conditions,
+            joined,
             refs,
             callee,
             mode,
             timeout,
         ) = item
-        epoch = 0
-        for k, epoch_start in enumerate(starts):
-            if start is not None and start >= epoch_start and k > 0:
-                epoch = k
         event: dict[str, Any] = {
             "index": index,
             "kind": kind,
             "line": line,
-            "qudit": qubit,
+            "qudit": qudit,
             "start_vtu": start,
             "duration_vtu": duration,
+            "end_vtu": None if start is None or duration is None else start + duration,
             "iteration": list(iteration),
-            "epoch": epoch,
+            "epoch": 0 if start is None else bisect.bisect_right(starts, start),
             "conditions": [
                 {
                     "branch": branch,
@@ -370,38 +376,29 @@ def _events(lowered: Lowered) -> list[dict[str, Any]]:
                 for branch, arm, readouts, answers, test in conditions
             ],
         }
-        if kind in ("drive", "readout"):
+        if kind in _PLAYED:
             tree = _tree(nodes)
             amplitude = _amplitude(tree)
             event["waveform"] = tree
             event["amplitude"] = (
                 None if amplitude is None else {"re": amplitude.real, "im": amplitude.imag}
             )
-            event["frequency_hz"] = None if math.isnan(frequency) else frequency
-            event["phase_rad"] = None if math.isnan(phase) else phase
-        if kind in ("submit", "answer"):
+            event["frequency_hz"] = _number(frequency)
+            event["phase_rad"] = _number(phase)
+        elif kind == "sync":
+            event["line"] = None
+            event["qudit"] = None
+            event["lines"] = list(joined)
+        elif kind in ("submit", "answer"):
             event["link"] = line
             event["function"] = callee
             if kind == "submit":
                 event["measurements"] = list(refs)
             else:
                 event["wait"] = mode
-                event["timeout_ns"] = None if math.isnan(timeout) else timeout
+                event["timeout_ns"] = _number(timeout)
         events.append(event)
-    return events
-
-
-def _lines(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    lines: dict[int, dict[str, Any]] = {}
-    for event in events:
-        if event["kind"] in ("submit", "answer") or event["line"] < 0:
-            continue
-        entry = lines.setdefault(
-            event["line"], {"line": event["line"], "role": "drive", "qudit": event["qudit"]}
-        )
-        if event["kind"] == "readout":
-            entry["role"] = "readout"
-    return [lines[k] for k in sorted(lines)]
+    return lines, events
 
 
 def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, Any]:
@@ -415,12 +412,7 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
     """
     from .classical.emulation import export as emulation
 
-    if lowered.parameters:
-        raise ValueError(
-            "the module has float parameters "
-            f"({', '.join(lowered.parameters)}); lower it with their values first"
-        )
-    events = _events(lowered)
+    lines, events = _walk(lowered)
     limits = lowered.options.machine.controller
     if limits is not None:
         violations = _violations(lowered, events, limits)
@@ -436,9 +428,13 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
                 f"{clock} GHz clock"
             )
         for event in events:
-            if event.get("waveform") is not None and event["duration_vtu"] is not None:
+            if event.get("waveform") is None or event["duration_vtu"] is None:
+                continue
+            try:
                 samples = sample_waveform(event["waveform"], event["duration_vtu"], per_vtu)
-                event["samples"] = {"re": samples.real.tolist(), "im": samples.imag.tolist()}
+            except ValueError as e:
+                raise ValueError(f"event {event['index']} ({event['kind']}): {e}") from None
+            event["samples"] = {"re": samples.real.tolist(), "im": samples.imag.tolist()}
     base = emulation(lowered)
     return {
         "format": FORMAT,
@@ -447,7 +443,7 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
         "schedule": lowered.options.schedule,
         "sample_rate_ghz": sample_rate_ghz,
         "qudits": list(lowered.qudits),
-        "lines": _lines(events),
+        "lines": lines,
         "events": events,
         "epochs": base["epochs"],
         "calls": base["calls"],
@@ -462,6 +458,8 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
 
 def _exclusive(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
     """Whether two events lie in different arms of one branch execution."""
+    if not a["conditions"] or not b["conditions"]:
+        return False
     arms = {(c["branch"], tuple(a["iteration"])): c["arm"] for c in a["conditions"]}
     for c in b["conditions"]:
         arm = arms.get((c["branch"], tuple(b["iteration"])))
@@ -476,10 +474,11 @@ def _pairs(
     """Each event with the latest earlier event it can follow on one path."""
     ordered = sorted(events, key=lambda e: (e["start_vtu"], e["index"]))
     pairs = []
-    for k, event in enumerate(ordered):
-        for previous in reversed(ordered[:k]):
-            if not _exclusive(previous, event):
-                pairs.append((previous, event))
+    for k in range(1, len(ordered)):
+        event = ordered[k]
+        for j in range(k - 1, -1, -1):
+            if not _exclusive(ordered[j], event):
+                pairs.append((ordered[j], event))
                 break
     return pairs
 
@@ -493,13 +492,7 @@ def _violations(
         found.append(
             f"the target's clock is {clock} GHz; the controller runs at {limits.clock_ghz} GHz"
         )
-    timed = [
-        e
-        for e in events
-        if e["kind"] in ("drive", "readout")
-        and e["start_vtu"] is not None
-        and e["duration_vtu"] is not None
-    ]
+    timed = [e for e in events if e["kind"] in _PLAYED and e["end_vtu"] is not None]
     if limits.max_events is not None and len(timed) > limits.max_events:
         found.append(
             f"{len(timed)} drives and readouts; the controller plays at most {limits.max_events}"
@@ -546,7 +539,7 @@ def _violations(
                 by_acquirer.setdefault(limits.acquirers[event["qudit"]], []).append(event)
         for acquirer, items in sorted(by_acquirer.items()):
             for previous, event in _pairs(items):
-                free = previous["start_vtu"] + previous["duration_vtu"] + limits.acquirer_hold_vtu
+                free = previous["end_vtu"] + limits.acquirer_hold_vtu
                 if event["start_vtu"] < free:
                     found.append(
                         f"acquirer {acquirer}: the readout of qudit {event['qudit']} at "
@@ -558,16 +551,15 @@ def _violations(
             for condition in event["conditions"]:
                 for ref in condition["readouts"]:
                     readout = events[ref]
-                    ready = (
-                        readout["start_vtu"] + readout["duration_vtu"] + limits.feedback_latency_vtu
-                    )
+                    if readout["end_vtu"] is None:
+                        continue
+                    ready = readout["end_vtu"] + limits.feedback_latency_vtu
                     if event["start_vtu"] < ready:
                         found.append(
                             f"line {event['line']}: the {event['kind']} at {event['start_vtu']} "
-                            f"depends on the readout ending at "
-                            f"{readout['start_vtu'] + readout['duration_vtu']}; the controller "
-                            f"needs {limits.feedback_latency_vtu} cycles of feedback latency "
-                            f"(start at {ready} or later; schedule with rcp and "
+                            f"depends on the readout ending at {readout['end_vtu']}; the "
+                            f"controller needs {limits.feedback_latency_vtu} cycles of feedback "
+                            f"latency (start at {ready} or later; schedule with rcp and "
                             "readout_latency_vtu >= feedback_latency_vtu)"
                         )
     if not limits.answer_timeouts:
@@ -590,4 +582,4 @@ def check(lowered: Lowered, limits: ControllerLimits | None = None) -> list[str]
     limits = limits if limits is not None else lowered.options.machine.controller
     if limits is None:
         return []
-    return _violations(lowered, _events(lowered), limits)
+    return _violations(lowered, _walk(lowered, values=False)[1], limits)

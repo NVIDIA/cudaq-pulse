@@ -15,7 +15,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import Bits, qec
+from cudaq_pulse.classical import Bits, Float, qec
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import (
     FORMAT,
@@ -53,26 +53,30 @@ def _program(kernel=drive_and_branch, schedule="asap", machine=None, **kwargs):
 
 def test_export_lists_every_timed_operation_with_its_waveform_and_tone():
     program = _program()
-    assert program["format"] == FORMAT
-    json.dumps(program)
+    assert program["format"] == FORMAT == "cudaq-pulse.controller/1"
+    assert json.loads(json.dumps(program)) == program
     assert program["lines"] == [
         {"line": 0, "role": "drive", "qudit": 0},
         {"line": 1, "role": "readout", "qudit": 0},
         {"line": 2, "role": "drive", "qudit": 1},
     ]
-    kinds = [(e["kind"], e["line"], e["start_vtu"], e["duration_vtu"]) for e in program["events"]]
+    kinds = [(e["kind"], e["line"], e["start_vtu"], e["end_vtu"]) for e in program["events"]]
     assert kinds == [
         ("drive", 0, 0, 16),
-        ("drive", 0, 16, 16),
-        ("readout", 1, 32, 100),
-        ("drive", 2, 132, 20),
-        ("drive", 2, 132, 20),
+        ("drive", 0, 16, 32),
+        ("sync", None, 32, 32),
+        ("readout", 1, 32, 132),
+        ("sync", None, 132, 132),
+        ("drive", 2, 132, 152),
+        ("drive", 2, 132, 152),
     ]
-    first, second, readout, then, otherwise = program["events"]
+    assert [e["index"] for e in program["events"]] == list(range(7))
+    first, second, _, readout, _, then, _ = program["events"]
     assert first["waveform"] == {
         "shape": "gaussian",
         "params": {"duration": 16.0, "amplitude": 0.5, "sigma": 4.0},
     }
+    assert first["duration_vtu"] == 16 and first["iteration"] == []
     assert second["waveform"]["shape"] == "drag"
     assert second["waveform"]["params"]["beta"] == pytest.approx(0.3)
     # The frame change before a drive is the frame it plays in.
@@ -87,13 +91,123 @@ def test_export_lists_every_timed_operation_with_its_waveform_and_tone():
 
 def test_export_marks_the_branch_and_the_measurement_it_depends_on():
     events = _program()["events"]
-    readout, then, otherwise = events[2], events[3], events[4]
+    readout, then, otherwise = events[3], events[5], events[6]
     assert readout["conditions"] == []
     assert then["conditions"] == [
-        {"branch": 0, "arm": True, "readouts": [2], "answers": [], "test": "is_set"}
+        {"branch": 0, "arm": True, "readouts": [3], "answers": [], "test": "is_set"}
     ]
-    assert otherwise["conditions"][0]["arm"] is False
-    assert otherwise["conditions"][0]["readouts"] == [2]
+    assert otherwise["conditions"] == [
+        {"branch": 0, "arm": False, "readouts": [3], "answers": [], "test": "is_set"}
+    ]
+
+
+def test_export_names_the_lines_a_sync_joins():
+    events = _program()["events"]
+    assert events[2]["lines"] == [0, 1] and events[4]["lines"] == [1, 2]
+    assert events[2]["qudit"] is None and events[2]["duration_vtu"] == 0
+
+
+@pulse.kernel
+def staggered(q, r):
+    d, t = get_drive_line(q)
+    d1, t1 = get_drive_line(r)
+    ro, rt = get_readout_line(q)
+    for _ in range(3):
+        drive(d, gaussian(24, 0.5, 6.0), t)
+        drive(d1, square(8, 0.1), t1)
+        sync(d, d1, ro)
+        readout(ro, square(40, 0.05), rt)
+        drive(d1, square(12, 0.1), t1)
+        sync(d, d1, ro)
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap", "rcp", "alap_rcp"])
+def test_a_sync_is_a_barrier_between_the_events_of_its_lines(schedule):
+    events = _program(staggered, schedule=schedule)["events"]
+    syncs = [e for e in events if e["kind"] == "sync"]
+    assert len(syncs) == 6
+    assert [s["iteration"] for s in syncs] == [[0], [0], [1], [1], [2], [2]]
+    for barrier in syncs:
+        joined = set(barrier["lines"])
+        assert joined == {0, 1, 2}
+        for event in events:
+            if event["kind"] == "sync" or event["line"] not in joined:
+                continue
+            if event["index"] < barrier["index"]:
+                assert event["end_vtu"] <= barrier["start_vtu"], (barrier, event)
+            else:
+                assert event["start_vtu"] >= barrier["start_vtu"], (barrier, event)
+
+
+@pulse.kernel
+def detuned(q, r):
+    d, t = get_drive_line(q)
+    t = shift_frequency(t, 2.0e6)
+    drive(d, square(16, 0.1), t)
+    wait(d, 100)
+    drive(d, square(16, 0.1), t)
+    t = shift_phase(t, 0.25)
+    drive(d, square(16, 0.1), t)
+
+
+def test_a_detuned_tone_gains_phase_between_its_drives():
+    # Virtual Z folds the phase shift into the last drive.
+    lowered = pulse.compile(detuned, schedule="asap").lower(Q[0], Q[1])
+    assert "frame_phase_offset" in lowered.mlir()
+    program = lowered.export_controller()
+    clock = program["clock_ghz"]
+    drives = [e for e in program["events"] if e["kind"] == "drive"]
+    assert [e["start_vtu"] for e in drives] == [0, 116, 132]
+    for event, extra in zip(drives, (0.0, 0.0, 0.25), strict=True):
+        assert event["frequency_hz"] == pytest.approx(5.0e9 + 2.0e6)
+        expected = 2 * math.pi * 2.0e6 * event["start_vtu"] / clock * 1e-9 + extra
+        assert event["phase_rad"] == pytest.approx(expected)
+
+
+@pulse.kernel
+def tone_in_one_arm(q, r):
+    d, t = get_drive_line(q)
+    ro, rt = get_readout_line(q)
+    m = readout(ro, square(100, 0.05), rt)
+    sync(d, ro)
+    if m:
+        drive(d, square(20, 0.3), t)
+    drive(d, gaussian(20, 0.2, 5.0), t)
+
+
+@pulse.kernel
+def phase_in_one_arm(q, r):
+    d, t = get_drive_line(q)
+    ro, rt = get_readout_line(q)
+    drive(d, gaussian(20, 0.2, 5.0), t)
+    m = readout(ro, square(100, 0.05), rt)
+    sync(d, ro)
+    if m:
+        shift_phase(t, 0.5)
+        drive(d, square(20, 0.3), t)
+    drive(d, gaussian(20, 0.2, 5.0), t)
+
+
+def test_a_frame_only_one_arm_touches_is_unchanged_in_the_other():
+    last = _program(tone_in_one_arm)["events"][-1]
+    assert last["frequency_hz"] == pytest.approx(5.0e9)
+    assert last["phase_rad"] == 0.0
+    last = _program(phase_in_one_arm)["events"][-1]
+    assert last["frequency_hz"] is None and last["phase_rad"] is None
+
+
+@pulse.kernel
+def idle_readout_line(q, r):
+    ro, rt = get_readout_line(q)
+    wait(ro, 10)
+
+
+def test_a_line_is_listed_with_its_role_even_when_it_only_waits():
+    program = _program(idle_readout_line)
+    assert program["lines"] == [{"line": 0, "role": "readout", "qudit": 0}]
+    (event,) = program["events"]
+    assert event["kind"] == "wait" and event["end_vtu"] == 10
+    assert "waveform" not in event
 
 
 def test_export_samples_envelopes_at_a_multiple_of_the_clock():
@@ -105,6 +219,7 @@ def test_export_samples_envelopes_at_a_multiple_of_the_clock():
     np.testing.assert_allclose(samples, expected)
     t = np.arange(64) / 4 - 8
     np.testing.assert_allclose(samples.real, 0.5 * np.exp(-0.5 * t**2 / 16.0))
+    assert "samples" not in program["events"][2]
     with pytest.raises(ValueError, match="whole multiple"):
         _program(sample_rate_ghz=1.5 * pulse.get_device().clock_ghz)
 
@@ -120,6 +235,45 @@ def test_drag_samples_carry_the_derivative_in_quadrature():
     np.testing.assert_allclose(samples, g - 1j * 0.5 * t * g / 4.0)
 
 
+def test_gaussian_square_samples_are_flat_between_their_edges():
+    node = {
+        "shape": "gaussian_square",
+        "params": {"duration": 40, "amplitude": 0.5, "sigma": 3.0, "risefall": 10},
+    }
+    samples = sample_waveform(node, 40).real
+    np.testing.assert_allclose(samples[10:30], 0.5)
+    np.testing.assert_allclose(samples[:10], 0.5 * np.exp(-0.5 * (np.arange(10) - 10) ** 2 / 9))
+    np.testing.assert_allclose(samples[30:], 0.5 * np.exp(-0.5 * np.arange(10) ** 2 / 9))
+
+
+def ramp(t):
+    return t / 8
+
+
+@pulse.kernel
+def sampled_envelopes(q, r):
+    d, t = get_drive_line(q)
+    drive(d, custom(8, ramp), t)
+    drive(d, custom_samples([0.0, 0.5, 1.0, 0.5]), t)
+
+
+def test_custom_envelopes_are_exported_as_their_samples():
+    program = _program(sampled_envelopes, sample_rate_ghz=pulse.get_device().clock_ghz)
+    traced, given = program["events"]
+    expected = [(k + 0.5) / 8 for k in range(8)]
+    assert traced["waveform"]["shape"] == "custom_samples"
+    assert traced["waveform"]["samples"] == pytest.approx(expected)
+    assert traced["samples"]["re"] == pytest.approx(expected)
+    assert given["waveform"] == {"shape": "custom_samples", "samples": [0.0, 0.5, 1.0, 0.5]}
+    assert traced["amplitude"]["re"] == pytest.approx(expected[-1])
+
+
+def test_a_waveform_a_python_function_plays_cannot_be_sampled():
+    node = {"shape": "custom", "name": "ramp_envelope", "params": {"duration": 32.0}}
+    with pytest.raises(ValueError, match="cannot sample a 'custom' waveform"):
+        sample_waveform(node, 32)
+
+
 def test_shape_key_ignores_overall_amplitude_only():
     a = {"shape": "gaussian", "params": {"duration": 16.0, "amplitude": 0.5, "sigma": 4.0}}
     b = {"shape": "gaussian", "params": {"duration": 16.0, "amplitude": 0.1, "sigma": 4.0}}
@@ -127,38 +281,9 @@ def test_shape_key_ignores_overall_amplitude_only():
     scaled = {"shape": "scale", "params": {"factor": -2.0}, "of": [b]}
     assert shape_key(a) == shape_key(b) == shape_key(scaled)
     assert shape_key(a) != shape_key(c)
-
-
-@pulse.kernel
-def tone_in_one_arm(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(100, 0.05), rt)
-    sync(d, r)
-    if m:
-        drive(d, square(20, 0.3), t)
-    drive(d, gaussian(20, 0.2, 5.0), t)
-
-
-@pulse.kernel
-def phase_in_one_arm(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, gaussian(20, 0.2, 5.0), t)
-    m = readout(r, square(100, 0.05), rt)
-    sync(d, r)
-    if m:
-        shift_phase(t, 0.5)
-        drive(d, square(20, 0.3), t)
-    drive(d, gaussian(20, 0.2, 5.0), t)
-
-
-def test_a_frame_only_one_arm_touches_is_unchanged_in_the_other():
-    last = pulse.compile(tone_in_one_arm).lower(Q[0]).export_controller()["events"][-1]
-    assert last["frequency_hz"] == pytest.approx(5.0e9)
-    assert last["phase_rad"] == 0.0
-    last = pulse.compile(phase_in_one_arm).lower(Q[0]).export_controller()["events"][-1]
-    assert last["frequency_hz"] is None and last["phase_rad"] is None
+    one = {"shape": "custom", "name": "one", "params": {"duration": 8.0}}
+    two = {"shape": "custom", "name": "two", "params": {"duration": 8.0}}
+    assert shape_key(one) != shape_key(two)
 
 
 @pulse.kernel
@@ -185,12 +310,8 @@ def test_limits_report_issue_spacing_acquirers_and_feedback():
     assert len(found) == 1 and "acquirer 0" in found[0]
     # Serialized by the scheduler, the readouts fit.
     machine = MachineModel(max_concurrent_readouts=1, line_switch_penalty_vtu=30)
-    assert (
-        check(
-            pulse.compile(two_readouts, schedule="rcp", machine=machine).lower(Q[0], Q[1]), limits
-        )
-        == []
-    )
+    lowered = pulse.compile(two_readouts, schedule="rcp", machine=machine).lower(Q[0], Q[1])
+    assert check(lowered, limits) == []
     limits = ControllerLimits(feedback_latency_vtu=50)
     lowered = pulse.compile(drive_and_branch, schedule="asap").lower(Q[0], Q[1])
     assert len(check(lowered, limits)) == 2
@@ -210,7 +331,9 @@ def test_limits_report_clock_tones_memory_and_size():
     found = check(lowered, ControllerLimits(samples_per_vtu=2, waveform_samples=64))
     assert [f.split(":")[0] for f in found] == ["line 1", "line 2"]
     found = check(lowered, ControllerLimits(max_events=4))
-    assert "at most 4" in found[0]
+    assert "5 drives and readouts" in found[0] and "at most 4" in found[0]
+    # Both arms of a branch play on one line at one time without conflict.
+    assert check(lowered, ControllerLimits(issue_vtu=4)) == []
 
 
 def test_limits_on_the_machine_model_fail_the_compilation():
@@ -223,17 +346,59 @@ def test_limits_on_the_machine_model_fail_the_compilation():
         MachineModel(controller={"issue_vtu": 4})  # type: ignore[arg-type]
 
 
+def test_a_limit_error_lists_ten_violations_and_counts_the_rest():
+    error = ControllerLimitError([f"violation {k}" for k in range(13)])
+    assert "violation 9" in str(error) and "violation 10" not in str(error)
+    assert "and 3 more" in str(error) and len(error.violations) == 13
+
+
 def test_limits_are_part_of_the_machine_model_identity():
     a = MachineModel(controller=ControllerLimits(issue_vtu=4, acquirers={0: 0}))
     b = MachineModel(controller=ControllerLimits(issue_vtu=4, acquirers={0: 0}))
     c = MachineModel(controller=ControllerLimits(issue_vtu=2))
     assert a == b and hash(a) == hash(b)
     assert a != c and a != MachineModel()
+    assert ControllerLimits(acquirers={0: 0, 1: 0}).as_dict()["acquirers"] == {"0": 0, "1": 0}
     with pytest.raises(ValueError, match="issue_vtu"):
         ControllerLimits(issue_vtu=0)
     with pytest.raises(ValueError, match="cannot be negative"):
         ControllerLimits(acquirer_hold_vtu=-1)
+    with pytest.raises(ValueError, match="positive or None"):
+        ControllerLimits(waveform_samples=0)
 
+
+def test_the_limits_travel_with_the_program():
+    limits = ControllerLimits(issue_vtu=1, tones_per_line=2)
+    program = _program(machine=MachineModel(controller=limits))
+    assert program["limits"] == limits.as_dict()
+    assert _program()["limits"] is None
+
+
+@pulse.kernel
+def ramsey(q, phase: float):
+    d, t = get_drive_line(q)
+    drive(d, gaussian(16, 0.25, 4.0), t)
+    shift_phase(t, phase)
+    drive(d, gaussian(16, 0.25, 4.0), t)
+
+
+def test_float_arguments_are_exported_at_their_values():
+    lowered = pulse.compile(ramsey).lower(Q[0], 0.75)
+    assert lowered.generic is not None
+    with pytest.raises(ValueError, match="float parameters"):
+        lowered.generic.export_controller()
+    program = lowered.export_controller()
+    assert program["events"][1]["phase_rad"] == pytest.approx(0.75)
+    assert not math.isnan(program["events"][0]["phase_rad"])
+
+
+def test_a_kernel_with_float_parameters_is_checked_when_compiled():
+    machine = MachineModel(controller=ControllerLimits(issue_vtu=4, min_wait_vtu=40))
+    with pytest.raises(ControllerLimitError, match="starts 16 cycles after"):
+        pulse.compile(ramsey, machine=machine).lower(Q[0], 0.75)
+
+
+# ── Classical calls ──────────────────────────────────────────────────────────
 
 decoder = qec.Decoder(0, syndromes=1, corrections=1, max_latency_ns=400, decode=lambda b: [b[0]])
 
@@ -276,6 +441,7 @@ def test_export_carries_calls_with_their_measurements_and_waits():
     assert enqueue["measurements"] == [readout["index"]]
     assert get["measurements"] == []
     assert answer["wait"] == "bounded" and answer["timeout_ns"] is None
+    assert all(e["end_vtu"] == e["start_vtu"] + e["duration_vtu"] for e in submits)
     fix = next(e for e in program["events"] if e["conditions"])
     assert fix["conditions"][0]["answers"] == [answer["index"]]
     assert fix["conditions"][0]["test"] == "answer"
@@ -283,6 +449,26 @@ def test_export_carries_calls_with_their_measurements_and_waits():
         enqueue["function"],
         get["function"],
     }
+    # Links are not lines.
+    assert all(line["role"] in ("drive", "readout") for line in program["lines"])
+
+
+def test_events_after_a_variable_wait_are_in_its_epoch():
+    @pulse.classical(results=(Float(),), max_latency_ns=100)
+    def tau():
+        return 8.0
+
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        drive(d, square(20, 0.1), t)
+        wait(d, tau.submit().result(), bounds=(4, 40))
+        drive(d, square(20, 0.1), t)
+
+    program = pulse.compile(k).lower(Q[0]).export_controller()
+    drives = [e for e in program["events"] if e["kind"] == "drive"]
+    assert [e["epoch"] for e in drives] == [0, 1]
+    assert len(program["epochs"]) == 2
 
 
 def test_a_controller_without_answer_timeouts_rejects_a_timed_wait():
@@ -293,21 +479,3 @@ def test_a_controller_without_answer_timeouts_rejects_a_timed_wait():
     assert answer["wait"] == "timeout" and answer["timeout_ns"] == pytest.approx(300)
     with pytest.raises(ControllerLimitError, match="cannot stop waiting"):
         pulse.compile(timed_out, machine=MachineModel(controller=limits)).lower(Q[0])
-
-
-@pulse.kernel
-def ramsey(q, phase: float):
-    d, t = get_drive_line(q)
-    drive(d, gaussian(16, 0.25, 4.0), t)
-    shift_phase(t, phase)
-    drive(d, gaussian(16, 0.25, 4.0), t)
-
-
-def test_float_arguments_are_exported_at_their_values():
-    lowered = pulse.compile(ramsey).lower(Q[0], 0.75)
-    assert lowered.generic is not None
-    with pytest.raises(ValueError, match="float parameters"):
-        lowered.generic.export_controller()
-    program = lowered.export_controller()
-    assert program["events"][1]["phase_rad"] == pytest.approx(0.75)
-    assert not math.isnan(program["events"][0]["phase_rad"])

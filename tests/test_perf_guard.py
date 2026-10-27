@@ -30,6 +30,8 @@ from pathlib import Path
 
 import cudaq_pulse as pulse
 import pytest
+from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse.controller import ControllerLimits
 from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder
 from cudaq_pulse.kernel.ir_builder import Parameter
 from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
@@ -206,6 +208,38 @@ def test_the_events_of_a_long_line_are_listed_in_linear_time():
     # Eight times the drives: about 10x the time when linear, 64x when not.
     times = {n: _best(lambda m=program(n): m.schedule, 3, 0) for n in (2000, 16000)}
     assert times[16000] < 8 * times[2000] * TOLERANCE, times
+
+
+@pytest.mark.scaling
+def test_a_long_program_is_exported_and_checked_in_linear_time():
+    limits = ControllerLimits(
+        issue_vtu=2,
+        acquirers={0: 0},
+        tones_per_line=2,
+        waveform_samples=10**9,
+        feedback_latency_vtu=1,
+    )
+    machine = MachineModel(readout_latency_vtu=1, controller=limits)
+
+    def program(n: int):
+        @pulse.kernel
+        def kernel(q):
+            line, tone = get_drive_line(q)
+            probe, probe_tone = get_readout_line(q)
+            for i in range(n):
+                drive(line, gaussian(16 + 0 * i, 0.1, 4.0), tone)
+                sync(line, probe)
+                m = readout(probe, square(40, 0.05), probe_tone)
+                sync(probe, line)
+                if m:
+                    drive(line, square(8, 0.1), tone)
+
+        compiled = pulse.compile(kernel, schedule="rcp", machine=machine, unroll_threshold=100_000)
+        return compiled.lower(Q[0])
+
+    # Eight times the events: about 8x the time when linear, 64x when not.
+    times = {n: _best(program(n).export_controller, 3, 0) for n in (500, 4000)}
+    assert times[4000] < 8 * times[500] * TOLERANCE, times
 
 
 @pytest.mark.scaling
