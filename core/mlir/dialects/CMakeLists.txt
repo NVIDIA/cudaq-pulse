@@ -7,5 +7,6 @@
 # ============================================================================ #
 
 add_subdirectory(Pulse)
+add_subdirectory(Classical)
 add_subdirectory(QOp)
 add_subdirectory(CuDensityMat)

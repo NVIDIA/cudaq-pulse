@@ -686,13 +686,38 @@ struct PulseToQOpPass
       if (op->getName().getStringRef() == "pulse.iq_acquire")
         readouts.push_back(op);
     });
-    // Without its arguments, a variable wait stands at its lowest length.
+    // The frequencies of the simulated qubits, where they differ from the
+    // device the program was compiled for (NaN: as compiled).
+    if (auto plant = module->getAttrOfType<DenseF64ArrayAttr>(
+            "pulse.plant_qubit_freq_hz"))
+      for (auto [index, frequency] : llvm::enumerate(plant.asArrayRef()))
+        if (!std::isnan(frequency))
+          qubitFreqHz[static_cast<int64_t>(index)] = frequency;
+    Operation *unanswered = nullptr;
+    module.walk([&](Operation *op) {
+      if (op->getName().getStringRef() == "classical.wait" &&
+          !op->hasAttr("classical.answers")) {
+        unanswered = op;
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    });
+    if (unanswered) {
+      unanswered->emitError(
+          "a program with classical calls evolves in segments between their "
+          "answers; lower it with each answer bound, as pulse.simulate() "
+          "does");
+      return signalPassFailure();
+    }
+    // Without its arguments, a variable wait stands at its lowest length. A
+    // wait whose length is an answer takes it from the bound answer.
     Operation *unbound = nullptr;
     module.walk([&](pulse::WaitOp wait) {
       auto conversion =
           wait.getDuration().getDefiningOp<pulse::DurationFromIntOp>();
       IntegerAttr cycles;
       if (!wait->hasAttr("pulse.variable") ||
+          wait->hasAttr("classical.variable") ||
           (conversion &&
            matchPattern(conversion.getCycles(), m_Constant(&cycles))))
         return WalkResult::advance();
@@ -1101,6 +1126,12 @@ struct PulseToQOpPass
     }
     for (Operation *op : llvm::reverse(sourceOps))
       op->erase();
+    // Classical calls are answered before lowering (bound along the path);
+    // their declarations and link parameters have no QOp counterpart.
+    for (Operation &op : llvm::make_early_inc_range(*module.getBody()))
+      if (op.getDialect() && op.getDialect()->getNamespace() == "classical")
+        op.erase();
+    module->removeAttr("classical.links");
   }
 };
 

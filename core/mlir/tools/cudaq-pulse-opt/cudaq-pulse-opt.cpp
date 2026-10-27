@@ -30,6 +30,12 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
 
+#include "cudaq-pulse/Dialect/Classical/ClassicalDialect.h.inc"
+#define GET_TYPEDEF_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalTypes.h.inc"
+#define GET_OP_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
+
 #include "cudaq-pulse/Dialect/QOp/QOpDialect.h.inc"
 #include "cudaq-pulse/Dialect/QOp/QOpEnums.h.inc"
 #define GET_ATTRDEF_CLASSES
@@ -67,12 +73,19 @@ std::unique_ptr<mlir::Pass> createPulseFusionPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleAsapPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleAlapPass();
 std::unique_ptr<mlir::Pass> createPulseInlineScheduleBlocksPass();
+std::unique_ptr<mlir::Pass> createPulseClassicalCheckPass();
+std::unique_ptr<mlir::Pass> createPulseScheduleRcpPass(int64_t maxDrives,
+                                                       int64_t maxReadouts,
+                                                       int64_t readoutLatency,
+                                                       int64_t switchPenalty,
+                                                       bool isAlap);
 } // namespace pulse
 
 int main(int argc, char **argv) {
   mlir::registerAllPasses();
   mlir::DialectRegistry registry;
   registry.insert<pulse::PulseDialect>();
+  registry.insert<classical::ClassicalDialect>();
   registry.insert<qop::QOpDialect>();
   registry.insert<cudm::CuDensityMatDialect>();
   registry.insert<mlir::func::FuncDialect>();
@@ -94,6 +107,11 @@ int main(int argc, char **argv) {
   mlir::registerPass(pulse::createPulseScheduleAsapPass);
   mlir::registerPass(pulse::createPulseScheduleAlapPass);
   mlir::registerPass(pulse::createPulseInlineScheduleBlocksPass);
+  mlir::registerPass(pulse::createPulseClassicalCheckPass);
+  // Resource-constrained scheduling with the default machine model (4
+  // drives, 2 readouts, no readout latency or switch penalty).
+  mlir::registerPass(
+      [] { return pulse::createPulseScheduleRcpPass(4, 2, 0, 0, false); });
 
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "cudaq-pulse MLIR optimizer\n", registry));

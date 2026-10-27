@@ -25,7 +25,11 @@ The kernel language (``drive``, ``gaussian``, ``get_drive_line``, ...) lives
 in ``cudaq_pulse.ops``; inside a ``@pulse.kernel`` its names are used bare.
 Compiler types (``CompileMetrics``, ``ScheduledEvent``, ``MachineModel``,
 ``DEFAULT_PASSES``) are in ``cudaq_pulse.compiler``, target descriptions and
-calibrations in ``cudaq_pulse.targets``.
+calibrations in ``cudaq_pulse.targets``. ``pulse.classical`` declares the
+classical functions a kernel calls while the QPU runs. ``pulse.controller``
+exports a compiled kernel to a controller and states a controller's limits,
+and ``pulse.backends`` finds the controller backends installed beside
+cudaq-pulse.
 """
 
 from __future__ import annotations
@@ -50,12 +54,22 @@ from .kernel._kernel import Kernel as Kernel
 from .kernel.ir_builder import CompilationError as CompilationError
 from .targets._registry import NoTargetError as NoTargetError
 
+# A module can't be declared callable, so checkers see the decorator's type.
+if TYPE_CHECKING:
+    from .classical import ClassicalDecorator
+
+    classical: ClassicalDecorator
+else:
+    from . import classical as classical
+
 __version__: str = _build_config.PACKAGE_VERSION
 
 # Simulation, GPU execution and visualization load NumPy, the GPU runtime
 # discovery or plotting, which compiling does not need: import them on first
 # use.
 if TYPE_CHECKING:
+    from . import backends as backends
+    from . import controller as controller
     from . import viz as viz
     from .runtime.gpu import GpuRuntimeError as GpuRuntimeError
     from .runtime.simulate import SimulationResult as SimulationResult
@@ -66,7 +80,7 @@ _LAZY_EXPORTS = {
     "simulate": ".runtime.simulate",
     "GpuRuntimeError": ".runtime.gpu",
 }
-_LAZY_MODULES = {"viz": ".viz"}
+_LAZY_MODULES = {"viz": ".viz", "backends": ".backends", "controller": ".controller"}
 
 __all__ = [
     "kernel",
@@ -88,6 +102,9 @@ __all__ = [
     "DeviceMismatchError",
     "GpuRuntimeError",
     "viz",
+    "classical",
+    "controller",
+    "backends",
 ]
 
 

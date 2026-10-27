@@ -139,14 +139,19 @@ def wait(target: Line, duration: Numeric, bounds: tuple[int, int | None] | None 
 
     Args:
         target: Drive or readout line.
-        duration: Wait duration in clock cycles. It may be computed from
-            ``float`` kernel parameters with ``+``, ``-``, ``*`` and ``/``;
-            the kernel then compiles once, and each call rounds the length
-            to the nearest cycle (ties up) and schedules with it.
+        duration: Wait duration in clock cycles. A literal must be a whole
+            number of cycles. It may be computed from ``float`` kernel
+            parameters with ``+``, ``-``, ``*`` and ``/``; the kernel then
+            compiles once, and each call rounds the length to the nearest
+            cycle (ties up) and schedules with it. When it is computed from
+            the answer of a classical call, the wait is a variable region:
+            every line syncs before it, and everything after it shifts with
+            its length, which is known only when the program runs.
         bounds: ``(lowest, highest)`` in clock cycles; ``highest`` may be
-            ``None``. A call whose wait length falls outside them raises
-            ``ValueError``. Without bounds the length must not be negative.
-            The kernel's schedule without arguments puts the wait at
+            ``None``. A call whose parameter-derived length falls outside
+            them raises ``ValueError``; a length from an answer is rounded
+            and clamped to them. Without bounds the length must not be
+            negative. Scheduling without the length puts the wait at
             ``lowest``.
     """
     _require_context("wait")

@@ -18,12 +18,14 @@ from __future__ import annotations
 import math
 import threading
 import time
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from ._native import PulseModuleBuilder
 from .kernel._bytecode_normalize import UnsupportedInterpreterError
+from .classical import Link
 from .kernel._schedule_blocks import check_root_schedule, root_schedule
 from .kernel._unroll import resolve_unroll_threshold
 from .kernel.ir_builder import CompilationError, SymbolicValueError
@@ -32,6 +34,7 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
     from ._device import Device
+    from .controller import ControllerLimits
     from .kernel._kernel import CompiledKernel, Kernel
 
 __all__ = [
@@ -65,14 +68,145 @@ DEFAULT_PASSES: tuple[str, ...] = (
 _STAGES = ("pulse", "llvm")
 
 
+class _Links(dict[int, Link]):
+    """The links of a machine model: a read-only, hashable mapping."""
+
+    def __hash__(self) -> int:  # type: ignore[override]
+        return hash(tuple(sorted(self.items(), key=lambda item: item[0])))
+
+    def _readonly(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("MachineModel.links is read-only")
+
+    __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = _readonly  # type: ignore[assignment]
+
+
 @dataclass(frozen=True)
 class MachineModel:
-    """Hardware resource limits for the ``rcp`` and ``alap_rcp`` schedules."""
+    """Hardware resource limits.
+
+    The drive and readout limits, readout latency and switch penalty apply
+    to the ``rcp`` and ``alap_rcp`` schedules. ``links`` describes the links
+    to classical devices (see ``cudaq_pulse.classical.Link``), keyed by name
+    (``"decoder"``, ``"controller"``) or by link id; a named link gets the
+    lowest id no other link has, in the order given, so the first named
+    link of a model without ids is link 0, the default. A classical
+    function's ``link=`` names one or gives its id. Their slots and
+    latencies apply to every schedule, because they are hardware. A link id
+    a program uses that is not listed gets ``Link()``; an unknown name is an
+    error. ``controller`` gives the limits of the controller the program is
+    for (``cudaq_pulse.controller.ControllerLimits``); every scheduled
+    program is checked against them.
+    """
 
     max_concurrent_drives: int = 4
     max_concurrent_readouts: int = 2
     readout_latency_vtu: int = 0
     line_switch_penalty_vtu: int = 0
+    links: Mapping[int | str, Link] = field(default_factory=dict)
+    controller: ControllerLimits | None = None
+    link_names: Mapping[str, int] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.controller is not None:
+            from .controller import ControllerLimits
+
+            if not isinstance(self.controller, ControllerLimits):
+                raise TypeError(
+                    f"MachineModel.controller must be a ControllerLimits, got {self.controller!r}"
+                )
+        given = dict(self.links)
+        links = _Links()
+        names: list[str] = []
+        for key, value in given.items():
+            if isinstance(key, str):
+                if not key.isidentifier():
+                    raise ValueError(f"MachineModel.links names are identifiers, got {key!r}")
+                names.append(key)
+            elif isinstance(key, bool) or not isinstance(key, int) or key < 0:
+                raise ValueError(f"MachineModel.links keys are names or link ids >= 0, got {key!r}")
+            if not isinstance(value, Link):
+                raise TypeError(f"MachineModel.links[{key!r}] must be a Link, got {value!r}")
+            if isinstance(key, int):
+                dict.__setitem__(links, key, value)
+        by_name: dict[str, int] = {}
+        next_id = 0
+        for name in names:
+            while next_id in links:
+                next_id += 1
+            dict.__setitem__(links, next_id, given[name])
+            by_name[name] = next_id
+        object.__setattr__(self, "links", links)
+        object.__setattr__(self, "link_names", MappingProxyType(by_name))
+        object.__setattr__(
+            self,
+            "_hash",
+            hash(
+                (
+                    self.max_concurrent_drives,
+                    self.max_concurrent_readouts,
+                    self.readout_latency_vtu,
+                    self.line_switch_penalty_vtu,
+                    self.links,
+                    tuple(sorted(by_name.items())),
+                    self.controller,
+                )
+            ),
+        )
+
+    def __hash__(self) -> int:
+        return self._hash  # type: ignore[no-any-return,attr-defined]
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, MachineModel):
+            return NotImplemented
+        return (
+            self.max_concurrent_drives,
+            self.max_concurrent_readouts,
+            self.readout_latency_vtu,
+            self.line_switch_penalty_vtu,
+            dict(self.links),
+            dict(self.link_names),
+            self.controller,
+        ) == (
+            other.max_concurrent_drives,
+            other.max_concurrent_readouts,
+            other.readout_latency_vtu,
+            other.line_switch_penalty_vtu,
+            dict(other.links),
+            dict(other.link_names),
+            other.controller,
+        )
+
+    def link_id(self, link: int | str) -> int:
+        """The id of *link*, a link name of this model or a link id."""
+        if isinstance(link, str):
+            found = self.link_names.get(link)
+            if found is None:
+                known = ", ".join(repr(n) for n in self.link_names) or "none"
+                raise CompilationError(
+                    f"no link named {link!r} in the machine model (its named links: {known}); "
+                    "add it to MachineModel(links={...})"
+                )
+            return found
+        return link
+
+    def link_name(self, link_id: int) -> str | None:
+        """The name of the link with id *link_id*, if it has one."""
+        for name, found in self.link_names.items():
+            if found == link_id:
+                return name
+        return None
+
+    def link(self, link: int | str) -> Link:
+        """The ``Link`` of *link* (a name or an id; ``Link()`` if unlisted)."""
+        return self.links.get(self.link_id(link), Link())
+
+    def links_attribute(self, used: Sequence[int]) -> str:
+        """The module attribute ``classical.links`` for the links in *used*."""
+        entries = ", ".join(
+            f'"{link}" = {self.links.get(link, Link()).attribute()}' for link in sorted(set(used))
+        )
+        return f"{{classical.links = {{{entries}}}}}"
 
 
 @dataclass(frozen=True)
@@ -84,6 +218,10 @@ class ScheduledEvent:
     scheduled (a kernel with float parameters is scheduled when it is called
     with their values). ``start`` and ``end`` are the scheduled times in VTU,
     and raise ``ValueError`` before then.
+
+    A call to a classical function adds a ``"submit"`` event, while the
+    request holds its link, and a zero-length ``"answer"`` event, when the
+    answer is taken. For those, ``line`` is the link id and ``qubit`` is -1.
     """
 
     kind: str
@@ -103,6 +241,86 @@ class ScheduledEvent:
         if self.duration_vtu is None:
             raise ValueError(f"{self.kind} on line {self.line} is not scheduled")
         return self.start + self.duration_vtu
+
+    @property
+    def link(self) -> int | None:
+        """The link of a classical call's event, else ``None``."""
+        return self.line if self.kind in ("submit", "answer") else None
+
+
+@dataclass(frozen=True)
+class Epoch:
+    """One epoch of a compiled kernel, from ``Lowered.epochs()``.
+
+    A variable wait (its length computed from a classical answer) or a
+    blocking classical wait is a barrier: every line syncs before it, and
+    everything after it shifts with its run-time length. Epoch 0 starts the
+    program; epoch k starts when the k-th barrier ends. ``start_vtu`` is the
+    epoch's start in the static schedule, which places every barrier at its
+    lowest length. At run time the epoch starts ``shift_vtu`` later, with
+    ``min_shift_vtu <= shift_vtu <= max_shift_vtu`` (``None``: unbounded).
+    ``opened_by`` is ``"start"``, ``"wait"`` (a variable wait on line
+    ``line``) or ``"answer"`` (a blocking wait on link ``line``).
+    """
+
+    index: int
+    opened_by: str
+    line: int
+    start_vtu: int
+    min_shift_vtu: int
+    max_shift_vtu: int | None
+
+
+@dataclass(frozen=True)
+class ClassicalCall:
+    """One execution of a call to a classical function, from ``classical_report()``.
+
+    Times are in virtual time units (clock cycles). The request is sent from
+    ``submit_vtu`` for ``submit_duration_vtu``; its answer is due at
+    ``due_vtu`` (the budgeted latency after that) and taken at ``taken_vtu``
+    (``None`` if the kernel never takes it). ``first_use_vtu`` is the
+    earliest start of a pulse whose amplitude, tone or branch comes from the
+    answer, and ``deadline_vtu`` the latest due time the function's
+    ``deadline_ns`` allows. ``epoch`` counts the blocking waits before it.
+    ``link_name`` is the link's name in the machine model, if it has one.
+
+    ``exposed_vtu`` is how long the first use waits for the answer beyond
+    when it could start without the call: after its line is free and after
+    the readout resonator of the last readout before the call has depleted
+    (``Qubit.depletion_ns``), when pulses must wait anyway. The rest of the
+    budget, ``hidden_vtu``, overlaps that work. A latency within the
+    depletion time is hidden entirely.
+    """
+
+    function: str
+    link: int
+    iteration: tuple[int, ...]
+    submit_vtu: int
+    submit_duration_vtu: int
+    due_vtu: int
+    taken_vtu: int | None
+    first_use_vtu: int | None
+    deadline_vtu: int | None
+    epoch: int
+    link_name: str | None = None
+    exposed_vtu: int | None = None
+
+    @property
+    def hidden_vtu(self) -> int | None:
+        """The part of the budget that overlaps other work."""
+        if self.exposed_vtu is None:
+            return None
+        return max(0, self.due_vtu - self.submit_vtu - self.exposed_vtu)
+
+    @property
+    def slack_vtu(self) -> int | None:
+        """How long the answer could arrive later without delaying a pulse."""
+        return None if self.first_use_vtu is None else self.first_use_vtu - self.due_vtu
+
+    @property
+    def deadline_slack_vtu(self) -> int | None:
+        """How far the due time is inside the deadline (negative: missed)."""
+        return None if self.deadline_vtu is None else self.deadline_vtu - self.due_vtu
 
 
 @dataclass()
@@ -279,6 +497,7 @@ class Lowered:
         "scheduled",
         "generic",
         "waits",
+        "classical",
     )
 
     def __init__(
@@ -306,6 +525,8 @@ class Lowered:
         self.scheduled = scheduled
         self.generic: Lowered | None = None
         self.waits = waits
+        # The classical functions the program calls, in declaration order.
+        self.classical: tuple[Any, ...] = ()
 
     def bind(self, values: Sequence[float]) -> Lowered:
         """This module with values for its float parameters, sharing it.
@@ -329,6 +550,7 @@ class Lowered:
         view.scheduled = self.scheduled
         view.generic = self
         view.waits = waits
+        view.classical = self.classical
         return view
 
     @property
@@ -384,15 +606,131 @@ class Lowered:
             events = module.events()
         return [ScheduledEvent(*event) for event in events]
 
+    def epochs(self) -> list[Epoch]:
+        """The epochs of the program, separated by variable and blocking waits.
+
+        A program without such waits has one epoch.
+        """
+        module = self._module if self.scheduled else self._concrete()
+        with self._lock:
+            boundaries = module.epoch_boundaries()
+        epochs = [Epoch(0, "start", -1, 0, 0, 0)]
+        unbounded = False
+        extra = 0
+        for k, (kind, line, start, lowest, highest) in enumerate(boundaries, start=1):
+            if highest < 0:
+                unbounded = True
+            else:
+                extra += highest - lowest
+            epochs.append(Epoch(k, kind, line, start + lowest, 0, None if unbounded else extra))
+        return epochs
+
+    def classical_report(self) -> list[ClassicalCall]:
+        """Every call to a classical function, with its timing and slack.
+
+        Calls in a loop are listed once per iteration, in program order.
+        """
+        module = self._module if self.scheduled else self._concrete()
+        with self._lock:
+            calls = module.classical_calls()
+            events = module.events() if calls else []
+        names = self.options.machine.link_name
+        exposed = _Exposure(self, events) if calls else None
+        return [
+            ClassicalCall(
+                name,
+                link,
+                tuple(iteration),
+                start,
+                length,
+                due,
+                taken,
+                use,
+                limit,
+                epoch,
+                names(link),
+                None if exposed is None or use is None else exposed(start, use),
+            )
+            for name, link, iteration, start, length, due, taken, use, limit, epoch in calls
+        ]
+
+    def export_emulation(self) -> dict[str, Any]:
+        """The program for a controller emulator: its schedule by epoch, its
+        calls and the manifest of its classical functions (see
+        ``cudaq_pulse.classical.emulation``)."""
+        from .classical.emulation import export
+
+        return export(self)
+
+    def export_controller(self, sample_rate_ghz: float | None = None) -> dict[str, Any]:
+        """The program for an out-of-tree controller backend: its lines and
+        every timed operation with its waveform, tone, frame and branches
+        (see ``cudaq_pulse.controller``); with *sample_rate_ghz*, each
+        envelope's samples too."""
+        from .controller import export
+
+        return export(self, sample_rate_ghz)
+
     def timeline(self, **kwargs: Any) -> Figure:
         """Plot the schedule, one row per line (needs matplotlib)."""
         from .viz.timeline import plot_schedule
 
-        return plot_schedule(self.schedule, **kwargs)
+        return plot_schedule(self, **kwargs)
 
     def __repr__(self) -> str:
         params = f", parameters={list(self.parameters)}" if self.parameters else ""
         return f"<Lowered {self.metrics.op_count} ops on {self.target.name}{params}>"
+
+
+class _Exposure:
+    """How long a call's first use waits beyond when it could start without
+    the call (see ``ClassicalCall.exposed_vtu``), in O(log n) per call."""
+
+    def __init__(self, lowered: Lowered, events: Sequence[Any]) -> None:
+        import bisect
+
+        self._bisect = bisect.bisect_right
+        clock = lowered.target.clock_ghz
+        qubits = lowered.target.target.qubits
+        ends: dict[int, list[int]] = {}
+        starting: dict[int, list[int]] = {}
+        readouts: list[tuple[int, int]] = []
+        holds: dict[int, int] = {}
+        for kind, line, qubit, start, duration in events:
+            if (kind != "drive" and kind != "readout") or start is None or duration is None:
+                continue
+            end = start + duration
+            ends.setdefault(line, []).append(end)
+            starting.setdefault(start, []).append(line)
+            if kind == "readout":
+                hold = holds.get(qubit)
+                if hold is None:
+                    q = qubits.get(qubit)
+                    hold = math.ceil(q.depletion_ns * clock) if q is not None else 0
+                    holds[qubit] = hold
+                readouts.append((end, end + hold))
+        for values in ends.values():
+            values.sort()
+        readouts.sort()
+        self._ends = ends
+        self._starting = starting
+        self._readout_ends = [end for end, _ in readouts]
+        self._holds = [hold for _, hold in readouts]
+
+    def __call__(self, submit_vtu: int, use_vtu: int) -> int | None:
+        lines = self._starting.get(use_vtu)
+        if not lines:
+            return None
+        free = 0
+        for line in lines:
+            ends = self._ends[line]
+            k = self._bisect(ends, use_vtu)
+            if k:
+                free = max(free, ends[k - 1])
+        k = self._bisect(self._readout_ends, submit_vtu)
+        if k:
+            free = max(free, self._holds[k - 1])
+        return max(0, use_vtu - max(free, submit_vtu))
 
 
 def build(
@@ -424,6 +762,7 @@ def build(
         flatten_schedules=options.flatten_schedules,
     )
     builder.unroll_threshold = options.unroll_threshold
+    builder.link_id = options.machine.link_id
     builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
     needed = tuple(sorted(builder.structural & set(parameters)))
     if needed:
@@ -444,6 +783,7 @@ def build(
         )
     buf: Any = builder.get_buffer()
     freq: Any = builder.get_freq_array()
+    links = [options.machine.link_id(function.link) for function in builder.classical]
     metrics.trace_ms = (time.perf_counter() - t0) * 1000
     metrics.op_count = builder.op_count
 
@@ -462,6 +802,8 @@ def build(
         module = PulseModuleBuilder().build_from_packed(
             buf, target.clock_ghz, builder.n_qubits, freq, name=name
         )
+    if links:
+        module.set_attributes(options.machine.links_attribute(links))
     metrics.ffi_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
@@ -494,6 +836,13 @@ def build(
         scheduled=scheduled,
         waits=_WaitLengths(builder.variable_waits, name) if builder.variable_waits else None,
     )
+    lowered.classical = tuple(builder.classical)
+    if options.machine.controller is not None and scheduled:
+        from .controller import ControllerLimitError, check
+
+        violations = check(lowered)
+        if violations:
+            raise ControllerLimitError(violations)
     return lowered, builder
 
 

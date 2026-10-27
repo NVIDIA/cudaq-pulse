@@ -1,0 +1,453 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+"""Emulating a controller that calls classical services, in virtual time.
+
+``export(lowered)`` writes what a controller needs to run a compiled kernel:
+its static schedule with each event's epoch, the epoch boundaries, its calls,
+and the **manifest** of the classical functions it calls (``manifest``): per
+function its wire id, link, handler schema and latency budget, which is what
+a CUDA-Q Realtime dispatcher's function table holds.
+
+``emulate(lowered, ...)`` runs the program shot by shot in virtual time,
+without physics: measurement outcomes come from a source, each call is sent
+as a real request (``wire``) over a channel to a service, and the answer
+comes back after the modelled transport delay plus the service's measured
+time. An answer later than its budget takes the timeout arm of a wait with a
+timeout, and is recorded as late otherwise. Answers are bound to the shot as
+in simulation, so variable waits get their real lengths and later epochs
+shift accordingly.
+"""
+
+from __future__ import annotations
+
+import math
+import socket
+import struct
+import threading
+import time
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
+import numpy as np
+
+from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
+from . import ClassicalFunction, Link, wire
+
+__all__ = [
+    "CallTrace",
+    "RealtimeChannel",
+    "device_call_text",
+    "EmulationResult",
+    "InProcess",
+    "Transport",
+    "UdpChannel",
+    "emulate",
+    "export",
+    "manifest",
+    "serve_udp",
+]
+
+FORMAT = "cudaq-pulse.emulation/1"
+MANIFEST_FORMAT = "cudaq-pulse.call-manifest/1"
+
+
+# ── Export ───────────────────────────────────────────────────────────────────
+
+
+def manifest(lowered: Any) -> dict[str, Any]:
+    """The classical functions a compiled kernel calls, for a dispatcher."""
+    machine = lowered.options.machine
+    functions = []
+    for fn in lowered.classical:
+        link = machine.link(fn.link)
+        link_id = machine.link_id(fn.link)
+        functions.append(
+            {
+                "name": fn.name,
+                "function_id": fn.id,
+                "random": fn.uniform,
+                "link": link_id,
+                "link_name": machine.link_name(link_id),
+                "schema": wire.schema(fn),
+                "argument_types": [a.descriptor for a in fn.args],
+                "result_types": [r.descriptor for r in fn.results],
+                "latency_ns": {
+                    "min": fn.min_latency_ns,
+                    "nominal": fn.nominal_latency_ns,
+                    "max": fn.max_latency_ns,
+                },
+                "latency_mode": fn.latency_mode,
+                "timeout_ns": fn.timeout_ns,
+                "deadline_ns": fn.deadline_ns,
+                "submit": fn.submit_policy,
+                "request_bytes": wire.HEADER_BYTES + sum(a.wire_bytes for a in fn.args),
+                "answer_bytes": wire.HEADER_BYTES + sum(r.wire_bytes for r in fn.results),
+                "slot_bytes": link.slot_bytes,
+                "max_in_flight": link.max_in_flight,
+            }
+        )
+    return {"format": MANIFEST_FORMAT, "functions": functions}
+
+
+def export(lowered: Any) -> dict[str, Any]:
+    """A compiled kernel for a controller emulator: schedule, epochs, calls,
+    links and manifest, as JSON-serializable data. Times are in clock cycles;
+    each event's ``epoch_start_vtu`` is the static start of its epoch, which
+    moves at run time by the lengths of the variable waits before it."""
+    epochs = lowered.epochs()
+    starts = [e.start_vtu for e in epochs]
+    events = []
+    for event in lowered.schedule:
+        index = 0
+        for k, start in enumerate(starts):
+            if event.start_vtu is not None and event.start_vtu >= start and k > 0:
+                index = k
+        events.append(
+            {
+                "kind": event.kind,
+                "line": event.line,
+                "link": event.link,
+                "qubit": event.qubit,
+                "start_vtu": event.start_vtu,
+                "duration_vtu": event.duration_vtu,
+                "epoch": index,
+                "epoch_start_vtu": starts[index],
+            }
+        )
+    machine = lowered.options.machine
+    return {
+        "format": FORMAT,
+        "clock_ghz": lowered.target.clock_ghz,
+        "links": {
+            str(machine.link_id(fn.link)): {
+                **asdict(machine.link(fn.link)),
+                "name": machine.link_name(machine.link_id(fn.link)),
+            }
+            for fn in lowered.classical
+        },
+        "epochs": [asdict(e) for e in epochs],
+        "events": events,
+        "calls": [asdict(c) for c in lowered.classical_report()],
+        "manifest": manifest(lowered),
+    }
+
+
+# ── Transport and channels ───────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Transport:
+    """The delay of one direction of a link: ``fixed_ns + bytes /
+    bytes_per_ns`` plus a jitter drawn from an exponential with mean
+    ``jitter_ns`` (0 for none)."""
+
+    fixed_ns: float = 0.0
+    bytes_per_ns: float = 0.0
+    jitter_ns: float = 0.0
+
+    def delay_ns(self, n_bytes: int, rng: np.random.Generator) -> float:
+        delay = self.fixed_ns
+        if self.bytes_per_ns > 0:
+            delay += n_bytes / self.bytes_per_ns
+        if self.jitter_ns > 0:
+            delay += float(rng.exponential(self.jitter_ns))
+        return delay
+
+
+class InProcess:
+    """A channel to services in this process: handlers by function name,
+    called on the decoded request."""
+
+    def __init__(
+        self, functions: Sequence[ClassicalFunction], handlers: Mapping[str, Callable[..., Any]]
+    ):
+        self._by_id = {fn.id: fn for fn in functions}
+        self._by_name = {fn.name: fn for fn in functions}
+        self._handlers = dict(handlers)
+
+    def call(self, function: ClassicalFunction, request: bytes) -> tuple[bytes, float]:
+        """Deliver *request*; returns the answer bytes and the service's time in ns."""
+        handler = self._handlers.get(function.name)
+        if handler is None:
+            raise KeyError(f"no service for {function.name!r}")
+        request_id, timestamp, args = wire.decode_request(function, request)
+        t0 = time.perf_counter_ns()
+        answer = handler(*args)
+        service_ns = float(time.perf_counter_ns() - t0)
+        return wire.encode_answer(function, answer, request_id, timestamp), service_ns
+
+    def close(self) -> None:
+        pass
+
+
+def serve_udp(
+    functions: Sequence[ClassicalFunction],
+    handlers: Mapping[str, Callable[..., Any]],
+    host: str = "127.0.0.1",
+    port: int = 0,
+    slot_bytes: int = 65536,
+) -> tuple[threading.Thread, tuple[str, int], Callable[[], None]]:
+    """Serve *handlers* over UDP: one datagram per request and per answer, in
+    the wire format. Returns the server thread, its address and a stop
+    function. The service's own time is appended to each answer as 8 bytes."""
+    by_id = {fn.id: fn for fn in functions}
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((host, port))
+    sock.settimeout(0.05)
+    running = threading.Event()
+    running.set()
+
+    def loop() -> None:
+        while running.is_set():
+            try:
+                data, peer = sock.recvfrom(slot_bytes)
+            except TimeoutError:
+                continue
+            except OSError:
+                return
+            fid = struct.unpack_from("<I", data, 4)[0]
+            fn = by_id[fid]
+            request_id, timestamp, args = wire.decode_request(fn, data)
+            t0 = time.perf_counter_ns()
+            answer = handlers[fn.name](*args)
+            service_ns = time.perf_counter_ns() - t0
+            reply = wire.encode_answer(fn, answer, request_id, timestamp)
+            sock.sendto(reply + struct.pack("<Q", service_ns), peer)
+
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+
+    def stop() -> None:
+        running.clear()
+        thread.join(timeout=1.0)
+        sock.close()
+
+    return thread, sock.getsockname(), stop
+
+
+class RealtimeChannel:
+    """A channel through the CUDA-Q Realtime host library, which dispatches
+    requests to registered GPU or host services. Not available yet: use
+    ``InProcess`` (with ``wire.native`` handlers for compiled code) or
+    ``UdpChannel``. The requests and answers are already in its wire
+    format, so a channel built on it drops in here."""
+
+    def __init__(self, library: str, *args: Any, **kwargs: Any) -> None:
+        raise NotImplementedError(
+            "a channel through the CUDA-Q Realtime host library is not available yet; "
+            "emulate with InProcess (wire.native handlers run compiled code) or UdpChannel"
+        )
+
+
+def device_call_text(lowered: Any) -> str:
+    """CUDA-Q kernel text that makes a compiled program's calls as
+    ``cc.device_call`` operations. Not available yet: export the program
+    with ``export`` (or ``Lowered.export_emulation()``), whose manifest holds
+    each function's wire id, payload types and link."""
+    raise NotImplementedError(
+        "exporting calls as CUDA-Q cc.device_call operations is not available yet; "
+        "use Lowered.export_emulation(), whose manifest lists every call"
+    )
+
+
+class UdpChannel:
+    """A channel to a service reached over UDP (``serve_udp``)."""
+
+    def __init__(self, address: tuple[str, int], slot_bytes: int = 65536, timeout_s: float = 2.0):
+        self._address = address
+        self._slot_bytes = slot_bytes
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.settimeout(timeout_s)
+
+    def call(self, function: ClassicalFunction, request: bytes) -> tuple[bytes, float]:
+        self._sock.sendto(request, self._address)
+        data, _ = self._sock.recvfrom(self._slot_bytes)
+        service_ns = struct.unpack_from("<Q", data, len(data) - 8)[0]
+        return data[:-8], float(service_ns)
+
+    def close(self) -> None:
+        self._sock.close()
+
+
+# ── The virtual-time driver ──────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class CallTrace:
+    """One call in an emulated shot. Times in ns of the shot's timeline."""
+
+    function: str
+    submit_ns: float
+    latency_ns: float
+    budget_ns: float
+    in_time: bool
+    inputs: tuple[Any, ...]
+    answer: Any
+
+
+@dataclass
+class EmulationResult:
+    """Per shot, the measurement outcomes (in time order) and the calls."""
+
+    outcomes: list[list[int]] = field(default_factory=list)
+    calls: list[list[CallTrace]] = field(default_factory=list)
+    ends_ns: list[float] = field(default_factory=list)
+    wall_s: float = 0.0
+
+    @property
+    def late_fraction(self) -> float:
+        traces = [c for shot in self.calls for c in shot]
+        return sum(not c.in_time for c in traces) / len(traces) if traces else 0.0
+
+    @property
+    def calls_per_second(self) -> float:
+        n = sum(len(shot) for shot in self.calls)
+        return n / self.wall_s if self.wall_s > 0 else math.inf
+
+
+def _budget_ns(function: ClassicalFunction, timeout_ns: float, link: Link) -> float:
+    limit = timeout_ns if timeout_ns >= 0 else function.timeout_ns
+    base = function.max_latency_ns if limit is None else limit
+    return base + link.feedback_ns
+
+
+def emulate(
+    lowered: Any,
+    *,
+    shots: int = 1,
+    channel: Any = None,
+    handlers: Mapping[str, Callable[..., Any]] | None = None,
+    transport: Transport | Mapping[int | str, Transport] | None = None,
+    outcomes: Callable[[int, int, np.random.Generator], int] | None = None,
+    service_time: str = "measured",
+    seed: int | None = None,
+) -> EmulationResult:
+    """Run *lowered* for *shots* in virtual time against classical services.
+
+    *channel* reaches the services (``InProcess`` of *handlers* by default,
+    the functions' bodies unless given). *transport* models each link's
+    delay in each direction, per link (name or id) or for all. *outcomes* gives the
+    level a readout reports, from its qudit and the shot's generator
+    (uniform 0/1 by default); a call that takes IQ points gets them drawn
+    at those levels from the target's dispersive readout model
+    (``IQModel``). The answer's latency is the request's
+    transport delay, plus the service's time (``"measured"`` wall-clock, or
+    ``"none"``), plus the answer's transport delay.
+    """
+    functions = tuple(lowered.classical)
+    by_name = {fn.name: fn for fn in functions}
+    chosen = {fn.name: fn.implementation for fn in functions if fn.implementation is not None}
+    chosen.update(handlers or {})
+    channel = channel or InProcess(functions, chosen)
+    rng = np.random.default_rng(seed)
+    machine = lowered.options.machine
+    schedule_args = lowered.options.schedule_args()
+    base = lowered._concrete().simulation_module(*schedule_args)
+    clock = lowered.target.clock_ghz
+    iq_model = (
+        IQModel(lowered.target.target, lowered.qudits, decay=False)
+        if any(takes_iq(fn) for fn in functions)
+        else None
+    )
+
+    def transport_of(link: int) -> Transport:
+        if transport is None:
+            return Transport()
+        if isinstance(transport, Transport):
+            return transport
+        found = transport.get(link)
+        if found is None:
+            name = machine.link_name(link)
+            found = transport.get(name) if name is not None else None
+        return found or Transport()
+
+    def outcome_of(qudit: int) -> int:
+        if outcomes is None:
+            return int(rng.integers(0, 2))
+        return int(outcomes(qudit, 0, rng))
+
+    result = EmulationResult()
+    t_wall = time.perf_counter()
+    for _ in range(shots):
+        module = base
+        path: list[tuple[tuple[int, tuple[int, ...]], int]] = []
+        shot_outcomes: list[int] = []
+        traces: list[CallTrace] = []
+        seen: dict[tuple[int, tuple[int, ...]], tuple[int, float]] = {}
+        request_id = 0
+        while True:
+            entries = [[index, *iteration, k] for (index, iteration), k in path]
+            found = module.next_measurement(entries)
+            call = module.next_call(entries)
+            measure_at = math.inf if found is None else found[4]
+            call_at = math.inf if call is None else call[1]
+            if call is not None and call_at < measure_at - 1e-9:
+                index, start, callee, arguments, answered, timeout = call
+                fn = by_name[callee]
+                known = {key: k for key, k in path}
+                point = None
+                if iq_model is not None and takes_iq(fn):
+                    model = iq_model
+                    drives = {
+                        (i, tuple(it)): (f, a) for i, it, f, a in module.readout_drives(entries)
+                    }
+
+                    def point(key: tuple[int, tuple[int, ...]]) -> tuple[float, float]:
+                        qudit, duration = seen[key]
+                        frequency, amplitude = drives.get(key, (math.nan, math.nan))
+                        return model.sample(rng, qudit, known[key], frequency, amplitude, duration)
+
+                inputs = _call_inputs(fn, arguments, known, point)
+                if fn.uniform is not None:
+                    # An on-device source: the controller answers, not a link.
+                    value = int(rng.integers(fn.uniform))
+                    budget = _budget_ns(fn, timeout, machine.link(fn.link))
+                    traces.append(
+                        CallTrace(callee, start, fn.nominal_latency_ns, budget, True, (), value)
+                    )
+                    module = module.bind_call(index, [float(value)], *schedule_args)
+                    continue
+                request = wire.encode_request(fn, inputs, request_id)
+                request_id += 1
+                answer_bytes, service_ns = channel.call(fn, request)
+                status, _, answer = wire.decode_answer(fn, answer_bytes)
+                if status != 0:
+                    raise RuntimeError(f"{callee} answered with status {status}")
+                link = machine.link(fn.link)
+                path_transport = transport_of(machine.link_id(fn.link))
+                latency = path_transport.delay_ns(len(request), rng) + path_transport.delay_ns(
+                    len(answer_bytes), rng
+                )
+                if service_time == "measured":
+                    latency += service_ns
+                budget = _budget_ns(fn, timeout, link)
+                in_time = latency <= budget
+                traces.append(CallTrace(callee, start, latency, budget, in_time, inputs, answer))
+                if not answered:
+                    module = module.bind_call(index, [], *schedule_args)
+                    continue
+                values = _answer_values(fn, answer)
+                has_timeout = timeout >= 0 or fn.timeout_ns is not None
+                if has_timeout:
+                    values = [1.0, *values] if in_time else [0.0] * (1 + len(values))
+                module = module.bind_call(index, values, *schedule_args)
+                continue
+            if found is None:
+                break
+            ridx, iteration, qudit, begin, finish = found
+            level = outcome_of(qudit)
+            seen[(ridx, tuple(iteration))] = (qudit, finish - begin)
+            path.append(((ridx, tuple(iteration)), level))
+            shot_outcomes.append(level)
+        ends = [s + d for _, _, _, s, d in module.events() if s is not None and d is not None]
+        result.outcomes.append(shot_outcomes)
+        result.calls.append(traces)
+        result.ends_ns.append(max(ends, default=0) / clock)
+    result.wall_s = time.perf_counter() - t_wall
+    return result

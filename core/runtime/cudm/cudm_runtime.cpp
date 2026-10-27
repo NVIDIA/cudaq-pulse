@@ -8,6 +8,7 @@
 
 #include "cudm_runtime.h"
 #include "cudaq-pulse/Runtime/WaveformCallback.h"
+#include "cudaq-pulse/Runtime/WireFormat.h"
 
 #include <cuComplex.h>
 #include <cuda_runtime_api.h>
@@ -40,6 +41,8 @@ struct HandleData {
   cudensitymatHandle_t native = nullptr;
   std::vector<WaveformCallback> callbacks;
   std::vector<size_t> freeCallbackSlots;
+  // The run's classical handlers, by function id; a program calls a few.
+  std::vector<std::pair<uint32_t, CudmClassicalHandler>> classical;
 };
 
 struct StateData {
@@ -965,6 +968,69 @@ CudmStatus cudm_evolve(CudmHandle handle, CudmOperator op, CudmState stateIn,
   for (auto *allocated : scratch)
     cudm_state_destroy(allocated);
   return status;
+}
+
+CudmStatus cudm_classical_register(CudmHandle handle, uint32_t function_id,
+                                   CudmClassicalHandler handler) {
+  auto *run = static_cast<HandleData *>(handle);
+  if (!run)
+    return fail(CUDM_ERROR_INVALID_HANDLE,
+                "cudm_classical_register received a null handle");
+  if (!handler)
+    return fail(CUDM_ERROR_INVALID_STATE,
+                "cudm_classical_register received a null handler");
+  for (auto &entry : run->classical)
+    if (entry.first == function_id) {
+      entry.second = handler;
+      return CUDM_SUCCESS;
+    }
+  run->classical.emplace_back(function_id, handler);
+  return CUDM_SUCCESS;
+}
+
+CudmStatus cudm_classical_call(CudmHandle handle, const void *request,
+                               int64_t request_bytes, void *answer,
+                               int64_t answer_capacity, int64_t *answer_bytes) {
+  using cudaq_pulse::wire::RequestHeader;
+  using cudaq_pulse::wire::ResponseHeader;
+  auto *run = static_cast<HandleData *>(handle);
+  if (!run)
+    return fail(CUDM_ERROR_INVALID_HANDLE,
+                "cudm_classical_call received a null handle");
+  if (!request || !answer || !answer_bytes ||
+      request_bytes < static_cast<int64_t>(sizeof(RequestHeader)) ||
+      answer_capacity < static_cast<int64_t>(sizeof(ResponseHeader)))
+    return fail(CUDM_ERROR_INVALID_STATE,
+                "cudm_classical_call needs a request and an answer slot of at "
+                "least one header");
+  RequestHeader header;
+  std::memcpy(&header, request, sizeof header);
+  if (header.magic != cudaq_pulse::wire::kRequestMagic ||
+      sizeof(RequestHeader) + header.argLen >
+          static_cast<uint64_t>(request_bytes))
+    return fail(CUDM_ERROR_INVALID_STATE,
+                "cudm_classical_call received a malformed request");
+  CudmClassicalHandler handler = nullptr;
+  for (const auto &entry : run->classical)
+    if (entry.first == header.functionId)
+      handler = entry.second;
+  if (!handler) {
+    lastError = "no classical handler registered on this run for function " +
+                std::to_string(header.functionId);
+    return CUDM_ERROR_INVALID_STATE;
+  }
+  handler(request, answer, static_cast<size_t>(answer_capacity));
+  ResponseHeader response;
+  std::memcpy(&response, answer, sizeof response);
+  if (response.magic != cudaq_pulse::wire::kResponseMagic ||
+      response.requestId != header.requestId ||
+      sizeof(ResponseHeader) + response.resultLen >
+          static_cast<uint64_t>(answer_capacity))
+    return fail(CUDM_ERROR_INVALID_STATE,
+                "a classical handler wrote a malformed answer");
+  *answer_bytes =
+      static_cast<int64_t>(sizeof(ResponseHeader) + response.resultLen);
+  return response.status == 0 ? CUDM_SUCCESS : CUDM_ERROR_INVALID_STATE;
 }
 
 } // extern "C"

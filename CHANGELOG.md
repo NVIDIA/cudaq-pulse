@@ -9,6 +9,59 @@ Each GitHub release takes its notes from the section for its version, so
 every change worth telling users about goes in the top section, the next
 release's `## [X.Y.Z] - Unreleased`, in the pull request that makes it.
 
+### Added
+
+- **Controller backends.** `Lowered.export_controller()` exports a
+  scheduled kernel for an out-of-tree controller backend
+  (`cudaq-pulse.controller/1`): every drive, readout, wait and classical call
+  with its exact timing, waveform and parameters (and, with
+  `sample_rate_ghz=`, its samples), tone frequency and frame phase, and the
+  measurement-conditioned branches it lies in. `MachineModel(controller=
+  ControllerLimits(...))` states what a controller can play (clock, issue
+  spacing, waveform memory, tones, readout acquirers, feedback latency,
+  answer timeouts) and makes compilation fail with `ControllerLimitError`
+  when a program exceeds it. `cudaq_pulse.backends` finds backends
+  installed under the `cudaq_pulse.backends` entry-point group;
+  `examples/controller_backend/` is a toy one.
+- **Classical calls at QPU runtime.** `classical`, a classical real-time
+  dialect for co-processing at QPU runtime: pulse programs call GPU, host or
+  FPGA services (decoders, estimators, calibration updates) while the QPU
+  runs and use their answers in the same shot. `@pulse.classical` declares a
+  function with typed arguments and results, a latency model and a link;
+  `fn.submit(...).result()` calls it in a kernel, with `timeout_ns=` for a
+  fallback. Links are named in `MachineModel(links={...})`. Every schedule
+  budgets the worst-case latency, holds link slots and reports each call's
+  slack and its hidden and exposed latency (`Lowered.classical_report()`);
+  `pulse-classical-check` verifies slots, deadlines and ordering.
+- **Variable waits.** `wait(line, answer, bounds=(lo, hi))` takes its length
+  from an answer; the timeline splits into epochs (`Lowered.epochs()`).
+- **Simulating and emulating calls.** `pulse.simulate` binds answers per
+  measurement path, with timeouts from the latency model, assignment errors
+  and relaxation during readout, IQ points from a dispersive readout model,
+  and `plant=` to simulate a drifted device without compiling again.
+  `Lowered.export_emulation()` writes the schedule, epochs and call manifest
+  for a controller; `classical.emulation.emulate` runs a program in virtual
+  time against real services, in process or over UDP. Requests and answers
+  use the CUDA-Q real-time wire format; `classical.qec.Decoder` talks to a
+  CUDA-QX real-time decoder. The cuDensityMat runtime keeps a classical
+  handler table per run.
+- **Calibrating while the QPU runs.** `classical.calibration` (adaptive T1,
+  a frequency binary search, three-point decay and phase estimators,
+  golden-section and Nelder-Mead steps), `classical.random_index` (an
+  on-device random source), `classical.loop` (a parameter store whose values
+  programs read at run time, and an estimate log) and `runtime.drift` (a
+  drifting device with its truth trace and surrogates). Example
+  `19_classical_calls.py` and the "Classical Calls at QPU Runtime" guide.
+
+### Fixed
+
+- A kernel that called a method of a global object (`fn.submit(...)`,
+  `cfg.scaled(...)`) was compiled again on every call; it is now cached.
+- Type checkers and editors reported `@pulse.classical(...)` as "Module is
+  not callable" and `fn.submit` as unknown. They now see the decorator with
+  its keyword options, so a wrong option is reported where it is written,
+  and `.submit()` returns a `Pending`.
+
 ## [0.1.0] - Unreleased
 
 The first public release, a research preview: APIs, dialects and numerical

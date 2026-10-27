@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import math
 import re as _re
+import threading
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -81,6 +83,9 @@ class SimulationResult:
     records: npt.NDArray[np.int64] | None = None
     times_ns: tuple[float, float] = (0.0, 0.0)
     _states: list[Any] = field(default_factory=list, repr=False)
+    #: For a program that calls classical functions: per entry of
+    #: ``branches``, the calls that path made, in time order.
+    calls: list[list[Any]] = field(default_factory=list)
 
 
 def simulate(
@@ -95,6 +100,10 @@ def simulate(
     dt_ns: float | None = None,
     integrator: str = "rk4",
     dephasing: str = "t2_star",
+    handlers: Mapping[str, Callable[..., Any]] | None = None,
+    readout: str = "ideal",
+    latency_branching: bool = False,
+    plant: Any = None,
 ) -> SimulationResult:
     """Simulate one compiled kernel call on the target it was compiled for.
 
@@ -136,6 +145,36 @@ def simulate(
         Dephase at each qudit's Ramsey T2* (``"t2_star"``, the default) or
         its Hahn-echo T2 (``"t2_echo"``), which every simulated qudit must
         have.
+    handlers:
+        For a program that calls classical functions, what answers each call,
+        by function name: a Python callable taking the call's arguments (bits
+        and levels as lists of ints, numbers as floats), by default the
+        function's own body. Each call's answer is bound to its path, and the
+        path is scheduled again, so answers that set amplitudes, frequencies,
+        branches or wait lengths take effect exactly.
+    readout:
+        ``"ideal"`` (the default) reports the measured level. ``"model"``
+        reports through each qubit's assignment errors (``readout_params``
+        ``error_1to0`` and ``error_0to1``) and ``"model_with_decay"`` adds
+        relaxation during the readout window; branches and calls see the
+        reported outcome, and the state is projected on the true one. A
+        call that takes ``IQ`` points gets points synthesized per shot at
+        each readout's true level, from its tone's frequency and its pulse's
+        amplitude (``IQModel``; with ``"model_with_decay"``, relaxation
+        during the window too); it needs ``shots``, and each shot from the
+        call on is simulated as its own trajectory.
+    plant:
+        A target description to simulate instead of the device the program
+        was compiled for: its qubits' frequencies, T1, T2, thermal
+        populations, drive strength and readout parameters apply, while the
+        program (its tones and pulses) stays as compiled. This is how a
+        drifting device is simulated without compiling again; see
+        ``cudaq_pulse.runtime.drift``.
+    latency_branching:
+        With a timeout, branch on whether the answer came in time with the
+        probability of the function's latency model; by default, without
+        shots, the answer is in time when the nominal latency is within the
+        timeout. With shots the in-time outcome is always sampled.
     """
     from ..compiler import Lowered
 
@@ -155,6 +194,10 @@ def simulate(
         dt_ns=dt_ns,
         integrator=integrator,
         dephasing=dephasing,
+        handlers=handlers,
+        readout=readout,
+        latency_branching=latency_branching,
+        plant=plant,
     )
 
 
@@ -171,11 +214,19 @@ def _simulate_lowered(
     dt_ns: float | None = None,
     integrator: str = "rk4",
     dephasing: str = "t2_star",
+    handlers: Mapping[str, Callable[..., Any]] | None = None,
+    readout: str = "ideal",
+    latency_branching: bool = False,
+    plant: Any = None,
 ) -> SimulationResult:
     if backend not in ("cpu", "gpu"):
         raise ValueError(f"unknown backend {backend!r}; choose 'cpu' or 'gpu'")
     if dephasing not in ("t2_star", "t2_echo"):
         raise ValueError(f"unknown dephasing {dephasing!r}; choose 't2_star' or 't2_echo'")
+    if readout not in ("ideal", "model", "model_with_decay"):
+        raise ValueError(
+            f"unknown readout {readout!r}; choose 'ideal', 'model' or 'model_with_decay'"
+        )
     if dt_ns is None:
         dt_ns = _default_step(lowered)
     elif dt_ns <= 0:
@@ -192,7 +243,7 @@ def _simulate_lowered(
             "the module has float parameters "
             f"({', '.join(lowered.parameters)}); lower it with their values first"
         )
-    target = lowered.target.target
+    target = lowered.target.target if plant is None else _check_plant(lowered, plant)
     if getattr(target, "architecture", None) != "transmon":
         raise NotImplementedError(
             "simulation supports transmon targets; the neutral-atom Hamiltonian "
@@ -212,7 +263,23 @@ def _simulate_lowered(
         integrator=integrator,
         clock_ghz=lowered.target.clock_ghz,
         dephasing=dephasing,
+        handlers=handlers,
+        readout=readout,
+        latency_branching=latency_branching,
+        plant=plant is not None,
     )
+
+
+def _check_plant(lowered: Lowered, plant: Any) -> Any:
+    """*plant*, a target description that defines every qudit of *lowered*."""
+    from ..targets import TargetDescription
+
+    if not isinstance(plant, TargetDescription):
+        raise TypeError(f"plant must be a TargetDescription, got {type(plant).__name__}")
+    missing = [q for q in lowered.qudits if q not in plant.qubits]
+    if missing:
+        raise ValueError(f"the plant does not define qudits {missing} that the program uses")
+    return plant
 
 
 _DEFAULT_STEP_NS = 0.05
@@ -256,6 +323,10 @@ def _simulate_compiled(
     integrator: str,
     clock_ghz: float,
     dephasing: str = "t2_star",
+    handlers: Mapping[str, Callable[..., Any]] | None = None,
+    readout: str = "ideal",
+    latency_branching: bool = False,
+    plant: bool = False,
 ) -> SimulationResult:
     # A cached specialization's module is shared by every call of it, from
     # any thread: a segment sets the module attributes it lowers with and
@@ -264,9 +335,20 @@ def _simulate_compiled(
     # a private copy of the module.
     lock = compiled._lock
     arguments = list(compiled.arguments)
-    module = (
-        compiled._concrete() if backend == "gpu" or compiled.waits is not None else compiled._module
-    )
+    functions = tuple(getattr(compiled, "classical", ()))
+    tree = bool(functions) or readout != "ideal"
+    if functions:
+        # Calls are bound one execution at a time, on the concrete module
+        # with loops that hold calls unrolled.
+        module = compiled._concrete().simulation_module(*compiled.options.schedule_args())
+        arguments = []
+        lock = threading.RLock()
+    else:
+        module = (
+            compiled._concrete()
+            if backend == "gpu" or compiled.waits is not None
+            else compiled._module
+        )
     qudits = compiled.qudits
     if not qudits:
         raise ValueError("the program uses no qudits; there is nothing to simulate")
@@ -283,7 +365,17 @@ def _simulate_compiled(
     )
     # Segments set their own window.
     base = _re.sub(r"qop\.(t_start|t_end|num_steps) = [^,]+, ", "", attributes[1:-1]) + ", " + extra
+    if plant:
+        frequencies = [math.nan] * (max(qudits) + 1)
+        for q in qudits:
+            frequencies[q] = float(target.qubits[q].frequency_hz)
+        base += (
+            ", pulse.plant_qubit_freq_hz = array<f64: "
+            + ", ".join("0x7FF8000000000000" if math.isnan(f) else repr(f) for f in frequencies)
+            + ">"
+        )
 
+    path_end = t_end is None and bool(functions)
     if t_end is None:
         events = [ScheduledEvent(*e) for e in module.events()]
         ends = [
@@ -307,6 +399,25 @@ def _simulate_compiled(
     state = engine.prepare(state)
 
     rng = np.random.default_rng(seed)
+    if tree:
+        return _simulate_tree(
+            module,
+            engine,
+            dims,
+            state,
+            t_start,
+            None if path_end else t_end,
+            shots,
+            rng,
+            functions,
+            handlers,
+            compiled,
+            target,
+            readout,
+            latency_branching,
+            clock_ghz,
+            mode,
+        )
     seen: dict[tuple[int, tuple[int, ...]], Measurement] = {}
     leaves: list[tuple[Any, list[tuple[tuple[int, tuple[int, ...]], int]], int]] = []
 
@@ -367,6 +478,95 @@ def _simulate_compiled(
         records=records,
         times_ns=(t_start, t_end),
         _states=[leaf for leaf, _, _ in leaves],
+    )
+
+
+def _simulate_tree(
+    module: Any,
+    engine: _Backend,
+    dims: tuple[int, ...],
+    state: Any,
+    t_start: float,
+    t_end: float | None,
+    shots: int | None,
+    rng: np.random.Generator,
+    functions: tuple[Any, ...],
+    handlers: Mapping[str, Callable[..., Any]] | None,
+    compiled: Any,
+    target: Any,
+    readout: str,
+    latency_branching: bool,
+    clock_ghz: float,
+    mode: Mapping[int, int],
+) -> SimulationResult:
+    """Simulate a program with classical calls or a readout model.
+
+    Without *t_end* each path runs to the end of its own schedule, which
+    variable waits make path-dependent."""
+    from ._calls import IQModel, ReadoutModel, simulate_tree, takes_iq
+
+    chosen = {f.name: f.implementation for f in functions if f.implementation is not None}
+    chosen.update(handlers or {})
+    model = (
+        None
+        if readout == "ideal"
+        else ReadoutModel(target, compiled.qudits, dims, decay=readout == "model_with_decay")
+    )
+    leaves, seen_raw = simulate_tree(
+        module,
+        engine,
+        dims,
+        state,
+        t_start,
+        t_end,
+        shots,
+        rng,
+        functions,
+        chosen,
+        compiled.options.schedule_args(),
+        model,
+        latency_branching,
+        clock_ghz,
+        mode,
+        (
+            IQModel(target, compiled.qudits, decay=readout == "model_with_decay")
+            if any(takes_iq(f) for f in functions)
+            else None
+        ),
+    )
+    seen = {key: Measurement(*value) for key, value in seen_raw.items()}
+    if t_end is None:
+        t_end = max((leaf.end for leaf in leaves), default=t_start)
+    measurements = sorted(seen.values(), key=lambda m: (m.end_ns, m.readout, m.iteration))
+    column = {(m.readout, m.iteration): i for i, m in enumerate(measurements)}
+    dim = math.prod(dims)
+    rho = np.zeros((dim, dim), dtype=np.complex128)
+    branches = []
+    rows = []
+    calls = []
+    for leaf in leaves:
+        density = leaf.weight * engine.density(leaf.state)
+        rho += density
+        outcomes = [-1] * len(measurements)
+        for key, k in leaf.path:
+            outcomes[column[key]] = k
+        branches.append((tuple(outcomes), float(np.real(np.trace(density)))))
+        calls.append(leaf.calls)
+        rows.extend([outcomes] * leaf.count)
+    records = None
+    if shots is not None:
+        records = np.array(rows, dtype=np.int64).reshape(len(rows), len(measurements))
+        rng.shuffle(records)
+    return SimulationResult(
+        density_matrix=rho,
+        dims=dims,
+        qudits=compiled.qudits,
+        measurements=measurements,
+        branches=branches,
+        records=records,
+        times_ns=(t_start, t_end),
+        _states=[leaf.state for leaf in leaves],
+        calls=calls,
     )
 
 

@@ -275,3 +275,73 @@ def test_simulating_a_high_index_pair_takes_little_memory(tmp_path):
     growth = json.loads(out.stdout)
     assert {k: dims for k, (dims, _) in growth.items()} == {f"{a},{b}": [3, 3] for a, b in pairs}
     assert all(mb < SIMULATE_MEMORY_LIMIT_MB for _, mb in growth.values()), growth
+
+
+# ── Classical calls ──────────────────────────────────────────────────────────
+
+
+def _classical_benchmarks():
+    spec = importlib.util.spec_from_file_location(
+        "classical_calls", _ROOT / "benchmarks" / "classical" / "classical_calls.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault(spec.name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_calls_compile_schedule_and_report_in_linear_time():
+    bench = _classical_benchmarks()
+    q = bench._device().qudit_handles[0]
+    compile_s, report_s = {}, {}
+    for n in (1000, 8000):
+        kernel = bench.many_calls(n, 4)
+        compile_s[n] = _best(lambda k=kernel: pulse.compile(k, schedule="asap").lower(q), 3, 0)
+        lowered = pulse.compile(kernel, schedule="asap").lower(q)
+        report_s[n] = _best(lowered.classical_report, 3, 0)
+        events_s = _best(lambda m=lowered: m.schedule, 3, 0)
+        assert len(lowered.classical_report()) == n
+    # 8x the calls: linear is 8x, quadratic 64x.
+    assert compile_s[8000] < 16 * compile_s[1000], compile_s
+    assert report_s[8000] < 16 * report_s[1000], report_s
+    assert events_s < report_s[8000] * 4
+
+
+def test_a_cached_kernel_that_calls_lowers_in_microseconds():
+    bench = _classical_benchmarks()
+    dev = bench._device()
+    q = dev.qudit_handles[0]
+    compiled = pulse.compile(bench.decoded_reset, device=dev)
+    compiled.lower(q)
+    per_call = _best(lambda: [compiled.lower(q) for _ in range(100)], 5) / 100
+    assert compiled.cache_info().compiled == 1
+    assert per_call < 100e-6, per_call
+
+
+def test_a_call_adds_little_to_simulation_on_the_same_timeline():
+    bench = _classical_benchmarks()
+    dev = bench._device(t1_us=20.0)
+    q = dev.qudit_handles[0]
+    plain = pulse.compile(bench.waiting_reset, device=dev).lower(q)
+    called = pulse.compile(bench.decoded_reset, device=dev).lower(q)
+    plus = [2**-0.5, 2**-0.5]
+    a = _best(lambda: pulse.simulate(plain, initial_state=plus, dt_ns=0.5), 3, 0)
+    b = _best(lambda: pulse.simulate(called, initial_state=plus, dt_ns=0.5), 3, 0)
+    assert b < 1.25 * a, (a, b)
+
+
+def test_compiling_calls_takes_little_memory_per_call():
+    import tracemalloc
+
+    bench = _classical_benchmarks()
+    q = bench._device().qudit_handles[0]
+    peaks = {}
+    for n in (500, 4000):
+        kernel = bench.many_calls(n, 1)
+        pulse.compile(kernel, schedule="asap").lower(q)
+        tracemalloc.start()
+        pulse.compile(kernel, schedule="asap").lower(q)
+        peaks[n] = tracemalloc.get_traced_memory()[1]
+        tracemalloc.stop()
+    per_call = (peaks[4000] - peaks[500]) / 3500
+    assert per_call < 2048, per_call

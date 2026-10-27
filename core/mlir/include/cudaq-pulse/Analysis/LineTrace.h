@@ -21,8 +21,14 @@
 
 namespace pulse {
 
+/// A `classical` link or call handle: linear and timed, like a line.
+inline bool isClassicalType(mlir::Type type) {
+  return type.getDialect().getNamespace() == "classical";
+}
+
 inline bool isLinearPulseType(mlir::Type type) {
-  return mlir::isa<DriveLineType, ReadoutLineType, ToneType>(type);
+  return mlir::isa<DriveLineType, ReadoutLineType, ToneType>(type) ||
+         isClassicalType(type);
 }
 
 /// The value `value` is the next version of, or null when `value` comes
@@ -58,7 +64,8 @@ inline mlir::Value linearPredecessor(mlir::Value value) {
   // A schedule block result continues the value its body yields.
   if (auto block = mlir::dyn_cast<ScheduleBlockOp>(op))
     return block.getBody().front().getTerminator()->getOperand(index);
-  if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(op))
+  if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(op) ||
+      op->getName().getStringRef() == "classical.get_link")
     return {};
   mlir::Type type = value.getType();
   unsigned rank = 0;
@@ -71,11 +78,13 @@ inline mlir::Value linearPredecessor(mlir::Value value) {
 }
 
 /// The `pulse.get_drive_line` / `pulse.get_readout_line` op whose line or
-/// tone `value` is a version of, or null.
+/// tone `value` is a version of (or the `classical.get_link` of a link), or
+/// null.
 inline mlir::Operation *traceAllocation(mlir::Value value) {
   while (value) {
     if (mlir::Operation *def = value.getDefiningOp())
-      if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(def))
+      if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(def) ||
+          def->getName().getStringRef() == "classical.get_link")
         return def;
     value = linearPredecessor(value);
   }
@@ -98,7 +107,8 @@ public:
       }
       chain.push_back(value);
       if (mlir::Operation *def = value.getDefiningOp())
-        if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(def)) {
+        if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(def) ||
+            def->getName().getStringRef() == "classical.get_link") {
           found = def;
           break;
         }

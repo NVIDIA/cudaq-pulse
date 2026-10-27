@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -61,9 +62,17 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseOps.h.inc"
 
+#include "cudaq-pulse/Dialect/Classical/ClassicalDialect.h.inc"
+#define GET_TYPEDEF_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalTypes.h.inc"
+#define GET_OP_CLASSES
+#include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
+
+#include "cudaq-pulse/Analysis/ClassicalTiming.h"
 #include "cudaq-pulse/Analysis/Execution.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
+#include "cudaq-pulse/Dialect/Classical/Answers.h"
 #include "cudaq-pulse/Runtime/WaveformCallback.h"
 
 #include "cudaq-pulse/Dialect/CuDensityMat/CuDensityMatDialect.h.inc"
@@ -89,6 +98,8 @@ std::unique_ptr<mlir::Pass> createVirtualZPass();
 std::unique_ptr<mlir::Pass> createPulseFusionPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleAsapPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleAlapPass();
+std::unique_ptr<mlir::Pass> createPulseClassicalCheckPass();
+std::unique_ptr<mlir::Pass> createPulseUnrollClassicalLoopsPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleRcpPass(int64_t maxDrives,
                                                        int64_t maxReadouts,
                                                        int64_t readoutLatency,
@@ -101,6 +112,7 @@ namespace {
 mlir::DialectRegistry makeRegistry() {
   mlir::DialectRegistry reg;
   reg.insert<pulse::PulseDialect>();
+  reg.insert<classical::ClassicalDialect>();
   reg.insert<qop::QOpDialect>();
   reg.insert<cudm::CuDensityMatDialect>();
   reg.insert<mlir::arith::ArithDialect>();
@@ -148,6 +160,10 @@ constexpr int kOpElse = 32;
 constexpr int kOpIfEnd = 33;
 constexpr int kOpBlockBegin = 34;
 constexpr int kOpBlockEnd = 35;
+constexpr int kOpClassicalDeclare = 36;
+constexpr int kOpClassicalSubmit = 37;
+constexpr int kOpClassicalWait = 38;
+constexpr int kOpClassicalCompare = 39;
 constexpr int kOpVariableWait = 40;
 // A payload length of 0xFF means the length is in the next word.
 constexpr int kExtendedPayload = 0xFF;
@@ -206,6 +222,294 @@ inline double i2f(int64_t bits) {
   return d;
 }
 
+/// The walk behind PulseModule::controller_events(): every timed op once
+/// per loop iteration, both arms of every branch, with the frame of its
+/// tone and the branches it lies in.
+struct ControllerWalk {
+  using WaveformNode =
+      std::tuple<std::string, std::vector<double>, std::vector<int64_t>>;
+  using Condition = std::tuple<int64_t, int64_t, std::vector<int64_t>,
+                               std::vector<int64_t>, std::string>;
+  using Event =
+      std::tuple<std::string, int64_t, int64_t, std::optional<int64_t>,
+                 std::optional<int64_t>, std::vector<int64_t>,
+                 std::vector<WaveformNode>, double, double,
+                 std::vector<Condition>, std::vector<int64_t>, std::string,
+                 std::string, double>;
+
+  struct Frame {
+    double frequencyHz = 0.0;
+    double frameFrequencyHz = 0.0;
+    double phase = 0.0;
+    double timeNs = 0.0;
+    /// Whether two arms leave the frame the same: without a detuning, the
+    /// time of the last drive does not matter.
+    bool operator==(const Frame &other) const {
+      auto same = [](double a, double b) {
+        return a == b || (std::isnan(a) && std::isnan(b));
+      };
+      return same(frequencyHz, other.frequencyHz) &&
+             same(frameFrequencyHz, other.frameFrequencyHz) &&
+             same(phase, other.phase) &&
+             (same(timeNs, other.timeNs) || frequencyHz == frameFrequencyHz);
+    }
+  };
+
+  explicit ControllerWalk(double clockGHz) : clockGHz(clockGHz) {}
+
+  double clockGHz;
+  llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
+  std::vector<Event> result;
+
+  static constexpr double kUnknown = std::numeric_limits<double>::quiet_NaN();
+
+  /// A number computed from constants alone, else NaN.
+  static double number(mlir::Value value) {
+    if (auto constant = pulse::constantNumber(value))
+      return *constant;
+    if (auto affine = pulse::affineNumber(value);
+        affine && affine->isConstant())
+      return affine->evaluate({});
+    return kUnknown;
+  }
+
+  pulse::AllocationTracer trace;
+  llvm::SmallVector<int64_t, 2> iteration;
+  std::vector<Condition> branches;
+  int64_t nextBranch = 0;
+  std::map<mlir::Operation *, Frame> frames;
+  // The event of the latest execution of each readout and classical wait.
+  llvm::DenseMap<mlir::Operation *, int64_t> latest;
+
+  /// The frame of a tone before any operation on it.
+  static Frame initialFrame(mlir::Operation *root) {
+    Frame frame;
+    if (!root)
+      return frame;
+    if (auto frequency = root->getAttrOfType<mlir::FloatAttr>("frequency_hz"))
+      frame = {frequency.getValueAsDouble(), frequency.getValueAsDouble(), 0.0,
+               0.0};
+    else if (root->getName().getStringRef() == "pulse.tone" &&
+             root->getNumOperands() == 2) {
+      double frequency = number(root->getOperand(0));
+      frame = {frequency, frequency, number(root->getOperand(1)), 0.0};
+    }
+    return frame;
+  }
+
+  Frame &frameOf(mlir::Value tone) {
+    mlir::Operation *root = pulse::toneRoot(tone);
+    auto [it, inserted] = frames.try_emplace(root);
+    if (inserted)
+      it->second = initialFrame(root);
+    return it->second;
+  }
+
+  static int64_t waveform(mlir::Value value, std::vector<WaveformNode> &nodes) {
+    mlir::Operation *def = value.getDefiningOp();
+    if (!def) {
+      nodes.emplace_back("argument", std::vector<double>{},
+                         std::vector<int64_t>{});
+      return static_cast<int64_t>(nodes.size()) - 1;
+    }
+    std::vector<double> numbers;
+    std::vector<int64_t> children;
+    for (mlir::Value operand : def->getOperands()) {
+      if (mlir::isa<pulse::WaveformType>(operand.getType()))
+        children.push_back(waveform(operand, nodes));
+      else
+        numbers.push_back(number(operand));
+    }
+    if (auto samples = def->getAttrOfType<mlir::ArrayAttr>("samples"))
+      for (mlir::Attribute sample : samples)
+        if (auto number = mlir::dyn_cast<mlir::FloatAttr>(sample))
+          numbers.push_back(number.getValueAsDouble());
+    std::string name = def->getName().stripDialect().str();
+    if (auto custom = def->getAttrOfType<mlir::StringAttr>("name"))
+      name += ":" + custom.getValue().str();
+    nodes.emplace_back(name, std::move(numbers), std::move(children));
+    return static_cast<int64_t>(nodes.size()) - 1;
+  }
+
+  /// The readout events and answer events `value` is computed from.
+  void inputs(mlir::Value value, std::vector<int64_t> &readouts,
+              std::vector<int64_t> &answers) {
+    llvm::SmallVector<mlir::Value> work{value};
+    llvm::DenseSet<mlir::Value> seen;
+    while (!work.empty()) {
+      mlir::Value v = work.pop_back_val();
+      if (!seen.insert(v).second)
+        continue;
+      mlir::Operation *def = v.getDefiningOp();
+      if (!def || mlir::isa<classical::SubmitOp>(def))
+        continue;
+      if (mlir::isa<pulse::ReadoutOp>(def) ||
+          def->getName().getStringRef() == "classical.wait") {
+        auto found = latest.find(def);
+        if (found != latest.end()) {
+          auto &list = mlir::isa<pulse::ReadoutOp>(def) ? readouts : answers;
+          if (llvm::find(list, found->second) == list.end())
+            list.push_back(found->second);
+        }
+        continue;
+      }
+      if (def->getNumRegions() == 0)
+        work.append(def->getOperands().begin(), def->getOperands().end());
+    }
+  }
+
+  void timed(mlir::Operation *op, llvm::StringRef kind, int64_t line,
+             int64_t qubit, std::vector<WaveformNode> nodes, double frequency,
+             double phase, std::vector<int64_t> refs, std::string callee,
+             std::string mode = "", double timeoutNs = kUnknown) {
+    result.emplace_back(
+        kind.str(), line, qubit, pulse::scheduledStart(op, iteration),
+        pulse::scheduledDuration(op),
+        std::vector<int64_t>(iteration.begin(), iteration.end()),
+        std::move(nodes), frequency, phase, branches, std::move(refs),
+        std::move(callee), std::move(mode), timeoutNs);
+  }
+
+  void block(mlir::Block &body) {
+    for (mlir::Operation &op : body)
+      step(&op);
+  }
+
+  void step(mlir::Operation *op) {
+    llvm::StringRef name = op->getName().getStringRef();
+    if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op)) {
+      mlir::Operation *allocation = trace(op->getOperand(0));
+      int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
+      int64_t qubit = -1;
+      if (allocation)
+        if (auto attr = allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
+          qubit = attr.getInt();
+      std::vector<WaveformNode> nodes;
+      double frequency = kUnknown, phase = kUnknown;
+      if (!mlir::isa<pulse::WaitOp>(op)) {
+        waveform(op->getOperand(1), nodes);
+        Frame &frame = frameOf(op->getOperand(2));
+        if (mlir::isa<pulse::DriveOp>(op))
+          if (auto offset =
+                  op->getAttrOfType<mlir::FloatAttr>("frame_phase_offset"))
+            frame.phase += offset.getValueAsDouble();
+        frequency = frame.frequencyHz;
+        phase = frame.phase;
+        if (mlir::isa<pulse::DriveOp>(op)) {
+          auto start = pulse::scheduledStart(op, iteration);
+          auto duration = pulse::scheduledDuration(op);
+          if (start && duration) {
+            double endNs = static_cast<double>(*start + *duration) / clockGHz;
+            frame.phase += (frame.frequencyHz - frame.frameFrequencyHz) *
+                           (2.0 * M_PI) * 1.0e-9 * (endNs - frame.timeNs);
+            frame.timeNs = endNs;
+          }
+        }
+      }
+      latest[op] = static_cast<int64_t>(result.size());
+      timed(op, op->getName().stripDialect(), line, qubit, std::move(nodes),
+            frequency, phase, {}, "");
+      return;
+    }
+    if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op)) {
+      bool submit = mlir::isa<classical::SubmitOp>(op);
+      std::vector<int64_t> refs, answers;
+      if (submit)
+        for (mlir::Value operand : op->getOperands())
+          inputs(operand, refs, answers);
+      std::string callee;
+      if (auto symbol = op->getAttrOfType<mlir::FlatSymbolRefAttr>("callee"))
+        callee = symbol.getValue().str();
+      else
+        for (mlir::NamedAttribute attr : op->getAttrs())
+          if (auto symbol =
+                  mlir::dyn_cast<mlir::FlatSymbolRefAttr>(attr.getValue()))
+            callee = symbol.getValue().str();
+      std::string mode;
+      double timeoutNs = kUnknown;
+      if (!submit) {
+        latest[op] = static_cast<int64_t>(result.size());
+        mode = op->hasAttr("classical.blocking") ? "blocking" : "bounded";
+        if (auto timeout = op->getAttrOfType<mlir::FloatAttr>("timeout_ns")) {
+          mode = "timeout";
+          timeoutNs = timeout.getValueAsDouble();
+        }
+      }
+      timed(op, submit ? "submit" : "answer",
+            classical::intAttr(op, "classical.device"), -1, {}, kUnknown,
+            kUnknown, std::move(refs), std::move(callee), std::move(mode),
+            timeoutNs);
+      return;
+    }
+    if (name == "pulse.shift_phase" || name == "pulse.set_phase" ||
+        name == "pulse.shift_frequency" || name == "pulse.set_frequency") {
+      double value = number(op->getOperand(1));
+      Frame &frame = frameOf(op->getOperand(0));
+      if (name == "pulse.shift_phase")
+        frame.phase += value;
+      else if (name == "pulse.set_phase")
+        frame.phase = value;
+      else if (name == "pulse.shift_frequency")
+        frame.frequencyHz += value;
+      else
+        frame.frequencyHz = value;
+      return;
+    }
+    if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+      int64_t trips = pulse::constantTripCount(loop).value_or(0);
+      iteration.push_back(0);
+      for (int64_t k = 0; k < trips; ++k) {
+        iteration.back() = k;
+        block(*loop.getBody());
+      }
+      iteration.pop_back();
+      return;
+    }
+    if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
+      std::vector<int64_t> readouts, answers;
+      mlir::Value condition = branch.getCondition();
+      inputs(condition, readouts, answers);
+      std::string test = "expression";
+      if (mlir::Operation *def = condition.getDefiningOp()) {
+        if (mlir::isa<pulse::IsSetOp>(def) && readouts.size() == 1)
+          test = "is_set";
+        else if (def->getName().getStringRef() == "classical.wait" &&
+                 answers.size() == 1)
+          test = "answer";
+      }
+      int64_t id = nextBranch++;
+      auto before = frames;
+      branches.emplace_back(id, 1, readouts, answers, test);
+      block(*branch.thenBlock());
+      auto afterThen = frames;
+      frames = before;
+      std::get<1>(branches.back()) = 0;
+      if (!branch.getElseRegion().empty())
+        block(*branch.elseBlock());
+      branches.pop_back();
+      // A tone only one arm used is, in the other, as it was before.
+      for (auto &[root, frame] : afterThen)
+        frames.try_emplace(root, before.count(root) ? before.at(root)
+                                                    : initialFrame(root));
+      for (auto &[root, frame] : frames) {
+        auto other = afterThen.find(root);
+        Frame then =
+            other != afterThen.end()
+                ? other->second
+                : (before.count(root) ? before.at(root) : initialFrame(root));
+        if (!(then == frame))
+          frame = {kUnknown, kUnknown, kUnknown, frame.timeNs};
+        else
+          frame.timeNs = std::max(frame.timeNs, then.timeNs);
+      }
+      return;
+    }
+    for (mlir::Region &region : op->getRegions())
+      for (mlir::Block &nested : region)
+        block(nested);
+  }
+};
+
 // -----------------------------------------------------------------------
 // PulseModule: opaque handle around an in-memory mlir::ModuleOp
 // -----------------------------------------------------------------------
@@ -256,6 +560,8 @@ public:
       else if (name == "pulse-schedule-alap")
         pm.addNestedPass<mlir::func::FuncOp>(
             pulse::createPulseScheduleAlapPass());
+      else if (name == "pulse-classical-check")
+        pm.addPass(pulse::createPulseClassicalCheckPass());
       else if (name == "loop-invariant-code-motion")
         pm.addPass(mlir::createLoopInvariantCodeMotionPass());
       else
@@ -302,6 +608,8 @@ public:
           policy == "alap_rcp"));
     else
       throw std::invalid_argument("unknown schedule policy: " + policy);
+    if (classical::declaresClassicalCalls(*module_))
+      pm.addPass(pulse::createPulseClassicalCheckPass());
     programs_.clear();
     runPipeline(pm, *module_, "pulse scheduling failed");
   }
@@ -311,7 +619,9 @@ public:
 
   /// (kind, line, qubit, start_vtu, duration_vtu) for every drive, readout
   /// and wait, once per loop iteration and in program order. Both arms of a
-  /// conditional are listed. Lines are numbered in allocation order.
+  /// conditional are listed. Lines are numbered in allocation order. A
+  /// classical call adds a "submit" and an "answer" event, whose line is the
+  /// link id and whose qubit is -1.
   std::vector<Event> events() {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
@@ -335,6 +645,13 @@ public:
           result.emplace_back(op.getName().stripDialect().str(), line, qubit,
                               pulse::scheduledStart(&op, iteration),
                               pulse::scheduledDuration(&op));
+        } else if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op)) {
+          // A classical call's events are on its link; they have no qudit.
+          result.emplace_back(mlir::isa<classical::SubmitOp>(op) ? "submit"
+                                                                 : "answer",
+                              classical::intAttr(&op, "classical.device"), -1,
+                              pulse::scheduledStart(&op, iteration),
+                              pulse::scheduledDuration(&op));
         } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
           int64_t trips = pulse::constantTripCount(loop).value_or(0);
           iteration.push_back(0);
@@ -352,6 +669,353 @@ public:
     };
     collect(*module_->getBody());
     return result;
+  }
+
+  /// One node of a waveform's expression: (op name without the dialect,
+  /// its numeric operands, or the samples of `custom_samples`, NaN where an
+  /// operand is not a number, and the indices of its waveform operands).
+  /// Children precede their parent; the last node is the root.
+  using WaveformNode =
+      std::tuple<std::string, std::vector<double>, std::vector<int64_t>>;
+  /// One measurement-conditioned branch an event lies in: (branch id, arm,
+  /// 1 for the then arm and 0 for the else arm, the indices of the readout
+  /// events and of the answer events the condition is computed from, and
+  /// "is_set" when the condition is one readout's `pulse.is_set`, "answer"
+  /// when it is one answer value as is, else "expression").
+  using Condition = std::tuple<int64_t, int64_t, std::vector<int64_t>,
+                               std::vector<int64_t>, std::string>;
+  using ControllerEvent =
+      std::tuple<std::string, int64_t, int64_t, std::optional<int64_t>,
+                 std::optional<int64_t>, std::vector<int64_t>,
+                 std::vector<WaveformNode>, double, double,
+                 std::vector<Condition>, std::vector<int64_t>, std::string,
+                 std::string, double>;
+
+  /// The timed ops of `events()`, in the same order, with what a controller
+  /// needs to play them: (kind, line, qubit, start_vtu, duration_vtu, loop
+  /// iteration, waveform, tone frequency in Hz and frame phase in radians
+  /// as the op starts, the branches it lies in, references, callee, wait
+  /// mode, timeout). The
+  /// frame is tracked through both arms of a branch; where the arms leave
+  /// it different, or a frame change is not a number, it is NaN from there
+  /// on. The references of a classical submit are the readout events whose
+  /// measurements it sends; the callee is its function. An answer's wait
+  /// is "bounded", "blocking" or "timeout", with its timeout in ns (NaN
+  /// for none).
+  std::vector<ControllerEvent> controller_events() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    ControllerWalk walk(clock());
+    module_->walk([&](mlir::Operation *op) {
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+        walk.lineIndex.try_emplace(op,
+                                   static_cast<int64_t>(walk.lineIndex.size()));
+    });
+    walk.block(*module_->getBody());
+    return std::move(walk.result);
+  }
+
+  /// (function, link, iteration, submit start, submit duration, due,
+  /// taken, first use, deadline, epoch) for every execution of a classical
+  /// call, in program order; times in cycles. `taken` is the wait's start
+  /// (absent for an answer never taken), `first use` the earliest start of a
+  /// pulse computed from the answer, `deadline` the latest due time the
+  /// function's deadline allows, and `epoch` the number of blocking waits
+  /// before the submission.
+  using ClassicalCall =
+      std::tuple<std::string, int64_t, std::vector<int64_t>, int64_t, int64_t,
+                 int64_t, std::optional<int64_t>, std::optional<int64_t>,
+                 std::optional<int64_t>, int64_t>;
+
+  std::vector<ClassicalCall> classical_calls() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    std::vector<ClassicalCall> calls;
+    if (!classical::declaresClassicalCalls(*module_))
+      return calls;
+    double clock = classical::moduleClockGHz(*module_);
+    mlir::SymbolTable symbols(*module_);
+    // The timed ops computed from each wait's answer, found once.
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>>
+        consumers;
+    auto consumersOf = [&](classical::WaitOp wait) {
+      auto [it, inserted] = consumers.try_emplace(wait);
+      if (!inserted)
+        return it->second;
+      llvm::SmallVector<mlir::Value> work(wait.getValues().begin(),
+                                          wait.getValues().end());
+      llvm::DenseSet<mlir::Operation *> seen;
+      while (!work.empty()) {
+        mlir::Value value = work.pop_back_val();
+        for (mlir::Operation *user : value.getUsers()) {
+          if (!seen.insert(user).second)
+            continue;
+          if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
+                        classical::SubmitOp>(user)) {
+            it->second.push_back(user);
+          } else if (user->getNumRegions() > 0) {
+            user->walk([&](mlir::Operation *inner) {
+              if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
+                            classical::SubmitOp>(inner))
+                it->second.push_back(inner);
+            });
+          } else {
+            work.append(user->getResults().begin(), user->getResults().end());
+          }
+        }
+      }
+      return it->second;
+    };
+    auto startOf = [&](mlir::Operation *op, llvm::ArrayRef<int64_t> iteration) {
+      llvm::SmallVector<int64_t, 2> at(iteration.begin(), iteration.end());
+      at.resize(pulse::enclosingLoops(op).size(), 0);
+      return pulse::scheduledStart(op, at);
+    };
+    int64_t epoch = 0;
+    llvm::SmallVector<int64_t, 2> iteration;
+    std::function<void(mlir::Block &)> collect = [&](mlir::Block &block) {
+      for (mlir::Operation &op : block) {
+        if (auto submit = mlir::dyn_cast<classical::SubmitOp>(op)) {
+          auto start = pulse::scheduledStart(&op, iteration);
+          if (!start)
+            continue;
+          auto callable =
+              symbols.lookup<classical::CallableOp>(submit.getCallee());
+          int64_t duration = pulse::scheduledDuration(&op).value_or(1);
+          int64_t due = *start + duration +
+                        classical::intAttr(&op, "classical.budget_vtu");
+          std::optional<int64_t> taken, firstUse, deadline;
+          for (mlir::Operation *user : submit.getFuture().getUsers())
+            if (auto wait = mlir::dyn_cast<classical::WaitOp>(user)) {
+              taken = startOf(wait, iteration);
+              for (mlir::Operation *consumer : consumersOf(wait))
+                if (auto at = startOf(consumer, iteration))
+                  firstUse = firstUse ? std::min(*firstUse, *at) : *at;
+            }
+          if (callable)
+            if (auto limit = callable.getDeadlineNs())
+              deadline =
+                  *start + classical::ceilVtu(limit->convertToDouble(), clock);
+          calls.emplace_back(
+              submit.getCallee().str(),
+              classical::intAttr(&op, "classical.device"),
+              std::vector<int64_t>(iteration.begin(), iteration.end()), *start,
+              duration, due, taken, firstUse, deadline, epoch);
+        } else if (mlir::isa<classical::WaitOp, pulse::WaitOp>(op)) {
+          if (op.hasAttr("classical.blocking") ||
+              op.hasAttr("classical.variable"))
+            ++epoch;
+        } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+          int64_t trips = pulse::constantTripCount(loop).value_or(0);
+          iteration.push_back(0);
+          for (int64_t k = 0; k < trips; ++k) {
+            iteration.back() = k;
+            collect(*loop.getBody());
+          }
+          iteration.pop_back();
+        } else {
+          for (mlir::Region &region : op.getRegions())
+            for (mlir::Block &nested : region)
+              collect(nested);
+        }
+      }
+    };
+    collect(*module_->getBody());
+    return calls;
+  }
+
+  /// The boundaries between epochs, in program order, once per loop
+  /// iteration: (kind, line or link, start, lowest, highest). A "wait" is a
+  /// variable wait on a line, whose length lies in [lowest, highest] cycles
+  /// (highest -1 if unbounded); an "answer" is a blocking wait on a link,
+  /// whose length is the answer's latency (lowest 0, highest -1). Each
+  /// boundary starts the next epoch when it ends.
+  using EpochBoundary =
+      std::tuple<std::string, int64_t, int64_t, int64_t, int64_t>;
+
+  std::vector<EpochBoundary> epoch_boundaries() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    std::vector<EpochBoundary> boundaries;
+    if (!classical::declaresClassicalCalls(*module_))
+      return boundaries;
+    llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
+    module_->walk([&](mlir::Operation *op) {
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+        lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
+    });
+    pulse::AllocationTracer trace;
+    llvm::SmallVector<int64_t, 2> iteration;
+    std::function<void(mlir::Block &)> collect = [&](mlir::Block &block) {
+      for (mlir::Operation &op : block) {
+        if (op.hasAttr("classical.variable") ||
+            op.hasAttr("classical.blocking")) {
+          auto start = pulse::scheduledStart(&op, iteration);
+          if (!start)
+            continue;
+          if (mlir::isa<pulse::WaitOp>(op)) {
+            mlir::Operation *allocation = trace(op.getOperand(0));
+            boundaries.emplace_back(
+                "wait", allocation ? lineIndex.lookup(allocation) : -1, *start,
+                classical::intAttr(&op, "pulse.min_vtu"),
+                classical::intAttr(&op, "pulse.max_vtu", -1));
+          } else {
+            boundaries.emplace_back("answer",
+                                    classical::intAttr(&op, "classical.device"),
+                                    *start, 0, -1);
+          }
+        } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+          int64_t trips = pulse::constantTripCount(loop).value_or(0);
+          iteration.push_back(0);
+          for (int64_t k = 0; k < trips; ++k) {
+            iteration.back() = k;
+            collect(*loop.getBody());
+          }
+          iteration.pop_back();
+        } else {
+          for (mlir::Region &region : op.getRegions())
+            for (mlir::Block &nested : region)
+              collect(nested);
+        }
+      }
+    };
+    collect(*module_->getBody());
+    return boundaries;
+  }
+
+  // ── Simulating classical calls ──────────────────────────────────────
+  //
+  // Simulation binds the answer of each call as a constant, one execution
+  // at a time along a measurement path, and schedules again: the timeline
+  // of a path is static once its answers are known.
+
+  /// This module with loops that hold calls unrolled and scheduled again
+  /// with `policy`, for simulation.
+  PulseModule simulation_module(const std::string &policy, int64_t maxDrives,
+                                int64_t maxReadouts, int64_t readoutLatency,
+                                int64_t switchPenalty) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto copy = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
+    mlir::PassManager pm(ctx_.get());
+    pm.addNestedPass<mlir::func::FuncOp>(
+        pulse::createPulseUnrollClassicalLoopsPass());
+    addSchedule(pm, policy, maxDrives, maxReadouts, readoutLatency,
+                switchPenalty);
+    runPipeline(pm, *copy, "simulation: unrolling classical loops failed");
+    return PulseModule(ctx_, std::move(copy));
+  }
+
+  /// One argument of a call: (kind, readout index, iteration, value), kind 0
+  /// for a measurement and 1 for a number.
+  using CallArgument =
+      std::tuple<int64_t, int64_t, std::vector<int64_t>, double>;
+  /// (submit index, start ns, callee, arguments, answered, timeout ns or -1)
+  using PendingCall = std::tuple<int64_t, double, std::string,
+                                 std::vector<CallArgument>, bool, double>;
+
+  /// The first call on `path` that has no answer bound yet, by start time.
+  std::optional<PendingCall>
+  next_call(const std::vector<std::vector<int64_t>> &path) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto readouts = readoutOps();
+    pulse::Path chosen = toPath(path, readouts);
+    llvm::DenseMap<mlir::Operation *, int64_t> indexOf;
+    module_->walk([&](classical::SubmitOp submit) {
+      indexOf.try_emplace(submit, static_cast<int64_t>(indexOf.size()));
+    });
+    double clockGHz = clock();
+    std::optional<PendingCall> next;
+    pulse::ExecutionWalker walker(clockGHz, chosen);
+    walker.onSubmit = [&](const pulse::Occurrence &occurrence) {
+      mlir::Operation *op = occurrence.op;
+      if (op->hasAttr("classical.bound"))
+        return false;
+      double start = occurrence.startVtu / clockGHz;
+      if (next && std::get<1>(*next) <= start)
+        return false;
+      auto submit = mlir::cast<classical::SubmitOp>(op);
+      std::vector<CallArgument> args;
+      for (mlir::Value operand : submit.getArgs()) {
+        if (auto key = walker.measurementKeyOf(operand)) {
+          int64_t index = std::distance(readouts.begin(),
+                                        llvm::find(readouts, key->readout));
+          args.emplace_back(0, index, key->iteration, 0.0);
+        } else if (auto value = pulse::ExecutionWalker::number(operand)) {
+          args.emplace_back(1, -1, std::vector<int64_t>{}, *value);
+        } else {
+          throw std::runtime_error(
+              "simulation: an argument of a classical call is neither a "
+              "measurement nor a number known on this path");
+        }
+      }
+      bool answered = false;
+      double timeout = -1.0;
+      for (mlir::Operation *user : submit.getFuture().getUsers())
+        if (auto wait = mlir::dyn_cast<classical::WaitOp>(user)) {
+          answered = true;
+          if (auto t = wait.getTimeoutNs())
+            timeout = t->convertToDouble();
+        }
+      next = PendingCall{indexOf.lookup(op), start,    submit.getCallee().str(),
+                         std::move(args),    answered, timeout};
+      return false;
+    };
+    auto function = getFuncOp();
+    if (!function)
+      throw std::runtime_error("no 'main' func in module");
+    if (!walker.run(function))
+      throw std::runtime_error(walker.error);
+    return next;
+  }
+
+  /// This module with the answer `values` bound to execution `index` of a
+  /// call (an empty `values` for a call whose answer is not taken), folded
+  /// and scheduled again with `policy`.
+  PulseModule bind_call(int64_t index, const std::vector<double> &values,
+                        const std::string &policy, int64_t maxDrives,
+                        int64_t maxReadouts, int64_t readoutLatency,
+                        int64_t switchPenalty) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto copy = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
+    classical::SubmitOp found;
+    int64_t seen = 0;
+    copy->walk([&](classical::SubmitOp submit) {
+      if (seen++ == index)
+        found = submit;
+    });
+    if (!found)
+      throw std::invalid_argument("bind_call: no call execution " +
+                                  std::to_string(index));
+    found->setAttr("classical.bound", mlir::UnitAttr::get(ctx_.get()));
+    bool rebound = false;
+    for (mlir::Operation *user :
+         llvm::make_early_inc_range(found.getFuture().getUsers()))
+      if (auto wait = mlir::dyn_cast<classical::WaitOp>(user)) {
+        if (wait.getValues().size() != values.size())
+          throw std::invalid_argument(
+              "bind_call: " + found.getCallee().str() + " answers " +
+              std::to_string(wait.getValues().size()) + " values, got " +
+              std::to_string(values.size()));
+        bindConstants(wait, values);
+        rebound = true;
+      }
+    PulseModule result(ctx_, std::move(copy));
+    if (rebound)
+      result.schedule(policy, maxDrives, maxReadouts, readoutLatency,
+                      switchPenalty);
+    return result;
+  }
+
+  /// This module with every answer not bound yet replaced by zeros, for
+  /// evolving up to the next call: those answers only affect what follows.
+  PulseModule placeholders() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto copy = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
+    llvm::SmallVector<classical::WaitOp> waits;
+    copy->walk([&](classical::WaitOp wait) {
+      if (!wait->hasAttr("classical.answers"))
+        waits.push_back(wait);
+    });
+    for (classical::WaitOp wait : waits)
+      bindConstants(wait, std::vector<double>(wait.getValues().size(), 0.0));
+    return PulseModule(ctx_, std::move(copy));
   }
 
   using Measurement =
@@ -392,6 +1056,66 @@ public:
     if (!walker.run(function))
       throw std::runtime_error(walker.error);
     return next;
+  }
+
+  using ReadoutDrive =
+      std::tuple<int64_t, std::vector<int64_t>, double, double>;
+
+  /// Every readout on `path` as (readout index, iteration, tone frequency in
+  /// Hz, peak amplitude of its pulse); NaN where a value is not a number.
+  std::vector<ReadoutDrive>
+  readout_drives(const std::vector<std::vector<int64_t>> &path) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto readouts = readoutOps();
+    pulse::Path chosen = toPath(path, readouts);
+    std::vector<ReadoutDrive> result;
+    pulse::ExecutionWalker walker(clock(), chosen);
+    walker.readoutTones = true;
+    walker.onReadout = [&](const pulse::Occurrence &occurrence,
+                           const pulse::MeasurementKey &key) {
+      int64_t index =
+          std::distance(readouts.begin(), llvm::find(readouts, occurrence.op));
+      const pulse::Affine &frequency = occurrence.tone.frequencyHz;
+      double hz = frequency.isConstant()
+                      ? frequency.evaluate({})
+                      : std::numeric_limits<double>::quiet_NaN();
+      result.emplace_back(index, key.iteration, hz,
+                          peakAmplitude(occurrence.op->getOperand(1)));
+      return false;
+    };
+    auto function = getFuncOp();
+    if (!function)
+      throw std::runtime_error("no 'main' func in module");
+    if (!walker.run(function))
+      throw std::runtime_error(walker.error);
+    return result;
+  }
+
+  /// The peak amplitude of a built-in waveform (its operand 1), through
+  /// `pulse.scale` by a real number and `pulse.neg`.
+  static double peakAmplitude(mlir::Value waveform) {
+    double factor = 1.0;
+    for (mlir::Operation *op = waveform.getDefiningOp(); op;) {
+      llvm::StringRef name = op->getName().getStringRef();
+      if (name == "pulse.neg") {
+        op = op->getOperand(0).getDefiningOp();
+        continue;
+      }
+      if (name == "pulse.scale") {
+        auto scale = pulse::constantNumber(op->getOperand(1));
+        if (!scale)
+          break;
+        factor *= *scale;
+        op = op->getOperand(0).getDefiningOp();
+        continue;
+      }
+      if (op->getNumOperands() < 2)
+        break;
+      if (auto amplitude = pulse::constantNumber(op->getOperand(1)))
+        return std::abs(*amplitude * factor);
+      break;
+    }
+    return std::numeric_limits<double>::quiet_NaN();
   }
 
   using Factor = std::tuple<int64_t, int64_t, std::vector<double>>;
@@ -524,6 +1248,8 @@ public:
     else
       throw std::invalid_argument("unsupported specialization schedule: " +
                                   schedule);
+    if (classical::declaresClassicalCalls(clonedModule))
+      pm.addPass(pulse::createPulseClassicalCheckPass());
     runPipeline(pm, clonedModule, "specialize: pass pipeline failed");
 
     auto owning = mlir::OwningOpRef<mlir::ModuleOp>(clonedModule);
@@ -690,6 +1416,35 @@ private:
     return program;
   }
 
+  static void addSchedule(mlir::PassManager &pm, const std::string &policy,
+                          int64_t maxDrives, int64_t maxReadouts,
+                          int64_t readoutLatency, int64_t switchPenalty) {
+    if (policy == "asap")
+      pm.addNestedPass<mlir::func::FuncOp>(
+          pulse::createPulseScheduleAsapPass());
+    else if (policy == "alap")
+      pm.addNestedPass<mlir::func::FuncOp>(
+          pulse::createPulseScheduleAlapPass());
+    else if (policy == "rcp" || policy == "alap_rcp")
+      pm.addNestedPass<mlir::func::FuncOp>(pulse::createPulseScheduleRcpPass(
+          maxDrives, maxReadouts, readoutLatency, switchPenalty,
+          policy == "alap_rcp"));
+    else
+      throw std::invalid_argument("unknown schedule policy: " + policy);
+  }
+
+  /// Bind `values` to the results of `wait`: the wait stays, so what it
+  /// feeds keeps waiting for it, and its results read as the values.
+  void bindConstants(classical::WaitOp wait,
+                     const std::vector<double> &values) {
+    std::vector<double> rounded(values);
+    for (auto [value, type] : llvm::zip(rounded, wait.getValues().getTypes()))
+      if (!mlir::isa<mlir::FloatType>(type))
+        value = std::round(value);
+    wait->setAttr("classical.answers",
+                  mlir::DenseF64ArrayAttr::get(ctx_.get(), rounded));
+  }
+
   llvm::SmallVector<mlir::Operation *> readoutOps() {
     llvm::SmallVector<mlir::Operation *> readouts;
     module_->walk([&](mlir::Operation *op) {
@@ -849,7 +1604,8 @@ private:
 
 bool isTimedPulseType(mlir::Type type) {
   return mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
-                   pulse::ToneType, pulse::MeasurementType>(type);
+                   pulse::ToneType, pulse::MeasurementType>(type) ||
+         pulse::isClassicalType(type);
 }
 
 /// Whether `value` is defined in `body` or in a region nested in it.
@@ -1031,6 +1787,9 @@ public:
       mlir::Block *parent;
       std::unique_ptr<mlir::Block> body;
       std::unique_ptr<mlir::Block> elseBody;
+      // The links of classical calls as the region began, and as its then
+      // arm ended: a link a region sends on is carried out of it.
+      std::map<int64_t, mlir::Value> linksBefore = {}, linksThen = {};
     };
     std::vector<Region> regions;
     // A schedule block is a region with neither loop bounds nor a condition.
@@ -1054,6 +1813,46 @@ public:
       auto v = alloc.getResult();
       qubitSSA[q] = v;
       return v;
+    };
+
+    // Classical calls: the declared functions by index, and the current
+    // version of each link, created at function entry when first used.
+    std::vector<classical::CallableOp> callables;
+    std::map<int64_t, mlir::Value> links;
+    auto linkOf = [&](int64_t device) -> mlir::Value {
+      auto it = links.find(device);
+      if (it != links.end())
+        return it->second;
+      mlir::OpBuilder::InsertionGuard guard(*builder_);
+      if (!regions.empty())
+        builder_->setInsertionPointToEnd(regions.front().parent);
+      auto get = classical::GetLinkOp::create(
+          *builder_, loc, classical::LinkType::get(ctx_.get()),
+          builder_->getI64IntegerAttr(device));
+      for (Region &open : regions)
+        open.linksBefore.try_emplace(device, get.getLink());
+      links[device] = get.getLink();
+      return get.getLink();
+    };
+    auto callableAt = [&](int64_t index) -> classical::CallableOp {
+      if (index < 0 || static_cast<size_t>(index) >= callables.size())
+        throw std::invalid_argument("packed: unknown classical function " +
+                                    std::to_string(index));
+      return callables[static_cast<size_t>(index)];
+    };
+    // The links one arm or body changed, as (device, before, after).
+    auto changedLinks = [](const std::map<int64_t, mlir::Value> &before,
+                           const std::map<int64_t, mlir::Value> &a,
+                           const std::map<int64_t, mlir::Value> &b) {
+      llvm::SmallVector<std::tuple<int64_t, mlir::Value, mlir::Value>> out;
+      for (auto &[device, value] : before) {
+        auto ia = a.find(device), ib = b.find(device);
+        mlir::Value va = ia == a.end() ? value : ia->second;
+        mlir::Value vb = ib == b.end() ? value : ib->second;
+        if (va != value || vb != value)
+          out.push_back({device, va, vb});
+      }
+      return out;
     };
 
     size_t cur = 0;
@@ -1114,6 +1913,7 @@ public:
                       nullptr};
         if (region.step <= 0)
           throw std::invalid_argument("packed: loop step must be positive");
+        region.linksBefore = links;
         builder_->setInsertionPointToEnd(region.body.get());
         regions.push_back(std::move(region));
         break;
@@ -1149,6 +1949,15 @@ public:
                                           *builder_, loc, next.getType()));
           yields.push_back(next);
         }
+        // Links the body sent on are carried by the loop.
+        llvm::SmallVector<std::pair<int64_t, size_t>> carriedLinks;
+        for (auto [device, after, unused] :
+             changedLinks(region.linksBefore, links, links)) {
+          (void)unused;
+          carriedLinks.push_back({device, inits.size()});
+          inits.push_back(region.linksBefore.at(device));
+          yields.push_back(after);
+        }
         auto index = [&](int64_t v) -> mlir::Value {
           return mlir::arith::ConstantIndexOp::create(*builder_, loc, v);
         };
@@ -1170,6 +1979,8 @@ public:
           });
         for (int64_t i = 0; i < n; ++i)
           bind(p[1 + 2 * n + i], loop.getResult(argOf[i]));
+        for (auto [device, index] : carriedLinks)
+          links[device] = loop.getResult(index);
         break;
       }
       case kOpIfBegin: {
@@ -1182,6 +1993,7 @@ public:
                       builder_->getBlock(),
                       std::make_unique<mlir::Block>(),
                       nullptr};
+        region.linksBefore = links;
         builder_->setInsertionPointToEnd(region.body.get());
         regions.push_back(std::move(region));
         break;
@@ -1192,6 +2004,8 @@ public:
             isBlock(regions.back()) || regions.back().elseBody)
           throw std::invalid_argument("packed: else outside an if");
         regions.back().elseBody = std::make_unique<mlir::Block>();
+        regions.back().linksThen = links;
+        links = regions.back().linksBefore;
         builder_->setInsertionPointToEnd(regions.back().elseBody.get());
         break;
       }
@@ -1211,8 +2025,23 @@ public:
           elseValues.push_back(look(p[1 + n + i]));
           types.push_back(thenValues.back().getType());
         }
-        auto condition = pulse::IsSetOp::create(
-            *builder_, loc, builder_->getI1Type(), region.condition);
+        // A link either arm sent on leaves the branch as a result.
+        const auto &thenLinks = region.elseBody ? region.linksThen : links;
+        const auto &elseLinks = region.elseBody ? links : region.linksBefore;
+        llvm::SmallVector<std::pair<int64_t, unsigned>> branchLinks;
+        for (auto [device, a, b] :
+             changedLinks(region.linksBefore, thenLinks, elseLinks)) {
+          branchLinks.push_back({device, static_cast<unsigned>(types.size())});
+          thenValues.push_back(a);
+          elseValues.push_back(b);
+          types.push_back(a.getType());
+        }
+        // A measurement is tested with pulse.is_set; an answer of a
+        // classical call is already a boolean.
+        mlir::Value condition = region.condition;
+        if (mlir::isa<pulse::MeasurementType>(condition.getType()))
+          condition = pulse::IsSetOp::create(*builder_, loc,
+                                             builder_->getI1Type(), condition);
         auto branch = mlir::scf::IfOp::create(*builder_, loc, types, condition,
                                               /*withElseRegion=*/true);
         auto fill = [&](mlir::Block *arm, mlir::Block *source,
@@ -1229,6 +2058,8 @@ public:
         fill(branch.elseBlock(), region.elseBody.get(), elseValues);
         for (int64_t i = 0; i < n; ++i)
           bind(p[1 + 2 * n + i], branch.getResult(i));
+        for (auto [device, index] : branchLinks)
+          links[device] = branch.getResult(index);
         break;
       }
       case kOpBlockBegin: {
@@ -1247,6 +2078,7 @@ public:
         blocks.emplace_back(p[0] == 0 ? "asap" : "alap",
                             std::string(reinterpret_cast<const char *>(p + 2),
                                         static_cast<size_t>(p[1])));
+        region.linksBefore = links;
         builder_->setInsertionPointToEnd(region.body.get());
         regions.push_back(std::move(region));
         break;
@@ -1264,6 +2096,13 @@ public:
         auto block = buildScheduleBlock(*builder_, loc, std::move(region.body),
                                         policy, callee);
         auto yielded = block.getBody().front().getTerminator()->getOperands();
+        // The last version of a link the block sent on is a block result.
+        for (auto &[device, value] : links)
+          for (auto [inner, result] : llvm::zip(yielded, block.getResults()))
+            if (inner == value) {
+              value = result;
+              break;
+            }
         for (auto [inner, result] : llvm::zip(yielded, block.getResults())) {
           auto it = blockVids.find(inner);
           if (it == blockVids.end())
@@ -1605,8 +2444,9 @@ public:
       }
 
       case kOpVariableWait: {
-        // [line, result line, cycles id, lowest, highest (-1: none)]
-        requirePayload(5);
+        // [line, result line, cycles id, lowest, highest (-1: none),
+        //  1 if the length is an answer of a classical call]
+        requirePayload(6);
         auto dur =
             pulse::DurationFromIntOp::create(*builder_, loc, durTy, look(p[2]));
         mlir::Value line = look(p[0]);
@@ -1616,6 +2456,8 @@ public:
         waitOp->setAttr("pulse.min_vtu", builder_->getI64IntegerAttr(p[3]));
         if (p[4] >= 0)
           waitOp->setAttr("pulse.max_vtu", builder_->getI64IntegerAttr(p[4]));
+        if (p[5])
+          waitOp->setAttr("classical.variable", builder_->getUnitAttr());
         bind(p[1], waitOp.getResult());
         break;
       }
@@ -1673,6 +2515,114 @@ public:
         auto sfOp = pulse::SetFrequencyOp::create(*builder_, loc, toneTy,
                                                   look(p[0]), fVal);
         bind(p[1], sfOp.getResult());
+        break;
+      }
+
+      case kOpClassicalDeclare: {
+        // [index, id, link, flags, min, nominal, max, timeout, deadline,
+        //  name length, args length, results length, text words...]
+        if (plen < 12)
+          throw std::invalid_argument("packed: malformed classical function");
+        int64_t lengths = p[9] + p[10] + p[11];
+        if (p[0] != static_cast<int64_t>(callables.size()) || p[9] <= 0 ||
+            p[10] < 0 || p[11] < 0 || plen != 12 + (lengths + 7) / 8)
+          throw std::invalid_argument("packed: malformed classical function");
+        std::string text(reinterpret_cast<const char *>(p + 12),
+                         static_cast<size_t>(lengths));
+        std::string symbol = text.substr(0, static_cast<size_t>(p[9]));
+        auto split = [&](llvm::StringRef list) {
+          llvm::SmallVector<llvm::StringRef> items;
+          if (!list.empty())
+            list.split(items, ',');
+          return builder_->getStrArrayAttr(items);
+        };
+        llvm::StringRef args = llvm::StringRef(text).substr(
+            static_cast<size_t>(p[9]), static_cast<size_t>(p[10]));
+        llvm::StringRef results = llvm::StringRef(text).substr(
+            static_cast<size_t>(p[9] + p[10]), static_cast<size_t>(p[11]));
+        int64_t flags = p[3];
+        static const char *modes[] = {"bounded", "timeout", "blocking"};
+        if ((flags & 3) > 2)
+          throw std::invalid_argument("packed: unknown latency mode");
+        mlir::OpBuilder::InsertionGuard guard(*builder_);
+        builder_->setInsertionPoint(funcOp);
+        auto callable = classical::CallableOp::create(
+            *builder_, loc, builder_->getStringAttr(symbol),
+            builder_->getI64IntegerAttr(p[1]),
+            builder_->getI64IntegerAttr(p[2]), split(args), split(results),
+            builder_->getF64FloatAttr(i2f(p[4])),
+            builder_->getF64FloatAttr(i2f(p[5])),
+            builder_->getF64FloatAttr(i2f(p[6])),
+            builder_->getStringAttr(modes[flags & 3]),
+            builder_->getStringAttr(flags & 4 ? "lazy" : "eager"),
+            flags & 16 ? builder_->getF64FloatAttr(i2f(p[7]))
+                       : mlir::FloatAttr(),
+            flags & 32 ? builder_->getF64FloatAttr(i2f(p[8]))
+                       : mlir::FloatAttr(),
+            flags & 8 ? builder_->getUnitAttr() : mlir::UnitAttr());
+        callables.push_back(callable);
+        break;
+      }
+      case kOpClassicalSubmit: {
+        // [function index, future id, n, argument ids...]
+        if (plen < 3 || p[2] < 0 || plen != 3 + p[2])
+          throw std::invalid_argument("packed: malformed classical submit");
+        auto callable = callableAt(p[0]);
+        llvm::SmallVector<mlir::Value> args;
+        for (int64_t i = 0; i < p[2]; ++i)
+          args.push_back(look(p[3 + i]));
+        int64_t device = callable.getDevice();
+        auto submit = classical::SubmitOp::create(
+            *builder_, loc, classical::LinkType::get(ctx_.get()),
+            classical::FutureType::get(ctx_.get()), linkOf(device),
+            mlir::FlatSymbolRefAttr::get(callable.getSymNameAttr()), args);
+        links[device] = submit.getUpdatedLink();
+        bind(p[1], submit.getFuture());
+        break;
+      }
+      case kOpClassicalWait: {
+        // [function index, future id, has timeout, timeout, n, result ids...]
+        if (plen < 5 || p[4] < 0 || plen != 5 + p[4])
+          throw std::invalid_argument("packed: malformed classical wait");
+        auto callable = callableAt(p[0]);
+        llvm::SmallVector<mlir::Type> types =
+            classical::answerTypes(callable, p[2] != 0);
+        if (static_cast<int64_t>(types.size()) != p[4])
+          throw std::invalid_argument("packed: classical wait expects " +
+                                      std::to_string(types.size()) +
+                                      " results");
+        auto wait = classical::WaitOp::create(
+            *builder_, loc, types, look(p[1]),
+            mlir::FlatSymbolRefAttr::get(callable.getSymNameAttr()),
+            p[2] ? builder_->getF64FloatAttr(i2f(p[3])) : mlir::FloatAttr());
+        for (int64_t i = 0; i < p[4]; ++i)
+          bind(p[5 + i], wait.getValues()[i]);
+        break;
+      }
+      case kOpClassicalCompare: {
+        // [result id, predicate (eq ne lt le gt ge), type (0 i64, 1 f64),
+        //  lhs, rhs]
+        requirePayload(5);
+        if (p[1] < 0 || p[1] > 5 || p[2] < 0 || p[2] > 1)
+          throw std::invalid_argument("packed: malformed classical compare");
+        mlir::Value lhs = look(p[3]), rhs = look(p[4]);
+        mlir::Value result;
+        if (p[2] == 1) {
+          static const mlir::arith::CmpFPredicate fp[] = {
+              mlir::arith::CmpFPredicate::OEQ, mlir::arith::CmpFPredicate::UNE,
+              mlir::arith::CmpFPredicate::OLT, mlir::arith::CmpFPredicate::OLE,
+              mlir::arith::CmpFPredicate::OGT, mlir::arith::CmpFPredicate::OGE};
+          result =
+              mlir::arith::CmpFOp::create(*builder_, loc, fp[p[1]], lhs, rhs);
+        } else {
+          static const mlir::arith::CmpIPredicate ip[] = {
+              mlir::arith::CmpIPredicate::eq,  mlir::arith::CmpIPredicate::ne,
+              mlir::arith::CmpIPredicate::slt, mlir::arith::CmpIPredicate::sle,
+              mlir::arith::CmpIPredicate::sgt, mlir::arith::CmpIPredicate::sge};
+          result =
+              mlir::arith::CmpIOp::create(*builder_, loc, ip[p[1]], lhs, rhs);
+        }
+        bind(p[0], result);
         break;
       }
 
@@ -1929,6 +2879,26 @@ NB_MODULE(_cudaq_pulse_native, m) {
       .def("events", &PulseModule::events,
            nb::call_guard<nb::gil_scoped_release>(),
            "(kind, line, qubit, start_vtu, duration_vtu) of each timed op")
+      .def("controller_events", &PulseModule::controller_events,
+           nb::call_guard<nb::gil_scoped_release>(),
+           "Each timed op with its iteration, waveform, tone frame, "
+           "branches, references, callee and wait, for a controller")
+      .def("simulation_module", &PulseModule::simulation_module,
+           "This module with loops holding calls unrolled, for simulation")
+      .def("next_call", &PulseModule::next_call, nb::arg("path"),
+           "The first call on a path whose answer is not bound yet")
+      .def("bind_call", &PulseModule::bind_call,
+           "This module with one call's answer bound, scheduled again")
+      .def("placeholders", &PulseModule::placeholders,
+           "This module with unbound answers set to zero")
+      .def("epoch_boundaries", &PulseModule::epoch_boundaries,
+           "The variable and blocking waits that start new epochs")
+      .def("classical_calls", &PulseModule::classical_calls,
+           "Every execution of a classical call, with its timing")
+      .def("readout_drives", &PulseModule::readout_drives, nb::arg("path"),
+           nb::call_guard<nb::gil_scoped_release>(),
+           "Every readout on a path: (index, iteration, frequency Hz, "
+           "amplitude)")
       .def("next_measurement", &PulseModule::next_measurement,
            nb::call_guard<nb::gil_scoped_release>(),
            "The next measurement without an outcome on a path", nb::arg("path"))

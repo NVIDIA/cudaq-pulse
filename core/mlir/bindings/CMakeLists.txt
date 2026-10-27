@@ -34,6 +34,7 @@ nanobind_add_module(
 
 target_link_libraries(_cudaq_pulse_native PRIVATE
   CudaqPulsePulse
+  CudaqPulseClassical
   CudaqPulsePulseTransforms
   CudaqPulseQOp
   CudaqPulseCuDensityMat

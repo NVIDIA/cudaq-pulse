@@ -13,6 +13,8 @@ API Reference
 
    compile
    simulation
+   classical
+   controller
    devices
    targets
    kernel

@@ -233,6 +233,40 @@ class ParameterExpression(_SymbolicNumber):
         return f"ParameterExpression({self.op}, {self.lhs!r}, {self.rhs!r})"
 
 
+class AnswerValue(_SymbolicNumber):
+    """A value a classical function returns, known only when the program runs.
+
+    It takes part in arithmetic like a float kernel parameter, and can set
+    amplitudes, phases and frequencies or decide a branch, but not a
+    duration. ``dtype`` is ``"i1"``, ``"i64"`` or ``"f64"``; ``scope`` is the
+    regions open where it was taken, outside which it is not defined.
+    """
+
+    __slots__ = ("vid", "dtype", "scope", "label")
+
+    def __init__(self, vid: int, dtype: str, scope: tuple[int, ...], label: str = "") -> None:
+        self.vid = vid
+        self.dtype = dtype
+        self.scope = scope
+        self.label = label
+
+    @property
+    def vtype(self) -> str:
+        return self.dtype
+
+    def __repr__(self) -> str:
+        return f"AnswerValue({self.label or self.vid}, {self.dtype})"
+
+
+def contains_answer(value: Any) -> bool:
+    """Whether a symbolic value is computed from an answer of a classical call."""
+    if isinstance(value, AnswerValue):
+        return True
+    if isinstance(value, (ParameterExpression, UndecidableComparison)):
+        return contains_answer(value.lhs) or contains_answer(value.rhs)
+    return False
+
+
 def is_symbolic(value: Any) -> bool:
     """Return whether *value* is a symbolic parameter or expression."""
     return isinstance(value, _SymbolicNumber)

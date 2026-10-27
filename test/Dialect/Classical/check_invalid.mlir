@@ -1,0 +1,157 @@
+// ============================================================================ //
+// Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          //
+// All rights reserved.                                                         //
+//                                                                              //
+// This source code and the accompanying materials are made available under     //
+// the terms of the Apache License 2.0 which accompanies this distribution.     //
+// ============================================================================ //
+
+// RUN: cudaq-pulse-opt %s --split-input-file --pulse-classical-check --verify-diagnostics
+
+// One case per diagnostic of pulse-classical-check. The schedules are written
+// by hand so that each breaks exactly one rule; the scheduler never produces
+// them.
+
+module attributes {pulse.clock_ghz = 1.0 : f64,
+                   classical.links = {"0" = {slot_bytes = 32 : i64}}} {
+  // expected-error @+1 {{a request of 'f' takes 40 bytes, but a slot of link 0 holds 32}}
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = ["f64", "f64"], results = [], latency_min_ns = 0.0,
+      latency_nominal_ns = 0.0, latency_max_ns = 0.0, mode = "bounded",
+      submit = "eager"}
+}
+
+// -----
+
+module attributes {pulse.clock_ghz = 1.0 : f64,
+                   classical.links = {"0" = {slot_bytes = 30 : i64}}} {
+  // expected-error @+1 {{an answer of 'f' takes 32 bytes, but a slot of link 0 holds 30}}
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = [], results = ["f64"], latency_min_ns = 0.0,
+      latency_nominal_ns = 0.0, latency_max_ns = 0.0, mode = "bounded",
+      submit = "eager"}
+}
+
+// -----
+
+// A deadline shorter than the budget: 1 cycle to submit and 1000 to answer
+// is 1001, against a deadline of 800 (slack -201).
+module attributes {pulse.clock_ghz = 1.0 : f64} {
+  // expected-error @+1 {{'f' cannot meet its deadline: its answer is due 1001 cycles after the submission starts, but the deadline is 800 (slack -201)}}
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = [], results = ["f64"], latency_min_ns = 0.0,
+      latency_nominal_ns = 500.0, latency_max_ns = 1000.0, mode = "bounded",
+      submit = "eager", deadline_ns = 800.0}
+}
+
+// -----
+
+// The link's feedback latency counts against the deadline too.
+module attributes {pulse.clock_ghz = 1.0 : f64,
+                   classical.links = {"0" = {feedback_ns = 300.0 : f64}}} {
+  // expected-error @+1 {{its answer is due 1301 cycles after the submission starts, but the deadline is 1200 (slack -101)}}
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = [], results = ["f64"], latency_min_ns = 0.0,
+      latency_nominal_ns = 500.0, latency_max_ns = 1000.0, mode = "bounded",
+      submit = "eager", deadline_ns = 1200.0}
+}
+
+// -----
+
+// S7: the answer is taken before it is due (10 + 1 + 100 = 111).
+module attributes {pulse.clock_ghz = 1.0 : f64} {
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = [], results = ["f64"], latency_min_ns = 0.0,
+      latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",
+      submit = "eager"}
+  func.func @early() {
+    %l = classical.get_link {device = 0 : i64} : !classical.link
+    %l1, %h = classical.submit %l, @f() {start_vtu = 10 : i64, duration_vtu = 1 : i64} : () -> (!classical.link, !classical.future)
+    // expected-error @+1 {{the answer of 'f' is taken at 50, before it is due at 111}}
+    %v = classical.wait %h, @f {start_vtu = 50 : i64, duration_vtu = 0 : i64} : f64
+    return
+  }
+}
+
+// -----
+
+// S7 in a loop: due 1 + 100 + 10k, taken 101 + 5k, late from k = 1 on.
+module attributes {pulse.clock_ghz = 1.0 : f64} {
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = [], results = ["f64"], latency_min_ns = 0.0,
+      latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",
+      submit = "eager"}
+  func.func @drifting() {
+    %l0 = classical.get_link {device = 0 : i64} : !classical.link
+    %lb = arith.constant 0 : index
+    %ub = arith.constant 4 : index
+    %step = arith.constant 1 : index
+    %ln = scf.for %i = %lb to %ub step %step iter_args(%l = %l0) -> (!classical.link) {
+      %l1, %h = classical.submit %l, @f() {start_vtu = 0 : i64, duration_vtu = 1 : i64, period_vtu = array<i64: 10>} : () -> (!classical.link, !classical.future)
+      // expected-error @+1 {{the answer of 'f' is taken at 116, before it is due at 131}}
+      %v = classical.wait %h, @f {start_vtu = 101 : i64, duration_vtu = 0 : i64, period_vtu = array<i64: 5>} : f64
+      scf.yield %l1 : !classical.link
+    }
+    return
+  }
+}
+
+// -----
+
+// S8: three requests in flight on a link with two slots.
+module attributes {pulse.clock_ghz = 1.0 : f64,
+                   classical.links = {"0" = {max_in_flight = 2 : i64}}} {
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = [], results = [], latency_min_ns = 0.0,
+      latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",
+      submit = "eager"}
+  func.func @crowded() {
+    %l0 = classical.get_link {device = 0 : i64} : !classical.link
+    // expected-error @+1 {{link 0 holds 3 requests at once at 2, more than its 2 slots}}
+    %l1, %a = classical.submit %l0, @f() {start_vtu = 0 : i64, duration_vtu = 1 : i64} : () -> (!classical.link, !classical.future)
+    %l2, %b = classical.submit %l1, @f() {start_vtu = 1 : i64, duration_vtu = 1 : i64} : () -> (!classical.link, !classical.future)
+    %l3, %c = classical.submit %l2, @f() {start_vtu = 2 : i64, duration_vtu = 1 : i64} : () -> (!classical.link, !classical.future)
+    return
+  }
+}
+
+// -----
+
+// S9: the second submission starts before the first is sent.
+module attributes {pulse.clock_ghz = 1.0 : f64,
+                   classical.links = {"0" = {bytes_per_ns = 1.0 : f64}}} {
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = [], results = [], latency_min_ns = 0.0,
+      latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",
+      submit = "eager"}
+  func.func @overlapping() {
+    %l0 = classical.get_link {device = 0 : i64} : !classical.link
+    %l1, %a = classical.submit %l0, @f() {start_vtu = 0 : i64, duration_vtu = 24 : i64} : () -> (!classical.link, !classical.future)
+    // expected-error @+1 {{submission on link 0 starts at 10, before the one before it in program order ends at 24}}
+    %l2, %b = classical.submit %l1, @f() {start_vtu = 10 : i64, duration_vtu = 24 : i64} : () -> (!classical.link, !classical.future)
+    return
+  }
+}
+
+// -----
+
+// A future carried out of the loop that submitted it.
+module attributes {pulse.clock_ghz = 1.0 : f64} {
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = [], results = ["f64"], latency_min_ns = 0.0,
+      latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",
+      submit = "eager"}
+  func.func @escaping(%h0: !classical.future) {
+    %l0 = classical.get_link {device = 0 : i64} : !classical.link
+    %lb = arith.constant 0 : index
+    %ub = arith.constant 1 : index
+    %step = arith.constant 1 : index
+    %ln, %hn = scf.for %i = %lb to %ub step %step iter_args(%l = %l0, %h = %h0) -> (!classical.link, !classical.future) {
+      %l1, %g = classical.submit %l, @f() {start_vtu = 0 : i64, duration_vtu = 1 : i64} : () -> (!classical.link, !classical.future)
+      scf.yield %l1, %g : !classical.link, !classical.future
+    }
+    // expected-error @+1 {{the answer of 'f' is taken in another loop iteration than its submission}}
+    %v = classical.wait %hn, @f {start_vtu = 500 : i64, duration_vtu = 0 : i64} : f64
+    return
+  }
+}

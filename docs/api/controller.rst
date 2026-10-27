@@ -1,0 +1,44 @@
+..
+   Copyright (c) 2026 NVIDIA Corporation & Affiliates.
+   All rights reserved.
+
+   This source code and the accompanying materials are made available under
+   the terms of the Apache License 2.0 which accompanies this distribution.
+
+Controller Backends API
+=======================
+
+See :doc:`../user_guide/controller_backends` for the exported program and
+how backends are found.
+
+Export and limits
+-----------------
+
+.. automethod:: cudaq_pulse.Lowered.export_controller
+   :no-index:
+
+.. autoclass:: cudaq_pulse.controller.ControllerLimits
+
+.. autoexception:: cudaq_pulse.controller.ControllerLimitError
+
+.. autofunction:: cudaq_pulse.controller.check
+
+.. autofunction:: cudaq_pulse.controller.sample_waveform
+
+.. autofunction:: cudaq_pulse.controller.shape_key
+
+Backends
+--------
+
+.. autoclass:: cudaq_pulse.backends.Backend
+   :members:
+
+.. autofunction:: cudaq_pulse.backends.available
+
+.. autofunction:: cudaq_pulse.backends.get
+
+.. autofunction:: cudaq_pulse.backends.register
+
+.. autofunction:: cudaq_pulse.backends.unregister
+
+.. autoexception:: cudaq_pulse.backends.BackendNotFoundError
