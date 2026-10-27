@@ -19,6 +19,7 @@ and share compiled kernels.
 
 from __future__ import annotations
 
+import dataclasses
 import enum
 import hashlib
 import json
@@ -26,8 +27,8 @@ import os
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, overload
 
-from ._errors import PulseError
-from .targets._registry import NoTargetError
+from ._errors import DeviceDefinitionError, Problem, PulseError, _closest, _count, _ranges
+from .targets._registry import NoTargetError, UnknownTargetError
 from .targets.base import TargetDescription
 
 __all__ = [
@@ -61,6 +62,7 @@ class Target(enum.Enum):
 
 
 _CARRIER = "qudit"
+_CONFIG_KEYS = ("target", "layout", "calibration", "cooldown")
 # Reserved for a model of where carriers are and how they move.
 _RESERVED_CONFIG = frozenset({"zones", "sites", "moves", "transport"})
 
@@ -207,13 +209,14 @@ class Device:
         source: str = "",
         calibration: Any = None,
     ) -> None:
-        carriers = sorted(target.qubits)
-        layout = tuple(carriers if layout is None else (int(i) for i in layout))
-        unknown = [i for i in layout if i not in target.qubits]
-        if unknown:
-            raise ValueError(f"layout names carriers {unknown} that target {name!r} does not have")
-        if len(set(layout)) != len(layout):
-            raise ValueError("layout maps two qudits to the same carrier")
+        problems: list[Problem] = []
+        layout = (
+            tuple(sorted(target.qubits))
+            if layout is None
+            else _layout(layout, target, name, problems)
+        )
+        if layout is None:
+            raise DeviceDefinitionError(problems=problems)
         self.target = target
         self.name = name
         self.source = source
@@ -265,17 +268,111 @@ def _from_spec(
 ) -> Device:
     from .targets._registry import make_target
 
-    target = make_target(spec)
+    return _calibrated(make_target(spec), spec, source, layout, calibration)
+
+
+def _calibrated(
+    target: TargetDescription,
+    spec: str | None,
+    source: str,
+    layout: Sequence[int] | None,
+    calibration: Any,
+) -> Device:
+    """The device of *target*, registered as *spec* (``None`` for a
+    ``TargetDescription``), with *calibration* applied."""
     if calibration is not None:
         target = calibration.apply(target)
     elif spec == "transmon_krinner_17q":
         from .targets.calibration import shipped_calibration
 
         calibration = shipped_calibration("krinner17")
-    return Device(target, name=spec, layout=layout, source=source, calibration=calibration)
+    name = target.name if spec is None else spec
+    return Device(target, name=name, layout=layout, source=source, calibration=calibration)
 
 
-def _calibration(config: Mapping[str, Any]) -> Any:
+def _target(spec: Any, problems: list[Problem]) -> TargetDescription | None:
+    from .targets._registry import available_targets, make_target
+
+    if isinstance(spec, TargetDescription):
+        return spec
+    if spec is None:
+        problems.append(
+            Problem(
+                "is missing",
+                path="target",
+                fix="give a registered target name ("
+                + ", ".join(available_targets())
+                + ") or a TargetDescription",
+            )
+        )
+        return None
+    if not isinstance(spec, str):
+        problems.append(
+            Problem(
+                f"must be a registered target name or a TargetDescription, "
+                f"got {type(spec).__name__}",
+                path="target",
+                value=spec,
+            )
+        )
+        return None
+    try:
+        return make_target(spec)
+    except (UnknownTargetError, ValueError) as error:
+        problems.append(Problem(Exception.__str__(error), path="target", value=spec))
+        return None
+
+
+def _layout(
+    layout: Any, target: TargetDescription | None, name: str, problems: list[Problem]
+) -> tuple[int, ...] | None:
+    """*layout* as carrier indices, checked against *target* when it is known."""
+    if isinstance(layout, (str, bytes)) or not isinstance(layout, Sequence):
+        problems.append(
+            Problem(
+                f"must be a list of carrier indices, got {type(layout).__name__}",
+                path="layout",
+                value=layout,
+            )
+        )
+        return None
+    found = len(problems)
+    carriers: list[int] = []
+    first: dict[int, int] = {}
+    known = target.qubits if target is not None else None
+    for k, entry in enumerate(layout):
+        path = f"layout[{k}]"
+        index = getattr(type(entry), "__index__", None)
+        if index is None or isinstance(entry, bool):
+            problems.append(
+                Problem(f"must be a carrier index, got {entry!r}", path=path, value=entry)
+            )
+            continue
+        carrier: int = index(entry)
+        if known is not None and carrier not in known:
+            problems.append(
+                Problem(
+                    f"carrier {carrier} is not in target {name!r} (it has {_ranges(known)})",
+                    path=path,
+                    value=carrier,
+                )
+            )
+        elif carrier in first:
+            problems.append(
+                Problem(
+                    f"carrier {carrier} is already named by layout[{first[carrier]}]",
+                    path=path,
+                    value=carrier,
+                    fix="each qudit names a different carrier",
+                )
+            )
+        else:
+            first[carrier] = k
+        carriers.append(carrier)
+    return tuple(carriers) if len(problems) == found else None
+
+
+def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:
     """The config's calibration: a Calibration, or a shipped name or a path,
     for the config's ``cooldown`` (the file's default if absent)."""
     from .targets.calibration import Calibration
@@ -284,15 +381,153 @@ def _calibration(config: Mapping[str, Any]) -> Any:
     cooldown = config.get("cooldown")
     if given is None:
         if cooldown is not None:
-            raise ValueError("device config gives a 'cooldown' but no 'calibration'")
+            problems.append(
+                Problem(
+                    f"{cooldown!r} is given without a calibration",
+                    path="cooldown",
+                    value=cooldown,
+                    fix='add "calibration", a shipped name or a file path, or remove "cooldown"',
+                )
+            )
         return None
     if isinstance(given, Calibration):
         if cooldown is not None and cooldown != given.cooldown:
-            raise ValueError(
-                f"device config asks for cooldown {cooldown!r} of a {given.cooldown!r} calibration"
+            problems.append(
+                Problem(
+                    f"asks for cooldown {cooldown!r} of a calibration loaded for "
+                    f"{given.cooldown!r}",
+                    path="cooldown",
+                    value=cooldown,
+                    fix=f"pass Calibration.load(..., cooldown={cooldown!r})",
+                )
             )
+            return None
         return given
-    return Calibration.load(given, cooldown=cooldown)
+    if not isinstance(given, (str, os.PathLike)):
+        problems.append(
+            Problem(
+                "must be a shipped calibration name, the path of a calibration file or a "
+                f"Calibration, got {type(given).__name__}",
+                path="calibration",
+                value=given,
+            )
+        )
+        return None
+    try:
+        return Calibration.load(given, cooldown=cooldown)
+    except FileNotFoundError as error:
+        problems.append(Problem(str(error), path="calibration", value=given))
+    except json.JSONDecodeError as error:
+        problems.append(
+            Problem(f"the calibration file is not valid JSON: {error}", path="calibration")
+        )
+    except ValueError as error:
+        problems.append(Problem(str(error), path="cooldown", value=cooldown))
+    return None
+
+
+def _definition(config: Mapping[str, Any], source: str, problems: list[Problem]) -> Device | None:
+    """The device of *config*, or ``None`` after adding its problems in the
+    order of the config's keys."""
+    found = len(problems)
+    device = _checked(config, source, problems)
+    order = {str(key): i for i, key in enumerate(config)}
+    problems[found:] = sorted(
+        problems[found:], key=lambda p: order.get(p.path.split("[")[0].split(".")[0], -1)
+    )
+    return device
+
+
+def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) -> Device | None:
+    for key in sorted(set(config) & _RESERVED_CONFIG):
+        problems.append(
+            Problem(
+                "is reserved for a model of where carriers are and how they move, "
+                "which is not available yet",
+                path=key,
+                fix=f"remove {key!r}",
+            )
+        )
+    for key in sorted(set(config) - set(_CONFIG_KEYS) - _RESERVED_CONFIG, key=str):
+        close = _closest(str(key), _CONFIG_KEYS)
+        problems.append(
+            Problem(
+                "unknown device config key",
+                path=str(key),
+                value=key,
+                fix=f"did you mean {close!r}?"
+                if close
+                else "the keys are " + ", ".join(_CONFIG_KEYS),
+            )
+        )
+    spec = config.get("target")
+    target = _target(spec, problems)
+    name = spec if isinstance(spec, str) else getattr(target, "name", "")
+    layout = config.get("layout")
+    if layout is not None:
+        layout = _layout(layout, target, name, problems)
+    calibration = _calibration(config, problems)
+    if problems or target is None:
+        return None
+    try:
+        return _calibrated(
+            target, spec if isinstance(spec, str) else None, source, layout, calibration
+        )
+    except (KeyError, ValueError) as error:
+        problems.append(
+            Problem(f"does not fit target {name!r}: {Exception.__str__(error)}", path="calibration")
+        )
+        return None
+
+
+def _json_positions(text: str) -> dict[str, tuple[int, int]]:
+    """The line and column of each value of the JSON *text*, by its path."""
+    decoder = json.JSONDecoder()
+    found: dict[str, int] = {}
+
+    def skip(i: int) -> int:
+        while text[i] in " \t\r\n":
+            i += 1
+        return i
+
+    def value(i: int, path: str) -> int:
+        i = skip(i)
+        found[path] = i
+        opening = text[i]
+        if opening not in "{[":
+            return decoder.raw_decode(text, i)[1]
+        closing = "}" if opening == "{" else "]"
+        i = skip(i + 1)
+        n = 0
+        while text[i] != closing:
+            if opening == "{":
+                key, i = decoder.raw_decode(text, i)
+                i = skip(i) + 1
+                i = value(i, f"{path}.{key}" if path else key)
+            else:
+                i = value(i, f"{path}[{n}]")
+                n += 1
+            i = skip(i)
+            if text[i] == ",":
+                i = skip(i + 1)
+        return i + 1
+
+    try:
+        value(0, "")
+    except (IndexError, ValueError):
+        pass
+    return {
+        path: (text.count("\n", 0, i) + 1, i - text.rfind("\n", 0, i)) for path, i in found.items()
+    }
+
+
+def _located(problems: list[Problem], file: str, text: str) -> list[Problem]:
+    positions = _json_positions(text)
+    located = []
+    for problem in problems:
+        line, column = positions.get(problem.path, (None, None))
+        located.append(dataclasses.replace(problem, file=file, line=line, column=column))
+    return located
 
 
 def device(config: Mapping[str, Any] | str | os.PathLike[str]) -> Device:
@@ -310,39 +545,48 @@ def device(config: Mapping[str, Any] | str | os.PathLike[str]) -> Device:
     ``cooldown`` one of its cooldowns; the calibration's couplings replace
     the target's, and ``Device.calibration`` holds it. The Krinner target
     uses the shipped ``krinner17`` calibration by default.
+
+    A config with problems raises ``DeviceDefinitionError`` listing all of
+    them, each with its path in the config and, for a file, its line and
+    column; ``python -m cudaq_pulse.doctor --system FILE`` runs the same
+    checks.
     """
-    source = "config"
-    if isinstance(config, (str, os.PathLike)):
-        source = f"file {os.fspath(config)}"
-        with open(config, encoding="utf-8") as f:
-            config = json.load(f)
-    if not isinstance(config, Mapping):
-        raise TypeError(f"device config must be a mapping, got {type(config).__name__}")
-    reserved = sorted(set(config) & _RESERVED_CONFIG)
-    if reserved:
-        raise NotImplementedError(
-            f"device config keys {', '.join(reserved)} are reserved: zones, sites and "
-            "moves of carriers are not modeled yet"
+    if not isinstance(config, (str, os.PathLike)):
+        if not isinstance(config, Mapping):
+            raise TypeError(f"device config must be a mapping, got {type(config).__name__}")
+        problems: list[Problem] = []
+        found = _definition(config, "config", problems)
+        if found is None:
+            raise DeviceDefinitionError(
+                f"{_count(len(problems), 'problem')} in the device config", problems=problems
+            )
+        return found
+    file = os.fspath(config)
+    with open(config, encoding="utf-8") as f:
+        text = f.read()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as error:
+        problem = Problem(
+            f"not valid JSON: {error.msg}", file=file, line=error.lineno, column=error.colno
         )
-    unknown = sorted(set(config) - {"target", "layout", "calibration", "cooldown"})
-    if unknown:
-        raise ValueError(f"unknown device config keys: {', '.join(unknown)}")
-    spec = config.get("target")
-    calibration = _calibration(config)
-    if isinstance(spec, TargetDescription):
-        target = spec if calibration is None else calibration.apply(spec)
-        return Device(
-            target,
-            name=spec.name,
-            layout=config.get("layout"),
-            source=source,
-            calibration=calibration,
+        raise DeviceDefinitionError(
+            f"1 problem in device file {file}", problems=[problem]
+        ) from error
+    problems = []
+    if isinstance(data, Mapping):
+        found = _definition(data, f"file {file}", problems)
+    else:
+        found = None
+        problems.append(
+            Problem(f"the file must hold a JSON object, got {type(data).__name__}", value=data)
         )
-    if not isinstance(spec, str):
-        raise ValueError(
-            "device config needs 'target': a registered target name or a TargetDescription"
+    if found is None:
+        raise DeviceDefinitionError(
+            f"{_count(len(problems), 'problem')} in device file {file}",
+            problems=_located(problems, file, text),
         )
-    return _from_spec(spec, source, config.get("layout"), calibration)
+    return found
 
 
 def get_device(target: Target | None = None) -> Device:

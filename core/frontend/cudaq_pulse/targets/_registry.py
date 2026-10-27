@@ -23,7 +23,7 @@ import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from .._errors import PulseError
+from .._errors import PulseError, _closest
 from .base import TargetDescription
 
 if TYPE_CHECKING:
@@ -125,8 +125,11 @@ def make_target(spec: str) -> TargetDescription:
     name, colon, arg = spec.partition(":")
     factory = _registry().get(name)
     if factory is None:
+        names = available_targets()
+        close = _closest(name, names)
+        hint = f"did you mean {close!r}? " if close else ""
         raise UnknownTargetError(
-            f"no registered target {spec!r}. Available: {', '.join(available_targets())}"
+            f"no registered target {spec!r}; {hint}the registered targets are {', '.join(names)}"
         )
     target = factory(arg if colon else None)
     if not isinstance(target, TargetDescription) and hasattr(target, "to_target"):

@@ -186,7 +186,13 @@ behavior may change in any 0.x release.
   669 (2022), and Rydberg chain and square arrays (compile only).
   A `Coupling`'s gate fields (`gate_type`, `gate_duration_ns`,
   `gate_buffer_ns`, `gate_fidelity`) default to `None`, unspecified; the
-  Krinner target gives its published CZ values.
+  Krinner target gives its published CZ values. A config or file with
+  problems raises `pulse.DeviceDefinitionError` (a `ValueError`) listing all
+  of them in `problems`, each a `pulse.Problem` with its path in the config
+  (`layout[2]`), the offending value and a fix, and for a file its line and
+  column; an unknown key or target name suggests the closest one, and the
+  reserved keys (`zones`, `sites`, `moves`, `transport`) are problems too.
+  `python -m cudaq_pulse.doctor --system FILE [--json]` runs the same checks.
 - **Calibrations and the transmon model.** `cudaq_pulse.targets.Calibration`
   loads fitted values, each with its kind, source, uncertainty and cooldown,
   apart from the published target, and a device config takes `"calibration"`
@@ -266,9 +272,10 @@ behavior may change in any 0.x release.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
   `CompiledKernel`, `Lowered`, `Pass`, `simulate`, `SimulationResult`,
   `device`, `get_device`, `Device`, `Qudit`, `Register`, `Target`,
-  `PulseError`, `CompilationError`, `NoTargetError`, `NoDeviceError`,
-  `DeviceMismatchError`, `GpuRuntimeError`, `viz`, `classical`,
-  `controller` and `backends`, plus `__version__`.
+  `PulseError`, `Problem`, `DeviceDefinitionError`, `CompilationError`,
+  `NoTargetError`, `NoDeviceError`, `DeviceMismatchError`,
+  `GpuRuntimeError`, `viz`, `classical`, `controller` and `backends`, plus
+  `__version__`.
   Every error cudaq-pulse raises on purpose derives from `PulseError` and
   keeps its built-in base (`NoTargetError` is still a `RuntimeError`).
   `cudaq_pulse.compiler`, `cudaq_pulse.runtime.simulate` and

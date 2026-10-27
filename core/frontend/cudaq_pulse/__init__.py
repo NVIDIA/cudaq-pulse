@@ -46,6 +46,8 @@ from ._device import Register as Register
 from ._device import Target as Target
 from ._device import device as device
 from ._device import get_device as get_device
+from ._errors import DeviceDefinitionError as DeviceDefinitionError
+from ._errors import Problem as Problem
 from ._errors import PulseError as PulseError
 from .compiler import Lowered as Lowered
 from .compiler import Pass as Pass
@@ -100,6 +102,8 @@ __all__ = [
     "Register",
     "Target",
     "PulseError",
+    "Problem",
+    "DeviceDefinitionError",
     "CompilationError",
     "NoTargetError",
     "NoDeviceError",

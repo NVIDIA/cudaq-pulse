@@ -320,9 +320,9 @@ def test_a_device_from_a_config_file(tmp_path: Path):
     assert [q.index for q in dev.qudit_handles] == [4, 5]
     assert dev == pulse.device({"target": "transmon_krinner_17q", "layout": [4, 5]})
     assert dev != pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
-    with pytest.raises(ValueError, match="unknown device config keys: lattice"):
+    with pytest.raises(pulse.DeviceDefinitionError, match="lattice: unknown device config key"):
         pulse.device({"target": "transmon_krinner_17q", "lattice": []})
-    with pytest.raises(NotImplementedError, match="zones are reserved"):
+    with pytest.raises(pulse.DeviceDefinitionError, match="zones: is reserved"):
         pulse.device({"target": "transmon_krinner_17q", "zones": []})
 
 

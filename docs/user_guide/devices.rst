@@ -35,6 +35,21 @@ registered target name or a ``cudaq_pulse.targets.TargetDescription``, and optio
 ``"layout"``. ``layout[i]`` is the carrier that qudit ``i`` names; by
 default every carrier of the target, in order.
 
+A config with problems raises ``DeviceDefinitionError``, a ``ValueError``,
+which lists every problem rather than the first. Each is a
+``pulse.Problem`` with its path in the config, the offending value and a
+fix; for a file, the line and column too:
+
+.. code-block:: text
+
+   DeviceDefinitionError: 2 problems in device file lab.json:
+     lab.json:3:20: layout[2]: carrier 99 is not in target 'transmon_krinner_17q' (it has 0..16)
+     lab.json:4:15: cooldown: 'x' is given without a calibration; add "calibration", a shipped name or a file path, or remove "cooldown"
+
+``python -m cudaq_pulse.doctor --system lab.json`` runs the same checks
+without a script, one problem per line; ``--json`` prints them as JSON, and
+it exits 1 when the file has a problem.
+
 Qudit handles
 -------------
 

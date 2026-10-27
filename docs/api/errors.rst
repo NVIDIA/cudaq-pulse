@@ -16,6 +16,12 @@ built-in base: ``NoTargetError`` is still a ``RuntimeError`` and
 built-in ``ValueError`` or ``TypeError``.
 
 .. autoexception:: cudaq_pulse.PulseError
+   :members: problems, location
+
+An error that finds several problems at once, such as
+``DeviceDefinitionError``, lists each as a ``Problem`` in ``problems``:
+
+.. autoclass:: cudaq_pulse.Problem
 
 Compiling
 ---------
@@ -26,6 +32,8 @@ Compiling
 
 Devices and targets
 -------------------
+
+.. autoexception:: cudaq_pulse.DeviceDefinitionError
 
 .. autoexception:: cudaq_pulse.NoDeviceError
 
