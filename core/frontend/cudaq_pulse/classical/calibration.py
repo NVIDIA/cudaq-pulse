@@ -42,10 +42,20 @@ from dataclasses import dataclass
 __all__ = [
     "GoldenSection",
     "NelderMead",
+    "adaptive_t1_update",
+    "adaptive_t1_wait",
+    "binary_search_phase",
+    "binary_search_update",
+    "binary_search_wait",
+    "count_ones",
+    "decay_time",
     "frequency_update",
     "golden_section_step",
     "nelder_mead_step",
+    "pi_train_amplitude",
+    "ramsey_detuning",
     "ramsey_setting",
+    "sparse_phase",
     "t1_update",
     "t1_wait",
     "three_point_decay",
@@ -467,3 +477,212 @@ def nelder_mead_step(state: NelderMead, cost: float) -> tuple[NelderMead, tuple[
             return state, state.next_point(), False
     done = state.converged()
     return state, state.best() if done else state.next_point(), done
+
+
+# ── The millisecond calibration protocol, in controller form ────────────────
+#
+# The estimators below are those of on-controller calibration: the
+# analytical decay and sparse phase estimators and the readout objective of
+# Marciniak et al. (arXiv:2602.11912), the adaptive T1 tracker of Berritta
+# et al. (arXiv:2506.09576) and the frequency binary search of Berritta et
+# al. (arXiv:2501.05386). They are written in controller form, so a
+# controller can run them as they are (``cudaq_pulse.controller.resources``
+# checks it): a fixed number of scalars of state, closed-form arithmetic
+# (+ - * /, comparisons, sqrt, exp, log, atan2, cos), branches and loops of
+# a trip count fixed when the program compiles, and no allocation or
+# exceptions. An estimate that cannot be formed is reported through a
+# result, not raised.
+
+
+def count_ones(bits: Sequence[int]) -> int:
+    """How many of *bits* are 1. Measurement results arrive bit-packed, so
+    a controller counts them a 32-bit word at a time."""
+    total = 0
+    for bit in bits:
+        total += bit
+    return total
+
+
+def _count_ones_cost(length: int) -> dict[str, int]:
+    words = -(-length // 32)
+    return {"popcount": words, "add": words}
+
+
+count_ones.controller_cost = _count_ones_cost  # type: ignore[attr-defined]
+
+
+def adaptive_t1_update(
+    shape: float,
+    rate: float,
+    excited: int,
+    wait: float,
+    error_1to0: float,
+    error_0to1: float,
+) -> tuple[float, float]:
+    """The gamma posterior over Gamma = 1/T1 after one "excite, wait *wait*,
+    measure" shot that read 1 (*excited*) or 0, through a readout that reads
+    |1> as 0 with probability *error_1to0* and |0> as 1 with *error_0to1*.
+
+    The prior is Gamma(shape k, rate theta), in the time unit of *wait*; the
+    likelihood of reading 1 is ``error_0to1 + (1 - error_1to0 - error_0to1)
+    exp(-Gamma wait)``. The posterior's exact mean and variance give the new
+    gamma distribution (moment matching), as in Berritta et al.; with
+    r = theta / (theta + wait), E[Gamma^n exp(-Gamma wait)] is
+    k (k + 1) ... (k + n - 1) r^k / (theta + wait)^n.
+    """
+    contrast = 1.0 - error_1to0 - error_0to1
+    inverse = 1.0 / (rate + wait)
+    decay = math.exp(shape * math.log(rate * inverse))
+    first = shape * inverse * decay
+    second = (shape + 1.0) * inverse * first
+    mean_prior = shape / rate
+    square_prior = mean_prior * (shape + 1.0) / rate
+    if excited:
+        base = error_0to1
+        weight = contrast
+    else:
+        base = 1.0 - error_0to1
+        weight = -contrast
+    norm = base + weight * decay
+    mean = (base * mean_prior + weight * first) / norm
+    variance = (base * square_prior + weight * second) / norm - mean * mean
+    variance = max(variance, mean * mean * 1e-12)
+    return mean * mean / variance, mean / variance
+
+
+def adaptive_t1_wait(shape: float, rate: float, scale: float = 0.51) -> float:
+    """The next wait: *scale* times the estimated T1 (rate / shape). The
+    adaptive T1 tracker uses a fixed scale of 0.51."""
+    return scale * rate / shape
+
+
+def binary_search_update(
+    mean_hz: float,
+    sigma_hz: float,
+    outcome: int,
+    wait_ns: float,
+    offset: float = -0.02,
+    contrast: float = 0.6,
+    coherence_ns: float = 10_000.0,
+) -> tuple[float, float]:
+    """The Gaussian posterior over a detuning after one shot of the
+    frequency binary search: a Ramsey shot of wait *wait_ns* set (by its
+    phase, ``binary_search_phase``) to the fringe's steepest point at the
+    estimate, reading *outcome* +1 or -1.
+
+    The likelihood of +1 is ``1/2 + (offset + contrast exp(-t / T)
+    sin(2 pi (D - mean) t)) / 2`` with T = *coherence_ns*, and the posterior
+    is the Gaussian of its exact moments (Berritta et al. 2025); a +1 moves
+    the estimate up.
+    """
+    t = wait_ns * 1e-9
+    variance = sigma_hz * sigma_hz
+    damp = math.exp(-wait_ns / coherence_ns - 2.0 * math.pi * math.pi * variance * t * t)
+    norm = 1.0 + outcome * offset
+    mean = mean_hz + 2.0 * math.pi * outcome * contrast * variance * t * damp / norm
+    shrink = 2.0 * math.pi * contrast * variance * t * damp / norm
+    variance = max(variance - shrink * shrink, 1.0)
+    return mean, math.sqrt(variance)
+
+
+def binary_search_wait(sigma_hz: float, coherence_ns: float = 10_000.0) -> float:
+    """The wait (ns) of the next binary-search shot, from the posterior
+    width: ``(sqrt(16 pi^2 s^2 + 1/T^2) - 1/T) / (8 pi^2 s^2)``."""
+    variance = sigma_hz * sigma_hz
+    inverse_t = 1e9 / coherence_ns
+    root = math.sqrt(16.0 * math.pi * math.pi * variance + inverse_t * inverse_t)
+    wait_s = (root - inverse_t) / (8.0 * math.pi * math.pi * variance)
+    return wait_s * 1e9
+
+
+def binary_search_phase(mean_hz: float, wait_ns: float) -> float:
+    """The phase of a Ramsey shot (as for ``frequency_update``: it reports 1
+    with probability (1 - cos(2 pi D t + phase)) / 2) that puts the estimate
+    *mean_hz* on the fringe's steepest point, so that a detuning above it
+    makes 1 more likely: the Ramsey of detuning 1 / (4 t) + mean."""
+    turn = 2.0 * math.pi
+    return (0.5 * math.pi - turn * mean_hz * wait_ns * 1e-9) % turn
+
+
+def decay_time(
+    p0: float, p1: float, p3: float, spacing: float, shots: int
+) -> tuple[float, float, bool]:
+    """The analytical decay estimator: the decay time T of
+    ``A exp(-t / T) + C`` from its values at t0, t0 + spacing and
+    t0 + 3 spacing, whatever A and C are (Marciniak et al., Eq. 1).
+
+    With c = (p3 - p0) / (p1 - p0) = x^2 + x + 1 and x = exp(-spacing / T),
+    x = sqrt(c - 3/4) - 1/2. Returns T, its standard deviation from the
+    binomial noise of *shots* shots per point (error propagation), and
+    whether an estimate was formed (1 < c < 3).
+    """
+    d1 = p1 - p0
+    d3 = p3 - p0
+    if d1 == 0.0:
+        return 0.0, 0.0, False
+    c = d3 / d1
+    if not (1.0 < c < 3.0):
+        return 0.0, 0.0, False
+    root = math.sqrt(c - 0.75)
+    x = root - 0.5
+    log_x = math.log(x)
+    t = -spacing / log_x
+    inverse = 1.0 / d1
+    dc0 = (p3 - p1) * inverse * inverse
+    dc1 = -d3 * inverse * inverse
+    dc3 = inverse
+    variance_c = (
+        dc0 * dc0 * p0 * (1.0 - p0) + dc1 * dc1 * p1 * (1.0 - p1) + dc3 * dc3 * p3 * (1.0 - p3)
+    ) / shots
+    slope = spacing / (x * log_x * log_x) * 0.5 / root
+    return t, abs(slope) * math.sqrt(variance_c), True
+
+
+def sparse_phase(p_minus: float, p_zero: float, p_plus: float, shots: int) -> tuple[float, float]:
+    """The sparse phase estimator: the phase theta0 of ``A cos(theta) + C``
+    from its values at theta0 - pi/2, theta0 and theta0 + pi/2, whatever A
+    and C are: atan2(p- - p+, 2 (p0 - (p- + p+) / 2)) (Marciniak et al.,
+    Eq. 3; theta0 + pi for A < 0). Returns it and its standard deviation
+    from the binomial noise of *shots* shots per point."""
+    y = p_minus - p_plus
+    x = 2.0 * p_zero - p_minus - p_plus
+    theta = math.atan2(y, x)
+    v_minus = p_minus * (1.0 - p_minus) / shots
+    v_zero = p_zero * (1.0 - p_zero) / shots
+    v_plus = p_plus * (1.0 - p_plus) / shots
+    r2 = x * x + y * y
+    if r2 == 0.0:
+        return theta, math.pi
+    variance = (
+        x * x * (v_minus + v_plus)
+        + y * y * (4.0 * v_zero + v_minus + v_plus)
+        - 2.0 * x * y * (v_plus - v_minus)
+    ) / (r2 * r2)
+    return theta, math.sqrt(variance)
+
+
+def pi_train_amplitude(amplitude: float, theta: float, turns: int) -> float:
+    """The corrected amplitude of a pulse from the sparse phase estimate
+    *theta* of a train of its pulses that rotates by *turns* (odd) times pi
+    when the amplitude is right, sampled at amplitude scales 1 - 1/(2 turns),
+    1 and 1 + 1/(2 turns) and read out as P(1).
+
+    P(1) = (1 - cos R) / 2 for the train's rotation R, so theta = R + pi
+    (mod 2 pi) and is 0 when R = turns pi. A pi pulse makes a train of
+    *turns* pulses; a pi/2 pulse a train of 2 *turns* (Marciniak et al.,
+    Eq. 4, applying the pi/2 pulse twice).
+    """
+    target = turns * math.pi
+    return amplitude * target / (target + theta)
+
+
+def ramsey_detuning(mean_hz: float, theta: float, wait_ns: float) -> float:
+    """The detuning from the sparse phase estimate *theta* of Ramsey shots
+    of wait *wait_ns* at phases phi0 - pi/2, phi0 and phi0 + pi/2, with
+    phi0 = -2 pi mean t (the convention of ``frequency_update``: P(1) =
+    (1 - cos(2 pi D t + phase)) / 2): D = mean + (theta - pi) / (2 pi t),
+    the phase taken in (-pi, pi]."""
+    error = theta - math.pi
+    if error <= -math.pi:
+        error += 2.0 * math.pi
+    return mean_hz + error / (2.0 * math.pi * wait_ns * 1e-9)
