@@ -215,7 +215,9 @@ of a ``wait`` (see :ref:`wait-lengths`). Any other use that needs its value
 while tracing, such as ``abs``, ``min``, ``math.sin``, ``//``, a comparison,
 or a waveform duration, makes it static, so each new value compiles the
 kernel again. The first such use warns once with a ``RuntimeWarning`` that
-names the argument and the operation.
+names the argument and the operation; it is a ``cudaq_pulse.PulseWarning``,
+so ``warnings.filterwarnings("error", category=cudaq_pulse.PulseWarning)``
+makes it an error.
 
 .. _wait-lengths:
 

@@ -26,7 +26,9 @@ def _lower_three(
         warnings.simplefilter("always")
         for i in range(3):
             compiled.lower(Q[0], *[a + step * i for a in args])
-    return [w for w in caught if w.category is RuntimeWarning], compiled.cache_info().compiled
+    return [
+        w for w in caught if issubclass(w.category, RuntimeWarning)
+    ], compiled.cache_info().compiled
 
 
 def test_a_wait_length_from_the_friction_log_compiles_once_without_a_warning():

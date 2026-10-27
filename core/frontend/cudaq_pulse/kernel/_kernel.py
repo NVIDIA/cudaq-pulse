@@ -508,6 +508,8 @@ _PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def _warn_static(kernel: str, params: list[str], operation: str) -> None:
     """Warn that tracing made the float parameters *params* static. Each is
     made static once per kernel, so this warns once per parameter."""
+    from .._errors import _SpecializationWarning
+
     quoted = ", ".join(repr(p) for p in params)
     one = len(params) == 1
     warnings.warn(
@@ -518,7 +520,7 @@ def _warn_static(kernel: str, params: list[str], operation: str) -> None:
         f"{'it a runtime parameter' if one else 'them runtime parameters'}, compute "
         "that value on the host and pass it in, or annotate the parameter as int to "
         "make the specialization explicit.",
-        RuntimeWarning,
+        _SpecializationWarning,
         skip_file_prefixes=(_PACKAGE_DIR,),
     )
 

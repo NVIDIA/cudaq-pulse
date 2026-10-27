@@ -179,6 +179,19 @@ def test_only_known_modules_raise_builtin_errors():
     assert found == BUILTIN_RAISES
 
 
+def test_the_specialization_warning_is_a_pulse_warning_and_a_runtime_warning():
+    from tests._handles import Q
+
+    @pulse.kernel
+    def k(q, x: float):
+        d, t = get_drive_line(q)
+        drive(d, square(int(x), 0.1), t)
+
+    with pytest.warns(pulse.PulseWarning, match="float argument 'x'") as record:
+        pulse.compile(k).lower(Q[0], 8.0)
+    assert issubclass(record[0].category, RuntimeWarning)
+
+
 def test_pulse_warnings_can_be_made_errors_at_once():
     with warnings.catch_warnings():
         warnings.filterwarnings("error", category=pulse.PulseWarning)
