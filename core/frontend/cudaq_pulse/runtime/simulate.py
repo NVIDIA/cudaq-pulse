@@ -24,6 +24,7 @@ by the cuDensityMat runtime (``backend="gpu"``), from the projected state.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re as _re
 import threading
@@ -723,6 +724,17 @@ def _step_times(t0: float, h: float, lo: int, hi: int) -> npt.NDArray[np.float64
     return np.stack([starts, starts + 0.5 * h, ends], axis=1).ravel()
 
 
+def _step_range(support: tuple[float, float], t0: float, h: float, steps: int) -> tuple[int, int]:
+    """The steps, of a segment from *t0* in steps of *h*, that a drive term
+    with this support can be nonzero on."""
+    start, end = support
+    # Clamped as floats first: a term that plays throughout has a huge or
+    # infinite duration.
+    lo = int(math.floor(min(max((start - t0) / h - 1, 0.0), float(steps))))
+    hi = int(math.ceil(min(max((end - t0) / h + 1, 0.0), float(steps))))
+    return lo, hi
+
+
 def _active_ranges(
     driven: list[tuple[int, Any, Any]], t0: float, h: float, steps: int
 ) -> list[tuple[int, int]]:
@@ -730,11 +742,7 @@ def _active_ranges(
     can be nonzero; every coefficient is zero on the other steps."""
     ranges = []
     for _, params, _ in driven:
-        start, end = _propagate.support(params)
-        # Clamped as floats first: a term that plays throughout has a huge
-        # or infinite duration.
-        lo = int(math.floor(min(max((start - t0) / h - 1, 0.0), float(steps))))
-        hi = int(math.ceil(min(max((end - t0) / h + 1, 0.0), float(steps))))
+        lo, hi = _step_range(_propagate.support(params), t0, h, steps)
         if hi > lo:
             ranges.append((lo, hi))
     ranges.sort()
@@ -764,9 +772,21 @@ class _Stepper:
         self.dim = static.shape[0]
         self.static = static
         self.driven = driven
+        # Terms with one operator (every pulse of a line's quadrature) add
+        # into one coefficient: a train of n pulses costs n evaluations of
+        # its own steps, not n over the whole train.
+        rows: dict[bytes, int] = {}
+        operators: list[npt.NDArray[np.complex128]] = []
+        self.row_of: list[int] = []
+        for _, _, op in driven:
+            row = rows.setdefault(op.tobytes(), len(operators))
+            if row == len(operators):
+                operators.append(op)
+            self.row_of.append(row)
+        self.supports = [_propagate.support(params) for _, params, _ in driven]
         self.operators = (
-            np.stack([op for _, _, op in driven])
-            if driven
+            np.stack(operators)
+            if operators
             else np.zeros((0, self.dim, self.dim), dtype=np.complex128)
         )
         self.jumps = jumps
@@ -798,7 +818,7 @@ class _Stepper:
         return bool((12 + squarings) * self._exact_base < n * self._rk4_cost)
 
     def idle(self, rho: Any, n: int) -> Any:
-        return self.constant(rho, n, np.zeros(len(self.driven))) if n > 0 else rho
+        return self.constant(rho, n, np.zeros(len(self.operators))) if n > 0 else rho
 
     def constant(self, rho: Any, n: int, values: npt.NDArray[np.float64]) -> Any:
         """*n* steps with every drive coefficient at *values*."""
@@ -819,11 +839,16 @@ class _Stepper:
 
     def play(self, rho: Any, t0: float, lo: int, hi: int) -> Any:
         """Steps lo .. hi - 1 (``done`` is lo), where drive terms play."""
-        times = _step_times(t0, self.h, lo, hi).tolist()
-        values = np.array(
-            [evaluate_callback(kind, params, times) for kind, params, _ in self.driven],
-            dtype=float,
-        ).reshape(len(self.driven), hi - lo, 3)
+        values = np.zeros((len(self.operators), hi - lo, 3))
+        for (kind, params, _), row, support in zip(self.driven, self.row_of, self.supports):
+            a, b = _step_range(support, t0, self.h, hi)
+            a = max(a, lo)
+            if b <= a:
+                continue
+            times = _step_times(t0, self.h, a, b).tolist()
+            values[row, a - lo : b - lo, :] += np.asarray(
+                evaluate_callback(kind, params, times), dtype=float
+            ).reshape(b - a, 3)
         flat = np.all(values[:, :, 0] == values[:, :, 1], axis=0) & np.all(
             values[:, :, 1] == values[:, :, 2], axis=0
         )
@@ -853,10 +878,13 @@ class _Stepper:
         self.done += n
         if self.dim > _propagate.MAX_MAPPED_DIM:
             hs = self.static + np.tensordot(
-                values.reshape(len(self.driven), n * 3).T, self.operators, axes=1
+                values.reshape(len(self.operators), n * 3).T, self.operators, axes=1
             )
             return self._rk4(rho, hs)
-        key = (self.key, "rk4", np.round(values, 12).tobytes())
+        # A digest, not the coefficients: a long pulse train's run to
+        # megabytes, and the cache keeps thousands of keys.
+        digest = hashlib.blake2b(np.round(values, 12).tobytes(), digest_size=16).digest()
+        key = (self.key, "rk4", digest)
         propagator = _propagate.cached(key)
         if propagator is None:
             if self._dissipator is None:
@@ -924,11 +952,15 @@ class _CpuBackend(_Backend):
         static = np.zeros((self.dim, self.dim), dtype=np.complex128)
         driven = []
         for re, im, kind, params, factors in hamiltonian:
-            operator = _full_operator(factors, self.dims)
             if kind:
-                driven.append((kind, params, operator))
+                # An unrolled program lists every pulse it plays; only those
+                # that overlap the segment act in it.
+                start, end = _propagate.support(params)
+                if end <= t0 or start >= t1:
+                    continue
+                driven.append((kind, params, _full_operator(factors, self.dims)))
             else:
-                static += (re + 1j * im) * operator
+                static += (re + 1j * im) * _full_operator(factors, self.dims)
         jumps = [(re + 1j * im) * _full_operator(f, self.dims) for re, im, _, _, f in collapse]
         decay = sum((c.conj().T @ c for c in jumps), np.zeros_like(static))
         if t1 <= t0:

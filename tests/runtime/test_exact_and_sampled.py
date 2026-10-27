@@ -203,3 +203,20 @@ def test_a_long_adaptive_loop_follows_one_path_per_shot():
     assert 1 <= len(result.branches) <= 3
     assert all(len(calls) == 60 for calls in result.calls)
     assert result.records is not None and result.records.shape == (3, 60)
+
+
+def test_kept_propagators_are_keyed_compactly():
+    @pulse.kernel
+    def train(q0):
+        d, t = get_drive_line(q0)
+        for _ in range(4):
+            drive(d, gaussian(400, _PI, 100), t)
+
+    _propagate.clear_cache()
+    pulse.simulate(on(_target(), train, Q[0]))
+    sizes = [
+        sum(len(part) for part in key[2:] if isinstance(part, bytes)) for key in _propagate._cache
+    ]
+    # A key names a stretch by a digest of its coefficients, whatever its
+    # length: the cache would otherwise hold every stretch's samples.
+    assert sizes and max(sizes) <= 1024

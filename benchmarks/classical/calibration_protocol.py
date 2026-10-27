@@ -41,6 +41,7 @@ from pathlib import Path
 
 import cudaq_pulse as pulse
 import numpy as np
+from cudaq_pulse.runtime import _propagate
 from cudaq_pulse.targets import transmon_krinner_17q
 
 _EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "23_calibration_protocol.py"
@@ -243,12 +244,16 @@ def steps(seed):
         start = time.perf_counter()
         lowered = pulse.compile(kernel, device=dev, machine=P["MACHINE"]).lower(q)
         compile_s = time.perf_counter() - start
-        tracemalloc.start()
         start = time.perf_counter()
         result = pulse.simulate(
             lowered, plant=plant, shots=1, seed=seed, paths="sampled", readout="model"
         )
         simulate_s = time.perf_counter() - start
+        # Tracing allocations slows NumPy several times over: measure apart,
+        # from cold (no propagators kept).
+        _propagate.clear_cache()
+        tracemalloc.start()
+        pulse.simulate(lowered, plant=plant, shots=1, seed=seed, paths="sampled", readout="model")
         peak = tracemalloc.get_traced_memory()[1]
         tracemalloc.stop()
         m = lowered.metrics
