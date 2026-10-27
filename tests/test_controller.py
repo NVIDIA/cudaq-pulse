@@ -514,12 +514,21 @@ def test_values_from_answers_are_exported_as_expressions():
             "of": [{"answer": answer, "result": 0}, {"const": 0.5}],
         }
     }
-    assert first["frame_updates"] == [
-        {"op": "shift_frequency", "value": {"answer": answer, "result": 1}, "conditions": []}
-    ]
-    assert second["frame_updates"] == [
-        {"op": "shift_phase", "value": {"answer": answer, "result": 0}, "conditions": []}
-    ]
+    [shift] = first["frame_updates"]
+    [phase] = second["frame_updates"]
+    assert shift == {
+        "id": shift["id"],
+        "op": "shift_frequency",
+        "value": {"answer": answer, "result": 1},
+        "conditions": [],
+    }
+    assert phase == {
+        "id": phase["id"],
+        "op": "shift_phase",
+        "value": {"answer": answer, "result": 0},
+        "conditions": [],
+    }
+    assert phase["id"] != shift["id"]
     assert "runtime" not in second["waveform"]
     readout = next(e for e in events if e["kind"] == "readout")
     # The readout tone's frame does not depend on run time.
@@ -631,6 +640,9 @@ def test_frame_updates_carry_the_arm_they_happen_in():
         ("shift_phase", 0.5, [([readout], True)]),
         ("shift_frequency", 1.0e6, [([readout], False)]),
     ]
+    # The shift from before the branch is one change, listed on both paths.
+    assert after["frame_updates"][0]["id"] == in_arm["frame_updates"][0]["id"]
+    assert len({u["id"] for u in after["frame_updates"]}) == 3
     assert all("length" not in e for e in program["events"] if e["kind"] == "wait")
 
 

@@ -444,6 +444,7 @@ struct ControllerWalk {
         for (const Condition &condition : update.conditions)
           write(json, condition);
       });
+      json.attribute("id", static_cast<int64_t>(update.seq));
       json.attribute("op", update.op);
       json.attributeBegin("value");
       json.rawValue(update.value);

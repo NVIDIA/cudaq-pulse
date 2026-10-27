@@ -88,12 +88,15 @@ Drives and readouts also have:
     computed from a readout or an answer, or made in a branch. The tone's
     id (such tones are numbered in the order they are first played), and
     the frame changes on that tone since its previous drive or readout, in
-    program order: each with ``op`` (``"shift_phase"``, ``"set_phase"``,
-    ``"shift_frequency"`` or ``"set_frequency"``), ``value`` (a number, or
-    an expression) and ``conditions``, the branch arms it is on the path of.
+    program order: each with ``id``, ``op`` (``"shift_phase"``,
+    ``"set_phase"``, ``"shift_frequency"`` or ``"set_frequency"``),
+    ``value`` (a number, or an expression) and ``conditions``, the branch
+    arms it is on the path of. One change pending before a branch whose arm
+    plays on the tone is listed again, with the other arm's condition, at
+    the next drive after the branch; the same ``id`` names it both times.
     A controller tracks such a tone's frame itself, applying these instead
-    of reading ``frequency_hz`` and ``phase_rad``. A drive whose own phase
-    offset does not change the frame has ``phase_offset_rad``.
+    of reading ``frequency_hz`` and ``phase_rad``, each ``id`` once. A drive
+    whose own phase offset does not change the frame has ``phase_offset_rad``.
 
 A waveform parameter computed from a readout or an answer is ``null`` in
 ``params`` and has an expression in the node's ``runtime``, by parameter
