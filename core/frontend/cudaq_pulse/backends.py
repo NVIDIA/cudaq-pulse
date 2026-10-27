@@ -50,7 +50,9 @@ from ._errors import InvalidValueError, NotFoundError, PulseError
 if TYPE_CHECKING:
     from importlib.metadata import EntryPoint
 
+    from ._validation import _Report
     from .compiler import MachineModel
+    from .controller import ControllerLimits
 
 __all__ = [
     "GROUP",
@@ -62,6 +64,7 @@ __all__ = [
     "get",
     "register",
     "unregister",
+    "validate",
 ]
 
 GROUP = "cudaq_pulse.backends"
@@ -190,3 +193,51 @@ def get(name: str) -> Backend:
         with _lock:
             backend = _loaded.setdefault(key, backend)
     return backend
+
+
+def validate(
+    backend: Backend | str,
+    controller: ControllerLimits | None = None,
+    *,
+    shots: int = 1000,
+    tolerance: float = 0.05,
+) -> _Report:
+    """Run the export test corpus through *backend* (a ``Backend`` or the
+    name of one) and report what it does wrong.
+
+    The corpus has a program for each kind of event (``cudaq_pulse.Event``)
+    and one with a branch, compiled for *controller* (by default the
+    backend's machine model's), in each format the backend reads. Each
+    must be emitted or refused with ``IncompatibleBackendError``; a program
+    with an event kind no format has, and one in a newer format, must be
+    refused. A program that exceeds the controller's limits is skipped.
+
+    A backend may offer two more methods, which make the checks stronger.
+    ``events(artifact)`` gives back the emitted programs, one list per
+    controller, each event a mapping with its ``kind``, ``line`` (the link
+    of a call or answer), ``start_cycles`` and optionally
+    ``duration_cycles``, every execution in program order; the count of
+    programs and the timing and order of plays, acquisitions, calls and
+    answers on each line must then match the controller program, and the
+    pulses must respect the controller's limits. ``emulate(artifact,
+    shots=...)`` gives each shot's measurement outcomes, in the order they
+    end; the fraction of 1s of each must match ``cudaq_pulse.simulate``
+    within *tolerance* plus three standard errors.
+
+    The report's ``ok`` is whether nothing failed; ``str()`` gives one line
+    per program, such as ``FAIL unsupported_event: emit() accepted
+    'forward_outcome'; it should raise IncompatibleBackendError``.
+    """
+    if shots < 1:
+        raise ValueError(f"shots must be positive, got {shots}")
+    if not tolerance >= 0:
+        raise ValueError(f"tolerance must be at least 0, got {tolerance}")
+    found = get(backend) if isinstance(backend, str) else backend
+    if not isinstance(found, Backend):
+        raise IncompatibleBackendError(
+            f"{found!r} is not a cudaq_pulse.backends.Backend: it needs a name, "
+            "machine_model(), emit() and run()"
+        )
+    from . import _validation
+
+    return _validation.validate(found, controller, shots, tolerance)

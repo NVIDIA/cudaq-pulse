@@ -593,6 +593,13 @@ behavior may change in any 0.x release.
   what a controller does, whatever the modality: `play`, `acquire`,
   `wait`, `sync`, `loop`, `call` and `answer` (/1 keeps `drive`, `readout`
   and `submit`). The export holds the plain strings.
+- **Backend validation.** `backends.validate(backend, controller=...)` runs
+  the export test corpus, a program per event kind, through a backend: each
+  program must be emitted or refused with `IncompatibleBackendError`, and
+  unknown event kinds and newer formats refused. A backend that gives its
+  emitted events back (`events()`) is checked for timing, order, program
+  count and limits, and one with an emulator (`emulate()`) against the
+  simulator. The report's `ok` and `str()` say what failed.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
   `CompiledKernel`, `Lowered`, `Pass`, `simulate`, `SimulationResult`,
   `BranchCoverage`, `device`, `Device`, `Qudit`, `Register`,

@@ -98,3 +98,5 @@ Backends
 .. autofunction:: cudaq_pulse.backends.register
 
 .. autofunction:: cudaq_pulse.backends.unregister
+
+.. autofunction:: cudaq_pulse.backends.validate

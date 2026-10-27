@@ -467,13 +467,26 @@ A backend is an object with a ``name`` and three methods, the
 machine model to compile for its controller, ``emit(program)`` takes an
 exported program and returns the controller's, and ``run(artifact,
 shots=...)`` runs it. ``formats``, if present, lists the export formats it
-reads. This one emits one line of text per drive and readout:
+reads. A program it cannot emit it refuses with
+``IncompatibleBackendError``.
+
+Two more methods are optional, and only ``backends.validate`` uses them
+(see `Validating a backend`_). ``events(artifact)`` gives an emitted
+artifact back as one list of events per controller program, each a mapping
+with its ``kind`` (``cudaq_pulse.Event``, or the ``/1`` name), ``line``
+(the link of a call or answer), ``start_cycles`` and optionally
+``duration_cycles``, every execution in program order.
+``emulate(artifact, shots=...)`` runs it on the backend's emulator and
+gives each shot's measurement outcomes, in the order the measurements end.
+
+This one emits one line of text per drive and readout:
 
 .. code-block:: python
 
    from collections.abc import Mapping
    from typing import Any
 
+   from cudaq_pulse.backends import IncompatibleBackendError
    from cudaq_pulse.compiler import MachineModel
    from cudaq_pulse.controller import FORMAT, ControllerLimits
 
@@ -487,12 +500,14 @@ reads. This one emits one line of text per drive and readout:
            return MachineModel(controller=limits)
 
        def emit(self, program: Mapping[str, Any]) -> list[str]:
+           if program["format"] != FORMAT:
+               raise IncompatibleBackendError(f"cannot read {program['format']}")
            played = []
            for event in program["events"]:
                if event["kind"] in ("wait", "sync"):
                    continue
                if event["kind"] not in ("drive", "readout") or event["conditions"]:
-                   raise ValueError(f"cannot play event {event['index']}")
+                   raise IncompatibleBackendError(f"cannot play event {event['index']}")
                played.append(
                    f"{event['start_cycles']} {event['kind']} line {event['line']} "
                    f"{event['waveform']['shape']} at {event['frequency_hz']:.6g} Hz"
@@ -553,6 +568,50 @@ same name:
    program = compiled.lower(dev.qudit_handles[0]).export_controller()
    print(backend.run(backend.emit(program), shots=1))
    # [['0 drive line 0 gaussian at 5e+09 Hz', '40 readout line 1 square at 5e+09 Hz']]
+
+Validating a backend
+--------------------
+
+``backends.validate(backend, controller=...)`` runs the export test corpus,
+which ships with cudaq-pulse, through a backend: a program for each kind of
+event (``cudaq_pulse.Event``) and one with a branch, compiled for the
+controller (by default the backend's machine model's) and exported in each
+format the backend reads. Each must be emitted or refused with
+``IncompatibleBackendError``, and a program with an event kind no format
+has, or in a newer format, must be refused. A program that exceeds the
+controller's limits is skipped.
+
+.. code-block:: python
+
+   from cudaq_pulse import backends
+   from cudaq_pulse.controller import ControllerLimits
+
+   report = backends.validate("text", controller=ControllerLimits(clock_ghz=1.0))
+   print(report)
+   # PASS play
+   # ...
+   # REFUSED call: cannot play event 1
+   # ...
+   # PASS unsupported_event
+   # PASS newer_format
+   # backend 'text': 7 passed, 3 refused
+   print(report.ok)  # True
+
+A backend that accepted the unknown event would instead report ``FAIL
+unsupported_event: emit() accepted 'forward_outcome'; it should raise
+IncompatibleBackendError``.
+
+Two optional methods make the checks stronger. With ``events(artifact)``,
+which gives the emitted programs back, one list of events per controller
+(each with its ``kind``, ``line``, ``start_cycles`` and optionally
+``duration_cycles``, every execution in program order), the number of
+programs and the timing and order of plays, acquisitions, calls and answers
+on each line must match the controller program, and the pulses must respect
+the controller's limits. With ``emulate(artifact, shots=...)``, which gives
+each shot's measurement outcomes in the order they end, the fraction of 1s
+of each must match ``cudaq_pulse.simulate`` within ``tolerance`` (0.05 by
+default) plus three standard errors of the ``shots``. Validating imports
+nothing until it is called.
 
 Errors
 ------
