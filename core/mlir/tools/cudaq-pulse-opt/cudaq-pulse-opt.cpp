@@ -54,32 +54,7 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/CuDensityMat/CuDensityMatOps.h.inc"
 
-// Conversion passes
-namespace pulse {
-std::unique_ptr<mlir::Pass> createPulseToQOpPass();
-}
-namespace qop {
-std::unique_ptr<mlir::Pass> createQOpToCuDensityMatPass();
-}
-namespace cudm {
-std::unique_ptr<mlir::Pass> createCuDensityMatToLLVMPass();
-}
-// Pulse Transforms passes
-namespace pulse {
-std::unique_ptr<mlir::Pass> createPulseVerifyPass();
-std::unique_ptr<mlir::Pass> createPulseCanonicalizePass();
-std::unique_ptr<mlir::Pass> createVirtualZPass();
-std::unique_ptr<mlir::Pass> createPulseFusionPass();
-std::unique_ptr<mlir::Pass> createPulseScheduleAsapPass();
-std::unique_ptr<mlir::Pass> createPulseScheduleAlapPass();
-std::unique_ptr<mlir::Pass> createPulseInlineScheduleBlocksPass();
-std::unique_ptr<mlir::Pass> createPulseClassicalCheckPass();
-std::unique_ptr<mlir::Pass> createPulseScheduleRcpPass(int64_t maxDrives,
-                                                       int64_t maxReadouts,
-                                                       int64_t readoutLatency,
-                                                       int64_t switchPenalty,
-                                                       bool isAlap);
-} // namespace pulse
+#include "cudaq-pulse/Transforms/Passes.h"
 
 int main(int argc, char **argv) {
   mlir::registerAllPasses();
@@ -94,24 +69,7 @@ int main(int argc, char **argv) {
   registry.insert<mlir::ub::UBDialect>();
   registry.insert<mlir::LLVM::LLVMDialect>();
 
-  // Conversion passes
-  mlir::registerPass(pulse::createPulseToQOpPass);
-  mlir::registerPass(qop::createQOpToCuDensityMatPass);
-  mlir::registerPass(cudm::createCuDensityMatToLLVMPass);
-
-  // Pulse Transforms passes
-  mlir::registerPass(pulse::createPulseVerifyPass);
-  mlir::registerPass(pulse::createPulseCanonicalizePass);
-  mlir::registerPass(pulse::createVirtualZPass);
-  mlir::registerPass(pulse::createPulseFusionPass);
-  mlir::registerPass(pulse::createPulseScheduleAsapPass);
-  mlir::registerPass(pulse::createPulseScheduleAlapPass);
-  mlir::registerPass(pulse::createPulseInlineScheduleBlocksPass);
-  mlir::registerPass(pulse::createPulseClassicalCheckPass);
-  // Resource-constrained scheduling with the default machine model (4
-  // drives, 2 readouts, no readout latency or switch penalty).
-  mlir::registerPass(
-      [] { return pulse::createPulseScheduleRcpPass(4, 2, 0, 0, false); });
+  pulse::registerPulsePasses();
 
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "cudaq-pulse MLIR optimizer\n", registry));

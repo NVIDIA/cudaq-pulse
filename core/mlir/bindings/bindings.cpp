@@ -74,38 +74,12 @@
 #include "cudaq-pulse/Analysis/Timing.h"
 #include "cudaq-pulse/Dialect/Classical/Answers.h"
 #include "cudaq-pulse/Runtime/WaveformCallback.h"
+#include "cudaq-pulse/Transforms/Passes.h"
 
 #include "cudaq-pulse/Dialect/CuDensityMat/CuDensityMatDialect.h.inc"
 #include "cudaq-pulse/Dialect/QOp/QOpDialect.h.inc"
 
 namespace nb = nanobind;
-
-// Conversion passes
-namespace pulse {
-std::unique_ptr<mlir::Pass> createPulseToQOpPass();
-}
-namespace qop {
-std::unique_ptr<mlir::Pass> createQOpToCuDensityMatPass();
-}
-namespace cudm {
-std::unique_ptr<mlir::Pass> createCuDensityMatToLLVMPass();
-}
-// Pulse Transforms passes
-namespace pulse {
-std::unique_ptr<mlir::Pass> createPulseVerifyPass();
-std::unique_ptr<mlir::Pass> createPulseCanonicalizePass();
-std::unique_ptr<mlir::Pass> createVirtualZPass();
-std::unique_ptr<mlir::Pass> createPulseFusionPass();
-std::unique_ptr<mlir::Pass> createPulseScheduleAsapPass();
-std::unique_ptr<mlir::Pass> createPulseScheduleAlapPass();
-std::unique_ptr<mlir::Pass> createPulseClassicalCheckPass();
-std::unique_ptr<mlir::Pass> createPulseUnrollClassicalLoopsPass();
-std::unique_ptr<mlir::Pass> createPulseScheduleRcpPass(int64_t maxDrives,
-                                                       int64_t maxReadouts,
-                                                       int64_t readoutLatency,
-                                                       int64_t switchPenalty,
-                                                       bool isAlap);
-} // namespace pulse
 
 namespace {
 
@@ -215,6 +189,18 @@ void runPipeline(mlir::PassManager &pm, mlir::Operation *op,
   DiagnosticCollector diagnostics(pm.getContext());
   if (mlir::failed(pm.run(op)))
     diagnostics.fail(what);
+}
+
+/// The pass registered as `name`, or null. The registry is filled once, on
+/// first use from any thread.
+const mlir::PassInfo *lookupPass(llvm::StringRef name) {
+  static const bool registered = [] {
+    pulse::registerPulsePasses();
+    mlir::registerLoopInvariantCodeMotionPass();
+    return true;
+  }();
+  (void)registered;
+  return mlir::PassInfo::lookup(name);
 }
 
 inline double i2f(int64_t bits) {
@@ -678,10 +664,8 @@ struct EpochWalk {
 // -----------------------------------------------------------------------
 // PulseModule: opaque handle around an in-memory mlir::ModuleOp
 // -----------------------------------------------------------------------
-// TODO(pulse): this wrapper owns the MLIRContext + ModuleOp and maps pass
-// names through the if/else chain in run_passes() below. Registering the
-// pulse passes so that PassManager pipeline strings parse directly would
-// replace the chain and most of this wrapper.
+// The wrapper owns the MLIRContext and the ModuleOp; run_passes() looks
+// passes up by their cudaq-pulse-opt names.
 class PulseModule {
 public:
   PulseModule(std::shared_ptr<mlir::MLIRContext> ctx,
@@ -697,37 +681,19 @@ public:
     return result;
   }
 
+  /// Run the passes named in `pipeline`, in order. A pass that runs on
+  /// functions runs on each function of the module.
   void run_passes(const std::vector<std::string> &pipeline) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
-    mlir::PassManager pm(ctx_.get());
+    mlir::PassManager pm(ctx_.get(), mlir::ModuleOp::getOperationName(),
+                         mlir::OpPassManager::Nesting::Implicit);
     for (auto &name : pipeline) {
-      if (name == "pulse-to-qop")
-        pm.addPass(pulse::createPulseToQOpPass());
-      else if (name == "qop-to-cudm")
-        pm.addPass(qop::createQOpToCuDensityMatPass());
-      else if (name == "cudm-to-llvm")
-        pm.addPass(cudm::createCuDensityMatToLLVMPass());
-      else if (name == "pulse-verify")
-        pm.addPass(pulse::createPulseVerifyPass());
-      else if (name == "pulse-canonicalize")
-        pm.addNestedPass<mlir::func::FuncOp>(
-            pulse::createPulseCanonicalizePass());
-      else if (name == "pulse-virtual-z")
-        pm.addNestedPass<mlir::func::FuncOp>(pulse::createVirtualZPass());
-      else if (name == "pulse-fusion")
-        pm.addNestedPass<mlir::func::FuncOp>(pulse::createPulseFusionPass());
-      else if (name == "pulse-schedule-asap")
-        pm.addNestedPass<mlir::func::FuncOp>(
-            pulse::createPulseScheduleAsapPass());
-      else if (name == "pulse-schedule-alap")
-        pm.addNestedPass<mlir::func::FuncOp>(
-            pulse::createPulseScheduleAlapPass());
-      else if (name == "pulse-classical-check")
-        pm.addPass(pulse::createPulseClassicalCheckPass());
-      else if (name == "loop-invariant-code-motion")
-        pm.addPass(mlir::createLoopInvariantCodeMotionPass());
-      else
+      const mlir::PassInfo *pass = lookupPass(name);
+      if (!pass)
         throw std::runtime_error("Unknown pass: " + name);
+      if (mlir::failed(pass->addToPipeline(
+              pm, "", [](const llvm::Twine &) { return mlir::failure(); })))
+        throw std::runtime_error("Cannot add pass: " + name);
     }
     programs_.clear();
     runPipeline(pm, *module_, "MLIR pass pipeline failed");
@@ -758,18 +724,8 @@ public:
                 int64_t switchPenalty = 0) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     mlir::PassManager pm(ctx_.get());
-    if (policy == "asap")
-      pm.addNestedPass<mlir::func::FuncOp>(
-          pulse::createPulseScheduleAsapPass());
-    else if (policy == "alap")
-      pm.addNestedPass<mlir::func::FuncOp>(
-          pulse::createPulseScheduleAlapPass());
-    else if (policy == "rcp" || policy == "alap_rcp")
-      pm.addNestedPass<mlir::func::FuncOp>(pulse::createPulseScheduleRcpPass(
-          maxDrives, maxReadouts, readoutLatency, switchPenalty,
-          policy == "alap_rcp"));
-    else
-      throw std::invalid_argument("unknown schedule policy: " + policy);
+    addSchedule(pm, policy, maxDrives, maxReadouts, readoutLatency,
+                switchPenalty);
     if (classical::declaresClassicalCalls(*module_))
       pm.addPass(pulse::createPulseClassicalCheckPass());
     programs_.clear();
@@ -1386,19 +1342,8 @@ public:
     PulseModule result(ctx_, std::move(owning));
     result.keepSource();
     mlir::PassManager pm(ctx_.get());
-    if (schedule == "asap")
-      pm.addNestedPass<mlir::func::FuncOp>(
-          pulse::createPulseScheduleAsapPass());
-    else if (schedule == "alap")
-      pm.addNestedPass<mlir::func::FuncOp>(
-          pulse::createPulseScheduleAlapPass());
-    else if (schedule == "rcp" || schedule == "alap_rcp")
-      pm.addNestedPass<mlir::func::FuncOp>(pulse::createPulseScheduleRcpPass(
-          maxDrives, maxReadouts, readoutLatency, switchPenalty,
-          schedule == "alap_rcp"));
-    else
-      throw std::invalid_argument("unsupported specialization schedule: " +
-                                  schedule);
+    addSchedule(pm, schedule, maxDrives, maxReadouts, readoutLatency,
+                switchPenalty);
     if (classical::declaresClassicalCalls(*result.module_))
       pm.addPass(pulse::createPulseClassicalCheckPass());
     runPipeline(pm, *result.module_, "specialize: pass pipeline failed");
@@ -1565,6 +1510,7 @@ private:
     return program;
   }
 
+  /// Add the schedule pass of `policy` with these resource limits to `pm`.
   static void addSchedule(mlir::PassManager &pm, const std::string &policy,
                           int64_t maxDrives, int64_t maxReadouts,
                           int64_t readoutLatency, int64_t switchPenalty) {
