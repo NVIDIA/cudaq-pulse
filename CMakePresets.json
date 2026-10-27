@@ -1,0 +1,76 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 30,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "Python3_EXECUTABLE": "${sourceDir}/.venv/bin/python"
+      }
+    },
+    {
+      "name": "dev",
+      "inherits": "base",
+      "displayName": "Compiler, Python package and tests",
+      "cacheVariables": {
+        "CUDAQ_PULSE_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "docs",
+      "inherits": "base",
+      "displayName": "Documentation",
+      "cacheVariables": {
+        "CUDAQ_PULSE_BUILD_DOCS": "ON"
+      }
+    },
+    {
+      "name": "gpu",
+      "inherits": "dev",
+      "displayName": "With the cuDensityMat GPU runtime (Linux; set CUDAQ_PULSE_CUDA12_ROOT)",
+      "cacheVariables": {
+        "CUDAQ_PULSE_ENABLE_GPU": "ON"
+      }
+    },
+    {
+      "name": "free-threaded",
+      "inherits": "dev",
+      "displayName": "For a free-threaded CPython in .venv",
+      "cacheVariables": {
+        "CUDAQ_PULSE_FREE_THREADED": "ON"
+      }
+    },
+    {
+      "name": "asan",
+      "inherits": "dev",
+      "displayName": "AddressSanitizer and UndefinedBehaviorSanitizer",
+      "cacheVariables": {
+        "CUDAQ_PULSE_SANITIZERS": "address;undefined"
+      }
+    },
+    {
+      "name": "tsan",
+      "inherits": "dev",
+      "displayName": "ThreadSanitizer",
+      "cacheVariables": {
+        "CUDAQ_PULSE_SANITIZERS": "thread"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "dev", "configurePreset": "dev" },
+    { "name": "check", "configurePreset": "dev", "targets": ["check-pulse"] },
+    { "name": "docs", "configurePreset": "docs", "targets": ["pulse-docs"] },
+    { "name": "gpu", "configurePreset": "gpu" },
+    { "name": "free-threaded", "configurePreset": "free-threaded" },
+    { "name": "asan", "configurePreset": "asan" },
+    { "name": "tsan", "configurePreset": "tsan" }
+  ]
+}

@@ -31,6 +31,7 @@ permissions:
 
 jobs:
   lint:
+    name: lint (pre-commit, zizmor)
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -43,8 +44,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --locked --only-group lint
-      - run: uv run --no-sync ruff check .
-      - run: uv run --no-sync ruff format --check .
+      # The hooks run ruff (lint and format), clang-format, the license,
+      # workflow-pin and release-hygiene checks, and zizmor offline.
       - run: uv run --no-sync pre-commit run --all-files --show-diff-on-failure
       # pre-commit runs zizmor offline; online, it also checks that every
       # pinned commit belongs to its action's repository.
@@ -87,10 +88,7 @@ jobs:
       - uses: ./.github/actions/mlir-toolchain
 
       - name: Configure
-        run: >
-          uv run --no-sync cmake -S . -B build/dev -G Ninja
-          -DCUDAQ_PULSE_BUILD_TESTS=ON
-          -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
+        run: uv run --no-sync cmake --preset dev
 
       - name: check-pulse (lit + pytest)
         run: uv run --no-sync cmake --build build/dev --target check-pulse

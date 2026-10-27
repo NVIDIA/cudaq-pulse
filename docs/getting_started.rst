@@ -24,8 +24,6 @@ needed. Releases are published on the `GitHub releases page
 <https://github.com/NVIDIA/cudaq-pulse/releases>`_, not on PyPI; ``pip``
 picks the wheel for your platform from the release:
 
-.. :spellcheck-disable:
-
 .. code-block:: bash
 
    python -m venv .venv
@@ -41,8 +39,6 @@ picks the wheel for your platform from the release:
 
    # Report what was installed and whether it works
    python -m cudaq_pulse.doctor
-
-.. :spellcheck-enable:
 
 Keep the version pin: it stops ``pip`` from choosing a different package of
 the same name from PyPI. The dependencies, CUDA libraries included, come from
@@ -85,8 +81,6 @@ Hello World
 Define a pulse kernel, compile it, simulate it on the CPU, and inspect the
 generated MLIR:
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    import cudaq_pulse as pulse
@@ -102,8 +96,6 @@ generated MLIR:
    print(f"P(1) = {result.density_matrix[1, 1].real:.3f}")   # P(1) = 0.973
    print(lowered.mlir())
    print(f"Compiled in {lowered.metrics.total_ms:.1f} ms")
-
-.. :spellcheck-enable:
 
 The Compiler Pipeline
 ---------------------
@@ -142,8 +134,6 @@ The test suite lives in the source repository rather than the wheel, and it
 imports whichever ``cudaq_pulse`` is installed, so it checks the installation
 you actually have:
 
-.. :spellcheck-disable:
-
 .. code-block:: bash
 
    git clone https://github.com/NVIDIA/cudaq-pulse.git
@@ -152,8 +142,6 @@ you actually have:
 
    pytest tests -m "not gpu"       # any installation
    pytest tests                    # GPU installations: also runs the GPU suite
-
-.. :spellcheck-enable:
 
 The GPU tests exercise single-qubit drive evolution, T1 decay, two-qubit XX
 coupling, integrator parity, and the public compile/JIT path. Selecting them
@@ -171,19 +159,13 @@ complete workflow, including GPU builds, linting, benchmarks, and building
 this documentation, is described in ``CONTRIBUTING.md`` at the repository
 root. In short:
 
-.. :spellcheck-disable:
-
 .. code-block:: bash
 
    uv sync
    python3 tools/fetch-mlir-toolchain.py   # optional; configuring fetches it too
-   cmake -S . -B build/dev -G Ninja \
-     -DCUDAQ_PULSE_BUILD_TESTS=ON \
-     -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
-   cmake --build build/dev --target check-pulse
+   cmake --preset dev
+   cmake --build --preset check        # builds, then runs check-pulse
 
-.. :spellcheck-enable:
-
-To build this documentation, configure with ``-DCUDAQ_PULSE_BUILD_DOCS=ON``
-and build the ``pulse-docs`` target; the HTML is written to
-``build/dev/docs/html``.
+To build this documentation, run ``cmake --preset docs`` and
+``cmake --build --preset docs``; the HTML is written to
+``build/docs/docs/html``.
