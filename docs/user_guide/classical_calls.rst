@@ -79,6 +79,7 @@ using it, a number of requests it holds at once and the largest request it
 takes. They belong to the machine model, named or by id:
 
 .. code-block:: python
+   :class: fragment
 
    from cudaq_pulse.classical import Link
    from cudaq_pulse.compiler import MachineModel
@@ -103,6 +104,7 @@ In a kernel, ``fn.submit(...)`` sends the request and returns a future, and
 ``future.result()`` takes the answer:
 
 .. code-block:: python
+   :class: fragment
 
    @pulse.kernel
    def feed_forward(q):
@@ -130,6 +132,7 @@ the next, as an estimator's state is.
 A wait may take its length from an answer, between bounds:
 
 .. code-block:: python
+   :class: fragment
 
    alpha, beta, tau = update_t1.submit([m], alpha, beta, tau).result()
    wait(d, tau, bounds=(200, 40000))
@@ -198,6 +201,7 @@ actual lengths on each path. Branches share the state rather than copying
 it.
 
 .. code-block:: python
+   :class: fragment
 
    result = pulse.simulate(lowered, initial_state=plus, latency_branching=True)
    for calls, (outcomes, p) in zip(result.calls, result.branches):
@@ -258,6 +262,7 @@ each direction plus the service's measured time. A late answer takes the
 timeout arm.
 
 .. code-block:: python
+   :class: fragment
 
    from cudaq_pulse.classical import emulation
 
@@ -291,6 +296,7 @@ kernel calls between measurements and runs between shots:
   into ``Floats`` for calls.
 
 .. code-block:: python
+   :class: fragment
 
    from cudaq_pulse.classical import calibration as cal
 
@@ -308,6 +314,7 @@ probe pulses on the flag; values cannot leave the arms of an ``if``, so the
 call stays outside it:
 
 .. code-block:: python
+   :class: fragment
 
    for _ in range(iterations):
        if done < 0.5:
@@ -339,6 +346,7 @@ length from it. ``EstimateLog`` records each estimate with what was true,
 when it is known.
 
 .. code-block:: python
+   :class: fragment
 
    store = ParameterStore(wait_vtu=4000.0)
    read_wait = store.reader("wait_vtu", link="controller", bounds=(0.0, 40000.0))
@@ -424,6 +432,7 @@ from ``ControllerLimits``, for the functions on its ``compute_links``:
 .. :spellcheck-disable:
 
 .. code-block:: python
+   :class: fragment
 
    from cudaq_pulse import controller
 
