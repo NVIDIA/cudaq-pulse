@@ -175,6 +175,14 @@ def encode_answer(
     return _RESPONSE.pack(RESPONSE_MAGIC, status, len(payload), request_id, timestamp) + payload
 
 
+def call_failed(name: str, request_id: int, status: int) -> ExecutionError:
+    """The error for an answer whose status is not 0."""
+    return ExecutionError(
+        f"classical function {name!r} failed on its host: request {request_id} was answered "
+        f"with status {status} (0 means success); see the handler's log"
+    )
+
+
 def decode_answer(function: ClassicalFunction, data: bytes) -> tuple[int, int, Any]:
     """``(status, request id, answer)`` of an answer from *function*."""
     magic, status, length, request_id, _ = _RESPONSE.unpack_from(data)
@@ -214,7 +222,7 @@ class _Native:
             )
         self._next_id = (self._next_id + 1) & 0xFFFFFFFF
         if status != 0:
-            raise ExecutionError(f"{self._function.name} answered with status {status}")
+            raise call_failed(self._function.name, request_id, status)
         return answer
 
 

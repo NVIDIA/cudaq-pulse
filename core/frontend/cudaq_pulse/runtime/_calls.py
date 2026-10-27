@@ -321,7 +321,9 @@ def simulate_tree(
         handler = handlers.get(callee)
         if handler is None:
             raise NotFoundError(
-                f"no handler for classical function {callee!r}; pass handlers={{{callee!r}: ...}}"
+                f"classical function {callee!r} is external and has no handler; pass "
+                f"simulate(..., handlers={{{callee!r}: my_{callee}}}), or declare {callee!r} "
+                "with a Python body"
             )
         if getattr(handler, "takes_history", False):
             return handler(*inputs, history=calls)

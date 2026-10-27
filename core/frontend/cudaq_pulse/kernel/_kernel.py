@@ -214,8 +214,17 @@ def _devices(value: Any, found: Device | None, name: str, seen: set[int]) -> Dev
         if found is None or found is device:
             return device
         if found != device:
+            from .._errors import _ranges
+
+            both = (
+                f"both of target {device.name!r}"
+                if found.name == device.name
+                else f"of targets {found.name!r} and {device.name!r}"
+            )
             raise DeviceMismatchError(
-                f"{name}() got qudits of two devices, {found.name!r} and {device.name!r}"
+                f"{name}() got qudits of two different devices, {both}: one with layout "
+                f"{_ranges(found.layout)}, the other with layout {_ranges(device.layout)}; "
+                "pass handles of one device"
             )
         return found
     if t is Register or t is tuple or t is list:

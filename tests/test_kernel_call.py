@@ -268,7 +268,7 @@ def test_mixing_devices_in_one_call_is_an_error():
         sync(get_drive_line(q0)[0], get_drive_line(q1)[0])
 
     a, other = _device(), _device(n=5)
-    with pytest.raises(pulse.DeviceMismatchError, match="two devices"):
+    with pytest.raises(pulse.DeviceMismatchError, match="two different devices"):
         pair.lower(a.qudit_handles[0], other.qudit_handles[1])
     pair.lower(a.qudit_handles[0], _device().qudit_handles[1])
 

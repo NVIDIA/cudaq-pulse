@@ -79,7 +79,7 @@ def _trace(
             local_vars[name] = val
 
     try:
-        return emitter._loop(prog, 0, -1, len(prog.instrs), -1)
+        return emitter.trace(prog)
     except Exception as e:
         add_source_note(e)
         raise

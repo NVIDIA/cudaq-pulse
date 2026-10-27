@@ -185,6 +185,10 @@ class InternalError(PulseError, RuntimeError):
         )
 
 
+class _CallTimeoutError(ExecutionError, TimeoutError):
+    """A classical call got no answer in time."""
+
+
 class PulseWarning(UserWarning):
     """Base class of the warnings cudaq-pulse issues, so that
     ``warnings.filterwarnings("error", category=pulse.PulseWarning)`` turns

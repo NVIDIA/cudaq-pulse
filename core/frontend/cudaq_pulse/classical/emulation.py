@@ -36,7 +36,7 @@ from typing import Any
 
 import numpy as np
 
-from .._errors import ExecutionError, NotFoundError, UnsupportedError
+from .._errors import NotFoundError, UnsupportedError, _CallTimeoutError
 from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
 from . import ClassicalFunction, Link, wire
 
@@ -273,7 +273,15 @@ class UdpChannel:
 
     def call(self, function: ClassicalFunction, request: bytes) -> tuple[bytes, float]:
         self._sock.sendto(request, self._address)
-        data, _ = self._sock.recvfrom(self._slot_bytes)
+        try:
+            data, _ = self._sock.recvfrom(self._slot_bytes)
+        except TimeoutError as error:
+            host, port = self._address
+            raise _CallTimeoutError(
+                f"classical function {function.name!r} got no answer from {host}:{port} within "
+                f"{self._sock.gettimeout()} s; check that serve_udp is running there, or raise "
+                "UdpChannel(timeout_s=...)"
+            ) from error
         service_ns = struct.unpack_from("<Q", data, len(data) - 8)[0]
         return data[:-8], float(service_ns)
 
@@ -422,9 +430,9 @@ def emulate(
                 request = wire.encode_request(fn, inputs, request_id)
                 request_id += 1
                 answer_bytes, service_ns = channel.call(fn, request)
-                status, _, answer = wire.decode_answer(fn, answer_bytes)
+                status, answered_id, answer = wire.decode_answer(fn, answer_bytes)
                 if status != 0:
-                    raise ExecutionError(f"{callee} answered with status {status}")
+                    raise wire.call_failed(callee, answered_id, status)
                 link = machine.link(fn.link)
                 path_transport = transport_of(machine.link_id(fn.link))
                 latency = path_transport.delay_ns(len(request), rng) + path_transport.delay_ns(

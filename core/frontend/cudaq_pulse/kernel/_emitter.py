@@ -475,8 +475,32 @@ def _operand_error(fname: str, call_args: list[Any]) -> CompilationError:
     elif want is _WAVEFORM and vtype is None:
         message += "; pass a waveform such as square(duration, amplitude)"
     elif want is _QUDIT and vtype is None:
-        message += "; pass one of the kernel's qudit arguments"
+        from .._device import Qudit
+
+        if isinstance(value, Qudit):
+            message = (
+                f"{fname}(): argument {index + 1} is a qudit handle that reached the kernel "
+                "inside a list; pass qudits as separate arguments, a Register "
+                "(dev.qudit_handles[0:4]) or a tuple, not a list"
+            )
+        else:
+            message += "; pass one of the kernel's qudit arguments"
     return CompilationError(message)
+
+
+def _unpack_error(value: Any, count: int) -> str:
+    """The error for unpacking *value*, which is not a tuple or list, into
+    *count* names."""
+    if value is None:
+        return (
+            f"cannot unpack None into {count} names: a call that returns nothing, such as "
+            "drive() or wait(), gives None; call it on its own line, not as "
+            "`a, b = drive(...)` (its arguments stay usable after it)"
+        )
+    return (
+        f"cannot unpack {_describe(value)} into {count} names; "
+        "only a tuple or list known while tracing can be unpacked"
+    )
 
 
 class _Chan:
@@ -787,6 +811,20 @@ class PulseIREmitter:
         prog = decode(code)
         return self._loop(prog, 0, -1, len(prog.instrs), -1)
 
+    def trace(self, prog: bc.DecodedCode) -> StackVal:
+        """Trace a whole kernel, as ``run`` traces a helper. A name read
+        before it is bound raises a plain ``CompilationError``: the private
+        error is how a loop being rolled learns that, and stops here."""
+        try:
+            return self._loop(prog, 0, -1, len(prog.instrs), -1)
+        except _UndefinedLocalError as e:
+            error = CompilationError(
+                f"{e.name!r} is used before it is assigned; assign it on every path that "
+                "reaches this line (an if on a value known while tracing takes only one arm)"
+            )
+            error.__dict__.update(e.__dict__)
+            raise error from None
+
     # ── Interpreter loop ─────────────────────────────────────────────
 
     def _loop(
@@ -992,9 +1030,12 @@ class PulseIREmitter:
                 elif op is _unpack:
                     val = pop()
                     if not isinstance(val, (tuple, list)):
-                        raise CompilationError(f"cannot unpack {type(val)}")
+                        raise CompilationError(_unpack_error(val, arg))
                     if len(val) != arg:
-                        raise CompilationError(f"unpack mismatch: expected {arg}, got {len(val)}")
+                        raise CompilationError(
+                            f"cannot unpack {len(val)} values into {arg} names; "
+                            f"the {type(val).__name__} has {len(val)}"
+                        )
                     stack.extend(reversed(val))
 
                 elif op is _build_tuple or op is _build_list:
@@ -1859,7 +1900,11 @@ class PulseIREmitter:
                 self._track_slots(owner, len(owner) - 1 if fname == "append" else 0)
             return
 
-        raise CompilationError(f"cannot call: {callable_val!r}")
+        raise CompilationError(
+            f"cannot call an object of type {type(callable_val).__name__!r} in a kernel; "
+            "a kernel calls pulse ops, other kernels, Python functions and methods, "
+            "and classical functions' .submit()"
+        )
 
     def _run_genexpr(self, code: types.CodeType, call_args: list[StackVal]) -> None:
         """Run a generator expression to the end, and push an iterator over

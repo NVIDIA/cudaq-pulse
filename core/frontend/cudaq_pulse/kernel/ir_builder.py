@@ -166,14 +166,18 @@ class _SymbolicNumber(_UndecidableComparisons):
 
     def cast(self, dtype: str) -> ParameterExpression:
         if dtype not in ("i64", "f64"):
-            raise CompilationError(f"unsupported symbolic cast to {dtype}")
+            raise InternalError(f"unsupported symbolic cast to {dtype}")
         return ParameterExpression("cast", self, dtype=dtype)
 
     def _not_concrete(self, operation: str) -> NoReturn:
+        names = parameter_names(self)
+        quoted = ", ".join(map(repr, dict.fromkeys(names)))
+        arguments = "argument" if len(set(names)) == 1 else "arguments"
         raise SymbolicValueError(
-            f"Cannot evaluate symbolic parameter expression with {operation}. "
-            "Use it in a supported pulse numeric argument.",
-            parameter_names(self),
+            f"{operation} needs the value of float {arguments} {quoted}, which is only known "
+            "when the kernel runs; use it only as a pulse op argument (amplitude, phase, "
+            "frequency, wait length), or annotate it as int to compile one kernel per value",
+            names,
             operation,
         )
 
