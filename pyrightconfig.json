@@ -1,5 +1,4 @@
 {
-    "reportUndefinedVariable": "warning",
     "pythonVersion": "3.12",
     "pythonPlatform": "Linux",
     "executionEnvironments": [

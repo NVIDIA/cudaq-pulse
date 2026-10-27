@@ -8,6 +8,11 @@ _skbuild/
 # Fetched MLIR toolchains and other local caches
 .cache/
 
+# Local CMake presets and clangd
+CMakeUserPresets.json
+compile_commands.json
+.clangd/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -16,6 +21,22 @@ __pycache__/
 .hypothesis/
 .mypy_cache/
 .ruff_cache/
+
+# Coverage, test reports and profiles
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+junit*.xml
+.tox/
+.nox/
+*.profraw
+
+# A CudaqPulse component installed for the editor-types check
+installed/
+
+# Local environment files
+.env
 
 # Native artifacts produced outside the build tree
 *.o

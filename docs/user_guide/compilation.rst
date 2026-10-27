@@ -12,8 +12,6 @@ A ``@pulse.kernel`` is called like a Python function. The first call with
 new arguments compiles the kernel; later calls reuse the compilation and
 only run it.
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    import cudaq_pulse as pulse
@@ -30,8 +28,6 @@ only run it.
    rabi(q, 0.4)                    # same compilation, new amplitude
    lowered = rabi.lower(q, 0.3)    # compiles (or reuses), does not run
    print(lowered.mlir())
-
-.. :spellcheck-enable:
 
 Arguments
 ---------
@@ -100,8 +96,6 @@ returns what the kernel returns, and it has the same ``lower`` as the
 kernel. Its specializations are kept for as long as the object lives and are
 never evicted.
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    sweep = pulse.compile(rabi)
@@ -109,8 +103,6 @@ never evicted.
        sweep(q, amplitude)          # one compilation for the whole sweep
 
    pinned = pulse.compile(rabi, device=dev, schedule="asap")
-
-.. :spellcheck-enable:
 
 Options, all keyword-only:
 

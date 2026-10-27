@@ -18,20 +18,14 @@ Import Convention
 
 A single import gives you everything:
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    import cudaq_pulse as pulse
-
-.. :spellcheck-enable:
 
 Inside ``@pulse.kernel`` functions, DSL operations (``drive``,
 ``gaussian``, ``get_drive_line``, etc.) are used as bare names, which
 editors complete and check with no configuration (see :doc:`editors`).
 Infrastructure stays behind the ``pulse.`` prefix:
-
-.. :spellcheck-disable:
 
 .. code-block:: python
 
@@ -43,12 +37,8 @@ Infrastructure stays behind the ``pulse.`` prefix:
    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
    rabi_oscillation(dev.qudit_handles[0])
 
-.. :spellcheck-enable:
-
 Defining a Kernel
 -----------------
-
-.. :spellcheck-disable:
 
 .. code-block:: python
 
@@ -60,16 +50,12 @@ Defining a Kernel
        waveform = gaussian(40, 0.3, 10.0)
        drive(drive_line, waveform, tone)
 
-.. :spellcheck-enable:
-
 Qudit arguments are **qudit handles** of a device: ``dev.qudit_handles[i]``
 for one qudit, and ``dev.qudit_handles[0:4]`` or ``dev.qudit_handles[[0, 2]]``
 for a register, which a kernel indexes and iterates like a list. The kernel
 runs on the device of its handles; see :doc:`devices`. How arguments bind,
 which of them the kernel is specialized on, and what a call returns are
 described in :doc:`compilation`.
-
-.. :spellcheck-disable:
 
 .. code-block:: python
 
@@ -79,8 +65,6 @@ described in :doc:`compilation`.
 
    reg = dev.qudit_handles[0:2]
    two(reg[0], reg[1], 0.3)
-
-.. :spellcheck-enable:
 
 Qudits always come from a device: a kernel takes them as parameters, and a
 call passes the device's handles (``dev.qudit_handles[i]``, or a register
@@ -99,8 +83,6 @@ at trace time:
 
 **For loops** with compile-time integer bounds:
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    @pulse.kernel
@@ -109,8 +91,6 @@ at trace time:
        for i in range(5):
            drive(drive_line, gaussian(40, 0.3, 10.0), tone)
            wait(drive_line, 20)
-
-.. :spellcheck-enable:
 
 A loop whose induction variable is never read, like the one above, is
 captured once as a structured ``scf.for`` in the kernel IR, so the IR size
@@ -149,8 +129,6 @@ traced iteration per element, with ``break``, ``continue`` and ``else``
 behaving as in Python. Lines and tones held in lists stay threaded through
 the loop:
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    @pulse.kernel
@@ -164,11 +142,7 @@ the loop:
            for line, tone in zip(lines, tones):
                drive(line, square(40, amplitude), tone)
 
-.. :spellcheck-enable:
-
 **If/else** with compile-time conditions:
-
-.. :spellcheck-disable:
 
 .. code-block:: python
 
@@ -181,12 +155,8 @@ the loop:
            waveform = gaussian(40, 0.3, 10.0)
        drive(drive_line, waveform, tone)
 
-.. :spellcheck-enable:
-
 **Measurement feedback**: an ``if`` on a measurement result (``if result:`` or
 ``if not result:``) is kept as a conditional region:
-
-.. :spellcheck-disable:
 
 .. code-block:: python
 
@@ -198,8 +168,6 @@ the loop:
        sync(drive_line, readout_line)
        if result:
            drive(drive_line, drag(40, 0.5, 10.0, 0.5), drive_tone)
-
-.. :spellcheck-enable:
 
 Both branches are traced, and lines and tones they rebind become the
 results of the region. Both branches must continue after the ``if``, and
@@ -257,8 +225,6 @@ Wait lengths
 A ``wait`` whose length is computed from ``float`` arguments keeps them
 runtime parameters, so a sweep over a delay compiles once:
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    import numpy as np
@@ -279,8 +245,6 @@ runtime parameters, so a sweep over a delay compiles once:
    compiled_echo = pulse.compile(echo)
    for tau in np.linspace(0, 20_000, 1000):
        compiled_echo.lower(q, tau)  # one compilation for the whole sweep
-
-.. :spellcheck-enable:
 
 - The length is in clock cycles, like every wait. Each call computes it
   from its values and rounds it to the nearest cycle, ties up
