@@ -279,7 +279,14 @@ behavior may change in any 0.x release.
   with its exact start and end, waveform and parameters (and, with
   `sample_rate_ghz=`, its samples), tone frequency and frame phase (including
   the phase a detuned tone gains between drives), epoch and the
-  measurement- or answer-conditioned branches it lies in. Within a version,
+  measurement- or answer-conditioned branches it lies in. What is known only
+  at run time is exported as an expression over readouts and answers: a
+  waveform parameter (`runtime`, including a value a measurement selects),
+  a variable wait's length and bounds, a submission's operands, and, on a
+  tone whose frame depends on run time, the frame changes since its
+  previous drive (`tone`, `frame_updates`), so a backend can compute them
+  where the answer arrives. A program that
+  computes nothing at run time exports exactly as before. Within a version,
   keys and event kinds are only added. `MachineModel(controller=
   ControllerLimits(...))` states what a controller can play (clock, issue
   spacing, waveform memory, tones, readout acquirers, feedback latency,

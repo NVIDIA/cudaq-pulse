@@ -479,3 +479,178 @@ def test_a_controller_without_answer_timeouts_rejects_a_timed_wait():
     assert answer["wait"] == "timeout" and answer["timeout_ns"] == pytest.approx(300)
     with pytest.raises(ControllerLimitError, match="cannot stop waiting"):
         pulse.compile(timed_out, machine=MachineModel(controller=limits)).lower(Q[0])
+
+
+# ── Values known at run time ────────────────────────────────────────────────
+
+
+@pulse.classical(args=(Bits(1),), results=(Float(), Float(), Float()), max_latency_ns=200)
+def settings(bits):
+    return 0.1 * bits[0], 1.0e5 * bits[0], 40.0 + bits[0]
+
+
+@pulse.kernel
+def answered(q):
+    d, t = get_drive_line(q)
+    ro, rt = get_readout_line(q)
+    m = readout(ro, square(100, 0.05), rt)
+    amp, detuning, delay = settings.submit([m]).result()
+    shift_frequency(t, detuning)
+    drive(d, square(20, amp * 0.5), t)
+    wait(d, delay, bounds=(8, 400))
+    shift_phase(t, amp)
+    drive(d, square(20, 0.2), t)
+
+
+def test_values_from_answers_are_exported_as_expressions():
+    program = pulse.compile(answered).lower(Q[0]).export_controller()
+    events = program["events"]
+    answer = next(e for e in events if e["kind"] == "answer")["index"]
+    first, second = (e for e in events if e["kind"] == "drive")
+    assert first["amplitude"] is None and first["frequency_hz"] is None
+    assert first["waveform"]["runtime"] == {
+        "amplitude": {
+            "op": "arith.mulf",
+            "of": [{"answer": answer, "result": 0}, {"const": 0.5}],
+        }
+    }
+    assert first["frame_updates"] == [
+        {"op": "shift_frequency", "value": {"answer": answer, "result": 1}, "conditions": []}
+    ]
+    assert second["frame_updates"] == [
+        {"op": "shift_phase", "value": {"answer": answer, "result": 0}, "conditions": []}
+    ]
+    assert "runtime" not in second["waveform"]
+    readout = next(e for e in events if e["kind"] == "readout")
+    # The readout tone's frame does not depend on run time.
+    assert first["tone"] == second["tone"] and "tone" not in readout
+    wait = next(e for e in events if e["kind"] == "wait")
+    assert (wait["min_cycles"], wait["max_cycles"]) == (8, 400)
+
+    def answers(expr):
+        if "answer" in expr:
+            return [(expr["answer"], expr["result"])]
+        return [a for child in expr.get("of", []) for a in answers(child)]
+
+    assert answers(wait["length"]) == [(answer, 2)]
+    submit = next(e for e in events if e["kind"] == "submit")
+    assert submit["operands"] == [{"readout": readout["index"]}]
+    assert json.loads(json.dumps(events)) == events
+
+
+@pulse.classical(args=(Bits(2), Float()), results=(Float(),), max_latency_ns=200)
+def scaled(bits, value):
+    return value * (bits[0] + bits[1])
+
+
+@pulse.kernel
+def chained(q):
+    d, t = get_drive_line(q)
+    ro, rt = get_readout_line(q)
+    a = readout(ro, square(100, 0.05), rt)
+    b = readout(ro, square(100, 0.05), rt)
+    first = scaled.submit([a, b], 0.5).result()
+    second = scaled.submit([b, a], first * 2.0).result()
+    drive(d, square(20, second), t)
+
+
+def test_a_submission_carries_its_arguments_in_order():
+    events = pulse.compile(chained).lower(Q[0]).export_controller()["events"]
+    a, b = (e["index"] for e in events if e["kind"] == "readout")
+    first, second = (e for e in events if e["kind"] == "submit")
+    answer = next(e for e in events if e["kind"] == "answer")["index"]
+    assert first["operands"] == [{"readout": a}, {"readout": b}, {"const": 0.5}]
+    assert second["operands"][:2] == [{"readout": b}, {"readout": a}]
+    assert second["operands"][2] == {
+        "op": "arith.mulf",
+        "of": [{"answer": answer, "result": 0}, {"const": 2.0}],
+    }
+
+
+@pulse.kernel
+def chosen_by_readout(q):
+    d, t = get_drive_line(q)
+    ro, rt = get_readout_line(q)
+    m = readout(ro, square(100, 0.05), rt)
+    if m:
+        value = 0.3
+    else:
+        value = 0.1
+    shift_phase(t, value)
+    drive(d, square(20, value), t)
+
+
+def test_a_value_a_readout_selects_at_run_time_is_exported_as_its_select(monkeypatch):
+    monkeypatch.setattr(pulse.compiler, "_can_select_at_runtime", lambda target, kind: True)
+    events = pulse.compile(chosen_by_readout).lower(Q[0]).export_controller()["events"]
+    readout = next(e for e in events if e["kind"] == "readout")["index"]
+    [drive] = (e for e in events if e["kind"] == "drive")
+    select = {
+        "op": "arith.select",
+        "of": [
+            {"op": "pulse.is_set", "of": [{"readout": readout}]},
+            {"const": 0.3},
+            {"const": 0.1},
+        ],
+    }
+    assert drive["conditions"] == []
+    assert drive["waveform"]["params"]["amplitude"] is None
+    assert drive["waveform"]["runtime"] == {"amplitude": select}
+    [shift] = drive["frame_updates"]
+    assert (shift["op"], shift["value"]) == ("shift_phase", select)
+
+
+@pulse.kernel
+def frame_in_arms(q, r):
+    d, t = get_drive_line(q)
+    ro, rt = get_readout_line(q)
+    shift_phase(t, 0.25)
+    m = readout(ro, square(100, 0.05), rt)
+    sync(d, ro)
+    if m:
+        drive(d, square(20, 0.1), t)
+        shift_phase(t, 0.5)
+    else:
+        shift_frequency(t, 1.0e6)
+    drive(d, square(20, 0.1), t)
+
+
+def test_frame_updates_carry_the_arm_they_happen_in():
+    program = _program(frame_in_arms)
+    readout = next(e for e in program["events"] if e["kind"] == "readout")["index"]
+    in_arm, after = (e for e in program["events"] if e["kind"] == "drive")
+    assert [(u["op"], u["value"]) for u in in_arm["frame_updates"]] == [("shift_phase", 0.25)]
+    # The drive in the if arm took the shift from before the branch, so
+    # after the branch it is pending only on the else arm's path.
+    ops = [
+        (u["op"], u["value"], [(c["readouts"], c["arm"]) for c in u["conditions"]])
+        for u in after["frame_updates"]
+    ]
+    assert ops == [
+        ("shift_phase", 0.25, [([readout], False)]),
+        ("shift_phase", 0.5, [([readout], True)]),
+        ("shift_frequency", 1.0e6, [([readout], False)]),
+    ]
+    assert all("length" not in e for e in program["events"] if e["kind"] == "wait")
+
+
+@pulse.kernel
+def decided_at_compile_time(q):
+    d, t = get_drive_line(q)
+    ro, rt = get_readout_line(q)
+    for k in range(3):
+        shift_phase(t, 0.1 * k)
+        drive(d, square(20, 0.1 * (k + 1)), t)
+    m = readout(ro, square(100, 0.05), rt)
+    sync(d, ro)
+    if m:
+        drive(d, square(20, 0.1), t)
+    wait(d, 16)
+    drive(d, square(20, 0.1), t)
+
+
+def test_a_program_computing_nothing_at_run_time_exports_no_run_time_keys():
+    events = pulse.compile(decided_at_compile_time).lower(Q[0]).export_controller()["events"]
+    keys = {"tone", "frame_updates", "phase_offset_rad", "length", "operands"}
+    assert all(not keys & e.keys() for e in events)
+    assert all("runtime" not in (e.get("waveform") or {}) for e in events)

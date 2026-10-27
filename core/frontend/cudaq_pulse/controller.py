@@ -44,6 +44,7 @@ exceptions. ``analyze`` does the same for one function on its own.
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
@@ -276,6 +277,33 @@ def _tree(nodes: Sequence[tuple[str, Sequence[float], Sequence[int]]]) -> dict[s
     return build(len(nodes) - 1)
 
 
+def _runtime_operands(
+    tree: dict[str, Any],
+    nodes: Sequence[tuple[str, Sequence[float], Sequence[int]]],
+    runtime: Sequence[Mapping[str, Any]],
+) -> None:
+    """Adds to each node of *tree* the expression of its operands computed
+    from a readout or an answer (``runtime``), by parameter name."""
+    computed: dict[int, dict[int, Any]] = {}
+    for item in runtime:
+        computed.setdefault(item["node"], {})[item["operand"]] = item["expr"]
+
+    def attach(index: int, node: dict[str, Any]) -> None:
+        name, numbers, children = nodes[index]
+        if index in computed:
+            names = _PARAMETERS.get(name.partition(":")[0])
+            if names is not None and len(names) != len(numbers):
+                names = None
+            node["runtime"] = {
+                (names[k] if names is not None else str(k)): expr
+                for k, expr in sorted(computed[index].items())
+            }
+        for child, sub in zip(children, node.get("of", ()), strict=True):
+            attach(child, sub)
+
+    attach(len(nodes) - 1, tree)
+
+
 def _amplitude(node: Mapping[str, Any] | None) -> complex | None:
     """The overall complex amplitude of a waveform, through scale and neg."""
     if node is None:
@@ -411,7 +439,7 @@ def _walk(
     # concrete module holds.
     module = lowered._concrete()
     with lowered._lock:
-        raw_lines, raw_events = module.controller_events()
+        raw_lines, raw_events, extras = module.controller_events()
     lines = [
         {"line": index, "role": role, "qudit": qudit}
         for index, (role, qudit) in enumerate(raw_lines)
@@ -479,6 +507,22 @@ def _walk(
                 event["wait"] = mode
                 event["timeout_ns"] = _number(timeout)
         events.append(event)
+    # What is known only at run time, on the few events that have any.
+    for index, tone, known in json.loads(extras) if extras else ():
+        event = events[index]
+        if "waveform" in known:
+            _runtime_operands(event["waveform"], raw_events[index][6], known["waveform"])
+        if tone >= 0:
+            event["tone"] = tone
+            event["frame_updates"] = known["frame_updates"]
+            if "phase_offset_rad" in known:
+                event["phase_offset_rad"] = known["phase_offset_rad"]
+        if "length" in known:
+            event["length"] = known["length"]
+            event["min_cycles"] = known.get("min_cycles")
+            event["max_cycles"] = known.get("max_cycles")
+        if "operands" in known:
+            event["operands"] = known["operands"]
     return lines, events
 
 

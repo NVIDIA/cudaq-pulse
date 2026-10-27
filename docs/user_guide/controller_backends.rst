@@ -82,7 +82,30 @@ Drives and readouts also have:
     The tone's frequency and its frame phase as the event starts, with every
     frame change and virtual Z before it applied and the phase a detuned
     tone gains over time, or ``null`` where the two arms of a branch leave
-    them different.
+    them different or a frame change is known only at run time.
+``tone``, ``frame_updates``, ``phase_offset_rad``
+    Only on a tone whose frame depends on run time: one with a frame change
+    computed from a readout or an answer, or made in a branch. The tone's
+    id (such tones are numbered in the order they are first played), and
+    the frame changes on that tone since its previous drive or readout, in
+    program order: each with ``op`` (``"shift_phase"``, ``"set_phase"``,
+    ``"shift_frequency"`` or ``"set_frequency"``), ``value`` (a number, or
+    an expression) and ``conditions``, the branch arms it is on the path of.
+    A controller tracks such a tone's frame itself, applying these instead
+    of reading ``frequency_hz`` and ``phase_rad``. A drive whose own phase
+    offset does not change the frame has ``phase_offset_rad``.
+
+A waveform parameter computed from a readout or an answer is ``null`` in
+``params`` and has an expression in the node's ``runtime``, by parameter
+name. An expression is ``{"const": x}``, ``{"answer": i, "result": k}``
+(result ``k`` of the answer event ``i``), ``{"readout": i}`` (the outcome of
+the readout event ``i``), ``{"op": name, "of": [...]}`` for an MLIR
+operation (``"arith.mulf"``, ``"arith.fptosi"``, ...; comparisons add
+``predicate``) over expressions, or ``{"unknown": name}``. A variable
+wait's ``duration_cycles`` is its least length, and it also has ``length``,
+the expression of its length in cycles, and ``min_cycles`` and
+``max_cycles``, its bounds. A program that computes nothing from its
+readouts and answers exports none of these keys.
 
 A sync has ``lines``, the lines it joins, and lasts 0 cycles: no event on
 those lines before it ends after its start, and none after it starts
@@ -91,8 +114,11 @@ before.
 A classical call is a ``submit``, while the request holds its link, and an
 ``answer``, when the answer is taken. Both have ``link`` and ``function``;
 a submit has ``measurements``, the readout events whose outcomes it sends,
-and an answer has ``wait``, ``"bounded"`` (by the latency budget),
-``"blocking"`` or ``"timeout"``, with ``timeout_ns``.
+and ``operands``, its arguments in the order of the function's argument
+descriptors (one per scalar or element, and one ``{"readout": i}`` per
+measurement), each an expression; an answer has ``wait``,
+``"bounded"`` (by the latency budget), ``"blocking"`` or ``"timeout"``,
+with ``timeout_ns``.
 
 Controller limits
 -----------------

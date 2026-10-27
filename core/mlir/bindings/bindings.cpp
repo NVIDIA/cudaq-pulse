@@ -23,6 +23,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <set>
 #include <thread>
 
 #include "mlir/Analysis/SliceAnalysis.h"
@@ -52,6 +53,7 @@
 #include "mlir/Transforms/Passes.h"
 
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/TargetSelect.h"
 
 #include <dlfcn.h>
@@ -232,6 +234,14 @@ inline double i2f(int64_t bits) {
   return d;
 }
 
+/// Whether a branch that yields a value of `type` can leave something known
+/// only at run time: anything but a line, a tone or a link.
+static bool yieldsValue(mlir::Type type) {
+  return !mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
+                    pulse::ToneType, pulse::QrefType, classical::LinkType>(
+      type);
+}
+
 /// The walk behind PulseModule::controller_events(): every timed op, sync
 /// and classical call once per loop iteration, both arms of every branch,
 /// with the frame of its tone and the branches it lies in.
@@ -327,6 +337,261 @@ struct ControllerWalk {
     return it->second;
   }
 
+  /// Whether `value` depends on a readout or an answer.
+  static bool fromRunTime(mlir::Value value) {
+    mlir::Operation *first = value.getDefiningOp();
+    if (!first || first->hasTrait<mlir::OpTrait::ConstantLike>())
+      return false;
+    llvm::SmallVector<mlir::Value> work{value};
+    llvm::DenseSet<mlir::Value> seen;
+    while (!work.empty()) {
+      mlir::Value v = work.pop_back_val();
+      if (!seen.insert(v).second)
+        continue;
+      mlir::Operation *def = v.getDefiningOp();
+      if (!def)
+        continue;
+      if (mlir::isa<pulse::ReadoutOp, classical::WaitOp, mlir::scf::IfOp>(def))
+        return true;
+      work.append(def->getOperands().begin(), def->getOperands().end());
+    }
+    return false;
+  }
+
+  /// Whether a measurement reaches anything but branch conditions and
+  /// submissions; true past a few ops, which only costs a slower walk.
+  static bool measurementIsUsed(mlir::Value value, int depth = 0) {
+    for (mlir::Operation *user : value.getUsers()) {
+      if (mlir::isa<mlir::scf::IfOp, classical::SubmitOp>(user))
+        continue;
+      if (depth == 4 ||
+          (!mlir::isa<pulse::IsSetOp, pulse::OutcomeOp>(user) &&
+           !mlir::isa<mlir::arith::ArithDialect>(user->getDialect())))
+        return true;
+      for (mlir::Value next : user->getResults())
+        if (measurementIsUsed(next, depth + 1))
+          return true;
+    }
+    return false;
+  }
+
+  /// The tones whose frame a controller tracks at run time: those with a
+  /// frame change computed from a readout or an answer, or made in a branch.
+  llvm::DenseSet<mlir::Operation *> tracked;
+  /// Whether any event can have something known only at run time: a tracked
+  /// tone, a classical call, or a measurement used other than as a branch
+  /// condition.
+  bool detail = false;
+
+  void scan(mlir::Operation *op) {
+    if (mlir::isa<pulse::ShiftPhaseOp, pulse::SetPhaseOp,
+                  pulse::ShiftFrequencyOp, pulse::SetFrequencyOp>(op)) {
+      if (fromRunTime(op->getOperand(1)) ||
+          op->getParentOfType<mlir::scf::IfOp>()) {
+        tracked.insert(toneRoots(op->getOperand(0)));
+        detail = true;
+      }
+    } else if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
+      // A virtual Z folded into a drive in an arm is a frame change there.
+      branch->walk([&](pulse::DriveOp drive) {
+        if (drive->hasAttr("frame_phase_offset")) {
+          tracked.insert(toneRoots(drive->getOperand(2)));
+          detail = true;
+        }
+      });
+    } else if (mlir::isa<classical::SubmitOp>(op)) {
+      detail = true;
+    } else if (mlir::isa<pulse::ReadoutOp>(op) && !detail) {
+      detail = measurementIsUsed(op->getResult(2));
+    }
+  }
+
+  // Each tracked tone's id, in the order tones are first played, and the
+  // frame changes on it since its latest drive or readout.
+  struct FrameUpdate {
+    uint64_t seq;
+    llvm::StringRef op;
+    std::string value; // JSON
+    std::vector<Condition> conditions;
+  };
+  // A JSON array of [event index, tone id or -1, object], open at its end.
+  // Its objects are written as they are known, keys in sorted order.
+  std::string extras;
+  llvm::DenseMap<mlir::Operation *, int64_t> toneIds;
+  std::map<mlir::Operation *, std::vector<FrameUpdate>> pending;
+  uint64_t nextUpdate = 0;
+
+  static void write(llvm::json::OStream &json, const Condition &condition) {
+    const auto &[id, arm, readouts, answers, test] = condition;
+    json.object([&] {
+      json.attributeArray("answers", [&] {
+        for (int64_t answer : answers)
+          json.value(answer);
+      });
+      json.attribute("arm", arm != 0);
+      json.attribute("branch", id);
+      json.attributeArray("readouts", [&] {
+        for (int64_t readout : readouts)
+          json.value(readout);
+      });
+      json.attribute("test", test);
+    });
+  }
+
+  static void write(llvm::json::OStream &json, const FrameUpdate &update) {
+    json.object([&] {
+      json.attributeArray("conditions", [&] {
+        for (const Condition &condition : update.conditions)
+          write(json, condition);
+      });
+      json.attribute("op", update.op);
+      json.attributeBegin("value");
+      json.rawValue(update.value);
+      json.attributeEnd();
+    });
+  }
+
+  /// How `value` is computed at run time: a constant, a result of an answer
+  /// event, or an op (by its MLIR name) over such expressions.
+  void expression(llvm::json::OStream &json, mlir::Value value, int depth = 0) {
+    double constant = number(value);
+    if (!std::isnan(constant))
+      return json.object([&] { json.attribute("const", constant); });
+    mlir::Operation *def = value.getDefiningOp();
+    if (!def)
+      return json.object([&] { json.attribute("unknown", "argument"); });
+    llvm::StringRef name = def->getName().getStringRef();
+    if (mlir::isa<pulse::ReadoutOp, classical::WaitOp>(def)) {
+      auto found = latest.find(def);
+      if (found == latest.end())
+        return json.object([&] { json.attribute("unknown", name); });
+      if (mlir::isa<pulse::ReadoutOp>(def))
+        return json.object([&] { json.attribute("readout", found->second); });
+      return json.object([&] {
+        json.attribute("answer", found->second);
+        json.attribute(
+            "result", static_cast<int64_t>(
+                          mlir::cast<mlir::OpResult>(value).getResultNumber()));
+      });
+    }
+    if (depth > 64 || def->getNumRegions() != 0 || def->getNumResults() != 1)
+      return json.object([&] { json.attribute("unknown", name); });
+    json.object([&] {
+      json.attributeArray("of", [&] {
+        for (mlir::Value operand : def->getOperands())
+          expression(json, operand, depth + 1);
+      });
+      json.attribute("op", name);
+      if (auto cmp = mlir::dyn_cast<mlir::arith::CmpFOp>(def))
+        json.attribute("predicate",
+                       mlir::arith::stringifyCmpFPredicate(cmp.getPredicate()));
+      else if (auto cmp = mlir::dyn_cast<mlir::arith::CmpIOp>(def))
+        json.attribute("predicate",
+                       mlir::arith::stringifyCmpIPredicate(cmp.getPredicate()));
+    });
+  }
+
+  /// A frame change's value, as JSON: its number, else its expression.
+  std::string frameValue(mlir::Value value) {
+    std::string text;
+    llvm::raw_string_ostream os(text);
+    llvm::json::OStream json(os);
+    double constant = number(value);
+    if (!std::isnan(constant))
+      json.value(constant);
+    else
+      expression(json, value);
+    return text;
+  }
+
+  void frameUpdate(mlir::Operation *root, llvm::StringRef op,
+                   std::string value) {
+    pending[root].push_back({nextUpdate++, op, std::move(value), branches});
+  }
+
+  // The run-time work of the walk stays out of line, so that the per-op
+  // path of a walk without tracked tones or detail is unchanged.
+
+  /// A frame change `op` (named `name`), on a tone that may be tracked.
+  LLVM_ATTRIBUTE_NOINLINE void frameChange(mlir::Operation *op,
+                                           llvm::StringRef name) {
+    if (mlir::Operation *root = toneRoots(op->getOperand(0));
+        tracked.contains(root))
+      frameUpdate(root, name, frameValue(op->getOperand(1)));
+  }
+
+  // The frame changes pending before each open branch, and after its then
+  // arm.
+  std::vector<std::pair<decltype(pending), decltype(pending)>> pendingArms;
+
+  LLVM_ATTRIBUTE_NOINLINE void enterBranch() {
+    pendingArms.emplace_back(pending, decltype(pending){});
+  }
+
+  LLVM_ATTRIBUTE_NOINLINE void enterElse() {
+    auto &[before, then] = pendingArms.back();
+    then = std::move(pending);
+    pending = before;
+  }
+
+  LLVM_ATTRIBUTE_NOINLINE void leaveBranch(const Condition &arms) {
+    auto [before, then] = std::move(pendingArms.back());
+    pendingArms.pop_back();
+    mergePending(before, then, arms);
+  }
+
+  /// The frame changes pending after a branch: those of both arms, by
+  /// program order. One pending before the branch that a drive or readout
+  /// in one arm took is pending only on the other arm's path.
+  void
+  mergePending(std::map<mlir::Operation *, std::vector<FrameUpdate>> &before,
+               std::map<mlir::Operation *, std::vector<FrameUpdate>> &then,
+               const Condition &branch) {
+    std::set<mlir::Operation *> roots;
+    for (auto *side : {&before, &then, &pending})
+      for (auto &entry : *side)
+        roots.insert(entry.first);
+    auto seqs = [](std::map<mlir::Operation *, std::vector<FrameUpdate>> &side,
+                   mlir::Operation *root) {
+      std::set<uint64_t> out;
+      auto found = side.find(root);
+      if (found != side.end())
+        for (auto &update : found->second)
+          out.insert(update.seq);
+      return out;
+    };
+    for (mlir::Operation *root : roots) {
+      std::set<uint64_t> old = seqs(before, root), inThen = seqs(then, root),
+                         inElse = seqs(pending, root);
+      std::map<uint64_t, FrameUpdate> merged;
+      auto take =
+          [&](std::map<mlir::Operation *, std::vector<FrameUpdate>> &side,
+              bool arm, const std::set<uint64_t> &other) {
+            auto found = side.find(root);
+            if (found == side.end())
+              return;
+            for (auto &update : found->second) {
+              if (merged.count(update.seq))
+                continue;
+              if (old.count(update.seq) && !other.count(update.seq)) {
+                update.conditions.push_back(branch);
+                std::get<1>(update.conditions.back()) = arm;
+              }
+              merged.emplace(update.seq, std::move(update));
+            }
+          };
+      take(then, true, inElse);
+      take(pending, false, inThen);
+      std::vector<FrameUpdate> out;
+      for (auto &[seq, update] : merged)
+        out.push_back(std::move(update));
+      if (out.empty())
+        pending.erase(root);
+      else
+        pending[root] = std::move(out);
+    }
+  }
+
   static int64_t waveform(mlir::Value value, std::vector<WaveformNode> &nodes) {
     mlir::Operation *def = value.getDefiningOp();
     if (!def) {
@@ -351,6 +616,32 @@ struct ControllerWalk {
       name += ":" + custom.getValue().str();
     nodes.emplace_back(name, std::move(numbers), std::move(children));
     return static_cast<int64_t>(nodes.size()) - 1;
+  }
+
+  /// The operands of `value`'s waveform nodes (numbered as `waveform` does,
+  /// `nodes` its result) computed from a readout or an answer, as (node,
+  /// operand index, operand).
+  static void
+  runTimeOperands(mlir::Value value, const std::vector<WaveformNode> &nodes,
+                  int64_t &next,
+                  std::vector<std::tuple<int64_t, int64_t, mlir::Value>> &out) {
+    mlir::Operation *def = value.getDefiningOp();
+    if (!def) {
+      ++next;
+      return;
+    }
+    llvm::SmallVector<std::pair<int64_t, mlir::Value>, 4> numbers;
+    for (mlir::Value operand : def->getOperands()) {
+      if (mlir::isa<pulse::WaveformType>(operand.getType()))
+        runTimeOperands(operand, nodes, next, out);
+      else
+        numbers.emplace_back(static_cast<int64_t>(numbers.size()), operand);
+    }
+    int64_t node = next++;
+    const std::vector<double> &known = std::get<1>(nodes[node]);
+    for (auto &[index, operand] : numbers)
+      if (std::isnan(known[index]) && fromRunTime(operand))
+        out.emplace_back(node, index, operand);
   }
 
   /// The readout events and answer events `value` is computed from.
@@ -383,11 +674,16 @@ struct ControllerWalk {
     return allocation ? lineIndex.lookup(allocation) : -1;
   }
 
+  // The walk is compiled twice: RunTime is false for a module that computes
+  // nothing at run time, so that its walk has none of the run-time work.
+
+  template <bool RunTime>
   void block(mlir::Block &body) {
     for (mlir::Operation &op : body)
-      step(&op);
+      step<RunTime>(&op);
   }
 
+  template <bool RunTime>
   void timed(mlir::Operation *op) {
     mlir::Operation *allocation = trace(op->getOperand(0));
     int64_t qubit = -1;
@@ -430,11 +726,116 @@ struct ControllerWalk {
       line->second = std::max(*line->second, *start + *duration);
     else
       line->second = std::nullopt;
+    if constexpr (RunTime)
+      if (detail)
+        runTime(op, nodes);
     result.emplace_back(
         op->getName().stripDialect().str(), lineOf(allocation), qubit, start,
         duration, std::vector<int64_t>(iteration.begin(), iteration.end()),
         std::move(nodes), frequency, phase, branches, std::vector<int64_t>{},
         std::vector<int64_t>{}, std::string(), std::string(), kUnknown);
+  }
+
+  /// What the next event, a drive, readout or wait, has that is known only
+  /// at run time.
+  LLVM_ATTRIBUTE_NOINLINE void runTime(mlir::Operation *op,
+                                       const std::vector<WaveformNode> &nodes) {
+    if (mlir::isa<pulse::WaitOp>(op)) {
+      if (!fromRunTime(op->getOperand(1)) ||
+          !op->hasAttr("pulse.variable_wait"))
+        return;
+      extra(-1, [&](llvm::json::OStream &json) {
+        json.attributeBegin("length");
+        expression(json, op->getOperand(1));
+        json.attributeEnd();
+        if (auto bound =
+                op->getAttrOfType<mlir::IntegerAttr>("pulse.max_cycles"))
+          json.attribute("max_cycles", bound.getInt());
+        if (auto bound =
+                op->getAttrOfType<mlir::IntegerAttr>("pulse.min_cycles"))
+          json.attribute("min_cycles", bound.getInt());
+      });
+      return;
+    }
+    std::vector<std::tuple<int64_t, int64_t, mlir::Value>> operands;
+    bool unknown = llvm::any_of(nodes, [](const WaveformNode &node) {
+      return llvm::any_of(std::get<1>(node),
+                          [](double v) { return std::isnan(v); });
+    });
+    if (unknown) {
+      int64_t next = 0;
+      runTimeOperands(op->getOperand(1), nodes, next, operands);
+    }
+    int64_t tone = -1;
+    std::vector<FrameUpdate> updates;
+    std::optional<double> offset;
+    mlir::Operation *root =
+        tracked.empty() ? nullptr : toneRoots(op->getOperand(2));
+    if (root && tracked.contains(root)) {
+      tone = toneIds.try_emplace(root, static_cast<int64_t>(toneIds.size()))
+                 .first->second;
+      if (mlir::isa<pulse::DriveOp>(op)) {
+        if (auto shift =
+                op->getAttrOfType<mlir::FloatAttr>("frame_phase_offset"))
+          frameUpdate(root, "shift_phase", text(shift.getValueAsDouble()));
+        if (auto own = op->getAttrOfType<mlir::FloatAttr>("phase_offset"))
+          offset = own.getValueAsDouble();
+      }
+      if (auto found = pending.find(root); found != pending.end()) {
+        updates = std::move(found->second);
+        pending.erase(found);
+      }
+    }
+    if (tone < 0 && operands.empty())
+      return;
+    extra(tone, [&](llvm::json::OStream &json) {
+      if (tone >= 0)
+        json.attributeArray("frame_updates", [&] {
+          for (const FrameUpdate &update : updates)
+            write(json, update);
+        });
+      if (offset)
+        json.attribute("phase_offset_rad", *offset);
+      if (!operands.empty())
+        json.attributeArray("waveform", [&] {
+          for (auto &[node, index, operand] : operands)
+            json.object([&] {
+              json.attributeBegin("expr");
+              expression(json, operand);
+              json.attributeEnd();
+              json.attribute("node", node);
+              json.attribute("operand", index);
+            });
+        });
+    });
+  }
+
+  /// The operands of a submission, in argument order.
+  LLVM_ATTRIBUTE_NOINLINE void submission(classical::SubmitOp request) {
+    extra(-1, [&](llvm::json::OStream &json) {
+      json.attributeArray("operands", [&] {
+        for (mlir::Value arg : request.getArgs())
+          expression(json, arg);
+      });
+    });
+  }
+
+  static std::string text(double number) {
+    std::string out;
+    llvm::raw_string_ostream os(out);
+    llvm::json::OStream(os).value(number);
+    return out;
+  }
+
+  /// Records what the next event has that is known only at run time: the
+  /// attributes `body` writes.
+  template <typename Body>
+  void extra(int64_t tone, Body body) {
+    llvm::raw_string_ostream os(extras);
+    os << (extras.empty() ? "[[" : ",[") << result.size() << ',' << tone << ',';
+    llvm::json::OStream json(os);
+    json.object([&] { body(json); });
+    os << ']';
   }
 
   void sync(pulse::SyncOp op) {
@@ -465,6 +866,7 @@ struct ControllerWalk {
 
   /// A submission (with the readout events whose measurements it sends) or
   /// the wait for its answer, on its link.
+  template <bool RunTime>
   void call(mlir::Operation *op) {
     bool submit = mlir::isa<classical::SubmitOp>(op);
     std::vector<int64_t> refs, answers;
@@ -484,6 +886,9 @@ struct ControllerWalk {
         timeoutNs = timeout.getValueAsDouble();
       }
     }
+    if constexpr (RunTime)
+      if (auto request = mlir::dyn_cast<classical::SubmitOp>(op))
+        submission(request);
     result.emplace_back(
         submit ? "submit" : "answer",
         classical::intAttr(op, "classical.device"), -1,
@@ -494,10 +899,11 @@ struct ControllerWalk {
         std::move(mode), timeoutNs);
   }
 
+  template <bool RunTime>
   void step(mlir::Operation *op) {
     llvm::StringRef name = op->getName().getStringRef();
     if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op)) {
-      timed(op);
+      timed<RunTime>(op);
       return;
     }
     if (auto barrier = mlir::dyn_cast<pulse::SyncOp>(op)) {
@@ -505,13 +911,16 @@ struct ControllerWalk {
       return;
     }
     if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op)) {
-      call(op);
+      call<RunTime>(op);
       return;
     }
     if (name == "pulse.shift_phase" || name == "pulse.set_phase" ||
         name == "pulse.shift_frequency" || name == "pulse.set_frequency") {
       double value = number(op->getOperand(1));
       Frame &frame = frameOf(op->getOperand(0));
+      if constexpr (RunTime)
+        if (!tracked.empty())
+          frameChange(op, name.drop_front(6));
       if (name == "pulse.shift_phase")
         frame.phase += value;
       else if (name == "pulse.set_phase")
@@ -527,7 +936,7 @@ struct ControllerWalk {
       iteration.push_back(0);
       for (int64_t k = 0; k < trips; ++k) {
         iteration.back() = k;
-        block(*loop.getBody());
+        block<RunTime>(*loop.getBody());
       }
       iteration.pop_back();
       return;
@@ -546,16 +955,23 @@ struct ControllerWalk {
       int64_t id = nextBranch++;
       auto framesBefore = frames;
       auto reachedBefore = reached;
+      bool tracking = RunTime && !tracked.empty();
+      if (tracking)
+        enterBranch();
       branches.emplace_back(id, 1, std::move(readouts), std::move(answers),
                             std::move(test));
-      block(*branch.thenBlock());
+      block<RunTime>(*branch.thenBlock());
       auto framesThen = std::move(frames);
       auto reachedThen = std::move(reached);
       frames = std::move(framesBefore);
       reached = std::move(reachedBefore);
+      if (tracking)
+        enterElse();
       std::get<1>(branches.back()) = 0;
       if (!branch.getElseRegion().empty())
-        block(*branch.elseBlock());
+        block<RunTime>(*branch.elseBlock());
+      if (tracking)
+        leaveBranch(branches.back());
       branches.pop_back();
       mergeFrames(framesThen);
       for (auto &[allocation, time] : reachedThen) {
@@ -571,7 +987,7 @@ struct ControllerWalk {
     }
     for (mlir::Region &region : op->getRegions())
       for (mlir::Block &nested : region)
-        block(nested);
+        block<RunTime>(nested);
   }
 
   /// The frames after a branch: those both arms leave the same, else
@@ -759,7 +1175,7 @@ public:
         pulse::createPulseLowerSelectsPass(runtime));
     programs_.clear();
     runPipeline(pm, *module_, "lowering selects failed");
-    return keepsSelects(*module_);
+    return keepsSelects();
   }
 
   /// This module, scheduled, with every op that reads a run-time select in
@@ -871,8 +1287,9 @@ public:
   }
 
   using ControllerLine = std::tuple<std::string, int64_t>;
-  using ControllerProgram = std::tuple<std::vector<ControllerLine>,
-                                       std::vector<ControllerWalk::Event>>;
+  using ControllerProgram =
+      std::tuple<std::vector<ControllerLine>,
+                 std::vector<ControllerWalk::Event>, std::string>;
 
   /// The lines, (role, qubit) in allocation order, and the timed ops of
   /// `events()`, in the same order, every sync and every classical call,
@@ -893,12 +1310,27 @@ public:
   /// its link: the references of a submission are the readout events whose
   /// measurements it sends, the callee is its function, and an answer's wait is
   /// "bounded", "blocking" or "timeout", with its timeout in ns (NaN for
-  /// none).
+  /// none). Then what is known only at run time, as a JSON array of [event
+  /// index, tone id or -1, object] for the events that have any (empty text
+  /// when none has). A drive or readout on a tone whose frame depends on run
+  /// time (a frame change computed from a readout or an answer, or made in a
+  /// branch) has its tone's id and the frame changes on the tone since its
+  /// latest drive or readout; a drive or readout has the expression of each
+  /// waveform operand computed from a readout or an answer; a variable wait
+  /// has the expression of its length and its bounds; a submission has the
+  /// expression of each argument.
   ControllerProgram controller_events() {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
+    return runTime_ ? controllerEvents<true>() : controllerEvents<false>();
+  }
+
+  template <bool RunTime>
+  ControllerProgram controllerEvents() {
     ControllerWalk walk(clock());
     std::vector<ControllerLine> lines;
     module_->walk([&](mlir::Operation *op) {
+      if constexpr (RunTime)
+        walk.scan(op);
       if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
         return;
       if (!walk.lineIndex
@@ -911,8 +1343,10 @@ public:
       lines.emplace_back(
           mlir::isa<pulse::GetDriveLineOp>(op) ? "drive" : "readout", qubit);
     });
-    walk.block(*module_->getBody());
-    return {std::move(lines), std::move(walk.result)};
+    walk.block<RunTime>(*module_->getBody());
+    if (!walk.extras.empty())
+      walk.extras += ']';
+    return {std::move(lines), std::move(walk.result), std::move(walk.extras)};
   }
 
   /// (function, link, iteration, submit start, submit duration, due,
@@ -1419,6 +1853,7 @@ public:
     foldBinding(clonedModule, bound);
     auto owning = mlir::OwningOpRef<mlir::ModuleOp>(clonedModule);
     PulseModule result(ctx_, std::move(owning));
+    result.runTime_ = runTime_;
     result.keepSource();
     mlir::PassManager pm(ctx_.get());
     addSchedule(pm, *result.module_, true, schedule, maxDrives, maxReadouts,
@@ -1682,17 +2117,36 @@ private:
   /// scheduled, if it had blocks, else the module.
   mlir::ModuleOp source() { return source_ ? *source_ : *module_; }
 
-  static bool keepsSelects(mlir::ModuleOp module) {
-    bool kept = false;
-    module.walk([&](mlir::arith::SelectOp) {
-      kept = true;
-      return mlir::WalkResult::interrupt();
+  /// Whether the module keeps a select; notes (in runTime_) whether it
+  /// computes something at run time or changes a frame in a branch.
+  bool keepsSelects() {
+    bool kept = false, runTime = false;
+    module_->walk([&](mlir::Operation *op) {
+      if (mlir::isa<mlir::arith::SelectOp>(op)) {
+        kept = true;
+        return mlir::WalkResult::interrupt();
+      }
+      if (mlir::isa<pulse::ShiftPhaseOp, pulse::SetPhaseOp,
+                    pulse::ShiftFrequencyOp, pulse::SetFrequencyOp>(op))
+        runTime |= op->getParentOfType<mlir::scf::IfOp>() != nullptr;
+      else if (mlir::isa<classical::SubmitOp>(op))
+        runTime = true;
+      else if (mlir::isa<mlir::scf::IfOp>(op))
+        runTime |= llvm::any_of(op->getResultTypes(), yieldsValue);
+      return mlir::WalkResult::advance();
     });
+    runTime_ = kept || runTime;
     return kept;
   }
 
+  friend class PulseModuleBuilder;
+
   std::shared_ptr<mlir::MLIRContext> ctx_;
   mlir::OwningOpRef<mlir::ModuleOp> module_;
+  // Whether the program can compute something at run time or change a frame
+  // in a branch: false only where the builder saw neither, so that
+  // controller_events() looks for them only where there can be any.
+  bool runTime_ = true;
   // The module before scheduling, while it has schedule blocks (see
   // keepSource).
   mlir::OwningOpRef<mlir::ModuleOp> source_;
@@ -2045,6 +2499,11 @@ public:
     // take them over when it closes.
     std::vector<std::pair<std::string, std::string>> blocks;
     llvm::DenseMap<mlir::Value, llvm::SmallVector<int64_t, 1>> blockVids;
+    // Whether the program computes something at run time (a select, a
+    // classical call, a value an if yields) or changes a frame in a branch;
+    // `openIfs` counts the ifs being built.
+    bool runTime = false;
+    int64_t openIfs = 0;
 
     auto bind = [&](int64_t vid, mlir::Value v) {
       ssa[vid] = v;
@@ -2276,6 +2735,7 @@ public:
         region.linksBefore = links;
         builder_->setInsertionPointToEnd(region.body.get());
         regions.push_back(std::move(region));
+        ++openIfs;
         break;
       }
       case kOpElse: {
@@ -2296,6 +2756,7 @@ public:
           throw std::invalid_argument("packed: malformed if end");
         Region region = std::move(regions.back());
         regions.pop_back();
+        --openIfs;
         builder_->setInsertionPointToEnd(region.parent);
         const int64_t n = p[0];
         llvm::SmallVector<mlir::Value> thenValues, elseValues;
@@ -2304,6 +2765,7 @@ public:
           thenValues.push_back(look(p[1 + i]));
           elseValues.push_back(look(p[1 + n + i]));
           types.push_back(thenValues.back().getType());
+          runTime |= yieldsValue(types.back());
         }
         // A link either arm sent on leaves the branch as a result.
         const auto &thenLinks = region.elseBody ? region.linksThen : links;
@@ -2548,6 +3010,7 @@ public:
               "packed: a select's values must have one type");
         bind(p[0], mlir::arith::SelectOp::create(*builder_, loc, condition,
                                                  then, other));
+        runTime = true;
         break;
       }
 
@@ -2774,6 +3237,7 @@ public:
         auto spOp = pulse::ShiftPhaseOp::create(*builder_, loc, toneTy,
                                                 look(p[0]), phaseVal);
         bind(p[1], spOp.getResult());
+        runTime |= openIfs > 0;
         break;
       }
 
@@ -2788,6 +3252,7 @@ public:
         auto spOp = pulse::SetPhaseOp::create(*builder_, loc, toneTy,
                                               look(p[0]), phaseVal);
         bind(p[1], spOp.getResult());
+        runTime |= openIfs > 0;
         break;
       }
 
@@ -2802,6 +3267,7 @@ public:
         auto sfOp = pulse::ShiftFrequencyOp::create(*builder_, loc, toneTy,
                                                     look(p[0]), fVal);
         bind(p[1], sfOp.getResult());
+        runTime |= openIfs > 0;
         break;
       }
 
@@ -2816,6 +3282,7 @@ public:
         auto sfOp = pulse::SetFrequencyOp::create(*builder_, loc, toneTy,
                                                   look(p[0]), fVal);
         bind(p[1], sfOp.getResult());
+        runTime |= openIfs > 0;
         break;
       }
 
@@ -2879,6 +3346,7 @@ public:
             mlir::FlatSymbolRefAttr::get(callable.getSymNameAttr()), args);
         links[device] = submit.getUpdatedLink();
         bind(p[1], submit.getFuture());
+        runTime = true;
         break;
       }
       case kOpClassicalWait: {
@@ -2939,7 +3407,9 @@ public:
 
     mlir::func::ReturnOp::create(*builder_, loc);
     auto owningModule = mlir::OwningOpRef<mlir::ModuleOp>(module);
-    return PulseModule(ctx_, std::move(owningModule));
+    PulseModule result(ctx_, std::move(owningModule));
+    result.runTime_ = runTime;
+    return result;
   }
 
 private:
