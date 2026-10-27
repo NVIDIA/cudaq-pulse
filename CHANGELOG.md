@@ -159,6 +159,9 @@ behavior may change in any 0.x release.
   `cudaq_pulse.targets.TargetDescription`; `pulse.Target` names the shipped
   targets: a 17-qubit transmon device built from Krinner et al., Nature 605,
   669 (2022), and Rydberg chain and square arrays (compile only).
+  A `Coupling`'s gate fields (`gate_type`, `gate_duration_ns`,
+  `gate_buffer_ns`, `gate_fidelity`) default to `None`, unspecified; the
+  Krinner target gives its published CZ values.
 - **Calibrations and the transmon model.** `cudaq_pulse.targets.Calibration`
   loads fitted values, each with its kind, source, uncertainty and cooldown,
   apart from the published target, and a device config takes `"calibration"`

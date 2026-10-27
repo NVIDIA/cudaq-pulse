@@ -116,8 +116,6 @@ class RydbergTarget:
                         qubit_b=aj.index,
                         coupling_strength_hz=v * 1e6,
                         gate_type="rydberg_blockade",
-                        gate_duration_ns=0.0,
-                        gate_fidelity=1.0,
                     )
                 )
 

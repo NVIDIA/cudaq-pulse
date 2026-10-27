@@ -31,12 +31,16 @@ target = transmon_krinner_17q()
 index = {q.label: q.index for q in target.qubits.values()}
 auxiliary, data = index["X1"], index["D2"]
 coupling = next(c for c in target.couplings if {c.qubit_a, c.qubit_b} == {auxiliary, data})
+# The Krinner target gives each CZ's published duration; a generic Coupling
+# leaves it unspecified (None).
+cz_ns = coupling.gate_duration_ns
+assert cz_ns is not None
 print(
     f"X1-D2: J_qq/2pi = {coupling.coupling_strength_hz / 1e6:.2f} MHz "
     f"(|11>-|20>: {coupling.gate_params['coupling_11_20_hz'] / 1e6:.0f} MHz), CZ step "
     f"{coupling.gate_params['cz_step']:.0f} at "
     f"{coupling.gate_params['interaction_frequency_hz'] / 1e9:.2f} GHz, "
-    f"{coupling.gate_duration_ns:.0f} ns"
+    f"{cz_ns:.0f} ns"
 )
 
 # The published 40 ns, sigma = 10 ns pulse; amplitudes are rates in rad/ns.
@@ -46,7 +50,7 @@ duration_ns, sigma_ns = drive_params["x_dur"], drive_params["x_sigma"]
 area_ns = sigma_ns * math.sqrt(2 * math.pi) * math.erf(duration_ns / (2 * math.sqrt(2) * sigma_ns))
 duration, sigma = round(duration_ns * clock_ghz), sigma_ns * clock_ghz
 pi_amplitude = math.pi / area_ns
-cz_slot = round(coupling.gate_duration_ns * clock_ghz)
+cz_slot = round(cz_ns * clock_ghz)
 
 
 @pulse.kernel

@@ -16,7 +16,13 @@ import statistics
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Coupling, Qubit, TargetDescription, transmon_krinner_17q
+from cudaq_pulse.targets import (
+    Coupling,
+    Qubit,
+    TargetDescription,
+    transmon_generic,
+    transmon_krinner_17q,
+)
 from cudaq_pulse.targets import _krinner17 as _k
 from cudaq_pulse.targets.transmon import krinner_idle_zz_hz
 
@@ -120,7 +126,9 @@ def test_cz_schedule_runs_three_disjoint_gates_per_step(target):
 
 
 def test_gate_errors_reproduce_the_published_statistics(target):
-    errors = [100 * (1 - c.gate_fidelity) for c in target.couplings]
+    fidelities = [c.gate_fidelity for c in target.couplings]
+    assert None not in fidelities
+    errors = [100 * (1 - f) for f in fidelities if f is not None]
     # 1.5(1.0) % mean, 0.6 % best and 5.4 % worst (App. B, Fig. 5).
     assert statistics.mean(errors) == pytest.approx(1.5, abs=0.1)
     assert min(errors) == pytest.approx(0.6) and max(errors) == pytest.approx(5.4)
@@ -227,3 +235,15 @@ def test_the_time_step_resolves_the_fastest_coupled_detuning():
 def x90_alone(q):
     d, t = get_drive_line(q)
     drive(d, square(40, 0.02), t)
+
+
+def test_a_generic_coupling_makes_no_gate_claims():
+    coupling = Coupling(0, 1, coupling_strength_hz=5e6)
+    assert coupling.gate_type is None
+    assert coupling.gate_duration_ns is None
+    assert coupling.gate_buffer_ns is None
+    assert coupling.gate_fidelity is None
+    assert all(
+        c.gate_duration_ns is None and c.gate_fidelity is None
+        for c in transmon_generic(3).couplings
+    )

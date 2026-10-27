@@ -69,15 +69,21 @@ class Coupling:
 
     ``coupling_strength_hz`` is g / 2 pi of the exchange coupling
     g (a^dagger b + a b^dagger).
+
+    ``gate_type``, ``gate_duration_ns``, ``gate_buffer_ns`` (the idle time
+    around the gate) and ``gate_fidelity`` describe the edge's two-qubit gate.
+    Each defaults to ``None``: the target does not specify it. Neither
+    compilation nor simulation reads them; ``transmon_krinner_17q`` gives the
+    published values.
     """
 
     qubit_a: int
     qubit_b: int
     coupling_strength_hz: float
-    gate_type: str = "cz"
-    gate_duration_ns: float = 98.0
-    gate_buffer_ns: float = 15.0
-    gate_fidelity: float = 0.985
+    gate_type: str | None = None
+    gate_duration_ns: float | None = None
+    gate_buffer_ns: float | None = None
+    gate_fidelity: float | None = None
     gate_params: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

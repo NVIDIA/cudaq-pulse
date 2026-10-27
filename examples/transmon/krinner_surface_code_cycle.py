@@ -42,7 +42,9 @@ for c in target.couplings:
     steps.setdefault(int(c.gate_params["cz_step"]), []).append((c.qubit_a, c.qubit_b))
 z_steps = [[steps[1], steps[2]], [steps[3], steps[4]]]
 x_steps = [[steps[5], steps[6]], [steps[7], steps[8]]]
-cz_slot = round(max(c.gate_duration_ns for c in target.couplings) * clock_ghz)
+cz_slot = round(
+    max(c.gate_duration_ns for c in target.couplings if c.gate_duration_ns is not None) * clock_ghz
+)
 
 for s in sorted(steps):
     print(f"CZ step {s}: " + ", ".join(f"{labels[a]}-{labels[d]}" for a, d in steps[s]))
