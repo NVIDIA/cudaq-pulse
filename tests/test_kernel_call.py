@@ -471,6 +471,65 @@ def test_simulating_new_float_values_shares_the_module():
     assert b > a > 0
 
 
+def test_lowering_the_same_values_again_specializes_once():
+    q = _device().qudit_handles[0]
+    first = rabi.lower(q, 0.3)
+    program = first.export_controller()
+    again = rabi.lower(q, 0.3)
+    assert again is not first
+    assert again._concrete() is first._concrete()
+    assert again.export_controller() == program
+    assert rabi.lower(q, 0.4)._concrete() is not first._concrete()
+
+
+def test_specialized_modules_are_told_apart_by_their_bits():
+    q = _device().qudit_handles[0]
+    assert rabi.lower(q, 0.0)._concrete() is not rabi.lower(q, -0.0)._concrete()
+    nan = float("nan")
+    assert rabi.lower(q, nan)._concrete() is rabi.lower(q, nan)._concrete()
+
+
+@pytest.fixture
+def specialized_cache():
+    """The native cache of rabi's module, its bounds restored afterwards."""
+    module = rabi.lower(_device().qudit_handles[0], 1.0).generic._module
+    _, entries, ops = module.specialized_cache()
+    yield module.specialized_cache
+    module.specialized_cache(entries, ops)
+
+
+def test_the_specialized_modules_kept_are_bounded(specialized_cache):
+    q = _device().qudit_handles[0]
+    kept = specialized_cache()[1]
+    first = rabi.lower(q, 1.0)
+    first._concrete()
+    for k in range(2 * kept):
+        rabi.lower(q, 1.0 + k)._concrete()
+        # The most recently used survives other values.
+        rabi.lower(q, 1.0)._concrete()
+    assert specialized_cache()[0] == kept
+    assert rabi.lower(q, 1.0)._concrete() is first._concrete()
+    specialized_cache(entries=2)
+    for k in range(8):
+        rabi.lower(q, 2.0 + k)._concrete()
+    assert specialized_cache()[0] == 2
+
+
+def test_a_large_module_keeps_fewer_specialized_modules(specialized_cache):
+    q = _device().qudit_handles[0]
+    specialized_cache(ops=1)
+    for k in range(8):
+        rabi.lower(q, 2.0 + k)._concrete()
+    assert specialized_cache()[0] == 1
+
+
+def test_a_module_changed_in_place_is_not_shared():
+    q = _device().qudit_handles[0]
+    first = rabi.lower(q, 5.0)._concrete()
+    first.schedule("asap")
+    assert rabi.lower(q, 5.0)._concrete() is not first
+
+
 def test_concurrent_simulations_of_one_specialization_agree():
     from concurrent.futures import ThreadPoolExecutor
 

@@ -21,7 +21,7 @@ import math
 import struct
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from fractions import Fraction
@@ -603,6 +603,17 @@ _MAX_WAIT_CYCLES = MAX_CYCLES
 
 # Values whose controller limits were checked, kept per module.
 _ACCEPTED_CALLS = 4096
+_PACKERS: dict[int, Callable[..., bytes]] = {}
+
+
+def _bits(values: tuple[float, ...]) -> bytes:
+    """*values* as a key, by their bits, so that -0.0 and 0.0, or two NaNs,
+    are told apart."""
+    try:
+        return _PACKERS[len(values)](*values)
+    except KeyError:
+        pack = _PACKERS[len(values)] = struct.Struct(f"{len(values)}d").pack
+        return pack(*values)
 
 
 class _WaitLength:
@@ -835,6 +846,11 @@ class Lowered:
     unpickled without compiling again, in any process of the build that
     compiled it; another build raises ``UnsupportedError``. A call's view
     pickles its values with its generic module.
+
+    The module with a call's values substituted is built once per distinct
+    values and shared by every view with them, so exporting or lowering the
+    same call again does not build it again. The latest few are kept per
+    module, fewer for a large one.
     """
 
     __slots__ = (
@@ -985,8 +1001,8 @@ class Lowered:
         return not self.scheduled or (self.waits is not None and bool(self.arguments))
 
     def _concrete(self) -> Any:
-        """The module with the values substituted (a private copy), or the
-        module itself when there are no values."""
+        """The module with the values substituted, shared by every view with
+        the same values, or the module itself when there are no values."""
         if not self.arguments:
             return self._module
         if self._concrete_module is None:
@@ -1236,7 +1252,7 @@ class _CheckedPerCall(Lowered):
 
     def bind(self, values: Sequence[float]) -> Lowered:
         view = super().bind(values)
-        key = struct.pack(f"{len(view.arguments)}d", *view.arguments)
+        key = _bits(view.arguments)
         if key not in self._accepted:
             from .controller import ControllerLimitError, _call_violations
 

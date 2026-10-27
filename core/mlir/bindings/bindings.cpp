@@ -15,6 +15,8 @@
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
 
+#include <algorithm>
+#include <atomic>
 #include <bit>
 #include <charconv>
 #include <cmath>
@@ -25,6 +27,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -1582,6 +1585,7 @@ public:
   /// patterns: one walk of the module, to where none of them applies.
   void run_passes(const std::vector<std::string> &pipeline) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
+    changed();
     mlir::PassManager pm(ctx_.get(), mlir::ModuleOp::getOperationName(),
                          mlir::OpPassManager::Nesting::Implicit);
     llvm::SmallVector<const pulse::RewriteStage *, 4> stages;
@@ -1695,6 +1699,7 @@ public:
                 int64_t maxReadouts = 2, int64_t readoutLatency = 0,
                 int64_t switchPenalty = 0) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
+    changed();
     mlir::PassManager pm(ctx_.get());
     addSchedule(pm, *module_, true, policy, maxDrives, maxReadouts,
                 readoutLatency, switchPenalty);
@@ -2360,6 +2365,7 @@ public:
   /// attributes.
   void set_attributes(const std::string &dictionary) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
+    changed();
     auto attr = mlir::parseAttribute(dictionary, ctx_.get());
     auto entries = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(attr);
     if (!entries)
@@ -2379,6 +2385,102 @@ public:
     return names;
   }
 
+  /// specialize(), built once per distinct arguments and shared: the latest
+  /// few are kept, while neither this module nor the one kept has changed
+  /// in place since. Called with the GIL held; it is released to build.
+  nb::object specialize_shared(const std::vector<double> &f64_args,
+                               const std::vector<int64_t> &i64_args,
+                               const std::string &schedule, int64_t maxDrives,
+                               int64_t maxReadouts, int64_t readoutLatency,
+                               int64_t switchPenalty) {
+    // By bits, so that -0.0 and 0.0, or two NaNs, are told apart.
+    std::string key;
+    key.reserve(8 * (f64_args.size() + i64_args.size() + 6) + schedule.size());
+    auto put = [&key](const void *data, size_t size) {
+      key.append(static_cast<const char *>(data), size);
+    };
+    size_t counts[2] = {f64_args.size(), i64_args.size()};
+    int64_t options[4] = {maxDrives, maxReadouts, readoutLatency,
+                          switchPenalty};
+    put(counts, sizeof counts);
+    put(f64_args.data(), 8 * f64_args.size());
+    put(i64_args.data(), 8 * i64_args.size());
+    put(options, sizeof options);
+    key += schedule;
+
+    uint64_t version = version_.load();
+    // Released outside the lock, before building, so that their memory can
+    // be reused.
+    std::vector<nb::object> dropped;
+    {
+      std::lock_guard<std::mutex> guard(specialized_.mutex);
+      auto &entries = specialized_.entries;
+      for (auto it = entries.begin(); it != entries.end(); ++it) {
+        if (it->key != key)
+          continue;
+        if (it->version == version &&
+            nb::inst_ptr<PulseModule>(it->module)->version_.load() ==
+                it->moduleVersion) {
+          std::rotate(it, it + 1, entries.end());
+          return entries.back().module;
+        }
+        dropped.push_back(std::move(it->module));
+        entries.erase(it);
+        break;
+      }
+      size_t room = specialized_.maxEntries;
+      int64_t ops = specialized_.ops.load();
+      if (ops > 0)
+        room = std::min<size_t>(
+            room, std::max<int64_t>(specialized_.maxOps / ops, 1));
+      if (entries.size() >= room) {
+        size_t drop = entries.size() + 1 - std::max<size_t>(room, 1);
+        for (size_t i = 0; i < drop; ++i)
+          dropped.push_back(std::move(entries[i].module));
+        entries.erase(entries.begin(), entries.begin() + drop);
+      }
+    }
+    dropped.clear();
+
+    std::optional<PulseModule> built;
+    {
+      nb::gil_scoped_release release;
+      built.emplace(specialize(f64_args, i64_args, schedule, maxDrives,
+                               maxReadouts, readoutLatency, switchPenalty));
+    }
+    nb::object result = nb::cast(std::move(*built), nb::rv_policy::move);
+    if (specialized_.maxEntries == 0 || specialized_.maxOps == 0)
+      return result;
+    std::lock_guard<std::mutex> guard(specialized_.mutex);
+    auto &entries = specialized_.entries;
+    for (auto &entry : entries)
+      if (entry.key == key)
+        return entry.module;
+    entries.push_back({std::move(key), version,
+                       nb::inst_ptr<PulseModule>(result)->version_.load(),
+                       result});
+    return result;
+  }
+
+  /// (specialized modules kept, at most how many, at most how many ops in
+  /// all); a non-negative argument sets that bound.
+  std::tuple<size_t, size_t, int64_t> specialized_cache(int64_t entries,
+                                                        int64_t ops) {
+    std::vector<nb::object> dropped;
+    std::lock_guard<std::mutex> guard(specialized_.mutex);
+    if (entries >= 0)
+      specialized_.maxEntries = static_cast<size_t>(entries);
+    if (ops >= 0)
+      specialized_.maxOps = ops;
+    if (entries >= 0 || ops >= 0) {
+      for (auto &entry : specialized_.entries)
+        dropped.push_back(std::move(entry.module));
+      specialized_.entries.clear();
+    }
+    return {specialized_.entries.size(), specialized_.maxEntries,
+            specialized_.maxOps};
+  }
+
   PulseModule specialize(const std::vector<double> &f64_args,
                          const std::vector<int64_t> &i64_args,
                          const std::string &schedule = "alap",
@@ -2386,6 +2488,11 @@ public:
                          int64_t readoutLatency = 0,
                          int64_t switchPenalty = 0) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
+    if (specialized_.ops.load() < 0) {
+      int64_t ops = 0;
+      source().walk([&](mlir::Operation *) { ++ops; });
+      specialized_.ops.store(ops);
+    }
     auto clonedModule = source().clone();
     auto funcOp = clonedModule.lookupSymbol<mlir::func::FuncOp>("main");
     if (!funcOp)
@@ -2715,6 +2822,38 @@ private:
 
   friend class PulseModuleBuilder;
 
+  /// The module changed in place: a specialized module kept from before, or
+  /// this one kept as another's, is not reused.
+  void changed() {
+    ++version_;
+    specialized_.ops.store(-1);
+  }
+
+  struct Specialized {
+    std::string key;
+    uint64_t version;       // of this module when it was built
+    uint64_t moduleVersion; // of the module built
+    nb::object module;
+  };
+  struct SpecializedCache {
+    std::mutex mutex;
+    std::vector<Specialized> entries; // least recently used first
+    size_t maxEntries = 16;
+    int64_t maxOps = int64_t(1) << 16;
+    std::atomic<int64_t> ops{-1}; // of this module, once counted
+    SpecializedCache() = default;
+    SpecializedCache(SpecializedCache &&other) noexcept
+        : entries(std::move(other.entries)), maxEntries(other.maxEntries),
+          maxOps(other.maxOps), ops(other.ops.load()) {}
+  };
+  struct Version {
+    std::atomic<uint64_t> value{0};
+    Version() = default;
+    Version(Version &&other) noexcept : value(other.value.load()) {}
+    uint64_t load() const { return value.load(); }
+    void operator++() { ++value; }
+  };
+
   std::shared_ptr<mlir::MLIRContext> ctx_;
   mlir::OwningOpRef<mlir::ModuleOp> module_;
   // Whether the program can compute something at run time or change a frame
@@ -2793,6 +2932,9 @@ private:
   std::shared_ptr<const mlir::FrozenRewritePatternSet> rewritePatterns_;
   // Lowered operator programs by module attribute dictionary.
   std::map<const void *, ProgramTemplate> programs_;
+  Version version_;
+  // Its specialized modules by their arguments (specialize_shared).
+  SpecializedCache specialized_;
   // Python threads may call into one module concurrently once the GIL is
   // released; MLIR does not allow concurrent mutation of one module.
   std::shared_ptr<std::recursive_mutex> lock_;
@@ -4328,9 +4470,10 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::arg("dictionary"))
       .def("param_names", &PulseModule::param_names,
            nb::call_guard<nb::gil_scoped_release>(), "Get parameter names")
-      .def("specialize", &PulseModule::specialize,
-           nb::call_guard<nb::gil_scoped_release>(),
-           "Clone module, substitute parameters with constants, fold, schedule",
+      .def("specialize", &PulseModule::specialize_shared,
+           "Clone module, substitute parameters with constants, fold, "
+           "schedule; built once per distinct arguments and shared while "
+           "neither module changes in place",
            nb::arg("f64_args"), nb::arg("i64_args"),
            nb::arg("schedule") = "alap", nb::arg("max_drives") = 4,
            nb::arg("max_readouts") = 2, nb::arg("readout_latency") = 0,
@@ -4350,7 +4493,12 @@ NB_MODULE(_cudaq_pulse_native, m) {
                                   runTime, rewrites);
           },
           "(module bytecode, source bytecode or b'', computes at run time, "
-          "rewrites rerun on a binding): what PulseModuleBuilder.load takes");
+          "rewrites rerun on a binding): what PulseModuleBuilder.load takes")
+      .def("specialized_cache", &PulseModule::specialized_cache,
+           "(specialized modules kept, at most how many, at most how many "
+           "ops in all); a non-negative argument sets that bound and empties "
+           "the cache",
+           nb::arg("entries") = -1, nb::arg("ops") = -1);
 
   nb::class_<PulseModuleBuilder>(m, "PulseModuleBuilder")
       .def(nb::init<>())

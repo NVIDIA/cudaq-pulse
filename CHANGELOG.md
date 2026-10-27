@@ -85,7 +85,9 @@ behavior may change in any 0.x release.
   first use, caches the specialization, and runs it; `kernel.lower(...)`
   stops before running, and `pulse.compile(kernel)` compiles ahead of the
   call. `float` parameters stay symbolic, so a parameter sweep compiles once.
-  Kernels call other kernels, loop with `range`, and branch on measurement
+  The module with a call's values substituted, which exports and the LLVM
+  stage read, is built once per distinct values and shared by every call
+  with them. Kernels call other kernels, loop with `range`, and branch on measurement
   results. A number the arms of an `if` on a measurement set differently
   (`if m: amp = 0.3` / `else: amp = 0.1`) holds the value of the arm that
   ran, as one `arith.select` on the measurement, in `elif` chains, nested

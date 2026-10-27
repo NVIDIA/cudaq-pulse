@@ -279,6 +279,23 @@ def test_a_wait_length_sweep_compiles_once():
 
 
 @pytest.mark.scaling
+def test_exporting_a_call_again_does_not_specialize_again():
+    @pulse.kernel
+    def pulses(q, amp: float):
+        d, t = get_drive_line(q)
+        for _ in range(16):
+            drive(d, gaussian(40, amp, 10.0), t)
+            shift_phase(t, 0.1)
+
+    compiled = pulse.compile(pulses, unroll_threshold=100_000)
+    values = iter(1e-3 * k for k in range(1, 10**6))
+    new = _best(lambda: compiled.lower(Q[0], next(values)).export_controller(), 20)
+    again = _best(lambda: compiled.lower(Q[0], 0.5).export_controller(), 20)
+    # Specializing is most of an export of new values.
+    assert again < new / 1.5, (again, new)
+
+
+@pytest.mark.scaling
 def test_a_sweep_of_a_wait_from_an_answer_and_a_float_compiles_once():
     from cudaq_pulse.classical import Float
 
