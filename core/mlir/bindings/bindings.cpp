@@ -780,10 +780,8 @@ public:
                 int64_t switchPenalty = 0) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     mlir::PassManager pm(ctx_.get());
-    addSchedule(pm, policy, maxDrives, maxReadouts, readoutLatency,
-                switchPenalty);
-    if (classical::declaresClassicalCalls(*module_))
-      pm.addPass(pulse::createPulseClassicalCheckPass());
+    addSchedule(pm, *module_, true, policy, maxDrives, maxReadouts,
+                readoutLatency, switchPenalty);
     programs_.clear();
     keepSource();
     runPipeline(pm, *module_, "pulse scheduling failed");
@@ -1046,10 +1044,9 @@ public:
     PulseModule result(ctx_, std::move(copy));
     result.keepSource();
     mlir::PassManager pm(ctx_.get());
-    addSchedule(pm, policy, maxDrives, maxReadouts, readoutLatency,
-                switchPenalty);
-    runPipeline(pm, *result.module_,
-                "simulation: unrolling classical loops failed");
+    addSchedule(pm, *result.module_, false, policy, maxDrives, maxReadouts,
+                readoutLatency, switchPenalty);
+    runPipeline(pm, *result.module_, "simulation: scheduling failed");
     return result;
   }
 
@@ -1398,10 +1395,8 @@ public:
     PulseModule result(ctx_, std::move(owning));
     result.keepSource();
     mlir::PassManager pm(ctx_.get());
-    addSchedule(pm, schedule, maxDrives, maxReadouts, readoutLatency,
-                switchPenalty);
-    if (classical::declaresClassicalCalls(*result.module_))
-      pm.addPass(pulse::createPulseClassicalCheckPass());
+    addSchedule(pm, *result.module_, true, schedule, maxDrives, maxReadouts,
+                readoutLatency, switchPenalty);
     runPipeline(pm, *result.module_, "specialize: pass pipeline failed");
     return result;
   }
@@ -1566,8 +1561,11 @@ private:
     return program;
   }
 
-  /// Add the schedule pass of `policy` with these resource limits to `pm`.
-  static void addSchedule(mlir::PassManager &pm, const std::string &policy,
+  /// Add scheduling `module` to `pm`: the schedule pass of `policy` with
+  /// these resource limits, the check of its classical calls if `checkCalls`
+  /// and it declares any, then the passes that run on a scheduled module.
+  static void addSchedule(mlir::PassManager &pm, mlir::ModuleOp module,
+                          bool checkCalls, const std::string &policy,
                           int64_t maxDrives, int64_t maxReadouts,
                           int64_t readoutLatency, int64_t switchPenalty) {
     if (policy == "asap")
@@ -1582,7 +1580,16 @@ private:
           policy == "alap_rcp"));
     else
       throw std::invalid_argument("unknown schedule policy: " + policy);
+    if (checkCalls && classical::declaresClassicalCalls(module))
+      pm.addPass(pulse::createPulseClassicalCheckPass());
+    addAfterSchedulePasses(pm);
   }
+
+  /// Passes that run on every module once it is scheduled and checked, by
+  /// schedule(), for a call's values (specialize) and for simulation: a
+  /// pass that needs the times of the ops, or that must see each binding,
+  /// goes here. None yet.
+  static void addAfterSchedulePasses(mlir::PassManager &) {}
 
   /// Bind `values` to the results of `wait`: the wait stays, so what it
   /// feeds keeps waiting for it, and its results read as the values.
