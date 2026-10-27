@@ -230,9 +230,12 @@ timeout, and the most drives and readouts in one program. Given
 to the machine model as ``MachineModel(controller=...)``, they make every
 compilation check the scheduled program, so that a program the controller
 cannot play fails at compile time with ``ControllerLimitError``, which lists
-each violated limit. ``cudaq_pulse.controller.check(lowered, limits)``
-returns the violations without raising. Without ``controller``, compiling
-checks nothing more.
+each violated limit. A limit that only some values of a ``float``
+parameter exceed, such as the tones a frequency shift adds or the memory
+a waveform width takes, is checked when a call supplies the values, once
+per distinct values, so a call that compiles also exports.
+``cudaq_pulse.controller.check(lowered, limits)`` returns the violations
+without raising. Without ``controller``, compiling checks nothing more.
 
 A minimal backend
 -----------------

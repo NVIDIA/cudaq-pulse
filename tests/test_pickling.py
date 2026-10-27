@@ -700,7 +700,7 @@ def test_a_process_pool_sweep_runs_programs_compiled_in_the_parent():
         # A result comes back from the worker as the parent computes it.
         program = pulse.compile(reset, device=LADDER).lower(Q[0])
         simulated = pool.submit(_simulate_in_worker, program).result()
-        with pytest.raises(ControllerLimitError, match="starts 20 cycles after") as caught:
+        with pytest.raises(ControllerLimitError, match="starts 21 cycles after") as caught:
             pool.submit(_over_the_limit).result()
     assert caught.value.violations == _limit_error().violations
     local = _simulate_in_worker(program)

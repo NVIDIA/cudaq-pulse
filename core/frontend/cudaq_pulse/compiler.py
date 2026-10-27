@@ -18,6 +18,7 @@ from __future__ import annotations
 import difflib
 import marshal
 import math
+import struct
 import threading
 import time
 from collections.abc import Mapping, Sequence
@@ -599,6 +600,9 @@ class CompileOptions:
 
 # Longest wait a call may ask for: lengths stay exact in a float.
 _MAX_WAIT_CYCLES = MAX_CYCLES
+
+# Values whose controller limits were checked, kept per module.
+_ACCEPTED_CALLS = 4096
 
 
 class _WaitLength:
@@ -1206,6 +1210,45 @@ def _lowered(
     return lowered
 
 
+class _CheckedPerCall(Lowered):
+    """A module whose controller limits some float values exceed and others
+    do not: each call's values are checked when they are bound, once per
+    distinct values, so that no limit fails first at export."""
+
+    __slots__ = ("_accepted", "clocks", "fine_delays")
+
+    def __init__(self, lowered: Lowered) -> None:
+        super().__init__(
+            lowered._module,
+            target=lowered.target,
+            metrics=lowered.metrics,
+            parameters=lowered.parameters,
+            qudits=lowered.qudits,
+            options=lowered.options,
+            scheduled=lowered.scheduled,
+            waits=lowered.waits,
+        )
+        self.classical = lowered.classical
+        self.runtime_selects = lowered.runtime_selects
+        self.clocks = lowered.clocks
+        self.fine_delays = lowered.fine_delays
+        self._accepted: set[bytes] = set()
+
+    def bind(self, values: Sequence[float]) -> Lowered:
+        view = super().bind(values)
+        key = struct.pack(f"{len(view.arguments)}d", *view.arguments)
+        if key not in self._accepted:
+            from .controller import ControllerLimitError, _call_violations
+
+            violations = _call_violations(view)
+            if violations:
+                raise ControllerLimitError(violations)
+            if len(self._accepted) >= _ACCEPTED_CALLS:
+                self._accepted.clear()
+            self._accepted.add(key)
+        return view
+
+
 class _Exposure:
     """How long a call's first use waits beyond when it could start without
     the call (see ``ClassicalCall.exposed_cycles``), in O(log n) per call."""
@@ -1423,8 +1466,8 @@ def build(
         )
     lowered.classical = tuple(builder.classical)
     lowered.runtime_selects = runtime_selects
-    if machine.controller is not None and scheduled:
-        _check_controller(lowered)
+    if machine.controller is not None:
+        lowered = _check_controller(lowered)
     return lowered, builder
 
 
@@ -1480,13 +1523,23 @@ def _line_delays(
         raise CompilationError(str(e)) from None
 
 
-def _check_controller(lowered: Lowered) -> None:
-    if lowered.options.machine.controller is not None and lowered.scheduled:
-        from .controller import ControllerLimitError, check
+def _check_controller(lowered: Lowered) -> Lowered:
+    """*lowered*, checked against its controller limits: those it exceeds
+    whatever its float values fail now, and when some values may exceed
+    others, each call's values are checked when they are bound."""
+    limits = lowered.options.machine.controller
+    if limits is None:
+        return lowered
+    from .controller import ControllerLimitError, _compile_check
 
-        violations = check(lowered)
+    exact = False
+    # A float wait length places the ops after it per call: the schedule
+    # without values is not one any call plays.
+    if lowered.scheduled and lowered.waits is None:
+        violations, exact = _compile_check(lowered, limits)
         if violations:
             raise ControllerLimitError(violations)
+    return lowered if exact else _CheckedPerCall(lowered)
 
 
 def with_line_delays(lowered: Lowered, options: CompileOptions, n_qudits: int) -> Lowered | None:
@@ -1525,8 +1578,7 @@ def with_line_delays(lowered: Lowered, options: CompileOptions, n_qudits: int) -
     )
     result.classical = lowered.classical
     result.runtime_selects = lowered.runtime_selects
-    _check_controller(result)
-    return result
+    return _check_controller(result)
 
 
 def compile[**P](

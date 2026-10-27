@@ -590,13 +590,17 @@ def _violations(
     off: Sequence[tuple[int, int, int]] = (),
     run_time: Sequence[str] = (),
     waveforms: bool = True,
+    unresolved: list[str] | None = None,
 ) -> list[str]:
     """The limits *events* exceed. With *clocks*, the events are in the
     controller's own cycles: the native walk's, with *off* its line events
     off the grid and *run_time* the violations of what they compute at run
     time, or else (lines on several controllers) converted here in place,
     their waveforms too unless *waveforms* is false (the limits count
-    waveforms alike either way)."""
+    waveforms alike either way). With *unresolved*, a tone or waveform
+    whose value is not known yet counts only if the limit is exceeded
+    whatever its value; a limit that only some values exceed is appended to
+    *unresolved* instead, to be checked with them."""
     if clocks is None:
         found = []
     else:
@@ -638,21 +642,32 @@ def _violations(
                     f"line {line}: {len(tones)} tone frequencies; the controller holds "
                     f"{limits.tones_per_line} per line"
                 )
+            elif unresolved is not None:
+                unknown = sum(e.get("frequency_hz") is None for e in items)
+                if len(tones) + unknown > limits.tones_per_line:
+                    unresolved.append(f"line {line}: tone frequencies")
         if limits.max_amplitude is not None:
-            found.extend(_over_amplitude(lines[line], items, limits.max_amplitude))
+            found.extend(_over_amplitude(lines[line], items, limits.max_amplitude, unresolved))
         if limits.waveform_samples is not None:
             shapes: dict[Any, int] = {}
+            unknown_samples = 0
             for e in items:
                 key = shape_key(e.get("waveform"))
-                shapes[
-                    (key, e["duration_cycles"]) if key is not None else ("event", e["index"])
-                ] = -(-e["duration_cycles"] * num // den)
+                samples = -(-e["duration_cycles"] * num // den)
+                if key is not None:
+                    shapes[(key, e["duration_cycles"])] = samples
+                elif unresolved is not None:
+                    unknown_samples += samples
+                else:
+                    shapes[("event", e["index"])] = samples
             used = sum(shapes.values())
             if used > limits.waveform_samples:
                 found.append(
                     f"line {line}: its waveforms take {used} samples; the controller's "
                     f"waveform memory holds {limits.waveform_samples}"
                 )
+            elif unresolved is not None and used + unknown_samples > limits.waveform_samples:
+                unresolved.append(f"line {line}: waveform memory")
     if limits.acquirers:
         by_acquirer: dict[int, list[Mapping[str, Any]]] = {}
         for event in timed:
@@ -701,12 +716,21 @@ def _violations(
 
 
 def _over_amplitude(
-    line: Mapping[str, Any], events: Sequence[Mapping[str, Any]], most: float
+    line: Mapping[str, Any],
+    events: Sequence[Mapping[str, Any]],
+    most: float,
+    unresolved: list[str] | None = None,
 ) -> list[str]:
-    """The events of *line* whose envelope peaks above *most*."""
+    """The events of *line* whose envelope peaks above *most*. With
+    *unresolved*, an envelope whose peak needs the call's values is noted
+    there, to be checked with them."""
     found = []
     for event in events:
-        peak = _peak_amplitude(event.get("waveform"))
+        tree = event.get("waveform")
+        peak = _peak_amplitude(tree)
+        if peak is None and tree is not None and unresolved is not None:
+            unresolved.append(f"line {line['line']}: amplitude")
+            unresolved = None
         if peak is not None and peak > most:
             found.append(
                 f"line {line['line']} ({line['role']} of qudit {line['qudit']}): the "
@@ -759,10 +783,21 @@ def _samples_per_own_cycle(limits: ControllerLimits, program_ghz: float) -> tupl
 
 
 def check(lowered: Lowered, limits: ControllerLimits | None = None) -> list[str]:
-    """The limits *lowered* exceeds, of *limits* or else its machine model's."""
+    """The limits *lowered* exceeds, of *limits* or else its machine model's.
+
+    Of a module with float parameters (``lowered.generic``), the limits it
+    exceeds whatever their values; a call's values are checked when it is
+    made, so a limit never fails first at export.
+    """
     limits = limits if limits is not None else lowered.options.machine.controller
     if limits is None:
         return []
+    return _compile_check(lowered, limits)[0]
+
+
+def _compile_check(lowered: Lowered, limits: ControllerLimits) -> tuple[list[str], bool]:
+    """The limits *lowered* exceeds whatever its float values, and whether
+    that is exact: ``False`` when some values may exceed others."""
     machine = lowered.options.machine
     if limits is machine.controller:
         clocks = (lowered._generic or lowered).clocks
@@ -773,10 +808,30 @@ def check(lowered: Lowered, limits: ControllerLimits | None = None) -> list[str]
     lines, events, off, problems = _walk(
         lowered, values=False, own=_native_clock(clocks), waveforms=False
     )
-    found = _violations(lowered, events, limits, lines, clocks, off, problems, waveforms=False)
+    unresolved: list[str] | None = [] if lowered.parameters else None
+    found = _violations(
+        lowered,
+        events,
+        limits,
+        lines,
+        clocks,
+        off,
+        problems,
+        waveforms=False,
+        unresolved=unresolved,
+    )
     if limits is not machine.controller:
         found.extend(_sample_rate_violations(lowered, limits, clocks, events))
-    return found
+    return found, not unresolved
+
+
+def _call_violations(lowered: Lowered) -> list[str]:
+    """The limits one call's values exceed, as its export checks them."""
+    limits = lowered.options.machine.controller
+    assert limits is not None
+    clocks = (lowered._generic or lowered).clocks
+    lines, events, off, problems = _walk(lowered, own=_native_clock(clocks))
+    return _violations(lowered, events, limits, lines, clocks, off, problems)
 
 
 def _sample_rate_violations(

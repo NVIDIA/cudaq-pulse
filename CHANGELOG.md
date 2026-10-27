@@ -356,7 +356,9 @@ behavior may change in any 0.x release.
   acquirers, feedback latency, answer timeouts, program size; the compiler
   itself limits no amplitude) and makes compilation fail with
   `ControllerLimitError` when a program exceeds it, parametric kernels
-  included. `cudaq_pulse.backends` finds backends installed under the
+  included: a limit that only some values of a float parameter exceed, such
+  as a tone shift, a waveform width or a wait length, is checked at the call
+  with its values, so a call that lowers also exports. `cudaq_pulse.backends` finds backends installed under the
   `cudaq_pulse.backends` entry-point group; a backend that fails to load, is
   not a `Backend` or does not read this export format raises
   `IncompatibleBackendError`, and an unknown name `BackendNotFoundError`,

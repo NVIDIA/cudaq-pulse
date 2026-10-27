@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import math
+import struct
 
 import cudaq_pulse as pulse
 import numpy as np
@@ -25,8 +26,11 @@ from cudaq_pulse.controller import (
     sample_waveform,
     shape_key,
 )
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from tests._handles import Q
+from tests.property_settings import examples
 
 
 @pulse.kernel
@@ -469,6 +473,101 @@ def test_a_kernel_with_float_parameters_is_checked_when_compiled():
     machine = MachineModel(controller=ControllerLimits(issue_cycles=4, min_wait_cycles=40))
     with pytest.raises(ControllerLimitError, match="starts 16 cycles after"):
         pulse.compile(ramsey, machine=machine).lower(Q[0], 0.75)
+
+
+@pulse.kernel
+def retuned(q, shift: float):
+    d, t = get_drive_line(q)
+    drive(d, gaussian(40, 0.5, 10.0), t)
+    shift_frequency(t, shift)
+    drive(d, gaussian(40, 0.5, 10.0), t)
+
+
+def test_a_float_tone_shift_beyond_the_limit_fails_at_the_call_not_at_export():
+    machine = MachineModel(controller=ControllerLimits(tones_per_line=1))
+    compiled = pulse.compile(retuned, machine=machine)
+    with pytest.raises(ControllerLimitError, match="2 tone frequencies"):
+        compiled.lower(Q[0], 50e6)
+    # No shift plays one tone, which fits.
+    assert len(compiled.lower(Q[0], 0.0).export_controller()["events"]) == 2
+    # Two tones fit a line that plays two.
+    two = MachineModel(controller=ControllerLimits(tones_per_line=2))
+    lowered = pulse.compile(retuned, machine=two).lower(Q[0], 50e6)
+    assert len(lowered.export_controller()["events"]) == 2
+
+
+@pulse.kernel
+def two_widths(q, a: float, b: float):
+    d, t = get_drive_line(q)
+    drive(d, gaussian(40, 0.5, a), t)
+    drive(d, gaussian(40, 0.5, b), t)
+
+
+def test_waveforms_of_float_widths_take_memory_by_their_values():
+    machine = MachineModel(
+        controller=ControllerLimits(
+            waveform_samples=60, sample_rate_ghz=pulse.get_device().clock_ghz
+        )
+    )
+    compiled = pulse.compile(two_widths, machine=machine)
+    # One width is one shape, stored once: it fits.
+    assert len(compiled.lower(Q[0], 10.0, 10.0).export_controller()["events"]) == 2
+    with pytest.raises(ControllerLimitError, match="80 samples"):
+        compiled.lower(Q[0], 10.0, 12.0)
+
+
+def test_a_call_is_checked_once_per_distinct_values():
+    machine = MachineModel(controller=ControllerLimits(tones_per_line=1))
+    compiled = pulse.compile(retuned, machine=machine)
+    first = compiled.lower(Q[0], 0.0)
+    compiled.lower(Q[0], 0.0)
+    assert first.generic._accepted == {struct.pack("d", 0.0)}
+    # A module no float value can push past a limit is not checked per call.
+    lowered = pulse.compile(ramsey, machine=machine).lower(Q[0], 0.75)
+    assert type(lowered.generic) is pulse.Lowered
+
+
+@pulse.kernel
+def waited(q, tau: float):
+    d, t = get_drive_line(q)
+    drive(d, square(16, 0.1), t)
+    wait(d, tau)
+    drive(d, square(16, 0.1), t)
+
+
+def test_a_float_wait_length_is_checked_against_the_limits_at_the_call():
+    machine = MachineModel(controller=ControllerLimits(issue_cycles=4, min_wait_cycles=40))
+    compiled = pulse.compile(waited, machine=machine)
+    with pytest.raises(ControllerLimitError, match="starts 20 cycles after"):
+        compiled.lower(Q[0], 4.0)
+    assert len(compiled.lower(Q[0], 40.0).export_controller()["events"]) == 3
+
+
+@given(
+    shift=st.sampled_from([0.0, 25e6, 50e6]),
+    widths=st.tuples(st.sampled_from([8.0, 10.0]), st.sampled_from([8.0, 10.0])),
+    tones=st.integers(1, 3),
+    samples=st.sampled_from([40, 60, 80, 200]),
+)
+@settings(max_examples=examples(40))
+def test_a_call_that_lowers_exports(shift, widths, tones, samples):
+    @pulse.kernel
+    def program(q, shift: float, a: float, b: float):
+        d, t = get_drive_line(q)
+        drive(d, gaussian(40, 0.5, a), t)
+        shift_frequency(t, shift)
+        drive(d, gaussian(40, 0.25, b), t)
+        shift_frequency(t, 25e6)
+        drive(d, gaussian(40, 0.5, 10.0), t)
+
+    limits = ControllerLimits(tones_per_line=tones, waveform_samples=samples)
+    try:
+        lowered = pulse.compile(program, machine=MachineModel(controller=limits)).lower(
+            Q[0], shift, *widths
+        )
+    except ControllerLimitError:
+        return
+    lowered.export_controller()
 
 
 # ── Classical calls ──────────────────────────────────────────────────────────
