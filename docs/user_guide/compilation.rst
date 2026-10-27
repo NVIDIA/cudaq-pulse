@@ -149,7 +149,8 @@ called kernel without ``schedule=`` is scheduled together with its caller.
 ``schedule=`` (compile with ``flatten_schedules=True`` instead). A kernel's
 policy is part of what it is, so a compiled kernel's specializations depend
 on its own policy, ``flatten_schedules`` and the policies of the kernels it
-calls.
+calls. The shape holds when the program is scheduled again, with float
+values bound or, in simulation, with the answers of classical calls bound.
 
 Inspecting a compilation
 ------------------------

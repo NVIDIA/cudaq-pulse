@@ -120,9 +120,12 @@ In a kernel, ``fn.submit(...)`` sends the request and returns a future, and
 
 With ``timeout_ns`` the result starts with a flag that is true when the
 answer came in time; the other values are zero when it did not, and the
-program takes its fallback. A future is taken in the kernel that submitted
-it, and in the same loop iteration. Answers may be carried from one iteration
-to the next, as an estimator's state is.
+program takes its fallback. A future is taken in the loop iteration that
+submitted it. It may be passed to a kernel the program calls, or returned
+from one, and taken there; an answer taken inside a kernel called with its
+own ``schedule=`` is used only inside it, so return the future instead when
+the caller needs the answer. Answers may be carried from one iteration to
+the next, as an estimator's state is.
 
 A wait may take its length from an answer, between bounds:
 
@@ -153,11 +156,16 @@ same way:
 - A request is submitted once its arguments are ready (eager, the default)
   or as late as the budget allows (lazy). It holds its link for
   ``fixed_ns + bytes / bytes_per_ns``, and a link holds ``max_in_flight``
-  requests at once.
+  requests at once: one more waits until a slot is free, so a program never
+  fails for having too many requests in flight.
 - Its answer is due after the budget: the maximum latency (or the timeout),
   plus the link's feedback time.
 - An operation whose amplitude, phase, frequency, duration or branch
   condition comes from the answer starts no earlier than that.
+- A kernel called with its own ``schedule=`` keeps its calls where its own
+  schedule puts them, eager submissions included, and moves with them: it
+  is placed where its requests fit the slots its caller's requests leave.
+- A blocking wait, like a variable wait, starts once every line is done.
 
 ``Lowered.classical_report()`` gives one ``ClassicalCall`` per execution of a
 call, in clock cycles: when it is submitted (``submit_vtu``), when its answer
