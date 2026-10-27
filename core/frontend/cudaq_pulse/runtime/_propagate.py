@@ -31,15 +31,13 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-_Matrix = npt.NDArray[np.complex128]
-
 # A register of at most this many levels gets the RK4 map of a driven
 # stretch built and kept; its superoperator has (levels)^2 rows.
 MAX_MAPPED_DIM = 4
 # Kept maps (each (levels)^4 complex numbers): at most 16 MB.
 _CACHE_ENTRIES = 4096
 
-_cache: dict[Any, _Matrix] = {}
+_cache: dict[Any, npt.NDArray[np.complex128]] = {}
 _cache_lock = threading.Lock()
 
 # Coefficients of the degree-13 Pade approximant (Higham 2005).
@@ -62,7 +60,7 @@ _PADE13 = (
 _THETA13 = 5.371920351148152
 
 
-def expm(a: _Matrix) -> _Matrix:
+def expm(a: npt.NDArray[np.complex128]) -> npt.NDArray[np.complex128]:
     """The matrix exponential, by scaling and squaring with a degree-13 Pade
     approximant."""
     norm = float(np.abs(a).sum(axis=0).max()) if a.size else 0.0
@@ -77,18 +75,18 @@ def expm(a: _Matrix) -> _Matrix:
     u = a @ (odd + b[7] * a6 + b[5] * a4 + b[3] * a2 + b[1] * ident)
     even = a6 @ (b[12] * a6 + b[10] * a4 + b[8] * a2)
     v = even + b[6] * a6 + b[4] * a4 + b[2] * a2 + b[0] * ident
-    r: _Matrix = np.linalg.solve(v - u, v + u)
+    r: npt.NDArray[np.complex128] = np.linalg.solve(v - u, v + u)
     for _ in range(squarings):
         r = r @ r
     return r
 
 
-def cached(key: Any) -> _Matrix | None:
+def cached(key: Any) -> npt.NDArray[np.complex128] | None:
     with _cache_lock:
         return _cache.get(key)
 
 
-def keep(key: Any, value: _Matrix) -> None:
+def keep(key: Any, value: npt.NDArray[np.complex128]) -> None:
     with _cache_lock:
         if len(_cache) >= _CACHE_ENTRIES:
             for old in list(_cache)[: _CACHE_ENTRIES // 2]:
@@ -119,7 +117,9 @@ def support(params: Sequence[float]) -> tuple[float, float]:
     return start, end
 
 
-def dissipator(jumps: Sequence[_Matrix], dim: int, key: bytes) -> _Matrix:
+def dissipator(
+    jumps: Sequence[npt.NDArray[np.complex128]], dim: int, key: bytes
+) -> npt.NDArray[np.complex128]:
     """The superoperator of sum_c (c rho c^+ - {c^+ c, rho} / 2); *key*
     identifies the jumps, for keeping it."""
     kept = cached(("dissipator", dim, key))
@@ -135,17 +135,23 @@ def dissipator(jumps: Sequence[_Matrix], dim: int, key: bytes) -> _Matrix:
     return out
 
 
-def liouvillian(hamiltonian: _Matrix, dissipative: _Matrix) -> _Matrix:
+def liouvillian(
+    hamiltonian: npt.NDArray[np.complex128], dissipative: npt.NDArray[np.complex128]
+) -> npt.NDArray[np.complex128]:
     """The superoperator of -i [H, rho] plus *dissipative*."""
     dim = hamiltonian.shape[0]
     ident = np.eye(dim, dtype=np.complex128)
-    out: _Matrix = -1j * (np.kron(hamiltonian, ident) - np.kron(ident, hamiltonian.T))
+    out: npt.NDArray[np.complex128] = -1j * (
+        np.kron(hamiltonian, ident) - np.kron(ident, hamiltonian.T)
+    )
     return out + dissipative
 
 
-def apply(propagator: _Matrix, rho: _Matrix) -> _Matrix:
+def apply(
+    propagator: npt.NDArray[np.complex128], rho: npt.NDArray[np.complex128]
+) -> npt.NDArray[np.complex128]:
     dim = rho.shape[0]
-    out: _Matrix = (propagator @ rho.reshape(-1)).reshape(dim, dim)
+    out: npt.NDArray[np.complex128] = (propagator @ rho.reshape(-1)).reshape(dim, dim)
     return out
 
 
@@ -162,7 +168,9 @@ def commutators(operators: Any) -> Any:
 _CHUNK = 512
 
 
-def rk4_map(static: _Matrix, terms: Any, values: Any, h: float) -> _Matrix:
+def rk4_map(
+    static: npt.NDArray[np.complex128], terms: Any, values: Any, h: float
+) -> npt.NDArray[np.complex128]:
     """The superoperator of RK4 steps of length *h* under the Lindbladian
     ``static + sum_k values[k] terms[k]`` (superoperators), *values* holding
     each term's coefficient at the start, middle and end of each step
@@ -174,7 +182,7 @@ def rk4_map(static: _Matrix, terms: Any, values: Any, h: float) -> _Matrix:
     size = static.shape[0]
     ident = np.eye(size, dtype=np.complex128)
     count = values.shape[1]
-    total: _Matrix | None = None
+    total: npt.NDArray[np.complex128] | None = None
     for lo in range(0, count, _CHUNK):
         part = values[:, lo : lo + _CHUNK, :]
         n = part.shape[1]
