@@ -50,12 +50,13 @@ __all__ = [
 
 _VALID_SCHEDULES = frozenset({"asap", "alap", "rcp", "alap_rcp"})
 
-# C++ pass names for the full pipeline
+# The cudaq-pulse-opt passes each pass name runs. The pattern passes fold
+# constants as they rewrite; a fold right before a pattern pass costs nothing.
 _PASS_MAP = {
     "verify": "pulse-verify",
-    "canonicalize": "pulse-canonicalize",
-    "virtual_z": "pulse-virtual-z",
-    "fusion": "pulse-fusion",
+    "canonicalize": "pulse-fold,pulse-canonicalize",
+    "virtual_z": "pulse-fold,pulse-virtual-z",
+    "fusion": "pulse-fold,pulse-fusion",
     "licm": "loop-invariant-code-motion",
 }
 

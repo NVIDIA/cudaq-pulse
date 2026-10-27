@@ -8,10 +8,11 @@
 
 // RUN: cudaq-pulse-opt --pulse-fusion %s | FileCheck %s
 
-// Adjacent pulses inside one arm fuse.
+// Adjacent pulses inside one arm fuse. Without pulse-fold the new duration
+// stays where the fused drive is.
 // CHECK-LABEL: func.func @inside_an_arm
-// CHECK: arith.constant 100
 // CHECK: scf.if
+// CHECK: arith.constant 100
 // CHECK: pulse.drive {{.*}}fused
 func.func @inside_an_arm(%bit: i1) {
   %q = pulse.qudit_alloc : !pulse.qref
@@ -55,8 +56,8 @@ func.func @across_an_if(%bit: i1) {
 // Adjacent pulses in a loop body fuse once per iteration; the last pulse of
 // one iteration does not fuse with the first pulse of the next.
 // CHECK-LABEL: func.func @loop_body
-// CHECK: arith.constant 100
 // CHECK: scf.for
+// CHECK: arith.constant 100
 // CHECK: pulse.drive {{.*}}fused
 // CHECK-NOT: pulse.drive %
 // CHECK: scf.yield

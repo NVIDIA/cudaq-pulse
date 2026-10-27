@@ -10,12 +10,10 @@
 // elimination, waveform CSE.
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/Pass/Pass.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+
+#include "cudaq-pulse/Transforms/Passes.h"
 
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"
 
@@ -112,39 +110,17 @@ struct InlineUntimedScheduleBlock
   }
 };
 
-struct PulseCanonicalizePass
-    : public mlir::PassWrapper<PulseCanonicalizePass,
-                               mlir::OperationPass<mlir::func::FuncOp>> {
-
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PulseCanonicalizePass)
-
-  llvm::StringRef getArgument() const override { return "pulse-canonicalize"; }
-  llvm::StringRef getDescription() const override {
-    return "Pulse-level canonicalization: sync elimination, waveform CSE";
-  }
-
-  void runOnOperation() override {
-    mlir::RewritePatternSet patterns(&getContext());
-    patterns.add<RemoveSingleOperandSync>(&getContext());
-    patterns.add<RemoveRedundantSync>(&getContext());
-    patterns.add<InlineUntimedScheduleBlock>(&getContext());
-    // Branch on pulse.is_set, and inline or drop loops that run once or
-    // never. scf.if patterns are left out: they may turn a branch over
-    // lines and tones into arith.select.
-    pulse::IsSetOp::getCanonicalizationPatterns(patterns, &getContext());
-    mlir::scf::ForOp::getCanonicalizationPatterns(patterns, &getContext());
-
-    mlir::GreedyRewriteConfig config;
-    if (mlir::failed(mlir::applyPatternsGreedily(getOperation(),
-                                                 std::move(patterns), config)))
-      signalPassFailure();
-  }
-};
-
 } // namespace
 
 namespace pulse {
-std::unique_ptr<mlir::Pass> createPulseCanonicalizePass() {
-  return std::make_unique<PulseCanonicalizePass>();
+void populateCanonicalizePatterns(mlir::RewritePatternSet &patterns) {
+  mlir::MLIRContext *ctx = patterns.getContext();
+  patterns.add<RemoveSingleOperandSync, RemoveRedundantSync,
+               InlineUntimedScheduleBlock>(ctx);
+  // Branch on pulse.is_set, and inline or drop loops that run once or
+  // never. scf.if patterns are left out: they may turn a branch over
+  // lines and tones into arith.select.
+  pulse::IsSetOp::getCanonicalizationPatterns(patterns, ctx);
+  mlir::scf::ForOp::getCanonicalizationPatterns(patterns, ctx);
 }
 } // namespace pulse

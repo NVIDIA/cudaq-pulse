@@ -10,13 +10,11 @@
 // square waveforms into a single drive with summed duration.
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
-#include "mlir/Pass/Pass.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+
+#include "cudaq-pulse/Transforms/Passes.h"
 
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"
 
@@ -162,31 +160,10 @@ struct FuseAdjacentSquareDrives
   }
 };
 
-struct PulseFusionPass
-    : public mlir::PassWrapper<PulseFusionPass,
-                               mlir::OperationPass<mlir::func::FuncOp>> {
-
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PulseFusionPass)
-
-  llvm::StringRef getArgument() const override { return "pulse-fusion"; }
-  llvm::StringRef getDescription() const override {
-    return "Fuse adjacent same-amplitude square-pulse drives into one";
-  }
-
-  void runOnOperation() override {
-    mlir::RewritePatternSet patterns(&getContext());
-    patterns.add<FuseAdjacentSquareDrives>(&getContext());
-    mlir::GreedyRewriteConfig config;
-    if (mlir::failed(mlir::applyPatternsGreedily(getOperation(),
-                                                 std::move(patterns), config)))
-      signalPassFailure();
-  }
-};
-
 } // namespace
 
 namespace pulse {
-std::unique_ptr<mlir::Pass> createPulseFusionPass() {
-  return std::make_unique<PulseFusionPass>();
+void populateFusionPatterns(mlir::RewritePatternSet &patterns) {
+  patterns.add<FuseAdjacentSquareDrives>(patterns.getContext());
 }
 } // namespace pulse

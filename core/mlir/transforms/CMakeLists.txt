@@ -11,6 +11,7 @@ add_mlir_dialect_library(CudaqPulsePulseTransforms
   Canonicalize.cpp
   VirtualZ.cpp
   Fusion.cpp
+  Rewrite.cpp
   ScheduleAlap.cpp
   ClassicalCheck.cpp
 

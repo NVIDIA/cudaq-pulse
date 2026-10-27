@@ -9,12 +9,10 @@
 // Virtual-Z pass: fold shift_phase ops into the next drive's waveform phase.
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/Pass/Pass.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+
+#include "cudaq-pulse/Transforms/Passes.h"
 
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"
 
@@ -172,33 +170,12 @@ struct HoistShiftPhaseOutOfBlock
   }
 };
 
-struct VirtualZPass
-    : public mlir::PassWrapper<VirtualZPass,
-                               mlir::OperationPass<mlir::func::FuncOp>> {
-
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VirtualZPass)
-
-  llvm::StringRef getArgument() const override { return "pulse-virtual-z"; }
-  llvm::StringRef getDescription() const override {
-    return "Fold shift_phase ops into adjacent drive ops as phase attributes";
-  }
-
-  void runOnOperation() override {
-    mlir::RewritePatternSet patterns(&getContext());
-    patterns.add<FoldShiftPhaseIntoDrive, SinkShiftPhaseThroughIf,
-                 SinkShiftPhaseIntoBlock, HoistShiftPhaseOutOfBlock>(
-        &getContext());
-    mlir::GreedyRewriteConfig config;
-    if (mlir::failed(mlir::applyPatternsGreedily(getOperation(),
-                                                 std::move(patterns), config)))
-      signalPassFailure();
-  }
-};
-
 } // namespace
 
 namespace pulse {
-std::unique_ptr<mlir::Pass> createVirtualZPass() {
-  return std::make_unique<VirtualZPass>();
+void populateVirtualZPatterns(mlir::RewritePatternSet &patterns) {
+  patterns.add<FoldShiftPhaseIntoDrive, SinkShiftPhaseThroughIf,
+               SinkShiftPhaseIntoBlock, HoistShiftPhaseOutOfBlock>(
+      patterns.getContext());
 }
 } // namespace pulse

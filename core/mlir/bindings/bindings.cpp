@@ -203,6 +203,25 @@ const mlir::PassInfo *lookupPass(llvm::StringRef name) {
   return mlir::PassInfo::lookup(name);
 }
 
+/// The passes of `entry`, split at the commas outside option braces.
+llvm::SmallVector<llvm::StringRef, 4> splitPipeline(llvm::StringRef entry) {
+  llvm::SmallVector<llvm::StringRef, 4> passes;
+  int depth = 0;
+  size_t start = 0;
+  for (size_t i = 0; i < entry.size(); ++i) {
+    if (entry[i] == '{')
+      ++depth;
+    else if (entry[i] == '}')
+      --depth;
+    else if (entry[i] == ',' && depth == 0) {
+      passes.push_back(entry.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  passes.push_back(entry.drop_front(start).trim());
+  return passes;
+}
+
 inline double i2f(int64_t bits) {
   double d;
   std::memcpy(&d, &bits, sizeof(double));
@@ -681,20 +700,50 @@ public:
     return result;
   }
 
-  /// Run the passes named in `pipeline`, in order. A pass that runs on
-  /// functions runs on each function of the module.
+  /// Run the passes named in `pipeline`, in order: each entry is a pass as
+  /// cudaq-pulse-opt names it, with its options in braces, or several
+  /// separated by commas. A pass that runs on functions runs on each
+  /// function of the module. Pattern passes in a row (pulse-fold,
+  /// pulse-canonicalize, pulse-virtual-z, pulse-fusion) run as one rewrite
+  /// with all their patterns: one walk of the module, to where none of them
+  /// applies.
   void run_passes(const std::vector<std::string> &pipeline) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     mlir::PassManager pm(ctx_.get(), mlir::ModuleOp::getOperationName(),
                          mlir::OpPassManager::Nesting::Implicit);
-    for (auto &name : pipeline) {
-      const mlir::PassInfo *pass = lookupPass(name);
-      if (!pass)
-        throw std::runtime_error("Unknown pass: " + name);
-      if (mlir::failed(pass->addToPipeline(
-              pm, "", [](const llvm::Twine &) { return mlir::failure(); })))
-        throw std::runtime_error("Cannot add pass: " + name);
-    }
+    llvm::SmallVector<const pulse::RewriteStage *, 4> stages;
+    bool fold = false;
+    auto flush = [&] {
+      if (stages.empty() && fold)
+        stages.push_back(pulse::findRewriteStage("pulse-fold"));
+      if (!stages.empty())
+        pm.addNestedPass<mlir::func::FuncOp>(
+            pulse::createPulseRewritePass(stages, fold));
+      stages.clear();
+      fold = false;
+    };
+    for (const std::string &entry : pipeline)
+      for (llvm::StringRef pass : splitPipeline(entry)) {
+        auto [name, options] = pass.split('{');
+        if (const pulse::RewriteStage *stage = pulse::findRewriteStage(name);
+            stage && options.empty()) {
+          if (!stage->populate) {
+            fold = true;
+            continue;
+          }
+          stages.push_back(stage);
+          continue;
+        }
+        flush();
+        const mlir::PassInfo *info = lookupPass(name);
+        if (!info)
+          throw std::runtime_error("Unknown pass: " + name.str());
+        if (mlir::failed(info->addToPipeline(
+                pm, options.empty() ? options : options.drop_back(),
+                [](const llvm::Twine &) { return mlir::failure(); })))
+          throw std::runtime_error("Cannot add pass: " + pass.str());
+      }
+    flush();
     programs_.clear();
     runPipeline(pm, *module_, "MLIR pass pipeline failed");
   }

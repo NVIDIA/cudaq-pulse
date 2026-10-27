@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassRegistry.h"
 
@@ -21,9 +22,30 @@ namespace pulse {
 std::unique_ptr<mlir::Pass> createPulseToQOpPass();
 
 std::unique_ptr<mlir::Pass> createPulseVerifyPass();
-std::unique_ptr<mlir::Pass> createPulseCanonicalizePass();
-std::unique_ptr<mlir::Pass> createVirtualZPass();
-std::unique_ptr<mlir::Pass> createPulseFusionPass();
+
+void populateCanonicalizePatterns(mlir::RewritePatternSet &patterns);
+void populateVirtualZPatterns(mlir::RewritePatternSet &patterns);
+void populateFusionPatterns(mlir::RewritePatternSet &patterns);
+
+/// A pass that is one greedy rewrite of a function with its patterns.
+struct RewriteStage {
+  llvm::StringLiteral argument;
+  llvm::StringLiteral description;
+  /// Adds the patterns; null for pulse-fold, which has none and only folds.
+  void (*populate)(mlir::RewritePatternSet &);
+};
+
+/// pulse-fold, pulse-canonicalize, pulse-virtual-z and pulse-fusion.
+llvm::ArrayRef<RewriteStage> rewriteStages();
+/// The stage registered as `argument`, or null.
+const RewriteStage *findRewriteStage(llvm::StringRef argument);
+/// One greedy rewrite of a function with the patterns of all `stages`, which
+/// also folds ops and merges equal constants when `fold`. The stages share a
+/// walk of the function, so a pipeline that runs several back to back pays
+/// for one.
+std::unique_ptr<mlir::Pass>
+createPulseRewritePass(llvm::ArrayRef<const RewriteStage *> stages, bool fold);
+
 std::unique_ptr<mlir::Pass> createPulseScheduleAsapPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleAlapPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleRcpPass(int64_t maxDrives,
@@ -53,9 +75,10 @@ inline void registerPulsePasses() {
   mlir::registerPass(cudm::createCuDensityMatToLLVMPass);
 
   mlir::registerPass(createPulseVerifyPass);
-  mlir::registerPass(createPulseCanonicalizePass);
-  mlir::registerPass(createVirtualZPass);
-  mlir::registerPass(createPulseFusionPass);
+  for (const RewriteStage &stage : rewriteStages())
+    mlir::registerPass([&stage] {
+      return createPulseRewritePass(&stage, stage.populate == nullptr);
+    });
   mlir::registerPass(createPulseScheduleAsapPass);
   mlir::registerPass(createPulseScheduleAlapPass);
   mlir::registerPass(createPulseInlineScheduleBlocksPass);
