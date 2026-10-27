@@ -1033,8 +1033,9 @@ class PackedIRBuilder:
         cycle (ties up). From float arguments it does not specialize on them,
         and each call checks it against the bounds; from the answer of a
         classical call it is a variable region, clamped to the bounds. A
-        length from both does not specialize on its float arguments either,
-        and each call checks its float part (its answers taken as 0)."""
+        length from both does not specialize on its float arguments either:
+        each call checks that its float part (its answers taken as 0) is
+        finite and at most the highest length, and the run clamps it whole."""
         rounded = ParameterExpression(
             "cast", ParameterExpression("add", duration, 0.5), dtype="i64"
         )
@@ -1048,7 +1049,7 @@ class PackedIRBuilder:
                 self._answer_integers = False
             if at_call:
                 text = f"{arithmetic_text(duration)} (its answers at 0)"
-                self.variable_waits.append((floats, lowest, highest, text))
+                self.variable_waits.append((floats, None, highest, text))
         else:
             cycles = self._get_numeric_vid(rounded, "i64", specializes=False)
             self.variable_waits.append((duration, lowest, highest))

@@ -42,8 +42,9 @@ behavior may change in any 0.x release.
   cycles. A length computed from the answer of a classical call makes the
   wait a variable region: it is rounded the same way, clamped to its
   bounds, and opens a new epoch (below). A length from both, such as
-  `wait(d, answer + tau)`, compiles once too: each call checks its float
-  part (the length with its answers at 0) against the bounds.
+  `wait(d, answer + tau)`, compiles once too: each call checks that its
+  float part (the length with its answers at 0) is finite and at most the
+  upper bound, and the whole length is clamped to the bounds at run time.
 - **Python in kernels.** List, dict and set comprehensions, set displays
   and generator expressions are unrolled while tracing, so
   `[get_drive_line(q) for q in qubits]` builds a list of lines and

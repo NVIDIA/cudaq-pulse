@@ -250,10 +250,8 @@ def offset_by_tau(q, p, tau: float):
 
 def test_a_wait_from_an_answer_and_a_float_compiles_once():
     compiled = pulse.compile(offset_by_tau)
-    # Each call checks the float part, the length with its answer at 0,
-    # against the bounds; the answer adds to it at run time.
     for k in range(1000):
-        low = compiled.lower(Q[0], Q[1], 8.0 + 0.5 * k)
+        low = compiled.lower(Q[0], Q[1], 0.5 * k)
     assert compiled.cache_info().compiled == 1
     # The answer keeps the wait a barrier that opens an epoch, at its lowest
     # length until it is known.
@@ -266,9 +264,12 @@ def test_a_wait_from_an_answer_and_a_float_compiles_once():
 @pytest.mark.parametrize(
     ("tau", "message"),
     [
-        (1500.0, r"next_tau\[0\] \+ tau \(its answers at 0\) = 1500.0 .* outside its bounds"),
-        (2.0, r"= 2.0 rounds to 2 clock cycles, outside its bounds \(8, 1000\)"),
+        (
+            1500.0,
+            r"next_tau\[0\] \+ tau \(its answers at 0\) = 1500.0 .* above its highest length 1000",
+        ),
         (float("nan"), "must be a finite number"),
+        (float("-inf"), "must be a finite number"),
     ],
 )
 def test_the_float_part_of_a_wait_from_an_answer_is_checked_at_call_time(tau, message):
@@ -279,7 +280,25 @@ def test_the_float_part_of_a_wait_from_an_answer_is_checked_at_call_time(tau, me
     assert compiled.cache_info().compiled == 1
 
 
-@pytest.mark.parametrize("tau", [30.4, 980.0])
+@pytest.mark.parametrize("tau", [2.0, -50.0, 100.0])
+def test_a_float_part_below_the_lowest_length_is_clamped_with_the_answer(tau):
+    @pulse.kernel
+    def k(q, tau: float):
+        d, t = get_drive_line(q)
+        wait(d, next_tau.submit(10.0).result() + tau, bounds=(8, 100))
+        drive(d, square(40, 0.1), t)
+
+    # Only the float part's highest length is checked when called: the
+    # answer adds to it, and the run clamps the sum to the bounds.
+    compiled = pulse.compile(k)
+    low = compiled.lower(Q[0], tau)
+    assert [e.opened_by for e in low.epochs()] == ["start", "wait"]
+    with pytest.raises(ValueError, match="above its highest length 100"):
+        compiled.lower(Q[0], 101.0)
+    assert compiled.cache_info().compiled == 1
+
+
+@pytest.mark.parametrize("tau", [30.4, 980.0, -15.0])
 def test_a_wait_from_an_answer_and_a_float_runs_their_sum_clamped(tau):
     from cudaq_pulse.targets import Qubit, TargetDescription
 

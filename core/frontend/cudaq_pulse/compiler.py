@@ -399,13 +399,20 @@ class _WaitLength:
     The call's values give its length, rounded to the nearest cycle with ties
     up as the module rounds it, and checked against its bounds before the
     call runs. For a length that also takes answers of classical calls this
-    is its float part, the length with its answers at 0; *text* names it.
+    is its float part, the length with its answers at 0, which *text* names:
+    it has no lowest length (*lowest* is None) and must be finite and at most
+    the highest, since the run clamps the whole length to the bounds.
     """
 
     __slots__ = ("source", "length", "lowest", "highest", "text", "kernel")
 
     def __init__(
-        self, expression: Any, lowest: int, highest: int, kernel: str, text: str | None = None
+        self,
+        expression: Any,
+        lowest: int | None,
+        highest: int,
+        kernel: str,
+        text: str | None = None,
     ) -> None:
         from .kernel.ir_builder import arithmetic_source, arithmetic_text
 
@@ -428,6 +435,13 @@ class _WaitLength:
                 "finite number of clock cycles"
             )
         cycles = math.floor(x + 0.5)
+        if self.lowest is None:
+            if self.highest is not None and cycles > self.highest:
+                raise ValueError(
+                    f"{self.kernel}(): the wait length {self.text} = {x!r} rounds to "
+                    f"{cycles} clock cycles, above its highest length {self.highest}"
+                )
+            return
         if cycles < 0 and self.lowest == 0:
             raise ValueError(
                 f"{self.kernel}(): the wait length {self.text} = {x!r} rounds to "
@@ -453,9 +467,10 @@ class _WaitLengths:
             for wait in waits
         )
         # floor(x + 0.5) is in [lowest, highest] exactly when
-        # lowest <= x + 0.5 < highest + 1, which NaN fails.
+        # lowest <= x + 0.5 < highest + 1, which NaN fails; without a lowest,
+        # -1e400 (minus infinity) < x + 0.5 also fails for minus infinity.
         tests = " and ".join(
-            f"{w.lowest} <= {w.source} + 0.5 < "
+            f"{'-1e400 <' if w.lowest is None else f'{w.lowest} <='} {w.source} + 0.5 < "
             f"{(_MAX_WAIT_CYCLES if w.highest is None else w.highest) + 1}"
             for w in self.waits
         )

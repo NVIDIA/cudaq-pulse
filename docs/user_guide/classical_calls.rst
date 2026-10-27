@@ -142,10 +142,11 @@ after it shifts by the wait's actual length, which is clamped to the bounds.
 
 A length may also add ``float`` kernel parameters to an answer, as in
 ``wait(d, answer + tau, bounds=(8, 1000))``. The kernel still compiles once:
-``tau`` is taken when the kernel is called, and each call checks the length
-with its answers taken as 0 (here ``tau``) against the bounds, raising
-``ValueError`` outside them. The wait stays a barrier, and its whole length
-is clamped to the bounds at run time.
+``tau`` is taken when the kernel is called, and each call checks that the
+length with its answers taken as 0 (here ``tau``) is finite and at most the
+upper bound, raising ``ValueError`` otherwise; it may be below the lower
+bound, since the answer adds to it. The wait stays a barrier, and its whole
+length is clamped to the bounds at run time.
 
 Scheduling and the report
 -------------------------
