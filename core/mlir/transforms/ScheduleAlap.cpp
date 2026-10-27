@@ -462,6 +462,101 @@ private:
     return start;
   }
 
+  /// One execution of a submission in a scheduled block, in the block's
+  /// local time: when it starts and how long it holds its link's slot.
+  struct BlockRequest {
+    int64_t start, busy;
+    mlir::Operation *op;
+  };
+
+  static void collectRequests(mlir::Block &body,
+                              llvm::SmallVectorImpl<int64_t> &iteration,
+                              llvm::SmallVectorImpl<BlockRequest> &found) {
+    for (mlir::Operation &op : body) {
+      if (mlir::isa<classical::SubmitOp>(op)) {
+        if (auto start = pulse::scheduledStart(&op, iteration))
+          found.push_back({*start, durationOf(&op) + budgetOf(&op), &op});
+      } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+        int64_t trips = pulse::constantTripCount(loop).value_or(0);
+        iteration.push_back(0);
+        for (int64_t k = 0; k < trips; ++k) {
+          iteration.back() = k;
+          collectRequests(*loop.getBody(), iteration, found);
+        }
+        iteration.pop_back();
+      } else {
+        // Both arms of a branch hold their slots, as the check counts them.
+        for (mlir::Region &region : op.getRegions())
+          for (mlir::Block &nested : region)
+            collectRequests(nested, iteration, found);
+      }
+    }
+  }
+
+  /// The requests of `block`, ordered by local start (forward) or by local
+  /// end, latest first (backward).
+  llvm::ArrayRef<BlockRequest> requestsOf(pulse::ScheduleBlockOp block,
+                                          bool backward) {
+    auto [it, inserted] = blockRequests.try_emplace(block.getOperation());
+    auto &[forwardOrder, backwardOrder] = it->second;
+    if (inserted) {
+      llvm::SmallVector<int64_t, 2> iteration;
+      collectRequests(block.getBody().front(), iteration, forwardOrder);
+      llvm::stable_sort(forwardOrder, [](const auto &a, const auto &b) {
+        return a.start < b.start;
+      });
+      backwardOrder = forwardOrder;
+      llvm::stable_sort(backwardOrder, [](const auto &a, const auto &b) {
+        return a.start + a.busy > b.start + b.busy;
+      });
+    }
+    return backward ? backwardOrder : forwardOrder;
+  }
+
+  /// Move a block placed at `start` until the requests in it fit the slots
+  /// its links have left, later (forward) or earlier (backward), and take
+  /// those slots. The block's own schedule fits empty links, so moving it
+  /// past the requests around it always succeeds.
+  int64_t takeBlockSlots(pulse::ScheduleBlockOp block, int64_t start,
+                         bool backward) {
+    llvm::ArrayRef<BlockRequest> requests = requestsOf(block, backward);
+    if (requests.empty())
+      return start;
+    while (true) {
+      llvm::DenseMap<int64_t, llvm::SmallVector<int64_t>> trial;
+      int64_t shift = 0;
+      for (const BlockRequest &request : requests) {
+        int64_t device = classical::intAttr(request.op, "classical.device");
+        auto it = trial.find(device);
+        if (it == trial.end())
+          it = trial.try_emplace(device, lanesOf(request.op)).first;
+        auto &heap = it->second;
+        int64_t at = start + request.start;
+        if (backward) {
+          std::pop_heap(heap.begin(), heap.end());
+          shift = at + request.busy - heap.back();
+          heap.back() = at;
+          std::push_heap(heap.begin(), heap.end());
+        } else {
+          auto later = std::greater<int64_t>();
+          std::pop_heap(heap.begin(), heap.end(), later);
+          shift = heap.back() - at;
+          heap.back() = at + request.busy;
+          std::push_heap(heap.begin(), heap.end(), later);
+        }
+        if (shift > 0)
+          break;
+      }
+      if (shift <= 0) {
+        for (auto &[device, heap] : trial)
+          linkLanes[device] = std::move(heap);
+        return start;
+      }
+      start += backward ? -shift : shift;
+      lanesBound = true;
+    }
+  }
+
   void forwardSubmit(classical::SubmitOp submit) {
     mlir::Operation *op = submit;
     int64_t start =
@@ -587,6 +682,8 @@ private:
     for (auto [input, offset] : llvm::zip(inputs, shape.in))
       if (offset >= 0)
         start = std::max(start, ready(input) - offset);
+    if (classical)
+      start = takeBlockSlots(block, start, /*backward=*/false);
     record(block, start);
     for (auto [result, offset, source] :
          llvm::zip(block.getOutputs(), shape.out, shape.source))
@@ -886,6 +983,8 @@ private:
       else
         bound(inputs[source], needed);
     }
+    if (classical)
+      start = takeBlockSlots(block, start, /*backward=*/true);
     record(block, start);
     armStart = std::min(armStart, start);
     for (auto [input, offset] : llvm::zip(inputs, shape.in))
@@ -1005,6 +1104,11 @@ private:
   /// A link's slots delayed a request: loop iterations may differ, so they
   /// are all simulated.
   bool lanesBound = false;
+  /// The requests of each block, by local start and by local end.
+  llvm::DenseMap<mlir::Operation *,
+                 std::pair<llvm::SmallVector<BlockRequest>,
+                           llvm::SmallVector<BlockRequest>>>
+      blockRequests;
   /// Under ALAP, nothing before a blocking wait ends after it.
   int64_t ceiling = kNever;
   std::map<std::pair<mlir::Operation *, llvm::SmallVector<int64_t, 2>>, int64_t>

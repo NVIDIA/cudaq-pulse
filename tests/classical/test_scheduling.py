@@ -435,3 +435,34 @@ def test_scheduling_invariants(steps, policy):
             assert s0 + d0 <= s1
     if calls:
         assert _makespan(low) >= max(c.taken_vtu or 0 for c in calls)
+
+
+# ── Regressions ──────────────────────────────────────────────────────────────
+
+
+
+@pytest.mark.parametrize("callee", ["asap", "alap"])
+@pytest.mark.parametrize("policy", ["asap", "alap"])
+def test_a_block_waits_for_a_slot_the_caller_holds(callee, policy):
+    @pulse.kernel(schedule=callee)
+    def twice(r, rt):
+        m = readout(r, square(10, 0.05), rt)
+        a = decode.submit([m])
+        b = decode.submit([m])
+        a.result()
+        b.result()
+
+    @pulse.kernel
+    def k(q):
+        r, rt = get_readout_line(q)
+        f = decode.submit([readout(r, square(10, 0.05), rt)])
+        twice(r, rt)
+        f.result()
+
+    machine = MachineModel(links={0: Link(max_in_flight=2)})
+    calls = pulse.compile(k, schedule=policy, machine=machine).lower(Q[0]).classical_report()
+    first, *block = calls
+    # The block's second request needs the slot the first call frees.
+    assert block[1].submit_vtu == first.due_vtu
+    assert block[0].submit_vtu == block[1].submit_vtu - 1
+
