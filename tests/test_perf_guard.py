@@ -324,6 +324,7 @@ def _classical_benchmarks():
     return module
 
 
+@pytest.mark.scaling
 def test_calls_compile_schedule_and_report_in_linear_time():
     bench = _classical_benchmarks()
     q = bench._device().qudit_handles[0]
@@ -364,6 +365,7 @@ def test_a_call_adds_little_to_simulation_on_the_same_timeline():
     assert b < 1.25 * a, (a, b)
 
 
+@pytest.mark.scaling
 def test_compiling_calls_takes_little_memory_per_call():
     import tracemalloc
 
