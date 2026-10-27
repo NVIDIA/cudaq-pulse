@@ -770,6 +770,24 @@ def _attribute_error(obj: Any, attr: str) -> str:
     return attribute_error(obj, attr)
 
 
+def _qudit_attribute_error(name: str | None, attr: str) -> str:
+    """The error for reading attribute *attr* of qudit parameter *name*
+    while tracing."""
+    if name is None or "[" not in name:
+        where = "a qudit" if name is None else f"qudit {name!r}"
+        handle = "q" if name is None else name
+        example = f"value: float, called with TABLE[{handle}.{attr}]"
+    else:
+        where = f"qudit {name!r}"
+        register = name.split("[")[0]
+        example = f"values: list[float], called with [TABLE[q.{attr}] for q in {register}]"
+    return (
+        f"cannot read .{attr} of {where} while the kernel is traced: in a kernel a qudit "
+        "is a value of the program, not a handle. Look the value up on the host and pass "
+        f"it in as a parameter, e.g. {example}"
+    )
+
+
 def _describe(value: Any) -> str:
     """How an operand error names what the kernel passed."""
     if value.__class__ is IRValue:
@@ -1275,6 +1293,7 @@ class PulseIREmitter:
         "_lines",
         "_unroll",
         "_one_arm",
+        "_qudit_names",
     )
 
     _can_roll: bool
@@ -1288,6 +1307,7 @@ class PulseIREmitter:
     # Names a measurement-conditioned if bound in one arm only, with the
     # branch instruction; set by the first such if.
     _one_arm: dict[str, tuple[bc.DecodedCode, int]]
+    _qudit_names: dict[int, str]
 
     def __init__(
         self,
@@ -1312,6 +1332,7 @@ class PulseIREmitter:
             self._acquired = caller._acquired
             self._lines = caller._lines
             self._unroll = caller._unroll
+            self._qudit_names = caller._qudit_names
             return
         self._can_roll = getattr(builder, "supports_regions", False)
         self._unroll = resolve_unroll_threshold(getattr(builder, "unroll_threshold", None))
@@ -1328,6 +1349,8 @@ class PulseIREmitter:
         # Lines acquired so far, counted across inlined calls.
         self._acquired = [0]
         self._lines = _Lines()
+        # Qudit vid -> the kernel parameter it is ("q", "qs[1]"), for errors.
+        self._qudit_names = {}
         if not _PULSE_FUNCTIONS:
             _load_pulse_functions()
 
@@ -1472,6 +1495,10 @@ class PulseIREmitter:
                         try:
                             push(getattr(obj, arg))
                         except (AttributeError, TypeError) as e:
+                            if obj.__class__ is IRValue and obj.vtype == "qref":
+                                raise CompilationError(
+                                    _qudit_attribute_error(self._qudit_names.get(obj.vid), arg)
+                                ) from e
                             raise CompilationError(_attribute_error(obj, arg)) from e
 
                 elif op is _subscr:

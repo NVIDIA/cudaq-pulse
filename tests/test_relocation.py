@@ -219,6 +219,56 @@ def test_acquirer_limits_are_checked_per_call():
     assert check(apart, limits) == []
 
 
+def test_bound_views_print_carriers():
+    @pulse.kernel
+    def k(q: Qudit):
+        line, _ = get_drive_line(q)
+        drive(line, square(20, 0.1), _)
+
+    carrier = DEV.layout[4]
+    text = pulse.compile(k, passes=()).lower(H[4]).mlir()
+    assert f"qubit = {carrier} : i64" in text
+    assert "pulse.slot" in text and "!pulse.qref" not in text.split("func.func")[1].split(")")[0]
+
+
+@pytest.mark.parametrize(
+    "annotation, read, name, rewrite",
+    [
+        (Qudit, "q.logical", "'q'", "value: float, called with TABLE[q.logical]"),
+        (None, "q.index", "'q'", "value: float, called with TABLE[q.index]"),
+    ],
+)
+def test_reading_a_qudit_attribute_names_the_rewrite(annotation, read, name, rewrite):
+    table = [0.1] * len(H)
+    source = f"""
+def k(q):
+    d, t = get_drive_line(q)
+    drive(d, square(20, table[{read}]), t)
+"""
+    scope = {"table": table, "get_drive_line": get_drive_line, "drive": drive, "square": square}
+    exec(source, scope)
+    k = scope["k"]
+    if annotation is not None:
+        k.__annotations__["q"] = annotation
+    with pytest.raises(CompilationError, match=rf"cannot read \.\w+ of qudit {name}") as e:
+        pulse.kernel(k).lower(H[2])
+    assert rewrite in str(e.value)
+
+
+def test_reading_a_register_element_attribute_names_the_list_rewrite():
+    table = [0.1] * len(H)
+
+    @pulse.kernel
+    def k(qs: Register):
+        for q in qs:
+            d, t = get_drive_line(q)
+            drive(d, square(20, table[q.index]), t)
+
+    with pytest.raises(CompilationError, match=r"of qudit 'qs\[0\]'") as e:
+        k.lower(H[[1, 2]])
+    assert "values: list[float], called with [TABLE[q.index] for q in qs]" in str(e.value)
+
+
 def test_list_promoted_to_static_warns():
     @pulse.kernel
     def k(q: Qudit, lengths: list[float]):
