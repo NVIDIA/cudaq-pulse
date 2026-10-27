@@ -138,7 +138,7 @@ def test_measurements_report_device_qudits(measured):
     assert [m.qudit for m in on_chip.measurements] == [measured]
     assert [m.qudit for m in alone.measurements] == [new[measured]]
     _same(on_chip, alone)
-    assert on_chip.branches == pytest.approx(alone.branches)
+    assert on_chip.branches == [(o, pytest.approx(p)) for o, p in alone.branches]
     np.testing.assert_array_equal(on_chip.records, alone.records)
 
 
