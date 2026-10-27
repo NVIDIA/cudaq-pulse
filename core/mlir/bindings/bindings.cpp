@@ -704,6 +704,7 @@ public:
     if (classical::declaresClassicalCalls(*module_))
       pm.addPass(pulse::createPulseClassicalCheckPass());
     programs_.clear();
+    keepSource();
     runPipeline(pm, *module_, "pulse scheduling failed");
   }
 
@@ -987,14 +988,19 @@ public:
                                 int64_t maxReadouts, int64_t readoutLatency,
                                 int64_t switchPenalty) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
-    auto copy = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
-    mlir::PassManager pm(ctx_.get());
-    pm.addNestedPass<mlir::func::FuncOp>(
+    auto copy = mlir::OwningOpRef<mlir::ModuleOp>(source().clone());
+    mlir::PassManager unroll(ctx_.get());
+    unroll.addNestedPass<mlir::func::FuncOp>(
         pulse::createPulseUnrollClassicalLoopsPass());
+    runPipeline(unroll, *copy, "simulation: unrolling classical loops failed");
+    PulseModule result(ctx_, std::move(copy));
+    result.keepSource();
+    mlir::PassManager pm(ctx_.get());
     addSchedule(pm, policy, maxDrives, maxReadouts, readoutLatency,
                 switchPenalty);
-    runPipeline(pm, *copy, "simulation: unrolling classical loops failed");
-    return PulseModule(ctx_, std::move(copy));
+    runPipeline(pm, *result.module_,
+                "simulation: unrolling classical loops failed");
+    return result;
   }
 
   /// One argument of a call: (kind, readout index, iteration, value), kind 0
@@ -1042,12 +1048,11 @@ public:
       }
       bool answered = false;
       double timeout = -1.0;
-      for (mlir::Operation *user : submit.getFuture().getUsers())
-        if (auto wait = mlir::dyn_cast<classical::WaitOp>(user)) {
-          answered = true;
-          if (auto t = wait.getTimeoutNs())
-            timeout = t->convertToDouble();
-        }
+      for (classical::WaitOp wait : classical::waitsOf(submit)) {
+        answered = true;
+        if (auto t = wait.getTimeoutNs())
+          timeout = t->convertToDouble();
+      }
       next = PendingCall{indexOf.lookup(op), start,    submit.getCallee().str(),
                          std::move(args),    answered, timeout};
       return false;
@@ -1068,7 +1073,8 @@ public:
                         int64_t maxReadouts, int64_t readoutLatency,
                         int64_t switchPenalty) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
-    auto copy = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
+    bool unscheduled = static_cast<bool>(source_);
+    auto copy = mlir::OwningOpRef<mlir::ModuleOp>(source().clone());
     classical::SubmitOp found;
     int64_t seen = 0;
     copy->walk([&](classical::SubmitOp submit) {
@@ -1078,21 +1084,27 @@ public:
     if (!found)
       throw std::invalid_argument("bind_call: no call execution " +
                                   std::to_string(index));
+    if (unscheduled) {
+      int64_t scheduled = 0;
+      module_->walk([&](classical::SubmitOp) { ++scheduled; });
+      if (scheduled != seen)
+        throw std::runtime_error(
+            "bind_call: the module has " + std::to_string(scheduled) +
+            " call executions and its source " + std::to_string(seen));
+    }
     found->setAttr("classical.bound", mlir::UnitAttr::get(ctx_.get()));
     bool rebound = false;
-    for (mlir::Operation *user :
-         llvm::make_early_inc_range(found.getFuture().getUsers()))
-      if (auto wait = mlir::dyn_cast<classical::WaitOp>(user)) {
-        if (wait.getValues().size() != values.size())
-          throw std::invalid_argument(
-              "bind_call: " + found.getCallee().str() + " answers " +
-              std::to_string(wait.getValues().size()) + " values, got " +
-              std::to_string(values.size()));
-        bindConstants(wait, values);
-        rebound = true;
-      }
+    for (classical::WaitOp wait : classical::waitsOf(found)) {
+      if (wait.getValues().size() != values.size())
+        throw std::invalid_argument(
+            "bind_call: " + found.getCallee().str() + " answers " +
+            std::to_string(wait.getValues().size()) + " values, got " +
+            std::to_string(values.size()));
+      bindConstants(wait, values);
+      rebound = true;
+    }
     PulseModule result(ctx_, std::move(copy));
-    if (rebound)
+    if (rebound || unscheduled)
       result.schedule(policy, maxDrives, maxReadouts, readoutLatency,
                       switchPenalty);
     return result;
@@ -1292,7 +1304,7 @@ public:
                          int64_t readoutLatency = 0,
                          int64_t switchPenalty = 0) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
-    auto clonedModule = module_->clone();
+    auto clonedModule = source().clone();
     auto funcOp = clonedModule.lookupSymbol<mlir::func::FuncOp>("main");
     if (!funcOp)
       throw std::runtime_error("specialize: no 'main' func in module");
@@ -1328,8 +1340,13 @@ public:
     funcOp.setType(builder.getFunctionType({}, {}));
 
     // Fold parameter expressions before deriving concrete durations.
+    mlir::PassManager fold(ctx_.get());
+    fold.addPass(mlir::createCanonicalizerPass());
+    runPipeline(fold, clonedModule, "specialize: pass pipeline failed");
+    auto owning = mlir::OwningOpRef<mlir::ModuleOp>(clonedModule);
+    PulseModule result(ctx_, std::move(owning));
+    result.keepSource();
     mlir::PassManager pm(ctx_.get());
-    pm.addPass(mlir::createCanonicalizerPass());
     if (schedule == "asap")
       pm.addNestedPass<mlir::func::FuncOp>(
           pulse::createPulseScheduleAsapPass());
@@ -1343,12 +1360,10 @@ public:
     else
       throw std::invalid_argument("unsupported specialization schedule: " +
                                   schedule);
-    if (classical::declaresClassicalCalls(clonedModule))
+    if (classical::declaresClassicalCalls(*result.module_))
       pm.addPass(pulse::createPulseClassicalCheckPass());
-    runPipeline(pm, clonedModule, "specialize: pass pipeline failed");
-
-    auto owning = mlir::OwningOpRef<mlir::ModuleOp>(clonedModule);
-    return PulseModule(ctx_, std::move(owning));
+    runPipeline(pm, *result.module_, "specialize: pass pipeline failed");
+    return result;
   }
 
 private:
@@ -1576,8 +1591,28 @@ private:
     return module_->lookupSymbol<mlir::func::FuncOp>("main");
   }
 
+  /// Keep a copy of the module before it is scheduled if it has schedule
+  /// blocks: scheduling inlines them, and a module scheduled again (with
+  /// values or answers bound) must place each block whole again.
+  void keepSource() {
+    bool blocks = false;
+    module_->walk([&](pulse::ScheduleBlockOp) {
+      blocks = true;
+      return mlir::WalkResult::interrupt();
+    });
+    if (blocks)
+      source_ = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
+  }
+
+  /// What a module scheduled again starts from: the module before it was
+  /// scheduled, if it had blocks, else the module.
+  mlir::ModuleOp source() { return source_ ? *source_ : *module_; }
+
   std::shared_ptr<mlir::MLIRContext> ctx_;
   mlir::OwningOpRef<mlir::ModuleOp> module_;
+  // The module before scheduling, while it has schedule blocks (see
+  // keepSource).
+  mlir::OwningOpRef<mlir::ModuleOp> source_;
   // Lowered operator programs by module attribute dictionary.
   std::map<const void *, ProgramTemplate> programs_;
   // Python threads may call into one module concurrently once the GIL is

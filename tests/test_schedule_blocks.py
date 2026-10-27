@@ -397,3 +397,29 @@ def test_kernel_schedules_are_checked_where_kernels_are_declared():
     with pytest.raises(ValueError, match="applies to a whole program"):
         pulse.kernel(schedule="rcp")(lambda q: None)
     assert pulse.kernel(schedule="asap")(lambda q: None).schedule == "asap"
+
+
+def test_a_block_with_a_float_length_wait_keeps_its_shape_when_called():
+    @pulse.kernel(schedule="asap")
+    def delayed(da, ta, db, tb, tau: float):
+        wait(da, tau, bounds=(0, 400))
+        drive(da, square(40, 0.1), ta)
+        drive(db, square(10, 0.1), tb)
+
+    @pulse.kernel
+    def top(qa, qb, qc, tau: float):
+        da, ta = get_drive_line(qa)
+        db, tb = get_drive_line(qb)
+        dc, tc = get_drive_line(qc)
+        drive(dc, square(1000, 0.1), tc)
+        delayed(da, ta, db, tb, tau)
+
+    events = top.lower(*_qubits(3), 37.0).schedule
+    # Placed whole at the end of the ALAP program, the ASAP block still
+    # starts both of its lines together.
+    assert [(e.kind, e.line, e.start_vtu) for e in events] == [
+        ("drive", 2, 0),
+        ("wait", 0, 923),
+        ("drive", 0, 960),
+        ("drive", 1, 923),
+    ]

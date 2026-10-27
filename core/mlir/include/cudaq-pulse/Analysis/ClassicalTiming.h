@@ -113,12 +113,33 @@ inline int64_t budgetVtu(CallableOp callable, const LinkModel &link,
   return ceilVtu(latency, clockGHz) + ceilVtu(link.feedbackNs, clockGHz);
 }
 
+/// The waits that take `future`, following it into and out of
+/// `pulse.schedule_block`s.
+inline void waitsOf(mlir::Value future, llvm::SmallVectorImpl<WaitOp> &found) {
+  for (mlir::OpOperand &use : future.getUses()) {
+    mlir::Operation *user = use.getOwner();
+    if (auto wait = mlir::dyn_cast<WaitOp>(user))
+      found.push_back(wait);
+    else if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(user))
+      waitsOf(block.getBody().getArgument(use.getOperandNumber()), found);
+    else if (mlir::isa<pulse::YieldOp>(user))
+      if (auto block =
+              mlir::dyn_cast<pulse::ScheduleBlockOp>(user->getParentOp()))
+        waitsOf(block->getResult(use.getOperandNumber()), found);
+  }
+}
+
+inline llvm::SmallVector<WaitOp, 1> waitsOf(SubmitOp submit) {
+  llvm::SmallVector<WaitOp, 1> found;
+  waitsOf(submit.getFuture(), found);
+  return found;
+}
+
 /// The timeout of the wait that takes the answer of `submit`, if it has one.
 inline std::optional<double> waitTimeoutNs(SubmitOp submit) {
-  for (mlir::Operation *user : submit.getFuture().getUsers())
-    if (auto wait = mlir::dyn_cast<WaitOp>(user))
-      if (auto timeout = wait.getTimeoutNs())
-        return timeout->convertToDouble();
+  for (WaitOp wait : waitsOf(submit))
+    if (auto timeout = wait.getTimeoutNs())
+      return timeout->convertToDouble();
   return std::nullopt;
 }
 

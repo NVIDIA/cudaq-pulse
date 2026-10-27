@@ -510,3 +510,23 @@ def test_a_blocking_wait_in_a_block_is_rejected_without_the_verifier(passes):
 
     with pytest.raises(RuntimeError, match="return the future from the kernel and take the answer"):
         pulse.compile(k, passes=passes).lower(Q[0])
+
+
+@pytest.mark.parametrize("callee", ["asap", "alap"])
+@pytest.mark.parametrize("policy", ["asap", "alap"])
+def test_a_future_taken_with_a_timeout_in_a_block_budgets_the_timeout(callee, policy):
+    @pulse.kernel(schedule=callee)
+    def take(future, d, t):
+        ok, fix = future.result(timeout_ns=400)
+        if fix[0]:
+            drive(d, square(ARM, 0.1), t)
+
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        r, rt = get_readout_line(q)
+        take(decode.submit([readout(r, square(READOUT, 0.05), rt)]), d, t)
+
+    (call,) = pulse.compile(k, schedule=policy).lower(Q[0]).classical_report()
+    assert call.due_vtu == READOUT + 1 + math.ceil(400 * CLOCK)
+    assert call.taken_vtu >= call.due_vtu and call.first_use_vtu >= call.due_vtu

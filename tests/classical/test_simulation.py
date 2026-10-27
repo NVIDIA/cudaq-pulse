@@ -406,3 +406,69 @@ def test_calls_on_a_high_index_qudit_use_its_mode():
         pulse.compile(decoded_reset, device=dev).lower(q), initial_state=PLUS, readout="model"
     )
     assert _by_outcome(modelled)[(0,)] == pytest.approx(0.5 + 0.5 * 0.1, abs=1e-6)
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap"])
+@pytest.mark.parametrize("where", ["future_in", "future_out"])
+def test_an_answer_crossing_a_block_is_bound_in_simulation(schedule, where):
+    @pulse.kernel(schedule=schedule)
+    def correct(future, d, t):
+        if future.result()[0]:
+            drive(d, square(40, PI_AMP), t)
+
+    @pulse.kernel(schedule=schedule)
+    def measure(d, r, rt):
+        result = readout(r, square(1000, 0.05), rt)
+        sync(d, r)
+        return decoder.submit([result])
+
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        r, rt = get_readout_line(q)
+        if where == "future_in":
+            result = readout(r, square(1000, 0.05), rt)
+            sync(d, r)
+            correct(decoder.submit([result]), d, t)
+        else:
+            if measure(d, r, rt).result()[0]:
+                drive(d, square(40, PI_AMP), t)
+
+    dev = _device()
+    q = dev.qudit_handles[0]
+    result = pulse.simulate(pulse.compile(k, device=dev).lower(q), initial_state=PLUS)
+    reset = pulse.simulate(pulse.compile(active_reset, device=dev).lower(q), initial_state=PLUS)
+    np.testing.assert_allclose(result.density_matrix, reset.density_matrix, atol=1e-9)
+    assert [[c.answer for c in calls] for calls in result.calls] == [[[0]], [[1]]]
+
+
+def test_simulation_keeps_a_blocks_own_schedule():
+    @pulse.kernel(schedule="asap")
+    def early(d, t, e, u):
+        drive(d, square(40, PI_AMP), t)
+        drive(e, square(100, 0.0), u)
+
+    @pulse.kernel
+    def k(q, p):
+        d, t = get_drive_line(q)
+        e, u = get_drive_line(p)
+        drive(e, square(4000, constant.submit(0.0).result()), u)
+        early(d, t, e, u)
+
+    dev = _device(t1_us=1.0, n=2)
+    low = pulse.compile(k, device=dev).lower(*dev.qudit_handles)
+    pi = next(e for e in low.schedule if e.kind == "drive" and e.qubit == 0)
+    # The ASAP block ends with the program: its pi pulse ends 60 cycles
+    # before the end, where a flattened ALAP schedule would end it at the end.
+    end = max(e.end for e in low.schedule)
+    assert end - pi.end == 60
+    excited = 1.0 - pulse.simulate(low).density_matrix[0, 0].real
+
+    @pulse.kernel
+    def pi_alone(q):
+        d, t = get_drive_line(q)
+        drive(d, square(40, PI_AMP), t)
+
+    alone = pulse.simulate(pulse.compile(pi_alone, device=dev).lower(dev.qudit_handles[0]))
+    at_end = 1.0 - alone.density_matrix[0, 0].real
+    assert excited == pytest.approx(at_end * math.exp(-60 / 2.0 / 1000.0), abs=1e-4)
