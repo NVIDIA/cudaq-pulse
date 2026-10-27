@@ -18,6 +18,10 @@ Functions and links
 
 .. autofunction:: cudaq_pulse.classical.external
 
+.. autofunction:: cudaq_pulse.classical.function_id
+
+.. autoclass:: cudaq_pulse.classical.ClassicalDecorator
+
 .. autoclass:: cudaq_pulse.classical.ClassicalFunction
    :members: submit
 
@@ -61,7 +65,7 @@ Wire format
 -----------
 
 .. automodule:: cudaq_pulse.classical.wire
-   :members: schema, encode_request, decode_request, encode_answer, decode_answer, native
+   :members: schema, encode_request, decode_request, encode_answer, decode_answer, native, HEADER_BYTES, REQUEST_MAGIC, RESPONSE_MAGIC
 
 QEC decoders
 ------------

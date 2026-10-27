@@ -34,8 +34,6 @@ results, its latency and the link its requests travel on. The body is the
 reference implementation: simulation and emulation run it in place of the
 service.
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    import cudaq_pulse as pulse
@@ -51,8 +49,6 @@ service.
    )
    def decode(syndrome):
        return [syndrome[0]]
-
-.. :spellcheck-enable:
 
 Argument types are ``Bits(n)`` and ``Levels(n)`` (measurement results),
 ``IQ(n)`` (the IQ points of ``n`` readouts), ``Float()``, ``Integer()``,
@@ -82,8 +78,6 @@ request, a bandwidth, a feedback time from an answer arriving to a pulse
 using it, a number of requests it holds at once and the largest request it
 takes. They belong to the machine model, named or by id:
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    from cudaq_pulse.classical import Link
@@ -97,8 +91,6 @@ takes. They belong to the machine model, named or by id:
    )
    lowered = pulse.compile(kernel, device=dev, machine=machine).lower(q)
 
-.. :spellcheck-enable:
-
 A function's ``link=`` names a link of the machine model, or gives a link id.
 Named links get the lowest ids no other link has, in the order given, so the
 first named link of a model without ids is link 0, the default. Compiling a
@@ -109,8 +101,6 @@ Calling from a kernel
 
 In a kernel, ``fn.submit(...)`` sends the request and returns a future, and
 ``future.result()`` takes the answer:
-
-.. :spellcheck-disable:
 
 .. code-block:: python
 
@@ -128,8 +118,6 @@ In a kernel, ``fn.submit(...)`` sends the request and returns a future, and
            if m:
                drive(d, square(40, PI_AMP), t)
 
-.. :spellcheck-enable:
-
 With ``timeout_ns`` the result starts with a flag that is true when the
 answer came in time; the other values are zero when it did not, and the
 program takes its fallback. A future is taken in the kernel that submitted
@@ -138,14 +126,10 @@ to the next, as an estimator's state is.
 
 A wait may take its length from an answer, between bounds:
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    alpha, beta, tau = update_t1.submit([m], alpha, beta, tau).result()
    wait(d, tau, bounds=(200, 40000))
-
-.. :spellcheck-enable:
 
 Such a variable wait is a barrier: every line syncs before it, and it opens a
 new *epoch*. The static schedule places it at its lower bound, and everything
@@ -197,15 +181,11 @@ is bound, and the path is scheduled again, so variable waits take their
 actual lengths on each path. Branches share the state rather than copying
 it.
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    result = pulse.simulate(lowered, initial_state=plus, latency_branching=True)
    for calls, (outcomes, p) in zip(result.calls, result.branches):
        print(outcomes, p, [c.answer for c in calls])
-
-.. :spellcheck-enable:
 
 - ``handlers={"decode": fn}`` replaces a function's body, or provides one
   for a function declared with ``pulse.classical.external``.
@@ -261,8 +241,6 @@ call goes out as real wire bytes, in process or over UDP to a server from
 each direction plus the service's measured time. A late answer takes the
 timeout arm.
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    from cudaq_pulse.classical import emulation
@@ -274,8 +252,6 @@ timeout arm.
        seed=1,
    )
    print(run.late_fraction, run.calls_per_second)
-
-.. :spellcheck-enable:
 
 Calibrating while the QPU runs
 ------------------------------
@@ -298,8 +274,6 @@ kernel calls between measurements and runs between shots:
   the next point and whether the search has converged. Their states pack
   into ``Floats`` for calls.
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    from cudaq_pulse.classical import calibration as cal
@@ -311,15 +285,11 @@ kernel calls between measurements and runs between shots:
        alpha, beta = cal.t1_update(alpha, beta, bool(survived[0]), wait_vtu / 2.0)
        return alpha, beta, min(max(cal.t1_wait(alpha, beta) * 2.0, 200), 20000)
 
-.. :spellcheck-enable:
-
 **The converged pattern.** A kernel's trip counts are fixed when it
 compiles. To stop early, the estimator carries a converged flag in its state,
 keeps answering with its final point once converged, and the kernel gates its
 probe pulses on the flag; values cannot leave the arms of an ``if``, so the
 call stays outside it:
-
-.. :spellcheck-disable:
 
 .. code-block:: python
 
@@ -330,8 +300,6 @@ call stays outside it:
            shift_frequency(t, -x)
        m = readout(r, ro, rt)
        state, x, done = golden_step.submit([m], state).result()
-
-.. :spellcheck-enable:
 
 **Choosing among settings.** An integer answer selects among arms with
 ``if i == 0: ... elif i == 1: ...``, or a balanced split, ``if i < 2:`` with
@@ -354,8 +322,6 @@ hardware a read of a controller register, and a variable wait takes its
 length from it. ``EstimateLog`` records each estimate with what was true,
 when it is known.
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    store = ParameterStore(wait_vtu=4000.0)
@@ -371,8 +337,6 @@ when it is known.
        lowered = compiled.lower(q, amplitude)   # no compiling after the first
        ...
        store.set("wait_vtu", next_wait, iteration=i)
-
-.. :spellcheck-enable:
 
 **A drifting device.** ``cudaq_pulse.runtime.drift.DriftingPlant`` moves one
 qubit's T1 (``TelegraphT1``, switching between two values), frequency and

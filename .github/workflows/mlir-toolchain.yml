@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   build:
-    name: ${{ matrix.platform }}
+    name: mlir-toolchain (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
     timeout-minutes: 360

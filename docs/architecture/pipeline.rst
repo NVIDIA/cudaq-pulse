@@ -11,8 +11,6 @@ Compilation Pipeline
 cudaq-pulse compiles ``@kernel`` functions through a multi-stage pipeline
 that goes from Python source to GPU-executable code.
 
-.. :spellcheck-disable:
-
 .. code-block:: text
 
    @kernel Python function
@@ -40,8 +38,6 @@ that goes from Python source to GPU-executable code.
          | JIT compile + execute
          v
    GPU simulation via cuDensityMat
-
-.. :spellcheck-enable:
 
 Stage 1: Bytecode Tracing
 --------------------------

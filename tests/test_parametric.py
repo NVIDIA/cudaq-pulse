@@ -642,12 +642,12 @@ class TestE2ESweeps:
 
 
 # ===========================================================================
-# Backward compatibility
+# Kernels without parameters
 # ===========================================================================
 
 
-class TestBackwardCompat:
-    """Existing concrete kernels must work identically."""
+class TestConcreteKernels:
+    """Kernels with only concrete arguments compile as before parameters."""
 
     def test_existing_single_qubit(self):
 

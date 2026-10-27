@@ -126,6 +126,15 @@ model, operations, compilation, custom passes, and GPU execution.
 [`examples/custom_passes/`](https://github.com/NVIDIA/cudaq-pulse/tree/main/examples/custom_passes) shows how to write
 passes in Python and as C++ plugins.
 
+Kernels can also call classical functions while the QPU runs
+(`@pulse.classical`, `fn.submit(...).result()`): decoders, estimators or
+calibration updates whose answers the same shot uses, scheduled with their
+latency budget and simulated or emulated in virtual time. A compiled kernel
+exports to an out-of-tree controller backend with
+`Lowered.export_controller()`, and `cudaq_pulse.backends` finds the backends
+installed beside cudaq-pulse; see the "Classical Calls at QPU Runtime" and
+"Writing a Controller Backend" guides.
+
 ## Run the test suite against your installation
 
 The tests live in this repository, not in the wheel. They import whichever
@@ -174,7 +183,7 @@ release carries the wheels and the source distribution.
 
 - `core/frontend/` — Python DSL, compiler pipeline, targets, and
   runtime
-- `core/mlir/` — Pulse, `QOp`, and CuDensityMat dialects, transformations,
+- `core/mlir/` — Pulse, Classical, `QOp`, and CuDensityMat dialects, transformations,
   bindings, and `cudaq-pulse-opt`
 - `core/runtime/` — cuDensityMat runtime library loaded by JIT-compiled code
 - `cmake/` — dependency, Python staging, testing, and documentation modules

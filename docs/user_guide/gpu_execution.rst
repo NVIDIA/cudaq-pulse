@@ -20,15 +20,11 @@ research and should not be treated as a production simulator.
 Installation
 ------------
 
-.. :spellcheck-disable:
-
 .. code-block:: bash
 
    RELEASE=https://github.com/NVIDIA/cudaq-pulse/releases/expanded_assets/v0.1.0
    pip install "cudaq-pulse[cu12]==0.1.0" --find-links "$RELEASE"   # CUDA 12 libraries
    pip install "cudaq-pulse[cu13]==0.1.0" --find-links "$RELEASE"   # CUDA 13 libraries
-
-.. :spellcheck-enable:
 
 The Linux wheels include a cuDensityMat runtime library for each of CUDA 12
 and CUDA 13. The ``cu12`` and ``cu13`` extras install cuDensityMat and the
@@ -60,13 +56,9 @@ Troubleshooting
 
 Run the diagnostics first:
 
-.. :spellcheck-disable:
-
 .. code-block:: bash
 
    python -m cudaq_pulse.doctor
-
-.. :spellcheck-enable:
 
 It prints the version, the wheel platform, whether the GPU runtime is built
 in, which CUDA extra is installed, each library it loads with its path or the
@@ -76,15 +68,11 @@ compiler-only installation.
 
 From Python, the same check is:
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    from cudaq_pulse.runtime import require_gpu_runtime
 
    require_gpu_runtime()   # returns the loaded runtime or raises
-
-.. :spellcheck-enable:
 
 Source builds enable the runtime with ``-DCUDAQ_PULSE_ENABLE_GPU=ON``, which
 makes CUDA and cuDensityMat required: configuration fails instead of
@@ -141,8 +129,6 @@ MLIR Lowering
 
 To inspect the lowered LLVM IR:
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    import cudaq_pulse as pulse
@@ -155,8 +141,6 @@ To inspect the lowered LLVM IR:
    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
    llvm_ir = my_kernel.lower(dev.qudit_handles[0]).mlir("llvm")
    print(llvm_ir)
-
-.. :spellcheck-enable:
 
 The lowering passes through three dialect conversions:
 
@@ -178,8 +162,6 @@ GPU Simulation
 --------------
 
 To execute on a GPU (requires cuDensityMat runtime):
-
-.. :spellcheck-disable:
 
 .. code-block:: python
 
@@ -211,8 +193,6 @@ To execute on a GPU (requires cuDensityMat runtime):
    lowered = x_gate.lower(dev.qudit_handles[0])
    result = pulse.simulate(lowered, backend="gpu", t_end=20.0, dt_ns=0.1, integrator="rk4")
    print(result.density_matrix)
-
-.. :spellcheck-enable:
 
 ``t_end`` and ``dt_ns`` are in nanoseconds; ``t_end`` defaults to the end of
 the schedule. ``dt_ns`` defaults to 0.05 ns, or to 20 steps per period of the
@@ -315,8 +295,6 @@ all paths sum to the ensemble
 with no sampling error. Requesting ``shots`` also samples per-shot records
 of the outcomes from the same branch probabilities.
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    @pulse.kernel
@@ -333,8 +311,6 @@ of the outcomes from the same branch probabilities.
    result.density_matrix   # ensemble state at the end
    result.branches         # [(outcomes, probability), ...]
    result.records          # one row of outcomes per shot
-
-.. :spellcheck-enable:
 
 ``backend="cpu"`` integrates the same lowered operator with a NumPy RK4
 reference; ``backend="gpu"`` evolves each segment with cuDensityMat, starting

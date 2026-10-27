@@ -20,13 +20,9 @@ foreach(_major IN LISTS CUDAQ_PULSE_CUDA_MAJORS)
     cudm_runtime.cpp
   )
 
-  # Use build/install-interface generator expressions: the raw source path is
-  # only valid while building from this source tree, whereas consumers of an
-  # installed cudaq-pulse resolve the header from the install prefix.
-  target_include_directories(${_target} PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-    $<INSTALL_INTERFACE:include>
-  )
+  # The runtime is loaded by JIT-compiled code, not linked by installed
+  # consumers, so its header is only used inside this build.
+  target_include_directories(${_target} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 
   target_link_libraries(${_target} PRIVATE
     cudaq_pulse_cuda${_major}

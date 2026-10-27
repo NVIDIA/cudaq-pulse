@@ -48,7 +48,7 @@ def test_no_interpreter_bookkeeping_survives():
 
     def f(n):
         for i in range(n):
-            g(i)  # noqa: F821
+            g(i)  # pyright: ignore[reportUndefinedVariable]  # noqa: F821
         return None
 
     ops = set(_ops(f))
@@ -58,7 +58,7 @@ def test_no_interpreter_bookkeeping_survives():
 def test_keyword_call_is_call_kw_with_names_constant():
 
     def f():
-        return g(1, b=2)  # noqa: F821
+        return g(1, b=2)  # pyright: ignore[reportUndefinedVariable]  # noqa: F821
 
     instrs = decode(f.__code__).instrs
     kw = [i for i, (op, _) in enumerate(instrs) if op == bc.CALL_KW]
@@ -71,7 +71,7 @@ def test_jump_targets_are_instruction_indices():
     def f(a, n):
         for _ in range(n):
             if a and n:
-                g()  # noqa: F821
+                g()  # pyright: ignore[reportUndefinedVariable]  # noqa: F821
 
     instrs = decode(f.__code__).instrs
     for i, (op, arg) in enumerate(instrs):
@@ -89,7 +89,7 @@ def test_loop_var_read_is_detected():
 
     def f(n):
         for i in range(n):
-            g(i)  # noqa: F821
+            g(i)  # pyright: ignore[reportUndefinedVariable]  # noqa: F821
 
     (loop,) = [arg for op, arg in decode(f.__code__).instrs if op == bc.FOR_ITER]
     assert loop[1] is True

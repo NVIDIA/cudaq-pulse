@@ -18,13 +18,9 @@ schedules or metrics. Numbers 11 and 15 were removed and are not reused.
 
 All examples use the canonical import convention:
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    import cudaq_pulse as pulse
-
-.. :spellcheck-enable:
 
 Core Examples
 -------------
@@ -169,11 +165,7 @@ compile only; simulating them is not supported yet.
 Running Examples
 ----------------
 
-.. :spellcheck-disable:
-
 .. code-block:: bash
 
    # From a clone of the repository, with cudaq-pulse installed.
    python examples/01_single_qubit_rabi.py
-
-.. :spellcheck-enable:

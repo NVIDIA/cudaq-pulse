@@ -43,9 +43,12 @@ __all__ = [
     "schema",
 ]
 
+#: The size of a request or response header.
 HEADER_BYTES = 24
-REQUEST_MAGIC = 0x43555152  # 'CUQR'
-RESPONSE_MAGIC = 0x43555153  # 'CUQS'
+#: The first word of a request header, ``'CUQR'``.
+REQUEST_MAGIC = 0x43555152
+#: The first word of a response header, ``'CUQS'``.
+RESPONSE_MAGIC = 0x43555153
 _REQUEST = struct.Struct("<IIIIQ")
 _RESPONSE = struct.Struct("<IiIIQ")
 

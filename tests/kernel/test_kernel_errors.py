@@ -130,7 +130,7 @@ def test_a_misspelled_op_from_the_friction_log_names_the_file_and_line():
     @pulse.kernel
     def k(q):
         d, t = get_drive_line(q)
-        drvie(d, gaussian(40, 0.1, 10.0), t)  # noqa: F821
+        drvie(d, gaussian(40, 0.1, 10.0), t)  # pyright: ignore[reportUndefinedVariable]  # noqa: F821
 
     with pytest.raises(
         CompilationError, match=r"unknown pulse op: drvie; did you mean drive\(\)\?"
@@ -157,7 +157,7 @@ def test_an_error_in_a_helper_shows_the_kernel_line_then_the_helper_line():
 def test_an_unknown_name_far_from_any_suggests_nothing():
     @pulse.kernel
     def k(q):
-        zzzzqqq(q)  # noqa: F821
+        zzzzqqq(q)  # pyright: ignore[reportUndefinedVariable]  # noqa: F821
 
     with pytest.raises(CompilationError) as e:
         python_ir(k, Q[0])

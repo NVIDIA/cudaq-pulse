@@ -396,7 +396,8 @@ _UNCOUNTED_OPS = frozenset({"pulse.qudit_arg", "pulse.qudit_alloc", "scf.yield"}
 
 
 class PythonIRBuilder:
-    """Lightweight in-memory IR builder (swap for real MLIR bindings)."""
+    """An in-memory IR builder that keeps each op as Python data, so tests can
+    inspect what a kernel traces to; compilation uses ``PackedIRBuilder``."""
 
     # Accepts scf.for regions, so the tracer may emit a loop once.
     supports_regions = True
