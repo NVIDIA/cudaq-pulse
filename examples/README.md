@@ -32,6 +32,7 @@ schedules or metrics. `cudaq-pulse-opt` is installed with the package.
 | [`18_per_kernel_schedules.py`](18_per_kernel_schedules.py) | Per-kernel ASAP and ALAP policies in a stabilizer cycle | CPU |
 | [`19_classical_calls.py`](19_classical_calls.py) | Classical calls at QPU runtime: decoding with feed-forward, slack and latency reports | CPU, simulates |
 | [`20_adaptive_calibration.py`](20_adaptive_calibration.py) | Adaptive calibration with variable waits against a drifting device | CPU, simulates |
+| [`21_calibration_protocol.py`](21_calibration_protocol.py) | A millisecond calibration chain on the controller, after Marciniak et al., arXiv:2602.11912 (2026), with adaptive T1 estimation after Berritta et al., arXiv:2506.09576 (2025) | CPU, simulates |
 | [`custom_passes/python_pass.py`](custom_passes/python_pass.py) | A schedule check written in Python | CPU |
 | [`custom_passes/cpp/`](custom_passes/cpp) | An MLIR pass plugin for `cudaq-pulse-opt --load-pass-plugin` | CPU (builds with CMake) |
 | [`controller_backend/toy_controller/__init__.py`](controller_backend/toy_controller/__init__.py) | A toy controller backend found by its entry point: limits, `emit` and `run` | CPU |

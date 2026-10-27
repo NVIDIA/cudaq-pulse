@@ -69,7 +69,11 @@ _STAGES = ("pulse", "llvm")
 
 
 class _Links(dict[int, Link]):
-    """The links of a machine model: a read-only, hashable mapping."""
+    """The links of a machine model: a read-only, hashable mapping by id,
+    which keeps the names the model gave them (``names``), so that a model
+    made from another's links (``dataclasses.replace``) keeps them too."""
+
+    names: Mapping[str, int] = MappingProxyType({})
 
     def __hash__(self) -> int:  # type: ignore[override]
         return hash(tuple(sorted(self.items(), key=lambda item: item[0])))
@@ -114,7 +118,17 @@ class MachineModel:
                 raise TypeError(
                     f"MachineModel.controller must be a ControllerLimits, got {self.controller!r}"
                 )
-        given = dict(self.links)
+        if isinstance(self.links, _Links):
+            # Another model's links, as dataclasses.replace passes them: by
+            # id, with their names beside them.
+            named = set(self.links.names.values())
+            given: dict[int | str, Link] = {
+                key: value for key, value in self.links.items() if key not in named
+            }
+            for name, link_id in sorted(self.links.names.items(), key=lambda item: item[1]):
+                given[name] = self.links[link_id]
+        else:
+            given = dict(self.links)
         links = _Links()
         names: list[str] = []
         for key, value in given.items():
@@ -135,8 +149,9 @@ class MachineModel:
                 next_id += 1
             dict.__setitem__(links, next_id, given[name])
             by_name[name] = next_id
+        links.names = MappingProxyType(by_name)
         object.__setattr__(self, "links", links)
-        object.__setattr__(self, "link_names", MappingProxyType(by_name))
+        object.__setattr__(self, "link_names", links.names)
         object.__setattr__(
             self,
             "_hash",

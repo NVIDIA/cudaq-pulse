@@ -286,15 +286,25 @@ def simulate_tree(
     clock_ghz: float,
     modes: Mapping[int, int],
     iq_model: IQModel | None = None,
+    sampled: bool = False,
 ) -> tuple[list[_Leaf], dict[tuple[int, tuple[int, ...]], Any]]:
     """Walk every path; returns the leaves and the measurements seen.
 
-    *modes* gives the state's mode of each device qudit."""
+    *modes* gives the state's mode of each device qudit. With *sampled*,
+    only the paths some shot takes are walked."""
     by_name = {f.name: f for f in functions}
     seen: dict[tuple[int, tuple[int, ...]], Any] = {}
     leaves: list[_Leaf] = []
     placeholder_cache: dict[int, Any] = {}
+    end_cache: dict[int, tuple[Any, float]] = {}
     norm = engine.weight(state)
+
+    def schedule_end(current: Any) -> float:
+        cached = end_cache.get(id(current))
+        if cached is None or cached[0] is not current:
+            cached = (current, _schedule_end(current, clock_ghz))
+            end_cache[id(current)] = cached
+        return cached[1]
 
     def segment_module(current: Any) -> Any:
         key = id(current)
@@ -364,7 +374,7 @@ def simulate_tree(
             rng.multinomial(count, [p_ok, 1.0 - p_ok]) if count else np.zeros(2, dtype=np.int64)
         )
         for (in_time, p), n in zip(outcomes_ok, counts):
-            if p <= 0:
+            if p <= 0 or (sampled and n == 0):
                 continue
             bound = [1.0, *values] if in_time else [0.0] * (1 + len(values))
             run(
@@ -393,7 +403,7 @@ def simulate_tree(
         calls: list[CallRecord],
     ) -> None:
         entries = [[index, *iteration, k] for (index, iteration), k in path]
-        end_here = t_end if t_end is not None else _schedule_end(current, clock_ghz)
+        end_here = t_end if t_end is not None else schedule_end(current)
         found = current.next_measurement(entries)
         call = current.next_call(entries) if functions else None
         measure_at = math.inf if found is None else found[4]
@@ -414,8 +424,11 @@ def simulate_tree(
                 draws = (
                     rng.multinomial(count, [1.0 / n] * n) if count else np.zeros(n, dtype=np.int64)
                 )
-                # Every value is followed, so the ensemble state stays exact.
+                # Every value is followed (every value a shot draws, with sampled
+                # paths), so the ensemble state stays exact.
                 for value, drawn in enumerate(draws):
+                    if sampled and drawn == 0:
+                        continue
                     answer_call(
                         current,
                         path,
@@ -483,17 +496,17 @@ def simulate_tree(
         projected = [engine.project(state, dims, m, k) for k in range(dims[m])]
         weights = np.array([engine.weight(s) for s in projected]) * weight
         branches: list[tuple[int, int, Any, float]] = []
+        floor = _NEGLIGIBLE * (weights.sum() if sampled else norm)
         for k, (branch, w) in enumerate(zip(projected, weights)):
-            if w <= _NEGLIGIBLE * norm:
+            if w <= floor:
                 continue
             if readout is None:
                 branches.append((k, k, branch, 1.0))
             else:
                 for r, p in readout.reports(m, k):
                     branches.append((r, k, branch, p))
-        probabilities = np.array(
-            [engine.weight(b) * p * weight for _, _, b, p in branches], dtype=float
-        )
+        # Exact propagation leaves an empty level at a trace of +-1e-17.
+        probabilities = np.maximum([engine.weight(b) * p * weight for _, _, b, p in branches], 0.0)
         total = probabilities.sum()
         counts = (
             rng.multinomial(count, probabilities / total)
@@ -501,6 +514,12 @@ def simulate_tree(
             else np.zeros(len(branches), dtype=np.int64)
         )
         for (r, k, branch, p), n in zip(branches, counts):
+            if sampled:
+                if n == 0:
+                    continue
+                # A path of many measurements is improbable as a whole;
+                # each followed outcome is kept at unit weight instead.
+                branch = branch / engine.weight(branch)
             run(
                 current,
                 [*path, (key, r)],
