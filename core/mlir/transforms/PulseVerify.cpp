@@ -35,6 +35,7 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
 
+#include "cudaq-pulse/Analysis/ClassicalTiming.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
 
@@ -398,9 +399,7 @@ struct PulseVerifyPass
                      "with its bounds in pulse.min_vtu and pulse.max_vtu");
         hadError = true;
       } else if (op->getParentOfType<pulse::ScheduleBlockOp>()) {
-        op.emitError("a variable wait cannot be inside a pulse.schedule_block, "
-                     "whose length is fixed; call the kernel without schedule= "
-                     "or move the wait out of it");
+        op.emitError(classical::kVariableWaitInBlock);
         hadError = true;
       } else if (op->getParentOfType<mlir::scf::IfOp>()) {
         op.emitError("a variable wait cannot be inside one arm of an scf.if; "
@@ -418,8 +417,7 @@ struct PulseVerifyPass
       if (!callable || callable.getMode() != "blocking")
         return;
       if (op->getParentOfType<pulse::ScheduleBlockOp>()) {
-        op.emitError("a blocking wait cannot be inside a pulse.schedule_block, "
-                     "whose length is fixed; wait after the block");
+        op.emitError(classical::kBlockingWaitInBlock);
         hadError = true;
       } else if (op->getParentOfType<mlir::scf::IfOp>()) {
         op.emitError("a blocking wait cannot be inside one arm of an scf.if; "

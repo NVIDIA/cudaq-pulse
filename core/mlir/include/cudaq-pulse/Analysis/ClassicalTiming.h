@@ -182,6 +182,16 @@ inline bool annotateClassicalCalls(mlir::func::FuncOp function) {
   return any;
 }
 
+/// Why a wait cannot be in a `pulse.schedule_block`, which is placed whole:
+/// the verifier and the scheduler, which may run without it, both say so.
+inline constexpr const char *kVariableWaitInBlock =
+    "a variable wait cannot be inside a pulse.schedule_block, whose length "
+    "is fixed; call the kernel without schedule= or move the wait out of it";
+inline constexpr const char *kBlockingWaitInBlock =
+    "a blocking wait cannot be inside a pulse.schedule_block, whose length "
+    "is fixed; return the future from the kernel and take the answer after "
+    "it returns, or call the kernel without schedule=";
+
 inline int64_t intAttr(mlir::Operation *op, llvm::StringRef name,
                        int64_t fallback = 0) {
   if (auto attr = op->getAttrOfType<mlir::IntegerAttr>(name))

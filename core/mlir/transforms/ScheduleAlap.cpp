@@ -1704,6 +1704,23 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
           "called kernels, or flatten them with flatten_schedules=True");
   }
   bool classical = classical::annotateClassicalCalls(function);
+  if (classical)
+    for (pulse::ScheduleBlockOp block : outermostBlocks(function.getBody())) {
+      mlir::WalkResult found = block.walk([](mlir::Operation *op) {
+        if (op->hasAttr("classical.variable")) {
+          op->emitError(classical::kVariableWaitInBlock);
+          return mlir::WalkResult::interrupt();
+        }
+        if (mlir::isa<classical::WaitOp>(op) &&
+            op->hasAttr("classical.blocking")) {
+          op->emitError(classical::kBlockingWaitInBlock);
+          return mlir::WalkResult::interrupt();
+        }
+        return mlir::WalkResult::advance();
+      });
+      if (found.wasInterrupted())
+        return mlir::failure();
+    }
   return scheduleRegion(function.getBody(), function, resources, isAlap,
                         classical);
 }

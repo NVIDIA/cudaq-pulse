@@ -466,3 +466,17 @@ def test_a_block_waits_for_a_slot_the_caller_holds(callee, policy):
     assert block[1].submit_vtu == first.due_vtu
     assert block[0].submit_vtu == block[1].submit_vtu - 1
 
+
+@pytest.mark.parametrize("passes", [None, ()])
+def test_a_blocking_wait_in_a_block_is_rejected_without_the_verifier(passes):
+    @pulse.kernel(schedule="asap")
+    def inner(d, t):
+        drive(d, square(ARM, calibrate.submit(0.5).result()), t)
+
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        inner(d, t)
+
+    with pytest.raises(RuntimeError, match="return the future from the kernel and take the answer"):
+        pulse.compile(k, passes=passes).lower(Q[0])
