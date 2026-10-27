@@ -10,7 +10,9 @@
 The body of a function a controller runs is read as Python source and walked
 once: every arithmetic operation, comparison, branch, load and elementary
 function is counted by class, through the helper functions it calls, with
-loops multiplied by their trip counts. The walk also checks the body is in
+loops multiplied by their trip counts. An expression of constants costs
+nothing (it folds when the program compiles) and dividing by a constant is
+a multiply. The walk also checks the body is in
 *controller form*: a fixed number of scalars of state, loops of a trip count
 known when the program compiles (``range`` of a constant, or a fixed-size
 argument), no ``while``, recursion, allocation, exceptions, closures over
@@ -84,6 +86,14 @@ _BINARY = {
     ast.BitXor: "add",
     ast.LShift: "add",
     ast.RShift: "add",
+}
+# Operators an expression of constants folds through when the program compiles.
+_FOLDS: dict[type, Callable[[Any, Any], Any]] = {
+    ast.Add: lambda a, b: a + b,
+    ast.Sub: lambda a, b: a - b,
+    ast.Mult: lambda a, b: a * b,
+    ast.Div: lambda a, b: a / b,
+    ast.Pow: lambda a, b: float(a) ** float(b),
 }
 # Each scalar a function holds is a 64-bit register.
 _REGISTER_BYTES = 8
@@ -230,6 +240,34 @@ class _Walker:
             return -value if isinstance(value, (int, float)) else None
         return None
 
+    def numeric(self, node: ast.AST) -> int | float | None:
+        """The number *node* folds to when the program compiles, if any."""
+        if isinstance(node, ast.BinOp) and type(node.op) in _FOLDS:
+            left, right = self.numeric(node.left), self.numeric(node.right)
+            if left is None or right is None:
+                return None
+            try:
+                value = _FOLDS[type(node.op)](left, right)
+            except (ArithmeticError, ValueError):
+                return None
+            return value if isinstance(value, (int, float)) and math.isfinite(value) else None
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+            value = self.numeric(node.operand)
+            if value is None:
+                return None
+            return -value if isinstance(node.op, ast.USub) else value
+        value = self.constant(node)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value
+        return None
+
+    def binary(self, op: ast.operator, right: ast.AST) -> str | None:
+        """The class of ``left <op> right``: dividing by a constant is a
+        multiply by its reciprocal."""
+        if isinstance(op, ast.Div) and self.numeric(right) not in (None, 0):
+            return "mul"
+        return _BINARY.get(type(op))
+
     def length(self, node: ast.AST) -> int | None:
         if isinstance(node, ast.Name) and node.id in self.sizes:
             return self.sizes[node.id]
@@ -267,7 +305,7 @@ class _Walker:
             return cost
         if isinstance(node, ast.AugAssign):
             cost.extend(self.expression(node.value))
-            kind = _BINARY.get(type(node.op))
+            kind = self.binary(node.op, node.value)
             if kind is None:
                 self.flag(node, f"the operator {type(node.op).__name__}")
             else:
@@ -387,6 +425,8 @@ class _Walker:
                     self.flag(node, f"the attribute {node.attr}")
             return cost
         if isinstance(node, ast.BinOp):
+            if self.numeric(node) is not None:
+                return cost
             cost.extend(self.expression(node.left))
             cost.extend(self.expression(node.right))
             if isinstance(node.op, ast.Pow):
@@ -398,7 +438,7 @@ class _Walker:
                     cost.add("mul")
                     cost.add("exp")
                 return cost
-            kind = _BINARY.get(type(node.op))
+            kind = self.binary(node.op, node.right)
             if kind is None:
                 self.flag(node, f"the operator {type(node.op).__name__}")
             else:

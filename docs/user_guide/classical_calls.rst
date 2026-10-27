@@ -442,7 +442,9 @@ What it costs the controller
 ``cudaq_pulse.controller.resources(lowered)`` reads each classical
 function's body once and reports its operations by class on its longest
 path, how many it holds, its state in bytes, its compute time against its
-``max_latency_ns``, and its calls, slots and bytes per shot. The limits come
+``max_latency_ns``, and its calls, slots and bytes per shot. An expression
+of constants costs nothing, as it folds when the program compiles, and
+dividing by a constant counts as a multiply. The limits come
 from ``ControllerLimits``, for the functions on its ``compute_links``:
 
 .. :spellcheck-disable:

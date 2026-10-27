@@ -36,7 +36,8 @@ behavior may change in any 0.x release.
   many seeds against the published numbers.
 - **What classical functions cost a controller.** `controller.resources()`
   reports each classical function's operations by class (read from its
-  body), state in bytes, compute time against `max_latency_ns`, and calls,
+  body; an expression of constants folds, and dividing by a constant is a
+  multiply), state in bytes, compute time against `max_latency_ns`, and calls,
   slots and buffer bytes per shot, and whether its body is in controller
   form (fixed-size state, bounded loops, no allocation or exceptions).
   `ControllerLimits` gains `op_cycles`, `compute_clock_ghz`, `max_ops`,
