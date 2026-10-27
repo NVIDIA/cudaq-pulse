@@ -1298,7 +1298,12 @@ class PulseIREmitter:
             b = else_locals.get(name, _MISSING)
             if a is b:
                 merged[name] = a
-            elif isinstance(a, IRValue) and isinstance(b, IRValue) and a.vtype == b.vtype:
+            elif (
+                isinstance(a, IRValue)
+                and isinstance(b, IRValue)
+                and a.vtype == b.vtype
+                and a.vtype != "qref"
+            ):
                 results.append((name, a, b))
             elif a is _MISSING or b is _MISSING:
                 continue  # bound in one arm only: unbound after the if
@@ -1478,6 +1483,7 @@ class PulseIREmitter:
         hoist = False
         stale: list[tuple[str, _Chan]] = []
         crossing: list[str] = []
+        fixed: list[str] = []
         try:
             self._loop(prog, for_idx + 1, for_idx, exit_idx, for_idx)
             slot_changes = _slot_changes(containers)
@@ -1500,6 +1506,8 @@ class PulseIREmitter:
             if ok:
                 delta = self._ir_delta(snap)
                 stale, crossing = _stale_names(delta, saved_locals, count)
+                fixed, rebound = _qudit_names(delta, saved_locals, count)
+                crossing += rebound
                 if crossing:
                     # Traced again with them unbound, to learn whether the
                     # body reads them before rebinding them.
@@ -1547,6 +1555,7 @@ class PulseIREmitter:
         assert slot_changes is not None
         for n, _ in stale:
             del delta[n]
+        qudits = [(n, delta.pop(n)) for n in fixed]
         # Channels the body advanced are carried, unless a name carries the
         # same value; a channel first acquired in the body was hoisted.
         aliases: list[tuple[_Chan, str]] = []
@@ -1604,6 +1613,13 @@ class PulseIREmitter:
             carried.chan = cell
         for n, chan in stale:
             self.locals[n] = chan.value
+        for n, qudit in qudits:
+            if count:
+                self.locals[n] = qudit
+            elif n in saved_locals:
+                self.locals[n] = saved_locals[n]
+            else:
+                del self.locals[n]
 
         if count:
             self.locals[var] = rng[-1]
@@ -2292,6 +2308,25 @@ def _stale_names(
             else:
                 stale.append((n, old.chan))
     return stale, crossing
+
+
+def _qudit_names(
+    delta: dict[str, IRValue], before: dict[str, StackVal], count: int
+) -> tuple[list[str], list[str]]:
+    """The names a rolled loop body left on a qudit, and the names it moved
+    from one qudit to another.
+
+    A qudit is allocated before any loop and is not carried: every
+    iteration leaves the same qudit on a name, which names it after the
+    loop. A name that entered on another qudit is returned apart: the loop
+    rolls only if the body does not read it before rebinding it.
+    """
+    fixed: list[str] = []
+    moved: list[str] = []
+    for n, v in delta.items():
+        if v.vtype == "qref":
+            (moved if count and n in before else fixed).append(n)
+    return fixed, moved
 
 
 def _channel_values(held: dict[tuple[int, str], _Held]) -> list[tuple[_Chan, IRValue]]:

@@ -700,6 +700,215 @@ def test_a_name_read_before_it_is_rebound_on_its_channel_stays_rolled():
     _rolled(_compile(looped, 2, True))
 
 
+# ── Qudits named in a rolled loop body ───────────────────────────────
+#
+# A qudit is allocated before any loop, so a name a rolled body binds to
+# one (``for q in qs``) is not carried: every iteration leaves the same
+# qudit on it.
+
+
+def _gathered(qs):
+    """Drive each qudit and return its line, in a list built as it goes."""
+    drives = []
+    for q in qs:
+        d, t = get_drive_line(q)
+        drive(d, square(16, AMP), t)
+        drives.append(d)
+    return drives
+
+
+def test_lines_gathered_in_a_list_in_a_rolled_body():
+    @pulse.kernel
+    def looped(qs):
+        for _ in range(3):
+            drives = []
+            for q in qs:
+                d, t = get_drive_line(q)
+                drive(d, square(16, AMP), t)
+                drives.append(d)
+            sync(*drives)
+
+    @pulse.kernel
+    def unrolled(qs):
+        d0, t0 = get_drive_line(qs[0])
+        d1, t1 = get_drive_line(qs[1])
+        d2, t2 = get_drive_line(qs[2])
+        for _k in (0, 1, 2):
+            drive(d0, square(16, AMP), t0)
+            drive(d1, square(16, AMP), t1)
+            drive(d2, square(16, AMP), t2)
+            sync(d0, d1, d2)
+
+    ops, _ = check(looped, unrolled, loops=1, n=3, qvec=True)
+    for_end = next(op for op in ops if op.kind == "scf.for_end")
+    assert "q" not in for_end.attrs["iter_args"]
+    (body,) = _loop_bodies(ops)
+    assert body.count("pulse.drive") == 3 and "pulse.get_drive_line" not in body
+
+
+def test_lines_gathered_in_a_list_through_nested_loops():
+    @pulse.kernel
+    def looped(qs):
+        for _ in range(2):
+            for _ in range(3):
+                drives = []
+                for q in qs:
+                    d, t = get_drive_line(q)
+                    drive(d, square(16, AMP), t)
+                    drives.append(d)
+                sync(*drives)
+            for q in qs[::-1]:
+                d, t = get_drive_line(q)
+                wait(d, 8)
+
+    @pulse.kernel
+    def unrolled(qs):
+        d0, t0 = get_drive_line(qs[0])
+        d1, t1 = get_drive_line(qs[1])
+        for _j in (0, 1):
+            for _k in (0, 1, 2):
+                drive(d0, square(16, AMP), t0)
+                drive(d1, square(16, AMP), t1)
+                sync(d0, d1)
+            wait(d1, 8)
+            wait(d0, 8)
+
+    ops, _ = check(looped, unrolled, loops=2, n=2, qvec=True)
+    outer, inner = _loop_bodies(ops)
+    assert "scf.for" in outer and inner.count("pulse.drive") == 2
+
+
+def test_lines_gathered_by_a_helper_in_a_rolled_body():
+    @pulse.kernel
+    def looped(qs):
+        for _ in range(3):
+            sync(*_gathered(qs))
+
+    @pulse.kernel
+    def unrolled(qs):
+        d0, t0 = get_drive_line(qs[0])
+        d1, t1 = get_drive_line(qs[1])
+        for _k in (0, 1, 2):
+            drive(d0, square(16, AMP), t0)
+            drive(d1, square(16, AMP), t1)
+            sync(d0, d1)
+
+    check(looped, unrolled, loops=1, n=2, qvec=True)
+
+
+def test_a_line_list_and_qudit_from_a_rolled_body_are_used_after_it():
+    # After the loop the list holds the lines the last iteration left, and
+    # q the last qudit of the list.
+    @pulse.kernel
+    def looped(qs):
+        for _ in range(3):
+            drives = []
+            for q in qs:
+                d, t = get_drive_line(q)
+                drive(d, square(16, AMP), t)
+                drives.append(d)
+            sync(*drives)
+        drive(drives[0], square(16, 2 * AMP), get_drive_line(qs[0])[1])
+        sync(*drives)
+        d, t = get_drive_line(q)
+        drive(d, square(32, AMP), t)
+
+    @pulse.kernel
+    def unrolled(qs):
+        d0, t0 = get_drive_line(qs[0])
+        d1, t1 = get_drive_line(qs[1])
+        for _k in (0, 1, 2):
+            drive(d0, square(16, AMP), t0)
+            drive(d1, square(16, AMP), t1)
+            sync(d0, d1)
+        drive(d0, square(16, 2 * AMP), t0)
+        sync(d0, d1)
+        drive(d1, square(32, AMP), t1)
+
+    _, compiled = check(looped, unrolled, loops=1, n=2, qvec=True)
+    assert _length(compiled) == 3 * 16 + 16 + 32
+
+
+def test_a_qudit_name_rebound_before_it_is_read_stays_rolled():
+    @pulse.kernel
+    def looped(qs):
+        q = qs[0]
+        for _ in range(3):
+            q = qs[1]
+            d, t = get_drive_line(q)
+            drive(d, square(16, AMP), t)
+        d, t = get_drive_line(q)
+        drive(d, square(16, 2 * AMP), t)
+
+    @pulse.kernel
+    def unrolled(qs):
+        d1, t1 = get_drive_line(qs[1])
+        for _k in (0, 1, 2):
+            drive(d1, square(16, AMP), t1)
+        drive(d1, square(16, 2 * AMP), t1)
+
+    check(looped, unrolled, loops=1, n=2, qvec=True)
+
+
+def test_a_qudit_name_read_before_it_is_rebound_unrolls():
+    # The first iteration drives qudit 0, the others qudit 1.
+    @pulse.kernel
+    def looped(qs):
+        q = qs[0]
+        for _ in range(3):
+            d, t = get_drive_line(q)
+            drive(d, square(16, AMP), t)
+            q = qs[1]
+
+    @pulse.kernel
+    def unrolled(qs):
+        d0, t0 = get_drive_line(qs[0])
+        d1, t1 = get_drive_line(qs[1])
+        drive(d0, square(16, AMP), t0)
+        drive(d1, square(16, AMP), t1)
+        drive(d1, square(16, AMP), t1)
+
+    check(looped, unrolled, loops=0, n=2, qvec=True)
+
+
+def test_a_qudit_name_keeps_its_value_after_a_loop_that_does_not_run():
+    @pulse.kernel
+    def looped(qs):
+        q = qs[0]
+        for _ in range(0):
+            for q in qs:
+                d, t = get_drive_line(q)
+                drive(d, square(16, AMP), t)
+        d, t = get_drive_line(q)
+        drive(d, square(16, AMP), t)
+
+    @pulse.kernel
+    def unrolled(qs):
+        d, t = get_drive_line(qs[0])
+        drive(d, square(16, AMP), t)
+
+    # The lines the body acquires are acquired before the loop, so the
+    # simulation holds qudit 1 as well.
+    _, compiled = check(looped, unrolled, loops=1, n=2, qvec=True, sim=False)
+    assert _schedule(compiled) == [("drive", 0, 0, 16)]
+
+
+def test_a_measured_branch_choosing_a_qudit_is_rejected():
+    @pulse.kernel
+    def looped(qs):
+        r, rt = get_readout_line(qs[0])
+        for _ in range(3):
+            m = readout(r, square(16, AMP), rt)
+            q = qs[0]
+            if m:
+                q = qs[1]
+            d, t = get_drive_line(q)
+            drive(d, square(16, AMP), t)
+
+    with pytest.raises(CompilationError, match="'q' would depend on a measurement result"):
+        _compile(looped, 2, True)
+
+
 # ── Loops on both sides of the call ──────────────────────────────────
 
 
