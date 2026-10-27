@@ -15,7 +15,7 @@ its exact start and end, its waveform (the shape and its parameters, and
 optionally its samples), its tone's frequency and frame phase, the
 measurement-conditioned branches it lies in, and the epochs and calls of
 ``Lowered.export_emulation()``. The schedule is final: a backend places each
-event at its ``start_vtu`` and does not schedule again.
+event at its ``start_cycles`` and does not schedule again.
 
 The number after the slash is the format's major version. Within one version,
 new keys and new event kinds may be added, so a backend ignores keys it does
@@ -119,21 +119,21 @@ class ControllerLimitError(CompilationError):
 
 @dataclass(frozen=True)
 class ControllerLimits:
-    """What a controller can play; every limit is in clock cycles (VTU).
+    """What a controller can play; every limit is in clock cycles.
 
     ``clock_ghz``: the only clock the controller runs at (``None``: any).
-    ``issue_vtu`` and ``min_wait_vtu``: two operations on one line start
-    exactly ``issue_vtu`` apart, or at least ``issue_vtu + min_wait_vtu``
-    apart, because the controller issues one instruction per ``issue_vtu``
-    and idles no less than ``min_wait_vtu``.
-    ``samples_per_vtu`` and ``waveform_samples``: the waveform memory of a
+    ``issue_cycles`` and ``min_wait_cycles``: two operations on one line start
+    exactly ``issue_cycles`` apart, or at least ``issue_cycles + min_wait_cycles``
+    apart, because the controller issues one instruction per ``issue_cycles``
+    and idles no less than ``min_wait_cycles``.
+    ``samples_per_cycles`` and ``waveform_samples``: the waveform memory of a
     line holds this many samples, at this many samples per cycle; waveforms
     of one shape at different amplitudes share it (``shape_key``).
     ``tones_per_line``: distinct tone frequencies one line plays.
-    ``acquirers`` and ``acquirer_hold_vtu``: the acquirer reading each
+    ``acquirers`` and ``acquirer_hold_cycles``: the acquirer reading each
     qudit; readouts on one acquirer are serialized, each holding it for its
-    duration plus ``acquirer_hold_vtu``.
-    ``feedback_latency_vtu``: the least time from the end of a readout to
+    duration plus ``acquirer_hold_cycles``.
+    ``feedback_latency_cycles``: the least time from the end of a readout to
     the start of an operation in a branch on its outcome.
     ``answer_timeouts``: whether the controller can stop waiting for an
     answer after a timeout (``result(timeout_ns=...)``, ``latency_mode=
@@ -158,14 +158,14 @@ class ControllerLimits:
     """
 
     clock_ghz: float | None = None
-    issue_vtu: int = 1
-    min_wait_vtu: int = 0
-    samples_per_vtu: int | None = None
+    issue_cycles: int = 1
+    min_wait_cycles: int = 0
+    samples_per_cycles: int | None = None
     waveform_samples: int | None = None
     tones_per_line: int | None = None
     acquirers: Mapping[int, int] = field(default_factory=dict)
-    acquirer_hold_vtu: int = 0
-    feedback_latency_vtu: int = 0
+    acquirer_hold_cycles: int = 0
+    feedback_latency_cycles: int = 0
     max_events: int | None = None
     answer_timeouts: bool = True
     compute_links: tuple[int | str, ...] = ("controller",)
@@ -180,13 +180,13 @@ class ControllerLimits:
     def __post_init__(self) -> None:
         if self.clock_ghz is not None and not self.clock_ghz > 0:
             raise ValueError(f"ControllerLimits.clock_ghz must be positive, got {self.clock_ghz}")
-        if self.issue_vtu < 1:
-            raise ValueError("ControllerLimits.issue_vtu must be at least 1")
-        for name in ("min_wait_vtu", "acquirer_hold_vtu", "feedback_latency_vtu"):
+        if self.issue_cycles < 1:
+            raise ValueError("ControllerLimits.issue_cycles must be at least 1")
+        for name in ("min_wait_cycles", "acquirer_hold_cycles", "feedback_latency_cycles"):
             if getattr(self, name) < 0:
                 raise ValueError(f"ControllerLimits.{name} cannot be negative")
         for name in (
-            "samples_per_vtu",
+            "samples_per_cycles",
             "waveform_samples",
             "tones_per_line",
             "max_events",
@@ -332,11 +332,11 @@ def shape_key(node: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
 
 
 def sample_waveform(
-    node: Mapping[str, Any], duration_vtu: int, samples_per_vtu: int = 1
+    node: Mapping[str, Any], duration_cycles: int, samples_per_cycles: int = 1
 ) -> np.ndarray:
-    """The complex envelope of a waveform, ``samples_per_vtu`` per cycle.
+    """The complex envelope of a waveform, ``samples_per_cycles`` per cycle.
 
-    Sample ``k`` is the envelope at ``k / samples_per_vtu`` cycles from the
+    Sample ``k`` is the envelope at ``k / samples_per_cycles`` cycles from the
     start, with the definitions of the waveform ops (times in cycles), the
     same the simulator plays. Raises ``ValueError`` for a waveform the
     export cannot evaluate: a ``pulse.custom`` op of hand-written IR, whose
@@ -344,8 +344,8 @@ def sample_waveform(
     """
     import numpy as np
 
-    count = int(duration_vtu) * int(samples_per_vtu)
-    t = np.arange(count, dtype=float) / samples_per_vtu
+    count = int(duration_cycles) * int(samples_per_cycles)
+    t = np.arange(count, dtype=float) / samples_per_cycles
 
     def evaluate(node: Mapping[str, Any]) -> Any:
         shape = node["shape"]
@@ -365,7 +365,7 @@ def sample_waveform(
             values = np.asarray(node["samples"], dtype=float)
             if not len(values):
                 return np.zeros(count, complex)
-            index = (t * len(values) / max(duration_vtu, 1)).astype(int)
+            index = (t * len(values) / max(duration_cycles, 1)).astype(int)
             return values[np.minimum(index, len(values) - 1)].astype(complex)
         if shape not in _AMPLITUDES or any(v is None for v in params.values()):
             raise ValueError(f"cannot sample a {shape!r} waveform without numeric parameters")
@@ -418,7 +418,7 @@ def _walk(
         for index, (role, qudit) in enumerate(raw_lines)
     ]
     # Epoch k > 0 starts when the k-th barrier ends.
-    starts = [e.start_vtu for e in lowered.epochs()[1:]] if lowered.classical else []
+    starts = [e.start_cycles for e in lowered.epochs()[1:]] if lowered.classical else []
     events = []
     for index, item in enumerate(raw_events):
         (
@@ -443,9 +443,9 @@ def _walk(
             "kind": kind,
             "line": line,
             "qudit": qudit,
-            "start_vtu": start,
-            "duration_vtu": duration,
-            "end_vtu": None if start is None or duration is None else start + duration,
+            "start_cycles": start,
+            "duration_cycles": duration,
+            "end_cycles": None if start is None or duration is None else start + duration,
             "iteration": list(iteration),
             "epoch": 0 if start is None else bisect.bisect_right(starts, start),
             "conditions": [
@@ -504,17 +504,17 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
     clock = lowered.target.clock_ghz
     if sample_rate_ghz is not None:
         ratio = sample_rate_ghz / clock
-        per_vtu = round(ratio)
-        if per_vtu < 1 or abs(ratio - per_vtu) > 1e-9:
+        per_cycles = round(ratio)
+        if per_cycles < 1 or abs(ratio - per_cycles) > 1e-9:
             raise ValueError(
                 f"sample_rate_ghz={sample_rate_ghz} is not a whole multiple of the "
                 f"{clock} GHz clock"
             )
         for event in events:
-            if event.get("waveform") is None or event["duration_vtu"] is None:
+            if event.get("waveform") is None or event["duration_cycles"] is None:
                 continue
             try:
-                samples = sample_waveform(event["waveform"], event["duration_vtu"], per_vtu)
+                samples = sample_waveform(event["waveform"], event["duration_cycles"], per_cycles)
             except ValueError as e:
                 raise ValueError(f"event {event['index']} ({event['kind']}): {e}") from None
             event["samples"] = {"re": samples.real.tolist(), "im": samples.imag.tolist()}
@@ -555,7 +555,7 @@ def _pairs(
     events: Sequence[Mapping[str, Any]],
 ) -> list[tuple[Mapping[str, Any], Mapping[str, Any]]]:
     """Each event with the latest earlier event it can follow on one path."""
-    ordered = sorted(events, key=lambda e: (e["start_vtu"], e["index"]))
+    ordered = sorted(events, key=lambda e: (e["start_cycles"], e["index"]))
     pairs = []
     for k in range(1, len(ordered)):
         event = ordered[k]
@@ -575,7 +575,7 @@ def _violations(
         found.append(
             f"the target's clock is {clock} GHz; the controller runs at {limits.clock_ghz} GHz"
         )
-    timed = [e for e in events if e["kind"] in _PLAYED and e["end_vtu"] is not None]
+    timed = [e for e in events if e["kind"] in _PLAYED and e["end_cycles"] is not None]
     if limits.max_events is not None and len(timed) > limits.max_events:
         found.append(
             f"{len(timed)} drives and readouts; the controller plays at most {limits.max_events}"
@@ -583,15 +583,15 @@ def _violations(
     by_line: dict[int, list[Mapping[str, Any]]] = {}
     for event in timed:
         by_line.setdefault(event["line"], []).append(event)
-    issue, gap = limits.issue_vtu, limits.issue_vtu + limits.min_wait_vtu
+    issue, gap = limits.issue_cycles, limits.issue_cycles + limits.min_wait_cycles
     for line, items in sorted(by_line.items()):
         for previous, event in _pairs(items):
-            distance = event["start_vtu"] - previous["start_vtu"]
+            distance = event["start_cycles"] - previous["start_cycles"]
             if distance != issue and distance < gap:
                 found.append(
-                    f"line {line}: {event['kind']} at {event['start_vtu']} starts "
+                    f"line {line}: {event['kind']} at {event['start_cycles']} starts "
                     f"{distance} cycles after the {previous['kind']} at "
-                    f"{previous['start_vtu']}; the controller "
+                    f"{previous['start_cycles']}; the controller "
                     f"needs exactly {issue} or at least {gap}"
                 )
         if limits.tones_per_line is not None:
@@ -602,13 +602,13 @@ def _violations(
                     f"{limits.tones_per_line} per line"
                 )
         if limits.waveform_samples is not None:
-            per_vtu = limits.samples_per_vtu or 1
+            per_cycles = limits.samples_per_cycles or 1
             shapes: dict[Any, int] = {}
             for e in items:
                 key = shape_key(e.get("waveform"))
-                shapes[(key, e["duration_vtu"]) if key is not None else ("event", e["index"])] = (
-                    e["duration_vtu"] * per_vtu
-                )
+                shapes[
+                    (key, e["duration_cycles"]) if key is not None else ("event", e["index"])
+                ] = e["duration_cycles"] * per_cycles
             used = sum(shapes.values())
             if used > limits.waveform_samples:
                 found.append(
@@ -622,28 +622,28 @@ def _violations(
                 by_acquirer.setdefault(limits.acquirers[event["qudit"]], []).append(event)
         for acquirer, items in sorted(by_acquirer.items()):
             for previous, event in _pairs(items):
-                free = previous["end_vtu"] + limits.acquirer_hold_vtu
-                if event["start_vtu"] < free:
+                free = previous["end_cycles"] + limits.acquirer_hold_cycles
+                if event["start_cycles"] < free:
                     found.append(
                         f"acquirer {acquirer}: the readout of qudit {event['qudit']} at "
-                        f"{event['start_vtu']} starts before the acquirer is free at {free} "
-                        f"(the readout of qudit {previous['qudit']} at {previous['start_vtu']})"
+                        f"{event['start_cycles']} starts before the acquirer is free at {free} "
+                        f"(the readout of qudit {previous['qudit']} at {previous['start_cycles']})"
                     )
-    if limits.feedback_latency_vtu:
+    if limits.feedback_latency_cycles:
         for event in timed:
             for condition in event["conditions"]:
                 for ref in condition["readouts"]:
                     readout = events[ref]
-                    if readout["end_vtu"] is None:
+                    if readout["end_cycles"] is None:
                         continue
-                    ready = readout["end_vtu"] + limits.feedback_latency_vtu
-                    if event["start_vtu"] < ready:
+                    ready = readout["end_cycles"] + limits.feedback_latency_cycles
+                    if event["start_cycles"] < ready:
                         found.append(
-                            f"line {event['line']}: the {event['kind']} at {event['start_vtu']} "
-                            f"depends on the readout ending at {readout['end_vtu']}; the "
-                            f"controller needs {limits.feedback_latency_vtu} cycles of feedback "
+                            f"line {event['line']}: the {event['kind']} at {event['start_cycles']} "
+                            f"depends on the readout ending at {readout['end_cycles']}; the "
+                            f"controller needs {limits.feedback_latency_cycles} cycles of feedback "
                             f"latency (start at {ready} or later; schedule with rcp and "
-                            "readout_latency_vtu >= feedback_latency_vtu)"
+                            "readout_latency_cycles >= feedback_latency_cycles)"
                         )
     if not limits.answer_timeouts:
         functions = {fn.name: fn for fn in lowered.classical}
@@ -653,7 +653,7 @@ def _violations(
             fn = functions.get(event["function"])
             if event["wait"] == "timeout" or (fn is not None and fn.latency_mode == "timeout"):
                 found.append(
-                    f"the wait for {event['function']} at {event['start_vtu']} has a timeout; "
+                    f"the wait for {event['function']} at {event['start_cycles']} has a timeout; "
                     "the controller cannot stop waiting for an answer, so take it with "
                     "result() (no timeout_ns)"
                 )
@@ -893,8 +893,8 @@ def resources(lowered: Lowered, limits: ControllerLimits | None = None) -> Resou
         if row is not None:
             entry["bytes"] += row.request_bytes + row.answer_bytes
             entry["largest"] = max(entry["largest"], row.request_bytes, row.answer_bytes)
-        end = call.taken_vtu if call.taken_vtu is not None else call.due_vtu
-        entry["spans"].append((call.submit_vtu, max(end, call.submit_vtu + 1)))
+        end = call.taken_cycles if call.taken_cycles is not None else call.due_cycles
+        entry["spans"].append((call.submit_cycles, max(end, call.submit_cycles + 1)))
     links = []
     for link_id, entry in sorted(usage.items()):
         edges = sorted([(a, 1) for a, _ in entry["spans"]] + [(b, -1) for _, b in entry["spans"]])

@@ -172,8 +172,8 @@ class TestDialectRoundtrip:
             drive(d, wf, t)
 
         ck = k.lower(Q[0])
-        assert "start_vtu = 0" in ck.mlir()
-        assert "duration_vtu = 40" in ck.mlir()
+        assert "start_cycles = 0" in ck.mlir()
+        assert "duration_cycles = 40" in ck.mlir()
 
 
 # ===========================================================================
@@ -239,7 +239,7 @@ class TestParametricCompilation:
         assert ck.parameters == ()
         assert ck.generic is None
         assert "func.func @main()" in ck.mlir()
-        assert "start_vtu" in ck.mlir()  # scheduled
+        assert "start_cycles" in ck.mlir()  # scheduled
 
     def test_phase_parameter(self):
 
@@ -310,12 +310,12 @@ class TestEvaluation:
     def test_eval_kwargs(self, parametric_amp):
         result = parametric_amp.lower(Q[0], amp=0.5)
         assert not bool(result.parameters)
-        assert "start_vtu" in result.mlir()
-        assert "duration_vtu" in result.mlir()
+        assert "start_cycles" in result.mlir()
+        assert "duration_cycles" in result.mlir()
 
     def test_eval_positional(self, parametric_amp):
         result = parametric_amp.lower(Q[0], 0.5)
-        assert "start_vtu" in result.mlir()
+        assert "start_cycles" in result.mlir()
 
     def test_eval_produces_correct_amplitude(self, parametric_amp):
         result = parametric_amp.lower(Q[0], amp=0.5)
@@ -346,8 +346,8 @@ class TestEvaluation:
 
         ck = pulse.compile(k)
         result = ck.lower(Q[0], amp=0.5, duration=80)
-        assert "start_vtu" in result.mlir()
-        assert "duration_vtu = 80" in result.mlir()
+        assert "start_cycles" in result.mlir()
+        assert "duration_cycles = 80" in result.mlir()
 
     def test_eval_wrong_param_count_raises(self, parametric_amp):
         with pytest.raises(TypeError, match="takes 2 positional arguments but 3 were given"):
@@ -383,8 +383,8 @@ class TestEvaluation:
     def test_scheduling_correct_after_eval(self, parametric_amp):
         result = parametric_amp.lower(Q[0], amp=0.5)
         mlir = result.mlir()
-        assert "start_vtu = 0 : i64" in mlir
-        assert "duration_vtu = 64 : i64" in mlir
+        assert "start_cycles = 0 : i64" in mlir
+        assert "duration_cycles = 64 : i64" in mlir
 
 
 # ===========================================================================
@@ -397,12 +397,12 @@ class TestStrictScheduling:
 
     @staticmethod
     def _extract_drive_attrs(mlir: str):
-        """Extract (start_vtu, duration_vtu) for each pulse.drive op."""
+        """Extract (start_cycles, duration_cycles) for each pulse.drive op."""
         drives = []
         for m in re.finditer(r"pulse\.drive.*?\{([^}]*)\}", mlir):
             attrs_str = m.group(1)
-            start = int(re.search(r"start_vtu\s*=\s*(\d+)", attrs_str).group(1))
-            dur = int(re.search(r"duration_vtu\s*=\s*(\d+)", attrs_str).group(1))
+            start = int(re.search(r"start_cycles\s*=\s*(\d+)", attrs_str).group(1))
+            dur = int(re.search(r"duration_cycles\s*=\s*(\d+)", attrs_str).group(1))
             drives.append((start, dur))
         return drives
 
@@ -563,8 +563,8 @@ class TestE2ESweeps:
         ck = pulse.compile(k)
         for amp_val in [0.1 * i for i in range(1, 11)]:
             result = ck.lower(Q[0], amp=amp_val)
-            assert "start_vtu" in result.mlir()
-            assert "duration_vtu = 64" in result.mlir()
+            assert "start_cycles" in result.mlir()
+            assert "duration_cycles = 64" in result.mlir()
 
     def test_duration_sweep(self):
 
@@ -577,7 +577,7 @@ class TestE2ESweeps:
         ck = pulse.compile(k)
         for dur_val in [20, 40, 60, 80, 100, 200]:
             result = ck.lower(Q[0], dur=dur_val)
-            assert f"duration_vtu = {dur_val}" in result.mlir()
+            assert f"duration_cycles = {dur_val}" in result.mlir()
 
     def test_phase_sweep(self):
 
@@ -591,7 +591,7 @@ class TestE2ESweeps:
         ck = pulse.compile(k)
         for angle in [0.0, math.pi / 4, math.pi / 2, math.pi, 2 * math.pi]:
             result = ck.lower(Q[0], phi=angle)
-            assert "start_vtu" in result.mlir()
+            assert "start_cycles" in result.mlir()
 
     def test_qec_parameterized(self):
         """Surface-code-like kernel with parameterized amplitudes."""
@@ -610,7 +610,7 @@ class TestE2ESweeps:
         assert bool(ck.parameters)
 
         result = ck.lower(Q[0], Q[1], amp=0.25)
-        assert "start_vtu" in result.mlir()
+        assert "start_cycles" in result.mlir()
         assert len(re.findall(r"= pulse\.drive ", result.mlir())) == 2
 
     def test_performance_specialize_vs_recompile(self):
@@ -659,8 +659,8 @@ class TestConcreteKernels:
 
         ck = k.lower(Q[0])
         assert "func.func @main()" in ck.mlir()
-        assert "start_vtu = 0" in ck.mlir()
-        assert "duration_vtu = 40" in ck.mlir()
+        assert "start_cycles = 0" in ck.mlir()
+        assert "duration_cycles = 40" in ck.mlir()
 
     def test_existing_two_qubit_sync(self):
 
@@ -676,7 +676,7 @@ class TestConcreteKernels:
         ck = k.lower(Q[0], Q[1])
         assert "pulse.sync" in ck.mlir()
         assert len(re.findall(r"= pulse\.drive ", ck.mlir())) == 2
-        assert "start_vtu" in ck.mlir()
+        assert "start_cycles" in ck.mlir()
 
     def test_existing_echo_with_wait(self):
 
@@ -691,7 +691,7 @@ class TestConcreteKernels:
 
         ck = k.lower(Q[0])
         assert "pulse.wait" in ck.mlir()
-        assert "start_vtu" in ck.mlir()
+        assert "start_cycles" in ck.mlir()
 
     def test_existing_with_shift_phase(self):
 
@@ -704,7 +704,7 @@ class TestConcreteKernels:
 
         ck = k.lower(Q[0])
         assert ck.mlir() is not None
-        assert "start_vtu" in ck.mlir()
+        assert "start_cycles" in ck.mlir()
 
     def test_existing_with_all_passes(self):
 
@@ -805,4 +805,4 @@ class TestExpressionsAcrossRegions:
             pulse_pair(d, t, scaled)
             drive(d, square(16, scaled), t)
 
-        assert sum(e.duration_vtu for e in k.lower(Q[0], 0.2).schedule) == 48
+        assert sum(e.duration_cycles for e in k.lower(Q[0], 0.2).schedule) == 48

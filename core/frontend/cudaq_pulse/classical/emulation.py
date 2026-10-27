@@ -98,15 +98,15 @@ def manifest(lowered: Any) -> dict[str, Any]:
 def export(lowered: Any) -> dict[str, Any]:
     """A compiled kernel for a controller emulator: schedule, epochs, calls,
     links and manifest, as JSON-serializable data. Times are in clock cycles;
-    each event's ``epoch_start_vtu`` is the static start of its epoch, which
+    each event's ``epoch_start_cycles`` is the static start of its epoch, which
     moves at run time by the lengths of the variable waits before it."""
     epochs = lowered.epochs()
-    starts = [e.start_vtu for e in epochs]
+    starts = [e.start_cycles for e in epochs]
     events = []
     for event in lowered.schedule:
         index = 0
         for k, start in enumerate(starts):
-            if event.start_vtu is not None and event.start_vtu >= start and k > 0:
+            if event.start_cycles is not None and event.start_cycles >= start and k > 0:
                 index = k
         events.append(
             {
@@ -114,10 +114,10 @@ def export(lowered: Any) -> dict[str, Any]:
                 "line": event.line,
                 "link": event.link,
                 "qubit": event.qubit,
-                "start_vtu": event.start_vtu,
-                "duration_vtu": event.duration_vtu,
+                "start_cycles": event.start_cycles,
+                "duration_cycles": event.duration_cycles,
                 "epoch": index,
-                "epoch_start_vtu": starts[index],
+                "epoch_start_cycles": starts[index],
             }
         )
     machine = lowered.options.machine

@@ -31,10 +31,10 @@ classical.callable @decode {function_id = 3007678287 : i64, device = 0 : i64,
 // loop is unrolled because its rounds differ.
 // CHECK-LABEL: func.func @rounds
 // CHECK-NOT: scf.for
-// CHECK: classical.submit {{.*}}start_vtu = 300 : i64}
-// CHECK: classical.submit {{.*}}start_vtu = 600 : i64}
-// CHECK: classical.submit {{.*}}start_vtu = 1301 : i64}
-// CHECK: classical.submit {{.*}}start_vtu = 1601 : i64}
+// CHECK: classical.submit {{.*}}start_cycles = 300 : i64}
+// CHECK: classical.submit {{.*}}start_cycles = 600 : i64}
+// CHECK: classical.submit {{.*}}start_cycles = 1301 : i64}
+// CHECK: classical.submit {{.*}}start_cycles = 1601 : i64}
 func.func @rounds() {
   %q = pulse.qudit_alloc : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
@@ -71,12 +71,12 @@ func.func @rounds() {
 // consecutive rounds overlap, and the loop keeps a period of 300.
 // CHECK-LABEL: func.func @pipelined
 // CHECK: scf.for
-// CHECK: classical.submit {{.*}}period_vtu = array<i64: 300>, start_vtu = 300 : i64}
-// ASAP: classical.wait {{.*}}period_vtu = array<i64: 300>, start_vtu = 1301 : i64}
-// ASAP: pulse.drive {{.*}}period_vtu = array<i64: 300>, start_vtu = 1301 : i64}
+// CHECK: classical.submit {{.*}}period_cycles = array<i64: 300>, start_cycles = 300 : i64}
+// ASAP: classical.wait {{.*}}period_cycles = array<i64: 300>, start_cycles = 1301 : i64}
+// ASAP: pulse.drive {{.*}}period_cycles = array<i64: 300>, start_cycles = 1301 : i64}
 // Under ALAP the waits move to where the drives need them, packed at the end.
-// ALAP: classical.wait {{.*}}period_vtu = array<i64: 40>, start_vtu = 2081 : i64}
-// RCP: classical.wait {{.*}}period_vtu = array<i64: 300>, start_vtu = 1301 : i64}
+// ALAP: classical.wait {{.*}}period_cycles = array<i64: 40>, start_cycles = 2081 : i64}
+// RCP: classical.wait {{.*}}period_cycles = array<i64: 300>, start_cycles = 1301 : i64}
 func.func @pipelined() {
   %q = pulse.qudit_alloc : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)

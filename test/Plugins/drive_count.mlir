@@ -12,7 +12,7 @@
 // RUN:   | FileCheck %s
 
 // CHECK-LABEL: func.func @two_drives
-// CHECK-SAME: pulse_example.drive_vtu = 100 : i64
+// CHECK-SAME: pulse_example.drive_cycles = 100 : i64
 // CHECK-SAME: pulse_example.drives = 2 : i64
 func.func @two_drives() {
   %q = pulse.qudit_alloc : !pulse.qref

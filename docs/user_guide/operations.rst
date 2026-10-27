@@ -126,7 +126,7 @@ Each constructor returns a waveform value that can be passed to
    * - ``custom_samples(samples)``
      - Waveform from a non-empty sequence of at most 252 real-valued samples
 
-For ``gaussian_square``, ``width`` is the flat-top width in virtual time units;
+For ``gaussian_square``, ``width`` is the flat-top width in clock cycles;
 ``duration - width`` must be a positive even integer so the two edges have the
 same integer duration.
 

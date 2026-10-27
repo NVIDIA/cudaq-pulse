@@ -172,14 +172,14 @@ same way:
 - A blocking wait, like a variable wait, starts once every line is done.
 
 ``Lowered.classical_report()`` gives one ``ClassicalCall`` per execution of a
-call, in clock cycles: when it is submitted (``submit_vtu``), when its answer
-is due (``due_vtu``) and taken, the first operation that uses it, its slack
-(``slack_vtu``, how much later the answer could arrive without delaying a
+call, in clock cycles: when it is submitted (``submit_cycles``), when its answer
+is due (``due_cycles``) and taken, the first operation that uses it, its slack
+(``slack_cycles``, how much later the answer could arrive without delaying a
 pulse) and, with ``deadline_ns``, how far inside its deadline it is.
-``exposed_vtu`` is how long the first use waits for the answer beyond when it
+``exposed_cycles`` is how long the first use waits for the answer beyond when it
 could start anyway: after its line is free and after the readout resonator
 has depleted (``Qubit.depletion_ns``, from ``readout_params["depletion_ns"]``
-or from ``kappa_eff_hz``). The rest of the budget, ``hidden_vtu``, overlaps
+or from ``kappa_eff_hz``). The rest of the budget, ``hidden_cycles``, overlaps
 work that had to happen anyway, so a latency within the depletion time costs
 nothing. The
 timeline (``Lowered.timeline()``) draws each link as a row of its own,
@@ -303,8 +303,8 @@ kernel calls between measurements and runs between shots:
    @pulse.classical(args=(Bits(1), Float(), Float(), Float()),
                     results=(Float(), Float(), Float()),
                     max_latency_ns=200, link="controller")
-   def t1_estimator(survived, alpha, beta, wait_vtu):
-       alpha, beta = cal.t1_update(alpha, beta, bool(survived[0]), wait_vtu / 2.0)
+   def t1_estimator(survived, alpha, beta, wait_cycles):
+       alpha, beta = cal.t1_update(alpha, beta, bool(survived[0]), wait_cycles / 2.0)
        return alpha, beta, min(max(cal.t1_wait(alpha, beta) * 2.0, 200), 20000)
 
 **The converged pattern.** A kernel's trip counts are fixed when it
@@ -348,8 +348,8 @@ when it is known.
 .. code-block:: python
    :class: fragment
 
-   store = ParameterStore(wait_vtu=4000.0)
-   read_wait = store.reader("wait_vtu", link="controller", bounds=(0.0, 40000.0))
+   store = ParameterStore(wait_cycles=4000.0)
+   read_wait = store.reader("wait_cycles", link="controller", bounds=(0.0, 40000.0))
 
    @pulse.kernel
    def shot(q, amplitude: float):
@@ -360,7 +360,7 @@ when it is known.
    for i in range(10_000):
        lowered = compiled.lower(q, amplitude)   # no compiling after the first
        ...
-       store.set("wait_vtu", next_wait, iteration=i)
+       store.set("wait_cycles", next_wait, iteration=i)
 
 **A drifting device.** ``cudaq_pulse.runtime.drift.DriftingPlant`` moves one
 qubit's T1 (``TelegraphT1``, switching between two values), frequency and

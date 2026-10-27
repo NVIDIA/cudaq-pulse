@@ -32,7 +32,7 @@ func.func @across_a_variable_wait() {
   %l1, %h = classical.submit %l, @f() : () -> (!classical.link, !classical.future)
   %n = classical.wait %h, @f : i64
   %dur = pulse.duration_from_int %n : (i64) -> !pulse.duration
-  %d1 = pulse.wait %d0, %dur {classical.variable, pulse.variable, pulse.min_vtu = 0 : i64} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+  %d1 = pulse.wait %d0, %dur {classical.variable, pulse.variable_wait, pulse.min_cycles = 0 : i64} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
   %e2, %u2 = pulse.drive %e1, %wf, %u1 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   return
 }

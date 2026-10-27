@@ -28,7 +28,7 @@ func.func @t1(%tau: f64) {
   %x = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !pulse.waveform
   %m = pulse.square %c200, %amp, %zero : i64, f64, f64 -> !pulse.waveform
   // CHECK: = pulse.drive %
-  // CHECK-SAME: start_vtu = 0
+  // CHECK-SAME: start_cycles = 0
   %d1, %t1 = pulse.drive %d0, %x, %t0
       : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   // CHECK: %[[X:.*]] = arith.addf %arg0
@@ -38,17 +38,17 @@ func.func @t1(%tau: f64) {
   %n = arith.fptosi %h : f64 to i64
   %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
   // CHECK: = pulse.wait %
-  // CHECK-SAME: duration_vtu = 16
-  // CHECK-SAME: pulse.max_vtu = 4000
-  // CHECK-SAME: pulse.min_vtu = 16
-  // CHECK-SAME: pulse.variable
-  // CHECK-SAME: start_vtu = 40
-  %d2 = pulse.wait %d1, %len {pulse.variable, pulse.min_vtu = 16 : i64, pulse.max_vtu = 4000 : i64}
+  // CHECK-SAME: duration_cycles = 16
+  // CHECK-SAME: pulse.max_cycles = 4000
+  // CHECK-SAME: pulse.min_cycles = 16
+  // CHECK-SAME: pulse.variable_wait
+  // CHECK-SAME: start_cycles = 40
+  %d2 = pulse.wait %d1, %len {pulse.variable_wait, pulse.min_cycles = 16 : i64, pulse.max_cycles = 4000 : i64}
       : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
   %s:2 = pulse.sync %d2, %r0 : !pulse.drive_line, !pulse.readout_line
       -> !pulse.drive_line, !pulse.readout_line
   // CHECK: = pulse.readout %
-  // CHECK-SAME: start_vtu = 56
+  // CHECK-SAME: start_cycles = 56
   %r1, %rt1, %res = pulse.readout %s#1, %m, %rt0, "iq"
       : !pulse.readout_line, !pulse.waveform, !pulse.tone
       -> !pulse.readout_line, !pulse.tone, !pulse.measurement
@@ -73,17 +73,17 @@ func.func @two_lines(%tau: f64) {
   %n = arith.fptosi %tau : f64 to i64
   %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
   // CHECK: = pulse.wait %
-  // CHECK-SAME: duration_vtu = 100
-  // CHECK-SAME: start_vtu = 0
-  %a1 = pulse.wait %a0, %len {pulse.variable, pulse.min_vtu = 100 : i64}
+  // CHECK-SAME: duration_cycles = 100
+  // CHECK-SAME: start_cycles = 0
+  %a1 = pulse.wait %a0, %len {pulse.variable_wait, pulse.min_cycles = 100 : i64}
       : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
   // CHECK: = pulse.drive %
-  // CHECK-SAME: start_vtu = 100
+  // CHECK-SAME: start_cycles = 100
   %a2, %at2 = pulse.drive %a1, %x, %at
       : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   // CHECK: = pulse.drive %
-  // ALAP-SAME: start_vtu = 100
-  // ASAP-SAME: start_vtu = 0
+  // ALAP-SAME: start_cycles = 100
+  // ASAP-SAME: start_cycles = 0
   %b1, %bt1 = pulse.drive %b0, %x, %bt
       : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   return
@@ -107,11 +107,11 @@ func.func @bound() {
   %n = arith.fptosi %h : f64 to i64
   %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
   // ROUNDTRIP: = pulse.wait %
-  // ROUNDTRIP-SAME: duration_vtu = 100
-  %d1 = pulse.wait %d0, %len {pulse.variable, pulse.min_vtu = 0 : i64}
+  // ROUNDTRIP-SAME: duration_cycles = 100
+  %d1 = pulse.wait %d0, %len {pulse.variable_wait, pulse.min_cycles = 0 : i64}
       : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
   // ROUNDTRIP: = pulse.drive %
-  // ROUNDTRIP-SAME: start_vtu = 100
+  // ROUNDTRIP-SAME: start_cycles = 100
   %d2, %t1 = pulse.drive %d1, %x, %t0
       : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   return

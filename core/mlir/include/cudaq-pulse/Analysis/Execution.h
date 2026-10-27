@@ -64,8 +64,8 @@ using Path = std::map<MeasurementKey, int64_t>;
 struct Occurrence {
   mlir::Operation *op = nullptr;
   std::vector<int64_t> iteration;
-  int64_t startVtu = 0;
-  int64_t durationVtu = 0;
+  int64_t startCycles = 0;
+  int64_t durationCycles = 0;
   /// For drives and readouts: the frame of the op's tone as it starts.
   ToneState tone;
 };
@@ -224,9 +224,9 @@ private:
         onDrive(occurrence);
       if (auto frame = op->getAttrOfType<mlir::FloatAttr>("frame_phase_offset"))
         tone.phase += frame.getValueAsDouble();
-      double endNs =
-          static_cast<double>(occurrence.startVtu + occurrence.durationVtu) /
-          clockGHz;
+      double endNs = static_cast<double>(occurrence.startCycles +
+                                         occurrence.durationCycles) /
+                     clockGHz;
       tone.phase += (tone.frequencyHz - tone.frameFrequencyHz) * (2.0 * M_PI) *
                     1.0e-9 * (endNs - tone.timeNs);
       tone.timeNs = endNs;

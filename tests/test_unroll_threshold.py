@@ -148,7 +148,7 @@ def _kernels():
 
 
 def _events(lowered):
-    return sorted((e.line, e.kind, e.start_vtu, e.duration_vtu) for e in lowered.schedule)
+    return sorted((e.line, e.kind, e.start_cycles, e.duration_cycles) for e in lowered.schedule)
 
 
 @pytest.mark.parametrize("name", sorted(_kernels()))
@@ -163,8 +163,8 @@ def test_rolled_and_unrolled_programs_are_the_same(name):
     # unrolled program; the evolution is the same.
     a = pulse.compile(kernel, unroll_threshold=0).lower(Q[0], Q[1])
     b = pulse.compile(kernel, unroll_threshold=10**6).lower(Q[0], Q[1])
-    end = max(e.start_vtu + e.duration_vtu for e in a.schedule)
-    assert end == max(e.start_vtu + e.duration_vtu for e in b.schedule)
+    end = max(e.start_cycles + e.duration_cycles for e in a.schedule)
+    assert end == max(e.start_cycles + e.duration_cycles for e in b.schedule)
     rho_a = pulse.simulate(a, levels=3, dt_ns=0.05).density_matrix
     rho_b = pulse.simulate(b, levels=3, dt_ns=0.05).density_matrix
     assert np.allclose(rho_a, rho_b, atol=1e-10)

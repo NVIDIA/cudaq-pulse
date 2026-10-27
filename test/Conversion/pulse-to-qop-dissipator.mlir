@@ -24,7 +24,7 @@ func.func @main() {
   %wf = pulse.gaussian %duration, %amplitude, %sigma
       : i64, f64, f64 -> !pulse.waveform
   %d1, %t1 = pulse.drive %d0, %wf, %t0
-      {start_vtu = 0 : i64, duration_vtu = 40 : i64}
+      {start_cycles = 0 : i64, duration_cycles = 40 : i64}
       : !pulse.drive_line, !pulse.waveform, !pulse.tone
       -> !pulse.drive_line, !pulse.tone
 

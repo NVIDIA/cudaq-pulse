@@ -63,10 +63,10 @@ func.func @branch_before_measurement(%x: !pulse.waveform) {
   %q = pulse.qudit_alloc : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
-  %r1, %rt1, %m = pulse.readout %r0, %x, %rt0, "iq" {start_vtu = 0 : i64, duration_vtu = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %r1, %rt1, %m = pulse.readout %r0, %x, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   %bit = pulse.is_set %m : !pulse.measurement -> i1
   %d1, %t1 = scf.if %bit -> (!pulse.drive_line, !pulse.tone) {
-    %d, %t = pulse.drive %d0, %x, %t0 {start_vtu = 100 : i64, duration_vtu = 40 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+    %d, %t = pulse.drive %d0, %x, %t0 {start_cycles = 100 : i64, duration_cycles = 40 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
     scf.yield %d, %t : !pulse.drive_line, !pulse.tone
   } else {
     scf.yield %d0, %t0 : !pulse.drive_line, !pulse.tone
@@ -85,8 +85,8 @@ func.func @loop_periods_disagree(%x: !pulse.waveform, %w: !pulse.duration) {
   %ub = arith.constant 4 : index
   %step = arith.constant 1 : index
   %d2, %t2 = scf.for %i = %lb to %ub step %step iter_args(%d = %d0, %t = %t0) -> (!pulse.drive_line, !pulse.tone) {
-    %dd, %tt = pulse.drive %d, %x, %t {start_vtu = 0 : i64, duration_vtu = 40 : i64, period_vtu = array<i64: 80>} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
-    %dw = pulse.wait %dd, %w {start_vtu = 40 : i64, duration_vtu = 60 : i64, period_vtu = array<i64: 100>} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+    %dd, %tt = pulse.drive %d, %x, %t {start_cycles = 0 : i64, duration_cycles = 40 : i64, period_cycles = array<i64: 80>} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+    %dw = pulse.wait %dd, %w {start_cycles = 40 : i64, duration_cycles = 60 : i64, period_cycles = array<i64: 100>} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
     scf.yield %dw, %tt : !pulse.drive_line, !pulse.tone
   }
   return
@@ -102,8 +102,8 @@ func.func @loop_iterations_overlap(%x: !pulse.waveform, %w: !pulse.duration) {
   %ub = arith.constant 4 : index
   %step = arith.constant 1 : index
   %d2, %t2 = scf.for %i = %lb to %ub step %step iter_args(%d = %d0, %t = %t0) -> (!pulse.drive_line, !pulse.tone) {
-    %dd, %tt = pulse.drive %d, %x, %t {start_vtu = 0 : i64, duration_vtu = 40 : i64, period_vtu = array<i64: 80>} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
-    %dw = pulse.wait %dd, %w {start_vtu = 40 : i64, duration_vtu = 60 : i64, period_vtu = array<i64: 80>} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+    %dd, %tt = pulse.drive %d, %x, %t {start_cycles = 0 : i64, duration_cycles = 40 : i64, period_cycles = array<i64: 80>} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+    %dw = pulse.wait %dd, %w {start_cycles = 40 : i64, duration_cycles = 60 : i64, period_cycles = array<i64: 80>} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
     scf.yield %dw, %tt : !pulse.drive_line, !pulse.tone
   }
   return

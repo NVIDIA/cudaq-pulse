@@ -95,7 +95,7 @@ def decoded_feed_forward(qubit):
 
 # The next wait is C_WAIT times the current T1 estimate, within the bounds.
 C_WAIT = 1.0
-WAIT_BOUNDS_VTU = (200, 40000)  # 0.1 us to 20 us at 2 GHz
+WAIT_BOUNDS_CYCLES = (200, 40000)  # 0.1 us to 20 us at 2 GHz
 CLOCK_GHZ = 2.0
 
 
@@ -120,7 +120,7 @@ def update_t1(survived, alpha, beta, last_wait):
     else:
         alpha = alpha + 1.0
     t1_estimate_ns = beta / alpha
-    lo, hi = WAIT_BOUNDS_VTU
+    lo, hi = WAIT_BOUNDS_CYCLES
     next_wait = min(max(C_WAIT * t1_estimate_ns * CLOCK_GHZ, lo), hi)
     return alpha, beta, next_wait
 
@@ -142,7 +142,7 @@ def track_t1(qubit, rounds: int, alpha: float, beta: float, first_wait: int):
         if m:  # active reset
             drive(drive_line, square(40, PI_AMP), drive_tone)
         drive(drive_line, square(40, PI_AMP), drive_tone)
-        wait(drive_line, tau, bounds=WAIT_BOUNDS_VTU)
+        wait(drive_line, tau, bounds=WAIT_BOUNDS_CYCLES)
     sync(drive_line, readout_line)
     readout(readout_line, square(400, 0.05), readout_tone)
 
@@ -156,10 +156,10 @@ def print_report(lowered):
     clock = lowered.target.clock_ghz
     print(f"  {'function':<10} {'link':>10} {'issue ns':>9} {'ready ns':>9} {'slack ns':>9}")
     for call in lowered.classical_report():
-        slack = "-" if call.slack_vtu is None else f"{call.slack_vtu / clock:.1f}"
+        slack = "-" if call.slack_cycles is None else f"{call.slack_cycles / clock:.1f}"
         print(
-            f"  {call.function:<10} {call.link_name:>10} {call.submit_vtu / clock:>9.1f} "
-            f"{call.due_vtu / clock:>9.1f} {slack:>9}"
+            f"  {call.function:<10} {call.link_name:>10} {call.submit_cycles / clock:>9.1f} "
+            f"{call.due_cycles / clock:>9.1f} {slack:>9}"
         )
 
 

@@ -44,19 +44,19 @@ struct DriveCountPass
       if (function.getName().getStringRef() != "func.func")
         continue;
       int64_t drives = 0;
-      int64_t driveVtu = 0;
+      int64_t driveCycles = 0;
       function.walk([&](mlir::Operation *op) {
         if (op->getName().getStringRef() != "pulse.drive")
           return;
         ++drives;
         if (auto duration =
-                op->getAttrOfType<mlir::IntegerAttr>("duration_vtu"))
-          driveVtu += duration.getInt();
+                op->getAttrOfType<mlir::IntegerAttr>("duration_cycles"))
+          driveCycles += duration.getInt();
       });
       function.setAttr("pulse_example.drives",
                        builder.getI64IntegerAttr(drives));
-      function.setAttr("pulse_example.drive_vtu",
-                       builder.getI64IntegerAttr(driveVtu));
+      function.setAttr("pulse_example.drive_cycles",
+                       builder.getI64IntegerAttr(driveCycles));
     }
   }
 };

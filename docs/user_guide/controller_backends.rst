@@ -44,7 +44,7 @@ event has:
 ``line``, ``qudit``
     The line it plays on and that line's qudit; ``null`` for a sync. For a
     classical call, ``line`` is its link and ``qudit`` is -1.
-``start_vtu``, ``duration_vtu``, ``end_vtu``
+``start_cycles``, ``duration_cycles``, ``end_cycles``
     The final schedule as integers, in clock cycles. A backend places every
     event at its start and does not schedule again.
 ``iteration``
@@ -132,7 +132,7 @@ reads. This one emits one line of text per drive and readout:
        formats = (FORMAT,)
 
        def machine_model(self) -> MachineModel:
-           limits = ControllerLimits(clock_ghz=1.0, issue_vtu=2, min_wait_vtu=2)
+           limits = ControllerLimits(clock_ghz=1.0, issue_cycles=2, min_wait_cycles=2)
            return MachineModel(controller=limits)
 
        def emit(self, program: Mapping[str, Any]) -> list[str]:
@@ -143,7 +143,7 @@ reads. This one emits one line of text per drive and readout:
                if event["kind"] not in ("drive", "readout") or event["conditions"]:
                    raise ValueError(f"cannot play event {event['index']}")
                played.append(
-                   f"{event['start_vtu']} {event['kind']} line {event['line']} "
+                   f"{event['start_cycles']} {event['kind']} line {event['line']} "
                    f"{event['waveform']['shape']} at {event['frequency_hz']:.6g} Hz"
                )
            return played

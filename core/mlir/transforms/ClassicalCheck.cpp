@@ -64,7 +64,7 @@ static void collectSubmissions(
         continue;
       int64_t device = classical::intAttr(&op, "classical.device");
       int64_t duration = pulse::scheduledDuration(&op).value_or(1);
-      int64_t budget = classical::intAttr(&op, "classical.budget_vtu");
+      int64_t budget = classical::intAttr(&op, "classical.budget_cycles");
       perLink[device].push_back({*start, *start + duration + budget, &op});
       if (!inBranch)
         ordered[device].push_back({*start, *start + duration, &op});
@@ -119,9 +119,10 @@ struct PulseClassicalCheckPass
         failed = true;
       }
       if (auto deadline = callable.getDeadlineNs()) {
-        int64_t due = classical::submitVtu(callable, link, clock) +
-                      classical::budgetVtu(callable, link, clock);
-        int64_t limit = classical::ceilVtu(deadline->convertToDouble(), clock);
+        int64_t due = classical::submitCycles(callable, link, clock) +
+                      classical::budgetCycles(callable, link, clock);
+        int64_t limit =
+            classical::ceilCycles(deadline->convertToDouble(), clock);
         if (due > limit) {
           callable.emitError("'")
               << callable.getSymName() << "' cannot meet its deadline: its "
@@ -157,7 +158,7 @@ struct PulseClassicalCheckPass
           }
           return;
         }
-        if (!submit->hasAttr("start_vtu") || !wait->hasAttr("start_vtu"))
+        if (!submit->hasAttr("start_cycles") || !wait->hasAttr("start_cycles"))
           return;
         auto loops = pulse::enclosingLoops(wait, function);
         if (loops != pulse::enclosingLoops(submit, function)) {
@@ -168,7 +169,7 @@ struct PulseClassicalCheckPass
           return;
         }
         int64_t duration = pulse::scheduledDuration(submit).value_or(1);
-        int64_t budget = classical::intAttr(submit, "classical.budget_vtu");
+        int64_t budget = classical::intAttr(submit, "classical.budget_cycles");
         size_t depth = loops.size();
         llvm::SmallVector<int64_t, 2> iteration(depth, 0);
         for (uint64_t corner = 0; corner < (uint64_t{1} << depth); ++corner) {

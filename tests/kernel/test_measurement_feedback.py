@@ -25,7 +25,7 @@ def _compile(kernel, n_qubits=1, **kwargs):
 
 
 def _makespan(compiled):
-    return max(e.start_vtu + e.duration_vtu for e in compiled.schedule)
+    return max(e.start_cycles + e.duration_cycles for e in compiled.schedule)
 
 
 def test_active_reset_retains_the_conditional():
@@ -78,7 +78,7 @@ def test_conditional_waits_for_the_measurement():
     events = _compile(active_reset, schedule="asap").schedule
     readout = next(e for e in events if e.kind == "readout")
     drive = next(e for e in events if e.kind == "drive")
-    assert drive.start_vtu >= readout.start_vtu + readout.duration_vtu
+    assert drive.start_cycles >= readout.start_cycles + readout.duration_cycles
 
 
 def test_feedback_inside_a_retained_loop():

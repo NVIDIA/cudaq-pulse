@@ -103,7 +103,7 @@ def report(label: str, compiled: pulse.Lowered) -> None:
     data_lines = sorted(timeline)[2:]
     makespan = max(e.end for e in compiled.schedule)
     print(f"\n  --- {label} ---")
-    print(f"    makespan: {makespan} VTU")
+    print(f"    makespan: {makespan} clock cycles")
     layer = [timeline[line][0][1] for line in data_lines]
     print(f"    first layer starts on the data lines: {layer}")
     readout = next(e for e in timeline[1] if e[0] == "readout")

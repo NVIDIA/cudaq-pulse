@@ -35,7 +35,7 @@ def _compile(kernel, **kwargs):
 
 
 def _makespan(compiled):
-    return max((e.start_vtu + e.duration_vtu for e in compiled.schedule), default=0)
+    return max((e.start_cycles + e.duration_cycles for e in compiled.schedule), default=0)
 
 
 _amplitudes = st.lists(
@@ -58,7 +58,7 @@ def test_schedules_are_back_to_back_on_one_line(amplitudes, durations, waits, ph
         events = compiled.schedule
         assert _makespan(compiled) == expected
         for before, after in zip(events, events[1:]):
-            assert after.start_vtu == before.start_vtu + before.duration_vtu
+            assert after.start_cycles == before.start_cycles + before.duration_cycles
 
 
 @given(amplitudes=_amplitudes, durations=_durations, phases=_phases)

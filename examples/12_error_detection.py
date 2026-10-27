@@ -51,7 +51,10 @@ PROGRAMS = {
   %wf = {_SQUARE.format(dur="%c40")}
   %d1, %t1 = {
         _DRIVE.format(
-            line="%d", wf="%wf", tone="%t", attrs=" {start_vtu = 0 : i64, duration_vtu = 40 : i64}"
+            line="%d",
+            wf="%wf",
+            tone="%t",
+            attrs=" {start_cycles = 0 : i64, duration_cycles = 40 : i64}",
         )
     }
   %d2, %t2 = {
@@ -59,7 +62,7 @@ PROGRAMS = {
             line="%d1",
             wf="%wf",
             tone="%t1",
-            attrs=" {start_vtu = 20 : i64, duration_vtu = 40 : i64}",
+            attrs=" {start_cycles = 20 : i64, duration_cycles = 40 : i64}",
         )
     }
 """,

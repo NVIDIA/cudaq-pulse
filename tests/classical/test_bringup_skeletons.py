@@ -77,10 +77,10 @@ T1_BOUNDS = (200, 20000)  # 0.1 to 10 us
     max_latency_ns=200,
     link="controller",
 )
-def t1_estimator(survived, alpha, beta, wait_vtu):
-    alpha, beta = cal.t1_update(alpha, beta, bool(survived[0]), wait_vtu / CLOCK)
-    wait_vtu = min(max(cal.t1_wait(alpha, beta) * CLOCK, T1_BOUNDS[0]), T1_BOUNDS[1])
-    return alpha, beta, wait_vtu
+def t1_estimator(survived, alpha, beta, wait_cycles):
+    alpha, beta = cal.t1_update(alpha, beta, bool(survived[0]), wait_cycles / CLOCK)
+    wait_cycles = min(max(cal.t1_wait(alpha, beta) * CLOCK, T1_BOUNDS[0]), T1_BOUNDS[1])
+    return alpha, beta, wait_cycles
 
 
 @pulse.kernel
@@ -137,12 +137,12 @@ RAMSEY_BOUNDS = (20, 40000)
     max_latency_ns=300,
     link="controller",
 )
-def frequency_estimator(bit, mean, sigma, wait_vtu, phase):
+def frequency_estimator(bit, mean, sigma, wait_cycles, phase):
     # The Ramsey wait counts from the first pulse's centre to the second's.
-    mean, sigma = cal.frequency_update(mean, sigma, int(bit[0]), wait_vtu / CLOCK + 20.0, phase)
+    mean, sigma = cal.frequency_update(mean, sigma, int(bit[0]), wait_cycles / CLOCK + 20.0, phase)
     wait_ns, phase = cal.ramsey_setting(mean, sigma)
-    wait_vtu = min(max((wait_ns - 20.0) * CLOCK, RAMSEY_BOUNDS[0]), RAMSEY_BOUNDS[1])
-    return mean, sigma, wait_vtu, phase
+    wait_cycles = min(max((wait_ns - 20.0) * CLOCK, RAMSEY_BOUNDS[0]), RAMSEY_BOUNDS[1])
+    return mean, sigma, wait_cycles, phase
 
 
 @pulse.kernel
@@ -207,17 +207,17 @@ def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
 
 
 @pulse.kernel
-def t1_shot(q, wait_vtu: int):
+def t1_shot(q, wait_cycles: int):
     d, t = get_drive_line(q)
     drive(d, square(40, PI_AMP), t)
-    wait(d, wait_vtu)
+    wait(d, wait_cycles)
 
 
 @pulse.kernel
-def ramsey_shot(q, wait_vtu: int, phase: float):
+def ramsey_shot(q, wait_cycles: int, phase: float):
     d, t = get_drive_line(q)
     drive(d, square(40, PI_AMP / 2), t)
-    wait(d, wait_vtu)
+    wait(d, wait_cycles)
     shift_phase(t, phase)
     drive(d, square(40, PI_AMP / 2), t)
 
@@ -226,14 +226,14 @@ def test_k13_three_point_decay_and_phase_recover_the_device(target):
     dev = _device(target)
     q = dev.qudit_handles[0]
     compiled = pulse.compile(t1_shot, device=dev)
-    spacing_vtu = 8000
+    spacing_cycles = 8000
     p = [
-        pulse.simulate(compiled.lower(q, 2000 + k * spacing_vtu), dt_ns=4.0)
+        pulse.simulate(compiled.lower(q, 2000 + k * spacing_cycles), dt_ns=4.0)
         .density_matrix[1, 1]
         .real
         for k in range(3)
     ]
-    t1_us = cal.three_point_decay(*p, spacing=spacing_vtu / CLOCK) / 1e3
+    t1_us = cal.three_point_decay(*p, spacing=spacing_cycles / CLOCK) / 1e3
     assert t1_us == pytest.approx(target.qubits[0].t1_us, rel=0.02)
     # A detuned plant puts a phase 2 pi d T on the Ramsey fringe.
     offset = 250e3
@@ -247,16 +247,16 @@ def test_k13_three_point_decay_and_phase_recover_the_device(target):
         },
     )
     ramsey = pulse.compile(ramsey_shot, device=dev)
-    wait_vtu, theta, delta = 600, math.pi / 2, 0.5
+    wait_cycles, theta, delta = 600, math.pi / 2, 0.5
     # The simulated fringe is a - b cos(theta + e) at kernel phase pi - theta.
     p = [
-        pulse.simulate(ramsey.lower(q, wait_vtu, math.pi - (theta + k * delta)), plant=detuned)
+        pulse.simulate(ramsey.lower(q, wait_cycles, math.pi - (theta + k * delta)), plant=detuned)
         .density_matrix[1, 1]
         .real
         for k in (-1, 0, 1)
     ]
     error = cal.three_point_phase(*p, theta=theta, delta=delta)
-    separation_ns = (wait_vtu + 40) / CLOCK
+    separation_ns = (wait_cycles + 40) / CLOCK
     assert error == pytest.approx(2 * math.pi * offset * separation_ns * 1e-9, abs=0.02)
 
 
@@ -376,8 +376,8 @@ def test_k14_golden_section_in_a_shot_uses_the_converged_pattern(target):
 
 # ── K15: closed-loop cadence between shots ──────────────────────────────────
 
-STORE = ParameterStore(wait_vtu=4000.0)
-READ_WAIT = STORE.reader("wait_vtu", link="controller", bounds=(0.0, 40000.0))
+STORE = ParameterStore(wait_cycles=4000.0)
+READ_WAIT = STORE.reader("wait_cycles", link="controller", bounds=(0.0, 40000.0))
 
 
 @pulse.kernel
@@ -396,7 +396,7 @@ def test_k15_the_closed_loop_runs_ten_thousand_iterations_on_one_compile(target)
     compiled = pulse.compile(cadence_shot, device=dev, machine=MACHINE)
     log = EstimateLog()
     for i in range(10_000):
-        STORE.set("wait_vtu", 2000.0 + (i % 100) * 20.0, iteration=i)
+        STORE.set("wait_cycles", 2000.0 + (i % 100) * 20.0, iteration=i)
         lowered = compiled.lower(q, PI_AMP * (1 + 1e-4 * (i % 10)))
         if i % 2500 == 0:
             result = pulse.simulate(lowered, dt_ns=4.0)
@@ -476,7 +476,7 @@ def test_k17_latency_within_depletion_is_hidden(target):
                 drive(d, square(40, PI_AMP), t)
 
         (call,) = pulse.compile(feedback, device=dev).lower(dev.qudit_handles[0]).classical_report()
-        assert call.exposed_vtu / CLOCK == pytest.approx(exposed_ns, abs=1.0)
+        assert call.exposed_cycles / CLOCK == pytest.approx(exposed_ns, abs=1.0)
 
 
 # ── K18: readout models ─────────────────────────────────────────────────────

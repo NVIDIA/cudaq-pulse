@@ -34,7 +34,7 @@ from tests._handles import Q
 from tests._ir import python_ir
 
 FREQ_HZ = 5.0e9
-# With H = amp X / 2 at 1 rad/ns per unit amplitude, 16 vtu (8 ns) at
+# With H = amp X / 2 at 1 rad/ns per unit amplitude, 16 cycles (8 ns) at
 # amplitude 0.05 rotates by 0.4 rad: small enough that sequences of
 # pulses with different phases or frequencies end in distinct states.
 AMP = 0.05
@@ -121,12 +121,12 @@ def _loop_bodies(ops):
 
 def _schedule(compiled):
     """``(kind, qubit, start, duration)`` of each event, in time order."""
-    events = [(e.kind, e.qubit, e.start_vtu, e.duration_vtu) for e in compiled.schedule]
+    events = [(e.kind, e.qubit, e.start_cycles, e.duration_cycles) for e in compiled.schedule]
     return sorted(events, key=lambda e: (e[2], e[1], e[0]))
 
 
 def _length(compiled):
-    return max((e.start_vtu + e.duration_vtu for e in compiled.schedule), default=0)
+    return max((e.start_cycles + e.duration_cycles for e in compiled.schedule), default=0)
 
 
 def _verify(compiled):
@@ -527,7 +527,7 @@ def test_callee_under_a_compile_time_if():
     assert _length(compiled) == 48
 
 
-_PI = math.pi / 8.0  # 16 vtu (8 ns) at this amplitude is a pi rotation
+_PI = math.pi / 8.0  # 16 cycles (8 ns) at this amplitude is a pi rotation
 
 
 @pulse.kernel

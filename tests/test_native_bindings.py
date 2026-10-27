@@ -38,7 +38,7 @@ def test_pulse_module_methods():
     concrete = module.specialize([0.1], [], "alap")
     assert "%arg0" not in concrete.print()
     assert concrete.schedule("asap") is None
-    assert "start_vtu = 0" in concrete.print()
+    assert "start_cycles = 0" in concrete.print()
     assert "llvm.func" in concrete.run_full_lowering()
 
 

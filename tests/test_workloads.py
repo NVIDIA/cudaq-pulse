@@ -40,11 +40,11 @@ def test_workload_compiles_and_schedules(name):
     compiled = pulse.compile(module.build, schedule="asap").lower(*_make_qubits(n))
     events = compiled.schedule
     assert compiled.metrics.op_count > 0
-    assert max(e.start_vtu + e.duration_vtu for e in events) > 0
+    assert max(e.start_cycles + e.duration_cycles for e in events) > 0
     for line in {e.line for e in events}:
         timeline = [e for e in events if e.line == line]
         for before, after in zip(timeline, timeline[1:]):
-            assert after.start_vtu >= before.start_vtu + before.duration_vtu
+            assert after.start_cycles >= before.start_cycles + before.duration_cycles
 
 
 @pytest.mark.parametrize("policy", ["asap", "alap"])
@@ -56,8 +56,8 @@ def test_cross_resonance_pulses_wait_for_the_target_tone(policy):
     # Program order: sx on q0, then sx(q1), CR, x(q0), CR-, sx(q1). The CR
     # pulses play on line 0 at q1's tone, between the two pulses on line 1.
     _, sx_first, cr, _, cr_neg, sx_last = drives
-    assert cr.start_vtu >= sx_first.start_vtu + sx_first.duration_vtu
-    assert sx_last.start_vtu >= cr_neg.start_vtu + cr_neg.duration_vtu
+    assert cr.start_cycles >= sx_first.start_cycles + sx_first.duration_cycles
+    assert sx_last.start_cycles >= cr_neg.start_cycles + cr_neg.duration_cycles
 
 
 # ── Bug corpus: module imports and stats are sane ─────────────────────

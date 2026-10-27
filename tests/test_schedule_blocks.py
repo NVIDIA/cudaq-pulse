@@ -27,11 +27,11 @@ _ROOT = Path(__file__).resolve().parents[1]
 
 
 def _timeline(compiled):
-    return [(e.kind, e.line, e.start_vtu, e.duration_vtu) for e in compiled.schedule]
+    return [(e.kind, e.line, e.start_cycles, e.duration_cycles) for e in compiled.schedule]
 
 
 def _starts(compiled):
-    return [e.start_vtu for e in compiled.schedule]
+    return [e.start_cycles for e in compiled.schedule]
 
 
 def _qubits(n):
@@ -189,7 +189,7 @@ def test_three_levels_of_blocks_compose():
 
     compiled = top.lower(*_qubits(3))
     # Same placement as the three_levels lit test.
-    assert sorted((e.line, e.start_vtu, e.duration_vtu) for e in compiled.schedule) == [
+    assert sorted((e.line, e.start_cycles, e.duration_cycles) for e in compiled.schedule) == [
         (0, 160, 100),
         (0, 260, 40),
         (1, 160, 60),
@@ -212,7 +212,7 @@ def test_block_in_a_rolled_loop_keeps_the_loop():
 
     compiled = pulse.compile(top, schedule="asap").lower(Q[0])
     assert "scf.for" in compiled.mlir()
-    assert [(e.kind, e.start_vtu) for e in compiled.schedule][:4] == [
+    assert [(e.kind, e.start_cycles) for e in compiled.schedule][:4] == [
         ("drive", 0),
         ("wait", 40),
         ("drive", 100),
@@ -242,8 +242,8 @@ def test_measurement_from_a_block_controls_the_caller():
     events = top.lower(*_qubits(2)).schedule
     readout_event = next(e for e in events if e.kind == "readout")
     feedback = events[-1]
-    assert readout_event.start_vtu == 100
-    assert feedback.line == 2 and feedback.start_vtu == 500
+    assert readout_event.start_cycles == 100
+    assert feedback.line == 2 and feedback.start_cycles == 500
 
 
 def test_tone_threaded_into_a_block_waits_for_its_pulse():
@@ -389,7 +389,7 @@ def test_a_callee_that_acquires_its_lines_in_a_rolled_loop_stays_rolled():
 
     lowered = repeated.lower(*_qubits(2), 4)
     assert lowered.mlir().count("scf.for") == 1
-    starts = sorted(e.start_vtu for e in lowered.schedule if e.line == 0)
+    starts = sorted(e.start_cycles for e in lowered.schedule if e.line == 0)
     assert starts == [0, 40, 80, 120]
 
 
@@ -417,7 +417,7 @@ def test_a_block_with_a_float_length_wait_keeps_its_shape_when_called():
     events = top.lower(*_qubits(3), 37.0).schedule
     # Placed whole at the end of the ALAP program, the ASAP block still
     # starts both of its lines together.
-    assert [(e.kind, e.line, e.start_vtu) for e in events] == [
+    assert [(e.kind, e.line, e.start_cycles) for e in events] == [
         ("drive", 2, 0),
         ("wait", 0, 923),
         ("drive", 0, 960),

@@ -72,8 +72,8 @@ dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
 compiled = pulse.compile(krinner_pair, device=dev).lower(
     dev.qudit_handles[auxiliary], dev.qudit_handles[data]
 )
-total_vtu = max(e.end for e in compiled.schedule)
-print(f"  {compiled.metrics.op_count} ops, {total_vtu / clock_ghz:.0f} ns total")
+total_cycles = max(e.end for e in compiled.schedule)
+print(f"  {compiled.metrics.op_count} ops, {total_cycles / clock_ghz:.0f} ns total")
 
 print("\n=== Stage 2: scheduled Pulse MLIR ===")
 print(compiled.mlir())

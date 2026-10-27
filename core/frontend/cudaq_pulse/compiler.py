@@ -104,8 +104,8 @@ class MachineModel:
 
     max_concurrent_drives: int = 4
     max_concurrent_readouts: int = 2
-    readout_latency_vtu: int = 0
-    line_switch_penalty_vtu: int = 0
+    readout_latency_cycles: int = 0
+    line_switch_penalty_cycles: int = 0
     links: Mapping[int | str, Link] = field(default_factory=dict)
     controller: ControllerLimits | None = None
     link_names: Mapping[str, int] = field(init=False, repr=False, compare=False)
@@ -159,8 +159,8 @@ class MachineModel:
                 (
                     self.max_concurrent_drives,
                     self.max_concurrent_readouts,
-                    self.readout_latency_vtu,
-                    self.line_switch_penalty_vtu,
+                    self.readout_latency_cycles,
+                    self.line_switch_penalty_cycles,
                     self.links,
                     tuple(sorted(by_name.items())),
                     self.controller,
@@ -177,16 +177,16 @@ class MachineModel:
         return (
             self.max_concurrent_drives,
             self.max_concurrent_readouts,
-            self.readout_latency_vtu,
-            self.line_switch_penalty_vtu,
+            self.readout_latency_cycles,
+            self.line_switch_penalty_cycles,
             dict(self.links),
             dict(self.link_names),
             self.controller,
         ) == (
             other.max_concurrent_drives,
             other.max_concurrent_readouts,
-            other.readout_latency_vtu,
-            other.line_switch_penalty_vtu,
+            other.readout_latency_cycles,
+            other.line_switch_penalty_cycles,
             dict(other.links),
             dict(other.link_names),
             other.controller,
@@ -229,10 +229,10 @@ class ScheduledEvent:
     """One timed operation of a compiled kernel.
 
     ``line`` numbers the kernel's drive and readout lines in allocation order.
-    ``start_vtu`` and ``duration_vtu`` are ``None`` until the kernel is
+    ``start_cycles`` and ``duration_cycles`` are ``None`` until the kernel is
     scheduled (a kernel with float parameters is scheduled when it is called
-    with their values). ``start`` and ``end`` are the scheduled times in VTU,
-    and raise ``ValueError`` before then.
+    with their values). ``start`` and ``end`` are the scheduled times in
+    clock cycles, and raise ``ValueError`` before then.
 
     A call to a classical function adds a ``"submit"`` event, while the
     request holds its link, and a zero-length ``"answer"`` event, when the
@@ -242,20 +242,20 @@ class ScheduledEvent:
     kind: str
     line: int
     qubit: int
-    start_vtu: int | None
-    duration_vtu: int | None
+    start_cycles: int | None
+    duration_cycles: int | None
 
     @property
     def start(self) -> int:
-        if self.start_vtu is None:
+        if self.start_cycles is None:
             raise ValueError(f"{self.kind} on line {self.line} is not scheduled")
-        return self.start_vtu
+        return self.start_cycles
 
     @property
     def end(self) -> int:
-        if self.duration_vtu is None:
+        if self.duration_cycles is None:
             raise ValueError(f"{self.kind} on line {self.line} is not scheduled")
-        return self.start + self.duration_vtu
+        return self.start + self.duration_cycles
 
     @property
     def link(self) -> int | None:
@@ -270,10 +270,10 @@ class Epoch:
     A variable wait (its length computed from a classical answer) or a
     blocking classical wait is a barrier: every line syncs before it, and
     everything after it shifts with its run-time length. Epoch 0 starts the
-    program; epoch k starts when the k-th barrier ends. ``start_vtu`` is the
+    program; epoch k starts when the k-th barrier ends. ``start_cycles`` is the
     epoch's start in the static schedule, which places every barrier at its
-    lowest length. At run time the epoch starts ``shift_vtu`` later, with
-    ``min_shift_vtu <= shift_vtu <= max_shift_vtu`` (``None``: unbounded).
+    lowest length. At run time the epoch starts ``shift_cycles`` later, with
+    ``min_shift_cycles <= shift_cycles <= max_shift_cycles`` (``None``: unbounded).
     ``opened_by`` is ``"start"``, ``"wait"`` (a variable wait on line
     ``line``) or ``"answer"`` (a blocking wait on link ``line``).
     """
@@ -281,61 +281,61 @@ class Epoch:
     index: int
     opened_by: str
     line: int
-    start_vtu: int
-    min_shift_vtu: int
-    max_shift_vtu: int | None
+    start_cycles: int
+    min_shift_cycles: int
+    max_shift_cycles: int | None
 
 
 @dataclass(frozen=True)
 class ClassicalCall:
     """One execution of a call to a classical function, from ``classical_report()``.
 
-    Times are in virtual time units (clock cycles). The request is sent from
-    ``submit_vtu`` for ``submit_duration_vtu``; its answer is due at
-    ``due_vtu`` (the budgeted latency after that) and taken at ``taken_vtu``
-    (``None`` if the kernel never takes it). ``first_use_vtu`` is the
+    Times are in clock cycles. The request is sent from
+    ``submit_cycles`` for ``submit_duration_cycles``; its answer is due at
+    ``due_cycles`` (the budgeted latency after that) and taken at ``taken_cycles``
+    (``None`` if the kernel never takes it). ``first_use_cycles`` is the
     earliest start of a pulse whose amplitude, tone or branch comes from the
-    answer, and ``deadline_vtu`` the latest due time the function's
+    answer, and ``deadline_cycles`` the latest due time the function's
     ``deadline_ns`` allows. ``epoch`` counts the blocking waits before it.
     ``link_name`` is the link's name in the machine model, if it has one.
 
-    ``exposed_vtu`` is how long the first use waits for the answer beyond
+    ``exposed_cycles`` is how long the first use waits for the answer beyond
     when it could start without the call: after its line is free and after
     the readout resonator of the last readout before the call has depleted
     (``Qubit.depletion_ns``), when pulses must wait anyway. The rest of the
-    budget, ``hidden_vtu``, overlaps that work. A latency within the
+    budget, ``hidden_cycles``, overlaps that work. A latency within the
     depletion time is hidden entirely.
     """
 
     function: str
     link: int
     iteration: tuple[int, ...]
-    submit_vtu: int
-    submit_duration_vtu: int
-    due_vtu: int
-    taken_vtu: int | None
-    first_use_vtu: int | None
-    deadline_vtu: int | None
+    submit_cycles: int
+    submit_duration_cycles: int
+    due_cycles: int
+    taken_cycles: int | None
+    first_use_cycles: int | None
+    deadline_cycles: int | None
     epoch: int
     link_name: str | None = None
-    exposed_vtu: int | None = None
+    exposed_cycles: int | None = None
 
     @property
-    def hidden_vtu(self) -> int | None:
+    def hidden_cycles(self) -> int | None:
         """The part of the budget that overlaps other work."""
-        if self.exposed_vtu is None:
+        if self.exposed_cycles is None:
             return None
-        return max(0, self.due_vtu - self.submit_vtu - self.exposed_vtu)
+        return max(0, self.due_cycles - self.submit_cycles - self.exposed_cycles)
 
     @property
-    def slack_vtu(self) -> int | None:
+    def slack_cycles(self) -> int | None:
         """How long the answer could arrive later without delaying a pulse."""
-        return None if self.first_use_vtu is None else self.first_use_vtu - self.due_vtu
+        return None if self.first_use_cycles is None else self.first_use_cycles - self.due_cycles
 
     @property
-    def deadline_slack_vtu(self) -> int | None:
+    def deadline_slack_cycles(self) -> int | None:
         """How far the due time is inside the deadline (negative: missed)."""
-        return None if self.deadline_vtu is None else self.deadline_vtu - self.due_vtu
+        return None if self.deadline_cycles is None else self.deadline_cycles - self.due_cycles
 
 
 @dataclass()
@@ -385,10 +385,10 @@ class CompileOptions:
             raise ValueError("machine.max_concurrent_drives must be positive")
         if machine.max_concurrent_readouts <= 0:
             raise ValueError("machine.max_concurrent_readouts must be positive")
-        if machine.readout_latency_vtu < 0:
-            raise ValueError("machine.readout_latency_vtu cannot be negative")
-        if machine.line_switch_penalty_vtu < 0:
-            raise ValueError("machine.line_switch_penalty_vtu cannot be negative")
+        if machine.readout_latency_cycles < 0:
+            raise ValueError("machine.readout_latency_cycles cannot be negative")
+        if machine.line_switch_penalty_cycles < 0:
+            raise ValueError("machine.line_switch_penalty_cycles cannot be negative")
         if unroll_threshold is not None:
             unroll_threshold = resolve_unroll_threshold(unroll_threshold)
         return CompileOptions(schedule, passes, machine, bool(flatten_schedules), unroll_threshold)
@@ -399,8 +399,8 @@ class CompileOptions:
             self.schedule,
             m.max_concurrent_drives,
             m.max_concurrent_readouts,
-            int(m.readout_latency_vtu),
-            int(m.line_switch_penalty_vtu),
+            int(m.readout_latency_cycles),
+            int(m.line_switch_penalty_cycles),
         )
 
 
@@ -720,7 +720,7 @@ class Lowered:
 
 class _Exposure:
     """How long a call's first use waits beyond when it could start without
-    the call (see ``ClassicalCall.exposed_vtu``), in O(log n) per call."""
+    the call (see ``ClassicalCall.exposed_cycles``), in O(log n) per call."""
 
     def __init__(self, lowered: Lowered, events: Sequence[Any]) -> None:
         import bisect
@@ -753,20 +753,20 @@ class _Exposure:
         self._readout_ends = [end for end, _ in readouts]
         self._holds = [hold for _, hold in readouts]
 
-    def __call__(self, submit_vtu: int, use_vtu: int) -> int | None:
-        lines = self._starting.get(use_vtu)
+    def __call__(self, submit_cycles: int, use_cycles: int) -> int | None:
+        lines = self._starting.get(use_cycles)
         if not lines:
             return None
         free = 0
         for line in lines:
             ends = self._ends[line]
-            k = self._bisect(ends, use_vtu)
+            k = self._bisect(ends, use_cycles)
             if k:
                 free = max(free, ends[k - 1])
-        k = self._bisect(self._readout_ends, submit_vtu)
+        k = self._bisect(self._readout_ends, submit_cycles)
         if k:
             free = max(free, self._holds[k - 1])
-        return max(0, use_vtu - max(free, submit_vtu))
+        return max(0, use_cycles - max(free, submit_cycles))
 
 
 def build(

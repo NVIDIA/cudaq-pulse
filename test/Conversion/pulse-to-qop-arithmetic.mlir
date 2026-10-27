@@ -36,12 +36,12 @@ func.func @main() {
   %scaled = pulse.scale %s, %factor : !pulse.waveform, f64 -> !pulse.waveform
   %sum = pulse.add %g, %scaled : !pulse.waveform
   %d1, %t1 = pulse.drive %d0, %sum, %t0
-      {start_vtu = 0 : i64, duration_vtu = 4 : i64}
+      {start_cycles = 0 : i64, duration_cycles = 4 : i64}
       : !pulse.drive_line, !pulse.waveform, !pulse.tone
       -> !pulse.drive_line, !pulse.tone
   %product = pulse.mul %g, %s : !pulse.waveform
   %d2, %t2 = pulse.drive %d1, %product, %t1
-      {start_vtu = 4 : i64, duration_vtu = 4 : i64}
+      {start_cycles = 4 : i64, duration_cycles = 4 : i64}
       : !pulse.drive_line, !pulse.waveform, !pulse.tone
       -> !pulse.drive_line, !pulse.tone
   return

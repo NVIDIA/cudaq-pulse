@@ -43,13 +43,13 @@ def _single_qubit_target(*, t1_us, t2_star_us=0.0, frequency_hz=5.0e9):
 
 # A calibrated pi pulse: 40 virtual units at 2 GHz is 20 ns; with H = amp*X/2
 # an amplitude of pi/20 rad/ns applies a pi rotation |0> -> |1>.
-def _pi_pulse_then_wait(wait_vtu):
+def _pi_pulse_then_wait(wait_cycles):
 
     @pulse.kernel
     def kernel(q0):
         d0, t0 = get_drive_line(q0)
         drive(d0, square(40, math.pi / 20.0), t0)
-        wait(d0, wait_vtu)
+        wait(d0, wait_cycles)
 
     return kernel
 
@@ -84,8 +84,8 @@ def test_t1_longer_wait_more_decay():
     """Longer idle time produces strictly more T1 decay."""
     target = _single_qubit_target(t1_us=0.2)
 
-    def _run(wait_vtu, t_end):
-        ir = (_pi_pulse_then_wait(wait_vtu), Q[0])
+    def _run(wait_cycles, t_end):
+        ir = (_pi_pulse_then_wait(wait_cycles), Q[0])
         result = evolve(
             on(target, *ir), t_start=0.0, t_end=t_end, num_steps=int(t_end), integrator="rk4"
         )

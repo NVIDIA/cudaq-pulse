@@ -327,9 +327,9 @@ def test_a_kernel_with_its_own_schedule_returns_a_future():
 
     low = pulse.compile(k).lower(Q[0])
     report = low.classical_report()
-    assert len(report) == 1 and report[0].taken_vtu == report[0].due_vtu
+    assert len(report) == 1 and report[0].taken_cycles == report[0].due_cycles
     flat = pulse.compile(k, flatten_schedules=True).lower(Q[0]).classical_report()
-    assert flat[0].due_vtu == report[0].due_vtu
+    assert flat[0].due_cycles == report[0].due_cycles
 
 
 def test_two_links_get_two_link_values():
@@ -524,8 +524,8 @@ def test_links_reach_the_module_and_the_schedule():
     (call,) = low.classical_report()
     clock = low.target.clock_ghz
     # 24 header bytes + 1 payload byte at 1 byte/ns, plus the fixed 50 ns.
-    assert call.submit_duration_vtu == math.ceil((50 + 25) * clock)
-    assert call.due_vtu == call.submit_vtu + call.submit_duration_vtu + math.ceil(
+    assert call.submit_duration_cycles == math.ceil((50 + 25) * clock)
+    assert call.due_cycles == call.submit_cycles + call.submit_duration_cycles + math.ceil(
         (500 + 100) * clock
     )
     assert hash(machine) == hash(
@@ -544,10 +544,10 @@ def test_report_and_schedule_events():
     (call,) = low.classical_report()
     clock = low.target.clock_ghz
     assert call.function == "echo" and call.link == 0 and call.iteration == ()
-    assert call.submit_vtu == 200 and call.submit_duration_vtu == 1
-    assert call.due_vtu == 201 + math.ceil(500 * clock)
-    assert call.taken_vtu == call.due_vtu == call.first_use_vtu
-    assert call.slack_vtu == 0 and call.deadline_vtu is None and call.epoch == 0
+    assert call.submit_cycles == 200 and call.submit_duration_cycles == 1
+    assert call.due_cycles == 201 + math.ceil(500 * clock)
+    assert call.taken_cycles == call.due_cycles == call.first_use_cycles
+    assert call.slack_cycles == 0 and call.deadline_cycles is None and call.epoch == 0
     kinds = [(e.kind, e.link) for e in low.schedule if e.link is not None]
     assert kinds == [("submit", 0), ("answer", 0)]
     assert all(e.link is None for e in low.schedule if e.kind == "drive")

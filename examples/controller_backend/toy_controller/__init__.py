@@ -45,10 +45,10 @@ class ToyBackend:
     def machine_model(self) -> MachineModel:
         limits = ControllerLimits(
             clock_ghz=1.0,
-            issue_vtu=2,
-            min_wait_vtu=2,
+            issue_cycles=2,
+            min_wait_cycles=2,
             acquirers={q: q // 2 for q in range(self.qudits)},
-            acquirer_hold_vtu=10,
+            acquirer_hold_cycles=10,
             answer_timeouts=False,
         )
         return MachineModel(max_concurrent_readouts=1, controller=limits)
@@ -64,7 +64,7 @@ class ToyBackend:
                 raise ValueError(f"the toy controller cannot play {event['kind']} event {event}")
             amplitude = event["amplitude"] or {"re": 0.0}
             lines.append(
-                f"{event['line']} {event['start_vtu']} {event['kind']} "
+                f"{event['line']} {event['start_cycles']} {event['kind']} "
                 f"{event['waveform']['shape']} {amplitude['re']:.6g} "
                 f"{event['frequency_hz'] or 0.0:.6g}"
             )

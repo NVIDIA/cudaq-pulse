@@ -31,15 +31,15 @@ classical.callable @update {args = ["bits:1", "f64", "f64", "f64"], device = 0 :
 // The answer is due 500 ns + 2 x 8 ns of feedback = 1016 cycles after the
 // submission, at 1224, where the variable wait starts.
 // CHECK-LABEL: func.func @round
-// CHECK: pulse.readout {{.*}}start_vtu = 0 : i64}
-// CHECK: classical.submit {{.*}}duration_vtu = 8 : i64, start_vtu = 200 : i64}
-// CHECK: classical.wait {{.*}}start_vtu = 1224 : i64}
-// ALAP: pulse.drive {{.*}}start_vtu = 1144 : i64}
-// ALAP: pulse.drive {{.*}}duration_vtu = 40 : i64, start_vtu = 1184 : i64}
-// ASAP: pulse.drive {{.*}}start_vtu = 200 : i64}
-// ASAP: pulse.drive {{.*}}duration_vtu = 40 : i64, start_vtu = 240 : i64}
-// CHECK: pulse.wait {{.*}}classical.variable{{.*}}duration_vtu = 32 : i64, {{.*}}start_vtu = 1224 : i64}
-// CHECK: pulse.readout {{.*}}start_vtu = 1256 : i64}
+// CHECK: pulse.readout {{.*}}start_cycles = 0 : i64}
+// CHECK: classical.submit {{.*}}duration_cycles = 8 : i64, start_cycles = 200 : i64}
+// CHECK: classical.wait {{.*}}start_cycles = 1224 : i64}
+// ALAP: pulse.drive {{.*}}start_cycles = 1144 : i64}
+// ALAP: pulse.drive {{.*}}duration_cycles = 40 : i64, start_cycles = 1184 : i64}
+// ASAP: pulse.drive {{.*}}start_cycles = 200 : i64}
+// ASAP: pulse.drive {{.*}}duration_cycles = 40 : i64, start_cycles = 240 : i64}
+// CHECK: pulse.wait {{.*}}classical.variable{{.*}}duration_cycles = 32 : i64, {{.*}}start_cycles = 1224 : i64}
+// CHECK: pulse.readout {{.*}}start_cycles = 1256 : i64}
 func.func @round() {
   %c40 = arith.constant 40 : i64
   %c200 = arith.constant 200 : i64
@@ -71,7 +71,7 @@ func.func @round() {
   %rounded = arith.addf %a#2, %half : f64
   %n = arith.fptosi %rounded : f64 to i64
   %len = pulse.duration_from_int %n : (i64) -> !pulse.duration
-  %d2 = pulse.wait %d1, %len {classical.variable, pulse.variable, pulse.min_vtu = 32 : i64, pulse.max_vtu = 4000 : i64} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+  %d2 = pulse.wait %d1, %len {classical.variable, pulse.variable_wait, pulse.min_cycles = 32 : i64, pulse.max_cycles = 4000 : i64} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
   %s2:2 = pulse.sync %d2, %s#1 : !pulse.drive_line, !pulse.readout_line -> !pulse.drive_line, !pulse.readout_line
   %r2, %u2, %m2 = pulse.readout %s2#1, %pr, %u1, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
   return

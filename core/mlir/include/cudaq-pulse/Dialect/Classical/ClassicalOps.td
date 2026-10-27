@@ -114,7 +114,7 @@ def Classical_WaitOp : ClassicalOp<"wait",
     are available when the future is: the end of the submission plus the
     budgeted latency (and the link's feedback latency). Pulses whose
     parameters, tones or branch conditions are computed from them start no
-    earlier. Scheduling records that time as `start_vtu`.
+    earlier. Scheduling records that time as `start_cycles`.
 
     With `timeout_ns` (or when the function's mode is `"timeout"`) the wait
     gives a leading `i1`, false when no answer came within the timeout;

@@ -66,8 +66,8 @@ C++ optimization passes via ``mlir::PassManager``. See
 Stage 4: Scheduling
 --------------------
 
-The scheduling pass (``pulse-schedule-alap``) assigns ``start_vtu`` and
-``duration_vtu`` attributes to every timed operation, respecting data
+The scheduling pass (``pulse-schedule-alap``) assigns ``start_cycles`` and
+``duration_cycles`` attributes to every timed operation, respecting data
 dependencies, sync constraints, and operation durations. A pulse waits for
 its line and for its tone: pulses that share a tone play in the order the
 tone is threaded through them.

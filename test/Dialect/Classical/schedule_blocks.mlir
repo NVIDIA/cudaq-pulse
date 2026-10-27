@@ -22,8 +22,8 @@ classical.callable @decode_wide {function_id = 1, device = 1 : i64,
 // waiting: the parent waits after the block, and the block's shape makes the
 // future available at its local due time (300 + 1 + 1000 = 1301).
 // CHECK-LABEL: func.func @measure_and_submit
-// CHECK: classical.submit {{.*}}start_vtu = 300 : i64}
-// CHECK: classical.wait {{.*}}start_vtu = 1301 : i64}
+// CHECK: classical.submit {{.*}}start_cycles = 300 : i64}
+// CHECK: classical.wait {{.*}}start_cycles = 1301 : i64}
 func.func @measure_and_submit() {
   %q = pulse.qudit_alloc : !pulse.qref
   %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)

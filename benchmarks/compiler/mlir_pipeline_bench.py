@@ -161,10 +161,10 @@ def main() -> None:
     for name, kernel, n in BENCHMARKS:
         compiled = _compile(kernel, n)
         events = compiled.schedule
-        makespan = max(e.start_vtu + e.duration_vtu for e in events)
+        makespan = max(e.start_cycles + e.duration_cycles for e in events)
         print(
             f"  {name:16s}  {compiled.metrics.op_count:3d} ops, {n} qubits, "
-            f"{len(events):3d} timed events, makespan {makespan} vtu"
+            f"{len(events):3d} timed events, makespan {makespan} cycles"
         )
 
     print("\n" + "=" * 72)

@@ -16,10 +16,11 @@
 // the measurement is available, and the lines leaving the `if` are ready when
 // the later arm is done.
 //
-// Results are written as `start_vtu` / `duration_vtu`, plus `period_vtu` for
-// ops in loops (see Analysis/Timing.h). When an op's start is not affine in
-// its iteration (a loop's first or last iterations behave differently), that
-// iteration is peeled off the loop and the function is scheduled again.
+// Results are written as `start_cycles` / `duration_cycles`, plus
+// `period_cycles` for ops in loops (see Analysis/Timing.h). When an op's start
+// is not affine in its iteration (a loop's first or last iterations behave
+// differently), that iteration is peeled off the loop and the function is
+// scheduled again.
 //
 // A classical call is a `classical.submit`, which holds its link for a few
 // cycles and makes a future available a budgeted latency after it ends, and a
@@ -126,7 +127,7 @@ static int64_t getWaitDuration(pulse::WaitOp wait) {
           wait.getDuration().getDefiningOp<pulse::DurationFromIntOp>())
     if (auto cycles = traceConstantI64(conversion.getCycles()))
       return *cycles;
-  if (auto lowest = wait->getAttrOfType<mlir::IntegerAttr>("pulse.min_vtu"))
+  if (auto lowest = wait->getAttrOfType<mlir::IntegerAttr>("pulse.min_cycles"))
     return lowest.getInt();
   return 0;
 }
@@ -152,10 +153,10 @@ static BlockShape shapeOf(pulse::ScheduleBlockOp block) {
       values.assign(attr.asArrayRef().begin(), attr.asArrayRef().end());
     return values;
   };
-  if (auto length = block->getAttrOfType<mlir::IntegerAttr>("length_vtu"))
+  if (auto length = block->getAttrOfType<mlir::IntegerAttr>("length_cycles"))
     shape.length = length.getInt();
-  shape.in = array("in_offset_vtu");
-  shape.out = array("out_offset_vtu");
+  shape.in = array("in_offset_cycles");
+  shape.out = array("out_offset_cycles");
   shape.source = array("out_source");
   return shape;
 }
@@ -168,20 +169,20 @@ static int64_t durationOf(mlir::Operation *op) {
   if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
     return getWaveformDuration(readout.getPulse());
   if (mlir::isa<classical::SubmitOp>(op))
-    return classical::intAttr(op, "classical.submit_vtu", 1);
+    return classical::intAttr(op, "classical.submit_cycles", 1);
   if (mlir::isa<classical::WaitOp>(op))
     return 0;
   // A variable wait is scheduled at its lowest length, or at its length,
   // clamped to its bounds, once an answer has been bound to it.
   if (op->hasAttr("classical.variable")) {
-    int64_t lowest = classical::intAttr(op, "pulse.min_vtu");
+    int64_t lowest = classical::intAttr(op, "pulse.min_cycles");
     int64_t length = lowest;
     if (auto conversion = mlir::cast<pulse::WaitOp>(op)
                               .getDuration()
                               .getDefiningOp<pulse::DurationFromIntOp>())
       if (auto cycles = pulse::boundNumber(conversion.getCycles()))
         length = std::max(lowest, static_cast<int64_t>(*cycles));
-    if (auto highest = op->getAttrOfType<mlir::IntegerAttr>("pulse.max_vtu"))
+    if (auto highest = op->getAttrOfType<mlir::IntegerAttr>("pulse.max_cycles"))
       length = std::min(length, highest.getInt());
     return length;
   }
@@ -190,7 +191,7 @@ static int64_t durationOf(mlir::Operation *op) {
 
 /// From the end of a submission until its future is available.
 static int64_t budgetOf(mlir::Operation *submit) {
-  return classical::intAttr(submit, "classical.budget_vtu");
+  return classical::intAttr(submit, "classical.budget_cycles");
 }
 
 /// Lines, tones and measurement results: the values that become available
@@ -1140,14 +1141,14 @@ writeTiming(mlir::Operation *op, mlir::Operation *root,
                    llvm::ArrayRef<int64_t> periods) {
     mlir::NamedAttrList attributes(op->getAttrDictionary());
     if (start)
-      attributes.set("start_vtu", mlir::IntegerAttr::get(i64, *start));
+      attributes.set("start_cycles", mlir::IntegerAttr::get(i64, *start));
     else
-      attributes.erase("start_vtu");
-    attributes.set("duration_vtu", mlir::IntegerAttr::get(i64, duration));
+      attributes.erase("start_cycles");
+    attributes.set("duration_cycles", mlir::IntegerAttr::get(i64, duration));
     if (periods.empty())
-      attributes.erase("period_vtu");
+      attributes.erase("period_cycles");
     else
-      attributes.set("period_vtu",
+      attributes.set("period_cycles",
                      mlir::DenseI64ArrayAttr::get(context, periods));
     op->setAttrs(attributes.getDictionary(context));
   };
@@ -1332,7 +1333,7 @@ static std::optional<NotAffine> periodMismatch(mlir::Region &region,
     };
     forEachScheduled(loop.getRegion(), [&](mlir::Operation *timed) {
       auto periods =
-          timed->getAttrOfType<mlir::DenseI64ArrayAttr>("period_vtu");
+          timed->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles");
       if (problem || !periods || static_cast<size_t>(periods.size()) <= level)
         return;
       if (mlir::isa<classical::WaitOp>(timed))
@@ -1385,7 +1386,7 @@ private:
   }
 
   void note(mlir::Operation *op) {
-    if (auto start = op->getAttrOfType<mlir::IntegerAttr>("start_vtu"))
+    if (auto start = op->getAttrOfType<mlir::IntegerAttr>("start_cycles"))
       earliest = std::min(earliest, start.getInt());
   }
 
@@ -1578,10 +1579,11 @@ static void writeShape(pulse::ScheduleBlockOp block) {
   }
   mlir::MLIRContext *context = block.getContext();
   block->setAttr(
-      "length_vtu",
+      "length_cycles",
       mlir::IntegerAttr::get(mlir::IntegerType::get(context, 64), length));
-  block->setAttr("in_offset_vtu", mlir::DenseI64ArrayAttr::get(context, in));
-  block->setAttr("out_offset_vtu", mlir::DenseI64ArrayAttr::get(context, out));
+  block->setAttr("in_offset_cycles", mlir::DenseI64ArrayAttr::get(context, in));
+  block->setAttr("out_offset_cycles",
+                 mlir::DenseI64ArrayAttr::get(context, out));
   block->setAttr("out_source", mlir::DenseI64ArrayAttr::get(context, source));
 }
 
@@ -1600,31 +1602,33 @@ static void inlineBody(pulse::ScheduleBlockOp block) {
 /// it.
 static void inlineScheduleBlock(pulse::ScheduleBlockOp block) {
   mlir::MLIRContext *context = block.getContext();
-  auto start = block->getAttrOfType<mlir::IntegerAttr>("start_vtu");
+  auto start = block->getAttrOfType<mlir::IntegerAttr>("start_cycles");
   llvm::SmallVector<int64_t> outer;
   if (auto periods =
-          block->getAttrOfType<mlir::DenseI64ArrayAttr>("period_vtu"))
+          block->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles"))
     outer.assign(periods.asArrayRef().begin(), periods.asArrayRef().end());
   block.getBody().walk([&](mlir::Operation *op) {
     if (!isTimedOp(op))
       return;
-    auto local = op->getAttrOfType<mlir::IntegerAttr>("start_vtu");
+    auto local = op->getAttrOfType<mlir::IntegerAttr>("start_cycles");
     if (!start || !local) {
       // The block or this op never runs.
-      op->removeAttr("start_vtu");
-      op->removeAttr("period_vtu");
+      op->removeAttr("start_cycles");
+      op->removeAttr("period_cycles");
       return;
     }
-    op->setAttr("start_vtu",
+    op->setAttr("start_cycles",
                 mlir::IntegerAttr::get(local.getType(),
                                        start.getInt() + local.getInt()));
     llvm::SmallVector<int64_t> periods = outer;
-    if (auto inner = op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_vtu"))
+    if (auto inner =
+            op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles"))
       periods.append(inner.asArrayRef().begin(), inner.asArrayRef().end());
     if (periods.empty())
-      op->removeAttr("period_vtu");
+      op->removeAttr("period_cycles");
     else
-      op->setAttr("period_vtu", mlir::DenseI64ArrayAttr::get(context, periods));
+      op->setAttr("period_cycles",
+                  mlir::DenseI64ArrayAttr::get(context, periods));
   });
   inlineBody(block);
 }

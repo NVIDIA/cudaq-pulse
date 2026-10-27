@@ -141,12 +141,12 @@ def calls(low: Any) -> list[Call]:
         Call(
             c.function,
             c.link_name,
-            c.submit_vtu,
-            c.submit_duration_vtu,
-            c.due_vtu,
-            c.taken_vtu,
-            c.first_use_vtu,
-            c.deadline_slack_vtu,
+            c.submit_cycles,
+            c.submit_duration_cycles,
+            c.due_cycles,
+            c.taken_cycles,
+            c.first_use_cycles,
+            c.deadline_slack_cycles,
         )
         for c in low.classical_report()
     ]
@@ -155,11 +155,11 @@ def calls(low: Any) -> list[Call]:
 def epoch_starts(low: Any) -> list[tuple[str, int, int]]:
     """Each epoch after the first: what opened it, on which line or link,
     and when it starts in the static schedule."""
-    return [(e.opened_by, e.line, e.start_vtu) for e in low.epochs()[1:]]
+    return [(e.opened_by, e.line, e.start_cycles) for e in low.epochs()[1:]]
 
 
 def _export_times(event: dict[str, Any]) -> tuple[int, int]:
-    return event["start_vtu"], event["duration_vtu"]
+    return event["start_cycles"], event["duration_cycles"]
 
 
 def timeline(low: Any) -> list[tuple[str, int, int, int]]:

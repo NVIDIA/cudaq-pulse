@@ -34,7 +34,7 @@ func.func @main(%f: f64, %phase: f64, %amp: f64) {
   %scaled = arith.mulf %amp, %half : f64
   %s = pulse.square %duration, %scaled, %zero : i64, f64, f64 -> !pulse.waveform
   %d1, %t3 = pulse.drive %d0, %s, %t2
-      {start_vtu = 2 : i64, duration_vtu = 4 : i64}
+      {start_cycles = 2 : i64, duration_cycles = 4 : i64}
       : !pulse.drive_line, !pulse.waveform, !pulse.tone
       -> !pulse.drive_line, !pulse.tone
   return

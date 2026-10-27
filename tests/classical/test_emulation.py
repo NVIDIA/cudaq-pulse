@@ -60,7 +60,7 @@ def test_export_and_manifest_are_json():
     assert artifact["format"] == emulation.FORMAT
     assert [e["opened_by"] for e in artifact["epochs"]] == ["start", "wait"]
     after = [e for e in artifact["events"] if e["epoch"] == 1]
-    assert after and all(e["start_vtu"] >= e["epoch_start_vtu"] for e in after)
+    assert after and all(e["start_cycles"] >= e["epoch_start_cycles"] for e in after)
     (entry,) = artifact["manifest"]["functions"]
     assert entry["function_id"] == next_wait.id and entry["slot_bytes"] == 256
     assert entry["schema"] == wire.schema(next_wait)

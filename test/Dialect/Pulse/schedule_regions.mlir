@@ -16,9 +16,9 @@
 // the wait after it starts once all eight have run.
 // CHECK-LABEL: func.func @dd_loop
 // CHECK: scf.for
-// CHECK: pulse.drive {{.*}}{duration_vtu = 40 : i64, period_vtu = array<i64: 240>, start_vtu = 100 : i64}
-// CHECK: pulse.wait {{.*}}{duration_vtu = 200 : i64, period_vtu = array<i64: 240>, start_vtu = 140 : i64}
-// CHECK: pulse.wait {{.*}}{duration_vtu = 10 : i64, start_vtu = 2020 : i64}
+// CHECK: pulse.drive {{.*}}{duration_cycles = 40 : i64, period_cycles = array<i64: 240>, start_cycles = 100 : i64}
+// CHECK: pulse.wait {{.*}}{duration_cycles = 200 : i64, period_cycles = array<i64: 240>, start_cycles = 140 : i64}
+// CHECK: pulse.wait {{.*}}{duration_cycles = 10 : i64, start_cycles = 2020 : i64}
 func.func @dd_loop() {
   %q = pulse.qudit_alloc : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
@@ -48,11 +48,11 @@ func.func @dd_loop() {
 // Line b is busy until 500, so the first iteration's drive runs early and
 // later ones wait for the sync: ASAP peels the first iteration off the loop.
 // CHECK-LABEL: func.func @transient
-// ASAP: pulse.drive {{.*}}start_vtu = 0 : i64
+// ASAP: pulse.drive {{.*}}start_cycles = 0 : i64
 // ASAP: scf.for %{{.*}} = %c1{{.*}} to %c6
-// ASAP: pulse.drive {{.*}}period_vtu = array<i64: 40>, start_vtu = 500 : i64
+// ASAP: pulse.drive {{.*}}period_cycles = array<i64: 40>, start_cycles = 500 : i64
 // ALAP: scf.for %{{.*}} = %c0 to %c6
-// ALAP: pulse.drive {{.*}}period_vtu = array<i64: 40>, start_vtu = 460 : i64
+// ALAP: pulse.drive {{.*}}period_cycles = array<i64: 40>, start_cycles = 460 : i64
 func.func @transient(%x: !pulse.waveform) {
   %qa = pulse.qudit_alloc : !pulse.qref
   %qb = pulse.qudit_alloc : !pulse.qref
@@ -79,10 +79,10 @@ func.func @transient(%x: !pulse.waveform) {
 // The conditional X waits for the readout; the wait after the if waits for
 // the longer arm.
 // CHECK-LABEL: func.func @active_reset
-// CHECK: pulse.readout {{.*}}{duration_vtu = 300 : i64, start_vtu = 0 : i64}
+// CHECK: pulse.readout {{.*}}{duration_cycles = 300 : i64, start_cycles = 0 : i64}
 // CHECK: scf.if
-// CHECK: pulse.drive {{.*}}{duration_vtu = 40 : i64, start_vtu = 300 : i64}
-// CHECK: pulse.wait {{.*}}{duration_vtu = 10 : i64, start_vtu = 340 : i64}
+// CHECK: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 300 : i64}
+// CHECK: pulse.wait {{.*}}{duration_cycles = 10 : i64, start_cycles = 340 : i64}
 func.func @active_reset() {
   %q = pulse.qudit_alloc : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
@@ -110,9 +110,9 @@ func.func @active_reset() {
 // Each conditional drive waits for its own iteration's readout. ASAP plays it
 // right after the readout; ALAP packs the drives at the end of the schedule.
 // CHECK-LABEL: func.func @feedback_in_loop
-// CHECK: pulse.readout {{.*}}{duration_vtu = 300 : i64, period_vtu = array<i64: 300>, start_vtu = 0 : i64}
-// ASAP: pulse.drive {{.*}}{duration_vtu = 40 : i64, period_vtu = array<i64: 300>, start_vtu = 300 : i64}
-// ALAP: pulse.drive {{.*}}{duration_vtu = 40 : i64, period_vtu = array<i64: 40>, start_vtu = 1340 : i64}
+// CHECK: pulse.readout {{.*}}{duration_cycles = 300 : i64, period_cycles = array<i64: 300>, start_cycles = 0 : i64}
+// ASAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, period_cycles = array<i64: 300>, start_cycles = 300 : i64}
+// ALAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, period_cycles = array<i64: 40>, start_cycles = 1340 : i64}
 func.func @feedback_in_loop() {
   %q = pulse.qudit_alloc : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)

@@ -80,7 +80,7 @@ def test_an_n_way_switch_takes_the_arm_of_its_index(kernel):
     (call,) = lowered.classical_report()
     # Every arm ends at the same time, after the longest one.
     drives = [e for e in lowered.schedule if e.kind == "drive"]
-    assert {e.start_vtu + e.duration_vtu for e in drives} == {call.due_vtu + 160}
+    assert {e.start_cycles + e.duration_cycles for e in drives} == {call.due_cycles + 160}
     for index in range(4):
         result = pulse.simulate(lowered, handlers={"pick": lambda bits, i=index: i})
         angle = math.pi * 0.25 * (index + 1)
@@ -166,12 +166,12 @@ def test_latency_within_the_depletion_time_is_hidden(depletion_ns):
     lowered = pulse.compile(feedback, device=dev).lower(dev.qudit_handles[0])
     (call,) = lowered.classical_report()
     clock = dev.clock_ghz
-    budget = call.due_vtu - call.submit_vtu
+    budget = call.due_cycles - call.submit_cycles
     expected = max(0, budget - math.ceil(depletion_ns * clock))
-    assert call.exposed_vtu == expected
-    assert call.hidden_vtu == budget - expected
+    assert call.exposed_cycles == expected
+    assert call.hidden_cycles == budget - expected
     if depletion_ns * clock >= budget:
-        assert call.exposed_vtu == 0
+        assert call.exposed_cycles == 0
 
 
 def test_depletion_defaults_from_kappa():

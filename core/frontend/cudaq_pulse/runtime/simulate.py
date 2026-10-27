@@ -402,9 +402,9 @@ def _simulate_compiled(
     if t_end is None:
         events = [ScheduledEvent(*e) for e in module.events()]
         ends = [
-            e.start_vtu + e.duration_vtu
+            e.start_cycles + e.duration_cycles
             for e in events
-            if e.start_vtu is not None and e.duration_vtu is not None
+            if e.start_cycles is not None and e.duration_cycles is not None
         ]
         t_end = max(ends, default=0) / clock_ghz
     if t_end < t_start:

@@ -7,7 +7,7 @@
  *******************************************************************************/
 
 // The timing of classical calls: what a link costs and how long an answer is
-// budgeted, in virtual time units.
+// budgeted, in clock cycles.
 //
 // A link's parameters come from the module attribute `classical.links`, a
 // dictionary from the link id (as a string) to a dictionary with any of
@@ -17,8 +17,8 @@
 // `slot_bytes` (the largest request or answer, header included).
 //
 // `annotateClassicalCalls` writes on every `classical.submit` the attributes
-// scheduling reads: `classical.submit_vtu` (how long the submission holds the
-// link), `classical.budget_vtu` (from its end until the answer is due),
+// scheduling reads: `classical.submit_cycles` (how long the submission holds
+// the link), `classical.budget_cycles` (from its end until the answer is due),
 // `classical.device`, `classical.max_in_flight` and `classical.eager`; and on
 // every `classical.wait` `classical.device` and, in blocking mode,
 // `classical.blocking`.
@@ -92,25 +92,25 @@ inline int64_t answerBytes(CallableOp callable) {
 }
 
 /// How long a submission holds the link: at least one cycle.
-inline int64_t submitVtu(CallableOp callable, const LinkModel &link,
-                         double clockGHz) {
+inline int64_t submitCycles(CallableOp callable, const LinkModel &link,
+                            double clockGHz) {
   double ns = link.fixedNs;
   if (link.bytesPerNs > 0.0)
     ns += static_cast<double>(requestBytes(callable)) / link.bytesPerNs;
-  return std::max<int64_t>(1, ceilVtu(ns, clockGHz));
+  return std::max<int64_t>(1, ceilCycles(ns, clockGHz));
 }
 
 /// From the end of a submission until its answer is due: the maximum
 /// latency (the timeout in timeout mode, or the timeout of the wait that
 /// takes the answer) and the link's feedback latency.
-inline int64_t budgetVtu(CallableOp callable, const LinkModel &link,
-                         double clockGHz,
-                         std::optional<double> waitTimeoutNs = std::nullopt) {
+inline int64_t
+budgetCycles(CallableOp callable, const LinkModel &link, double clockGHz,
+             std::optional<double> waitTimeoutNs = std::nullopt) {
   double latency = waitTimeoutNs ? *waitTimeoutNs
                    : callable.getMode() == "timeout"
                        ? callable.getTimeoutNs()->convertToDouble()
                        : callable.getLatencyMaxNs().convertToDouble();
-  return ceilVtu(latency, clockGHz) + ceilVtu(link.feedbackNs, clockGHz);
+  return ceilCycles(latency, clockGHz) + ceilCycles(link.feedbackNs, clockGHz);
 }
 
 /// The waits that take `future`, following it into and out of
@@ -176,11 +176,11 @@ inline bool annotateClassicalCalls(mlir::func::FuncOp function) {
       any = true;
       LinkModel link = linkModel(module, callable.getDevice());
       mlir::NamedAttrList attrs(op->getAttrDictionary());
-      attrs.set("classical.submit_vtu",
-                b.getI64IntegerAttr(submitVtu(callable, link, clock)));
-      attrs.set("classical.budget_vtu",
-                b.getI64IntegerAttr(
-                    budgetVtu(callable, link, clock, waitTimeoutNs(submit))));
+      attrs.set("classical.submit_cycles",
+                b.getI64IntegerAttr(submitCycles(callable, link, clock)));
+      attrs.set("classical.budget_cycles",
+                b.getI64IntegerAttr(budgetCycles(callable, link, clock,
+                                                 waitTimeoutNs(submit))));
       attrs.set("classical.device", b.getI64IntegerAttr(callable.getDevice()));
       attrs.set("classical.max_in_flight",
                 b.getI64IntegerAttr(link.maxInFlight));

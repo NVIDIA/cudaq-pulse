@@ -89,7 +89,7 @@ def test_the_backends_limits_reject_what_its_controller_cannot_play(installed):
             dev.qudit_handles[0], dev.qudit_handles[1]
         )
     # Serialized by the scheduler, with the acquirer's hold time between them.
-    machine = dataclasses.replace(machine, line_switch_penalty_vtu=10)
+    machine = dataclasses.replace(machine, line_switch_penalty_cycles=10)
     pulse.compile(two_readouts, device=dev, schedule="rcp", machine=machine).lower(
         dev.qudit_handles[0], dev.qudit_handles[1]
     )

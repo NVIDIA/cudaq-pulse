@@ -15,9 +15,9 @@
 // A cross-resonance pulse on line a at qubit b's tone runs between the two
 // pulses on line b that the tone is threaded through, though the lines differ.
 // CHECK-LABEL: func.func @shared_tone
-// CHECK: pulse.drive {{.*}}{duration_vtu = 40 : i64, start_vtu = 0 : i64}
-// CHECK: pulse.drive {{.*}}{duration_vtu = 200 : i64, start_vtu = 40 : i64}
-// CHECK: pulse.drive {{.*}}{duration_vtu = 40 : i64, start_vtu = 240 : i64}
+// CHECK: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 0 : i64}
+// CHECK: pulse.drive {{.*}}{duration_cycles = 200 : i64, start_cycles = 40 : i64}
+// CHECK: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 240 : i64}
 func.func @shared_tone() {
   %qa = pulse.qudit_alloc : !pulse.qref
   %qb = pulse.qudit_alloc : !pulse.qref
@@ -39,9 +39,9 @@ func.func @shared_tone() {
 // is still scheduled as one pattern.
 // CHECK-LABEL: func.func @phase_only_tone
 // CHECK: scf.for
-// CHECK: pulse.drive {{.*}}{duration_vtu = 40 : i64, period_vtu = array<i64: 40>, start_vtu = 0 : i64}
-// ASAP: pulse.drive {{.*}}{duration_vtu = 40 : i64, start_vtu = 0 : i64}
-// ALAP: pulse.drive {{.*}}{duration_vtu = 40 : i64, start_vtu = 280 : i64}
+// CHECK: pulse.drive {{.*}}{duration_cycles = 40 : i64, period_cycles = array<i64: 40>, start_cycles = 0 : i64}
+// ASAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 0 : i64}
+// ALAP: pulse.drive {{.*}}{duration_cycles = 40 : i64, start_cycles = 280 : i64}
 func.func @phase_only_tone() {
   %qa = pulse.qudit_alloc : !pulse.qref
   %qb = pulse.qudit_alloc : !pulse.qref

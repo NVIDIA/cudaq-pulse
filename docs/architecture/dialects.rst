@@ -32,7 +32,7 @@ them out, waveforms, and timing. Lines and tones are linear values, consumed
 once and returned updated by each op that uses them, so the order of the
 pulses on a line is explicit in the IR and ``pulse-verify`` can check it.
 Waveforms are ordinary values. Durations are in clock cycles of the target,
-and scheduling records each timed op's ``start_vtu`` and ``duration_vtu``.
+and scheduling records each timed op's ``start_cycles`` and ``duration_cycles``.
 
 - Types: ``!pulse.qref``, ``!pulse.drive_line``, ``!pulse.readout_line``,
   ``!pulse.tone``, ``!pulse.waveform``, ``!pulse.measurement``,

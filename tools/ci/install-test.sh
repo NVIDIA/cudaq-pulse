@@ -142,7 +142,7 @@ opt_checks() {
   expect_in verified.mlir "pulse.drive"
   in_venv cudaq-pulse-opt --pulse-canonicalize --pulse-virtual-z --pulse-fusion \
     --pulse-schedule-asap kernel.mlir -o scheduled.mlir
-  expect_in scheduled.mlir "start_vtu = 0"
+  expect_in scheduled.mlir "start_cycles = 0"
   in_venv cudaq-pulse-opt --pulse-to-qop --qop-to-cudm --cudm-to-llvm --canonicalize \
     --convert-arith-to-llvm --convert-func-to-llvm --reconcile-unrealized-casts \
     kernel.mlir -o lowered.mlir

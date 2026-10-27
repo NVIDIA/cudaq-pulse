@@ -156,11 +156,11 @@ inline std::optional<Descriptor> parseDescriptor(llvm::StringRef text) {
   return std::nullopt;
 }
 
-/// Virtual time units covering `ns` nanoseconds at `clockGHz`, rounded up so
+/// Clock cycles covering `ns` nanoseconds at `clockGHz`, rounded up so
 /// a budget is never optimistic.
-inline int64_t ceilVtu(double ns, double clockGHz) {
-  double vtu = ns * clockGHz;
-  double rounded = std::ceil(vtu - 1e-9);
+inline int64_t ceilCycles(double ns, double clockGHz) {
+  double cycles = ns * clockGHz;
+  double rounded = std::ceil(cycles - 1e-9);
   return rounded < 0 ? 0 : static_cast<int64_t>(rounded);
 }
 

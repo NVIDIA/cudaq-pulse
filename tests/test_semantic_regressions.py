@@ -25,8 +25,8 @@ def _drive_timings(mlir: str) -> list[tuple[int, int]]:
     timings = []
     for match in re.finditer(r"pulse\.drive.*?\{([^}]*)\}", mlir):
         attrs = match.group(1)
-        start = re.search(r"start_vtu\s*=\s*(-?\d+)", attrs)
-        duration = re.search(r"duration_vtu\s*=\s*(-?\d+)", attrs)
+        start = re.search(r"start_cycles\s*=\s*(-?\d+)", attrs)
+        duration = re.search(r"duration_cycles\s*=\s*(-?\d+)", attrs)
         assert start and duration
         timings.append((int(start.group(1)), int(duration.group(1))))
     return timings
@@ -44,7 +44,7 @@ def test_constant_loop_is_retained_and_scheduled_per_iteration():
     compiled = pulse.compile(kernel, schedule="asap", passes=()).lower(Q[0])
     assert compiled.mlir().count("= pulse.drive ") == 1
     assert "scf.for" in compiled.mlir()
-    assert [(e.start_vtu, e.duration_vtu) for e in compiled.schedule] == [
+    assert [(e.start_cycles, e.duration_cycles) for e in compiled.schedule] == [
         (0, 10),
         (10, 10),
         (20, 10),
@@ -135,7 +135,7 @@ def test_an_unannotated_parameter_specializes_the_kernel():
     compiled = pulse.compile(kernel)
     lowered = compiled.lower(Q[0], tau=17)
     assert "%arg0" not in lowered.mlir()
-    assert lowered.mlir().count("duration_vtu = 17") == 1
+    assert lowered.mlir().count("duration_cycles = 17") == 1
     compiled.lower(Q[0], tau=18)
     assert compiled.cache_info().compiled == 2
 
@@ -153,7 +153,7 @@ def test_a_float_that_sets_a_duration_is_specialized_on():
     specialized = pulse.compile(kernel, schedule="asap").lower(Q[0], sigma=5.0, delay=7)
     assert kernel.static_parameters == ("q", "sigma", "delay")
     assert _drive_timings(specialized.mlir()) == [(0, 20)]
-    assert "duration_vtu = 15" in specialized.mlir()
+    assert "duration_cycles = 15" in specialized.mlir()
 
 
 def test_unknown_pass_is_rejected():
@@ -205,7 +205,7 @@ def test_scheduler_tracks_line_lineage_and_resource_intervals():
             drive(line, square(duration, 0.2), tone)
 
     compiled = pulse.compile(lineage, passes=(), schedule="asap").lower(Q[0])
-    assert [e.start_vtu for e in compiled.schedule] == [0, 10, 30]
+    assert [e.start_cycles for e in compiled.schedule] == [0, 10, 30]
 
     @pulse.kernel
     def resources(qs):
@@ -216,7 +216,7 @@ def test_scheduler_tracks_line_lineage_and_resource_intervals():
     compiled = pulse.compile(
         resources, passes=(), schedule="rcp", machine=MachineModel(max_concurrent_drives=2)
     ).lower(Q[0:3])
-    assert [e.start_vtu for e in compiled.schedule] == [0, 0, 100]
+    assert [e.start_cycles for e in compiled.schedule] == [0, 0, 100]
 
 
 def test_alap_delays_independent_shorter_operation():
@@ -228,7 +228,7 @@ def test_alap_delays_independent_shorter_operation():
         drive(line1, square(100, 0.2), tone1)
 
     compiled = pulse.compile(k, passes=()).lower(Q[0], Q[1])
-    assert [(e.line, e.start_vtu) for e in compiled.schedule] == [(0, 60), (1, 0)]
+    assert [(e.line, e.start_cycles) for e in compiled.schedule] == [(0, 60), (1, 0)]
 
 
 def test_packed_decoder_rejects_truncated_and_unknown_records():
@@ -281,5 +281,5 @@ def test_alap_rcp_never_schedules_before_time_zero():
         schedule="alap_rcp",
         machine=MachineModel(max_concurrent_drives=2, max_concurrent_readouts=1),
     ).lower(*[Q[i] for i in range(n)])
-    assert min(e.start_vtu for e in compiled.schedule) >= 0
+    assert min(e.start_cycles for e in compiled.schedule) >= 0
     compiled._module.run_passes(["pulse-verify"])

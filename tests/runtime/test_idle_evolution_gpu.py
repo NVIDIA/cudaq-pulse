@@ -28,7 +28,7 @@ gpu = pytest.mark.gpu
 # negligible and the idle-period decay cleanly follows exp(-t/T1).
 _T1_US = 2.0
 _T1_NS = _T1_US * 1.0e3
-_CLOCK_GHZ = 2.0  # 2 virtual time units per nanosecond
+_CLOCK_GHZ = 2.0  # 2 clock cycles per nanosecond
 
 
 def _target():
@@ -49,15 +49,15 @@ def _target():
 
 def _p1_after_wait(wait_ns):
     """Prepare |1> with a pi pulse, idle for wait_ns, return P(|1>)."""
-    wait_vtu = int(round(wait_ns * _CLOCK_GHZ))
+    wait_cycles = int(round(wait_ns * _CLOCK_GHZ))
 
-    if wait_vtu > 0:
+    if wait_cycles > 0:
 
         @pulse.kernel
         def kernel(q0):
             d0, t0 = get_drive_line(q0)
             drive(d0, square(40, math.pi / 20.0), t0)
-            wait(d0, wait_vtu)
+            wait(d0, wait_cycles)
     else:
 
         @pulse.kernel

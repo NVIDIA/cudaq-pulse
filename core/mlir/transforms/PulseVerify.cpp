@@ -127,10 +127,11 @@ private:
     auto duration = pulse::scheduledDuration(op);
     if (!start || !duration)
       return;
-    auto periods = op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_vtu");
+    auto periods = op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles");
     if (static_cast<size_t>(periods ? periods.size() : 0) != iteration.size()) {
-      error(op, "scheduled operation needs one period_vtu entry per enclosing "
-                "scf.for");
+      error(op,
+            "scheduled operation needs one period_cycles entry per enclosing "
+            "scf.for");
       return;
     }
     if (*start < 0) {
@@ -163,7 +164,7 @@ private:
     auto trips = pulse::constantTripCount(loop);
     if (!trips) {
       for (mlir::Operation &inner : loop.getBody()->without_terminator())
-        if (isTimedOp(&inner) && inner.hasAttr("start_vtu")) {
+        if (isTimedOp(&inner) && inner.hasAttr("start_cycles")) {
           error(&inner, "a scheduled loop needs constant bounds");
           return;
         }
@@ -188,12 +189,13 @@ private:
     loop.getBody()->walk([&](mlir::Operation *op) {
       if (!isTimedOp(op))
         return;
-      auto periods = op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_vtu");
+      auto periods =
+          op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles");
       if (!periods || periods.size() <= level)
         return;
       int64_t period = periods[level];
       if (period < 0)
-        return error(op, "period_vtu must not be negative");
+        return error(op, "period_cycles must not be negative");
       mlir::Operation *line = trace(op->getOperand(0));
       auto [it, inserted] = periodOf.try_emplace(line, period);
       if (!inserted && it->second != period)
@@ -394,9 +396,10 @@ struct PulseVerifyPass
     module.walk([&](pulse::WaitOp op) {
       if (!op->hasAttr("classical.variable"))
         return;
-      if (!op->hasAttr("pulse.variable")) {
-        op.emitError("a classical.variable wait must also be pulse.variable, "
-                     "with its bounds in pulse.min_vtu and pulse.max_vtu");
+      if (!op->hasAttr("pulse.variable_wait")) {
+        op.emitError(
+            "a classical.variable wait must also be pulse.variable_wait, "
+            "with its bounds in pulse.min_cycles and pulse.max_cycles");
         hadError = true;
       } else if (op->getParentOfType<pulse::ScheduleBlockOp>()) {
         op.emitError(classical::kVariableWaitInBlock);
@@ -449,12 +452,13 @@ struct PulseVerifyPass
     module.walk([&](pulse::WaitOp op) {
       auto conversion =
           op.getDuration().getDefiningOp<pulse::DurationFromIntOp>();
-      if (op->hasAttr("pulse.variable") ||
+      if (op->hasAttr("pulse.variable_wait") ||
           (conversion && traceConstantI64(conversion.getCycles())))
         return;
-      op.emitError("a wait whose length is not a constant must be marked "
-                   "pulse.variable, with its bounds in pulse.min_vtu and "
-                   "pulse.max_vtu");
+      op.emitError(
+          "a wait whose length is not a constant must be marked "
+          "pulse.variable_wait, with its bounds in pulse.min_cycles and "
+          "pulse.max_cycles");
       hadError = true;
     });
 

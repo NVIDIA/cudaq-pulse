@@ -26,11 +26,11 @@ classical.callable @decode {function_id = 1, device = 0 : i64,
 // sends two requests 1 cycle apart, so it starts once the first slot is free
 // again: its second request goes out at 111, its readout at 100.
 // CHECK-LABEL: func.func @block_waits_for_a_slot
-// CHECK: pulse.readout {{.*}}start_vtu = 0 : i64}
-// CHECK: classical.submit {{.*}}start_vtu = 10 : i64}
-// CHECK: pulse.readout {{.*}}start_vtu = 100 : i64}
-// CHECK: classical.submit {{.*}}start_vtu = 110 : i64}
-// CHECK: classical.submit {{.*}}start_vtu = 111 : i64}
+// CHECK: pulse.readout {{.*}}start_cycles = 0 : i64}
+// CHECK: classical.submit {{.*}}start_cycles = 10 : i64}
+// CHECK: pulse.readout {{.*}}start_cycles = 100 : i64}
+// CHECK: classical.submit {{.*}}start_cycles = 110 : i64}
+// CHECK: classical.submit {{.*}}start_cycles = 111 : i64}
 func.func @block_waits_for_a_slot() {
   %q = pulse.qudit_alloc : !pulse.qref
   %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)

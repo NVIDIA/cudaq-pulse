@@ -49,8 +49,8 @@ def test_the_store_versions_every_change_and_the_log_round_trips():
         log.tracking_error("amplitude")
 
 
-STORE = ParameterStore(wait_vtu=4000.0, amplitude=PI_AMP)
-READ_WAIT = STORE.reader("wait_vtu", bounds=(0.0, 80000.0))
+STORE = ParameterStore(wait_cycles=4000.0, amplitude=PI_AMP)
+READ_WAIT = STORE.reader("wait_cycles", bounds=(0.0, 80000.0))
 
 
 @pulse.kernel
@@ -77,10 +77,10 @@ def test_ten_thousand_iterations_run_without_compiling_again():
     # The wait is read when the program runs: simulating after changing the
     # store gives the new wait's decay, from the same compiled kernel.
     STORE.set("amplitude", PI_AMP)
-    for wait_vtu in (4000.0, 20000.0):
-        STORE.set("wait_vtu", wait_vtu)
+    for wait_cycles in (4000.0, 20000.0):
+        STORE.set("wait_cycles", wait_cycles)
         result = pulse.simulate(compiled.lower(q, STORE["amplitude"]), dt_ns=1.0)
-        elapsed_ns = wait_vtu / dev.clock_ghz + 20 + 200
+        elapsed_ns = wait_cycles / dev.clock_ghz + 20 + 200
         assert dict(result.branches)[(1,)] == pytest.approx(math.exp(-elapsed_ns / 20e3), abs=5e-3)
     assert compiled.cache_info().compiled == 1
 

@@ -156,27 +156,27 @@ LogicalResult WaitOp::verify() {
   // the specific subtype matches.
   if (getLine().getType() != getUpdatedLine().getType())
     return emitOpError("input and output line types must match");
-  auto lowest = (*this)->getAttrOfType<IntegerAttr>("pulse.min_vtu");
-  auto highest = (*this)->getAttrOfType<IntegerAttr>("pulse.max_vtu");
-  if (!(*this)->hasAttr("pulse.variable")) {
+  auto lowest = (*this)->getAttrOfType<IntegerAttr>("pulse.min_cycles");
+  auto highest = (*this)->getAttrOfType<IntegerAttr>("pulse.max_cycles");
+  if (!(*this)->hasAttr("pulse.variable_wait")) {
     if (lowest || highest)
-      return emitOpError(
-          "pulse.min_vtu and pulse.max_vtu apply to a pulse.variable wait");
+      return emitOpError("pulse.min_cycles and pulse.max_cycles apply to a "
+                         "pulse.variable_wait wait");
     return success();
   }
   if (!lowest)
-    return emitOpError("a pulse.variable wait needs pulse.min_vtu");
+    return emitOpError("a pulse.variable_wait wait needs pulse.min_cycles");
   if (lowest.getInt() < 0)
-    return emitOpError("pulse.min_vtu must not be negative, got ")
+    return emitOpError("pulse.min_cycles must not be negative, got ")
            << lowest.getInt();
   if (highest && highest.getInt() < lowest.getInt())
-    return emitOpError("pulse.max_vtu (")
-           << highest.getInt() << ") is below pulse.min_vtu ("
+    return emitOpError("pulse.max_cycles (")
+           << highest.getInt() << ") is below pulse.min_cycles ("
            << lowest.getInt() << ")";
   if (auto conversion = getDuration().getDefiningOp<DurationFromIntOp>())
     if (auto cycles = getConstantI64(conversion.getCycles()))
       if (*cycles < lowest.getInt() || (highest && *cycles > highest.getInt()))
-        return emitOpError("a pulse.variable wait of ")
+        return emitOpError("a pulse.variable_wait wait of ")
                << *cycles << " cycles is outside its bounds ["
                << lowest.getInt() << ", "
                << (highest ? std::to_string(highest.getInt()) : "none") << "]";

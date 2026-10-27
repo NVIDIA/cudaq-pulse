@@ -23,7 +23,7 @@ def concurrent_drive_violations(compiled: pulse.Lowered, max_drives: int) -> lis
     """Return (time, active drives) wherever more than *max_drives* overlap."""
     edges = []
     for event in compiled.schedule:
-        if event.kind == "drive" and event.duration_vtu:
+        if event.kind == "drive" and event.duration_cycles:
             edges.append((event.start, 1))
             edges.append((event.end, -1))
     active = 0

@@ -28,8 +28,8 @@ def PulseDialect : Dialect {
     - **Waveform algebra**: Element-wise add/sub/mul/scale/neg on envelopes
 
     Durations are in clock cycles of the target (the module's
-    `pulse.clock_ghz`); scheduling records each timed op's `start_vtu` and
-    `duration_vtu` in the same unit.
+    `pulse.clock_ghz`); scheduling records each timed op's `start_cycles` and
+    `duration_cycles` in the same unit.
 
     Example:
     ```mlir

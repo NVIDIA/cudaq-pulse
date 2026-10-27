@@ -213,13 +213,13 @@ def test_the_events_of_a_long_line_are_listed_in_linear_time():
 @pytest.mark.scaling
 def test_a_long_program_is_exported_and_checked_in_linear_time():
     limits = ControllerLimits(
-        issue_vtu=2,
+        issue_cycles=2,
         acquirers={0: 0},
         tones_per_line=2,
         waveform_samples=10**9,
-        feedback_latency_vtu=1,
+        feedback_latency_cycles=1,
     )
-    machine = MachineModel(readout_latency_vtu=1, controller=limits)
+    machine = MachineModel(readout_latency_cycles=1, controller=limits)
 
     def program(n: int):
         @pulse.kernel
@@ -442,10 +442,10 @@ def test_walking_a_long_program_along_a_path_is_linear():
 
 def test_a_long_idle_simulates_in_constant_time():
     @pulse.kernel
-    def idle(q, wait_vtu: int):
+    def idle(q, wait_cycles: int):
         d, t = get_drive_line(q)
         drive(d, square(40, 0.157), t)
-        wait(d, wait_vtu)
+        wait(d, wait_cycles)
 
     dev = pulse.device({"target": ladder_target(1)})
     compiled = pulse.compile(idle, device=dev)

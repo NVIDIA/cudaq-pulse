@@ -175,7 +175,7 @@ def _as_i64(value: Any, description: str) -> int:
     if isinstance(value, numbers.Real) and float(value).is_integer():
         return int(float(value))
     raise CompilationError(
-        f"{description} must be an integer number of virtual time units, got {value!r}"
+        f"{description} must be an integer number of clock cycles, got {value!r}"
     )
 
 
@@ -403,8 +403,8 @@ class PackedIRBuilder:
             self._w(tv)
             self._w(rlv)
             self._w(rtv)
-            self._w(_UNSCHEDULED)  # start_vtu (set by C++ scheduler)
-            self._w(_UNSCHEDULED)  # duration_vtu (set by C++ scheduler)
+            self._w(_UNSCHEDULED)  # start_cycles (set by C++ scheduler)
+            self._w(_UNSCHEDULED)  # duration_cycles (set by C++ scheduler)
             return results
 
         # --- readout ---

@@ -25,10 +25,10 @@ classical.callable @tau {function_id = 1 : i64, device = 0 : i64,
 // and the wait starts at 300 (length 16), then the drive after it at 316.
 // Under ALAP the drive on line d before the wait slides up to it (260).
 // CHECK-LABEL: func.func @barrier
-// ASAP: pulse.drive {{.*}}start_vtu = 0 : i64
-// ALAP: pulse.drive {{.*}}start_vtu = 260 : i64
-// CHECK: pulse.wait {{.*}}classical.variable{{.*}}duration_vtu = 16 : i64, {{.*}}start_vtu = 300 : i64}
-// CHECK: pulse.drive {{.*}}start_vtu = 316 : i64
+// ASAP: pulse.drive {{.*}}start_cycles = 0 : i64
+// ALAP: pulse.drive {{.*}}start_cycles = 260 : i64
+// CHECK: pulse.wait {{.*}}classical.variable{{.*}}duration_cycles = 16 : i64, {{.*}}start_cycles = 300 : i64}
+// CHECK: pulse.drive {{.*}}start_cycles = 316 : i64
 func.func @barrier() {
   %q = pulse.qudit_alloc : !pulse.qref
   %p = pulse.qudit_alloc : !pulse.qref
@@ -46,7 +46,7 @@ func.func @barrier() {
   %l1, %h = classical.submit %l, @tau() : () -> (!classical.link, !classical.future)
   %n = classical.wait %h, @tau : i64
   %dur = pulse.duration_from_int %n : (i64) -> !pulse.duration
-  %d2 = pulse.wait %d1, %dur {classical.variable, pulse.variable, pulse.min_vtu = 16 : i64, pulse.max_vtu = 1000 : i64} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+  %d2 = pulse.wait %d1, %dur {classical.variable, pulse.variable_wait, pulse.min_cycles = 16 : i64, pulse.max_cycles = 1000 : i64} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
   %d3, %t3 = pulse.drive %d2, %x, %t1 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   return
 }
@@ -58,11 +58,11 @@ func.func @barrier() {
 // slides up to the next barrier, and the last round, which has none after it,
 // is peeled off the loop.
 // CHECK-LABEL: func.func @rounds
-// ASAP: classical.submit {{.*}}period_vtu = array<i64: 106>, start_vtu = 0 : i64}
-// ASAP: pulse.wait {{.*}}classical.variable{{.*}}period_vtu = array<i64: 106>, {{.*}}start_vtu = 101 : i64}
-// ASAP: pulse.drive {{.*}}period_vtu = array<i64: 106>, start_vtu = 106 : i64}
-// ALAP: pulse.drive {{.*}}period_vtu = array<i64: 106>, start_vtu = 167 : i64}
-// ALAP: pulse.drive {{.*}}start_vtu = 424 : i64}
+// ASAP: classical.submit {{.*}}period_cycles = array<i64: 106>, start_cycles = 0 : i64}
+// ASAP: pulse.wait {{.*}}classical.variable{{.*}}period_cycles = array<i64: 106>, {{.*}}start_cycles = 101 : i64}
+// ASAP: pulse.drive {{.*}}period_cycles = array<i64: 106>, start_cycles = 106 : i64}
+// ALAP: pulse.drive {{.*}}period_cycles = array<i64: 106>, start_cycles = 167 : i64}
+// ALAP: pulse.drive {{.*}}start_cycles = 424 : i64}
 func.func @rounds() {
   %q = pulse.qudit_alloc : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
@@ -80,7 +80,7 @@ func.func @rounds() {
     %l1, %h = classical.submit %l, @tau() : () -> (!classical.link, !classical.future)
     %n = classical.wait %h, @tau : i64
     %dur = pulse.duration_from_int %n : (i64) -> !pulse.duration
-    %d1 = pulse.wait %d, %dur {classical.variable, pulse.variable, pulse.min_vtu = 5 : i64} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+    %d1 = pulse.wait %d, %dur {classical.variable, pulse.variable_wait, pulse.min_cycles = 5 : i64} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
     %d2, %t2 = pulse.drive %d1, %x, %t : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
     scf.yield %d2, %t2, %l1 : !pulse.drive_line, !pulse.tone, !classical.link
   }

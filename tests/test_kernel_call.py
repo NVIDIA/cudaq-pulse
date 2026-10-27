@@ -67,8 +67,8 @@ def flip_and_measure(q):
 
 def test_arguments_bind_like_a_python_call():
     q = _device().qudit_handles[0]
-    assert rabi.lower(q, 0.1).schedule[0].duration_vtu == 40
-    assert rabi.lower(q, amp=0.1, duration=8).schedule[0].duration_vtu == 8
+    assert rabi.lower(q, 0.1).schedule[0].duration_cycles == 40
+    assert rabi.lower(q, amp=0.1, duration=8).schedule[0].duration_cycles == 8
     with pytest.raises(TypeError, match=r"rabi\(\) takes 2 positional arguments but 3"):
         rabi.lower(q, 0.1, 8)
     with pytest.raises(TypeError, match="missing 1 required positional argument: 'amp'"):
@@ -173,7 +173,7 @@ def test_a_changed_global_is_seen_on_the_next_call():
         second = reads_globals.lower(q)
         assert second is not first and "2.000000e-01" in second.mlir()
         SETTINGS["duration"] = 8
-        assert reads_globals.lower(q).schedule[0].duration_vtu == 8
+        assert reads_globals.lower(q).schedule[0].duration_cycles == 8
     finally:
         AMPLITUDE = 0.1
         SETTINGS["duration"] = 40
@@ -445,7 +445,7 @@ def test_a_float_that_decides_control_flow_or_a_duration_is_specialized_on():
 
     q = _device().qudit_handles[0]
     ck = pulse.compile(shaped)
-    assert ck.lower(q, 0.7, 16.0).schedule[-1].duration_vtu == 16
+    assert ck.lower(q, 0.7, 16.0).schedule[-1].duration_cycles == 16
     assert len(ck.lower(q, 0.2, 8.0).schedule) == 1
     assert shaped.static_parameters == ("q", "amp", "width")
     assert shaped.runtime_parameters == ()
@@ -516,7 +516,7 @@ def test_the_schedule_option_is_part_of_the_compiled_kernel():
     dev = _device()
     args = (dev.qudit_handles[0], dev.qudit_handles[1])
     starts = {
-        policy: [e.start_vtu for e in pulse.compile(two, schedule=policy).lower(*args).schedule]
+        policy: [e.start_cycles for e in pulse.compile(two, schedule=policy).lower(*args).schedule]
         for policy in ("asap", "alap")
     }
     assert starts["asap"] != starts["alap"]
@@ -563,7 +563,7 @@ def test_a_kernel_called_with_the_loop_variable_sees_each_value():
             idle(q, i)
 
     q = _device().qudit_handles[0]
-    waits = [e.duration_vtu for e in ramp.lower(q, 3).schedule]
+    waits = [e.duration_cycles for e in ramp.lower(q, 3).schedule]
     assert waits == [4, 8, 12]
 
 
@@ -634,7 +634,7 @@ def test_two_calls_that_acquire_the_same_drive_line_play_in_sequence():
 
     # Without fusion, which would merge the two pulses into one.
     lowered = pulse.compile(twice, passes=()).lower(_device().qudit_handles[0])
-    assert [(e.start_vtu, e.duration_vtu) for e in lowered.schedule] == [(0, 16), (16, 16)]
+    assert [(e.start_cycles, e.duration_cycles) for e in lowered.schedule] == [(0, 16), (16, 16)]
     assert lowered.mlir().count("pulse.get_drive_line") == 1
 
 
@@ -648,7 +648,7 @@ def test_a_callee_shares_the_line_its_caller_holds():
         drive(d, square(8, 0.02), t)
 
     lowered = pulse.compile(outer, passes=()).lower(_device().qudit_handles[0])
-    assert [e.start_vtu for e in lowered.schedule] == [0, 8, 24]
+    assert [e.start_cycles for e in lowered.schedule] == [0, 8, 24]
     # The callee's pulse carries the caller's phase.
     assert lowered.mlir().count("pulse.shift_phase") == 1
 
@@ -663,7 +663,7 @@ def test_two_names_for_one_line_stay_in_step():
         drive(d1, square(8, 0.02), t1)
 
     lowered = pulse.compile(aliased, passes=()).lower(_device().qudit_handles[0])
-    assert [e.start_vtu for e in lowered.schedule] == [0, 8, 16]
+    assert [e.start_cycles for e in lowered.schedule] == [0, 8, 16]
 
 
 def test_a_callee_acquiring_the_line_in_a_rolled_loop_is_hoisted():
@@ -678,7 +678,7 @@ def test_a_callee_acquiring_the_line_in_a_rolled_loop_is_hoisted():
     text = large.mlir()
     assert text.count("scf.for") == 1 and text.count("pulse.get_drive_line") == 1
     assert text.index("pulse.get_drive_line") < text.index("scf.for")
-    assert [e.start_vtu for e in large.schedule] == [16 * i for i in range(64)]
+    assert [e.start_cycles for e in large.schedule] == [16 * i for i in range(64)]
 
 
 def test_each_arm_of_a_branch_acquires_a_line_it_first_uses():

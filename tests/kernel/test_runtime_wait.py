@@ -38,7 +38,7 @@ def _static_twin(fn: types.FunctionType) -> types.FunctionType:
 
 
 def _events(lowered) -> list[tuple]:
-    return [(e.kind, e.line, e.start_vtu, e.duration_vtu) for e in lowered.schedule]
+    return [(e.kind, e.line, e.start_cycles, e.duration_cycles) for e in lowered.schedule]
 
 
 def _assert_same_schedules(fn, qudits, sweeps, policies=POLICIES):
@@ -203,7 +203,7 @@ def test_two_lines_waiting_one_length_wait_in_parallel():
     lowered = pulse.compile(pulse.kernel(same)).lower(Q[0], Q[1], 900.0)
     # Concurrent, not one after the other as behind a barrier.
     waits = [e for e in lowered.schedule if e.kind == "wait"]
-    assert [(w.start_vtu, w.duration_vtu) for w in waits] == [(40, 900), (24, 900)]
+    assert [(w.start_cycles, w.duration_cycles) for w in waits] == [(40, 900), (24, 900)]
 
 
 def test_helpers_and_called_kernels_take_the_length():
@@ -238,8 +238,8 @@ def test_a_length_rounds_to_the_nearest_cycle_ties_up(tau, cycles):
     lowered = pulse.compile(pulse.kernel(t1)).lower(Q[0], tau)
     wait_event = next(e for e in lowered.schedule if e.kind == "wait")
     readout_event = lowered.schedule[-1]
-    assert (wait_event.start_vtu, wait_event.duration_vtu) == (40, cycles)
-    assert readout_event.start_vtu == 40 + cycles
+    assert (wait_event.start_cycles, wait_event.duration_cycles) == (40, cycles)
+    assert readout_event.start_cycles == 40 + cycles
 
 
 def test_the_module_rounds_and_the_call_binds():
@@ -247,10 +247,10 @@ def test_the_module_rounds_and_the_call_binds():
     generic = lowered.generic.mlir()
     assert "%arg0: f64" in generic
     assert "arith.fptosi" in generic
-    assert "pulse.variable" in generic and "pulse.min_vtu = 0" in generic
+    assert "pulse.variable_wait" in generic and "pulse.min_cycles = 0" in generic
     bound = lowered.mlir()
     assert "%arg0" not in bound
-    assert "duration_vtu = 7 : i64, pulse.min_vtu = 0" in bound
+    assert "duration_cycles = 7 : i64, pulse.min_cycles = 0" in bound
 
 
 def test_without_values_a_wait_stands_at_its_lowest_length():
@@ -296,7 +296,7 @@ def _bounded(bounds):
 def test_lengths_within_the_bounds_run():
     compiled = _bounded((100, 4000))
     for tau, cycles in ((100.0, 100), (99.5, 100), (4000.4, 4000), (1234.0, 1234)):
-        assert compiled.lower(Q[0], tau).schedule[-1].duration_vtu == cycles
+        assert compiled.lower(Q[0], tau).schedule[-1].duration_cycles == cycles
 
 
 @pytest.mark.parametrize(
@@ -325,7 +325,7 @@ def test_bounds_may_be_positional_and_open_above():
         wait(d, tau, (10, None))
 
     compiled = pulse.compile(k)
-    assert compiled.lower(Q[0], 1e9).schedule[0].duration_vtu == 10**9
+    assert compiled.lower(Q[0], 1e9).schedule[0].duration_cycles == 10**9
     with pytest.raises(ValueError, match=r"outside its bounds \(10, None\)"):
         compiled.lower(Q[0], 9.0)
 
@@ -337,7 +337,7 @@ def test_bounds_may_be_positional_and_open_above():
         ("x", r"bounds= takes \(lowest, highest\) in clock cycles"),
         ((-1, 3), r"bounds= must satisfy 0 <= lowest <= highest"),
         ((5, 2), r"bounds= must satisfy 0 <= lowest <= highest"),
-        ((0.5, 2), r"must be an integer number of virtual time units"),
+        ((0.5, 2), r"must be an integer number of clock cycles"),
     ],
 )
 def test_malformed_bounds_fail_while_compiling(bounds, message):
@@ -361,7 +361,7 @@ def test_bounds_check_a_length_known_while_compiling():
         d, t = get_drive_line(q)
         wait(d, tau, bounds=(0, 40))
 
-    assert k.lower(Q[0], 30).schedule[0].duration_vtu == 30
+    assert k.lower(Q[0], 30).schedule[0].duration_cycles == 30
     with pytest.raises(CompilationError, match=r"wait duration 50 is outside its bounds \(0, 40\)"):
         k.lower(Q[0], 50)
 
@@ -407,7 +407,7 @@ def test_an_error_names_a_negated_expression():
         d, t = get_drive_line(q)
         wait(d, -(tau - t0))
 
-    assert k.lower(Q[0], 10.0, 50.0).schedule[0].duration_vtu == 40
+    assert k.lower(Q[0], 10.0, 50.0).schedule[0].duration_cycles == 40
     with pytest.raises(ValueError, match=r"the wait length -\(tau - t0\) = -40\.0 rounds"):
         k.lower(Q[0], 50.0, 10.0)
 
@@ -418,7 +418,7 @@ def test_a_division_by_a_zero_argument_fails_the_call():
         d, t = get_drive_line(q)
         wait(d, total / n)
 
-    assert k.lower(Q[0], 100.0, 4.0).schedule[0].duration_vtu == 25
+    assert k.lower(Q[0], 100.0, 4.0).schedule[0].duration_cycles == 25
     with pytest.raises(ValueError, match="the wait length total / n is nan"):
         k.lower(Q[0], 100.0, 0.0)
 
@@ -430,5 +430,5 @@ def test_a_length_that_needs_more_than_arithmetic_stays_static():
         wait(d, tau % 7)
 
     with pytest.warns(RuntimeWarning, match="float argument 'tau'"):
-        assert k.lower(Q[0], 30.0).schedule[0].duration_vtu == 2
+        assert k.lower(Q[0], 30.0).schedule[0].duration_cycles == 2
     assert k.runtime_parameters == ()

@@ -100,10 +100,10 @@ def test_exact_stretches_agree_with_stepping_within_its_error(levels, monkeypatc
 
 
 @pulse.kernel
-def _excite_and_wait(q0, wait_vtu: int):
+def _excite_and_wait(q0, wait_cycles: int):
     d, t = get_drive_line(q0)
     drive(d, square(40, _PI), t)
-    wait(d, wait_vtu)
+    wait(d, wait_cycles)
 
 
 def test_a_long_idle_decays_exactly_and_quickly():
@@ -171,8 +171,8 @@ _MACHINE = MachineModel(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
 
 
 @pulse.classical(args=(Bits(1), Float()), results=(Float(),), max_latency_ns=200, link="controller")
-def _halve_or_double(bit, wait_vtu):
-    return min(max(wait_vtu * (2.0 if bit[0] else 0.5), 20.0), 20000.0)
+def _halve_or_double(bit, wait_cycles):
+    return min(max(wait_cycles * (2.0 if bit[0] else 0.5), 20.0), 20000.0)
 
 
 @pulse.kernel

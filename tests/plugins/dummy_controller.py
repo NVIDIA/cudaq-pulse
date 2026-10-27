@@ -32,10 +32,10 @@ class DummyBackend:
     def machine_model(self) -> MachineModel:
         limits = ControllerLimits(
             clock_ghz=1.0,
-            issue_vtu=2,
-            min_wait_vtu=2,
+            issue_cycles=2,
+            min_wait_cycles=2,
             acquirers={q: q // 2 for q in range(8)},
-            acquirer_hold_vtu=10,
+            acquirer_hold_cycles=10,
         )
         return MachineModel(max_concurrent_readouts=1, controller=limits)
 
@@ -43,7 +43,7 @@ class DummyBackend:
         if program.get("format") != FORMAT:
             raise ValueError(f"expected a {FORMAT} program, got {program.get('format')!r}")
         return sorted(
-            (e["start_vtu"], e["line"], e["kind"], e["waveform"]["shape"])
+            (e["start_cycles"], e["line"], e["kind"], e["waveform"]["shape"])
             for e in program["events"]
             if e["kind"] in ("drive", "readout")
         )

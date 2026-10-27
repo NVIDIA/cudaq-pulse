@@ -114,7 +114,7 @@ def test_an_int_argument_sets_the_sampled_duration(qubit):
         drive(line, custom(n, cosine_envelope), tone)
 
     assert len(_samples(sized.lower(qubit, 12).mlir())) == 12
-    assert sized.lower(qubit, 12).schedule[0].duration_vtu == 12
+    assert sized.lower(qubit, 12).schedule[0].duration_cycles == 12
 
 
 def test_the_longest_envelope_is_252_cycles(qubit):

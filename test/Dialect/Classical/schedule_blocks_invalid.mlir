@@ -45,7 +45,7 @@ func.func @variable_wait_in_block() {
   %d2 = pulse.schedule_block "asap" (%d0) : (!pulse.drive_line) -> (!pulse.drive_line) {
   ^bb0(%d: !pulse.drive_line):
     // expected-error @+1 {{a variable wait cannot be inside a pulse.schedule_block, whose length is fixed; call the kernel without schedule= or move the wait out of it}}
-    %d1 = pulse.wait %d, %dur {classical.variable, pulse.variable, pulse.min_vtu = 0 : i64} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+    %d1 = pulse.wait %d, %dur {classical.variable, pulse.variable_wait, pulse.min_cycles = 0 : i64} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
     pulse.yield %d1 : !pulse.drive_line
   }
   return

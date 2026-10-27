@@ -50,8 +50,8 @@ def single(q, tau0: float):
 def test_a_wait_from_an_answer_is_a_variable_wait():
     text = _mlir(single, Q[0], 10.0)
     assert re.search(
-        r"pulse.wait .*classical.variable, .*pulse.max_vtu = 4000 : i64, "
-        r"pulse.min_vtu = 16 : i64, pulse.variable",
+        r"pulse.wait .*classical.variable, .*pulse.max_cycles = 4000 : i64, "
+        r"pulse.min_cycles = 16 : i64, pulse.variable_wait",
         text,
     )
     # Rounded to the nearest cycle: (x + 0.5) cast to an integer.
@@ -68,8 +68,8 @@ def test_integer_answers_and_no_bounds():
         drive(d, square(40, 0.1), t)
 
     text = _mlir(k, Q[0])
-    assert re.search(r"classical.variable, .*pulse.min_vtu = 0 : i64, pulse.variable", text)
-    assert "pulse.max_vtu" not in text
+    assert re.search(r"classical.variable, .*pulse.min_cycles = 0 : i64, pulse.variable_wait", text)
+    assert "pulse.max_cycles" not in text
 
 
 def test_bounds_errors():
@@ -99,7 +99,7 @@ def test_bounds_errors():
         d, t = get_drive_line(q)
         wait(d, 10, bounds=(0, 20))
 
-    assert "pulse.variable" not in pulse.compile(fixed_with_bounds).lower(Q[0]).mlir()
+    assert "pulse.variable_wait" not in pulse.compile(fixed_with_bounds).lower(Q[0]).mlir()
 
 
 def test_a_variable_wait_cannot_be_in_a_block_or_a_branch_arm():
@@ -145,9 +145,9 @@ def test_epochs_and_their_shift_ranges(policy):
     low = pulse.compile(k, schedule=policy).lower(Q[0], Q[1])
     epochs = low.epochs()
     assert [e.opened_by for e in epochs] == ["start", "wait", "wait"]
-    assert epochs[1].max_shift_vtu == 92 and epochs[2].max_shift_vtu is None
+    assert epochs[1].max_shift_cycles == 92 and epochs[2].max_shift_cycles is None
     # The first barrier waits for the 400-cycle drive on the other line.
-    assert epochs[1].start_vtu == 400 + 8
+    assert epochs[1].start_cycles == 400 + 8
     calls = low.classical_report()
     assert [c.epoch for c in calls] == [0, 1]
 
@@ -194,18 +194,18 @@ def test_epoch_invariants(steps, policy):
     barriers = [
         i
         for i, e in enumerate(events)
-        if e.kind == "wait" and e.link is None and e.duration_vtu == 4
+        if e.kind == "wait" and e.link is None and e.duration_cycles == 4
     ]
     variable = sum(1 for kind, _ in steps if kind == "variable_wait")
     assert len(low.epochs()) == variable + 1
     for i in barriers:
-        start = events[i].start_vtu
-        end = start + events[i].duration_vtu
+        start = events[i].start_cycles
+        end = start + events[i].duration_cycles
         for j, e in enumerate(events):
             if j < i:
-                assert e.start_vtu + e.duration_vtu <= start
+                assert e.start_cycles + e.duration_cycles <= start
             elif j > i:
-                assert e.start_vtu >= end
+                assert e.start_cycles >= end
 
 
 def test_a_wait_from_a_float_parameter_beside_calls_is_no_barrier():
@@ -225,8 +225,8 @@ def test_a_wait_from_a_float_parameter_beside_calls_is_no_barrier():
     waits = [line for line in low.mlir().splitlines() if "pulse.wait" in line]
     assert len(waits) == 2
     # The parameter's wait: bound and rounded, no barrier; the answer's: a barrier.
-    assert "classical.variable" not in waits[0] and "duration_vtu = 10 : i64" in waits[0]
-    assert "classical.variable" in waits[1] and "pulse.min_vtu = 8" in waits[1]
+    assert "classical.variable" not in waits[0] and "duration_cycles = 10 : i64" in waits[0]
+    assert "classical.variable" in waits[1] and "pulse.min_cycles = 8" in waits[1]
     drives = [e for e in low.schedule if e.kind == "drive" and e.line == 0]
     assert drives[0].start == 10
     assert [e.opened_by for e in low.epochs()] == ["start", "wait"]
@@ -257,7 +257,7 @@ def test_a_wait_from_an_answer_and_a_float_compiles_once():
     # length until it is known.
     assert [e.opened_by for e in low.epochs()] == ["start", "wait"]
     (wait_event,) = [e for e in low.schedule if e.kind == "wait" and e.link is None]
-    assert wait_event.start == 400 and wait_event.duration_vtu == 8
+    assert wait_event.start == 400 and wait_event.duration_cycles == 8
     assert "%arg0: f64" in low.generic.mlir()
 
 
@@ -346,4 +346,4 @@ def test_pulses_either_side_of_a_barrier_are_not_fused(barrier):
     low = pulse.compile(k, unroll_threshold=0).lower(Q[0], Q[1])
     spectator = [e for e in low.schedule if e.kind == "drive" and e.qubit == 1]
     assert [e.end - e.start for e in spectator] == [400, 30]
-    assert spectator[1].start >= low.epochs()[-1].start_vtu
+    assert spectator[1].start >= low.epochs()[-1].start_cycles

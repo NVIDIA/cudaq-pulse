@@ -118,11 +118,11 @@ def test_the_surrogates_match_simulating_the_plant():
     dev = pulse.device({"target": _target()})
     q = dev.qudit_handles[0]
     compiled_t1 = pulse.compile(t1_shot, device=dev)
-    for wait_vtu in (0.0, 4000.0, 16000.0):
-        result = pulse.simulate(compiled_t1.lower(q, wait_vtu), plant=target, dt_ns=1.0)
+    for wait_cycles in (0.0, 4000.0, 16000.0):
+        result = pulse.simulate(compiled_t1.lower(q, wait_cycles), plant=target, dt_ns=1.0)
         p1 = dict(result.branches).get((1,), 0.0)
         # The surrogate counts the wait; the pi pulse and readout add 40 ns.
-        elapsed = wait_vtu / dev.clock_ghz + 40
+        elapsed = wait_cycles / dev.clock_ghz + 40
         assert p1 == pytest.approx(plant.p_survive(elapsed), abs=0.03)
     # On resonance the amplitude scale stretches the rotation exactly.
     resonant = DriftingPlant(_target(t1_us=0.0), amplitude=OrnsteinUhlenbeck(0.05, 1.0), seed=3)

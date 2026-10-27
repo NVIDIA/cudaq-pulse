@@ -24,10 +24,10 @@ module @excited attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = [
     %zero = arith.constant 0.0 : f64
     %ro = pulse.square %c300, %amp, %zero : i64, f64, f64 -> !pulse.waveform
     %x = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !pulse.waveform
-    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" {start_vtu = 0 : i64, duration_vtu = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %bit = pulse.is_set %m : !pulse.measurement -> i1
     %d1, %t1 = scf.if %bit -> (!pulse.drive_line, !pulse.tone) {
-      %d, %t = pulse.drive %d0, %x, %t0 {start_vtu = 300 : i64, duration_vtu = 40 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+      %d, %t = pulse.drive %d0, %x, %t0 {start_cycles = 300 : i64, duration_cycles = 40 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
       scf.yield %d, %t : !pulse.drive_line, !pulse.tone
     } else {
       scf.yield %d0, %t0 : !pulse.drive_line, !pulse.tone
@@ -52,10 +52,10 @@ module @ground attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = [a
     %zero = arith.constant 0.0 : f64
     %ro = pulse.square %c300, %amp, %zero : i64, f64, f64 -> !pulse.waveform
     %x = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !pulse.waveform
-    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" {start_vtu = 0 : i64, duration_vtu = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %bit = pulse.is_set %m : !pulse.measurement -> i1
     %d1, %t1 = scf.if %bit -> (!pulse.drive_line, !pulse.tone) {
-      %d, %t = pulse.drive %d0, %x, %t0 {start_vtu = 300 : i64, duration_vtu = 40 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+      %d, %t = pulse.drive %d0, %x, %t0 {start_cycles = 300 : i64, duration_cycles = 40 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
       scf.yield %d, %t : !pulse.drive_line, !pulse.tone
     } else {
       scf.yield %d0, %t0 : !pulse.drive_line, !pulse.tone
@@ -80,10 +80,10 @@ module @before attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path = []
     %zero = arith.constant 0.0 : f64
     %ro = pulse.square %c300, %amp, %zero : i64, f64, f64 -> !pulse.waveform
     %x = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !pulse.waveform
-    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" {start_vtu = 0 : i64, duration_vtu = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %bit = pulse.is_set %m : !pulse.measurement -> i1
     %d1, %t1 = scf.if %bit -> (!pulse.drive_line, !pulse.tone) {
-      %d, %t = pulse.drive %d0, %x, %t0 {start_vtu = 300 : i64, duration_vtu = 40 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+      %d, %t = pulse.drive %d0, %x, %t0 {start_cycles = 300 : i64, duration_cycles = 40 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
       scf.yield %d, %t : !pulse.drive_line, !pulse.tone
     } else {
       scf.yield %d0, %t0 : !pulse.drive_line, !pulse.tone
@@ -105,10 +105,10 @@ module @undecided attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.path =
     %zero = arith.constant 0.0 : f64
     %ro = pulse.square %c300, %amp, %zero : i64, f64, f64 -> !pulse.waveform
     // expected-error @+1 {{no outcome on pulse.path for this measurement, which completes at 3.000000e+02 ns, before the evolution window ends}}
-    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" {start_vtu = 0 : i64, duration_vtu = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r0, %ro, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     %bit = pulse.is_set %m : !pulse.measurement -> i1
     %d1, %t1 = scf.if %bit -> (!pulse.drive_line, !pulse.tone) {
-      %d, %t = pulse.drive %d0, %ro, %t0 {start_vtu = 300 : i64, duration_vtu = 300 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+      %d, %t = pulse.drive %d0, %ro, %t0 {start_cycles = 300 : i64, duration_cycles = 300 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
       scf.yield %d, %t : !pulse.drive_line, !pulse.tone
     } else {
       scf.yield %d0, %t0 : !pulse.drive_line, !pulse.tone
@@ -125,7 +125,7 @@ module @no_path attributes {pulse.clock_ghz = 1.000000e+00 : f64} {
     %q = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
     %r0, %rt0 = pulse.get_readout_line %q {qubit = 0 : i64, frequency_hz = 7.000000e+09 : f64} : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
     // expected-error @+1 {{a program that measures evolves in segments between measurements}}
-    %r1, %rt1, %m = pulse.readout %r0, %x, %rt0, "iq" {start_vtu = 0 : i64, duration_vtu = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    %r1, %rt1, %m = pulse.readout %r0, %x, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     return
   }
 }

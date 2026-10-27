@@ -74,7 +74,7 @@ def TimepointType : PulseType<"Timepoint", "timepoint"> {
 }
 
 def DurationType : PulseType<"Duration", "duration"> {
-  let summary = "Time interval in virtual time units (VTU)";
+  let summary = "Time interval in clock cycles";
 }
 
 //===----------------------------------------------------------------------===//

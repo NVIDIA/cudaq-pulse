@@ -45,7 +45,7 @@ MACHINE = MachineModel(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
 
 SIGMA0_HZ = 2e6
 WAIT0_NS, PHASE0 = cal.ramsey_setting(0.0, SIGMA0_HZ)
-BOUNDS_VTU = (20, 40000)
+BOUNDS_CYCLES = (20, 40000)
 
 
 @pulse.classical(
@@ -54,15 +54,15 @@ BOUNDS_VTU = (20, 40000)
     max_latency_ns=300,
     link="controller",
 )
-def frequency_estimator(bit, mean_hz, sigma_hz, wait_vtu, phase):
+def frequency_estimator(bit, mean_hz, sigma_hz, wait_cycles, phase):
     """Update the detuning posterior from one Ramsey shot; pick the next."""
     # The Ramsey wait counts from the first pi/2 pulse's centre to the second's.
     mean_hz, sigma_hz = cal.frequency_update(
-        mean_hz, sigma_hz, int(bit[0]), wait_vtu / CLOCK_GHZ + 20.0, phase
+        mean_hz, sigma_hz, int(bit[0]), wait_cycles / CLOCK_GHZ + 20.0, phase
     )
     wait_ns, phase = cal.ramsey_setting(mean_hz, sigma_hz)
-    wait_vtu = min(max((wait_ns - 20.0) * CLOCK_GHZ, BOUNDS_VTU[0]), BOUNDS_VTU[1])
-    return mean_hz, sigma_hz, wait_vtu, phase
+    wait_cycles = min(max((wait_ns - 20.0) * CLOCK_GHZ, BOUNDS_CYCLES[0]), BOUNDS_CYCLES[1])
+    return mean_hz, sigma_hz, wait_cycles, phase
 
 
 @pulse.kernel
@@ -85,7 +85,7 @@ def binary_search(q, rounds: int):
         if m:  # active reset
             drive(d, square(40, PI_AMP), t)
         drive(d, square(40, PI_AMP / 2), t)
-        wait(d, tau, bounds=BOUNDS_VTU)
+        wait(d, tau, bounds=BOUNDS_CYCLES)
         shift_phase(t, math.pi - phase)
         drive(d, square(40, PI_AMP / 2), t)
     sync(d, r)

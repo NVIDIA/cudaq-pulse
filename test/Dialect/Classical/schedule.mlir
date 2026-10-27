@@ -31,10 +31,10 @@ classical.callable @track {function_id = 2067622972 : i64, device = 1 : i64,
 // Readout 0..300, submit 300..301, answer due 3301; the conditional drive
 // starts there under both policies, and the eager submission stays at 300.
 // CHECK-LABEL: func.func @feedback
-// CHECK: pulse.readout {{.*}}start_vtu = 0
-// CHECK: classical.submit {{.*}}classical.budget_vtu = 3000 : i64{{.*}}classical.submit_vtu = 1 : i64{{.*}}duration_vtu = 1 : i64, start_vtu = 300 : i64}
-// CHECK: classical.wait {{.*}}duration_vtu = 0 : i64, start_vtu = 3301 : i64}
-// CHECK: pulse.drive {{.*}}start_vtu = 3301 : i64
+// CHECK: pulse.readout {{.*}}start_cycles = 0
+// CHECK: classical.submit {{.*}}classical.budget_cycles = 3000 : i64{{.*}}classical.submit_cycles = 1 : i64{{.*}}duration_cycles = 1 : i64, start_cycles = 300 : i64}
+// CHECK: classical.wait {{.*}}duration_cycles = 0 : i64, start_cycles = 3301 : i64}
+// CHECK: pulse.drive {{.*}}start_cycles = 3301 : i64
 func.func @feedback() {
   %q = pulse.qudit_alloc : !pulse.qref
   %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
@@ -62,13 +62,13 @@ func.func @feedback() {
 // other qudit does not. The lazy submission floats under ALAP, so its answer is
 // due just when the drive needs it, at the 5000-cycle makespan minus 40.
 // CHECK-LABEL: func.func @parameter
-// CHECK: pulse.drive {{.*}}start_vtu = 0 : i64
-// ASAP: classical.submit {{.*}}start_vtu = 300 : i64}
-// ALAP: classical.submit {{.*}}start_vtu = 1959 : i64}
-// ASAP: classical.wait {{.*}}start_vtu = 3301 : i64}
-// ALAP: classical.wait {{.*}}start_vtu = 4960 : i64}
-// ASAP: pulse.drive {{.*}}start_vtu = 3301 : i64
-// ALAP: pulse.drive {{.*}}start_vtu = 4960 : i64
+// CHECK: pulse.drive {{.*}}start_cycles = 0 : i64
+// ASAP: classical.submit {{.*}}start_cycles = 300 : i64}
+// ALAP: classical.submit {{.*}}start_cycles = 1959 : i64}
+// ASAP: classical.wait {{.*}}start_cycles = 3301 : i64}
+// ALAP: classical.wait {{.*}}start_cycles = 4960 : i64}
+// ASAP: pulse.drive {{.*}}start_cycles = 3301 : i64
+// ALAP: pulse.drive {{.*}}start_cycles = 4960 : i64
 func.func @parameter() {
   %q = pulse.qudit_alloc : !pulse.qref
   %p = pulse.qudit_alloc : !pulse.qref
@@ -94,8 +94,8 @@ func.func @parameter() {
 
 // Two submissions on one link go out one after the other, in program order.
 // CHECK-LABEL: func.func @link_order
-// CHECK: classical.submit {{.*}}start_vtu = 300 : i64}
-// CHECK: classical.submit {{.*}}start_vtu = 301 : i64}
+// CHECK: classical.submit {{.*}}start_cycles = 300 : i64}
+// CHECK: classical.submit {{.*}}start_cycles = 301 : i64}
 func.func @link_order() {
   %q = pulse.qudit_alloc : !pulse.qref
   %r0, %rt0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
@@ -116,11 +116,11 @@ func.func @link_order() {
 // is in (40 + 1 + 100 = 141). Under ALAP the independent drive before it,
 // which would otherwise slide to the makespan, still ends by then.
 // CHECK-LABEL: func.func @barrier
-// CHECK: pulse.drive {{.*}}start_vtu = 0 : i64
-// ASAP: pulse.drive {{.*}}start_vtu = 0 : i64
-// ALAP: pulse.drive {{.*}}start_vtu = 101 : i64
-// CHECK: classical.wait {{.*}}classical.blocking{{.*}}start_vtu = 141 : i64}
-// CHECK: pulse.drive {{.*}}start_vtu = 141 : i64
+// CHECK: pulse.drive {{.*}}start_cycles = 0 : i64
+// ASAP: pulse.drive {{.*}}start_cycles = 0 : i64
+// ALAP: pulse.drive {{.*}}start_cycles = 101 : i64
+// CHECK: classical.wait {{.*}}classical.blocking{{.*}}start_cycles = 141 : i64}
+// CHECK: pulse.drive {{.*}}start_cycles = 141 : i64
 func.func @barrier() {
   %q = pulse.qudit_alloc : !pulse.qref
   %p = pulse.qudit_alloc : !pulse.qref

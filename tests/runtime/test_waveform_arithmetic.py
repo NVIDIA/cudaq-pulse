@@ -49,7 +49,7 @@ def _simulate(kernel):
 
 
 def _gaussian(t_ns, duration, amplitude, sigma):
-    """The envelope of gaussian(duration, amplitude, sigma), in vtu units."""
+    """The envelope of gaussian(duration, amplitude, sigma), in clock cycles."""
     center = duration / CLOCK_GHZ / 2.0
     width = sigma / CLOCK_GHZ
     return amplitude * np.exp(-0.5 * (t_ns - center) ** 2 / width**2)

@@ -113,7 +113,7 @@ static DriveTiming driveTiming(const pulse::Occurrence &occurrence,
                                double clockGHz, double qubitFrequencyHz,
                                double phaseOffset) {
   const double scale = 1.0 / clockGHz;
-  const double startNs = static_cast<double>(occurrence.startVtu) * scale;
+  const double startNs = static_cast<double>(occurrence.startCycles) * scale;
   const pulse::ToneState &tone = occurrence.tone;
   const Affine qubitFrequency(qubitFrequencyHz);
   const Affine theta = tone.phase +
@@ -122,8 +122,8 @@ static DriveTiming driveTiming(const pulse::Occurrence &occurrence,
                        (tone.frameFrequencyHz - qubitFrequency) * (2.0 * M_PI) *
                            1.0e-9 * startNs +
                        Affine(phaseOffset);
-  return {startNs, static_cast<double>(occurrence.durationVtu) * scale, -theta,
-          (qubitFrequency - tone.frequencyHz) * (2.0 * M_PI) * 1.0e-9};
+  return {startNs, static_cast<double>(occurrence.durationCycles) * scale,
+          -theta, (qubitFrequency - tone.frequencyHz) * (2.0 * M_PI) * 1.0e-9};
 }
 
 /// The callback of `waveform`, a built-in or custom_samples op, played with
@@ -326,7 +326,7 @@ getWaveformCallbacks(const pulse::Occurrence &occurrence, double clockGHz,
       callbacks.push_back(std::move(*callback));
       continue;
     }
-    const auto count = occurrence.durationVtu;
+    const auto count = occurrence.durationCycles;
     SmallVector<double> real, imaginary;
     for (int64_t k = 0; k < count; ++k) {
       auto value = envelopeAt(term.waveform->getResult(0), (k + 0.5) / clockGHz,
@@ -716,7 +716,7 @@ struct PulseToQOpPass
       auto conversion =
           wait.getDuration().getDefiningOp<pulse::DurationFromIntOp>();
       IntegerAttr cycles;
-      if (!wait->hasAttr("pulse.variable") ||
+      if (!wait->hasAttr("pulse.variable_wait") ||
           wait->hasAttr("classical.variable") ||
           (conversion &&
            matchPattern(conversion.getCycles(), m_Constant(&cycles))))
@@ -761,17 +761,19 @@ struct PulseToQOpPass
       windowEnd = attr.getValueAsDouble();
 
     // Collect the drives played on this path, in execution order.
-    int64_t endVtu = 0;
+    int64_t endCycles = 0;
     std::map<pulse::MeasurementKey, double> measurementEndNs;
     SmallVector<Operation *> driveOrder;
     DenseMap<Operation *, SmallVector<pulse::Occurrence>> drives;
     pulse::ExecutionWalker walker(clockGHz, path);
     walker.onTimed = [&](const pulse::Occurrence &occurrence) {
-      endVtu = std::max(endVtu, occurrence.startVtu + occurrence.durationVtu);
+      endCycles = std::max(endCycles,
+                           occurrence.startCycles + occurrence.durationCycles);
     };
     walker.onDrive = [&](const pulse::Occurrence &occurrence) {
-      double startNs = occurrence.startVtu / clockGHz;
-      double endNs = (occurrence.startVtu + occurrence.durationVtu) / clockGHz;
+      double startNs = occurrence.startCycles / clockGHz;
+      double endNs =
+          (occurrence.startCycles + occurrence.durationCycles) / clockGHz;
       if ((windowEnd && startNs >= *windowEnd) ||
           (windowStart && endNs <= *windowStart))
         return;
@@ -783,7 +785,7 @@ struct PulseToQOpPass
     walker.onReadout = [&](const pulse::Occurrence &occurrence,
                            const pulse::MeasurementKey &key) {
       measurementEndNs[key] =
-          (occurrence.startVtu + occurrence.durationVtu) / clockGHz;
+          (occurrence.startCycles + occurrence.durationCycles) / clockGHz;
       return false;
     };
     if (!walker.run(mainFunc)) {
@@ -805,15 +807,15 @@ struct PulseToQOpPass
     // Carry the scheduled pulse interval into the evolution lowering. Pulse
     // time is expressed in virtual clock units; cuDensityMat callbacks and
     // integrators use nanoseconds.
-    if (endVtu > 0) {
-      const double endNs = static_cast<double>(endVtu) / clockGHz;
+    if (endCycles > 0) {
+      const double endNs = static_cast<double>(endCycles) / clockGHz;
       if (!module->hasAttr("qop.t_start"))
         module->setAttr("qop.t_start", b.getF64FloatAttr(0.0));
       if (!module->hasAttr("qop.t_end"))
         module->setAttr("qop.t_end", b.getF64FloatAttr(endNs));
       if (!module->hasAttr("qop.num_steps"))
         module->setAttr("qop.num_steps",
-                        b.getI64IntegerAttr(std::max<int64_t>(100, endVtu)));
+                        b.getI64IntegerAttr(std::max<int64_t>(100, endCycles)));
       if (!module->hasAttr("qop.integrator"))
         module->setAttr("qop.integrator", b.getStringAttr("rk4"));
     }

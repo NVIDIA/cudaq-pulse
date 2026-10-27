@@ -167,7 +167,7 @@ the module of one call:
    The drives, readouts and waits with their start and duration in clock
    cycles (``ScheduledEvent``). ``event.start`` and ``event.end`` are the
    scheduled times as ``int``; they raise ``ValueError`` on an event that is
-   not scheduled yet, whose ``start_vtu`` and ``duration_vtu`` are ``None``.
+   not scheduled yet, whose ``start_cycles`` and ``duration_cycles`` are ``None``.
 
 ``.timeline(**kwargs)``
    A matplotlib figure of the schedule, one row per line.

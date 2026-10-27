@@ -141,7 +141,7 @@ if __name__ == "__main__":
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
-    print("\n=== Uhrig DD (8 pulses, T=5000 VTU) ===")
+    print("\n=== Uhrig DD (8 pulses, T=5000 clock cycles) ===")
     compiled_kernel = pulse.compile(uhrig_dd, device=dev).lower(
         dev.qudit_handles[0], sigma, amplitude_pi, 5000, 8
     )

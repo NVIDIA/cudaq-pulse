@@ -153,10 +153,10 @@ def amplitude_estimator(minus, zero, plus, amplitude):
 
 
 @pulse.classical(args=(Float(),), results=(Float(), Float()), max_latency_ns=200, link="controller")
-def decay_delays(t1_vtu):
+def decay_delays(t1_cycles):
     """The decay estimator's second and third delays, spaced by the last
     T1 estimate."""
-    spacing = min(max(t1_vtu, 64.0), (WAITS[1] - T0) / 3.0)
+    spacing = min(max(t1_cycles, 64.0), (WAITS[1] - T0) / 3.0)
     return T0 + spacing, T0 + 3.0 * spacing
 
 
@@ -166,15 +166,15 @@ def decay_delays(t1_vtu):
     max_latency_ns=1000,
     link="controller",
 )
-def decay_estimator(first, second, third, spacing_vtu, t1_vtu):
+def decay_estimator(first, second, third, spacing_cycles, t1_cycles):
     """T1 and its standard deviation (in clock cycles) from the three
-    delays; the last estimate *t1_vtu* when none can be formed."""
+    delays; the last estimate *t1_cycles* when none can be formed."""
     t1, sigma, ok = cal.decay_time(
-        _fraction(first), _fraction(second), _fraction(third), spacing_vtu, SHOTS
+        _fraction(first), _fraction(second), _fraction(third), spacing_cycles, SHOTS
     )
     if ok:
         return t1, sigma
-    return t1_vtu, t1_vtu
+    return t1_cycles, t1_cycles
 
 
 @pulse.classical(args=(Float(), Float()), results=(Float(),), max_latency_ns=200, link="controller")
@@ -188,12 +188,12 @@ def first_wait(shape, rate):
     max_latency_ns=2000,
     link="controller",
 )
-def adaptive_t1(bit, shape, rate, wait_vtu, error_1to0, error_0to1):
+def adaptive_t1(bit, shape, rate, wait_cycles, error_1to0, error_0to1):
     """Update the gamma posterior over 1/T1 (rate in clock cycles) from one
     shot; pick the next wait."""
-    shape, rate = cal.adaptive_t1_update(shape, rate, bit[0], wait_vtu, error_1to0, error_0to1)
-    wait_vtu = min(max(cal.adaptive_t1_wait(shape, rate, ATT_SCALE), WAITS[0]), WAITS[1])
-    return shape, rate, wait_vtu
+    shape, rate = cal.adaptive_t1_update(shape, rate, bit[0], wait_cycles, error_1to0, error_0to1)
+    wait_cycles = min(max(cal.adaptive_t1_wait(shape, rate, ATT_SCALE), WAITS[0]), WAITS[1])
+    return shape, rate, wait_cycles
 
 
 # ── Shots and steps ─────────────────────────────────────────────────────────
@@ -213,33 +213,33 @@ def shot_end(q, pi_amp: float):
 
 
 @pulse.kernel
-def settle_and_read(q, settle_vtu: int):
+def settle_and_read(q, settle_cycles: int):
     """Read out, then wait for the qubit to relax (passive reset)."""
     d, t = get_drive_line(q)
     r, rt = get_readout_line(q)
     sync(d, r)
     m = readout(r, square(READOUT, READOUT_AMP), rt)
     sync(d, r)
-    wait(d, settle_vtu)
+    wait(d, settle_cycles)
     return m
 
 
 @pulse.kernel
-def assignment(q, pi_amp: float, settle_vtu: int = 0):
-    """Assignment errors; with *settle_vtu*, a passive reset of that length
+def assignment(q, pi_amp: float, settle_cycles: int = 0):
+    """Assignment errors; with *settle_cycles*, a passive reset of that length
     after each readout instead of the active one."""
     d, t = get_drive_line(q)
     ground = []
     excited = []
-    if settle_vtu:
-        wait(d, settle_vtu)
+    if settle_cycles:
+        wait(d, settle_cycles)
     else:
         shot_end(q, pi_amp)
     for _ in range(SHOTS):
-        if settle_vtu:
-            ground.append(settle_and_read(q, settle_vtu))
+        if settle_cycles:
+            ground.append(settle_and_read(q, settle_cycles))
             drive(d, square(PULSE, pi_amp), t)
-            excited.append(settle_and_read(q, settle_vtu))
+            excited.append(settle_and_read(q, settle_cycles))
         else:
             ground.append(shot_end(q, pi_amp))
             drive(d, square(PULSE, pi_amp), t)
@@ -296,9 +296,9 @@ def amplitude(q, amplitude: float, pulses: int, pi_amp: float):
 
 
 @pulse.kernel
-def decay(q, pi_amp: float, t1_vtu: float):
+def decay(q, pi_amp: float, t1_cycles: float):
     d, t = get_drive_line(q)
-    second, third = decay_delays.submit(t1_vtu).result()
+    second, third = decay_delays.submit(t1_cycles).result()
     first_bits = []
     second_bits = []
     third_bits = []
@@ -312,7 +312,9 @@ def decay(q, pi_amp: float, t1_vtu: float):
         drive(d, square(PULSE, pi_amp), t)
         wait(d, third, bounds=WAITS)
         third_bits.append(shot_end(q, pi_amp))
-    return decay_estimator.submit(first_bits, second_bits, third_bits, second - T0, t1_vtu).result()
+    return decay_estimator.submit(
+        first_bits, second_bits, third_bits, second - T0, t1_cycles
+    ).result()
 
 
 @pulse.kernel
@@ -323,17 +325,17 @@ def tracked_t1(
     rate: float,
     error_1to0: float,
     error_0to1: float,
-    settle_vtu: int = 0,
+    settle_cycles: int = 0,
 ):
-    """Adaptive T1; with *settle_vtu*, a passive reset of that length after
+    """Adaptive T1; with *settle_cycles*, a passive reset of that length after
     each readout instead of the active one."""
     d, t = get_drive_line(q)
     w = first_wait.submit(shape, rate).result()
     for _ in range(ATT_SHOTS):
         drive(d, square(PULSE, pi_amp), t)
         wait(d, w, bounds=WAITS)
-        if settle_vtu:
-            m = settle_and_read(q, settle_vtu)
+        if settle_cycles:
+            m = settle_and_read(q, settle_cycles)
         else:
             m = shot_end(q, pi_amp)
         shape, rate, w = adaptive_t1.submit([m], shape, rate, w, error_1to0, error_0to1).result()
@@ -341,7 +343,7 @@ def tracked_t1(
 
 
 @pulse.kernel
-def calibration_chain(q, t1_guess_vtu: float):
+def calibration_chain(q, t1_guess_cycles: float):
     d, t = get_drive_line(q)
     # The adaptive tracker's likelihood holds only assignment errors: an
     # active reset would add a preparation error that depends on the last
@@ -351,7 +353,7 @@ def calibration_chain(q, t1_guess_vtu: float):
     shift_frequency(t, detuning)
     pi_amp, _ = amplitude(q, PI_AMP, TRAIN, PI_AMP)
     half_amp, _ = amplitude(q, pi_amp * 0.5, 2 * TRAIN, pi_amp)
-    t1, _ = decay(q, pi_amp, t1_guess_vtu)
+    t1, _ = decay(q, pi_amp, t1_guess_cycles)
     tracked_t1(q, pi_amp, 3.0, 3.0 * t1, error_1to0, error_0to1, SETTLE)
 
 
@@ -366,8 +368,8 @@ def _search_setting(mean_hz, sigma_hz):
     """The next binary-search wait (between the pi/2 pulses, in clock
     cycles) and phase."""
     wait_ns = cal.binary_search_wait(sigma_hz, COHERENCE_NS)
-    wait_vtu = min(max(wait_ns * CLOCK_GHZ - PULSE, SEARCH_WAITS[0]), SEARCH_WAITS[1])
-    return wait_vtu, cal.binary_search_phase(mean_hz, (wait_vtu + PULSE) / CLOCK_GHZ)
+    wait_cycles = min(max(wait_ns * CLOCK_GHZ - PULSE, SEARCH_WAITS[0]), SEARCH_WAITS[1])
+    return wait_cycles, cal.binary_search_phase(mean_hz, (wait_cycles + PULSE) / CLOCK_GHZ)
 
 
 WAIT0, PHASE0 = _search_setting(0.0, SIGMA0_HZ)
@@ -379,14 +381,14 @@ WAIT0, PHASE0 = _search_setting(0.0, SIGMA0_HZ)
     max_latency_ns=2000,
     link="controller",
 )
-def search_step(bits, mean_hz, sigma_hz, wait_vtu):
+def search_step(bits, mean_hz, sigma_hz, wait_cycles):
     """Without a reset, a shot's outcome is whether the readout changed."""
     outcome = 2 * abs(bits[0] - bits[1]) - 1
     mean_hz, sigma_hz = cal.binary_search_update(
-        mean_hz, sigma_hz, outcome, (wait_vtu + PULSE) / CLOCK_GHZ, -0.02, 0.6, COHERENCE_NS
+        mean_hz, sigma_hz, outcome, (wait_cycles + PULSE) / CLOCK_GHZ, -0.02, 0.6, COHERENCE_NS
     )
-    wait_vtu, phase = _search_setting(mean_hz, sigma_hz)
-    return mean_hz, sigma_hz, wait_vtu, phase
+    wait_cycles, phase = _search_setting(mean_hz, sigma_hz)
+    return mean_hz, sigma_hz, wait_cycles, phase
 
 
 @pulse.kernel
@@ -480,17 +482,17 @@ if __name__ == "__main__":
     compiled = pulse.compile(calibration_chain, device=dev, machine=MACHINE)
     lowered = compiled.lower(q, 20_000.0 * CLOCK_GHZ)
     compile_s = time.perf_counter() - start
-    end_vtu = max(
-        e.start_vtu + e.duration_vtu
+    end_cycles = max(
+        e.start_cycles + e.duration_cycles
         for e in lowered.schedule
-        if e.start_vtu is not None and e.duration_vtu is not None
+        if e.start_cycles is not None and e.duration_cycles is not None
     )
     print(
         f"  {sum(1 for e in lowered.schedule if e.kind == 'readout')} readouts, "
         f"{len(lowered.classical_report())} calls, {len(lowered.epochs())} epochs; "
         f"compiled in {compile_s:.2f} s"
     )
-    print(f"  the static schedule (every variable wait at its least) is {end_vtu / 2e3:.0f} us")
+    print(f"  the static schedule (every variable wait at its least) is {end_cycles / 2e3:.0f} us")
     start = time.perf_counter()
     result = pulse.simulate(lowered, plant=plant, shots=1, seed=7, paths="sampled", readout="model")
     print(f"  one shot of the chain simulated in {time.perf_counter() - start:.1f} s")

@@ -47,7 +47,7 @@ def print_ascii_timeline(events: list[pulse.compiler.ScheduledEvent], width: int
             for c in range(start, min(end + 1, width)):
                 row[c] = char
         print(f"  line {line}: |{''.join(row)}|")
-    print(f"  {'':>8} 0{' ' * (width - 8)}{max_t} VTU")
+    print(f"  {'':>8} 0{' ' * (width - 8)}{max_t} cycles")
 
 
 def main():

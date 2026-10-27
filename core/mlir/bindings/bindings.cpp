@@ -687,9 +687,9 @@ public:
   using Event = std::tuple<std::string, int64_t, int64_t,
                            std::optional<int64_t>, std::optional<int64_t>>;
 
-  /// (kind, line, qubit, start_vtu, duration_vtu) for every drive, readout
-  /// and wait, once per loop iteration and in program order. Both arms of a
-  /// conditional are listed. Lines are numbered in allocation order. A
+  /// (kind, line, qubit, start_cycles, duration_cycles) for every drive,
+  /// readout and wait, once per loop iteration and in program order. Both arms
+  /// of a conditional are listed. Lines are numbered in allocation order. A
   /// classical call adds a "submit" and an "answer" event, whose line is the
   /// link id and whose qubit is -1.
   std::vector<Event> events() {
@@ -748,8 +748,8 @@ public:
   /// The lines, (role, qubit) in allocation order, and the timed ops of
   /// `events()`, in the same order, every sync and every classical call,
   /// with what a controller needs to play them: (kind, line, qubit,
-  /// start_vtu, duration_vtu, loop iteration, waveform, tone frequency in Hz
-  /// and frame phase in radians at the op's start, the branches it lies in,
+  /// start_cycles, duration_cycles, loop iteration, waveform, tone frequency in
+  /// Hz and frame phase in radians at the op's start, the branches it lies in,
   /// the lines a sync joins, references, callee, wait mode, timeout). A
   /// waveform is its expression's nodes, children before their parent: (op name
   /// without the dialect, its numeric operands or the samples of
@@ -853,7 +853,7 @@ public:
               symbols.lookup<classical::CallableOp>(submit.getCallee());
           int64_t duration = pulse::scheduledDuration(&op).value_or(1);
           int64_t due = *start + duration +
-                        classical::intAttr(&op, "classical.budget_vtu");
+                        classical::intAttr(&op, "classical.budget_cycles");
           std::optional<int64_t> taken, firstUse, deadline;
           for (mlir::Operation *user : submit.getFuture().getUsers())
             if (auto wait = mlir::dyn_cast<classical::WaitOp>(user)) {
@@ -864,8 +864,8 @@ public:
             }
           if (callable)
             if (auto limit = callable.getDeadlineNs())
-              deadline =
-                  *start + classical::ceilVtu(limit->convertToDouble(), clock);
+              deadline = *start +
+                         classical::ceilCycles(limit->convertToDouble(), clock);
           calls.emplace_back(
               submit.getCallee().str(),
               classical::intAttr(&op, "classical.device"),
@@ -926,8 +926,8 @@ public:
             mlir::Operation *allocation = trace(op.getOperand(0));
             boundaries.emplace_back(
                 "wait", allocation ? lineIndex.lookup(allocation) : -1, *start,
-                classical::intAttr(&op, "pulse.min_vtu"),
-                classical::intAttr(&op, "pulse.max_vtu", -1));
+                classical::intAttr(&op, "pulse.min_cycles"),
+                classical::intAttr(&op, "pulse.max_cycles", -1));
           } else {
             boundaries.emplace_back("answer",
                                     classical::intAttr(&op, "classical.device"),
@@ -1004,7 +1004,7 @@ public:
       mlir::Operation *op = occurrence.op;
       if (op->hasAttr("classical.bound"))
         return false;
-      double start = occurrence.startVtu / clockGHz;
+      double start = occurrence.startCycles / clockGHz;
       if (next && std::get<1>(*next) <= start)
         return false;
       auto submit = mlir::cast<classical::SubmitOp>(op);
@@ -1120,7 +1120,8 @@ public:
                            const pulse::MeasurementKey &key) {
       if (chosen.count(key))
         return false;
-      double end = (occurrence.startVtu + occurrence.durationVtu) / clockGHz;
+      double end =
+          (occurrence.startCycles + occurrence.durationCycles) / clockGHz;
       if (next && std::get<4>(*next) <= end)
         return false;
       int64_t index =
@@ -1130,7 +1131,7 @@ public:
         if (auto attr = allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
           qubit = attr.getInt();
       next = Measurement{index, key.iteration, qubit,
-                         occurrence.startVtu / clockGHz, end};
+                         occurrence.startCycles / clockGHz, end};
       return false;
     };
     auto function = getFuncOp();
@@ -2493,9 +2494,10 @@ public:
             pulse::DriveOp::create(*builder_, loc, driveTy, toneTy, look(p[0]),
                                    look(p[1]), look(p[2]));
         if (p[5] != -1)
-          driveOp->setAttr("start_vtu", builder_->getI64IntegerAttr(p[5]));
+          driveOp->setAttr("start_cycles", builder_->getI64IntegerAttr(p[5]));
         if (p[6] != -1)
-          driveOp->setAttr("duration_vtu", builder_->getI64IntegerAttr(p[6]));
+          driveOp->setAttr("duration_cycles",
+                           builder_->getI64IntegerAttr(p[6]));
         bind(p[3], driveOp.getUpdatedLine());
         bind(p[4], driveOp.getUpdatedTone());
         break;
@@ -2558,10 +2560,11 @@ public:
         mlir::Value line = look(p[0]);
         auto waitOp = pulse::WaitOp::create(*builder_, loc, line.getType(),
                                             line, dur.getResult());
-        waitOp->setAttr("pulse.variable", builder_->getUnitAttr());
-        waitOp->setAttr("pulse.min_vtu", builder_->getI64IntegerAttr(p[3]));
+        waitOp->setAttr("pulse.variable_wait", builder_->getUnitAttr());
+        waitOp->setAttr("pulse.min_cycles", builder_->getI64IntegerAttr(p[3]));
         if (p[4] >= 0)
-          waitOp->setAttr("pulse.max_vtu", builder_->getI64IntegerAttr(p[4]));
+          waitOp->setAttr("pulse.max_cycles",
+                          builder_->getI64IntegerAttr(p[4]));
         if (p[5])
           waitOp->setAttr("classical.variable", builder_->getUnitAttr());
         bind(p[1], waitOp.getResult());
@@ -2983,9 +2986,10 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "Schedule pulse operations", nb::arg("policy"),
            nb::arg("max_drives") = 4, nb::arg("max_readouts") = 2,
            nb::arg("readout_latency") = 0, nb::arg("switch_penalty") = 0)
-      .def("events", &PulseModule::events,
-           nb::call_guard<nb::gil_scoped_release>(),
-           "(kind, line, qubit, start_vtu, duration_vtu) of each timed op")
+      .def(
+          "events", &PulseModule::events,
+          nb::call_guard<nb::gil_scoped_release>(),
+          "(kind, line, qubit, start_cycles, duration_cycles) of each timed op")
       .def("controller_events", &PulseModule::controller_events,
            nb::call_guard<nb::gil_scoped_release>(),
            "Each timed op with its iteration, waveform, tone frame, "

@@ -18,8 +18,8 @@ func.func @simple_schedule() {
   %wf = pulse.gaussian %duration, %amplitude, %sigma
       : i64, f64, f64 -> !pulse.waveform
   // CHECK: = pulse.drive
-  // CHECK-SAME: duration_vtu = 40
-  // CHECK-SAME: start_vtu = 0
+  // CHECK-SAME: duration_cycles = 40
+  // CHECK-SAME: start_cycles = 0
   %d2, %t2 = pulse.drive %d, %wf, %t : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   return
 }

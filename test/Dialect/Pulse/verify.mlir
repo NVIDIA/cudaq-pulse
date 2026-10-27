@@ -19,11 +19,11 @@ func.func @invalid_linearity_and_timing() {
   %wf = pulse.square %duration, %real, %imag
       : i64, f64, f64 -> !pulse.waveform
   %d1, %t1 = pulse.drive %d0, %wf, %t0
-      {start_vtu = 0 : i64, duration_vtu = 40 : i64}
+      {start_cycles = 0 : i64, duration_cycles = 40 : i64}
       : !pulse.drive_line, !pulse.waveform, !pulse.tone
       -> !pulse.drive_line, !pulse.tone
   %d2, %t2 = pulse.drive %d0, %wf, %t0
-      {start_vtu = 20 : i64, duration_vtu = 40 : i64}
+      {start_cycles = 20 : i64, duration_cycles = 40 : i64}
       : !pulse.drive_line, !pulse.waveform, !pulse.tone
       -> !pulse.drive_line, !pulse.tone
 
@@ -34,10 +34,10 @@ func.func @invalid_linearity_and_timing() {
   %wait_duration = pulse.duration_from_int %wait_cycles
       : (i64) -> !pulse.duration
   %wait_line_1 = pulse.wait %wait_line, %wait_duration
-      {start_vtu = 0 : i64, duration_vtu = 40 : i64}
+      {start_cycles = 0 : i64, duration_cycles = 40 : i64}
       : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
   %wait_line_2 = pulse.wait %wait_line_1, %wait_duration
-      {start_vtu = 20 : i64, duration_vtu = 40 : i64}
+      {start_cycles = 20 : i64, duration_cycles = 40 : i64}
       : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
   return
 }

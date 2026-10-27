@@ -70,7 +70,7 @@ def _events(low, kind):
 
 
 def _makespan(low):
-    return max(e.start_vtu + e.duration_vtu for e in low.schedule)
+    return max(e.start_cycles + e.duration_cycles for e in low.schedule)
 
 
 @pytest.mark.parametrize("policy", POLICIES)
@@ -78,15 +78,15 @@ def test_feedback_makespan_is_readout_submit_latency_and_arm(policy):
     low = pulse.compile(feedback, schedule=policy).lower(Q[0])
     assert _makespan(low) == READOUT + 1 + BUDGET + ARM
     (call,) = low.classical_report()
-    assert call.submit_vtu == READOUT and call.due_vtu == READOUT + 1 + BUDGET
-    assert _events(low, "drive")[0].start_vtu == call.due_vtu
+    assert call.submit_cycles == READOUT and call.due_cycles == READOUT + 1 + BUDGET
+    assert _events(low, "drive")[0].start_cycles == call.due_cycles
 
 
 def test_readout_latency_delays_the_submission_under_rcp():
-    machine = MachineModel(readout_latency_vtu=50)
+    machine = MachineModel(readout_latency_cycles=50)
     low = pulse.compile(feedback, schedule="rcp", machine=machine).lower(Q[0])
     (call,) = low.classical_report()
-    assert call.submit_vtu == READOUT + 50
+    assert call.submit_cycles == READOUT + 50
 
 
 @pytest.mark.parametrize("feedback_ns", [0, 100, 250])
@@ -114,20 +114,20 @@ def _late_consumer(fn):
 def test_eager_submission_keeps_its_asap_time_under_alap(policy):
     low = pulse.compile(_late_consumer(decode), schedule=policy).lower(Q[0], Q[1])
     (call,) = low.classical_report()
-    assert call.submit_vtu == READOUT or call.submit_vtu > READOUT
-    readout_end = _events(low, "readout")[0].start_vtu + READOUT
-    assert call.submit_vtu == readout_end
+    assert call.submit_cycles == READOUT or call.submit_cycles > READOUT
+    readout_end = _events(low, "readout")[0].start_cycles + READOUT
+    assert call.submit_cycles == readout_end
     # The conditional drive is pushed to the end, so the answer has slack.
-    assert call.slack_vtu == 8000 - ARM - call.due_vtu
+    assert call.slack_cycles == 8000 - ARM - call.due_cycles
 
 
 def test_lazy_submission_floats_to_just_in_time_under_alap():
     low = pulse.compile(_late_consumer(decode_lazy), schedule="alap").lower(Q[0], Q[1])
     (call,) = low.classical_report()
-    assert call.slack_vtu == 0
-    assert call.due_vtu == 8000 - ARM
+    assert call.slack_cycles == 0
+    assert call.due_cycles == 8000 - ARM
     asap = pulse.compile(_late_consumer(decode_lazy), schedule="asap").lower(Q[0], Q[1])
-    assert asap.classical_report()[0].submit_vtu == READOUT
+    assert asap.classical_report()[0].submit_cycles == READOUT
 
 
 def _rounds(n, fn=decode):
@@ -150,10 +150,11 @@ def test_rounds_overlap_their_calls(policy, rolled):
     low = pulse.compile(_rounds(8), schedule=policy, unroll_threshold=threshold).lower(Q[0])
     calls = low.classical_report()
     assert len(calls) == 8
-    assert [c.submit_vtu for c in calls] == [READOUT * (k + 1) for k in range(8)]
+    assert [c.submit_cycles for c in calls] == [READOUT * (k + 1) for k in range(8)]
     # Eight requests are in flight at once on the default 64-slot link.
     in_flight = max(
-        sum(c.submit_vtu <= t < c.due_vtu for c in calls) for t in (c.submit_vtu for c in calls)
+        sum(c.submit_cycles <= t < c.due_cycles for c in calls)
+        for t in (c.submit_cycles for c in calls)
     )
     assert in_flight == min(8, math.ceil((1 + BUDGET) / READOUT))
 
@@ -166,12 +167,12 @@ def test_link_slots_bound_requests_in_flight(policy, slots):
         Q[0]
     )
     calls = low.classical_report()
-    busy = [(c.submit_vtu, c.due_vtu) for c in calls]
+    busy = [(c.submit_cycles, c.due_cycles) for c in calls]
     for start, _ in busy:
         assert sum(s <= start < e for s, e in busy) <= slots
     # Request k waits for the answer of request k - slots.
     for k in range(slots, len(calls)):
-        assert calls[k].submit_vtu >= calls[k - slots].due_vtu
+        assert calls[k].submit_cycles >= calls[k - slots].due_cycles
 
 
 def test_submissions_on_one_link_go_out_in_order():
@@ -187,10 +188,10 @@ def test_submissions_on_one_link_go_out_in_order():
 
     machine = MachineModel(links={0: Link(fixed_ns=10)})
     calls = pulse.compile(k, machine=machine).lower(Q[0]).classical_report()
-    starts = [c.submit_vtu for c in calls]
+    starts = [c.submit_cycles for c in calls]
     assert starts == sorted(starts)
     for a, b in zip(calls, calls[1:]):
-        assert b.submit_vtu >= a.submit_vtu + a.submit_duration_vtu
+        assert b.submit_cycles >= a.submit_cycles + a.submit_duration_cycles
 
 
 def test_links_are_independent():
@@ -203,7 +204,7 @@ def test_links_are_independent():
 
     low = pulse.compile(k, schedule="asap").lower(Q[0])
     calls = low.classical_report()
-    assert [c.submit_vtu for c in calls] == [0, 0]
+    assert [c.submit_cycles for c in calls] == [0, 0]
     assert {c.link for c in calls} == {1, 2}
 
 
@@ -221,7 +222,7 @@ def test_nested_branches_on_answers(policy):
 
     low = pulse.compile(k, schedule=policy).lower(Q[0])
     first, second = low.classical_report()
-    assert second.submit_vtu >= first.due_vtu + READOUT
+    assert second.submit_cycles >= first.due_cycles + READOUT
     assert _makespan(low) == 2 * (READOUT + 1 + BUDGET) + ARM
 
 
@@ -244,8 +245,8 @@ def test_a_block_returns_its_future(policy, flatten):
 
     low = pulse.compile(k, schedule=policy, flatten_schedules=flatten).lower(Q[0])
     (call,) = low.classical_report()
-    assert call.due_vtu == READOUT + 1 + BUDGET
-    assert _makespan(low) == call.due_vtu + ARM
+    assert call.due_cycles == READOUT + 1 + BUDGET
+    assert _makespan(low) == call.due_cycles + ARM
 
 
 def test_timeout_budgets_the_timeout():
@@ -259,7 +260,7 @@ def test_timeout_budgets_the_timeout():
             drive(d, square(ARM, 0.1), t)
 
     (call,) = pulse.compile(k).lower(Q[0]).classical_report()
-    assert call.due_vtu == READOUT + 1 + math.ceil(400 * CLOCK)
+    assert call.due_cycles == READOUT + 1 + math.ceil(400 * CLOCK)
 
 
 def test_blocking_waits_start_epochs():
@@ -278,8 +279,8 @@ def test_blocking_waits_start_epochs():
         calls = low.classical_report()
         assert [c.epoch for c in calls] == [0, 1]
         # Nothing before the first answer ends after it.
-        first_answer = calls[0].taken_vtu
-        assert _events(low, "drive")[0].start_vtu + ARM <= first_answer
+        first_answer = calls[0].taken_cycles
+        assert _events(low, "drive")[0].start_cycles + ARM <= first_answer
 
 
 def test_a_missed_deadline_is_rejected():
@@ -319,7 +320,7 @@ def test_deadline_slack_is_reported():
         loose.submit([readout(r, square(READOUT, 0.05), rt)]).result()
 
     (call,) = pulse.compile(k).lower(Q[0]).classical_report()
-    assert call.deadline_slack_vtu == math.ceil(1500 * CLOCK) - (1 + BUDGET)
+    assert call.deadline_slack_cycles == math.ceil(1500 * CLOCK) - (1 + BUDGET)
 
 
 def test_a_request_too_big_for_its_slot_is_rejected():
@@ -370,7 +371,7 @@ def test_very_many_calls_schedule_in_linear_time(links):
         calls = low.classical_report()
         assert len(calls) == n
         # Each call waits for the previous drive; answers are due 41 later.
-        assert calls[-1].due_vtu == calls[-1].submit_vtu + 1 + 40
+        assert calls[-1].due_cycles == calls[-1].submit_cycles + 1 + 40
     # 4x the calls in well under 16x the time (quadratic would be 16x).
     assert timings[2000] < 8 * timings[500]
 
@@ -419,24 +420,24 @@ def test_scheduling_invariants(steps, policy):
     calls = low.classical_report()
     for call in calls:
         # S7: every answer is taken no earlier than it is due.
-        assert call.taken_vtu is None or call.taken_vtu >= call.due_vtu
-        assert call.first_use_vtu is None or call.first_use_vtu >= call.due_vtu
-        assert call.due_vtu == call.submit_vtu + call.submit_duration_vtu + BUDGET
+        assert call.taken_cycles is None or call.taken_cycles >= call.due_cycles
+        assert call.first_use_cycles is None or call.first_use_cycles >= call.due_cycles
+        assert call.due_cycles == call.submit_cycles + call.submit_duration_cycles + BUDGET
     # S9: one link sends one request at a time, in program order.
-    starts = [c.submit_vtu for c in calls]
+    starts = [c.submit_cycles for c in calls]
     assert starts == sorted(starts)
     # No two pulses overlap on a line, and the makespan covers everything.
     by_line: dict[tuple[str, int], list[tuple[int, int]]] = {}
     for e in low.schedule:
-        assert e.start_vtu >= 0
+        assert e.start_cycles >= 0
         if e.link is None:
-            by_line.setdefault(("line", e.line), []).append((e.start_vtu, e.duration_vtu))
+            by_line.setdefault(("line", e.line), []).append((e.start_cycles, e.duration_cycles))
     for spans in by_line.values():
         spans.sort()
         for (s0, d0), (s1, _) in zip(spans, spans[1:]):
             assert s0 + d0 <= s1
     if calls:
-        assert _makespan(low) >= max(c.taken_vtu or 0 for c in calls)
+        assert _makespan(low) >= max(c.taken_cycles or 0 for c in calls)
 
 
 # ── Regressions ──────────────────────────────────────────────────────────────
@@ -454,7 +455,7 @@ def test_a_helper_passed_a_future_takes_its_answer():
             drive(d, square(ARM, 0.1), t)
 
     (call,) = pulse.compile(k).lower(Q[0]).classical_report()
-    assert call.first_use_vtu == call.due_vtu
+    assert call.first_use_cycles == call.due_cycles
 
 
 @pytest.mark.parametrize("policy", ["asap", "alap"])
@@ -469,8 +470,8 @@ def test_a_blocking_wait_waits_for_every_line(policy):
 
     low = pulse.compile(k, schedule=policy).lower(Q[0], Q[1])
     (call,) = low.classical_report()
-    assert call.taken_vtu == 8000
-    assert _events(low, "drive")[1].start_vtu == 8000
+    assert call.taken_cycles == 8000
+    assert _events(low, "drive")[1].start_cycles == 8000
 
 
 @pytest.mark.parametrize("callee", ["asap", "alap"])
@@ -495,8 +496,8 @@ def test_a_block_waits_for_a_slot_the_caller_holds(callee, policy):
     calls = pulse.compile(k, schedule=policy, machine=machine).lower(Q[0]).classical_report()
     first, *block = calls
     # The block's second request needs the slot the first call frees.
-    assert block[1].submit_vtu == first.due_vtu
-    assert block[0].submit_vtu == block[1].submit_vtu - 1
+    assert block[1].submit_cycles == first.due_cycles
+    assert block[0].submit_cycles == block[1].submit_cycles - 1
 
 
 @pytest.mark.parametrize("passes", [None, ()])
@@ -530,5 +531,5 @@ def test_a_future_taken_with_a_timeout_in_a_block_budgets_the_timeout(callee, po
         take(decode.submit([readout(r, square(READOUT, 0.05), rt)]), d, t)
 
     (call,) = pulse.compile(k, schedule=policy).lower(Q[0]).classical_report()
-    assert call.due_vtu == READOUT + 1 + math.ceil(400 * CLOCK)
-    assert call.taken_vtu >= call.due_vtu and call.first_use_vtu >= call.due_vtu
+    assert call.due_cycles == READOUT + 1 + math.ceil(400 * CLOCK)
+    assert call.taken_cycles >= call.due_cycles and call.first_use_cycles >= call.due_cycles

@@ -60,7 +60,7 @@ def test_export_lists_every_timed_operation_with_its_waveform_and_tone():
         {"line": 1, "role": "readout", "qudit": 0},
         {"line": 2, "role": "drive", "qudit": 1},
     ]
-    kinds = [(e["kind"], e["line"], e["start_vtu"], e["end_vtu"]) for e in program["events"]]
+    kinds = [(e["kind"], e["line"], e["start_cycles"], e["end_cycles"]) for e in program["events"]]
     assert kinds == [
         ("drive", 0, 0, 16),
         ("drive", 0, 16, 32),
@@ -76,7 +76,7 @@ def test_export_lists_every_timed_operation_with_its_waveform_and_tone():
         "shape": "gaussian",
         "params": {"duration": 16.0, "amplitude": 0.5, "sigma": 4.0},
     }
-    assert first["duration_vtu"] == 16 and first["iteration"] == []
+    assert first["duration_cycles"] == 16 and first["iteration"] == []
     assert second["waveform"]["shape"] == "drag"
     assert second["waveform"]["params"]["beta"] == pytest.approx(0.3)
     # The frame change before a drive is the frame it plays in.
@@ -104,7 +104,7 @@ def test_export_marks_the_branch_and_the_measurement_it_depends_on():
 def test_export_names_the_lines_a_sync_joins():
     events = _program()["events"]
     assert events[2]["lines"] == [0, 1] and events[4]["lines"] == [1, 2]
-    assert events[2]["qudit"] is None and events[2]["duration_vtu"] == 0
+    assert events[2]["qudit"] is None and events[2]["duration_cycles"] == 0
 
 
 @pulse.kernel
@@ -134,9 +134,9 @@ def test_a_sync_is_a_barrier_between_the_events_of_its_lines(schedule):
             if event["kind"] == "sync" or event["line"] not in joined:
                 continue
             if event["index"] < barrier["index"]:
-                assert event["end_vtu"] <= barrier["start_vtu"], (barrier, event)
+                assert event["end_cycles"] <= barrier["start_cycles"], (barrier, event)
             else:
-                assert event["start_vtu"] >= barrier["start_vtu"], (barrier, event)
+                assert event["start_cycles"] >= barrier["start_cycles"], (barrier, event)
 
 
 @pulse.kernel
@@ -157,10 +157,10 @@ def test_a_detuned_tone_gains_phase_between_its_drives():
     program = lowered.export_controller()
     clock = program["clock_ghz"]
     drives = [e for e in program["events"] if e["kind"] == "drive"]
-    assert [e["start_vtu"] for e in drives] == [0, 116, 132]
+    assert [e["start_cycles"] for e in drives] == [0, 116, 132]
     for event, extra in zip(drives, (0.0, 0.0, 0.25), strict=True):
         assert event["frequency_hz"] == pytest.approx(5.0e9 + 2.0e6)
-        expected = 2 * math.pi * 2.0e6 * event["start_vtu"] / clock * 1e-9 + extra
+        expected = 2 * math.pi * 2.0e6 * event["start_cycles"] / clock * 1e-9 + extra
         assert event["phase_rad"] == pytest.approx(expected)
 
 
@@ -206,7 +206,7 @@ def test_a_line_is_listed_with_its_role_even_when_it_only_waits():
     program = _program(idle_readout_line)
     assert program["lines"] == [{"line": 0, "role": "readout", "qudit": 0}]
     (event,) = program["events"]
-    assert event["kind"] == "wait" and event["end_vtu"] == 10
+    assert event["kind"] == "wait" and event["end_cycles"] == 10
     assert "waveform" not in event
 
 
@@ -302,20 +302,20 @@ def close_drives(q, r):
 
 
 def test_limits_report_issue_spacing_acquirers_and_feedback():
-    limits = ControllerLimits(issue_vtu=4, min_wait_vtu=4)
+    limits = ControllerLimits(issue_cycles=4, min_wait_cycles=4)
     found = check(pulse.compile(close_drives).lower(Q[0], Q[1]), limits)
     assert len(found) == 1 and "starts 5 cycles after" in found[0]
-    limits = ControllerLimits(acquirers={0: 0, 1: 0}, acquirer_hold_vtu=30)
+    limits = ControllerLimits(acquirers={0: 0, 1: 0}, acquirer_hold_cycles=30)
     found = check(pulse.compile(two_readouts, schedule="asap").lower(Q[0], Q[1]), limits)
     assert len(found) == 1 and "acquirer 0" in found[0]
     # Serialized by the scheduler, the readouts fit.
-    machine = MachineModel(max_concurrent_readouts=1, line_switch_penalty_vtu=30)
+    machine = MachineModel(max_concurrent_readouts=1, line_switch_penalty_cycles=30)
     lowered = pulse.compile(two_readouts, schedule="rcp", machine=machine).lower(Q[0], Q[1])
     assert check(lowered, limits) == []
-    limits = ControllerLimits(feedback_latency_vtu=50)
+    limits = ControllerLimits(feedback_latency_cycles=50)
     lowered = pulse.compile(drive_and_branch, schedule="asap").lower(Q[0], Q[1])
     assert len(check(lowered, limits)) == 2
-    machine = MachineModel(readout_latency_vtu=50)
+    machine = MachineModel(readout_latency_cycles=50)
     lowered = pulse.compile(drive_and_branch, schedule="rcp", machine=machine).lower(Q[0], Q[1])
     assert check(lowered, limits) == []
 
@@ -328,22 +328,22 @@ def test_limits_report_clock_tones_memory_and_size():
     assert check(lowered, ControllerLimits(tones_per_line=1)) == []
     # Line 0 plays two shapes of 16 cycles, the readout line one of 100,
     # line 2 two of 20.
-    found = check(lowered, ControllerLimits(samples_per_vtu=2, waveform_samples=64))
+    found = check(lowered, ControllerLimits(samples_per_cycles=2, waveform_samples=64))
     assert [f.split(":")[0] for f in found] == ["line 1", "line 2"]
     found = check(lowered, ControllerLimits(max_events=4))
     assert "5 drives and readouts" in found[0] and "at most 4" in found[0]
     # Both arms of a branch play on one line at one time without conflict.
-    assert check(lowered, ControllerLimits(issue_vtu=4)) == []
+    assert check(lowered, ControllerLimits(issue_cycles=4)) == []
 
 
 def test_limits_on_the_machine_model_fail_the_compilation():
-    machine = MachineModel(controller=ControllerLimits(issue_vtu=4, min_wait_vtu=4))
+    machine = MachineModel(controller=ControllerLimits(issue_cycles=4, min_wait_cycles=4))
     with pytest.raises(ControllerLimitError, match="starts 5 cycles after") as caught:
         pulse.compile(close_drives, machine=machine).lower(Q[0], Q[1])
     assert len(caught.value.violations) == 1
     assert isinstance(caught.value, pulse.CompilationError)
     with pytest.raises(TypeError, match="ControllerLimits"):
-        MachineModel(controller={"issue_vtu": 4})  # type: ignore[arg-type]
+        MachineModel(controller={"issue_cycles": 4})  # type: ignore[arg-type]
 
 
 def test_a_limit_error_lists_ten_violations_and_counts_the_rest():
@@ -353,22 +353,22 @@ def test_a_limit_error_lists_ten_violations_and_counts_the_rest():
 
 
 def test_limits_are_part_of_the_machine_model_identity():
-    a = MachineModel(controller=ControllerLimits(issue_vtu=4, acquirers={0: 0}))
-    b = MachineModel(controller=ControllerLimits(issue_vtu=4, acquirers={0: 0}))
-    c = MachineModel(controller=ControllerLimits(issue_vtu=2))
+    a = MachineModel(controller=ControllerLimits(issue_cycles=4, acquirers={0: 0}))
+    b = MachineModel(controller=ControllerLimits(issue_cycles=4, acquirers={0: 0}))
+    c = MachineModel(controller=ControllerLimits(issue_cycles=2))
     assert a == b and hash(a) == hash(b)
     assert a != c and a != MachineModel()
     assert ControllerLimits(acquirers={0: 0, 1: 0}).as_dict()["acquirers"] == {"0": 0, "1": 0}
-    with pytest.raises(ValueError, match="issue_vtu"):
-        ControllerLimits(issue_vtu=0)
+    with pytest.raises(ValueError, match="issue_cycles"):
+        ControllerLimits(issue_cycles=0)
     with pytest.raises(ValueError, match="cannot be negative"):
-        ControllerLimits(acquirer_hold_vtu=-1)
+        ControllerLimits(acquirer_hold_cycles=-1)
     with pytest.raises(ValueError, match="positive or None"):
         ControllerLimits(waveform_samples=0)
 
 
 def test_the_limits_travel_with_the_program():
-    limits = ControllerLimits(issue_vtu=1, tones_per_line=2)
+    limits = ControllerLimits(issue_cycles=1, tones_per_line=2)
     program = _program(machine=MachineModel(controller=limits))
     assert program["limits"] == limits.as_dict()
     assert _program()["limits"] is None
@@ -393,7 +393,7 @@ def test_float_arguments_are_exported_at_their_values():
 
 
 def test_a_kernel_with_float_parameters_is_checked_when_compiled():
-    machine = MachineModel(controller=ControllerLimits(issue_vtu=4, min_wait_vtu=40))
+    machine = MachineModel(controller=ControllerLimits(issue_cycles=4, min_wait_cycles=40))
     with pytest.raises(ControllerLimitError, match="starts 16 cycles after"):
         pulse.compile(ramsey, machine=machine).lower(Q[0], 0.75)
 
@@ -441,7 +441,7 @@ def test_export_carries_calls_with_their_measurements_and_waits():
     assert enqueue["measurements"] == [readout["index"]]
     assert get["measurements"] == []
     assert answer["wait"] == "bounded" and answer["timeout_ns"] is None
-    assert all(e["end_vtu"] == e["start_vtu"] + e["duration_vtu"] for e in submits)
+    assert all(e["end_cycles"] == e["start_cycles"] + e["duration_cycles"] for e in submits)
     fix = next(e for e in program["events"] if e["conditions"])
     assert fix["conditions"][0]["answers"] == [answer["index"]]
     assert fix["conditions"][0]["test"] == "answer"

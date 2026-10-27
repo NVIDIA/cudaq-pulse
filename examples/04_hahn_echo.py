@@ -70,17 +70,17 @@ def cpmg_echo(qubit, sigma, amp_half_pi, amp_pi, tau, n_refocus):
 
 
 def main():
-    sigma = 10.0  # Gaussian sigma in VTU
+    sigma = 10.0  # Gaussian sigma in clock cycles
     amp_half_pi = 0.25
     amp_pi = 0.50
-    tau = 500  # VTU
+    tau = 500  # clock cycles
 
     print("=== Hahn Echo ===")
     compiled_kernel = pulse.compile(hahn_echo, device=dev).lower(
         dev.qudit_handles[0], sigma, amp_half_pi, amp_pi, tau
     )
     total_hahn = 2 * int(4 * sigma) + int(4 * sigma) + 2 * tau
-    print(f"  Expected duration: {total_hahn} VTU")
+    print(f"  Expected duration: {total_hahn} clock cycles")
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
@@ -90,7 +90,7 @@ def main():
         dev.qudit_handles[0], sigma, amp_half_pi, amp_pi, tau, n_refocus
     )
     total_cpmg = 2 * int(4 * sigma) + n_refocus * (int(4 * sigma) + 2 * tau)
-    print(f"  Expected duration: {total_cpmg} VTU")
+    print(f"  Expected duration: {total_cpmg} clock cycles")
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 

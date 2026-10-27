@@ -8,10 +8,10 @@
 
 // Schedule attributes of timed pulse ops inside structured control flow.
 //
-// A scheduled drive, readout or wait carries `start_vtu` and `duration_vtu`.
-// Inside `scf.for` loops it also carries `period_vtu`, one entry per
-// enclosing loop (outermost first): in iteration (k_0, ..., k_n) of those
-// loops the op starts at start_vtu + sum_l k_l * period_vtu[l].
+// A scheduled drive, readout or wait carries `start_cycles` and
+// `duration_cycles`. Inside `scf.for` loops it also carries `period_cycles`,
+// one entry per enclosing loop (outermost first): in iteration (k_0, ..., k_n)
+// of those loops the op starts at start_cycles + sum_l k_l * period_cycles[l].
 
 #pragma once
 
@@ -57,18 +57,19 @@ enclosingLoops(mlir::Operation *op, mlir::Operation *root = nullptr) {
 /// is scheduled.
 inline std::optional<int64_t>
 scheduledStart(mlir::Operation *op, llvm::ArrayRef<int64_t> iteration) {
-  auto start = op->getAttrOfType<mlir::IntegerAttr>("start_vtu");
+  auto start = op->getAttrOfType<mlir::IntegerAttr>("start_cycles");
   if (!start)
     return std::nullopt;
   int64_t time = start.getInt();
-  if (auto periods = op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_vtu"))
+  if (auto periods =
+          op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles"))
     for (auto [k, period] : llvm::zip(iteration, periods.asArrayRef()))
       time += k * period;
   return time;
 }
 
 inline std::optional<int64_t> scheduledDuration(mlir::Operation *op) {
-  if (auto duration = op->getAttrOfType<mlir::IntegerAttr>("duration_vtu"))
+  if (auto duration = op->getAttrOfType<mlir::IntegerAttr>("duration_cycles"))
     return duration.getInt();
   return std::nullopt;
 }

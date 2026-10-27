@@ -142,7 +142,7 @@ def test_loop_over_a_list_held_line_stays_rolled():
     ir = python_ir(k, Q[0])
     assert [op.kind for op in ir.ops].count("scf.for") == 1
     compiled = pulse.compile(k, schedule="asap").lower(Q[0])
-    assert max(e.start_vtu + e.duration_vtu for e in compiled.schedule) == 6 * 40 + 10
+    assert max(e.start_cycles + e.duration_cycles for e in compiled.schedule) == 6 * 40 + 10
 
 
 def test_compile_with_default_passes_accepts_list_indexed_kernels():

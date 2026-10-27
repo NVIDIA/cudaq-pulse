@@ -51,12 +51,12 @@ def plot_schedule(
     # Rows are lines, then the links of classical calls.
     spans: list[tuple[str, tuple[bool, int], int, int]] = []
     for ev in events:
-        if ev.start_vtu is None or ev.duration_vtu is None:
+        if ev.start_cycles is None or ev.duration_cycles is None:
             raise ValueError(
                 "the module is not scheduled; lower the kernel with its float arguments"
             )
         spans.append(
-            (ev.kind, (ev.kind in _CLASSICAL_KINDS, ev.line), ev.start_vtu, ev.duration_vtu)
+            (ev.kind, (ev.kind in _CLASSICAL_KINDS, ev.line), ev.start_cycles, ev.duration_cycles)
         )
     import matplotlib.patches as mpatches
     import matplotlib.pyplot as plt
@@ -128,7 +128,7 @@ def plot_schedule(
     ax.set_yticklabels(
         [(f"link {link_label.get(n, n)}" if link else f"line {n}") for link, n in line_ids]
     )
-    ax.set_xlabel("Time (VTU)")
+    ax.set_xlabel("Time (clock cycles)")
     ax.set_ylim(-0.5, n_rows - 0.5)
 
     max_time = max((x + w for _, _, x, w in spans), default=100)

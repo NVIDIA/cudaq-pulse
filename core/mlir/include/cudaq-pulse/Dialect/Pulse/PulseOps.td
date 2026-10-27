@@ -136,7 +136,7 @@ def GaussianSquarePulseOp : PulseOp<"gaussian_square", [Pure]> {
   let summary = "Create a flat-topped Gaussian pulse";
   let description = [{
     A Gaussian rising edge, a flat top at the given amplitude, and a
-    Gaussian falling edge. `risefall` is the duration of each edge in VTU.
+    Gaussian falling edge. `risefall` is the duration of each edge in clock cycles.
   }];
   let arguments = (ins
     I64:$duration,
@@ -349,11 +349,11 @@ def WaitOp : PulseOp<"wait", []> {
     line, of the same kind. The scheduler reads the length from a
     `pulse.duration_from_int` of a constant.
 
-    A wait marked `pulse.variable` takes its length from a value computed
+    A wait marked `pulse.variable_wait` takes its length from a value computed
     from the function's float arguments, so it is known only when they are
-    bound. It carries `pulse.min_vtu` and, optionally, `pulse.max_vtu`: the
+    bound. It carries `pulse.min_cycles` and, optionally, `pulse.max_cycles`: the
     bounds of its length in clock cycles. Without bound arguments, the module
-    is scheduled with the wait at `pulse.min_vtu`; binding them folds the
+    is scheduled with the wait at `pulse.min_cycles`; binding them folds the
     length to a constant within the bounds, and scheduling again gives the
     exact schedule.
   }];
@@ -619,10 +619,10 @@ def ScheduleBlockOp : PulseOp<"schedule_block", [
     ```
 
     Scheduling inlines the block, so later passes see flat IR. Before that,
-    the scheduler records the block's shape on it: `length_vtu`, for each
-    operand the local time it is first needed (`in_offset_vtu`, -1 if no
+    the scheduler records the block's shape on it: `length_cycles`, for each
+    operand the local time it is first needed (`in_offset_cycles`, -1 if no
     timed op depends on it), and for each result the local time it is
-    available (`out_offset_vtu`), or -1 with `out_source` naming the operand
+    available (`out_offset_cycles`), or -1 with `out_source` naming the operand
     it passes through unchanged.
   }];
   let arguments = (ins StrAttr:$policy, Variadic<AnyTimedType>:$inputs,
