@@ -297,7 +297,7 @@ def test_a_missed_deadline_is_rejected():
         r, rt = get_readout_line(q)
         tight.submit([readout(r, square(READOUT, 0.05), rt)]).result()
 
-    with pytest.raises(RuntimeError, match="cannot meet its deadline.*slack -401"):
+    with pytest.raises(RuntimeError, match=r"cannot meet its deadline.*slack -401\); raise deadline_ns"):
         pulse.compile(k).lower(Q[0])
 
 

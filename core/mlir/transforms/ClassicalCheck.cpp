@@ -127,7 +127,9 @@ struct PulseClassicalCheckPass
               << callable.getSymName() << "' cannot meet its deadline: its "
               << "answer is due " << due << " cycles after the submission "
               << "starts, but the deadline is " << limit << " (slack "
-              << limit - due << ")";
+              << limit - due
+              << "); raise deadline_ns, lower max_latency_ns or use a "
+                 "faster link";
           failed = true;
         }
       }
