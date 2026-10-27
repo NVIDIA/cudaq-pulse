@@ -5,8 +5,8 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""The release tag checks, the workflow pin check, the release hygiene check
-and the GPU CI matrix (source tree only)."""
+"""The release tag checks, the workflow pin check, the release hygiene check,
+the GPU CI matrix and the classical remnant check (source tree only)."""
 
 import importlib.util
 import json
@@ -240,6 +240,33 @@ def test_release_hygiene(tmp_path):
     path = tmp_path / "f.txt"
     path.write_text("\n".join(bad + good) + "\n")
     assert [error.split(":")[1] for error in check(path)] == ["1", "2", "3", "4", "5"]
+
+
+def test_classical_remnants(tmp_path):
+    check = _load("check-classical-remnants").check
+    assert check(_TOOLS.parent / "docs" / "user_guide" / "classical_calls.rst") == []
+    # Assembled at run time so this file passes the check itself.
+    old = "Fl" + "oats"
+    bad = [
+        f"from cudaq_pulse.classical import {old}",
+        f"x = classical.{old}",
+        "@pulse.classical(ar" + "gs=(Bi" + "ts(1),), max_latency_ns=1)",
+        f"A ``{old}(7)`` argument.",
+        "def f(b: Bi" + "ts[3]) -> None: ...",
+    ]
+    good = [
+        "@pulse.classical(ar" + "gs=()) is rejected  # remnant-ok",
+        "@pulse.classical(max_latency_ns=1, lengths={'bits': 3})",
+        "class Bits(Protocol):",
+        "def _schema_function(name, args=(), results=()):",
+        "_Floats(2)",
+    ]
+    path = tmp_path / "f.py"
+    path.write_text("\n".join(bad + good) + "\n")
+    assert [int(error.split(":")[1]) for error in check(path)] == [1, 2, 3, 3, 4, 5]
+    notebook = tmp_path / "n.ipynb"
+    notebook.write_text(json.dumps({"cells": [{"source": ["x = 1\n", bad[1]]}]}))
+    assert [error.split(":")[1] for error in check(notebook)] == ["2"]
 
 
 def _locked(package):

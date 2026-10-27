@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+"""Fail if a tracked file still spells a classical function the old way.
+
+A classical function's type hints say what it takes and returns, so the
+declaration types (``Floats(2)``, ``classical.Levels``, ``Bits(3)`` and the
+rest) and the ``args=``/``results=`` options are gone from the API. This
+finds them in docs, examples, notebooks, docstrings, messages and tests. A
+line that must name an old spelling (the error that says it is gone, the
+test of that error, the changelog entry) carries ``remnant-ok``.
+
+Usage: python tools/check-classical-remnants.py [FILES...]   (default: git ls-files)
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+_OLD = r"(?:Levels|IQ|Floats|Integers|Bytes|Float|Integer|Byte)"
+_PATTERNS = (
+    ("an old declaration type", re.compile(rf"\bclassical\.{_OLD}\b")),
+    ("an old declaration type", re.compile(rf"(?<![\w.]){_OLD}\(")),
+    ("an old declaration type", re.compile(rf"``{_OLD}(?:\([^`]*\))?``")),
+    (
+        "an old declaration type",
+        re.compile(rf"from\s+cudaq_pulse\.classical\s+import\s+[^\n]*\b{_OLD}\b"),
+    ),
+    ("a sized Bits", re.compile(r"(?<![\w.])(?<!class )(?:classical\.|pulse\.)?Bits\(\s*[\w*]")),
+    ("a sized Bits", re.compile(r"(?<![\w.])Bits\[")),
+    (
+        "args= or results= on a declaration",
+        re.compile(
+            r"(?<!\w)(?:classical|external|function|ClassicalFunction)\((?:[^()]|\([^()]*\))*?"
+            r"\b(?:args|results)\s*=",
+            re.S,
+        ),
+    ),
+)
+_SUFFIXES = {".py", ".pyi", ".md", ".rst", ".txt", ".ipynb", ".td", ".h"}
+
+
+def _text(path: Path) -> str:
+    raw = path.read_text(encoding="utf-8")
+    if path.suffix != ".ipynb":
+        return raw
+    # The cells' sources only, so a hit's line number is a line of a cell.
+    try:
+        cells = json.loads(raw).get("cells", [])
+    except ValueError:
+        return raw
+    return "\n".join("".join(cell.get("source", [])) for cell in cells)
+
+
+def check(path: Path) -> list[str]:
+    if path.suffix not in _SUFFIXES:
+        return []
+    try:
+        text = _text(path)
+    except (UnicodeDecodeError, IsADirectoryError, FileNotFoundError):
+        return []
+    lines = text.splitlines()
+    found = set()
+    for what, pattern in _PATTERNS:
+        for match in pattern.finditer(text):
+            number = text.count("\n", 0, match.start()) + 1
+            if "remnant-ok" not in lines[number - 1]:
+                found.add((number, what))
+    return [f"{path}:{number}: {what}" for number, what in sorted(found)]
+
+
+def main() -> int:
+    if sys.argv[1:]:
+        paths = [Path(p) for p in sys.argv[1:]]
+    else:
+        listed = subprocess.run(
+            ["git", "ls-files", "-z"], capture_output=True, check=True, text=True
+        )
+        paths = [Path(p) for p in listed.stdout.split("\0") if p]
+    me = Path(__file__).resolve()
+    errors = [error for path in paths if path.resolve() != me for error in check(path)]
+    for error in errors:
+        print(error)
+    if errors:
+        print(
+            f"{len(errors)} old classical spellings: declare with type hints"
+            " (def f(bits: pulse.Bits) -> float) and lengths=, or mark a line"
+            " that must name one with remnant-ok"
+        )
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
