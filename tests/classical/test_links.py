@@ -54,6 +54,20 @@ def test_names_take_the_lowest_free_ids_in_order():
     assert mixed.link("controller") == CONTROLLER and mixed.link(7) == Link()
 
 
+def test_a_model_made_with_replace_keeps_its_link_names():
+    import dataclasses
+
+    from cudaq_pulse.controller import ControllerLimits
+
+    mixed = MachineModel(links={0: DECODER, "controller": CONTROLLER, 2: Link(), "spare": Link()})
+    changed = dataclasses.replace(mixed, controller=ControllerLimits(max_events=10))
+    assert dict(changed.link_names) == {"controller": 1, "spare": 3}
+    assert changed.link("controller") == CONTROLLER and dict(changed.links) == dict(mixed.links)
+    assert dataclasses.replace(changed, controller=None) == mixed
+    named = dataclasses.replace(mixed, links={"decoder": DECODER})
+    assert dict(named.link_names) == {"decoder": 0}
+
+
 def test_a_named_link_compiles_to_the_same_ir_as_its_id():
     machine = MachineModel(links={"decoder": DECODER, "controller": CONTROLLER})
     by_id = MachineModel(links={0: DECODER, 1: CONTROLLER})
