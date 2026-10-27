@@ -35,7 +35,7 @@ import linecache
 import math
 import operator
 import types
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import Any
 
 from ..classical import ClassicalFunction
@@ -184,6 +184,21 @@ def _uses_pulse_ops(fn: types.FunctionType, seen: set[int] | None = None) -> boo
         if isinstance(value, types.FunctionType) and _uses_pulse_ops(value, seen):
             return True
     return False
+
+
+def _takes_ir(args: Sequence[Any], kwargs: dict[str, Any] | None) -> bool:
+    """Whether a helper called with *args* must be traced: it is passed IR
+    values, or futures (whose ``result()`` only a traced call can take),
+    directly or in a list or tuple."""
+
+    def traced(value: Any) -> bool:
+        if isinstance(value, (IRValue, _classical.Future)):
+            return True
+        return isinstance(value, (list, tuple)) and any(
+            isinstance(v, _classical.Future) for v in value
+        )
+
+    return any(traced(a) for a in args) or bool(kwargs and any(traced(v) for v in kwargs.values()))
 
 
 def _truth(value: StackVal) -> bool:
@@ -1710,9 +1725,7 @@ class PulseIREmitter:
         # Executing these as ordinary Python would invoke pulse operations
         # outside the compiler context and lose their IR effects.
         if isinstance(callable_val, types.FunctionType) and (
-            any(isinstance(arg, IRValue) for arg in call_args)
-            or (kwargs and any(isinstance(v, IRValue) for v in kwargs.values()))
-            or _uses_pulse_ops(callable_val)
+            _takes_ir(call_args, kwargs) or _uses_pulse_ops(callable_val)
         ):
             self._inline_helper(callable_val, call_args, kwargs)
             return
@@ -1720,11 +1733,7 @@ class PulseIREmitter:
         if (
             callable_val.__class__ is types.MethodType
             and callable_val.__func__.__class__ is types.FunctionType
-            and (
-                any(isinstance(arg, IRValue) for arg in call_args)
-                or (kwargs and any(isinstance(v, IRValue) for v in kwargs.values()))
-                or _uses_pulse_ops(callable_val.__func__)
-            )
+            and (_takes_ir(call_args, kwargs) or _uses_pulse_ops(callable_val.__func__))
         ):
             self._inline_helper(callable_val.__func__, [callable_val.__self__, *call_args], kwargs)
             return

@@ -440,6 +440,20 @@ def test_scheduling_invariants(steps, policy):
 # ── Regressions ──────────────────────────────────────────────────────────────
 
 
+def test_a_helper_passed_a_future_takes_its_answer():
+    def answer(future):
+        return future.result()[0]
+
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        r, rt = get_readout_line(q)
+        if answer(decode.submit([readout(r, square(READOUT, 0.05), rt)])):
+            drive(d, square(ARM, 0.1), t)
+
+    (call,) = pulse.compile(k).lower(Q[0]).classical_report()
+    assert call.first_use_vtu == call.due_vtu
+
 
 @pytest.mark.parametrize("policy", ["asap", "alap"])
 def test_a_blocking_wait_waits_for_every_line(policy):
