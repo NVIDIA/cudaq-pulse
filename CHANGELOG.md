@@ -198,9 +198,11 @@ behavior may change in any 0.x release.
   latency, holds link slots and reports each call's slack and its hidden and
   exposed latency (`Lowered.classical_report()`); `pulse-classical-check`
   verifies slots, deadlines and ordering. A wait whose length is an answer,
-  and a blocking wait for an answer, are barriers: the timeline splits into
-  epochs (`Lowered.epochs()`) whose start shifts with the run-time lengths
-  before them.
+  and a blocking wait for an answer, are barriers for the lines that depend
+  on them (through a `sync`, a measurement or answer, a branch or a shared
+  tone): those lines split into epochs (`Lowered.epochs()`) whose start
+  shifts with the run-time lengths before them, and other lines keep their
+  time, so qubits waiting on answers of their own run side by side.
 - **Simulating and emulating calls.** `pulse.simulate` binds answers per
   measurement path, with timeouts from the latency model, assignment errors
   and relaxation during readout, IQ points from a dispersive readout model,

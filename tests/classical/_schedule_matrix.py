@@ -21,6 +21,7 @@ from __future__ import annotations
 import itertools
 import json
 import math
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, NamedTuple
@@ -63,6 +64,11 @@ PLACEMENTS = (
     "both_waits",
     "across_variable",
     "loop_variable",
+    "spectator_variable",
+    "spectator_loop",
+    "spectator_unrolled",
+    "synced_variable",
+    "shared_answer",
     "callee",
     "callee_loop",
     "callee_twice",
@@ -75,6 +81,8 @@ PLACEMENTS = (
 CALLEE_PLACEMENTS = frozenset(p for p in PLACEMENTS if p.startswith(("callee", "future")))
 # Where the answer is taken inside the called kernel.
 TAKEN_IN_CALLEE = CALLEE_PLACEMENTS - {"future_out"}
+# Where both qubits wait on run-time lengths of their own.
+SPECTATING = frozenset({"spectator_variable", "spectator_loop", "spectator_unrolled"})
 # Called kernels whose events are only their own, so their shape can be
 # compared with the kernel compiled alone.
 SHAPED = frozenset({"callee", "callee_loop", "callee_twice", "callee_feedback", "callee_float"})
@@ -158,6 +166,40 @@ def epoch_starts(low: Any) -> list[tuple[str, int, int]]:
     return [(e.opened_by, e.line, e.start_cycles) for e in low.epochs()[1:]]
 
 
+def line_timelines(low: Any) -> dict[int, int]:
+    """The timeline of each line, in allocation order: lines in different
+    timelines do not wait for one another's run-time waits. Without
+    timelines every line is in timeline 0."""
+    allocations = re.findall(r"pulse\.get_(?:drive|readout)_line [^\n]*", low.mlir())
+    found = {}
+    for line, text in enumerate(allocations):
+        match = re.search(r"classical\.timeline = (\d+)", text)
+        found[line] = int(match.group(1)) if match else 0
+    return found
+
+
+def epoch_after(low: Any) -> list[int | None]:
+    """The epoch each epoch follows, from the export: the one its barrier
+    ends, on the lines it holds back (``None`` for the first). The export
+    names it only where it is not the one before."""
+    epochs = low.export_emulation()["epochs"]
+    return [e.get("after", k - 1 if k else None) for k, e in enumerate(epochs)]
+
+
+def event_epochs(low: Any) -> list[int]:
+    """The epoch of each event of ``low.schedule``, from the export."""
+    return [e["epoch"] for e in low.export_emulation()["events"]]
+
+
+def _follows(after: Sequence[int | None], epoch: int | None, k: int) -> bool:
+    """Whether *epoch* is *k* or opens after it, through ``after``."""
+    while epoch is not None:
+        if epoch == k:
+            return True
+        epoch = after[epoch]
+    return False
+
+
 def _export_times(event: dict[str, Any]) -> tuple[int, int]:
     return event["start_cycles"], event["duration_cycles"]
 
@@ -218,6 +260,11 @@ def barrier_lengths(case: Case) -> list[int]:
         "across_variable": [answer],
         "callee_variable": [answer],
         "loop_variable": [answer] * LOOP,
+        "spectator_variable": [answer, answer],
+        "spectator_loop": [answer, answer] * LOOP,
+        "spectator_unrolled": [answer, answer] * LOOP,
+        "synced_variable": [answer],
+        "shared_answer": [answer, answer],
         "mixed_wait": [mixed],
         "both_waits": [answer, mixed],
     }.get(case.placement, [])
@@ -376,6 +423,25 @@ def program(case: Case, *, callee_as_helper: bool = False) -> Any:
             for _ in range(n):
                 wait(d, length(), bounds=TAU_BOUNDS)
                 feedback(d, t, readout(r, square(RO, 0.05), rt))
+        elif placement == "spectator_variable":
+            wait(d, length(), bounds=TAU_BOUNDS)
+            feedback(d, t, m)
+            wait(e, length(), bounds=TAU_BOUNDS)
+        elif placement in ("spectator_loop", "spectator_unrolled"):
+            for _ in range(n):
+                wait(d, length(), bounds=TAU_BOUNDS)
+                feedback(d, t, readout(r, square(RO, 0.05), rt))
+                wait(e, length(), bounds=TAU_BOUNDS)
+                drive(e, square(TAIL, 0.05), u)
+        elif placement == "synced_variable":
+            wait(d, length(), bounds=TAU_BOUNDS)
+            sync(d, e)
+            feedback(d, t, m)
+        elif placement == "shared_answer":
+            x = length()
+            wait(d, x, bounds=TAU_BOUNDS)
+            wait(e, x, bounds=TAU_BOUNDS)
+            feedback(d, t, m)
         elif placement in ("callee", "callee_feedback", "callee_variable"):
             callee(q)
         elif placement == "callee_loop":
@@ -417,7 +483,7 @@ def compile_case(case: Case, device: Any = None, kernel: Any = None, **options: 
     settings: dict[str, Any] = {
         "machine": MACHINE,
         "flatten_schedules": case.flatten,
-        "unroll_threshold": 10**6 if case.placement == "static_loop" else 0,
+        "unroll_threshold": 10**6 if case.placement in ("static_loop", "spectator_unrolled") else 0,
     }
     if case.root in ("rcp", "alap_rcp"):
         settings["schedule"] = case.root
@@ -477,8 +543,11 @@ def check_calls(case: Case, low: Any) -> None:
     spans = sorted((c.submit, c.due) for c in made)
     for start, _ in spans:
         assert sum(s <= start < e for s, e in spans) <= link.max_in_flight
-    for (s0, _), (s1, _) in zip(spans, spans[1:]):
-        assert s1 >= s0 + 1
+    # Lines that wait on their own share the link: each budgets its
+    # requests as sent after the others', so they may go out at once.
+    sharing = len(set(line_timelines(low).values()))
+    for start, _ in spans:
+        assert sum(s == start for s, _ in spans) <= sharing
 
 
 def check_lines(low: Any) -> None:
@@ -495,34 +564,72 @@ def check_lines(low: Any) -> None:
 
 
 def check_barriers(case: Case, low: Any) -> None:
-    """A variable or blocking wait is a barrier: every operation before it
-    in program order ends by its start, every one after starts after it;
-    there is one per variable wait and blocking answer."""
+    """A variable or blocking wait is a barrier on the lines that wait for
+    it: every operation of theirs before it in program order ends by its
+    start, every one after starts after it, and so does everything in the
+    epoch it opens; there is one per variable wait and blocking answer.
+    With one timeline it holds back every line and call."""
     events = low.schedule
-    barriers: list[int] = []
-    for opened_by, line, start in epoch_starts(low):
+    timelines = line_timelines(low)
+    single = len(set(timelines.values())) <= 1
+    epoch_of, after = event_epochs(low), epoch_after(low)
+    barriers: list[tuple[int, int]] = []
+    for k, (opened_by, line, start) in enumerate(epoch_starts(low), 1):
         for i, e in enumerate(events):
-            if i in barriers:
+            if any(i == b for b, _ in barriers):
                 continue
             wait = opened_by == "wait" and e.kind == "wait" and e.link is None and e.end == start
             answer = opened_by == "answer" and e.kind == "answer" and e.start == start
             if (wait or answer) and e.line == line:
-                barriers.append(i)
+                barriers.append((i, k))
                 break
         else:
             raise AssertionError(f"no barrier opens the epoch at {start}")
-    for i in barriers:
+    for i, k in barriers:
         barrier = events[i]
+        opened = [_follows(after, epoch, k) for epoch in epoch_of]
+        held = {timelines[e.line] for e, o in zip(events, opened) if o and e.link is None}
+        if barrier.link is None:
+            held.add(timelines[barrier.line])
         for j, e in enumerate(events):
-            if j < i:
+            mine = single or (e.link is None and timelines[e.line] in held)
+            if j < i and mine:
                 assert e.end <= barrier.start or e.kind == "answer", (e, barrier)
-            elif j > i:
+            elif j > i and (mine or opened[j]):
                 assert e.start >= barrier.end, (e, barrier)
     variable = len(barrier_lengths(case))
     if case.placement in ("loop_variable", "callee_loop") or case.take == "blocking":
         assert len(barriers) >= variable
     else:
         assert len(barriers) == variable
+
+
+def check_scope(case: Case, low: Any) -> None:
+    """A run-time wait holds back only the lines that depend on it: two
+    qubits waiting on their own answers do not wait for each other, a sync
+    after a wait aligns the lines it names, and an answer used on two lines
+    holds back both."""
+    timelines = line_timelines(low)
+    d, e = timelines[0], timelines[2]
+    events = low.schedule
+    waits = [x for x in events if x.kind == "wait" and x.link is None and x.line in (0, 2)]
+    variable = [x for x in waits if x.duration_cycles == TAU_BOUNDS[0]]
+    if case.placement in SPECTATING:
+        if case.policy in ("asap", "alap"):
+            assert d != e
+            # q's first wait does not wait for p's long first pulse.
+            first = next(x for x in variable if x.line == 0)
+            assert first.start < SPECTATOR, first
+    elif case.placement == "synced_variable":
+        assert d == e
+        (barrier,) = [x for x in variable if x.line == 0]
+        tail = [x for x in events if x.kind == "drive" and x.line == 2][-1]
+        assert tail.start >= barrier.end
+    elif case.placement == "shared_answer":
+        assert d == e
+        on_q, on_p = (next(x for x in variable if x.line == k) for k in (0, 2))
+        # Both wait for the answer, so q's waits for p's long pulse too.
+        assert min(on_q.start, on_p.start) >= SPECTATOR
 
 
 def check_reverify(low: Any) -> None:
@@ -545,8 +652,15 @@ def check_tight(case: Case, low: Any) -> None:
         for e in events:
             assert e.start in ready, e
     else:
+        # Each timeline ends on its own: its lines wait for nothing later.
+        timelines = line_timelines(low)
+        ends: dict[int, int] = {}
+        for e in events:
+            if e.link is None:
+                t = timelines[e.line]
+                ends[t] = max(ends.get(t, 0), e.end)
         makespan = max(e.end for e in events)
-        needed = {makespan} | {e.start for e in events} | barriers
+        needed = {makespan} | set(ends.values()) | {e.start for e in events} | barriers
         for e in events:
             if e.kind in ("drive", "readout", "wait"):
                 assert e.end in needed, e
@@ -612,9 +726,11 @@ def epoch_shifts(case: Case, low: Any) -> list[int]:
     """How much later each epoch starts at run time than in the static
     schedule, which places each variable wait at its lowest length."""
     runs = iter(barrier_lengths(case))
+    after = epoch_after(low)
     shifts = [0]
-    for opened_by, _, _ in epoch_starts(low):
-        shifts.append(shifts[-1] + (next(runs) - TAU_BOUNDS[0] if opened_by == "wait" else 0))
+    for k, (opened_by, _, _) in enumerate(epoch_starts(low), 1):
+        previous = shifts[after[k]] if after[k] is not None else 0
+        shifts.append(previous + (next(runs) - TAU_BOUNDS[0] if opened_by == "wait" else 0))
     return shifts
 
 
@@ -669,8 +785,12 @@ def explicit_reference(low: Any, shifts: Sequence[int]) -> Any:
         timed.append((index, kind, which, gap, duration, amplitude, conditions))
     tree = _hoist(_nest(timed, 0))
     # The program runs until its last operation ends at run time, a wait
-    # perhaps: the reference waits as long.
-    end = max(e.end for e in low.schedule) + shifts[-1]
+    # perhaps: the reference waits as long. A variable wait ends where the
+    # epoch it opens starts.
+    end = max(
+        max(e.end + shifts[k] for e, k in zip(low.schedule, event_epochs(low))),
+        max(e.start_cycles + shifts[e.index] for e in low.epochs()),
+    )
     last = max((cursor.get(key, 0), key) for key in cursor)
     if end > last[0]:
         tree.append(("wait", last[1], end - last[0]))

@@ -19,6 +19,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from tests._handles import Q
+from tests.classical._schedule_matrix import line_timelines
 from tests.property_settings import examples
 
 POLICIES = ("asap", "alap", "rcp", "alap_rcp")
@@ -128,13 +129,16 @@ def test_a_variable_wait_cannot_be_in_a_block_or_a_branch_arm():
     pulse.compile(in_block, flatten_schedules=True).lower(Q[0])
 
 
+@pytest.mark.parametrize("tied", [False, True])
 @pytest.mark.parametrize("policy", POLICIES)
-def test_epochs_and_their_shift_ranges(policy):
+def test_epochs_and_their_shift_ranges(policy, tied):
     @pulse.kernel
     def k(q, p):
         d, t = get_drive_line(q)
         e, u = get_drive_line(p)
         drive(e, square(400, 0.01), u)
+        if tied:
+            sync(d, e)
         a = next_tau.submit(1.0).result()
         wait(d, a, bounds=(8, 100))
         drive(d, square(40, 0.1), t)
@@ -146,10 +150,19 @@ def test_epochs_and_their_shift_ranges(policy):
     epochs = low.epochs()
     assert [e.opened_by for e in epochs] == ["start", "wait", "wait"]
     assert epochs[1].max_shift_cycles == 92 and epochs[2].max_shift_cycles is None
-    # The first barrier waits for the 400-cycle drive on the other line.
-    assert epochs[1].start_cycles == 400 + 8
     calls = low.classical_report()
     assert [c.epoch for c in calls] == [0, 1]
+    spectator = [e for e in low.schedule if e.kind == "drive" and e.qubit == 1]
+    if tied:
+        # Synced with the 400-cycle drive on the other line, the first
+        # barrier waits for it, and that line's next drive for the barriers.
+        assert epochs[1].start_cycles == 400 + 8
+        assert spectator[1].start >= epochs[2].start_cycles
+    else:
+        # Untied, it starts once its answer is due, and the other line
+        # plays on without waiting for either barrier.
+        assert epochs[1].start_cycles == calls[0].due_cycles + 8 < 400
+        assert spectator[1].start == 400
 
 
 def test_a_program_without_variable_waits_has_one_epoch():
@@ -198,10 +211,18 @@ def test_epoch_invariants(steps, policy):
     ]
     variable = sum(1 for kind, _ in steps if kind == "variable_wait")
     assert len(low.epochs()) == variable + 1
+    # A barrier holds back the lines of its timeline: with one timeline,
+    # every line and call.
+    timelines = line_timelines(low)
+    single = len(set(timelines.values())) == 1
     for i in barriers:
         start = events[i].start_cycles
         end = start + events[i].duration_cycles
+        timeline = timelines[events[i].line]
         for j, e in enumerate(events):
+            held = single if e.link is not None else timelines[e.line] == timeline
+            if not held:
+                continue
             if j < i:
                 assert e.start_cycles + e.duration_cycles <= start
             elif j > i:
@@ -254,10 +275,12 @@ def test_a_wait_from_an_answer_and_a_float_compiles_once():
         low = compiled.lower(Q[0], Q[1], 0.5 * k)
     assert compiled.cache_info().compiled == 1
     # The answer keeps the wait a barrier that opens an epoch, at its lowest
-    # length until it is known.
+    # length until it is known; it waits for the answer, not for the other
+    # line's 400-cycle drive.
     assert [e.opened_by for e in low.epochs()] == ["start", "wait"]
     (wait_event,) = [e for e in low.schedule if e.kind == "wait" and e.link is None]
-    assert wait_event.start == 400 and wait_event.duration_cycles == 8
+    (call,) = low.classical_report()
+    assert wait_event.start == max(40, call.due_cycles) and wait_event.duration_cycles == 8
     assert "%arg0: f64" in low.generic.mlir()
 
 
@@ -306,19 +329,27 @@ def test_a_wait_from_an_answer_and_a_float_runs_their_sum_clamped(tau):
     dev = pulse.device({"target": TargetDescription(name="decay", qubits=qubits)})
     q, p = dev.qudit_handles
     length = min(max(round(2.0 * 10.0 + tau), 8), 1000)
+    low = pulse.compile(offset_by_tau, device=dev).lower(q, p, tau)
+    # The drive on d, then the wait once its answer is due, where the static
+    # schedule puts them; the other line plays on.
+    drive_d = next(e for e in low.schedule if e.kind == "drive" and e.line == 0)
+    (variable,) = [e for e in low.schedule if e.kind == "wait" and e.link is None]
 
     @pulse.kernel
     def fixed(q, p):
         d, t = get_drive_line(q)
         e, u = get_drive_line(p)
         drive(e, square(400, 0.01), u)
+        if drive_d.start:
+            wait(d, drive_d.start)
         drive(d, square(40, 0.1), t)
-        sync(d, e)
+        if variable.start > drive_d.end:
+            wait(d, variable.start - drive_d.end)
         wait(d, length)
         drive(d, square(40, 0.1), t)
 
-    mixed = pulse.simulate(pulse.compile(offset_by_tau, device=dev).lower(q, p, tau))
-    reference = pulse.simulate(pulse.compile(fixed, device=dev).lower(q, p))
+    mixed = pulse.simulate(low)
+    reference = pulse.simulate(pulse.compile(fixed, device=dev, schedule="asap").lower(q, p))
     np.testing.assert_allclose(mixed.density_matrix, reference.density_matrix, atol=1e-9)
 
 

@@ -44,7 +44,6 @@ exceptions. ``analyze`` does the same for one function on its own.
 
 from __future__ import annotations
 
-import bisect
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
@@ -417,8 +416,7 @@ def _walk(
         {"line": index, "role": role, "qudit": qudit}
         for index, (role, qudit) in enumerate(raw_lines)
     ]
-    # Epoch k > 0 starts when the k-th barrier ends.
-    starts = [e.start_cycles for e in lowered.epochs()[1:]] if lowered.classical else []
+    epochs = lowered._event_epochs(syncs=True)
     events = []
     for index, item in enumerate(raw_events):
         (
@@ -447,7 +445,7 @@ def _walk(
             "duration_cycles": duration,
             "end_cycles": None if start is None or duration is None else start + duration,
             "iteration": list(iteration),
-            "epoch": 0 if start is None else bisect.bisect_right(starts, start),
+            "epoch": epochs[index] if epochs and start is not None else 0,
             "conditions": [
                 {
                     "branch": branch,

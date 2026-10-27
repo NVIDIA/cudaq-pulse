@@ -23,6 +23,12 @@
 // every `classical.wait` `classical.device` and, in blocking mode,
 // `classical.blocking`.
 //
+// Lines that no run-time wait ties together wait independently: the
+// scheduler numbers each such group of lines a timeline, `classical.timeline`
+// on their allocations and on the calls made for them. A link used by
+// several timelines shares out its slots between them and sends for each in
+// turn, so each timeline's requests are timed as if the link were its own.
+//
 // Include after the Pulse and Classical op headers.
 
 #pragma once
@@ -33,8 +39,11 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <map>
 #include <optional>
+#include <vector>
 
 namespace classical {
 
@@ -158,6 +167,8 @@ inline bool declaresClassicalCalls(mlir::ModuleOp module) {
   return false;
 }
 
+inline constexpr const char *kTimelineAttr = "classical.timeline";
+
 /// Write the timing attributes of every call in `function` (see the file
 /// comment). Returns false if `function` makes no call.
 inline bool annotateClassicalCalls(mlir::func::FuncOp function) {
@@ -168,6 +179,9 @@ inline bool annotateClassicalCalls(mlir::func::FuncOp function) {
   mlir::SymbolTable symbols(module);
   mlir::Builder b(function.getContext());
   bool any = false;
+  // The timelines on each link, for the submissions that have one.
+  std::vector<std::pair<mlir::Operation *, int64_t>> shared;
+  std::map<int64_t, std::vector<int64_t>> timelines;
   function.walk([&](mlir::Operation *op) {
     if (auto submit = mlir::dyn_cast<SubmitOp>(op)) {
       auto callable = symbols.lookup<CallableOp>(submit.getCallee());
@@ -188,6 +202,11 @@ inline bool annotateClassicalCalls(mlir::func::FuncOp function) {
         attrs.set("classical.eager", b.getUnitAttr());
       else
         attrs.erase("classical.eager");
+      if (auto timeline = attrs.get(kTimelineAttr)) {
+        int64_t t = mlir::cast<mlir::IntegerAttr>(timeline).getInt();
+        shared.emplace_back(op, t);
+        timelines[callable.getDevice()].push_back(t);
+      }
       op->setAttrs(attrs.getDictionary(op->getContext()));
     } else if (auto wait = mlir::dyn_cast<WaitOp>(op)) {
       auto callable = symbols.lookup<CallableOp>(wait.getCallee());
@@ -200,6 +219,41 @@ inline bool annotateClassicalCalls(mlir::func::FuncOp function) {
         op->setAttr("classical.blocking", b.getUnitAttr());
     }
   });
+  // A link that T timelines use gives each its share of the slots, the
+  // first ones one more when they do not divide evenly. A timeline sends one
+  // request at a time, so each is sent at most after one pending send of
+  // every other timeline: it holds the link for its own send and T - 1 of
+  // the link's longest.
+  auto cyclesOf = [](mlir::Operation *op, llvm::StringRef name) {
+    return mlir::cast<mlir::IntegerAttr>(op->getAttr(name)).getInt();
+  };
+  std::map<int64_t, int64_t> longest;
+  for (auto [op, t] : shared) {
+    int64_t &most = longest[cyclesOf(op, "classical.device")];
+    most = std::max(most, cyclesOf(op, "classical.submit_cycles"));
+  }
+  for (auto &[device, list] : timelines) {
+    std::sort(list.begin(), list.end());
+    list.erase(std::unique(list.begin(), list.end()), list.end());
+  }
+  for (auto [op, t] : shared) {
+    int64_t device = cyclesOf(op, "classical.device");
+    const std::vector<int64_t> &list = timelines[device];
+    auto count = static_cast<int64_t>(list.size());
+    if (count <= 1)
+      continue;
+    auto rank = static_cast<int64_t>(
+        std::lower_bound(list.begin(), list.end(), t) - list.begin());
+    int64_t slots = linkModel(module, device).maxInFlight;
+    int64_t share = slots / count + (rank < slots % count ? 1 : 0);
+    int64_t send =
+        cyclesOf(op, "classical.submit_cycles") + (count - 1) * longest[device];
+    mlir::NamedAttrList attrs(op->getAttrDictionary());
+    attrs.set("classical.submit_cycles", b.getI64IntegerAttr(send));
+    attrs.set("classical.max_in_flight",
+              b.getI64IntegerAttr(std::max<int64_t>(1, share)));
+    op->setAttrs(attrs.getDictionary(op->getContext()));
+  }
   return any;
 }
 

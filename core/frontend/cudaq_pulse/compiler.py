@@ -268,14 +268,19 @@ class Epoch:
     """One epoch of a compiled kernel, from ``Lowered.epochs()``.
 
     A variable wait (its length computed from a classical answer) or a
-    blocking classical wait is a barrier: every line syncs before it, and
-    everything after it shifts with its run-time length. Epoch 0 starts the
-    program; epoch k starts when the k-th barrier ends. ``start_cycles`` is the
-    epoch's start in the static schedule, which places every barrier at its
-    lowest length. At run time the epoch starts ``shift_cycles`` later, with
-    ``min_shift_cycles <= shift_cycles <= max_shift_cycles`` (``None``: unbounded).
-    ``opened_by`` is ``"start"``, ``"wait"`` (a variable wait on line
-    ``line``) or ``"answer"`` (a blocking wait on link ``line``).
+    blocking classical wait is a barrier for the lines that depend on it:
+    those it waits on or whose pulses use its answer, and every line tied to
+    them by a ``sync``, a shared tone, a branch or a kernel with its own
+    ``schedule=``. They sync before it, and what follows on them shifts with
+    its run-time length; other lines keep their time. Epoch 0 starts the
+    program; epoch k starts when the k-th barrier, in program order, ends.
+    ``start_cycles`` is the epoch's start in the static schedule, which places
+    every barrier at its lowest length. At run time the epoch starts
+    ``shift_cycles`` later, with ``min_shift_cycles <= shift_cycles <=
+    max_shift_cycles`` (``None``: unbounded); the bound adds up the barriers
+    before it on the same lines. ``opened_by`` is ``"start"``, ``"wait"`` (a
+    variable wait on line ``line``) or ``"answer"`` (a blocking wait on link
+    ``line``).
     """
 
     index: int
@@ -296,7 +301,7 @@ class ClassicalCall:
     (``None`` if the kernel never takes it). ``first_use_cycles`` is the
     earliest start of a pulse whose amplitude, tone or branch comes from the
     answer, and ``deadline_cycles`` the latest due time the function's
-    ``deadline_ns`` allows. ``epoch`` counts the blocking waits before it.
+    ``deadline_ns`` allows. ``epoch`` is the epoch it is submitted in.
     ``link_name`` is the link's name in the machine model, if it has one.
 
     ``exposed_cycles`` is how long the first use waits for the answer beyond
@@ -647,19 +652,32 @@ class Lowered:
 
         A program without such waits has one epoch.
         """
+        return self._epochs()[0]
+
+    def _epochs(self) -> tuple[list[Epoch], list[int | None]]:
+        """The epochs, and the epoch each one follows (``None`` for the
+        first): the one its barrier ends, on the lines the barrier holds
+        back. Its shift adds to that epoch's."""
         module = self._module if self.scheduled else self._concrete()
         with self._lock:
             boundaries = module.epoch_boundaries()
         epochs = [Epoch(0, "start", -1, 0, 0, 0)]
-        unbounded = False
-        extra = 0
-        for k, (kind, line, start, lowest, highest) in enumerate(boundaries, start=1):
-            if highest < 0:
-                unbounded = True
-            else:
-                extra += highest - lowest
-            epochs.append(Epoch(k, kind, line, start + lowest, 0, None if unbounded else extra))
-        return epochs
+        after: list[int | None] = [None]
+        for k, (kind, line, start, lowest, highest, before) in enumerate(boundaries, start=1):
+            most = epochs[before].max_shift_cycles
+            extra = None if most is None or highest < 0 else most + highest - lowest
+            epochs.append(Epoch(k, kind, line, start + lowest, 0, extra))
+            after.append(before)
+        return epochs, after
+
+    def _event_epochs(self, syncs: bool) -> list[int]:
+        """The epoch of each event of ``schedule`` (with *syncs*, of the
+        controller export), in the same order."""
+        if not self.classical:
+            return []
+        module = self._concrete() if syncs or self._retimed else self._module
+        with self._lock:
+            return list(module.event_epochs(syncs))
 
     def classical_report(self) -> list[ClassicalCall]:
         """Every call to a classical function, with its timing and slack.

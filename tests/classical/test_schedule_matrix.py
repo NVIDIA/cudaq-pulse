@@ -52,6 +52,7 @@ def test_case(case):
     matrix.check_calls(case, low)
     matrix.check_lines(low)
     matrix.check_barriers(case, low)
+    matrix.check_scope(case, low)
     matrix.check_reverify(low)
     matrix.check_export(case, low, matrix.lower_case(case, Q))
     if case.policy in ("asap", "alap") and not case.blocks:

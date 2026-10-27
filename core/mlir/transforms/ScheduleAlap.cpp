@@ -28,8 +28,15 @@
 // function that makes calls, every value carries the time it is available, so
 // a pulse whose amplitude, tone or branch condition is computed from an
 // answer starts after it; a function without calls skips that bookkeeping.
-// Eager submissions keep their ASAP time under ALAP. A blocking wait is a
-// barrier: nothing after it starts before it, nothing before it ends after.
+// Eager submissions keep their ASAP time under ALAP. A blocking wait, like a
+// variable wait, is a barrier: nothing after it starts before it, nothing
+// before it ends after.
+//
+// A barrier holds back only its timeline (see Timelines below): the lines
+// that depend on it. Each timeline keeps its own floor, end and ceiling, its
+// own order on each link it shares and its own lanes under rcp, and a loop
+// advances the timelines its body plays on. With one timeline (a function
+// on one line, or without a run-time wait) a barrier holds back every line.
 //
 // A `pulse.schedule_block` is scheduled first, innermost first, on its own
 // with its own policy. Its shape (length, and when each operand is first
@@ -277,6 +284,284 @@ struct Resources {
   int64_t switchPenalty = 0;
 };
 
+// ── Timelines ────────────────────────────────────────────────────────────
+
+/// The lines of a function in timelines: a run-time wait (a variable wait,
+/// or a blocking wait for an answer) holds back the lines of its timeline
+/// only. Two lines share a timeline when one waits for the other: an op
+/// joins the timelines of the lines, tones, measurements and answers it is
+/// computed from, an op in a branch joins the condition's, a schedule block
+/// (placed whole) or a sync joins its inputs', and a loop-carried value
+/// joins what it starts from and what each iteration yields.
+///
+/// Other lines are held back too where their schedule could not just move
+/// with the wait: under rcp/alap_rcp when there are more lines than lanes, a
+/// blocking wait whose answer nothing uses (it stops everything), and a link
+/// with more timelines than slots, which merges them until each has one.
+struct Timelines {
+  /// The number of timelines, or 0 when one barrier would hold back every
+  /// line: a function without run-time waits, or with one timeline.
+  int64_t count = 0;
+  /// Under rcp/alap_rcp, the drive and readout lines of each timeline: its
+  /// own lanes.
+  llvm::SmallVector<int64_t> drives, readouts;
+};
+
+class TimelineAnalysis {
+public:
+  TimelineAnalysis(mlir::func::FuncOp function, const Resources &resources)
+      : function(function), resources(resources) {}
+
+  /// Find the timelines and write `classical.timeline` on the allocations,
+  /// calls and schedule blocks of the function, or remove it if there is
+  /// one. Returns whether the calls' attributes changed.
+  bool run(Timelines &result) {
+    // Without a run-time wait there is one timeline: skip the analysis.
+    bool numbered = false;
+    auto scan = function.walk([&](mlir::Operation *op) {
+      if (op->hasAttr("classical.variable") ||
+          (mlir::isa<classical::WaitOp>(op) &&
+           op->hasAttr("classical.blocking")))
+        return mlir::WalkResult::interrupt();
+      numbered |= op->hasAttr(classical::kTimelineAttr);
+      return mlir::WalkResult::advance();
+    });
+    if (!scan.wasInterrupted()) {
+      if (numbered)
+        function.walk([](mlir::Operation *op) {
+          op->removeAttr(classical::kTimelineAttr);
+        });
+      return numbered;
+    }
+    visitBlock(function.getBody().front(), kNone);
+    result = decide();
+    bool changed = stale;
+    if (result.count == 0) {
+      if (stale)
+        for (auto [op, c] : nodes)
+          op->removeAttr(classical::kTimelineAttr);
+      return changed;
+    }
+    mlir::Builder b(function.getContext());
+    for (auto [op, c] : nodes)
+      op->setAttr(classical::kTimelineAttr, b.getI64IntegerAttr(idOf[find(c)]));
+    return true;
+  }
+
+private:
+  static constexpr unsigned kNone = ~0u;
+
+  unsigned make() {
+    parent.push_back(static_cast<unsigned>(parent.size()));
+    return parent.back();
+  }
+  unsigned find(unsigned x) {
+    while (parent[x] != x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
+    }
+    return x;
+  }
+  /// The joined class; the earlier one names it, so numbering is stable.
+  unsigned join(unsigned a, unsigned b) {
+    if (a == kNone)
+      return b;
+    if (b == kNone)
+      return a;
+    a = find(a);
+    b = find(b);
+    if (a == b)
+      return a;
+    if (b < a)
+      std::swap(a, b);
+    parent[b] = a;
+    return a;
+  }
+  unsigned of(mlir::Value value) const {
+    auto it = classOf.find(value);
+    return it == classOf.end() ? kNone : it->second;
+  }
+  static bool isLink(mlir::Value value) {
+    return mlir::isa<classical::LinkType>(value.getType());
+  }
+  unsigned operandClass(mlir::Operation *op, unsigned context) {
+    unsigned c = context;
+    for (mlir::Value operand : op->getOperands())
+      if (!isLink(operand))
+        c = join(c, of(operand));
+    return c;
+  }
+  void give(mlir::ValueRange values, unsigned c) {
+    if (c == kNone)
+      return;
+    for (mlir::Value value : values)
+      if (!isLink(value))
+        classOf[value] = c;
+  }
+  void note(mlir::Operation *op, unsigned c) {
+    stale |= op->hasAttr(classical::kTimelineAttr);
+    nodes.push_back({op, c});
+  }
+  /// A call with no inputs that carry time goes with what uses its answer.
+  unsigned orphan(unsigned c) { return c != kNone ? c : make(); }
+
+  void visitBlock(mlir::Block &block, unsigned context) {
+    for (mlir::Operation &op : block)
+      if (!op.hasTrait<mlir::OpTrait::IsTerminator>())
+        visitOp(&op, context);
+  }
+
+  void visitOp(mlir::Operation *op, unsigned context) {
+    if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op)) {
+      unsigned c = join(make(), context);
+      lines.push_back({op, c});
+      note(op, c);
+      give(op->getResults(), c);
+      return;
+    }
+    if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+      auto yield = loop.getBody()->getTerminator();
+      for (auto [init, arg, result] :
+           llvm::zip(loop.getInitArgs(), loop.getRegionIterArgs(),
+                     loop.getResults())) {
+        if (isLink(arg))
+          continue;
+        unsigned c = join(make(), join(context, of(init)));
+        classOf[arg] = c;
+        classOf[result] = c;
+      }
+      visitBlock(*loop.getBody(), context);
+      for (auto [arg, yielded] :
+           llvm::zip(loop.getRegionIterArgs(), yield->getOperands()))
+        if (!isLink(arg))
+          join(of(arg), of(yielded));
+      return;
+    }
+    if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
+      unsigned c = join(context, of(branch.getCondition()));
+      visitBlock(*branch.thenBlock(), c);
+      if (!branch.getElseRegion().empty())
+        visitBlock(*branch.elseBlock(), c);
+      for (auto [index, result] : llvm::enumerate(branch.getResults())) {
+        unsigned r = join(c, of(branch.thenYield().getOperand(index)));
+        if (!branch.getElseRegion().empty())
+          r = join(r, of(branch.elseYield().getOperand(index)));
+        give(result, r);
+      }
+      return;
+    }
+    if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op)) {
+      unsigned c = operandClass(op, context);
+      if (c == kNone)
+        c = make();
+      give(block.getBody().getArguments(), c);
+      visitBlock(block.getBody().front(), c);
+      for (mlir::Value yielded :
+           block.getBody().front().getTerminator()->getOperands())
+        if (!isLink(yielded))
+          c = join(c, of(yielded));
+      give(op->getResults(), c);
+      note(op, c);
+      return;
+    }
+    if (auto submit = mlir::dyn_cast<classical::SubmitOp>(op)) {
+      unsigned c = orphan(operandClass(op, context));
+      give(submit.getFuture(), c);
+      note(op, c);
+      return;
+    }
+    if (auto wait = mlir::dyn_cast<classical::WaitOp>(op)) {
+      unsigned c = orphan(operandClass(op, context));
+      give(wait.getValues(), c);
+      note(op, c);
+      if (op->hasAttr("classical.blocking")) {
+        runtimeWait = true;
+        everyLine |= llvm::all_of(wait.getValues(),
+                                  [](mlir::Value v) { return v.use_empty(); });
+      }
+      return;
+    }
+    runtimeWait |= op->hasAttr("classical.variable");
+    unsigned c = operandClass(op, context);
+    for (mlir::Region &region : op->getRegions())
+      for (mlir::Block &nested : region)
+        visitBlock(nested, c);
+    give(op->getResults(), c);
+  }
+
+  /// Number the classes that hold lines in allocation order; a call or
+  /// block whose class holds none goes with the first line.
+  void number() {
+    llvm::DenseSet<unsigned> withLines;
+    for (auto [op, c] : lines)
+      withLines.insert(find(c));
+    for (auto [op, c] : nodes)
+      if (!withLines.count(find(c)))
+        join(c, lines.front().second);
+    idOf.clear();
+    for (auto [op, c] : lines)
+      idOf.try_emplace(find(c), static_cast<int64_t>(idOf.size()));
+  }
+
+  Timelines decide() {
+    Timelines result;
+    if (!runtimeWait || everyLine || lines.size() < 2)
+      return result;
+    if (resources.enabled) {
+      int64_t drives = 0, readouts = 0;
+      for (auto [op, c] : lines)
+        ++(mlir::isa<pulse::GetDriveLineOp>(op) ? drives : readouts);
+      if (drives > resources.maxDrives || readouts > resources.maxReadouts)
+        return result;
+    }
+    auto module = function->getParentOfType<mlir::ModuleOp>();
+    // Merge the timelines of a link round-robin until it has a slot for each.
+    while (true) {
+      number();
+      std::map<int64_t, llvm::SmallVector<unsigned>> perLink;
+      for (auto [op, c] : nodes) {
+        if (!mlir::isa<classical::SubmitOp>(op))
+          continue;
+        auto &list = perLink[classical::intAttr(op, "classical.device")];
+        if (!llvm::is_contained(list, find(c)))
+          list.push_back(find(c));
+      }
+      bool merged = false;
+      for (auto &[device, list] : perLink) {
+        auto slots = static_cast<size_t>(std::max<int64_t>(
+            1, classical::linkModel(module, device).maxInFlight));
+        for (size_t k = slots; k < list.size(); ++k) {
+          join(list[k], list[k % slots]);
+          merged = true;
+        }
+      }
+      if (!merged)
+        break;
+    }
+    number();
+    if (idOf.size() < 2)
+      return result;
+    result.count = static_cast<int64_t>(idOf.size());
+    if (resources.enabled) {
+      result.drives.assign(idOf.size(), 0);
+      result.readouts.assign(idOf.size(), 0);
+      for (auto [op, c] : lines)
+        ++(mlir::isa<pulse::GetDriveLineOp>(op)
+               ? result.drives
+               : result.readouts)[idOf[find(c)]];
+    }
+    return result;
+  }
+
+  mlir::func::FuncOp function;
+  Resources resources;
+  llvm::SmallVector<unsigned> parent;
+  llvm::DenseMap<mlir::Value, unsigned> classOf;
+  llvm::SmallVector<std::pair<mlir::Operation *, unsigned>> lines, nodes;
+  llvm::DenseMap<unsigned, int64_t> idOf;
+  bool runtimeWait = false, everyLine = false, stale = false;
+};
+
 struct Sample {
   llvm::SmallVector<int64_t, 2> iteration;
   int64_t start;
@@ -293,8 +578,16 @@ struct Extrapolation {
 /// every block argument available at time 0.
 class Scheduler {
 public:
-  Scheduler(mlir::Region &region, Resources resources, bool classical = false)
-      : region(&region), resources(resources), classical(classical) {}
+  Scheduler(mlir::Region &region, Resources resources, bool classical = false,
+            const Timelines *timelines = nullptr)
+      : region(&region), resources(resources), classical(classical),
+        lanesPer(timelines && timelines->count > 1 ? timelines : nullptr) {
+    auto count = static_cast<size_t>(isolated() ? lanesPer->count : 1);
+    floors.assign(count, 0);
+    ends.assign(count, 0);
+    iterationEnds.assign(count, -1);
+    ceilings.assign(count, kNever);
+  }
 
   mlir::LogicalResult forward() {
     resetLanes(0);
@@ -331,8 +624,67 @@ private:
     laneReset = value;
     if (!resources.enabled)
       return;
-    driveLanes.assign(static_cast<size_t>(resources.maxDrives), value);
-    readoutLanes.assign(static_cast<size_t>(resources.maxReadouts), value);
+    // Timelines that wait independently each use lanes of their own: as
+    // many as they have lines, which the hardware has.
+    size_t count = floors.size();
+    driveLanes.assign(count, {});
+    readoutLanes.assign(count, {});
+    for (size_t t = 0; t < count; ++t) {
+      int64_t drives = isolated() ? lanesPer->drives[t] : resources.maxDrives;
+      int64_t readouts =
+          isolated() ? lanesPer->readouts[t] : resources.maxReadouts;
+      driveLanes[t].assign(static_cast<size_t>(std::max<int64_t>(1, drives)),
+                           value);
+      readoutLanes[t].assign(
+          static_cast<size_t>(std::max<int64_t>(1, readouts)), value);
+    }
+  }
+
+  // ── Timelines ─────────────────────────────────────────────────────────
+
+  bool isolated() const { return lanesPer != nullptr; }
+
+  /// The timeline of a call, block, line or tone allocation, or of the
+  /// first line or tone `op` plays on.
+  int64_t timelineOf(mlir::Operation *op) {
+    if (!isolated())
+      return 0;
+    auto [it, inserted] = timelineCache.try_emplace(op, 0);
+    if (!inserted)
+      return it->second;
+    if (op->hasAttr(classical::kTimelineAttr)) {
+      it->second = classical::intAttr(op, classical::kTimelineAttr);
+    } else {
+      for (mlir::Value operand : op->getOperands())
+        if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
+                      pulse::ToneType>(operand.getType())) {
+          it->second = timelineOfValue(operand);
+          break;
+        }
+    }
+    return it->second;
+  }
+
+  int64_t timelineOfValue(mlir::Value value) {
+    if (!isolated())
+      return 0;
+    mlir::Operation *allocation = trace(value);
+    return allocation ? classical::intAttr(allocation, classical::kTimelineAttr)
+                      : 0;
+  }
+
+  /// No op of timeline `t` starts before this: its last run-time wait, and
+  /// the condition of the branch the op is in.
+  int64_t floorOf(int64_t t) const { return std::max(floor, floors[t]); }
+
+  /// Where a timeline's lines end if nothing later uses them.
+  int64_t endOf(int64_t t) const { return isolated() ? ends[t] : makespan; }
+
+  /// A link as one timeline sees it: its share of the slots, and its own
+  /// order of submissions.
+  using LinkKey = std::pair<int64_t, int64_t>;
+  LinkKey linkOf(mlir::Operation *submit) {
+    return {classical::intAttr(submit, "classical.device"), timelineOf(submit)};
   }
 
   void record(mlir::Operation *op, int64_t start) {
@@ -387,10 +739,13 @@ private:
   int64_t ready(mlir::Value value) const { return readyAt.lookup(value); }
 
   /// When every operand of `op` is available: data from answers included.
+  /// Timelines keep their own order on a link, so the link a submission
+  /// is threaded through says nothing about when it may start.
   int64_t operandsReady(mlir::Operation *op) const {
     int64_t time = 0;
     for (mlir::Value operand : op->getOperands())
-      time = std::max(time, ready(operand));
+      if (!isolated() || !mlir::isa<classical::LinkType>(operand.getType()))
+        time = std::max(time, ready(operand));
     return time;
   }
 
@@ -398,8 +753,7 @@ private:
   /// they become free (forward, min-heap) or must be free from (backward,
   /// max-heap). A link's slots bound every policy: they are hardware.
   llvm::SmallVector<int64_t> &lanesOf(mlir::Operation *submit) {
-    int64_t device = classical::intAttr(submit, "classical.device");
-    auto [it, inserted] = linkLanes.try_emplace(device);
+    auto [it, inserted] = linkLanes.try_emplace(linkOf(submit));
     if (inserted)
       it->second.assign(
           static_cast<size_t>(std::max<int64_t>(
@@ -415,7 +769,7 @@ private:
   bool slotsHoldSteadyState(mlir::scf::ForOp loop, int64_t period) {
     if (!classical)
       return true;
-    llvm::DenseMap<int64_t, std::pair<int64_t, int64_t>> perLink;
+    std::map<LinkKey, std::pair<int64_t, int64_t>> perLink;
     bool ok = true;
     loop.getBody()->walk([&](classical::SubmitOp submit) {
       mlir::Operation *op = submit;
@@ -424,7 +778,7 @@ private:
         ok = false;
         return;
       }
-      auto &[need, slots] = perLink[classical::intAttr(op, "classical.device")];
+      auto &[need, slots] = perLink[linkOf(op)];
       need += (busy + period - 1) / period;
       slots = classical::intAttr(op, "classical.max_in_flight", 64);
     });
@@ -524,13 +878,13 @@ private:
     if (requests.empty())
       return start;
     while (true) {
-      llvm::DenseMap<int64_t, llvm::SmallVector<int64_t>> trial;
+      std::map<LinkKey, llvm::SmallVector<int64_t>> trial;
       int64_t shift = 0;
       for (const BlockRequest &request : requests) {
-        int64_t device = classical::intAttr(request.op, "classical.device");
-        auto it = trial.find(device);
+        LinkKey key = linkOf(request.op);
+        auto it = trial.find(key);
         if (it == trial.end())
-          it = trial.try_emplace(device, lanesOf(request.op)).first;
+          it = trial.try_emplace(key, lanesOf(request.op)).first;
         auto &heap = it->second;
         int64_t at = start + request.start;
         if (backward) {
@@ -549,8 +903,8 @@ private:
           break;
       }
       if (shift <= 0) {
-        for (auto &[device, heap] : trial)
-          linkLanes[device] = std::move(heap);
+        for (auto &[key, heap] : trial)
+          linkLanes[key] = std::move(heap);
         return start;
       }
       start += backward ? -shift : shift;
@@ -560,30 +914,35 @@ private:
 
   void forwardSubmit(classical::SubmitOp submit) {
     mlir::Operation *op = submit;
-    int64_t start =
-        std::max({ready(submit.getLink()), floor, operandsReady(op)});
+    int64_t t = timelineOf(op);
+    int64_t link = isolated() ? linkReady[linkOf(op)] : ready(submit.getLink());
+    int64_t start = std::max({link, floorOf(t), operandsReady(op)});
     int64_t duration = durationOf(op), budget = budgetOf(op);
     start = takeSlot(op, start, duration + budget);
     record(op, start);
     readyAt[submit.getUpdatedLink()] = start + duration;
+    if (isolated())
+      linkReady[linkOf(op)] = start + duration;
     readyAt[submit.getFuture()] = start + duration + budget;
-    noteEnd(start + duration);
+    noteEnd(start + duration, t);
   }
 
   void forwardWait(classical::WaitOp wait) {
-    int64_t start = std::max(ready(wait.getFuture()), floor);
-    // A blocking wait is a barrier: every line is done before it.
+    int64_t t = timelineOf(wait);
+    int64_t start = std::max(ready(wait.getFuture()), floorOf(t));
+    // A blocking wait is a barrier: every line of its timeline is done
+    // before it.
     if (wait->hasAttr("classical.blocking"))
-      start = std::max(start, makespan);
+      start = std::max(start, endOf(t));
     record(wait, start);
     for (mlir::Value value : wait.getValues())
       readyAt[value] = start;
     if (wait->hasAttr("classical.blocking"))
-      floor = std::max(floor, start);
-    noteEnd(start);
+      floors[t] = std::max(floors[t], start);
+    noteEnd(start, t);
   }
 
-  void place(mlir::Operation *op, int64_t start) {
+  void place(mlir::Operation *op, int64_t start, int64_t t) {
     int64_t duration = durationOf(op);
     record(op, start);
     int64_t end = start + duration;
@@ -596,12 +955,14 @@ private:
     readyAt[op->getResult(0)] = lineEnd;
     if (mlir::Value tone = toneResult(op))
       readyAt[tone] = end;
-    noteEnd(lineEnd);
+    noteEnd(lineEnd, t);
   }
 
-  void noteEnd(int64_t end) {
+  void noteEnd(int64_t end, int64_t t) {
     makespan = std::max(makespan, end);
     iterationEnd = std::max(iterationEnd, end);
+    ends[t] = std::max(ends[t], end);
+    iterationEnds[t] = std::max(iterationEnds[t], end);
   }
 
   mlir::LogicalResult forwardBlock(mlir::Block &block) {
@@ -623,24 +984,27 @@ private:
       }
     }
     if (isTimedOp(op)) {
-      int64_t start = std::max(ready(op->getOperand(0)), floor);
+      int64_t t = timelineOf(op);
+      int64_t start = std::max(ready(op->getOperand(0)), floorOf(t));
       if (mlir::Value tone = toneOperand(op))
         start = std::max(start, ready(tone));
       if (classical) {
         start = std::max(start, operandsReady(op));
-        // A variable wait is a barrier: every line is done before it.
+        // A variable wait is a barrier: every line of its timeline is done
+        // before it.
         if (op->hasAttr("classical.variable"))
-          start = std::max(start, makespan);
+          start = std::max(start, endOf(t));
       }
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op)) {
-        auto &lanes = mlir::isa<pulse::DriveOp>(op) ? driveLanes : readoutLanes;
+        auto &lanes =
+            mlir::isa<pulse::DriveOp>(op) ? driveLanes[t] : readoutLanes[t];
         auto lane = std::min_element(lanes.begin(), lanes.end());
         start = std::max(start, *lane);
         *lane = start + durationOf(op) + resources.switchPenalty;
       }
-      place(op, start);
+      place(op, start, t);
       if (classical && op->hasAttr("classical.variable"))
-        floor = std::max(floor, start + durationOf(op));
+        floors[t] = std::max(floors[t], start + durationOf(op));
       return mlir::success();
     }
     if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op)) {
@@ -648,12 +1012,13 @@ private:
       return mlir::success();
     }
     if (auto sync = mlir::dyn_cast<pulse::SyncOp>(op)) {
-      int64_t time = floor;
+      int64_t t = timelineOf(op);
+      int64_t time = floorOf(t);
       for (mlir::Value line : sync.getLines())
         time = std::max(time, ready(line));
       for (mlir::Value result : sync.getResults())
         readyAt[result] = time;
-      noteEnd(time);
+      noteEnd(time, t);
       return mlir::success();
     }
     if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op))
@@ -682,7 +1047,8 @@ private:
   void forwardScheduleBlock(pulse::ScheduleBlockOp block) {
     BlockShape shape = shapeOf(block);
     auto inputs = block.getInputs();
-    int64_t start = floor;
+    int64_t t = timelineOf(block);
+    int64_t start = floorOf(t);
     for (auto [input, offset] : llvm::zip(inputs, shape.in))
       if (offset >= 0)
         start = std::max(start, ready(input) - offset);
@@ -692,7 +1058,7 @@ private:
     for (auto [result, offset, source] :
          llvm::zip(block.getOutputs(), shape.out, shape.source))
       readyAt[result] = offset >= 0 ? start + offset : ready(inputs[source]);
-    noteEnd(start + shape.length);
+    noteEnd(start + shape.length, t);
   }
 
   mlir::LogicalResult forwardLoop(mlir::scf::ForOp loop) {
@@ -717,6 +1083,13 @@ private:
             !loop->isAncestor(operand.getParentRegion()->getParentOp()))
           outside = std::max(outside, ready(operand));
     });
+    // So do the floors of the timelines carried values are on.
+    llvm::SmallVector<int64_t> outsideOf;
+    for (mlir::Value init : loop.getInitArgs())
+      outsideOf.push_back(
+          std::max(outside, isLineType(init.getType()) || !isolated()
+                                ? floors[timelineOfValue(init)]
+                                : *llvm::max_element(floors)));
 
     iteration.push_back(0);
     std::optional<int64_t> lastShift;
@@ -724,6 +1097,10 @@ private:
       iteration.back() = k;
       int64_t savedEnd = iterationEnd;
       iterationEnd = 0;
+      auto savedEnds = iterationEnds;
+      std::fill(iterationEnds.begin(), iterationEnds.end(), -1);
+      auto floorsBefore = floors;
+      auto linksBefore = linkReady;
       for (auto [arg, time] : llvm::zip(args, carried))
         readyAt[arg] = time;
       if (mlir::failed(forwardBlock(*loop.getBody())))
@@ -733,23 +1110,44 @@ private:
         next.push_back(ready(value));
       int64_t thisEnd = iterationEnd;
       iterationEnd = std::max(savedEnd, iterationEnd);
+      auto theseEnds = iterationEnds;
+      for (auto [end, saved] : llvm::zip(iterationEnds, savedEnds))
+        end = std::max(end, saved);
 
       int64_t shift;
       bool shifted = uniformShift(carried, next, kinds, shift);
       bool steady = !resources.enabled && !lanesBound && shifted &&
                     lastShift == shift && shift >= 0 &&
                     slotsHoldSteadyState(loop, shift);
-      for (auto [before, after, kind] : llvm::zip(carried, next, kinds))
+      for (auto [before, after, kind, bound] :
+           llvm::zip(carried, next, kinds, outsideOf))
         if (kind == Carried::Timed ||
             (kind == Carried::Tone && after != before))
-          steady = steady && after >= outside;
+          steady = steady && after >= bound;
       lastShift = shifted ? std::optional<int64_t>(shift) : std::nullopt;
       llvm::SmallVector<int64_t> previous = std::move(carried);
       carried = std::move(next);
       if (steady && k + 1 < count) {
         int64_t remaining = count - 1 - k;
-        extrapolate(carried, previous, kinds, remaining * shift);
-        noteEnd(thisEnd + remaining * shift);
+        int64_t distance = remaining * shift;
+        extrapolate(carried, previous, kinds, distance);
+        // What the iterations not simulated move: the ends and run-time
+        // waits of the timelines the body plays on, and their links.
+        if (!isolated()) {
+          noteEnd(thisEnd + distance, 0);
+        } else {
+          for (auto [t, end] : llvm::enumerate(theseEnds))
+            if (end >= 0)
+              noteEnd(end + distance, static_cast<int64_t>(t));
+          for (auto &[key, time] : linkReady) {
+            auto before = linksBefore.find(key);
+            if (before == linksBefore.end() || before->second != time)
+              time += distance;
+          }
+        }
+        for (auto [now, before] : llvm::zip(floors, floorsBefore))
+          if (now != before)
+            now += distance;
         extrapolations.push_back({loop, shift});
         break;
       }
@@ -760,6 +1158,15 @@ private:
     return mlir::success();
   }
 
+  using Lanes = llvm::SmallVector<llvm::SmallVector<int64_t>, 1>;
+
+  /// After a branch, each lane is as busy as the busier arm left it.
+  static void mergeLanes(Lanes &lanes, const Lanes &other, bool later) {
+    for (auto [mine, theirs] : llvm::zip(lanes, other))
+      for (auto [a, b] : llvm::zip(mine, theirs))
+        a = later ? std::max(a, b) : std::min(a, b);
+  }
+
   mlir::LogicalResult forwardIf(mlir::scf::IfOp branch) {
     int64_t savedFloor = floor;
     for (mlir::Value measurement : conditionMeasurements(branch.getCondition()))
@@ -768,6 +1175,7 @@ private:
       floor = std::max(floor, ready(branch.getCondition()));
 
     auto savedDrive = driveLanes, savedReadout = readoutLanes;
+    auto savedLinks = linkReady;
     if (mlir::failed(forwardBlock(*branch.thenBlock())))
       return mlir::failure();
     llvm::SmallVector<int64_t> results;
@@ -775,17 +1183,22 @@ private:
       results.push_back(ready(value));
     if (!branch.getElseRegion().empty()) {
       auto thenDrive = driveLanes, thenReadout = readoutLanes;
+      auto thenLinks = std::move(linkReady);
       driveLanes = savedDrive;
       readoutLanes = savedReadout;
+      linkReady = std::move(savedLinks);
       if (mlir::failed(forwardBlock(*branch.elseBlock())))
         return mlir::failure();
       for (auto [time, value] :
            llvm::zip(results, branch.elseYield().getOperands()))
         time = std::max(time, ready(value));
-      for (auto [a, b] : llvm::zip(driveLanes, thenDrive))
-        a = std::max(a, b);
-      for (auto [a, b] : llvm::zip(readoutLanes, thenReadout))
-        a = std::max(a, b);
+      mergeLanes(driveLanes, thenDrive, /*later=*/true);
+      mergeLanes(readoutLanes, thenReadout, /*later=*/true);
+      for (auto &[key, time] : thenLinks) {
+        auto [it, inserted] = linkReady.try_emplace(key, time);
+        if (!inserted)
+          it->second = std::max(it->second, time);
+      }
     }
     for (auto [result, time] : llvm::zip(branch.getResults(), results))
       readyAt[result] = time;
@@ -796,9 +1209,10 @@ private:
   // ── Backward (ALAP) ───────────────────────────────────────────────────
 
   /// The latest time `value` may become available without delaying the
-  /// schedule. Lines left unconsumed may run until the makespan; nothing
-  /// waits for an unused measurement.
-  int64_t late(mlir::Value value) const {
+  /// schedule. Lines left unconsumed may run until the makespan, or until
+  /// the end of their timeline: a later run-time wait elsewhere does not
+  /// move them. Nothing waits for an unused measurement.
+  int64_t late(mlir::Value value) {
     auto it = lateAt.find(value);
     if (it != lateAt.end())
       return it->second;
@@ -810,6 +1224,8 @@ private:
     if (classical && !mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
                                 pulse::ToneType, classical::LinkType>(type))
       return kNever;
+    if (isolated() && !mlir::isa<classical::LinkType>(type))
+      return ends[timelineOfValue(value)];
     return makespan;
   }
 
@@ -845,12 +1261,18 @@ private:
 
   void backwardSubmit(classical::SubmitOp submit) {
     mlir::Operation *op = submit;
+    int64_t t = timelineOf(op);
     int64_t duration = durationOf(op), budget = budgetOf(op);
     int64_t start;
     if (op->hasAttr("classical.eager")) {
       start = forwardStartOf(op);
     } else {
-      int64_t end = std::min(late(submit.getUpdatedLink()), ceiling);
+      int64_t link = late(submit.getUpdatedLink());
+      if (isolated()) {
+        auto it = linkLate.find(linkOf(op));
+        link = it == linkLate.end() ? ends[t] : it->second;
+      }
+      int64_t end = std::min(link, ceilings[t]);
       int64_t needed = late(submit.getFuture());
       if (needed != kNever)
         end = std::min(end, needed - budget);
@@ -862,20 +1284,30 @@ private:
     armStart = std::min(armStart, start);
     for (mlir::Value operand : op->getOperands())
       bound(operand, start);
+    if (isolated()) {
+      auto [it, inserted] = linkLate.try_emplace(linkOf(op), start);
+      if (!inserted)
+        it->second = std::min(it->second, start);
+    }
   }
 
   void backwardWait(classical::WaitOp wait) {
+    int64_t t = timelineOf(wait);
     int64_t start = kNever;
     for (mlir::Value value : wait.getValues())
       start = std::min(start, late(value));
     if (start == kNever || wait->hasAttr("classical.blocking"))
       start = forwardStartOf(wait);
-    start = std::min(start, ceiling);
+    // A timeline's share of a link holds only the requests it times; an
+    // answer it took late would hold its slot after its due time.
+    else if (isolated())
+      start = std::min(start, forwardStartOf(wait));
+    start = std::min(start, ceilings[t]);
     record(wait, start);
     armStart = std::min(armStart, start);
     bound(wait.getFuture(), start);
     if (wait->hasAttr("classical.blocking"))
-      ceiling = std::min(ceiling, start);
+      ceilings[t] = std::min(ceilings[t], start);
   }
 
   void bound(mlir::Value value, int64_t time) {
@@ -908,14 +1340,16 @@ private:
       record(op, start);
       armStart = std::min(armStart, start);
       bound(op->getOperand(0), start);
+      int64_t &ceiling = ceilings[timelineOf(op)];
       ceiling = std::min(ceiling, start);
       return mlir::success();
     }
     if (isTimedOp(op)) {
+      int64_t t = timelineOf(op);
       int64_t duration = durationOf(op);
       int64_t end = late(op->getResult(0));
       if (classical)
-        end = std::min(end, ceiling);
+        end = std::min(end, ceilings[t]);
       bool isReadout = mlir::isa<pulse::ReadoutOp>(op);
       if (isReadout) {
         int64_t latency = resources.readoutLatency;
@@ -928,7 +1362,7 @@ private:
       if (mlir::Value tone = toneResult(op))
         end = std::min(end, late(tone));
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op)) {
-        auto &lanes = isReadout ? readoutLanes : driveLanes;
+        auto &lanes = isReadout ? readoutLanes[t] : driveLanes[t];
         auto lane = std::max_element(lanes.begin(), lanes.end());
         end = std::min(end, *lane);
         *lane = end - duration - resources.switchPenalty;
@@ -949,7 +1383,7 @@ private:
       return mlir::success();
     }
     if (auto sync = mlir::dyn_cast<pulse::SyncOp>(op)) {
-      int64_t time = makespan;
+      int64_t time = endOf(timelineOf(op));
       for (mlir::Value result : sync.getResults())
         time = std::min(time, late(result));
       for (mlir::Value line : sync.getLines())
@@ -976,7 +1410,11 @@ private:
   void backwardScheduleBlock(pulse::ScheduleBlockOp block) {
     BlockShape shape = shapeOf(block);
     auto inputs = block.getInputs();
-    int64_t start = makespan - shape.length;
+    int64_t t = timelineOf(block);
+    // A block before a run-time wait ends by its start, like any op.
+    int64_t start = endOf(t) - shape.length;
+    if (classical)
+      start = std::min(start, ceilings[t] - shape.length);
     for (auto [result, offset, source] :
          llvm::zip(block.getOutputs(), shape.out, shape.source)) {
       int64_t needed = late(result);
@@ -1030,6 +1468,8 @@ private:
         lateAt.erase(arg);
       for (auto [value, time] : llvm::zip(yield.getOperands(), carried))
         bound(value, time);
+      auto ceilingsBefore = ceilings;
+      auto linksBefore = linkLate;
       if (mlir::failed(backwardBlock(*loop.getBody())))
         return mlir::failure();
       llvm::SmallVector<int64_t> next;
@@ -1046,6 +1486,14 @@ private:
       carried = std::move(next);
       if (steady && k > 0) {
         extrapolate(carried, previous, kinds, k * shift);
+        for (auto [now, before] : llvm::zip(ceilings, ceilingsBefore))
+          if (now != before)
+            now += k * shift;
+        for (auto &[key, time] : linkLate) {
+          auto before = linksBefore.find(key);
+          if (before == linksBefore.end() || before->second != time)
+            time += k * shift;
+        }
         extrapolations.push_back({loop, -shift});
         break;
       }
@@ -1060,6 +1508,7 @@ private:
     int64_t savedArmStart = armStart;
     armStart = kNever;
     auto savedDrive = driveLanes, savedReadout = readoutLanes;
+    auto savedLinks = linkLate;
     for (auto [value, result] :
          llvm::zip(branch.thenYield().getOperands(), branch.getResults()))
       bound(value, late(result));
@@ -1067,17 +1516,22 @@ private:
       return mlir::failure();
     if (!branch.getElseRegion().empty()) {
       auto thenDrive = driveLanes, thenReadout = readoutLanes;
+      auto thenLinks = std::move(linkLate);
       driveLanes = savedDrive;
       readoutLanes = savedReadout;
+      linkLate = std::move(savedLinks);
       for (auto [value, result] :
            llvm::zip(branch.elseYield().getOperands(), branch.getResults()))
         bound(value, late(result));
       if (mlir::failed(backwardBlock(*branch.elseBlock())))
         return mlir::failure();
-      for (auto [a, b] : llvm::zip(driveLanes, thenDrive))
-        a = std::min(a, b);
-      for (auto [a, b] : llvm::zip(readoutLanes, thenReadout))
-        a = std::min(a, b);
+      mergeLanes(driveLanes, thenDrive, /*later=*/false);
+      mergeLanes(readoutLanes, thenReadout, /*later=*/false);
+      for (auto &[key, time] : thenLinks) {
+        auto [it, inserted] = linkLate.try_emplace(key, time);
+        if (!inserted)
+          it->second = std::min(it->second, time);
+      }
     }
     if (armStart != kNever) {
       for (mlir::Value measurement :
@@ -1094,16 +1548,29 @@ private:
   Resources resources;
   llvm::DenseMap<mlir::Value, int64_t> readyAt;
   llvm::DenseMap<mlir::Value, int64_t> lateAt;
-  llvm::SmallVector<int64_t> driveLanes, readoutLanes;
+  /// Under rcp, the drive and readout lanes of each timeline.
+  Lanes driveLanes, readoutLanes;
   llvm::SmallVector<int64_t, 2> iteration;
+  /// No op starts before the condition of the branch it is in.
   int64_t floor = 0;
   int64_t iterationEnd = 0;
   int64_t armStart = kNever;
   // Classical calls.
   bool classical = false;
-  /// Request slots per link id, each the time it is free (forward) or must
-  /// be free from (backward).
-  llvm::DenseMap<int64_t, llvm::SmallVector<int64_t>> linkLanes;
+  /// The lines' timelines, when there is more than one.
+  const Timelines *lanesPer = nullptr;
+  pulse::AllocationTracer trace;
+  llvm::DenseMap<mlir::Operation *, int64_t> timelineCache;
+  /// Per timeline: no op starts before its last run-time wait (forward),
+  /// where its ops end (in the current loop iteration: -1 for none), and
+  /// under ALAP nothing before a run-time wait ends after it.
+  llvm::SmallVector<int64_t, 1> floors, ends, iterationEnds, ceilings;
+  /// With timelines, when each one's link is free (forward) or must be
+  /// free from (backward), in its own order.
+  std::map<LinkKey, int64_t> linkReady, linkLate;
+  /// Request slots per link and timeline, each the time it is free
+  /// (forward) or must be free from (backward).
+  llvm::DenseMap<LinkKey, llvm::SmallVector<int64_t>> linkLanes;
   int64_t laneReset = 0;
   /// A link's slots delayed a request: loop iterations may differ, so they
   /// are all simulated.
@@ -1112,8 +1579,6 @@ private:
   llvm::DenseMap<mlir::Operation *, std::pair<llvm::SmallVector<BlockRequest>,
                                               llvm::SmallVector<BlockRequest>>>
       blockRequests;
-  /// Under ALAP, nothing before a blocking wait ends after it.
-  int64_t ceiling = kNever;
   std::map<std::pair<mlir::Operation *, llvm::SmallVector<int64_t, 2>>, int64_t>
       forwardStarts;
   llvm::SmallVector<Extrapolation> forwardExtrapolations;
@@ -1635,13 +2100,13 @@ static void inlineScheduleBlock(pulse::ScheduleBlockOp block) {
 
 // ── Driver ───────────────────────────────────────────────────────────────
 
-static mlir::LogicalResult scheduleRegion(mlir::Region &region,
-                                          mlir::Operation *root,
-                                          Resources resources, bool isAlap,
-                                          bool classical) {
+static mlir::LogicalResult
+scheduleRegion(mlir::Region &region, mlir::Operation *root, Resources resources,
+               bool isAlap, bool classical, const Timelines &timelines) {
   for (pulse::ScheduleBlockOp block : outermostBlocks(region)) {
     if (mlir::failed(scheduleRegion(block.getBody(), block, Resources{},
-                                    block.getPolicy() == "alap", classical)))
+                                    block.getPolicy() == "alap", classical,
+                                    timelines)))
       return mlir::failure();
     writeShape(block);
   }
@@ -1649,7 +2114,7 @@ static mlir::LogicalResult scheduleRegion(mlir::Region &region,
   // Each round either writes an affine schedule or removes an iteration from
   // a loop, so this terminates.
   while (true) {
-    Scheduler scheduler(region, resources, classical);
+    Scheduler scheduler(region, resources, classical, &timelines);
     if (mlir::failed(scheduler.forward()))
       return mlir::failure();
     if (isAlap) {
@@ -1662,7 +2127,7 @@ static mlir::LogicalResult scheduleRegion(mlir::Region &region,
                             [](const Sample &s) { return s.start >= 0; });
       });
       if (!feasible) {
-        scheduler = Scheduler(region, resources, classical);
+        scheduler = Scheduler(region, resources, classical, &timelines);
         if (mlir::failed(scheduler.forward()))
           return mlir::failure();
       }
@@ -1727,8 +2192,11 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
       if (found.wasInterrupted())
         return mlir::failure();
     }
+  Timelines timelines;
+  if (classical && TimelineAnalysis(function, resources).run(timelines))
+    classical::annotateClassicalCalls(function);
   return scheduleRegion(function.getBody(), function, resources, isAlap,
-                        classical);
+                        classical, timelines);
 }
 
 template <bool IsAlap>

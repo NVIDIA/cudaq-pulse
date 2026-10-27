@@ -61,7 +61,8 @@ budgets the maximum. Simulation and emulation use a triangular distribution
 over ``[min, max]`` with its mode at the nominal value. ``latency_mode``
 chooses what happens when an answer could be late: ``"bounded"`` (the
 default) trusts the maximum, ``"timeout"`` gives up after ``timeout_ns``, and
-``"blocking"`` stops every line until the answer arrives. ``submit="lazy"``
+``"blocking"`` stops the lines that wait for the answer until it arrives
+(see the barriers below). ``submit="lazy"``
 sends a request as late as the budget allows rather than as soon as its
 arguments are ready, and ``deadline_ns`` bounds how long after its submission
 an answer may be due.
@@ -137,11 +138,25 @@ A wait may take its length from an answer, between bounds:
    alpha, beta, tau = update_t1.submit([m], alpha, beta, tau).result()
    wait(d, tau, bounds=(200, 40000))
 
-Such a variable wait is a barrier: every line syncs before it, and it opens a
-new *epoch*. The static schedule places it at its lower bound, and everything
-after it shifts by the wait's actual length, which is clamped to the bounds.
-``Lowered.epochs()`` lists the epochs. A variable wait may not be inside a
-``schedule_block`` or a branch; a blocking wait is a barrier in the same way.
+Such a variable wait is a barrier for the lines that depend on it, and it
+opens a new *epoch* for them. The static schedule places it at its lower
+bound, and what follows it on those lines shifts by the wait's actual length,
+which is clamped to the bounds. ``Lowered.epochs()`` lists the epochs. A
+variable wait may not be inside a ``schedule_block`` or a branch; a blocking
+wait is a barrier in the same way.
+
+A barrier holds back the lines of its *timeline*: lines share one when one
+waits for the other, through a ``sync`` naming both, a measurement or an
+answer used on both, a branch on one around the other, a tone or a value
+carried between them, or a kernel with its own ``schedule=`` that plays on
+both. They sync before the barrier; lines on other timelines keep their time,
+so qubits that wait on answers of their own run side by side. Timelines also
+merge where their schedules could not move independently: when a link has
+fewer slots than the timelines that use it, under ``rcp`` and ``alap_rcp``
+when there are more lines than lanes, and for a blocking wait whose answer
+nothing uses, which holds back every line. Timelines that share a link each
+get a share of its slots and budget each request as sent after the others',
+so a request on a shared link is due a few cycles later than alone.
 
 A length may also add ``float`` kernel parameters to an answer, as in
 ``wait(d, answer + tau, bounds=(8, 1000))``. The kernel still compiles once:
@@ -169,7 +184,8 @@ same way:
 - A kernel called with its own ``schedule=`` keeps its calls where its own
   schedule puts them, eager submissions included, and moves with them: it
   is placed where its requests fit the slots its caller's requests leave.
-- A blocking wait, like a variable wait, starts once every line is done.
+- A blocking wait, like a variable wait, starts once every line of its
+  timeline is done.
 
 ``Lowered.classical_report()`` gives one ``ClassicalCall`` per execution of a
 call, in clock cycles: when it is submitted (``submit_cycles``), when its answer
@@ -466,7 +482,10 @@ answer into registers; branching on an answer; frequency, phase and
 amplitude updates from an answer; and, for variable waits, a wait whose
 length comes from a register, after which the rest of the epoch is released
 together. The emulation artifact gives every event its epoch and its time
-from the epoch's start for that purpose.
+from the epoch's start for that purpose. An epoch holds the lines of its
+barrier's timeline, so epochs of different timelines move independently: an
+epoch's shift adds to that of the epoch it follows, which is the one before
+it unless the epoch names another in ``after``.
 
 Not available yet: a channel through the CUDA-Q Realtime host library
 (``emulation.RealtimeChannel``), exporting calls as CUDA-Q

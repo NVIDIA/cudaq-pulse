@@ -51,8 +51,10 @@ event has:
     The iteration of each loop around it, outermost first.
 ``epoch``
     The epoch it starts in. A wait whose length is an answer, and a blocking
-    wait for an answer, end one epoch and start the next; everything in a
-    later epoch shifts by the run-time lengths before it.
+    wait for an answer, end one epoch of the lines that wait for it and
+    start the next; an event shifts by the run-time lengths of its epoch's
+    barrier and of the barriers of the epochs it follows. Each epoch follows
+    the one before it, or the epoch its ``after`` names.
 ``conditions``
     The measurement-conditioned branches the event lies in, outermost
     first: the ``branch``, the ``arm`` (``true`` for the ``if`` arm), and

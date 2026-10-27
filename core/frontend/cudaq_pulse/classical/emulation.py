@@ -99,15 +99,15 @@ def export(lowered: Any) -> dict[str, Any]:
     """A compiled kernel for a controller emulator: schedule, epochs, calls,
     links and manifest, as JSON-serializable data. Times are in clock cycles;
     each event's ``epoch_start_cycles`` is the static start of its epoch, which
-    moves at run time by the lengths of the variable waits before it."""
-    epochs = lowered.epochs()
+    moves at run time by the lengths of the run-time waits before it on its
+    lines. An epoch's shift adds to that of the epoch it follows, the one
+    before it unless it names another in ``after``."""
+    epochs, after = lowered._epochs()
     starts = [e.start_cycles for e in epochs]
+    epoch_of = lowered._event_epochs(syncs=False)
     events = []
-    for event in lowered.schedule:
-        index = 0
-        for k, start in enumerate(starts):
-            if event.start_cycles is not None and event.start_cycles >= start and k > 0:
-                index = k
+    for position, event in enumerate(lowered.schedule):
+        index = epoch_of[position] if epoch_of and event.start_cycles is not None else 0
         events.append(
             {
                 "kind": event.kind,
@@ -131,7 +131,10 @@ def export(lowered: Any) -> dict[str, Any]:
             }
             for fn in lowered.classical
         },
-        "epochs": [asdict(e) for e in epochs],
+        "epochs": [
+            {**asdict(e), "after": a} if k and a != k - 1 else asdict(e)
+            for k, (e, a) in enumerate(zip(epochs, after))
+        ],
         "events": events,
         "calls": [
             {**asdict(c), "iteration": list(c.iteration)} for c in lowered.classical_report()

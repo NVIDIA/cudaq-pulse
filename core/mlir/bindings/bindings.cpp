@@ -582,6 +582,99 @@ struct ControllerWalk {
   }
 };
 
+/// The epochs of a scheduled program, in program order. A variable wait or a
+/// blocking wait ends the current epoch of its timeline (the lines it holds
+/// back) and opens the next one, which starts after it: epoch k > 0 is
+/// opened by the k-th such wait, and follows `after`, the epoch its timeline
+/// was in. Without timelines every epoch follows the one before.
+struct EpochWalk {
+  /// (kind, line or link, start, lowest, highest, after) per boundary: see
+  /// PulseModule::epoch_boundaries().
+  using Boundary =
+      std::tuple<std::string, int64_t, int64_t, int64_t, int64_t, int64_t>;
+
+  explicit EpochWalk(mlir::ModuleOp module) {
+    module.walk([&](mlir::Operation *op) {
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+        lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
+    });
+  }
+
+  llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
+  pulse::AllocationTracer trace;
+  std::map<int64_t, int64_t> current;
+  std::vector<Boundary> boundaries;
+
+  int64_t timelineOf(mlir::Operation *op) {
+    if (op->hasAttr(classical::kTimelineAttr))
+      return classical::intAttr(op, classical::kTimelineAttr);
+    for (mlir::Value operand : op->getOperands())
+      if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
+                    pulse::ToneType>(operand.getType())) {
+        mlir::Operation *allocation = trace(operand);
+        return allocation
+                   ? classical::intAttr(allocation, classical::kTimelineAttr)
+                   : 0;
+      }
+    return 0;
+  }
+
+  /// The epoch `op` runs in, in iteration `iteration`; a boundary opens the
+  /// next. A variable wait runs in the epoch it ends, a blocking wait's
+  /// answer is taken in the one it opens.
+  int64_t visit(mlir::Operation *op, llvm::ArrayRef<int64_t> iteration) {
+    int64_t &epoch = current[timelineOf(op)];
+    if (!op->hasAttr("classical.variable") &&
+        !op->hasAttr("classical.blocking"))
+      return epoch;
+    auto start = pulse::scheduledStart(op, iteration);
+    if (!start)
+      return epoch;
+    int64_t after = epoch;
+    if (mlir::isa<pulse::WaitOp>(op)) {
+      mlir::Operation *allocation = trace(op->getOperand(0));
+      boundaries.emplace_back(
+          "wait", allocation ? lineIndex.lookup(allocation) : -1, *start,
+          classical::intAttr(op, "pulse.min_cycles"),
+          classical::intAttr(op, "pulse.max_cycles", -1), after);
+    } else {
+      boundaries.emplace_back("answer",
+                              classical::intAttr(op, "classical.device"),
+                              *start, 0, -1, after);
+    }
+    epoch = static_cast<int64_t>(boundaries.size());
+    return mlir::isa<pulse::WaitOp>(op) ? after : epoch;
+  }
+
+  /// Visit every op of `block` once per loop iteration, both arms of each
+  /// branch, as the event listings do; `fn(op, epoch)` for each timed op,
+  /// call and sync.
+  template <typename Fn>
+  void run(mlir::Block &block, Fn &&fn) {
+    for (mlir::Operation &op : block) {
+      if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
+                    pulse::SyncOp, classical::SubmitOp, classical::WaitOp>(
+              op)) {
+        fn(&op, visit(&op, iteration));
+      } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+        int64_t trips = pulse::constantTripCount(loop).value_or(0);
+        iteration.push_back(0);
+        for (int64_t k = 0; k < trips; ++k) {
+          iteration.back() = k;
+          run(*loop.getBody(), fn);
+        }
+        iteration.pop_back();
+      } else {
+        for (mlir::Region &region : op.getRegions())
+          for (mlir::Block &nested : region)
+            run(nested, fn);
+      }
+    }
+  }
+
+  llvm::SmallVector<int64_t, 2> iteration;
+};
+
 // -----------------------------------------------------------------------
 // PulseModule: opaque handle around an in-memory mlir::ModuleOp
 // -----------------------------------------------------------------------
@@ -791,8 +884,7 @@ public:
   /// call, in program order; times in cycles. `taken` is the wait's start
   /// (absent for an answer never taken), `first use` the earliest start of a
   /// pulse computed from the answer, `deadline` the latest due time the
-  /// function's deadline allows, and `epoch` the number of blocking waits
-  /// before the submission.
+  /// function's deadline allows, and `epoch` the epoch it is submitted in.
   using ClassicalCall =
       std::tuple<std::string, int64_t, std::vector<int64_t>, int64_t, int64_t,
                  int64_t, std::optional<int64_t>, std::optional<int64_t>,
@@ -841,11 +933,12 @@ public:
       at.resize(pulse::enclosingLoops(op).size(), 0);
       return pulse::scheduledStart(op, at);
     };
-    int64_t epoch = 0;
+    EpochWalk epochs(*module_);
     llvm::SmallVector<int64_t, 2> iteration;
     std::function<void(mlir::Block &)> collect = [&](mlir::Block &block) {
       for (mlir::Operation &op : block) {
         if (auto submit = mlir::dyn_cast<classical::SubmitOp>(op)) {
+          int64_t epoch = epochs.visit(&op, iteration);
           auto start = pulse::scheduledStart(&op, iteration);
           if (!start)
             continue;
@@ -872,9 +965,7 @@ public:
               std::vector<int64_t>(iteration.begin(), iteration.end()), *start,
               duration, due, taken, firstUse, deadline, epoch);
         } else if (mlir::isa<classical::WaitOp, pulse::WaitOp>(op)) {
-          if (op.hasAttr("classical.blocking") ||
-              op.hasAttr("classical.variable"))
-            ++epoch;
+          epochs.visit(&op, iteration);
         } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
           int64_t trips = pulse::constantTripCount(loop).value_or(0);
           iteration.push_back(0);
@@ -895,61 +986,32 @@ public:
   }
 
   /// The boundaries between epochs, in program order, once per loop
-  /// iteration: (kind, line or link, start, lowest, highest). A "wait" is a
-  /// variable wait on a line, whose length lies in [lowest, highest] cycles
-  /// (highest -1 if unbounded); an "answer" is a blocking wait on a link,
-  /// whose length is the answer's latency (lowest 0, highest -1). Each
-  /// boundary starts the next epoch when it ends.
-  using EpochBoundary =
-      std::tuple<std::string, int64_t, int64_t, int64_t, int64_t>;
-
-  std::vector<EpochBoundary> epoch_boundaries() {
+  /// iteration: (kind, line or link, start, lowest, highest, after). A "wait"
+  /// is a variable wait on a line, whose length lies in [lowest, highest]
+  /// cycles (highest -1 if unbounded); an "answer" is a blocking wait on a
+  /// link, whose length is the answer's latency (lowest 0, highest -1). The
+  /// k-th boundary starts epoch k when it ends; `after` is the epoch it
+  /// ends, of the lines it holds back.
+  std::vector<EpochWalk::Boundary> epoch_boundaries() {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
-    std::vector<EpochBoundary> boundaries;
     if (!classical::declaresClassicalCalls(*module_))
-      return boundaries;
-    llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
-    module_->walk([&](mlir::Operation *op) {
-      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
-        lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
+      return {};
+    EpochWalk walk(*module_);
+    walk.run(*module_->getBody(), [](mlir::Operation *, int64_t) {});
+    return std::move(walk.boundaries);
+  }
+
+  /// The epoch of each event of `events()` (with `syncs`, of
+  /// `controller_events()`), in the same order.
+  std::vector<int64_t> event_epochs(bool syncs) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    std::vector<int64_t> epochs;
+    EpochWalk walk(*module_);
+    walk.run(*module_->getBody(), [&](mlir::Operation *op, int64_t epoch) {
+      if (syncs || !mlir::isa<pulse::SyncOp>(op))
+        epochs.push_back(epoch);
     });
-    pulse::AllocationTracer trace;
-    llvm::SmallVector<int64_t, 2> iteration;
-    std::function<void(mlir::Block &)> collect = [&](mlir::Block &block) {
-      for (mlir::Operation &op : block) {
-        if (op.hasAttr("classical.variable") ||
-            op.hasAttr("classical.blocking")) {
-          auto start = pulse::scheduledStart(&op, iteration);
-          if (!start)
-            continue;
-          if (mlir::isa<pulse::WaitOp>(op)) {
-            mlir::Operation *allocation = trace(op.getOperand(0));
-            boundaries.emplace_back(
-                "wait", allocation ? lineIndex.lookup(allocation) : -1, *start,
-                classical::intAttr(&op, "pulse.min_cycles"),
-                classical::intAttr(&op, "pulse.max_cycles", -1));
-          } else {
-            boundaries.emplace_back("answer",
-                                    classical::intAttr(&op, "classical.device"),
-                                    *start, 0, -1);
-          }
-        } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
-          int64_t trips = pulse::constantTripCount(loop).value_or(0);
-          iteration.push_back(0);
-          for (int64_t k = 0; k < trips; ++k) {
-            iteration.back() = k;
-            collect(*loop.getBody());
-          }
-          iteration.pop_back();
-        } else {
-          for (mlir::Region &region : op.getRegions())
-            for (mlir::Block &nested : region)
-              collect(nested);
-        }
-      }
-    };
-    collect(*module_->getBody());
-    return boundaries;
+    return epochs;
   }
 
   // ── Simulating classical calls ──────────────────────────────────────
@@ -3004,6 +3066,8 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "This module with unbound answers set to zero")
       .def("epoch_boundaries", &PulseModule::epoch_boundaries,
            "The variable and blocking waits that start new epochs")
+      .def("event_epochs", &PulseModule::event_epochs, nb::arg("syncs"),
+           "The epoch of each event, in the order the events are listed")
       .def("classical_calls", &PulseModule::classical_calls,
            "Every execution of a classical call, with its timing")
       .def("readout_drives", &PulseModule::readout_drives, nb::arg("path"),

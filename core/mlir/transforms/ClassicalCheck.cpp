@@ -16,6 +16,10 @@
 // - at no time does a link hold more requests than `max_in_flight` (S8);
 // - the submissions on one link go out one after another, in program order
 //   (S9).
+//
+// Where lines wait independently (`classical.timeline`), a link's slots and
+// order are per timeline: each holds no more requests than its share and
+// sends its own in program order.
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -51,18 +55,22 @@ struct Occurrence {
   mlir::Operation *op;
 };
 
+/// A link, or one timeline's share of it (-1: the whole link).
+using LinkKey = std::pair<int64_t, int64_t>;
+
 /// Every execution of every submission, per link, in program order. Both
 /// arms of a branch are listed, so capacity is checked for the worst case.
 static void collectSubmissions(
     mlir::Block &block, llvm::SmallVectorImpl<int64_t> &iteration,
-    std::map<int64_t, std::vector<Occurrence>> &perLink, bool inBranch,
-    std::map<int64_t, std::vector<Occurrence>> &ordered) {
+    std::map<LinkKey, std::vector<Occurrence>> &perLink, bool inBranch,
+    std::map<LinkKey, std::vector<Occurrence>> &ordered) {
   for (mlir::Operation &op : block) {
     if (mlir::isa<classical::SubmitOp>(op)) {
       auto start = pulse::scheduledStart(&op, iteration);
       if (!start)
         continue;
-      int64_t device = classical::intAttr(&op, "classical.device");
+      LinkKey device{classical::intAttr(&op, "classical.device"),
+                     classical::intAttr(&op, classical::kTimelineAttr, -1)};
       int64_t duration = pulse::scheduledDuration(&op).value_or(1);
       int64_t budget = classical::intAttr(&op, "classical.budget_cycles");
       perLink[device].push_back({*start, *start + duration + budget, &op});
@@ -194,12 +202,13 @@ struct PulseClassicalCheckPass
         }
       });
 
-      std::map<int64_t, std::vector<Occurrence>> perLink, ordered;
+      std::map<LinkKey, std::vector<Occurrence>> perLink, ordered;
       llvm::SmallVector<int64_t> iteration;
       collectSubmissions(function.getBody().front(), iteration, perLink, false,
                          ordered);
       // S8: requests in flight at once, by a sweep over interval ends.
-      for (auto &[device, occurrences] : perLink) {
+      for (auto &[key, occurrences] : perLink) {
+        auto [device, timeline] = key;
         if (occurrences.empty())
           continue;
         int64_t capacity = classical::intAttr(occurrences.front().op,
@@ -221,18 +230,24 @@ struct PulseClassicalCheckPass
           }
         }
         if (worst > capacity) {
-          occurrences.front().op->emitError("link ")
-              << device << " holds " << worst << " requests at once at " << when
-              << ", more than its " << capacity << " slots";
+          auto diag = occurrences.front().op->emitError("link ");
+          diag << device << " holds " << worst << " requests";
+          if (timeline >= 0)
+            diag << " for lines that wait on their own";
+          diag << " at once at " << when << ", more than ";
+          if (timeline >= 0)
+            diag << "the " << capacity << " of its slots they have";
+          else
+            diag << "its " << capacity << " slots";
           failed = true;
         }
       }
       // S9: one submission at a time on a link, in program order.
-      for (auto &[device, occurrences] : ordered)
+      for (auto &[key, occurrences] : ordered)
         for (size_t i = 1; i < occurrences.size(); ++i)
           if (occurrences[i].start < occurrences[i - 1].end) {
             occurrences[i].op->emitError("submission on link ")
-                << device << " starts at " << occurrences[i].start
+                << key.first << " starts at " << occurrences[i].start
                 << ", before the one before it in program order ends at "
                 << occurrences[i - 1].end;
             failed = true;

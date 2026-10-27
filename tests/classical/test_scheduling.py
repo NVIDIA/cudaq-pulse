@@ -458,20 +458,29 @@ def test_a_helper_passed_a_future_takes_its_answer():
     assert call.first_use_cycles == call.due_cycles
 
 
+@pytest.mark.parametrize("tied", [False, True])
 @pytest.mark.parametrize("policy", ["asap", "alap"])
-def test_a_blocking_wait_waits_for_every_line(policy):
+def test_a_blocking_wait_waits_for_the_lines_it_feeds(policy, tied):
     @pulse.kernel
     def k(q, p):
         d, t = get_drive_line(q)
         e, u = get_drive_line(p)
         drive(e, square(8000, 0.01), u)
+        if tied:
+            sync(d, e)
         x = calibrate.submit(0.5).result()
         drive(d, square(ARM, x), t)
 
     low = pulse.compile(k, schedule=policy).lower(Q[0], Q[1])
     (call,) = low.classical_report()
-    assert call.taken_cycles == 8000
-    assert _events(low, "drive")[1].start_cycles == 8000
+    fed = [e for e in _events(low, "drive") if e.line == 0]
+    if tied:
+        assert call.taken_cycles == 8000
+        assert fed[0].start_cycles == 8000
+    else:
+        # Only the line that uses the answer waits for it.
+        assert call.taken_cycles == call.due_cycles < 8000
+        assert fed[0].start_cycles == call.due_cycles
 
 
 @pytest.mark.parametrize("callee", ["asap", "alap"])

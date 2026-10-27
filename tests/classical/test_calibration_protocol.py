@@ -41,6 +41,15 @@ def _adaptive_t1(q):
     tracked_t1(q, PI_AMP, 3.0, 450_000.0 * CLOCK, 0.11, 0.14, 1_600_000)
 
 
+_calibration_chain = P["calibration_chain"]
+
+
+@pulse.kernel
+def _two_chains(q, p, t1_guess_cycles: float):
+    _calibration_chain(q, t1_guess_cycles)
+    _calibration_chain(p, t1_guess_cycles)
+
+
 def _device(target):
     dev = pulse.device({"target": target})
     return dev, dev.qudit_handles[0]
@@ -129,3 +138,16 @@ def test_a_slower_controller_rejects_the_chain_at_compile_time():
     slow = pulse.compile(P["calibration_chain"], device=dev, machine=machine)
     with pytest.raises(controller.ControllerLimitError, match="adaptive_t1 computes for about"):
         slow.lower(q, 20_000.0 * CLOCK)
+
+
+def test_two_qubits_calibrate_side_by_side():
+    target = transmon_krinner_17q()
+    dev = pulse.device({"target": target})
+    q, p = dev.qudit_handles[:2]
+    one = _chain()[0].lower(q, 20_000.0 * CLOCK)
+    two = pulse.compile(_two_chains, device=dev, machine=P["MACHINE"]).lower(q, p, 20_000.0 * CLOCK)
+    # Each chain waits only on its own answers, so two take about as long as
+    # one: only their requests on the shared link go out one after the other.
+    alone, side_by_side = (max(e.end for e in low.schedule) for low in (one, two))
+    assert alone <= side_by_side < alone * 1.01
+    assert controller.resources(two).violations == ()
