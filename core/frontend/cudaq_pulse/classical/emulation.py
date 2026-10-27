@@ -133,7 +133,9 @@ def export(lowered: Any) -> dict[str, Any]:
         },
         "epochs": [asdict(e) for e in epochs],
         "events": events,
-        "calls": [asdict(c) for c in lowered.classical_report()],
+        "calls": [
+            {**asdict(c), "iteration": list(c.iteration)} for c in lowered.classical_report()
+        ],
         "manifest": manifest(lowered),
     }
 

@@ -124,3 +124,24 @@ def test_the_realtime_channel_and_device_call_export_are_seams():
     low = pulse.compile(feedback).lower(Q[0])
     with pytest.raises(NotImplementedError, match="export_emulation"):
         emulation.device_call_text(low)
+
+
+def test_exports_with_calls_in_loops_are_json_data():
+    import json
+
+    @pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=100, name="json_decode")
+    def json_decode(bits):
+        return [bits[0]]
+
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        r, rt = get_readout_line(q)
+        for _ in range(2):
+            if json_decode.submit([readout(r, square(100, 0.05), rt)]).result()[0]:
+                drive(d, square(40, 0.1), t)
+
+    low = pulse.compile(k, unroll_threshold=0).lower(Q[0])
+    for program in (low.export_emulation(), low.export_controller()):
+        assert json.loads(json.dumps(program)) == program
+        assert [c["iteration"] for c in program["calls"]] == [[0], [1]]
