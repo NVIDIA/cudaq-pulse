@@ -571,6 +571,9 @@ private:
 
   void forwardWait(classical::WaitOp wait) {
     int64_t start = std::max(ready(wait.getFuture()), floor);
+    // A blocking wait is a barrier: every line is done before it.
+    if (wait->hasAttr("classical.blocking"))
+      start = std::max(start, makespan);
     record(wait, start);
     for (mlir::Value value : wait.getValues())
       readyAt[value] = start;

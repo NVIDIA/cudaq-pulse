@@ -441,6 +441,22 @@ def test_scheduling_invariants(steps, policy):
 
 
 
+@pytest.mark.parametrize("policy", ["asap", "alap"])
+def test_a_blocking_wait_waits_for_every_line(policy):
+    @pulse.kernel
+    def k(q, p):
+        d, t = get_drive_line(q)
+        e, u = get_drive_line(p)
+        drive(e, square(8000, 0.01), u)
+        x = calibrate.submit(0.5).result()
+        drive(d, square(ARM, x), t)
+
+    low = pulse.compile(k, schedule=policy).lower(Q[0], Q[1])
+    (call,) = low.classical_report()
+    assert call.taken_vtu == 8000
+    assert _events(low, "drive")[1].start_vtu == 8000
+
+
 @pytest.mark.parametrize("callee", ["asap", "alap"])
 @pytest.mark.parametrize("policy", ["asap", "alap"])
 def test_a_block_waits_for_a_slot_the_caller_holds(callee, policy):
