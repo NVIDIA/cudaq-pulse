@@ -81,12 +81,6 @@ jobs:
           PYTHONPATH: build/dev/python
         run: uv run --no-sync python -m pytest -m "physics and not gpu" --run-nightly tests/physics
 
-      - name: Full scheduling matrices
-        if: always()
-        env:
-          PYTHONPATH: build/dev/python
-        run: uv run --no-sync python -m pytest -m "slow and not gpu" --run-slow -q tests
-
       - name: New parameter values against a compile
         if: always()
         env:

@@ -120,24 +120,6 @@ def all_cases() -> list[Case]:
     return cases
 
 
-def pairwise(cases: Sequence[Case], fields: Sequence[str]) -> list[Case]:
-    """A deterministic subset of *cases* with every pair of values of
-    *fields* that some case has."""
-
-    def pairs(case: Case) -> set[tuple[Any, ...]]:
-        values = [(f, getattr(case, f)) for f in fields]
-        return set(itertools.combinations(values, 2))
-
-    covering = [pairs(c) for c in cases]
-    needed = set().union(*covering)
-    chosen: list[Case] = []
-    while needed:
-        best = max(range(len(cases)), key=lambda k: len(covering[k] & needed))
-        chosen.append(cases[best])
-        needed -= covering[best]
-    return chosen
-
-
 # ── Times, in clock cycles ───────────────────────────────────────────────────
 
 

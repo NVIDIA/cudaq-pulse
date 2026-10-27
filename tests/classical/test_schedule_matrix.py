@@ -8,8 +8,8 @@
 """Classical calls in every scheduling mode, from every place in a kernel,
 and kernels calling kernels with every pair of schedules.
 
-Each test runs a pairwise subset of its cases by default, and the rest with
-``--run-slow``. The cases and the properties are in ``_schedule_matrix``.
+Every case runs by default. The cases and the properties are in
+``_schedule_matrix``.
 """
 
 from __future__ import annotations
@@ -28,12 +28,9 @@ from cudaq_pulse.compiler import MachineModel
 from tests._handles import Q
 from tests.classical import _schedule_matrix as matrix
 
-FIELDS = ("root", "callee", "placement", "link", "take", "flatten")
 
-
-def _params(cases, default):
-    chosen = set(default)
-    return [pytest.param(c, id=c.id, marks=() if c in chosen else pytest.mark.slow) for c in cases]
+def _params(cases):
+    return [pytest.param(c, id=c.id) for c in cases]
 
 
 CASES = matrix.all_cases()
@@ -43,7 +40,7 @@ VALID = [c for c in CASES if matrix.expected_error(c) is None]
 # ── Every case: compile, verify, schedule, export ────────────────────────────
 
 
-@pytest.mark.parametrize("case", _params(CASES, matrix.pairwise(CASES, FIELDS)))
+@pytest.mark.parametrize("case", _params(CASES))
 def test_case(case):
     expected = matrix.expected_error(case)
     if expected is not None:
@@ -68,7 +65,7 @@ _ORDER = [c for c in VALID if c.root == "default"]
 
 @pytest.mark.parametrize(
     "case",
-    _params(_ORDER, matrix.pairwise(_ORDER, ("callee", "placement", "link", "take", "flatten"))),
+    _params(_ORDER),
 )
 def test_asap_is_early_and_alap_late(case):
     matrix.check_policy_order(case, Q)
@@ -79,9 +76,7 @@ def test_asap_is_early_and_alap_late(case):
 _SHAPED = [c for c in VALID if c.blocks and c.placement in matrix.SHAPED]
 
 
-@pytest.mark.parametrize(
-    "case", _params(_SHAPED, matrix.pairwise(_SHAPED, ("root", "callee", "placement", "take")))
-)
+@pytest.mark.parametrize("case", _params(_SHAPED))
 def test_a_called_kernel_with_its_own_schedule_keeps_its_shape(case):
     low = matrix.lower_case(case, Q)
     own = matrix.compile_case(case, kernel=matrix.alone(case)).lower(
@@ -93,9 +88,7 @@ def test_a_called_kernel_with_its_own_schedule_keeps_its_shape(case):
 _INLINED = [c for c in VALID if c.placement in matrix.CALLEE_PLACEMENTS and c.callee is None]
 
 
-@pytest.mark.parametrize(
-    "case", _params(_INLINED, matrix.pairwise(_INLINED, ("root", "placement", "link", "take")))
-)
+@pytest.mark.parametrize("case", _params(_INLINED))
 def test_a_called_kernel_without_a_schedule_is_scheduled_as_inlined(case):
     as_kernel = matrix.lower_case(case, Q)
     helper = matrix.compile_case(case, kernel=matrix.program(case, callee_as_helper=True))
@@ -107,9 +100,7 @@ def test_a_called_kernel_without_a_schedule_is_scheduled_as_inlined(case):
 _FLAT = [c for c in VALID if c.flatten]
 
 
-@pytest.mark.parametrize(
-    "case", _params(_FLAT, matrix.pairwise(_FLAT, ("root", "callee", "placement", "take")))
-)
+@pytest.mark.parametrize("case", _params(_FLAT))
 def test_flattening_ignores_every_called_kernels_schedule(case):
     plain = dataclasses.replace(case, callee=None, flatten=False)
     assert matrix.timeline(matrix.lower_case(case, Q)) == matrix.timeline(
@@ -120,8 +111,6 @@ def test_flattening_ignores_every_called_kernels_schedule(case):
 _NESTED = list(
     itertools.product(matrix.CALLEES, matrix.CALLEES, matrix.CALLEES, matrix.LINKS, matrix.TAKES)
 )
-# Every triple of schedules; links and takes in the slow tier.
-_NESTED_DEFAULT = {n for n in _NESTED if n[3] == "controller" and n[4] == "result"}
 
 
 def _nested(outer, middle, inner, link, take):
@@ -162,14 +151,7 @@ def _nested(outer, middle, inner, link, take):
 
 @pytest.mark.parametrize(
     "nested",
-    [
-        pytest.param(
-            n,
-            id="-".join(str(x) for x in n),
-            marks=() if n in _NESTED_DEFAULT else pytest.mark.slow,
-        )
-        for n in _NESTED
-    ],
+    [pytest.param(n, id="-".join(str(x) for x in n)) for n in _NESTED],
 )
 @pytest.mark.parametrize("policy", ["asap", "alap"])
 def test_three_kernels_deep_with_mixed_schedules(nested, policy):
@@ -197,21 +179,9 @@ def test_three_kernels_deep_with_mixed_schedules(nested, policy):
 # ── Simulation against an explicitly scheduled reference ─────────────────────
 
 _SIMULATED = [c for c in VALID if c.root in ("default", "asap", "alap") and c.link == "controller"]
-_SIMULATED_DEFAULT = [
-    matrix.Case("default", "asap", "future_out"),
-    matrix.Case("asap", "alap", "future_in", take="timeout"),
-    matrix.Case("alap", "asap", "callee_float"),
-    matrix.Case("default", None, "both_waits", take="blocking"),
-    matrix.Case("asap", None, "mixed_wait", take="timeout"),
-    matrix.Case("alap", None, "loop_variable"),
-    matrix.Case("default", None, "branch"),
-    matrix.Case("asap", "asap", "callee_twice", take="timeout"),
-]
-
-assert set(_SIMULATED_DEFAULT) <= set(_SIMULATED)
 
 
-@pytest.mark.parametrize("case", _params(_SIMULATED, _SIMULATED_DEFAULT))
+@pytest.mark.parametrize("case", _params(_SIMULATED))
 def test_simulation_matches_an_explicit_schedule(case):
     low = matrix.lower_case(case, Q)
     shifts = matrix.epoch_shifts(case, low)
