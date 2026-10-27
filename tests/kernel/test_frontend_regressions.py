@@ -27,7 +27,7 @@ from cudaq_pulse.kernel.ir_builder import (
 )
 from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
-from tests._handles import Q
+from tests._handles import Q, ladder_target
 from tests._ir import python_ir
 
 # ── Closures are read on every call ──────────────────────────────────
@@ -177,12 +177,37 @@ def test_short_stack_swap_raises():
 # ── Packed encoding limits ───────────────────────────────────────────
 
 
-def test_sync_over_too_many_lines_raises():
+@pytest.mark.parametrize("n", [84, 85, 1200])
+def test_a_sync_over_many_lines_takes_an_extended_record(n):
     builder = PackedIRBuilder(name="k")
-    lines = tuple(IRValue(i, "drive_line") for i in range(85))
-    builder.emit("pulse.sync", lines[:84], tuple(v.vtype for v in lines[:84]))
-    with pytest.raises(CompilationError, match="at most|packed limit"):
-        builder.emit("pulse.sync", lines, tuple(v.vtype for v in lines))
+    lines = tuple(IRValue(i, "drive_line") for i in range(n))
+    builder.emit("pulse.sync", lines, tuple(v.vtype for v in lines))
+    header = builder.get_buffer()[0]
+    payload = (header >> 8) & 0xFF
+    if n == 84:
+        assert payload == 1 + 3 * n
+    else:
+        assert payload == 0xFF and builder.get_buffer()[1] == 1 + 3 * n
+
+
+def test_a_sync_over_a_thousand_lines_compiles_schedules_and_exports():
+    n = 1200
+    dev = pulse.device({"target": ladder_target(n)})
+
+    @pulse.kernel
+    def wide(qs):
+        lines = [get_drive_line(q) for q in qs]
+        drive(lines[-1], square(40, 0.1))
+        sync(*lines)
+        for d in lines:
+            drive(d, square(8, 0.1))
+
+    lowered = pulse.compile(wide, device=dev, schedule="asap").lower(dev.qudit_handles[0:n])
+    drives = lowered.schedule
+    assert len(drives) == n + 1
+    assert {e.start_cycles for e in drives[1:]} == {40}
+    (barrier,) = [e for e in lowered.export_controller()["events"] if e["kind"] == "sync"]
+    assert barrier["lines"] == list(range(n)) and barrier["start_cycles"] == 40
 
 
 def test_packed_param_names_are_recorded():

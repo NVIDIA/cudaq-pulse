@@ -3460,44 +3460,38 @@ class PulseIREmitter:
                 return
             found = self._local_names(first, second)
             names = {id(first): found[0], id(second): found[1]}
-        arg_info: list[tuple[str | None, IRValue | None, Any, Any]] = []
-        for a in call_args:
+        # The operands each result may replace, by type, the first in operand
+        # order last: a sync over n lines rebinds in O(n), not O(n^2).
+        unclaimed: dict[str, list[tuple[str | None, IRValue, Any, Any]]] = {}
+        for a in reversed(call_args):
             if a.__class__ is IRValue and a.vtype in LINEAR_TYPES:
                 slot = slots.get(id(a))
                 if slot is not None and not _slot_holds(slot, a):
                     slot = None
                 name = self._find_local_name(a) if names is None else names[id(a)]
-                arg_info.append((name, a, slot, a.chan))
-            else:
-                arg_info.append((None, None, None, None))
+                if name is not None or slot is not None or a.chan is not None:
+                    if a.vtype in unclaimed:
+                        unclaimed[a.vtype].append((name, a, slot, a.chan))
+                    else:
+                        unclaimed[a.vtype] = [(name, a, slot, a.chan)]
 
-        claimed: set[int] = set()
         for res in results:
-            if res.vtype not in LINEAR_TYPES:
+            if res.vtype not in unclaimed or not unclaimed[res.vtype]:
                 continue
-            for i, (name, op_val, slot, chan) in enumerate(arg_info):
-                if (
-                    i in claimed
-                    or op_val is None
-                    or (name is None and slot is None and chan is None)
-                ):
-                    continue
-                if op_val.vtype == res.vtype:
-                    if chan is not None and chan.value is op_val:
-                        chan.value = res
-                        res.chan = chan
-                        if chan.shared:
-                            for other, value in self.locals.items():
-                                if value is op_val:
-                                    self.locals[other] = res
-                    if name is not None:
-                        self.locals[name] = res
-                    if slot is not None:
-                        slot[0][slot[1]] = res
-                        slots.pop(id(op_val), None)
-                        slots[id(res)] = (slot[0], slot[1], res)
-                    claimed.add(i)
-                    break
+            name, op_val, slot, chan = unclaimed[res.vtype].pop()
+            if chan is not None and chan.value is op_val:
+                chan.value = res
+                res.chan = chan
+                if chan.shared:
+                    for other, value in self.locals.items():
+                        if value is op_val:
+                            self.locals[other] = res
+            if name is not None:
+                self.locals[name] = res
+            if slot is not None:
+                slot[0][slot[1]] = res
+                slots.pop(id(op_val), None)
+                slots[id(res)] = (slot[0], slot[1], res)
 
     def _restore_container(self, obj: Any, copy: Any) -> None:
         """Undo a traced arm or loop body's changes to a list or dict.

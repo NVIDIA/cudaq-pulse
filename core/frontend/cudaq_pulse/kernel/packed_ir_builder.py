@@ -631,12 +631,10 @@ class PackedIRBuilder:
         if kind == "pulse.sync":
             n = len(operands)
             payload_len = 1 + 3 * n
-            if payload_len > _MAX_PAYLOAD:
-                raise CompilationError(
-                    f"sync() over {n} lines exceeds the packed limit of "
-                    f"{(_MAX_PAYLOAD - 1) // 3} lines per sync"
-                )
-            words = [_header(_SYNC, payload_len), n]
+            if payload_len >= _MAX_PAYLOAD:
+                words = [_header(_SYNC, _MAX_PAYLOAD), payload_len, n]
+            else:
+                words = [_header(_SYNC, payload_len), n]
             for j in range(n):
                 in_vid = operands[j].vid
                 out_vid = results[j].vid if j < len(results) else in_vid

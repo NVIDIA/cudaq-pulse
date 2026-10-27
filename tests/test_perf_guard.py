@@ -58,6 +58,8 @@ pytestmark = pytest.mark.benchmark
 _ROOT = Path(__file__).resolve().parents[1]
 BASELINE = _ROOT / "benchmarks" / "baselines" / "frontend_perf.json"
 TOLERANCE = 3.0
+# A rolled loop's cost must not grow with its trip count.
+FLAT_LOOP_LIMIT = 2.0
 # A build tree stages the package in build/<dir>/python and cudaq-pulse-opt
 # in build/<dir>/bin.
 _BUILD_BIN = Path(pulse.__file__).parent.parent.parent / "bin"
@@ -255,6 +257,25 @@ def test_verify_does_constant_work_per_unused_line(tmp_path):
         ]
         # The message, the source line and its caret: nothing attached.
         assert stderr.count("\n") == 3 * len(warnings), stderr[:2000]
+
+
+@pytest.mark.scaling
+def test_a_wide_sync_traces_in_linear_time():
+    wide = pulse.device({"target": ladder_target(4000)}).qudit_handles
+
+    def program(n: int):
+        @pulse.kernel
+        def kernel(qubits):
+            lines = [get_drive_line(q) for q in qubits]
+            sync(*lines)
+            for line in lines:
+                drive(line, square(8, 0.1))
+
+        return lambda: pulse.compile(kernel).lower(wide[0:n]).metrics.trace_ms
+
+    # Eight times the lines: about 8x the time when linear, 64x when not.
+    times = {n: min(program(n)() for _ in range(3)) for n in (500, 4000)}
+    assert times[4000] < 8 * times[500] * FLAT_LOOP_LIMIT, times
 
 
 @pytest.mark.scaling
