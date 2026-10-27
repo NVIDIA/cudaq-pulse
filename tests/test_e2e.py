@@ -94,11 +94,7 @@ def test_loop_full_pipeline():
 
 
 def test_scheduling_pipeline():
-    """Scheduling via compile() with ALAP policy.
-
-    Note: RCP scheduling is not yet available in the C++ pass pipeline
-    (_SCHEDULE_MAP only maps "alap"). This test uses schedule="alap".
-    """
+    """Scheduling via compile() with the ALAP policy."""
 
     @pulse.kernel
     def k(q0, q1):

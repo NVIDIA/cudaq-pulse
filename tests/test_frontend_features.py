@@ -8,8 +8,8 @@
 """Op-count checks for the frontend features the compiler relies on.
 
 Loop retention, exact unrolling of index-dependent loops, closures and
-helpers, symbolic parameters, and rejection of measurement-dependent
-branches in the packed compile() path. Expected counts come from the
+helpers, symbolic parameters, and measurement-dependent branches kept as
+conditional regions in the packed compile() path. Expected counts come from the
 kernel structure, not from a previous run, so a frontend that drops or
 duplicates ops fails here.
 """

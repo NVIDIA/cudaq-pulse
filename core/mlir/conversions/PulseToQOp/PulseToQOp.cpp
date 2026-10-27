@@ -736,7 +736,7 @@ struct PulseToQOpPass
       readouts.front()->emitError(
           "a program that measures evolves in segments between measurements; "
           "lower it along a measurement-outcome path (pulse.path), as "
-          "pulse.evolve() does");
+          "pulse.simulate() does");
       return signalPassFailure();
     }
     if (pathAttr)

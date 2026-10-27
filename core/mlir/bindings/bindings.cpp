@@ -123,7 +123,8 @@ mlir::DialectRegistry makeRegistry() {
   return reg;
 }
 
-// Packed-buffer OpCode enum — must match Python packed_emit.py constants
+// Packed-buffer opcodes; they must match the opcodes in
+// core/frontend/cudaq_pulse/kernel/packed_ir_builder.py.
 constexpr int kOpAllocDrive = 0;
 constexpr int kOpAllocReadout = 1;
 constexpr int kOpAllocTone = 2;
@@ -609,12 +610,9 @@ struct ControllerWalk {
 // PulseModule: opaque handle around an in-memory mlir::ModuleOp
 // -----------------------------------------------------------------------
 // TODO(pulse): this wrapper owns the MLIRContext + ModuleOp and maps pass
-// names through the if/else chain in run_passes() below. A cleaner design
-// (tracked as a follow-up) is to expose MLIR's own MlirModule/MlirPassManager
-// and register the pulse passes so PassManager pipeline strings parse
-// directly, removing this bespoke wrapper. Deferred here because it threads
-// through the Python frontend (compile.py/jit.py/evolve.py) and warrants its
-// own change + validation pass.
+// names through the if/else chain in run_passes() below. Registering the
+// pulse passes so that PassManager pipeline strings parse directly would
+// replace the chain and most of this wrapper.
 class PulseModule {
 public:
   PulseModule(std::shared_ptr<mlir::MLIRContext> ctx,
@@ -2877,7 +2875,8 @@ JITModule createJITModule(mlir::ModuleOp module,
 }
 
 // -----------------------------------------------------------------------
-// MLIRPipeline: text-in / text-out convenience wrapper (legacy API)
+// MLIRPipeline: the text-in, text-out lowerings and the JIT entry points of
+// the Python runtime
 // -----------------------------------------------------------------------
 class MLIRPipeline {
 public:
