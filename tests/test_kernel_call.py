@@ -181,6 +181,88 @@ def test_a_changed_global_is_seen_on_the_next_call():
     assert reads_globals.cache_info().compiled == 3
 
 
+@dataclasses.dataclass
+class _Calibration:
+    amplitude: float
+    durations: list[int]
+
+
+CALIBRATIONS = {f"q{i}": _Calibration(0.1, [40]) for i in range(1000)}
+SCALES = {"a": 0.5, "b": 0.25}
+
+
+@pulse.kernel
+def subscripts_a_dict(q):
+    d = get_drive_line(q)
+    entry = CALIBRATIONS["q3"]
+    drive(d, square(entry.durations[0], entry.amplitude))
+
+
+@pulse.kernel
+def iterates_a_dict(q):
+    d = get_drive_line(q)
+    for scale in SCALES.values():
+        drive(d, square(8, scale))
+
+
+@pulse.kernel
+def checks_a_dict(q):
+    d = get_drive_line(q)
+    drive(d, square(8, 0.5 if "c" in SCALES else 0.1))
+
+
+@pulse.kernel
+def measures_a_dict(q):
+    d = get_drive_line(q)
+    drive(d, square(8 * len(SCALES), 0.1))
+
+
+def test_a_subscripted_dict_is_guarded_at_the_items_read():
+    q = _device().qudit_handles[0]
+    first = subscripts_a_dict.lower(q)
+    entry = CALIBRATIONS["q3"]
+    try:
+        CALIBRATIONS["q4"] = _Calibration(0.9, [8])
+        CALIBRATIONS["new"] = _Calibration(0.9, [8])
+        assert subscripts_a_dict.lower(q) is first
+        entry.amplitude = 0.2
+        assert "2.000000e-01" in subscripts_a_dict.lower(q).mlir()
+        entry.durations.append(4)
+        entry.durations[0] = 16
+        assert subscripts_a_dict.lower(q).schedule[0].duration_cycles == 16
+        CALIBRATIONS["q3"] = _Calibration(0.3, [40])
+        assert "3.000000e-01" in subscripts_a_dict.lower(q).mlir()
+        del CALIBRATIONS["q3"]
+        with pytest.raises(CompilationError, match="subscript failed"):
+            subscripts_a_dict.lower(q)
+    finally:
+        CALIBRATIONS["q3"] = entry
+        entry.amplitude, entry.durations[:] = 0.1, [40]
+        CALIBRATIONS.pop("new")
+        CALIBRATIONS["q4"] = _Calibration(0.1, [40])
+
+
+@pytest.mark.parametrize(
+    ("kernel", "change"),
+    [
+        (iterates_a_dict, lambda: SCALES.update(b=0.75)),
+        (checks_a_dict, lambda: SCALES.update(c=1.0)),
+        (measures_a_dict, lambda: SCALES.update(c=1.0)),
+    ],
+    ids=["iterated", "tested with in", "passed to a call"],
+)
+def test_a_dict_used_whole_is_guarded_whole(kernel, change):
+    q = _device().qudit_handles[0]
+    first = kernel.lower(q)
+    assert kernel.lower(q) is first
+    try:
+        change()
+        assert kernel.lower(q) is not first
+    finally:
+        SCALES.clear()
+        SCALES.update(a=0.5, b=0.25)
+
+
 class _Pulses:
     def __init__(self, amplitude):
         self.amplitude = amplitude

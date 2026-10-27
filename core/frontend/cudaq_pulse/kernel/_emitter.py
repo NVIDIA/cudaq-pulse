@@ -1461,9 +1461,11 @@ class PulseIREmitter:
         "_lines",
         "_unroll",
         "_one_arm",
+        "_dict_items",
     )
 
     _can_roll: bool
+    _dict_items: dict[tuple[int, Any], tuple[dict[Any, Any], Any, Any]] | None
     _slots: dict[int, tuple[list[Any], int, IRValue]]
     _durations: dict[int, int]
     _mutated: dict[int, tuple[Any, Any]] | None
@@ -1490,6 +1492,7 @@ class PulseIREmitter:
         self._builtins = _BUILTINS
         if caller is not None:
             # An inlined call shares the trace's state with its caller.
+            self._dict_items = caller._dict_items
             self._can_roll = caller._can_roll
             self._slots = caller._slots
             self._durations = caller._durations
@@ -1499,6 +1502,9 @@ class PulseIREmitter:
             self._lines = caller._lines
             self._unroll = caller._unroll
             return
+        # The builder's record of the dict items the trace read, for the
+        # guard (``_guard.py``); None for a builder that keeps none.
+        self._dict_items = getattr(builder, "dict_items", None)
         self._can_roll = getattr(builder, "supports_regions", False)
         self._unroll = resolve_unroll_threshold(getattr(builder, "unroll_threshold", None))
         # id(line or tone) -> (list, index, value) for values read out of a
@@ -1598,6 +1604,7 @@ class PulseIREmitter:
         local_vars = self.locals
         closures = self._fn_closures
         fn_globals = self._fn_globals
+        dict_items = self._dict_items
         push = stack.append
         pop = stack.pop
 
@@ -1679,6 +1686,8 @@ class PulseIREmitter:
                         and value.vtype in LINEAR_TYPES
                     ):
                         self._slots[id(value)] = (obj, index, value)
+                    elif obj.__class__ is dict and dict_items is not None:
+                        dict_items[(id(obj), index)] = (obj, index, value)
 
                 elif op is _load_attr:
                     obj = pop()
@@ -1797,6 +1806,8 @@ class PulseIREmitter:
                         # 3.14, a generator expression's result.
                         push(value)
                     else:
+                        if vt is dict and dict_items is not None:
+                            self.b.dict_whole.add(id(value))
                         push(_Unrolled(_iterate(value)))
                     if _iter_slots > 1:
                         stack.extend([None] * (_iter_slots - 1))
@@ -1869,6 +1880,8 @@ class PulseIREmitter:
                 elif op is _contains:
                     right = pop()
                     left = pop()
+                    if right.__class__ is dict and dict_items is not None:
+                        self.b.dict_whole.add(id(right))
                     push((left in right) != arg)
 
                 elif op is bc.COPY:

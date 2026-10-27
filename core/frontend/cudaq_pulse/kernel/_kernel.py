@@ -662,7 +662,12 @@ class Kernel[**P]:
             if promoted:
                 _warn_static(self.__name__, [names[i] for i in promoted], operation, where)
         returns = _return_spec(builder.returned, builder.readouts, self.__name__)
-        guard = build_guard(fn, impure=builder.impure)
+        guard = build_guard(
+            fn,
+            impure=builder.impure,
+            dict_items=builder.dict_items,
+            dict_whole=builder.dict_whole,
+        )
         pins = tuple(values[i] for i in static)
         entry = _Entry(lowered, guard, returns, pins, runtime)
         if options.machine.line_delays_ns and lowered.scheduled:

@@ -409,6 +409,11 @@ class PackedIRBuilder:
         self._n_readouts = 0
         # Set by the emitter when the trace evaluated an impure host call.
         self.impure = False
+        # For the guard, kept by the emitter: the dict items the trace read,
+        # (id(dict), key) -> (dict, key, value), and the ids of the dicts it
+        # iterated or tested with `in`, whose every item matters.
+        self.dict_items: dict[tuple[int, Any], tuple[dict[Any, Any], Any, Any]] = {}
+        self.dict_whole: set[int] = set()
         # The compilation's loop-unroll threshold; None for the default.
         self.unroll_threshold: int | None = None
         # The controller's ControllerLimits.max_instructions; set it with

@@ -260,6 +260,30 @@ def test_verify_does_constant_work_per_unused_line(tmp_path):
 
 
 @pytest.mark.scaling
+def test_compiling_a_kernel_that_reads_a_dict_is_flat_in_its_size():
+    def program(n: int):
+        table = {f"entry{i}": [0.1, 40] for i in range(n)}
+        namespace = {"table": table}
+        exec(
+            "def kernel(q):\n"
+            "    line = get_drive_line(q)\n"
+            "    entry = table['entry7']\n"
+            "    drive(line, square(entry[1], entry[0]))\n",
+            namespace,
+        )
+        kernel = pulse.kernel(namespace["kernel"])
+        compiled = pulse.compile(kernel)
+        compiled.lower(Q[0])
+        return lambda: pulse.compile(kernel).lower(Q[0]), lambda: compiled.lower(Q[0])
+
+    small, large = program(16), program(100_000)
+    compile_s = {"16": _best(small[0], 5, 0), "100000": _best(large[0], 5, 0)}
+    call_s = {"16": _best(small[1], 20, 0), "100000": _best(large[1], 20, 0)}
+    assert compile_s["100000"] < compile_s["16"] * FLAT_LOOP_LIMIT, compile_s
+    assert call_s["100000"] < call_s["16"] * FLAT_LOOP_LIMIT, call_s
+
+
+@pytest.mark.scaling
 def test_a_wide_sync_traces_in_linear_time():
     wide = pulse.device({"target": ladder_target(4000)}).qudit_handles
 
