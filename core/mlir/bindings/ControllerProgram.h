@@ -1183,6 +1183,18 @@ private:
     return out;
   }
 
+  // The kind of an event in format /2, named for what the controller does
+  // rather than for a modality.
+  static const char *structuredKind(const char *kind) {
+    if (std::strcmp(kind, "drive") == 0)
+      return "play";
+    if (std::strcmp(kind, "readout") == 0)
+      return "acquire";
+    if (std::strcmp(kind, "submit") == 0)
+      return "call";
+    return kind;
+  }
+
   nb::dict common(const ControllerRecord &r, size_t index) {
     nb::dict event;
     bool sync = std::strcmp(r.kind, "sync") == 0;
@@ -1190,7 +1202,7 @@ private:
     bool call = (r.kind[0] == 's' && !sync) || r.kind[0] == 'a';
     if (!compact)
       event["index"] = index;
-    event["kind"] = r.kind;
+    event["kind"] = compact ? structuredKind(r.kind) : r.kind;
     if (!compact)
       event["line"] = sync || loop ? nb::none() : nb::object(nb::int_(r.line));
     else if (!sync && !loop && !call)

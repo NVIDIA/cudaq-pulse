@@ -138,6 +138,14 @@ rather than with its executions, as a sequencer runs it. It has the keys of
 ``/1``, except that:
 
 ``events``
+    Each event's ``kind`` is one of ``cudaq_pulse.Event``, named for what a
+    controller does whatever the modality: ``"play"`` (a ``/1`` drive),
+    ``"acquire"`` (a readout), ``"wait"``, ``"sync"``, ``"loop"``,
+    ``"call"`` (a ``/1`` submit) and ``"answer"``. An event in a branch
+    keeps its kind and lists its ``conditions``, and phase and frequency
+    changes are in the ``tones`` of the events that play them, so neither
+    has a kind of its own. A backend refuses a kind it does not know.
+
     A tree. A loop whose iterations repeat (each event moves by one period,
     and every tone keeps its frequency) is one ``loop`` event: ``trips``
     iterations from ``first_iteration`` (omitted when 0), one
@@ -148,7 +156,7 @@ rather than with its executions, as a sequencer runs it. It has the keys of
     iteration that differs from the rest is exported before its loop; a
     loop that does not repeat is exported once per iteration, as in ``/1``.
 ``waveforms``
-    Each distinct waveform expression once; a drive or readout gives the
+    Each distinct waveform expression once; a play or acquire gives the
     index of its own in ``waveform``. With ``sample_rate_ghz``, ``samples``
     holds each one's samples, in the same order. Each also has ``id``, 16
     hex digits that depend on its expression alone, so they stay the same

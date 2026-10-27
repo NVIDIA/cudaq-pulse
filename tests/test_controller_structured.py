@@ -211,6 +211,32 @@ def test_unrolling_the_structured_export_gives_the_flat_one(name):
     assert len(json.dumps(structured)) < len(json.dumps(flat))
 
 
+def _kinds(events):
+    for event in events:
+        yield event["kind"]
+        if event["kind"] == "loop":
+            yield from _kinds(event["body"])
+
+
+def test_every_structured_event_kind_is_an_event_and_exported_as_a_plain_string():
+    seen = set()
+    for name in _CASES:
+        lowered, export = _lower(name)
+        program = json.loads(json.dumps(lowered.export_controller(**export, version=2)))
+        seen.update(_kinds(program["events"]))
+    assert seen <= set(pulse.Event)
+    assert {"play", "acquire", "sync", "loop", "call", "answer"} <= seen
+    assert pulse.Event.PLAY == "play" and pulse.Event("acquire") is pulse.Event.ACQUIRE
+
+
+def test_unrolling_refuses_an_event_kind_the_format_does_not_have():
+    lowered, _ = _lower("branches")
+    program = lowered.export_controller(version=2)
+    program["events"].append({**program["events"][0], "kind": "teleport"})
+    with pytest.raises(ValueError, match="cannot unroll events of kind 'teleport'"):
+        unroll(program)
+
+
 def test_unrolling_a_flat_export_returns_it():
     lowered, _ = _lower("branches")
     flat = lowered.export_controller()
@@ -238,7 +264,7 @@ def test_a_loop_body_carries_its_period_and_phase_steps():
     assert len(played) == 16
     in_loops = [e["tones"] for loop in _loops(program["events"]) for e in _played(loop["body"])]
     assert in_loops and all(len(t) == 1 and "phase_step_rad" in t[0] for t in in_loops)
-    outside = [e["tones"] for e in program["events"] if e["kind"] == "drive"]
+    outside = [e["tones"] for e in program["events"] if e["kind"] == "play"]
     assert all("phase_step_rad" not in t[0] for t in outside)
 
 
@@ -246,7 +272,7 @@ def _played(events):
     for event in events:
         if event["kind"] == "loop":
             yield from _played(event["body"])
-        elif event["kind"] in ("drive", "readout"):
+        elif event["kind"] in ("play", "acquire"):
             yield event
 
 
@@ -260,7 +286,7 @@ def test_a_loop_whose_frequency_changes_every_iteration_is_listed_per_iteration(
 def test_a_first_iteration_that_differs_is_exported_before_its_loop():
     program = _lower("first_differs")[0].export_controller(version=2)
     kinds = [e["kind"] for e in program["events"]]
-    assert kinds[-1] == "loop" and "drive" in kinds[:-1]
+    assert kinds[-1] == "loop" and "play" in kinds[:-1]
     assert program["events"][-1]["first_iteration"] == 1
 
 

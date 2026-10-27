@@ -106,6 +106,7 @@ if TYPE_CHECKING:
     from ._units import s as s
     from ._units import us as us
     from .classical import Link as Link
+    from .controller import Event as Event
     from .runtime.gpu import GpuRuntimeError as GpuRuntimeError
     from .runtime.simulate import BranchCoverage as BranchCoverage
     from .runtime.simulate import SimulationResult as SimulationResult
@@ -116,6 +117,7 @@ _LAZY_EXPORTS = {
     "BranchCoverage": ".runtime.simulate",
     "simulate": ".runtime.simulate",
     "GpuRuntimeError": ".runtime.gpu",
+    "Event": ".controller",
     # Times with units load exact arithmetic (fractions), which a program in
     # cycles does not need.
     "Time": "._units",
@@ -181,6 +183,7 @@ __all__ = [
     "Length",
     "controller",
     "backends",
+    "Event",
 ]
 
 

@@ -61,6 +61,7 @@ import sys
 import types
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
+from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -89,6 +90,7 @@ __all__ = [
     "ControllerLimitError",
     "ControllerLimits",
     "ControllerUsage",
+    "Event",
     "FunctionCost",
     "FunctionResources",
     "FunctionUsage",
@@ -159,6 +161,36 @@ _PROCESSOR_DEFAULTS: Mapping[str, Any] = MappingProxyType(
 # The /2 name of the /1 key naming the quantum system.
 _SYSTEM_KEYS: Mapping[str, str] = MappingProxyType({"target": "quantum_system"})
 
+
+class Event(StrEnum):
+    """The kind of an event of a format /2 program: what the controller
+    does, named alike for every modality.
+
+    ``PLAY`` plays a waveform on a line and ``ACQUIRE`` plays one and
+    acquires a measurement result; ``WAIT`` idles a line, ``SYNC`` aligns
+    lines and ``LOOP`` repeats its body. ``CALL`` sends a request to a
+    classical function over a link and ``ANSWER`` takes its answer. An event
+    in a branch keeps its kind and lists its ``conditions``; a frame's
+    phase and frequency are carried by the events that play on it. The
+    export holds the plain strings, so ``Event.PLAY == "play"``.
+    """
+
+    PLAY = "play"
+    ACQUIRE = "acquire"
+    WAIT = "wait"
+    SYNC = "sync"
+    LOOP = "loop"
+    CALL = "call"
+    ANSWER = "answer"
+
+
+_EVENT_KINDS = frozenset(Event)
+# The /2 kinds of /1 events whose /1 names differ.
+_KINDS: Mapping[str, str] = MappingProxyType(
+    {"drive": "play", "readout": "acquire", "submit": "call"}
+)
+_FLAT_KINDS: Mapping[str, str] = MappingProxyType({v: k for k, v in _KINDS.items()})
+
 # The parameter names of each waveform op, in operand order.
 _PARAMETERS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
@@ -187,7 +219,7 @@ _AMPLITUDES: Mapping[str, tuple[int, ...]] = MappingProxyType(
 _AMPLITUDE_NAMES: Mapping[str, frozenset[str]] = MappingProxyType(
     {shape: frozenset(_PARAMETERS[shape][i] for i in at) for shape, at in _AMPLITUDES.items()}
 )
-_PLAYED = frozenset({"drive", "readout"})
+_PLAYED = frozenset({"drive", "readout", "play", "acquire"})
 # The keys a format /2 waveform has beside its expression.
 _IDS = ("id", "shape_id")
 
@@ -839,6 +871,20 @@ def _one_clock(clocks: _clocks.ClockPlan | None) -> bool:
     return clocks is None or (clocks.owners is None and _native_clock(clocks) is None)
 
 
+def _unknown_kinds(events: Sequence[Mapping[str, Any]]) -> list[str]:
+    """The kinds of *events*, in loops too, that format /2 does not have,
+    sorted."""
+    found: set[str] = set()
+    stack = [events]
+    while stack:
+        for event in stack.pop():
+            if event["kind"] == "loop":
+                stack.append(event["body"])
+            elif event["kind"] not in _EVENT_KINDS:
+                found.add(str(event["kind"]))
+    return sorted(found)
+
+
 def _played(events: Sequence[dict[str, Any]]) -> Any:
     """The drives and readouts of *events*, in the bodies of loops too."""
     for event in events:
@@ -1068,6 +1114,9 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
                 number(item["body"])
 
     number(program["events"])
+    unknown = _unknown_kinds(program["events"])
+    if unknown:
+        raise ValueError(f"cannot unroll events of kind {', '.join(map(repr, unknown))}")
     events: list[dict[str, Any]] = []
     latest: dict[int, int] = {}
     branches: dict[tuple[Any, ...], int] = {}
@@ -1076,7 +1125,7 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
         # loops: (depth, iteration, iterations since the first, period, the
         # branches around the loop) for each rolled loop around *items*.
         for item in items:
-            kind = item["kind"]
+            kind = _FLAT_KINDS.get(item["kind"], item["kind"])
             if kind == "loop":
                 outer = {c["branch"] for c in item.get("conditions", ())}
                 depth = len(item.get("iteration", ()))

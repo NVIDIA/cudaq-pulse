@@ -589,6 +589,10 @@ behavior may change in any 0.x release.
   quantum system's name as `quantum_system`. Two waveforms of
   one shape at `float` amplitudes share memory, and a limit that only some
   `float` values exceed is checked when a call supplies them.
+- **Event kinds.** `pulse.Event` names the kinds of event in format /2 for
+  what a controller does, whatever the modality: `play`, `acquire`,
+  `wait`, `sync`, `loop`, `call` and `answer` (/1 keeps `drive`, `readout`
+  and `submit`). The export holds the plain strings.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
   `CompiledKernel`, `Lowered`, `Pass`, `simulate`, `SimulationResult`,
   `BranchCoverage`, `device`, `Device`, `Qudit`, `Register`,

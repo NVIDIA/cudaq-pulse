@@ -64,6 +64,7 @@ TOP_LEVEL = {
     "classical",
     "controller",
     "backends",
+    "Event",
     "__version__",
 }
 
