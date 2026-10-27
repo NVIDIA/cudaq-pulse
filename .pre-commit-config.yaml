@@ -21,7 +21,7 @@ repos:
       - id: trailing-whitespace
         exclude: ^LICENSES/  # third-party license texts stay verbatim
 
-  # Keep in step with the ruff version in uv.lock.
+  # Keep in step with the ruff version in uv.lock (tests/test_release_tools.py).
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.0
     hooks:

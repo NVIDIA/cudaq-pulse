@@ -164,3 +164,19 @@ def test_release_hygiene(tmp_path):
     path = tmp_path / "f.txt"
     path.write_text("\n".join(bad + good) + "\n")
     assert [error.split(":")[1] for error in check(path)] == ["1", "2", "3", "4", "5"]
+
+
+def _locked(package):
+    lock = (_TOOLS.parent / "uv.lock").read_text()
+    match = re.search(rf'^name = "{package}"\nversion = "([^"]+)"', lock, re.M)
+    assert match, package
+    return match.group(1)
+
+
+def test_tool_pins_agree():
+    precommit = (_TOOLS.parent / ".pre-commit-config.yaml").read_text()
+    ci = (_TOOLS.parent / ".github" / "workflows" / "ci.yml").read_text()
+    revs = dict(re.findall(r"repo: https://github.com/\S+/(\S+)\n\s+rev: v(\S+)", precommit))
+    assert revs["ruff-pre-commit"] == _locked("ruff")
+    assert set(re.findall(r"zizmor==(\S+)", ci)) == {revs["zizmor-pre-commit"]}
+    assert set(re.findall(r"pyright==(\S+)", ci)) == {_locked("pyright")}
