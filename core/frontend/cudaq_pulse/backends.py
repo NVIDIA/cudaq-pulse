@@ -30,8 +30,11 @@ controller's program; ``run(artifact, shots=...)`` runs it::
     artifact = backend.emit(lowered.export_controller())
     result = backend.run(artifact, shots=100)
 
+A backend may also list the export formats it reads in ``formats``; ``get``
+refuses one that does not read ``cudaq_pulse.controller.FORMAT``.
 ``register(name, factory)`` adds a backend in this process, without a
-distribution.
+distribution. Nothing here runs until it is called: importing cudaq-pulse
+neither imports this module nor looks for backends.
 """
 
 from __future__ import annotations
@@ -48,7 +51,9 @@ if TYPE_CHECKING:
 __all__ = [
     "GROUP",
     "Backend",
+    "BackendError",
     "BackendNotFoundError",
+    "IncompatibleBackendError",
     "available",
     "get",
     "register",
@@ -77,8 +82,17 @@ class Backend(Protocol):
         ...
 
 
-class BackendNotFoundError(LookupError):
+class BackendError(Exception):
+    """A controller backend cannot be found or used."""
+
+
+class BackendNotFoundError(BackendError, LookupError):
     """No backend of that name is installed or registered."""
+
+
+class IncompatibleBackendError(BackendError, TypeError):
+    """A backend fails to load, is not a ``Backend``, or does not read this
+    version's export format."""
 
 
 _lock = threading.Lock()
@@ -122,11 +136,30 @@ def _instance(name: str, loaded: Any) -> Backend:
     if isinstance(loaded, type) or (not isinstance(loaded, Backend) and callable(loaded)):
         backend = loaded()
     if not isinstance(backend, Backend):
-        raise TypeError(
+        raise IncompatibleBackendError(
             f"backend {name!r} is not a cudaq_pulse.backends.Backend: it needs a name, "
             "machine_model(), emit() and run()"
         )
+    formats = getattr(backend, "formats", None)
+    if formats is not None:
+        from .controller import FORMAT
+
+        if FORMAT not in tuple(formats):
+            raise IncompatibleBackendError(
+                f"backend {name!r} reads {', '.join(map(str, formats)) or 'no format'}; "
+                f"this cudaq-pulse exports {FORMAT}"
+            )
     return backend
+
+
+def _load(name: str, found: EntryPoint) -> Any:
+    try:
+        return found.load()
+    except Exception as e:
+        source = f" from {found.dist.name} {found.dist.version}" if found.dist else ""
+        raise IncompatibleBackendError(
+            f"backend {name!r} ({found.value}{source}) failed to load: {type(e).__name__}: {e}"
+        ) from e
 
 
 def get(name: str) -> Backend:
@@ -149,7 +182,7 @@ def get(name: str) -> Backend:
     with _lock:
         backend = _loaded.get(key)
     if backend is None:
-        backend = _instance(name, found.load())
+        backend = _instance(name, _load(name, found))
         with _lock:
             backend = _loaded.setdefault(key, backend)
     return backend

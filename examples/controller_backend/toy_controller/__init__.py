@@ -37,6 +37,7 @@ class ToyResult:
 
 class ToyBackend:
     name = "toy"
+    formats = (FORMAT,)
 
     def __init__(self, qudits: int = 8) -> None:
         self.qudits = qudits
@@ -57,8 +58,10 @@ class ToyBackend:
             raise ValueError(f"expected a {FORMAT} program, got {program.get('format')!r}")
         lines = []
         for event in program["events"]:
-            if event["kind"] not in ("drive", "readout"):
+            if event["kind"] in ("wait", "sync"):
                 continue
+            if event["kind"] not in ("drive", "readout") or event["conditions"]:
+                raise ValueError(f"the toy controller cannot play {event['kind']} event {event}")
             amplitude = event["amplitude"] or {"re": 0.0}
             lines.append(
                 f"{event['line']} {event['start_vtu']} {event['kind']} "

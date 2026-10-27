@@ -18,7 +18,7 @@ name = "toy-controller"
 version = "0.1.0"
 description = "A toy controller backend for cudaq-pulse"
 requires-python = ">=3.12"
-dependencies = ["cudaq-pulse"]
+dependencies = ["cudaq-pulse>=0.1,<0.2"]
 
 [project.entry-points."cudaq_pulse.backends"]
 toy = "toy_controller:ToyBackend"
