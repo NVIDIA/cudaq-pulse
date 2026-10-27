@@ -9,7 +9,8 @@ Controller Backends API
 =======================
 
 See :doc:`../user_guide/controller_backends` for the exported program and
-how backends are found.
+how backends are found, and :doc:`errors` for ``ControllerLimitError`` and
+the ``BackendError`` exceptions.
 
 Export and limits
 -----------------
@@ -17,11 +18,14 @@ Export and limits
 .. automethod:: cudaq_pulse.Lowered.export_controller
    :no-index:
 
-.. autoclass:: cudaq_pulse.controller.ControllerLimits
+.. autodata:: cudaq_pulse.controller.FORMAT
 
-.. autoexception:: cudaq_pulse.controller.ControllerLimitError
+.. autoclass:: cudaq_pulse.controller.ControllerLimits
+   :members: as_dict
 
 .. autofunction:: cudaq_pulse.controller.check
+
+.. autofunction:: cudaq_pulse.controller.export
 
 .. autofunction:: cudaq_pulse.controller.sample_waveform
 
@@ -29,6 +33,8 @@ Export and limits
 
 Backends
 --------
+
+.. autodata:: cudaq_pulse.backends.GROUP
 
 .. autoclass:: cudaq_pulse.backends.Backend
    :members:
@@ -40,5 +46,3 @@ Backends
 .. autofunction:: cudaq_pulse.backends.register
 
 .. autofunction:: cudaq_pulse.backends.unregister
-
-.. autoexception:: cudaq_pulse.backends.BackendNotFoundError

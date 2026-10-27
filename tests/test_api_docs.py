@@ -29,6 +29,8 @@ PUBLIC_MODULES = [
     "cudaq_pulse.runtime",
     "cudaq_pulse.runtime.simulate",
     "cudaq_pulse.viz",
+    "cudaq_pulse.controller",
+    "cudaq_pulse.backends",
 ]
 
 _DIRECTIVE = re.compile(r"^\.\. auto(\w+):: (\S+)", re.M)

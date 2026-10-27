@@ -254,7 +254,10 @@ pre-releases `X.Y.Z{a,b,rc}N` and post releases `X.Y.Z.postN`.
   `cudaq_pulse` and of its documented submodules (`cudaq_pulse.ops`,
   `cudaq_pulse.compiler`, `cudaq_pulse.targets`,
   `cudaq_pulse.targets.transmon_model`, `cudaq_pulse.runtime`,
-  `cudaq_pulse.runtime.simulate` and `cudaq_pulse.viz`), their documented behavior,
+  `cudaq_pulse.runtime.simulate`, `cudaq_pulse.viz`, `cudaq_pulse.controller`
+  and `cudaq_pulse.backends`), their documented behavior, the
+  `cudaq_pulse.backends` entry-point group, the controller export format
+  (whose version is `cudaq_pulse.controller.FORMAT`),
   the documented environment variables, and the `cudaq-pulse-opt` and
   `python -m cudaq_pulse.doctor` command lines. Modules and names that start
   with an underscore, the native extension, the C++ headers, and the textual

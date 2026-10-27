@@ -30,8 +30,11 @@ schedules or metrics. `cudaq-pulse-opt` is installed with the package.
 | [`16_visualization.py`](16_visualization.py) | Schedule timelines; plots with the `[viz]` extra | CPU |
 | [`17_ghz_state_prep.py`](17_ghz_state_prep.py) | GHZ state preparation with cross-resonance CNOTs | CPU |
 | [`18_per_kernel_schedules.py`](18_per_kernel_schedules.py) | Per-kernel ASAP and ALAP policies in a stabilizer cycle | CPU |
+| [`19_classical_calls.py`](19_classical_calls.py) | Classical calls at QPU runtime: decoding with feed-forward, slack and latency reports | CPU, simulates |
+| [`20_adaptive_calibration.py`](20_adaptive_calibration.py) | Adaptive calibration with variable waits against a drifting device | CPU, simulates |
 | [`custom_passes/python_pass.py`](custom_passes/python_pass.py) | A schedule check written in Python | CPU |
 | [`custom_passes/cpp/`](custom_passes/cpp) | An MLIR pass plugin for `cudaq-pulse-opt --load-pass-plugin` | CPU (builds with CMake) |
+| [`controller_backend/toy_controller/__init__.py`](controller_backend/toy_controller/__init__.py) | A toy controller backend found by its entry point: limits, `emit` and `run` | CPU |
 | [`transmon/krinner_rabi.py`](transmon/krinner_rabi.py) | Rabi drive on the 17-qubit transmon device | CPU |
 | [`transmon/krinner_full_pipeline.py`](transmon/krinner_full_pipeline.py) | Each stage of the lowering: Pulse, QOp and LLVM IR | CPU |
 | [`transmon/krinner_surface_code_cycle.py`](transmon/krinner_surface_code_cycle.py) | The timeline of one surface-code cycle | CPU |

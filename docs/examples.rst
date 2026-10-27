@@ -87,13 +87,12 @@ Core Examples
        dynamical decoupling, compared with one flat schedule
    * - 19
      - ``19_classical_calls.py``
-     - Classical calls at QPU runtime: decoding with feed-forward and a
-       timeout fallback, adaptive Bayesian T1 tracking with a variable wait,
-       the call report, simulation, and the emulation export
+     - Classical calls at QPU runtime: real-time decoding with feed-forward,
+       call slack and hidden latency *(simulates)*
    * - 20
      - ``20_adaptive_calibration.py``
-     - A frequency binary search inside one shot, and tracking a drifting
-       device's T1 and frequency between shots against its truth
+     - Adaptive calibration with variable waits, tracking a drifting device
+       *(simulates)*
 
 Custom Passes
 -------------
@@ -112,6 +111,25 @@ Custom Passes
      - An MLIR pass plugin loaded with ``cudaq-pulse-opt --load-pass-plugin``
 
 See :doc:`user_guide/custom_passes`.
+
+Controller Backend
+------------------
+
+``examples/controller_backend/``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - File
+     - Description
+   * - ``toy_controller/__init__.py``
+     - A toy controller backend: its limits, ``emit`` and ``run``
+   * - ``pyproject.toml``
+     - Its distribution, registering it in the ``cudaq_pulse.backends``
+       entry-point group
+
+See :doc:`user_guide/controller_backends`.
 
 Hardware Target Examples
 ------------------------

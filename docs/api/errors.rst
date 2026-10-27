@@ -44,3 +44,18 @@ cannot run; see :ref:`gpu-errors`.
 .. autoexception:: cudaq_pulse.runtime.GpuRuntimeLoadError
 
 .. autoexception:: cudaq_pulse.runtime.GpuDeviceUnavailableError
+
+Controller backends
+-------------------
+
+Compiling for a controller whose limits a program exceeds raises
+``ControllerLimitError``; finding a backend raises a ``BackendError``. See
+:doc:`controller`.
+
+.. autoexception:: cudaq_pulse.controller.ControllerLimitError
+
+.. autoexception:: cudaq_pulse.backends.BackendError
+
+.. autoexception:: cudaq_pulse.backends.BackendNotFoundError
+
+.. autoexception:: cudaq_pulse.backends.IncompatibleBackendError
