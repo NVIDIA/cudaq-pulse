@@ -205,3 +205,32 @@ def test_epoch_invariants(steps, policy):
                 assert e.start_vtu + e.duration_vtu <= start
             elif j > i:
                 assert e.start_vtu >= end
+
+
+def test_a_wait_from_a_float_parameter_beside_calls_is_no_barrier():
+    @pulse.kernel
+    def k(q, p, tau: float):
+        d, t = get_drive_line(q)
+        e, u = get_drive_line(p)
+        drive(e, square(400, 0.01), u)
+        wait(d, tau, bounds=(0, 100))
+        drive(d, square(40, 0.1), t)
+        a = next_tau.submit(1.0).result()
+        wait(d, a, bounds=(8, 100))
+        drive(d, square(40, 0.1), t)
+
+    compiled = pulse.compile(k, schedule="asap")
+    low = compiled.lower(Q[0], Q[1], 10.4)
+    waits = [line for line in low.mlir().splitlines() if "pulse.wait" in line]
+    assert len(waits) == 2
+    # The parameter's wait: bound and rounded, no barrier; the answer's: a barrier.
+    assert "classical.variable" not in waits[0] and "duration_vtu = 10 : i64" in waits[0]
+    assert "classical.variable" in waits[1] and "pulse.min_vtu = 8" in waits[1]
+    drives = [e for e in low.schedule if e.kind == "drive" and e.line == 0]
+    assert drives[0].start == 10
+    assert [e.opened_by for e in low.epochs()] == ["start", "wait"]
+    # One compilation for every length; a length outside its bounds is a call error.
+    compiled.lower(Q[0], Q[1], 50.0)
+    assert compiled.cache_info().compiled == 1
+    with pytest.raises(ValueError, match="bounds"):
+        compiled.lower(Q[0], Q[1], 120.0)
