@@ -24,8 +24,8 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from ._native import PulseModuleBuilder
-from .kernel._bytecode_normalize import UnsupportedInterpreterError
 from .classical import Link
+from .kernel._bytecode_normalize import UnsupportedInterpreterError
 from .kernel._schedule_blocks import check_root_schedule, root_schedule
 from .kernel._unroll import resolve_unroll_threshold
 from .kernel.ir_builder import CompilationError, SymbolicValueError

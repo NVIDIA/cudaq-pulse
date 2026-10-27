@@ -181,8 +181,7 @@ static int64_t durationOf(mlir::Operation *op) {
                               .getDefiningOp<pulse::DurationFromIntOp>())
       if (auto cycles = pulse::boundNumber(conversion.getCycles()))
         length = std::max(lowest, static_cast<int64_t>(*cycles));
-    if (auto highest =
-            op->getAttrOfType<mlir::IntegerAttr>("pulse.max_vtu"))
+    if (auto highest = op->getAttrOfType<mlir::IntegerAttr>("pulse.max_vtu"))
       length = std::min(length, highest.getInt());
     return length;
   }
