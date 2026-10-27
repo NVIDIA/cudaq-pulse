@@ -6,11 +6,12 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  *******************************************************************************/
 
-// Pulse canonicalization pass: redundant sync elimination, dead line
-// elimination, waveform CSE.
+// The patterns of pulse-canonicalize: redundant syncs, adjacent waits on a
+// line, untimed schedule blocks, and the is_set and scf.for patterns.
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 
 #include "cudaq-pulse/Transforms/Passes.h"
@@ -80,6 +81,49 @@ struct RemoveRedundantSync : public mlir::OpRewritePattern<pulse::SyncOp> {
   }
 };
 
+/// The constant length in cycles of a wait that has no attributes (so not a
+/// variable, answer-length or scheduled wait), or nullopt.
+static std::optional<int64_t> plainWaitCycles(pulse::WaitOp wait) {
+  if (!wait->getAttrDictionary().empty())
+    return std::nullopt;
+  auto duration = wait.getDuration().getDefiningOp<pulse::DurationFromIntOp>();
+  if (!duration)
+    return std::nullopt;
+  llvm::APInt cycles;
+  if (!mlir::matchPattern(duration.getCycles(), mlir::m_ConstantInt(&cycles)))
+    return std::nullopt;
+  return cycles.getSExtValue();
+}
+
+/// A wait right after another on the same line idles the line as one wait
+/// of both lengths does.
+struct MergeAdjacentWaits : public mlir::OpRewritePattern<pulse::WaitOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(pulse::WaitOp second,
+                  mlir::PatternRewriter &rewriter) const override {
+    auto first = second.getLine().getDefiningOp<pulse::WaitOp>();
+    if (!first || !first.getUpdatedLine().hasOneUse() ||
+        first->getBlock() != second->getBlock())
+      return mlir::failure();
+    std::optional<int64_t> a = plainWaitCycles(first);
+    std::optional<int64_t> b = plainWaitCycles(second);
+    if (!a || !b)
+      return mlir::failure();
+    rewriter.setInsertionPoint(second);
+    mlir::Location loc = second.getLoc();
+    auto cycles =
+        mlir::arith::ConstantIntOp::create(rewriter, loc, *a + *b, 64);
+    auto duration = pulse::DurationFromIntOp::create(
+        rewriter, loc, second.getDuration().getType(), cycles);
+    rewriter.replaceOpWithNewOp<pulse::WaitOp>(second, second.getType(),
+                                               first.getLine(), duration);
+    rewriter.eraseOp(first);
+    return mlir::success();
+  }
+};
+
 /// A schedule block without drives, readouts or waits has no duration and
 /// schedules the same inlined.
 struct InlineUntimedScheduleBlock
@@ -115,7 +159,7 @@ struct InlineUntimedScheduleBlock
 namespace pulse {
 void populateCanonicalizePatterns(mlir::RewritePatternSet &patterns) {
   mlir::MLIRContext *ctx = patterns.getContext();
-  patterns.add<RemoveSingleOperandSync, RemoveRedundantSync,
+  patterns.add<RemoveSingleOperandSync, RemoveRedundantSync, MergeAdjacentWaits,
                InlineUntimedScheduleBlock>(ctx);
   // Branch on pulse.is_set, and inline or drop loops that run once or
   // never. scf.if patterns are left out: they may turn a branch over
