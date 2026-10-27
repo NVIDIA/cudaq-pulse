@@ -274,6 +274,7 @@ struct ControllerWalk {
   }
 
   pulse::AllocationTracer trace;
+  pulse::ToneRoots toneRoots;
   llvm::SmallVector<int64_t, 2> iteration;
   std::vector<Condition> branches;
   int64_t nextBranch = 0;
@@ -298,7 +299,7 @@ struct ControllerWalk {
   }
 
   Frame &frameOf(mlir::Value tone) {
-    mlir::Operation *root = pulse::toneRoot(tone);
+    mlir::Operation *root = toneRoots(tone);
     auto [it, inserted] = frames.try_emplace(root);
     if (inserted)
       it->second = initialFrame(root);

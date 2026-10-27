@@ -91,6 +91,38 @@ inline mlir::Operation *toneRoot(mlir::Value tone) {
   return current.getDefiningOp();
 }
 
+/// `toneRoot` for walks that visit every op of a program, remembering every
+/// value on the way: a tone threads through every drive and frame change on
+/// its line, so walking back from each one would make the walk quadratic.
+class ToneRoots {
+public:
+  mlir::Operation *operator()(mlir::Value tone) {
+    llvm::SmallVector<mlir::Value, 16> chain;
+    mlir::Operation *root = nullptr;
+    mlir::Value current = tone;
+    while (true) {
+      auto known = roots.find(current);
+      if (known != roots.end()) {
+        root = known->second;
+        break;
+      }
+      chain.push_back(current);
+      mlir::Value previous = linearPredecessor(current);
+      if (!previous) {
+        root = current.getDefiningOp();
+        break;
+      }
+      current = previous;
+    }
+    for (mlir::Value value : chain)
+      roots[value] = root;
+    return root;
+  }
+
+private:
+  llvm::DenseMap<mlir::Value, mlir::Operation *> roots;
+};
+
 class ExecutionWalker {
 public:
   ExecutionWalker(double clockGHz, const Path &path)
@@ -142,7 +174,7 @@ private:
   }
 
   ToneState &toneOf(mlir::Value tone) {
-    mlir::Operation *root = toneRoot(tone);
+    mlir::Operation *root = roots(tone);
     auto [it, inserted] = tones.try_emplace(root);
     if (inserted && root) {
       if (auto frequency = root->getAttrOfType<mlir::FloatAttr>("frequency_hz"))
@@ -409,6 +441,7 @@ private:
   double clockGHz;
   const Path &path;
   llvm::DenseMap<mlir::Operation *, ToneState> tones;
+  ToneRoots roots;
   llvm::DenseMap<mlir::Value, MeasurementKey> measurementOf;
   std::vector<int64_t> iteration;
   bool stopped = false;

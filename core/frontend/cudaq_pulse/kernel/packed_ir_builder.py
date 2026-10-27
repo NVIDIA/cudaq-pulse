@@ -210,6 +210,10 @@ class PackedIRBuilder:
         # Key by the expression object itself, not id(expression): temporary
         # expressions may be collected and Python may reuse their integer IDs.
         self._numeric_vids: dict[tuple[ParameterExpression, str], int] = {}
+        # Per open region, innermost last: the expressions first materialized
+        # in it, forgotten when it closes (their values do not dominate what
+        # follows it).
+        self._scope_keys: list[list[tuple[ParameterExpression, str]]] = []
         # Open regions, innermost last: the yields seen so far in each.
         self._regions: list[dict[str, tuple[int, ...]]] = []
         # Measurement vid -> readout ordinal, for readouts outside any region.
@@ -654,12 +658,15 @@ class PackedIRBuilder:
     def _open_scope(self, loop: bool | None = None) -> None:
         """Open a region: a loop body, a branch arm, or (``None``) a block."""
         self._scope.append(self._next_scope)
+        self._scope_keys.append([])
         if loop is not None:
             self._flow.append((self._next_scope, loop))
         self._next_scope += 1
 
     def _close_scope(self) -> None:
         closed = self._scope.pop()
+        for key in self._scope_keys.pop():
+            self._numeric_vids.pop(key, None)
         if self._flow and self._flow[-1][0] == closed:
             self._flow.pop()
 
@@ -837,6 +844,7 @@ class PackedIRBuilder:
             list(self._scope),
             list(self._flow),
             self._next_scope,
+            [list(keys) for keys in self._scope_keys],
         )
 
     def rollback(self, checkpoint: tuple[Any, ...]) -> None:
@@ -851,6 +859,7 @@ class PackedIRBuilder:
             scope,
             flow,
             self._next_scope,
+            self._scope_keys,
         ) = checkpoint
         self._regions = regions
         self._scope = scope
@@ -933,7 +942,7 @@ class PackedIRBuilder:
                 result = self._emit_numeric_cast(source, source_dtype, target_dtype)
                 if target_dtype != expected_dtype:
                     result = self._emit_numeric_cast(result, target_dtype, expected_dtype)
-                self._numeric_vids[cache_key] = result
+                self._remember(cache_key, result)
                 return result
 
             dtype = "f64" if value.op == "div" else expected_dtype
@@ -970,7 +979,7 @@ class PackedIRBuilder:
                 self._w(rhs)
             if dtype != expected_dtype:
                 result = self._emit_numeric_cast(result, dtype, expected_dtype)
-            self._numeric_vids[cache_key] = result
+            self._remember(cache_key, result)
             return result
 
         result = self._next_id
@@ -983,6 +992,11 @@ class PackedIRBuilder:
             _as_i64(value, "integer expression") if expected_dtype == "i64" else _f2i(float(value))
         )
         return result
+
+    def _remember(self, key: tuple[ParameterExpression, str], vid: int) -> None:
+        self._numeric_vids[key] = vid
+        if self._scope_keys:
+            self._scope_keys[-1].append(key)
 
     def _emit_numeric_cast(self, operand: int, source_dtype: str, target_dtype: str) -> int:
         if source_dtype == target_dtype:
