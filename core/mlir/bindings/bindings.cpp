@@ -13,6 +13,7 @@
 #include <nanobind/stl/array.h>
 #include <nanobind/stl/map.h>
 #include <nanobind/stl/optional.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
@@ -2536,13 +2537,18 @@ public:
 
   /// The controller limits the schedule exceeds, as messages; -1 for a
   /// limit not set. A loop whose iterations repeat is checked at its first
-  /// two iterations and its last.
-  std::vector<std::string> controller_check(
+  /// two iterations and its last. `memory` is (samples, granule, shared,
+  /// scaling, synthesized shapes, hold). With `resolve`, a value not known
+  /// counts only where every value exceeds the limit, and the second result
+  /// says whether some value might; else it is false.
+  std::pair<std::vector<std::string>, bool> controller_check(
       int64_t issue, int64_t gap, int64_t samplesNum, int64_t samplesDen,
-      int64_t waveformSamples, int64_t tonesPerLine, int64_t maxEvents,
+      const std::tuple<int64_t, int64_t, bool, bool, std::vector<std::string>,
+                       bool> &memory,
+      int64_t tonesPerLine, int64_t maxEvents,
       const std::map<int64_t, int64_t> &acquirers, int64_t acquirerHold,
       int64_t feedbackLatency, bool answerTimeouts,
-      const std::vector<std::string> &timeoutFunctions) {
+      const std::vector<std::string> &timeoutFunctions, bool resolve) {
     ControllerWalk walk(clock(), ControllerWalk::Walk::Sampled);
     std::vector<ControllerLine> lines;
     walkController(walk, lines, nullptr);
@@ -2551,7 +2557,13 @@ public:
     limits.gap = gap;
     limits.samplesNum = samplesNum;
     limits.samplesDen = samplesDen;
-    limits.waveformSamples = waveformSamples;
+    const auto &[samples, granule, shared, scaling, synthesized, hold] = memory;
+    limits.waveformSamples = samples;
+    limits.granule = granule;
+    limits.sharedMemory = shared;
+    limits.scaling = scaling;
+    limits.synthesized = {synthesized.begin(), synthesized.end()};
+    limits.hold = hold;
     limits.tonesPerLine = tonesPerLine;
     limits.maxEvents = maxEvents;
     limits.acquirers = acquirers;
@@ -2561,7 +2573,80 @@ public:
     limits.timeoutFunctions = {timeoutFunctions.begin(),
                                timeoutFunctions.end()};
     std::lock_guard<std::recursive_mutex> guard(*lock_);
-    return checkControllerLimits(walk.result, limits);
+    bool unresolved = false;
+    auto found = checkControllerLimits(walk.result, limits,
+                                       resolve ? &unresolved : nullptr);
+    return {std::move(found), unresolved};
+  }
+
+  /// What each float argument of `main` reaches, in argument order: a
+  /// sorted subset of amplitude (an overall factor of a waveform), phase,
+  /// frequency, shape (another waveform parameter), timing (a length) and
+  /// other (anything else, such as a classical call or a branch).
+  std::vector<std::vector<std::string>> parameter_roles() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    std::vector<std::vector<std::string>> out;
+    auto func = source().lookupSymbol<mlir::func::FuncOp>("main");
+    if (!func || func.getBody().empty())
+      return out;
+    static const std::map<std::string, std::set<unsigned>> amplitudes = {
+        {"pulse.square", {1, 2}},       {"pulse.gaussian", {1}},
+        {"pulse.gaussian_square", {1}}, {"pulse.drag", {1}},
+        {"pulse.cosine", {1}},          {"pulse.tanh_ramp", {1}},
+        {"pulse.scale", {0}},
+    };
+    for (mlir::BlockArgument arg : func.getBody().front().getArguments()) {
+      if (!mlir::isa<mlir::FloatType>(arg.getType()))
+        continue;
+      std::set<std::string> roles;
+      llvm::SmallVector<mlir::Value> work{arg};
+      llvm::DenseSet<mlir::Value> seen;
+      while (!work.empty()) {
+        mlir::Value value = work.pop_back_val();
+        if (!seen.insert(value).second)
+          continue;
+        for (mlir::OpOperand &use : value.getUses()) {
+          mlir::Operation *user = use.getOwner();
+          std::string name = user->getName().getStringRef().str();
+          if (user->getNumResults() == 1 &&
+              mlir::isa<pulse::WaveformType>(user->getResult(0).getType())) {
+            // The index among the operands that are numbers.
+            unsigned index = 0;
+            for (unsigned i = 0; i < use.getOperandNumber(); ++i)
+              if (!mlir::isa<pulse::WaveformType>(
+                      user->getOperand(i).getType()))
+                ++index;
+            auto found = amplitudes.find(name);
+            if (found != amplitudes.end() && found->second.count(index))
+              roles.insert("amplitude");
+            else
+              roles.insert(index == 0 ? "timing" : "shape");
+          } else if (name == "pulse.shift_phase" || name == "pulse.set_phase") {
+            roles.insert("phase");
+          } else if (name == "pulse.shift_frequency" ||
+                     name == "pulse.set_frequency") {
+            roles.insert("frequency");
+          } else if (name == "pulse.tone") {
+            roles.insert(use.getOperandNumber() == 0 ? "frequency" : "phase");
+          } else if (name == "pulse.wait" ||
+                     name == "pulse.duration_from_int") {
+            roles.insert("timing");
+          } else if (user->getNumRegions() == 0 &&
+                     !user->hasTrait<mlir::OpTrait::IsTerminator>() &&
+                     user->getNumResults() > 0 &&
+                     llvm::all_of(user->getResultTypes(), [](mlir::Type t) {
+                       return t.isIntOrIndexOrFloat();
+                     })) {
+            for (mlir::Value result : user->getResults())
+              work.push_back(result);
+          } else {
+            roles.insert("other");
+          }
+        }
+      }
+      out.emplace_back(roles.begin(), roles.end());
+    }
+    return out;
   }
 
   /// (function, link, iteration, submit start, submit duration, due,
@@ -5494,11 +5579,13 @@ NB_MODULE(_cudaq_pulse_native, m) {
       .def("controller_check", &PulseModule::controller_check,
            nb::call_guard<nb::gil_scoped_release>(), nb::arg("issue"),
            nb::arg("gap"), nb::arg("samples_num"), nb::arg("samples_den"),
-           nb::arg("waveform_samples"), nb::arg("tones_per_line"),
-           nb::arg("max_events"), nb::arg("acquirers"),
-           nb::arg("acquirer_hold"), nb::arg("feedback_latency"),
-           nb::arg("answer_timeouts"), nb::arg("timeout_functions"),
+           nb::arg("memory"), nb::arg("tones_per_line"), nb::arg("max_events"),
+           nb::arg("acquirers"), nb::arg("acquirer_hold"),
+           nb::arg("feedback_latency"), nb::arg("answer_timeouts"),
+           nb::arg("timeout_functions"), nb::arg("resolve"),
            "The controller limits the schedule exceeds")
+      .def("parameter_roles", &PulseModule::parameter_roles,
+           "What each float argument of main reaches")
       .def("controller_events_on", &PulseModule::controller_events_on,
            nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
            nb::arg("num"), nb::arg("den"), nb::arg("grid"),

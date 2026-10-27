@@ -782,6 +782,14 @@ struct ControllerLimitSpec {
   int64_t samplesNum = 1;
   int64_t samplesDen = 1;
   int64_t waveformSamples = -1;
+  // The waveform memory: its allocation unit, whether all lines share one,
+  // whether one stored shape plays at any amplitude, the built-in shapes it
+  // plays without memory, and whether a constant one needs none.
+  int64_t granule = 1;
+  bool sharedMemory = false;
+  bool scaling = true;
+  std::set<std::string> synthesized;
+  bool hold = false;
   int64_t tonesPerLine = -1;
   int64_t maxEvents = -1;
   std::map<int64_t, int64_t> acquirers;
@@ -792,11 +800,12 @@ struct ControllerLimitSpec {
 };
 
 /// The key of `shape_key` in cudaq_pulse.controller: equal for waveforms
-/// that differ only in overall amplitude; none when the waveform is not
-/// built from numbers alone.
+/// that differ only in overall amplitude, known or not; none when another
+/// number is not known. Without `scaled`, equal only for equal waveforms,
+/// and none when any number is not known.
 inline std::optional<std::string>
-shapeKey(const std::vector<ControllerWalk::WaveformNode> &nodes,
-         int64_t index) {
+shapeKey(const std::vector<ControllerWalk::WaveformNode> &nodes, int64_t index,
+         bool scaled = true) {
   static const std::map<std::string, std::vector<std::string>> parameters = {
       {"square", {"duration", "amplitude", "amplitude_imag"}},
       {"gaussian", {"duration", "amplitude", "sigma"}},
@@ -821,6 +830,22 @@ shapeKey(const std::vector<ControllerWalk::WaveformNode> &nodes,
   std::string custom = name.find(':') == std::string::npos
                            ? ""
                            : name.substr(name.find(':') + 1);
+  if (!scaled) {
+    std::string key = name + "(";
+    for (double v : numbers) {
+      if (std::isnan(v))
+        return std::nullopt;
+      key += text(v) + ",";
+    }
+    key += ")[";
+    for (int64_t child : children) {
+      auto inner = shapeKey(nodes, child, false);
+      if (!inner)
+        return std::nullopt;
+      key += *inner + ";";
+    }
+    return key + "]";
+  }
   if (shape == "scale" || shape == "neg")
     return children.empty() ? std::nullopt : shapeKey(nodes, children[0]);
   if (shape == "custom_samples") {
@@ -848,19 +873,37 @@ shapeKey(const std::vector<ControllerWalk::WaveformNode> &nodes,
     }
     return key + "]";
   }
-  if (llvm::any_of(numbers, [](double v) { return std::isnan(v); }))
-    return std::nullopt;
   std::string key = shape + "|" + custom;
   auto skip = amplitudes.find(shape);
   for (size_t i = 0; i < numbers.size(); ++i)
-    if (skip == amplitudes.end() || !skip->second.count(i))
+    if (skip == amplitudes.end() || !skip->second.count(i)) {
+      if (std::isnan(numbers[i]))
+        return std::nullopt;
       key += "|" + names->second[i] + "=" + text(numbers[i]);
+    }
   return key;
 }
 
+/// The op name of a waveform's root, through scale and neg.
+inline std::string
+rootShape(const std::vector<ControllerWalk::WaveformNode> &nodes) {
+  int64_t index = static_cast<int64_t>(nodes.size()) - 1;
+  while (index >= 0) {
+    const auto &[name, numbers, children] = nodes[index];
+    if ((name != "scale" && name != "neg") || children.empty())
+      return name;
+    index = children[0];
+  }
+  return "";
+}
+
+/// The limits `records` exceed. With `unresolved`, a tone or waveform whose
+/// value is not known counts only where the limit is exceeded whatever its
+/// value; `*unresolved` is set when only some values would exceed one.
 inline std::vector<std::string>
 checkControllerLimits(const std::vector<ControllerRecord> &records,
-                      const ControllerLimitSpec &limits) {
+                      const ControllerLimitSpec &limits,
+                      bool *unresolved = nullptr) {
   std::vector<std::string> found;
   std::vector<size_t> timed;
   int64_t played = 0;
@@ -942,34 +985,63 @@ checkControllerLimits(const std::vector<ControllerRecord> &records,
     }
     if (limits.tonesPerLine >= 0) {
       std::set<double> tones;
-      for (size_t i : items)
+      int64_t unknown = 0;
+      for (size_t i : items) {
         if (!std::isnan(records[i].frequency))
           tones.insert(records[i].frequency);
-      if (static_cast<int64_t>(tones.size()) > limits.tonesPerLine)
+        else if (records[i].played())
+          unknown += records[i].weight;
+      }
+      int64_t known = static_cast<int64_t>(tones.size());
+      if (known > limits.tonesPerLine)
         found.push_back("line " + std::to_string(line) + ": " +
                         std::to_string(tones.size()) +
                         " tone frequencies; the controller holds " +
                         std::to_string(limits.tonesPerLine) + " per line");
+      else if (unresolved && known + unknown > limits.tonesPerLine)
+        *unresolved = true;
     }
-    if (limits.waveformSamples >= 0) {
+  }
+  if (limits.waveformSamples >= 0) {
+    // One memory per line, or one for all.
+    std::map<int64_t, std::vector<size_t>> memories;
+    for (auto &[line, items] : byLine)
+      for (size_t i : items)
+        if (records[i].played())
+          memories[limits.sharedMemory ? -1 : line].push_back(i);
+    std::vector<int8_t> costless;
+    for (auto &[line, items] : memories) {
       std::map<std::string, int64_t> shapes;
-      int64_t unshared = 0;
+      int64_t unshared = 0, unknown = 0;
       for (size_t i : items) {
         const ControllerRecord &r = records[i];
         waveforms.add(r.op);
         size_t shape = static_cast<size_t>(waveforms.of.lookup(r.op));
-        if (keys.size() <= shape)
+        if (keys.size() <= shape) {
           keys.resize(shape + 1);
-        if (!keys[shape]) {
-          const auto &nodes = waveforms.distinct[shape];
-          keys[shape] = shapeKey(nodes, static_cast<int64_t>(nodes.size()) - 1);
+          costless.resize(shape + 1, -1);
         }
+        const auto &nodes = waveforms.distinct[shape];
+        if (costless[shape] < 0) {
+          std::string root = rootShape(nodes);
+          costless[shape] = limits.synthesized.count(root) ||
+                            (limits.hold && root == "square");
+        }
+        if (costless[shape])
+          continue;
+        if (!keys[shape])
+          keys[shape] = shapeKey(nodes, static_cast<int64_t>(nodes.size()) - 1,
+                                 limits.scaling);
         const std::optional<std::string> &key = *keys[shape];
         int64_t samples =
             (*r.duration * limits.samplesNum + limits.samplesDen - 1) /
             limits.samplesDen;
+        samples =
+            (samples + limits.granule - 1) / limits.granule * limits.granule;
         if (key)
           shapes[*key + "@" + std::to_string(*r.duration)] = samples;
+        else if (unresolved)
+          unknown += samples * r.weight;
         else
           unshared += samples * r.weight;
       }
@@ -977,10 +1049,15 @@ checkControllerLimits(const std::vector<ControllerRecord> &records,
       for (auto &[key, samples] : shapes)
         used += samples;
       if (used > limits.waveformSamples)
-        found.push_back("line " + std::to_string(line) +
-                        ": its waveforms take " + std::to_string(used) +
-                        " samples; the controller's waveform memory holds " +
-                        std::to_string(limits.waveformSamples));
+        found.push_back(
+            (limits.sharedMemory
+                 ? std::string("its waveforms take ")
+                 : "line " + std::to_string(line) + ": its waveforms take ") +
+            std::to_string(used) + " samples; the controller's " +
+            (limits.sharedMemory ? "shared " : "") + "waveform memory holds " +
+            std::to_string(limits.waveformSamples));
+      else if (unresolved && used + unknown > limits.waveformSamples)
+        *unresolved = true;
     }
   }
   if (!limits.acquirers.empty()) {

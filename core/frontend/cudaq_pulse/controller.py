@@ -70,6 +70,12 @@ from ._errors import InvalidTypeError, InvalidValueError, UnsupportedError
 from ._units import Time, as_nanoseconds
 from .kernel.ir_builder import CompilationError
 
+try:
+    # hashlib's own blake2b, without hashlib's import of OpenSSL (a millisecond).
+    from _blake2 import blake2b as _blake2b
+except ImportError:  # pragma: no cover - CPython builds without the _blake2 module
+    from hashlib import blake2b as _blake2b
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -91,6 +97,7 @@ __all__ = [
     "ProcessorUsage",
     "ResourceReport",
     "UsageReport",
+    "WaveformMemory",
     "analyze",
     "check",
     "export",
@@ -106,6 +113,51 @@ FORMAT = "cudaq-pulse.controller/1"
 _STRUCTURED = "cudaq-pulse.controller/2"
 # Every format this cudaq-pulse writes.
 _FORMATS = (FORMAT, _STRUCTURED)
+# The names format /2 gives a controller's and a link's fields where they
+# differ from the /1 names; unroll() turns them back.
+_CONTROLLER_KEYS: Mapping[str, str] = MappingProxyType(
+    {
+        "issue_cycles": "instruction_cycles",
+        "min_wait_cycles": "min_idle_cycles",
+        "acquirers": "detectors",
+        "acquirer_hold_cycles": "detector_recovery_cycles",
+        "waveform_samples": "waveform_memory_samples",
+        "tones_per_line": "max_tones_per_line",
+        "max_events": "max_pulses",
+        "answer_timeouts": "supports_timeouts",
+    }
+)
+_LINK_KEYS: Mapping[str, str] = MappingProxyType(
+    {
+        "fixed_ns": "send_ns",
+        "bytes_per_ns": "bandwidth_bytes_per_ns",
+        "feedback_ns": "answer_delay_ns",
+        "max_in_flight": "slots",
+    }
+)
+# What a controller computes is one processor in format /2 (none when no
+# compute limit is set): each /2 field, in order, with the /1 field it
+# comes from (None: one /1 does not have).
+_PROCESSOR_KEYS: tuple[tuple[str, str | None], ...] = (
+    ("links", "compute_links"),
+    ("clock_ghz", "compute_clock_ghz"),
+    ("cycles_per_op", "op_cycles"),
+    ("unsupported", None),
+    ("max_concurrent_calls", None),
+    ("fixed_cost_only", "controller_form"),
+    ("max_ops", "max_ops"),
+    ("max_state_bytes", "state_bytes"),
+    ("max_calls_per_shot", "max_calls_per_shot"),
+    ("max_bytes_per_shot", "buffer_bytes"),
+)
+_COMPUTE_KEYS = frozenset(old for _, old in _PROCESSOR_KEYS if old is not None)
+# The /2 processor fields ControllerLimits cannot set: the calls it computes
+# at once, and the operations it cannot compute (named, not costed).
+_PROCESSOR_DEFAULTS: Mapping[str, Any] = MappingProxyType(
+    {"unsupported": (), "max_concurrent_calls": 1}
+)
+# The /2 name of the /1 key naming the quantum system.
+_SYSTEM_KEYS: Mapping[str, str] = MappingProxyType({"target": "quantum_system"})
 
 # The parameter names of each waveform op, in operand order.
 _PARAMETERS: Mapping[str, tuple[str, ...]] = MappingProxyType(
@@ -136,6 +188,8 @@ _AMPLITUDE_NAMES: Mapping[str, frozenset[str]] = MappingProxyType(
     {shape: frozenset(_PARAMETERS[shape][i] for i in at) for shape, at in _AMPLITUDES.items()}
 )
 _PLAYED = frozenset({"drive", "readout"})
+# The keys a format /2 waveform has beside its expression.
+_IDS = ("id", "shape_id")
 
 
 class ControllerLimitError(CompilationError):
@@ -189,6 +243,60 @@ def _limit_error(lowered: Lowered, violations: Sequence[str]) -> ControllerLimit
 
 
 @dataclass(frozen=True)
+class WaveformMemory:
+    """The memory a controller plays waveforms from (``ControllerLimits.waveform_memory``).
+
+    ``samples``: what it holds, in samples (at the limits'
+    ``sample_rate_ghz``); each stored waveform takes its samples rounded
+    up to a whole number of ``granule``. ``shared``: one memory for every
+    line, else one per line. ``scaling``: a stored waveform plays at any
+    overall amplitude and phase, so waveforms of one shape share it
+    (``shape_key``); else only equal waveforms do. ``synthesized``: the
+    built-in shapes the controller generates without memory. ``hold``: a
+    waveform constant over its duration (``square``) needs none either.
+
+    Compiling checks that every waveform of a program fits at once. The
+    rest describes the memory to a backend or planner, through the export's
+    ``limits``: ``upload_samples_per_cycle``, the rate it is loaded at
+    (``None``: not stated); ``upload_while_playing``, whether loading may
+    overlap playing; ``persistent``, whether what it holds stays loaded from
+    one program to the next.
+    """
+
+    samples: int
+    granule: int = 1
+    shared: bool = False
+    scaling: bool = True
+    synthesized: frozenset[str] = frozenset()
+    hold: bool = False
+    upload_samples_per_cycle: float | None = None
+    upload_while_playing: bool = False
+    persistent: bool = False
+
+    def __post_init__(self) -> None:
+        if self.samples < 1 or self.granule < 1:
+            raise ValueError("WaveformMemory.samples and granule must be positive")
+        object.__setattr__(self, "synthesized", frozenset(self.synthesized))
+        unknown = sorted(self.synthesized - set(_AMPLITUDES))
+        if unknown:
+            raise ValueError(
+                f"WaveformMemory.synthesized has unknown shapes {unknown}; "
+                f"the built-in shapes are {', '.join(_AMPLITUDES)}"
+            )
+        rate = self.upload_samples_per_cycle
+        if rate is not None and not rate > 0:
+            raise ValueError(
+                f"WaveformMemory.upload_samples_per_cycle must be positive, got {rate}"
+            )
+
+    def as_dict(self) -> dict[str, Any]:
+        """The memory as JSON-serializable data."""
+        data = {f.name: getattr(self, f.name) for f in fields(self)}
+        data["synthesized"] = sorted(self.synthesized)
+        return data
+
+
+@dataclass(frozen=True)
 class ControllerLimits:
     """What a controller can play; every limit is in its own clock cycles.
 
@@ -212,6 +320,9 @@ class ControllerLimits:
     ``waveform_samples``: the waveform memory of a line holds this many
     samples, at ``sample_rate_ghz``; waveforms of one shape at different
     amplitudes share it (``shape_key``).
+    ``waveform_memory``: the waveform memory in full (``WaveformMemory``),
+    of which ``waveform_samples=n`` is
+    ``waveform_memory=WaveformMemory(samples=n)``; give one of them.
     ``tones_per_line``: distinct tone frequencies one line plays.
     ``max_amplitude``: the largest magnitude of a sample its lines play
     (``None``: no limit). The compiler sets no amplitude limit of its own;
@@ -287,10 +398,16 @@ class ControllerLimits:
     controller_form: bool = False
     max_instructions: int | None = None
     max_program_duration: float | Time | None = None
+    waveform_memory: WaveformMemory | None = None
 
     def __post_init__(self) -> None:
         if self.clock_ghz is not None and not self.clock_ghz > 0:
             raise ValueError(f"ControllerLimits.clock_ghz must be positive, got {self.clock_ghz}")
+        if self.waveform_memory is not None and self.waveform_samples is not None:
+            raise ValueError(
+                "give ControllerLimits.waveform_samples or waveform_memory, not both: "
+                "waveform_samples=n is waveform_memory=WaveformMemory(samples=n)"
+            )
         steps = self.cycles_per_timestep
         if isinstance(steps, bool) or not isinstance(steps, int) or steps < 1:
             raise InvalidValueError(
@@ -403,6 +520,9 @@ class ControllerLimits:
         for name in ("max_amplitude", "max_instructions", "max_program_duration"):
             if data[name] is None:
                 del data[name]
+        data["waveform_memory"] = (
+            None if self.waveform_memory is None else self.waveform_memory.as_dict()
+        )
         return data
 
 
@@ -591,6 +711,25 @@ class _Waveforms:
             self.table.append(tree)
         return index, None
 
+    def identified(self) -> list[dict[str, Any] | None]:
+        """The table, each waveform with its ``id`` and ``shape_id``."""
+        out: list[dict[str, Any] | None] = []
+        for key, tree in zip(self._index, self.table, strict=True):
+            if tree is None:
+                out.append(None)
+                continue
+            entry = {"id": _digest(key), **tree}
+            shape = shape_key(tree)
+            if shape is not None:
+                entry["shape_id"] = _digest(repr(shape))
+            out.append(entry)
+        return out
+
+
+def _digest(text: str) -> str:
+    """A content id: 16 hex digits of a hash of *text*."""
+    return _blake2b(text.encode(), digest_size=8).hexdigest()
+
 
 def _walk(
     lowered: Lowered,
@@ -776,9 +915,12 @@ def export(
         )
         if violations:
             raise _limit_error(lowered, violations)
-    # compile() checked the module it scheduled; the module of a call with
-    # values may differ from it.
-    elif limits is not None and (lowered.arguments or not lowered.scheduled or role is not None):
+    # On one clock, compile() checked the module it scheduled, and a call
+    # whose values some limit depends on was checked when it bound them; on
+    # another, the events in the controller's cycles are checked here.
+    elif limits is not None and (
+        not _one_clock(clocks) or (not lowered.scheduled and not lowered.arguments)
+    ):
         violations = _limit_violations(
             lowered, limits, clocks, walked if waveforms is None else None
         )
@@ -813,9 +955,19 @@ def export(
         "lines": lines,
     }
     if waveforms is not None:
-        program["waveforms"] = waveforms.table
+        program["waveforms"] = waveforms.identified()
         if sample_rate_ghz is not None:
             program["samples"] = samples_of
+        generic = lowered.generic
+        if generic is not None and generic.parameters:
+            with lowered._lock:
+                roles = generic._module.parameter_roles()
+            program["parameters"] = {
+                name: {"value": value, "reaches": reaches}
+                for name, value, reaches in zip(
+                    generic.parameters, lowered.arguments, roles, strict=True
+                )
+            }
     program.update(
         {
             "events": events,
@@ -841,9 +993,49 @@ def export(
                     symbols[key] = symbols[key][:]
                 event["symbols"] = symbols
     if version == 2:
+        renamed = {"limits": "controller", **_SYSTEM_KEYS}
+        program = {renamed.get(k, k): v for k, v in program.items()}
+        program["controller"] = None if limits is None else _structured_controller(limits)
+        program["links"] = {
+            k: {_LINK_KEYS.get(f, f): v for f, v in link.items()}
+            for k, link in program["links"].items()
+        }
         program["programs"] = {}
         program["bindings"] = {}
     return program
+
+
+def _structured_controller(limits: ControllerLimits) -> dict[str, Any]:
+    """The controller's fields under their format /2 names."""
+    data = limits.as_dict()
+    out = {_CONTROLLER_KEYS.get(k, k): v for k, v in data.items() if k not in _COMPUTE_KEYS}
+    processor = {
+        new: list(_PROCESSOR_DEFAULTS[new])
+        if new == "unsupported"
+        else _PROCESSOR_DEFAULTS[new]
+        if old is None
+        else data[old]
+        for new, old in _PROCESSOR_KEYS
+    }
+    out["processors"] = [processor] if limits.computes else []
+    return out
+
+
+def _flat_controller(data: Mapping[str, Any]) -> dict[str, Any]:
+    """A format /2 controller under its /1 names, in /1 order."""
+    processors = data["processors"]
+    if len(processors) > 1:
+        raise ValueError("format /1 has at most one processor per controller")
+    if processors:
+        compute = {old: processors[0][new] for new, old in _PROCESSOR_KEYS if old is not None}
+    else:
+        compute = ControllerLimits().as_dict()
+    return {
+        f.name: compute[f.name]
+        if f.name in _COMPUTE_KEYS
+        else data[_CONTROLLER_KEYS.get(f.name, f.name)]
+        for f in fields(ControllerLimits)
+    }
 
 
 def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
@@ -859,7 +1051,10 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
     if program["format"] != _STRUCTURED:
         raise ValueError(f"cannot unroll format {program['format']!r}")
     qudit_of = {line["line"]: line["qudits"][0] for line in program["lines"]}
-    waveforms = program["waveforms"]
+    waveforms = [
+        None if entry is None else {k: v for k, v in entry.items() if k not in _IDS}
+        for entry in program["waveforms"]
+    ]
     amplitudes = [_amplitude(tree) for tree in waveforms]
     samples = program.get("samples")
     # Every event of /2, loops included, by its place in pre-order: the
@@ -959,12 +1154,19 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
             events.append(event)
 
     expand(program["events"], [])
+    flat_keys = {"controller": "limits", **{v: k for k, v in _SYSTEM_KEYS.items()}}
     flat = {
-        k: v
+        flat_keys.get(k, k): v
         for k, v in program.items()
-        if k not in ("programs", "bindings", "waveforms", "samples")
+        if k not in ("programs", "bindings", "waveforms", "samples", "parameters")
     }
     flat["format"] = FORMAT
+    if flat["limits"] is not None:
+        flat["limits"] = _flat_controller(flat["limits"])
+    names = {v: k for k, v in _LINK_KEYS.items()}
+    flat["links"] = {
+        k: {names.get(f, f): v for f, v in link.items()} for k, link in flat["links"].items()
+    }
     flat["lines"] = [
         {"line": line["line"], "role": line["role"], "qudit": line["qudits"][0]}
         for line in program["lines"]
@@ -1241,6 +1443,22 @@ def _export_plan(
 # ── Checks ───────────────────────────────────────────────────────────────────
 
 
+def _memory(limits: ControllerLimits) -> tuple[int, int, bool, bool, list[str], bool]:
+    """The waveform memory of *limits* as the native check takes it."""
+    memory = limits.waveform_memory
+    if memory is None:
+        samples = -1 if limits.waveform_samples is None else limits.waveform_samples
+        return samples, 1, False, True, [], False
+    return (
+        memory.samples,
+        memory.granule,
+        memory.shared,
+        memory.scaling,
+        sorted(memory.synthesized),
+        memory.hold,
+    )
+
+
 def _checks_natively(limits: ControllerLimits, clocks: _clocks.ClockPlan | None) -> bool:
     """Whether the native check counts every limit of *limits* on *clocks*."""
     return (
@@ -1250,20 +1468,25 @@ def _checks_natively(limits: ControllerLimits, clocks: _clocks.ClockPlan | None)
     )
 
 
-def _native_check(lowered: Lowered, limits: ControllerLimits) -> list[str]:
+def _native_check(
+    lowered: Lowered, limits: ControllerLimits, unresolved: list[str] | None = None
+) -> list[str]:
     """The limits *lowered* exceeds as the native check finds them: a loop
     whose iterations repeat is checked once, its first iterations and its
     last standing for all of them, so a violation inside it is reported
-    once."""
+    once. With *unresolved*, a tone or waveform whose value is not known yet
+    counts only if the limit is exceeded whatever its value; a limit that
+    only some values exceed is appended to *unresolved*."""
     num, den = _samples_per_own_cycle(limits, lowered.target.clock_ghz)
     module = lowered._concrete()
+    found: list[str]
     with lowered._lock:
-        found: list[str] = module.controller_check(
+        found, maybe = module.controller_check(
             limits.issue_cycles,
             limits.issue_cycles + limits.min_wait_cycles,
             num,
             den,
-            -1 if limits.waveform_samples is None else limits.waveform_samples,
+            _memory(limits),
             -1 if limits.tones_per_line is None else limits.tones_per_line,
             -1 if limits.max_events is None else limits.max_events,
             dict(limits.acquirers),
@@ -1271,21 +1494,46 @@ def _native_check(lowered: Lowered, limits: ControllerLimits) -> list[str]:
             limits.feedback_latency_cycles,
             limits.answer_timeouts,
             [fn.name for fn in lowered.classical if fn.latency_mode == "timeout"],
+            unresolved is not None,
         )
+    if maybe and unresolved is not None:
+        unresolved.append("tone frequencies or waveform memory")
     return found
 
 
-def _found_natively(lowered: Lowered, limits: ControllerLimits) -> bool:
-    """Whether *lowered* exceeds a limit of *limits* (``_checks_natively``):
-    a check then lists its violations, one per execution, from a walk."""
-    if _native_check(lowered, limits):
-        return True
-    if limits.computes and resources(lowered, limits).violations:
-        return True
-    return (
-        limits is not lowered.options.machine.controller
-        and _sample_rates(lowered, limits) is not None
-    )
+def _natively_found(
+    lowered: Lowered, limits: ControllerLimits, unresolved: list[str] | None = None
+) -> list[str] | None:
+    """``None`` when *lowered* exceeds no limit of *limits*
+    (``_checks_natively``), else what the native check finds: a check then
+    lists the violations, one per execution, from a walk."""
+    found = _native_check(lowered, limits, unresolved)
+    if (
+        found
+        or (limits.computes and resources(lowered, limits).violations)
+        or (
+            limits is not lowered.options.machine.controller
+            and _sample_rates(lowered, limits) is not None
+        )
+    ):
+        return found
+    return None
+
+
+def _with_memory(
+    found: Sequence[str],
+    native: Sequence[str],
+    limits: ControllerLimits,
+    unresolved: list[str] | None,
+    maybe: Sequence[str],
+) -> Sequence[str]:
+    """*found* with the waveform memory violations of *native*: only the
+    native check checks a ``WaveformMemory``."""
+    if limits.waveform_memory is None:
+        return found
+    if unresolved is not None:
+        unresolved.extend(maybe)
+    return [*found, *(m for m in native if "waveform memory holds" in m)]
 
 
 def _limit_violations(
@@ -1293,27 +1541,44 @@ def _limit_violations(
     limits: ControllerLimits,
     clocks: _clocks.ClockPlan | None,
     walked: tuple[Any, Any, Any, Any] | None = None,
+    unresolved: list[str] | None = None,
 ) -> Sequence[str]:
     """The limits a call's schedule exceeds, as ``_violations`` finds them,
     one per execution. On one clock, without limits the native check does
     not count, the native check says whether there are any. They are listed
     from the events of *walked* (``_walk``'s format /1, in the controller's
     cycles), else of a walk made here that has a long rolled loop whose
-    iterations repeat once (``_loops``)."""
-    if _checks_natively(limits, clocks) and not _found_natively(lowered, limits):
-        return []
+    iterations repeat once (``_loops``).
+
+    With *unresolved*, a tone or waveform whose value is not known yet
+    counts only if the limit is exceeded whatever its value; a limit that
+    only some values exceed is appended to *unresolved*."""
+    native: list[str] = []
+    maybe: list[str] = []
+    if _checks_natively(limits, clocks):
+        found_natively = _natively_found(lowered, limits, None if unresolved is None else maybe)
+        if found_natively is None:
+            if unresolved is not None:
+                unresolved.extend(maybe)
+            return []
+        native = found_natively
     if walked is not None:
         lines, events, off, problems = walked
-        return _violations(lowered, events, limits, lines, clocks, off, problems)
+        found = _violations(lowered, events, limits, lines, clocks, off, problems, True, unresolved)
+        return _with_memory(found, native, limits, unresolved, maybe)
     repeats: list[tuple[int, ...]] = []
     lines, events, off, problems = _walk(
-        lowered, own=_native_clock(clocks), waveforms=False, repeats=repeats
+        lowered, unresolved is None, _native_clock(clocks), False, repeats=repeats
     )
     if repeats:
         from ._loops import violations
 
-        return violations(lowered, events, repeats, limits, lines, None)
-    return _violations(lowered, events, limits, lines, clocks, off, problems, False)
+        listed = violations(lowered, events, repeats, limits, lines, unresolved)
+    else:
+        listed = _violations(
+            lowered, events, limits, lines, clocks, off, problems, False, unresolved
+        )
+    return _with_memory(listed, native, limits, unresolved, maybe)
 
 
 def _exclusive(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
@@ -1621,10 +1886,15 @@ def _compile_check(
 
         clocks = _clocks.plan(limits, lowered.target.clock_ghz, machine.reference_clock_ghz)
     slots = lowered._role is not None and lowered._role.slots > 0
-    if system is None and not slots and not lowered.parameters:
+    native: list[str] = []
+    maybe: list[str] = []
+    if system is None and not slots:
         assert limits is not None
-        if _checks_natively(limits, clocks) and not _found_natively(lowered, limits):
-            return [], True
+        if _checks_natively(limits, clocks):
+            found_natively = _natively_found(lowered, limits, maybe if lowered.parameters else None)
+            if found_natively is None:
+                return [], not maybe
+            native = found_natively
     repeats: list[tuple[int, ...]] | None = None if system is not None or slots else []
     lines, events, off, problems = _walk(
         lowered, values=False, own=_native_clock(clocks), waveforms=False, repeats=repeats
@@ -1636,7 +1906,7 @@ def _compile_check(
         rates = None if limits is machine.controller else _sample_rates(lowered, limits)
         pending: list[str] | None = [] if lowered.parameters else None
         found = violations(lowered, events, repeats, limits, lines, pending, rates)
-        return found, not pending
+        return _with_memory(found, native, limits, pending, maybe), not pending
     if system is not None and slots and not system._plays_everything:
         # Which controller plays a line depends on the qudits a call binds.
         return [], False
@@ -1660,6 +1930,9 @@ def _compile_check(
         unresolved.append("acquirers")
     if limits is not None and limits is not machine.controller:
         found.extend(_sample_rate_violations(lowered, limits, clocks, events))
+    if system is None:
+        assert limits is not None
+        found = [*_with_memory(found, native, limits, unresolved, maybe)]
     return found, not unresolved
 
 

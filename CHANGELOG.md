@@ -575,6 +575,20 @@ behavior may change in any 0.x release.
   fails it when a call's answer is due later than that after the end of
   the readouts its request carries, in any iteration. Waits whose length
   is known only at run time count at their highest length.
+- **Waveform memory.** `ControllerLimits(waveform_memory=WaveformMemory(...))`
+  describes a controller's waveform memory: its size and allocation unit,
+  one per line or shared, whether a stored shape plays at any amplitude,
+  the shapes it generates without memory, and its upload rate, overlap and
+  persistence; `waveform_samples=n` is its simplest case. In format /2,
+  each waveform has an `id` from its content and a `shape_id` equal for
+  waveforms that differ only in amplitude and phase, and `parameters` says
+  what each `float` parameter reaches, so a planner can tell which values
+  change only amplitudes. The controller and its links are written in /2
+  under their new names (`instruction_cycles`, `detectors`, `send_ns`,
+  `slots`, ...), what it computes as a list of `processors`, and the
+  quantum system's name as `quantum_system`. Two waveforms of
+  one shape at `float` amplitudes share memory, and a limit that only some
+  `float` values exceed is checked when a call supplies them.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
   `CompiledKernel`, `Lowered`, `Pass`, `simulate`, `SimulationResult`,
   `BranchCoverage`, `device`, `Device`, `Qudit`, `Register`,

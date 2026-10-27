@@ -48,7 +48,6 @@ dev = pulse.device({"target": target})
 readers = lines // 2
 limits = ControllerLimits(
     clock_ghz=1.0,
-    samples_per_cycles=1,
     waveform_samples=1 << 20,
     tones_per_line=4,
     acquirers={q: q for q in range(readers)},

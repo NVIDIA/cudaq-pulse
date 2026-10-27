@@ -150,7 +150,46 @@ rather than with its executions, as a sequencer runs it. It has the keys of
 ``waveforms``
     Each distinct waveform expression once; a drive or readout gives the
     index of its own in ``waveform``. With ``sample_rate_ghz``, ``samples``
-    holds each one's samples, in the same order.
+    holds each one's samples, in the same order. Each also has ``id``, 16
+    hex digits that depend on its expression alone, so they stay the same
+    from one compile, call, line or controller to the next, and
+    ``shape_id``, equal for waveforms that differ only in overall amplitude
+    and phase (``shape_key``), the ones a controller that scales what it
+    plays stores once.
+``parameters``
+    For a module with ``float`` parameters, each one's ``value`` in this
+    call and what it ``reaches``: ``"amplitude"`` (an overall factor of a
+    waveform), ``"phase"``, ``"frequency"``, ``"shape"`` (another waveform
+    parameter), ``"timing"`` (a length) or ``"other"``. A parameter that
+    reaches only amplitudes and phases leaves every ``shape_id`` the same
+    for every value. Omitted without parameters.
+``controller``
+    In place of ``limits``: the controller, with the fields
+    ``instruction_cycles``, ``min_idle_cycles``, ``detectors``,
+    ``detector_recovery_cycles``,
+    ``waveform_memory_samples``, ``max_tones_per_line``, ``max_pulses`` and
+    ``supports_timeouts`` for ``ControllerLimits.issue_cycles``,
+    ``min_wait_cycles``, ``acquirers``, ``acquirer_hold_cycles``,
+    ``waveform_samples``, ``tones_per_line``,
+    ``max_events`` and ``answer_timeouts``; the others keep their names.
+    What it computes is in ``processors``, empty when no compute limit is
+    set, else one processor with ``links``, ``clock_ghz``,
+    ``cycles_per_op`` (the cost of each class of operation it computes),
+    ``unsupported`` (the classes it cannot compute, by name; empty, and
+    ``max_concurrent_calls``, 1, as ``ControllerLimits`` has no field to
+    change them),
+    ``fixed_cost_only``, ``max_ops``, ``max_state_bytes``,
+    ``max_calls_per_shot`` and ``max_bytes_per_shot``, for
+    ``compute_links``, ``compute_clock_ghz``, ``op_cycles``,
+    ``controller_form``, ``max_ops``, ``state_bytes``,
+    ``max_calls_per_shot`` and ``buffer_bytes``.
+``quantum_system``
+    In place of ``target``: the name of the quantum system the program is
+    for.
+``links``
+    Each link with ``send_ns``, ``bandwidth_bytes_per_ns``,
+    ``answer_delay_ns`` and ``slots`` for ``Link.fixed_ns``,
+    ``bytes_per_ns``, ``feedback_ns`` and ``max_in_flight``.
 ``lines``
     Each line's ``qudits``, a list.
 Played events
@@ -358,6 +397,39 @@ calibrated again, reuses its trace and optimized module and schedules it
 again, with the same result, byte for byte, as compiling it anew. A delay
 of a line no controller of the system plays, or of a qudit the quantum
 system lacks, is a ``DeviceDefinitionError``.
+
+Waveform memory
+---------------
+
+``ControllerLimits(waveform_memory=WaveformMemory(...))`` describes the
+memory a controller plays waveforms from, in samples:
+
+.. code-block:: python
+
+   from cudaq_pulse.controller import ControllerLimits, WaveformMemory
+
+   memory = WaveformMemory(
+       samples=65536,             # what it holds
+       granule=32,                # each waveform rounds up to whole granules
+       shared=True,               # one memory for every line
+       synthesized=frozenset({"square", "gaussian"}),  # generated, not stored
+       upload_samples_per_cycle=4.0,
+       upload_while_playing=True,
+   )
+   limits = ControllerLimits(sample_rate_ghz=2.0, waveform_memory=memory)
+
+Compiling checks that every waveform of a program fits at once: per line, or
+once over all lines when ``shared``, each distinct waveform takes its
+samples rounded up to ``granule``. With ``scaling`` (the default), the
+controller plays one stored shape at any amplitude and phase, so waveforms
+that differ only in those share memory, even when a ``float`` parameter sets
+the amplitude; without it, only equal waveforms do. Shapes in
+``synthesized``, and with ``hold`` a waveform that is constant, take none.
+The upload rate, whether uploads overlap playing, and ``persistent`` (the
+memory keeps its waveforms from one program to the next) are not checked;
+they reach a backend, or a planner that places waveforms in memory, through
+the export's ``controller``, with the waveform ids and parameter roles of
+``/2``. ``waveform_samples=n`` is ``waveform_memory=WaveformMemory(samples=n)``.
 
 Controller limits
 -----------------

@@ -472,6 +472,57 @@ def test_reaction_times_add_nothing_to_the_checks_of_a_call():
 
 
 @pytest.mark.scaling
+def test_values_no_limit_depends_on_are_bound_without_a_check():
+    @pulse.kernel
+    def sweep(q, amp: float):
+        line, tone = get_drive_line(q)
+        for _ in range(1000):
+            drive(line, gaussian(16, amp, 4.0), tone)
+            drive(line, gaussian(16, 0.5, 4.0), tone)
+
+    limits = ControllerLimits(waveform_samples=64, tones_per_line=1)
+    compiled = {
+        "limits": pulse.compile(sweep, machine=MachineModel(controller=limits)),
+        "plain": pulse.compile(sweep),
+    }
+    values = [0.001 * i for i in range(200)]
+    bind_s = {
+        name: _best(lambda c=c: [c.lower(Q[0], v) for v in values], 3, 0)
+        for name, c in compiled.items()
+    }
+    # One shape at any amplitude fits whatever the value: no check per call.
+    assert bind_s["limits"] < bind_s["plain"] * 1.25, bind_s
+
+
+@pytest.mark.scaling
+def test_a_waveform_memory_of_a_rolled_loop_is_checked_in_constant_time():
+    from cudaq_pulse.controller import WaveformMemory, check
+
+    memory = WaveformMemory(
+        samples=4096, granule=32, shared=True, synthesized=frozenset({"square"})
+    )
+    limits = ControllerLimits(waveform_memory=memory)
+
+    def program(n: int):
+        @pulse.kernel
+        def kernel(q):
+            line = get_drive_line(q)
+            for _ in range(n):
+                drive(line, gaussian(16, 0.1, 4.0))
+                drive(line, square(8, 0.2))
+                shift_phase(line.tone, 0.1)
+
+        return kernel
+
+    check_s = {}
+    for n in (100, 100_000):
+        lowered = pulse.compile(program(n)).lower(Q[0])
+        assert check(lowered, limits) == []
+        check_s[n] = _best(lambda m=lowered: check(m, limits), 5)
+    assert check_s[100_000] < check_s[100] * FLAT_LOOP_LIMIT, check_s
+
+
+@pytest.mark.scaling
 def test_a_wait_length_sweep_compiles_once(monkeypatch):
     @pulse.kernel
     def t1(q, tau: float):

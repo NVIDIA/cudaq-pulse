@@ -17,7 +17,14 @@ import pytest
 from cudaq_pulse import backends
 from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import FORMAT, ControllerLimitError, ControllerLimits, check, unroll
+from cudaq_pulse.controller import (
+    FORMAT,
+    ControllerLimitError,
+    ControllerLimits,
+    WaveformMemory,
+    check,
+    unroll,
+)
 from cudaq_pulse.targets import Qubit, TargetDescription
 
 _TARGET = TargetDescription(
@@ -283,7 +290,10 @@ def test_the_structured_format_is_refused_by_an_unknown_version():
 _LIMITS = [
     ControllerLimits(issue_cycles=3, min_wait_cycles=5),
     ControllerLimits(tones_per_line=1),
-    ControllerLimits(sample_rate_ghz=2 * _TARGET.clock_ghz, waveform_samples=60),
+    ControllerLimits(sample_rate_ghz=4.0, waveform_samples=60),
+    ControllerLimits(
+        waveform_memory=WaveformMemory(samples=60, granule=32, scaling=False, shared=True)
+    ),
     ControllerLimits(acquirers={0: 0, 1: 0}, acquirer_hold_cycles=500),
     ControllerLimits(feedback_latency_cycles=50),
     ControllerLimits(max_events=7),
