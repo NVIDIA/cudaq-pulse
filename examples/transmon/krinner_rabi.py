@@ -24,11 +24,12 @@ import cudaq_pulse as pulse
 from cudaq_pulse.targets import transmon_krinner_17q
 
 target = transmon_krinner_17q()
+dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
 qubit_idx = 4  # D5 -- central data qubit
 
 qubit_d5 = target.qubits[qubit_idx]
 drive_params = target.get_drive_params(qubit_idx)
-clock_ghz = target.clock_ghz
+clock_ghz = dev.clock_ghz  # the program clock kernels count cycles of
 
 print(f"Target: {target.name} ({target.n_qubits} qubits)")
 print(f"Qubit {qubit_d5.label} (idx {qubit_idx}):")
@@ -59,7 +60,6 @@ def rabi_d5(qubit):
         wait(drive_line, 100)
 
 
-dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
 compiled = pulse.compile(rabi_d5, device=dev).lower(dev.qudit_handles[qubit_idx])
 total_cycles = max(e.end for e in compiled.schedule)
 print(

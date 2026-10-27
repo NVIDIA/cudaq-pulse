@@ -94,10 +94,9 @@ if __name__ == "__main__":
     backend = backends.get("toy")
     target = TargetDescription(
         name="toy-device",
-        clock_ghz=1.0,
         qubits={0: Qubit(index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=0, t2_star_us=0)},
     )
-    dev = pulse.device({"target": target})
+    dev = pulse.device({"target": target, "clock_ghz": 1.0})
 
     @pulse.kernel
     def drive_and_measure(q):

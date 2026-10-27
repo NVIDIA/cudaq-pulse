@@ -71,7 +71,7 @@ class Target(enum.Enum):
 
 
 _CARRIER = "qudit"
-_CONFIG_KEYS = ("target", "layout", "calibration", "cooldown")
+_CONFIG_KEYS = ("target", "layout", "calibration", "cooldown", "clock_ghz")
 # Reserved for a model of where carriers are and how they move.
 _RESERVED_CONFIG = frozenset({"zones", "sites", "moves", "transport"})
 
@@ -204,6 +204,10 @@ class _Handles:
 class Device:
     """A read-only machine description; see the module docstring.
 
+    ``clock_ghz`` is the program clock: kernels count time in its cycles. A
+    config's ``"clock_ghz"`` sets it, else the target's. Each controller may
+    run its own clock, a whole-cycle ratio of it (see ``cudaq_pulse.controller``).
+
     ``qubit_freq[q]`` is the 0-1 transition frequency of qudit ``q`` (Hz) and
     ``transition_freq[q, i, j]`` that of levels ``i`` and ``j``; both are
     indexed by the user's qudit numbering and are read-only arrays.
@@ -217,7 +221,14 @@ class Device:
         layout: Sequence[int] | None = None,
         source: str = "",
         calibration: Any = None,
+        clock_ghz: float | None = None,
     ) -> None:
+        if clock_ghz is not None:
+            from ._clocks import program_clock_ghz
+
+            clock = program_clock_ghz(clock_ghz, {}, target.clock_ghz)
+            if clock != target.clock_ghz:
+                target = dataclasses.replace(target, clock_ghz=clock)
         problems: list[Problem] = []
         layout = (
             tuple(sorted(target.qubits))
@@ -286,9 +297,11 @@ def _calibrated(
     source: str,
     layout: Sequence[int] | None,
     calibration: Any,
+    clock_ghz: float | None = None,
 ) -> Device:
     """The device of *target*, registered as *spec* (``None`` for a
-    ``TargetDescription``), with *calibration* applied."""
+    ``TargetDescription``), with *calibration* applied and *clock_ghz* (if
+    given) its program clock."""
     if calibration is not None:
         target = calibration.apply(target)
     elif spec == "transmon_krinner_17q":
@@ -296,7 +309,14 @@ def _calibrated(
 
         calibration = shipped_calibration("krinner17")
     name = target.name if spec is None else spec
-    return Device(target, name=name, layout=layout, source=source, calibration=calibration)
+    return Device(
+        target,
+        name=name,
+        layout=layout,
+        source=source,
+        calibration=calibration,
+        clock_ghz=clock_ghz,
+    )
 
 
 def _target(spec: Any, problems: list[Problem]) -> TargetDescription | None:
@@ -476,11 +496,19 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
     if layout is not None:
         layout = _layout(layout, target, name, problems)
     calibration = _calibration(config, problems)
+    clock_ghz = config.get("clock_ghz")
+    if clock_ghz is not None:
+        from ._clocks import program_clock_ghz
+
+        try:
+            program_clock_ghz(clock_ghz, {}, 0.0)
+        except ValueError as error:
+            problems.append(Problem(str(error), path="clock_ghz", value=clock_ghz))
     if problems or target is None:
         return None
     try:
         return _calibrated(
-            target, spec if isinstance(spec, str) else None, source, layout, calibration
+            target, spec if isinstance(spec, str) else None, source, layout, calibration, clock_ghz
         )
     except (KeyError, ValueError) as error:
         problems.append(
@@ -543,17 +571,19 @@ def device(config: Mapping[str, Any] | str | os.PathLike[str]) -> Device:
     """A device from a config: a mapping, or the path of a JSON file.
 
     The config gives the target, by registered name or as a ``TargetDescription``
-    description, and may give a layout and a calibration::
+    description, and may give a layout, a calibration and a program clock::
 
         {"target": "transmon_krinner_17q", "layout": [4, 5, 6],
-         "calibration": "krinner17", "cooldown": "K22-main"}
+         "calibration": "krinner17", "cooldown": "K22-main", "clock_ghz": 2.0}
 
     ``layout[i]`` is the carrier that qudit ``i`` names; by default every
     carrier of the target, in order. ``calibration`` is a ``Calibration``,
     the name of a shipped one or the path of a calibration file, and
     ``cooldown`` one of its cooldowns; the calibration's couplings replace
     the target's, and ``Device.calibration`` holds it. The Krinner target
-    uses the shipped ``krinner17`` calibration by default.
+    uses the shipped ``krinner17`` calibration by default. ``clock_ghz`` is
+    the program clock kernels count cycles of (``Device.clock_ghz``); by
+    default the target's.
 
     A config with problems raises ``DeviceDefinitionError`` listing all of
     them, each with its path in the config and, for a file, its line and

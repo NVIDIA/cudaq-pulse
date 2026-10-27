@@ -29,7 +29,8 @@ import cudaq_pulse as pulse
 from cudaq_pulse.targets import transmon_krinner_17q
 
 target = transmon_krinner_17q()
-clock_ghz = target.clock_ghz
+dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+clock_ghz = dev.clock_ghz  # the program clock kernels count cycles of
 labels = {q.index: q.label for q in target.qubits.values()}
 n_qubits = target.n_qubits
 data_qubits = [i for i in range(n_qubits) if labels[i].startswith("D")]
@@ -103,7 +104,6 @@ def surface_code_cycle(qubits):
             sync(lines[n_qubits - 2 - i], lines[n_qubits - 1 - i])
 
 
-dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
 compiled = pulse.compile(surface_code_cycle, device=dev).lower(dev.qudit_handles[:n_qubits])
 total_ns = max(e.end for e in compiled.schedule) / clock_ghz
 print(

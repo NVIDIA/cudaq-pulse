@@ -62,7 +62,7 @@ def two_readouts(q, r):
 
 
 def _device():
-    return pulse.device({"target": dataclasses.replace(ladder_target(4), clock_ghz=1.0)})
+    return pulse.device({"target": ladder_target(4), "clock_ghz": 1.0})
 
 
 def test_an_installed_backend_is_listed_without_being_imported(installed):

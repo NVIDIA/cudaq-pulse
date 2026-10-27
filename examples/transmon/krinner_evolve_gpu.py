@@ -38,7 +38,7 @@ auxiliary, data = index["X1"], index["D2"]
 
 # The published 40 ns, sigma = 10 ns pulse; amplitudes are rates in rad/ns.
 drive_params = target.get_drive_params(data)
-clock_ghz = target.clock_ghz
+clock_ghz = dev.clock_ghz  # the program clock kernels count cycles of
 duration_ns, sigma_ns = drive_params["x_dur"], drive_params["x_sigma"]
 area_ns = sigma_ns * math.sqrt(2 * math.pi) * math.erf(duration_ns / (2 * math.sqrt(2) * sigma_ns))
 duration, sigma = round(duration_ns * clock_ghz), sigma_ns * clock_ghz
