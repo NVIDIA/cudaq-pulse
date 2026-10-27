@@ -178,3 +178,21 @@ def test_only_measurements_can_be_conditions():
 
     with pytest.raises(CompilationError, match="only measurement results"):
         k(Q[0])
+
+
+_ROUNDS = (0, 1)
+
+
+def test_nested_feedback_ending_an_unrolled_loop_body():
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        r, rt = get_readout_line(q)
+        m = readout(r, square(10, 0.05), rt)
+        for _ in _ROUNDS:
+            if m:
+                if m:
+                    drive(d, square(10, 0.1), t)
+
+    events = k.lower(Q[0]).schedule
+    assert [e.kind for e in events] == ["readout", "drive", "drive"]

@@ -746,7 +746,8 @@ def _successors(instrs: tuple[Instr, ...], i: int, exit_node: int) -> tuple[int,
         return (i + 1, arg)
     if op == FOR_ITER:
         return (i + 1, arg[0])
-    if op in (RETURN, RAISE, UNSUPPORTED):
+    # Tracing an arm stops at its REGION_END, as at a return.
+    if op in (RETURN, RAISE, UNSUPPORTED, REGION_END):
         return (exit_node,)
     return (i + 1,)
 
