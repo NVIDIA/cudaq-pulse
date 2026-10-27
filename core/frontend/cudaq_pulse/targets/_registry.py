@@ -23,6 +23,7 @@ import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from .._errors import PulseError
 from .base import TargetDescription
 
 if TYPE_CHECKING:
@@ -33,12 +34,12 @@ ENV_VAR = "CUDAQ_PULSE_TARGET"
 TargetFactory = Callable[[str | None], Any]
 
 
-class NoTargetError(RuntimeError):
+class NoTargetError(PulseError, RuntimeError):
     """``get_device()`` was called with no argument and ``CUDAQ_PULSE_TARGET``
     names no process target."""
 
 
-class UnknownTargetError(LookupError):
+class UnknownTargetError(PulseError, LookupError):
     """A target name, in a device config or in ``CUDAQ_PULSE_TARGET``, is not
     registered; the message lists the registered ones."""
 

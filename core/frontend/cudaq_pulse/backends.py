@@ -43,6 +43,8 @@ import threading
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from ._errors import PulseError
+
 if TYPE_CHECKING:
     from importlib.metadata import EntryPoint
 
@@ -82,7 +84,7 @@ class Backend(Protocol):
         ...
 
 
-class BackendError(Exception):
+class BackendError(PulseError):
     """A controller backend cannot be found or used."""
 
 

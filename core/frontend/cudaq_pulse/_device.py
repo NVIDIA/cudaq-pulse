@@ -26,6 +26,7 @@ import os
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, overload
 
+from ._errors import PulseError
 from .targets._registry import NoTargetError
 from .targets.base import TargetDescription
 
@@ -47,7 +48,7 @@ class NoDeviceError(NoTargetError):
     for a kernel call."""
 
 
-class DeviceMismatchError(RuntimeError):
+class DeviceMismatchError(PulseError, RuntimeError):
     """A kernel call mixes handles of different devices, or of an unpinned one."""
 
 

@@ -27,6 +27,7 @@ TOP_LEVEL = {
     "Qudit",
     "Register",
     "Target",
+    "PulseError",
     "CompilationError",
     "NoTargetError",
     "NoDeviceError",
@@ -186,3 +187,46 @@ def test_viz_loads_on_first_use():
         check=True,
     ).stdout.strip()
     assert out == "False True"
+
+
+def test_every_public_error_is_a_pulse_error_and_keeps_its_builtin_base():
+    import cudaq_pulse.backends
+    import cudaq_pulse.compiler
+    import cudaq_pulse.controller
+    import cudaq_pulse.runtime
+    import cudaq_pulse.targets
+
+    builtin = {
+        "CompilationError": Exception,
+        "UnsupportedInterpreterError": RuntimeError,
+        "NoTargetError": RuntimeError,
+        "NoDeviceError": RuntimeError,
+        "DeviceMismatchError": RuntimeError,
+        "UnknownTargetError": LookupError,
+        "GpuRuntimeError": RuntimeError,
+        "GpuSupportNotBuiltError": RuntimeError,
+        "GpuRuntimeLoadError": RuntimeError,
+        "GpuDeviceUnavailableError": RuntimeError,
+        "BackendError": Exception,
+        "BackendNotFoundError": LookupError,
+        "IncompatibleBackendError": TypeError,
+        "ControllerLimitError": Exception,
+    }
+    errors = {
+        name: getattr(module, name)
+        for module in (
+            pulse,
+            cudaq_pulse.backends,
+            cudaq_pulse.compiler,
+            cudaq_pulse.controller,
+            cudaq_pulse.runtime,
+            cudaq_pulse.targets,
+        )
+        for name in module.__all__
+        if isinstance(getattr(module, name), type)
+        and issubclass(getattr(module, name), BaseException)
+    }
+    assert set(errors) == set(builtin) | {"PulseError"}
+    for name, base in builtin.items():
+        assert issubclass(errors[name], pulse.PulseError), name
+        assert issubclass(errors[name], base), name

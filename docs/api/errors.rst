@@ -9,8 +9,13 @@
 Errors
 ======
 
-Every error cudaq-pulse raises on purpose is one of these, or a built-in
-``ValueError`` or ``TypeError`` for a malformed argument.
+Every error cudaq-pulse raises on purpose derives from ``PulseError``, so
+``except cudaq_pulse.PulseError`` catches them all. Each also keeps its
+built-in base: ``NoTargetError`` is still a ``RuntimeError`` and
+``UnknownTargetError`` a ``LookupError``. A malformed argument raises a
+built-in ``ValueError`` or ``TypeError``.
+
+.. autoexception:: cudaq_pulse.PulseError
 
 Compiling
 ---------

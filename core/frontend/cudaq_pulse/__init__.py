@@ -46,6 +46,7 @@ from ._device import Register as Register
 from ._device import Target as Target
 from ._device import device as device
 from ._device import get_device as get_device
+from ._errors import PulseError as PulseError
 from .compiler import Lowered as Lowered
 from .compiler import compile as compile
 from .kernel import kernel as kernel
@@ -96,6 +97,7 @@ __all__ = [
     "Qudit",
     "Register",
     "Target",
+    "PulseError",
     "CompilationError",
     "NoTargetError",
     "NoDeviceError",

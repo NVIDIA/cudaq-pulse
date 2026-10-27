@@ -235,10 +235,12 @@ behavior may change in any 0.x release.
   the "Writing a Controller Backend" guide walks through one.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
   `CompiledKernel`, `Lowered`, `simulate`, `SimulationResult`, `device`,
-  `get_device`, `Device`, `Qudit`, `Register`, `Target`,
+  `get_device`, `Device`, `Qudit`, `Register`, `Target`, `PulseError`,
   `CompilationError`, `NoTargetError`, `NoDeviceError`,
   `DeviceMismatchError`, `GpuRuntimeError`, `viz`, `classical`,
   `controller` and `backends`, plus `__version__`.
+  Every error cudaq-pulse raises on purpose derives from `PulseError` and
+  keeps its built-in base (`NoTargetError` is still a `RuntimeError`).
   `cudaq_pulse.compiler`, `cudaq_pulse.runtime.simulate` and
   `cudaq_pulse.targets.transmon_model` list their public names in `__all__`,
   as the other documented modules do. `cudaq_pulse.targets.UnknownTargetError`
