@@ -118,8 +118,6 @@ exported program and returns the controller's, and ``run(artifact,
 shots=...)`` runs it. ``formats``, if present, lists the export formats it
 reads. This one emits one line of text per drive and readout:
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    from collections.abc import Mapping
@@ -153,20 +151,14 @@ reads. This one emits one line of text per drive and readout:
        def run(self, artifact: Any, *, shots: int = 1) -> list[list[str]]:
            return [list(artifact) for _ in range(shots)]
 
-.. :spellcheck-enable:
-
 Its distribution registers it under its name in the
 ``cudaq_pulse.backends`` entry-point group, naming the backend class or any
 callable without arguments that returns one:
-
-.. :spellcheck-disable:
 
 .. code-block:: toml
 
    [project.entry-points."cudaq_pulse.backends"]
    text = "text_controller:TextBackend"
-
-.. :spellcheck-enable:
 
 Using a backend
 ---------------
@@ -176,8 +168,6 @@ any, and ``backends.get(name)`` loads one on first use and keeps it.
 ``backends.register(name, factory)`` adds a backend in the running process
 without a distribution, and takes precedence over an installed one of the
 same name:
-
-.. :spellcheck-disable:
 
 .. code-block:: python
 
@@ -211,8 +201,6 @@ same name:
    program = compiled.lower(dev.qudit_handles[0]).export_controller()
    print(backend.run(backend.emit(program), shots=1))
    # [['0 drive line 0 gaussian at 5e+09 Hz', '40 readout line 1 square at 5e+09 Hz']]
-
-.. :spellcheck-enable:
 
 Errors
 ------
