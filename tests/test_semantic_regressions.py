@@ -67,6 +67,38 @@ def test_range_start_stop_step_values_are_preserved():
         assert f"{value:.6e}" in compiled.mlir()
 
 
+@pytest.mark.parametrize("symbolic", [False, True])
+def test_tones_kept_in_a_list_and_retuned_stay_in_a_rolled_loop(symbolic):
+
+    @pulse.kernel
+    def constant(qs):
+        lines = [get_drive_line(q) for q in qs]
+        for (d, t), f in zip(lines, (5.0e9, 5.1e9)):
+            set_frequency(t, f)
+        for _ in range(20):
+            for d, t in lines:
+                drive(d, square(20, 0.3), t)
+
+    @pulse.kernel
+    def runtime(qs, f0: float, f1: float):
+        lines = [get_drive_line(q) for q in qs]
+        for (d, t), f in zip(lines, (f0, f1)):
+            set_frequency(t, f)
+        for _ in range(20):
+            for d, t in lines:
+                drive(d, square(20, 0.3), t)
+
+    args = (5.0e9, 5.1e9) if symbolic else ()
+    compiled = pulse.compile(runtime if symbolic else constant).lower(Q[0:2], *args)
+    text = compiled.mlir()
+    assert text.count("scf.for") == 1
+    assert text.count("= pulse.drive ") == 2
+    assert text.count("pulse.set_frequency") == 2
+    drives = [e for e in compiled.schedule if e.kind == "drive"]
+    assert len(drives) == 40
+    assert max(e.start_cycles + e.duration_cycles for e in drives) == 20 * 20
+
+
 def test_compile_keeps_a_measurement_dependent_branch():
 
     @pulse.kernel

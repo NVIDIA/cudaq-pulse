@@ -15,5 +15,7 @@
   "tier1_qaoa4_compile": 1.678,
   "tier1_qaoa4_trace": 0.426,
   "tier1_vqe_hea_compile": 1.889,
-  "tier1_vqe_hea_trace": 0.503
+  "tier1_vqe_hea_trace": 0.503,
+  "tone_list_loop_n512_compile": 0.435,
+  "tone_list_loop_n8_compile": 0.471
 }

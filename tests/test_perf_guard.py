@@ -38,7 +38,13 @@ from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
 from tests._handles import Q, ladder_target
 from tests._ir import python_ir
-from tests.kernel.ir_corpus import bicycle_syndrome, dd_loop, parametric, surface_syndrome
+from tests.kernel.ir_corpus import (
+    bicycle_syndrome,
+    dd_loop,
+    parametric,
+    surface_syndrome,
+    tone_list_loop,
+)
 
 pytestmark = pytest.mark.benchmark
 
@@ -115,6 +121,7 @@ def _cases() -> dict[str, Callable[[], object]]:
     for n in (8, 512):
         cases[f"dd_loop_n{n}"] = _kernel_ir(dd_loop(n), 1)
         cases[f"dd_loop_n{n}_compile"] = _compile(dd_loop(n), 1)
+        cases[f"tone_list_loop_n{n}_compile"] = _fused(tone_list_loop(n), 2)
     surface5, n5 = surface_syndrome(5)
     surface9, n9 = surface_syndrome(9)
     bicycle, nb = bicycle_syndrome(6, 6)
@@ -165,6 +172,10 @@ def test_building_the_module_costs_less_than_tracing_the_kernel():
 def test_retained_loop_compile_time_is_flat(ratios):
     assert ratios["dd_loop_n512"] < ratios["dd_loop_n8"] * FLAT_LOOP_LIMIT
     assert ratios["dd_loop_n512_compile"] < ratios["dd_loop_n8_compile"] * FLAT_LOOP_LIMIT
+    assert (
+        ratios["tone_list_loop_n512_compile"]
+        < ratios["tone_list_loop_n8_compile"] * FLAT_LOOP_LIMIT
+    )
 
 
 def _half_unused(n_qubits: int):

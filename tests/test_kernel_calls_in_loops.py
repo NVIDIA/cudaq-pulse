@@ -53,15 +53,15 @@ def _device(n):
     return pulse.device({"target": _target(n)})
 
 
-def _trace(kernel, n=1, qvec=False):
+def _trace(kernel, n=1, qvec=False, args=()):
     """The kernel's IR, as a list of ops."""
-    return python_ir(kernel, *_qubits(n, qvec)).ops
+    return python_ir(kernel, *_qubits(n, qvec), *args).ops
 
 
-def _compile(kernel, n=1, qvec=False, passes=None):
-    """The compiled, scheduled kernel."""
+def _compile(kernel, n=1, qvec=False, passes=None, args=()):
+    """The compiled, scheduled kernel; *args* follow the qudits."""
     dev = _device(n)
-    return pulse.compile(kernel, passes=passes, device=dev).lower(*_qubits(n, qvec, dev))
+    return pulse.compile(kernel, passes=passes, device=dev).lower(*_qubits(n, qvec, dev), *args)
 
 
 def _compile_symbolic(kernel):
@@ -74,9 +74,10 @@ def _evaluate(compiled, *values):
     return compiled.lower(_device(1).qudit_handles[0], *values)
 
 
-def _simulate(kernel, n=1, qvec=False, **kwargs):
+def _simulate(kernel, n=1, qvec=False, args=(), **kwargs):
     """The CPU simulation of the kernel."""
-    lowered = _compile(kernel, n, qvec, passes=("verify", "canonicalize", "virtual_z", "fusion"))
+    passes = ("verify", "canonicalize", "virtual_z", "fusion")
+    lowered = _compile(kernel, n, qvec, passes=passes, args=args)
     return pulse.simulate(lowered, **kwargs)
 
 
@@ -135,29 +136,31 @@ def _verify(compiled):
     module.run_passes(["pulse-verify"])
 
 
-def check(kernel, reference, *, loops, n=1, qvec=False, sim=True, **sim_kwargs):
+def check(kernel, reference, *, loops, n=1, qvec=False, sim=True, args=(), **sim_kwargs):
     """Compare *kernel* with its hand-unrolled *reference*.
 
-    *loops* is the number of ``scf.for`` ops *kernel* traces to. Returns
-    the kernel's ops and its compiled form for case-specific checks.
+    *loops* is the number of ``scf.for`` ops *kernel* traces to; *args*
+    follow the qudits in every call. Returns the kernel's ops and its
+    compiled form for case-specific checks.
     """
-    ops = _trace(kernel, n, qvec)
+    ops = _trace(kernel, n, qvec, args)
     assert _kinds(ops)["scf.for"] == loops
-    assert _kinds(_trace(reference, n, qvec))["scf.for"] == 0
+    assert _kinds(_trace(reference, n, qvec, args))["scf.for"] == 0
 
-    compiled = _compile(kernel, n, qvec)
-    expected = _compile(reference, n, qvec)
+    compiled = _compile(kernel, n, qvec, args=args)
+    expected = _compile(reference, n, qvec, args=args)
     _verify(compiled)
     _verify(expected)
     assert _length(compiled) == _length(expected)
     # Fusion merges adjacent drives of the unrolled reference only, so
     # events are compared without it.
-    compiled = _compile(kernel, n, qvec, passes=UNFUSED)
-    assert _schedule(compiled) == _schedule(_compile(reference, n, qvec, passes=UNFUSED))
+    compiled = _compile(kernel, n, qvec, passes=UNFUSED, args=args)
+    unfused = _compile(reference, n, qvec, passes=UNFUSED, args=args)
+    assert _schedule(compiled) == _schedule(unfused)
 
     if sim:
-        result = _simulate(kernel, n, qvec, **sim_kwargs)
-        want = _simulate(reference, n, qvec, **sim_kwargs)
+        result = _simulate(kernel, n, qvec, args, **sim_kwargs)
+        want = _simulate(reference, n, qvec, args, **sim_kwargs)
         assert result.times_ns == want.times_ns
         np.testing.assert_allclose(result.density_matrix, want.density_matrix, atol=1e-9)
         got, ref = sorted(result.branches), sorted(want.branches)
@@ -395,6 +398,306 @@ def test_lines_held_in_lists_stay_threaded_through_a_rolled_loop():
     ops, _ = check(looped, unrolled, loops=1, n=2)
     for_end = next(op for op in ops if op.kind == "scf.for_end")
     assert {"lines[0]", "lines[1]", "tones[0]", "tones[1]"} <= set(for_end.attrs["iter_args"])
+
+
+# ── Tones kept in a container across a rolled loop ───────────────────
+#
+# ``get_drive_line`` returns a (line, tone) tuple, and a tuple in a list is
+# not rebound when its tone is retuned: names unpacked from it later hold an
+# old value of the channel. The loop carries the channel, not those names.
+
+DETUNE_HZ = 20.0e6
+
+
+def _retuned(q):
+    return FREQ_HZ + 0.1e9 * q + DETUNE_HZ
+
+
+def _rolled(compiled):
+    """The compiled module keeps its loops and its retunes."""
+    text = compiled.mlir()
+    assert "scf.for" in text and "pulse.set_frequency" in text
+    return text
+
+
+def test_tones_retuned_in_a_list_stay_rolled():
+    @pulse.kernel
+    def looped(qs):
+        lines = [get_drive_line(q) for q in qs]
+        for (d, t), f in zip(lines, (_retuned(0), _retuned(1))):
+            set_frequency(t, f)
+        for _ in range(3):
+            for d, t in lines:
+                drive(d, square(16, AMP), t)
+
+    @pulse.kernel
+    def unrolled(qs):
+        d0, t0 = get_drive_line(qs[0])
+        d1, t1 = get_drive_line(qs[1])
+        t0 = set_frequency(t0, _retuned(0))
+        t1 = set_frequency(t1, _retuned(1))
+        for _k in (0, 1, 2):
+            drive(d0, square(16, AMP), t0)
+            drive(d1, square(16, AMP), t1)
+
+    @pulse.kernel
+    def native(qs):
+        lines = [get_drive_line(q) for q in qs]
+        for _ in range(3):
+            for d, t in lines:
+                drive(d, square(16, AMP), t)
+
+    _, compiled = check(looped, unrolled, loops=1, n=2, qvec=True)
+    _rolled(_compile(looped, 2, True))
+    assert _length(compiled) == 3 * 16
+    _distinct(looped, native, n=2, qvec=True)
+
+
+def test_several_tones_retuned_in_a_list():
+    @pulse.kernel
+    def looped(qs):
+        lines = [get_drive_line(q) for q in qs]
+        for (d, t), f in zip(lines, (_retuned(0), _retuned(1), _retuned(2))):
+            set_frequency(t, f)
+        for _ in range(2):
+            for d, t in lines:
+                drive(d, square(16, AMP), t)
+
+    @pulse.kernel
+    def unrolled(qs):
+        d0, t0 = get_drive_line(qs[0])
+        d1, t1 = get_drive_line(qs[1])
+        d2, t2 = get_drive_line(qs[2])
+        t0 = set_frequency(t0, _retuned(0))
+        t1 = set_frequency(t1, _retuned(1))
+        t2 = set_frequency(t2, _retuned(2))
+        for _k in (0, 1):
+            drive(d0, square(16, AMP), t0)
+            drive(d1, square(16, AMP), t1)
+            drive(d2, square(16, AMP), t2)
+
+    check(looped, unrolled, loops=1, n=3, qvec=True)
+    _rolled(_compile(looped, 3, True))
+
+
+def test_tones_retuned_in_a_tuple():
+    @pulse.kernel
+    def looped(q0, q1):
+        lines = (get_drive_line(q0), get_drive_line(q1))
+        for (d, t), f in zip(lines, (_retuned(0), _retuned(1))):
+            set_frequency(t, f)
+        for _ in range(3):
+            for d, t in lines:
+                drive(d, square(16, AMP), t)
+
+    @pulse.kernel
+    def unrolled(q0, q1):
+        d0, t0 = get_drive_line(q0)
+        d1, t1 = get_drive_line(q1)
+        t0 = set_frequency(t0, _retuned(0))
+        t1 = set_frequency(t1, _retuned(1))
+        for _k in (0, 1, 2):
+            drive(d0, square(16, AMP), t0)
+            drive(d1, square(16, AMP), t1)
+
+    check(looped, unrolled, loops=1, n=2)
+    _rolled(_compile(looped, 2))
+
+
+def test_tones_retuned_in_a_dict():
+    @pulse.kernel
+    def looped(q0, q1):
+        lines = {"a": get_drive_line(q0), "b": get_drive_line(q1)}
+        set_frequency(lines["a"][1], _retuned(0))
+        set_frequency(lines["b"][1], _retuned(1))
+        for _ in range(3):
+            for d, t in lines.values():
+                drive(d, square(16, AMP), t)
+
+    @pulse.kernel
+    def unrolled(q0, q1):
+        d0, t0 = get_drive_line(q0)
+        d1, t1 = get_drive_line(q1)
+        t0 = set_frequency(t0, _retuned(0))
+        t1 = set_frequency(t1, _retuned(1))
+        for _k in (0, 1, 2):
+            drive(d0, square(16, AMP), t0)
+            drive(d1, square(16, AMP), t1)
+
+    check(looped, unrolled, loops=1, n=2)
+    _rolled(_compile(looped, 2))
+
+
+def test_tones_in_a_list_retuned_to_runtime_floats():
+    @pulse.kernel
+    def looped(qs, f0: float, f1: float):
+        lines = [get_drive_line(q) for q in qs]
+        for (d, t), f in zip(lines, (f0, f1)):
+            set_frequency(t, f)
+        for _ in range(3):
+            for d, t in lines:
+                drive(d, square(16, AMP), t)
+
+    @pulse.kernel
+    def unrolled(qs, f0: float, f1: float):
+        d0, t0 = get_drive_line(qs[0])
+        d1, t1 = get_drive_line(qs[1])
+        t0 = set_frequency(t0, f0)
+        t1 = set_frequency(t1, f1)
+        for _k in (0, 1, 2):
+            drive(d0, square(16, AMP), t0)
+            drive(d1, square(16, AMP), t1)
+
+    args = (_retuned(0), _retuned(1))
+    check(looped, unrolled, loops=1, n=2, qvec=True, args=args)
+    _rolled(_compile(looped, 2, True, args=args))
+    generic = pulse.compile(looped, device=_device(2))
+    assert generic.parameters == ("f0", "f1")
+
+
+def test_tones_retuned_in_a_list_through_nested_loops():
+    @pulse.kernel
+    def looped(qs):
+        lines = [get_drive_line(q) for q in qs]
+        for (d, t), f in zip(lines, (_retuned(0), _retuned(1))):
+            set_frequency(t, f)
+        for _ in range(2):
+            for _ in range(3):
+                for d, t in lines:
+                    drive(d, square(16, AMP), t)
+            for d, t in lines:
+                wait(d, 8)
+
+    @pulse.kernel
+    def unrolled(qs):
+        d0, t0 = get_drive_line(qs[0])
+        d1, t1 = get_drive_line(qs[1])
+        t0 = set_frequency(t0, _retuned(0))
+        t1 = set_frequency(t1, _retuned(1))
+        for _j in (0, 1):
+            for _k in (0, 1, 2):
+                drive(d0, square(16, AMP), t0)
+                drive(d1, square(16, AMP), t1)
+            wait(d0, 8)
+            wait(d1, 8)
+
+    ops, _ = check(looped, unrolled, loops=2, n=2, qvec=True)
+    outer, inner = _loop_bodies(ops)
+    assert "scf.for" in outer and inner.count("pulse.drive") == 2
+    assert _rolled(_compile(looped, 2, True)).count("scf.for") == 2
+
+
+def test_tones_retuned_in_a_list_reach_a_self_scheduled_callee():
+    @pulse.kernel(schedule="asap")
+    def burst(lines):
+        for _ in range(3):
+            for d, t in lines:
+                drive(d, square(16, AMP), t)
+
+    @pulse.kernel
+    def looped(qs):
+        lines = [get_drive_line(q) for q in qs]
+        for (d, t), f in zip(lines, (_retuned(0), _retuned(1))):
+            set_frequency(t, f)
+        burst(lines)
+        for _ in range(2):
+            burst(lines)
+
+    @pulse.kernel
+    def unrolled(qs):
+        d0, t0 = get_drive_line(qs[0])
+        d1, t1 = get_drive_line(qs[1])
+        t0 = set_frequency(t0, _retuned(0))
+        t1 = set_frequency(t1, _retuned(1))
+        for _k in (0, 1, 2, 3, 4, 5, 6, 7, 8):
+            drive(d0, square(16, AMP), t0)
+            drive(d1, square(16, AMP), t1)
+
+    check(looped, unrolled, loops=3, n=2, qvec=True)
+    _rolled(_compile(looped, 2, True))
+
+
+def test_tones_retuned_in_a_list_iterated_in_another_order():
+    # The names left by the retuning loop enter on qudit 1 and leave on
+    # qudit 0; the body rebinds them before reading them.
+    @pulse.kernel
+    def looped(qs):
+        lines = [get_drive_line(q) for q in qs]
+        for (d, t), f in zip(lines, (_retuned(0), _retuned(1))):
+            set_frequency(t, f)
+        for _ in range(3):
+            for d, t in lines[::-1]:
+                drive(d, square(16, AMP), t)
+        drive(d, square(16, 2 * AMP), t)
+
+    @pulse.kernel
+    def unrolled(qs):
+        d0, t0 = get_drive_line(qs[0])
+        d1, t1 = get_drive_line(qs[1])
+        t0 = set_frequency(t0, _retuned(0))
+        t1 = set_frequency(t1, _retuned(1))
+        for _k in (0, 1, 2):
+            drive(d1, square(16, AMP), t1)
+            drive(d0, square(16, AMP), t0)
+        drive(d0, square(16, 2 * AMP), t0)
+
+    check(looped, unrolled, loops=1, n=2, qvec=True)
+    _rolled(_compile(looped, 2, True))
+
+
+def test_a_name_read_before_it_moves_to_another_channel_unrolls():
+    # The first iteration drives qudit 1 through the names the retuning loop
+    # left, the others qudit 0: the iterations differ, so the loop unrolls.
+    @pulse.kernel
+    def looped(qs):
+        lines = [get_drive_line(q) for q in qs]
+        for (d, t), f in zip(lines, (_retuned(0), _retuned(1))):
+            set_frequency(t, f)
+        for _ in range(3):
+            drive(d, square(16, 2 * AMP), t)
+            for d, t in lines[::-1]:
+                drive(d, square(16, AMP), t)
+
+    @pulse.kernel
+    def unrolled(qs):
+        d0, t0 = get_drive_line(qs[0])
+        d1, t1 = get_drive_line(qs[1])
+        t0 = set_frequency(t0, _retuned(0))
+        t1 = set_frequency(t1, _retuned(1))
+        drive(d1, square(16, 2 * AMP), t1)
+        for k in (0, 1, 2):
+            if k:
+                drive(d0, square(16, 2 * AMP), t0)
+            drive(d1, square(16, AMP), t1)
+            drive(d0, square(16, AMP), t0)
+
+    check(looped, unrolled, loops=0, n=2, qvec=True)
+
+
+def test_a_name_read_before_it_is_rebound_on_its_channel_stays_rolled():
+    @pulse.kernel
+    def looped(qs):
+        lines = [get_drive_line(q) for q in qs]
+        for (d, t), f in zip(lines, (_retuned(0), _retuned(1))):
+            set_frequency(t, f)
+        for _ in range(3):
+            drive(d, square(16, 2 * AMP), t)
+            for d, t in lines:
+                drive(d, square(16, AMP), t)
+
+    @pulse.kernel
+    def unrolled(qs):
+        d0, t0 = get_drive_line(qs[0])
+        d1, t1 = get_drive_line(qs[1])
+        t0 = set_frequency(t0, _retuned(0))
+        t1 = set_frequency(t1, _retuned(1))
+        for _k in (0, 1, 2):
+            drive(d1, square(16, 2 * AMP), t1)
+            drive(d0, square(16, AMP), t0)
+            drive(d1, square(16, AMP), t1)
+
+    check(looped, unrolled, loops=1, n=2, qvec=True)
+    _rolled(_compile(looped, 2, True))
 
 
 # ── Loops on both sides of the call ──────────────────────────────────

@@ -84,6 +84,22 @@ def dd_loop(n_iter: int) -> Callable[..., Any]:
     return dd
 
 
+def tone_list_loop(n_iter: int) -> Callable[..., Any]:
+    """Tones kept in a list, retuned, then driven in a rolled loop."""
+
+    @pulse.kernel
+    def listed(qs):
+        lines = [get_drive_line(q) for q in qs]
+        for (d, t), f in zip(lines, (5.0e9, 5.1e9)):
+            set_frequency(t, f)
+        x = square(40, 0.047)
+        for _ in range(n_iter):
+            for d, t in lines:
+                drive(d, x, t)
+
+    return listed
+
+
 @pulse.kernel
 def cpmg_with_waits(q0):
     d0, t0 = get_drive_line(q0)

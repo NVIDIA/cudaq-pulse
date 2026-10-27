@@ -66,6 +66,8 @@ behavior may change in any 0.x release.
   the calls in its body) is at most the unroll threshold: 8 by default, the
   measured break-even point, set with `pulse.compile(k, unroll_threshold=)`,
   `@pulse.kernel(unroll_threshold=)` or `CUDAQ_PULSE_UNROLL_THRESHOLD`.
+  Lines and tones kept in a list, tuple or dict, retuned with
+  `set_frequency` or not, are carried through a rolled loop.
 - **Runtime wait lengths.** A `wait` whose length is computed from `float`
   parameters with `+`, `-`, `*` and `/` (`wait(d, tau)`, `wait(d, tau / 2)`)
   keeps them runtime parameters: a T1, Ramsey or echo sweep compiles once,

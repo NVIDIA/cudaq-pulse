@@ -695,6 +695,14 @@ class _NotRollableError(Exception):
     """The single traced iteration of a rolled loop left the loop body."""
 
 
+class _UndefinedLocalError(CompilationError):
+    """A name was read before the kernel bound it."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"undefined local: {name}")
+        self.name = name
+
+
 class PulseIREmitter:
     """Traces decoded bytecode and emits pulse IR via a builder."""
 
@@ -837,7 +845,7 @@ class PulseIREmitter:
                     try:
                         push(local_vars[arg])
                     except KeyError:
-                        raise CompilationError(f"undefined local: {arg}") from None
+                        raise _UndefinedLocalError(arg) from None
 
                 elif op is _load_global:
                     value = fn_globals.get(arg, _MISSING)
@@ -1418,7 +1426,13 @@ class PulseIREmitter:
     # ── Structured loops ─────────────────────────────────────────────
 
     def _roll(
-        self, loop: _Loop, prog: bc.DecodedCode, for_idx: int, exit_idx: int, hoisted: bool = False
+        self,
+        loop: _Loop,
+        prog: bc.DecodedCode,
+        for_idx: int,
+        exit_idx: int,
+        hoisted: bool = False,
+        unbound: dict[str, StackVal] | None = None,
     ) -> bool:
         """Emit *loop* as one ``scf.for``; return False to unroll it instead.
 
@@ -1427,10 +1441,14 @@ class PulseIREmitter:
         (non-IR locals and the lists and dicts they hold, and any container
         a called kernel or helper reaches) unchanged, so all iterations would
         trace identically. Otherwise the emitted ops are rolled back.
+        The names in *unbound* are left unbound while the body is traced.
         """
         rng = loop.rng
         stack = self.stack
         saved_stack = list(stack)
+        if unbound:
+            for n in unbound:
+                del self.locals[n]
         saved_locals = dict(self.locals)
         containers = [
             (v, list(v) if isinstance(v, list) else dict(v))
@@ -1458,6 +1476,8 @@ class PulseIREmitter:
         self._mutated = mutated
         acquired = self._acquired[0]
         hoist = False
+        stale: list[tuple[str, _Chan]] = []
+        crossing: list[str] = []
         try:
             self._loop(prog, for_idx + 1, for_idx, exit_idx, for_idx)
             slot_changes = _slot_changes(containers)
@@ -1477,7 +1497,20 @@ class PulseIREmitter:
                     and len(log) - mark == self._acquired[0] - acquired
                     and all(q.vid < first for _, q in log[mark:])
                 )
+            if ok:
+                delta = self._ir_delta(snap)
+                stale, crossing = _stale_names(delta, saved_locals, count)
+                if crossing:
+                    # Traced again with them unbound, to learn whether the
+                    # body reads them before rebinding them.
+                    ok = False
         except _NotRollableError:
+            ok = False
+        except _UndefinedLocalError as e:
+            # A name that enters on one channel and leaves on another is read
+            # before it is rebound: iterations after the first differ.
+            if unbound is None or e.name not in unbound:
+                raise
             ok = False
         finally:
             self._mutated = outer
@@ -1493,6 +1526,8 @@ class PulseIREmitter:
             stack[:] = saved_stack
             self.locals.clear()
             self.locals.update(saved_locals)
+            if unbound:
+                self.locals.update(unbound)
             for obj, copy in containers:
                 self._restore_container(obj, copy)
             _restore_channels(held, n_held, entering)
@@ -1503,11 +1538,15 @@ class PulseIREmitter:
             if hoist:
                 for fname, q in dict.fromkeys(undone):
                     self._emit_pulse_call(fname, [q])
-                return self._roll(loop, prog, for_idx, exit_idx, hoisted=True)
+                return self._roll(loop, prog, for_idx, exit_idx, True, unbound)
+            if crossing:
+                moved = {n: saved_locals[n] for n in crossing}
+                return self._roll(loop, prog, for_idx, exit_idx, hoisted, moved)
             return False
 
-        delta = self._ir_delta(snap)
         assert slot_changes is not None
+        for n, _ in stale:
+            del delta[n]
         # Channels the body advanced are carried, unless a name carries the
         # same value; a channel first acquired in the body was hoisted.
         aliases: list[tuple[_Chan, str]] = []
@@ -1563,6 +1602,8 @@ class PulseIREmitter:
             carried = self.locals[alias]
             cell.value = carried
             carried.chan = cell
+        for n, chan in stale:
+            self.locals[n] = chan.value
 
         if count:
             self.locals[var] = rng[-1]
@@ -2219,6 +2260,38 @@ def _slot_changes(
                 return None
             changes.append((obj, i, new))
     return changes
+
+
+def _stale_names(
+    delta: dict[str, IRValue], before: dict[str, StackVal], count: int
+) -> tuple[list[tuple[str, _Chan]], list[str]]:
+    """The names a rolled loop body left on an old value of a channel, and
+    the names it moved from one channel to another.
+
+    A name on an old value was read from a tuple or dict the tracer does
+    not rebind; each use of it reads its channel's current value. It is not
+    carried when it entered on the same channel or the body bound it first,
+    so every iteration traces alike; after the loop it names the channel's
+    value, given as (name, channel). A name that entered on another channel
+    is returned apart: the loop rolls only if the body does not read it
+    before rebinding it.
+    """
+    stale: list[tuple[str, _Chan]] = []
+    crossing: list[str] = []
+    for n, v in delta.items():
+        chan = v.chan
+        if chan is None:
+            continue
+        old = before.get(n, v)
+        if old is v or (old.__class__ is IRValue and old.chan is chan):
+            if chan.value is not v:
+                stale.append((n, chan))
+        elif old.__class__ is IRValue and old.chan is not None:
+            if count:
+                crossing.append(n)
+            else:
+                stale.append((n, old.chan))
+    return stale, crossing
 
 
 def _channel_values(held: dict[tuple[int, str], _Held]) -> list[tuple[_Chan, IRValue]]:
