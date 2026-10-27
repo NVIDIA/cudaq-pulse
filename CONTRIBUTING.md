@@ -99,6 +99,11 @@ times as many. A failure prints a `@reproduce_failure` line; a nightly
 failure also gives its seed in the job summary, replayed with
 `HYPOTHESIS_PROFILE=nightly pytest <test> --hypothesis-seed=<seed>`.
 
+Test matrices, such as `tests/classical/test_schedule_matrix.py` (classical
+calls under every schedule and from every place in a kernel), run a
+pairwise subset of their cases by default; `--run-slow` runs all of them,
+as the nightly workflow does.
+
 ## Writing passes
 
 Compiler passes are C++ MLIR passes in `core/mlir/transforms/`. To try one

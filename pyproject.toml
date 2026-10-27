@@ -233,4 +233,5 @@ markers = [
     "scaling: benchmark that compares two sizes in one process, so holds on any machine",
     "physics: physics verification against reference values (tests/physics)",
     "nightly: slow physics check, skipped unless --run-nightly is given",
+    "slow: the rest of a test matrix beyond its default subset, skipped unless --run-slow is given",
 ]
