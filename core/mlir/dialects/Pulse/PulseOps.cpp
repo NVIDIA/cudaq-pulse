@@ -56,7 +56,9 @@ static std::optional<double> getConstantF64(Value v) {
 }
 
 // ===----------------------------------------------------------------------===//
-// Verifiers — real semantic checks matching the Python verify pass logic.
+// Verifiers — semantic checks of each op. Module-wide checks (linearity,
+// monotone time, measurement causality) are the pulse-verify pass
+// (transforms/PulseVerify.cpp).
 //
 // Values that trace to arith.constant are checked for constraints.
 // Block arguments (parametric values) skip runtime checks — they are
@@ -351,24 +353,22 @@ OperandRange ScheduleBlockOp::getEntrySuccessorOperands(RegionSuccessor) {
 // ===----------------------------------------------------------------------===//
 // Folders — fold away no-op operations (zero shift, scale by 1, double neg).
 //
-// These correspond to the Python canonicalize.py transforms:
-//   _idle_compression (WaitOp zero-dur), _redundant_sync_elim (SyncOp),
-// and virtual_z.py transforms:
-//   consecutive shift_phase/set_phase merging.
+// Rewrites that need more than one op are passes: redundant syncs, dead
+// lines and waveform CSE in pulse-canonicalize (transforms/Canonicalize.cpp),
+// phase folding into drives in pulse-virtual-z (transforms/VirtualZ.cpp).
 // ===----------------------------------------------------------------------===//
 
 OpFoldResult WaitOp::fold(FoldAdaptor adaptor) {
   // Cannot fold via adaptor since DurationType is a custom type.
-  // Zero-duration wait elimination handled by canonicalize pass.
   return nullptr;
 }
 
 // SyncOp has variadic results → multi-result fold signature
 LogicalResult SyncOp::fold(FoldAdaptor adaptor,
                            SmallVectorImpl<OpFoldResult> &results) {
-  // Python canonicalize.py:_redundant_sync_elim removes syncs where all
-  // lines already share the same time. That's a program-wide analysis;
-  // per-op we can't determine that. Return failure = no fold.
+  // Whether a sync is redundant depends on the lines' times, a program-wide
+  // analysis that pulse-canonicalize (RemoveRedundantSync) does; one op on
+  // its own never folds.
   return failure();
 }
 
@@ -426,11 +426,10 @@ OpFoldResult PulseNegOp::fold(FoldAdaptor adaptor) {
 // ===----------------------------------------------------------------------===//
 // Canonicalization patterns
 //
-// The heavy lifting (idle compression, waveform CSE, virtual-Z folding,
-// dead-line elimination, redundant-sync elimination) is performed by
-// dedicated Python or MLIR passes. Op-level getCanonicalizationPatterns
-// registers lightweight rewrite patterns that the generic MLIR canonicalizer
-// pass picks up.
+// Waveform CSE, virtual-Z folding, dead-line and redundant-sync elimination
+// are the pulse passes in transforms/. The op-level hooks below register no
+// patterns yet; patterns added to them run in the generic MLIR
+// canonicalizer.
 // ===----------------------------------------------------------------------===//
 
 void WaitOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
