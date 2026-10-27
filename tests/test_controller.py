@@ -16,7 +16,7 @@ import cudaq_pulse as pulse
 import cudaq_pulse.controller as controller_module
 import numpy as np
 import pytest
-from cudaq_pulse.classical import Bits, Float, qec
+from cudaq_pulse.classical import qec
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import (
     FORMAT,
@@ -621,8 +621,8 @@ def test_a_call_that_lowers_exports(shift, widths, tones, samples):
 decoder = qec.Decoder(0, syndromes=1, corrections=1, max_latency_ns=400, decode=lambda b: [b[0]])
 
 
-@pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=400)
-def check_bit(bits):
+@pulse.classical(max_latency_ns=400)
+def check_bit(bits: pulse.Bits) -> pulse.Bits:
     return [bits[0]]
 
 
@@ -672,8 +672,8 @@ def test_export_carries_calls_with_their_measurements_and_waits():
 
 
 def test_events_after_a_variable_wait_are_in_its_epoch():
-    @pulse.classical(results=(Float(),), max_latency_ns=100)
-    def tau():
+    @pulse.classical(max_latency_ns=100)
+    def tau() -> float:
         return 8.0
 
     @pulse.kernel

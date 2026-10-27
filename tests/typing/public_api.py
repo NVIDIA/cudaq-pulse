@@ -13,11 +13,11 @@ mypy must report, and --warn-unused-ignores fails if it stops reporting it.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, assert_type
 
 import cudaq_pulse as pulse
-from cudaq_pulse.classical import Bits, ClassicalFunction, Float, Pending
+from cudaq_pulse.classical import Bits, ClassicalFunction, Pending
 from cudaq_pulse.compiler import CompileMetrics, ScheduledEvent
 from cudaq_pulse.controller import ControllerLimits
 from cudaq_pulse.ops import Waveform
@@ -83,35 +83,51 @@ assert_type(pulse.simulate(rabi, dev.qudit_handles[0], 0.5), pulse.SimulationRes
 assert_type(pulse.simulate(compiled, dev.qudit_handles[0], 0.5), pulse.SimulationResult)
 
 
-# pulse.classical is a module at run time; checkers see a callable decorator.
-@pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=400, link="gpu")
-def decode(syndrome: list[int]) -> list[int]:
-    return [syndrome[0]]
+# pulse.classical is a module at run time; checkers see a callable decorator,
+# and a classical function keeps the signature of its body.
+@pulse.classical(max_latency_ns=400, link="gpu")
+def decode(syndrome: Bits) -> bool:
+    return bool(syndrome[0])
 
 
-def _scale(x: float) -> list[float]:
-    return [2 * x]
+@pulse.classical(max_latency_ns=10, lengths={"return": ("x", None)})
+def _scale(x: list[float], k: float) -> tuple[list[float], float]:
+    return [k * v for v in x], k
 
 
-assert_type(decode, ClassicalFunction)
-assert_type(decode.submit([1]), Pending)
-assert_type(decode.submit([1]).result(timeout=350 * pulse.ns), Any)
-assert_type(decode.submit([1]).result(timeout=700), Any)
-assert_type(
-    pulse.classical(_scale, args=(Float,), results=(Float(),), max_latency_ns=1.0),
-    ClassicalFunction,
-)
-assert_type(pulse.classical(max_latency_ns=10), Callable[[Callable[..., Any]], ClassicalFunction])
-assert_type(pulse.classical.external("dec", max_latency_ns=10), ClassicalFunction)
-assert_type(pulse.classical.function(_scale, max_latency_ns=1), ClassicalFunction)
-assert_type(pulse.classical.Bits, type[Bits])
-assert_type(pulse.classical.Bits(4), Bits)
-assert_type(pulse.classical.random_index(4), ClassicalFunction)
+@pulse.classical.external(max_latency_ns=10, lengths={"index": 2})
+def table(index: Bits) -> float:
+    raise NotImplementedError
+
+
+def _double(x: float) -> float:
+    return 2 * x
+
+
+decode_as: ClassicalFunction[[Bits], bool] = decode
+table_as: ClassicalFunction[[Bits], float] = table
+double_as: ClassicalFunction[[float], float] = pulse.classical(_double, max_latency_ns=1.0)
+double_too: ClassicalFunction[[float], float] = pulse.classical.function(_double, max_latency_ns=1)
+mismatched: ClassicalFunction[[float], bool] = decode  # type: ignore[assignment]
+assert_type(decode.submit([1]), Pending[bool])
+assert_type(decode.submit([1]).result(), bool)
+assert_type(decode.submit([1]).result(timeout=350 * pulse.ns), tuple[bool, bool])
+assert_type(decode.submit([1]).result(timeout=700), tuple[bool, bool])
+assert_type(_scale.submit([1.0], 2.0).result(), tuple[list[float], float])
+assert_type(_scale.submit([1.0], 2.0).result(timeout=9), tuple[bool, list[float], float])
+scale_3: ClassicalFunction[[list[float], float], tuple[list[float], float]] = _scale.specialize(x=3)
+assert_type(_scale.specialize(x=3).submit([1.0], 2.0).result(), tuple[list[float], float])
+assert_type(table.submit([0, 1]).result(), float)
+assert_type(pulse.classical.random_index(4), ClassicalFunction[[], int])
 assert_type(pulse.classical.function_id("decode"), int)
-pulse.classical(args=(), results=(), max_latency_ns="soon")  # type: ignore[call-overload]
-pulse.classical(args=(Bits(1),))  # type: ignore[call-overload]
-pulse.classical(_scale, max_latency_ns=1, args=(int,))  # type: ignore[arg-type]
-pulse.classical.external("dec", name="x", max_latency_ns=1)  # type: ignore[call-arg]
+functions: list[ClassicalFunction[..., Any]] = [decode, _scale, table]
+decode.submit(0.5)  # type: ignore[arg-type]
+decode.submit([1], [0])  # type: ignore[call-arg]
+_scale.submit([1.0], k="x")  # type: ignore[arg-type]
+pulse.classical(max_latency_ns="soon")  # type: ignore[call-overload]
+pulse.classical(_double)  # type: ignore[call-overload]
+pulse.classical(_double, max_latency_ns=1, lengths=3)  # type: ignore[call-overload]
+pulse.classical.external(max_latency_ns=1, args=())  # type: ignore[call-arg]  # remnant-ok
 
 # pulse.controller is a module and the loader of controller descriptions.
 box = pulse.controller("reference.controller", drive_lines=[0, 1])

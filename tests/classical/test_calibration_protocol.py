@@ -128,7 +128,7 @@ def test_the_chain_fits_the_declared_controller():
     assert report.violations == ()
     assert all(row.on_controller and row.cost.in_controller_form for row in report.functions)
     by_name = {row.function: row for row in report.functions}
-    assert by_name["adaptive_t1"].calls_per_shot == P["tracker_shots"]
+    assert by_name["adaptive_t1__1"].calls_per_shot == P["tracker_shots"]
     assert report.calls_per_shot == 7 + P["tracker_shots"]
     assert all(row.compute_ns < row.max_latency_ns for row in report.functions)
 
@@ -140,7 +140,7 @@ def test_a_slower_controller_rejects_the_chain_at_compile_time():
     )
     machine = MachineModel(links={"controller": P["machine"].link("controller")}, controller=limits)
     slow = pulse.compile(P["calibration_chain"], device=dev, machine=machine)
-    with pytest.raises(controller.ControllerLimitError, match="adaptive_t1 computes for about"):
+    with pytest.raises(controller.ControllerLimitError, match="adaptive_t1__1 computes for about"):
         slow.lower(q, 20_000.0 * CLOCK)
 
 

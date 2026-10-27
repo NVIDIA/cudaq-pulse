@@ -40,7 +40,7 @@ import tempfile
 from pathlib import Path
 
 import cudaq_pulse as pulse
-from cudaq_pulse.classical import Bits, Float, Link, emulation
+from cudaq_pulse.classical import Link, emulation
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.targets import Qubit, TargetDescription
 
@@ -66,17 +66,10 @@ machine = MachineModel(
 # ── 1. Real-time decoding with feed-forward ─────────────────────────────────
 
 
-@pulse.classical(
-    args=(Bits(1),),
-    results=(Bits(1),),
-    min_latency_ns=200,
-    nominal_latency_ns=300,
-    max_latency_ns=400,
-    link="gpu",
-)
-def decode(syndrome):
+@pulse.classical(min_latency_ns=200, nominal_latency_ns=300, max_latency_ns=400, link="gpu")
+def decode(syndrome: pulse.Bits) -> bool:
     """A toy decoder: correct when the syndrome bit is set."""
-    return [syndrome[0]]
+    return bool(syndrome[0])
 
 
 @pulse.kernel
@@ -91,7 +84,7 @@ def decoded_feed_forward(qubit):
     sync(drive_line, readout_line)
     pi_pulse = square(cal["pi_duration"], cal["pi_amp"])
     if in_time:
-        if correction[0]:
+        if correction:
             drive(drive_line, pi_pulse)
     else:
         if m:
@@ -106,13 +99,13 @@ wait_bounds = (100 * pulse.ns, 20 * pulse.us)
 wait_bounds_ns = tuple(bound / pulse.ns for bound in wait_bounds)
 
 
-@pulse.classical(
-    args=(Bits(1), Float(), Float(), Float()),
-    results=(Float(), Float(), Float()),
-    max_latency_ns=200,
-    link="controller",
-)
-def update_t1(survived, alpha, beta, last_wait_ns):
+@pulse.classical(max_latency_ns=200, link="controller")
+def update_t1(
+    survived: pulse.Bits,
+    alpha: float,
+    beta: float,
+    last_wait_ns: float,
+) -> tuple[float, float, float]:
     """One Bayesian update of a gamma posterior over the decay rate.
 
     The posterior over Gamma = 1/T1 is Gamma(alpha, beta), with mean

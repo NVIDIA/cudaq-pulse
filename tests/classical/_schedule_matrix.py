@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 import cudaq_pulse as pulse
-from cudaq_pulse.classical import Bits, Float, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
 
 CLOCK = 2.0  # GHz, the test device's clock
@@ -220,24 +220,19 @@ def relative(events: Iterable[Any]) -> list[tuple[str, int, int]]:
 
 def _declare(link: str, take: str) -> tuple[Any, Any]:
     mode = "blocking" if take == "blocking" else "bounded"
-    decode = pulse.classical(
-        lambda bits: [bits[0]],
-        name=f"decode_{link}_{take}",
-        args=(Bits(1),),
-        results=(Bits(1),),
-        max_latency_ns=LATENCY_NS,
-        latency_mode=mode,
-        link=link,
+
+    @pulse.classical(
+        name=f"decode_{link}_{take}", max_latency_ns=LATENCY_NS, latency_mode=mode, link=link
     )
-    tau = pulse.classical(
-        lambda x: TAU_ANSWER,
-        name=f"tau_{link}_{take}",
-        args=(Float(),),
-        results=(Float(),),
-        max_latency_ns=LATENCY_NS,
-        latency_mode=mode,
-        link=link,
+    def decode(bits: pulse.Bits) -> pulse.Bits:
+        return [bits[0]]
+
+    @pulse.classical(
+        name=f"tau_{link}_{take}", max_latency_ns=LATENCY_NS, latency_mode=mode, link=link
     )
+    def tau(x: float) -> float:
+        return TAU_ANSWER
+
     return decode, tau
 
 

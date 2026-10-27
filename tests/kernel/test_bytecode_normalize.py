@@ -150,9 +150,10 @@ def test_the_instruction_reader_decodes_as_dis_does(monkeypatch):
     import ast
     import dis
 
+    from cudaq_pulse.classical import _infer, _infer_rare
     from cudaq_pulse.kernel import _emitter
 
-    codes = list(_codes(ast, dis, inspect, bc, _emitter))
+    codes = list(_codes(ast, dis, inspect, bc, _emitter, _infer, _infer_rare))
     lean = [bc._decode(c) for c in codes]
     monkeypatch.setattr(bc, "_instructions", lambda c: list(dis.get_instructions(c)))
     for code, a in zip(codes, lean):

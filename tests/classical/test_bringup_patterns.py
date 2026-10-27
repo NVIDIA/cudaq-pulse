@@ -16,7 +16,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import Bits, Float, Integer, emulation, random_index
+from cudaq_pulse.classical import emulation, random_index
 from cudaq_pulse.targets import Qubit, TargetDescription
 
 PI_AMP = math.pi / 20
@@ -34,9 +34,9 @@ def _device(**readout):
     return pulse.device({"target": TargetDescription(name="sim", qubits={0: qubit})})
 
 
-pick = pulse.classical(
-    lambda bits: 0, name="pick", args=(Bits(1),), results=(Integer(),), max_latency_ns=100
-)
+@pulse.classical(max_latency_ns=100)
+def pick(bits: pulse.Bits) -> int:
+    return 0
 
 
 @pulse.kernel
@@ -147,13 +147,10 @@ def test_a_random_source_is_marked_in_the_manifest_and_emulated_locally():
 @pytest.mark.parametrize("depletion_ns", [0.0, 150.0, 300.0, 500.0])
 def test_latency_within_the_depletion_time_is_hidden(depletion_ns):
     dev = _device(depletion_ns=depletion_ns)
-    decide = pulse.classical(
-        lambda bits: [bits[0]],
-        name="decide",
-        args=(Bits(1),),
-        results=(Bits(1),),
-        max_latency_ns=300,
-    )
+
+    @pulse.classical(max_latency_ns=300)
+    def decide(bits: pulse.Bits) -> pulse.Bits:
+        return [bits[0]]
 
     @pulse.kernel
     def feedback(q):
@@ -192,12 +189,8 @@ def test_depletion_defaults_from_kappa():
 # kernel gates its probe pulses on the flag.
 
 
-@pulse.classical(
-    args=(Bits(1), Float(), Float()),
-    results=(Float(), Float()),
-    max_latency_ns=50,
-)
-def count_up(bits, x, done):
+@pulse.classical(max_latency_ns=50)
+def count_up(bits: pulse.Bits, x: float, done: float) -> tuple[float, float]:
     if done > 0.5:
         return x, 1.0
     x = x + 1.0

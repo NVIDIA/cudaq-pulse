@@ -314,6 +314,8 @@ class PackedIRBuilder:
         # Classical functions declared so far, in record order, and the
         # regions open now (ids), which bound where an answer is defined.
         self.classical: list[Any] = []
+        # Per template, its versions in this program by key (list lengths).
+        self._versions: dict[Any, dict[Any, Any]] = {}
         # Resolves a classical function's link (a name or an id) to its id;
         # compile() sets it from the machine model.
         self.link_id: Callable[[Any], int] = _link_without_machine
@@ -864,6 +866,10 @@ class PackedIRBuilder:
         index = self._classical_index.get(id(function))
         if index is not None:
             return index
+        if function._plan is not None:  # a template reached with no arguments
+            raise CompilationError(
+                f"{function.name}.submit() takes {len(function._plan)} arguments, got 0"
+            )
         for other in self.classical:
             if other.name == function.name:
                 raise CompilationError(
@@ -998,6 +1004,9 @@ class PackedIRBuilder:
         self._flow = flow
         for function in self.classical[n_classical:]:
             del self._classical_index[id(function)]
+            template = function._template
+            if template is not None:
+                self._versions.get(template, {}).pop(function._key, None)
         del self.classical[n_classical:]
         live = self._next_id
         for vid in [vid for vid in self.readouts if vid >= live]:

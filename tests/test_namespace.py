@@ -58,6 +58,7 @@ TOP_LEVEL = {
     "ms",
     "s",
     "viz",
+    "Bits",
     "classical",
     "controller",
     "backends",

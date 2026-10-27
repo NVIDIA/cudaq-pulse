@@ -41,7 +41,8 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from .._errors import InvalidTypeError, InvalidValueError
-from . import Bits, Byte, ClassicalFunction, Integer, function_id
+from . import ClassicalFunction, function_id
+from ._values import _Bits, _Byte, _Integer
 
 __all__ = [
     "Decoder",
@@ -81,29 +82,29 @@ class Decoder:
         self.corrections = corrections
         self.decode = decode
         suffix = f"{decoder_id}_{syndromes}_{corrections}"
-        self.enqueue_function = ClassicalFunction(
+        self.enqueue_function = ClassicalFunction._declared(
             None,
+            (_Integer(), _Integer(), _Integer(), _Integer(), _Bits(syndromes)),
+            (),
             name=f"enqueue_syndromes_{suffix}",
-            args=(Integer(), Integer(), Integer(), Integer(), Bits(syndromes)),
-            results=(),
             max_latency_ns=enqueue_latency_ns,
             link=link,
             id=ENQUEUE_SYNDROMES_ID,
         )
-        self.corrections_function = ClassicalFunction(
+        self.corrections_function = ClassicalFunction._declared(
             None,
+            (_Integer(), _Integer(), _Byte()),
+            (_Bits(corrections),),
             name=f"get_corrections_{suffix}",
-            args=(Integer(), Integer(), Byte()),
-            results=(Bits(corrections),),
             max_latency_ns=max_latency_ns,
             link=link,
             id=GET_CORRECTIONS_ID,
         )
-        self.reset_function = ClassicalFunction(
+        self.reset_function = ClassicalFunction._declared(
             None,
+            (_Integer(),),
+            (),
             name=f"reset_decoder_{suffix}",
-            args=(Integer(),),
-            results=(),
             max_latency_ns=enqueue_latency_ns,
             link=link,
             id=RESET_DECODER_ID,

@@ -15,19 +15,19 @@ import math
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.classical import Bits, Float, Link, emulation, wire
+from cudaq_pulse.classical import Link, emulation, wire
 from cudaq_pulse.compiler import MachineModel
 
 from tests._handles import Q
 
 
-@pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=1000)
-def decode(bits):
+@pulse.classical(max_latency_ns=1000)
+def decode(bits: pulse.Bits) -> pulse.Bits:
     return [bits[0]]
 
 
-@pulse.classical(args=(Bits(1),), results=(Float(),), max_latency_ns=10)
-def next_wait(bits):
+@pulse.classical(max_latency_ns=10)
+def next_wait(bits: pulse.Bits) -> float:
     return 400.0 * bits[0]
 
 
@@ -63,8 +63,10 @@ def test_export_and_manifest_are_json():
     after = [e for e in artifact["events"] if e["epoch"] == 1]
     assert after and all(e["start_cycles"] >= e["epoch_start_cycles"] for e in after)
     (entry,) = artifact["manifest"]["functions"]
-    assert entry["function_id"] == next_wait.id and entry["slot_bytes"] == 256
-    assert entry["schema"] == wire.schema(next_wait)
+    version = next_wait.specialize(bits=1)
+    assert version.name == "next_wait__1"
+    assert entry["function_id"] == version.id and entry["slot_bytes"] == 256
+    assert entry["schema"] == wire.schema(version)
     assert entry["request_bytes"] == 25 and entry["answer_bytes"] == 32
     assert artifact["links"]["0"]["max_in_flight"] == 8
 
@@ -139,8 +141,8 @@ def test_the_realtime_channel_and_device_call_export_are_seams():
 def test_exports_with_calls_in_loops_are_json_data():
     import json
 
-    @pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=100, name="json_decode")
-    def json_decode(bits):
+    @pulse.classical(max_latency_ns=100, name="json_decode")
+    def json_decode(bits: pulse.Bits) -> pulse.Bits:
         return [bits[0]]
 
     @pulse.kernel

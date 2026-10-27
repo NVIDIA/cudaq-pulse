@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.classical import Bits, Float
 
 from tests._handles import Q
 from tests.classical._schedule_matrix import line_timelines
@@ -24,14 +23,10 @@ LONG, RO, BOUNDS = 2000, 200, (16, 4000)
 
 
 def _length(mode):
-    return pulse.classical(
-        lambda bits: 100.0 + 50.0 * bits[0],
-        name=f"length_{mode}",
-        args=(Bits(1),),
-        results=(Float(),),
-        max_latency_ns=50,
-        latency_mode=mode,
-    )
+    def length(bits: pulse.Bits) -> float:
+        return 100.0 + 50.0 * bits[0]
+
+    return pulse.classical(length, name=f"length_{mode}", max_latency_ns=50, latency_mode=mode)
 
 
 LENGTH = {"bounded": _length("bounded"), "blocking": _length("blocking")}

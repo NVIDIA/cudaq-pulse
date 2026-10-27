@@ -72,7 +72,7 @@ import time
 
 import cudaq_pulse as pulse
 from cudaq_pulse import controller
-from cudaq_pulse.classical import Bits, Float, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.targets import transmon_17q
@@ -120,30 +120,22 @@ machine = MachineModel(
 
 
 def _fraction(bits):
-    return cal.count_ones(bits) / shots_per_setting
+    return cal.count_ones(bits) / len(bits)
 
 
 # ── Estimators on the controller ────────────────────────────────────────────
 
 
-@pulse.classical(
-    args=(Bits(shots_per_setting), Bits(shots_per_setting)),
-    results=(Float(), Float()),
-    max_latency_ns=500,
-    link="controller",
-)
-def assignment_errors(ground, excited):
+@pulse.classical(max_latency_ns=500, link="controller")
+def assignment_errors(ground: pulse.Bits, excited: pulse.Bits) -> tuple[float, float]:
     """|1> read as 0, and |0> read as 1."""
     return 1.0 - _fraction(excited), _fraction(ground)
 
 
-@pulse.classical(
-    args=(Bits(shots_per_setting), Bits(shots_per_setting), Bits(shots_per_setting), Float()),
-    results=(Float(), Float()),
-    max_latency_ns=1000,
-    link="controller",
-)
-def ramsey_estimator(minus, zero, plus, mean_hz):
+@pulse.classical(max_latency_ns=1000, link="controller")
+def ramsey_estimator(
+    minus: pulse.Bits, zero: pulse.Bits, plus: pulse.Bits, mean_hz: float
+) -> tuple[float, float]:
     """The detuning from Ramsey shots at phases -pi/2, 0 and +pi/2 about the
     estimate *mean_hz*, and its standard deviation."""
     theta, sigma = cal.sparse_phase(
@@ -153,13 +145,13 @@ def ramsey_estimator(minus, zero, plus, mean_hz):
     return detuning, sigma / (2.0 * math.pi * ramsey_delay_ns * 1e-9)
 
 
-@pulse.classical(
-    args=(Bits(shots_per_setting), Bits(shots_per_setting), Bits(shots_per_setting), Float()),
-    results=(Float(), Float()),
-    max_latency_ns=1000,
-    link="controller",
-)
-def amplitude_estimator(minus, zero, plus, amplitude):
+@pulse.classical(max_latency_ns=1000, link="controller")
+def amplitude_estimator(
+    minus: pulse.Bits,
+    zero: pulse.Bits,
+    plus: pulse.Bits,
+    amplitude: float,
+) -> tuple[float, float]:
     """The corrected amplitude from a train of n = pulses_per_train pi
     pulses, at amplitude scales 1 - 1/(2 n), 1 and 1 + 1/(2 n), and the
     standard deviation of its relative correction."""
@@ -171,27 +163,22 @@ def amplitude_estimator(minus, zero, plus, amplitude):
     )
 
 
-@pulse.classical(args=(Float(),), results=(Float(), Float()), max_latency_ns=200, link="controller")
-def decay_delays(t1_cycles):
+@pulse.classical(max_latency_ns=200, link="controller")
+def decay_delays(t1_cycles: float) -> tuple[float, float]:
     """The decay estimator's second and third delays, spaced by the last
     T1 estimate."""
     spacing = min(max(t1_cycles, 64.0), (wait_range_cycles[1] - first_delay_cycles) / 3.0)
     return first_delay_cycles + spacing, first_delay_cycles + 3.0 * spacing
 
 
-@pulse.classical(
-    args=(
-        Bits(shots_per_setting),
-        Bits(shots_per_setting),
-        Bits(shots_per_setting),
-        Float(),
-        Float(),
-    ),
-    results=(Float(), Float()),
-    max_latency_ns=1000,
-    link="controller",
-)
-def decay_estimator(first, second, third, spacing_cycles, t1_cycles):
+@pulse.classical(max_latency_ns=1000, link="controller")
+def decay_estimator(
+    first: pulse.Bits,
+    second: pulse.Bits,
+    third: pulse.Bits,
+    spacing_cycles: float,
+    t1_cycles: float,
+) -> tuple[float, float]:
     """T1 and its standard deviation (in clock cycles) from the three
     delays; the last estimate *t1_cycles* when none can be formed."""
     t1, sigma, ok = cal.decay_time(
@@ -202,21 +189,23 @@ def decay_estimator(first, second, third, spacing_cycles, t1_cycles):
     return t1_cycles, t1_cycles
 
 
-@pulse.classical(args=(Float(), Float()), results=(Float(),), max_latency_ns=200, link="controller")
-def first_wait(shape, rate):
+@pulse.classical(max_latency_ns=200, link="controller")
+def first_wait(shape: float, rate: float) -> float:
     return min(
         max(cal.adaptive_t1_wait(shape, rate, tracker_wait_scale), wait_range_cycles[0]),
         wait_range_cycles[1],
     )
 
 
-@pulse.classical(
-    args=(Bits(1), Float(), Float(), Float(), Float(), Float()),
-    results=(Float(), Float(), Float()),
-    max_latency_ns=2000,
-    link="controller",
-)
-def adaptive_t1(bit, shape, rate, wait_cycles, error_1to0, error_0to1):
+@pulse.classical(max_latency_ns=2000, link="controller")
+def adaptive_t1(
+    bit: pulse.Bits,
+    shape: float,
+    rate: float,
+    wait_cycles: float,
+    error_1to0: float,
+    error_0to1: float,
+) -> tuple[float, float, float]:
     """Update the gamma posterior over 1/T1 (rate in clock cycles) from one
     shot; pick the next wait."""
     shape, rate = cal.adaptive_t1_update(shape, rate, bit[0], wait_cycles, error_1to0, error_0to1)
@@ -409,13 +398,13 @@ def _search_setting(mean_hz, sigma_hz):
 initial_wait_cycles, initial_phase = _search_setting(0.0, initial_sigma_hz)
 
 
-@pulse.classical(
-    args=(Bits(2), Float(), Float(), Float()),
-    results=(Float(), Float(), Float(), Float()),
-    max_latency_ns=2000,
-    link="controller",
-)
-def search_step(bits, mean_hz, sigma_hz, wait_cycles):
+@pulse.classical(max_latency_ns=2000, link="controller")
+def search_step(
+    bits: pulse.Bits,
+    mean_hz: float,
+    sigma_hz: float,
+    wait_cycles: float,
+) -> tuple[float, float, float, float]:
     """Without a reset, a shot's outcome is whether the readout changed."""
     outcome = 2 * abs(bits[0] - bits[1]) - 1
     mean_hz, sigma_hz = cal.binary_search_update(

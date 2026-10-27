@@ -14,7 +14,6 @@ import re
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import Bits, Float, Integer
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -25,13 +24,13 @@ from tests.property_settings import examples
 POLICIES = ("asap", "alap", "rcp", "alap_rcp")
 
 
-@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=50)
-def next_tau(x):
+@pulse.classical(max_latency_ns=50)
+def next_tau(x: float) -> float:
     return 2.0 * x
 
 
-@pulse.classical(args=(Bits(1),), results=(Integer(),), max_latency_ns=50)
-def tau_index(bits):
+@pulse.classical(max_latency_ns=50)
+def tau_index(bits: pulse.Bits) -> int:
     return 10 * bits[0]
 
 
@@ -353,8 +352,8 @@ def test_a_wait_from_an_answer_and_a_float_runs_their_sum_clamped(tau):
     np.testing.assert_allclose(mixed.density_matrix, reference.density_matrix, atol=1e-9)
 
 
-@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=50, latency_mode="blocking")
-def blocking_tau(x):
+@pulse.classical(max_latency_ns=50, latency_mode="blocking")
+def blocking_tau(x: float) -> float:
     return x
 
 

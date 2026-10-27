@@ -1112,6 +1112,8 @@ def build(
     from .kernel.bytecode_bridge import _trace_kernel_with_builder
     from .kernel.packed_ir_builder import PackedIRBuilder
 
+    if classical._PENDING:
+        classical.flush()
     metrics = CompileMetrics(target=target.name)
     name = getattr(fn, "__name__", "kernel")
     t0 = time.perf_counter()

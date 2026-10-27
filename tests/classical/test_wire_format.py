@@ -24,9 +24,27 @@ from pathlib import Path
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import classical
-from cudaq_pulse.classical import IQ, Bits, Byte, Float, Floats, Integer, Integers, Levels, wire
+from cudaq_pulse.classical import wire
+from cudaq_pulse.classical._values import (
+    _IQ,
+    _Bits,
+    _Byte,
+    _Bytes,
+    _Float,
+    _Floats,
+    _Integer,
+    _Integers,
+    _Levels,
+)
 
 from tests._tools import c_compiler
+
+
+def _schema_function(name, args=(), results=(), body=None):
+    """A function of one schema given as wire types, for layouts that no
+    type hint spells (u8, 32-bit numbers)."""
+    return classical.ClassicalFunction._declared(body, args, results, name=name, max_latency_ns=0)
+
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "realtime_wire.json").read_text())
 
@@ -35,7 +53,11 @@ def test_header_layout_and_magics():
     assert wire.HEADER_BYTES == FIXTURE["header_bytes"]
     assert wire.REQUEST_MAGIC == FIXTURE["request_magic"]
     assert wire.RESPONSE_MAGIC == FIXTURE["response_magic"]
-    fn = pulse.classical(lambda: None, name="probe", max_latency_ns=0)
+
+    @pulse.classical(name="probe", max_latency_ns=0)
+    def fn() -> None:
+        pass
+
     request = wire.encode_request(fn, (), request_id=7, timestamp=2**40)
     magic, fid, length, rid, ts = struct.unpack("<IIIIQ", request)
     assert (magic, fid, length, rid, ts) == (wire.REQUEST_MAGIC, fn.id, 0, 7, 2**40)
@@ -43,12 +65,19 @@ def test_header_layout_and_magics():
 
 def test_payload_type_ids():
     ids = FIXTURE["payload_types"]
-    fn = pulse.classical(
-        lambda *a: None,
-        name="all",
-        args=(Byte, Integer(32), Integer(), Float(32), Float(), Floats(2, 32), Floats(2), Bits(3)),
-        results=(two_bytes := classical.Bytes(2), Integers(2), Levels(2), IQ(1)),
-        max_latency_ns=0,
+    fn = _schema_function(
+        "all",
+        (
+            _Byte(),
+            _Integer(32),
+            _Integer(),
+            _Float(32),
+            _Float(),
+            _Floats(2, 32),
+            _Floats(2),
+            _Bits(3),
+        ),
+        (two_bytes := _Bytes(2), _Integers(2), _Levels(2), _IQ(1)),
     )
     s = wire.schema(fn)
     assert [a["type_id"] for a in s["args"]] == [
@@ -75,20 +104,16 @@ def test_payload_type_ids():
 
 def test_protocol_examples():
     example1, example2, example3, _ = FIXTURE["protocol_examples"]
-    process = pulse.classical(
-        lambda c, t: None, name="process", args=(Integer(32), Float(32)), max_latency_ns=0
-    )
+    process = _schema_function("process", (_Integer(32), _Float(32)))
     request = wire.encode_request(process, (5, 0.25))
     assert len(request) - 24 == example1["arg_len"]
     assert struct.unpack_from("<i", request, example1["offsets"][0])[0] == 5
     assert struct.unpack_from("<f", request, example1["offsets"][1])[0] == 0.25
-    decode = pulse.classical(
-        lambda b, n: None, name="decode", args=(Bits(128), Integer(32)), max_latency_ns=0
-    )
+    decode = _schema_function("decode", (_Bits(128), _Integer(32)))
     request = wire.encode_request(decode, ([1] * 128, 128))
     assert len(request) - 24 == example2["arg_len"]
     assert struct.unpack_from("<I", request, example2["offsets"][1])[0] == 128
-    answer_fn = pulse.classical(lambda: 3, name="answer", results=(Byte,), max_latency_ns=0)
+    answer_fn = _schema_function("answer", (), (_Byte(),))
     answer = wire.encode_answer(answer_fn, 3)
     assert answer[24] == example3["result_byte_24"]
     assert struct.unpack_from("<I", answer, 8)[0] == example3["result_len"]
@@ -96,27 +121,43 @@ def test_protocol_examples():
 
 def test_bits_pack_lsb_first():
     case = FIXTURE["bit_packing"]
-    fn = pulse.classical(
-        lambda b: None, name="bits", args=(Bits(len(case["bits"])),), max_latency_ns=0
-    )
+
+    @pulse.classical(name="bits", max_latency_ns=0, lengths={"b": len(case["bits"])})
+    def fn(b: pulse.Bits) -> None:
+        return None
+
     request = wire.encode_request(fn, (case["bits"],))
     assert list(request[24:]) == case["bytes"]
     assert wire.decode_request(fn, request)[2] == [case["bits"]]
 
 
 def test_round_trips():
-    fn = pulse.classical(
-        lambda *a: None,
-        name="mixed",
-        args=(Bits(10), Levels(3), IQ(2), Float(), Integer(32), Floats(2, 32)),
-        results=(Float(), Bits(3)),
-        max_latency_ns=0,
+    @pulse.classical(
+        max_latency_ns=0, lengths={"bits": 10, "levels": 3, "points": 2, "return": (None, 3)}
     )
-    args = ([1, 0] * 5, [0, 2, 1], [[0.5, -0.5], [1.0, 2.0]], 3.25, -7, [1.5, 2.5])
+    def mixed(
+        bits: pulse.Bits, levels: list[int], points: list[complex], x: float
+    ) -> tuple[float, pulse.Bits]:
+        return x, bits[:3]
+
+    assert [a.descriptor for a in mixed.args] == ["bits:10", "levels:3", "iq:2", "f64"]
+    args = ([1, 0] * 5, [0, 2, 1], [0.5 - 0.5j, 1.0 + 2.0j], 3.25)
+    request = wire.encode_request(mixed, args, request_id=9)
+    rid, _, decoded = wire.decode_request(mixed, request)
+    assert rid == 9 and decoded == [args[0], args[1], [0.5 - 0.5j, 1.0 + 2.0j], 3.25]
+    answer = wire.encode_answer(mixed, (0.125, [1, 1, 0]), request_id=9)
+    assert wire.decode_answer(mixed, answer) == (0, 9, (0.125, [1, 1, 0]))
+
+    fn = _schema_function(
+        "mixed32",
+        (_Bits(10), _Levels(3), _IQ(2), _Float(), _Integer(32), _Floats(2, 32)),
+        (_Float(), _Bits(3)),
+    )
+    args = ([1, 0] * 5, [0, 2, 1], [(0.5, -0.5), (1.0, 2.0)], 3.25, -7, [1.5, 2.5])
     request = wire.encode_request(fn, args, request_id=9)
     rid, _, decoded = wire.decode_request(fn, request)
     assert rid == 9
-    assert decoded[:2] == [args[0], args[1]] and decoded[2] == [(0.5, -0.5), (1.0, 2.0)]
+    assert decoded[:2] == [args[0], args[1]] and decoded[2] == [0.5 - 0.5j, 1.0 + 2.0j]
     assert decoded[3:] == [3.25, -7, [1.5, 2.5]]
     answer = wire.encode_answer(fn, (0.125, [1, 1, 0]), request_id=9)
     assert wire.decode_answer(fn, answer) == (0, 9, (0.125, [1, 1, 0]))
@@ -160,17 +201,13 @@ def handler_library(tmp_path_factory):
     return str(library)
 
 
-parity = pulse.classical(
-    lambda bits: [sum(bits) % 2],
-    name="parity",
-    args=(Bits(4),),
-    results=(Bits(1),),
-    max_latency_ns=0,
-)
+@pulse.classical(max_latency_ns=0)
+def parity(bits: pulse.Bits) -> pulse.Bits:
+    return [sum(bits) % 2]
 
 
 def test_a_native_handler_answers_like_the_python_one(handler_library):
-    native = wire.native(handler_library, "parity", parity)
+    native = wire.native(handler_library, "parity", parity.specialize(bits=4))
     for bits in ([0, 0, 0, 0], [1, 0, 0, 0], [1, 1, 0, 1], [1, 1, 1, 1]):
         assert native(bits) == parity(bits)
 
@@ -198,7 +235,7 @@ def test_a_native_handler_drives_a_simulation(handler_library):
     native = pulse.simulate(
         low,
         initial_state=rho0,
-        handlers={"parity": wire.native(handler_library, "parity", parity)},
+        handlers={"parity": wire.native(handler_library, "parity", parity.specialize(bits=4))},
         levels=2,
     )
     np.testing.assert_allclose(native.density_matrix, python.density_matrix, atol=1e-12)

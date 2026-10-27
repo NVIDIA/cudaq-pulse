@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any
 from .._classical_report import report
 from .._errors import NotFoundError, UnsupportedError, _CallTimeoutError, _positive_int
 from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
-from . import ClassicalFunction, Link, wire
+from . import ClassicalFunction, Link, _handlers_for, wire
 
 if TYPE_CHECKING:
     # Exports import this module, and must not import numpy or socket.
@@ -281,18 +281,21 @@ class Transport:
 
 class InProcess:
     """A channel to services in this process: handlers by function name,
-    called on the decoded request."""
+    called on the decoded request. A handler named for a function whose
+    list lengths come from its calls serves each of its versions."""
 
     def __init__(
-        self, functions: Sequence[ClassicalFunction], handlers: Mapping[str, Callable[..., Any]]
+        self,
+        functions: Sequence[ClassicalFunction[..., Any]],
+        handlers: Mapping[str, Callable[..., Any]],
     ):
         self._by_id = {fn.id: fn for fn in functions}
         self._by_name = {fn.name: fn for fn in functions}
         self._handlers = dict(handlers)
 
-    def call(self, function: ClassicalFunction, request: bytes) -> tuple[bytes, float]:
+    def call(self, function: ClassicalFunction[..., Any], request: bytes) -> tuple[bytes, float]:
         """Deliver *request*; returns the answer bytes and the service's time in ns."""
-        handler = self._handlers.get(function.name)
+        handler = self._handlers.get(function.name) or self._handlers.get(function.base_name)
         if handler is None:
             raise NotFoundError(f"no service for {function.name!r}")
         request_id, timestamp, args = wire.decode_request(function, request)
@@ -306,7 +309,7 @@ class InProcess:
 
 
 def serve_udp(
-    functions: Sequence[ClassicalFunction],
+    functions: Sequence[ClassicalFunction[..., Any]],
     handlers: Mapping[str, Callable[..., Any]],
     host: str = "127.0.0.1",
     port: int = 0,
@@ -336,7 +339,8 @@ def serve_udp(
             fn = by_id[fid]
             request_id, timestamp, args = wire.decode_request(fn, data)
             t0 = time.perf_counter_ns()
-            answer = handlers[fn.name](*args)
+            handler = handlers.get(fn.name) or handlers[fn.base_name]
+            answer = handler(*args)
             service_ns = time.perf_counter_ns() - t0
             reply = wire.encode_answer(fn, answer, request_id, timestamp)
             sock.sendto(reply + struct.pack("<Q", service_ns), peer)
@@ -388,7 +392,7 @@ class UdpChannel:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.settimeout(timeout_s)
 
-    def call(self, function: ClassicalFunction, request: bytes) -> tuple[bytes, float]:
+    def call(self, function: ClassicalFunction[..., Any], request: bytes) -> tuple[bytes, float]:
         self._sock.sendto(request, self._address)
         try:
             data, _ = self._sock.recvfrom(self._slot_bytes)
@@ -442,7 +446,7 @@ class EmulationResult:
         return n / self.wall_s if self.wall_s > 0 else math.inf
 
 
-def _budget_ns(function: ClassicalFunction, timeout_ns: float, link: Link) -> float:
+def _budget_ns(function: ClassicalFunction[..., Any], timeout_ns: float, link: Link) -> float:
     limit = timeout_ns if timeout_ns >= 0 else function.timeout_ns
     base = function.max_latency_ns if limit is None else limit
     return base + link.feedback_ns
@@ -475,8 +479,7 @@ def emulate(
         shots = _positive_int("shots", shots)
     functions = tuple(lowered.classical)
     by_name = {fn.name: fn for fn in functions}
-    chosen = {fn.name: fn.implementation for fn in functions if fn.implementation is not None}
-    chosen.update(handlers or {})
+    chosen = _handlers_for(functions, handlers)
     channel = channel or InProcess(functions, chosen)
     import numpy as np
 

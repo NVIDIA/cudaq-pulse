@@ -23,7 +23,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import Bits, Float, Floats, Integer, Link, random_index
+from cudaq_pulse.classical import Link, random_index
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
 from cudaq_pulse.compiler import MachineModel
@@ -71,13 +71,10 @@ def _device(target):
 T1_BOUNDS = (200, 20000)  # 0.1 to 10 us
 
 
-@pulse.classical(
-    args=(Bits(1), Float(), Float(), Float()),
-    results=(Float(), Float(), Float()),
-    max_latency_ns=200,
-    link="controller",
-)
-def t1_estimator(survived, alpha, beta, wait_cycles):
+@pulse.classical(max_latency_ns=200, link="controller")
+def t1_estimator(
+    survived: pulse.Bits, alpha: float, beta: float, wait_cycles: float
+) -> tuple[float, float, float]:
     alpha, beta = cal.t1_update(alpha, beta, bool(survived[0]), wait_cycles / CLOCK)
     wait_cycles = min(max(cal.t1_wait(alpha, beta) * CLOCK, T1_BOUNDS[0]), T1_BOUNDS[1])
     return alpha, beta, wait_cycles
@@ -131,13 +128,10 @@ W0, PHASE0 = cal.ramsey_setting(0.0, SIGMA0)
 RAMSEY_BOUNDS = (20, 40000)
 
 
-@pulse.classical(
-    args=(Bits(1), Float(), Float(), Float(), Float()),
-    results=(Float(), Float(), Float(), Float()),
-    max_latency_ns=300,
-    link="controller",
-)
-def frequency_estimator(bit, mean, sigma, wait_cycles, phase):
+@pulse.classical(max_latency_ns=300, link="controller")
+def frequency_estimator(
+    bit: pulse.Bits, mean: float, sigma: float, wait_cycles: float, phase: float
+) -> tuple[float, float, float, float]:
     # The Ramsey wait counts from the first pulse's centre to the second's.
     mean, sigma = cal.frequency_update(mean, sigma, int(bit[0]), wait_cycles / CLOCK + 20.0, phase)
     wait_ns, phase = cal.ramsey_setting(mean, sigma)
@@ -328,13 +322,8 @@ def test_k14_nelder_mead_optimizes_readout_frequency_and_amplitude(target):
 GOLDEN = cal.GoldenSection.start(-4e6, 4e6, tolerance=3e6)
 
 
-@pulse.classical(
-    args=(Bits(1), Floats(7)),
-    results=(Floats(7), Float(), Float()),
-    max_latency_ns=400,
-    link="controller",
-)
-def golden_step(bit, state):
+@pulse.classical(max_latency_ns=400, link="controller", lengths={"return": ("state", None, None)})
+def golden_step(bit: pulse.Bits, state: list[float]) -> tuple[list[float], float, float]:
     # A toy cost from one shot: 0 if the qubit was excited, else 1.
     state = cal.GoldenSection.from_floats(state)
     state, x, done = cal.golden_section_step(state, 1.0 - bit[0])
@@ -465,13 +454,10 @@ def test_k17_latency_within_depletion_is_hidden(target):
     )
     dev = _device(depleting)
     for latency_ns, exposed_ns in ((200.0, 0.0), (400.0, 150.0)):
-        decide = pulse.classical(
-            lambda bits: [bits[0]],
-            name="decide",
-            args=(Bits(1),),
-            results=(Bits(1),),
-            max_latency_ns=latency_ns - 0.5,
-        )
+
+        @pulse.classical(max_latency_ns=latency_ns - 0.5)
+        def decide(bits: pulse.Bits) -> pulse.Bits:
+            return [bits[0]]
 
         @pulse.kernel
         def feedback(q):
@@ -533,13 +519,8 @@ def test_k18_readout_models_on_the_target(target):
 PAULI = random_index(4, name="pauli", link="controller")
 
 
-@pulse.classical(
-    args=(Integer(), Integer(), Integer()),
-    results=(Integer(),),
-    max_latency_ns=50,
-    link="controller",
-)
-def recovery(a, b, c):
+@pulse.classical(max_latency_ns=50, link="controller")
+def recovery(a: int, b: int, c: int) -> int:
     return a ^ b ^ c
 
 

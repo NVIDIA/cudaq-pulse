@@ -31,7 +31,7 @@ import time
 import tracemalloc
 
 import cudaq_pulse as pulse
-from cudaq_pulse.classical import Bits, Float, emulation
+from cudaq_pulse.classical import emulation
 from cudaq_pulse.targets import Qubit, TargetDescription
 
 PI_AMP = math.pi / 20
@@ -45,16 +45,12 @@ def _device(t1_us: float = 0.0) -> pulse.Device:
 def many_calls(n: int, links: int):
     """A kernel of *n* calls, round-robin over *links* links, each answer
     setting the next drive's amplitude."""
+
+    def same(x: float) -> float:
+        return x
+
     functions = [
-        pulse.classical(
-            lambda x: x,
-            name=f"f{k}",
-            args=(Float(),),
-            results=(Float(),),
-            max_latency_ns=20,
-            link=k,
-        )
-        for k in range(links)
+        pulse.classical(same, name=f"f{k}", max_latency_ns=20, link=k) for k in range(links)
     ]
 
     @pulse.kernel
@@ -67,9 +63,9 @@ def many_calls(n: int, links: int):
     return kernel
 
 
-decode = pulse.classical(
-    lambda bits: [bits[0]], name="decode", args=(Bits(1),), results=(Bits(1),), max_latency_ns=200
-)
+@pulse.classical(max_latency_ns=200)
+def decode(bits: pulse.Bits) -> pulse.Bits:
+    return [bits[0]]
 
 
 @pulse.kernel

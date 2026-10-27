@@ -15,7 +15,6 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import Bits, Float, Integer
 from cudaq_pulse.targets import Qubit, TargetDescription
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse at 2 GHz
@@ -36,8 +35,8 @@ def _device(t1_us=0.0, n=1, readout_params=None):
     return pulse.device({"target": TargetDescription(name="sim", qubits=qubits)})
 
 
-@pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=0)
-def decoder(bits):
+@pulse.classical(max_latency_ns=0)
+def decoder(bits: pulse.Bits) -> pulse.Bits:
     return [bits[0]]
 
 
@@ -101,13 +100,9 @@ def test_a_decoder_reproduces_active_reset_exactly(shots):
 
 
 def test_an_answer_amplitude_is_bound_per_path():
-    amplitude = pulse.classical(
-        lambda bits: PI_AMP * bits[0],
-        name="amplitude",
-        args=(Bits(1),),
-        results=(Float(),),
-        max_latency_ns=0,
-    )
+    @pulse.classical(max_latency_ns=0)
+    def amplitude(bits: pulse.Bits) -> float:
+        return PI_AMP * bits[0]
 
     @pulse.kernel
     def k(q):
@@ -127,8 +122,8 @@ def test_an_answer_amplitude_is_bound_per_path():
     np.testing.assert_allclose(result.density_matrix, reset.density_matrix, atol=1e-9)
 
 
-@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=0)
-def constant(x):
+@pulse.classical(max_latency_ns=0)
+def constant(x: float) -> float:
     return x
 
 
@@ -172,13 +167,9 @@ def test_a_variable_wait_matches_the_fixed_wait_and_t1_decay(tau):
 
 
 def test_variable_waits_differ_per_path():
-    adaptive = pulse.classical(
-        lambda bits: 4000.0 * bits[0],
-        name="adaptive",
-        args=(Bits(1),),
-        results=(Float(),),
-        max_latency_ns=0,
-    )
+    @pulse.classical(max_latency_ns=0)
+    def adaptive(bits: pulse.Bits) -> float:
+        return 4000.0 * bits[0]
 
     @pulse.kernel
     def k(q, p):
@@ -211,13 +202,10 @@ def test_variable_waits_differ_per_path():
 
 def test_a_d2_repetition_round_flags_double_flips_with_probability_p_squared():
     p = 0.2
-    both = pulse.classical(
-        lambda bits: [bits[0] & bits[1]],
-        name="both_flipped",
-        args=(Bits(2),),
-        results=(Bits(1),),
-        max_latency_ns=0,
-    )
+
+    @pulse.classical(name="both_flipped", max_latency_ns=0)
+    def both(bits: pulse.Bits) -> pulse.Bits:
+        return [bits[0] & bits[1]]
 
     @pulse.kernel
     def k(a, b, flag):
@@ -244,15 +232,9 @@ def test_a_d2_repetition_round_flags_double_flips_with_probability_p_squared():
 
 
 def test_timeouts_take_the_fallback_at_the_modelled_rate():
-    slow = pulse.classical(
-        lambda bits: [1],
-        name="slow",
-        args=(Bits(1),),
-        results=(Bits(1),),
-        min_latency_ns=0,
-        nominal_latency_ns=500,
-        max_latency_ns=1000,
-    )
+    @pulse.classical(min_latency_ns=0, nominal_latency_ns=500, max_latency_ns=1000)
+    def slow(bits: pulse.Bits) -> pulse.Bits:
+        return [1]
 
     @pulse.kernel
     def k(q, p):
@@ -325,7 +307,9 @@ def test_decay_during_readout_adds_to_the_one_to_zero_error():
 def test_handlers_override_and_are_required_for_external_functions():
     from cudaq_pulse import classical
 
-    remote = classical.external("remote", args=(Bits(1),), results=(Integer(),), max_latency_ns=0)
+    @classical.external(max_latency_ns=0, lengths={"bits": 1})
+    def remote(bits: pulse.Bits) -> int:
+        raise NotImplementedError
 
     @pulse.kernel
     def k(q):
@@ -346,9 +330,9 @@ def test_handlers_override_and_are_required_for_external_functions():
 
 
 def test_calls_in_a_rolled_loop_are_bound_per_iteration():
-    counter = pulse.classical(
-        lambda x: x + 1.0, name="counter", args=(Float(),), results=(Float(),), max_latency_ns=0
-    )
+    @pulse.classical(max_latency_ns=0)
+    def counter(x: float) -> float:
+        return x + 1.0
 
     @pulse.kernel(unroll_threshold=0)
     def k(q):

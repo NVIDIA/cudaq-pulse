@@ -14,7 +14,6 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import IQ, Bits
 from cudaq_pulse.runtime._calls import IQModel
 from cudaq_pulse.targets import Qubit, TargetDescription
 
@@ -47,10 +46,9 @@ def _threshold(dev):
     axis = (c1 - c0) / abs(c1 - c0)
     middle = (c0 + c1) / 2
 
-    @pulse.classical(args=(IQ(1),), results=(Bits(1),), max_latency_ns=0)
-    def discriminate(points):
-        (i, q) = points[0]
-        return [int(((complex(i, q) - middle) * axis.conjugate()).real > 0)]
+    @pulse.classical(max_latency_ns=0)
+    def discriminate(points: list[complex]) -> pulse.Bits:
+        return [int(((points[0] - middle) * axis.conjugate()).real > 0)]
 
     return discriminate
 
@@ -99,16 +97,16 @@ def test_iq_points_scale_with_the_readout_amplitude():
 
     for amplitude in seen:
 
-        @pulse.classical(args=(IQ(1),), results=(Bits(1),), max_latency_ns=0, name="record")
-        def record(points, amplitude=amplitude):
-            seen[amplitude].append(complex(*points[0]))
-            return [0]
+        @pulse.classical(max_latency_ns=0, name="record")
+        def record(point: complex) -> bool:
+            seen[amplitude].append(point)
+            return False
 
         @pulse.kernel
         def probe(q, a: float):
             r = get_readout_line(q)
             result = readout(r, square(1000, a))
-            record.submit([result]).result()
+            record.submit(result).result()
 
         pulse.simulate(
             pulse.compile(probe, device=dev).lower(q, amplitude), shots=600, seed=5, levels=2
@@ -181,7 +179,7 @@ def test_emulation_draws_iq_points_at_the_reported_levels():
     assert all(a == [1] for a in answers)  # 5 sigma apart: no errors expected
     points = [traces[0].inputs[0][0] for traces in result.calls]
     _, c1 = _centers(dev)
-    assert abs(complex(*np.mean(points, axis=0)) - c1) < 0.2
+    assert abs(np.mean(points) - c1) < 0.2
 
 
 def test_the_17_qubit_twin_separates_its_readout_states():
@@ -197,13 +195,9 @@ def test_the_17_qubit_twin_separates_its_readout_states():
     c0, c1 = (model.center(0, k, params["ro_freq"], 1.0, tau) for k in (0, 1))
     assert abs(c1 - c0) > 3  # a high-fidelity single-shot readout
 
-    record = pulse.classical(
-        lambda points: [0],
-        name="transmon_17q_iq",
-        args=(IQ(1),),
-        results=(Bits(1),),
-        max_latency_ns=0,
-    )
+    @pulse.classical(name="transmon_17q_iq", max_latency_ns=0)
+    def record(points: list[complex]) -> pulse.Bits:
+        return [0]
 
     @pulse.kernel
     def probe(q):
@@ -214,4 +208,4 @@ def test_the_17_qubit_twin_separates_its_readout_states():
     lowered = pulse.compile(probe, device=dev).lower(q)
     result = emulation.emulate(lowered, shots=20, outcomes=lambda q, _, rng: 0, seed=1)
     points = [traces[0].inputs[0][0] for traces in result.calls]
-    assert all(math.isfinite(i) and math.isfinite(qv) for i, qv in points)
+    assert all(math.isfinite(p.real) and math.isfinite(p.imag) for p in points)

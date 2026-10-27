@@ -41,7 +41,7 @@ class CallRecord:
     in_time: bool
 
 
-def latency_in_time_probability(function: ClassicalFunction, timeout_ns: float) -> float:
+def latency_in_time_probability(function: ClassicalFunction[..., Any], timeout_ns: float) -> float:
     """P(latency <= timeout) for the function's latency, triangular on
     [min, max] with its mode at the nominal latency."""
     lo, mode, hi = function.min_latency_ns, function.nominal_latency_ns, function.max_latency_ns
@@ -57,12 +57,16 @@ def latency_in_time_probability(function: ClassicalFunction, timeout_ns: float) 
     return 1.0 - (hi - x) ** 2 / ((hi - lo) * (hi - mode))
 
 
-def takes_iq(function: ClassicalFunction) -> bool:
+def _point(value: Any) -> complex:
+    return complex(value) if isinstance(value, complex) else complex(*value)
+
+
+def takes_iq(function: ClassicalFunction[..., Any]) -> bool:
     return any(spec.descriptor.startswith("iq") for spec in function.args)
 
 
 def _call_inputs(
-    function: ClassicalFunction,
+    function: ClassicalFunction[..., Any],
     arguments: Sequence[tuple[int, int, Sequence[int], float]],
     outcomes: Mapping[tuple[int, tuple[int, ...]], int],
     iq: Callable[[tuple[int, tuple[int, ...]]], tuple[float, float]] | None = None,
@@ -89,14 +93,14 @@ def _call_inputs(
                 raise InvalidValueError(
                     f"{function.name}: IQ points are drawn per shot; simulate with shots"
                 )
-            part = [iq(key) for key in part_keys]
+            part = [_point(iq(key)) for key in part_keys]
         elif spec.source == "integer":
             part = [int(v) for v in part]
         grouped.append(part[0] if spec.is_scalar else list(part))
     return tuple(grouped)
 
 
-def _answer_values(function: ClassicalFunction, answer: Any) -> list[float]:
+def _answer_values(function: ClassicalFunction[..., Any], answer: Any) -> list[float]:
     """The handler's answer as the flat list of SSA values the wait gives."""
     results = function.results
     parts = answer if len(results) > 1 else (answer,)

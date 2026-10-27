@@ -63,6 +63,7 @@ from ._errors import PulseWarning as PulseWarning
 from ._errors import TimingError as TimingError
 from ._errors import UnsupportedError as UnsupportedError
 from ._errors import UpgradeNotice as UpgradeNotice
+from .classical import Bits as Bits
 from .compiler import Lowered as Lowered
 from .compiler import Pass as Pass
 from .compiler import compile as compile
@@ -171,6 +172,7 @@ __all__ = [
     "s",
     "viz",
     "classical",
+    "Bits",
     "controller",
     "backends",
 ]

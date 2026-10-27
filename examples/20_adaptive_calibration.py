@@ -30,7 +30,7 @@ import dataclasses
 import math
 
 import cudaq_pulse as pulse
-from cudaq_pulse.classical import Bits, Float, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
 from cudaq_pulse.compiler import MachineModel
@@ -54,18 +54,19 @@ wait_bounds = (10 * pulse.ns, 20 * pulse.us)
 wait_bounds_ns = tuple(bound / pulse.ns for bound in wait_bounds)
 
 
-@pulse.classical(
-    args=(Bits(1), Float(), Float(), Float(), Float()),
-    results=(Float(), Float(), Float(), Float()),
-    max_latency_ns=300,
-    link="controller",
-)
-def frequency_estimator(bit, mean_hz, sigma_hz, gap_ns, phase):
+@pulse.classical(max_latency_ns=300, link="controller")
+def frequency_estimator(
+    bit: pulse.Bits,
+    mean_hz: float,
+    sigma_hz: float,
+    gap_ns: float,
+    phase: float,
+) -> tuple[float, float, float, float]:
     """Update the detuning posterior from one Ramsey shot; pick the next."""
     # The Ramsey wait counts from the first pi/2 pulse's centre to the
     # second's; the gap between the pulses is a pulse shorter.
     mean_hz, sigma_hz = cal.frequency_update(
-        mean_hz, sigma_hz, int(bit[0]), gap_ns + pi_duration_ns, phase
+        mean_hz, sigma_hz, bit[0], gap_ns + pi_duration_ns, phase
     )
     wait_ns, phase = cal.ramsey_setting(mean_hz, sigma_hz)
     gap_ns = min(max(wait_ns - pi_duration_ns, wait_bounds_ns[0]), wait_bounds_ns[1])

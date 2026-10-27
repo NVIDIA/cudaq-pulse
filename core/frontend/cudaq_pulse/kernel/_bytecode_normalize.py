@@ -28,7 +28,7 @@ supported interpreter (3.12 through 3.15):
 Constructs the tracer does not support decode to ``UNSUPPORTED`` and raise
 only when executed, so the error is the same on every version. What each
 one stood for is kept in ``DecodedCode.notes``, for readers that follow
-more of Python than the tracer.
+more of Python than the tracer (``classical._infer``).
 
 Other interpreters fail fast with ``UnsupportedInterpreterError``. Adding a
 CPython version means adding it to ``SUPPORTED_MINORS`` and its loop epilogue

@@ -372,10 +372,9 @@ def test_exporting_a_call_again_does_not_specialize_again():
 
 @pytest.mark.scaling
 def test_a_sweep_of_a_wait_from_an_answer_and_a_float_compiles_once(monkeypatch):
-    from cudaq_pulse.classical import Float
 
-    @pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=50, name="perf_offset")
-    def offset(x):
+    @pulse.classical(max_latency_ns=50, name="perf_offset")
+    def offset(x: float) -> float:
         return x
 
     @pulse.kernel
@@ -562,13 +561,11 @@ def test_a_long_idle_simulates_in_constant_time():
 
 
 def test_an_adaptive_loop_of_fifty_rounds_simulates_one_path_per_shot():
-    from cudaq_pulse.classical import Bits, Float, Link
+    from cudaq_pulse.classical import Link
     from cudaq_pulse.compiler import MachineModel
 
-    @pulse.classical(
-        args=(Bits(1), Float()), results=(Float(),), max_latency_ns=200, link="controller"
-    )
-    def next_wait(bit, w):
+    @pulse.classical(max_latency_ns=200, link="controller")
+    def next_wait(bit: pulse.Bits, w: float) -> float:
         return min(max(w * (1.5 if bit[0] else 0.75), 40.0), 200_000.0)
 
     @pulse.kernel

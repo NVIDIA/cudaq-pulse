@@ -102,9 +102,12 @@ class Branch:
 
     def answers(self, function: str) -> list[Any]:
         """The answers of this branch's calls to *function* (its name), in
-        call order. A function it did not call is a ``KeyError`` listing
-        those it called."""
-        found = [call.answer for call in self.calls if call.function == function]
+        call order. The name a function was declared with also takes the
+        calls to its versions by list length (``"adaptive_t1"`` takes
+        ``"adaptive_t1__1"``). A function it did not call is a ``KeyError``
+        listing those it called."""
+        version = _re.compile(_re.escape(function) + r"(__[0-9i_]+)?")
+        found = [call.answer for call in self.calls if version.fullmatch(call.function)]
         if not found:
             called = list(dict.fromkeys(call.function for call in self.calls))
             raise NotFoundError(
@@ -274,11 +277,12 @@ def simulate(
         ``error_1to0`` and ``error_0to1``) and ``"model_with_decay"`` adds
         relaxation during the readout window; branches and calls see the
         reported outcome, and the state is projected on the true one. A
-        call that takes ``IQ`` points gets points synthesized per shot at
-        each readout's true level, from its tone's frequency and its pulse's
-        amplitude (``IQModel``; with ``"model_with_decay"``, relaxation
-        during the window too); it needs ``shots``, and each shot from the
-        call on is simulated as its own trajectory.
+        call that takes IQ points (``complex`` or ``list[complex]``) gets
+        points synthesized per shot at each readout's true level, from its
+        tone's frequency and its pulse's amplitude (``IQModel``; with
+        ``"model_with_decay"``, relaxation during the window too); it needs
+        ``shots``, and each shot from the call on is simulated as its own
+        trajectory.
     plant:
         A target description to simulate instead of the device the program
         was compiled for: its qubits' frequencies, T1, T2, thermal
@@ -689,10 +693,10 @@ def _simulate_tree(
 
     Without *t_end* each path runs to the end of its own schedule, which
     variable waits make path-dependent."""
+    from ..classical import _handlers_for
     from ._calls import IQModel, ReadoutModel, simulate_tree, takes_iq
 
-    chosen = {f.name: f.implementation for f in functions if f.implementation is not None}
-    chosen.update(handlers or {})
+    chosen = _handlers_for(functions, handlers)
     model = (
         None
         if readout == "ideal"

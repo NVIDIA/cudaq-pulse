@@ -21,7 +21,7 @@ import time
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import Bits, Float, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.runtime import _propagate
 from cudaq_pulse.runtime import simulate as simulate_module
@@ -181,8 +181,8 @@ def test_branch_coverage_takes_its_members_or_their_strings():
 _MACHINE = MachineModel(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
 
 
-@pulse.classical(args=(Bits(1), Float()), results=(Float(),), max_latency_ns=200, link="controller")
-def _halve_or_double(bit, wait_cycles):
+@pulse.classical(max_latency_ns=200, link="controller")
+def _halve_or_double(bit: pulse.Bits, wait_cycles: float) -> float:
     return min(max(wait_cycles * (2.0 if bit[0] else 0.5), 20.0), 20000.0)
 
 

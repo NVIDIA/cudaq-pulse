@@ -11,46 +11,39 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Sequence
 
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import classical
-from cudaq_pulse.classical import (
-    IQ,
-    Bits,
-    Byte,
-    Bytes,
-    Float,
-    Floats,
-    Integer,
-    Integers,
-    Levels,
-    Link,
-)
+from cudaq_pulse.classical import Link, wire
 from cudaq_pulse.compiler import MachineModel
 
 from tests._handles import Q
 
 
-@pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=500)
-def echo(bits):
+@pulse.classical(max_latency_ns=500)
+def echo(bits: pulse.Bits) -> pulse.Bits:
     return [bits[0]]
 
 
-@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=100, link=1)
-def double(x):
+@pulse.classical(max_latency_ns=100, link=1)
+def double(x: float) -> float:
     return 2 * x
 
 
-@pulse.classical(args=(Levels(1),), results=(Integer(),), max_latency_ns=200)
-def choose(levels):
+@pulse.classical(max_latency_ns=200)
+def choose(levels: list[int]) -> int:
     return levels[0]
 
 
-_slow = pulse.classical(
-    lambda: 1.0, name="slow", results=(Float(),), max_latency_ns=1, latency_mode="blocking"
-)
-_sink = classical.external("sink", args=(Float(),), max_latency_ns=1)
+@pulse.classical(name="slow", max_latency_ns=1, latency_mode="blocking")
+def _slow() -> float:
+    return 1.0
+
+
+@classical.external(name="sink", max_latency_ns=1)
+def _sink(x: float) -> None: ...
 
 
 def _mlir(kernel, *args, **options):
@@ -63,9 +56,14 @@ def _mlir(kernel, *args, **options):
 def test_module_is_the_decorator():
     assert callable(pulse.classical)
     assert pulse.classical is classical
-    fn = pulse.classical(lambda: None, name="anon", max_latency_ns=1)
+
+    def nothing() -> None:
+        pass
+
+    fn = pulse.classical(nothing, name="anon", max_latency_ns=1)
     assert isinstance(fn, classical.ClassicalFunction)
-    assert classical.function(lambda: None, name="anon", max_latency_ns=1).name == "anon"
+    assert classical.function(nothing, name="anon", max_latency_ns=1).name == "anon"
+    assert pulse.Bits is classical.Bits
 
 
 def test_function_id_is_fnv1a_as_cuda_q_hashes_handler_names():
@@ -77,11 +75,12 @@ def test_function_id_is_fnv1a_as_cuda_q_hashes_handler_names():
 
 
 def test_declaration_keeps_the_schema_and_timing():
+    def fit(points: list[complex], xs: list[float], levels: list[int], n: int) -> list[float]:
+        return xs[:2]
+
     fn = pulse.classical(
-        lambda s: s,
-        name="fit",
-        args=(IQ(4), Floats(3, 32), Integers(2), Bytes(5), Byte, Float(32), Integer(32)),
-        results=(Floats(2),),
+        fit,
+        lengths={"points": 4, "xs": 3, "levels": 2, "return": 2},
         min_latency_ns=10,
         nominal_latency_ns=20,
         max_latency_ns=30,
@@ -92,15 +91,8 @@ def test_declaration_keeps_the_schema_and_timing():
         link=3,
         id=7,
     )
-    assert [a.descriptor for a in fn.args] == [
-        "iq:4",
-        "f32[3]",
-        "i32[2]",
-        "u8[5]",
-        "u8",
-        "f32",
-        "i32",
-    ]
+    assert [a.descriptor for a in fn.args] == ["iq:4", "f64[3]", "levels:2", "i64"]
+    assert [r.descriptor for r in fn.results] == ["f64[2]"]
     assert (fn.min_latency_ns, fn.nominal_latency_ns, fn.max_latency_ns) == (10, 20, 30)
     assert (fn.latency_mode, fn.timeout_ns, fn.submit_policy, fn.deadline_ns) == (
         "timeout",
@@ -113,12 +105,19 @@ def test_declaration_keeps_the_schema_and_timing():
     assert "fit" in repr(fn)
 
 
+def test_hints_map_to_wire_types():
+    @pulse.classical(max_latency_ns=1)
+    def scalars(x: float, n: int, point: complex) -> tuple[float, int, bool]:
+        return x, n, bool(point.real)
+
+    assert [a.descriptor for a in scalars.args] == ["f64", "i64", "iq:1"]
+    assert [r.descriptor for r in scalars.results] == ["f64", "i64", "bits:1"]
+    assert all(a.is_scalar for a in scalars.args) and scalars.results[2].is_scalar
+
+
 @pytest.mark.parametrize(
     ("options", "message"),
     [
-        ({"args": (object(),)}, "must be a type such as"),
-        ({"args": (Bits(1),) * 9}, "at most 8 arguments"),
-        ({"results": (Bits(1),) * 5}, "at most 4 results"),
         ({"max_latency_ns": -1}, "finite number >= 0"),
         ({"max_latency_ns": math.inf}, "finite number >= 0"),
         ({"min_latency_ns": 20, "max_latency_ns": 10}, "min <= nominal <= max"),
@@ -132,35 +131,124 @@ def test_declaration_keeps_the_schema_and_timing():
         ({"link": True}, "link must be"),
         ({"id": 2**32}, "32-bit"),
         ({"name": "not valid"}, "identifier"),
+        ({"lengths": [("return", 1)]}, "lengths must be a dict"),
     ],
 )
 def test_declaration_errors(options, message):
+    def f() -> None:
+        pass
+
     options = {"max_latency_ns": 1, **options}
     with pytest.raises((ValueError, TypeError), match=message):
-        pulse.classical(lambda *a: None, name=options.pop("name", "f"), **options)
+        pulse.classical(f, **options)
+
+
+def test_declaring_takes_a_def_with_hints():
+    with pytest.raises(TypeError, match="a function defined with def"):
+        pulse.classical(lambda x: x, name="f", max_latency_ns=1)
+    with pytest.raises(TypeError, match="args= and results= are gone"):
+        pulse.classical(max_latency_ns=1, args=(), results=())  # remnant-ok
+
+
+def _nine(
+    a: float, b: float, c: float, d: float, e: float, f: float, g: float, h: float, i: float
+) -> None:
+    pass
+
+
+def _five() -> tuple[float, float, float, float, float]:
+    return 0.0, 0.0, 0.0, 0.0, 0.0
+
+
+def _no_hint(x) -> float:  # noqa: ANN001
+    return x
+
+
+def _no_return(x: float):  # noqa: ANN202
+    return x
+
+
+def _flag(x: bool) -> float:
+    return float(x)
+
+
+def _measurement(m: pulse.ops.MeasurementResult) -> float:
+    return float(m)
+
+
+def _dict(x: dict[str, int]) -> float:
+    return 0.0
+
+
+def _bools(x: list[bool]) -> float:
+    return 0.0
+
+
+def _complex_out(x: float) -> complex:
+    return complex(x)
+
+
+def _keyword(*, x: float) -> float:
+    return x
+
+
+def _scalar_length(x: float) -> float:
+    return x
+
+
+def _unknown_length(x: float) -> float:
+    return x
+
+
+def _bad_rule(x: pulse.Bits, n: float) -> pulse.Bits:
+    return x
+
+
+def _tuple_rule(x: pulse.Bits) -> tuple[float, pulse.Bits]:
+    return 0.0, x
 
 
 @pytest.mark.parametrize(
-    ("make", "message"),
+    ("fn", "lengths", "message"),
     [
-        (lambda: Bits(0), "positive whole number"),
-        (lambda: Levels(1.5), "positive whole number"),
-        (lambda: IQ(True), "positive whole number"),
-        (lambda: Float(16), "64 or 32 bits"),
-        (lambda: Floats(2, 8), "64 or 32 bits"),
-        (lambda: Integer(8), "64 or 32 bits"),
+        (_nine, {}, "at most 8 arguments"),
+        (_five, {}, "at most 4 results"),
+        (_no_hint, {}, "parameter 'x' needs a type"),
+        (_no_return, {}, "annotate what it returns"),
+        (_flag, {}, "a measured bit is pulse.Bits"),
+        (_measurement, {}, "say how to read it"),
+        (_dict, {}, "can't be dict"),
+        (_bools, {}, "lists hold float, int or complex"),
+        (_complex_out, {}, "return tuple\\[float, float\\] instead"),
+        (_keyword, {}, "only positional parameters"),
+        (_scalar_length, {"x": 3}, "it is a single value"),
+        (_unknown_length, {"y": 3}, "which aren't parameters"),
+        (_bad_rule, {"return": "n"}, "isn't a list parameter"),
+        (_bad_rule, {"x": 0}, "positive length"),
+        (_tuple_rule, {"return": 3}, "one entry per result"),
+        (_tuple_rule, {"return": (2, 3)}, "a length for a scalar result"),
+        (_tuple_rule, {"x": 3}, "pinned to one schema"),
     ],
 )
-def test_type_errors(make, message):
-    with pytest.raises(ValueError, match=message):
-        make()
+def test_hint_errors_are_raised_where_the_function_is_used(fn, lengths, message):
+    declared = pulse.classical(fn, max_latency_ns=1, lengths=lengths)
+    with pytest.raises(TypeError, match=message):
+        len(declared.args)
+    with pytest.raises(TypeError, match=message):  # kept, raised again
+        wire.schema(declared)
+
+    def k(q):
+        declared.submit()
+
+    _compile_error(k, message)
 
 
-def test_types_compare_by_descriptor():
-    assert Bits(3) == Bits(3) and Bits(3) != Levels(3)
-    assert len({Floats(2), Floats(2), Floats(2, 32)}) == 2
-    assert (IQ(2).answer_count, IQ(2).wire_bytes) == (4, 16)
-    assert Bits(9).wire_bytes == 2
+def test_sequence_hints_are_lists():
+    @pulse.classical(max_latency_ns=1, lengths={"xs": 2, "levels": 3})
+    def total(xs: Sequence[float], levels: Sequence[int]) -> float:
+        return sum(xs) + sum(levels)
+
+    assert [a.descriptor for a in total.args] == ["f64[2]", "levels:3"]
 
 
 def test_link_validation():
@@ -183,17 +271,37 @@ def test_calling_outside_a_kernel_runs_the_body():
     answer = double.submit(2.0)
     assert answer.done() and answer.result() == 4.0
     assert answer.result(timeout=20) == (True, 4.0)
-    with pytest.raises(TypeError, match="takes 1 arguments"):
+    with pytest.raises(TypeError, match="takes 1 positional arguments"):
         double(1, 2)
+    assert echo([1]) == [1]
 
 
 def test_external_function_has_no_body():
-    fn = classical.external("remote", args=(Float(),), results=(), max_latency_ns=5)
-    assert fn.implementation is None and fn.name == "remote"
+    @classical.external(max_latency_ns=5, lengths={"syndrome": 4, "return": 2})
+    def remote(syndrome: pulse.Bits, gain: float) -> pulse.Bits:
+        raise NotImplementedError
+
+    assert remote.implementation is None and remote.name == "remote"
+    assert [a.descriptor for a in remote.args] == ["bits:4", "f64"]
+    assert [r.descriptor for r in remote.results] == ["bits:2"]
     with pytest.raises(TypeError, match="no reference implementation"):
-        fn(1.0)
+        remote([0, 1, 0, 1], 1.0)
     with pytest.raises(TypeError, match="needs a name"):
         classical.ClassicalFunction(None, max_latency_ns=1)
+
+
+def test_external_functions_state_every_length_at_once():
+    with pytest.raises(TypeError, match="an external function has one schema; give lengths for"):
+
+        @classical.external(max_latency_ns=5)
+        def table(index: pulse.Bits) -> float:
+            raise NotImplementedError
+
+    with pytest.raises(TypeError, match="state the pulse.Bits result's length"):
+
+        @classical.external(max_latency_ns=5, lengths={"index": 2})
+        def lookup(index: pulse.Bits) -> pulse.Bits:
+            raise NotImplementedError
 
 
 # ── Tracing ──────────────────────────────────────────────────────────────────
@@ -211,10 +319,10 @@ def _reset(q):
 
 def test_submit_and_result_become_classical_ops():
     text = _mlir(_reset, Q[0])
-    assert re.search(r"classical.callable @echo \{.*args = \[\"bits:1\"\]", text)
+    assert re.search(r"classical.callable @echo__1 \{.*args = \[\"bits:1\"\]", text)
     assert "classical.get_link {device = 0 : i64}" in text
-    assert re.search(r"classical.submit %\S+, @echo\(%result\)", text)
-    assert re.search(r"classical.wait %future, @echo .*: i1", text)
+    assert re.search(r"classical.submit %\S+, @echo__1\(%result\)", text)
+    assert re.search(r"classical.wait %future, @echo__1 .*: i1", text)
     assert re.search(r"scf.if %\d+ -> ", text)
     assert "pulse.is_set" not in text
 
@@ -372,13 +480,9 @@ def test_timeout_at_the_call_gives_an_ok_bit():
 
 
 def test_several_results_come_back_as_a_tuple():
-    fit = pulse.classical(
-        lambda p: (0.0, [0.0, 0.0]),
-        name="fit",
-        args=(IQ(2),),
-        results=(Float(), Floats(2)),
-        max_latency_ns=10,
-    )
+    @pulse.classical(max_latency_ns=10)
+    def fit(p: list[complex]) -> tuple[float, list[float]]:
+        return (0.0, [0.0, 0.0])
 
     @pulse.kernel
     def k(q):
@@ -390,6 +494,27 @@ def test_several_results_come_back_as_a_tuple():
         drive(d, square(40, shift + x + y))
 
     assert re.search(r"classical.wait .*: f64, f64, f64", _mlir(k, Q[0]))
+
+
+def test_a_function_with_an_id_has_one_version_per_program():
+    @pulse.classical(max_latency_ns=10, id=0x51)
+    def first(o: pulse.Bits) -> bool:
+        return bool(o[0])
+
+    def calls(*sizes):
+        @pulse.kernel
+        def k(q):
+            r = get_readout_line(q)
+            for n in sizes:
+                first.submit([readout(r, square(100, 0.05)) for _ in range(n)]).result()
+
+        return pulse.compile(k).lower(Q[0])
+
+    # Each program may pick its length, again and again.
+    for n in (2, 3, 2):
+        assert [(f.name, f.id) for f in calls(n, n).classical] == [("first", 0x51)]
+    with pytest.raises(pulse.CompilationError, match=r"has id=0x51, .* o=3 here and o=2 earlier"):
+        calls(2, 3)
 
 
 # ── Errors ───────────────────────────────────────────────────────────────────
@@ -429,10 +554,13 @@ def test_argument_errors():
         r = get_readout_line(q)
         double.submit(readout(r, square(10, 0.1)))
 
-    def too_many_measurements(q):
+    def one_measurement_for_bits(q):
         r = get_readout_line(q)
-        m = readout(r, square(10, 0.1))
-        echo.submit([m, m])
+        echo.submit(readout(r, square(10, 0.1)))
+
+    def mixed_levels(q):
+        r = get_readout_line(q)
+        choose.submit([readout(r, square(10, 0.1)), 1])
 
     def keyword(q):
         double.submit(x=1.0)
@@ -440,7 +568,8 @@ def test_argument_errors():
     _compile_error(wrong_count, "takes 1 arguments, got 0")
     _compile_error(number_for_bits, "takes measurement results")
     _compile_error(measurement_for_float, "takes numbers")
-    _compile_error(too_many_measurements, "takes 1 measurement result, got 2")
+    _compile_error(one_measurement_for_bits, r"a list; got one measurement, so pass \[m\]")
+    _compile_error(mixed_levels, "all measurements .sent as levels. or all numbers")
     _compile_error(keyword, "positional arguments only")
 
 
@@ -504,8 +633,13 @@ def test_an_answer_cannot_leave_its_kernel_with_its_own_schedule():
 
 
 def test_two_functions_with_one_name():
-    a = pulse.classical(lambda: 1.0, name="same", results=(Float(),), max_latency_ns=1)
-    b = pulse.classical(lambda: 2.0, name="same", results=(Float(),), max_latency_ns=1)
+    @pulse.classical(name="same", max_latency_ns=1)
+    def a() -> float:
+        return 1.0
+
+    @pulse.classical(name="same", max_latency_ns=1)
+    def b() -> float:
+        return 2.0
 
     def k(q):
         a.submit()
@@ -543,7 +677,7 @@ def test_report_and_schedule_events():
     low = pulse.compile(_reset, schedule="asap").lower(Q[0])
     (call,) = low.classical_report()
     clock = low.target.clock_ghz
-    assert call.function == "echo" and call.link == 0 and call.iteration == ()
+    assert call.function == "echo__1" and call.link == 0 and call.iteration == ()
     assert call.submit_cycles == 200 and call.submit_duration_cycles == 1
     assert call.due_cycles == 201 + math.ceil(500 * clock)
     assert call.taken_cycles == call.due_cycles == call.first_use_cycles

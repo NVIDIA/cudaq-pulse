@@ -110,7 +110,7 @@ def simulate_tree(
     t_end: float | None,
     shots: int | None,
     rng: np.random.Generator,
-    functions: Sequence[ClassicalFunction],
+    functions: Sequence[ClassicalFunction[..., Any]],
     handlers: Mapping[str, Callable[..., Any]],
     schedule_args: tuple[Any, ...],
     readout: ReadoutModel | None,

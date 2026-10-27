@@ -14,7 +14,7 @@ import time
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.classical import Bits, Float, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -28,31 +28,23 @@ READOUT, ARM, LATENCY_NS = 300, 40, 1000
 BUDGET = math.ceil(LATENCY_NS * CLOCK)
 
 
-@pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=LATENCY_NS)
-def decode(bits):
+@pulse.classical(max_latency_ns=LATENCY_NS)
+def decode(bits: pulse.Bits) -> pulse.Bits:
     return [bits[0]]
 
 
-@pulse.classical(
-    args=(Bits(1),),
-    results=(Bits(1),),
-    max_latency_ns=LATENCY_NS,
-    submit="lazy",
-    name="decode_lazy",
-)
-def decode_lazy(bits):
+@pulse.classical(max_latency_ns=LATENCY_NS, submit="lazy", name="decode_lazy")
+def decode_lazy(bits: pulse.Bits) -> pulse.Bits:
     return [bits[0]]
 
 
-@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=100, link=1)
-def tune(x):
+@pulse.classical(max_latency_ns=100, link=1)
+def tune(x: float) -> float:
     return x
 
 
-@pulse.classical(
-    args=(Float(),), results=(Float(),), max_latency_ns=50, latency_mode="blocking", link=2
-)
-def calibrate(x):
+@pulse.classical(max_latency_ns=50, latency_mode="blocking", link=2)
+def calibrate(x: float) -> float:
     return x
 
 
@@ -284,14 +276,9 @@ def test_blocking_waits_start_epochs():
 
 
 def test_a_missed_deadline_is_rejected():
-    tight = pulse.classical(
-        lambda b: b,
-        name="tight",
-        args=(Bits(1),),
-        results=(Bits(1),),
-        max_latency_ns=1000,
-        deadline_ns=800,
-    )
+    @pulse.classical(max_latency_ns=1000, deadline_ns=800)
+    def tight(b: pulse.Bits) -> pulse.Bits:
+        return b
 
     @pulse.kernel
     def k(q):
@@ -305,14 +292,9 @@ def test_a_missed_deadline_is_rejected():
 
 
 def test_deadline_slack_is_reported():
-    loose = pulse.classical(
-        lambda b: b,
-        name="loose",
-        args=(Bits(1),),
-        results=(Bits(1),),
-        max_latency_ns=1000,
-        deadline_ns=1500,
-    )
+    @pulse.classical(max_latency_ns=1000, deadline_ns=1500)
+    def loose(b: pulse.Bits) -> pulse.Bits:
+        return b
 
     @pulse.kernel
     def k(q):
@@ -325,7 +307,10 @@ def test_deadline_slack_is_reported():
 
 def test_a_request_too_big_for_its_slot_is_rejected():
     machine = MachineModel(links={0: Link(slot_bytes=24 + 0 + 1 - 1 + 1)})
-    big = pulse.classical(lambda b: b, name="big", args=(Bits(16),), results=(), max_latency_ns=1)
+
+    @pulse.classical(max_latency_ns=1)
+    def big(b: pulse.Bits) -> None:
+        return b
 
     @pulse.kernel
     def k(q):
@@ -333,21 +318,16 @@ def test_a_request_too_big_for_its_slot_is_rejected():
         m = readout(r, square(READOUT, 0.05))
         big.submit([m] * 16)
 
-    with pytest.raises(RuntimeError, match="a request of 'big' takes 26 bytes"):
+    with pytest.raises(RuntimeError, match="a request of 'big__16' takes 26 bytes"):
         pulse.compile(k, machine=machine).lower(Q[0])
 
 
 def _many(n, links):
+    def same(x: float) -> float:
+        return x
+
     functions = [
-        pulse.classical(
-            lambda x: x,
-            name=f"f{k}",
-            args=(Float(),),
-            results=(Float(),),
-            max_latency_ns=20,
-            link=k,
-        )
-        for k in range(links)
+        pulse.classical(same, name=f"f{k}", max_latency_ns=20, link=k) for k in range(links)
     ]
 
     @pulse.kernel

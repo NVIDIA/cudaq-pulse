@@ -90,8 +90,10 @@ class Line:
         return _require_context("Line.tones")
 
 
-class MeasurementResult:
-    """Opaque measurement result from ``readout()``."""
+class MeasurementResult(int):
+    """One measurement from ``readout()``: its value is the outcome index
+    (0 or 1 for a qubit, 0 to d-1 for a qudit). Kernels pass it to classical
+    functions as ``pulse.Bits``, ``list[int]`` or ``complex``."""
 
 
 class RoundDirection(enum.StrEnum):

@@ -22,7 +22,7 @@ import re
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import Bits, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
 
 from tests._handles import Q
@@ -245,15 +245,11 @@ def test_requests_beyond_max_in_flight_wait_for_a_slot(callee, schedule, over):
 @pytest.mark.parametrize("link", matrix.LINKS)
 @pytest.mark.parametrize(("deadline", "meets"), [(150.0 + 50.0 + 20.0, True), (150.0, False)])
 def test_a_latency_meets_its_deadline_or_names_the_fix(link, deadline, meets):
-    tight = pulse.classical(
-        lambda bits: bits,
-        name=f"deadline_{link}",
-        args=(Bits(1),),
-        results=(Bits(1),),
-        max_latency_ns=matrix.LATENCY_NS,
-        deadline_ns=deadline,
-        link=link,
+    @pulse.classical(
+        name=f"deadline_{link}", max_latency_ns=matrix.LATENCY_NS, deadline_ns=deadline, link=link
     )
+    def tight(bits: pulse.Bits) -> pulse.Bits:
+        return bits
 
     @pulse.kernel(schedule="asap")
     def inner(r, rt):

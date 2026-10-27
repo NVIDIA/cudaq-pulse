@@ -34,6 +34,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 _EXAMPLES = [
     _ROOT / "examples" / "19_classical_calls.py",
     _ROOT / "examples" / "20_adaptive_calibration.py",
+    _ROOT / "examples" / "21_calibration_protocol.py",
 ]
 _PACKAGE_ROOT = Path(cudaq_pulse.__file__).resolve().parents[1]
 _BARE_NAMES = frozenset(
@@ -42,21 +43,26 @@ _BARE_NAMES = frozenset(
 
 _PLANTED = """\
 import cudaq_pulse as pulse
-from cudaq_pulse.classical import Bits, Float
 
 
-@pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=400, link="gpu")
-def decode(syndrome):
-    return [syndrome[0]]
+@pulse.classical(max_latency_ns=400, link="gpu")
+def decode(syndrome: pulse.Bits) -> bool:
+    return bool(syndrome[0])
 
 
-@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns="soon")  # planted
-def scale(x):
-    return [2 * x]
+@pulse.classical(max_latency_ns="soon")  # planted
+def scale(x: float) -> float:
+    return 2 * x
 
 
-in_time, correction = decode.submit([1]).result(timeout=350 * pulse.ns)
-table = pulse.classical.external("table", args=(Bits(2),), max_latency_ns=50)
+@pulse.classical.external(max_latency_ns=50, lengths={"index": 2})
+def table(index: pulse.Bits) -> float:
+    raise NotImplementedError
+
+
+in_time, flip = decode.submit([1]).result(timeout=350 * pulse.ns)
+correction: bool = flip
+offset: float = table.submit([0, 1]).result()
 """
 
 

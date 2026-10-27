@@ -43,10 +43,10 @@ import json
 import math
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .._errors import InvalidValueError, NotFoundError
-from . import ClassicalFunction, Float
+from . import ClassicalFunction
 
 if TYPE_CHECKING:
     from .._units import Time
@@ -115,7 +115,7 @@ class ParameterStore:
         link: int | str = 0,
         max_latency_ns: float | Time = 0.0,
         bounds: tuple[float, float] | None = None,
-    ) -> ClassicalFunction:
+    ) -> ClassicalFunction[..., Any]:
         """A classical function of no arguments that answers with the current
         value of *name* (in clock cycles if it is a wait's length), so a
         program compiled once reads each iteration's value at run time. With
@@ -132,8 +132,6 @@ class ParameterStore:
         return ClassicalFunction(
             read,
             name=f"read_{name}",
-            args=(),
-            results=(Float(),),
             max_latency_ns=max_latency_ns,
             link=link,
         )

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.classical import Bits, Link, emulation
+from cudaq_pulse.classical import Link, emulation
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.kernel.ir_builder import CompilationError
 
@@ -22,14 +22,10 @@ CONTROLLER = Link(fixed_ns=4, max_in_flight=4)
 
 
 def _function(link):
-    return pulse.classical(
-        lambda bits: [bits[0]],
-        name="decide",
-        args=(Bits(1),),
-        results=(Bits(1),),
-        max_latency_ns=100,
-        link=link,
-    )
+    def decide(bits: pulse.Bits) -> pulse.Bits:
+        return [bits[0]]
+
+    return pulse.classical(decide, max_latency_ns=100, link=link)
 
 
 def _kernel(fn):
