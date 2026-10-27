@@ -16,6 +16,18 @@ behavior may change in any 0.x release.
 
 ### Added
 
+- **Controllers with their own clocks.** Kernels count cycles of the
+  device's program clock, `"clock_ghz"` in the device config (or the
+  target's). A controller whose clock is slower starts and times operations
+  only every few program cycles: the scheduler puts each line's operations
+  on its controller's grid and a `sync` on the grid its lines share, an
+  operation off the grid is a compile error naming the line, its controller
+  and the nearest valid lengths, and `pulse.cycles_on(line, n)` rounds a
+  length onto the grid (`pulse.Rounding`). Controller programs count their
+  own cycles, with `"program_clock_ghz"` written when it differs;
+  `MachineModel.reference_clock_ghz` is checked against every controller
+  clock and exported; the simulator samples generated waveforms at the
+  line's controller clock.
 - **Calibration on the controller.** `cudaq_pulse.classical.calibration`
   adds the estimators of millisecond on-controller calibration in controller
   form: adaptive T1 tracking with assignment errors (`adaptive_t1_update`,

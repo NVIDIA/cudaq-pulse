@@ -123,10 +123,40 @@ measurement), each an expression; an answer has ``wait``,
 ``"bounded"`` (by the latency budget), ``"blocking"`` or ``"timeout"``,
 with ``timeout_ns``.
 
+Clocks
+------
+
+A kernel counts time in cycles of the device's program clock,
+``Device.clock_ghz`` (a device config's ``"clock_ghz"``, else the
+target's). A controller may run its own clock, ``ControllerLimits.clock_ghz``,
+at a whole-cycle ratio of it: at ``a / b`` of the program clock, in lowest
+terms, it starts and times operations only every ``b`` program cycles. The
+scheduler places every operation on its line's grid and meets a sync on
+every synced line's grid; a length that is not a multiple of the grid fails
+to compile with ``ControllerLimitError``, which names the line, its
+controller and the nearest valid lengths. ``pulse.cycles_on(line, n)`` in a
+kernel rounds a length onto the line's grid (up; ``rounding="down"`` or
+``"nearest"``), so a kernel can be written for any controller clock::
+
+    drive(line, gaussian(pulse.cycles_on(line, 41), 0.1, 10.0), tone)
+
+The export counts the controller's own cycles: ``clock_ghz`` is the
+controller's clock, and when that is not the program clock the export also
+gives ``program_clock_ghz``, converts every time to the controller's cycles
+(exactly for operations on its lines; rounded up for classical calls and
+epochs) and scales each waveform's time parameters (``duration``,
+``sigma``, ``beta``, ``risefall``) with them. A program for a controller at
+the program clock is unchanged. ``MachineModel(reference_clock_ghz=...)``
+states a clock the controllers share; every controller's clock must be a
+whole multiple of it, and the export gives it as ``reference_clock_ghz``.
+Without one, each controller's start is known only to within one of its own
+cycles, which budgets between controllers count.
+
 Controller limits
 -----------------
 
-``ControllerLimits`` states what a controller can play: its clock, how
+``ControllerLimits`` states what a controller can play, in its own clock
+cycles: its clock, how
 closely two operations on one line can follow each other, its waveform
 memory and tones per line, which acquirer reads each qudit and how long a
 readout holds it, the least feedback latency from a readout to an operation
@@ -212,9 +242,9 @@ same name:
        {
            "target": TargetDescription(
                name="one-qubit",
-               clock_ghz=1.0,
                qubits={0: Qubit(0, 5.0e9, -2.0e8, 50.0, 30.0)},
-           )
+           ),
+           "clock_ghz": 1.0,
        }
    )
 
