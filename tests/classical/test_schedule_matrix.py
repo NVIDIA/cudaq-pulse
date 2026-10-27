@@ -205,8 +205,10 @@ _SIMULATED_DEFAULT = [
     matrix.Case("asap", None, "mixed_wait", take="timeout"),
     matrix.Case("alap", None, "loop_variable"),
     matrix.Case("default", None, "branch"),
-    matrix.Case("asap", "asap", "callee_twice", take="blocking"),
+    matrix.Case("asap", "asap", "callee_twice", take="timeout"),
 ]
+
+assert set(_SIMULATED_DEFAULT) <= set(_SIMULATED)
 
 
 @pytest.mark.parametrize("case", _params(_SIMULATED, _SIMULATED_DEFAULT))
