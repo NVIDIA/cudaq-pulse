@@ -42,7 +42,7 @@ def test_jit_executes_target_aware_program():
 
 def test_jit_import():
     """JIT module should be importable."""
-    from cudaq_pulse.runtime import jit
+    from cudaq_pulse.runtime import _jit as jit
 
     assert hasattr(jit, "JITCompiler")
 

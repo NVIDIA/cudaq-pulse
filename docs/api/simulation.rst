@@ -19,3 +19,17 @@ Simulation API
 .. autoclass:: cudaq_pulse.SimulationResult
    :members:
    :undoc-members:
+
+.. autoclass:: cudaq_pulse.runtime.simulate.Measurement
+   :members:
+   :undoc-members:
+
+GPU runtime
+-----------
+
+The GPU runtime is loaded on first use; its errors are on :doc:`errors`.
+
+.. autofunction:: cudaq_pulse.runtime.require_gpu_runtime
+
+.. autoclass:: cudaq_pulse.runtime.GpuRuntime
+   :members:

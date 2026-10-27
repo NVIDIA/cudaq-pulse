@@ -45,7 +45,7 @@ def test_import_and_compile_do_not_load_numpy_or_the_gpu_runtime(tmp_path):
         "dev = p.get_device(p.Target.TRANSMON_KRINNER_17Q)\n"
         "p.compile(k).lower(dev.qudit_handles[0])\n"
         "print(sorted(m for m in ('numpy', 'cudaq_pulse.runtime.gpu',"
-        " 'cudaq_pulse.runtime.jit', 'importlib.metadata') if m in sys.modules))",
+        " 'cudaq_pulse.runtime._jit', 'importlib.metadata') if m in sys.modules))",
         tmp_path,
     )
     assert loaded == "[]"
@@ -80,8 +80,12 @@ def test_dir_lists_no_internals():
         "cudaq_pulse",
         "cudaq_pulse._device",
         "cudaq_pulse.doctor",
+        "cudaq_pulse.compiler",
+        "cudaq_pulse.ops",
         "cudaq_pulse.runtime",
-        "cudaq_pulse.runtime.jit",
+        "cudaq_pulse.runtime.simulate",
+        "cudaq_pulse.targets",
+        "cudaq_pulse.targets.transmon_model",
         "cudaq_pulse.viz",
     ],
 )

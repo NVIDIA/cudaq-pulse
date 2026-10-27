@@ -8,7 +8,7 @@
 """Lowering a traced kernel to a scheduled MLIR module, and its inspection.
 
 ``cudaq_pulse.compile(k)`` returns a callable ``CompiledKernel`` (see
-``kernel/kernel.py``); this module holds what it is built from: the options
+``kernel/_kernel.py``); this module holds what it is built from: the options
 that pick passes and a schedule, the native build of one specialization, and
 ``Lowered``, the read-only view of one compiled module.
 """
@@ -22,14 +22,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-try:
-    from ._native._cudaq_pulse_native import PulseModuleBuilder
-except ImportError as _e:
-    raise RuntimeError(
-        "cudaq-pulse native bindings required. Install the cudaq-pulse wheel, "
-        "or build from source with `pip install .`; see CONTRIBUTING.md."
-    ) from _e
-
+from ._native import PulseModuleBuilder
+from .kernel._bytecode_normalize import UnsupportedInterpreterError
 from .kernel._schedule_blocks import check_root_schedule, root_schedule
 from .kernel._unroll import resolve_unroll_threshold
 from .kernel.ir_builder import CompilationError, SymbolicValueError
@@ -39,6 +33,16 @@ if TYPE_CHECKING:
 
     from ._device import Device
     from .kernel._kernel import CompiledKernel, Kernel
+
+__all__ = [
+    "DEFAULT_PASSES",
+    "CompileMetrics",
+    "Lowered",
+    "MachineModel",
+    "ScheduledEvent",
+    "UnsupportedInterpreterError",
+    "compile",
+]
 
 
 _VALID_SCHEDULES = frozenset({"asap", "alap", "rcp", "alap_rcp"})

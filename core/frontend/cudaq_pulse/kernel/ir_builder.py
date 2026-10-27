@@ -22,7 +22,9 @@ Op = namedtuple("Op", ["kind", "operands", "results", "attrs"])
 
 
 class CompilationError(Exception):
-    pass
+    """A kernel cannot be traced or compiled: an unsupported construct, an
+    operation given the wrong kind of argument, or invalid pulse IR. The
+    message says what to write instead, and a note gives the kernel line."""
 
 
 class SymbolicValueError(CompilationError):

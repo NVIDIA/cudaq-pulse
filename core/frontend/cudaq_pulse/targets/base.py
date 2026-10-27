@@ -9,8 +9,8 @@
 
 A ``TargetDescription`` fully describes a quantum device: qubit frequencies,
 anharmonicities, coupling topology, decoherence parameters, and readout.
-It can generate Hamiltonian and Lindblad dissipator terms for the
-``pulse_to_operator`` lowering pass.
+It can generate Hamiltonian and Lindblad dissipator terms for the Pulse ->
+QOp lowering.
 """
 
 from __future__ import annotations
@@ -75,6 +75,9 @@ class CrosstalkEntry:
 
     ``static_zz_hz`` is the ZZ rate zeta / 2 pi, zeta = E11 - E10 - E01 + E00,
     modeled as zeta n_a n_b in addition to what the couplings produce.
+    ``zz_coupling`` and ``freq_delta_hz`` are reserved for a later crosstalk
+    model: they are stored, but neither compilation nor simulation reads
+    them yet.
     """
 
     qubit_a: int

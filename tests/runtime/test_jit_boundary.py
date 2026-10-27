@@ -16,7 +16,8 @@ import sys
 
 import numpy as np
 import pytest
-from cudaq_pulse.runtime import gpu, jit
+from cudaq_pulse.runtime import _jit as jit
+from cudaq_pulse.runtime import gpu
 
 
 def test_scalars_and_arrays_marshal_to_ctypes():

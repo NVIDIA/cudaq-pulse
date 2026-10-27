@@ -42,7 +42,9 @@ __all__ = [
 
 
 class NoDeviceError(NoTargetError):
-    """A kernel call has no device: no qudit handle, no pin, no process target."""
+    """A kernel was called without qudit handles and was not compiled for a
+    device, so it has no device to run on. The process target is never used
+    for a kernel call."""
 
 
 class DeviceMismatchError(RuntimeError):

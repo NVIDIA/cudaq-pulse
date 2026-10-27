@@ -87,7 +87,7 @@ class RydbergTarget:
         return math.sqrt(dx * dx + dy * dy)
 
     def interaction_strength(self, a: RydbergAtom, b: RydbergAtom) -> float:
-        """V_{jk} = C6 / |x_j - x_k|^6 in MHz."""
+        """``V_jk = C6 / |x_j - x_k|^6`` in MHz."""
         r = self._distance(a, b)
         if r < 1e-12:
             raise ValueError(f"Atoms {a.index} and {b.index} are at the same position.")
@@ -180,7 +180,7 @@ class RydbergTarget:
         return terms
 
     def dissipator_terms(self) -> list[dict[str, Any]]:
-        """Rydberg dissipators: spontaneous emission from |r> to |g>."""
+        """Rydberg dissipators: spontaneous emission from ``|r>`` to ``|g>``."""
         terms: list[dict[str, Any]] = []
         for atom in self.atoms:
             gamma = 1.0 / (1000.0 * 1e3)  # ~1/ms, expressed in 1/ns

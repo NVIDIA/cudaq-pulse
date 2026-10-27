@@ -7,7 +7,7 @@
 # ============================================================================ #
 """QPU target definitions: Hamiltonians, decoherence models, connectivity."""
 
-from ._registry import available_targets, register_target
+from ._registry import UnknownTargetError, available_targets, register_target
 from .base import Coupling, CrosstalkEntry, Qubit, TargetDescription
 from .calibration import Calibration
 from .rydberg import RydbergAtom, RydbergTarget, rydberg_chain, rydberg_square
@@ -27,4 +27,5 @@ __all__ = [
     "rydberg_square",
     "register_target",
     "available_targets",
+    "UnknownTargetError",
 ]

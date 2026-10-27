@@ -39,6 +39,8 @@ from ._attributes import _VALID_INTEGRATORS, _f64, _level_attributes, _target_at
 if TYPE_CHECKING:
     from ..compiler import Lowered
 
+__all__ = ["Measurement", "SimulationResult", "simulate"]
+
 # Branches whose weight falls below this fraction of the initial state's are
 # not followed.
 _NEGLIGIBLE = 1e-14
@@ -568,7 +570,7 @@ class _GpuBackend(_Backend):
         integrator: str,
     ) -> None:
         super().__init__(module, dims, dt_ns, base, lock)
-        from .jit import JITCompiler
+        from ._jit import JITCompiler
 
         self.compiler = JITCompiler()
         self.integrator = integrator

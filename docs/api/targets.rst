@@ -1,0 +1,53 @@
+..
+   Copyright (c) 2026 NVIDIA Corporation & Affiliates.
+   All rights reserved.
+
+   This source code and the accompanying materials are made available under
+   the terms of the Apache License 2.0 which accompanies this distribution.
+
+
+Targets API
+===========
+
+A target describes a device's qudits, couplings and decoherence; a device
+(:doc:`devices`) pairs one with a qudit layout.
+
+.. autoclass:: cudaq_pulse.targets.TargetDescription
+   :members:
+
+.. autoclass:: cudaq_pulse.targets.Qubit
+   :members:
+   :undoc-members:
+
+.. autoclass:: cudaq_pulse.targets.Coupling
+   :members:
+   :undoc-members:
+
+.. autoclass:: cudaq_pulse.targets.CrosstalkEntry
+   :members:
+   :undoc-members:
+
+Shipped targets
+---------------
+
+.. autofunction:: cudaq_pulse.targets.transmon_krinner_17q
+
+.. autofunction:: cudaq_pulse.targets.transmon_generic
+
+.. autoclass:: cudaq_pulse.targets.RydbergAtom
+   :members:
+   :undoc-members:
+
+.. autoclass:: cudaq_pulse.targets.RydbergTarget
+   :members:
+
+.. autofunction:: cudaq_pulse.targets.rydberg_chain
+
+.. autofunction:: cudaq_pulse.targets.rydberg_square
+
+Registering targets
+-------------------
+
+.. autofunction:: cudaq_pulse.targets.register_target
+
+.. autofunction:: cudaq_pulse.targets.available_targets

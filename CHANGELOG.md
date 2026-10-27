@@ -144,6 +144,16 @@ behavior may change in any 0.x release.
   `get_device`, `Device`, `Qudit`, `Register`, `Target`,
   `CompilationError`, `NoTargetError`, `NoDeviceError`,
   `DeviceMismatchError`, `GpuRuntimeError` and `viz`, plus `__version__`.
+  `cudaq_pulse.compiler`, `cudaq_pulse.runtime.simulate` and
+  `cudaq_pulse.targets.transmon_model` list their public names in `__all__`,
+  as the other documented modules do. `cudaq_pulse.targets.UnknownTargetError`
+  (an unregistered target name) and
+  `cudaq_pulse.compiler.UnsupportedInterpreterError` (a Python whose bytecode
+  the kernel tracer does not know) are public, and every public name is in
+  the API reference, errors on their own page.
+- Target registration, the shipped targets and calibrations, and the kernel
+  tracer's caches are safe to use from several threads on free-threaded
+  CPython: each target and calibration is built once.
 - **Dialects and tools.** The Pulse, QOp and CuDensityMat MLIR dialects
   with their lowerings to LLVM; `cudaq-pulse-opt`, the MLIR driver, which
   also loads out-of-tree pass plugins; `python -m cudaq_pulse.doctor`, which

@@ -25,11 +25,8 @@ Device API
 .. autoclass:: cudaq_pulse.Register
    :members:
 
-.. autoexception:: cudaq_pulse.NoDeviceError
-
-.. autoexception:: cudaq_pulse.NoTargetError
-
-.. autoexception:: cudaq_pulse.DeviceMismatchError
+Errors are on :doc:`errors`; the targets a device is built from are on
+:doc:`targets`.
 
 Calibrations and the transmon circuit model
 -------------------------------------------

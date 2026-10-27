@@ -27,3 +27,8 @@ Compilation API
 .. autoclass:: cudaq_pulse.compiler.CompileMetrics
    :members:
    :undoc-members:
+
+.. autodata:: cudaq_pulse.compiler.DEFAULT_PASSES
+   :no-value:
+
+   The passes ``pulse.compile`` runs when ``passes`` is not given, in order.

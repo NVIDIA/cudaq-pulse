@@ -14,5 +14,8 @@ API Reference
    compile
    simulation
    devices
+   targets
    kernel
    ops
+   viz
+   errors
