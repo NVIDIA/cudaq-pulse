@@ -12,6 +12,11 @@
 // RUN: cudaq-pulse-opt --pulse-schedule-rcp %s | FileCheck %s --check-prefixes=CHECK,RCP
 // RUN: cudaq-pulse-opt --pulse-schedule-asap --pulse-classical-check --pulse-verify %s > /dev/null
 // RUN: cudaq-pulse-opt --pulse-schedule-rcp --pulse-classical-check %s > /dev/null
+// RUN: cudaq-pulse-opt --pulse-unroll-classical-loops %s | FileCheck %s --check-prefix=UNROLL
+
+// Simulating a module unrolls every loop that calls.
+// UNROLL: classical.callable @decode_wide
+// UNROLL-NOT: scf.for
 
 module attributes {pulse.clock_ghz = 1.0 : f64,
                    classical.links = {"0" = {max_in_flight = 2 : i64}}} {

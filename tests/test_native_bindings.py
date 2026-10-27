@@ -83,6 +83,19 @@ def test_pass_failures_carry_the_diagnostics():
         native.MLIRPipeline().parse_to_module("func.func @main() {")
 
 
+def test_a_pass_by_name_takes_its_options():
+    from tests.workloads import w4_syndrome
+
+    text = pulse.compile(w4_syndrome.build).lower(*Q[: w4_syndrome.NUM_QUBITS]).mlir()
+    pipeline = native.MLIRPipeline()
+    scheduled = pipeline.parse_to_module(text)
+    scheduled.schedule("alap_rcp", 1, 1, 3, 2)
+    by_name = pipeline.parse_to_module(text)
+    options = "max-drives=1 max-readouts=1 readout-latency=3 switch-penalty=2 alap=true"
+    by_name.run_passes([f"pulse-schedule-rcp{{{options}}}"])
+    assert by_name.print() == scheduled.print() != pipeline.parse_to_module(text).print()
+
+
 def test_compiled_module_is_named_after_the_kernel():
     compiled = _x.lower(Q[0], 0.1)
     assert compiled.mlir().startswith("module @_x")

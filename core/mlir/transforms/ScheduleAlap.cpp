@@ -2251,6 +2251,53 @@ struct PulseScheduleRcpPass
   bool isAlap;
 };
 
+/// pulse-schedule-rcp as cudaq-pulse-opt runs it, with the machine model as
+/// options. The extension builds PulseScheduleRcpPass instead: options cost
+/// a command-line parser per pass.
+struct PulseScheduleRcpOptionsPass
+    : public mlir::PassWrapper<PulseScheduleRcpOptionsPass,
+                               mlir::OperationPass<mlir::func::FuncOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PulseScheduleRcpOptionsPass)
+
+  PulseScheduleRcpOptionsPass() = default;
+  PulseScheduleRcpOptionsPass(const PulseScheduleRcpOptionsPass &other)
+      : PassWrapper(other) {}
+
+  llvm::StringRef getArgument() const override { return "pulse-schedule-rcp"; }
+  llvm::StringRef getDescription() const override {
+    return "Assign a resource-constrained pulse schedule";
+  }
+  void getDependentDialects(mlir::DialectRegistry &registry) const override {
+    registry.insert<mlir::arith::ArithDialect>();
+  }
+  void runOnOperation() override {
+    Resources resources{true, maxDrives, maxReadouts, readoutLatency,
+                        switchPenalty};
+    if (mlir::failed(schedule(getOperation(), resources, alap)))
+      signalPassFailure();
+  }
+
+  Option<int64_t> maxDrives{*this, "max-drives",
+                            llvm::cl::desc("Drives that may play at once"),
+                            llvm::cl::init(4)};
+  Option<int64_t> maxReadouts{*this, "max-readouts",
+                              llvm::cl::desc("Readouts that may play at once"),
+                              llvm::cl::init(2)};
+  Option<int64_t> readoutLatency{
+      *this, "readout-latency",
+      llvm::cl::desc(
+          "Cycles after a readout before its line and result are ready"),
+      llvm::cl::init(0)};
+  Option<int64_t> switchPenalty{
+      *this, "switch-penalty",
+      llvm::cl::desc("Cycles a drive or readout unit stays busy after each op"),
+      llvm::cl::init(0)};
+  Option<bool> alap{*this, "alap",
+                    llvm::cl::desc("Place each op as late as it may go "
+                                   "(alap_rcp)"),
+                    llvm::cl::init(false)};
+};
+
 /// Drop every schedule block, so that its ops are scheduled with the
 /// enclosing ones.
 struct PulseInlineScheduleBlocksPass
@@ -2342,6 +2389,10 @@ std::unique_ptr<mlir::Pass> createPulseScheduleRcpPass(int64_t maxDrives,
                                                        bool isAlap) {
   return std::make_unique<PulseScheduleRcpPass>(
       maxDrives, maxReadouts, readoutLatency, switchPenalty, isAlap);
+}
+
+std::unique_ptr<mlir::Pass> createPulseScheduleRcpOptionsPass() {
+  return std::make_unique<PulseScheduleRcpOptionsPass>();
 }
 
 std::unique_ptr<mlir::Pass> createPulseInlineScheduleBlocksPass() {

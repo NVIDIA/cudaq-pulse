@@ -53,6 +53,9 @@ std::unique_ptr<mlir::Pass> createPulseScheduleRcpPass(int64_t maxDrives,
                                                        int64_t readoutLatency,
                                                        int64_t switchPenalty,
                                                        bool isAlap);
+/// pulse-schedule-rcp with the machine model as pass options, for
+/// cudaq-pulse-opt; the extension creates the pass above.
+std::unique_ptr<mlir::Pass> createPulseScheduleRcpOptionsPass();
 std::unique_ptr<mlir::Pass> createPulseInlineScheduleBlocksPass();
 std::unique_ptr<mlir::Pass> createPulseClassicalCheckPass();
 std::unique_ptr<mlir::Pass> createPulseUnrollClassicalLoopsPass();
@@ -83,9 +86,7 @@ inline void registerPulsePasses() {
   mlir::registerPass(createPulseScheduleAlapPass);
   mlir::registerPass(createPulseInlineScheduleBlocksPass);
   mlir::registerPass(createPulseClassicalCheckPass);
-  // Resource-constrained scheduling with the default machine model (4
-  // drives, 2 readouts, no readout latency or switch penalty).
-  mlir::registerPass(
-      [] { return createPulseScheduleRcpPass(4, 2, 0, 0, false); });
+  mlir::registerPass(createPulseUnrollClassicalLoopsPass);
+  mlir::registerPass(createPulseScheduleRcpOptionsPass);
 }
 } // namespace pulse
