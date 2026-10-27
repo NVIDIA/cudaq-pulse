@@ -27,10 +27,12 @@ from .ir_builder import (
     IRValue,
     Parameter,
     ParameterExpression,
+    arithmetic_text,
     contains_answer,
     is_arithmetic,
     is_symbolic,
     parameter_names,
+    without_answers,
 )
 
 _pack_d = struct.Struct("=d")
@@ -252,7 +254,7 @@ class PackedIRBuilder:
         self.structural: set[str] = set()
         # (length, lowest, highest or -1) of each wait whose length the
         # module computes from float arguments, checked at call time.
-        self.variable_waits: list[tuple[Any, int, int]] = []
+        self.variable_waits: list[tuple[Any, ...]] = []
         # Classical functions declared so far, in record order, and the
         # regions open now (ids), which bound where an answer is defined.
         self.classical: list[Any] = []
@@ -1030,16 +1032,23 @@ class PackedIRBuilder:
         """A wait whose length is computed at run time, rounded to the nearest
         cycle (ties up). From float arguments it does not specialize on them,
         and each call checks it against the bounds; from the answer of a
-        classical call it is a variable region, clamped to the bounds."""
+        classical call it is a variable region, clamped to the bounds. A
+        length from both does not specialize on its float arguments either,
+        and each call checks its float part (its answers taken as 0)."""
         rounded = ParameterExpression(
             "cast", ParameterExpression("add", duration, 0.5), dtype="i64"
         )
         if answer:
+            floats = without_answers(duration)
+            at_call = bool(parameter_names(duration)) and is_arithmetic(floats)
             self._answer_integers = True
             try:
-                cycles = self._get_numeric_vid(rounded, "i64")
+                cycles = self._get_numeric_vid(rounded, "i64", specializes=not at_call)
             finally:
                 self._answer_integers = False
+            if at_call:
+                text = f"{arithmetic_text(duration)} (its answers at 0)"
+                self.variable_waits.append((floats, lowest, highest, text))
         else:
             cycles = self._get_numeric_vid(rounded, "i64", specializes=False)
             self.variable_waits.append((duration, lowest, highest))

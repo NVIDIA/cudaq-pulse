@@ -315,10 +315,24 @@ def arithmetic_source(value: Any) -> str | None:
     return None
 
 
+def without_answers(value: Any) -> Any:
+    """*value* with every answer of a classical call taken as 0: the part of
+    a wait length that its float parameters give."""
+    if isinstance(value, AnswerValue):
+        return 0.0
+    if isinstance(value, ParameterExpression):
+        return ParameterExpression(
+            value.op, without_answers(value.lhs), without_answers(value.rhs), dtype=value.dtype
+        )
+    return value
+
+
 def arithmetic_text(value: Any) -> str:
     """*value* as the user wrote it, roughly: ``tau / 2``, ``2.0 * tau + 40.0``."""
     if isinstance(value, Parameter):
         return value.name
+    if isinstance(value, AnswerValue):
+        return value.label or "answer"
     if isinstance(value, ParameterExpression):
         if value.op == "neg":
             return f"-{_operand_text(value.lhs, 3)}"

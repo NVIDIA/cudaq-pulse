@@ -398,19 +398,22 @@ class _WaitLength:
 
     The call's values give its length, rounded to the nearest cycle with ties
     up as the module rounds it, and checked against its bounds before the
-    call runs.
+    call runs. For a length that also takes answers of classical calls this
+    is its float part, the length with its answers at 0; *text* names it.
     """
 
     __slots__ = ("source", "length", "lowest", "highest", "text", "kernel")
 
-    def __init__(self, expression: Any, lowest: int, highest: int, kernel: str) -> None:
+    def __init__(
+        self, expression: Any, lowest: int, highest: int, kernel: str, text: str | None = None
+    ) -> None:
         from .kernel.ir_builder import arithmetic_source, arithmetic_text
 
         self.source = arithmetic_source(expression)
         self.length = eval(f"lambda a: {self.source}", {"__builtins__": {}})
         self.lowest = lowest
         self.highest = None if highest < 0 else highest
-        self.text = arithmetic_text(expression)
+        self.text = arithmetic_text(expression) if text is None else text
         self.kernel = kernel
 
     def check(self, values: Sequence[float]) -> None:
@@ -444,8 +447,11 @@ class _WaitLengths:
 
     __slots__ = ("ok", "waits")
 
-    def __init__(self, waits: Sequence[tuple[Any, int, int]], kernel: str) -> None:
-        self.waits = tuple(_WaitLength(*wait, kernel) for wait in waits)
+    def __init__(self, waits: Sequence[tuple[Any, ...]], kernel: str) -> None:
+        self.waits = tuple(
+            _WaitLength(wait[0], wait[1], wait[2], kernel, wait[3] if len(wait) > 3 else None)
+            for wait in waits
+        )
         # floor(x + 0.5) is in [lowest, highest] exactly when
         # lowest <= x + 0.5 < highest + 1, which NaN fails.
         tests = " and ".join(

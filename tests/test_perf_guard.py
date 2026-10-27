@@ -262,6 +262,31 @@ def test_a_wait_length_sweep_compiles_once():
     assert new < cached * FLAT_LOOP_LIMIT, (new, cached)
 
 
+@pytest.mark.scaling
+def test_a_sweep_of_a_wait_from_an_answer_and_a_float_compiles_once():
+    from cudaq_pulse.classical import Float
+
+    @pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=50, name="perf_offset")
+    def offset(x):
+        return x
+
+    @pulse.kernel
+    def t1(q, tau: float):
+        d, t = get_drive_line(q)
+        r, rt = get_readout_line(q)
+        drive(d, square(40, 0.1), t)
+        wait(d, offset.submit(8.0).result() + tau, bounds=(0, 8000))
+        sync(d, r)
+        readout(r, square(100, 0.05), rt)
+
+    compiled = pulse.compile(t1)
+    sweep = [float(4 * i + 1) for i in range(1000)]
+    new = _best(lambda: [compiled.lower(Q[0], tau) for tau in sweep], 3, 0)
+    assert compiled.cache_info().compiled == 1
+    cached = _best(lambda: [compiled.lower(Q[0], sweep[0]) for _ in sweep], 3, 0)
+    assert new < cached * FLAT_LOOP_LIMIT, (new, cached)
+
+
 # Peak memory a simulation of two qutrits may add: their 9 x 9 density matrix
 # and operators are tiny, so this only fails if the space grows with the
 # qudits' indices (3^14 states for qudits 13 and 3).

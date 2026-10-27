@@ -41,7 +41,9 @@ behavior may change in any 0.x release.
   `ValueError` at the call. A literal length must be a whole number of
   cycles. A length computed from the answer of a classical call makes the
   wait a variable region: it is rounded the same way, clamped to its
-  bounds, and opens a new epoch (below).
+  bounds, and opens a new epoch (below). A length from both, such as
+  `wait(d, answer + tau)`, compiles once too: each call checks its float
+  part (the length with its answers at 0) against the bounds.
 - **Python in kernels.** List, dict and set comprehensions, set displays
   and generator expressions are unrolled while tracing, so
   `[get_drive_line(q) for q in qubits]` builds a list of lines and

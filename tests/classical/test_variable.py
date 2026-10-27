@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 
 import cudaq_pulse as pulse
+import numpy as np
 import pytest
 from cudaq_pulse.classical import Bits, Float, Integer
 from hypothesis import given, settings
@@ -234,3 +235,69 @@ def test_a_wait_from_a_float_parameter_beside_calls_is_no_barrier():
     assert compiled.cache_info().compiled == 1
     with pytest.raises(ValueError, match="bounds"):
         compiled.lower(Q[0], Q[1], 120.0)
+
+
+@pulse.kernel
+def offset_by_tau(q, p, tau: float):
+    d, t = get_drive_line(q)
+    e, u = get_drive_line(p)
+    drive(e, square(400, 0.01), u)
+    drive(d, square(40, 0.1), t)
+    a = next_tau.submit(10.0).result()
+    wait(d, a + tau, bounds=(8, 1000))
+    drive(d, square(40, 0.1), t)
+
+
+def test_a_wait_from_an_answer_and_a_float_compiles_once():
+    compiled = pulse.compile(offset_by_tau)
+    # Each call checks the float part, the length with its answer at 0,
+    # against the bounds; the answer adds to it at run time.
+    for k in range(1000):
+        low = compiled.lower(Q[0], Q[1], 8.0 + 0.5 * k)
+    assert compiled.cache_info().compiled == 1
+    # The answer keeps the wait a barrier that opens an epoch, at its lowest
+    # length until it is known.
+    assert [e.opened_by for e in low.epochs()] == ["start", "wait"]
+    (wait_event,) = [e for e in low.schedule if e.kind == "wait" and e.link is None]
+    assert wait_event.start == 400 and wait_event.duration_vtu == 8
+    assert "%arg0: f64" in low.generic.mlir()
+
+
+@pytest.mark.parametrize(
+    ("tau", "message"),
+    [
+        (1500.0, r"next_tau\[0\] \+ tau \(its answers at 0\) = 1500.0 .* outside its bounds"),
+        (2.0, r"= 2.0 rounds to 2 clock cycles, outside its bounds \(8, 1000\)"),
+        (float("nan"), "must be a finite number"),
+    ],
+)
+def test_the_float_part_of_a_wait_from_an_answer_is_checked_at_call_time(tau, message):
+    compiled = pulse.compile(offset_by_tau)
+    with pytest.raises(ValueError, match=message):
+        compiled.lower(Q[0], Q[1], tau)
+    compiled.lower(Q[0], Q[1], 30.0)
+    assert compiled.cache_info().compiled == 1
+
+
+@pytest.mark.parametrize("tau", [30.4, 980.0])
+def test_a_wait_from_an_answer_and_a_float_runs_their_sum_clamped(tau):
+    from cudaq_pulse.targets import Qubit, TargetDescription
+
+    qubits = {i: Qubit(i, 5e9 + 1e8 * i, -2e8, 2.0, 0.0) for i in range(2)}
+    dev = pulse.device({"target": TargetDescription(name="decay", qubits=qubits)})
+    q, p = dev.qudit_handles
+    length = min(max(round(2.0 * 10.0 + tau), 8), 1000)
+
+    @pulse.kernel
+    def fixed(q, p):
+        d, t = get_drive_line(q)
+        e, u = get_drive_line(p)
+        drive(e, square(400, 0.01), u)
+        drive(d, square(40, 0.1), t)
+        sync(d, e)
+        wait(d, length)
+        drive(d, square(40, 0.1), t)
+
+    mixed = pulse.simulate(pulse.compile(offset_by_tau, device=dev).lower(q, p, tau))
+    reference = pulse.simulate(pulse.compile(fixed, device=dev).lower(q, p))
+    np.testing.assert_allclose(mixed.density_matrix, reference.density_matrix, atol=1e-9)
