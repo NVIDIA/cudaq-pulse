@@ -48,10 +48,8 @@ jobs:
 
       - name: Build
         run: |
-          uv run --no-sync cmake -S . -B build/dev -G Ninja \
-            -DCUDAQ_PULSE_BUILD_TESTS=ON \
-            -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
-          uv run --no-sync cmake --build build/dev
+          uv run --no-sync cmake --preset dev
+          uv run --no-sync cmake --build --preset dev
 
       - name: Restore the example database
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

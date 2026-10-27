@@ -14,8 +14,6 @@ pulse clock. A *device* is a target together with a *layout*, which maps
 the qudit numbering a program uses to the target's carriers. Both are
 read-only.
 
-.. :spellcheck-disable:
-
 .. code-block:: python
 
    import cudaq_pulse as pulse
@@ -31,8 +29,6 @@ read-only.
    chip.qubit_freq[0]                 # 0-1 frequency of qudit 0, in Hz
    chip.transition_freq[0, 1, 2]      # 1-2 frequency of qudit 0
    chip.qubit_freq[0] = 5.01e9        # ValueError: assignment destination is read-only
-
-.. :spellcheck-enable:
 
 A config is a mapping (or a JSON file of one) with ``"target"``, a
 registered target name or a ``cudaq_pulse.targets.TargetDescription``, and optionally
@@ -61,14 +57,10 @@ The process target
 A script can leave the choice of device to the command line with a *process
 target*:
 
-.. :spellcheck-disable:
-
 .. code-block:: bash
 
    CUDAQ_PULSE_TARGET=transmon_krinner_17q python script.py
    python -m cudaq_pulse --target transmon_generic:4 script.py --script-args
-
-.. :spellcheck-enable:
 
 The launcher sets ``CUDAQ_PULSE_TARGET`` for the script and passes the
 script's own arguments through unparsed. ``pulse.get_device()`` with no

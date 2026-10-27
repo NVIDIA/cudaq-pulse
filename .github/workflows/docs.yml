@@ -26,6 +26,7 @@ permissions:
 
 jobs:
   build:
+    name: docs (build)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -41,10 +42,8 @@ jobs:
 
       - name: Build
         run: |
-          uv run --no-sync cmake -S . -B build/docs -G Ninja \
-            -DCUDAQ_PULSE_BUILD_DOCS=ON \
-            -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
-          uv run --no-sync cmake --build build/docs --target pulse-docs
+          uv run --no-sync cmake --preset docs
+          uv run --no-sync cmake --build --preset docs
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

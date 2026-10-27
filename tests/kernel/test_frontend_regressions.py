@@ -75,7 +75,7 @@ def test_empty_closure_cell_raises():
         @pulse.kernel
         def k(q0):
             d0, t0 = get_drive_line(q0)
-            drive(d0, square(10, late), t0)
+            drive(d0, square(10, late), t0)  # pyright: ignore[reportUndefinedVariable]
 
         return k
 

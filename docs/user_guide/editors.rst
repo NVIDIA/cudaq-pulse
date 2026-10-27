@@ -55,13 +55,9 @@ mypy and ruff take no names from an installed package, so they report the
 bare names as undefined until they are told about them, once per project.
 In the directory that holds your configuration, run:
 
-.. :spellcheck-disable:
-
 .. code-block:: bash
 
    python -m cudaq_pulse.doctor --setup-editor
-
-.. :spellcheck-enable:
 
 It finds the configuration each tool reads (``mypy.ini``, ``.mypy.ini``,
 ``[tool.mypy]`` in ``pyproject.toml`` or ``[mypy]`` in ``setup.cfg`` for

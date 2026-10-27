@@ -567,7 +567,7 @@ class TestErrors:
 
         def bad_kernel(q0):
             d0, t0 = get_drive_line(q0)
-            unknown_function_xyz(d0)  # noqa: F821
+            unknown_function_xyz(d0)  # pyright: ignore[reportUndefinedVariable]  # noqa: F821
 
         emitter = compile_kernel_bytecode(bad_kernel)
         with pytest.raises(CompilationError):
