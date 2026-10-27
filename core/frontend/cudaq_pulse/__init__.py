@@ -23,6 +23,8 @@ Usage::
 
 The kernel language (``drive``, ``gaussian``, ``get_drive_line``, ...) lives
 in ``cudaq_pulse.ops``; inside a ``@pulse.kernel`` its names are used bare.
+``pulse.cycles_on(line, n)`` rounds a length onto the grid of the line's
+controller, for controllers whose clock is slower than the program's.
 Compiler types (``CompileMetrics``, ``ScheduledEvent``, ``MachineModel``,
 ``DEFAULT_PASSES``) are in ``cudaq_pulse.compiler``, target descriptions and
 calibrations in ``cudaq_pulse.targets``. ``pulse.classical`` declares the
@@ -38,6 +40,8 @@ from typing import TYPE_CHECKING
 
 from . import _build_config
 from . import ops as ops
+from ._clocks import Rounding as Rounding
+from ._clocks import cycles_on as cycles_on
 from ._device import Device as Device
 from ._device import DeviceMismatchError as DeviceMismatchError
 from ._device import NoDeviceError as NoDeviceError
@@ -127,6 +131,8 @@ __all__ = [
     "NoDeviceError",
     "DeviceMismatchError",
     "GpuRuntimeError",
+    "cycles_on",
+    "Rounding",
     "viz",
     "classical",
     "controller",

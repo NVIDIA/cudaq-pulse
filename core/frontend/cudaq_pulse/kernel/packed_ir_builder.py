@@ -270,6 +270,9 @@ class PackedIRBuilder:
         # Resolves a classical function's link (a name or an id) to its id;
         # compile() sets it from the machine model.
         self.link_id: Callable[[Any], int] = _link_without_machine
+        # The grid of a (role, qudit) line, in program cycles; compile() sets
+        # it when a controller runs a coarser clock. None: every line is 1.
+        self.line_grid: Callable[[str, int], int] | None = None
         self._classical_index: dict[int, int] = {}
         self._scope: list[int] = []
         # Loops and branch arms open now, as (id, is_loop): where a future

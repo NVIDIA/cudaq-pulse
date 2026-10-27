@@ -41,6 +41,7 @@ import types
 from collections.abc import Callable, Iterator, Sequence
 from typing import Any, NoReturn
 
+from .. import _clocks
 from ..classical import ClassicalFunction
 from . import _bytecode_normalize as bc
 from . import _classical
@@ -155,6 +156,34 @@ def _extract_closures(fn: Any) -> dict[str, Any]:
 _PULSE_FUNCTIONS: dict[Any, str] = {}
 _SUBMIT = ClassicalFunction.submit
 _RESULT = _classical.Future.result
+_CYCLES_ON = _clocks.cycles_on
+
+
+def _cycles_on(builder: Any, args: list[StackVal], kwargs: dict[str, StackVal] | None) -> int:
+    """``cycles_on(line, n, rounding)`` while tracing: a number, from the
+    grid of the line's controller."""
+    line, n, rounding = _bound(_CYCLES_ON, args, kwargs or {}).args
+    if not isinstance(line, IRValue) or line.vtype not in ("drive_line", "readout_line"):
+        raise CompilationError(
+            f"cycles_on() takes a line from get_drive_line or get_readout_line, got {line!r}"
+        )
+    if is_symbolic(n):
+        names = tuple(dict.fromkeys(_parameter_names(n)))
+        raise SymbolicValueError(
+            f"cycles_on() needs a length known while the kernel compiles; it depends on "
+            f"{', '.join(map(repr, names))}",
+            names,
+            "a cycles_on() length",
+        )
+    grid_of = getattr(builder, "line_grid", None)
+    grid = 1
+    if grid_of is not None:
+        qudit = getattr(builder, "_line_qubit", {}).get(line.vid, -1)
+        grid = grid_of(line.vtype.removesuffix("_line"), qudit)
+    try:
+        return _clocks.round_on_grid(n, grid, rounding)
+    except ValueError as e:
+        raise CompilationError(str(e)) from None
 
 
 def _load_pulse_functions() -> None:
@@ -2331,6 +2360,9 @@ class PulseIREmitter:
             if kwargs:
                 call_args = _bind_positional(callable_val, call_args, kwargs)
             self._push_pulse_results(op_name, call_args)
+            return
+        if callable_val is _CYCLES_ON:
+            self.stack.append(_cycles_on(self.b, call_args, kwargs))
             return
 
         # Calls to classical functions: fn.submit(...) and future.result().

@@ -36,6 +36,7 @@ from typing import Any
 
 import numpy as np
 
+from .. import _clocks
 from .._errors import NotFoundError, UnsupportedError, _CallTimeoutError
 from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
 from . import ClassicalFunction, Link, wire
@@ -98,11 +99,13 @@ def manifest(lowered: Any) -> dict[str, Any]:
 
 def export(lowered: Any) -> dict[str, Any]:
     """A compiled kernel for a controller emulator: schedule, epochs, calls,
-    links and manifest, as JSON-serializable data. Times are in clock cycles;
-    each event's ``epoch_start_cycles`` is the static start of its epoch, which
-    moves at run time by the lengths of the run-time waits before it on its
-    lines. An epoch's shift adds to that of the epoch it follows, the one
-    before it unless it names another in ``after``."""
+    links and manifest, as JSON-serializable data. Times are in clock cycles
+    of the controller, at ``clock_ghz`` (with ``program_clock_ghz`` when that
+    is not the program clock, as in ``cudaq_pulse.controller``); each event's
+    ``epoch_start_cycles`` is the static start of its epoch, which moves at
+    run time by the lengths of the run-time waits before it on its lines. An
+    epoch's shift adds to that of the epoch it follows, the one before it
+    unless it names another in ``after``."""
     epochs, after = lowered._epochs()
     starts = [e.start_cycles for e in epochs]
     epoch_of = lowered._event_epochs(syncs=False)
@@ -122,7 +125,7 @@ def export(lowered: Any) -> dict[str, Any]:
             }
         )
     machine = lowered.options.machine
-    return {
+    data = {
         "format": FORMAT,
         "clock_ghz": lowered.target.clock_ghz,
         "links": {
@@ -142,6 +145,15 @@ def export(lowered: Any) -> dict[str, Any]:
         ],
         "manifest": manifest(lowered),
     }
+    clocks = _clocks.plan(machine.controller, lowered.target.clock_ghz, machine.reference_clock_ghz)
+    if clocks is None:
+        return data
+    own = clocks.controllers[0]
+    if own.ratio != 1:
+        data = _clocks.own_cycles(data, own)
+        data["clock_ghz"] = own.clock_ghz
+    keys = _clocks.clock_keys(clocks, own)
+    return {"format": FORMAT, "clock_ghz": data["clock_ghz"], **keys, **data}
 
 
 # ── Transport and channels ───────────────────────────────────────────────────

@@ -71,6 +71,7 @@
 
 #include "cudaq-pulse/Analysis/Affine.h"
 #include "cudaq-pulse/Analysis/ClassicalTiming.h"
+#include "cudaq-pulse/Analysis/LineGrid.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
 
@@ -578,10 +579,11 @@ struct Extrapolation {
 /// every block argument available at time 0.
 class Scheduler {
 public:
-  Scheduler(mlir::Region &region, Resources resources, bool classical = false,
-            const Timelines *timelines = nullptr)
+  Scheduler(mlir::Region &region, Resources resources, bool classical,
+            const pulse::LineGrid &grid, const Timelines *timelines = nullptr)
       : region(&region), resources(resources), classical(classical),
-        lanesPer(timelines && timelines->count > 1 ? timelines : nullptr) {
+        lanesPer(timelines && timelines->count > 1 ? timelines : nullptr),
+        grid(grid) {
     auto count = static_cast<size_t>(isolated() ? lanesPer->count : 1);
     floors.assign(count, 0);
     ends.assign(count, 0);
@@ -732,6 +734,18 @@ private:
     if (mlir::isa<pulse::ToneType, classical::LinkType>(type))
       return Carried::Tone;
     return timed ? Carried::Timed : Carried::Untimed;
+  }
+
+  // ── Grids ─────────────────────────────────────────────────────────────
+
+  /// The grid every line of `sync` is on.
+  int64_t syncGrid(pulse::SyncOp sync) {
+    if (!grid.perLine())
+      return grid.lcm();
+    int64_t step = 1;
+    for (mlir::Value line : sync.getLines())
+      step = std::lcm(step, grid.of(line, lines));
+    return step;
   }
 
   // ── Forward (ASAP) ────────────────────────────────────────────────────
@@ -908,6 +922,9 @@ private:
         return start;
       }
       start += backward ? -shift : shift;
+      if (grid.enabled())
+        start = backward ? pulse::LineGrid::roundDown(start, grid.lcm())
+                         : pulse::LineGrid::roundUp(start, grid.lcm());
       lanesBound = true;
     }
   }
@@ -995,13 +1012,18 @@ private:
         if (op->hasAttr("classical.variable"))
           start = std::max(start, endOf(t));
       }
+      int64_t step = grid.enabled() ? grid.of(op->getOperand(0), lines) : 1;
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op)) {
         auto &lanes =
             mlir::isa<pulse::DriveOp>(op) ? driveLanes[t] : readoutLanes[t];
         auto lane = std::min_element(lanes.begin(), lanes.end());
         start = std::max(start, *lane);
+        if (step > 1)
+          start = pulse::LineGrid::roundUp(start, step);
         *lane = start + durationOf(op) + resources.switchPenalty;
       }
+      if (step > 1)
+        start = pulse::LineGrid::roundUp(start, step);
       place(op, start, t);
       if (classical && op->hasAttr("classical.variable"))
         floors[t] = std::max(floors[t], start + durationOf(op));
@@ -1016,6 +1038,8 @@ private:
       int64_t time = floorOf(t);
       for (mlir::Value line : sync.getLines())
         time = std::max(time, ready(line));
+      if (grid.enabled())
+        time = pulse::LineGrid::roundUp(time, syncGrid(sync));
       for (mlir::Value result : sync.getResults())
         readyAt[result] = time;
       noteEnd(time, t);
@@ -1052,6 +1076,8 @@ private:
     for (auto [input, offset] : llvm::zip(inputs, shape.in))
       if (offset >= 0)
         start = std::max(start, ready(input) - offset);
+    if (grid.enabled())
+      start = pulse::LineGrid::roundUp(start, grid.lcm());
     if (classical)
       start = takeBlockSlots(block, start, /*backward=*/false);
     record(block, start);
@@ -1118,6 +1144,7 @@ private:
       bool shifted = uniformShift(carried, next, kinds, shift);
       bool steady = !resources.enabled && !lanesBound && shifted &&
                     lastShift == shift && shift >= 0 &&
+                    shift % grid.lcm() == 0 &&
                     slotsHoldSteadyState(loop, shift);
       for (auto [before, after, kind, bound] :
            llvm::zip(carried, next, kinds, outsideOf))
@@ -1374,13 +1401,18 @@ private:
       }
       if (mlir::Value tone = toneResult(op))
         end = std::min(end, late(tone));
+      int64_t step = grid.enabled() ? grid.of(op->getOperand(0), lines) : 1;
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op)) {
         auto &lanes = isReadout ? readoutLanes[t] : driveLanes[t];
         auto lane = std::max_element(lanes.begin(), lanes.end());
         end = std::min(end, *lane);
+        if (step > 1)
+          end = pulse::LineGrid::roundDown(end - duration, step) + duration;
         *lane = end - duration - resources.switchPenalty;
       }
       int64_t start = end - duration;
+      if (step > 1)
+        start = pulse::LineGrid::roundDown(start, step);
       record(op, start);
       armStart = std::min(armStart, start);
       bound(op->getOperand(0), start);
@@ -1399,6 +1431,8 @@ private:
       int64_t time = endOf(timelineOf(op));
       for (mlir::Value result : sync.getResults())
         time = std::min(time, late(result));
+      if (grid.enabled())
+        time = pulse::LineGrid::roundDown(time, syncGrid(sync));
       for (mlir::Value line : sync.getLines())
         bound(line, time);
       armStart = std::min(armStart, time);
@@ -1438,6 +1472,8 @@ private:
       else
         bound(inputs[source], needed);
     }
+    if (grid.enabled())
+      start = pulse::LineGrid::roundDown(start, grid.lcm());
     if (classical)
       start = takeBlockSlots(block, start, /*backward=*/true);
     record(block, start);
@@ -1493,6 +1529,7 @@ private:
       bool shifted = uniformShift(carried, next, kinds, shift);
       bool steady = !resources.enabled && !lanesBound && shifted &&
                     lastShift == shift && shift <= 0 &&
+                    shift % grid.lcm() == 0 &&
                     slotsHoldSteadyState(loop, -shift);
       lastShift = shifted ? std::optional<int64_t>(shift) : std::nullopt;
       llvm::SmallVector<int64_t> previous = std::move(carried);
@@ -1606,6 +1643,9 @@ private:
   std::map<std::pair<mlir::Operation *, llvm::SmallVector<int64_t, 2>>, int64_t>
       forwardStarts;
   llvm::SmallVector<Extrapolation> forwardExtrapolations;
+  // Lines whose controllers start operations only every few program cycles.
+  pulse::LineGrid grid;
+  pulse::AllocationTracer lines;
 };
 
 // ── Writing the schedule ─────────────────────────────────────────────────
@@ -2126,11 +2166,12 @@ static void inlineScheduleBlock(pulse::ScheduleBlockOp block) {
 
 static mlir::LogicalResult
 scheduleRegion(mlir::Region &region, mlir::Operation *root, Resources resources,
-               bool isAlap, bool classical, const Timelines &timelines) {
+               bool isAlap, bool classical, const Timelines &timelines,
+               const pulse::LineGrid &grid) {
   for (pulse::ScheduleBlockOp block : outermostBlocks(region)) {
     if (mlir::failed(scheduleRegion(block.getBody(), block, Resources{},
                                     block.getPolicy() == "alap", classical,
-                                    timelines)))
+                                    timelines, grid)))
       return mlir::failure();
     writeShape(block);
   }
@@ -2138,7 +2179,7 @@ scheduleRegion(mlir::Region &region, mlir::Operation *root, Resources resources,
   // Each round either writes an affine schedule or removes an iteration from
   // a loop, so this terminates.
   while (true) {
-    Scheduler scheduler(region, resources, classical, &timelines);
+    Scheduler scheduler(region, resources, classical, grid, &timelines);
     if (mlir::failed(scheduler.forward()))
       return mlir::failure();
     if (isAlap) {
@@ -2151,7 +2192,7 @@ scheduleRegion(mlir::Region &region, mlir::Operation *root, Resources resources,
                             [](const Sample &s) { return s.start >= 0; });
       });
       if (!feasible) {
-        scheduler = Scheduler(region, resources, classical, &timelines);
+        scheduler = Scheduler(region, resources, classical, grid, &timelines);
         if (mlir::failed(scheduler.forward()))
           return mlir::failure();
       }
@@ -2222,8 +2263,9 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
   // Ops that read a value a measurement selects wait for it, as ops that
   // read an answer do.
   bool data = classical || function->hasAttr("pulse.selected_values");
+  pulse::LineGrid grid(function->getParentOfType<mlir::ModuleOp>());
   return scheduleRegion(function.getBody(), function, resources, isAlap, data,
-                        timelines);
+                        timelines, grid);
 }
 
 template <bool IsAlap>

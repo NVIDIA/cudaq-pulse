@@ -17,6 +17,14 @@ measurement-conditioned branches it lies in, and the epochs and calls of
 ``Lowered.export_emulation()``. The schedule is final: a backend places each
 event at its ``start_cycles`` and does not schedule again.
 
+Times count the controller's own clock cycles, at ``clock_ghz``. When the
+controller's clock is not the program clock, the export also gives
+``program_clock_ghz``, every time is converted to its cycles (exactly for
+operations on its lines, which are on its grid, and rounded up for the
+others) and every waveform's time parameters are scaled with them. With a
+shared reference clock (``MachineModel.reference_clock_ghz``) it also gives
+``reference_clock_ghz``.
+
 The number after the slash is the format's major version. Within one version,
 new keys and new event kinds may be added, so a backend ignores keys it does
 not know and refuses event kinds it does not know; a change that removes or
@@ -50,7 +58,7 @@ from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from . import _controller_cost
+from . import _clocks, _controller_cost
 from ._controller_cost import OP_CLASSES, FunctionCost
 from .kernel.ir_builder import CompilationError
 
@@ -118,9 +126,14 @@ class ControllerLimitError(CompilationError):
 
 @dataclass(frozen=True)
 class ControllerLimits:
-    """What a controller can play; every limit is in clock cycles.
+    """What a controller can play; every limit is in its own clock cycles.
 
-    ``clock_ghz``: the only clock the controller runs at (``None``: any).
+    ``clock_ghz``: the controller's clock (``None``: the program clock,
+    ``Device.clock_ghz``). It must be a whole-cycle ratio of the program
+    clock: at ``a / b`` of it (in lowest terms) the controller starts and
+    times operations every ``b`` program cycles, so every operation on its
+    lines must start and last a multiple of ``b`` (``pulse.cycles_on``
+    rounds a length onto that grid), and its program counts its own cycles.
     ``issue_cycles`` and ``min_wait_cycles``: two operations on one line start
     exactly ``issue_cycles`` apart, or at least ``issue_cycles + min_wait_cycles``
     apart, because the controller issues one instruction per ``issue_cycles``
@@ -373,12 +386,17 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
     from .classical.emulation import export as emulation
 
     lines, events = _walk(lowered)
-    limits = lowered.options.machine.controller
+    machine = lowered.options.machine
+    limits = machine.controller
     if limits is not None:
-        violations = _violations(lowered, events, limits)
+        violations = _violations(lowered, events, limits, lines)
         if violations:
             raise ControllerLimitError(violations)
-    clock = lowered.target.clock_ghz
+    clocks = _clocks.plan(limits, lowered.target.clock_ghz, machine.reference_clock_ghz)
+    own = None if clocks is None else clocks.controllers[0]
+    if own is not None and own.ratio != 1:
+        events = _clocks.own_cycles(events, own)
+    clock = lowered.target.clock_ghz if own is None else own.clock_ghz
     if sample_rate_ghz is not None:
         ratio = sample_rate_ghz / clock
         per_cycles = round(ratio)
@@ -400,6 +418,7 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
         "format": FORMAT,
         "target": lowered.target.name,
         "clock_ghz": clock,
+        **({} if clocks is None or own is None else _clocks.clock_keys(clocks, own)),
         "schedule": lowered.options.schedule,
         "sample_rate_ghz": sample_rate_ghz,
         "qudits": list(lowered.qudits),
@@ -444,14 +463,20 @@ def _pairs(
 
 
 def _violations(
-    lowered: Lowered, events: Sequence[Mapping[str, Any]], limits: ControllerLimits
+    lowered: Lowered,
+    events: Sequence[Mapping[str, Any]],
+    limits: ControllerLimits,
+    lines: Sequence[Mapping[str, Any]],
 ) -> list[str]:
     found: list[str] = []
-    clock = lowered.target.clock_ghz
-    if limits.clock_ghz is not None and abs(clock - limits.clock_ghz) > 1e-12:
-        found.append(
-            f"the target's clock is {clock} GHz; the controller runs at {limits.clock_ghz} GHz"
-        )
+    clocks = _clocks.plan(
+        limits, lowered.target.clock_ghz, lowered.options.machine.reference_clock_ghz
+    )
+    if clocks is not None:
+        found.extend(_clocks.off_grid(clocks, lines, events))
+        own = clocks.controllers[0]
+        if own.ratio != 1:
+            events = _clocks.own_cycles(list(events), own)
     timed = [e for e in events if e["kind"] in _PLAYED and e["end_cycles"] is not None]
     if limits.max_events is not None and len(timed) > limits.max_events:
         found.append(
@@ -544,7 +569,8 @@ def check(lowered: Lowered, limits: ControllerLimits | None = None) -> list[str]
     limits = limits if limits is not None else lowered.options.machine.controller
     if limits is None:
         return []
-    return _violations(lowered, _walk(lowered, values=False)[1], limits)
+    lines, events = _walk(lowered, values=False)
+    return _violations(lowered, events, limits, lines)
 
 
 # ── What the classical functions cost ───────────────────────────────────────

@@ -25,6 +25,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from . import _clocks
 from ._errors import InvalidValueError
 from ._native import PulseModuleBuilder
 from .classical import Link
@@ -190,7 +191,10 @@ class MachineModel:
     a program uses that is not listed gets ``Link()``; an unknown name is an
     error. ``controller`` gives the limits of the controller the program is
     for (``cudaq_pulse.controller.ControllerLimits``); every scheduled
-    program is checked against them.
+    program is checked against them. ``reference_clock_ghz`` is a clock the
+    controllers share, if they do: each controller's clock must be a whole
+    multiple of it, and without it each controller's start is known only to
+    within one of its own cycles.
     """
 
     max_concurrent_drives: int = 4
@@ -199,6 +203,7 @@ class MachineModel:
     line_switch_penalty_cycles: int = 0
     links: Mapping[int | str, Link] = field(default_factory=dict)
     controller: ControllerLimits | None = None
+    reference_clock_ghz: float | None = None
     link_names: Mapping[str, int] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -209,6 +214,10 @@ class MachineModel:
                 raise TypeError(
                     f"MachineModel.controller must be a ControllerLimits, got {self.controller!r}"
                 )
+        if self.reference_clock_ghz is not None and not self.reference_clock_ghz > 0:
+            raise InvalidValueError(
+                f"MachineModel.reference_clock_ghz must be positive, got {self.reference_clock_ghz}"
+            )
         if isinstance(self.links, _Links):
             # Another model's links, as dataclasses.replace passes them: by
             # id, with their names beside them.
@@ -255,6 +264,7 @@ class MachineModel:
                     self.links,
                     tuple(sorted(by_name.items())),
                     self.controller,
+                    self.reference_clock_ghz,
                 )
             ),
         )
@@ -273,6 +283,7 @@ class MachineModel:
             dict(self.links),
             dict(self.link_names),
             self.controller,
+            self.reference_clock_ghz,
         ) == (
             other.max_concurrent_drives,
             other.max_concurrent_readouts,
@@ -281,6 +292,7 @@ class MachineModel:
             dict(other.links),
             dict(other.link_names),
             other.controller,
+            other.reference_clock_ghz,
         )
 
     def link_id(self, link: int | str) -> int:
@@ -567,13 +579,15 @@ class _WaitLength:
 class _WaitLengths:
     """The variable waits of a module, checked together on every call."""
 
-    __slots__ = ("ok", "waits")
+    __slots__ = ("grid", "ok", "waits")
 
-    def __init__(self, waits: Sequence[tuple[Any, ...]], kernel: str) -> None:
+    def __init__(self, waits: Sequence[tuple[Any, ...]], kernel: str, grid: int = 1) -> None:
         self.waits = tuple(
             _WaitLength(wait[0], wait[1], wait[2], kernel, wait[3] if len(wait) > 3 else None)
             for wait in waits
         )
+        # Lengths a controller with a coarser clock than the program's can time.
+        self.grid = grid
         # floor(x + 0.5) is in [lowest, highest] exactly when
         # lowest <= x + 0.5 < highest + 1, which NaN fails; without a lowest,
         # -1e400 (minus infinity) < x + 0.5 also fails for minus infinity.
@@ -582,6 +596,12 @@ class _WaitLengths:
             f"{(_MAX_WAIT_CYCLES if w.highest is None else w.highest) + 1}"
             for w in self.waits
         )
+        if grid > 1:
+            tests += "".join(
+                f" and ({w.source} + 0.5) // 1 % {grid} == 0"
+                for w in self.waits
+                if w.lowest is not None
+            )
         self.ok = eval(f"lambda a: {tests}", {"__builtins__": {}})
 
     def check(self, values: Sequence[float]) -> None:
@@ -592,6 +612,15 @@ class _WaitLengths:
             pass
         for wait in self.waits:
             wait.check(values)
+        for wait in self.waits:
+            cycles = math.floor(wait.length(values) + 0.5)
+            if wait.lowest is not None and cycles % self.grid:
+                lower = cycles // self.grid * self.grid
+                raise InvalidValueError(
+                    f"{wait.kernel}(): the wait length {wait.text} rounds to {cycles} clock "
+                    f"cycles, which its controller cannot time: it times every {self.grid} "
+                    f"cycles, so the nearest lengths are {lower} and {lower + self.grid}"
+                )
 
 
 class Lowered:
@@ -901,6 +930,8 @@ def build(
     metrics = CompileMetrics(target=target.name)
     name = getattr(fn, "__name__", "kernel")
     t0 = time.perf_counter()
+    machine = options.machine
+    clocks = _clocks.plan(machine.controller, target.clock_ghz, machine.reference_clock_ghz)
     builder = PackedIRBuilder(
         name=name,
         clock_ghz=target.clock_ghz,
@@ -908,8 +939,10 @@ def build(
         flatten_schedules=options.flatten_schedules,
     )
     builder.unroll_threshold = options.unroll_threshold
-    builder.link_id = options.machine.link_id
+    builder.link_id = machine.link_id
     builder.locate_structural = frozenset(parameters)
+    if clocks is not None:
+        builder.line_grid = clocks.grid_of
     builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
     needed = tuple(sorted(builder.structural & set(parameters)))
     if needed:
@@ -956,6 +989,10 @@ def build(
         )
     if links:
         module.set_attributes(options.machine.links_attribute(links))
+    if clocks is not None:
+        grids = clocks.attributes(builder.n_qubits)
+        if grids is not None:
+            module.set_attributes(grids)
     metrics.ffi_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
@@ -991,7 +1028,11 @@ def build(
         qudits=builder.used_qubits or qudits,
         options=options,
         scheduled=scheduled,
-        waits=_WaitLengths(builder.variable_waits, name) if builder.variable_waits else None,
+        waits=(
+            _WaitLengths(builder.variable_waits, name, 1 if clocks is None else clocks.lcm)
+            if builder.variable_waits
+            else None
+        ),
     )
     lowered.classical = tuple(builder.classical)
     lowered.runtime_selects = runtime_selects

@@ -162,7 +162,9 @@ def sync(*targets: Line) -> None:
     """Synchronize multiple lines to a common time point.
 
     All lines are padded to the latest time among them before
-    subsequent operations proceed.
+    subsequent operations proceed. When their controllers start operations
+    only every few program cycles, they meet at the next time on every
+    line's grid.
 
     Args:
         targets: Two or more drive/readout lines to synchronize.

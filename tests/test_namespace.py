@@ -45,6 +45,8 @@ TOP_LEVEL = {
     "NoDeviceError",
     "DeviceMismatchError",
     "GpuRuntimeError",
+    "cycles_on",
+    "Rounding",
     "viz",
     "classical",
     "controller",
