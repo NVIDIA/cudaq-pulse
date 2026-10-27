@@ -27,6 +27,26 @@ Export and limits
 
 .. autofunction:: cudaq_pulse.controller.shape_key
 
+What classical functions cost
+-----------------------------
+
+.. autofunction:: cudaq_pulse.controller.resources
+
+.. autofunction:: cudaq_pulse.controller.analyze
+
+.. autoclass:: cudaq_pulse.controller.ResourceReport
+   :members:
+
+.. autoclass:: cudaq_pulse.controller.FunctionResources
+   :members:
+
+.. autoclass:: cudaq_pulse.controller.LinkUsage
+
+.. autoclass:: cudaq_pulse.controller.FunctionCost
+   :members:
+
+.. autodata:: cudaq_pulse.controller.OP_CLASSES
+
 Backends
 --------
 

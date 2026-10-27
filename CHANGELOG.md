@@ -13,6 +13,34 @@ request that makes it.
 
 ### Added
 
+- **Calibration on the controller.** `cudaq_pulse.classical.calibration`
+  adds the estimators of millisecond on-controller calibration in controller
+  form: adaptive T1 tracking with assignment errors (`adaptive_t1_update`,
+  `adaptive_t1_wait`), the frequency binary search
+  (`binary_search_update`, `binary_search_wait`, `binary_search_phase`),
+  the analytical decay estimator (`decay_time`) and the sparse phase
+  estimator (`sparse_phase`, `pi_train_amplitude`, `ramsey_detuning`).
+  `examples/23_calibration_protocol.py` runs the whole calibration chain as
+  one program with its estimators on the controller link;
+  `benchmarks/classical/calibration_protocol.py` checks it end to end over
+  many seeds against the published numbers.
+- **What classical functions cost a controller.** `controller.resources()`
+  reports each classical function's operations by class (read from its
+  body), state in bytes, compute time against `max_latency_ns`, and calls,
+  slots and buffer bytes per shot, and whether its body is in controller
+  form (fixed-size state, bounded loops, no allocation or exceptions).
+  `ControllerLimits` gains `op_cycles`, `compute_clock_ghz`, `max_ops`,
+  `state_bytes`, `max_calls_per_shot`, `buffer_bytes`, `controller_form`
+  and `compute_links`; compiling fails with `ControllerLimitError` when a
+  program exceeds them.
+- **Faster simulation of long programs.** Idle waits and square pulses in
+  their frame are propagated exactly, at a cost independent of their
+  length, and driven stretches on registers of up to four levels by RK4
+  maps built at once (a 100 us T1 shot: 104 s to under 1 ms).
+  `simulate(paths="sampled")` follows only the paths the shots take, so a
+  program that measures many times in one shot costs time linear in its
+  measurements. Finding the next measurement and exporting for a controller
+  are now linear in the program's length.
 - **Controller backends.** `Lowered.export_controller()` exports a
   scheduled kernel for an out-of-tree controller backend
   (`cudaq-pulse.controller/1`): every drive, readout, wait and classical call
@@ -57,6 +85,10 @@ request that makes it.
 
 ### Fixed
 
+- A number computed from a float parameter or an answer, first used inside
+  a branch (a called kernel's conditional pulse) and then after it, failed
+  module verification ("does not dominate this use"); it is now made again
+  after the branch.
 - A kernel that called a method of a global object (`fn.submit(...)`,
   `cfg.scaled(...)`) was compiled again on every call; it is now cached.
 - Type checkers and editors reported `@pulse.classical(...)` as "Module is

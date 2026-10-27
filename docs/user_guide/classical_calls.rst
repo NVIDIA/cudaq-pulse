@@ -382,6 +382,77 @@ state in ``plant.truth``. ``plant.target()`` is the device now, for
 ``p_rabi`` give the standard experiments' outcome probabilities directly, for
 loops of many iterations.
 
+A calibration chain on the controller
+-------------------------------------
+
+``examples/23_calibration_protocol.py`` runs the millisecond calibration
+chain of Marciniak et al. (arXiv:2602.11912) as one program whose estimators
+are classical functions on the controller's link, so nothing goes to a host
+or a GPU between steps: readout assignment errors, the drive frequency from
+Ramsey shots at three phases (sparse phase estimation), the pi and pi/2
+amplitudes from pulse trains at three amplitude scales, T1 from the
+analytical decay estimator at delays spaced by the last estimate, and T1
+again by the adaptive tracker of Berritta et al. (arXiv:2506.09576), whose
+prior is centred on the previous estimate and whose likelihood uses the
+measured assignment errors. Each step is a kernel that returns its
+estimator's answer, and the next step plays its pulses with it: the drive
+tone is shifted by the measured detuning, the trains use the corrected
+amplitudes, the delays come from the T1 estimate.
+
+The estimators in ``cudaq_pulse.classical.calibration`` that the chain uses
+(``adaptive_t1_update``, ``binary_search_update``, ``decay_time``,
+``sparse_phase`` and their helpers) are in *controller form*: a fixed
+number of scalars of state, closed-form arithmetic, branches and loops of a
+trip count fixed when the program compiles, and no allocation or
+exceptions. An estimate that cannot be formed is a result
+(``decay_time`` returns whether it formed one), not an error.
+
+Compile the chain with ALAP scheduling (the default). A pulse just before a
+variable wait then ends where the wait starts, so the qubit decays for the
+answer's length; under ASAP the excitation plays as early as it can, and
+the qubit also decays through the call's latency.
+
+A program that measures hundreds of times in one shot is simulated one
+path per shot: ``pulse.simulate(lowered, shots=n, paths="sampled")``. Idle
+waits and square pulses are propagated exactly, so a shot's cost does not
+grow with its waits.
+
+What it costs the controller
+----------------------------
+
+``cudaq_pulse.controller.resources(lowered)`` reads each classical
+function's body once and reports its operations by class on its longest
+path, how many it holds, its state in bytes, its compute time against its
+``max_latency_ns``, and its calls, slots and bytes per shot. The limits come
+from ``ControllerLimits``, for the functions on its ``compute_links``:
+
+.. :spellcheck-disable:
+
+.. code-block:: python
+
+   from cudaq_pulse import controller
+
+   limits = controller.ControllerLimits(
+       op_cycles={"div": 8, "sqrt": 8, "exp": 12, "log": 12, "trig": 12},
+       compute_clock_ghz=0.25,       # 4 ns per cycle
+       controller_form=True,
+       max_ops=256,
+       state_bytes=512,
+   )
+   machine = MachineModel(links={"controller": Link(fixed_ns=4)}, controller=limits)
+   lowered = pulse.compile(chain, device=dev, machine=machine).lower(q)
+   print(controller.resources(lowered))
+
+.. :spellcheck-enable:
+
+The report is a table: for the chain's adaptive T1 update, 47 operations
+(one ``exp``, one ``log``, eight divisions) and 0.5 us at these costs, called
+50 times per shot. A function that computes past its budget, holds too many
+operations or bytes, or (with ``controller_form=True``) uses a ``while``
+loop, a list or an exception fails to compile with ``ControllerLimitError``
+naming it, the limit and the line. Without any of these limits, compiling
+does not read function bodies.
+
 Running on hardware
 -------------------
 

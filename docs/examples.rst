@@ -91,6 +91,13 @@ Core Examples
      - ``20_adaptive_calibration.py``
      - A frequency binary search inside one shot, and tracking a drifting
        device's T1 and frequency between shots against its truth
+   * - 23
+     - ``23_calibration_protocol.py``
+     - A millisecond calibration chain run on the controller: readout errors,
+       Ramsey frequency, pi and pi/2 amplitudes, and T1 by the analytical
+       decay estimator and adaptive tracking, each step's answer setting the
+       next step's pulses; the frequency binary search; and what each
+       estimator costs the controller
 
 Hardware Target Examples
 ------------------------

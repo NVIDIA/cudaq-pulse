@@ -521,7 +521,7 @@ def adaptive_t1_update(
 ) -> tuple[float, float]:
     """The gamma posterior over Gamma = 1/T1 after one "excite, wait *wait*,
     measure" shot that read 1 (*excited*) or 0, through a readout that reads
-    |1> as 0 with probability *error_1to0* and |0> as 1 with *error_0to1*.
+    ``|1>`` as 0 with probability *error_1to0* and ``|0>`` as 1 with *error_0to1*.
 
     The prior is Gamma(shape k, rate theta), in the time unit of *wait*; the
     likelihood of reading 1 is ``error_0to1 + (1 - error_1to0 - error_0to1)
