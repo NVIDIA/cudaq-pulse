@@ -28,6 +28,18 @@ machine model, ``MachineModel(controller=ControllerLimits(...))``, it makes
 ``ControllerLimitError`` naming each violated limit, so that a program the
 controller cannot play fails at compile time. ``check`` returns the
 violations without raising.
+
+The limits also state what the controller can compute, for the classical
+functions it runs itself (those on its ``compute_links``): the cycles each
+class of operation takes, how many operations a function may hold, how many
+bytes of state, and how many calls and bytes of requests and answers one
+shot may use. ``resources`` reports, for every classical function of a
+program, an estimate of its operations by class (read from its body), its
+state in bytes, its compute time against its ``max_latency_ns`` and its
+calls, slots and buffer bytes per shot, and whether its body is in
+*controller form*: a fixed number of scalars of state, loops of a trip count
+known when the program compiles, no ``while``, recursion, allocation or
+exceptions. ``analyze`` does the same for one function on its own.
 """
 
 from __future__ import annotations
@@ -39,6 +51,8 @@ from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from . import _controller_cost
+from ._controller_cost import OP_CLASSES, FunctionCost
 from .kernel.ir_builder import CompilationError
 
 if TYPE_CHECKING:
@@ -48,10 +62,17 @@ if TYPE_CHECKING:
 
 __all__ = [
     "FORMAT",
+    "OP_CLASSES",
     "ControllerLimitError",
     "ControllerLimits",
+    "FunctionCost",
+    "FunctionResources",
+    "LinkUsage",
+    "ResourceReport",
+    "analyze",
     "check",
     "export",
+    "resources",
     "sample_waveform",
     "shape_key",
 ]
@@ -119,6 +140,21 @@ class ControllerLimits:
     "timeout"``); without, only waits that block or are budgeted are
     allowed.
     ``max_events``: the drives and readouts of one program.
+
+    What it computes, for the classical functions on ``compute_links`` (link
+    names or ids; by default the link named ``"controller"``):
+    ``op_cycles``: clock cycles per operation of each class of
+    ``OP_CLASSES`` (``add``, ``mul``, ``div``, ``compare``, ``branch``,
+    ``load``, ``convert``, ``popcount``, ``sqrt``, ``exp``, ``log``,
+    ``trig``; a class not
+    given takes one cycle), at ``compute_clock_ghz`` (``None``: the program's
+    clock); with them, a function's longest path must fit its
+    ``max_latency_ns``. ``max_ops``: the operations one function may hold.
+    ``state_bytes``: the bytes of arguments, results and locals one function
+    may hold. ``max_calls_per_shot`` and ``buffer_bytes``: the calls, and
+    the bytes of requests and answers, one shot may make.
+    ``controller_form``: every such function's body must be in controller
+    form. Without any of these, compiling does not read function bodies.
     """
 
     clock_ghz: float | None = None
@@ -132,6 +168,14 @@ class ControllerLimits:
     feedback_latency_vtu: int = 0
     max_events: int | None = None
     answer_timeouts: bool = True
+    compute_links: tuple[int | str, ...] = ("controller",)
+    op_cycles: Mapping[str, int] = field(default_factory=dict)
+    compute_clock_ghz: float | None = None
+    max_ops: int | None = None
+    state_bytes: int | None = None
+    max_calls_per_shot: int | None = None
+    buffer_bytes: int | None = None
+    controller_form: bool = False
 
     def __post_init__(self) -> None:
         if self.clock_ghz is not None and not self.clock_ghz > 0:
@@ -141,11 +185,36 @@ class ControllerLimits:
         for name in ("min_wait_vtu", "acquirer_hold_vtu", "feedback_latency_vtu"):
             if getattr(self, name) < 0:
                 raise ValueError(f"ControllerLimits.{name} cannot be negative")
-        for name in ("samples_per_vtu", "waveform_samples", "tones_per_line", "max_events"):
+        for name in (
+            "samples_per_vtu",
+            "waveform_samples",
+            "tones_per_line",
+            "max_events",
+            "max_ops",
+            "state_bytes",
+            "max_calls_per_shot",
+            "buffer_bytes",
+        ):
             value = getattr(self, name)
             if value is not None and value < 1:
                 raise ValueError(f"ControllerLimits.{name} must be positive or None")
+        if self.compute_clock_ghz is not None and not self.compute_clock_ghz > 0:
+            raise ValueError(
+                f"ControllerLimits.compute_clock_ghz must be positive, got {self.compute_clock_ghz}"
+            )
+        unknown = sorted(set(self.op_cycles) - set(OP_CLASSES))
+        if unknown:
+            raise ValueError(
+                f"ControllerLimits.op_cycles has unknown classes {unknown}; "
+                f"the classes are {', '.join(OP_CLASSES)}"
+            )
+        if any(int(v) < 0 for v in self.op_cycles.values()):
+            raise ValueError("ControllerLimits.op_cycles cannot be negative")
         object.__setattr__(self, "acquirers", MappingProxyType(dict(self.acquirers)))
+        object.__setattr__(
+            self, "op_cycles", MappingProxyType({k: int(v) for k, v in self.op_cycles.items()})
+        )
+        object.__setattr__(self, "compute_links", tuple(self.compute_links))
 
     def __hash__(self) -> int:
         return hash(
@@ -155,10 +224,24 @@ class ControllerLimits:
             )
         )
 
+    @property
+    def computes(self) -> bool:
+        """Whether any limit on what the controller computes is set."""
+        return bool(
+            self.op_cycles
+            or self.controller_form
+            or self.max_ops is not None
+            or self.state_bytes is not None
+            or self.max_calls_per_shot is not None
+            or self.buffer_bytes is not None
+        )
+
     def as_dict(self) -> dict[str, Any]:
         """The limits as JSON-serializable data."""
         data = {f.name: getattr(self, f.name) for f in fields(self)}
         data["acquirers"] = {str(k): v for k, v in sorted(self.acquirers.items())}
+        data["op_cycles"] = dict(sorted(self.op_cycles.items()))
+        data["compute_links"] = list(self.compute_links)
         return data
 
 
@@ -574,6 +657,8 @@ def _violations(
                     "the controller cannot stop waiting for an answer, so take it with "
                     "result() (no timeout_ns)"
                 )
+    if limits.computes:
+        found.extend(resources(lowered, limits).violations)
     return found
 
 
@@ -583,3 +668,322 @@ def check(lowered: Lowered, limits: ControllerLimits | None = None) -> list[str]
     if limits is None:
         return []
     return _violations(lowered, _walk(lowered, values=False)[1], limits)
+
+
+# ── What the classical functions cost ───────────────────────────────────────
+
+# A request and an answer carry a 24-byte header (classical.wire).
+_HEADER_BYTES = 24
+
+
+@dataclass(frozen=True)
+class FunctionResources:
+    """What one classical function costs, from ``resources`` or ``analyze``.
+
+    ``cost`` is its body's static cost (operations by class on the longest
+    path, size, locals, whether it is in controller form). ``state_bytes``
+    adds its arguments, results and locals; ``request_bytes`` and
+    ``answer_bytes`` are its messages with their headers. ``compute_ns`` is
+    the longest path's time at the limits' ``op_cycles`` and clock (``None``
+    without them), against ``max_latency_ns``. ``calls_per_shot`` counts its
+    executions in one shot of the program (0 from ``analyze``).
+    ``on_controller`` says whether it runs on the controller (its link is
+    one of the limits' ``compute_links``).
+    """
+
+    function: str
+    link: int | str
+    on_controller: bool
+    cost: FunctionCost
+    state_bytes: int
+    request_bytes: int
+    answer_bytes: int
+    max_latency_ns: float
+    compute_cycles: int | None
+    compute_ns: float | None
+    calls_per_shot: int = 0
+
+    @property
+    def margin_ns(self) -> float | None:
+        """How much of ``max_latency_ns`` the compute time leaves."""
+        return None if self.compute_ns is None else self.max_latency_ns - self.compute_ns
+
+
+@dataclass(frozen=True)
+class LinkUsage:
+    """One link's use in one shot: its calls, the most requests it holds
+    at once against its slots, its largest message against its slot size,
+    and the bytes of all its requests and answers."""
+
+    link: int | str
+    calls_per_shot: int
+    peak_in_flight: int
+    max_in_flight: int
+    largest_message_bytes: int
+    slot_bytes: int
+    bytes_per_shot: int
+
+
+@dataclass(frozen=True)
+class ResourceReport:
+    """What a program's classical functions cost the controller, per
+    function and per shot, and the limits it exceeds (``violations``).
+    ``str(report)`` is a table."""
+
+    functions: tuple[FunctionResources, ...]
+    links: tuple[LinkUsage, ...]
+    calls_per_shot: int
+    buffer_bytes: int
+    limits: ControllerLimits | None
+    violations: tuple[str, ...]
+
+    def __str__(self) -> str:
+        return format_report(self)
+
+
+def _payload_bytes(types: Sequence[Any]) -> int:
+    return sum(int(t.wire_bytes) for t in types)
+
+
+def _value_lengths(function: Any) -> dict[str, int]:
+    """The lengths of a function's sequence arguments, by parameter name."""
+    import inspect
+
+    implementation = function.implementation
+    try:
+        names = list(inspect.signature(implementation).parameters)
+    except (TypeError, ValueError):
+        return {}
+    lengths = {}
+    for name, spec in zip(names, function.args):
+        if not spec.is_scalar:
+            lengths[name] = int(spec.count)
+    return lengths
+
+
+def _link_key(function: Any) -> int | str:
+    link: int | str = function.link
+    return link
+
+
+def _on_controller(function: Any, limits: ControllerLimits | None, machine: Any) -> bool:
+    links = limits.compute_links if limits is not None else ("controller",)
+    if function.link in links:
+        return True
+    if machine is not None:
+        try:
+            link_id = machine.link_id(function.link)
+        except (KeyError, ValueError):
+            return False
+        return any(
+            (isinstance(link, int) and link == link_id)
+            or (
+                isinstance(link, str)
+                and link in machine.link_names
+                and machine.link_id(link) == link_id
+            )
+            for link in links
+        )
+    return False
+
+
+def _function_resources(
+    function: Any,
+    limits: ControllerLimits | None,
+    clock_ghz: float | None,
+    machine: Any = None,
+    calls: int = 0,
+) -> FunctionResources:
+    if function.implementation is None:
+        cost = FunctionCost(
+            function.name, {}, 0, 0, 0, (), (f"{function.name}: external, with no body to read",)
+        )
+    elif function.uniform is not None:
+        cost = FunctionCost(function.name, {"load": 1}, 1, 0, 0, (), ())
+    else:
+        cost = _controller_cost.analyze_callable(function.implementation, _value_lengths(function))
+    args_bytes = _payload_bytes(function.args)
+    results_bytes = _payload_bytes(function.results)
+    state = args_bytes + results_bytes + _controller_cost.register_bytes(cost.locals)
+    cycles = compute_ns = None
+    if limits is not None and limits.op_cycles:
+        cycles = cost.cycles(limits.op_cycles)
+        rate = limits.compute_clock_ghz or limits.clock_ghz or clock_ghz
+        if rate:
+            compute_ns = cycles / rate
+    return FunctionResources(
+        function=function.name,
+        link=_link_key(function),
+        on_controller=_on_controller(function, limits, machine),
+        cost=cost,
+        state_bytes=state,
+        request_bytes=_HEADER_BYTES + args_bytes,
+        answer_bytes=_HEADER_BYTES + results_bytes,
+        max_latency_ns=function.max_latency_ns,
+        compute_cycles=cycles,
+        compute_ns=compute_ns,
+        calls_per_shot=calls,
+    )
+
+
+def analyze(function: Any, limits: ControllerLimits | None = None) -> FunctionResources:
+    """What one classical function costs, on its own (see ``resources``)."""
+    return _function_resources(function, limits, None)
+
+
+def _function_violations(row: FunctionResources, limits: ControllerLimits) -> list[str]:
+    found = []
+    name = row.function
+    if limits.controller_form and row.cost.violations:
+        found.append(
+            f"{name} is not in controller form: "
+            + "; ".join(row.cost.violations[:4])
+            + (
+                f" (and {len(row.cost.violations) - 4} more)"
+                if len(row.cost.violations) > 4
+                else ""
+            )
+        )
+    if limits.max_ops is not None and row.cost.size > limits.max_ops:
+        found.append(
+            f"{name} holds {row.cost.size} operations; the controller holds {limits.max_ops} "
+            "per function"
+        )
+    if limits.state_bytes is not None and row.state_bytes > limits.state_bytes:
+        found.append(
+            f"{name} needs {row.state_bytes} bytes of state (arguments, results and "
+            f"{row.cost.locals} locals); the controller holds {limits.state_bytes} per function"
+        )
+    if row.compute_ns is not None and row.compute_ns > row.max_latency_ns:
+        found.append(
+            f"{name} computes for about {row.compute_ns:.0f} ns ({row.compute_cycles} cycles on "
+            f"its longest path), beyond its max_latency_ns={row.max_latency_ns:g}"
+        )
+    return found
+
+
+def resources(lowered: Lowered, limits: ControllerLimits | None = None) -> ResourceReport:
+    """What the classical functions of *lowered* cost the controller.
+
+    *limits*, else the machine model's, give the cycle costs and the limits
+    checked; every function is reported, and the limits apply to those on
+    the controller's ``compute_links``. Calls per shot, slots in flight and
+    buffer bytes come from the scheduled program (``classical_report``).
+    """
+    limits = limits if limits is not None else lowered.options.machine.controller
+    machine = lowered.options.machine
+    calls = lowered.classical_report() if lowered.classical and lowered.scheduled else []
+    per_function: dict[str, int] = {}
+    for call in calls:
+        per_function[call.function] = per_function.get(call.function, 0) + 1
+    rows = tuple(
+        _function_resources(
+            fn, limits, lowered.target.clock_ghz, machine, per_function.get(fn.name, 0)
+        )
+        for fn in lowered.classical
+    )
+    by_name = {row.function: row for row in rows}
+    usage: dict[int, dict[str, Any]] = {}
+    for call in calls:
+        row = by_name.get(call.function)
+        entry = usage.setdefault(
+            call.link, {"calls": 0, "bytes": 0, "largest": 0, "spans": [], "name": call.link_name}
+        )
+        entry["calls"] += 1
+        if row is not None:
+            entry["bytes"] += row.request_bytes + row.answer_bytes
+            entry["largest"] = max(entry["largest"], row.request_bytes, row.answer_bytes)
+        end = call.taken_vtu if call.taken_vtu is not None else call.due_vtu
+        entry["spans"].append((call.submit_vtu, max(end, call.submit_vtu + 1)))
+    links = []
+    for link_id, entry in sorted(usage.items()):
+        edges = sorted([(a, 1) for a, _ in entry["spans"]] + [(b, -1) for _, b in entry["spans"]])
+        peak = held = 0
+        for _, step in edges:
+            held += step
+            peak = max(peak, held)
+        link = machine.link(link_id)
+        links.append(
+            LinkUsage(
+                link=entry["name"] if entry["name"] is not None else link_id,
+                calls_per_shot=entry["calls"],
+                peak_in_flight=peak,
+                max_in_flight=link.max_in_flight,
+                largest_message_bytes=entry["largest"],
+                slot_bytes=link.slot_bytes,
+                bytes_per_shot=entry["bytes"],
+            )
+        )
+    found: list[str] = []
+    controller_rows = [row for row in rows if row.on_controller]
+    controller_calls = sum(row.calls_per_shot for row in controller_rows)
+    controller_bytes = sum(
+        row.calls_per_shot * (row.request_bytes + row.answer_bytes) for row in controller_rows
+    )
+    if limits is not None:
+        for row in controller_rows:
+            found.extend(_function_violations(row, limits))
+        if limits.max_calls_per_shot is not None and controller_calls > limits.max_calls_per_shot:
+            found.append(
+                f"one shot makes {controller_calls} calls to the controller; it takes "
+                f"{limits.max_calls_per_shot}"
+            )
+        if limits.buffer_bytes is not None and controller_bytes > limits.buffer_bytes:
+            found.append(
+                f"one shot's requests and answers to the controller take {controller_bytes} "
+                f"bytes; its buffer holds {limits.buffer_bytes}"
+            )
+    for usage_row in links:
+        if usage_row.peak_in_flight > usage_row.max_in_flight:
+            found.append(
+                f"link {usage_row.link!r} holds {usage_row.peak_in_flight} requests at once; it "
+                f"has {usage_row.max_in_flight} slots"
+            )
+        if usage_row.largest_message_bytes > usage_row.slot_bytes:
+            found.append(
+                f"link {usage_row.link!r} carries a {usage_row.largest_message_bytes}-byte "
+                f"message; its slots hold {usage_row.slot_bytes}"
+            )
+    return ResourceReport(
+        functions=rows,
+        links=tuple(links),
+        calls_per_shot=len(calls),
+        buffer_bytes=sum(entry["bytes"] for entry in usage.values()),
+        limits=limits,
+        violations=tuple(found),
+    )
+
+
+def format_report(report: ResourceReport) -> str:
+    """The report as a table, one row per function and per link."""
+    lines = ["Classical functions"]
+    header = (
+        f"  {'function':<24} {'link':<11} {'ops':>5} {'size':>5} {'state B':>7} "
+        f"{'compute':>9} {'budget':>8} {'calls':>5}  form"
+    )
+    lines.append(header)
+    for row in report.functions:
+        compute = "-" if row.compute_ns is None else f"{row.compute_ns:.0f} ns"
+        form = "ok" if row.cost.in_controller_form else "no"
+        lines.append(
+            f"  {row.function:<24} {str(row.link):<11} {row.cost.total:>5} {row.cost.size:>5} "
+            f"{row.state_bytes:>7} {compute:>9} {row.max_latency_ns:>5.0f} ns "
+            f"{row.calls_per_shot:>5}  {form}"
+        )
+        ops = ", ".join(f"{k} {n}" for k, n in row.cost.ops.items() if n)
+        if ops:
+            lines.append(f"      {ops}")
+    if report.links:
+        lines.append("Links, per shot")
+        lines.append(f"  {'link':<11} {'calls':>5} {'in flight':>9} {'largest B':>9} {'bytes':>7}")
+        for usage in report.links:
+            lines.append(
+                f"  {str(usage.link):<11} {usage.calls_per_shot:>5} "
+                f"{usage.peak_in_flight:>4}/{usage.max_in_flight:<4} "
+                f"{usage.largest_message_bytes:>4}/{usage.slot_bytes:<4} {usage.bytes_per_shot:>7}"
+            )
+    lines.append(f"Per shot: {report.calls_per_shot} calls, {report.buffer_bytes} bytes")
+    if report.violations:
+        lines.append("Exceeds:")
+        lines.extend(f"  {v}" for v in report.violations)
+    return "\n".join(lines)

@@ -285,7 +285,7 @@ struct ControllerWalk {
   }
 
   pulse::AllocationTracer trace;
-  llvm::DenseMap<mlir::Value, mlir::Operation *> roots;
+  pulse::ToneRoots toneRoots;
   llvm::SmallVector<int64_t, 2> iteration;
   std::vector<Condition> branches;
   int64_t nextBranch = 0;
@@ -310,32 +310,8 @@ struct ControllerWalk {
     return {};
   }
 
-  /// pulse::toneRoot, with each value traced once.
-  mlir::Operation *toneRoot(mlir::Value tone) {
-    llvm::SmallVector<mlir::Value, 16> chain;
-    mlir::Value current = tone;
-    mlir::Operation *root = nullptr;
-    while (true) {
-      auto known = roots.find(current);
-      if (known != roots.end()) {
-        root = known->second;
-        break;
-      }
-      chain.push_back(current);
-      mlir::Value previous = pulse::linearPredecessor(current);
-      if (!previous) {
-        root = current.getDefiningOp();
-        break;
-      }
-      current = previous;
-    }
-    for (mlir::Value traced : chain)
-      roots[traced] = root;
-    return root;
-  }
-
   Frame &frameOf(mlir::Value tone) {
-    mlir::Operation *root = toneRoot(tone);
+    mlir::Operation *root = toneRoots(tone);
     auto [it, inserted] = frames.try_emplace(root);
     if (inserted)
       it->second = initialFrame(root);

@@ -89,6 +89,17 @@ Core Examples
      - ``20_adaptive_calibration.py``
      - Adaptive calibration with variable waits, tracking a drifting device
        *(simulates)*
+   * - 21
+     - ``21_calibration_protocol.py``
+     - A millisecond calibration chain run on the controller: readout errors,
+       Ramsey frequency, pi and pi/2 amplitudes, and T1 by the analytical
+       decay estimator and adaptive tracking, each step's answer setting the
+       next step's pulses; the frequency binary search; and what each
+       estimator costs the controller, after Marciniak et al.,
+       "Millisecond-Scale Calibration and Benchmarking of Superconducting
+       Qubits", arXiv:2602.11912 (2026), and Berritta et al., "Real-time
+       adaptive tracking of fluctuating relaxation rates in superconducting
+       qubits", arXiv:2506.09576 (2025) *(simulates)*
 
 Custom Passes
 -------------

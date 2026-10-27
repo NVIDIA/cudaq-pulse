@@ -694,3 +694,30 @@ def test_each_arm_of_a_branch_acquires_a_line_it_first_uses():
     h = _device().qudit_handles
     lowered = pulse.compile(feedback, passes=()).lower(h[0], h[1])
     assert lowered.mlir().count("pulse.get_drive_line") == 2
+
+
+@pulse.kernel
+def _flip_if_set(q, amp: float):
+    d, t = get_drive_line(q)
+    r, rt = get_readout_line(q)
+    m = readout(r, square(20, 0.05), rt)
+    sync(d, r)
+    if m:
+        drive(d, square(40, amp), t)
+
+
+@pulse.kernel
+def _same_value_inside_and_after_a_branch(q, amp: float):
+    d, t = get_drive_line(q)
+    half = amp * 0.5
+    # First made inside the branch of the called kernel, then used after it:
+    # it must be made again there, where the branch's value does not reach.
+    _flip_if_set(q, half)
+    drive(d, square(40, half), t)
+
+
+def test_a_value_first_made_in_a_branch_is_made_again_after_it():
+    q = _device().qudit_handles[0]
+    lowered = pulse.compile(_same_value_inside_and_after_a_branch).lower(q, 0.3)
+    drives = [e for e in lowered.schedule if e.kind == "drive"]
+    assert len(drives) == 2

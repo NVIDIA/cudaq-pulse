@@ -68,23 +68,18 @@ def _rho02(t_ns, t1_us, t2_us):
     return 0.5 * math.exp(-(gamma1 + 4.0 * gamma_phi) * t_ns)
 
 
-def test_a_qutrit_coherence_needs_a_step_that_resolves_the_anharmonicity():
-    """rho02 turns at the anharmonicity, 1.26 rad/ns here: RK4 damps it
-    unless |alpha| dt << 1, and converges to the analytic decay as dt
-    shrinks."""
+def test_an_idle_qutrit_coherence_is_exact_at_any_step():
+    """rho02 turns at the anharmonicity, 1.26 rad/ns here, which RK4 damps
+    unless |alpha| dt << 1; an idle stretch has a constant Lindbladian and
+    is propagated exactly, so even a coarse step gives the analytic decay."""
     entry = ref("t2_qutrit_02")
     p = entry["params"]
     psi = (basis(3, 0) + basis(3, 2)) / math.sqrt(2.0)
     t_ns = 500.0
     exact = _rho02(t_ns, p["T1_us"], p["T2_us"])
-    errors = [
-        abs(abs(_decay("t2_qutrit_02", 3, psi, dt, t_ns)[0, 2]) - exact) / exact
-        for dt in (0.2, 0.1, 0.05)
-    ]
-    assert errors[0] > 1e-4
-    # Fourth order: halving the step cuts the error about 2^4 = 16 times.
-    assert errors[0] / errors[1] > 10 and errors[1] / errors[2] > 10
-    assert errors[2] < entry["tolerance"]["rel"] * 10
+    for dt in (0.2, 0.1, 0.05):
+        error = abs(abs(_decay("t2_qutrit_02", 3, psi, dt, t_ns)[0, 2]) - exact) / exact
+        assert error < 1e-9, dt
 
 
 @pytest.mark.nightly
