@@ -24,6 +24,8 @@ from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.targets import transmon_krinner_17q
 
 _EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "21_calibration_protocol.py"
+if not _EXAMPLE.exists():
+    pytest.skip("needs the source tree's examples/", allow_module_level=True)
 P = runpy.run_path(str(_EXAMPLE), run_name="calibration_protocol")
 PI_AMP, CLOCK = P["PI_AMP"], P["CLOCK_GHZ"]
 amplitude, tracked_t1, TRAIN = P["amplitude"], P["tracked_t1"], P["TRAIN"]

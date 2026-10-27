@@ -480,7 +480,11 @@ if __name__ == "__main__":
     compiled = pulse.compile(calibration_chain, device=dev, machine=MACHINE)
     lowered = compiled.lower(q, 20_000.0 * CLOCK_GHZ)
     compile_s = time.perf_counter() - start
-    end_vtu = max(e.start_vtu + e.duration_vtu for e in lowered.schedule if e.start_vtu is not None)
+    end_vtu = max(
+        e.start_vtu + e.duration_vtu
+        for e in lowered.schedule
+        if e.start_vtu is not None and e.duration_vtu is not None
+    )
     print(
         f"  {sum(1 for e in lowered.schedule if e.kind == 'readout')} readouts, "
         f"{len(lowered.classical_report())} calls, {len(lowered.epochs())} epochs; "

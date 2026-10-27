@@ -167,7 +167,12 @@ manylinux-aarch64-image = "manylinux_2_28"
 build-verbosity = 1
 test-extras = ["cu12"]
 test-groups = ["test"]
-test-sources = ["tests", "pyproject.toml", "benchmarks/compiler/compile_time.py"]
+test-sources = [
+    "tests",
+    "pyproject.toml",
+    "benchmarks/compiler/compile_time.py",
+    "benchmarks/baselines/compile_time.json",
+]
 test-command = [
     "python -c \"import cudaq_pulse._build_config as c; assert sorted(c.GPU_RUNTIME_LIBRARIES) == [12, 13], 'release wheels must include the CUDA 12 and CUDA 13 GPU runtimes'\"",
     "cudaq-pulse-opt --help > /dev/null",

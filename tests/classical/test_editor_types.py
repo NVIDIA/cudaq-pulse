@@ -66,7 +66,8 @@ def _planted_line() -> int:
 def files(tmp_path_factory: pytest.TempPathFactory) -> list[Path]:
     planted = tmp_path_factory.mktemp("planted") / "planted.py"
     planted.write_text(_PLANTED)
-    return [planted, *_EXAMPLES]
+    # A wheel's tests run without the source tree's examples/.
+    return [planted, *(example for example in _EXAMPLES if example.exists())]
 
 
 def _env() -> dict[str, str]:
@@ -176,6 +177,8 @@ def test_planted_wrong_call_is_the_only_error(checker, files, request):
 @pytest.mark.parametrize("checker", ["pyright", "mypy"])
 @pytest.mark.parametrize("example", _EXAMPLES, ids=lambda p: p.name)
 def test_example_checks_clean(checker, example, request):
+    if not example.exists():
+        pytest.skip("needs the source tree's examples/")
     errors = request.getfixturevalue(checker)
     unexpected = [e for e in errors if e[0] == example.resolve() and not _bare_name(e[2], e[3])]
     assert not unexpected, unexpected

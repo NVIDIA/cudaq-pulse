@@ -53,7 +53,11 @@ _PROBE_EXPECTED = {
 
 
 def docs_modules(docs: Path) -> dict[str, str]:
-    """Each docs page's Python code blocks, in order, as one module."""
+    """Each docs page's Python code blocks, in order, as one module.
+
+    A block with the option ``:class: fragment`` continues an example whose
+    other parts the page shows in prose, so it is left out.
+    """
     modules = {}
     for page in sorted(docs.rglob("*.rst")):
         lines = page.read_text().splitlines()
@@ -61,12 +65,15 @@ def docs_modules(docs: Path) -> dict[str, str]:
         while i < len(lines):
             if re.match(r"\s*\.\. code-block:: python\s*$", lines[i]):
                 i += 1
-                block = []
+                block, fragment = [], False
                 while i < len(lines) and (not lines[i].strip() or lines[i][:1] in " \t"):
-                    if not lines[i].lstrip().startswith(":"):
+                    if lines[i].lstrip().startswith(":"):
+                        fragment |= lines[i].split() == [":class:", "fragment"]
+                    else:
                         block.append(lines[i])
                     i += 1
-                blocks.append(textwrap.dedent("\n".join(block)).strip())
+                if not fragment:
+                    blocks.append(textwrap.dedent("\n".join(block)).strip())
             else:
                 i += 1
         if blocks:
