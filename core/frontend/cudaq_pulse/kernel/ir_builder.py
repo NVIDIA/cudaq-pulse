@@ -18,15 +18,9 @@ import numbers
 from collections import namedtuple
 from typing import Any, NoReturn
 
-from .._errors import PulseError
+from .._errors import CompilationError as CompilationError
 
 Op = namedtuple("Op", ["kind", "operands", "results", "attrs"])
-
-
-class CompilationError(PulseError):
-    """A kernel cannot be traced or compiled: an unsupported construct, an
-    operation given the wrong kind of argument, or invalid pulse IR. The
-    message says what to write instead, and a note gives the kernel line."""
 
 
 class SymbolicValueError(CompilationError):
@@ -37,7 +31,7 @@ class SymbolicValueError(CompilationError):
     instead of keeping it symbolic.
     """
 
-    def __init__(self, message: str, names: tuple[str, ...], operation: str = ""):
+    def __init__(self, message: str, names: tuple[str, ...] = (), operation: str = ""):
         super().__init__(message)
         self.names = names
         self.operation = operation

@@ -14,7 +14,21 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, ClassVar, Final
 
-__all__ = ["DeviceDefinitionError", "Problem", "PulseError"]
+__all__ = [
+    "CompilationError",
+    "DeviceDefinitionError",
+    "ExecutionError",
+    "InternalError",
+    "InvalidTypeError",
+    "InvalidValueError",
+    "NotFoundError",
+    "Problem",
+    "PulseError",
+    "PulseWarning",
+    "TimingError",
+    "UnsupportedError",
+    "UpgradeNotice",
+]
 
 # How many problems an error's message lists; ``problems`` holds them all.
 _SHOWN = 10
@@ -71,11 +85,12 @@ class Problem:
 class PulseError(Exception):
     """Base class of every error cudaq-pulse raises on purpose.
 
-    Each subclass also keeps its built-in base, so ``except RuntimeError``
-    or ``except LookupError`` still catches what it caught before. Errors
-    that the native extension raises while running MLIR passes, and
+    Each subclass also has the built-in base its kind of error has in
+    Python, so ``except ValueError``, ``except KeyError`` or ``except
+    RuntimeError`` catches it as it would the built-in error. Errors that
+    the native extension raises while running MLIR passes, and
     ``ValueError`` or ``TypeError`` for a malformed argument, are not
-    subclasses.
+    subclasses yet.
 
     An error that found several problems at once lists them in
     ``problems``, and its message shows the first ten.
@@ -113,6 +128,64 @@ class DeviceDefinitionError(PulseError, ValueError):
         if not message:
             message = f"{_count(len(problems), 'problem')} in the device definition"
         super().__init__(message, problems=problems)
+
+
+class InvalidValueError(PulseError, ValueError):
+    """An argument, option or setting has the right type but a value that
+    cannot be used: a negative duration, an empty list, a shape that does
+    not match."""
+
+
+class InvalidTypeError(PulseError, TypeError):
+    """An argument, option or callback result has a type that cannot be
+    used, such as a string where a number is needed."""
+
+
+class NotFoundError(PulseError, KeyError):
+    """A name has nothing behind it: a calibration value, a handler, a
+    parameter or a file that is not there. The message lists what there is."""
+
+
+class UnsupportedError(PulseError, NotImplementedError):
+    """What was asked is not available yet, or not on this platform or
+    Python version. It is a ``NotImplementedError``, and so also a
+    ``RuntimeError``."""
+
+
+class CompilationError(PulseError, RuntimeError):
+    """A kernel cannot be traced or compiled: an unsupported construct, an
+    operation given the wrong kind of argument, or invalid pulse IR. The
+    message says what to write instead, and a note gives the kernel line."""
+
+
+class TimingError(CompilationError):
+    """A program cannot meet a timing it declares: a deadline for an answer,
+    or a limit on its length. ``problems`` names each one that is missed."""
+
+
+class ExecutionError(PulseError, RuntimeError):
+    """Running a compiled program failed: a simulation, a classical call or
+    a GPU launch."""
+
+
+class InternalError(PulseError, RuntimeError):
+    """A bug in cudaq-pulse: a check that a valid program never fails. The
+    message asks for a report with the kernel that raised it."""
+
+
+class PulseWarning(UserWarning):
+    """Base class of the warnings cudaq-pulse issues, so that
+    ``warnings.filterwarnings("error", category=pulse.PulseWarning)`` turns
+    them all into errors."""
+
+
+class UpgradeNotice(PulseWarning):
+    """Something still works but has a newer form, such as a file in an
+    older format; the message names the newer form. Issued once per cause."""
+
+
+class _SpecializationWarning(PulseWarning, RuntimeWarning):
+    """A kernel call compiled a new specialization of the kernel."""
 
 
 def _count(n: int, noun: str) -> str:

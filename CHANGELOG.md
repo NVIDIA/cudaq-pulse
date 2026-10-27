@@ -272,12 +272,19 @@ behavior may change in any 0.x release.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
   `CompiledKernel`, `Lowered`, `Pass`, `simulate`, `SimulationResult`,
   `device`, `get_device`, `Device`, `Qudit`, `Register`, `Target`,
-  `PulseError`, `Problem`, `DeviceDefinitionError`, `CompilationError`,
-  `NoTargetError`, `NoDeviceError`, `DeviceMismatchError`,
-  `GpuRuntimeError`, `viz`, `classical`, `controller` and `backends`, plus
-  `__version__`.
+  `PulseError`, `Problem`, `DeviceDefinitionError`, `InvalidValueError`,
+  `InvalidTypeError`, `NotFoundError`, `UnsupportedError`,
+  `CompilationError`, `TimingError`, `ExecutionError`, `InternalError`,
+  `PulseWarning`, `UpgradeNotice`, `NoTargetError`, `NoDeviceError`,
+  `DeviceMismatchError`, `GpuRuntimeError`, `viz`, `classical`,
+  `controller` and `backends`, plus `__version__`.
   Every error cudaq-pulse raises on purpose derives from `PulseError` and
-  keeps its built-in base (`NoTargetError` is still a `RuntimeError`).
+  has the built-in base of its kind: `InvalidValueError` is a `ValueError`,
+  `InvalidTypeError` a `TypeError`, `NotFoundError` a `KeyError`,
+  `UnsupportedError` a `NotImplementedError`, and `CompilationError`,
+  `ExecutionError` and `InternalError` are `RuntimeError`s. An
+  `InternalError` is a bug in cudaq-pulse, and its message asks for a
+  report. Every warning cudaq-pulse issues is a `PulseWarning`.
   `cudaq_pulse.compiler`, `cudaq_pulse.runtime.simulate` and
   `cudaq_pulse.targets.transmon_model` list their public names in `__all__`,
   as the other documented modules do. `cudaq_pulse.targets.UnknownTargetError`

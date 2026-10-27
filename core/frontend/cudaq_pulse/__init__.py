@@ -46,16 +46,25 @@ from ._device import Register as Register
 from ._device import Target as Target
 from ._device import device as device
 from ._device import get_device as get_device
+from ._errors import CompilationError as CompilationError
 from ._errors import DeviceDefinitionError as DeviceDefinitionError
+from ._errors import ExecutionError as ExecutionError
+from ._errors import InternalError as InternalError
+from ._errors import InvalidTypeError as InvalidTypeError
+from ._errors import InvalidValueError as InvalidValueError
+from ._errors import NotFoundError as NotFoundError
 from ._errors import Problem as Problem
 from ._errors import PulseError as PulseError
+from ._errors import PulseWarning as PulseWarning
+from ._errors import TimingError as TimingError
+from ._errors import UnsupportedError as UnsupportedError
+from ._errors import UpgradeNotice as UpgradeNotice
 from .compiler import Lowered as Lowered
 from .compiler import Pass as Pass
 from .compiler import compile as compile
 from .kernel import kernel as kernel
 from .kernel._kernel import CompiledKernel as CompiledKernel
 from .kernel._kernel import Kernel as Kernel
-from .kernel.ir_builder import CompilationError as CompilationError
 from .targets._registry import NoTargetError as NoTargetError
 
 # A module can't be declared callable, so checkers see the decorator's type.
@@ -104,7 +113,16 @@ __all__ = [
     "PulseError",
     "Problem",
     "DeviceDefinitionError",
+    "InvalidValueError",
+    "InvalidTypeError",
+    "NotFoundError",
+    "UnsupportedError",
     "CompilationError",
+    "TimingError",
+    "ExecutionError",
+    "InternalError",
+    "PulseWarning",
+    "UpgradeNotice",
     "NoTargetError",
     "NoDeviceError",
     "DeviceMismatchError",

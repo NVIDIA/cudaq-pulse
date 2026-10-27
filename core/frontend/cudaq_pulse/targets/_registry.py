@@ -23,7 +23,7 @@ import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from .._errors import PulseError, _closest
+from .._errors import NotFoundError, PulseError, _closest
 from .base import TargetDescription
 
 if TYPE_CHECKING:
@@ -39,7 +39,7 @@ class NoTargetError(PulseError, RuntimeError):
     names no process target."""
 
 
-class UnknownTargetError(PulseError, LookupError):
+class UnknownTargetError(NotFoundError):
     """A target name, in a device config or in ``CUDAQ_PULSE_TARGET``, is not
     registered; the message lists the registered ones."""
 

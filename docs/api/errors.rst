@@ -10,10 +10,12 @@ Errors
 ======
 
 Every error cudaq-pulse raises on purpose derives from ``PulseError``, so
-``except cudaq_pulse.PulseError`` catches them all. Each also keeps its
-built-in base: ``NoTargetError`` is still a ``RuntimeError`` and
-``UnknownTargetError`` a ``LookupError``. A malformed argument raises a
-built-in ``ValueError`` or ``TypeError``.
+``except cudaq_pulse.PulseError`` catches them all. Each also has the
+built-in base of its kind of error, so ``except ValueError`` or ``except
+RuntimeError`` catches it as it would the built-in one: ``InvalidValueError``
+is a ``ValueError``, ``NotFoundError`` and ``UnknownTargetError`` are
+``KeyError``\ s, and ``CompilationError`` and ``NoTargetError`` are
+``RuntimeError``\ s.
 
 .. autoexception:: cudaq_pulse.PulseError
    :members: problems, location
@@ -23,12 +25,32 @@ An error that finds several problems at once, such as
 
 .. autoclass:: cudaq_pulse.Problem
 
+Arguments and names
+-------------------
+
+.. autoexception:: cudaq_pulse.InvalidValueError
+
+.. autoexception:: cudaq_pulse.InvalidTypeError
+
+.. autoexception:: cudaq_pulse.NotFoundError
+
+.. autoexception:: cudaq_pulse.UnsupportedError
+
 Compiling
 ---------
 
 .. autoexception:: cudaq_pulse.CompilationError
 
+.. autoexception:: cudaq_pulse.TimingError
+
 .. autoexception:: cudaq_pulse.compiler.UnsupportedInterpreterError
+
+Running
+-------
+
+.. autoexception:: cudaq_pulse.ExecutionError
+
+.. autoexception:: cudaq_pulse.InternalError
 
 Devices and targets
 -------------------
@@ -47,8 +69,8 @@ GPU simulation
 --------------
 
 ``pulse.simulate(..., backend="gpu")`` raises one of the three subclasses of
-``GpuRuntimeError`` (``cudaq_pulse.GpuRuntimeError``) when GPU simulation
-cannot run; see :ref:`gpu-errors`.
+``GpuRuntimeError`` (``cudaq_pulse.GpuRuntimeError``), an ``ExecutionError``,
+when GPU simulation cannot run; see :ref:`gpu-errors`.
 
 .. autoexception:: cudaq_pulse.runtime.GpuRuntimeError
 
@@ -72,3 +94,10 @@ Compiling for a controller whose limits a program exceeds raises
 .. autoexception:: cudaq_pulse.backends.BackendNotFoundError
 
 .. autoexception:: cudaq_pulse.backends.IncompatibleBackendError
+
+Warnings
+--------
+
+.. autoexception:: cudaq_pulse.PulseWarning
+
+.. autoexception:: cudaq_pulse.UpgradeNotice
