@@ -23,11 +23,11 @@ that goes from Python source to GPU-executable code.
          v
    In-memory MLIR ModuleOp (Pulse dialect)
          |
-         | C++ passes: verify, virtual-z, fusion, canonicalize, LICM
+         | C++ passes of passes= (verify, virtual-Z, fusion by default)
          v
    Optimized Pulse-dialect MLIR
          |
-         | pulse-schedule-alap
+         | schedule of the policy (asap, alap, rcp, alap_rcp)
          v
    Scheduled Pulse-dialect MLIR  -->  CompiledKernel
          |
@@ -59,18 +59,24 @@ etc.) directly into an ``mlir::ModuleOp``.
 Stage 3: MLIR Passes
 ---------------------
 
-The in-memory MLIR module is then run through a configurable set of
-C++ optimization passes via ``mlir::PassManager``. See
-:doc:`mlir_passes` for details on each pass.
+The in-memory MLIR module is then run through the C++ passes named in
+``passes=`` via ``mlir::PassManager``; pattern passes in a row run as one
+rewrite. See :doc:`mlir_passes` for details on each pass.
 
 Stage 4: Scheduling
 --------------------
 
-The scheduling pass (``pulse-schedule-alap``) assigns ``start_cycles`` and
-``duration_cycles`` attributes to every timed operation, respecting data
-dependencies, sync constraints, and operation durations. A pulse waits for
+The schedule pass of the policy (``pulse-schedule-alap`` by default)
+assigns ``start_cycles`` and ``duration_cycles`` attributes to every timed
+operation, respecting data dependencies, sync constraints, and operation
+durations; a module that declares classical calls is then checked with
+``pulse-classical-check``. A pulse waits for
 its line and for its tone: pulses that share a tone play in the order the
 tone is threaded through them.
+
+``float`` parameters stay function arguments of the scheduled module. A call
+with values binds them on a copy, folds it, reruns the virtual-Z and fusion
+patterns where the values open them, and schedules it again.
 
 Stage 5: Lowering (Optional)
 -----------------------------

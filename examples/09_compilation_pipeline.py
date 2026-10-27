@@ -16,6 +16,7 @@ call with its timing breakdown.
 import math
 
 import cudaq_pulse as pulse
+from cudaq_pulse.compiler import DEFAULT_PASSES
 
 
 @pulse.kernel
@@ -24,7 +25,8 @@ def pipeline_demo(qubit_0, qubit_1):
 
     Includes:
       - A shift_phase before a drive (virtual-Z folds it)
-      - Adjacent waits (canonicalize merges them)
+      - Adjacent waits (canonicalize, which main() adds to the default
+        passes, merges them)
       - Adjacent same-amplitude square pulses (fusion merges them)
     """
     drive_line_0, tone_0 = get_drive_line(qubit_0)
@@ -47,9 +49,9 @@ def pipeline_demo(qubit_0, qubit_1):
 
 
 def main():
-    compiled_kernel = pulse.compile(pipeline_demo, schedule="alap", device=dev).lower(
-        dev.qudit_handles[0], dev.qudit_handles[1]
-    )
+    compiled_kernel = pulse.compile(
+        pipeline_demo, schedule="alap", device=dev, passes=(*DEFAULT_PASSES, "canonicalize")
+    ).lower(dev.qudit_handles[0], dev.qudit_handles[1])
 
     print("=== Compiled MLIR (first 30 lines) ===")
     for line in compiled_kernel.mlir().splitlines()[:30]:

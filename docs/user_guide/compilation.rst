@@ -120,8 +120,11 @@ Options, all keyword-only:
 
 ``passes`` *(sequence of str, optional)*
    Optimization passes, ``("verify", "virtual_z", "fusion")`` by default;
-   ``()`` runs none. Available: ``"verify"``, ``"canonicalize"``,
-   ``"virtual_z"``, ``"fusion"``, ``"licm"``.
+   ``()`` runs none. Available: ``"verify"`` (check the IR),
+   ``"canonicalize"`` (remove redundant syncs, merge waits in a row),
+   ``"virtual_z"`` (fold frame changes into drives), ``"fusion"`` (merge
+   square pulses in a row), ``"licm"`` (hoist loop-invariant ops). See
+   :doc:`../architecture/mlir_passes`.
 
 ``machine`` *(MachineModel, optional)*
    Resource limits for the RCP schedules.

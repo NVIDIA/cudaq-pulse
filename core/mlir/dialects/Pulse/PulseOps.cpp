@@ -352,10 +352,12 @@ OperandRange ScheduleBlockOp::getEntrySuccessorOperands(RegionSuccessor) {
 
 // ===----------------------------------------------------------------------===//
 // Folders — fold away no-op operations (zero shift, scale by 1, double neg).
+// pulse-fold and every greedy rewrite apply them.
 //
-// Rewrites that need more than one op are passes: redundant syncs, dead
-// lines and waveform CSE in pulse-canonicalize (transforms/Canonicalize.cpp),
-// phase folding into drives in pulse-virtual-z (transforms/VirtualZ.cpp).
+// Rewrites that need more than one op are passes: redundant syncs and
+// adjacent waits in pulse-canonicalize (transforms/Canonicalize.cpp), phase
+// folding into drives in pulse-virtual-z (transforms/VirtualZ.cpp), square
+// pulse fusion in pulse-fusion (transforms/Fusion.cpp).
 // ===----------------------------------------------------------------------===//
 
 OpFoldResult WaitOp::fold(FoldAdaptor adaptor) {
@@ -426,10 +428,9 @@ OpFoldResult PulseNegOp::fold(FoldAdaptor adaptor) {
 // ===----------------------------------------------------------------------===//
 // Canonicalization patterns
 //
-// Waveform CSE, virtual-Z folding, dead-line and redundant-sync elimination
-// are the pulse passes in transforms/. The op-level hooks below register no
-// patterns yet; patterns added to them run in the generic MLIR
-// canonicalizer.
+// The pulse rewrites are the pattern passes in transforms/. The op-level
+// hooks below register no patterns yet; patterns added to them run in the
+// generic MLIR canonicalizer, and so when a call's values are bound.
 // ===----------------------------------------------------------------------===//
 
 void WaitOp::getCanonicalizationPatterns(RewritePatternSet &patterns,

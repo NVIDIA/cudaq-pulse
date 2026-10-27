@@ -25,8 +25,8 @@ constexpr pulse::RewriteStage stages[] = {
     {"pulse-fold",
      "Fold ops, merge equal constants and remove dead ops and blocks", nullptr},
     {"pulse-canonicalize",
-     "Remove redundant syncs, inline untimed schedule blocks, and branch on "
-     "is_set and drop loops that run once or never",
+     "Remove redundant syncs, merge waits in a row, inline untimed schedule "
+     "blocks, and branch on is_set and drop loops that run once or never",
      pulse::populateCanonicalizePatterns},
     {"pulse-virtual-z",
      "Fold shift_phase ops into adjacent drive ops as phase attributes",
