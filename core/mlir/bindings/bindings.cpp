@@ -25,6 +25,7 @@
 #include <mutex>
 #include <thread>
 
+#include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVMPass.h"
@@ -44,8 +45,10 @@
 #include "mlir/Parser/Parser.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
+#include "mlir/Rewrite/FrozenRewritePatternSet.h"
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
 
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
@@ -732,6 +735,10 @@ public:
             continue;
           }
           stages.push_back(stage);
+          if (!llvm::is_contained(rewrites_, stage)) {
+            rewrites_.push_back(stage);
+            rewritePatterns_.reset();
+          }
           continue;
         }
         flush();
@@ -1360,6 +1367,7 @@ public:
 
     size_t f64Idx = 0, i64Idx = 0;
     auto f64Ty = builder.getF64Type();
+    llvm::SmallVector<mlir::Value> bound;
 
     for (unsigned i = 0; i < entryBlock.getNumArguments(); ++i) {
       auto arg = entryBlock.getArgument(i);
@@ -1374,6 +1382,7 @@ public:
           throw std::runtime_error("specialize: not enough f64 arguments");
         replacement = mlir::arith::ConstantFloatOp::create(
             builder, loc, f64Ty, llvm::APFloat(f64_args[f64Idx++]));
+        bound.push_back(replacement);
       }
       arg.replaceAllUsesWith(replacement);
     }
@@ -1384,9 +1393,7 @@ public:
     funcOp.setType(builder.getFunctionType({}, {}));
 
     // Fold parameter expressions before deriving concrete durations.
-    mlir::PassManager fold(ctx_.get());
-    fold.addPass(mlir::createCanonicalizerPass());
-    runPipeline(fold, clonedModule, "specialize: pass pipeline failed");
+    foldBinding(clonedModule, bound);
     auto owning = mlir::OwningOpRef<mlir::ModuleOp>(clonedModule);
     PulseModule result(ctx_, std::move(owning));
     result.keepSource();
@@ -1647,6 +1654,72 @@ private:
   // The module before scheduling, while it has schedule blocks (see
   // keepSource).
   mlir::OwningOpRef<mlir::ModuleOp> source_;
+  /// Fold `module`, whose float arguments were replaced by the constants
+  /// `values`: as the canonicalizer does, then with the pattern passes this
+  /// module ran, on the only ops the values can open to them, frame changes
+  /// by a constant phase and drives of a square pulse, if the values reach
+  /// one. Both pattern sets are gathered once per module.
+  void foldBinding(mlir::ModuleOp module, llvm::ArrayRef<mlir::Value> values) {
+    bool phases = false, amplitudes = false;
+    if (!rewrites_.empty()) {
+      llvm::SetVector<mlir::Operation *> reached;
+      for (mlir::Value value : values)
+        mlir::getForwardSlice(value, &reached);
+      for (mlir::Operation *op : reached) {
+        phases |= mlir::isa<pulse::ShiftPhaseOp>(op);
+        amplitudes |= mlir::isa<pulse::SquarePulseOp>(op);
+      }
+    }
+
+    if (!canonicalPatterns_) {
+      mlir::RewritePatternSet set(ctx_.get());
+      for (mlir::Dialect *dialect : ctx_->getLoadedDialects())
+        dialect->getCanonicalizationPatterns(set);
+      for (mlir::RegisteredOperationName op : ctx_->getRegisteredOperations())
+        op.getCanonicalizationPatterns(set, ctx_.get());
+      canonicalPatterns_ =
+          std::make_shared<const mlir::FrozenRewritePatternSet>(std::move(set));
+    }
+    // The canonicalizer pass's defaults.
+    mlir::GreedyRewriteConfig config;
+    config.setRegionSimplificationLevel(
+        mlir::GreedySimplifyRegionLevel::Normal);
+    (void)mlir::applyPatternsGreedily(module, *canonicalPatterns_, config);
+    if (!phases && !amplitudes)
+      return;
+
+    llvm::SmallVector<mlir::Operation *> ops;
+    module.walk([&](mlir::Operation *op) {
+      if (auto shift = mlir::dyn_cast<pulse::ShiftPhaseOp>(op); shift && phases)
+        if (mlir::Operation *phase = shift.getPhaseRad().getDefiningOp();
+            phase && mlir::isa<mlir::arith::ConstantFloatOp>(phase)) {
+          ops.push_back(phase);
+          ops.push_back(op);
+        }
+      if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op); drive && amplitudes)
+        if (drive.getPulse().getDefiningOp<pulse::SquarePulseOp>())
+          ops.push_back(op);
+    });
+    if (ops.empty())
+      return;
+    if (!rewritePatterns_) {
+      mlir::RewritePatternSet set(ctx_.get());
+      for (const pulse::RewriteStage *stage : rewrites_)
+        stage->populate(set);
+      rewritePatterns_ =
+          std::make_shared<const mlir::FrozenRewritePatternSet>(std::move(set));
+    }
+    mlir::GreedyRewriteConfig opConfig;
+    opConfig.enableFolding(false).enableConstantCSE(false);
+    opConfig.setStrictness(mlir::GreedyRewriteStrictness::ExistingOps);
+    (void)mlir::applyOpPatternsGreedily(ops, *rewritePatterns_, opConfig);
+  }
+
+  // The pattern passes run_passes ran, in the order first run.
+  llvm::SmallVector<const pulse::RewriteStage *, 4> rewrites_;
+  // What foldBinding rewrites with, once gathered.
+  std::shared_ptr<const mlir::FrozenRewritePatternSet> canonicalPatterns_;
+  std::shared_ptr<const mlir::FrozenRewritePatternSet> rewritePatterns_;
   // Lowered operator programs by module attribute dictionary.
   std::map<const void *, ProgramTemplate> programs_;
   // Python threads may call into one module concurrently once the GIL is

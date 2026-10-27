@@ -122,6 +122,42 @@ def test_compile_with_fusion():
     assert ck.mlir() is not None
 
 
+@pulse.kernel
+def _ramsey(q, phase: float):
+    d, t = get_drive_line(q)
+    drive(d, gaussian(40, 0.3, 10.0), t)
+    shift_phase(t, phase)
+    drive(d, gaussian(40, 0.3, 10.0), t)
+
+
+def test_a_phase_from_a_float_folds_into_the_drive_once_bound():
+    bound = pulse.compile(_ramsey).lower(Q[0], 0.25)
+    assert "pulse.shift_phase" in bound.generic.mlir()
+    assert "pulse.shift_phase" not in bound.mlir()
+    assert "frame_phase_offset = 2.500000e-01" in bound.mlir()
+    # Without virtual_z the frame change stays, bound or not.
+    assert "pulse.shift_phase" in pulse.compile(_ramsey, passes=()).lower(Q[0], 0.25).mlir()
+
+
+@pulse.kernel
+def _two_squares(q, a: float, b: float):
+    d, t = get_drive_line(q)
+    drive(d, square(50, a), t)
+    drive(d, square(50, b), t)
+
+
+def test_squares_of_amplitudes_bound_equal_fuse():
+    compiled = pulse.compile(_two_squares)
+    assert "fused" in compiled.lower(Q[0], 0.2, 0.2).mlir()
+    assert "fused" not in compiled.lower(Q[0], 0.2, 0.3).mlir()
+    assert (
+        "fused"
+        not in pulse.compile(_two_squares, passes=("verify", "virtual_z"))
+        .lower(Q[0], 0.2, 0.2)
+        .mlir()
+    )
+
+
 def test_compile_bad_schedule_raises():
     with pytest.raises(ValueError, match="Unknown schedule"):
         pulse.compile(_bell, schedule="bogus").lower(Q[0], Q[1])
