@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .._errors import InvalidValueError
+
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
@@ -52,7 +54,7 @@ def plot_schedule(
     spans: list[tuple[str, tuple[bool, int], int, int]] = []
     for ev in events:
         if ev.start_cycles is None or ev.duration_cycles is None:
-            raise ValueError(
+            raise InvalidValueError(
                 "the module is not scheduled; lower the kernel with its float arguments"
             )
         spans.append(

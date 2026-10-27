@@ -32,6 +32,7 @@ __all__ = [
 
 # How many problems an error's message lists; ``problems`` holds them all.
 _SHOWN = 10
+_ISSUES_URL = "https://github.com/NVIDIA/cudaq-pulse/issues"
 
 
 class _Unset:
@@ -88,9 +89,9 @@ class PulseError(Exception):
     Each subclass also has the built-in base its kind of error has in
     Python, so ``except ValueError``, ``except KeyError`` or ``except
     RuntimeError`` catches it as it would the built-in error. Errors that
-    the native extension raises while running MLIR passes, and
-    ``ValueError`` or ``TypeError`` for a malformed argument, are not
-    subclasses yet.
+    the native extension raises while running MLIR passes are not
+    subclasses yet, nor are some ``ValueError`` and ``TypeError`` for a
+    malformed compile option or controller limit.
 
     An error that found several problems at once lists them in
     ``problems``, and its message shows the first ten.
@@ -108,8 +109,11 @@ class PulseError(Exception):
         """The first problem that names a file, if any."""
         return next((p for p in self.problems if p.file is not None), None)
 
+    def _header(self) -> str:
+        return Exception.__str__(self)
+
     def __str__(self) -> str:
-        text = Exception.__str__(self)
+        text = self._header()
         if not self.problems:
             return text
         lines = [str(p) for p in self.problems[:_SHOWN]]
@@ -171,6 +175,14 @@ class ExecutionError(PulseError, RuntimeError):
 class InternalError(PulseError, RuntimeError):
     """A bug in cudaq-pulse: a check that a valid program never fails. The
     message asks for a report with the kernel that raised it."""
+
+    def _header(self) -> str:
+        from ._build_config import PACKAGE_VERSION
+
+        return (
+            f"{Exception.__str__(self)}; this is a bug in cudaq-pulse {PACKAGE_VERSION}; "
+            f"please report it at {_ISSUES_URL} with the kernel that raised it"
+        )
 
 
 class PulseWarning(UserWarning):

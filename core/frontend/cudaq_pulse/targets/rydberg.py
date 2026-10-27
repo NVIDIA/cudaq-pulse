@@ -27,6 +27,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+from .._errors import InvalidValueError
 from .base import Coupling, Qubit, TargetDescription
 
 # Rb-87, |70S_1/2> Rydberg state
@@ -65,7 +66,7 @@ class RydbergTarget:
         global_detuning_mhz: float = 0.0,
     ):
         if not atoms:
-            raise ValueError("Must provide at least one atom.")
+            raise InvalidValueError("Must provide at least one atom.")
         self.atoms = sorted(atoms, key=lambda a: a.index)
         self.c6 = c6
         self.global_rabi_mhz = global_rabi_mhz
@@ -78,7 +79,7 @@ class RydbergTarget:
     def blockade_radius(self) -> float:
         """Rydberg blockade radius in um: R_b = (C6 / Omega)^{1/6}."""
         if self.global_rabi_mhz <= 0:
-            raise ValueError("global_rabi_mhz must be > 0 to compute blockade radius.")
+            raise InvalidValueError("global_rabi_mhz must be > 0 to compute blockade radius.")
         return float((self.c6 / self.global_rabi_mhz) ** (1.0 / 6.0))
 
     def _distance(self, a: RydbergAtom, b: RydbergAtom) -> float:
@@ -90,7 +91,7 @@ class RydbergTarget:
         """``V_jk = C6 / |x_j - x_k|^6`` in MHz."""
         r = self._distance(a, b)
         if r < 1e-12:
-            raise ValueError(f"Atoms {a.index} and {b.index} are at the same position.")
+            raise InvalidValueError(f"Atoms {a.index} and {b.index} are at the same position.")
         return self.c6 / (r**6)
 
     def to_target(self) -> TargetDescription:
@@ -209,7 +210,7 @@ def rydberg_chain(
         Inter-atom spacing in micrometers.
     """
     if n < 1:
-        raise ValueError(f"n must be >= 1, got {n}")
+        raise InvalidValueError(f"n must be >= 1, got {n}")
     atoms = [RydbergAtom(index=i, position=(i * spacing_um, 0.0)) for i in range(n)]
     return RydbergTarget(
         atoms, c6=c6, global_rabi_mhz=global_rabi_mhz, global_detuning_mhz=global_detuning_mhz
@@ -234,7 +235,7 @@ def rydberg_square(
         Lattice spacing in micrometers.
     """
     if rows < 1 or cols < 1:
-        raise ValueError(f"rows and cols must be >= 1, got rows={rows}, cols={cols}")
+        raise InvalidValueError(f"rows and cols must be >= 1, got rows={rows}, cols={cols}")
     atoms = []
     for r in range(rows):
         for c in range(cols):

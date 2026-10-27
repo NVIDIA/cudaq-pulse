@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+from .._errors import InvalidValueError, NotFoundError
+
 _SECONDS_PER_NANOSECOND = 1.0e-9
 _NANOSECONDS_PER_MICROSECOND = 1.0e3
 
@@ -127,7 +129,7 @@ class TargetDescription:
 
     def __post_init__(self) -> None:
         if not self.clock_ghz > 0:
-            raise ValueError(f"clock_ghz must be positive, got {self.clock_ghz}")
+            raise InvalidValueError(f"clock_ghz must be positive, got {self.clock_ghz}")
         object.__setattr__(self, "qubits", MappingProxyType(dict(self.qubits)))
         object.__setattr__(self, "couplings", tuple(self.couplings))
         object.__setattr__(self, "crosstalk", tuple(self.crosstalk))
@@ -183,7 +185,7 @@ class TargetDescription:
     def get_drive_params(self, qubit_index: int) -> dict[str, float]:
         """Per-qubit drive parameters (amp, sigma, beta, etc.)."""
         if qubit_index not in self.qubits:
-            raise KeyError(f"Qubit {qubit_index} not in target {self.name!r}")
+            raise NotFoundError(f"Qubit {qubit_index} not in target {self.name!r}")
         return dict(self.qubits[qubit_index].drive_params)
 
     def drive_amplitude_scale(self, qubit_index: int) -> float:
@@ -199,7 +201,7 @@ class TargetDescription:
         explicit = params.get("amplitude_scale_rad_per_ns")
         if explicit is not None:
             if explicit <= 0:
-                raise ValueError(
+                raise InvalidValueError(
                     f"amplitude_scale_rad_per_ns must be positive for qubit {qubit_index}"
                 )
             return float(explicit)

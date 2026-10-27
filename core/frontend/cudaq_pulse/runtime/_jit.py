@@ -22,6 +22,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
+from .._errors import ExecutionError, InvalidTypeError
 from .._native._cudaq_pulse_native import JITModule, MLIRPipeline
 from .gpu import GpuRuntime, require_gpu_runtime
 
@@ -85,21 +86,21 @@ class JITCompiler:
                 if raw_message
                 else "unknown cuDensityMat error"
             )
-            raise RuntimeError(f"cuDensityMat execution failed: {message}")
+            raise ExecutionError(f"cuDensityMat execution failed: {message}")
         shapes = {
             itemsize * hilbert_dim: (hilbert_dim,),
             itemsize * hilbert_dim * hilbert_dim: (hilbert_dim, hilbert_dim),
         }
         shape = shapes.get(byte_count)
         if shape is None:
-            raise RuntimeError(
+            raise ExecutionError(
                 f"cuDensityMat returned {byte_count} bytes, which is not a complex128 state "
                 f"vector or density matrix of dimension {hilbert_dim}"
             )
         buffer = (ctypes.c_byte * byte_count)()
         status = runtime.cudm_last_result_copy(buffer, byte_count)
         if status != 0:
-            raise RuntimeError("could not copy the cuDensityMat result buffer")
+            raise ExecutionError("could not copy the cuDensityMat result buffer")
         array = np.frombuffer(buffer, dtype=np.complex128).copy()
         return [JITResult(shape=shape, dtype=np.dtype(np.complex128), _array=array)]
 
@@ -119,21 +120,21 @@ def _marshal_args(args: Sequence[Any]) -> tuple[list[Any], list[Any]]:
     keep_alive: list[Any] = []
     for index, a in enumerate(args):
         if isinstance(a, (bool, np.bool_)):
-            raise TypeError(f"argument {index}: booleans are not JIT arguments")
+            raise InvalidTypeError(f"argument {index}: booleans are not JIT arguments")
         if isinstance(a, (int, np.integer)):
             c_args.append(ctypes.c_int64(int(a)))
         elif isinstance(a, (float, np.floating)):
             c_args.append(ctypes.c_double(float(a)))
         elif isinstance(a, np.ndarray):
             if a.dtype not in _ARRAY_DTYPES:
-                raise TypeError(
+                raise InvalidTypeError(
                     f"argument {index}: arrays must be float64, complex128 or int64, got {a.dtype}"
                 )
             contiguous = np.ascontiguousarray(a)
             keep_alive.append(contiguous)
             c_args.append(contiguous.ctypes.data_as(ctypes.c_void_p))
         else:
-            raise TypeError(
+            raise InvalidTypeError(
                 f"argument {index}: {type(a).__name__} is not a JIT argument; "
                 "use an int, a float or a NumPy array"
             )

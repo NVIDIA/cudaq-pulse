@@ -18,6 +18,7 @@ import math
 import threading
 from typing import Any
 
+from .._errors import InvalidValueError
 from . import _krinner17 as _k
 from .base import Coupling, Qubit, TargetDescription
 
@@ -196,7 +197,7 @@ def transmon_generic(
         with side length = ceil(sqrt(n_qubits))).
     """
     if n_qubits < 1:
-        raise ValueError(f"n_qubits must be >= 1, got {n_qubits}")
+        raise InvalidValueError(f"n_qubits must be >= 1, got {n_qubits}")
 
     import math as _math
 
@@ -225,7 +226,7 @@ def transmon_generic(
             if r + 1 < side and i + side < n_qubits:
                 edges.append((i, i + side))
     else:
-        raise ValueError(f"Unknown topology {topology!r}. Use 'linear', 'ring', or 'grid'.")
+        raise InvalidValueError(f"Unknown topology {topology!r}. Use 'linear', 'ring', or 'grid'.")
 
     couplings = [Coupling(a, b, coupling_strength_hz=coupling_strength_hz) for a, b in edges]
 

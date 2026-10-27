@@ -132,6 +132,53 @@ def test_a_symbolic_value_error_survives_pickling():
     assert (str(copy), copy.names, copy.operation) == (str(error), ("theta",), "int()")
 
 
+def test_an_internal_error_asks_for_a_report():
+    error = pulse.InternalError("the slot table is empty")
+    text = str(error)
+    assert text.startswith("the slot table is empty; this is a bug in cudaq-pulse ")
+    assert text.endswith(
+        "; please report it at https://github.com/NVIDIA/cudaq-pulse/issues "
+        "with the kernel that raised it"
+    )
+    assert str(pickle.loads(pickle.dumps(error))) == text
+
+
+def test_library_errors_are_pulse_errors_of_their_kind():
+    from cudaq_pulse.classical import emulation
+    from cudaq_pulse.targets import Calibration, transmon_generic
+
+    with pytest.raises(pulse.NotFoundError, match="no calibration 'missing'"):
+        Calibration.load("missing")
+    with pytest.raises(pulse.InvalidValueError, match="n_qubits must be >= 1"):
+        transmon_generic(0)
+    with pytest.raises(pulse.UnsupportedError, match="not available yet"):
+        emulation.device_call_text(None)
+    with pytest.raises(pulse.CompilationError, match="inside a @cudaq_pulse.kernel"):
+        pulse.ops.wait(None, 4)
+
+
+# The modules that still raise built-in errors, and how many; every other
+# module raises library errors only.
+BUILTIN_RAISES = {"compiler.py": 21, "controller.py": 11, "kernel/_kernel.py": 8}
+
+
+def test_only_known_modules_raise_builtin_errors():
+    import re
+    from pathlib import Path
+
+    raise_builtin = re.compile(
+        r"\braise (ValueError|TypeError|KeyError|RuntimeError|FileNotFoundError|"
+        r"NotImplementedError)\("
+    )
+    root = Path(pulse.__file__).parent
+    found = {}
+    for path in sorted(root.rglob("*.py")):
+        count = len(raise_builtin.findall(path.read_text()))
+        if count:
+            found[path.relative_to(root).as_posix()] = count
+    assert found == BUILTIN_RAISES
+
+
 def test_pulse_warnings_can_be_made_errors_at_once():
     with warnings.catch_warnings():
         warnings.filterwarnings("error", category=pulse.PulseWarning)

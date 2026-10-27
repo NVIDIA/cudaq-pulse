@@ -35,6 +35,8 @@ from typing import Any
 
 import numpy as np
 
+from .._errors import InvalidValueError
+
 __all__ = ["DriftingPlant", "OrnsteinUhlenbeck", "PlantState", "TelegraphT1"]
 
 
@@ -86,7 +88,7 @@ class DriftingPlant:
         seed: int | None = None,
     ) -> None:
         if qubit not in target.qubits:
-            raise ValueError(f"the target has no qubit {qubit}")
+            raise InvalidValueError(f"the target has no qubit {qubit}")
         self._target = target
         self.qubit = qubit
         self.t1 = t1
@@ -107,7 +109,7 @@ class DriftingPlant:
     def advance(self, dt_s: float) -> PlantState:
         """Move time on by *dt_s* seconds; returns the new state."""
         if dt_s < 0:
-            raise ValueError("time only moves forward")
+            raise InvalidValueError("time only moves forward")
         s = self.state
         t1_us = s.t1_us
         if self.t1 is not None:

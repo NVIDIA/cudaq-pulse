@@ -23,7 +23,7 @@ import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from .._errors import NotFoundError, PulseError, _closest
+from .._errors import InvalidTypeError, InvalidValueError, NotFoundError, PulseError, _closest
 from .base import TargetDescription
 
 if TYPE_CHECKING:
@@ -47,7 +47,7 @@ class UnknownTargetError(NotFoundError):
 def _no_argument(name: str, factory: Callable[[], Any]) -> TargetFactory:
     def make(arg: str | None) -> Any:
         if arg is not None:
-            raise ValueError(f"target {name!r} takes no argument, got {arg!r}")
+            raise InvalidValueError(f"target {name!r} takes no argument, got {arg!r}")
         return factory()
 
     return make
@@ -56,7 +56,7 @@ def _no_argument(name: str, factory: Callable[[], Any]) -> TargetFactory:
 def _count(name: str, factory: Callable[[int], Any]) -> TargetFactory:
     def make(arg: str | None) -> Any:
         if arg is None or not arg.isdigit():
-            raise ValueError(f"target {name!r} needs a qudit count, e.g. {name}:4")
+            raise InvalidValueError(f"target {name!r} needs a qudit count, e.g. {name}:4")
         return factory(int(arg))
 
     return make
@@ -66,7 +66,7 @@ def _grid(name: str, factory: Callable[[int, int], Any]) -> TargetFactory:
     def make(arg: str | None) -> Any:
         rows, _, cols = (arg or "").partition("x")
         if not (rows.isdigit() and cols.isdigit()):
-            raise ValueError(f"target {name!r} needs a grid size, e.g. {name}:3x3")
+            raise InvalidValueError(f"target {name!r} needs a grid size, e.g. {name}:3x3")
         return factory(int(rows), int(cols))
 
     return make
@@ -105,7 +105,7 @@ def register_target(name: str, factory: TargetFactory) -> None:
     name: which target a process uses is still chosen by the environment.
     """
     if not name or ":" in name or name != name.strip():
-        raise ValueError(f"invalid target name {name!r}")
+        raise InvalidValueError(f"invalid target name {name!r}")
     registry = _registry()
     with _lock:
         registry[name] = factory
@@ -135,7 +135,7 @@ def make_target(spec: str) -> TargetDescription:
     if not isinstance(target, TargetDescription) and hasattr(target, "to_target"):
         target = target.to_target()
     if not isinstance(target, TargetDescription):
-        raise TypeError(
+        raise InvalidTypeError(
             f"target factory {name!r} returned {type(target).__name__}, not a TargetDescription"
         )
     return target

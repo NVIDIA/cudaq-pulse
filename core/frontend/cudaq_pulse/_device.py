@@ -27,7 +27,16 @@ import os
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, overload
 
-from ._errors import DeviceDefinitionError, Problem, PulseError, _closest, _count, _ranges
+from ._errors import (
+    DeviceDefinitionError,
+    InvalidTypeError,
+    NotFoundError,
+    Problem,
+    PulseError,
+    _closest,
+    _count,
+    _ranges,
+)
 from .targets._registry import NoTargetError, UnknownTargetError
 from .targets.base import TargetDescription
 
@@ -415,7 +424,7 @@ def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:
         return None
     try:
         return Calibration.load(given, cooldown=cooldown)
-    except FileNotFoundError as error:
+    except NotFoundError as error:
         problems.append(Problem(str(error), path="calibration", value=given))
     except json.JSONDecodeError as error:
         problems.append(
@@ -553,7 +562,7 @@ def device(config: Mapping[str, Any] | str | os.PathLike[str]) -> Device:
     """
     if not isinstance(config, (str, os.PathLike)):
         if not isinstance(config, Mapping):
-            raise TypeError(f"device config must be a mapping, got {type(config).__name__}")
+            raise InvalidTypeError(f"device config must be a mapping, got {type(config).__name__}")
         problems: list[Problem] = []
         found = _definition(config, "config", problems)
         if found is None:
@@ -596,5 +605,7 @@ def get_device(target: Target | None = None) -> Device:
 
         return current_target()
     if not isinstance(target, Target):
-        raise TypeError(f"get_device() expects a cudaq_pulse.Target, got {type(target).__name__}")
+        raise InvalidTypeError(
+            f"get_device() expects a cudaq_pulse.Target, got {type(target).__name__}"
+        )
     return _from_spec(target.value, f"shipped {target.name}")

@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import numpy.typing as npt
 
+from .._errors import ExecutionError, InvalidTypeError, InvalidValueError, UnsupportedError
 from .._native._cudaq_pulse_native import evaluate_callback
 from ..compiler import ScheduledEvent
 from . import _propagate
@@ -194,7 +195,7 @@ def simulate(
     from ..compiler import Lowered
 
     if not isinstance(lowered, Lowered):
-        raise TypeError(
+        raise InvalidTypeError(
             "simulate() expects the module of one kernel call, from "
             f"kernel.lower(*args); got {type(lowered).__name__}"
         )
@@ -237,36 +238,36 @@ def _simulate_lowered(
     paths: str = "all",
 ) -> SimulationResult:
     if paths not in ("all", "sampled"):
-        raise ValueError(f"unknown paths {paths!r}; choose 'all' or 'sampled'")
+        raise InvalidValueError(f"unknown paths {paths!r}; choose 'all' or 'sampled'")
     if paths == "sampled" and not shots:
-        raise ValueError("paths='sampled' follows the paths of the shots; pass shots >= 1")
+        raise InvalidValueError("paths='sampled' follows the paths of the shots; pass shots >= 1")
     if backend not in ("cpu", "gpu"):
-        raise ValueError(f"unknown backend {backend!r}; choose 'cpu' or 'gpu'")
+        raise InvalidValueError(f"unknown backend {backend!r}; choose 'cpu' or 'gpu'")
     if dephasing not in ("t2_star", "t2_echo"):
-        raise ValueError(f"unknown dephasing {dephasing!r}; choose 't2_star' or 't2_echo'")
+        raise InvalidValueError(f"unknown dephasing {dephasing!r}; choose 't2_star' or 't2_echo'")
     if readout not in ("ideal", "model", "model_with_decay"):
-        raise ValueError(
+        raise InvalidValueError(
             f"unknown readout {readout!r}; choose 'ideal', 'model' or 'model_with_decay'"
         )
     if dt_ns is None:
         dt_ns = _default_step(lowered)
     elif dt_ns <= 0:
-        raise ValueError("dt_ns must be positive")
+        raise InvalidValueError("dt_ns must be positive")
     if shots is not None and shots < 0:
-        raise ValueError("shots must not be negative")
+        raise InvalidValueError("shots must not be negative")
     if integrator not in _VALID_INTEGRATORS:
-        raise ValueError(
+        raise InvalidValueError(
             f"Unknown integrator {integrator!r}. "
             f"Choose from: {', '.join(sorted(_VALID_INTEGRATORS))}"
         )
     if lowered.parameters:
-        raise ValueError(
+        raise InvalidValueError(
             "the module has float parameters "
             f"({', '.join(lowered.parameters)}); lower it with their values first"
         )
     target = lowered.target.target if plant is None else _check_plant(lowered, plant)
     if getattr(target, "architecture", None) != "transmon":
-        raise NotImplementedError(
+        raise UnsupportedError(
             "simulation supports transmon targets; the neutral-atom Hamiltonian "
             "(Rabi drive, detuning and C6 / r^6 n n interactions) is not lowered"
         )
@@ -297,10 +298,10 @@ def _check_plant(lowered: Lowered, plant: Any) -> Any:
     from ..targets import TargetDescription
 
     if not isinstance(plant, TargetDescription):
-        raise TypeError(f"plant must be a TargetDescription, got {type(plant).__name__}")
+        raise InvalidTypeError(f"plant must be a TargetDescription, got {type(plant).__name__}")
     missing = [q for q in lowered.qudits if q not in plant.qubits]
     if missing:
-        raise ValueError(f"the plant does not define qudits {missing} that the program uses")
+        raise InvalidValueError(f"the plant does not define qudits {missing} that the program uses")
     return plant
 
 
@@ -374,7 +375,7 @@ def _simulate_compiled(
         )
     qudits = compiled.qudits
     if not qudits:
-        raise ValueError("the program uses no qudits; there is nothing to simulate")
+        raise InvalidValueError("the program uses no qudits; there is nothing to simulate")
     mode = {q: i for i, q in enumerate(qudits)}
     dims, extra = _level_attributes(target, qudits, levels)
     attributes = _target_attributes(
@@ -408,7 +409,7 @@ def _simulate_compiled(
         ]
         t_end = max(ends, default=0) / clock_ghz
     if t_end < t_start:
-        raise ValueError(f"t_end ({t_end}) must not precede t_start ({t_start})")
+        raise InvalidValueError(f"t_end ({t_end}) must not precede t_start ({t_start})")
 
     dim = math.prod(dims)
     state = _initial_state(initial_state, dim)
@@ -615,7 +616,7 @@ def _initial_state(state: npt.ArrayLike | None, dim: int) -> npt.NDArray[np.comp
         return psi
     array = np.asarray(state, dtype=np.complex128)
     if array.shape not in ((dim,), (dim, dim)):
-        raise ValueError(f"initial_state must have shape ({dim},) or ({dim}, {dim})")
+        raise InvalidValueError(f"initial_state must have shape ({dim},) or ({dim}, {dim})")
     return array
 
 
@@ -1030,7 +1031,7 @@ class _GpuBackend(_Backend):
         buffer = np.ascontiguousarray(state.ravel(order="F") if mixed else state)
         library = self.compiler._runtime.library
         if library.cudm_set_initial_state(buffer.ctypes.data, buffer.nbytes) != 0:
-            raise RuntimeError("could not set the cuDensityMat initial state")
+            raise ExecutionError("could not set the cuDensityMat initial state")
         results = self.compiler.load_and_run(
             jit_module, n_qubits=len(self.dims), state_dim=self.dim
         )

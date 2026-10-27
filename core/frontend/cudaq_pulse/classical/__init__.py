@@ -53,6 +53,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, Required, TypedDict, Unpack, overload
 
+from .._errors import InvalidTypeError, InvalidValueError
+
 __all__ = [
     "Bits",
     "Byte",
@@ -134,13 +136,13 @@ class ValueType:
 
 def _count(n: int, what: str) -> int:
     if isinstance(n, bool) or not isinstance(n, int) or n <= 0:
-        raise ValueError(f"{what} needs a positive whole number of values, got {n!r}")
+        raise InvalidValueError(f"{what} needs a positive whole number of values, got {n!r}")
     return n
 
 
 def _bits_width(bits: int, allowed: tuple[int, ...], what: str) -> int:
     if bits not in allowed:
-        raise ValueError(f"{what} has {' or '.join(map(str, allowed))} bits, got {bits!r}")
+        raise InvalidValueError(f"{what} has {' or '.join(map(str, allowed))} bits, got {bits!r}")
     return bits
 
 
@@ -249,7 +251,9 @@ def _value_type(value: Any, where: str) -> ValueType:
         return value
     if isinstance(value, type) and issubclass(value, (Float, Integer, Byte)):
         return value()
-    raise TypeError(f"{where} must be a type such as Bits(4), Float() or Floats(8), got {value!r}")
+    raise InvalidTypeError(
+        f"{where} must be a type such as Bits(4), Float() or Floats(8), got {value!r}"
+    )
 
 
 # What ``args`` and ``results`` entries may be: ``Float`` stands for ``Float()``.
@@ -302,11 +306,13 @@ class Link:
         for name in ("fixed_ns", "bytes_per_ns", "feedback_ns"):
             value = getattr(self, name)
             if not (isinstance(value, (int, float)) and math.isfinite(value) and value >= 0):
-                raise ValueError(f"Link.{name} must be a finite number >= 0, got {value!r}")
+                raise InvalidValueError(f"Link.{name} must be a finite number >= 0, got {value!r}")
         if not isinstance(self.max_in_flight, int) or self.max_in_flight < 1:
-            raise ValueError(f"Link.max_in_flight must be at least 1, got {self.max_in_flight!r}")
+            raise InvalidValueError(
+                f"Link.max_in_flight must be at least 1, got {self.max_in_flight!r}"
+            )
         if not isinstance(self.slot_bytes, int) or self.slot_bytes <= 24:
-            raise ValueError(
+            raise InvalidValueError(
                 f"Link.slot_bytes must exceed the 24-byte header, got {self.slot_bytes!r}"
             )
 
@@ -352,10 +358,12 @@ class ClassicalFunction:
     ) -> None:
         if name is None:
             if implementation is None:
-                raise TypeError("an external classical function needs a name")
+                raise InvalidTypeError("an external classical function needs a name")
             name = implementation.__name__
         if not name or not name.replace("_", "a").isalnum() or name[0].isdigit():
-            raise ValueError(f"a classical function name must be an identifier, got {name!r}")
+            raise InvalidValueError(
+                f"a classical function name must be an identifier, got {name!r}"
+            )
         self.name = name
         self.implementation = implementation
         self.args: tuple[ValueType, ...] = tuple(_value_type(a, "args entry") for a in args)
@@ -363,9 +371,11 @@ class ClassicalFunction:
             _value_type(r, "results entry") for r in results
         )
         if len(self.args) > _MAX_ARGS:
-            raise ValueError(f"{name}: at most {_MAX_ARGS} arguments, got {len(self.args)}")
+            raise InvalidValueError(f"{name}: at most {_MAX_ARGS} arguments, got {len(self.args)}")
         if len(self.results) > _MAX_RESULTS:
-            raise ValueError(f"{name}: at most {_MAX_RESULTS} results, got {len(self.results)}")
+            raise InvalidValueError(
+                f"{name}: at most {_MAX_RESULTS} results, got {len(self.results)}"
+            )
         nominal = max_latency_ns if nominal_latency_ns is None else nominal_latency_ns
         for label, value in (
             ("max_latency_ns", max_latency_ns),
@@ -373,9 +383,11 @@ class ClassicalFunction:
             ("nominal_latency_ns", nominal),
         ):
             if not (isinstance(value, (int, float)) and math.isfinite(value) and value >= 0):
-                raise ValueError(f"{name}: {label} must be a finite number >= 0, got {value!r}")
+                raise InvalidValueError(
+                    f"{name}: {label} must be a finite number >= 0, got {value!r}"
+                )
         if not min_latency_ns <= nominal <= max_latency_ns:
-            raise ValueError(
+            raise InvalidValueError(
                 f"{name}: latencies must satisfy min <= nominal <= max, got "
                 f"{min_latency_ns}, {nominal}, {max_latency_ns}"
             )
@@ -383,35 +395,35 @@ class ClassicalFunction:
         self.nominal_latency_ns = float(nominal)
         self.max_latency_ns = float(max_latency_ns)
         if latency_mode not in _LATENCY_MODES:
-            raise ValueError(
+            raise InvalidValueError(
                 f"{name}: latency_mode must be one of {', '.join(_LATENCY_MODES)}, "
                 f"got {latency_mode!r}"
             )
         if (latency_mode == "timeout") != (timeout_ns is not None):
-            raise ValueError(
+            raise InvalidValueError(
                 f"{name}: timeout_ns goes with latency_mode='timeout' (or pass "
                 "timeout_ns to result() at the call)"
             )
         if timeout_ns is not None and not timeout_ns > 0:
-            raise ValueError(f"{name}: timeout_ns must be positive, got {timeout_ns!r}")
+            raise InvalidValueError(f"{name}: timeout_ns must be positive, got {timeout_ns!r}")
         self.latency_mode = latency_mode
         self.timeout_ns = None if timeout_ns is None else float(timeout_ns)
         if submit not in _SUBMIT_POLICIES:
-            raise ValueError(f"{name}: submit must be 'eager' or 'lazy', got {submit!r}")
+            raise InvalidValueError(f"{name}: submit must be 'eager' or 'lazy', got {submit!r}")
         self.submit_policy = submit
         if deadline_ns is not None and not deadline_ns > 0:
-            raise ValueError(f"{name}: deadline_ns must be positive, got {deadline_ns!r}")
+            raise InvalidValueError(f"{name}: deadline_ns must be positive, got {deadline_ns!r}")
         self.deadline_ns = None if deadline_ns is None else float(deadline_ns)
         if isinstance(link, str):
             if not link.isidentifier():
-                raise ValueError(f"{name}: a link name must be an identifier, got {link!r}")
+                raise InvalidValueError(f"{name}: a link name must be an identifier, got {link!r}")
         elif isinstance(link, bool) or not isinstance(link, int) or link < 0:
-            raise ValueError(
+            raise InvalidValueError(
                 f"{name}: link must be a link name or a whole number >= 0, got {link!r}"
             )
         self.link = link
         if id is not None and not (isinstance(id, int) and 0 <= id <= 0xFFFFFFFF):
-            raise ValueError(f"{name}: id must be a 32-bit unsigned integer, got {id!r}")
+            raise InvalidValueError(f"{name}: id must be a 32-bit unsigned integer, got {id!r}")
         self.id = function_id(name) if id is None else id
         self.custom_id = id is not None
         # For an on-device random source: how many equally likely values.
@@ -427,12 +439,14 @@ class ClassicalFunction:
     def __call__(self, *args: Any) -> Any:
         """Run the reference implementation on *args* (outside a kernel)."""
         if self.implementation is None:
-            raise TypeError(
+            raise InvalidTypeError(
                 f"{self.name} is external and has no reference implementation; "
                 "simulate it with handlers={...}, or declare it with a body"
             )
         if len(args) != len(self.args):
-            raise TypeError(f"{self.name}() takes {len(self.args)} arguments, got {len(args)}")
+            raise InvalidTypeError(
+                f"{self.name}() takes {len(self.args)} arguments, got {len(args)}"
+            )
         return self.implementation(*args)
 
     def submit(self, *args: Any) -> Pending:
@@ -535,7 +549,7 @@ def random_index(
     randomized-benchmarking gate per shot, branching on the index.
     """
     if isinstance(n, bool) or not isinstance(n, int) or n < 2:
-        raise ValueError(f"random_index needs at least 2 values, got {n!r}")
+        raise InvalidValueError(f"random_index needs at least 2 values, got {n!r}")
     import random
 
     function = ClassicalFunction(

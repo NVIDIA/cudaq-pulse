@@ -19,6 +19,7 @@ from collections import namedtuple
 from typing import Any, NoReturn
 
 from .._errors import CompilationError as CompilationError
+from .._errors import InternalError
 
 Op = namedtuple("Op", ["kind", "operands", "results", "attrs"])
 
@@ -203,7 +204,7 @@ class Parameter(_SymbolicNumber):
 
     def __init__(self, name: str, index: int, dtype: str = "unknown"):
         if dtype not in ("unknown", "i64", "f64"):
-            raise ValueError(f"unsupported parameter dtype {dtype!r}")
+            raise InternalError(f"unsupported parameter dtype {dtype!r}")
         self.name = name
         self.index = index
         self.dtype = dtype

@@ -284,7 +284,10 @@ behavior may change in any 0.x release.
   `UnsupportedError` a `NotImplementedError`, and `CompilationError`,
   `ExecutionError` and `InternalError` are `RuntimeError`s. An
   `InternalError` is a bug in cudaq-pulse, and its message asks for a
-  report. Every warning cudaq-pulse issues is a `PulseWarning`.
+  report. `Calibration.load` of a calibration that is neither shipped nor a
+  file raises `NotFoundError`, and a malformed request or answer on a
+  classical channel an `ExecutionError`. Every warning cudaq-pulse issues
+  is a `PulseWarning`.
   `cudaq_pulse.compiler`, `cudaq_pulse.runtime.simulate` and
   `cudaq_pulse.targets.transmon_model` list their public names in `__all__`,
   as the other documented modules do. `cudaq_pulse.targets.UnknownTargetError`

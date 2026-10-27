@@ -29,6 +29,7 @@ import struct
 from collections.abc import Sequence
 from typing import Any
 
+from .._errors import ExecutionError, InvalidValueError
 from . import ClassicalFunction, ValueType
 
 __all__ = [
@@ -102,7 +103,7 @@ def schema(function: ClassicalFunction) -> dict[str, Any]:
 
 def _pack(specs: Sequence[ValueType], values: Sequence[Any], what: str) -> bytes:
     if len(values) != len(specs):
-        raise ValueError(f"{len(specs)} {what} expected, got {len(values)}")
+        raise InvalidValueError(f"{len(specs)} {what} expected, got {len(values)}")
     out = bytearray()
     for spec, value in zip(specs, values):
         _, size, _, fmt = _layout(spec)
@@ -128,7 +129,7 @@ def _unpack(specs: Sequence[ValueType], data: bytes) -> list[Any]:
         chunk = data[cursor : cursor + size]
         cursor += size
         if len(chunk) != size:
-            raise ValueError("payload shorter than its schema")
+            raise ExecutionError("payload shorter than its schema")
         if spec.descriptor.startswith("bits:"):
             items: list[Any] = [(chunk[i // 8] >> (i % 8)) & 1 for i in range(spec.count)]
         else:
@@ -152,9 +153,11 @@ def decode_request(function: ClassicalFunction, data: bytes) -> tuple[int, int, 
     """``(request id, timestamp, arguments)`` of a request to *function*."""
     magic, fid, length, request_id, timestamp = _REQUEST.unpack_from(data)
     if magic != REQUEST_MAGIC:
-        raise ValueError(f"not a request: magic {magic:#x}")
+        raise ExecutionError(f"not a request: magic {magic:#x}")
     if fid != function.id:
-        raise ValueError(f"request for function {fid:#x}, not {function.name} ({function.id:#x})")
+        raise ExecutionError(
+            f"request for function {fid:#x}, not {function.name} ({function.id:#x})"
+        )
     return request_id, timestamp, _unpack(function.args, data[HEADER_BYTES : HEADER_BYTES + length])
 
 
@@ -176,7 +179,7 @@ def decode_answer(function: ClassicalFunction, data: bytes) -> tuple[int, int, A
     """``(status, request id, answer)`` of an answer from *function*."""
     magic, status, length, request_id, _ = _RESPONSE.unpack_from(data)
     if magic != RESPONSE_MAGIC:
-        raise ValueError(f"not an answer: magic {magic:#x}")
+        raise ExecutionError(f"not an answer: magic {magic:#x}")
     values = (
         _unpack(function.results, data[HEADER_BYTES : HEADER_BYTES + length]) if status == 0 else []
     )
@@ -199,19 +202,19 @@ class _Native:
     def __call__(self, *args: Any) -> Any:
         request = encode_request(self._function, args, self._next_id)
         if len(request) > self._slot_bytes:
-            raise ValueError(
+            raise ExecutionError(
                 f"{self._function.name}: request of {len(request)} bytes exceeds the slot"
             )
         ctypes.memmove(self._request, request, len(request))
         self._handler(self._request, self._answer, self._slot_bytes)
         status, request_id, answer = decode_answer(self._function, self._answer.raw)
         if request_id != self._next_id:
-            raise RuntimeError(
+            raise ExecutionError(
                 f"{self._function.name}: answer to request {request_id}, expected {self._next_id}"
             )
         self._next_id = (self._next_id + 1) & 0xFFFFFFFF
         if status != 0:
-            raise RuntimeError(f"{self._function.name} answered with status {status}")
+            raise ExecutionError(f"{self._function.name} answered with status {status}")
         return answer
 
 

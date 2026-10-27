@@ -40,6 +40,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from .._errors import InvalidTypeError, InvalidValueError
 from . import Bits, Byte, ClassicalFunction, Integer, function_id
 
 __all__ = [
@@ -133,7 +134,7 @@ class Decoder:
 
         def get(decoder_id: int, return_size: int, clear: int, history: Sequence[Any] = ()) -> Any:
             if decode is None:
-                raise TypeError("this Decoder has no decode function to simulate it with")
+                raise InvalidTypeError("this Decoder has no decode function to simulate it with")
             bits: list[int] = []
             for record in history:
                 if record.function == reset_name:
@@ -142,7 +143,9 @@ class Decoder:
                     bits.extend(record.inputs[4])
             answer = list(decode(bits))
             if len(answer) != corrections:
-                raise ValueError(f"decode returned {len(answer)} bits, expected {corrections}")
+                raise InvalidValueError(
+                    f"decode returned {len(answer)} bits, expected {corrections}"
+                )
             return answer
 
         get.takes_history = True  # type: ignore[attr-defined]

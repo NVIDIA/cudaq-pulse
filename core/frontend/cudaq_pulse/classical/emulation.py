@@ -36,6 +36,7 @@ from typing import Any
 
 import numpy as np
 
+from .._errors import ExecutionError, NotFoundError, UnsupportedError
 from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
 from . import ClassicalFunction, Link, wire
 
@@ -180,7 +181,7 @@ class InProcess:
         """Deliver *request*; returns the answer bytes and the service's time in ns."""
         handler = self._handlers.get(function.name)
         if handler is None:
-            raise KeyError(f"no service for {function.name!r}")
+            raise NotFoundError(f"no service for {function.name!r}")
         request_id, timestamp, args = wire.decode_request(function, request)
         t0 = time.perf_counter_ns()
         answer = handler(*args)
@@ -244,7 +245,7 @@ class RealtimeChannel:
     format, so a channel built on it drops in here."""
 
     def __init__(self, library: str, *args: Any, **kwargs: Any) -> None:
-        raise NotImplementedError(
+        raise UnsupportedError(
             "a channel through the CUDA-Q Realtime host library is not available yet; "
             "emulate with InProcess (wire.native handlers run compiled code) or UdpChannel"
         )
@@ -255,7 +256,7 @@ def device_call_text(lowered: Any) -> str:
     ``cc.device_call`` operations. Not available yet: export the program
     with ``export`` (or ``Lowered.export_emulation()``), whose manifest holds
     each function's wire id, payload types and link."""
-    raise NotImplementedError(
+    raise UnsupportedError(
         "exporting calls as CUDA-Q cc.device_call operations is not available yet; "
         "use Lowered.export_emulation(), whose manifest lists every call"
     )
@@ -423,7 +424,7 @@ def emulate(
                 answer_bytes, service_ns = channel.call(fn, request)
                 status, _, answer = wire.decode_answer(fn, answer_bytes)
                 if status != 0:
-                    raise RuntimeError(f"{callee} answered with status {status}")
+                    raise ExecutionError(f"{callee} answered with status {status}")
                 link = machine.link(fn.link)
                 path_transport = transport_of(machine.link_id(fn.link))
                 latency = path_transport.delay_ns(len(request), rng) + path_transport.delay_ns(
