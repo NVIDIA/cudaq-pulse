@@ -301,3 +301,30 @@ def test_a_wait_from_an_answer_and_a_float_runs_their_sum_clamped(tau):
     mixed = pulse.simulate(pulse.compile(offset_by_tau, device=dev).lower(q, p, tau))
     reference = pulse.simulate(pulse.compile(fixed, device=dev).lower(q, p))
     np.testing.assert_allclose(mixed.density_matrix, reference.density_matrix, atol=1e-9)
+
+
+@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=50, latency_mode="blocking")
+def blocking_tau(x):
+    return x
+
+
+@pytest.mark.parametrize("barrier", ["variable", "blocking", "variable_in_loop"])
+def test_pulses_either_side_of_a_barrier_are_not_fused(barrier):
+    @pulse.kernel
+    def k(q, p):
+        d, t = get_drive_line(q)
+        e, u = get_drive_line(p)
+        drive(e, square(400, 0.05), u)
+        if barrier == "variable":
+            wait(d, next_tau.submit(10.0).result(), bounds=(8, 100))
+        elif barrier == "blocking":
+            drive(d, square(40, blocking_tau.submit(0.1).result()), t)
+        else:
+            for _ in range(2):
+                wait(d, next_tau.submit(10.0).result(), bounds=(8, 100))
+        drive(e, square(30, 0.05), u)
+
+    low = pulse.compile(k, unroll_threshold=0).lower(Q[0], Q[1])
+    spectator = [e for e in low.schedule if e.kind == "drive" and e.qubit == 1]
+    assert [e.end - e.start for e in spectator] == [400, 30]
+    assert spectator[1].start >= low.epochs()[-1].start_vtu

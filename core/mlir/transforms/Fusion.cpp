@@ -13,6 +13,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -48,6 +49,32 @@ static bool sameSSAValue(mlir::Value a, mlir::Value b) {
   if (aCst && bCst)
     return aCst.value().bitwiseIsEqual(bCst.value());
   return false;
+}
+
+/// Whether `op` is or holds a barrier: a wait whose length comes from an
+/// answer, or a wait for a blocking classical call. Operations after a
+/// barrier start after it, so two drives either side of one are not
+/// adjacent in time.
+static bool holdsBarrier(mlir::Operation *op) {
+  auto barrier = [](mlir::Operation *inner) {
+    if (inner->hasAttr("classical.variable"))
+      return true;
+    if (inner->getName().getStringRef() != "classical.wait")
+      return false;
+    auto callee = inner->getAttrOfType<mlir::FlatSymbolRefAttr>("callee");
+    mlir::Operation *callable =
+        callee ? mlir::SymbolTable::lookupNearestSymbolFrom(inner, callee)
+               : nullptr;
+    auto mode =
+        callable ? callable->getAttrOfType<mlir::StringAttr>("mode") : nullptr;
+    return mode && mode.getValue() == "blocking";
+  };
+  return op
+      ->walk([&](mlir::Operation *inner) {
+        return barrier(inner) ? mlir::WalkResult::interrupt()
+                              : mlir::WalkResult::advance();
+      })
+      .wasInterrupted();
 }
 
 static double phaseAttr(pulse::DriveOp drive, llvm::StringRef name) {
@@ -87,6 +114,13 @@ struct FuseAdjacentSquareDrives
 
     if (secondDrive.getTone() != firstDrive.getUpdatedTone())
       return mlir::failure();
+
+    if (secondDrive->getBlock() != firstDrive->getBlock())
+      return mlir::failure();
+    for (mlir::Operation *op = firstDrive->getNextNode(); op != secondDrive;
+         op = op->getNextNode())
+      if (holdsBarrier(op))
+        return mlir::failure();
 
     // A frame change folded into the second drive (virtual Z) or a different
     // per-pulse phase would be lost by playing both as one pulse.
