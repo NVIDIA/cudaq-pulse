@@ -716,6 +716,10 @@ class ClassicalFunction[**P, R]:
     dispatched by the hash of that name. ``specialize(...)`` gives one version.
     """
 
+    # Set on an instance only when given, so that a function without one
+    # holds what it held before budgets (the kernel guard copies it).
+    reaction_deadline_ns: float | None = None
+
     def __init__(
         self,
         implementation: Callable[P, R] | None,
@@ -728,6 +732,7 @@ class ClassicalFunction[**P, R]:
         timeout_ns: float | Time | None = None,
         submit: str = "eager",
         deadline_ns: float | Time | None = None,
+        reaction_deadline_ns: float | Time | None = None,
         link: int | str = 0,
         _signature: Callable[..., Any] | None = None,
         _dispatch_key: int | None = None,
@@ -739,6 +744,7 @@ class ClassicalFunction[**P, R]:
         timeout_ns = as_nanoseconds(timeout_ns)
         deadline_ns = as_nanoseconds(deadline_ns)
         hinted = implementation if implementation is not None else _signature
+        reaction_deadline_ns = as_nanoseconds(reaction_deadline_ns)
         if name is None:
             if hinted is None:
                 raise InvalidTypeError("an external classical function needs a name")
@@ -789,6 +795,17 @@ class ClassicalFunction[**P, R]:
         if deadline_ns is not None and not deadline_ns > 0:
             raise InvalidValueError(f"{name}: deadline_ns must be positive, got {deadline_ns!r}")
         self.deadline_ns = None if deadline_ns is None else float(deadline_ns)
+        if reaction_deadline_ns is not None and not (
+            isinstance(reaction_deadline_ns, (int, float))
+            and math.isfinite(reaction_deadline_ns)
+            and reaction_deadline_ns > 0
+        ):
+            raise InvalidValueError(
+                f"{name}: reaction_deadline_ns must be a positive number, "
+                f"got {reaction_deadline_ns!r}"
+            )
+        if reaction_deadline_ns is not None:
+            self.reaction_deadline_ns = float(reaction_deadline_ns)
         if isinstance(link, str):
             if not link.isidentifier():
                 raise InvalidValueError(f"{name}: a link name must be an identifier, got {link!r}")
@@ -1105,6 +1122,8 @@ def _make(template: ClassicalFunction[..., Any], key: Any) -> ClassicalFunction[
     version: ClassicalFunction[..., Any] = object.__new__(ClassicalFunction)
     for attr in _COPIED:
         setattr(version, attr, getattr(template, attr))
+    if "reaction_deadline_ns" in template.__dict__:
+        version.reaction_deadline_ns = template.reaction_deadline_ns
     version._shape, version._plan, version._n, version._made = None, None, 0, None
     version._fast = _NO_VERSIONS
     items = iter(_key_items(key))
@@ -1234,6 +1253,7 @@ class _Options(TypedDict, total=False):
     timeout_ns: float | Time | None
     submit: str
     deadline_ns: float | Time | None
+    reaction_deadline_ns: float | Time | None
     link: int | str
     name: str | None
 
@@ -1265,11 +1285,17 @@ def function(implementation: Callable[..., Any] | None = None, /, **options: Any
     Keyword options: ``max_latency_ns`` (required), ``min_latency_ns``,
     ``nominal_latency_ns``, ``latency_mode`` (``"bounded"``, ``"timeout"``
     with ``timeout_ns``, or ``"blocking"``), ``submit`` (``"eager"`` or
-    ``"lazy"``), ``deadline_ns``, ``link`` (the link its requests travel on:
-    a name from ``MachineModel.links``, such as ``"controller"``, or a link
-    id; default 0; ``device`` is not used for it, because a cudaq-pulse
-    device is the QPU) and ``name``. A latency, timeout or deadline is a time
-    (``400 * pulse.ns``) or a number of ns.
+    ``"lazy"``), ``deadline_ns``, ``reaction_deadline_ns``, ``link`` (the
+    link its requests travel on: a name from ``MachineModel.links``, such as
+    ``"controller"``, or a link id; default 0; ``device`` is not used for
+    it, because a cudaq-pulse device is the QPU) and ``name``. A latency,
+    timeout or deadline is a time (``400 * pulse.ns``) or a number of ns.
+
+    With ``reaction_deadline_ns``, compiling fails unless every call's answer
+    is due within that long of the end of the latest readout whose outcome
+    the request carries (of the start of the submission when it carries
+    none): the time from measuring to being able to act on the answer,
+    queueing, link and ``max_latency_ns`` included.
 
     The hints are read when the function is first used (a program that
     calls it is compiled), and a mistake in them is raised there.

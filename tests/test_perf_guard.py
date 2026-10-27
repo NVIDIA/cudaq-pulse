@@ -419,6 +419,59 @@ def test_a_rolled_loop_is_checked_and_exported_rolled_in_constant_time():
 
 
 @pytest.mark.scaling
+def test_duration_budgets_of_a_rolled_loop_are_checked_in_constant_time():
+    @pulse.kernel(schedule="asap", max_duration_cycles=1000)
+    def cycle(q):
+        line = get_drive_line(q)
+        probe = get_readout_line(q)
+        drive(line, gaussian(16, 0.1, 4.0))
+        sync(line, probe)
+        readout(probe, square(40, 0.05))
+
+    def program(n: int):
+        @pulse.kernel(max_duration_cycles=10**9)
+        def kernel(q):
+            for _ in range(n):
+                cycle(q)
+
+        return kernel
+
+    compile_s = {}
+    for n in (100, 100_000):
+        kernel = program(n)
+        compile_s[n] = _best(lambda k=kernel: pulse.compile(k).lower(Q[0]), 3, 0)
+    assert compile_s[100_000] < compile_s[100] * FLAT_LOOP_LIMIT, compile_s
+
+
+@pytest.mark.scaling
+def test_reaction_times_add_nothing_to_the_checks_of_a_call():
+    def program(reaction_deadline_ns: float | None):
+        @pulse.classical(
+            max_latency_ns=200, reaction_deadline_ns=reaction_deadline_ns, name="perf_react"
+        )
+        def react(bits: pulse.Bits) -> pulse.Bits:
+            return [bits[0]]
+
+        @pulse.kernel
+        def kernel(q):
+            line, tone = get_drive_line(q)
+            probe, probe_tone = get_readout_line(q)
+            for _ in range(20_000):
+                m = readout(probe, square(40, 0.05), probe_tone)
+                if react.submit([m]).result()[0]:
+                    drive(line, gaussian(16, 0.1, 4.0), tone)
+
+        return kernel
+
+    # The calls are already checked once per execution; their reaction times
+    # are checked once per call, at the corners of its loop.
+    compile_s = {
+        r: _best(lambda k=program(r): pulse.compile(k).lower(Q[0]), 3, 0) for r in (None, 1000.0)
+    }
+    assert compile_s[1000.0] < compile_s[None] * 1.25, compile_s
+
+
+@pytest.mark.scaling
 def test_a_wait_length_sweep_compiles_once(monkeypatch):
     @pulse.kernel
     def t1(q, tau: float):

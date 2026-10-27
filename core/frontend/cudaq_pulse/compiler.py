@@ -1100,6 +1100,9 @@ def _rejected_literal(
     return located
 
 
+_BUDGETS = ("max_duration_cycles", "reaction_deadline_ns")
+
+
 def build(
     fn: Any,
     trace_args: Sequence[Any],
@@ -1108,6 +1111,7 @@ def build(
     options: CompileOptions,
     slots: int = 0,
     role: _Role | None = None,
+    max_duration_cycles: int | None = None,
 ) -> tuple[Lowered, Any]:
     """Trace *fn* and build its module on *target*.
 
@@ -1116,7 +1120,8 @@ def build(
     do the *slots* runtime qudits (slot k traces as the qudit of index
     -1 - k). A *role* names the
     symbols of a module with list or qudit parameters, and gets the rest of
-    what its calls share.
+    what its calls share. With *max_duration_cycles*, scheduling fails if
+    the program can take longer.
     Returns the module and the builder, whose record of readouts and host
     calls the caller needs. Raises ``SymbolicValueError`` naming the float
     parameters an integer of the program (a waveform duration, a cast to
@@ -1210,6 +1215,8 @@ def build(
             if system is None or machine.controller is not None
             else system._links_attribute(machine, links, target.clock_ghz)
         )
+    if max_duration_cycles is not None:
+        module.set_attributes(f"{{pulse.max_duration_cycles = {int(max_duration_cycles)} : i64}}")
     fine_delays = None if plain else _clocked_module(module, machine, target, clocks, builder)
     metrics.ffi_ms = (time.perf_counter() - t0) * 1000
 
@@ -1237,8 +1244,10 @@ def build(
         schedule_args = _schedule_args(options, clocks)
     try:
         module.schedule(*schedule_args)
-    except Exception:
-        if not parameters:
+    except Exception as e:
+        # A timing budget counts every wait at its highest length, so it
+        # fails the same way with any values.
+        if not parameters or any(name in str(e) for name in _BUDGETS):
             raise
         scheduled = False
     metrics.schedule_ms = (time.perf_counter() - t0) * 1000

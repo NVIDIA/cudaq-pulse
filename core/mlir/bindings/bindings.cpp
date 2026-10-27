@@ -4108,7 +4108,8 @@ public:
     // The open schedule blocks as (policy, callee), innermost last, and the
     // ids of the values bound inside them, so that a block's results can
     // take them over when it closes.
-    std::vector<std::pair<std::string, std::string>> blocks;
+    // (policy, callee, max_duration_cycles or -1) of each open block.
+    std::vector<std::tuple<std::string, std::string, int64_t>> blocks;
     llvm::DenseMap<mlir::Value, llvm::SmallVector<int64_t, 1>> blockVids;
     // Whether the program computes something at run time (a select, a
     // classical call, a value an if yields) or changes a frame in a branch;
@@ -4500,9 +4501,15 @@ public:
         break;
       }
       case kOpBlockBegin: {
-        // [policy (0 = asap, 1 = alap), callee name bytes, name words...]
-        if (plen < 2 || p[0] < 0 || p[0] > 1 || p[1] < 0 ||
-            plen != 2 + (p[1] + 7) / 8)
+        // [policy (0 = asap, 1 = alap), callee name bytes, name words...,
+        //  max_duration_cycles (optional)]
+        if (plen < 2 || p[0] < 0 || p[0] > 1 || p[1] < 0)
+          throw std::invalid_argument("packed: malformed schedule block");
+        int64_t nameWords = (p[1] + 7) / 8;
+        if (plen != 2 + nameWords && plen != 3 + nameWords)
+          throw std::invalid_argument("packed: malformed schedule block");
+        int64_t budget = plen == 3 + nameWords ? p[2 + nameWords] : -1;
+        if (plen == 3 + nameWords && budget <= 0)
           throw std::invalid_argument("packed: malformed schedule block");
         Region region{false,
                       0,
@@ -4514,7 +4521,8 @@ public:
                       nullptr};
         blocks.emplace_back(p[0] == 0 ? "asap" : "alap",
                             std::string(reinterpret_cast<const char *>(p + 2),
-                                        static_cast<size_t>(p[1])));
+                                        static_cast<size_t>(p[1])),
+                            budget);
         region.linksBefore = links;
         builder_->setInsertionPointToEnd(region.body.get());
         regions.push_back(std::move(region));
@@ -4528,11 +4536,14 @@ public:
         Region region = std::move(regions.back());
         regions.pop_back();
         lengthen(region.cycles, cur);
-        auto [policy, callee] = std::move(blocks.back());
+        auto [policy, callee, budget] = std::move(blocks.back());
         blocks.pop_back();
         builder_->setInsertionPointToEnd(region.parent);
         auto block = buildScheduleBlock(*builder_, loc, std::move(region.body),
                                         policy, callee);
+        if (budget > 0)
+          block->setAttr("max_duration_cycles",
+                         builder_->getI64IntegerAttr(budget));
         auto yielded = block.getBody().front().getTerminator()->getOperands();
         // The last version of a link the block sent on is a block result.
         for (auto &[device, value] : links)
@@ -5020,12 +5031,15 @@ public:
 
       case kOpClassicalDeclare: {
         // [index, id, link, flags, min, nominal, max, timeout, deadline,
-        //  name length, args length, results length, text words...]
+        //  name length, args length, results length, text words...,
+        //  reaction (with flag 64)]
         if (plen < 12)
           throw std::invalid_argument("packed: malformed classical function");
         int64_t lengths = p[9] + p[10] + p[11];
+        int64_t textWords = (lengths + 7) / 8;
+        bool reaction = p[3] & 64;
         if (p[0] != static_cast<int64_t>(callables.size()) || p[9] <= 0 ||
-            p[10] < 0 || p[11] < 0 || plen != 12 + (lengths + 7) / 8)
+            p[10] < 0 || p[11] < 0 || plen != 12 + textWords + reaction)
           throw std::invalid_argument("packed: malformed classical function");
         std::string text(reinterpret_cast<const char *>(p + 12),
                          static_cast<size_t>(lengths));
@@ -5059,7 +5073,9 @@ public:
                        : mlir::FloatAttr(),
             flags & 32 ? builder_->getF64FloatAttr(i2f(p[8]))
                        : mlir::FloatAttr(),
-            flags & 8 ? builder_->getUnitAttr() : mlir::UnitAttr());
+            flags & 8 ? builder_->getUnitAttr() : mlir::UnitAttr(),
+            reaction ? builder_->getF64FloatAttr(i2f(p[12 + textWords]))
+                     : mlir::FloatAttr());
         callables.push_back(callable);
         break;
       }

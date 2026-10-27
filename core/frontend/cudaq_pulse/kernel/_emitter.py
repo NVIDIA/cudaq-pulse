@@ -66,6 +66,7 @@ from ._bytecode_normalize import (
     UNPACK_SEQUENCE,
     decode,
 )
+from ._schedule_blocks import block_budget
 from ._unroll import resolve_unroll_threshold
 from .ir_builder import (
     LINEAR_TYPES,
@@ -2803,8 +2804,9 @@ class PulseIREmitter:
         if inner is not None:
             # A kernel with its own policy is scheduled on its own, in a block.
             policy = getattr(callable_val, "schedule", None)
+            budget = block_budget(callable_val, self.b)
             if policy is not None and getattr(self.b, "schedule_blocks", False):
-                self.b.begin_schedule_block(policy, inner.__name__)
+                self.b.begin_schedule_block(policy, inner.__name__, budget)
                 self._inline_helper(inner, call_args, kwargs)
                 self.b.end_schedule_block()
             else:

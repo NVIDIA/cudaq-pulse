@@ -631,7 +631,8 @@ def ScheduleBlockOp : PulseOp<"schedule_block", [
     operand the local time it is first needed (`in_offset_cycles`, -1 if no
     timed op depends on it), and for each result the local time it is
     available (`out_offset_cycles`), or -1 with `out_source` naming the operand
-    it passes through unchanged.
+    it passes through unchanged. With `max_duration_cycles`, scheduling fails
+    if the block can take longer than that many cycles.
   }];
   let arguments = (ins StrAttr:$policy, Variadic<AnyTimedType>:$inputs,
                        OptionalAttr<StrAttr>:$callee);

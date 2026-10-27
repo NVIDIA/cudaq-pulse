@@ -882,8 +882,12 @@ class PackedIRBuilder:
         while len(numeric) > cached:
             numeric.popitem()
 
-    def begin_schedule_block(self, policy: str, callee: str) -> None:
-        """Open a block whose ops are scheduled on their own with *policy*.
+    def begin_schedule_block(
+        self, policy: str, callee: str, max_duration_cycles: int | None = None
+    ) -> None:
+        """Open a block whose ops are scheduled on their own with *policy*,
+        and that scheduling rejects if it can take more than
+        *max_duration_cycles*.
 
         The extension makes the lines, tones and measurements the block uses
         from outside its operands, and the ones it leaves its results.
@@ -891,6 +895,8 @@ class PackedIRBuilder:
         encoded = callee.encode("utf-8")
         padded = encoded + b"\0" * ((8 - len(encoded) % 8) % 8)
         words = [_unpack_q.unpack(padded[i : i + 8])[0] for i in range(0, len(padded), 8)]
+        if max_duration_cycles is not None:
+            words.append(max_duration_cycles)
         self._record(_BLOCK_BEGIN, [_BLOCK_POLICY[policy], len(encoded), *words])
         self.schedule_block_count += 1
         self._block_marks.append(len(self._numeric_vids))
@@ -1000,6 +1006,7 @@ class PackedIRBuilder:
         flags |= 8 if key != function._dispatch_key or not own else 0
         flags |= 16 if function.timeout_ns is not None else 0
         flags |= 32 if function.deadline_ns is not None else 0
+        flags |= 64 if function.reaction_deadline_ns is not None else 0
         name = function.name.encode("utf-8")
         args = ",".join(a.descriptor for a in function.args).encode("ascii")
         results = ",".join(r.descriptor for r in function.results).encode("ascii")
@@ -1022,6 +1029,11 @@ class PackedIRBuilder:
                 len(args),
                 len(results),
                 *words,
+                *(
+                    ()
+                    if function.reaction_deadline_ns is None
+                    else (_f2i(function.reaction_deadline_ns),)
+                ),
             ],
         )
         self.classical.append(function)

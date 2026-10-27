@@ -31,6 +31,7 @@ def kernel(
     cache_size: int | None = None,
     schedule: str | None = None,
     unroll_threshold: int | None = None,
+    max_duration_cycles: int | None = None,
 ) -> KernelDecorator: ...
 
 
@@ -41,6 +42,7 @@ def kernel[**P](
     cache_size: int | None = None,
     schedule: str | None = None,
     unroll_threshold: int | None = None,
+    max_duration_cycles: int | None = None,
 ) -> Kernel[P] | KernelDecorator:
     """Decorator that makes a Python function a pulse kernel.
 
@@ -75,14 +77,22 @@ def kernel[**P](
     *unroll_threshold* sets which ``for ... in range(n)`` loops are unrolled
     while tracing (see ``cudaq_pulse.compile``): a non-negative ``int``, 8 by
     default, and 0 never unrolls.
+
+    With *max_duration_cycles*, compiling fails if any execution of the
+    kernel can take longer than that many clock cycles: each call, for a
+    kernel called with its own ``schedule=`` (for example the body of a
+    loop that must fit its cycle), or the whole program, for the kernel
+    compiled. Waits whose length is only known when the program runs count
+    at their highest length.
     """
     from ._bytecode_normalize import check_interpreter
     from ._kernel import Kernel
-    from ._schedule_blocks import validate_kernel_schedule
+    from ._schedule_blocks import validate_kernel_schedule, validate_max_duration
     from ._unroll import resolve_unroll_threshold
 
     check_interpreter()
     validate_kernel_schedule(schedule)
+    validate_max_duration(max_duration_cycles)
     if unroll_threshold is not None:
         resolve_unroll_threshold(unroll_threshold)
 
@@ -92,6 +102,7 @@ def kernel[**P](
             cache_size=cache_size,
             schedule=schedule,
             unroll_threshold=unroll_threshold,
+            max_duration_cycles=max_duration_cycles,
         )
 
     return wrap if fn is None else wrap(fn)

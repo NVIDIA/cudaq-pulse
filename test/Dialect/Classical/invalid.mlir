@@ -235,3 +235,11 @@ func.func @nothing_to_wait_for() {
   "classical.wait"(%h) {callee = @f} : (!classical.future) -> ()
   return
 }
+
+// -----
+
+// expected-error @+1 {{reaction_deadline_ns must be positive}}
+classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+    args = [], results = [], latency_min_ns = 0.0, latency_nominal_ns = 0.0,
+    latency_max_ns = 0.0, mode = "bounded", submit = "eager",
+    reaction_deadline_ns = 0.0}

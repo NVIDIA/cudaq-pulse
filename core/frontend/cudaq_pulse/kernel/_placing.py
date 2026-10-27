@@ -251,7 +251,16 @@ def _build_placed(
     # parameters, bound as any other.
     relocated = any(kinds[i] != _FLOAT for i in runtime)
     role = _Role((*symbols, *slotted)) if relocated else None
-    return build(fn, trace_args, tuple(parameters), target, options, len(slotted), role)
+    return build(
+        fn,
+        trace_args,
+        tuple(parameters),
+        target,
+        options,
+        len(slotted),
+        role,
+        kernel.max_duration_cycles,
+    )
 
 
 def _real(value: Any) -> float:

@@ -167,7 +167,21 @@ default) trusts the maximum, ``"timeout"`` gives up after ``timeout_ns``, and
 (see the barriers below). ``submit="lazy"``
 sends a request as late as the budget allows rather than as soon as its
 arguments are ready, and ``deadline_ns`` bounds how long after its submission
-an answer may be due.
+an answer may be due. ``reaction_deadline_ns`` bounds how long after the
+readouts a request carries its answer may be due: the whole reaction, from the end of
+the measurement through queueing, the link and ``max_latency_ns`` to the
+answer being usable. Compiling fails if any execution of a call exceeds it,
+with the iteration, the slack and what to change.
+
+.. code-block:: python
+
+   @pulse.classical(max_latency_ns=800, reaction_deadline_ns=1500, link="feedback")
+   def correct(syndrome: pulse.Length[pulse.Bits, 8]) -> pulse.Length[pulse.Bits, 8]:
+       ...
+
+A call that carries no readout reacts from its submission. Waits between the
+readouts and the submission whose length is known only when the program runs
+count at their highest length.
 
 Outside a kernel, calling the function runs its body, and ``fn.submit(...)``
 returns an answer whose ``result()`` is ready at once. Between-shot code can
@@ -314,10 +328,10 @@ timeline (``Lowered.timeline()``) draws each link as a row of its own,
 labelled with its name.
 
 After scheduling, ``pulse-classical-check`` verifies that every request and
-answer fits its link's slots, that deadlines hold, that no answer is taken
-before it is due, that no link holds more requests than ``max_in_flight``,
-and that the submissions on a link go out one after another, in program
-order.
+answer fits its link's slots, that deadlines and reaction times hold, that no
+answer is taken before it is due, that no link holds more requests than
+``max_in_flight``, and that the submissions on a link go out one after
+another, in program order.
 
 Simulation
 ----------

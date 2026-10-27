@@ -567,6 +567,14 @@ behavior may change in any 0.x release.
   rolled program, compiling with limits takes 25 ms instead of 6 s,
   the /1 export 0.5 s instead of 4.6 s, and the /2 export 2 ms and 14 KB
   instead of 117 MB.
+- **Timing budgets.** `@pulse.kernel(max_duration_cycles=n)` fails
+  compilation when an execution of the kernel can take more than `n`
+  cycles: each call of a kernel with its own `schedule=` (a loop body that
+  must fit its cycle, checked once whatever the trip count), or the whole
+  program for the kernel compiled. `@pulse.classical(reaction_deadline_ns=...)`
+  fails it when a call's answer is due later than that after the end of
+  the readouts its request carries, in any iteration. Waits whose length
+  is known only at run time count at their highest length.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
   `CompiledKernel`, `Lowered`, `Pass`, `simulate`, `SimulationResult`,
   `BranchCoverage`, `device`, `Device`, `Qudit`, `Register`,

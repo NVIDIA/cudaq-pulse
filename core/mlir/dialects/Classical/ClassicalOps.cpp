@@ -74,6 +74,9 @@ LogicalResult CallableOp::verify() {
   if (auto deadline = getDeadlineNs())
     if (!(deadline->convertToDouble() > 0.0))
       return emitOpError("deadline_ns must be positive");
+  if (auto reaction = getReactionDeadlineNs())
+    if (!(reaction->convertToDouble() > 0.0))
+      return emitOpError("reaction_deadline_ns must be positive");
   int64_t id = getFunctionIdAttr().getInt();
   if (id < 0 || id > 0xFFFFFFFFll)
     return emitOpError("function_id must be a 32-bit unsigned value");

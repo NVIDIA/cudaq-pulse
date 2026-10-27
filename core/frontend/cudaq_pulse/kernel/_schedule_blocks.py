@@ -56,6 +56,41 @@ def validate_kernel_schedule(schedule: str | None) -> str | None:
     )
 
 
+def validate_max_duration(cycles: int | None) -> int | None:
+    """Check a ``@kernel(max_duration_cycles=...)`` value."""
+    if cycles is None:
+        return None
+    if isinstance(cycles, bool) or not isinstance(cycles, int) or cycles <= 0:
+        raise ValueError(
+            f"max_duration_cycles must be a whole number of cycles > 0, got {cycles!r}"
+        )
+    return cycles
+
+
+def block_budget(kernel: Any, builder: Any) -> int | None:
+    """The ``max_duration_cycles`` of called *kernel*, which its block carries.
+
+    Raises ``CompilationError`` when its calls have no length of their own
+    to hold to it.
+    """
+    cycles = getattr(kernel, "max_duration_cycles", None)
+    if cycles is None:
+        return None
+    name = kernel.__name__
+    if getattr(kernel, "schedule", None) is None:
+        raise CompilationError(
+            f"{name}() has max_duration_cycles but no schedule=, so it is scheduled "
+            "with its caller and its calls have no length of their own; give it "
+            'schedule="asap" or schedule="alap"'
+        )
+    if not getattr(builder, "schedule_blocks", False):
+        raise CompilationError(
+            f"flatten_schedules=True schedules {name}() with its caller, so its "
+            "max_duration_cycles cannot hold; compile without flatten_schedules"
+        )
+    return int(cycles)
+
+
 def root_schedule(own: str | None, schedule: str | None) -> str:
     """The policy for a compiled kernel: ``compile``'s, else its own."""
     if schedule is not None:

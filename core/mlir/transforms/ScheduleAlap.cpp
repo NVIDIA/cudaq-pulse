@@ -2445,6 +2445,148 @@ static void inlineScheduleBlock(pulse::ScheduleBlockOp block) {
   inlineBody(block);
 }
 
+// ── Duration budgets ─────────────────────────────────────────────────────
+//
+// `max_duration_cycles` on a schedule block, or `pulse.max_duration_cycles`
+// on the module, bounds how long every execution of the block, or the whole
+// program, may take. A wait whose length is not known yet is scheduled at
+// its current length; the check adds what each execution of it can add.
+
+/// How many cycles longer than scheduled `op` can take: 0 for an op of
+/// known length, -1 for a wait without a highest length.
+static int64_t stretchOf(mlir::Operation *op) {
+  if (mlir::isa<classical::WaitOp>(op))
+    return op->hasAttr("classical.blocking") ? -1 : 0;
+  auto wait = mlir::dyn_cast<pulse::WaitOp>(op);
+  if (!wait || !op->hasAttr("pulse.variable_wait"))
+    return 0;
+  if (auto conversion =
+          wait.getDuration().getDefiningOp<pulse::DurationFromIntOp>()) {
+    bool known = op->hasAttr("classical.variable")
+                     ? pulse::boundNumber(conversion.getCycles()).has_value()
+                     : traceConstantI64(conversion.getCycles()).has_value();
+    if (known)
+      return 0;
+  }
+  auto highest = op->getAttrOfType<mlir::IntegerAttr>("pulse.max_cycles");
+  if (!highest)
+    return -1;
+  return std::max<int64_t>(0, highest.getInt() - durationOf(op));
+}
+
+/// The executions of `op` per execution of `root`.
+static int64_t executionsIn(mlir::Operation *op, mlir::Operation *root) {
+  int64_t count = 1;
+  for (mlir::scf::ForOp loop : pulse::enclosingLoops(op, root))
+    count *= pulse::constantTripCount(loop).value_or(0);
+  return count;
+}
+
+/// What the ops in `root` whose length is not known yet can add to it, or
+/// the first one with no bound.
+static std::pair<int64_t, mlir::Operation *> stretchIn(mlir::Operation *root) {
+  int64_t total = 0;
+  mlir::Operation *unbounded = nullptr;
+  root->walk([&](mlir::Operation *op) {
+    if (!isTimedOp(op))
+      return mlir::WalkResult::advance();
+    int64_t stretch = stretchOf(op);
+    if (stretch < 0) {
+      unbounded = op;
+      return mlir::WalkResult::interrupt();
+    }
+    if (stretch > 0)
+      total += stretch * executionsIn(op, root);
+    return mlir::WalkResult::advance();
+  });
+  return {total, unbounded};
+}
+
+/// Fail with the error for `what` (a kernel, quoted), whose executions take
+/// `length` cycles as scheduled, against `budget`, if it can take longer.
+static mlir::LogicalResult checkBudget(mlir::Operation *root,
+                                       mlir::Operation *at,
+                                       llvm::StringRef what, int64_t length,
+                                       int64_t budget) {
+  auto [stretch, unbounded] = stretchIn(root);
+  if (unbounded && mlir::isa<classical::WaitOp>(unbounded))
+    return unbounded->emitError()
+           << what << " has max_duration_cycles=" << budget
+           << ", but it waits for an answer of a blocking classical function, "
+              "which has no bound; use latency_mode=\"bounded\" or "
+              "\"timeout\", or drop max_duration_cycles";
+  if (unbounded)
+    return unbounded->emitError()
+           << what << " has max_duration_cycles=" << budget
+           << ", but this wait in it has no highest length; bound it with "
+              "wait(..., bounds=(lowest, highest)), or drop "
+              "max_duration_cycles";
+  if (length + stretch <= budget)
+    return mlir::success();
+  auto diagnostic = at->emitError()
+                    << what << " takes " << (stretch ? "up to " : "")
+                    << length + stretch << " cycles";
+  if (stretch)
+    diagnostic << " (" << length << " as scheduled, its variable waits add up "
+               << "to " << stretch << ")";
+  diagnostic << ", more than max_duration_cycles=" << budget
+             << "; let its operations overlap, shorten them or raise "
+                "max_duration_cycles";
+  return mlir::failure();
+}
+
+static mlir::LogicalResult checkBlockBudget(pulse::ScheduleBlockOp block) {
+  auto budget = block->getAttrOfType<mlir::IntegerAttr>("max_duration_cycles");
+  if (!budget)
+    return mlir::success();
+  std::string what =
+      "each call of kernel '" + block.getCallee().value_or("block").str() + "'";
+  return checkBudget(block, block, what, shapeOf(block).length,
+                     budget.getInt());
+}
+
+/// The end of the last execution of the last op of the scheduled
+/// `function`.
+static int64_t programLength(mlir::func::FuncOp function) {
+  int64_t length = 0;
+  function.walk([&](mlir::Operation *op) {
+    if (!isTimedOp(op))
+      return;
+    auto start = op->getAttrOfType<mlir::IntegerAttr>("start_cycles");
+    if (!start)
+      return;
+    auto loops = pulse::enclosingLoops(op, function);
+    llvm::SmallVector<int64_t, 2> last;
+    for (mlir::scf::ForOp loop : loops) {
+      int64_t trips = pulse::constantTripCount(loop).value_or(0);
+      if (trips == 0)
+        return;
+      last.push_back(trips - 1);
+    }
+    int64_t end = start.getInt();
+    if (auto periods =
+            op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles"))
+      for (auto [k, period] : llvm::zip(last, periods.asArrayRef()))
+        end += std::max<int64_t>(0, k * period);
+    end += pulse::scheduledDuration(op).value_or(0);
+    length = std::max(length, end);
+  });
+  return length;
+}
+
+static mlir::LogicalResult checkProgramBudget(mlir::func::FuncOp function) {
+  auto module = function->getParentOfType<mlir::ModuleOp>();
+  auto budget = module ? module->getAttrOfType<mlir::IntegerAttr>(
+                             "pulse.max_duration_cycles")
+                       : mlir::IntegerAttr();
+  if (!budget)
+    return mlir::success();
+  std::string what =
+      "kernel '" + module.getSymName().value_or("main").str() + "'";
+  return checkBudget(function, function, what, programLength(function),
+                     budget.getInt());
+}
+
 // ── Driver ───────────────────────────────────────────────────────────────
 
 /// Schedule `region`, its schedule blocks done, in rounds until its schedule
@@ -2515,6 +2657,8 @@ scheduleRegion(mlir::Region &region, mlir::Operation *root, Resources resources,
                                     timelines, grid, controllers)))
       return mlir::failure();
     writeShape(block);
+    if (mlir::failed(checkBlockBudget(block)))
+      return mlir::failure();
   }
   bool traced = grid.enabled() || (resources.enabled && controllers.enabled());
   if (mlir::failed(
@@ -2576,7 +2720,8 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
       function->getParentOfType<mlir::ModuleOp>());
   if (mlir::failed(scheduleRegion(
           function.getBody(), function, resources, isAlap, data, timelines,
-          pulse::LineGrid(clocks), pulse::Controllers(clocks.controllers))))
+          pulse::LineGrid(clocks), pulse::Controllers(clocks.controllers))) ||
+      mlir::failed(checkProgramBudget(function)))
     return mlir::failure();
   pulse::applyLineDelays(function, clocks.delays);
   return mlir::success();

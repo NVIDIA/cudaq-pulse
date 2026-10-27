@@ -50,6 +50,11 @@ def Classical_CallableOp : ClassicalOp<"callable", [Symbol]> {
     - `deadline_ns` (optional): the answer must be back within this long of
       the start of the submission; `pulse-classical-check` rejects a
       schedule that cannot meet it.
+    - `reaction_deadline_ns` (optional): in every execution of a call, the answer
+      must be due within this long of the end of the latest readout whose
+      outcome the request carries, or of the start of the submission when
+      it carries none; `pulse-classical-check` rejects a schedule where it
+      is not.
   }];
   let arguments = (ins
     SymbolNameAttr:$sym_name,
@@ -64,7 +69,8 @@ def Classical_CallableOp : ClassicalOp<"callable", [Symbol]> {
     StrAttr:$submit,
     OptionalAttr<F64Attr>:$timeout_ns,
     OptionalAttr<F64Attr>:$deadline_ns,
-    UnitAttr:$function_id_override
+    UnitAttr:$function_id_override,
+    OptionalAttr<F64Attr>:$reaction_deadline_ns
   );
   let assemblyFormat = "$sym_name attr-dict";
   let hasVerifier = 1;

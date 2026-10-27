@@ -45,7 +45,7 @@ from .._device import Device, DeviceMismatchError, NoDeviceError, Qudit, Registe
 from .._errors import InvalidTypeError
 from ..compiler import CompileOptions, Lowered, build, with_line_delays
 from ._guard import Guard, build_guard
-from ._schedule_blocks import root_schedule, validate_kernel_schedule
+from ._schedule_blocks import root_schedule, validate_kernel_schedule, validate_max_duration
 from ._unroll import resolve_unroll_threshold
 from .ir_builder import (
     CompilationError,
@@ -500,6 +500,7 @@ class Kernel[**P]:
         cache_size: int | None = None,
         schedule: str | None = None,
         unroll_threshold: int | None = None,
+        max_duration_cycles: int | None = None,
     ) -> None:
         if not isinstance(fn, types.FunctionType):
             raise TypeError(f"@kernel expects a function, got {type(fn).__name__}")
@@ -511,6 +512,9 @@ class Kernel[**P]:
         # Called from another kernel, the kernel is scheduled on its own with
         # this policy; None schedules it with its caller.
         self.schedule = validate_kernel_schedule(schedule)
+        # The longest any execution of the kernel may take, checked when the
+        # program is scheduled.
+        self.max_duration_cycles = validate_max_duration(max_duration_cycles)
         # None leaves the threshold to cudaq_pulse.compile(), else the default.
         self.unroll_threshold = (
             None if unroll_threshold is None else resolve_unroll_threshold(unroll_threshold)
@@ -643,7 +647,12 @@ class Kernel[**P]:
                     for n, i in enumerate(runtime):
                         trace_args[i] = Parameter(names[i], n, "f64")
                     lowered, builder = build(
-                        fn, trace_args, tuple(names[i] for i in runtime), target, options
+                        fn,
+                        trace_args,
+                        tuple(names[i] for i in runtime),
+                        target,
+                        options,
+                        max_duration_cycles=self.max_duration_cycles,
                     )
                 break
             except SymbolicValueError as e:

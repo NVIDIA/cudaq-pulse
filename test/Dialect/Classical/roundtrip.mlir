@@ -11,11 +11,11 @@
 
 // Every classical op and type, and every argument and result descriptor.
 
-// CHECK: classical.callable @decode {{{.*}}args = ["bits:2"]{{.*}}results = ["bits:1"]
+// CHECK: classical.callable @decode {{{.*}}args = ["bits:2"]{{.*}}reaction_deadline_ns = 4.000000e+03{{.*}}results = ["bits:1"]
 classical.callable @decode {function_id = 3007678287 : i64, device = 0 : i64,
     args = ["bits:2"], results = ["bits:1"], latency_min_ns = 500.0,
     latency_nominal_ns = 900.0, latency_max_ns = 1500.0, mode = "bounded",
-    submit = "eager"}
+    submit = "eager", reaction_deadline_ns = 4000.0}
 // CHECK: classical.callable @est {{{.*}}mode = "timeout"{{.*}}timeout_ns = 2.000000e+03
 classical.callable @est {function_id = 2023343271 : i64, device = 1 : i64,
     args = ["iq:1", "levels:1", "f64", "i64", "u8", "i32", "f32", "f64[2]"],

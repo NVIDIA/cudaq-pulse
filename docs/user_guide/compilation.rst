@@ -171,6 +171,34 @@ on its own policy, ``flatten_schedules`` and the policies of the kernels it
 calls. The shape holds when the program is scheduled again, with float
 values bound or, in simulation, with the answers of classical calls bound.
 
+Duration budgets
+----------------
+
+``@pulse.kernel(max_duration_cycles=n)`` makes compiling fail if any
+execution of the kernel can take more than ``n`` clock cycles. On a kernel
+called with its own ``schedule=``, it bounds each call, which has one length
+wherever it is called: the body of a loop that must fit its cycle is checked
+once, whatever the trip count. On the kernel compiled, it bounds the whole
+program. A wait whose length is known only when the program runs counts at
+its highest length, so a wait without ``bounds=``, or a blocking classical
+call, cannot be inside a budget.
+
+.. code-block:: python
+
+   @pulse.kernel(schedule="asap", max_duration_cycles=2000)
+   def round_(data, ancilla):
+       ...
+
+   @pulse.kernel
+   def repeated(data, ancilla):
+       for _ in range(10_000):
+           round_(data, ancilla)
+
+Compiling ``repeated`` fails with the length of ``round_`` when it exceeds
+2000 cycles. A kernel with a budget but without ``schedule=`` is scheduled
+with its caller, so its calls have no length of their own: compiling a
+caller is an error that names the fix, as is ``flatten_schedules=True``.
+
 Inspecting a compilation
 ------------------------
 
