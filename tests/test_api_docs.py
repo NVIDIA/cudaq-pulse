@@ -31,6 +31,13 @@ PUBLIC_MODULES = [
     "cudaq_pulse.viz",
     "cudaq_pulse.controller",
     "cudaq_pulse.backends",
+    "cudaq_pulse.classical",
+    "cudaq_pulse.classical.wire",
+    "cudaq_pulse.classical.qec",
+    "cudaq_pulse.classical.emulation",
+    "cudaq_pulse.classical.calibration",
+    "cudaq_pulse.classical.loop",
+    "cudaq_pulse.runtime.drift",
 ]
 
 _DIRECTIVE = re.compile(r"^\.\. auto(\w+):: (\S+)", re.M)
@@ -59,9 +66,13 @@ def _documented():
             else:
                 objects.append(_resolve(path))
         for module, options in _MEMBERS.findall(text):
-            members = re.search(r":members: (.+)", options)
-            if members:
-                objects += [_resolve(f"{module}.{m.strip()}") for m in members.group(1).split(",")]
+            members = re.search(r":members:(.*)", options)
+            if members is None:
+                continue
+            names = [m.strip() for m in members.group(1).split(",") if m.strip()]
+            # A bare :members: documents the module's __all__.
+            names = names or list(importlib.import_module(module).__all__)
+            objects += [_resolve(f"{module}.{name}") for name in names]
     return objects, modules
 
 
