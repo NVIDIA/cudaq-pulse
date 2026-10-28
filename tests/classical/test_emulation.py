@@ -35,7 +35,7 @@ def feedback(q):
     d, t = get_drive_line(q)
     r, rt = get_readout_line(q)
     m = readout(r, square(300, 0.05), rt)
-    ok, fix = decode.submit([m]).result(timeout_ns=500)
+    ok, fix = decode.submit([m]).result(timeout=500 * pulse.ns)
     if ok:
         if fix[0]:
             drive(d, square(40, 0.1), t)

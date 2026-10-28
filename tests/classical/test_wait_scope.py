@@ -39,7 +39,7 @@ LENGTH = {"bounded": _length("bounded"), "blocking": _length("blocking")}
 
 def _take(future, take):
     if take == "timeout":
-        _, x = future.result(timeout_ns=100)
+        _, x = future.result(timeout=100 * pulse.ns)
         return x
     return future.result()
 

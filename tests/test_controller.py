@@ -428,7 +428,7 @@ def timed_out(q):
     d, t = get_drive_line(q)
     ro, rt = get_readout_line(q)
     m = readout(ro, square(100, 0.05), rt)
-    ok, fix = check_bit.submit([m]).result(timeout_ns=300)
+    ok, fix = check_bit.submit([m]).result(timeout=300 * pulse.ns)
     sync(d, ro)
     if ok:
         drive(d, square(20, 0.3), t)

@@ -255,9 +255,10 @@ behavior may change in any 0.x release.
   FPGA services (decoders, estimators, calibration updates) while the QPU
   runs and use their answers in the same shot. `@pulse.classical` declares a
   function with typed arguments and results, a latency model and a link;
-  `fn.submit(...).result()` calls it in a kernel, with `timeout_ns=` for a
-  fallback. Type checkers and editors see the decorator with its keyword
-  options, and `.submit()` returns a `Pending`. Links are named in
+  `fn.submit(...).result()` calls it in a kernel, with `timeout=` (cycles or
+  a time, `350 * pulse.ns`) for a fallback. Type checkers and editors see
+  the decorator with its keyword options, and `.submit()` returns a
+  `Pending`. Links are named in
   `MachineModel(links={...})`. Every schedule budgets the worst-case
   latency, holds link slots and reports each call's slack and its hidden and
   exposed latency (`Lowered.classical_report()`); `pulse-classical-check`

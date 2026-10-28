@@ -17,9 +17,12 @@ methods themselves.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from fractions import Fraction
 from typing import Any
 
+from .._units import Time, cycles_per_ns
 from ..classical import ClassicalFunction, ValueType
+from ._durations import cycles
 from .ir_builder import (
     AnswerValue,
     CompilationError,
@@ -49,7 +52,7 @@ class Future:
         self.answers: Any = None
         self.timeout_ns: float | None = None
 
-    def result(self, timeout_ns: float | None = None) -> Any:
+    def result(self, timeout: int | Time | None = None) -> Any:
         """Take the answer; only meaningful while a kernel is traced."""
         raise CompilationError("a future's result() is taken inside the kernel that submitted it")
 
@@ -150,30 +153,44 @@ def _group(function: ClassicalFunction, answers: list[AnswerValue]) -> Any:
     return grouped[0] if len(grouped) == 1 else tuple(grouped)
 
 
+def _timeout_ns(builder: Any, timeout: Any) -> float:
+    """*timeout*, cycles of the program clock or a time, in nanoseconds."""
+    if is_symbolic(timeout) or isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise CompilationError(
+            "result(timeout=...) takes a duration known when compiling: "
+            "an int number of cycles, or a time with units"
+        )
+    clock_ghz = getattr(builder, "clock_ghz", 2.0)
+    n = cycles("result", "timeout", timeout, True, "f(...).result(timeout={})", clock_ghz)
+    if isinstance(n, float):
+        if not n.is_integer():
+            raise CompilationError(
+                f"result(): timeout {n:g} is not a whole number of cycles; "
+                "durations are whole cycles"
+            )
+        n = int(n)
+    if not n > 0:
+        raise CompilationError(f"result(): timeout must be positive, got {timeout!r}")
+    return float(Fraction(n) / cycles_per_ns(clock_ghz))
+
+
 def take(builder: Any, future: Future, args: Sequence[Any], kwargs: dict[str, Any] | None) -> Any:
-    """Record ``future.result(timeout_ns=...)``."""
-    timeout_ns = None
+    """Record ``future.result(timeout=...)``."""
+    timeout = None
     if args:
         if len(args) > 1:
-            raise CompilationError("result() takes at most one argument, timeout_ns")
-        timeout_ns = args[0]
+            raise CompilationError("result() takes at most one argument, timeout")
+        timeout = args[0]
     for key, value in (kwargs or {}).items():
-        if key != "timeout_ns":
+        if key != "timeout":
             raise CompilationError(f"result() got an unexpected keyword {key!r}")
-        timeout_ns = value
+        timeout = value
     function = future.function
-    if timeout_ns is not None:
-        if (
-            is_symbolic(timeout_ns)
-            or isinstance(timeout_ns, bool)
-            or not isinstance(timeout_ns, (int, float))
-        ):
-            raise CompilationError("result(timeout_ns=...) takes a number known when compiling")
-        if not timeout_ns > 0:
-            raise CompilationError(f"timeout_ns must be positive, got {timeout_ns!r}")
+    timeout_ns = None
+    if timeout is not None:
+        timeout_ns = _timeout_ns(builder, timeout)
         if function.latency_mode == "blocking":
             raise CompilationError(f"{function.name} blocks until it answers; it has no timeout")
-        timeout_ns = float(timeout_ns)
     if future.answers is not None:
         if timeout_ns != future.timeout_ns:
             raise CompilationError("an answer is taken once; call result() with the same timeout")

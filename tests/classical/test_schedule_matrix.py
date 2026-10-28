@@ -280,9 +280,7 @@ def test_limits_without_timeouts_reject_a_timeout_and_name_the_fix():
     machine = MachineModel(
         links=dict(matrix.LINKS), controller=ControllerLimits(answer_timeouts=False)
     )
-    with pytest.raises(
-        ControllerLimitError, match=re.escape("take it with result() (no timeout_ns)")
-    ):
+    with pytest.raises(ControllerLimitError, match=re.escape("take it with result() (no timeout)")):
         matrix.lower_case(case, Q, machine=machine)
 
 

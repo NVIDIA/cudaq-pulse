@@ -86,7 +86,8 @@ def _scale(x: float) -> list[float]:
 
 assert_type(decode, ClassicalFunction)
 assert_type(decode.submit([1]), Pending)
-assert_type(decode.submit([1]).result(timeout_ns=350), Any)
+assert_type(decode.submit([1]).result(timeout=350 * pulse.ns), Any)
+assert_type(decode.submit([1]).result(timeout=700), Any)
 assert_type(
     pulse.classical(_scale, args=(Float,), results=(Float(),), max_latency_ns=1.0),
     ClassicalFunction,

@@ -156,7 +156,7 @@ class ControllerLimits:
     ``feedback_latency_cycles``: the least time from the end of a readout to
     the start of an operation in a branch on its outcome.
     ``answer_timeouts``: whether the controller can stop waiting for an
-    answer after a timeout (``result(timeout_ns=...)``, ``latency_mode=
+    answer after a timeout (``result(timeout=...)``, ``latency_mode=
     "timeout"``); without, only waits that block or are budgeted are
     allowed.
     ``max_events``: the drives and readouts of one program.
@@ -634,7 +634,7 @@ def _violations(
                 found.append(
                     f"the wait for {event['function']} at {event['start_cycles']} has a timeout; "
                     "the controller cannot stop waiting for an answer, so take it with "
-                    "result() (no timeout_ns)"
+                    "result() (no timeout)"
                 )
     if limits.computes:
         found.extend(resources(lowered, limits).violations)

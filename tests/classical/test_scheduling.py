@@ -255,7 +255,7 @@ def test_timeout_budgets_the_timeout():
         d, t = get_drive_line(q)
         r, rt = get_readout_line(q)
         m = readout(r, square(READOUT, 0.05), rt)
-        ok, fix = decode.submit([m]).result(timeout_ns=400)
+        ok, fix = decode.submit([m]).result(timeout=400 * pulse.ns)
         if ok:
             drive(d, square(ARM, 0.1), t)
 
@@ -529,7 +529,7 @@ def test_a_blocking_wait_in_a_block_is_rejected_without_the_verifier(passes):
 def test_a_future_taken_with_a_timeout_in_a_block_budgets_the_timeout(callee, policy):
     @pulse.kernel(schedule=callee)
     def take(future, d, t):
-        ok, fix = future.result(timeout_ns=400)
+        ok, fix = future.result(timeout=400 * pulse.ns)
         if fix[0]:
             drive(d, square(ARM, 0.1), t)
 

@@ -112,7 +112,7 @@ In a kernel, ``fn.submit(...)`` sends the request and returns a future, and
        d, t = get_drive_line(q)
        r, rt = get_readout_line(q)
        m = readout(r, square(500 * pulse.ns, 0.05), rt)
-       in_time, correction = decode.submit([m]).result(timeout_ns=350)
+       in_time, correction = decode.submit([m]).result(timeout=350 * pulse.ns)
        sync(d, r)
        if in_time:
            if correction[0]:
@@ -121,10 +121,11 @@ In a kernel, ``fn.submit(...)`` sends the request and returns a future, and
            if m:
                drive(d, square(20 * pulse.ns, PI_AMP), t)
 
-With ``timeout_ns`` the result starts with a flag that is true when the
+With ``timeout`` the result starts with a flag that is true when the
 answer came in time; the other values are zero when it did not, and the
-program takes its fallback. ``timeout_ns`` is in nanoseconds, or a time such
-as ``350 * pulse.ns``. A future is taken in the loop iteration that
+program takes its fallback. ``timeout`` is a duration like any other: an
+``int`` number of program cycles, or a time such as ``350 * pulse.ns``,
+which converts once when the kernel compiles. A future is taken in the loop iteration that
 submitted it. It may be passed to a kernel the program calls, or returned
 from one, and taken there; an answer taken inside a kernel called with its
 own ``schedule=`` is used only inside it, so return the future instead when

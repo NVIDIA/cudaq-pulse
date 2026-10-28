@@ -53,7 +53,7 @@ def scale(x):
     return [2 * x]
 
 
-in_time, correction = decode.submit([1]).result(timeout_ns=350)
+in_time, correction = decode.submit([1]).result(timeout=350 * pulse.ns)
 table = pulse.classical.external("table", args=(Bits(2),), max_latency_ns=50)
 """
 

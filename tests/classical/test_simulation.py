@@ -244,7 +244,7 @@ def test_timeouts_take_the_fallback_at_the_modelled_rate():
         r, rt = get_readout_line(q)
         e, u = get_drive_line(p)
         m = readout(r, square(100, 0.05), rt)
-        ok, fix = slow.submit([m]).result(timeout_ns=500)
+        ok, fix = slow.submit([m]).result(timeout=500 * pulse.ns)
         if ok:
             drive(e, square(40, PI_AMP), u)
 

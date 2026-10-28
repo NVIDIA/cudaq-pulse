@@ -304,15 +304,59 @@ def test_a_timeout_takes_a_time():
         d, t = get_drive_line(q)
         ro, rt = get_readout_line(q)
         m = readout(ro, square(100, 0.05), rt)
-        ok, fix = check_bit.submit([m]).result(timeout_ns=timeout)
+        ok, fix = check_bit.submit([m]).result(timeout=timeout)
         sync(d, ro)
         if ok:
             drive(d, square(20, 0.3), t)
 
-    with_units = timed.lower(Q[0], 0.3 * us).export_controller()
-    in_ns = timed.lower(Q[0], 300).export_controller()
-    answers = [next(e for e in p["events"] if e["kind"] == "answer") for p in (with_units, in_ns)]
+    with_units = timed.lower(Q[0], 0.3 * us)
+    in_cycles = timed.lower(Q[0], 600)
+    assert with_units.mlir() == in_cycles.mlir()
+    exports = (with_units.export_controller(), in_cycles.export_controller())
+    answers = [next(e for e in p["events"] if e["kind"] == "answer") for p in exports]
     assert answers[0]["timeout_ns"] == answers[1]["timeout_ns"] == 300
+
+
+def _timeout_error(timeout):
+    source = (
+        "def k(q):\n"
+        "    ro, rt = get_readout_line(q)\n"
+        "    m = readout(ro, square(100, 0.05), rt)\n"
+        f"    check_bit.submit([m]).result({timeout})\n"
+    )
+    namespace = {"pulse": pulse, "check_bit": check_bit}
+    exec(compile(source, "<kernel>", "exec"), namespace)
+    with pytest.raises(pulse.CompilationError) as caught:
+        pulse.kernel(namespace["k"]).lower(Q[0])
+    return str(caught.value).split("\nwhile tracing")[0]
+
+
+def test_a_float_timeout_is_the_float_duration_error():
+    assert _timeout_error("timeout=350.0") == (
+        "result(): timeout is a float (350.0). Durations are an int number of cycles, "
+        "or a time with units:\n"
+        "    f(...).result(timeout=350)               # 350 cycles\n"
+        "    f(...).result(timeout=350 * pulse.ns)    # 350 nanoseconds"
+    )
+
+
+def test_a_timeout_off_the_cycles_is_an_error():
+    assert _timeout_error("timeout=0.3 * pulse.ns").startswith(
+        "result(): timeout 0.3 ns is 0.6 cycles of the 2 GHz program clock, and durations "
+        "are whole cycles; round it with pulse.round_duration(line, 0.3 * pulse.ns)"
+    )
+
+
+@pytest.mark.parametrize(
+    ("timeout", "message"),
+    [
+        ("timeout_ns=300", "result() got an unexpected keyword 'timeout_ns'"),
+        ("timeout=0", "result(): timeout must be positive, got 0"),
+        ("timeout=-2 * pulse.ns", "result(): timeout must be positive"),
+    ],
+)
+def test_timeout_misuse(timeout, message):
+    assert _timeout_error(timeout).startswith(message)
 
 
 # ── One kernel, two clocks ───────────────────────────────────────────────────

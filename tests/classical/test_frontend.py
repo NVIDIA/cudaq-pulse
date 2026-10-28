@@ -182,7 +182,7 @@ def test_calling_outside_a_kernel_runs_the_body():
     assert double(1.5) == 3.0
     answer = double.submit(2.0)
     assert answer.done() and answer.result() == 4.0
-    assert answer.result(timeout_ns=10) == (True, 4.0)
+    assert answer.result(timeout=20) == (True, 4.0)
     with pytest.raises(TypeError, match="takes 1 arguments"):
         double(1, 2)
 
@@ -363,7 +363,7 @@ def test_timeout_at_the_call_gives_an_ok_bit():
     @pulse.kernel
     def k(q):
         d, t = get_drive_line(q)
-        ok, value = double.submit(0.5).result(timeout_ns=50)
+        ok, value = double.submit(0.5).result(timeout=100)
         if ok:
             drive(d, square(40, value), t)
 
@@ -454,13 +454,13 @@ def test_misuse_errors():
     def other_timeout(q):
         a = double.submit(1.0)
         a.result()
-        a.result(timeout_ns=5)
+        a.result(timeout=10)
 
     def blocking_timeout(q):
-        _slow.submit().result(timeout_ns=5)
+        _slow.submit().result(timeout=10)
 
     def symbolic_timeout(q, t: float):
-        double.submit(1.0).result(timeout_ns=t)
+        double.submit(1.0).result(timeout=t)
 
     def taken_in_a_loop(q):
         d, t = get_drive_line(q)

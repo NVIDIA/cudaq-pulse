@@ -282,14 +282,14 @@ def _calls(case: Case) -> tuple[Any, Any, Any]:
 
     def answer(future):
         if take == "timeout":
-            _, bits = future.result(timeout_ns=TIMEOUT_NS)
+            _, bits = future.result(timeout=TIMEOUT_NS * pulse.ns)
             return bits[0]
         return future.result()[0]
 
     def length():
         future = tau_fn.submit(1.0)
         if take == "timeout":
-            _, x = future.result(timeout_ns=TIMEOUT_NS)
+            _, x = future.result(timeout=TIMEOUT_NS * pulse.ns)
             return x
         return future.result()
 
@@ -714,7 +714,7 @@ def check_export(case: Case, low: Any, again: Any) -> None:
     no_timeouts = check(low, ControllerLimits(answer_timeouts=False))
     if case.take == "timeout":
         assert no_timeouts
-        assert all("take it with result() (no timeout_ns)" in v for v in no_timeouts)
+        assert all("take it with result() (no timeout)" in v for v in no_timeouts)
     else:
         assert no_timeouts == []
 

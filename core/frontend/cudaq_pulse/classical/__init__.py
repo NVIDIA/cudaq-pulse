@@ -54,6 +54,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, Required, TypedDict, Unpack, overload
 
 from .._errors import InvalidTypeError, InvalidValueError
+from .._units import Time
 
 __all__ = [
     "Bits",
@@ -402,7 +403,7 @@ class ClassicalFunction:
         if (latency_mode == "timeout") != (timeout_ns is not None):
             raise InvalidValueError(
                 f"{name}: timeout_ns goes with latency_mode='timeout' (or pass "
-                "timeout_ns to result() at the call)"
+                "timeout to result() at the call)"
             )
         if timeout_ns is not None and not timeout_ns > 0:
             raise InvalidValueError(f"{name}: timeout_ns must be positive, got {timeout_ns!r}")
@@ -463,11 +464,11 @@ class Pending(Protocol):
     """What ``fn.submit(...)`` returns: a future while a kernel is traced, an
     answer already taken when called outside a kernel.
 
-    ``.result()`` gives the declared results; with ``timeout_ns`` it gives
-    ``(in_time, *results)``.
+    ``.result()`` gives the declared results; with ``timeout`` (an int number
+    of program cycles, or a time with units) it gives ``(in_time, *results)``.
     """
 
-    def result(self, timeout_ns: float | None = None) -> Any: ...
+    def result(self, timeout: int | Time | None = None) -> Any: ...
 
 
 class Answer:
@@ -482,8 +483,8 @@ class Answer:
     def done(self) -> bool:
         return True
 
-    def result(self, timeout_ns: float | None = None) -> Any:
-        if timeout_ns is not None:
+    def result(self, timeout: int | Time | None = None) -> Any:
+        if timeout is not None:
             if isinstance(self._value, tuple):
                 return (True, *self._value)
             return (True, self._value)
