@@ -53,6 +53,11 @@ BASELINE = _ROOT / "benchmarks" / "baselines" / "frontend_perf.json"
 TOLERANCE = 3.0
 # A retained loop's compile time must not grow with its trip count.
 FLAT_LOOP_LIMIT = 2.0
+# A sweep of new values costs about what repeating one value does, and a
+# compile per value about 100x that: the limit sits between the two, far
+# enough from both that a loaded runner does not cross it. What a new value
+# costs exactly is gated by tools/perf-gate.py (bind_new_value).
+RECOMPILE_LIMIT = 10.0
 
 
 def _best(fn: Callable[[], object], min_reps: int = 5, budget_s: float = 0.25) -> float:
@@ -267,10 +272,10 @@ def test_a_wait_length_sweep_compiles_once():
     compiled = pulse.compile(t1)
     sweep = [float(4 * i + 1) for i in range(1000)]
     # A new length binds like a cached one; a compile costs about 100x as much.
-    new = _best(lambda: [compiled.lower(Q[0], tau) for tau in sweep], 3, 0)
+    new = _best(lambda: [compiled.lower(Q[0], tau) for tau in sweep], 5, 0)
     assert compiled.cache_info().compiled == 1
-    cached = _best(lambda: [compiled.lower(Q[0], sweep[0]) for _ in sweep], 3, 0)
-    assert new < cached * FLAT_LOOP_LIMIT, (new, cached)
+    cached = _best(lambda: [compiled.lower(Q[0], sweep[0]) for _ in sweep], 5, 0)
+    assert new < cached * RECOMPILE_LIMIT, (new, cached)
 
 
 @pytest.mark.scaling
@@ -292,10 +297,10 @@ def test_a_sweep_of_a_wait_from_an_answer_and_a_float_compiles_once():
 
     compiled = pulse.compile(t1)
     sweep = [float(4 * i + 1) for i in range(1000)]
-    new = _best(lambda: [compiled.lower(Q[0], tau) for tau in sweep], 3, 0)
+    new = _best(lambda: [compiled.lower(Q[0], tau) for tau in sweep], 5, 0)
     assert compiled.cache_info().compiled == 1
-    cached = _best(lambda: [compiled.lower(Q[0], sweep[0]) for _ in sweep], 3, 0)
-    assert new < cached * FLAT_LOOP_LIMIT, (new, cached)
+    cached = _best(lambda: [compiled.lower(Q[0], sweep[0]) for _ in sweep], 5, 0)
+    assert new < cached * RECOMPILE_LIMIT, (new, cached)
 
 
 # Peak memory a simulation of two qutrits may add: their 9 x 9 density matrix
