@@ -1,0 +1,22 @@
+// NVQConsole in GitHub Codespaces: installs the bundle that nvqconsole.yml
+// built for this branch and starts the console on port 8765. Forwarded ports
+// stay private to the codespace's owner unless they change it.
+{
+  "name": "NVQConsole",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    // Only for building from source when no bundle can be downloaded.
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" }
+  },
+  "hostRequirements": { "cpus": 4 },
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "postStartCommand": "bash .devcontainer/start.sh",
+  "forwardPorts": [8765],
+  "portsAttributes": {
+    "8765": { "label": "NVQConsole", "onAutoForward": "openBrowser" }
+  },
+  "customizations": {
+    "codespaces": { "openFiles": ["tools/console/run.py"] }
+  }
+}

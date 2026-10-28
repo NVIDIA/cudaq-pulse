@@ -1,0 +1,147 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+
+name: nvqconsole
+
+# Builds NVQConsole (tools/console) into one downloadable bundle: compiler-only
+# cudaq-pulse wheels for Linux x86-64 and macOS arm64, the built web app, the
+# examples, and the runs the console starts from, precomputed with the bundled
+# wheel. Runs on the nvqconsole branch only.
+#
+# To run a downloaded bundle (Python 3.12 or newer):
+#   pip install --find-links wheels cudaq-pulse && python run.py
+
+on:
+  push:
+    branches: [nvqconsole]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  wheel:
+    name: wheel (${{ matrix.platform }})
+    if: github.ref == 'refs/heads/nvqconsole'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x86_64, runner: ubuntu-24.04 }
+          - { platform: macos-aarch64, runner: macos-15 }
+    env:
+      # The console runs the compiler and the CPU simulator; the GPU runtime
+      # and the release tests are left to wheels.yml.
+      CIBW_BEFORE_ALL_LINUX: python3.12 tools/fetch-mlir-toolchain.py
+      CIBW_ENVIRONMENT_LINUX: CUDAQ_PULSE_ENABLE_GPU=OFF
+      CIBW_REPAIR_WHEEL_COMMAND_LINUX: auditwheel repair -w {dest_dir} {wheel}
+      CIBW_TEST_EXTRAS: ""
+      CIBW_TEST_GROUPS: ""
+      CIBW_TEST_SOURCES: ""
+      CIBW_TEST_COMMAND: python -c "import cudaq_pulse; print(cudaq_pulse.__version__)"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/mlir-toolchain
+        with:
+          unpack: ${{ runner.os == 'macOS' }}
+      - uses: pypa/cibuildwheel@b3395e271a35f73dad77f21802abe9b986dfe299 # v4.3.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: console-wheel-${{ matrix.platform }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 3
+
+  bundle:
+    needs: wheel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: console-wheel-*
+          path: bundle/wheels
+          merge-multiple: true
+
+      - name: Build the web app
+        working-directory: tools/console/web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Assemble the bundle
+        run: |
+          cp -R tools/console/nvqconsole tools/console/run.py bundle/
+          mkdir -p bundle/web
+          cp -R tools/console/web/dist bundle/web/dist
+          cp -R examples bundle/examples
+          cp LICENSE bundle/
+          find bundle -name __pycache__ -prune -exec rm -rf {} +
+
+      - name: Install the bundled wheel, as a downloader would
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --find-links bundle/wheels cudaq-pulse
+
+      - name: Precompute the runs the console starts from
+        run: |
+          cd bundle
+          "$RUNNER_TEMP/venv/bin/python" run.py --precompute runs.json
+          version="$("$RUNNER_TEMP/venv/bin/python" -c 'import cudaq_pulse; print(cudaq_pulse.__version__)')"
+          {
+            echo "NVQConsole for cudaq-pulse $version, built from ${GITHUB_SHA::12}"
+            echo
+            echo "Needs Python 3.12 or newer on Linux x86-64 or macOS arm64. In this folder:"
+            echo
+            echo "  pip install --find-links wheels cudaq-pulse && python run.py"
+            echo
+            echo "then open http://127.0.0.1:8765 (it opens by itself on a desktop)."
+            echo "The server listens on 127.0.0.1 only and starts from runs.json."
+          } > README.txt
+          cat README.txt
+
+      - name: Smoke-test the bundle
+        run: |
+          cd bundle
+          "$RUNNER_TEMP/venv/bin/python" run.py --no-open > "$RUNNER_TEMP/server.log" 2>&1 &
+          server=$!
+          for _ in $(seq 60); do
+            curl -fsS http://127.0.0.1:8765/api/health > /dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8765/ | grep -q '<div id="root">'
+          curl -fsS -X POST -H 'Content-Type: application/json' -d '{"experiment":"chain"}' \
+            http://127.0.0.1:8765/api/run | python -c 'import json,sys; r=json.load(sys.stdin); assert r["ok"] and r["cached"], r'
+          kill "$server"
+          cat "$RUNNER_TEMP/server.log"
+          grep -q "precomputed runs loaded" "$RUNNER_TEMP/server.log"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nvqconsole-bundle
+          path: bundle
+          if-no-files-found: error
+          retention-days: 30

@@ -76,7 +76,7 @@ export const loadExample = async (file: string) => {
   const meta = useConsole.getState().meta;
   const preset = meta?.examples.find((e) => e.file === file);
   // An example opened before keeps its edits in its editor model.
-  let source = monaco.editor.getModel(monaco.Uri.parse(`file:///${file}`))?.getValue() ?? sources.get(file);
+  let source = monaco.editor.getModel(monaco.Uri.parse(`example:///${file}`))?.getValue() ?? sources.get(file);
   if (source === undefined) {
     source = (await api.example(file)).source;
     sources.set(file, source);
@@ -256,7 +256,7 @@ const SourcePane = () => {
       </div>
       <div className="min-h-0 flex-1">
         <Editor
-          path={`file:///${exampleFile}`}
+          path={`example:///${exampleFile}`}
           defaultValue={source}
           language="python"
           theme={theme}
