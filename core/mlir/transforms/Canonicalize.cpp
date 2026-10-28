@@ -6,8 +6,9 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  *******************************************************************************/
 
-// The patterns of pulse-canonicalize: redundant syncs, adjacent waits on a
-// line, untimed schedule blocks, and the is_set and scf.for patterns.
+// The patterns of pulse-merge-waits (adjacent waits on a line) and of
+// pulse-simplify-control-flow (redundant syncs, untimed schedule blocks, and
+// the is_set and scf.for patterns).
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -157,9 +158,13 @@ struct InlineUntimedScheduleBlock
 } // namespace
 
 namespace pulse {
-void populateCanonicalizePatterns(mlir::RewritePatternSet &patterns) {
+void populateMergeWaitsPatterns(mlir::RewritePatternSet &patterns) {
+  patterns.add<MergeAdjacentWaits>(patterns.getContext());
+}
+
+void populateSimplifyControlFlowPatterns(mlir::RewritePatternSet &patterns) {
   mlir::MLIRContext *ctx = patterns.getContext();
-  patterns.add<RemoveSingleOperandSync, RemoveRedundantSync, MergeAdjacentWaits,
+  patterns.add<RemoveSingleOperandSync, RemoveRedundantSync,
                InlineUntimedScheduleBlock>(ctx);
   // Branch on pulse.is_set, and inline or drop loops that run once or
   // never. scf.if patterns are left out: they may turn a branch over

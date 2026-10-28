@@ -23,7 +23,7 @@ that goes from Python source to GPU-executable code.
          v
    In-memory MLIR ModuleOp (Pulse dialect)
          |
-         | C++ passes of passes= (verify, virtual-Z, fusion by default)
+         | C++ passes of passes= (DEFAULT_PASSES by default)
          v
    Optimized Pulse-dialect MLIR
          |
@@ -75,8 +75,8 @@ its line and for its tone: pulses that share a tone play in the order the
 tone is threaded through them.
 
 ``float`` parameters stay function arguments of the scheduled module. A call
-with values binds them on a copy, folds it, reruns the virtual-Z and fusion
-patterns where the values open them, and schedules it again.
+with values binds them on a copy, folds it, reruns ``fold_phases`` and
+``fuse_pulses`` where the values open them, and schedules it again.
 
 Stage 5: Lowering (Optional)
 -----------------------------

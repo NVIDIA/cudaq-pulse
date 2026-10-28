@@ -632,7 +632,7 @@ def test_two_calls_that_acquire_the_same_drive_line_play_in_sequence():
         x90(q)
         x90(q)
 
-    # Without fusion, which would merge the two pulses into one.
+    # Without fuse_pulses, which would merge the two pulses into one.
     lowered = pulse.compile(twice, passes=()).lower(_device().qudit_handles[0])
     assert [(e.start_cycles, e.duration_cycles) for e in lowered.schedule] == [(0, 16), (16, 16)]
     assert lowered.mlir().count("pulse.get_drive_line") == 1

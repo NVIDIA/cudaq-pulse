@@ -15,11 +15,13 @@ that pick passes and a schedule, the native build of one specialization, and
 
 from __future__ import annotations
 
+import difflib
 import math
 import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -42,6 +44,7 @@ __all__ = [
     "CompileMetrics",
     "Lowered",
     "MachineModel",
+    "Pass",
     "ScheduledEvent",
     "UnsupportedInterpreterError",
     "compile",
@@ -50,21 +53,78 @@ __all__ = [
 
 _VALID_SCHEDULES = frozenset({"asap", "alap", "rcp", "alap_rcp"})
 
-# The cudaq-pulse-opt passes each pass name runs. The pattern passes fold
-# constants as they rewrite; a fold right before a pattern pass costs nothing.
+
+class Pass(StrEnum):
+    """An optimization pass of ``pulse.compile(k, passes=)``.
+
+    Each member is a string, and the plain string (``"fold_phases"``) is
+    accepted wherever a member is. Passes run in the order given, any subset
+    in any order; the pattern passes (all but ``VERIFY`` and
+    ``HOIST_LOOP_INVARIANTS``) that follow one another run as one rewrite of
+    the program, and each of them also removes the operations its rewrites
+    leave unused.
+    """
+
+    #: Check waveform durations and that each line is used once at each step.
+    VERIFY = "verify"
+    #: Compute constant arithmetic at compile time and merge equal constants.
+    FOLD_CONSTANTS = "fold_constants"
+    #: Remove operations whose results nothing uses, unreachable blocks and
+    #: unused block arguments.
+    REMOVE_UNUSED = "remove_unused"
+    #: Join constant waits in a row on one line into one wait.
+    MERGE_WAITS = "merge_waits"
+    #: Remove syncs that order nothing, inline schedule blocks that take no
+    #: time, branch on ``is_set``, and inline or remove loops that run once
+    #: or never.
+    SIMPLIFY_CONTROL_FLOW = "simplify_control_flow"
+    #: Fold constant frame changes (``shift_phase``) into the next drive.
+    FOLD_PHASES = "fold_phases"
+    #: Merge back-to-back square-pulse drives of the same amplitude into one.
+    FUSE_PULSES = "fuse_pulses"
+    #: Move operations that compute the same value in every iteration out of
+    #: loops.
+    HOIST_LOOP_INVARIANTS = "hoist_loop_invariants"
+
+
+# The cudaq-pulse-opt pass each member runs.
 _PASS_MAP = {
-    "verify": "pulse-verify",
-    "canonicalize": "pulse-fold,pulse-canonicalize",
-    "virtual_z": "pulse-fold,pulse-virtual-z",
-    "fusion": "pulse-fold,pulse-fusion",
-    "licm": "loop-invariant-code-motion",
+    Pass.VERIFY: "pulse-verify",
+    Pass.FOLD_CONSTANTS: "pulse-fold-constants",
+    Pass.REMOVE_UNUSED: "pulse-remove-unused",
+    Pass.MERGE_WAITS: "pulse-merge-waits",
+    Pass.SIMPLIFY_CONTROL_FLOW: "pulse-simplify-control-flow",
+    Pass.FOLD_PHASES: "pulse-fold-phases",
+    Pass.FUSE_PULSES: "pulse-fuse-pulses",
+    Pass.HOIST_LOOP_INVARIANTS: "pulse-hoist-loop-invariants",
 }
 
-DEFAULT_PASSES: tuple[str, ...] = (
-    "verify",
-    "virtual_z",
-    "fusion",
+DEFAULT_PASSES: tuple[Pass, ...] = (
+    Pass.VERIFY,
+    Pass.FOLD_CONSTANTS,
+    Pass.REMOVE_UNUSED,
+    Pass.FOLD_PHASES,
+    Pass.FUSE_PULSES,
 )
+
+
+def _passes(passes: Sequence[str]) -> tuple[Pass, ...]:
+    """*passes* as members; a ValueError names any that is not one."""
+    if isinstance(passes, str):
+        raise ValueError(f"passes must be a sequence of pass names, not the string {passes!r}")
+    members = []
+    names = [p.value for p in Pass]
+    for name in passes:
+        try:
+            members.append(Pass(name))
+        except ValueError:
+            close = difflib.get_close_matches(str(name), names, n=1)
+            hint = f" Did you mean {close[0]!r}?" if close else ""
+            raise ValueError(
+                f"Unknown pass {name!r}.{hint} The passes are: {', '.join(names)}"
+            ) from None
+    return tuple(members)
+
 
 _STAGES = ("pulse", "llvm")
 
@@ -364,7 +424,7 @@ class CompileOptions:
     specialized: from ``CUDAQ_PULSE_UNROLL_THRESHOLD``, else the default."""
 
     schedule: str = "alap"
-    passes: tuple[str, ...] = DEFAULT_PASSES
+    passes: tuple[Pass, ...] = DEFAULT_PASSES
     machine: MachineModel = MachineModel()
     flatten_schedules: bool = False
     unroll_threshold: int | None = None
@@ -382,10 +442,7 @@ class CompileOptions:
                 f"Unknown schedule policy {schedule!r}. "
                 f"Choose from: {', '.join(sorted(_VALID_SCHEDULES))}"
             )
-        passes = DEFAULT_PASSES if passes is None else tuple(passes)
-        unknown = sorted(set(passes) - set(_PASS_MAP))
-        if unknown:
-            raise ValueError("Unknown pulse passes: " + ", ".join(unknown))
+        passes = DEFAULT_PASSES if passes is None else _passes(passes)
         machine = machine or MachineModel()
         if machine.max_concurrent_drives <= 0:
             raise ValueError("machine.max_concurrent_drives must be positive")
@@ -931,7 +988,8 @@ def compile[**P](
         ``"rcp"``, ``"alap_rcp"``; by default the kernel's own
         ``schedule=``, else ``"alap"``. Kernels it calls keep their own.
     passes:
-        Optimization passes, ``DEFAULT_PASSES`` by default; ``()`` for none.
+        Optimization passes (``Pass`` members or their names), run in the
+        order given; ``DEFAULT_PASSES`` by default, ``()`` for none.
     machine:
         Machine model for resource-constrained scheduling.
     flatten_schedules:

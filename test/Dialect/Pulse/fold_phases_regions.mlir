@@ -6,7 +6,7 @@
 // the terms of the Apache License 2.0 which accompanies this distribution.     //
 // ============================================================================ //
 
-// RUN: cudaq-pulse-opt --pulse-virtual-z %s | FileCheck %s
+// RUN: cudaq-pulse-opt --pulse-fold-phases %s | FileCheck %s
 
 // A frame change and its drive inside one arm fold together.
 // CHECK-LABEL: func.func @inside_an_arm

@@ -148,8 +148,8 @@ behavior may change in any 0.x release.
   while the kernel is traced, so custom envelopes compile, schedule and
   simulate like the built-in ones; it takes a callable, not an envelope
   name, and up to 252 clock cycles, like `custom_samples`.
-- **Compilation.** Verification, virtual-Z folding and drive fusion by
-  default; ASAP, ALAP and resource-constrained schedules
+- **Compilation.** Verification, constant and phase folding and pulse
+  fusion by default; ASAP, ALAP and resource-constrained schedules
   (`cudaq_pulse.compiler.MachineModel`); per-kernel schedule policies and
   schedule blocks. `pulse.Lowered.mlir()` returns the scheduled Pulse MLIR
   or the LLVM-dialect module, `Lowered.schedule` the timed events
@@ -242,9 +242,9 @@ behavior may change in any 0.x release.
   both `BackendError`s. `examples/controller_backend/` is a toy backend, and
   the "Writing a Controller Backend" guide walks through one.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
-  `CompiledKernel`, `Lowered`, `simulate`, `SimulationResult`, `device`,
-  `get_device`, `Device`, `Qudit`, `Register`, `Target`, `PulseError`,
-  `CompilationError`, `NoTargetError`, `NoDeviceError`,
+  `CompiledKernel`, `Lowered`, `Pass`, `simulate`, `SimulationResult`,
+  `device`, `get_device`, `Device`, `Qudit`, `Register`, `Target`,
+  `PulseError`, `CompilationError`, `NoTargetError`, `NoDeviceError`,
   `DeviceMismatchError`, `GpuRuntimeError`, `viz`, `classical`,
   `controller` and `backends`, plus `__version__`.
   Every error cudaq-pulse raises on purpose derives from `PulseError` and

@@ -6,7 +6,7 @@
 // the terms of the Apache License 2.0 which accompanies this distribution.     //
 // ============================================================================ //
 
-// RUN: cudaq-pulse-opt --pulse-canonicalize %s | FileCheck %s
+// RUN: cudaq-pulse-opt --pulse-simplify-control-flow %s | FileCheck %s
 
 !d = !pulse.drive_line
 !t = !pulse.tone

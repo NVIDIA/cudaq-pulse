@@ -94,7 +94,7 @@ def test_compile_single_qubit():
     assert "pulse.drive" in ck.mlir()
 
 
-def test_compile_with_virtual_z():
+def test_compile_folds_phases():
 
     @pulse.kernel
     def k(q):
@@ -135,7 +135,7 @@ def test_a_phase_from_a_float_folds_into_the_drive_once_bound():
     assert "pulse.shift_phase" in bound.generic.mlir()
     assert "pulse.shift_phase" not in bound.mlir()
     assert "frame_phase_offset = 2.500000e-01" in bound.mlir()
-    # Without virtual_z the frame change stays, bound or not.
+    # Without fold_phases the frame change stays, bound or not.
     assert "pulse.shift_phase" in pulse.compile(_ramsey, passes=()).lower(Q[0], 0.25).mlir()
 
 
@@ -150,12 +150,33 @@ def test_squares_of_amplitudes_bound_equal_fuse():
     compiled = pulse.compile(_two_squares)
     assert "fused" in compiled.lower(Q[0], 0.2, 0.2).mlir()
     assert "fused" not in compiled.lower(Q[0], 0.2, 0.3).mlir()
-    assert (
-        "fused"
-        not in pulse.compile(_two_squares, passes=("verify", "virtual_z"))
-        .lower(Q[0], 0.2, 0.2)
-        .mlir()
-    )
+    unfused = pulse.compile(_two_squares, passes=("verify", "fold_constants", "fold_phases"))
+    assert "fused" not in unfused.lower(Q[0], 0.2, 0.2).mlir()
+
+
+def test_passes_are_members_or_their_names():
+    assert pulse.Pass.FOLD_PHASES == "fold_phases"
+    as_members = pulse.compile(_bell, passes=pulse.compiler.DEFAULT_PASSES).lower(Q[0], Q[1])
+    as_names = pulse.compile(_bell, passes=[str(p) for p in pulse.compiler.DEFAULT_PASSES])
+    assert as_members.mlir() == as_names.lower(Q[0], Q[1]).mlir()
+    assert as_members.mlir() == pulse.compile(_bell).lower(Q[0], Q[1]).mlir()
+
+
+@pytest.mark.parametrize("passes", [(p,) for p in pulse.Pass] + [tuple(pulse.Pass)[::-1]])
+def test_every_pass_runs_alone_and_in_any_order(passes):
+    lowered = pulse.compile(_ramsey, passes=passes).lower(Q[0], 0.25)
+    assert "pulse.drive" in lowered.mlir()
+    assert lowered.schedule
+
+
+def test_an_unknown_pass_names_the_closest_and_lists_them_all():
+    with pytest.raises(
+        ValueError, match="Unknown pass 'fuse_pulse'. Did you mean 'fuse_pulses'"
+    ) as error:
+        pulse.compile(_bell, passes=("verify", "fuse_pulse"))
+    assert all(p.value in str(error.value) for p in pulse.Pass)
+    with pytest.raises(ValueError, match="not the string 'verify'"):
+        pulse.compile(_bell, passes="verify")
 
 
 def test_compile_bad_schedule_raises():

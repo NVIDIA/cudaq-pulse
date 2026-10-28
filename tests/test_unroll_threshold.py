@@ -159,7 +159,7 @@ def test_rolled_and_unrolled_programs_are_the_same(name):
     assert _rolled(rolled) and not _rolled(unrolled)
     # Without passes every pulse is scheduled alike.
     assert _events(rolled) == _events(unrolled)
-    # With the default passes, fusion may merge back-to-back pulses of the
+    # With the default passes, fuse_pulses may merge back-to-back pulses of the
     # unrolled program; the evolution is the same.
     a = pulse.compile(kernel, unroll_threshold=0).lower(Q[0], Q[1])
     b = pulse.compile(kernel, unroll_threshold=10**6).lower(Q[0], Q[1])

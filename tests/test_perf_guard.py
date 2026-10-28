@@ -213,7 +213,7 @@ def test_the_events_of_a_long_line_are_listed_in_linear_time():
             for i in range(n):
                 drive(line, square(8 + 0 * i, 0.1), tone)
 
-        # Without fusion, every drive is an event of its own.
+        # Without fuse_pulses, every drive is an event of its own.
         return pulse.compile(kernel, passes=("verify",), unroll_threshold=100_000).lower(Q[0])
 
     # Eight times the drives: about 10x the time when linear, 64x when not.

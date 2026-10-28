@@ -39,7 +39,7 @@ FREQ_HZ = 5.0e9
 # pulses with different phases or frequencies end in distinct states.
 AMP = 0.05
 SIGNIFICANT = 1e-3
-UNFUSED = ("verify", "virtual_z")
+UNFUSED = ("verify", "fold_constants", "remove_unused", "fold_phases")
 
 # ── Call mechanics ───────────────────────────────────────────────────
 
@@ -76,7 +76,7 @@ def _evaluate(compiled, *values):
 
 def _simulate(kernel, n=1, qvec=False, args=(), **kwargs):
     """The CPU simulation of the kernel."""
-    passes = ("verify", "canonicalize", "virtual_z", "fusion")
+    passes = (*UNFUSED, "merge_waits", "simplify_control_flow", "fuse_pulses")
     lowered = _compile(kernel, n, qvec, passes=passes, args=args)
     return pulse.simulate(lowered, **kwargs)
 
@@ -152,7 +152,7 @@ def check(kernel, reference, *, loops, n=1, qvec=False, sim=True, args=(), **sim
     _verify(compiled)
     _verify(expected)
     assert _length(compiled) == _length(expected)
-    # Fusion merges adjacent drives of the unrolled reference only, so
+    # fuse_pulses merges adjacent drives of the unrolled reference only, so
     # events are compared without it.
     compiled = _compile(kernel, n, qvec, passes=UNFUSED, args=args)
     unfused = _compile(reference, n, qvec, passes=UNFUSED, args=args)

@@ -6,10 +6,10 @@
 // the terms of the Apache License 2.0 which accompanies this distribution.     //
 // ============================================================================ //
 
-// RUN: cudaq-pulse-opt --pulse-fusion %s | FileCheck %s
+// RUN: cudaq-pulse-opt --pulse-fuse-pulses %s | FileCheck %s
 
-// Adjacent pulses inside one arm fuse. Without pulse-fold the new duration
-// stays where the fused drive is.
+// Adjacent pulses inside one arm fuse. Without pulse-fold-constants the new
+// duration stays where the fused drive is.
 // CHECK-LABEL: func.func @inside_an_arm
 // CHECK: scf.if
 // CHECK: arith.constant 100

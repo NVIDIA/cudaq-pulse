@@ -194,7 +194,7 @@ def test_unknown_pass_is_rejected():
     def kernel():
         pass
 
-    with pytest.raises(ValueError, match="Unknown pulse passes"):
+    with pytest.raises(ValueError, match="Unknown pass 'typo'"):
         pulse.compile(kernel, passes=("typo",)).lower()
 
 

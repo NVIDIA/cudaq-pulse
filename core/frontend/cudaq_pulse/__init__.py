@@ -48,6 +48,7 @@ from ._device import device as device
 from ._device import get_device as get_device
 from ._errors import PulseError as PulseError
 from .compiler import Lowered as Lowered
+from .compiler import Pass as Pass
 from .compiler import compile as compile
 from .kernel import kernel as kernel
 from .kernel._kernel import CompiledKernel as CompiledKernel
@@ -89,6 +90,7 @@ __all__ = [
     "compile",
     "CompiledKernel",
     "Lowered",
+    "Pass",
     "simulate",
     "SimulationResult",
     "device",

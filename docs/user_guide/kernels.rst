@@ -107,7 +107,7 @@ on its value; ``while`` loops are rejected.
 ``@pulse.kernel(unroll_threshold=n)`` or the ``CUDAQ_PULSE_UNROLL_THRESHOLD``
 environment variable, in that order, and 8 by default; 0 keeps every such
 loop rolled. Both forms are the same program: without passes their
-schedules are identical, and with the default passes fusion may merge
+schedules are identical, and with the default passes ``fuse_pulses`` may merge
 back-to-back pulses of the unrolled form, with the same evolution. The
 threshold is part of the cache key, so changing the variable recompiles.
 

@@ -706,36 +706,29 @@ public:
   /// Run the passes named in `pipeline`, in order: each entry is a pass as
   /// cudaq-pulse-opt names it, with its options in braces, or several
   /// separated by commas. A pass that runs on functions runs on each
-  /// function of the module. Pattern passes in a row (pulse-fold,
-  /// pulse-canonicalize, pulse-virtual-z, pulse-fusion) run as one rewrite
-  /// with all their patterns: one walk of the module, to where none of them
-  /// applies.
+  /// function of the module. Pattern passes in a row (pulse-fold-constants,
+  /// pulse-remove-unused, pulse-merge-waits, pulse-simplify-control-flow,
+  /// pulse-fold-phases, pulse-fuse-pulses) run as one rewrite with all their
+  /// patterns: one walk of the module, to where none of them applies.
   void run_passes(const std::vector<std::string> &pipeline) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     mlir::PassManager pm(ctx_.get(), mlir::ModuleOp::getOperationName(),
                          mlir::OpPassManager::Nesting::Implicit);
     llvm::SmallVector<const pulse::RewriteStage *, 4> stages;
-    bool fold = false;
     auto flush = [&] {
-      if (stages.empty() && fold)
-        stages.push_back(pulse::findRewriteStage("pulse-fold"));
       if (!stages.empty())
         pm.addNestedPass<mlir::func::FuncOp>(
-            pulse::createPulseRewritePass(stages, fold));
+            pulse::createPulseRewritePass(stages));
       stages.clear();
-      fold = false;
     };
     for (const std::string &entry : pipeline)
       for (llvm::StringRef pass : splitPipeline(entry)) {
         auto [name, options] = pass.split('{');
         if (const pulse::RewriteStage *stage = pulse::findRewriteStage(name);
             stage && options.empty()) {
-          if (!stage->populate) {
-            fold = true;
-            continue;
-          }
-          stages.push_back(stage);
-          if (!llvm::is_contained(rewrites_, stage)) {
+          if (!llvm::is_contained(stages, stage))
+            stages.push_back(stage);
+          if (stage->onBinding && !llvm::is_contained(rewrites_, stage)) {
             rewrites_.push_back(stage);
             rewritePatterns_.reset();
           }
@@ -1722,7 +1715,8 @@ private:
     (void)mlir::applyOpPatternsGreedily(ops, *rewritePatterns_, opConfig);
   }
 
-  // The pattern passes run_passes ran, in the order first run.
+  // The pattern passes run_passes ran that rerun on a binding
+  // (pulse-fold-phases, pulse-fuse-pulses), in the order first run.
   llvm::SmallVector<const pulse::RewriteStage *, 4> rewrites_;
   // What foldBinding rewrites with, once gathered.
   std::shared_ptr<const mlir::FrozenRewritePatternSet> canonicalPatterns_;

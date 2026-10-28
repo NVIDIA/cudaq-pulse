@@ -10,7 +10,15 @@
 import cudaq_pulse as pulse
 from cudaq_pulse.targets import Coupling, Qubit, TargetDescription
 
-PASSES = ("verify", "canonicalize", "virtual_z", "fusion")
+PASSES = (
+    "verify",
+    "fold_constants",
+    "remove_unused",
+    "merge_waits",
+    "simplify_control_flow",
+    "fold_phases",
+    "fuse_pulses",
+)
 CLOCK_GHZ = 2.0
 
 

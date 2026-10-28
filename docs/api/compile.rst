@@ -16,6 +16,10 @@ Compilation API
 .. autoclass:: cudaq_pulse.Lowered
    :members:
 
+.. autoclass:: cudaq_pulse.Pass
+   :members:
+   :undoc-members:
+
 .. autoclass:: cudaq_pulse.compiler.MachineModel
    :members:
    :undoc-members:

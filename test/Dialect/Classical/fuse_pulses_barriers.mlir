@@ -8,7 +8,7 @@
 
 // Two square drives on one line are not fused across a barrier on another
 // line: the second plays after it.
-// RUN: cudaq-pulse-opt --pulse-fusion %s | FileCheck %s
+// RUN: cudaq-pulse-opt --pulse-fuse-pulses %s | FileCheck %s
 
 classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
     args = [], results = ["i64"], latency_min_ns = 0.0,

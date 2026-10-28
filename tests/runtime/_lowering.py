@@ -14,7 +14,15 @@ import numpy as np
 from cudaq_pulse.runtime.simulate import _simulate_lowered
 from cudaq_pulse.targets import Qubit, TargetDescription
 
-EVOLVE_PASSES = ("verify", "canonicalize", "virtual_z", "fusion")
+EVOLVE_PASSES = (
+    "verify",
+    "fold_constants",
+    "remove_unused",
+    "merge_waits",
+    "simplify_control_flow",
+    "fold_phases",
+    "fuse_pulses",
+)
 
 
 def _handles(dev, args):

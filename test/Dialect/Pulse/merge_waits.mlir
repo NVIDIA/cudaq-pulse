@@ -6,8 +6,8 @@
 // the terms of the Apache License 2.0 which accompanies this distribution.     //
 // ============================================================================ //
 
-// RUN: cudaq-pulse-opt --pulse-canonicalize %s | FileCheck %s
-// RUN: cudaq-pulse-opt --pulse-canonicalize --pulse-schedule-alap %s | FileCheck %s --check-prefix=TIME
+// RUN: cudaq-pulse-opt --pulse-merge-waits %s | FileCheck %s
+// RUN: cudaq-pulse-opt --pulse-merge-waits --pulse-schedule-alap %s | FileCheck %s --check-prefix=TIME
 
 // Waits in a row on one line become one wait of their total length.
 // CHECK-LABEL: func.func @in_a_row

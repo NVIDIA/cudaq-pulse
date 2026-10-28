@@ -19,6 +19,7 @@ TOP_LEVEL = {
     "compile",
     "CompiledKernel",
     "Lowered",
+    "Pass",
     "simulate",
     "SimulationResult",
     "device",

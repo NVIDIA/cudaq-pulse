@@ -820,7 +820,7 @@ def explicit_reference(low: Any, shifts: Sequence[int]) -> Any:
             lines[("readout", which)] = get_readout_line(q)
         play(tree, lines, {})
 
-    # Without fusion, which would merge the pulses it places back to back.
+    # Without fuse_pulses, which would merge the pulses it places back to back.
     return pulse.compile(pulse.kernel(schedule="asap")(reference), passes=("verify",))
 
 

@@ -11,8 +11,8 @@ Usage:
     python benchmarks/compiler/compile_time.py [--iterations N]
         [--baseline FILE [--gate FACTOR]] [--write-baseline FILE]
 
-Compiles each of the 6 canonical workloads with ``pulse.compile(k).lower(...)`` (verify,
-virtual-Z, fusion, ALAP schedule). The op count is that of the traced kernel
+Compiles each of the 6 canonical workloads with ``pulse.compile(k).lower(...)`` (the
+default passes, ALAP schedule). The op count is that of the traced kernel
 IR, with loops retained. With --baseline, exits 1 if any op count differs
 from the baseline; adding --gate also fails any workload slower than its
 baseline time x FACTOR.

@@ -8,7 +8,7 @@
 Writing Custom Passes
 =====================
 
-Compiling a kernel runs the built-in pipeline (verify, virtual-Z, fusion and
+Compiling a kernel runs the built-in pipeline (the passes of ``passes=`` and
 a schedule) on an in-memory Pulse-dialect MLIR module. You can extend it in
 two ways, each shown by a runnable example in ``examples/custom_passes/``.
 

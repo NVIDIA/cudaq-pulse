@@ -14,67 +14,82 @@ name below, so ``cudaq-pulse-opt`` runs it on its own:
 
 .. code-block:: bash
 
-   cudaq-pulse-opt --pulse-fold --pulse-virtual-z kernel.mlir
+   cudaq-pulse-opt --pulse-fold-constants --pulse-fold-phases kernel.mlir
    cudaq-pulse-opt '--pulse-schedule-rcp=max-drives=2 alap=true' kernel.mlir
 
-``pulse.compile`` runs the passes named in ``passes=``, then the schedule of
-its policy. Each pass name maps to these passes:
+``pulse.compile`` runs the passes of ``passes=``, members of
+:class:`cudaq_pulse.Pass` or their names, in the order given, then the
+schedule of its policy. Each member is one pass:
 
-==================  ======================================
-``passes=`` name    Passes
-==================  ======================================
-``"verify"``        ``pulse-verify``
-``"virtual_z"``     ``pulse-fold``, ``pulse-virtual-z``
-``"fusion"``        ``pulse-fold``, ``pulse-fusion``
-``"canonicalize"``  ``pulse-fold``, ``pulse-canonicalize``
-``"licm"``          ``loop-invariant-code-motion``
-==================  ======================================
+=============================  =================================
+``Pass`` member                Pass
+=============================  =================================
+``VERIFY``                     ``pulse-verify``
+``FOLD_CONSTANTS``             ``pulse-fold-constants``
+``REMOVE_UNUSED``              ``pulse-remove-unused``
+``MERGE_WAITS``                ``pulse-merge-waits``
+``SIMPLIFY_CONTROL_FLOW``      ``pulse-simplify-control-flow``
+``FOLD_PHASES``                ``pulse-fold-phases``
+``FUSE_PULSES``                ``pulse-fuse-pulses``
+``HOIST_LOOP_INVARIANTS``      ``pulse-hoist-loop-invariants``
+=============================  =================================
+
+The default, ``DEFAULT_PASSES``, is ``VERIFY``, ``FOLD_CONSTANTS``,
+``REMOVE_UNUSED``, ``FOLD_PHASES`` and ``FUSE_PULSES``.
 
 Optimization passes
 -------------------
 
-``pulse-fold``, ``pulse-canonicalize``, ``pulse-virtual-z`` and
-``pulse-fusion`` are pattern passes: each is one greedy rewrite of a
-function. Pattern passes in a row in ``passes=`` run as a single rewrite with
-all their patterns, to the point where none applies, so splitting the work
-into passes costs no extra walk of the module.
+All but ``pulse-verify`` and ``pulse-hoist-loop-invariants`` are pattern
+passes: each is one greedy rewrite of a function. Pattern passes in a row in
+``passes=`` run as a single rewrite with all their patterns, to the point
+where none applies, so splitting the work into passes costs no extra walk of
+the module. A greedy rewrite removes the operations whose results nothing
+uses as it goes, so each pattern pass also removes those its rewrites leave
+unused.
 
-pulse-fold
+pulse-fold-constants
    Applies the folders of the ops (a frame change by zero, a scale by one, a
-   double negation), merges equal constants, and removes dead ops and
-   unreachable blocks. The other pattern passes do none of this on their
-   own; the ``passes=`` names run it with them.
+   double negation, constant arithmetic) and merges equal constants.
 
-pulse-canonicalize
+pulse-remove-unused
+   Removes operations whose results nothing uses, unreachable blocks and
+   unused block arguments.
+
+pulse-merge-waits
+   Merges waits in a row on one line, each of a constant length and neither
+   variable, into one.
+
+pulse-simplify-control-flow
    Removes a ``pulse.sync`` of one line and a sync of the lines another sync
-   just produced; merges waits in a row on one line, each of a constant
-   length and neither variable, into one; inlines a ``pulse.schedule_block``
-   with no drives, readouts or waits; branches on ``pulse.is_set``; and
-   inlines or drops ``scf.for`` loops that run once or never.
+   just produced; inlines a ``pulse.schedule_block`` with no drives, readouts
+   or waits; branches on ``pulse.is_set``; and inlines or removes ``scf.for``
+   loops that run once or never.
 
-pulse-virtual-z
+pulse-fold-phases
    Folds a ``pulse.shift_phase`` by a constant into the ``frame_phase_offset``
    of the drive that follows on its tone, after moving it past an
-   ``scf.if`` whose arms both pass it through unchanged, into a schedule block that
-   takes the tone next, or out of the end of a block. A frame rotation then
-   costs no operation of its own.
+   ``scf.if`` whose arms both pass it through unchanged, into a schedule
+   block that takes the tone next, or out of the end of a block. A frame
+   rotation then costs no operation of its own.
 
-pulse-fusion
+pulse-fuse-pulses
    Merges two drives in a row on one line and tone, whose waveforms are
    square pulses of the same amplitude and of constant durations, with the
    same phase offset and no frame change folded into the second, into one
    drive of the summed duration. A wait for an answer or for a blocking
    classical call between them keeps them apart.
 
-loop-invariant-code-motion
-   MLIR's pass: hoists waveform construction and other loop-invariant
-   operations out of ``scf.for`` bodies.
+pulse-hoist-loop-invariants
+   Moves waveform construction and other operations that compute the same
+   value in every iteration out of ``scf.for`` bodies (MLIR's loop-invariant
+   code motion).
 
 When a call binds a kernel's ``float`` parameters, the module with the
-values substituted is folded with MLIR's canonicalization patterns, and the
-virtual-Z and fusion patterns run again, if the module ran them, on the frame
-changes and square pulses the values reach: a phase or an amplitude that was
-a parameter folds or fuses once it is a number.
+values substituted is folded with MLIR's canonicalization patterns, and
+``pulse-fold-phases`` and ``pulse-fuse-pulses`` run again, if the module ran
+them, on the frame changes and square pulses the values reach: a phase or an
+amplitude that was a parameter folds or fuses once it is a number.
 
 Checks
 ------
