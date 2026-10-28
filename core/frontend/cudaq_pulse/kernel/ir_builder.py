@@ -259,6 +259,21 @@ class AnswerValue(_SymbolicNumber):
         return f"AnswerValue({self.label or self.vid}, {self.dtype})"
 
 
+class Selection(_SymbolicNumber):
+    """A value a condition selects while the program runs: ``then`` where
+    ``cond`` (a measurement, or a boolean IR value) holds, ``other`` where it
+    does not. ``then`` and ``other`` are numbers, symbolic numbers, waveforms
+    or selections; the builder emits one select of them."""
+
+    __slots__ = ("cond", "then", "other")
+    __hash__ = object.__hash__
+
+    def __init__(self, cond: IRValue, then: Any, other: Any) -> None:
+        self.cond = cond
+        self.then = then
+        self.other = other
+
+
 def contains_answer(value: Any) -> bool:
     """Whether a symbolic value is computed from an answer of a classical call."""
     if isinstance(value, AnswerValue):

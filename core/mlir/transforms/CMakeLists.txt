@@ -14,6 +14,7 @@ add_mlir_dialect_library(CudaqPulsePulseTransforms
   Rewrite.cpp
   ScheduleAlap.cpp
   ClassicalCheck.cpp
+  LowerSelects.cpp
 
   DEPENDS
   CudaqPulsePulseIncGen

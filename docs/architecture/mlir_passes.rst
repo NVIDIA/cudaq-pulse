@@ -91,6 +91,26 @@ values substituted is folded with MLIR's canonicalization patterns, and
 them, on the frame changes and square pulses the values reach: a phase or an
 amplitude that was a parameter folds or fuses once it is a number.
 
+Measurement choices
+-------------------
+
+pulse-lower-selects
+   Lowers the ``arith.select`` a measurement-conditioned ``if`` leaves on a
+   name its arms set differently. ``pulse.compile`` runs it before
+   ``passes=``, only on programs that have one. Its ``runtime`` option lists
+   the parameters the target takes at run time (``amplitude``, ``phase``,
+   ``frequency``): a use that sets one of those (a waveform's amplitude, the
+   factor of ``pulse.scale``, a frame's phase or frequency), through any
+   arithmetic, reads the select, so every use shares the one value. Any
+   other use (a duration, a waveform's shape, a waveform chosen whole) has
+   the first op with effects it reaches copied into both arms of an
+   ``scf.if`` on the select's condition, each reading that arm's value; an
+   ``elif`` select is copied after the one it is nested in, into the arm
+   that reads it. The function is marked ``pulse.selected_values``, so a
+   schedule starts an op that reads a selected value, kept or in the arms,
+   after the measurement. The compiler chooses ``runtime`` per target, and
+   today no target takes a value at run time.
+
 Checks
 ------
 

@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 
 namespace pulse {
 std::unique_ptr<mlir::Pass> createPulseToQOpPass();
@@ -71,6 +72,13 @@ std::unique_ptr<mlir::Pass> createPulseScheduleRcpOptionsPass();
 std::unique_ptr<mlir::Pass> createPulseInlineScheduleBlocksPass();
 std::unique_ptr<mlir::Pass> createPulseClassicalCheckPass();
 std::unique_ptr<mlir::Pass> createPulseUnrollClassicalLoopsPass();
+/// pulse-lower-selects with no parameter taken at run time, for
+/// cudaq-pulse-opt (where the `runtime` option sets them).
+std::unique_ptr<mlir::Pass> createPulseLowerSelectsPass();
+/// pulse-lower-selects keeping the selects of the parameter kinds in
+/// `runtime` (amplitude, phase, frequency).
+std::unique_ptr<mlir::Pass>
+createPulseLowerSelectsPass(llvm::ArrayRef<std::string> runtime);
 } // namespace pulse
 
 namespace qop {
@@ -98,6 +106,7 @@ inline void registerPulsePasses() {
   mlir::registerPass(createPulseInlineScheduleBlocksPass);
   mlir::registerPass(createPulseClassicalCheckPass);
   mlir::registerPass(createPulseUnrollClassicalLoopsPass);
+  mlir::registerPass([] { return createPulseLowerSelectsPass(); });
   mlir::registerPass(createPulseScheduleRcpOptionsPass);
 }
 } // namespace pulse

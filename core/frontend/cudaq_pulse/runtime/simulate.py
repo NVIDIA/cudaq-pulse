@@ -373,6 +373,12 @@ def _simulate_compiled(
             if backend == "gpu" or compiled.waits is not None
             else compiled._module
         )
+    if compiled.runtime_selects:
+        # A path plays the values its measurements select: on a copy, each op
+        # that reads a run-time value runs in both arms of an if on the
+        # measurement, at the time the schedule gave it.
+        module = module.resolve_selects()
+        lock = threading.RLock()
     qudits = compiled.qudits
     if not qudits:
         raise InvalidValueError("the program uses no qudits; there is nothing to simulate")

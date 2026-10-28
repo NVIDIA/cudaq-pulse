@@ -143,6 +143,7 @@ constexpr int kOpClassicalSubmit = 37;
 constexpr int kOpClassicalWait = 38;
 constexpr int kOpClassicalCompare = 39;
 constexpr int kOpVariableWait = 40;
+constexpr int kOpSelect = 41;
 // A payload length of 0xFF means the length is in the next word.
 constexpr int kExtendedPayload = 0xFF;
 
@@ -746,6 +747,38 @@ public:
     flush();
     programs_.clear();
     runPipeline(pm, *module_, "MLIR pass pipeline failed");
+  }
+
+  /// Keep the selects whose uses all set a parameter of a kind in
+  /// `runtime`; run every other op that reads one in both arms of an if.
+  /// Returns whether a select is kept.
+  bool lower_selects(const std::vector<std::string> &runtime) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    mlir::PassManager pm(ctx_.get());
+    pm.addNestedPass<mlir::func::FuncOp>(
+        pulse::createPulseLowerSelectsPass(runtime));
+    programs_.clear();
+    runPipeline(pm, *module_, "lowering selects failed");
+    return keepsSelects(*module_);
+  }
+
+  /// This module, scheduled, with every op that reads a run-time select in
+  /// both arms of an if on its condition at the time it was scheduled: each
+  /// measurement path plays the values it selects. For simulation.
+  PulseModule resolve_selects() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto resolve = [&](mlir::ModuleOp module) {
+      auto copy = mlir::OwningOpRef<mlir::ModuleOp>(module.clone());
+      mlir::PassManager pm(ctx_.get());
+      pm.addNestedPass<mlir::func::FuncOp>(
+          pulse::createPulseLowerSelectsPass({}));
+      runPipeline(pm, *copy, "resolving selects failed");
+      return copy;
+    };
+    PulseModule result(ctx_, resolve(*module_));
+    if (source_)
+      result.source_ = resolve(*source_);
+    return result;
   }
 
   std::string run_full_lowering() {
@@ -1649,6 +1682,15 @@ private:
   /// scheduled, if it had blocks, else the module.
   mlir::ModuleOp source() { return source_ ? *source_ : *module_; }
 
+  static bool keepsSelects(mlir::ModuleOp module) {
+    bool kept = false;
+    module.walk([&](mlir::arith::SelectOp) {
+      kept = true;
+      return mlir::WalkResult::interrupt();
+    });
+    return kept;
+  }
+
   std::shared_ptr<mlir::MLIRContext> ctx_;
   mlir::OwningOpRef<mlir::ModuleOp> module_;
   // The module before scheduling, while it has schedule blocks (see
@@ -2490,6 +2532,25 @@ public:
         break;
       }
 
+      case kOpSelect: {
+        // [result id, condition (a measurement or i1), then id, else id]
+        requirePayload(4);
+        mlir::Value condition = look(p[1]);
+        if (mlir::isa<pulse::MeasurementType>(condition.getType()))
+          condition = pulse::IsSetOp::create(*builder_, loc,
+                                             builder_->getI1Type(), condition);
+        else if (!condition.getType().isInteger(1))
+          throw std::invalid_argument(
+              "packed: a select's condition must be a measurement or i1");
+        mlir::Value then = look(p[2]), other = look(p[3]);
+        if (then.getType() != other.getType())
+          throw std::invalid_argument(
+              "packed: a select's values must have one type");
+        bind(p[0], mlir::arith::SelectOp::create(*builder_, loc, condition,
+                                                 then, other));
+        break;
+      }
+
       case kOpNumConst: {
         requirePayload(3);
         if (p[1] == 0) {
@@ -3109,6 +3170,14 @@ NB_MODULE(_cudaq_pulse_native, m) {
       .def("run_passes", &PulseModule::run_passes,
            nb::call_guard<nb::gil_scoped_release>(),
            "Run named MLIR passes on this module")
+      .def("lower_selects", &PulseModule::lower_selects,
+           nb::call_guard<nb::gil_scoped_release>(), nb::arg("runtime"),
+           "Keep the selects of the run-time parameter kinds given; run "
+           "every other op that reads one in both arms of an if")
+      .def("resolve_selects", &PulseModule::resolve_selects,
+           nb::call_guard<nb::gil_scoped_release>(),
+           "This module with every op that reads a run-time select in both "
+           "arms of an if on its condition, for simulation")
       .def("run_full_lowering", &PulseModule::run_full_lowering,
            nb::call_guard<nb::gil_scoped_release>(),
            "Run full lowering: pulse -> qop -> cudm -> llvm")

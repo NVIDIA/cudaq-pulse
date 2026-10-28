@@ -58,7 +58,18 @@ behavior may change in any 0.x release.
   stops before running, and `pulse.compile(kernel)` compiles ahead of the
   call. `float` parameters stay symbolic, so a parameter sweep compiles once.
   Kernels call other kernels, loop with `range`, and branch on measurement
-  results. Kernels take their qudits as parameters; a call without qudit
+  results. A number the arms of an `if` on a measurement set differently
+  (`if m: amp = 0.3` / `else: amp = 0.1`) holds the value of the arm that
+  ran, as one `arith.select` on the measurement, in `elif` chains, nested
+  ifs and rolled loops too. Lowering keeps the select where the target
+  takes that amplitude, phase or frequency at run time, so every use reads
+  the one value; otherwise, and for durations and waveform shapes, each op
+  that reads it runs in both arms of an `if` on the measurement. No target
+  takes one at run time yet. Either way the ops wait for the measurement
+  and schedule and simulate alike. A name assigned in only one arm, with no
+  value before the
+  `if`, raises a `CompilationError` naming it and the line of the `if`.
+  Kernels take their qudits as parameters; a call without qudit
   handles raises `NoDeviceError` unless the kernel was compiled for a device
   (`pulse.compile(k, device=dev)`).
 - **Loop unrolling.** A `range` loop whose variable is never read is kept

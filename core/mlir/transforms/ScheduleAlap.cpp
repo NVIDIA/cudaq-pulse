@@ -1167,6 +1167,17 @@ private:
         a = later ? std::max(a, b) : std::min(a, b);
   }
 
+  /// Whether what `branch` yields is there only once its condition is: in a
+  /// function with values a measurement selects, an arm may set a parameter
+  /// from one, and the op that reads it waits for the measurement as it
+  /// would reading the selected value itself.
+  bool yieldsSelected(mlir::scf::IfOp branch) const {
+    if (!classical)
+      return false;
+    auto function = branch->getParentOfType<mlir::func::FuncOp>();
+    return function && function->hasAttr("pulse.selected_values");
+  }
+
   mlir::LogicalResult forwardIf(mlir::scf::IfOp branch) {
     int64_t savedFloor = floor;
     for (mlir::Value measurement : conditionMeasurements(branch.getCondition()))
@@ -1200,6 +1211,9 @@ private:
           it->second = std::max(it->second, time);
       }
     }
+    if (yieldsSelected(branch))
+      for (int64_t &time : results)
+        time = std::max(time, floor);
     for (auto [result, time] : llvm::zip(branch.getResults(), results))
       readyAt[result] = time;
     floor = savedFloor;
@@ -1539,6 +1553,17 @@ private:
         bound(measurement, armStart);
       if (classical)
         bound(branch.getCondition(), armStart);
+    }
+    if (yieldsSelected(branch)) {
+      int64_t needed = kNever;
+      for (mlir::Value result : branch.getResults())
+        needed = std::min(needed, late(result));
+      if (needed != kNever) {
+        for (mlir::Value measurement :
+             conditionMeasurements(branch.getCondition()))
+          bound(measurement, needed);
+        bound(branch.getCondition(), needed);
+      }
     }
     armStart = std::min(savedArmStart, armStart);
     return mlir::success();
@@ -2195,8 +2220,11 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
   Timelines timelines;
   if (classical && TimelineAnalysis(function, resources).run(timelines))
     classical::annotateClassicalCalls(function);
-  return scheduleRegion(function.getBody(), function, resources, isAlap,
-                        classical, timelines);
+  // Ops that read a value a measurement selects wait for it, as ops that
+  // read an answer do.
+  bool data = classical || function->hasAttr("pulse.selected_values");
+  return scheduleRegion(function.getBody(), function, resources, isAlap, data,
+                        timelines);
 }
 
 template <bool IsAlap>

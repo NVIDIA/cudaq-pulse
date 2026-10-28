@@ -33,10 +33,11 @@ import functools
 import inspect
 import linecache
 import math
+import numbers
 import operator
 import types
-from collections.abc import Iterator, Sequence
-from typing import Any
+from collections.abc import Callable, Iterator, Sequence
+from typing import Any, NoReturn
 
 from ..classical import ClassicalFunction
 from . import _bytecode_normalize as bc
@@ -67,12 +68,15 @@ from .ir_builder import (
     LINEAR_TYPES,
     OP_TABLE,
     UNDEFINED_VID,
+    AnswerValue,
     CompilationError,
     IRValue,
     Parameter,
     ParameterExpression,
     PythonIRBuilder,
+    Selection,
     SymbolicValueError,
+    UndecidableComparison,
     is_symbolic,
 )
 from .packed_ir_builder import MAX_CUSTOM_SAMPLES
@@ -219,6 +223,324 @@ class _NotMeasurement:
         self.value = value
 
 
+# ── Values a measurement-conditioned if chose ───────────────────────────
+
+# Choices compose: `amp * scale` of two choices on different measurements
+# has four values. Past this many, the ops given one would be too many ifs.
+_MAX_CHOICE_VALUES = 64
+
+_CHOICE_OPS: dict[str, Callable[[Any, Any], Any]] = {
+    "add": operator.add,
+    "sub": operator.sub,
+    "mul": operator.mul,
+    "div": operator.truediv,
+    "floordiv": operator.floordiv,
+    "mod": operator.mod,
+    "pow": operator.pow,
+}
+
+
+class _ChosenOperandError(Exception):
+    """A builder was given a choice: the op is emitted by ``_emit_chosen``."""
+
+
+class _Choice(Selection):
+    """A value a measurement-conditioned if chose: ``then`` where ``cond``
+    holds and ``other`` where it does not.
+
+    ``then`` and ``other`` are numbers, symbolic numbers, waveforms, or
+    choices on other conditions. Arithmetic and calls of pure functions
+    apply to each value, so a choice stays a choice between values. An op
+    given one reads a select of its values, made once (see
+    ``_emit_chosen``). ``scope`` is the regions open where the choice was
+    made, outside which ``cond`` is not defined; ``name`` and ``line`` name
+    it in errors.
+    """
+
+    __slots__ = ("name", "line", "scope", "vtype", "size")
+    __hash__ = object.__hash__
+    chan = None
+    vid = UNDEFINED_VID
+
+    def __init__(
+        self,
+        cond: IRValue,
+        then: Any,
+        other: Any,
+        name: str,
+        line: int | None,
+        scope: tuple[int, ...],
+    ) -> None:
+        self.cond = cond
+        self.then = then
+        self.other = other
+        self.name = name
+        self.line = line
+        self.scope = scope
+        self.vtype = "waveform" if getattr(then, "vtype", None) == "waveform" else None
+        self.size = _choice_size(then) + _choice_size(other)
+        if self.size > _MAX_CHOICE_VALUES:
+            raise CompilationError(
+                f"{self.origin} would have more than {_MAX_CHOICE_VALUES} values, one for "
+                "each combination of measurement outcomes it depends on; use it inside "
+                "the arms of the ifs instead"
+            )
+
+    @property
+    def origin(self) -> str:
+        return (
+            f"the value the measurement-conditioned if at line {self.line} chose for {self.name!r}"
+        )
+
+    def _binary(self, op: str, other: Any) -> Any:
+        return _choice_map(_CHOICE_OPS[op], self, other)
+
+    def _rbinary(self, op: str, other: Any) -> Any:
+        return _choice_map(_CHOICE_OPS[op], other, self)
+
+    def __neg__(self) -> Any:
+        return _choice_map(operator.neg, self)
+
+    def __pos__(self) -> Any:
+        return _choice_map(operator.pos, self)
+
+    def __abs__(self) -> Any:
+        return _choice_map(abs, self)
+
+    def __eq__(self, other: object) -> Any:
+        return _choice_map(operator.eq, self, other)
+
+    def __ne__(self, other: object) -> Any:
+        return _choice_map(operator.ne, self, other)
+
+    def __lt__(self, other: Any) -> Any:
+        return _choice_map(operator.lt, self, other)
+
+    def __le__(self, other: Any) -> Any:
+        return _choice_map(operator.le, self, other)
+
+    def __gt__(self, other: Any) -> Any:
+        return _choice_map(operator.gt, self, other)
+
+    def __ge__(self, other: Any) -> Any:
+        return _choice_map(operator.ge, self, other)
+
+    def cast(self, dtype: str) -> Any:
+        if dtype not in ("i64", "f64"):
+            raise CompilationError(f"unsupported symbolic cast to {dtype}")
+        convert = int if dtype == "i64" else float
+        return _choice_map(lambda v: v.cast(dtype) if is_symbolic(v) else convert(v), self)
+
+    def _not_concrete(self, operation: str) -> NoReturn:
+        raise CompilationError(
+            f"{self.origin} is known only when the program runs, so it cannot be "
+            f"used for {operation} while the kernel traces; use it in a pulse op or "
+            "as an if condition, or do this inside each arm of the if"
+        )
+
+    def __repr__(self) -> str:
+        return f"_Choice({self.cond!r}, {self.then!r}, {self.other!r})"
+
+
+def _choice_size(value: Any) -> int:
+    return value.size if value.__class__ is _Choice else 1
+
+
+def _choice_leaves(choice: _Choice) -> Iterator[Any]:
+    """The values *choice* may take."""
+    for value in (choice.then, choice.other):
+        if value.__class__ is _Choice:
+            yield from _choice_leaves(value)
+        else:
+            yield value
+
+
+def _selectable(fname: str, operands: tuple[Any, ...], attrs: dict[str, Any]) -> bool:
+    """Whether every choice the op *fname* is given can be one select: of
+    real or symbolic numbers, or of waveforms, and not one whose values the
+    builder checks against each other (the edges of a gaussian_square, the
+    bounds of a wait)."""
+    if fname == "gaussian_square" and (
+        _find_choice(attrs.get("duration")) is not None
+        or _find_choice(attrs.get("width")) is not None
+    ):
+        return False
+    if fname == "wait" and attrs.get("bounds") is not None:
+        return False
+    return all(_selects(v) for v in operands) and all(_selects(v) for v in attrs.values())
+
+
+def _selects(value: Any) -> bool:
+    cls = value.__class__
+    if cls is _Choice:
+        return all(_select_leaf(leaf) for leaf in _choice_leaves(value))
+    if cls is ParameterExpression or cls is UndecidableComparison:
+        return _selects(value.lhs) and _selects(value.rhs)
+    if cls is list or cls is tuple:
+        return _find_choice(value) is None
+    return True
+
+
+def _select_leaf(value: Any) -> bool:
+    cls = value.__class__
+    if cls is IRValue:
+        return bool(value.vtype == "waveform")
+    if cls is ParameterExpression:
+        return _selects(value)
+    return cls is Parameter or cls is AnswerValue or isinstance(value, numbers.Real)
+
+
+def _find_choice(value: Any) -> _Choice | None:
+    """The first choice *value* holds, directly or in an expression, list or tuple."""
+    cls = value.__class__
+    if cls is _Choice:
+        return value  # type: ignore[no-any-return]
+    if cls is ParameterExpression or cls is UndecidableComparison:
+        found = _find_choice(value.lhs)
+        return found if found is not None else _find_choice(value.rhs)
+    if cls is list or cls is tuple:
+        for item in value:
+            found = _find_choice(item)
+            if found is not None:
+                return found
+    return None
+
+
+def _choices_in(value: Any) -> Iterator[_Choice]:
+    """The choices *value* holds, not counting those inside other choices."""
+    cls = value.__class__
+    if cls is _Choice:
+        yield value
+    elif cls is ParameterExpression or cls is UndecidableComparison:
+        yield from _choices_in(value.lhs)
+        yield from _choices_in(value.rhs)
+    elif cls is list or cls is tuple:
+        for item in value:
+            yield from _choices_in(item)
+
+
+def _in_arm(value: Any, cond: IRValue, taken: bool) -> Any:
+    """*value* where an if on *cond* takes its then arm (*taken*) or its else arm."""
+    cls = value.__class__
+    if cls is _Choice:
+        if value.cond is cond:
+            return _in_arm(value.then if taken else value.other, cond, taken)
+        then = _in_arm(value.then, cond, taken)
+        other = _in_arm(value.other, cond, taken)
+        if then is value.then and other is value.other:
+            return value
+        return _choose(value.cond, then, other, value, value.scope)
+    if cls is ParameterExpression:
+        lhs = _in_arm(value.lhs, cond, taken)
+        rhs = _in_arm(value.rhs, cond, taken)
+        if lhs is value.lhs and rhs is value.rhs:
+            return value
+        return ParameterExpression(value.op, lhs, rhs, dtype=value.dtype)
+    if cls is UndecidableComparison:
+        lhs = _in_arm(value.lhs, cond, taken)
+        rhs = _in_arm(value.rhs, cond, taken)
+        if lhs is value.lhs and rhs is value.rhs:
+            return value
+        return _CHOICE_COMPARE[value.op](lhs, rhs)
+    if cls is list or cls is tuple:
+        items = [_in_arm(item, cond, taken) for item in value]
+        if all(a is b for a, b in zip(items, value)):
+            return value
+        return cls(items)
+    return value
+
+
+_CHOICE_COMPARE: dict[str, Callable[[Any, Any], Any]] = {
+    "==": operator.eq,
+    "!=": operator.ne,
+    "<": operator.lt,
+    "<=": operator.le,
+    ">": operator.gt,
+    ">=": operator.ge,
+}
+
+
+def _choose(cond: IRValue, then: Any, other: Any, like: _Choice, scope: tuple[int, ...]) -> Any:
+    """The choice on *cond* between *then* and *other*, named like *like*;
+    their value if they are the same."""
+    if then is other:
+        return then
+    cls = then.__class__
+    if cls is other.__class__ and (cls is int or cls is float or cls is bool) and then == other:
+        return then
+    return _Choice(cond, then, other, like.name, like.line, scope)
+
+
+def _choice_map(fn: Callable[..., Any], *args: Any) -> Any:
+    """``fn(*args)`` for the values the choices among *args* take: a choice
+    on the first one's condition, or ``fn(*args)`` if there are none."""
+    choices = [c for c in map(_find_choice, args) if c is not None]
+    if not choices:
+        return fn(*args)
+    scope = max((c.scope for c in choices), key=len)
+    return _map_choices(fn, args, choices[0], scope)
+
+
+def _map_choices(
+    fn: Callable[..., Any], args: tuple[Any, ...], like: _Choice, scope: tuple[int, ...]
+) -> Any:
+    choice = next((c for c in map(_find_choice, args) if c is not None), None)
+    if choice is None:
+        return fn(*args)
+    cond = choice.cond
+    then = _map_choices(fn, tuple(_in_arm(a, cond, True) for a in args), like, scope)
+    other = _map_choices(fn, tuple(_in_arm(a, cond, False) for a in args), like, scope)
+    return _choose(cond, then, other, like, scope)
+
+
+def _choice_condition(choice: _Choice) -> Any:
+    """What an if on *choice* branches on: a bool when every value it may
+    take has the same truth, else the condition that chose it."""
+
+    def truth(value: Any) -> bool:
+        if isinstance(value, IRValue):
+            raise CompilationError(f"{choice.origin} is a pulse {value.vtype}, not a condition")
+        return bool(value)
+
+    decided = _choice_map(truth, choice)
+    if decided.__class__ is bool:
+        return decided
+    if decided.then.__class__ is bool and decided.other.__class__ is bool:
+        return decided.cond if decided.then else _NotMeasurement(decided.cond)
+    raise CompilationError(
+        f"an if on {choice.origin} would depend on more than one measurement; "
+        "branch on the measurements instead"
+    )
+
+
+def _watch_choices(builder: Any) -> None:
+    """Make *builder* raise ``_ChosenOperandError`` for an op given a choice,
+    before the op has any effect. Until a trace makes its first choice the
+    builder is left as it is, so other programs pay nothing for this."""
+    if getattr(builder, "_unwatched_emit", None) is not None:
+        return
+    emit = builder.emit
+
+    def watched(
+        kind: str,
+        operands: tuple[Any, ...] = (),
+        result_types: tuple[str, ...] = (),
+        attrs: dict[str, Any] | None = None,
+    ) -> tuple[IRValue, ...]:
+        for v in operands:
+            if v.__class__ is _Choice:
+                raise _ChosenOperandError
+        if attrs:
+            for v in attrs.values():
+                if v.__class__ is not float and v.__class__ is not int:
+                    if _find_choice(v) is not None:
+                        raise _ChosenOperandError
+        return emit(kind, operands, result_types, attrs)  # type: ignore[no-any-return]
+
+    builder._unwatched_emit = emit
+    builder.emit = watched
+
+
 class _RegionDone:
     """Returned by ``_loop`` when an if-arm reaches its join point."""
 
@@ -358,6 +680,8 @@ def _describe(value: Any) -> str:
         return f"an {word}" if word[0] in "aeiou" else f"a {word}"
     if isinstance(value, (list, tuple)):
         return f"a {type(value).__name__} of {len(value)}"
+    if value.__class__ is _Choice:
+        return str(value.origin)
     return f"{type(value).__name__} {value!r}"
 
 
@@ -617,6 +941,12 @@ def _parameter_names(value: Any) -> list[str]:
 
 
 def _range_error(args: list[Any]) -> CompilationError:
+    choice = _find_choice(args)
+    if choice is not None:
+        return CompilationError(
+            f"a range() bound is {choice.origin}, which is known only when the program "
+            "runs; loop inside each arm of the if instead"
+        )
     names = sorted({n for a in args for n in _parameter_names(a)})
     if names:
         return SymbolicValueError(
@@ -639,6 +969,8 @@ def _iterate(value: Any) -> Any:
             "in pulse kernels run over Python values known at compile time"
         )
     if is_symbolic(value):
+        if value.__class__ is _Choice:
+            raise CompilationError(f"cannot iterate over {value.origin}")
         names = _parameter_names(value)
         raise SymbolicValueError(
             f"cannot iterate over kernel parameter {', '.join(map(repr, names))}",
@@ -722,9 +1054,43 @@ class _NotRollableError(Exception):
 class _UndefinedLocalError(CompilationError):
     """A name was read before the kernel bound it."""
 
-    def __init__(self, name: str) -> None:
-        super().__init__(f"undefined local: {name}")
+    def __init__(self, name: str, message: str = "") -> None:
+        super().__init__(message or f"undefined local: {name}")
         self.name = name
+        self.message = message
+
+
+def _choice_kind(value: Any) -> str | None:
+    """What a measurement-conditioned if can choose *value* as: "number" or
+    "waveform"; None if it cannot."""
+    cls = value.__class__
+    if cls is _Choice:
+        return "number" if value.vtype is None else "waveform"
+    if cls is IRValue:
+        return "waveform" if value.vtype == "waveform" else None
+    if cls is AnswerValue or cls is Parameter or cls is ParameterExpression:
+        return "number"
+    return "number" if isinstance(value, numbers.Real) else None
+
+
+def _made_in_if(value: Any, first: int, scope: tuple[int, ...]) -> bool:
+    """Whether the number or waveform *value* holds a value made inside a
+    measurement-conditioned if, which does not exist after it. *first* is
+    the first id made inside the if, *scope* the regions open around it."""
+    cls = value.__class__
+    if cls is _Choice:
+        return (
+            value.cond.vid >= first
+            or _made_in_if(value.then, first, scope)
+            or _made_in_if(value.other, first, scope)
+        )
+    if cls is IRValue:
+        return bool(value.vid >= first)
+    if cls is AnswerValue:
+        return bool(scope[: len(value.scope)] != value.scope)
+    if cls is ParameterExpression:
+        return _made_in_if(value.lhs, first, scope) or _made_in_if(value.rhs, first, scope)
+    return False
 
 
 class PulseIREmitter:
@@ -745,6 +1111,7 @@ class PulseIREmitter:
         "_acquired",
         "_lines",
         "_unroll",
+        "_one_arm",
     )
 
     _can_roll: bool
@@ -755,6 +1122,9 @@ class PulseIREmitter:
     _acquired: list[int]
     _lines: _Lines
     _unroll: int
+    # Names a measurement-conditioned if bound in one arm only, with the
+    # branch instruction; set by the first such if.
+    _one_arm: dict[str, tuple[bc.DecodedCode, int]]
 
     def __init__(
         self,
@@ -819,7 +1189,8 @@ class PulseIREmitter:
             return self._loop(prog, 0, -1, len(prog.instrs), -1)
         except _UndefinedLocalError as e:
             error = CompilationError(
-                f"{e.name!r} is used before it is assigned; assign it on every path that "
+                e.message
+                or f"{e.name!r} is used before it is assigned; assign it on every path that "
                 "reaches this line (an if on a value known while tracing takes only one arm)"
             )
             error.__dict__.update(e.__dict__)
@@ -883,7 +1254,7 @@ class PulseIREmitter:
                     try:
                         push(local_vars[arg])
                     except KeyError:
-                        raise _UndefinedLocalError(arg) from None
+                        raise self._undefined(arg) from None
 
                 elif op is _load_global:
                     value = fn_globals.get(arg, _MISSING)
@@ -958,6 +1329,9 @@ class PulseIREmitter:
                 elif op is _jif or op is _jit:
                     cond = pop()
                     if cond.__class__ is not bool:
+                        if cond.__class__ is _Choice:
+                            self._check_choice(cond)
+                            cond = _choice_condition(cond)
                         if _classical.is_answer_condition(cond):
                             cond = _classical.condition(self.b, cond)
                         if isinstance(cond, (IRValue, _NotMeasurement)):
@@ -1075,6 +1449,8 @@ class PulseIREmitter:
                         push(_NotMeasurement(value))
                     elif isinstance(value, _NotMeasurement):
                         push(value.value)
+                    elif value.__class__ is _Choice:
+                        push(_choice_map(operator.not_, value))
                     else:
                         push(not _truth(value))
 
@@ -1113,6 +1489,9 @@ class PulseIREmitter:
 
                 elif op is bc.DELETE_FAST:
                     local_vars.pop(arg, None)
+                    one_arm = getattr(self, "_one_arm", None)
+                    if one_arm:
+                        one_arm.pop(arg, None)
 
                 elif op is bc.BUILD_SLICE:
                     items = stack[-arg:]
@@ -1315,6 +1694,7 @@ class PulseIREmitter:
         n_held = len(held)
         entering = _channel_values(held) if n_held else ()
 
+        first = builder._next_id  # the first id made in the if
         builder.emit("scf.if", (value,), ())
         then_locals, then_slots = self._trace_arm(
             view, index, join, then_start, saved_stack, containers
@@ -1334,6 +1714,8 @@ class PulseIREmitter:
 
         merged: dict[str, StackVal] = {}
         results: list[tuple[str, IRValue, IRValue]] = []
+        # Names the arms leave different numbers or waveforms on.
+        chosen: list[tuple[str, Any, Any]] = []
         for name in sorted(then_locals.keys() | else_locals.keys()):
             a = then_locals.get(name, _MISSING)
             b = else_locals.get(name, _MISSING)
@@ -1347,15 +1729,16 @@ class PulseIREmitter:
             ):
                 results.append((name, a, b))
             elif a is _MISSING or b is _MISSING:
-                continue  # bound in one arm only: unbound after the if
+                # Bound in one arm only: unbound after the if.
+                try:
+                    self._one_arm[name] = (prog, index)
+                except AttributeError:
+                    self._one_arm = {name: (prog, index)}
             elif type(a) is type(b) and isinstance(a, _SCALARS) and a == b:
                 merged[name] = a
             else:
-                raise CompilationError(
-                    f"{name!r} would depend on a measurement result; only pulse "
-                    "resources (lines, tones, waveforms) may differ between the "
-                    "arms of a measurement-conditioned if"
-                )
+                self._check_choosable(name, a, b, prog, index, first)
+                chosen.append((name, a, b))
         # List slots holding lines or tones that either arm rebound.
         slot_results: list[tuple[Any, int, IRValue, IRValue]] = []
         originals = {id(obj): copy for obj, copy in containers}
@@ -1406,6 +1789,12 @@ class PulseIREmitter:
             self._slots.pop(id(b), None)
             if not isinstance(obj, _Held):
                 self._slots[id(out)] = (obj, i, out)
+        if chosen:
+            line = prog.location(index)[1]
+            scope = getattr(builder, "scope", ())
+            for name, a, b in chosen:
+                merged[name] = _Choice(value, a, b, name, line, scope)
+            _watch_choices(builder)
         for cell, alias in aliases:
             out = merged[alias]
             cell.value = out
@@ -1418,6 +1807,47 @@ class PulseIREmitter:
         stack[:] = saved_stack
         # Both arms returned: continue at the trailing ``return None``.
         return len(prog.instrs) - 2 if returns else join
+
+    def _check_choosable(
+        self, name: str, a: Any, b: Any, prog: bc.DecodedCode, index: int, first: int
+    ) -> None:
+        """Reject the values *a* and *b* the arms of the if at
+        ``prog.instrs[index]`` leave on *name*, unless the if can choose
+        between them: two numbers or two waveforms that exist after it."""
+        line = prog.location(index)[1]
+        kind = _choice_kind(a)
+        if kind is not None and kind == _choice_kind(b):
+            scope = getattr(self.b, "scope", ())[:-1]  # around the if: this is its else arm
+            if not (_made_in_if(a, first, scope) or _made_in_if(b, first, scope)):
+                return
+            raise CompilationError(
+                f"{name!r} would depend on a measurement result through a value made "
+                f"inside an arm of the measurement-conditioned if at line {line}, which "
+                f"does not exist after the if; use {name!r} inside that arm, or make the "
+                "value before the if"
+            )
+        raise CompilationError(
+            f"{name!r} would depend on a measurement result: the arms of the "
+            f"measurement-conditioned if at line {line} leave {_describe(a)} and "
+            f"{_describe(b)} on it, and an if chooses only between two numbers or two "
+            "waveforms, or two lines or tones of one kind; compute it before the if, "
+            "or use it inside each arm"
+        )
+
+    def _undefined(self, name: str) -> _UndefinedLocalError:
+        """The error for reading *name*, which is not bound."""
+        one_arm = getattr(self, "_one_arm", None)
+        where = one_arm.get(name) if one_arm else None
+        if where is None:
+            return _UndefinedLocalError(name)
+        prog, index = where
+        line = prog.location(index)[1]
+        return _UndefinedLocalError(
+            name,
+            f"{name!r} is assigned in only one arm of the measurement-conditioned if "
+            f"at line {line} and has no value before it, so it has no value after the "
+            "if when the other arm runs; assign it in both arms, or before the if",
+        )
 
     def _trace_arm(
         self,
@@ -1847,7 +2277,6 @@ class PulseIREmitter:
         if callable_val.__class__ is _GenExpr:
             self._run_genexpr(callable_val.code, call_args)
             return
-
         # Regular Python callable (int, float, len, abs, math.sin, etc.)
         # int()/float() on a symbolic value create an explicit IR cast.
         if callable(callable_val):
@@ -1861,16 +2290,22 @@ class PulseIREmitter:
             if any(is_symbolic(a) for a in call_args) or (
                 kwargs and any(is_symbolic(v) for v in kwargs.values())
             ):
-                names = [
-                    n for a in [*call_args, *(kwargs or {}).values()] for n in _parameter_names(a)
-                ]
-                raise SymbolicValueError(
-                    f"Cannot call {fname}() with symbolic parameter "
-                    "expressions. Only int(), float(), arithmetic, and pulse "
-                    "numeric arguments are supported.",
-                    tuple(dict.fromkeys(names)),
-                    f"{fname}()",
-                )
+                if _find_choice([*call_args, *(kwargs or {}).values()]) is not None:
+                    if self._call_on_choice(callable_val, fname, call_args, kwargs):
+                        return
+                else:
+                    names = [
+                        n
+                        for a in [*call_args, *(kwargs or {}).values()]
+                        for n in _parameter_names(a)
+                    ]
+                    raise SymbolicValueError(
+                        f"Cannot call {fname}() with symbolic parameter "
+                        "expressions. Only int(), float(), arithmetic, and pulse "
+                        "numeric arguments are supported.",
+                        tuple(dict.fromkeys(names)),
+                        f"{fname}()",
+                    )
             if not _is_pure_host_call(callable_val):
                 try:
                     self.b.impure = True
@@ -1905,6 +2340,163 @@ class PulseIREmitter:
             "a kernel calls pulse ops, other kernels, Python functions and methods, "
             "and classical functions' .submit()"
         )
+
+    def _call_on_choice(
+        self,
+        fn: Any,
+        fname: str,
+        call_args: list[StackVal],
+        kwargs: dict[str, StackVal] | None,
+    ) -> bool:
+        """Call *fn* with arguments holding a choice: inline a Python helper,
+        or apply a pure function to each value the choice may take. False
+        for any other callable, which is called with the choice itself."""
+        if fn.__class__ is types.FunctionType:
+            self._inline_helper(fn, call_args, kwargs)
+            return True
+        if fn.__class__ is types.MethodType and fn.__func__.__class__ is types.FunctionType:
+            self._inline_helper(fn.__func__, [fn.__self__, *call_args], kwargs)
+            return True
+        if isinstance(fn, type):
+            if fn not in (int, float, bool, complex):
+                return False
+        else:
+            owner = getattr(fn, "__self__", None)
+            if owner is not None and not isinstance(owner, types.ModuleType):
+                return False
+            if not _is_pure_host_call(fn):
+                return False
+        keys = list(kwargs or {})
+        n_pos = len(call_args)
+
+        def call(*values: Any) -> Any:
+            return fn(*values[:n_pos], **dict(zip(keys, values[n_pos:])))
+
+        try:
+            result = _choice_map(call, *call_args, *(kwargs or {}).values())
+        except _EVALUATION_ERRORS as e:
+            raise CompilationError(f"failed to evaluate {fname}({call_args!r}): {e}") from e
+        self.stack.append(result)
+        return True
+
+    def _check_choice(self, choice: _Choice) -> None:
+        """Reject *choice* outside the regions where its if is."""
+        scope = choice.scope
+        if scope and getattr(self.b, "scope", ())[: len(scope)] != scope:
+            raise CompilationError(
+                f"{choice.origin} is used outside the loop or branch that if is in; use it there"
+            )
+
+    def _emit_chosen(
+        self,
+        fname: str,
+        op_name: str,
+        operands: tuple[Any, ...],
+        out_types: tuple[str, ...],
+        attrs: dict[str, Any],
+        nested: bool = False,
+    ) -> tuple[Any, ...]:
+        """Emit the op *fname* given a choice, once: each number or waveform
+        it chooses is one select on the choice's condition, which every op
+        given that choice reads. Lowering keeps a select where the target
+        takes the value at run time, and otherwise emits each op that reads
+        it in both arms of an if on the condition. Choices a select cannot
+        hold (inside a list, of complex numbers, or that a check needs the
+        value of) are emitted per arm instead. A *nested* choice, one an arm
+        of another gives, was checked with it."""
+        given = [*operands, *attrs.values()]
+        if not nested:
+            for root in _choices_in(given):
+                self._check_choice(root)
+        b = self.b
+        select = getattr(b, "select", None)
+        if select is None or not _selectable(fname, operands, attrs):
+            return self._emit_per_arm(fname, op_name, operands, out_types, attrs)
+        operands = tuple(
+            self._select_waveform(v) if v.__class__ is _Choice else v for v in operands
+        )
+        results: tuple[Any, ...] = b._unwatched_emit(op_name, operands, out_types, attrs)
+        if fname in _MAKES_WAVEFORM:
+            if fname in _WAVEFORMS:
+                duration = attrs.get("duration")
+            else:
+                duration = self._waveform_duration(fname, operands, attrs)
+            if duration.__class__ is int:
+                self._durations[results[0].vid] = duration
+            else:
+                self._durations.pop(results[0].vid, None)
+        return results
+
+    def _select_waveform(self, choice: _Choice) -> IRValue:
+        """The select of the waveforms *choice* holds, with their duration if
+        they all have the same one."""
+        value = IRValue(self.b.select(choice, "waveform"), "waveform")
+        known = self._durations
+        durations = {known.get(leaf.vid) for leaf in _choice_leaves(choice)}
+        duration = durations.pop() if len(durations) == 1 else None
+        if duration is None:
+            known.pop(value.vid, None)
+        else:
+            known[value.vid] = duration
+        return value
+
+    def _emit_per_arm(
+        self,
+        fname: str,
+        op_name: str,
+        operands: tuple[Any, ...],
+        out_types: tuple[str, ...],
+        attrs: dict[str, Any],
+    ) -> tuple[Any, ...]:
+        """Emit the op *fname* given a choice no select holds: a waveform op
+        once for each value the choice may take, making a choice of
+        waveforms; any other op in each arm of an if on the choice's
+        condition, as if the kernel had written it in both arms."""
+        choice = _find_choice([*operands, *attrs.values()])
+        assert choice is not None
+        cond = choice.cond
+        arms = [
+            (
+                tuple(_in_arm(v, cond, taken) for v in operands),
+                {k: _in_arm(v, cond, taken) for k, v in attrs.items()},
+            )
+            for taken in (True, False)
+        ]
+        if fname in _MAKES_WAVEFORM:
+            then = self._emit_resolved(fname, op_name, *arms[0], out_types)
+            other = self._emit_resolved(fname, op_name, *arms[1], out_types)
+            return (_choose(cond, then[0], other[0], choice, choice.scope),)
+        b = self.b
+        b.emit("scf.if", (cond,), ())
+        then = self._emit_resolved(fname, op_name, *arms[0], out_types)
+        b.emit("scf.yield", then, ())
+        b.emit("scf.else", (), ())
+        other = self._emit_resolved(fname, op_name, *arms[1], out_types)
+        b.emit("scf.yield", other, ())
+        types_ = tuple(v.vtype for v in then)
+        return b.emit("scf.if_end", (), types_, {"result_names": list(types_)})  # type: ignore[no-any-return]
+
+    def _emit_resolved(
+        self,
+        fname: str,
+        op_name: str,
+        operands: tuple[Any, ...],
+        attrs: dict[str, Any],
+        out_types: tuple[str, ...],
+    ) -> tuple[Any, ...]:
+        """Emit the op *fname* with the values an arm of a choice gives it."""
+        try:
+            results: tuple[Any, ...] = self.b.emit(op_name, operands, out_types, attrs)
+        except _ChosenOperandError:
+            return self._emit_chosen(fname, op_name, operands, out_types, attrs, nested=True)
+        if fname in _MAKES_WAVEFORM:
+            if fname in _WAVEFORMS:
+                duration = attrs.get("duration")
+            else:
+                duration = self._waveform_duration(fname, operands, attrs)
+            if duration.__class__ is int:
+                self._durations[results[0].vid] = duration
+        return results
 
     def _run_genexpr(self, code: types.CodeType, call_args: list[StackVal]) -> None:
         """Run a generator expression to the end, and push an iterator over
@@ -2096,7 +2688,8 @@ class PulseIREmitter:
                 for i in range(n_val):
                     v = call_args[i]
                     if v.__class__ is not IRValue or v.vtype not in operand_types[i]:
-                        raise _operand_error(fname, call_args)
+                        if v.__class__ is not _Choice or v.vtype not in operand_types[i]:
+                            raise _operand_error(fname, call_args)
                     call_args[i] = _current(v)
             operands = tuple(call_args[:n_val])
             attrs = dict(zip(attr_names, call_args[n_val:]))
@@ -2117,14 +2710,21 @@ class PulseIREmitter:
                     duration = None
             else:
                 duration = self._waveform_duration(fname, operands, attrs)
-            results = self.b.emit(op_name, operands, out_types, attrs)
-            # A rolled-back loop body can leave an entry for a reused vid.
-            if duration is None:
-                self._durations.pop(results[0].vid, None)
+            try:
+                results = self.b.emit(op_name, operands, out_types, attrs)
+            except _ChosenOperandError:
+                results = self._emit_chosen(fname, op_name, operands, out_types, attrs)
             else:
-                self._durations[results[0].vid] = duration
+                # A rolled-back loop body can leave an entry for a reused vid.
+                if duration is None:
+                    self._durations.pop(results[0].vid, None)
+                else:
+                    self._durations[results[0].vid] = duration
         else:
-            results = self.b.emit(op_name, operands, out_types, attrs)
+            try:
+                results = self.b.emit(op_name, operands, out_types, attrs)
+            except _ChosenOperandError:
+                results = self._emit_chosen(fname, op_name, operands, out_types, attrs)
 
         if line_op:
             self._lines.add((call_args[0].vid, fname), results)

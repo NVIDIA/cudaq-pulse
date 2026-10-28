@@ -27,6 +27,7 @@ from .ir_builder import (
     IRValue,
     Parameter,
     ParameterExpression,
+    Selection,
     arithmetic_text,
     contains_answer,
     is_arithmetic,
@@ -81,6 +82,7 @@ _CLASSICAL_SUBMIT = 37
 _CLASSICAL_WAIT = 38
 _CLASSICAL_COMPARE = 39
 _VARIABLE_WAIT = 40
+_SELECT = 41
 _LATENCY_MODE = {"bounded": 0, "timeout": 1, "blocking": 2}
 _COMPARE = {"==": 0, "!=": 1, "<": 2, "<=": 3, ">": 4, ">=": 5}
 
@@ -207,6 +209,9 @@ class PackedIRBuilder:
 
     # Loops and measurement-conditioned branches become region records.
     supports_regions = True
+    # Whether the trace emitted a select: lowering then chooses per target
+    # how each op that reads one runs.
+    selects = False
 
     def __init__(
         self,
@@ -234,7 +239,7 @@ class PackedIRBuilder:
         self._param_names: dict[int, str] = {}  # Parameter.index → name
         # Key by the expression object itself, not id(expression): temporary
         # expressions may be collected and Python may reuse their integer IDs.
-        self._numeric_vids: dict[tuple[ParameterExpression, str], int] = {}
+        self._numeric_vids: dict[tuple[ParameterExpression | Selection, str], int] = {}
         # Open regions, innermost last: the yields seen so far in each, and
         # under "cached" the size of _numeric_vids when it opened.
         self._regions: list[dict[str, Any]] = []
@@ -1015,6 +1020,10 @@ class PackedIRBuilder:
             self._numeric_vids[cache_key] = result
             return result
 
+        cls = value.__class__
+        if cls is not float and cls is not int and isinstance(value, Selection):
+            return self.select(value, expected_dtype, specializes)
+
         result = self._next_id
         self._next_id += 1
         self._ensure(4)
@@ -1025,6 +1034,36 @@ class PackedIRBuilder:
             _as_i64(value, "integer expression") if expected_dtype == "i64" else _f2i(float(value))
         )
         return result
+
+    def select(self, value: Selection, dtype: str, specializes: bool = True) -> int:
+        """The id of *value* as a *dtype* ("i64", "f64" or "waveform"): one
+        select between its two values, each made once where it is first
+        needed. Lowering keeps it, or emits each op that reads it in both
+        arms of an if on its condition."""
+        key = (value, dtype)
+        vid = self._numeric_vids.get(key)
+        if vid is not None:
+            return vid
+        then = self._selected(value.then, dtype, specializes)
+        other = self._selected(value.other, dtype, specializes)
+        vid = self._next_id
+        self._next_id += 1
+        self._ensure(5)
+        self._w(_header(_SELECT, 4))
+        self._w(vid)
+        self._w(value.cond.vid)
+        self._w(then)
+        self._w(other)
+        self._numeric_vids[key] = vid
+        self.selects = True
+        return vid
+
+    def _selected(self, value: Any, dtype: str, specializes: bool) -> int:
+        if isinstance(value, Selection):
+            return self.select(value, dtype, specializes)
+        if dtype == "waveform":
+            return int(value.vid)
+        return self._get_numeric_vid(value, dtype, specializes)
 
     def _variable_wait(
         self, line: int, result: int, duration: Any, lowest: int, highest: int, answer: bool = False
