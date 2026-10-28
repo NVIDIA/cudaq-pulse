@@ -25,6 +25,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from ._errors import InvalidValueError
 from ._native import PulseModuleBuilder
 from .classical import Link
 from .kernel._bytecode_normalize import UnsupportedInterpreterError
@@ -109,9 +110,11 @@ DEFAULT_PASSES: tuple[Pass, ...] = (
 
 
 def _passes(passes: Sequence[str]) -> tuple[Pass, ...]:
-    """*passes* as members; a ValueError names any that is not one."""
+    """*passes* as members; an InvalidValueError names any that is not one."""
     if isinstance(passes, str):
-        raise ValueError(f"passes must be a sequence of pass names, not the string {passes!r}")
+        raise InvalidValueError(
+            f"passes must be a sequence of pass names, not the string {passes!r}"
+        )
     members = []
     names = [p.value for p in Pass]
     for name in passes:
@@ -120,7 +123,7 @@ def _passes(passes: Sequence[str]) -> tuple[Pass, ...]:
         except ValueError:
             close = difflib.get_close_matches(str(name), names, n=1)
             hint = f" Did you mean {close[0]!r}?" if close else ""
-            raise ValueError(
+            raise InvalidValueError(
                 f"Unknown pass {name!r}.{hint} The passes are: {', '.join(names)}"
             ) from None
     return tuple(members)

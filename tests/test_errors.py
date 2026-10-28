@@ -156,10 +156,19 @@ def test_library_errors_are_pulse_errors_of_their_kind():
     with pytest.raises(pulse.CompilationError, match="inside a @cudaq_pulse.kernel"):
         pulse.ops.wait(None, 4)
 
+    @pulse.kernel
+    def empty():
+        pass
+
+    with pytest.raises(pulse.InvalidValueError, match="Did you mean 'fuse_pulses'"):
+        pulse.compile(empty, passes=("fuse_pulse",))
+    with pytest.raises(pulse.InvalidValueError, match="not the string 'verify'"):
+        pulse.compile(empty, passes="verify")
+
 
 # The modules that still raise built-in errors, and how many; every other
 # module raises library errors only.
-BUILTIN_RAISES = {"compiler.py": 21, "controller.py": 11, "kernel/_kernel.py": 8}
+BUILTIN_RAISES = {"compiler.py": 19, "controller.py": 11, "kernel/_kernel.py": 8}
 
 
 def test_only_known_modules_raise_builtin_errors():
