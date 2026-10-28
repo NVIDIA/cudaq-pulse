@@ -11,34 +11,49 @@
 # environments and test the installed package. The tests run from a copy of
 # tests/ outside the checkout, so the source tree is never importable.
 #
-# Usage: tools/ci/install-test.sh [--python PY] [--wheelhouse DIR] MODE...
+# Usage: tools/ci/install-test.sh [--python PY] [--wheelhouse DIR]
+#                                 [--driver-only] [--allow-old-driver] MODE...
 #
 # Modes:
-#   base    install cudaq-pulse; compile a kernel, run the installed
-#           cudaq-pulse-opt on it, the doctor (no GPU required), and
-#           pytest -m "not gpu"
-#   extras  install [cu12] and [cu13], each in its own environment; the doctor
-#           must load every library and report that no device is present
-#   gpu     install [cu12] and [cu13], each in its own environment; the doctor
-#           must pass and pytest -m gpu must succeed
+#   base      install cudaq-pulse; compile a kernel, run the installed
+#             cudaq-pulse-opt on it, the doctor (no GPU required), and
+#             pytest -m "not gpu"
+#   extras    install [cu12] and [cu13], each in its own environment; the
+#             doctor must load every library and report that no device is
+#             present
+#   gpu-cu12  install [cu12] in a fresh environment; the doctor must pass and
+#   gpu-cu13  pytest -m gpu must succeed (likewise for [cu13])
+#   gpu       gpu-cu12, then gpu-cu13
+#
+# The GPU modes read the driver's CUDA version from libcuda.so.1 first. A
+# driver older than the extra's minimum (CUDA 12.0 for [cu12], CUDA 13.0 for
+# [cu13]) fails the test, unless --allow-old-driver is given: then the doctor
+# must refuse that driver by name, and the GPU tests are not run.
+# --driver-only fails if a CUDA toolkit is present, so that the GPU modes
+# prove the extras alone supply every CUDA library.
 
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 python="python3"
 wheelhouse="${repo_root}/wheelhouse"
+driver_only=false
+allow_old_driver=false
 modes=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --python) python="$2"; shift 2 ;;
     --wheelhouse) wheelhouse="$(cd "$2" && pwd)"; shift 2 ;;
+    --driver-only) driver_only=true; shift ;;
+    --allow-old-driver) allow_old_driver=true; shift ;;
     base | extras | gpu) modes+=("$1"); shift ;;
+    gpu-cu12 | gpu-cu13) modes+=("$1"); shift ;;
     *) echo "error: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 if [[ ${#modes[@]} -eq 0 ]]; then
-  echo "error: no mode given (base, extras, gpu)" >&2
+  echo "error: no mode given (base, extras, gpu-cu12, gpu-cu13, gpu)" >&2
   exit 2
 fi
 
@@ -154,6 +169,82 @@ opt_checks() {
   expect_in invalid.err "'pulse.square' op duration must be positive, got 0"
 }
 
+# Exits 0 if a CUDA toolkit is visible: nvcc, a toolkit directory, a CUDA
+# runtime on the loader path, or CUDA_HOME/CUDA_PATH.
+toolkit_present() {
+  local dir
+  command -v nvcc && return 0
+  for dir in /usr/local/cuda /usr/local/cuda-* /opt/cuda; do
+    [[ -e "$dir" ]] && { echo "$dir"; return 0; }
+  done
+  ldconfig -p 2>/dev/null | grep -F 'libcudart.so' && return 0
+  [[ -n "${CUDA_HOME:-}${CUDA_PATH:-}" ]] && { echo "CUDA_HOME/CUDA_PATH is set"; return 0; }
+  return 1
+}
+
+# cuDriverGetVersion from the driver's libcuda.so.1 (12080 is CUDA 12.8), or
+# 0 without a driver; read directly, not through cudaq-pulse.
+driver_cuda_version() {
+  "$python" - <<'EOF'
+import ctypes
+
+try:
+    libcuda = ctypes.CDLL("libcuda.so.1")
+except OSError:
+    print(0)
+else:
+    version = ctypes.c_int(0)
+    print(version.value if libcuda.cuDriverGetVersion(ctypes.byref(version)) == 0 else 0)
+EOF
+}
+
+# gpu_extra cuNN: the GPU tests from a fresh environment with only [cuNN].
+gpu_extra() {
+  local extra="$1" minimum driver
+  case "$extra" in
+    cu12) minimum=12000 ;;
+    cu13) minimum=13000 ;;
+  esac
+  if command -v nvidia-smi >/dev/null; then nvidia-smi; fi
+  driver="$(driver_cuda_version)"
+  if [[ "$driver" -eq 0 ]]; then
+    echo "error: no NVIDIA driver (libcuda.so.1 is not loadable)" >&2
+    exit 1
+  fi
+  new_venv "gpu-${extra}" "cudaq-pulse[${extra}]==${version}" "${test_requirements[@]}"
+  if [[ "$driver" -ge "$minimum" ]]; then
+    in_venv python -m cudaq_pulse.doctor
+    run_pytest "gpu"
+  elif [[ "$allow_old_driver" == true ]]; then
+    # The doctor must fail on the driver's age alone: every library loads,
+    # and the message names the extra and its minimum driver.
+    if in_venv python -m cudaq_pulse.doctor >"${work}/doctor.out" 2>&1; then
+      cat "${work}/doctor.out"
+      echo "error: the doctor accepted a driver older than [${extra}] supports" >&2
+      exit 1
+    fi
+    cat "${work}/doctor.out"
+    if ! grep -qF "cudaq-pulse[${extra}] needs driver" "${work}/doctor.out"; then
+      echo "error: the doctor did not refuse the driver by its version" >&2
+      exit 1
+    fi
+    in_venv python -m cudaq_pulse.doctor --expect-no-device
+    echo "::notice::driver supports CUDA $((driver / 1000)).$((driver % 1000 / 10)), older than" \
+      "[${extra}] needs: the doctor refused it as expected; GPU tests not run"
+  else
+    echo "error: the driver supports CUDA $((driver / 1000)).$((driver % 1000 / 10));" \
+      "[${extra}] needs CUDA $((minimum / 1000)).0 or newer" >&2
+    exit 1
+  fi
+  drop_venv
+}
+
+if [[ "$driver_only" == true ]] && found="$(toolkit_present)"; then
+  echo "error: a CUDA toolkit is present (${found}); --driver-only tests machines" \
+    "that have only the NVIDIA driver" >&2
+  exit 1
+fi
+
 for mode in "${modes[@]}"; do
   case "$mode" in
     base)
@@ -172,13 +263,10 @@ for mode in "${modes[@]}"; do
         drop_venv
       done
       ;;
+    gpu-cu12 | gpu-cu13) gpu_extra "${mode#gpu-}" ;;
     gpu)
-      for extra in cu12 cu13; do
-        new_venv "gpu-${extra}" "cudaq-pulse[${extra}]==${version}" "${test_requirements[@]}"
-        in_venv python -m cudaq_pulse.doctor
-        run_pytest "gpu"
-        drop_venv
-      done
+      gpu_extra cu12
+      gpu_extra cu13
       ;;
   esac
 done

@@ -15,9 +15,9 @@ name: wheels
 # release-meta checks the tag and gpu-gate confirms GPU verification; PyPI
 # uploads are disabled for now (see the end of this file).
 #
-# GPU gate: with the GPU_RUNNER repository variable set, a tag runs
-# gpu-install-test on that runner and publishes only if it passes. Without a
-# runner, the tag's run stops at gpu-gate; once the GPU tests have passed on
+# GPU gate: with the GPU_RUNNERS repository variable set, a tag runs
+# gpu-install-test on the GPU runners and publishes only if it passes. Without
+# runners, the tag's run stops at gpu-gate; once the GPU tests have passed on
 # the tagged commit elsewhere, a maintainer runs this workflow manually on
 # the tag with `gpu-verified-sha` set to that commit's full SHA (see
 # CONTRIBUTING.md). A GPU run that fails cannot be overridden.
@@ -29,7 +29,7 @@ on:
   workflow_dispatch:
     inputs:
       gpu:
-        description: Also install the wheels on the GPU runner and run the GPU tests
+        description: Also run every GPU test row on the GPU runners
         type: boolean
         default: false
       gpu-verified-sha:
@@ -177,36 +177,20 @@ jobs:
         if: runner.os == 'Linux'
         run: bash tools/ci/install-test.sh --python "${{ matrix.python }}" extras
 
-  # Runs on release tags, and on manual runs with `gpu`, when the GPU_RUNNER
-  # repository variable names a runner: a label such as `linux-gpu`, or a
-  # JSON list of labels such as ["self-hosted", "linux", "x64", "gpu"]. The
-  # runner needs an NVIDIA GPU and a driver new enough for CUDA 13; no CUDA
-  # toolkit is used, since the extras supply every library. Fails if the GPU
-  # is missing. Pull requests never reach it.
+  # The GPU tests from the wheels (gpu-tests.yml), once the GPU_RUNNERS
+  # repository variable names the GPU runners: the quick rows on pushes to
+  # staging, every row on release tags and on manual runs with `gpu`. Each
+  # row installs one CUDA extra in an image with no CUDA toolkit, since the
+  # extras supply every library. Pull requests never reach it.
   gpu-install-test:
     if: >-
-      vars.GPU_RUNNER != '' &&
-      (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.gpu))
+      vars.GPU_RUNNERS != '' &&
+      (github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v') || inputs.gpu)
     needs: wheels
-    runs-on: ${{ startsWith(vars.GPU_RUNNER, '[') && fromJSON(vars.GPU_RUNNER) || vars.GPU_RUNNER }}
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.12"
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: wheels-${{ runner.arch == 'ARM64' && 'linux-aarch64' || 'linux-x86_64' }}
-          path: wheelhouse
-
-      - name: Require a GPU
-        run: nvidia-smi
-
-      - name: Install [cu12] and [cu13] and run the GPU tests
-        run: bash tools/ci/install-test.sh gpu
+    uses: ./.github/workflows/gpu-tests.yml
+    with:
+      source: wheels
+      scope: ${{ (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch') && 'full' || 'quick' }}
 
   # A release publishes only after GPU verification: gpu-install-test passed
   # in this run, or, when it did not run, a maintainer attested on a manual
@@ -236,7 +220,7 @@ jobs:
             echo "GPU verification: attested by @$GITHUB_ACTOR for $GITHUB_SHA (no GPU runner)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          echo "::error::no GPU verification for $GITHUB_SHA: set the GPU_RUNNER variable, or run" \
+          echo "::error::no GPU verification for $GITHUB_SHA: set the GPU_RUNNERS variable, or run" \
             "this workflow on the tag with gpu-verified-sha=$GITHUB_SHA after the GPU tests pass" \
             "(CONTRIBUTING.md, Releases)"
           exit 1

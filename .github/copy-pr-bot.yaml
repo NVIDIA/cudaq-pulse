@@ -1,0 +1,13 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+
+# The copy-pr-bot GitHub App pushes each pull request whose commit a
+# maintainer has vetted to a pull-request/<N> branch, where ci.yml runs the
+# GPU tests (CONTRIBUTING.md, GPU CI). The file does nothing until the app is
+# installed on the repository.
+enabled: true

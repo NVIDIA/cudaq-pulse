@@ -5,10 +5,11 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""The release tag checks, the workflow pin check and the release hygiene check
-(source tree only)."""
+"""The release tag checks, the workflow pin check, the release hygiene check
+and the GPU CI matrix (source tree only)."""
 
 import importlib.util
+import json
 import re
 from pathlib import Path
 
@@ -129,10 +130,75 @@ def test_every_workflow_job_has_a_timeout(workflow):
     jobs = workflow.read_text().split("\njobs:\n", 1)[1]
     blocks = re.split(r"^  (?=[\w-]+:\s*$)", jobs, flags=re.M)[1:]
     assert blocks
+    # A job that calls a reusable workflow cannot set one; the called jobs do.
     missing = [
-        b.split(":", 1)[0] for b in blocks if not re.search(r"^    timeout-minutes:", b, re.M)
+        b.split(":", 1)[0]
+        for b in blocks
+        if not re.search(r"^    (timeout-minutes|uses):", b, re.M)
     ]
     assert not missing, f"{workflow.name}: jobs without timeout-minutes: {missing}"
+
+
+def _gpu_matrix():
+    return _load("ci/gpu-matrix")
+
+
+def test_gpu_runners_variable():
+    parse = _gpu_matrix().parse_runners
+    assert parse("") == parse("  ") == {}
+    assert parse("gpu-label") == {"x86_64": "gpu-label"}
+    assert parse('["a", "b"]') == {"x86_64": ["a", "b"]}
+    both = '{"x86_64": "a", "aarch64": ["b", "c"]}'
+    assert parse(both) == {"x86_64": "a", "aarch64": ["b", "c"]}
+    for bad in ('{"x86": "a"}', '{"x86_64": ""}', '{"x86_64": []}', '{"x86_64": [1]}'):
+        with pytest.raises(ValueError):
+            parse(bad)
+
+
+def test_gpu_matrix_scopes_and_roles():
+    gpu = _gpu_matrix()
+    every = {role: f"label-{role}" for role in gpu.ROLES}
+    quick, skipped = gpu.plan("wheels", "quick", every)
+    assert [(r["extra"], r["runner"]) for r in quick] == [
+        ("cu12", "label-x86_64"),
+        ("cu13", "label-x86_64"),
+    ]
+    assert not skipped
+    full, _ = gpu.plan("wheels", "full", every)
+    assert len(full) == len(gpu.ROWS["wheels"])
+    assert {r["platform"] for r in full} == {"linux-x86_64", "linux-aarch64"}
+    old = [r for r in full if r["runner"] == "label-x86_64-min-driver"]
+    assert {r["extra"] for r in old} == {"cu12", "cu13"}
+    assert all(r["flags"] == "--allow-old-driver" for r in old)
+    assert all(r["flags"] == "" for r in full if r not in old)
+    partial, skipped = gpu.plan("wheels", "full", {"x86_64": "a"})
+    assert {r["runner"] for r in partial} == {"a"} and len(skipped) == 4
+    build, _ = gpu.plan("build", "full", every)
+    assert [(r["extra"], r["image"]) for r in build] == [("cu12", gpu.CUDA_DEVEL)]
+
+
+def test_gpu_matrix_images_are_pinned():
+    gpu = _gpu_matrix()
+    for rows in gpu.ROWS.values():
+        for row in rows:
+            assert re.search(r"@sha256:[0-9a-f]{64}$", row.image), row.image
+
+
+def test_gpu_matrix_output(capsys, monkeypatch, tmp_path):
+    main = _gpu_matrix().main
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "summary.md"))
+    monkeypatch.setenv("GPU_RUNNERS", "")
+    assert main(["--source", "wheels"]) == 1
+    assert "matrix=" not in capsys.readouterr().out
+    monkeypatch.setenv("GPU_RUNNERS", '{"aarch64": "a"}')
+    assert main(["--source", "build", "--scope", "full"]) == 1
+    monkeypatch.setenv("GPU_RUNNERS", '{"x86_64": ["a", "b"]}')
+    assert main(["--source", "wheels", "--scope", "full"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("matrix=") and out.count("\n") == 1
+    matrix = json.loads(out.removeprefix("matrix="))
+    assert [r["runner"] for r in matrix["include"]] == [["a", "b"]] * 3
+    assert "skipped: no aarch64 runner" in (tmp_path / "summary.md").read_text()
 
 
 def test_workflow_pins(tmp_path):
