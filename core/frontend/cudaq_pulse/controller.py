@@ -625,7 +625,6 @@ def _export_plan(
         return plan
     lined = set(slots)
     symbols: list[tuple[dict[str, Any], int, int]] = []
-    named: set[str] = set()
     argument = 0
     for name, kind, parameter, position in role.symbols:
         entry: dict[str, Any] = {"symbol": name, "kind": kind, "parameter": parameter}
@@ -634,17 +633,10 @@ def _export_plan(
         if kind == "slot":
             slot = int(name[1:])
             symbols.append((entry, _CARRIER, slot))
-            if slot in lined and f"{name}.f01" not in named:
-                named.add(f"{name}.f01")
+            if slot in lined:
                 native = {"symbol": f"{name}.f01", "kind": "frequency", "slot": name}
                 native["transition"] = [0, 1]
                 symbols.append((native, _NATIVE, slot))
-        elif kind == "frequency":
-            named.add(name)
-            entry = {"symbol": name, "kind": kind, "slot": parameter}
-            entry["transition"] = [int(name[-2]), int(name[-1])]
-            symbols.append((entry, _ARGUMENT, argument))
-            argument += 1
         else:
             symbols.append((entry, _ARGUMENT, argument))
             argument += 1

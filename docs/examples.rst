@@ -100,6 +100,11 @@ Core Examples
        Qubits", arXiv:2602.11912 (2026), and Berritta et al., "Real-time
        adaptive tracking of fluctuating relaxation rates in superconducting
        qubits", arXiv:2506.09576 (2025) *(simulates)*
+   * - 22
+     - ``22_runtime_qudits.py``
+     - One compile for every qudit of a device: the qudit is bound at each
+       call, and a frequency the kernel needs, read from the device on the
+       host, is an ordinary float parameter
 
 Custom Passes
 -------------

@@ -81,22 +81,6 @@ def _timebase_ghz(device: Device) -> float:
     return device.clock_ghz
 
 
-def _transition_hz(device: Device, carrier: int, lower: int, upper: int) -> float:
-    """The frequency of carrier *carrier*'s transition between two levels,
-    by the target's model; a target without one has two levels."""
-    qubit = device.target.qubits[carrier]
-    model = device.target.model
-    if not isinstance(model, SimulationModel):
-        model = SimulationModel()
-    levels = model.levels_of(carrier)
-    if upper >= levels:
-        raise ValueError(
-            f"qudit {carrier} of {device.name!r} is modeled with {levels} levels; "
-            f"it has no transition {lower}-{upper}"
-        )
-    return model.transitions_hz(qubit, levels)[(lower, upper)]
-
-
 def _structure(device: Device) -> str:
     """What a kernel whose qudits are runtime parameters depends on: not the
     carriers or their calibration, which are bound per call."""

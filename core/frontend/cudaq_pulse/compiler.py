@@ -16,7 +16,6 @@ that pick passes and a schedule, the native build of one specialization, and
 from __future__ import annotations
 
 import difflib
-import functools
 import marshal
 import math
 import struct
@@ -29,7 +28,6 @@ from fractions import Fraction
 from types import FunctionType, MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from ._device import _transition_hz
 from ._errors import InvalidTypeError, InvalidValueError
 from ._native import PackedValueError, PulseModuleBuilder
 from ._units import Time, as_nanoseconds
@@ -1284,7 +1282,6 @@ class _Role:
         "every",
         "program_id",
         "dependencies",
-        "frequencies",
         "placed",
         "views",
         "modules",
@@ -1300,9 +1297,6 @@ class _Role:
         self.program_id = ""
         # The symbols each exported event's fields depend on, once exported.
         self.dependencies: list[dict[str, list[str]]] | None = None
-        # (slot, lower, upper) of each frequency() of a runtime qudit: float
-        # arguments after the call's.
-        self.frequencies: tuple[tuple[int, int, int], ...] = ()
         # The qudits a call uses, by its carriers (at most _PLACEMENTS).
         self.placed: dict[tuple[int, ...], tuple[int, ...]] = {}
         # A call without float values is its carriers and device: its view,
@@ -1600,22 +1594,7 @@ def build(
     builder.locate_structural = frozenset(parameters)
     plain = machine._plain
     clocks = None if plain else _clocked_builder(builder, machine, target)
-    builder.parameter_count = len(parameters)
-    builder.transition_hz = functools.partial(_transition_hz, target)
     builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
-    if builder.slot_frequencies:
-        # Runtime qudits' frequencies read with frequency(): float arguments
-        # after the call's, which each call binds from its carriers.
-        assert role is not None
-        hidden = tuple(
-            f"s{slot}.f{lower}{upper}" for slot, lower, upper in builder.slot_frequencies
-        )
-        parameters = (*parameters, *hidden)
-        role.frequencies = tuple(builder.slot_frequencies)
-        floats = [s for s in role.symbols if s[1] != "slot"]
-        slotted = [s for s in role.symbols if s[1] == "slot"]
-        frequencies = [(name, "frequency", name.split(".")[0], None) for name in hidden]
-        role.symbols = (*floats, *frequencies, *slotted)
     needed = tuple(sorted(builder.structural & set(parameters)))
     if needed:
         error = SymbolicValueError(

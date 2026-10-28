@@ -41,7 +41,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Any, NamedTuple
 
-from .._device import Device, DeviceMismatchError, NoDeviceError, Qudit, Register, _transition_hz
+from .._device import Device, DeviceMismatchError, NoDeviceError, Qudit, Register
 from .._errors import InvalidTypeError
 from ..compiler import _PLACEMENTS, CompileOptions, Lowered, _Role, build, with_line_delays
 from ._guard import Guard, build_guard
@@ -767,10 +767,6 @@ class Kernel[**P]:
             view = views.get((placement, device))
             if view is not None:
                 return view
-        if role is not None and role.frequencies:
-            assert device is not None
-            for slot, lower, upper in role.frequencies:
-                numbers.append(_transition_hz(device, carriers[slot], lower, upper))
         # A module with list or qudit parameters is a _Placed or _CheckedPlaced.
         place: Callable[..., Lowered] = lowered.bind
         view = place(numbers, placement, device)

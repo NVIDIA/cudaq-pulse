@@ -316,13 +316,6 @@ class PackedIRBuilder:
         self._flow: list[tuple[int, bool]] = []
         self._next_scope = 0
         self._answer_integers = False
-        # The float arguments the caller gives; a runtime qudit's frequency
-        # read with frequency() becomes one more, after them.
-        self.parameter_count = 0
-        self.transition_hz: Callable[[int, int, int], float] | None = None
-        # (slot, lower, upper) of each such frequency, in argument order.
-        self.slot_frequencies: list[tuple[int, int, int]] = []
-        self._slot_frequency: dict[tuple[int, int, int], Parameter] = {}
 
     def _mk(self, vtype: str, name: str = "") -> IRValue:
         v = IRValue(self._next_id, vtype, name)
@@ -1359,23 +1352,6 @@ class PackedIRBuilder:
         if rate is not None:
             self._w(rate[0])
             self._w(rate[1])
-
-    def frequency(self, qudit: IRValue, lower: int, upper: int) -> Any:
-        """The frequency of *qudit*'s transition: a number for a static
-        qudit, a float argument of the module for a runtime one."""
-        carrier = self._qref_to_qubit.get(qudit.vid, 0)
-        if carrier >= 0:
-            if self.transition_hz is None:
-                raise CompilationError("frequency() needs a compilation target")
-            return self.transition_hz(carrier, lower, upper)
-        key = (-1 - carrier, lower, upper)
-        found = self._slot_frequency.get(key)
-        if found is None:
-            index = self.parameter_count + len(self.slot_frequencies)
-            found = Parameter(f"s{key[0]}.f{lower}{upper}", index, "f64")
-            self._slot_frequency[key] = found
-            self.slot_frequencies.append(key)
-        return found
 
     @property
     def param_names(self) -> list[str]:

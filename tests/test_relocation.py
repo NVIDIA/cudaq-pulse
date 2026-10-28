@@ -13,7 +13,6 @@ from cudaq_pulse.controller import ControllerLimitError, ControllerLimits, check
 from cudaq_pulse.kernel.ir_builder import CompilationError
 from cudaq_pulse.ops import (
     drive,
-    frequency,
     gaussian,
     get_drive_line,
     get_readout_line,
@@ -32,7 +31,7 @@ DEV = get_device(Target.TRANSMON_KRINNER_17Q)
 H = DEV.qudit_handles
 
 
-def _body(q, r, amps):
+def _body(q, r, amps, f12):
     d, t = get_drive_line(q)
     drive(d, gaussian(40, amps[0], 10.0), t)
     t = shift_phase(t, 0.3)
@@ -40,7 +39,7 @@ def _body(q, r, amps):
     for x in r:
         dx, tx = get_drive_line(x)
         drive(dx, square(20, 0.1), tx)
-    t = set_frequency(t, frequency(q, (1, 2)))
+    t = set_frequency(t, f12)
     drive(d, square(20, amps[0]), t)
     rl, rt = get_readout_line(q)
     return readout(rl, square(100, 0.05), rt)
@@ -54,16 +53,21 @@ def _static(fn, **options):
     return k
 
 
-def _static_k(q, r, amps: list[float]):
-    return _body(q, r, amps)
+def _static_k(q, r, amps: list[float], f12: float):
+    return _body(q, r, amps, f12)
 
 
 static_k = _static(_static_k)
 
 
+def _f12(q):
+    """The 1-2 frequency of *q*, read from its device on the host."""
+    return float(q.device.transition_freq[q.logical, 1, 2])
+
+
 @pulse.kernel
-def runtime_k(q: Qudit, r: Register, amps: list[float]):
-    return _body(q, r, amps)
+def runtime_k(q: Qudit, r: Register, amps: list[float], f12: float):
+    return _body(q, r, amps, f12)
 
 
 def _plain(export):
@@ -87,7 +91,7 @@ def test_runtime_qudits_match_static_compiles(schedule):
     options = {"schedule": schedule}
     static = _static(_static_k, **options)
     runtime = pulse.kernel(runtime_k.__wrapped__, **options)
-    calls = [(H[3], H[[5, 7]], [0.2, 0.4]), (H[9], H[[0, 16]], [0.1, 0.3])]
+    calls = [(H[3], H[[5, 7]], [0.2, 0.4], _f12(H[3])), (H[9], H[[0, 16]], [0.1, 0.3], _f12(H[9]))]
     for args in calls:
         a, b = static.lower(*args), runtime.lower(*args)
         assert _plain(a.export_controller()) == _plain(b.export_controller())
@@ -101,26 +105,30 @@ def test_recalibration_reuses_the_compile():
     runtime = pulse.kernel(runtime_k.__wrapped__)
     other = _recalibrated(DEV, DEV.layout[3], 2.5e6)
     assert other.fingerprint != DEV.fingerprint
-    a = runtime.lower(H[3], H[[5]], [0.2, 0.4])
-    b = runtime.lower(other.qudit_handles[3], other.qudit_handles[[5]], [0.2, 0.4])
+    a = runtime.lower(H[3], H[[5]], [0.2, 0.4], _f12(H[3]))
+    b = runtime.lower(
+        other.qudit_handles[3], other.qudit_handles[[5]], [0.2, 0.4], _f12(other.qudit_handles[3])
+    )
     assert runtime.cache_info().compiled == 1
     fa = {e["frequency_hz"] for e in a.export_controller()["events"] if e["kind"] == "drive"}
     fb = {e["frequency_hz"] for e in b.export_controller()["events"] if e["kind"] == "drive"}
     assert fa != fb
-    static = static_k.lower(other.qudit_handles[3], other.qudit_handles[[5]], [0.2, 0.4])
+    static = static_k.lower(
+        other.qudit_handles[3], other.qudit_handles[[5]], [0.2, 0.4], _f12(other.qudit_handles[3])
+    )
     assert _plain(static.export_controller()) == _plain(b.export_controller())
 
 
 def test_program_id_is_stable_and_symbols_bind():
-    a = runtime_k.lower(H[3], H[[5, 7]], [0.2, 0.4]).export_controller()
-    b = runtime_k.lower(H[9], H[[0, 16]], [0.1, 0.3]).export_controller()
+    a = runtime_k.lower(H[3], H[[5, 7]], [0.2, 0.4], _f12(H[3])).export_controller()
+    b = runtime_k.lower(H[9], H[[0, 16]], [0.1, 0.3], _f12(H[9])).export_controller()
     assert a["program_id"] == b["program_id"]
     symbols = {s["symbol"]: s for s in b["symbols"]}
     assert symbols["s0"]["value"] == DEV.layout[9]
     assert symbols["amps[1]"]["value"] == 0.3
-    assert symbols["s0.f12"]["transition"] == [1, 2]
+    assert symbols["f12"]["value"] == _f12(H[9])
     assert symbols["s0.f01"]["value"] == DEV.frequencies[DEV.layout[9]]
-    retuned = [e for e in b["events"] if e["symbols"].get("frequency_hz") == ["s0.f12"]]
+    retuned = [e for e in b["events"] if e["symbols"].get("frequency_hz") == ["f12"]]
     assert retuned and all(e["symbols"]["qudit"] == "s0" for e in retuned)
 
 
@@ -134,45 +142,22 @@ def test_static_qudit_exports_have_no_symbols():
     assert all("symbols" not in e for e in export["events"])
 
 
-def test_frequency_of_a_static_or_runtime_qudit_is_its_transition():
-    def k(q):
-        d, t = get_drive_line(q)
-        drive(d, square(20, 0.1), set_frequency(t, frequency(q, (2, 1))))
-
-    qubit = DEV.target.qubits[DEV.layout[4]]
-    for kernel in (_static(k), pulse.kernel(k)):
-        events = kernel.lower(H[4]).export_controller()["events"]
-        want = qubit.frequency_hz + qubit.anharmonicity_hz
-        assert events[0]["frequency_hz"] == pytest.approx(want)
-
-
-@pytest.mark.parametrize("transition", [(0, 0), (0, 3), (-1, 1), (0, 1.0)])
-def test_frequency_rejects_bad_transitions(transition):
-    @pulse.kernel
-    def k(q: Qudit):
-        d, t = get_drive_line(q)
-        drive(d, square(20, 0.1), set_frequency(t, frequency(q, transition)))
-
-    with pytest.raises((CompilationError, ValueError)):
-        k.lower(H[0])
-
-
 def test_duplicate_qudits_are_rejected():
     with pytest.raises(TypeError, match="more than once"):
-        runtime_k.lower(H[3], H[[3, 5]], [0.2, 0.4])
+        runtime_k.lower(H[3], H[[3, 5]], [0.2, 0.4], _f12(H[3]))
 
 
 def test_qudits_of_two_devices_are_rejected():
     other = _recalibrated(DEV, DEV.layout[3], 1e6)
     with pytest.raises(pulse.DeviceMismatchError):
-        runtime_k.lower(H[3], other.qudit_handles[[5]], [0.2, 0.4])
+        runtime_k.lower(H[3], other.qudit_handles[[5]], [0.2, 0.4], _f12(H[3]))
 
 
 def test_register_length_is_part_of_the_key():
     runtime = pulse.kernel(runtime_k.__wrapped__)
-    runtime.lower(H[3], H[[5]], [0.2, 0.4])
-    runtime.lower(H[3], H[[5, 7]], [0.2, 0.4])
-    runtime.lower(H[4], H[[6, 8]], [0.2, 0.4])
+    runtime.lower(H[3], H[[5]], [0.2, 0.4], _f12(H[3]))
+    runtime.lower(H[3], H[[5, 7]], [0.2, 0.4], _f12(H[3]))
+    runtime.lower(H[4], H[[6, 8]], [0.2, 0.4], _f12(H[4]))
     assert runtime.cache_info().compiled == 2
 
 
@@ -193,8 +178,8 @@ def test_unbound_view_cannot_lower_to_llvm():
 
 def test_simulation_matches_static():
     pytest.importorskip("cudaq_pulse.runtime.simulate")
-    a = static_k.lower(H[1], H[[2]], [0.2, 0.4])
-    b = runtime_k.lower(H[1], H[[2]], [0.2, 0.4])
+    a = static_k.lower(H[1], H[[2]], [0.2, 0.4], _f12(H[1]))
+    b = runtime_k.lower(H[1], H[[2]], [0.2, 0.4], _f12(H[1]))
     ra, rb = pulse.simulate(a), pulse.simulate(b)
     assert ra.qudits == rb.qudits
     np.testing.assert_allclose(ra.density_matrix, rb.density_matrix, atol=0)
@@ -207,7 +192,7 @@ def test_simulation_matches_static():
 )
 def test_any_placement_matches_static(indices, amp):
     q, *rest = indices
-    args = (H[q], H[rest], [amp, amp / 2])
+    args = (H[q], H[rest], [amp, amp / 2], _f12(H[q]))
     a, b = static_k.lower(*args), runtime_k.lower(*args)
     assert _plain(a.export_controller()) == _plain(b.export_controller())
 
