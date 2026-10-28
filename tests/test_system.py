@@ -253,6 +253,48 @@ def test_a_program_needing_a_capability_a_controller_lacks_does_not_compile():
     pulse.compile(drive_and_branch, device=qpu).lower(qpu.qudits[0], qpu.qudits[1])
 
 
+@pulse.kernel(unroll_threshold=0)
+def two_loops(q: pulse.Qudit, r: pulse.Qudit):
+    d, t = get_drive_line(q)
+    e, u = get_drive_line(r)
+    for _ in range(30):
+        drive(d, square(20, 0.1), t)
+        drive(d, square(20, 0.2), t)
+    for _ in range(10):
+        drive(e, square(20, 0.1), u)
+
+
+def test_a_controller_without_loop_gets_its_loops_unrolled_for_it_only():
+    no_loop = [c for c in pulse.Capability if c != "loop"]
+    a, b = _two_boxes(max_events=4)
+    a = pulse.Controller(drive_lines=[0, 1], model="box.a", max_events=4, supports=no_loop)
+    qpu = _qpu(a, b)
+    assert "scf.for" in two_loops.lower(qpu.qudits[0], qpu.qudits[2]).mlir()
+    # Without loop, box.a plays all 60 drives of its loop, naming it; box.b
+    # holds its loop's body once.
+    with pytest.raises(ControllerLimitError) as raised:
+        pulse.compile(two_loops, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
+    text = str(raised.value)
+    assert "controllers[0] (box.a): 60 drives and readouts" in text
+    assert "the loop of 30 iterations from cycle 0 plays 58 more" in text
+    assert "box.b" not in text
+    # Unrolling adds pulses, not waveforms: memory for one shape fits either way.
+    for supports in (None, no_loop):
+        held = pulse.Controller(drive_lines=[0, 1], waveform_samples=20, supports=supports)
+        qpu = _qpu(held, b)
+        pulse.compile(two_loops, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
+    # With loop, a body over max_events is counted once and still fails.
+    small = pulse.Controller(drive_lines=[0, 1], model="box.a", max_events=1)
+    qpu = _qpu(small, b)
+    with pytest.raises(ControllerLimitError, match="body counted once; the controller holds"):
+        pulse.compile(two_loops, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
+    # A plain ControllerLimits counts every iteration, as before (the second
+    # loop's identical pulses fuse into one).
+    machine = MachineModel(controller=ControllerLimits(max_events=60))
+    with pytest.raises(ControllerLimitError, match="61 drives and readouts; the controller plays"):
+        pulse.compile(two_loops, machine=machine).lower(*qpu.qudits[:2])
+
+
 def test_a_call_sends_and_answers_only_controllers_its_link_reaches():
     a, b = _two_boxes()
     qpu = _qpu(a, b, links={"feedback": pulse.Link(controllers=[a])})

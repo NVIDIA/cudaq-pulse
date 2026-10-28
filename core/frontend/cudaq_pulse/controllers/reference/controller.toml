@@ -28,4 +28,5 @@ supports = [
     "branch",
     "runtime_frame_update",
     "forward_outcome",
+    "loop",
 ]

@@ -74,7 +74,12 @@ class Capability(enum.StrEnum):
     take its ``answer``; ``branch`` on an outcome or an answer;
     ``runtime_frame_update`` a tone's frequency or phase from a value
     computed while the QPU runs; ``forward_outcome`` of one of its readouts
-    to another controller, which branches on it.
+    to another controller, which branches on it; ``loop``: run a rolled
+    loop itself, holding its body once. A controller without ``loop`` plays
+    a rolled loop unrolled, so each iteration counts against its
+    ``max_events``. Unrolling does not change its waveform memory: a
+    waveform is stored once per shape however often it plays, so only the
+    pulse count goes up.
     """
 
     PLAY = "play"
@@ -86,7 +91,7 @@ class Capability(enum.StrEnum):
     BRANCH = "branch"
     RUNTIME_FRAME_UPDATE = "runtime_frame_update"
     FORWARD_OUTCOME = "forward_outcome"
-    # LOOP = "loop": a loop the controller runs itself; to be decided.
+    LOOP = "loop"
 
 
 _PLAYED = frozenset({"drive", "readout"})
@@ -209,6 +214,10 @@ class Controller(ControllerLimits):
     def supports_capability(self, capability: Capability) -> bool:
         """Whether the controller can do *capability*."""
         return self.supports is None or capability in self.supports
+
+    @property
+    def _runs_loops(self) -> bool:
+        return self.supports is None or Capability.LOOP in self.supports
 
 
 def _known(owners: Iterable[int | None]) -> list[int]:

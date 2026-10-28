@@ -62,7 +62,10 @@ behavior may change in any 0.x release.
   quantum system. `compile(kernel, device=qpu)` checks every program against
   the system: a line on no controller, each controller's own limits, a
   capability (`pulse.Capability`) a controller lacks, and a call over a link
-  that does not reach its controllers fail to compile. `rcp` keeps a branch
+  that does not reach its controllers fail to compile. A controller that
+  supports `loop` holds a rolled loop's body once against `max_events`; one
+  that does not plays it unrolled, and its limit error names the loop; unrolling adds pulses,
+  not waveform memory, which holds each shape once. `rcp` keeps a branch
   on a readout the `feedback_latency_cycles` of the controllers that read out.
 - **Controller descriptions.** `pulse.controller("vendor.model",
   drive_lines=..., readout_lines=...)` loads a controller from a TOML

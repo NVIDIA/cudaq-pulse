@@ -300,6 +300,11 @@ class ControllerLimits:
         return frozen_reduce(self)
 
     @property
+    def _runs_loops(self) -> bool:
+        """Whether a rolled loop's body counts once against ``max_events``."""
+        return False
+
+    @property
     def computes(self) -> bool:
         """Whether any limit on what the controller computes is set."""
         return bool(
@@ -744,9 +749,7 @@ def _violations(
         e for e in events if e["kind"] in _PLAYED and e["end_cycles"] is not None
     ]
     if limits.max_events is not None and len(timed) > limits.max_events:
-        found.append(
-            f"{len(timed)} drives and readouts; the controller plays at most {limits.max_events}"
-        )
+        found.extend(_event_count(timed, limits.max_events, limits._runs_loops))
     by_line: dict[int, list[Mapping[str, Any]]] = {}
     for event in timed:
         by_line.setdefault(event["line"], []).append(event)
@@ -914,6 +917,47 @@ def _samples_per_own_cycle(limits: ControllerLimits, program_ghz: float) -> tupl
     from . import _clocks
 
     return _clocks.made_for(limits.sample_rate_ghz, limits.clock_ghz or program_ghz)
+
+
+def _event_count(timed: Sequence[Mapping[str, Any]], most: int, runs_loops: bool) -> list[str]:
+    """The violation of ``max_events`` (*most*) by *timed*, which exceeds it
+    unrolled; a controller that *runs_loops* holds a rolled body once."""
+    if runs_loops:
+        held = sum(1 for e in timed if not any(e["iteration"]))
+        if held <= most:
+            return []
+        return [
+            f"{held} drives and readouts, a rolled loop's body counted once; the "
+            f"controller holds at most {most}"
+        ]
+    text = f"{len(timed)} drives and readouts; the controller plays at most {most}"
+    loops = _rolled_loops(timed)
+    if loops:
+        grown = "; ".join(
+            f"the loop of {trips} iterations from cycle {start} plays {extra} more"
+            for trips, start, extra in loops
+        )
+        text += f". It does not support 'loop', so rolled loops are unrolled for it: {grown}"
+    return [text]
+
+
+def _rolled_loops(timed: Sequence[Mapping[str, Any]]) -> list[tuple[int, int, int]]:
+    """Each outermost rolled loop of *timed* (in program order): its trip
+    count, its first start cycle and the events past its first iteration."""
+    loops: list[list[int]] = []
+    previous = -1
+    for e in timed:
+        iteration = e["iteration"]
+        if not iteration:
+            previous = -1
+            continue
+        if previous < 0 or iteration[0] < previous:
+            loops.append([0, e["start_cycles"], 0])
+        loop = loops[-1]
+        loop[0] = max(loop[0], iteration[0] + 1)
+        loop[2] += any(iteration)
+        previous = iteration[0]
+    return [(trips, start, extra) for trips, start, extra in loops if extra]
 
 
 def check(lowered: Lowered, limits: ControllerLimits | None = None) -> list[str]:
