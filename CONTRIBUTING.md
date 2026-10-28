@@ -259,23 +259,14 @@ after its release. [zizmor](https://docs.zizmor.sh/) audits the workflows
   CPython 3.14t with the GIL off (configured with
   `-DCUDAQ_PULSE_FREE_THREADED=ON`, which declares the extension safe
   without the GIL; release wheels are not free-threaded yet). The `gpu` job
-  builds with GPU support and runs the GPU tests on the runner named by the
-  `GPU_RUNNER` repository variable: nightly once the variable is set, and on
-  a manual run with `gpu` enabled.
+  builds with GPU support and runs the GPU tests (see [GPU CI](#gpu-ci)).
 - `wheels.yml`: cibuildwheel for `cp312-abi3` (3.12 and newer) on
   manylinux_2_28 (x86_64, aarch64, with the CUDA 12 and CUDA 13 runtimes) and
   macOS arm64 (compiler-only), plus an sdist. It then installs
   the wheels in clean containers without a CUDA toolkit. `gpu-install-test`
-  runs the GPU tests from the wheels on the `GPU_RUNNER` runner, on every
-  release tag and on a manual run with `gpu` enabled, and gates the release
-  (see [Releases](#releases)).
-
-`GPU_RUNNER` is a runner label (`linux-gpu`) or a JSON list of labels
-(`["self-hosted", "linux", "x64", "gpu"]`). Only tag pushes, the nightly
-schedule and manual runs reach it, never pull requests, so a self-hosted
-runner does not run code from forks; it should still be ephemeral and
-isolated. While it is unset, every GPU job is skipped and the CPU jobs are
-unaffected.
+  runs the GPU tests from the wheels (see [GPU CI](#gpu-ci)) and gates the
+  release (see [Releases](#releases)).
+- `gpu-tests.yml`: the GPU tests, called by `ci.yml` and `wheels.yml`.
 - `docs.yml`: Sphinx with warnings as errors; deploys `main` to GitHub Pages.
 - `property-nightly.yml`: the property tests with random examples, the
   slow physics checks (`nightly`) and the perf guard, every night and on
@@ -283,6 +274,71 @@ unaffected.
   kept in the Actions cache. GitHub runs scheduled workflows from the default
   branch, so the schedule tests `main`; a manual dispatch tests the branch it
   is dispatched on.
+
+### GPU CI
+
+The GPU tests run on NVIDIA's shared GitHub Actions GPU runners, through
+`gpu-tests.yml`. Each test runs in a container that gets the machine's GPU
+and driver and nothing else. `tools/ci/gpu-matrix.py` lists the rows,
+following what the GPU code varies on:
+
+- `wheels.yml` (`gpu-install-test`) installs the run's wheels with one CUDA
+  extra per row, in images that have no CUDA toolkit
+  (`install-test.sh --driver-only` fails if one is present), and runs the
+  doctor and `pytest -m gpu`. On every push to `staging` it runs `[cu12]`
+  and `[cu13]` on x86_64 with the newest driver. Release tags and manual
+  runs with `gpu` also run both extras on aarch64 and on x86_64 with the
+  oldest driver, plus `[cu13]` on the newest Python (the abi3 wheel). On
+  the oldest driver, an extra whose minimum driver (CUDA 12.0 for `[cu12]`,
+  CUDA 13.0 for `[cu13]`) is newer than the installed one must be refused
+  by the doctor with that reason; on any other row an old driver fails the
+  test. Free-threaded Python has no release wheels and no row.
+- `ci.yml` (`gpu`) builds from source with `CUDAQ_PULSE_ENABLE_GPU=ON` in
+  the CUDA 12.9 development image with the `[cu12]` libraries, and runs
+  `check-pulse-gpu`, on every push to `main` and `staging`, on vetted pull
+  requests (below) and on manual runs with `gpu`.
+
+The `GPU_RUNNERS` repository variable switches GPU CI on, and names a runner
+for each role, as a JSON object:
+
+```json
+{"x86_64": "<label>", "x86_64-min-driver": "<label>", "aarch64": "<label>"}
+```
+
+`x86_64` has the newest driver, `x86_64-min-driver` the oldest. A value may be
+a JSON list of labels, and a bare label means `x86_64` alone. A row whose
+role is missing is skipped and listed in the job summary. While
+`GPU_RUNNERS` is unset, no GPU job runs or waits for a runner, and
+`gpu-gate` requires the manual attestation (see
+[GPU verification](#gpu-verification)).
+
+**Pull requests.** The `pull_request` event never runs a GPU job, since a
+pull request from a fork controls the workflow files it runs with. Instead,
+the [copy-pr-bot](https://github.com/apps/copy-pr-bot) GitHub App
+(configured in `.github/copy-pr-bot.yaml`) pushes a copy of the pull request
+to a `pull-request/<N>` branch of this repository, and `ci.yml` runs the
+`gpu` job there alone. Commits the app already trusts are copied on their
+own; for any other, a maintainer first reviews the commit, workflow changes
+included, and approves it with the app's `/ok to test` comment. Every new
+commit needs approval again. The GPU jobs use no secrets and a
+read-only token. The pull request shows the result as the `ci` checks of
+its head commit.
+
+**Switching it on** (repository administrators):
+
+1. NVIDIA's runner administrators grant this repository the GPU runners.
+2. Set `GPU_RUNNERS` to their labels (Settings, *Secrets and variables*,
+   *Actions*, *Variables*).
+3. Install the copy-pr-bot app on the repository, for pull requests.
+4. Run `ci` and `wheels` manually with `gpu` on `staging`, and check that
+   every row ran on a GPU and passed.
+
+Deleting `GPU_RUNNERS` switches everything off again. Uninstalling the app
+stops the pull-request copies.
+
+To run the wheels' GPU tests on a machine with an NVIDIA GPU, put the wheels
+in `wheelhouse/` and run `bash tools/ci/install-test.sh gpu-cu12` (or
+`gpu-cu13`, or `gpu` for both).
 
 ## Versioning and stability
 
@@ -377,10 +433,11 @@ PyPI and TestPyPI uploads will be re-enabled with trusted publishing.
 No release is published without GPU verification of the tagged commit; the
 `gpu-gate` job in `wheels.yml` enforces it, and it fails closed:
 
-- **With a GPU runner** (`GPU_RUNNER` set), the tag's run executes
-  `gpu-install-test` and publishes only if it passes. A failed GPU run
-  cannot be overridden: fix the problem and tag a new version.
-- **Without a GPU runner**, the tag's run builds and tests everything else
+- **With GPU runners** (`GPU_RUNNERS` set; see [GPU CI](#gpu-ci)), the
+  tag's run executes every `gpu-install-test` row and publishes only if they
+  all pass. A failed GPU run cannot be overridden: fix the problem and tag a
+  new version.
+- **Without GPU runners**, the tag's run builds and tests everything else
   and then stops at `gpu-gate`. To release it:
   1. Run the GPU test suite on the tagged commit on a machine with an
      NVIDIA GPU: build it as in [GPU builds](#gpu-builds) and run
