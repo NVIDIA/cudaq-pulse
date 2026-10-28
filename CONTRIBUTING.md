@@ -207,6 +207,14 @@ summary flags it: give that case its own `"tolerance"` before committing
 the baseline. A new case added later needs its count taken the same way,
 from the run that fails on it.
 
+**Counts that can't be right fail in every mode**, bootstrap included: a
+case without a count, a count of zero, a compile under 100,000 instructions
+per repetition, or a heavier case (a large compile, the first compile)
+measuring less than twice a lighter one. Such a run's counts are left out of
+its `perf-gate-baseline` artifact. The `perf-gate-callgrind-dumps` artifact
+holds each run's raw Callgrind dumps and Valgrind log for inspection
+(`callgrind_annotate` reads them); locally, `--dumps DIR` keeps them.
+
 The
 summary lists every case with its baseline, its count in this run, the
 change, and the spread between two identical runs made in the same job. A

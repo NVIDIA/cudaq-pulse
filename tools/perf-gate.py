@@ -31,6 +31,11 @@ run (sizes still do). Its measurements, taken as the baseline, drop the
 field; the field next to any count is an error, so the gate cannot stay in
 bootstrap mode once it has counts.
 
+In every mode, the gate fails if the counts cannot be right: a case without
+one, a count of zero or one too small for its case, or a heavier case not
+measuring well above a lighter one (``implausible``). Such counts are never
+written as a baseline; ``--dumps DIR`` keeps the dumps for inspection.
+
 Usage:
     python tools/perf-gate.py                 # compare with the baseline
     python tools/perf-gate.py --update        # rewrite the baseline from this run
@@ -146,18 +151,73 @@ def _no_aslr() -> list[str]:
     return command if probe.returncode == 0 else []
 
 
-def parse_dump(text: str) -> tuple[str, dict[str, int]] | None:
-    """The case name and event totals of one Callgrind dump written by a
-    ``perf_gate_stop`` client request, or None for any other dump."""
+class GateError(Exception):
+    """Measurements that cannot be trusted: the gate fails in every mode."""
+
+
+@dataclass
+class Dump:
+    name: str
+    events: dict[str, int]
+    summary: dict[str, int] | None
+
+
+# A cost line starts with its positions (a number, "0x" address, or a
+# "+n", "-n" or "*" relative to the last one) or, without positions, its
+# first event.
+_COST_LINE = re.compile(r"[0-9+*-]")
+
+
+def parse_dump(text: str) -> Dump | None:
+    """One Callgrind dump written by a ``perf_gate_stop`` client request, or
+    None for any other dump.
+
+    The events are the ``totals:`` line, which Callgrind writes as the sum
+    of the dump's self-cost lines: the lines after ``calls=`` (a call's
+    inclusive cost) and ``jump=``/``jcnd=`` are not self cost. The sum is
+    checked against it. The header's ``summary:`` is kept for comparison."""
     trigger = re.search(r"^desc: Trigger: Client Request: (.+)$", text, re.MULTILINE)
-    events = re.search(r"^events: (.+)$", text, re.MULTILINE)
-    totals = re.search(r"^(?:totals|summary): (.+)$", text, re.MULTILINE)
-    if trigger is None or events is None or totals is None:
+    if trigger is None:
         return None
-    names = events.group(1).split()
-    values = [int(v) for v in totals.group(1).split()]
-    values += [0] * (len(names) - len(values))
-    return trigger.group(1).strip(), dict(zip(names, values))
+    name = trigger.group(1).strip()
+    names: list[str] | None = None
+    positions = 1  # "positions: line" when the header does not say
+    summary = totals = None
+    self_cost: list[int] = []
+    not_self = False
+
+    def costs(fields: list[str]) -> dict[str, int]:
+        if names is None or len(fields) > len(names):
+            raise GateError(f"dump for {name}: costs {fields} do not match its events: line")
+        values = [int(v) for v in fields]
+        return dict(zip(names, values + [0] * (len(names) - len(values))))
+
+    for line in text.splitlines():
+        if line.startswith("positions:"):
+            positions = len(line.partition(":")[2].split())
+        elif line.startswith("events:"):
+            names = line.partition(":")[2].split()
+            self_cost = [0] * len(names)
+        elif line.startswith("summary:"):
+            summary = costs(line.partition(":")[2].split())
+        elif line.startswith("totals:"):
+            totals = costs(line.partition(":")[2].split())
+        elif line.startswith(("calls=", "jump=", "jcnd=")):
+            not_self = True
+        elif _COST_LINE.match(line):
+            if not_self:
+                not_self = False
+                continue
+            for i, value in enumerate(costs(line.split()[positions:]).values()):
+                self_cost[i] += value
+    if names is None or totals is None:
+        raise GateError(f"dump for {name} has no events: or totals: line (truncated?)")
+    if list(totals.values()) != self_cost:
+        raise GateError(
+            f"dump for {name}: totals {list(totals.values())} differ from the sum of its "
+            f"cost lines {self_cost}"
+        )
+    return Dump(name, totals, summary)
 
 
 def estimated_cycles(events: dict[str, int]) -> float | None:
@@ -173,8 +233,10 @@ def estimated_cycles(events: dict[str, int]) -> float | None:
 
 def _callgrind(
     python: str, env: dict[str, str], marks: Path, directory: Path, prefix: list[str]
-) -> dict[str, dict[str, float]]:
-    directory.mkdir()
+) -> tuple[dict[str, dict[str, float]], list[str]]:
+    """One Callgrind run of every case: its events per repetition, and
+    notes on its dumps. The dumps and Valgrind's log stay in *directory*."""
+    directory.mkdir(parents=True)
     command = [
         *prefix,
         "valgrind",
@@ -182,8 +244,6 @@ def _callgrind(
         "--instr-atstart=no",
         "--cache-sim=yes",
         *CACHES,
-        "--dump-line=no",
-        "--dump-instr=no",
         f"--callgrind-out-file={directory}/callgrind.out",
         python,
         str(CASES),
@@ -191,48 +251,94 @@ def _callgrind(
         str(marks),
     ]
     out = subprocess.run(command, env=env, capture_output=True, text=True, cwd=ROOT)
+    (directory / "valgrind.log").write_text(out.stderr)
     if out.returncode:
-        sys.exit(f"perf gate: Callgrind run failed:\n{out.stderr[-4000:]}")
+        raise GateError(f"Callgrind run failed ({directory.name}):\n{out.stderr[-4000:]}")
     reps = json.loads(out.stdout.strip().splitlines()[-1])
     results: dict[str, dict[str, float]] = {}
-    for dump in sorted(directory.iterdir()):
-        parsed = parse_dump(dump.read_text(errors="replace"))
-        if parsed is None:
+    notes = []
+    for path in sorted(directory.glob("callgrind.out*")):
+        dump = parse_dump(path.read_text(errors="replace"))
+        if dump is None:
             continue
-        name, events = parsed
-        n = reps[name]
-        cycles = estimated_cycles(events)
-        results[name] = {
-            "instructions": events["Ir"] / n,
+        if dump.name not in reps or dump.name in results:
+            raise GateError(f"unexpected Callgrind dump {path.name} for {dump.name}")
+        n = reps[dump.name]
+        cycles = estimated_cycles(dump.events)
+        results[dump.name] = {
+            "instructions": dump.events.get("Ir", 0) / n,
             "estimated_cycles": float("nan") if cycles is None else cycles / n,
         }
+        if dump.summary is not None and dump.summary != dump.events:
+            notes.append(
+                f"{dump.name}: the dump's summary: Ir {dump.summary.get('Ir')} differs "
+                f"from its totals: Ir {dump.events.get('Ir')} ({directory.name}/{path.name})"
+            )
     missing = set(reps) - set(results)
     if missing:
-        sys.exit(f"perf gate: no Callgrind dump for {', '.join(sorted(missing))}")
-    return results
+        raise GateError(f"no Callgrind dump for {', '.join(sorted(missing))} ({directory.name})")
+    return results, notes
 
 
 def measure_instructions(
-    python: str, env: dict[str, str], processes: int, workdir: Path
-) -> tuple[dict[str, Measured], bool]:
+    python: str, env: dict[str, str], processes: int, workdir: Path, dumps: Path
+) -> tuple[dict[str, Measured], list[str], bool]:
     """Each case's instructions per repetition in *processes* identical
-    runs, made side by side, and whether address randomization was off."""
+    runs, made side by side (their dumps in *dumps*), notes on the dumps,
+    and whether address randomization was off."""
     marks = _build_marks(workdir)
     prefix = _no_aslr()
     with concurrent.futures.ThreadPoolExecutor(processes) as pool:
         runs = list(
             pool.map(
-                lambda k: _callgrind(python, env, marks, workdir / f"run{k}", prefix),
+                lambda k: _callgrind(python, env, marks, dumps / f"run{k}", prefix),
                 range(processes),
             )
         )
     measured: dict[str, Measured] = {}
-    for run in runs:
+    notes = []
+    for run, run_notes in runs:
+        notes += run_notes
         for name, values in run.items():
             m = measured.setdefault(name, Measured())
             m.instructions.append(values["instructions"])
             m.estimated_cycles.append(values["estimated_cycles"])
-    return measured, bool(prefix)
+    return measured, notes, bool(prefix)
+
+
+# Instructions per repetition below which a count is wrong, not fast (a
+# compile is well above a million), and pairs of cases whose first does
+# several times the work of the second.
+MINIMUM = 200
+MINIMUM_COMPILE = 100_000
+HEAVIER = (
+    ("first_compile", "compile_bell"),
+    ("compile_surface_d5", "compile_bell"),
+    ("compile_calls_large", "compile_calls_small"),
+)
+
+
+def implausible(measured: dict[str, Measured], cases: set[str]) -> list[str]:
+    """Why the instruction counts cannot be right: a case of *cases* without
+    a count, a count of zero or one too small for its case, or a heavier
+    case measuring less than twice a lighter one. Empty if plausible."""
+    problems = [f"{name}: no instruction count measured" for name in sorted(cases - set(measured))]
+    for name, m in sorted(measured.items()):
+        least = MINIMUM_COMPILE if name.startswith(("compile_", "first_compile")) else MINIMUM
+        if not m.instructions or not all(x >= least for x in m.instructions):
+            problems.append(
+                f"{name}: {', '.join(_num(x) for x in m.instructions) or 'no'} instructions "
+                f"per repetition measured; a count below {least:,} is not plausible"
+            )
+    for heavy, light in HEAVIER:
+        if heavy in measured and light in measured:
+            h, lo = min(measured[heavy].instructions), min(measured[light].instructions)
+            if not h >= 2 * lo or lo <= 0:
+                problems.append(
+                    f"{heavy} measured {_num(h)} instructions per repetition, not more than "
+                    f"twice {light}'s {_num(lo)}: the counts do not follow the work"
+                )
+    return problems
 
 
 @dataclass
@@ -320,17 +426,27 @@ def compare(
 FAILING = {"slower", "improved", "sizes", "new", "removed", "no baseline"}
 
 
-def bootstrap_error(baseline: dict[str, Any]) -> str | None:
-    """Why the baseline's ``bootstrap`` field is not allowed, or None.
+def baseline_error(baseline: dict[str, Any]) -> str | None:
+    """Why the baseline is not allowed, or None: an instruction count that
+    is not a positive number, or a ``bootstrap`` field next to counts.
 
     Bootstrap mode (instruction counts measured and reported, not gated)
     is allowed only while no case has a count: taking a CI run's
     measurements as the baseline drops the field, so the gate cannot stay
     in bootstrap mode once it has counts."""
+    cases = baseline.get("cases", {})
+    bad = sorted(
+        n
+        for n, c in cases.items()
+        if "instructions" in c
+        and not (isinstance(c["instructions"], (int, float)) and c["instructions"] > 0)
+    )
+    if bad:
+        return f"instruction counts must be positive numbers ({', '.join(bad)})"
     flag = baseline.get("bootstrap", False)
     if flag not in (True, False):
         return f"bootstrap must be true or false, not {flag!r}"
-    counted = sorted(n for n, c in baseline.get("cases", {}).items() if "instructions" in c)
+    counted = sorted(n for n, c in cases.items() if "instructions" in c)
     if flag and counted:
         return (
             "bootstrap is true but the baseline has instruction counts "
@@ -448,11 +564,19 @@ def main() -> int:
     parser.add_argument(
         "--sizes-only", action="store_true", help="skip the instruction counts (no Valgrind)"
     )
+    parser.add_argument(
+        "--dumps", type=Path, help="keep Callgrind's dumps and logs in this new directory"
+    )
     args = parser.parse_args()
+    if args.dumps and args.dumps.exists() and any(args.dumps.iterdir()):
+        parser.error(f"--dumps {args.dumps} is not empty")
 
     pythonpath = str((ROOT / args.pythonpath).resolve())
     baseline = json.loads(args.baseline.read_text()) if args.baseline.exists() else {}
     environment = _environment(args.python)
+    # Instruction counts that cannot be right fail the gate in every mode.
+    problems: list[str] = []
+    dump_notes: list[str] = []
 
     with tempfile.TemporaryDirectory(prefix="perf-gate-") as tmp:
         workdir = Path(tmp)
@@ -479,13 +603,23 @@ def main() -> int:
         elif (platform.system(), platform.machine()) != ("Linux", "x86_64"):
             note = "instruction counts skipped: the baseline is for Linux x86-64"
         else:
-            instructions, no_aslr = measure_instructions(args.python, env, args.processes, workdir)
-            note = "address randomization " + (
-                "off (setarch -R)" if no_aslr else "on: setarch -R is not permitted here"
-            )
+            dumps = args.dumps.resolve() if args.dumps else workdir / "callgrind"
+            try:
+                instructions, dump_notes, no_aslr = measure_instructions(
+                    args.python, env, args.processes, workdir, dumps
+                )
+            except GateError as e:
+                problems.append(f"Callgrind: {e}")
+                note = "instruction counts not measured"
+            else:
+                problems += implausible(instructions, set(sizes))
+                note = "address randomization " + (
+                    "off (setarch -R)" if no_aslr else "on: setarch -R is not permitted here"
+                )
 
     rows = compare(baseline, sizes, instructions)
-    measured = as_baseline(environment, sizes, instructions, baseline)
+    # Counts that failed the checks are reported but never become a baseline.
+    measured = as_baseline(environment, sizes, None if problems else instructions, baseline)
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(measured, indent=2) + "\n")
@@ -522,9 +656,11 @@ def main() -> int:
         )
         for r in unstable
     ]
-    for line in spread_lines:
+    if len(dump_notes) > 3:
+        dump_notes = [*dump_notes[:3], f"and {len(dump_notes) - 3} more dumps"]
+    for line in spread_lines + dump_notes:
         print(f"::warning title=Perf gate::{line}")
-    if bootstrapped:
+    if bootstrapped and not problems:
         print(
             "\nBOOTSTRAP MODE: the baseline has no instruction counts for "
             f"{len(bootstrapped)} case(s); they are measured and reported, not gated."
@@ -538,13 +674,18 @@ def main() -> int:
 
     failures = [r for r in rows if r.verdict in FAILING]
     if args.update:
+        if problems:
+            print("\nThe instruction counts are not valid; the baseline was not written:")
+            for line in problems:
+                print(f"  {line}")
+            return 1
         args.baseline.write_text(json.dumps(measured, indent=2) + "\n")
         print(f"\nWrote {args.baseline}")
         if instructions is None:
             print("Only the program sizes were updated: " + note)
         return 0
 
-    lines = []
+    lines = list(problems)
     for r in failures:
         reason = {
             "slower": f"{_pct(r.delta)} instructions (limit +{100 * r.tolerance:.1f}%)",
@@ -555,16 +696,30 @@ def main() -> int:
             "no baseline": "no instruction count in the baseline",
         }[r.verdict]
         lines.append(f"{r.name}: {reason}")
-    invalid = bootstrap_error(baseline)
+    invalid = baseline_error(baseline)
     if invalid:
         lines.append(f"{args.baseline.name}: {invalid}")
+    if os.environ.get("GITHUB_ACTIONS"):
+        dumps_hint = "the perf-gate-callgrind-dumps artifact has each run's dumps and Valgrind log"
+    elif args.dumps:
+        dumps_hint = f"each run's dumps and Valgrind log are in {args.dumps}"
+    else:
+        dumps_hint = "keep the dumps with --dumps DIR"
     if os.environ.get("GITHUB_ACTIONS"):
         for line in lines:
             print(f"::error title=Perf gate::{line}")
     if args.summary:
         with args.summary.open("a") as f:
             f.write("## Perf gate: instructions and program sizes\n\n")
-            if bootstrapped:
+            if problems:
+                f.write(
+                    "> [!CAUTION]\n"
+                    "> **The instruction counts are not valid**, so this run fails in every "
+                    "mode and its counts are not in its perf-gate-baseline artifact: "
+                    + " ".join(f"{line}." for line in problems)
+                    + f" To inspect: {dumps_hint}.\n\n"
+                )
+            elif bootstrapped:
                 f.write(
                     "> [!WARNING]\n"
                     f"> **Bootstrap mode.** {len(bootstrapped)} case(s) have no instruction "
@@ -582,6 +737,14 @@ def main() -> int:
                     + " ".join(f"{line}." for line in spread_lines)
                     + "\n\n"
                 )
+            if dump_notes:
+                f.write(
+                    "> [!WARNING]\n"
+                    "> **Callgrind's dump summaries differ from their totals** (the totals, "
+                    "the sum of the cost lines, are used): "
+                    + " ".join(f"{line}." for line in dump_notes)
+                    + f" To inspect: {dumps_hint}.\n\n"
+                )
             f.write(render(rows, markdown=True) + "\n\n")
             f.write(
                 f"Fails above +{100 * REGRESSION:.1f}% or below -{100 * IMPROVEMENT:.1f}% "
@@ -594,15 +757,19 @@ def main() -> int:
                 f.write("Environment differs from the baseline's: " + "; ".join(env_diff) + "\n\n")
             if lines:
                 f.write("**Failed:**\n\n" + "".join(f"- {line}\n" for line in lines) + "\n")
-                f.write(
-                    "If the change is intended, take this run as the baseline and commit it:\n\n"
-                    f"```\n{_update_command()}\n```\n"
-                )
+                if not problems:
+                    f.write(
+                        "If the change is intended, take this run as the baseline and "
+                        f"commit it:\n\n```\n{_update_command()}\n```\n"
+                    )
     if lines:
         print("\nPerf gate failed:")
         for line in lines:
             print(f"  {line}")
-        print(f"\nIf the change is intended, update the baseline:\n  {_update_command()}")
+        if problems:
+            print(f"\nThe instruction counts are not valid; {dumps_hint}.")
+        else:
+            print(f"\nIf the change is intended, update the baseline:\n  {_update_command()}")
         return 1
     if bootstrapped:
         print("\nPerf gate passed in bootstrap mode: instruction counts were not gated.")

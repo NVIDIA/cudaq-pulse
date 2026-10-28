@@ -219,7 +219,8 @@ jobs:
       - name: Perf gate
         run: >
           uv run --no-sync python tools/perf-gate.py --processes 2
-          --out perf-gate/perf_gate.json --summary "$GITHUB_STEP_SUMMARY"
+          --out perf-gate/perf_gate.json --dumps perf-gate/callgrind
+          --summary "$GITHUB_STEP_SUMMARY"
 
       # This run's measurements in the baseline's format; the summary of a
       # failed run gives the command that makes them the baseline.
@@ -228,6 +229,16 @@ jobs:
         with:
           name: perf-gate-baseline
           path: perf-gate/perf_gate.json
+          retention-days: 14
+
+      # Callgrind's raw dumps and Valgrind's log for each run, to inspect
+      # the counts (callgrind_annotate reads them).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: perf-gate-callgrind-dumps
+          path: perf-gate/callgrind
+          if-no-files-found: warn
           retention-days: 14
 
   # Kernels type-check clean in Pylance's and Cursor's default mode and in
