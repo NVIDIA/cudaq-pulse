@@ -63,6 +63,7 @@ from ._errors import PulseWarning as PulseWarning
 from ._errors import TimingError as TimingError
 from ._errors import UnsupportedError as UnsupportedError
 from ._errors import UpgradeNotice as UpgradeNotice
+from .classical import Link as Link
 from .compiler import Lowered as Lowered
 from .compiler import Pass as Pass
 from .compiler import compile as compile
@@ -76,8 +77,10 @@ from .targets._registry import NoTargetError as NoTargetError
 # A module can't be declared callable, so checkers see the decorator's type.
 if TYPE_CHECKING:
     from .classical import ClassicalDecorator
+    from .controller import ControllerModule
 
     classical: ClassicalDecorator
+    controller: ControllerModule
 else:
     from . import classical as classical
 
@@ -88,8 +91,10 @@ __version__: str = _build_config.PACKAGE_VERSION
 # use.
 if TYPE_CHECKING:
     from . import backends as backends
-    from . import controller as controller
     from . import viz as viz
+    from ._system import Capability as Capability
+    from ._system import Controller as Controller
+    from ._system import ControlSystem as ControlSystem
     from ._units import Time as Time
     from ._units import ms as ms
     from ._units import ns as ns
@@ -112,6 +117,9 @@ _LAZY_EXPORTS = {
     "us": "._units",
     "ms": "._units",
     "s": "._units",
+    "Capability": "._system",
+    "Controller": "._system",
+    "ControlSystem": "._system",
 }
 _LAZY_MODULES = {"viz": ".viz", "backends": ".backends", "controller": ".controller"}
 
@@ -129,6 +137,10 @@ __all__ = [
     "Device",
     "Qudit",
     "Register",
+    "Controller",
+    "ControlSystem",
+    "Capability",
+    "Link",
     "PulseError",
     "Problem",
     "DeviceDefinitionError",

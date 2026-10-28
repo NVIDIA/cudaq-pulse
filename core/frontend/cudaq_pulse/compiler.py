@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 
     from . import _clocks
     from ._device import Device
+    from ._system import ControlSystem
     from .controller import ControllerLimits
     from .kernel._kernel import CompiledKernel, Kernel
 
@@ -242,6 +243,9 @@ class MachineModel:
     reference_clock_ghz: float | None = None
     line_delays_ns: Mapping[tuple[str, int], float | Time] = field(default_factory=dict)
     link_names: Mapping[str, int] = field(init=False, repr=False, compare=False)
+    # The ControlSystem this model was made from, whose wiring and
+    # capabilities every program is checked against.
+    _system: ControlSystem | None = field(default=None, repr=False)
     _plain: bool = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -286,11 +290,15 @@ class MachineModel:
             "line_delays_ns",
             MappingProxyType(dict(sorted(delays.items()))) if delays else _NO_DELAYS,
         )
-        # Nothing of clocks to do: no controller, reference clock or delays.
+        # Nothing of clocks to do: no controller, control system, reference
+        # clock or delays.
         object.__setattr__(
             self,
             "_plain",
-            self.controller is None and self.reference_clock_ghz is None and not delays,
+            self.controller is None
+            and self._system is None
+            and self.reference_clock_ghz is None
+            and not delays,
         )
         if isinstance(self.links, _Links):
             # Another model's links, as dataclasses.replace passes them: by
@@ -340,6 +348,7 @@ class MachineModel:
                     self.controller,
                     self.reference_clock_ghz,
                     tuple(self.line_delays_ns.items()),
+                    self._system,
                 )
             ),
         )
@@ -365,6 +374,7 @@ class MachineModel:
             self.controller,
             self.reference_clock_ghz,
             dict(self.line_delays_ns),
+            self._system,
         ) == (
             other.max_concurrent_drives,
             other.max_concurrent_readouts,
@@ -375,6 +385,7 @@ class MachineModel:
             other.controller,
             other.reference_clock_ghz,
             dict(other.line_delays_ns),
+            other._system,
         )
 
     def link_id(self, link: int | str) -> int:
@@ -1435,7 +1446,9 @@ class _CheckedPerCall(Lowered):
 
             violations = _call_violations(view)
             if violations:
-                raise ControllerLimitError(violations)
+                raise ControllerLimitError(
+                    violations, system=view.options.machine._system is not None
+                )
             if len(self._accepted) >= _ACCEPTED_CALLS:
                 self._accepted.clear()
             self._accepted.add(key)
@@ -1449,7 +1462,9 @@ class _CheckedPerCall(Lowered):
 
             violations = _call_violations(view)
             if violations:
-                raise ControllerLimitError(violations)
+                raise ControllerLimitError(
+                    violations, system=view.options.machine._system is not None
+                )
             if len(self._accepted) >= _ACCEPTED_CALLS:
                 self._accepted.clear()
             self._accepted.add(key)
@@ -1719,7 +1734,7 @@ def build(
         role.used = builder.used_qubits
         role.every = qudits
         role.program_id = role.identify(buf, name, parameters, target, options)
-    if machine.controller is not None:
+    if not plain:
         lowered = _check_controller(lowered)
     return lowered, builder
 
@@ -1780,8 +1795,10 @@ def _check_controller(lowered: Lowered) -> Lowered:
     """*lowered*, checked against its controller limits: those it exceeds
     whatever its float values fail now, and when some values may exceed
     others, each call's values are checked when they are bound."""
-    limits = lowered.options.machine.controller
-    if limits is None:
+    machine = lowered.options.machine
+    limits = machine.controller
+    system = machine._system
+    if limits is None and system is None:
         return lowered
     from .controller import ControllerLimitError, _compile_check
 
@@ -1789,9 +1806,9 @@ def _check_controller(lowered: Lowered) -> Lowered:
     # A float wait length places the ops after it per call: the schedule
     # without values is not one any call plays.
     if lowered.scheduled and lowered.waits is None:
-        violations, exact = _compile_check(lowered, limits)
+        violations, exact = _compile_check(lowered, limits, system)
         if violations:
-            raise ControllerLimitError(violations)
+            raise ControllerLimitError(violations, system=system is not None)
     if exact:
         return lowered
     return (_CheckedPerCall if lowered._role is None else _CheckedPlaced)(lowered)
@@ -1845,7 +1862,7 @@ def compile[**P](
     *,
     schedule: str | None = None,
     passes: Sequence[str] | None = None,
-    machine: MachineModel | None = None,
+    machine: MachineModel | ControlSystem | None = None,
     device: Device | None = None,
     flatten_schedules: bool = False,
     unroll_threshold: int | None = None,
@@ -1872,7 +1889,10 @@ def compile[**P](
         Optimization passes (``Pass`` members or their names), run in the
         order given; ``DEFAULT_PASSES`` by default, ``()`` for none.
     machine:
-        Machine model for resource-constrained scheduling.
+        Machine model for resource-constrained scheduling, or a
+        ``ControlSystem``: every program is then checked against its
+        controllers' wiring, capabilities and limits. By default the
+        control system of *device*, if it has one.
     flatten_schedules:
         Ignore the ``schedule=`` of every called kernel and schedule the whole
         program with *schedule*.
@@ -1893,6 +1913,16 @@ def compile[**P](
 
     if not isinstance(kernel, Kernel):
         raise TypeError(f"compile() expects a @cudaq_pulse.kernel, got {type(kernel).__name__}")
+    if machine is None and device is not None:
+        machine = device.control_system
+    if machine is not None and not isinstance(machine, MachineModel):
+        from ._system import ControlSystem
+
+        if not isinstance(machine, ControlSystem):
+            raise InvalidTypeError(
+                f"compile(machine=) takes a MachineModel or a ControlSystem, got {machine!r}"
+            )
+        machine = machine._machine
     options = CompileOptions.make(
         root_schedule(kernel.schedule, schedule),
         passes,

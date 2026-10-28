@@ -13,12 +13,13 @@ mypy must report, and --warn-unused-ignores fails if it stops reporting it.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, assert_type
 
 import cudaq_pulse as pulse
 from cudaq_pulse.classical import Bits, ClassicalFunction, Float, Pending
 from cudaq_pulse.compiler import CompileMetrics, ScheduledEvent
+from cudaq_pulse.controller import ControllerLimits
 from cudaq_pulse.ops import Waveform
 
 wave = pulse.ops.gaussian(40, 0.1, 10.0)
@@ -111,3 +112,17 @@ pulse.classical(args=(), results=(), max_latency_ns="soon")  # type: ignore[call
 pulse.classical(args=(Bits(1),))  # type: ignore[call-overload]
 pulse.classical(_scale, max_latency_ns=1, args=(int,))  # type: ignore[arg-type]
 pulse.classical.external("dec", name="x", max_latency_ns=1)  # type: ignore[call-arg]
+
+# pulse.controller is a module and the loader of controller descriptions.
+box = pulse.controller("reference.controller", drive_lines=[0, 1])
+assert_type(box, pulse.Controller)
+assert_type(pulse.controller.ControllerLimits(issue_cycles=2), ControllerLimits)
+assert_type(pulse.controller.FORMAT, str)
+control = pulse.ControlSystem(controllers=[box], links={"feedback": pulse.Link(controllers=[box])})
+assert_type(control.controllers, Sequence[pulse.Controller])
+assert_type(box.supports_capability(pulse.Capability.BRANCH), bool)
+qpu = pulse.device({"quantum_system": "transmon_krinner_17q", "control_system": control})
+assert_type(qpu.control_system, pulse.ControlSystem | None)
+assert_type(qpu.as_dict(), dict[str, Any])
+pulse.compile(rabi, device=qpu, machine=control)
+pulse.controller(3)  # type: ignore[arg-type]

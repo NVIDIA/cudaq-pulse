@@ -136,7 +136,7 @@ def export(lowered: Any, with_events: bool = True) -> dict[str, Any]:
         "clock_ghz": lowered.target.clock_ghz,
         "links": {
             str(machine.link_id(fn.link)): {
-                **asdict(machine.link(fn.link)),
+                **machine.link(fn.link).cost(),
                 "name": machine.link_name(machine.link_id(fn.link)),
             }
             for fn in lowered.classical

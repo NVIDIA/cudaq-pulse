@@ -16,7 +16,8 @@ file(GLOB_RECURSE _cudaq_pulse_python_sources
   RELATIVE "${CUDAQ_PULSE_FRONTEND_DIR}"
   "${CUDAQ_PULSE_FRONTEND_DIR}/*.py"
   "${CUDAQ_PULSE_FRONTEND_DIR}/*.pyi"
-  "${CUDAQ_PULSE_FRONTEND_DIR}/*.json")
+  "${CUDAQ_PULSE_FRONTEND_DIR}/*.json"
+  "${CUDAQ_PULSE_FRONTEND_DIR}/*.toml")
 list(APPEND _cudaq_pulse_python_sources py.typed)
 
 cudaq_pulse_stage_python_sources(CudaqPulsePythonStaging

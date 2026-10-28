@@ -105,6 +105,12 @@ Core Examples
      - One compile for every qudit of a device: the qudit is bound at each
        call, and a frequency the kernel needs, read from the device on the
        host, is an ordinary float parameter
+   * - 23
+     - ``23_define_a_qpu.py``
+     - Define a QPU: two controllers loaded from an installed description
+       with the installation's wiring, a "feedback" link that takes a readout
+       of one and answers the other, the compile-time checks against the
+       control system, and the QPU saved and loaded as one system file
 
 Custom Passes
 -------------

@@ -51,10 +51,13 @@ import sys
 import types
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, Required, TypedDict, Unpack, overload
+from typing import TYPE_CHECKING, Any, Protocol, Required, TypedDict, Unpack, overload
 
 from .._errors import InvalidTypeError, InvalidValueError
 from .._units import Time, as_nanoseconds
+
+if TYPE_CHECKING:
+    from .._system import Controller
 
 __all__ = [
     "Bits",
@@ -296,6 +299,10 @@ class Link:
     ``feedback_ns`` are times (``100 * pulse.ns``) or numbers of ns. ``max_in_flight`` is how many
     requests the link holds at once (its slots), and ``slot_bytes`` the
     largest request or answer, its 24-byte header included.
+
+    ``controllers`` are the controllers of a ``ControlSystem`` the link
+    reaches (``None``: all of them): a call over it can send only their
+    measurements, and only they can use its answers.
     """
 
     fixed_ns: float | Time = 0.0
@@ -303,6 +310,7 @@ class Link:
     feedback_ns: float | Time = 0.0
     max_in_flight: int = 64
     slot_bytes: int = 1024
+    controllers: Sequence[Controller] | None = None
 
     def __post_init__(self) -> None:
         # A program that uses a link it does not list makes a Link() as it
@@ -311,6 +319,16 @@ class Link:
             object.__setattr__(self, "fixed_ns", float(self.fixed_ns))
         if self.feedback_ns.__class__ is Time:
             object.__setattr__(self, "feedback_ns", float(self.feedback_ns))
+        if self.controllers is not None:
+            from .._system import Controller
+
+            reached = tuple(self.controllers)
+            for controller in reached:
+                if not isinstance(controller, Controller):
+                    raise InvalidTypeError(
+                        f"Link.controllers are pulse.Controller objects, got {controller!r}"
+                    )
+            object.__setattr__(self, "controllers", reached)
         for name in ("fixed_ns", "bytes_per_ns", "feedback_ns"):
             value = getattr(self, name)
             if not (isinstance(value, (int, float)) and math.isfinite(value) and value >= 0):
@@ -323,6 +341,16 @@ class Link:
             raise InvalidValueError(
                 f"Link.slot_bytes must exceed the 24-byte header, got {self.slot_bytes!r}"
             )
+
+    def cost(self) -> dict[str, float | int]:
+        """What the link costs, as JSON-serializable data."""
+        return {
+            "fixed_ns": self.fixed_ns,
+            "bytes_per_ns": self.bytes_per_ns,
+            "feedback_ns": self.feedback_ns,
+            "max_in_flight": self.max_in_flight,
+            "slot_bytes": self.slot_bytes,
+        }
 
     def attribute(self) -> str:
         """The link as an entry of the module attribute ``classical.links``."""

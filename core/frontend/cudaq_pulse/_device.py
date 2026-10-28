@@ -28,7 +28,7 @@ import json
 import os
 from array import array
 from collections.abc import Iterator, Mapping, Sequence
-from typing import Any, overload
+from typing import TYPE_CHECKING, Any, overload
 
 from ._errors import (
     DeviceDefinitionError,
@@ -44,6 +44,9 @@ from ._errors import (
 from .targets._registry import NoTargetError, UnknownTargetError
 from .targets.base import _EXCHANGE, TargetDescription, _coupling_kind
 from .targets.models import SimulationModel
+
+if TYPE_CHECKING:
+    from ._system import ControlSystem
 
 __all__ = [
     "Device",
@@ -66,7 +69,17 @@ class DeviceMismatchError(PulseError, RuntimeError):
 
 
 _CARRIER = "qudit"
-_CONFIG_KEYS = ("target", "layout", "calibration", "cooldown", "clock_ghz")
+_CONFIG_KEYS = (
+    "format",
+    "written_by",
+    "quantum_system",
+    "target",
+    "layout",
+    "calibration",
+    "cooldown",
+    "control_system",
+    "clock_ghz",
+)
 # Reserved for a model of where carriers are and how they move.
 _RESERVED_CONFIG = frozenset({"zones", "sites", "moves", "transport"})
 
@@ -284,7 +297,12 @@ class Device:
     levels the target's model gives each qudit (NaN past a qudit's last
     level); both are indexed by the user's qudit numbering and are read-only
     arrays.
+    ``control_system`` is the ``ControlSystem`` that plays it, if given;
+    ``compile(kernel, device=dev)`` checks every program against it.
     """
+
+    # The registered target the device was made from, as ``as_dict`` writes it.
+    _spec: str | None = None
 
     def __init__(
         self,
@@ -294,6 +312,7 @@ class Device:
         layout: Sequence[int] | None = None,
         source: str = "",
         calibration: Any = None,
+        control_system: ControlSystem | None = None,
         clock_ghz: float | None = None,
     ) -> None:
         if clock_ghz is not None:
@@ -308,8 +327,19 @@ class Device:
             if layout is None
             else _layout(layout, target, name, problems)
         )
-        if layout is None:
+        if control_system is not None:
+            from ._system import ControlSystem, _wiring_problems
+
+            if not isinstance(control_system, ControlSystem):
+                raise InvalidTypeError(
+                    f"Device control_system must be a ControlSystem, got {control_system!r}"
+                )
+            problems.extend(_wiring_problems(control_system, target))
+        if layout is None or problems:
             raise DeviceDefinitionError(problems=problems)
+        self.control_system = control_system
+        # The target before its calibration was applied, as ``as_dict`` writes it.
+        self._base_target = target
         self.target = target
         self.name = name
         self.source = source
@@ -391,8 +421,31 @@ class Device:
         known = f"its labels are {', '.join(labels)}" if labels else "its qudits have no labels"
         raise NotFoundError(f"device {self.name!r} has no qudit labelled {label!r}; {hint}{known}")
 
+    @property
+    def quantum_system(self) -> TargetDescription:
+        """The calibrated physics of the device (``target``)."""
+        return self.target
+
+    @property
+    def qudits(self) -> _Handles:
+        """The qudit handles, by the user's numbering (``qudit_handles``)."""
+        return self.qudit_handles
+
+    def as_dict(self) -> dict[str, Any]:
+        """The device as JSON-serializable data, which ``pulse.device()``
+        reads back: its format (``cudaq-pulse.system/1``), the version that
+        wrote it, its quantum system (a registered name, or every value
+        inline), layout and calibration, and its control system."""
+        from ._system import _device_data
+
+        return _device_data(self)
+
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, Device) and other.fingerprint == self.fingerprint
+        return (
+            isinstance(other, Device)
+            and other.fingerprint == self.fingerprint
+            and other.control_system == self.control_system
+        )
 
     def __hash__(self) -> int:
         return hash(self.fingerprint)
@@ -423,11 +476,15 @@ class Device:
 
 
 def _from_spec(
-    spec: str, source: str, layout: Sequence[int] | None = None, calibration: Any = None
+    spec: str,
+    source: str,
+    layout: Sequence[int] | None = None,
+    calibration: Any = None,
+    control_system: ControlSystem | None = None,
 ) -> Device:
     from .targets._registry import make_target
 
-    return _calibrated(make_target(spec), spec, source, layout, calibration)
+    return _calibrated(make_target(spec), spec, source, layout, calibration, control_system)
 
 
 def _calibrated(
@@ -436,11 +493,13 @@ def _calibrated(
     source: str,
     layout: Sequence[int] | None,
     calibration: Any,
+    control_system: ControlSystem | None = None,
     clock_ghz: float | None = None,
 ) -> Device:
     """The device of *target*, registered as *spec* (``None`` for a
     ``TargetDescription``), with *calibration* applied and *clock_ghz* (if
     given) its program clock."""
+    base = target
     if calibration is not None:
         target = calibration.apply(target)
     elif spec == "transmon_17q":
@@ -448,17 +507,21 @@ def _calibrated(
 
         calibration = shipped_calibration("transmon_17q")
     name = target.name if spec is None else spec
-    return Device(
+    made = Device(
         target,
         name=name,
         layout=layout,
         source=source,
         calibration=calibration,
+        control_system=control_system,
         clock_ghz=clock_ghz,
     )
+    made._spec = spec
+    made._base_target = base
+    return made
 
 
-def _target(spec: Any, problems: list[Problem]) -> TargetDescription | None:
+def _target(spec: Any, problems: list[Problem], key: str = "target") -> TargetDescription | None:
     from .targets._registry import available_targets, make_target
 
     if isinstance(spec, TargetDescription):
@@ -467,7 +530,7 @@ def _target(spec: Any, problems: list[Problem]) -> TargetDescription | None:
         problems.append(
             Problem(
                 "is missing",
-                path="target",
+                path=key,
                 fix="give a registered target name ("
                 + ", ".join(available_targets())
                 + ") or a TargetDescription",
@@ -479,7 +542,7 @@ def _target(spec: Any, problems: list[Problem]) -> TargetDescription | None:
             Problem(
                 f"must be a registered target name or a TargetDescription, "
                 f"got {type(spec).__name__}",
-                path="target",
+                path=key,
                 value=spec,
             )
         )
@@ -487,7 +550,7 @@ def _target(spec: Any, problems: list[Problem]) -> TargetDescription | None:
     try:
         return make_target(spec)
     except (UnknownTargetError, ValueError) as error:
-        problems.append(Problem(Exception.__str__(error), path="target", value=spec))
+        problems.append(Problem(Exception.__str__(error), path=key, value=spec))
         return None
 
 
@@ -571,11 +634,19 @@ def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:
             )
             return None
         return given
+    if isinstance(given, Mapping):
+        try:
+            return Calibration(given, name="inline", cooldown=cooldown)
+        except (KeyError, TypeError, ValueError) as error:
+            problems.append(
+                Problem(f"is not calibration data: {Exception.__str__(error)}", path="calibration")
+            )
+            return None
     if not isinstance(given, (str, os.PathLike)):
         problems.append(
             Problem(
-                "must be a shipped calibration name, the path of a calibration file or a "
-                f"Calibration, got {type(given).__name__}",
+                "must be a shipped calibration name, the path of a calibration file, "
+                f"calibration data or a Calibration, got {type(given).__name__}",
                 path="calibration",
                 value=given,
             )
@@ -628,8 +699,40 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
                 else "the keys are " + ", ".join(_CONFIG_KEYS),
             )
         )
-    spec = config.get("target")
-    target = _target(spec, problems)
+    from ._system import ControlSystem, _check_format, _Reader, _wiring_problems
+
+    problems.extend(_check_format(config))
+    key = "quantum_system" if "quantum_system" in config else "target"
+    if "quantum_system" in config and "target" in config:
+        problems.append(
+            Problem(
+                "is the former name of 'quantum_system', which the config also gives",
+                path="target",
+                fix="remove 'target'",
+            )
+        )
+    reader = _Reader(None if source == "config" else source)
+    spec = config.get(key)
+    if isinstance(spec, Mapping):
+        spec = reader.quantum_system(spec, key)
+        target = spec
+    else:
+        target = _target(spec, problems, key)
+    control = config.get("control_system")
+    if isinstance(control, Mapping):
+        control = reader.control_system(control, "control_system")
+    elif control is not None and not isinstance(control, ControlSystem):
+        problems.append(
+            Problem(
+                f"must be a ControlSystem or its data, got {type(control).__name__}",
+                path="control_system",
+                value=control,
+            )
+        )
+        control = None
+    problems.extend(reader.problems)
+    if control is not None and target is not None:
+        problems.extend(_wiring_problems(control, target))
     name = spec if isinstance(spec, str) else getattr(target, "name", "")
     layout = config.get("layout")
     if layout is not None:
@@ -647,7 +750,13 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
         return None
     try:
         return _calibrated(
-            target, spec if isinstance(spec, str) else None, source, layout, calibration, clock_ghz
+            target,
+            spec if isinstance(spec, str) else None,
+            source,
+            layout,
+            calibration,
+            control,
+            clock_ghz,
         )
     except (KeyError, ValueError) as error:
         problems.append(
@@ -701,7 +810,12 @@ def _located(problems: list[Problem], file: str, text: str) -> list[Problem]:
     positions = _json_positions(text)
     located = []
     for problem in problems:
-        line, column = positions.get(problem.path, (None, None))
+        # A path the file has no value at (a missing key) points at the
+        # nearest value that holds it.
+        path = problem.path
+        while path and path not in positions:
+            path = path[: max(path.rfind("."), path.rfind("["), 0)]
+        line, column = positions.get(path, (None, None))
         located.append(dataclasses.replace(problem, file=file, line=line, column=column))
     return located
 
@@ -717,20 +831,25 @@ def device(config: Mapping[str, Any] | str | os.PathLike[str] | None = None) -> 
     without one it raises ``NoTargetError``. A string that names no
     registered target is the path of a config file.
 
-    A config gives the target, by registered name or as a ``TargetDescription``,
-    and may give a layout, a calibration and a program clock::
+    A config gives the quantum system, by registered name or as a
+    ``TargetDescription``, and may give a layout, a calibration, the
+    control system and a program clock::
 
-        {"target": "transmon_17q", "layout": [4, 5, 6],
-         "calibration": "transmon_17q", "cooldown": "2022-main", "clock_ghz": 2.0}
+        {"quantum_system": "transmon_17q", "layout": [4, 5, 6],
+         "calibration": "transmon_17q", "cooldown": "2022-main",
+         "control_system": pulse.ControlSystem(controllers=[...]), "clock_ghz": 2.0}
 
     ``layout[i]`` is the carrier that qudit ``i`` names; by default every
     carrier of the target, in order. ``calibration`` is a ``Calibration``,
     the name of a shipped one or the path of a calibration file, and
     ``cooldown`` one of its cooldowns; the calibration's couplings replace
     the target's, and ``Device.calibration`` holds it. The ``transmon_17q``
-    target uses the shipped ``transmon_17q`` calibration by default. ``clock_ghz`` is
-    the program clock kernels count cycles of (``Device.clock_ghz``); by
-    default the target's.
+    target uses the shipped ``transmon_17q`` calibration by default.
+    ``control_system`` is a ``ControlSystem``, whose lines must be carriers
+    of the quantum system. ``clock_ghz`` is the program clock kernels count
+    cycles of (``Device.clock_ghz``); by default the quantum system's.
+    ``"target"`` is the former name of ``"quantum_system"``. A system file,
+    as ``Device.as_dict()`` writes it, gives each of these as data.
 
     A config with problems raises ``DeviceDefinitionError`` listing all of
     them, each with its path in the config and, for a file, its line and

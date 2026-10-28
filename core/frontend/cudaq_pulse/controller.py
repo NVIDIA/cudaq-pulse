@@ -53,10 +53,13 @@ exceptions. ``analyze`` does the same for one function on its own.
 from __future__ import annotations
 
 import math
+import os
+import sys
+import types
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from . import _controller_cost
 from ._controller_cost import OP_CLASSES, FunctionCost
@@ -68,6 +71,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from . import _clocks
+    from ._system import Controller, ControlSystem
     from .compiler import Lowered
 
 __all__ = [
@@ -119,12 +123,13 @@ _PLAYED = frozenset({"drive", "readout"})
 class ControllerLimitError(CompilationError):
     """A scheduled program exceeds a limit of the controller it is for."""
 
-    def __init__(self, violations: Sequence[str]) -> None:
+    def __init__(self, violations: Sequence[str], *, system: bool = False) -> None:
         self.violations = tuple(violations)
         shown = "\n  ".join(self.violations[:10])
         more = len(self.violations) - 10
         tail = f"\n  ... and {more} more" if more > 0 else ""
-        super().__init__(f"the program exceeds the controller's limits:\n  {shown}{tail}")
+        what = "does not fit the control system" if system else "exceeds the controller's limits"
+        super().__init__(f"the program {what}:\n  {shown}{tail}")
 
 
 @dataclass(frozen=True)
@@ -514,15 +519,17 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
     role = lowered._role
     plan: _ExportPlan | None = None if role is None else role.export_plan
     slots: list[int] | None = [] if role is not None and plan is None else None
-    limits = lowered.options.machine.controller
+    machine = lowered.options.machine
+    limits = machine.controller
+    system = machine._system
     clocks = (lowered._generic or lowered).clocks
     native = None if clocks is None else _native_clock(clocks)
     # In the controller's own cycles from here on.
     lines, events, off, problems = _walk(lowered, own=native, slots=slots)
-    if limits is not None:
-        violations = _violations(lowered, events, limits, lines, clocks, off, problems)
+    if limits is not None or system is not None:
+        violations = _all_violations(lowered, lines, events, limits, system, clocks, off, problems)
         if violations:
-            raise ControllerLimitError(violations)
+            raise ControllerLimitError(violations, system=system is not None)
     own = None
     if clocks is not None:
         from . import _clocks
@@ -922,9 +929,12 @@ def check(lowered: Lowered, limits: ControllerLimits | None = None) -> list[str]
     return _compile_check(lowered, limits)[0]
 
 
-def _compile_check(lowered: Lowered, limits: ControllerLimits) -> tuple[list[str], bool]:
+def _compile_check(
+    lowered: Lowered, limits: ControllerLimits | None, system: ControlSystem | None = None
+) -> tuple[list[str], bool]:
     """The limits *lowered* exceeds whatever its float values, and whether
-    that is exact: ``False`` when some values may exceed others."""
+    that is exact: ``False`` when some values may exceed others. With
+    *system*, of its controllers (*limits* is then its only one, or ``None``)."""
     machine = lowered.options.machine
     if limits is machine.controller:
         clocks = (lowered._generic or lowered).clocks
@@ -936,16 +946,20 @@ def _compile_check(lowered: Lowered, limits: ControllerLimits) -> tuple[list[str
         lowered, values=False, own=_native_clock(clocks), waveforms=False
     )
     slots = lowered._role is not None and lowered._role.slots > 0
+    if system is not None and slots and not system._plays_everything:
+        # Which controller plays a line depends on the qudits a call binds.
+        return [], False
     unresolved: list[str] | None = [] if lowered.parameters or slots else None
     natives = None
-    if slots and limits.tones_per_line is not None:
+    if slots and limits is not None and limits.tones_per_line is not None:
         with lowered._lock:
             natives = lowered._module.controller_native_tones()
-    found = _violations(
+    found = _all_violations(
         lowered,
+        lines,
         events,
         limits,
-        lines,
+        system,
         clocks,
         off,
         problems,
@@ -953,22 +967,46 @@ def _compile_check(lowered: Lowered, limits: ControllerLimits) -> tuple[list[str
         unresolved=unresolved,
         natives=natives,
     )
-    if slots and limits.acquirers:
+    if slots and limits is not None and limits.acquirers:
         assert unresolved is not None
         # Acquirers are given per carrier, which each call binds.
         unresolved.append("acquirers")
-    if limits is not machine.controller:
+    if limits is not None and limits is not machine.controller:
         found.extend(_sample_rate_violations(lowered, limits, clocks, events))
     return found, not unresolved
 
 
+def _all_violations(
+    lowered: Lowered,
+    lines: Sequence[Mapping[str, Any]],
+    events: Sequence[dict[str, Any]],
+    limits: ControllerLimits | None,
+    system: ControlSystem | None,
+    clocks: _clocks.ClockPlan | None,
+    off: Sequence[tuple[int, int, int]] = (),
+    run_time: Sequence[str] = (),
+    waveforms: bool = True,
+    unresolved: list[str] | None = None,
+    natives: Sequence[int] | None = None,
+) -> list[str]:
+    if system is not None:
+        return system._violations(
+            lowered, lines, events, clocks, off, run_time, waveforms, unresolved, natives
+        )
+    assert limits is not None
+    return _violations(
+        lowered, events, limits, lines, clocks, off, run_time, waveforms, unresolved, natives
+    )
+
+
 def _call_violations(lowered: Lowered) -> list[str]:
     """The limits one call's values exceed, as its export checks them."""
-    limits = lowered.options.machine.controller
-    assert limits is not None
+    machine = lowered.options.machine
     clocks = (lowered._generic or lowered).clocks
     lines, events, off, problems = _walk(lowered, own=_native_clock(clocks))
-    return _violations(lowered, events, limits, lines, clocks, off, problems)
+    return _all_violations(
+        lowered, lines, events, machine.controller, machine._system, clocks, off, problems
+    )
 
 
 def _sample_rate_violations(
@@ -1323,3 +1361,56 @@ def format_report(report: ResourceReport) -> str:
         lines.append("Exceeds:")
         lines.extend(f"  {v}" for v in report.violations)
     return "\n".join(lines)
+
+
+_Limits = ControllerLimits
+_Report = ResourceReport
+_Resources = FunctionResources
+
+
+# ── pulse.controller(...) ────────────────────────────────────────────────────
+
+
+class ControllerModule(Protocol):
+    """What type checkers take ``pulse.controller`` to be: the loader of
+    controller descriptions, with this module's names as attributes.
+
+    ``pulse.controller("vendor.model", drive_lines=..., readout_lines=...)``
+    is the ``Controller`` an installed description (or a TOML file, by path)
+    states, with the installation's wiring; each file is parsed once. A
+    module can't be declared callable, so ``cudaq_pulse`` declares its
+    ``controller`` attribute with this type for checkers only; at run time
+    it is this module.
+    """
+
+    FORMAT: str
+    OP_CLASSES: tuple[str, ...]
+    ControllerLimitError: type[ControllerLimitError]
+    ControllerLimits: type[ControllerLimits]
+    FunctionCost: type[FunctionCost]
+    FunctionResources: type[FunctionResources]
+    LinkUsage: type[LinkUsage]
+    ResourceReport: type[ResourceReport]
+
+    def __call__(self, description: str | os.PathLike[str], /, **wiring: Any) -> Controller: ...
+    def analyze(self, function: Any, limits: _Limits | None = None) -> _Resources: ...
+    def check(self, lowered: Lowered, limits: _Limits | None = None) -> list[str]: ...
+    def export(self, lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, Any]: ...
+    def format_report(self, report: _Report) -> str: ...
+    def resources(self, lowered: Lowered, limits: _Limits | None = None) -> _Report: ...
+    def sample_waveform(
+        self, node: Mapping[str, Any], duration_cycles: int, samples_per_cycles: int = 1
+    ) -> np.ndarray: ...
+    def shape_key(self, node: Mapping[str, Any] | None) -> tuple[Any, ...] | None: ...
+
+
+class _ControllerModule(types.ModuleType):
+    """This module, callable as ``pulse.controller(description, **wiring)``."""
+
+    def __call__(self, description: str | os.PathLike[str], /, **wiring: Any) -> Controller:
+        from ._system import load_controller
+
+        return load_controller(description, **wiring)
+
+
+sys.modules[__name__].__class__ = _ControllerModule

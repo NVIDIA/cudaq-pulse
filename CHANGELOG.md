@@ -52,8 +52,35 @@ behavior may change in any 0.x release.
   controller exports carry a `program_id`, shared by every call of one
   compile, and `symbols`: each symbol's value in the call, and per event the
   symbols its qudit, frequency, phase and waveform depend on.
+- **Control systems.** A device can hold the controllers that play it:
+  `pulse.Controller` (a controller's limits, the drive and readout lines it
+  plays, its peer latency, clock skew and alignment tolerance, its
+  `supports`, `backend`, `model` and `version`) and `pulse.ControlSystem`
+  (its controllers, its links by name, each `Link` with the `controllers`
+  it reaches). `pulse.device({"quantum_system": ..., "control_system":
+  ...})` checks the wiring against the quantum system and raises one
+  `DeviceDefinitionError` listing every problem; `"target"` still names the
+  quantum system. `compile(kernel, device=qpu)` checks every program against
+  the system: a line on no controller, each controller's own limits, a
+  capability (`pulse.Capability`) a controller lacks, and a call over a link
+  that does not reach its controllers fail to compile. `rcp` keeps a branch
+  on a readout the `feedback_latency_cycles` of the controllers that read out.
+- **Controller descriptions.** `pulse.controller("vendor.model",
+  drive_lines=..., readout_lines=...)` loads a controller from a TOML
+  description installed with cudaq-pulse (or one given by path), parsed
+  once, with the installation's wiring. `reference.controller` ships.
+- **System files.** `Device.as_dict()` writes a QPU as one mapping, format
+  `cudaq-pulse.system/1`, which `pulse.device()` reads back from a mapping
+  or a JSON file, reporting each problem with its line. A file written from
+  another version of an installed description is noticed once
+  (`UpgradeNotice`). `python -m cudaq_pulse.doctor --system FILE` checks a
+  system file and whether its controllers' backends are installed.
 
 ### Changed
+
+- **The simulator says which systems it has no model for.** Simulating a
+  system that is not a transmon raises `UnsupportedError` (a
+  `NotImplementedError`): export and hardware runs work.
 
 - **Qudit parameters are runtime by default.** A kernel no longer compiles
   again for each qudit it is called on: `kernel.runtime_parameters` lists

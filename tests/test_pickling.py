@@ -562,7 +562,7 @@ def test_the_source_stamp_hashes_the_sources_as_they_are():
     root = staged.resolve().parent
     found = sorted(
         p.relative_to(root).as_posix()
-        for pattern in ("*.py", "*.pyi", "*.json")
+        for pattern in ("*.py", "*.pyi", "*.json", "*.toml")
         for p in root.rglob(pattern)
     )
     digests = "".join(

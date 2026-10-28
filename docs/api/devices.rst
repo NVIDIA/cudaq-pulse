@@ -61,6 +61,31 @@ One nanosecond, microsecond, millisecond and second:
 Errors are on :doc:`errors`; the targets a device is built from are on
 :doc:`targets`.
 
+Control systems
+---------------
+
+A device's ``control_system`` is the controllers that play it, their wiring
+and the links beside them. ``pulse.controller("vendor.model", drive_lines=...,
+readout_lines=...)`` loads a ``Controller`` from an installed description (or
+a TOML file, by path) with the installation's wiring; each file is parsed
+once. ``Device.as_dict()`` writes the whole QPU as one system file, format
+``cudaq-pulse.system/1``, which ``pulse.device()`` reads back, raising a
+``DeviceDefinitionError`` that lists every problem with its line.
+``python -m cudaq_pulse.doctor --system FILE`` checks a system file.
+
+.. autoclass:: cudaq_pulse.Controller
+   :members: as_dict, supports_capability
+
+.. autoclass:: cudaq_pulse.ControlSystem
+   :members: as_dict
+
+.. autoclass:: cudaq_pulse.Capability
+   :members:
+   :undoc-members:
+
+.. autoclass:: cudaq_pulse.Link
+   :no-index:
+
 Calibrations and the transmon circuit model
 -------------------------------------------
 
