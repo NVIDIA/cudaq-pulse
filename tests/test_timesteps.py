@@ -10,13 +10,15 @@
 
 from __future__ import annotations
 
+import dataclasses
+import math
 from fractions import Fraction
 
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import _clocks
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import ControllerLimitError, ControllerLimits
+from cudaq_pulse.controller import ControllerLimitError, ControllerLimits, check
 
 from tests._handles import Q
 
@@ -129,3 +131,67 @@ def test_a_line_delay_moves_a_line_by_whole_timesteps():
 def test_cycles_per_timestep_is_a_positive_int(bad):
     with pytest.raises(ValueError, match="cycles_per_timestep"):
         ControllerLimits(cycles_per_timestep=bad)
+
+
+# ── Sample rates ─────────────────────────────────────────────────────────────
+
+# 2.4 GHz samples on a 1 GHz controller of the 2 GHz program clock: 12
+# samples every 5 of its cycles, 10 program cycles.
+AWG = ControllerLimits(clock_ghz=1.0, sample_rate_ghz=2.4)
+
+
+def ramp(t):
+    return t / 100
+
+
+@pulse.kernel
+def shaped(q):
+    d, t = get_drive_line(q)
+    drive(d, custom(pulse.round_duration(d, 18), ramp), t)
+
+
+def test_a_fractional_sample_rate_puts_lines_on_whole_samples():
+    assert _clocks.plan(AWG, 2.0).controllers[0].grid == 10
+    assert _clocks.sample_rate(AWG, 2.0) == (6, 5)
+    with pytest.raises(ControllerLimitError) as caught:
+        pulse.compile(short, machine=MachineModel(controller=AWG)).lower(Q[3])
+    (message,) = caught.value.violations
+    assert message.startswith(
+        "line d3 moves in timesteps of 10 cycles; 22 cycles isn't a whole number of timesteps"
+    )
+    assert "pulse.round_duration(line, 22) gives 30, or 20 rounding down" in message
+
+
+def test_custom_is_sampled_at_a_fractional_rate():
+    lowered = pulse.compile(shaped, machine=MachineModel(controller=AWG)).lower(Q[0])
+    (drive,) = [e for e in lowered.export_controller()["events"] if e["kind"] == "drive"]
+    # 20 program cycles are 10 of the controller's, 24 samples.
+    assert drive["duration_cycles"] == 10
+    assert len(drive["waveform"]["samples"]) == 24
+
+
+def test_waveform_memory_counts_samples_at_the_rate():
+    lowered = pulse.compile(shaped, machine=MachineModel(controller=AWG)).lower(Q[0])
+    limits = dataclasses.replace(AWG, waveform_samples=20)
+    (found,) = check(lowered, limits)
+    assert "its waveforms take 24 samples" in found
+
+
+def test_a_whole_sample_rate_on_the_clock_changes_nothing():
+    assert _clocks.plan(ControllerLimits(sample_rate_ghz=4.0), 2.0) is None
+    plain = pulse.compile(stepped).lower(Q[0], Q[1])
+    two = pulse.compile(
+        stepped, machine=MachineModel(controller=ControllerLimits(sample_rate_ghz=4.0))
+    )
+    assert two.lower(Q[0], Q[1]).mlir() == plain.mlir()
+
+
+@pytest.mark.parametrize("bad", [0, -1.0, True, "2.4", float("nan")])
+def test_sample_rate_ghz_is_a_positive_number(bad):
+    with pytest.raises(ValueError, match="sample_rate_ghz"):
+        ControllerLimits(sample_rate_ghz=bad)
+
+
+def test_a_sample_rate_without_a_whole_cycle_ratio_is_an_error():
+    with pytest.raises(ValueError, match="sample rate has no whole-cycle ratio"):
+        _clocks.plan(ControllerLimits(sample_rate_ghz=math.pi), 2.0)

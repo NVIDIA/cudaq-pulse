@@ -219,19 +219,35 @@ def plan(
     """The clocks of a program for *limits*' controller, or ``None`` when every
     controller runs at the program clock and no reference clock is given."""
     if limits is None:
-        own, steps = None, 1
+        own, steps, samples = None, 1, None
     else:
-        own, steps = limits.clock_ghz, limits.cycles_per_timestep
-    if reference_clock_ghz is None and steps == 1 and (own is None or own == program_ghz):
+        own, steps, samples = limits.clock_ghz, limits.cycles_per_timestep, limits.sample_rate_ghz
+    if (
+        reference_clock_ghz is None
+        and steps == 1
+        and (own is None or own == program_ghz)
+        and (samples is None or _sample_step(samples, program_ghz) == 1)
+    ):
         return None
-    key = (own, program_ghz, reference_clock_ghz, steps)
+    key = (own, program_ghz, reference_clock_ghz, steps, samples)
     found = _PLANS.get(key)
     if found is None:
-        found = _PLANS[key] = _plan(own, program_ghz, reference_clock_ghz, steps)
+        found = _PLANS[key] = _plan(own, program_ghz, reference_clock_ghz, steps, samples)
     return found
 
 
-_PLANS: dict[tuple[float | None, float, float | None, int], ClockPlan] = {}
+_PLANS: dict[tuple[float | None, float, float | None, int, float | None], ClockPlan] = {}
+
+
+def _sample_step(sample_rate_ghz: float, program_ghz: float) -> int:
+    """The program cycles of the shortest whole number of samples."""
+    try:
+        return made_for(sample_rate_ghz, program_ghz)[1]
+    except ValueError:
+        raise _definition_error(
+            f"a controller's {_ghz(sample_rate_ghz)} sample rate has no whole-cycle ratio "
+            f"to the {_ghz(program_ghz)} program clock"
+        ) from None
 
 
 def timestep(ratio: Fraction, cycles_per_timestep: int) -> int:
@@ -242,21 +258,33 @@ def timestep(ratio: Fraction, cycles_per_timestep: int) -> int:
     return own // math.gcd(ratio.numerator, own)
 
 
-def _plan(own: float | None, program_ghz: float, reference: float | None, steps: int) -> ClockPlan:
+def _plan(
+    own: float | None,
+    program_ghz: float,
+    reference: float | None,
+    steps: int,
+    samples: float | None,
+) -> ClockPlan:
     clock = program_ghz if own is None else own
     if reference is not None:
         _check_reference(reference, {"controller": clock})
     ratio = clock_ratio(clock, program_ghz)
-    controller = ControllerClock("controller", clock, ratio, timestep(ratio, steps))
+    grid = timestep(ratio, steps)
+    if samples is not None:
+        grid = math.lcm(grid, _sample_step(samples, program_ghz))
+    controller = ControllerClock("controller", clock, ratio, grid)
     return ClockPlan(program_ghz, (controller,), reference)
 
 
-def sample_rate(limits: ControllerLimits, plan: ClockPlan | None) -> tuple[int, int] | None:
+def sample_rate(limits: ControllerLimits, program_ghz: float) -> tuple[int, int] | None:
     """The samples a line of *limits*' controller plays per program cycle, as
     ``(n, d)``: ``n`` every ``d`` cycles; ``None`` when it is one."""
-    rate = Fraction(limits.samples_per_cycles or 1)
-    if plan is not None:
-        rate *= plan.controllers[0].ratio
+    if limits.sample_rate_ghz is not None:
+        n, d = made_for(limits.sample_rate_ghz, program_ghz)
+        return None if n == d else (n, d)
+    if limits.clock_ghz is None:
+        return None
+    rate = clock_ratio(limits.clock_ghz, program_ghz)
     return None if rate == 1 else (rate.numerator, rate.denominator)
 
 

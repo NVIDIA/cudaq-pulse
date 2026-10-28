@@ -1015,7 +1015,7 @@ def build(
         builder.line_grid = clocks.grid_of
         builder.wait_grid = clocks.lcm
     if machine.controller is not None:
-        builder.sample_rate = _clocks.sample_rate(machine.controller, clocks)
+        builder.sample_rate = _clocks.sample_rate(machine.controller, target.clock_ghz)
     builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
     needed = tuple(sorted(builder.structural & set(parameters)))
     if needed:

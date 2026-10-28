@@ -503,7 +503,7 @@ def test_custom_samples_the_envelope_at_the_lines_rate():
     assert drive["duration_cycles"] == 4
     assert drive["waveform"]["samples"] == pytest.approx([ramp(t) for t in (1, 3, 5, 7)])
     # ...and two per cycle on a controller that plays two.
-    machine = MachineModel(controller=ControllerLimits(samples_per_cycles=2))
+    machine = MachineModel(controller=ControllerLimits(sample_rate_ghz=4.0))
     drive = _played(pulse.compile(shaped, machine=machine).lower(Q[0]))
     assert drive["duration_cycles"] == 8
     expected = [ramp((k + 0.5) / 2) for k in range(16)]
@@ -563,7 +563,7 @@ def test_sample_arrays_play_only_at_the_rate_they_were_made_for():
         "that play 1 GHz (one sample every 2 clock cycles)"
     )
     assert "pass sample_rate_ghz=1" in message and "custom(duration, f)" in message
-    machine = MachineModel(controller=ControllerLimits(samples_per_cycles=2))
+    machine = MachineModel(controller=ControllerLimits(sample_rate_ghz=4.0))
     with pytest.raises(pulse.CompilationError, match="lines that play 4 GHz"):
         pulse.compile(at_program_rate, machine=machine).lower(Q[0])
     # Made for the line's rate, they last their samples at it.

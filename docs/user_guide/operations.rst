@@ -155,7 +155,7 @@ length of one sample record; play a longer envelope as consecutive drives.
 
 A ``custom_samples`` array is made for one rate and plays only at that
 rate: one sample per clock cycle, or ``sample_rate_ghz``. On lines whose
-controller plays another rate (its clock times its ``samples_per_cycles``)
+controller plays another rate (its ``sample_rate_ghz``)
 it is a compile error, never a pulse that lasts longer or shorter than the
 samples were made for; resample the array for the line and pass its rate,
 or use ``custom``:

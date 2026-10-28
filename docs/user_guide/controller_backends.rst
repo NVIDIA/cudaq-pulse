@@ -73,7 +73,7 @@ Drives and readouts also have:
     ``neg``, ``add``, ``sub`` and ``mul`` nodes over ``of``, and
     ``samples`` for ``custom_samples`` (which ``custom()`` envelopes become
     when the kernel is traced), at the line's own rate (its controller's
-    clock times its ``samples_per_cycles``); and its overall complex amplitude,
+    ``sample_rate_ghz``); and its overall complex amplitude,
     ``{"re": ..., "im": ...}``. Times in parameters are in cycles.
 ``samples``
     With ``export_controller(sample_rate_ghz=...)``, a whole multiple of the
@@ -132,17 +132,22 @@ A kernel counts time in cycles of the device's program clock,
 ``Device.clock_ghz`` (a device config's ``"clock_ghz"``, else the
 target's); a duration written as a time converts to them when the kernel
 compiles (see :ref:`durations`). A controller may run its own clock,
-``ControllerLimits.clock_ghz``, at a whole-cycle ratio of it, and may start
+``ControllerLimits.clock_ghz``, at a whole-cycle ratio of it; may start
 and time operations only every ``ControllerLimits.cycles_per_timestep`` of
-its own cycles (default 1).
+its own cycles (default 1); and may play samples at
+``ControllerLimits.sample_rate_ghz`` (default one per cycle of its clock),
+at any ratio of whole numbers to its clock.
 
 .. _timestep:
 
 A line's **timestep** is the shortest time, in program cycles, at whose
 multiples its controller can start and end operations: the fewest whole
-program cycles that are a whole number of the controller's steps. On the
-program clock it is ``cycles_per_timestep``; at ``a / b`` of the program
-clock (in lowest terms), with one cycle per step, it is ``b``.
+program cycles that are a whole number of the controller's steps and of
+its samples. On the program clock with one sample per cycle it is
+``cycles_per_timestep``; at ``a / b`` of the program clock (in lowest
+terms), with one cycle per step, it is ``b``; at 2.4 GHz samples on a
+1 GHz clock it is 5 cycles, 12 samples. A length off the samples is an
+error like any other off its timesteps; it is never rounded.
 
 The scheduler places every operation on whole timesteps of its line and
 meets a sync on a multiple of every synced line's timestep; a length that

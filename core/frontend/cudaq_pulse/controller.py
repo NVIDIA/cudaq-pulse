@@ -140,9 +140,15 @@ class ControllerLimits:
     exactly ``issue_cycles`` apart, or at least ``issue_cycles + min_wait_cycles``
     apart, because the controller issues one instruction per ``issue_cycles``
     and idles no less than ``min_wait_cycles``.
-    ``samples_per_cycles`` and ``waveform_samples``: the waveform memory of a
-    line holds this many samples, at this many samples per cycle; waveforms
-    of one shape at different amplitudes share it (``shape_key``).
+    ``sample_rate_ghz``: the rate its lines play samples at (``None``: one
+    per cycle of its clock). Its ratio to the clock may be a fraction, and
+    every operation on its lines must start and last a whole number of
+    samples, which the timestep includes: at 2.4 GHz on a 1 GHz clock, whole
+    multiples of 5 cycles. A length off them is a compile error, never
+    rounded.
+    ``waveform_samples``: the waveform memory of a line holds this many
+    samples, at ``sample_rate_ghz``; waveforms of one shape at different
+    amplitudes share it (``shape_key``).
     ``tones_per_line``: distinct tone frequencies one line plays.
     ``acquirers`` and ``acquirer_hold_cycles``: the acquirer reading each
     qudit; readouts on one acquirer are serialized, each holding it for its
@@ -181,7 +187,7 @@ class ControllerLimits:
     cycles_per_timestep: int = 1
     issue_cycles: int = 1
     min_wait_cycles: int = 0
-    samples_per_cycles: int | None = None
+    sample_rate_ghz: float | None = None
     waveform_samples: int | None = None
     tones_per_line: int | None = None
     acquirers: Mapping[int, int] = field(default_factory=dict)
@@ -216,8 +222,17 @@ class ControllerLimits:
         for name in ("max_fine_delay_ns", "alignment_tolerance_cycles"):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) < 0:
                 raise InvalidValueError(f"ControllerLimits.{name} must be a finite number >= 0")
+        rate = self.sample_rate_ghz
+        if rate is not None and (
+            isinstance(rate, bool)
+            or not isinstance(rate, (int, float))
+            or not math.isfinite(rate)
+            or not rate > 0
+        ):
+            raise InvalidValueError(
+                f"ControllerLimits.sample_rate_ghz must be a positive number or None, got {rate!r}"
+            )
         for name in (
-            "samples_per_cycles",
             "waveform_samples",
             "tones_per_line",
             "max_events",
@@ -308,11 +323,11 @@ def shape_key(node: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
 
 
 def sample_waveform(
-    node: Mapping[str, Any], duration_cycles: int, samples_per_cycles: int = 1
+    node: Mapping[str, Any], duration_cycles: int, samples_per_cycle: int = 1
 ) -> np.ndarray:
-    """The complex envelope of a waveform, ``samples_per_cycles`` per cycle.
+    """The complex envelope of a waveform, ``samples_per_cycle`` per cycle.
 
-    Sample ``k`` is the envelope at ``k / samples_per_cycles`` cycles from the
+    Sample ``k`` is the envelope at ``k / samples_per_cycle`` cycles from the
     start, with the definitions of the waveform ops (times in cycles), the
     same the simulator plays. Raises ``ValueError`` for a waveform the
     export cannot evaluate: a ``pulse.custom`` op of hand-written IR, whose
@@ -320,8 +335,8 @@ def sample_waveform(
     """
     import numpy as np
 
-    count = int(duration_cycles) * int(samples_per_cycles)
-    t = np.arange(count, dtype=float) / samples_per_cycles
+    count = int(duration_cycles) * int(samples_per_cycle)
+    t = np.arange(count, dtype=float) / samples_per_cycle
 
     def evaluate(node: Mapping[str, Any]) -> Any:
         shape = node["shape"]
@@ -548,6 +563,7 @@ def _violations(
     for event in timed:
         by_line.setdefault(event["line"], []).append(event)
     issue, gap = limits.issue_cycles, limits.issue_cycles + limits.min_wait_cycles
+    num, den = _samples_per_own_cycle(limits, lowered.target.clock_ghz)
     for line, items in sorted(by_line.items()):
         for previous, event in _pairs(items):
             distance = event["start_cycles"] - previous["start_cycles"]
@@ -566,13 +582,12 @@ def _violations(
                     f"{limits.tones_per_line} per line"
                 )
         if limits.waveform_samples is not None:
-            per_cycles = limits.samples_per_cycles or 1
             shapes: dict[Any, int] = {}
             for e in items:
                 key = shape_key(e.get("waveform"))
                 shapes[
                     (key, e["duration_cycles"]) if key is not None else ("event", e["index"])
-                ] = e["duration_cycles"] * per_cycles
+                ] = -(-e["duration_cycles"] * num // den)
             used = sum(shapes.values())
             if used > limits.waveform_samples:
                 found.append(
@@ -626,6 +641,13 @@ def _violations(
     return found
 
 
+def _samples_per_own_cycle(limits: ControllerLimits, program_ghz: float) -> tuple[int, int]:
+    """The controller's samples per cycle of its clock, as (num, den)."""
+    if limits.sample_rate_ghz is None:
+        return 1, 1
+    return _clocks.made_for(limits.sample_rate_ghz, limits.clock_ghz or program_ghz)
+
+
 def check(lowered: Lowered, limits: ControllerLimits | None = None) -> list[str]:
     """The limits *lowered* exceeds, of *limits* or else its machine model's."""
     limits = limits if limits is not None else lowered.options.machine.controller
@@ -655,12 +677,12 @@ def _sample_rate_violations(
     for."""
     machine = lowered.options.machine
     made = None
+    program = lowered.target.clock_ghz
     if machine.controller is not None:
-        made = _clocks.sample_rate(machine.controller, (lowered.generic or lowered).clocks)
-    plays = _clocks.sample_rate(limits, clocks)
+        made = _clocks.sample_rate(machine.controller, program)
+    plays = _clocks.sample_rate(limits, program)
     if made == plays:
         return []
-    program = lowered.target.clock_ghz
     made_ghz = program if made is None else program * made[0] / made[1]
     plays_ghz = program if plays is None else program * plays[0] / plays[1]
     return [

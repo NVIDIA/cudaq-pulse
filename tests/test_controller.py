@@ -331,7 +331,7 @@ def test_limits_report_clock_tones_memory_and_size():
     assert check(lowered, ControllerLimits(tones_per_line=1)) == []
     # Line 0 plays two shapes of 16 cycles, the readout line one of 100,
     # line 2 two of 20.
-    found = check(lowered, ControllerLimits(samples_per_cycles=2, waveform_samples=64))
+    found = check(lowered, ControllerLimits(sample_rate_ghz=4.0, waveform_samples=64))
     assert [f.split(":")[0] for f in found] == ["line 1", "line 2"]
     found = check(lowered, ControllerLimits(max_events=4))
     assert "5 drives and readouts" in found[0] and "at most 4" in found[0]
