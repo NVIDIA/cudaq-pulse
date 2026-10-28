@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import dis
 import math
 import sys
 import typing
@@ -129,13 +128,16 @@ def test_unknown_opcode_raises_when_executed(monkeypatch):
     def f():
         return 1
 
-    real = dis.get_instructions
+    real = bc._instructions
 
     def renamed(code):
-        for ins in real(code):
-            yield ins._replace(opname="FROBNICATE") if ins.argval == 1 else ins
+        out = real(code)
+        for ins in out:
+            if ins.argval == 1:
+                ins.opname = "FROBNICATE"
+        return out
 
-    monkeypatch.setattr(bc.dis, "get_instructions", renamed)
+    monkeypatch.setattr(bc, "_instructions", renamed)
     prog = bc._decode(f.__code__)
     (message,) = [arg for op, arg in prog.instrs if op == bc.UNSUPPORTED]
     assert "(bytecode FROBNICATE" in message and bc.ISSUES_URL in message
