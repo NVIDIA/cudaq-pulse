@@ -127,10 +127,15 @@ behavior may change in any 0.x release.
   support, such as a `match` class pattern or an assignment to a global,
   is named in the error, with what to write instead, rather than reported
   as an unsupported bytecode instruction. A `float` argument that tracing
-  makes static, because `abs`, `min`, `math.*`, a comparison or a waveform
-  duration needs its value, warns once with a `RuntimeWarning` naming the
-  argument and the operation, since each new value then compiles the kernel
-  again.
+  makes static, because `abs`, `min`, `math.*`, a comparison, a `range`
+  bound or a waveform duration needs its value, warns once per kernel and
+  argument, since each new value then compiles the kernel again. The
+  warning, a `UserWarning` that is also a `RuntimeWarning`, names the
+  argument, the operation and the kernel line (and the helper's line when
+  the value is needed in a helper), and suggests passing a host-computed
+  value, annotating the argument as `int`, or giving it a fixed value.
+  Compiles of one kernel that trace at once warn once between them, and a
+  cached call checks nothing new.
 - **Operations.** The kernel language lives in `cudaq_pulse.ops` and is
   used by bare name inside kernels. Drive and readout channels per qudit; `drive`, `readout`,
   `wait` and `sync`; phase and frequency control (`shift_phase` follows the

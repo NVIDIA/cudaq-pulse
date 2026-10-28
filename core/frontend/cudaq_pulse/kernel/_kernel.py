@@ -485,41 +485,63 @@ class Kernel[**P]:
                 if not promote:
                     raise
                 operation = e.operation or "an operation that needs its value"
-            _warn_static(self.__name__, [names[i] for i in sorted(promote)], operation)
-            self._promote(promote)
+                where = _traced_line(e)
+            promoted = self._promote(promote)
+            if promoted:
+                _warn_static(self.__name__, [names[i] for i in promoted], operation, where)
         returns = _return_spec(builder.returned, builder.readouts, self.__name__)
         guard = build_guard(fn, impure=builder.impure)
         pins = tuple(values[i] for i in static)
         return _Entry(lowered, guard, returns, pins, runtime)
 
-    def _promote(self, indices: set[int]) -> None:
-        """Make float parameters static: the program needs their values."""
+    def _promote(self, indices: set[int]) -> list[int]:
+        """Make float parameters static: the program needs their values.
+        Returns those of *indices* that were not static yet, so that threads
+        tracing at once report each parameter once."""
         with self._promote_lock:
             static, runtime = self._split
+            promoted = [i for i in runtime if i in indices]
             self._split = (
                 tuple(sorted({*static, *indices})),
                 tuple(i for i in runtime if i not in indices),
             )
+        return promoted
 
 
 _PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _warn_static(kernel: str, params: list[str], operation: str) -> None:
+def _traced_line(e: BaseException) -> str:
+    """`` at line N`` for the kernel line where tracing raised *e*, with the
+    helper's line when the value was needed inside a helper."""
+    source = getattr(e, "pulse_source", None)
+    if source is None:
+        return ""
+    frames = [source, *getattr(e, "pulse_callers", ())]
+    prog, index = frames[-1]
+    where = f" at line {prog.location(index)[1]}"
+    if len(frames) > 1:
+        prog, index = frames[0]
+        where += f" (in {prog.code.co_name}(), line {prog.location(index)[1]})"
+    return where
+
+
+def _warn_static(kernel: str, params: list[str], operation: str, where: str = "") -> None:
     """Warn that tracing made the float parameters *params* static. Each is
     made static once per kernel, so this warns once per parameter."""
     from .._errors import _SpecializationWarning
 
     quoted = ", ".join(repr(p) for p in params)
     one = len(params) == 1
+    it = "it" if one else "them"
     warnings.warn(
         f"pulse kernel {kernel}(): float argument{'' if one else 's'} {quoted} "
-        f"{'is' if one else 'are'} used in {operation}, which needs "
+        f"{'is' if one else 'are'} used in {operation}{where}, which needs "
         f"{'its value' if one else 'their values'} while tracing, so the kernel is "
         f"compiled again for every new value of {quoted}. To keep "
         f"{'it a runtime parameter' if one else 'them runtime parameters'}, compute "
-        "that value on the host and pass it in, or annotate the parameter as int to "
-        "make the specialization explicit.",
+        f"that value on the host and pass it in; otherwise annotate {it} as int, or "
+        f"give {it} a fixed value, to make the specialization explicit.",
         _SpecializationWarning,
         skip_file_prefixes=(_PACKAGE_DIR,),
     )

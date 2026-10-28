@@ -209,6 +209,10 @@ class PackedIRBuilder:
 
     # Loops and measurement-conditioned branches become region records.
     supports_regions = True
+    # Of the float arguments that reach an integer, those named here record
+    # the instructions being traced then, innermost first, in structural_at.
+    locate_structural: frozenset[str] = frozenset()
+    structural_at: dict[str, list[tuple[Any, int]]]
     # Whether the trace emitted a select: lowering then chooses per target
     # how each op that reads one runs.
     selects = False
@@ -955,7 +959,16 @@ class PackedIRBuilder:
                 )
             )
         ):
-            self.structural.update(parameter_names(value))
+            names = parameter_names(value)
+            located = self.locate_structural
+            if located and not located.isdisjoint(names) and not self.structural.issuperset(names):
+                from ._emitter import tracing_frames
+
+                frames = tracing_frames()
+                at = self.__dict__.setdefault("structural_at", {})
+                for name in names:
+                    at.setdefault(name, frames)
+            self.structural.update(names)
 
         if isinstance(value, Parameter):
             base = self._get_parameter_base_vid(value, expected_dtype)

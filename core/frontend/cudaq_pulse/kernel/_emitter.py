@@ -36,6 +36,7 @@ import linecache
 import math
 import numbers
 import operator
+import sys
 import types
 from collections.abc import Callable, Iterator, Sequence
 from typing import Any, NoReturn
@@ -709,6 +710,21 @@ def _note_source(e: BaseException, prog: bc.DecodedCode, index: int) -> None:
                 callers.append((prog, index))
     except AttributeError:
         pass
+
+
+def tracing_frames() -> list[tuple[bc.DecodedCode, int]]:
+    """The instructions being traced, innermost first, as ``pulse_source``
+    and ``pulse_callers`` would name them if tracing raised here."""
+    loop = PulseIREmitter._loop.__code__
+    frames: list[tuple[bc.DecodedCode, int]] = []
+    frame: types.FrameType | None = sys._getframe(1)
+    while frame is not None:
+        if frame.f_code is loop:
+            prog = frame.f_locals["prog"]
+            if not frames or frames[-1][0] is not prog:
+                frames.append((prog, frame.f_locals["pc"] - 1))
+        frame = frame.f_back
+    return frames
 
 
 def add_source_note(e: BaseException) -> None:

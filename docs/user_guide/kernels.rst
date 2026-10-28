@@ -240,10 +240,13 @@ A ``float`` argument stays a runtime parameter, compiled once for every
 value, through ``+``, ``-``, ``*``, ``/`` and negation, including as the length
 of a ``wait`` (see :ref:`wait-lengths`). Any other use that needs its value
 while tracing, such as ``abs``, ``min``, ``math.sin``, ``//``, a comparison,
-or a waveform duration, makes it static, so each new value compiles the
-kernel again. The first such use warns once with a ``RuntimeWarning`` that
-names the argument and the operation; it is a ``cudaq_pulse.PulseWarning``,
-so ``warnings.filterwarnings("error", category=cudaq_pulse.PulseWarning)``
+a ``range`` bound or a waveform duration, makes it static, so each new value
+compiles the kernel again. The first such use warns once per kernel and
+argument with a ``cudaq_pulse.PulseWarning`` (also a ``RuntimeWarning``)
+that names the argument, the operation and the kernel line, and suggests
+computing the value on the host, annotating the argument as ``int``, or
+giving it a fixed value;
+``warnings.filterwarnings("error", category=cudaq_pulse.PulseWarning)``
 makes it an error.
 
 .. _wait-lengths:

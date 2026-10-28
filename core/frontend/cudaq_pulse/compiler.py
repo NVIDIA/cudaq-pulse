@@ -910,14 +910,20 @@ def build(
     )
     builder.unroll_threshold = options.unroll_threshold
     builder.link_id = options.machine.link_id
+    builder.locate_structural = frozenset(parameters)
     builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
     needed = tuple(sorted(builder.structural & set(parameters)))
     if needed:
-        raise SymbolicValueError(
+        error = SymbolicValueError(
             f"{name}(): {', '.join(needed)} must be known while the kernel compiles",
             needed,
             "a value that must be an integer, such as a waveform duration",
         )
+        frames = getattr(builder, "structural_at", {}).get(needed[0])
+        if frames:
+            error.pulse_source = frames[0]  # type: ignore[attr-defined]
+            error.pulse_callers = frames[1:]  # type: ignore[attr-defined]
+        raise error
     check_root_schedule(options.schedule, builder)
     qudits = builder.qubits
     missing = [q for q in qudits if q not in target.frequencies]
