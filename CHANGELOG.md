@@ -330,4 +330,17 @@ behavior may change in any 0.x release.
   (compiler only). The wheels link their own MLIR, so they need neither
   CUDA-Q nor an LLVM installation.
 
+### Fixed
+
+- A tone that an arm of a measurement-conditioned `if` changed with
+  `shift_phase`, `set_phase`, `shift_frequency` or `set_frequency` alone,
+  with no drive on it in that arm and no `sync` with the readout line after
+  the readout, was scheduled as ready before the measurement: the next drive
+  on it started while the readout was still playing (ASAP or ALAP), and ALAP
+  could move the readout after that drive. In export and simulation the
+  drive used a phase or frequency the measurement had not yet chosen. A
+  value an arm of an `if` yields is now ready only once its condition is,
+  under every schedule, also in kernels with classical calls. Programs
+  without such an arm schedule as before.
+
 [0.1.0]: https://github.com/NVIDIA/cudaq-pulse/releases/tag/v0.1.0
