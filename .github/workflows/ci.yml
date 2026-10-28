@@ -120,11 +120,12 @@ jobs:
           path: installed
           retention-days: 1
 
-      - name: Compile-time benchmark (op-count baseline)
+      # Op counts are gated by the perf-gate job and by
+      # tests/classical/test_no_call_identity.py; the times are informational.
+      - name: Compile-time benchmark (timing)
         run: >
           PYTHONPATH=build/dev/python uv run --no-sync python
           benchmarks/compiler/compile_time.py --iterations 5
-          --baseline benchmarks/baselines/compile_time.json
 
       - name: Pipeline and QEC scaling benchmarks (smoke)
         env:
@@ -158,6 +159,74 @@ jobs:
           echo "::warning title=Perf guard::tests/test_perf_guard.py is slower
           than its baseline on $PLATFORM, py$PYTHON; see the
           'Perf guard (baselines, non-blocking)' step"
+
+  # The instructions executed by fixed compile, bind, submit, export and
+  # simulate cases, counted by Callgrind, and their program sizes, against
+  # benchmarks/baselines/perf_gate.json (tools/perf-gate.py). Both repeat
+  # exactly between runs, so this job blocks a merge; wall-clock times stay
+  # informational (the test job's perf guard). The counts also depend on the
+  # toolchain, so everything is pinned: the image by digest, its packages by
+  # an Ubuntu archive snapshot, uv and Python by version. Changing a pin
+  # changes the counts: take a new baseline in the same pull request.
+  perf-gate:
+    name: perf gate (instructions and sizes, linux-x86_64)
+    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: ubuntu:24.04@sha256:24737cef17f4e22b1977df7d9a05e77c4e28b7da5b8911f8d8ccda136bf3573c
+      # Valgrind lays out the program's stack from where its own was put,
+      # so the gate runs it under `setarch -R` (no address randomization),
+      # which Docker's default seccomp profile refuses.
+      options: --security-opt seccomp=unconfined
+    env:
+      UBUNTU_SNAPSHOT: 20261020T000000Z
+      UV_COMPILE_BYTECODE: "1"
+    steps:
+      # The snapshot service needs HTTPS, so the certificates come first,
+      # from the current archive; nothing measured uses them.
+      - name: Install the snapshot's compiler and Valgrind
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates
+          apt-get update --snapshot "$UBUNTU_SNAPSHOT"
+          apt-get install -y --no-install-recommends --snapshot "$UBUNTU_SNAPSHOT" \
+            build-essential gh git python3 valgrind
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The build reads its version from the git tags.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.23"
+          python-version: "3.12.15"
+      - run: uv sync --locked --no-default-groups --group build
+      - uses: ./.github/actions/mlir-toolchain
+
+      - name: Build
+        run: |
+          uv run --no-sync cmake -S . -B build/dev -G Ninja \
+            -DCUDAQ_PULSE_BUILD_TESTS=OFF \
+            -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
+          uv run --no-sync cmake --build build/dev --target pulse
+
+      # Two identical Callgrind runs side by side: the summary shows how far
+      # they differ (the spread) next to each case's change.
+      - name: Perf gate
+        run: >
+          uv run --no-sync python tools/perf-gate.py --processes 2
+          --out perf-gate/perf_gate.json --summary "$GITHUB_STEP_SUMMARY"
+
+      # This run's measurements in the baseline's format; the summary of a
+      # failed run gives the command that makes them the baseline.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: perf-gate-baseline
+          path: perf-gate/perf_gate.json
+          retention-days: 14
 
   # Kernels type-check clean in Pylance's and Cursor's default mode and in
   # pyright's standard mode, with the package installed into a fresh
