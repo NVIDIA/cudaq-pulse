@@ -1,0 +1,171 @@
+/* NVIDIA Theme - Sharp, Futuristic */
+[data-theme="nvidia"] {
+  /* Core colors */
+  --bg: #0d0d0d;
+  --panel: #161616;
+  --text: #ffffff;
+  --muted: #a0a0a0;
+  --accent: #76b900;
+  --accent-2: #00d4ff;
+  --border: rgba(118, 185, 0, 0.25);
+  --grid: rgba(118, 185, 0, 0.08);
+  --danger: #ff3d3d;
+
+  /* Extended palette */
+  --nvidia-green: #76b900;
+  --nvidia-green-dark: #5a8f00;
+  --nvidia-blue: #00d4ff;
+  --nvidia-purple: #a855f7;
+  --surface-elevated: #1a1a1a;
+  --glow-green: rgba(118, 185, 0, 0.4);
+  --glow-blue: rgba(0, 212, 255, 0.4);
+
+  /* Typography */
+  font-family: "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
+  letter-spacing: -0.01em;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
+  --shadow-glow: 0 0 20px var(--glow-green);
+}
+
+/* Sharp corners with subtle highlights */
+[data-theme="nvidia"] .rounded-md,
+[data-theme="nvidia"] .rounded-lg,
+[data-theme="nvidia"] .rounded-xl {
+  border-radius: 4px;
+}
+
+[data-theme="nvidia"] .rounded-full {
+  border-radius: 4px;
+}
+
+/* Panel styling - sharp edges with glowing borders */
+[data-theme="nvidia"] [class*="border-\\[var\\(--border\\)\\]"] {
+  border-width: 1px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+/* Buttons - sharp, bold */
+[data-theme="nvidia"] button {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  transition: all 0.15s ease;
+}
+
+[data-theme="nvidia"] button:hover {
+  box-shadow: 0 0 15px var(--glow-green);
+}
+
+/* Input fields - futuristic styling */
+[data-theme="nvidia"] input[type="number"],
+[data-theme="nvidia"] input[type="range"],
+[data-theme="nvidia"] select {
+  border-radius: 2px;
+  border-width: 1px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+[data-theme="nvidia"] input:focus:not(:focus-visible),
+[data-theme="nvidia"] select:focus:not(:focus-visible) {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 8px var(--glow-green);
+}
+
+/* Tables - clean lines */
+[data-theme="nvidia"] table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+[data-theme="nvidia"] th {
+  text-transform: uppercase;
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+}
+
+/* Scrollbars - sleek */
+[data-theme="nvidia"] ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+[data-theme="nvidia"] ::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+[data-theme="nvidia"] ::-webkit-scrollbar-thumb {
+  background: var(--nvidia-green-dark);
+  border-radius: 0;
+}
+
+[data-theme="nvidia"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--nvidia-green);
+}
+
+/* Accent line decoration */
+[data-theme="nvidia"] h1::after,
+[data-theme="nvidia"] h2::after {
+  content: "";
+  display: block;
+  width: 40px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--nvidia-green), transparent);
+  margin-top: 8px;
+}
+
+/* Canvas/chart styling */
+[data-theme="nvidia"] canvas {
+  border-radius: 2px;
+}
+
+/* Status indicators */
+[data-theme="nvidia"] .bg-green-500 {
+  background-color: var(--nvidia-green) !important;
+  box-shadow: 0 0 8px var(--glow-green);
+}
+
+/* Selection highlight */
+[data-theme="nvidia"] ::selection {
+  background: var(--nvidia-green);
+  color: black;
+}
+
+/* Pulse effect for active elements */
+@keyframes nvidia-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--glow-green); }
+  50% { box-shadow: 0 0 12px 2px var(--glow-green); }
+}
+
+[data-theme="nvidia"] .animate-pulse {
+  animation: nvidia-pulse 2s ease-in-out infinite;
+}
+
+/* Grid pattern background (subtle) */
+[data-theme="nvidia"] body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image:
+    linear-gradient(rgba(118, 185, 0, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(118, 185, 0, 0.02) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: -1;
+}
+
+[data-theme="nvidia"] *:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+[data-theme="nvidia"] *:focus:not(:focus-visible) {
+  outline: none;
+}

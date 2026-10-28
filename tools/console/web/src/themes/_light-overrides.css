@@ -1,0 +1,156 @@
+/*
+ * Shared light-theme overrides for Tailwind dark-mode utilities.
+ * Imported after theme files so these rules win over hardcoded dark-mode classes.
+ * Scoped to all light themes via :is().
+ */
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-white {
+  color: var(--text) !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-emerald-400 {
+  color: #15803d !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-green-400,
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-green-500 {
+  color: #15803d !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-amber-400,
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-amber-200,
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-amber-300,
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-amber-300\/80 {
+  color: #92400e !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-amber-400\/80 {
+  color: #92400e !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-rose-400 {
+  color: #be123c !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-red-400 {
+  color: #b91c1c !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-blue-400,
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-blue-500 {
+  color: #1d4ed8 !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-cyan-400 {
+  color: #0e7490 !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-purple-400 {
+  color: #7e22ce !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-pink-400 {
+  color: #be185d !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-yellow-400 {
+  color: #a16207 !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-teal-400 {
+  color: #0f766e !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-gray-400 {
+  color: var(--muted) !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-red-500 {
+  color: var(--danger) !important;
+}
+
+/* Background: replace non-overlay bg-black with theme bg */
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .bg-black {
+  background-color: var(--bg) !important;
+}
+
+/* Status indicator dots are fine on light bg -- leave bg-emerald/amber/rose alone */
+
+/* Green accent backgrounds */
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .bg-green-500,
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .bg-green-400 {
+  background-color: var(--nvidia-green) !important;
+}
+
+/* Demo-mode banner: swap dark translucent gradient for light tinted bg */
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .bg-gradient-to-r.from-amber-500\/20 {
+  background: #fef9c3 !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .bg-gradient-to-r {
+  background: #fef9c3 !important;
+  border-bottom-color: var(--border) !important;
+}
+
+/* "Coming Soon" badges and similar amber-on-dark patterns */
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .bg-amber-500\/20 {
+  background-color: rgba(245, 158, 11, 0.15) !important;
+}
+
+/* Red notification badge -- white-on-red is fine, don't override */
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .bg-red-500 .text-white {
+  color: #ffffff !important;
+}
+
+/* Prose: undo dark-mode inversion */
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .prose-invert {
+  --tw-prose-body: var(--text);
+  --tw-prose-headings: var(--text);
+  --tw-prose-links: var(--accent-text);
+  --tw-prose-bold: var(--text);
+  --tw-prose-code: var(--text);
+  --tw-prose-quotes: var(--muted);
+  --tw-prose-counters: var(--muted);
+  --tw-prose-bullets: var(--muted);
+  color: var(--text);
+}
+
+/* Shadows: lighter for light backgrounds */
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .shadow-2xl {
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15) !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .shadow-lg {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Animated pulse: tone down for light bg */
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .animate-ping {
+  opacity: 0.5;
+}
+
+/* Hardcoded dark hex backgrounds used as Tailwind arbitrary values */
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .bg-\[\#0a0c0f\],
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .bg-\[\#0a0a0a\],
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .bg-\[\#050508\] {
+  background-color: var(--bg) !important;
+}
+
+/* Inline-style dark backgrounds on canvas containers -- CSS can override the class part */
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) [style*="background"][style*="#0"] {
+  background-color: var(--bg) !important;
+}
+
+/* Remap accent-colored text to the AA-compliant darker variant */
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-\[var\(--accent\)\] {
+  color: var(--accent-text) !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .border-\[var\(--accent\)\]\/40,
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .border-2.border-\[var\(--accent\)\]\/40 {
+  border-color: var(--accent-text) !important;
+}
+
+:is([data-theme="nvidia-retro"], [data-theme="nvidia-light"]) .text-\[var\(--accent\)\]\/60 {
+  color: var(--accent-text) !important;
+}

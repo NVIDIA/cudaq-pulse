@@ -1,0 +1,131 @@
+/* NVIDIA Light Theme - Professional presentation mode */
+[data-theme="nvidia-light"] {
+  --bg: #f5f5f5;
+  --panel: #ffffff;
+  --text: #1a1a1a;
+  --muted: #666666;
+  --accent: #76b900;
+  --accent-2: #004831;
+  --border: rgba(0, 0, 0, 0.22);
+  --grid: rgba(0, 0, 0, 0.06);
+  --danger: #d32f2f;
+
+  --accent-text: #3d6000;
+  --nvidia-green: #76b900;
+  --nvidia-green-dark: #5a8f00;
+  --nvidia-blue: #0078d4;
+  --surface-elevated: #ffffff;
+  --glow-green: rgba(118, 185, 0, 0.2);
+
+  font-family: "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
+  letter-spacing: -0.01em;
+  color-scheme: light;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="nvidia-light"] .rounded-md,
+[data-theme="nvidia-light"] .rounded-lg,
+[data-theme="nvidia-light"] .rounded-xl {
+  border-radius: 6px;
+}
+
+[data-theme="nvidia-light"] .rounded-full {
+  border-radius: 6px;
+}
+
+[data-theme="nvidia-light"] [class*="border-\\[var\\(--border\\)\\]"] {
+  border-width: 1px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="nvidia-light"] button {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: all 0.15s ease;
+}
+
+[data-theme="nvidia-light"] button:hover {
+  box-shadow: 0 2px 8px rgba(118, 185, 0, 0.2);
+}
+
+[data-theme="nvidia-light"] input[type="number"],
+[data-theme="nvidia-light"] input[type="range"],
+[data-theme="nvidia-light"] select {
+  border-radius: 4px;
+  border-width: 1px;
+  background-color: #fafafa;
+}
+
+[data-theme="nvidia-light"] input:focus,
+[data-theme="nvidia-light"] select:focus {
+  border-color: var(--accent-text);
+  box-shadow: 0 0 0 3px rgba(61, 96, 0, 0.2);
+}
+
+[data-theme="nvidia-light"] table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+[data-theme="nvidia-light"] th {
+  text-transform: uppercase;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  color: var(--muted);
+  background: #fafafa;
+}
+
+[data-theme="nvidia-light"] ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+[data-theme="nvidia-light"] ::-webkit-scrollbar-track {
+  background: #f0f0f0;
+}
+
+[data-theme="nvidia-light"] ::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3px;
+}
+
+[data-theme="nvidia-light"] ::-webkit-scrollbar-thumb:hover {
+  background: #aaa;
+}
+
+[data-theme="nvidia-light"] h1::after,
+[data-theme="nvidia-light"] h2::after {
+  content: "";
+  display: block;
+  width: 40px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--nvidia-green), transparent);
+  margin-top: 8px;
+}
+
+[data-theme="nvidia-light"] canvas {
+  border-radius: 4px;
+  background: #fafafa;
+}
+
+[data-theme="nvidia-light"] .bg-green-500 {
+  background-color: var(--nvidia-green) !important;
+}
+
+[data-theme="nvidia-light"] ::selection {
+  background: var(--nvidia-green);
+  color: white;
+}
+
+[data-theme="nvidia-light"] *:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+[data-theme="nvidia-light"] *:focus:not(:focus-visible) {
+  outline: none;
+}
