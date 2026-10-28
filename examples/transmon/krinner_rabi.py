@@ -11,7 +11,7 @@
 Demonstrates:
   - Loading the pre-defined transmon target
   - Using the published single-qubit pulse (40 ns DRAG, sigma = 10 ns)
-  - Compiling (verify, virtual-Z, fusion, ALAP schedule) a single-qubit
+  - Compiling (default passes, ALAP schedule) a single-qubit
     pulse program
   - Lowering it to the operator (QOp) dialect the simulator consumes
 """

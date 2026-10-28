@@ -68,7 +68,7 @@ These operations modify the rotating frame of a tone channel.
    by *phase*, in the convention of McKay et al., PRA 96, 022330 (2017). A
    pulse played after it turns about an axis rotated by ``-phase``, so
    ``shift_phase(t, pi / 2)`` followed by an X90 pulse is an X90 about the
-   -Y axis. It takes no time, and the virtual-Z pass folds it into the next
+   -Y axis. It takes no time, and ``Pass.FOLD_PHASES`` folds it into the next
    drive.
 
 .. function:: set_phase(tone, phase)

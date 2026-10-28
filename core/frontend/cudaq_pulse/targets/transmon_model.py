@@ -32,6 +32,8 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 
+from .._errors import InvalidValueError
+
 __all__ = ["ChargeCoupledPair", "TransmonCircuit", "anchored_charge_coupling_hz"]
 
 # Charge states -25..25: converged to < 1 Hz for E_J / E_C < 300.
@@ -112,7 +114,7 @@ class TransmonCircuit:
             if abs(target_hz - edge) < 1.0:
                 return flux
         if not min(f_lo, f_hi) <= target_hz <= max(f_lo, f_hi):
-            raise ValueError(
+            raise InvalidValueError(
                 f"{self.label or 'transmon'}: {target_hz:.6g} Hz is outside the tuning range "
                 f"[{min(f_lo, f_hi):.6g}, {max(f_lo, f_hi):.6g}] Hz"
             )

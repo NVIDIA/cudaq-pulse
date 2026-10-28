@@ -64,7 +64,7 @@ def test_cooldowns_and_provenance(cal):
     assert cal.value("coupling", "device_default", "g_11_20") == 7.0e6
     with pytest.raises(ValueError, match="no cooldown"):
         Calibration.load("krinner17", cooldown="nope")
-    with pytest.raises(FileNotFoundError, match="krinner17"):
+    with pytest.raises(pulse.NotFoundError, match="krinner17"):
         Calibration.load("missing")
 
 

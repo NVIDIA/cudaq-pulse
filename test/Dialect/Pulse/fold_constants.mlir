@@ -6,22 +6,23 @@
 // the terms of the Apache License 2.0 which accompanies this distribution.     //
 // ============================================================================ //
 
-// RUN: cudaq-pulse-opt --pulse-fold %s | FileCheck %s --check-prefix=FOLD
-// RUN: cudaq-pulse-opt --pulse-virtual-z %s | FileCheck %s --check-prefix=VZ
-// RUN: cudaq-pulse-opt --pulse-fold --pulse-virtual-z %s | FileCheck %s --check-prefix=BOTH
+// RUN: cudaq-pulse-opt --pulse-fold-constants %s | FileCheck %s --check-prefix=FOLD
+// RUN: cudaq-pulse-opt --pulse-fold-phases %s | FileCheck %s --check-prefix=PHASES
+// RUN: cudaq-pulse-opt --pulse-fold-constants --pulse-fold-phases %s | FileCheck %s --check-prefix=BOTH
 
-// pulse-fold drops a frame change by zero and merges equal constants;
-// pulse-virtual-z only moves frame changes into the drives they precede.
+// pulse-fold-constants drops a frame change by zero and merges equal
+// constants; pulse-fold-phases only moves frame changes into the drives they
+// precede.
 // FOLD-LABEL: func.func @frames
 // FOLD-COUNT-1: arith.constant 2.000000e-01
 // FOLD-NOT: arith.constant 2.000000e-01
 // FOLD-NOT: pulse.shift_phase
 // FOLD-NOT: frame_phase_offset
 
-// VZ-LABEL: func.func @frames
-// VZ-COUNT-2: arith.constant 2.000000e-01
-// VZ-NOT: pulse.shift_phase
-// VZ: pulse.drive {{.*}}frame_phase_offset = 0.000000e+00
+// PHASES-LABEL: func.func @frames
+// PHASES-COUNT-2: arith.constant 2.000000e-01
+// PHASES-NOT: pulse.shift_phase
+// PHASES: pulse.drive {{.*}}frame_phase_offset = 0.000000e+00
 
 // BOTH-LABEL: func.func @frames
 // BOTH-COUNT-1: arith.constant 2.000000e-01

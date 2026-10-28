@@ -456,7 +456,7 @@ def ShiftPhaseOp : PulseOp<"shift_phase", []> {
     Advances the tone's frame phase by `phase_rad`: a virtual Z rotation,
     in the convention of McKay et al., PRA 96, 022330 (2017). A pulse
     played after it turns about an axis rotated by `-phase_rad`. It takes
-    no time, and `pulse-virtual-z` folds it into the next drive.
+    no time, and `pulse-fold-phases` folds it into the next drive.
   }];
   let arguments = (ins ToneType:$tone, F64:$phase_rad);
   let results = (outs ToneType:$updated_tone);

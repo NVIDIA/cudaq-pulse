@@ -320,7 +320,9 @@ def test_handlers_override_and_are_required_for_external_functions():
 
     dev = _device()
     low = pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
-    with pytest.raises(KeyError, match="no handler for classical function 'remote'"):
+    with pytest.raises(
+        KeyError, match="classical function 'remote' is external and has no handler"
+    ):
         pulse.simulate(low)
     result = pulse.simulate(low, handlers={"remote": lambda bits: 3})
     assert result.density_matrix[1, 1].real == pytest.approx(1.0, abs=1e-6)

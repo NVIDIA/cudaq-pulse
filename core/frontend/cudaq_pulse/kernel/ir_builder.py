@@ -18,15 +18,10 @@ import numbers
 from collections import namedtuple
 from typing import Any, NoReturn
 
-from .._errors import PulseError
+from .._errors import CompilationError as CompilationError
+from .._errors import InternalError
 
 Op = namedtuple("Op", ["kind", "operands", "results", "attrs"])
-
-
-class CompilationError(PulseError):
-    """A kernel cannot be traced or compiled: an unsupported construct, an
-    operation given the wrong kind of argument, or invalid pulse IR. The
-    message says what to write instead, and a note gives the kernel line."""
 
 
 class SymbolicValueError(CompilationError):
@@ -37,7 +32,7 @@ class SymbolicValueError(CompilationError):
     instead of keeping it symbolic.
     """
 
-    def __init__(self, message: str, names: tuple[str, ...], operation: str = ""):
+    def __init__(self, message: str, names: tuple[str, ...] = (), operation: str = ""):
         super().__init__(message)
         self.names = names
         self.operation = operation
@@ -171,14 +166,18 @@ class _SymbolicNumber(_UndecidableComparisons):
 
     def cast(self, dtype: str) -> ParameterExpression:
         if dtype not in ("i64", "f64"):
-            raise CompilationError(f"unsupported symbolic cast to {dtype}")
+            raise InternalError(f"unsupported symbolic cast to {dtype}")
         return ParameterExpression("cast", self, dtype=dtype)
 
     def _not_concrete(self, operation: str) -> NoReturn:
+        names = parameter_names(self)
+        quoted = ", ".join(map(repr, dict.fromkeys(names)))
+        arguments = "argument" if len(set(names)) == 1 else "arguments"
         raise SymbolicValueError(
-            f"Cannot evaluate symbolic parameter expression with {operation}. "
-            "Use it in a supported pulse numeric argument.",
-            parameter_names(self),
+            f"{operation} needs the value of float {arguments} {quoted}, which is only known "
+            "when the kernel runs; use it only as a pulse op argument (amplitude, phase, "
+            "frequency, wait length), or annotate it as int to compile one kernel per value",
+            names,
             operation,
         )
 
@@ -209,7 +208,7 @@ class Parameter(_SymbolicNumber):
 
     def __init__(self, name: str, index: int, dtype: str = "unknown"):
         if dtype not in ("unknown", "i64", "f64"):
-            raise ValueError(f"unsupported parameter dtype {dtype!r}")
+            raise InternalError(f"unsupported parameter dtype {dtype!r}")
         self.name = name
         self.index = index
         self.dtype = dtype
@@ -258,6 +257,21 @@ class AnswerValue(_SymbolicNumber):
 
     def __repr__(self) -> str:
         return f"AnswerValue({self.label or self.vid}, {self.dtype})"
+
+
+class Selection(_SymbolicNumber):
+    """A value a condition selects while the program runs: ``then`` where
+    ``cond`` (a measurement, or a boolean IR value) holds, ``other`` where it
+    does not. ``then`` and ``other`` are numbers, symbolic numbers, waveforms
+    or selections; the builder emits one select of them."""
+
+    __slots__ = ("cond", "then", "other")
+    __hash__ = object.__hash__
+
+    def __init__(self, cond: IRValue, then: Any, other: Any) -> None:
+        self.cond = cond
+        self.then = then
+        self.other = other
 
 
 def contains_answer(value: Any) -> bool:

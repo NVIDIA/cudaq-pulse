@@ -6,7 +6,7 @@
 // the terms of the Apache License 2.0 which accompanies this distribution.     //
 // ============================================================================ //
 
-// RUN: cudaq-pulse-opt --loop-invariant-code-motion %s | FileCheck %s
+// RUN: cudaq-pulse-opt --pulse-hoist-loop-invariants %s | FileCheck %s
 
 // Waveform construction leaves the loop; the drive and the frame change it
 // consumes stay in the body.

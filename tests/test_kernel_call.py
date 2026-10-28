@@ -268,7 +268,7 @@ def test_mixing_devices_in_one_call_is_an_error():
         sync(get_drive_line(q0)[0], get_drive_line(q1)[0])
 
     a, other = _device(), _device(n=5)
-    with pytest.raises(pulse.DeviceMismatchError, match="two devices"):
+    with pytest.raises(pulse.DeviceMismatchError, match="two different devices"):
         pair.lower(a.qudit_handles[0], other.qudit_handles[1])
     pair.lower(a.qudit_handles[0], _device().qudit_handles[1])
 
@@ -320,9 +320,9 @@ def test_a_device_from_a_config_file(tmp_path: Path):
     assert [q.index for q in dev.qudit_handles] == [4, 5]
     assert dev == pulse.device({"target": "transmon_krinner_17q", "layout": [4, 5]})
     assert dev != pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
-    with pytest.raises(ValueError, match="unknown device config keys: lattice"):
+    with pytest.raises(pulse.DeviceDefinitionError, match="lattice: unknown device config key"):
         pulse.device({"target": "transmon_krinner_17q", "lattice": []})
-    with pytest.raises(NotImplementedError, match="zones are reserved"):
+    with pytest.raises(pulse.DeviceDefinitionError, match="zones: is reserved"):
         pulse.device({"target": "transmon_krinner_17q", "zones": []})
 
 
@@ -632,7 +632,7 @@ def test_two_calls_that_acquire_the_same_drive_line_play_in_sequence():
         x90(q)
         x90(q)
 
-    # Without fusion, which would merge the two pulses into one.
+    # Without fuse_pulses, which would merge the two pulses into one.
     lowered = pulse.compile(twice, passes=()).lower(_device().qudit_handles[0])
     assert [(e.start_cycles, e.duration_cycles) for e in lowered.schedule] == [(0, 16), (16, 16)]
     assert lowered.mlir().count("pulse.get_drive_line") == 1

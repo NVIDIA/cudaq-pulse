@@ -24,10 +24,10 @@ def pipeline_demo(qubit_0, qubit_1):
     """A 2-qubit program with redundancies for the pipeline to clean up.
 
     Includes:
-      - A shift_phase before a drive (virtual-Z folds it)
-      - Adjacent waits (canonicalize, which main() adds to the default
+      - A shift_phase before a drive (FOLD_PHASES folds it into the drive)
+      - Adjacent waits (MERGE_WAITS, which main() adds to the default
         passes, merges them)
-      - Adjacent same-amplitude square pulses (fusion merges them)
+      - Adjacent same-amplitude square pulses (FUSE_PULSES merges them)
     """
     drive_line_0, tone_0 = get_drive_line(qubit_0)
     drive_line_1, tone_1 = get_drive_line(qubit_1)
@@ -50,7 +50,7 @@ def pipeline_demo(qubit_0, qubit_1):
 
 def main():
     compiled_kernel = pulse.compile(
-        pipeline_demo, schedule="alap", device=dev, passes=(*DEFAULT_PASSES, "canonicalize")
+        pipeline_demo, schedule="alap", device=dev, passes=(*DEFAULT_PASSES, pulse.Pass.MERGE_WAITS)
     ).lower(dev.qudit_handles[0], dev.qudit_handles[1])
 
     print("=== Compiled MLIR (first 30 lines) ===")

@@ -118,12 +118,19 @@ Options, all keyword-only:
    Ignore the ``schedule=`` of every called kernel and schedule the whole
    program with ``schedule``, for comparison.
 
-``passes`` *(sequence of str, optional)*
-   Optimization passes, ``("verify", "virtual_z", "fusion")`` by default;
-   ``()`` runs none. Available: ``"verify"`` (check the IR),
-   ``"canonicalize"`` (remove redundant syncs, merge waits in a row),
-   ``"virtual_z"`` (fold frame changes into drives), ``"fusion"`` (merge
-   square pulses in a row), ``"licm"`` (hoist loop-invariant ops). See
+``passes`` *(sequence of Pass or str, optional)*
+   Optimization passes, run in the order given: members of
+   :class:`cudaq_pulse.Pass` or their names. ``DEFAULT_PASSES`` by default
+   (``VERIFY``, ``FOLD_CONSTANTS``, ``REMOVE_UNUSED``, ``FOLD_PHASES``,
+   ``FUSE_PULSES``); ``()`` runs none. The members are ``VERIFY`` (check the
+   IR), ``FOLD_CONSTANTS`` (compute constant arithmetic at compile time),
+   ``REMOVE_UNUSED`` (remove operations whose results nothing uses),
+   ``MERGE_WAITS`` (join constant waits in a row on one line),
+   ``SIMPLIFY_CONTROL_FLOW`` (remove syncs that order nothing, inline blocks
+   that take no time, remove loops that run once or never), ``FOLD_PHASES``
+   (fold frame changes into drives), ``FUSE_PULSES`` (merge square pulses in
+   a row) and ``HOIST_LOOP_INVARIANTS`` (move loop-invariant operations out
+   of loops). An unknown name is a ``ValueError`` that names the closest. See
    :doc:`../architecture/mlir_passes`.
 
 ``machine`` *(MachineModel, optional)*

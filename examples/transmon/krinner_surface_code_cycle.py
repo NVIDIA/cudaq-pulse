@@ -16,7 +16,7 @@ Demonstrates:
   - The X half: pi/2 on the X auxiliaries and the data qubits, steps 5-6,
     echo, steps 7-8, pi/2
   - Barriers between steps, so a step lasts as long as its gates
-  - Compiling it with pulse.compile (verify, virtual-Z, fusion, ALAP)
+  - Compiling it with pulse.compile (default passes, ALAP)
 
 Each CZ is a flux pulse; flux lines are not modeled yet, so its 98 ns slot
 idles both qubits. Readout, which the device overlaps with the next half

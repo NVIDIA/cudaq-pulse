@@ -43,7 +43,7 @@ import sys
 from types import CodeType
 from typing import Any
 
-from .._errors import PulseError
+from .._errors import UnsupportedError
 
 # ── Canonical opcodes ────────────────────────────────────────────────
 
@@ -345,7 +345,7 @@ SUPPORTED_MINORS = (12, 13, 14, 15)
 ISSUES_URL = "https://github.com/NVIDIA/cudaq-pulse/issues"
 
 
-class UnsupportedInterpreterError(PulseError, RuntimeError):
+class UnsupportedInterpreterError(UnsupportedError):
     """The running interpreter's bytecode is not known to the kernel tracer."""
 
 

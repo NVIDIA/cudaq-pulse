@@ -6,7 +6,7 @@
 // the terms of the Apache License 2.0 which accompanies this distribution.     //
 // ============================================================================ //
 
-// RUN: cudaq-pulse-opt --pulse-fusion %s | FileCheck %s
+// RUN: cudaq-pulse-opt --pulse-fuse-pulses %s | FileCheck %s
 
 // CHECK-LABEL: func.func @fuse_adjacent_squares
 func.func @fuse_adjacent_squares() {

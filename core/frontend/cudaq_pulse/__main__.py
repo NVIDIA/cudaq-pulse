@@ -38,7 +38,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("give either a script path or -m MODULE")
     try:
         make_target(ns.target)
-    except (LookupError, ValueError) as e:
+    except LookupError as e:
+        parser.error(Exception.__str__(e))
+    except ValueError as e:
         parser.error(f"{e}\navailable targets: {', '.join(available_targets())}")
     os.environ[ENV_VAR] = ns.target
     if not ns.quiet:

@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any, NoReturn
 
+from .._errors import CompilationError
 from ..kernel.ir_builder import Parameter
 
 __all__ = [
@@ -69,7 +70,7 @@ class MeasurementResult:
 
 
 def _require_context(op_name: str) -> NoReturn:
-    raise RuntimeError(f"{op_name}() must be called inside a @cudaq_pulse.kernel function")
+    raise CompilationError(f"{op_name}() must be called inside a @cudaq_pulse.kernel function")
 
 
 # ── Channel access ───────────────────────────────────────────────────────

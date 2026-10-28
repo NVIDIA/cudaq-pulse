@@ -70,13 +70,13 @@ def test_default_passes_preserve_the_schedule(amplitudes, durations, phases):
 
 @given(durations=_durations, phases=_phases)
 @settings(max_examples=examples(30))
-def test_virtual_z_is_idempotent(durations, phases):
+def test_folding_phases_is_idempotent(durations, phases):
     kernel = _random_kernel([0.3], durations, [], phases)
-    once = _compile(kernel, passes=("virtual_z",))
-    once._module.run_passes(["pulse-virtual-z"])
-    assert (
-        once._module.print() == _compile(kernel, passes=("virtual_z", "virtual_z"))._module.print()
-    )
+    fold = (pulse.Pass.FOLD_CONSTANTS, pulse.Pass.REMOVE_UNUSED, pulse.Pass.FOLD_PHASES)
+    once = _compile(kernel, passes=fold)
+    once._module.run_passes(["pulse-fold-phases"])
+    twice = _compile(kernel, passes=(*fold, pulse.Pass.FOLD_PHASES))
+    assert once._module.print() == twice._module.print()
 
 
 @given(amplitudes=_amplitudes, durations=_durations)

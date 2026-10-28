@@ -43,7 +43,7 @@ import threading
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from ._errors import PulseError
+from ._errors import InvalidValueError, NotFoundError, PulseError
 
 if TYPE_CHECKING:
     from importlib.metadata import EntryPoint
@@ -88,7 +88,7 @@ class BackendError(PulseError):
     """A controller backend cannot be found or used."""
 
 
-class BackendNotFoundError(BackendError, LookupError):
+class BackendNotFoundError(BackendError, NotFoundError):
     """No backend of that name is installed or registered."""
 
 
@@ -120,7 +120,7 @@ def register(name: str, factory: Callable[[], Backend]) -> None:
     """Make *factory* the backend *name* in this process; it takes precedence
     over an installed backend of the same name."""
     if not name or not name.isidentifier():
-        raise ValueError(f"a backend name is an identifier, got {name!r}")
+        raise InvalidValueError(f"a backend name is an identifier, got {name!r}")
     with _lock:
         _registered[name] = factory
         _loaded.pop((name, "registered"), None)

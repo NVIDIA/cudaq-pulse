@@ -107,7 +107,7 @@ on its value; ``while`` loops are rejected.
 ``@pulse.kernel(unroll_threshold=n)`` or the ``CUDAQ_PULSE_UNROLL_THRESHOLD``
 environment variable, in that order, and 8 by default; 0 keeps every such
 loop rolled. Both forms are the same program: without passes their
-schedules are identical, and with the default passes fusion may merge
+schedules are identical, and with the default passes ``fuse_pulses`` may merge
 back-to-back pulses of the unrolled form, with the same evolution. The
 threshold is part of the cache key, so changing the variable recompiles.
 
@@ -170,8 +170,35 @@ the loop:
            drive(drive_line, drag(40, 0.5, 10.0, 0.5), drive_tone)
 
 Both branches are traced, and lines and tones they rebind become the
-results of the region. Both branches must continue after the ``if``, and
-other Python values must not differ between them. Compiling keeps the
+results of the region. Both branches must continue after the ``if``. A
+number the branches set differently holds, after the ``if``, the value of
+the branch that ran:
+
+.. code-block:: python
+
+   @pulse.kernel
+   def flip_on_one(qubit):
+       drive_line, drive_tone = get_drive_line(qubit)
+       readout_line, readout_tone = get_readout_line(qubit)
+       result = readout(readout_line, square(1000, 0.05), readout_tone)
+       sync(drive_line, readout_line)
+       if result:
+           amp = 0.5
+       else:
+           amp = 0.0
+       drive(drive_line, square(40, amp), drive_tone)
+
+The number is one value the measurement selects. On a target that takes it
+at run time (an amplitude, a phase or a frequency), every op given it, or a
+waveform made from it, reads that value. Otherwise, and always for a
+duration or a waveform's shape, each such op runs in each branch with that
+branch's value, as if it were written in both. No target takes a selected
+value at run time yet. Either way the op waits for the measurement, and
+the program schedules and simulates the same. A name assigned in only one branch, with no value
+before the ``if``, has none after it: reading it raises a
+``CompilationError`` that names it and the line of the ``if``. Other Python
+values, qudits, and lines of different kinds must not differ between the
+branches. Compiling keeps the
 branch as an ``scf.if`` on ``pulse.is_set`` (whether the readout
 observed a nonzero level), whose arms yield the lines and tones they
 advance; both arms start once the measurement completes, and the code after
@@ -213,9 +240,14 @@ A ``float`` argument stays a runtime parameter, compiled once for every
 value, through ``+``, ``-``, ``*``, ``/`` and negation, including as the length
 of a ``wait`` (see :ref:`wait-lengths`). Any other use that needs its value
 while tracing, such as ``abs``, ``min``, ``math.sin``, ``//``, a comparison,
-or a waveform duration, makes it static, so each new value compiles the
-kernel again. The first such use warns once with a ``RuntimeWarning`` that
-names the argument and the operation.
+a ``range`` bound or a waveform duration, makes it static, so each new value
+compiles the kernel again. The first such use warns once per kernel and
+argument with a ``cudaq_pulse.PulseWarning`` (also a ``RuntimeWarning``)
+that names the argument, the operation and the kernel line, and suggests
+computing the value on the host, annotating the argument as ``int``, or
+giving it a fixed value;
+``warnings.filterwarnings("error", category=cudaq_pulse.PulseWarning)``
+makes it an error.
 
 .. _wait-lengths:
 

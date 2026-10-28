@@ -8,7 +8,7 @@
 # ============================================================================ #
 """Target-aware lowering demo on the Krinner target.
 
-  kernel -> pulse.compile (verify, virtual-Z, fusion, ALAP) -> Pulse MLIR
+  kernel -> pulse.compile (default passes, ALAP) -> Pulse MLIR
          -> QOp (operator algebra) -> CuDensityMat -> LLVM
 
 Prints the intermediate representations of the native lowering stack for a
@@ -71,7 +71,7 @@ def krinner_pair(qubit_aux, qubit_data):
     drive(drive_line_aux, drag(duration, pi_amplitude / 2, sigma, 0.0), tone_aux)
 
 
-print("=== Stage 1: compile (verify, virtual-Z, fusion, ALAP schedule) ===")
+print("=== Stage 1: compile (default passes, ALAP schedule) ===")
 dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
 compiled = pulse.compile(krinner_pair, device=dev).lower(
     dev.qudit_handles[auxiliary], dev.qudit_handles[data]

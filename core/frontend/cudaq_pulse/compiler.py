@@ -15,14 +15,17 @@ that pick passes and a schedule, the native build of one specialization, and
 
 from __future__ import annotations
 
+import difflib
 import math
 import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from ._errors import InvalidValueError
 from ._native import PulseModuleBuilder
 from .classical import Link
 from .kernel._bytecode_normalize import UnsupportedInterpreterError
@@ -42,6 +45,7 @@ __all__ = [
     "CompileMetrics",
     "Lowered",
     "MachineModel",
+    "Pass",
     "ScheduledEvent",
     "UnsupportedInterpreterError",
     "compile",
@@ -50,23 +54,110 @@ __all__ = [
 
 _VALID_SCHEDULES = frozenset({"asap", "alap", "rcp", "alap_rcp"})
 
-# The cudaq-pulse-opt passes each pass name runs. The pattern passes fold
-# constants as they rewrite; a fold right before a pattern pass costs nothing.
+
+class Pass(StrEnum):
+    """An optimization pass of ``pulse.compile(k, passes=)``.
+
+    Each member is a string, and the plain string (``"fold_phases"``) is
+    accepted wherever a member is. Passes run in the order given, any subset
+    in any order; the pattern passes (all but ``VERIFY`` and
+    ``HOIST_LOOP_INVARIANTS``) that follow one another run as one rewrite of
+    the program, and each of them also removes the operations its rewrites
+    leave unused.
+    """
+
+    #: Check waveform durations and that each line is used once at each step.
+    VERIFY = "verify"
+    #: Compute constant arithmetic at compile time and merge equal constants.
+    FOLD_CONSTANTS = "fold_constants"
+    #: Remove operations whose results nothing uses, unreachable blocks and
+    #: unused block arguments.
+    REMOVE_UNUSED = "remove_unused"
+    #: Join constant waits in a row on one line into one wait.
+    MERGE_WAITS = "merge_waits"
+    #: Remove syncs that order nothing, inline schedule blocks that take no
+    #: time, branch on ``is_set``, and inline or remove loops that run once
+    #: or never.
+    SIMPLIFY_CONTROL_FLOW = "simplify_control_flow"
+    #: Fold constant frame changes (``shift_phase``) into the next drive.
+    FOLD_PHASES = "fold_phases"
+    #: Merge back-to-back square-pulse drives of the same amplitude into one.
+    FUSE_PULSES = "fuse_pulses"
+    #: Move operations that compute the same value in every iteration out of
+    #: loops.
+    HOIST_LOOP_INVARIANTS = "hoist_loop_invariants"
+
+
+# The cudaq-pulse-opt pass each member runs.
 _PASS_MAP = {
-    "verify": "pulse-verify",
-    "canonicalize": "pulse-fold,pulse-canonicalize",
-    "virtual_z": "pulse-fold,pulse-virtual-z",
-    "fusion": "pulse-fold,pulse-fusion",
-    "licm": "loop-invariant-code-motion",
+    Pass.VERIFY: "pulse-verify",
+    Pass.FOLD_CONSTANTS: "pulse-fold-constants",
+    Pass.REMOVE_UNUSED: "pulse-remove-unused",
+    Pass.MERGE_WAITS: "pulse-merge-waits",
+    Pass.SIMPLIFY_CONTROL_FLOW: "pulse-simplify-control-flow",
+    Pass.FOLD_PHASES: "pulse-fold-phases",
+    Pass.FUSE_PULSES: "pulse-fuse-pulses",
+    Pass.HOIST_LOOP_INVARIANTS: "pulse-hoist-loop-invariants",
 }
 
-DEFAULT_PASSES: tuple[str, ...] = (
-    "verify",
-    "virtual_z",
-    "fusion",
+DEFAULT_PASSES: tuple[Pass, ...] = (
+    Pass.VERIFY,
+    Pass.FOLD_CONSTANTS,
+    Pass.REMOVE_UNUSED,
+    Pass.FOLD_PHASES,
+    Pass.FUSE_PULSES,
 )
 
+
+def _passes(passes: Sequence[str]) -> tuple[Pass, ...]:
+    """*passes* as members; an InvalidValueError names any that is not one."""
+    if isinstance(passes, str):
+        raise InvalidValueError(
+            f"passes must be a sequence of pass names, not the string {passes!r}"
+        )
+    members = []
+    names = [p.value for p in Pass]
+    for name in passes:
+        try:
+            members.append(Pass(name))
+        except ValueError:
+            close = difflib.get_close_matches(str(name), names, n=1)
+            hint = f" Did you mean {close[0]!r}?" if close else ""
+            raise InvalidValueError(
+                f"Unknown pass {name!r}.{hint} The passes are: {', '.join(names)}"
+            ) from None
+    return tuple(members)
+
+
 _STAGES = ("pulse", "llvm")
+
+# The parameters a measurement can select while the program runs, in the
+# order lowering asks about them, and those any target takes that way.
+_RUNTIME_KINDS = ("amplitude", "phase", "frequency")
+_SELECTED_AT_RUNTIME: frozenset[str] = frozenset()
+
+
+def _can_select_at_runtime(target: Device, parameter_kind: str) -> bool:
+    """Whether a program compiled for *target* can take a value of
+    *parameter_kind* that a measurement selects while it runs.
+
+    *target* is the device the program is built for. *parameter_kind* is
+    ``"amplitude"`` (of a waveform, or the factor of ``wf_scale``),
+    ``"phase"`` (of ``shift_phase`` and ``set_phase``) or ``"frequency"``
+    (of ``shift_frequency`` and ``set_frequency``). Durations, waveform
+    shapes and anything else that moves ops in time are never asked about.
+
+    Where this holds, the measurement selects the value once, every op that
+    uses it reads that run-time value, and the schedule starts those ops
+    once the measurement is in. Everywhere else, each op that uses the value
+    runs in both arms of an if on the measurement, with that arm's value.
+    Simulation gives the same result either way. No target takes any kind
+    at run time: ``export_controller`` gives an op's parameters as
+    constants, so a run-time value exports as ``null`` with nothing naming
+    the measurement that selects it, and ``export_emulation`` carries no
+    parameters.
+    """
+    return parameter_kind in _SELECTED_AT_RUNTIME
 
 
 class _Links(dict[int, Link]):
@@ -364,7 +455,7 @@ class CompileOptions:
     specialized: from ``CUDAQ_PULSE_UNROLL_THRESHOLD``, else the default."""
 
     schedule: str = "alap"
-    passes: tuple[str, ...] = DEFAULT_PASSES
+    passes: tuple[Pass, ...] = DEFAULT_PASSES
     machine: MachineModel = MachineModel()
     flatten_schedules: bool = False
     unroll_threshold: int | None = None
@@ -382,10 +473,7 @@ class CompileOptions:
                 f"Unknown schedule policy {schedule!r}. "
                 f"Choose from: {', '.join(sorted(_VALID_SCHEDULES))}"
             )
-        passes = DEFAULT_PASSES if passes is None else tuple(passes)
-        unknown = sorted(set(passes) - set(_PASS_MAP))
-        if unknown:
-            raise ValueError("Unknown pulse passes: " + ", ".join(unknown))
+        passes = DEFAULT_PASSES if passes is None else _passes(passes)
         machine = machine or MachineModel()
         if machine.max_concurrent_drives <= 0:
             raise ValueError("machine.max_concurrent_drives must be positive")
@@ -540,6 +628,7 @@ class Lowered:
         "generic",
         "waits",
         "classical",
+        "runtime_selects",
     )
 
     def __init__(
@@ -569,6 +658,8 @@ class Lowered:
         self.waits = waits
         # The classical functions the program calls, in declaration order.
         self.classical: tuple[Any, ...] = ()
+        # Whether ops read values measurements select while the program runs.
+        self.runtime_selects = False
 
     def bind(self, values: Sequence[float]) -> Lowered:
         """This module with values for its float parameters, sharing it.
@@ -593,6 +684,7 @@ class Lowered:
         view.generic = self
         view.waits = waits
         view.classical = self.classical
+        view.runtime_selects = self.runtime_selects
         return view
 
     @property
@@ -818,14 +910,20 @@ def build(
     )
     builder.unroll_threshold = options.unroll_threshold
     builder.link_id = options.machine.link_id
+    builder.locate_structural = frozenset(parameters)
     builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
     needed = tuple(sorted(builder.structural & set(parameters)))
     if needed:
-        raise SymbolicValueError(
+        error = SymbolicValueError(
             f"{name}(): {', '.join(needed)} must be known while the kernel compiles",
             needed,
             "a value that must be an integer, such as a waveform duration",
         )
+        frames = getattr(builder, "structural_at", {}).get(needed[0])
+        if frames:
+            error.pulse_source = frames[0]  # type: ignore[attr-defined]
+            error.pulse_callers = frames[1:]  # type: ignore[attr-defined]
+        raise error
     check_root_schedule(options.schedule, builder)
     qudits = builder.qubits
     missing = [q for q in qudits if q not in target.frequencies]
@@ -862,6 +960,11 @@ def build(
     metrics.ffi_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
+    runtime_selects = False
+    if builder.selects:
+        runtime_selects = module.lower_selects(
+            [kind for kind in _RUNTIME_KINDS if _can_select_at_runtime(target, kind)]
+        )
     cpp_passes = [_PASS_MAP[p] for p in options.passes]
     if cpp_passes:
         module.run_passes(cpp_passes)
@@ -892,6 +995,7 @@ def build(
         waits=_WaitLengths(builder.variable_waits, name) if builder.variable_waits else None,
     )
     lowered.classical = tuple(builder.classical)
+    lowered.runtime_selects = runtime_selects
     if options.machine.controller is not None and scheduled:
         from .controller import ControllerLimitError, check
 
@@ -931,7 +1035,8 @@ def compile[**P](
         ``"rcp"``, ``"alap_rcp"``; by default the kernel's own
         ``schedule=``, else ``"alap"``. Kernels it calls keep their own.
     passes:
-        Optimization passes, ``DEFAULT_PASSES`` by default; ``()`` for none.
+        Optimization passes (``Pass`` members or their names), run in the
+        order given; ``DEFAULT_PASSES`` by default, ``()`` for none.
     machine:
         Machine model for resource-constrained scheduling.
     flatten_schedules:

@@ -19,6 +19,7 @@ TOP_LEVEL = {
     "compile",
     "CompiledKernel",
     "Lowered",
+    "Pass",
     "simulate",
     "SimulationResult",
     "device",
@@ -28,7 +29,18 @@ TOP_LEVEL = {
     "Register",
     "Target",
     "PulseError",
+    "Problem",
+    "DeviceDefinitionError",
+    "InvalidValueError",
+    "InvalidTypeError",
+    "NotFoundError",
+    "UnsupportedError",
     "CompilationError",
+    "TimingError",
+    "ExecutionError",
+    "InternalError",
+    "PulseWarning",
+    "UpgradeNotice",
     "NoTargetError",
     "NoDeviceError",
     "DeviceMismatchError",
@@ -197,20 +209,28 @@ def test_every_public_error_is_a_pulse_error_and_keeps_its_builtin_base():
     import cudaq_pulse.targets
 
     builtin = {
-        "CompilationError": Exception,
-        "UnsupportedInterpreterError": RuntimeError,
+        "InvalidValueError": ValueError,
+        "InvalidTypeError": TypeError,
+        "NotFoundError": KeyError,
+        "UnsupportedError": NotImplementedError,
+        "CompilationError": RuntimeError,
+        "TimingError": RuntimeError,
+        "ExecutionError": RuntimeError,
+        "InternalError": RuntimeError,
+        "UnsupportedInterpreterError": NotImplementedError,
         "NoTargetError": RuntimeError,
         "NoDeviceError": RuntimeError,
         "DeviceMismatchError": RuntimeError,
-        "UnknownTargetError": LookupError,
+        "DeviceDefinitionError": ValueError,
+        "UnknownTargetError": KeyError,
         "GpuRuntimeError": RuntimeError,
         "GpuSupportNotBuiltError": RuntimeError,
         "GpuRuntimeLoadError": RuntimeError,
         "GpuDeviceUnavailableError": RuntimeError,
         "BackendError": Exception,
-        "BackendNotFoundError": LookupError,
+        "BackendNotFoundError": KeyError,
         "IncompatibleBackendError": TypeError,
-        "ControllerLimitError": Exception,
+        "ControllerLimitError": RuntimeError,
     }
     errors = {
         name: getattr(module, name)
@@ -224,9 +244,16 @@ def test_every_public_error_is_a_pulse_error_and_keeps_its_builtin_base():
         )
         for name in module.__all__
         if isinstance(getattr(module, name), type)
-        and issubclass(getattr(module, name), BaseException)
+        and issubclass(getattr(module, name), Exception)
+        and not issubclass(getattr(module, name), Warning)
     }
     assert set(errors) == set(builtin) | {"PulseError"}
     for name, base in builtin.items():
         assert issubclass(errors[name], pulse.PulseError), name
         assert issubclass(errors[name], base), name
+
+
+def test_every_public_warning_is_a_pulse_warning():
+    assert issubclass(pulse.PulseWarning, UserWarning)
+    assert issubclass(pulse.UpgradeNotice, pulse.PulseWarning)
+    assert not issubclass(pulse.PulseWarning, pulse.PulseError)

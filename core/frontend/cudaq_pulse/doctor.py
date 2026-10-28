@@ -13,8 +13,13 @@
                                                      # but no device exists
     python -m cudaq_pulse.doctor --setup-editor      # configure mypy and ruff for
                                                      # the kernel language
+    python -m cudaq_pulse.doctor --system lab.json   # check a device file
+    python -m cudaq_pulse.doctor --system lab.json --json
 
 The compiler check always runs; any failure there exits non-zero.
+``--system FILE`` instead runs the checks of ``pulse.device(FILE)`` and
+prints each problem as ``FILE:LINE:COLUMN: error: PATH: MESSAGE``, or with
+``--json`` as one JSON object; it exits 1 if the file has a problem.
 ``--setup-editor`` instead shows the change to the mypy and ruff
 configuration of the project in the current directory (or ``--project``)
 and writes it only when confirmed, or with ``--yes``.
@@ -24,15 +29,18 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import dataclasses
 import importlib.metadata
+import json
 import os
 import platform
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from . import _build_config
+from ._errors import UNSET, DeviceDefinitionError, Problem
 from .runtime import gpu
 
 __all__ = ["main"]
@@ -239,6 +247,61 @@ def _exit_code(
     return 1
 
 
+def _problem_line(problem: Problem) -> str:
+    text = str(dataclasses.replace(problem, file=None))
+    if problem.file is None:
+        return f"error: {text}"
+    where = [problem.file]
+    if problem.line is not None:
+        where.append(str(problem.line))
+        if problem.column is not None:
+            where.append(str(problem.column))
+    return f"{':'.join(where)}: error: {text}"
+
+
+def _problem_json(problem: Problem) -> dict[str, Any]:
+    fields = dataclasses.asdict(problem)
+    value = fields.pop("value")
+    if value is not UNSET:
+        try:
+            json.dumps(value)
+        except (TypeError, ValueError):
+            value = repr(value)
+        fields["value"] = value
+    return fields
+
+
+def _check_system(file: Path, as_json: bool, write: Callable[[str], None]) -> int:
+    """Check the device file *file*; return the exit code."""
+    from ._device import device
+
+    problems: tuple[Problem, ...] = ()
+    summary: dict[str, Any] | None = None
+    try:
+        dev = device(file)
+    except DeviceDefinitionError as error:
+        problems = error.problems
+    except OSError as error:
+        problems = (Problem(f"cannot read the file: {error.strerror or error}", file=str(file)),)
+    else:
+        summary = {"name": dev.name, "qudits": len(dev.layout), "layout": list(dev.layout)}
+    if as_json:
+        report = {
+            "file": str(file),
+            "ok": not problems,
+            "device": summary,
+            "problems": [_problem_json(p) for p in problems],
+        }
+        write(json.dumps(report, indent=2))
+    elif summary is not None:
+        write(f"{file}: ok, device {summary['name']} with {summary['qudits']} qudits")
+    else:
+        for problem in problems:
+            write(_problem_line(problem))
+        write(f"{file}: {len(problems)} problem{'' if len(problems) == 1 else 's'}")
+    return 1 if problems else 0
+
+
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     """Run the diagnostics and return the process exit code."""
     parser = argparse.ArgumentParser(
@@ -264,6 +327,15 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         help="show the mypy and ruff configuration the kernel language needs, and "
         "write it when confirmed (pyright-based editors need none)",
     )
+    modes.add_argument(
+        "--system",
+        type=Path,
+        metavar="FILE",
+        help="check the device file FILE as pulse.device(FILE) does, and list every problem",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="with --system, print the report as JSON"
+    )
     parser.add_argument(
         "--project",
         type=Path,
@@ -277,6 +349,10 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     stream = out if out is not None else sys.stdout
     if (args.yes or args.project is not None) and not args.setup_editor:
         parser.error("--yes and --project apply to --setup-editor")
+    if args.json and args.system is None:
+        parser.error("--json applies to --system")
+    if args.system is not None:
+        return _check_system(args.system, args.json, lambda line: print(line, file=stream))
     if args.setup_editor:
         from ._editor_setup import setup_editor
 

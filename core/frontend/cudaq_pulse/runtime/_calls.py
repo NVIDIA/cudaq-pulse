@@ -36,6 +36,7 @@ from typing import Any
 
 import numpy as np
 
+from .._errors import InvalidTypeError, InvalidValueError, NotFoundError
 from ..classical import ClassicalFunction
 
 # Branches whose weight falls below this fraction of the initial state's are
@@ -99,7 +100,7 @@ def _call_inputs(
             part = [int(v != 0) for v in part]
         elif spec.descriptor.startswith("iq"):
             if iq is None:
-                raise ValueError(
+                raise InvalidValueError(
                     f"{function.name}: IQ points are drawn per shot; simulate with shots"
                 )
             part = [iq(key) for key in part_keys]
@@ -114,7 +115,9 @@ def _answer_values(function: ClassicalFunction, answer: Any) -> list[float]:
     results = function.results
     parts = answer if len(results) > 1 else (answer,)
     if len(results) > 1 and (not isinstance(answer, (tuple, list)) or len(answer) != len(results)):
-        raise TypeError(f"{function.name} must return {len(results)} results, got {answer!r}")
+        raise InvalidTypeError(
+            f"{function.name} must return {len(results)} results, got {answer!r}"
+        )
     flat: list[float] = []
     for spec, part in zip(results, parts):
         if spec.is_scalar:
@@ -122,7 +125,7 @@ def _answer_values(function: ClassicalFunction, answer: Any) -> list[float]:
         else:
             items = list(part)
             if len(items) != spec.answer_count:
-                raise TypeError(
+                raise InvalidTypeError(
                     f"{function.name}: result {spec.descriptor} has {spec.answer_count} "
                     f"values, got {len(items)}"
                 )
@@ -317,8 +320,10 @@ def simulate_tree(
     def invoke(callee: str, inputs: tuple[Any, ...], calls: list[CallRecord]) -> Any:
         handler = handlers.get(callee)
         if handler is None:
-            raise KeyError(
-                f"no handler for classical function {callee!r}; pass handlers={{{callee!r}: ...}}"
+            raise NotFoundError(
+                f"classical function {callee!r} is external and has no handler; pass "
+                f"simulate(..., handlers={{{callee!r}: my_{callee}}}), or declare {callee!r} "
+                "with a Python body"
             )
         if getattr(handler, "takes_history", False):
             return handler(*inputs, history=calls)
@@ -451,7 +456,9 @@ def simulate_tree(
                 )
                 return
             if shots is None or iq_model is None:
-                raise ValueError(f"{callee}: IQ points are drawn per shot; simulate with shots")
+                raise InvalidValueError(
+                    f"{callee}: IQ points are drawn per shot; simulate with shots"
+                )
             drives = {(i, tuple(it)): (f, a) for i, it, f, a in current.readout_drives(entries)}
 
             def point(key: tuple[int, tuple[int, ...]]) -> tuple[float, float]:

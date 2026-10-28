@@ -99,11 +99,12 @@ def test_python_state_cannot_depend_on_a_measurement():
         d0, t0 = get_drive_line(q0)
         r0, rt = get_readout_line(q0)
         bit = readout(r0, square(300, 0.05), rt)
-        n = 1
+        n = [1]
         if bit:
-            n = 2
-        wait(d0, 10 * n)
+            n = [2]
+        wait(d0, 10 * n[0])
 
+    # Numbers are chosen (test_measurement_choice.py); other Python values are not.
     with pytest.raises(CompilationError, match="'n' would depend on a measurement result"):
         k(Q[0])
 

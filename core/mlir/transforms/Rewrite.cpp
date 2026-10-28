@@ -6,14 +6,16 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  *******************************************************************************/
 
-// The pattern passes: pulse-fold, pulse-canonicalize, pulse-virtual-z and
-// pulse-fusion, each one greedy rewrite of a function, and the pass that
-// applies several of them in a single rewrite.
+// The pattern passes, each one greedy rewrite of a function, the pass that
+// applies several of them in a single rewrite, and
+// pulse-hoist-loop-invariants.
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/LoopInvariantCodeMotionUtils.h"
 
 #include "cudaq-pulse/Transforms/Passes.h"
 
@@ -21,19 +23,30 @@
 
 namespace {
 
+// Every greedy rewrite also erases the operations whose results nothing
+// uses; pulse-remove-unused is that alone, with region simplification.
 constexpr pulse::RewriteStage stages[] = {
-    {"pulse-fold",
-     "Fold ops, merge equal constants and remove dead ops and blocks", nullptr},
-    {"pulse-canonicalize",
-     "Remove redundant syncs, merge waits in a row, inline untimed schedule "
-     "blocks, and branch on is_set and drop loops that run once or never",
-     pulse::populateCanonicalizePatterns},
-    {"pulse-virtual-z",
-     "Fold shift_phase ops into adjacent drive ops as phase attributes",
-     pulse::populateVirtualZPatterns},
-    {"pulse-fusion",
-     "Fuse adjacent same-amplitude square-pulse drives into one",
-     pulse::populateFusionPatterns},
+    {"pulse-fold-constants",
+     "Compute constant arithmetic at compile time and merge equal constants",
+     nullptr, /*foldConstants=*/true},
+    {"pulse-remove-unused",
+     "Remove operations whose results nothing uses, unreachable blocks and "
+     "unused block arguments",
+     nullptr, /*foldConstants=*/false, /*removeUnused=*/true},
+    {"pulse-merge-waits",
+     "Join constant waits in a row on one line into one wait",
+     pulse::populateMergeWaitsPatterns},
+    {"pulse-simplify-control-flow",
+     "Remove syncs that order nothing, inline schedule blocks that take no "
+     "time, branch on is_set, and inline or remove loops that run once or "
+     "never",
+     pulse::populateSimplifyControlFlowPatterns},
+    {"pulse-fold-phases",
+     "Fold constant frame changes into the next drive as phase attributes",
+     pulse::populateVirtualZPatterns, false, false, /*onBinding=*/true},
+    {"pulse-fuse-pulses",
+     "Merge back-to-back square-pulse drives of the same amplitude into one",
+     pulse::populateFusionPatterns, false, false, /*onBinding=*/true},
 };
 
 struct PulseRewritePass
@@ -42,9 +55,12 @@ struct PulseRewritePass
 
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PulseRewritePass)
 
-  PulseRewritePass(llvm::ArrayRef<const pulse::RewriteStage *> stages,
-                   bool fold)
-      : stages(stages), fold(fold) {
+  explicit PulseRewritePass(llvm::ArrayRef<const pulse::RewriteStage *> stages)
+      : stages(stages) {
+    for (const pulse::RewriteStage *stage : stages) {
+      foldConstants |= stage->foldConstants;
+      removeUnused |= stage->removeUnused;
+    }
     if (stages.size() == 1) {
       argument = stages.front()->argument.str();
       description = stages.front()->description.str();
@@ -70,8 +86,8 @@ struct PulseRewritePass
 
   void runOnOperation() override {
     mlir::GreedyRewriteConfig config;
-    config.enableFolding(fold).enableConstantCSE(fold);
-    if (!fold)
+    config.enableFolding(foldConstants).enableConstantCSE(foldConstants);
+    if (!removeUnused)
       config.setRegionSimplificationLevel(
           mlir::GreedySimplifyRegionLevel::Disabled);
     if (mlir::failed(
@@ -80,10 +96,31 @@ struct PulseRewritePass
   }
 
   llvm::SmallVector<const pulse::RewriteStage *, 4> stages;
-  bool fold;
+  bool foldConstants = false;
+  bool removeUnused = false;
   std::string argument;
   std::string description;
   mlir::FrozenRewritePatternSet patterns;
+};
+
+struct PulseHoistLoopInvariantsPass
+    : public mlir::PassWrapper<PulseHoistLoopInvariantsPass,
+                               mlir::OperationPass<>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PulseHoistLoopInvariantsPass)
+
+  llvm::StringRef getArgument() const override {
+    return "pulse-hoist-loop-invariants";
+  }
+  llvm::StringRef getDescription() const override {
+    return "Move operations that compute the same value in every iteration "
+           "out of loops";
+  }
+
+  void runOnOperation() override {
+    getOperation()->walk([](mlir::LoopLikeOpInterface loop) {
+      mlir::moveLoopInvariantCode(loop);
+    });
+  }
 };
 
 } // namespace
@@ -99,7 +136,11 @@ const RewriteStage *findRewriteStage(llvm::StringRef argument) {
 }
 
 std::unique_ptr<mlir::Pass>
-createPulseRewritePass(llvm::ArrayRef<const RewriteStage *> stages, bool fold) {
-  return std::make_unique<PulseRewritePass>(stages, fold);
+createPulseRewritePass(llvm::ArrayRef<const RewriteStage *> stages) {
+  return std::make_unique<PulseRewritePass>(stages);
+}
+
+std::unique_ptr<mlir::Pass> createPulseHoistLoopInvariantsPass() {
+  return std::make_unique<PulseHoistLoopInvariantsPass>();
 }
 } // namespace pulse

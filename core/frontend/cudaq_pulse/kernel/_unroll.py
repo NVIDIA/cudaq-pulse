@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import os
 
+from .._errors import InvalidValueError
+
 DEFAULT_UNROLL_THRESHOLD = 8
 UNROLL_THRESHOLD_ENV = "CUDAQ_PULSE_UNROLL_THRESHOLD"
 
@@ -34,7 +36,9 @@ def resolve_unroll_threshold(value: int | None = None) -> int:
         try:
             value = int(raw)
         except ValueError:
-            raise ValueError(f"{UNROLL_THRESHOLD_ENV} must be an integer, got {raw!r}") from None
+            raise InvalidValueError(
+                f"{UNROLL_THRESHOLD_ENV} must be an integer, got {raw!r}"
+            ) from None
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(f"unroll_threshold must be a non-negative integer, got {value!r}")
+        raise InvalidValueError(f"unroll_threshold must be a non-negative integer, got {value!r}")
     return value

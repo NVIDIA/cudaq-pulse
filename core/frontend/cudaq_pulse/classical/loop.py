@@ -44,6 +44,7 @@ import math
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 
+from .._errors import InvalidValueError, NotFoundError
 from . import ClassicalFunction, Float
 
 __all__ = ["Estimate", "EstimateLog", "ParameterStore", "Update"]
@@ -80,7 +81,7 @@ class ParameterStore:
             return self._values[name]
         except KeyError:
             known = ", ".join(sorted(self._values)) or "none"
-            raise KeyError(f"no parameter {name!r} (the store has {known})") from None
+            raise NotFoundError(f"no parameter {name!r} (the store has {known})") from None
 
     def __contains__(self, name: object) -> bool:
         return name in self._values
@@ -94,7 +95,7 @@ class ParameterStore:
     def set(self, name: str, value: float, *, iteration: int | None = None) -> None:
         value = float(value)
         if not math.isfinite(value):
-            raise ValueError(f"{name} must be finite, got {value}")
+            raise InvalidValueError(f"{name} must be finite, got {value}")
         self._values[name] = value
         self.version += 1
         self.history.append(Update(name, value, self.version, iteration))
@@ -182,7 +183,7 @@ class EstimateLog:
         *name* that have a truth."""
         errors = [e.value - e.truth for e in self.series(name) if e.truth is not None]
         if not errors:
-            raise ValueError(f"no estimates of {name!r} with a truth")
+            raise InvalidValueError(f"no estimates of {name!r} with a truth")
         return math.sqrt(sum(x * x for x in errors) / len(errors))
 
     def to_json(self) -> str:

@@ -42,7 +42,7 @@ def _device(frequencies: dict[int, float]) -> pulse.Device:
 
 
 _STAGES = ("trace_ms", "ffi_ms", "passes_ms", "schedule_ms", "total_ms")
-_PASSES = ("verify", "canonicalize", "virtual_z", "fusion", "licm")
+_PASSES = tuple(pulse.Pass)
 
 
 def _median_ms(fn: Callable[[], Any], repeats: int) -> float:
@@ -136,10 +136,10 @@ def main() -> None:
         print(f"  {name:16s}" + "".join(f"  {stages[s]:9.3f}" for s in _STAGES))
 
     print("\n--- Per-Pass Timings (median ms) ---")
-    print(f"  {'Kernel':16s}" + "".join(f"  {p:>12s}" for p in _PASSES))
-    for name, kernel, n in BENCHMARKS:
-        row = [bench_pass(kernel, n, p, args.repeats) for p in _PASSES]
-        print(f"  {name:16s}" + "".join(f"  {ms:12.3f}" for ms in row))
+    print(f"  {'Pass':22s}" + "".join(f"  {name:>14s}" for name, _, _ in BENCHMARKS))
+    for p in _PASSES:
+        row = [bench_pass(kernel, n, p, args.repeats) for _, kernel, n in BENCHMARKS]
+        print(f"  {p.value:22s}" + "".join(f"  {ms:14.3f}" for ms in row))
 
     print("\n--- Lowering to LLVM Dialect (median ms) ---")
     for name, kernel, n in BENCHMARKS:

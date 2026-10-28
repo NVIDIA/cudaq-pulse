@@ -58,7 +58,18 @@ behavior may change in any 0.x release.
   stops before running, and `pulse.compile(kernel)` compiles ahead of the
   call. `float` parameters stay symbolic, so a parameter sweep compiles once.
   Kernels call other kernels, loop with `range`, and branch on measurement
-  results. Kernels take their qudits as parameters; a call without qudit
+  results. A number the arms of an `if` on a measurement set differently
+  (`if m: amp = 0.3` / `else: amp = 0.1`) holds the value of the arm that
+  ran, as one `arith.select` on the measurement, in `elif` chains, nested
+  ifs and rolled loops too. Lowering keeps the select where the target
+  takes that amplitude, phase or frequency at run time, so every use reads
+  the one value; otherwise, and for durations and waveform shapes, each op
+  that reads it runs in both arms of an `if` on the measurement. No target
+  takes one at run time yet. Either way the ops wait for the measurement
+  and schedule and simulate alike. A name assigned in only one arm, with no
+  value before the
+  `if`, raises a `CompilationError` naming it and the line of the `if`.
+  Kernels take their qudits as parameters; a call without qudit
   handles raises `NoDeviceError` unless the kernel was compiled for a device
   (`pulse.compile(k, device=dev)`).
 - **Loop unrolling.** A `range` loop whose variable is never read is kept
@@ -93,7 +104,13 @@ behavior may change in any 0.x release.
   while tracing, so `sync(*lines)` synchronizes a list of lines built in a
   loop. Helpers called from a kernel may take keyword-only, `*args` and
   `**kwargs` parameters; methods of helper objects, `functools.partial`
-  objects and decorated helpers that use pulse ops are inlined too. Lines
+  objects and decorated helpers that use pulse ops are inlined too. A
+  method is inlined like a plain helper, with its object as `self` (its
+  class as `cls`) and the globals of the module that defines it, also when
+  it reaches a pulse op only through `self`, `cls` or an object `self`
+  holds (`self.wf()`, `self.gates.x90(...)`), when it is inherited, a
+  `staticmethod` or `classmethod`, stored as a bound method, or an
+  object's `__call__`. Lines
   and tones may be kept in any container, such as a list of `(line, tone)`
   pairs or a dict, and lists of them support `pop`, `insert`, `extend`,
   `remove` and `del xs[i]`. `sync()` takes lists and tuples of lines, as
@@ -110,10 +127,15 @@ behavior may change in any 0.x release.
   support, such as a `match` class pattern or an assignment to a global,
   is named in the error, with what to write instead, rather than reported
   as an unsupported bytecode instruction. A `float` argument that tracing
-  makes static, because `abs`, `min`, `math.*`, a comparison or a waveform
-  duration needs its value, warns once with a `RuntimeWarning` naming the
-  argument and the operation, since each new value then compiles the kernel
-  again.
+  makes static, because `abs`, `min`, `math.*`, a comparison, a `range`
+  bound or a waveform duration needs its value, warns once per kernel and
+  argument, since each new value then compiles the kernel again. The
+  warning, a `UserWarning` that is also a `RuntimeWarning`, names the
+  argument, the operation and the kernel line (and the helper's line when
+  the value is needed in a helper), and suggests passing a host-computed
+  value, annotating the argument as `int`, or giving it a fixed value.
+  Compiles of one kernel that trace at once warn once between them, and a
+  cached call checks nothing new.
 - **Operations.** The kernel language lives in `cudaq_pulse.ops` and is
   used by bare name inside kernels. Drive and readout channels per qudit; `drive`, `readout`,
   `wait` and `sync`; phase and frequency control (`shift_phase` follows the
@@ -148,14 +170,36 @@ behavior may change in any 0.x release.
   while the kernel is traced, so custom envelopes compile, schedule and
   simulate like the built-in ones; it takes a callable, not an envelope
   name, and up to 252 clock cycles, like `custom_samples`.
-- **Compilation.** Verification, virtual-Z folding and drive fusion by
-  default; ASAP, ALAP and resource-constrained schedules
+- **Compilation.** Verification, constant and phase folding and pulse
+  fusion by default; ASAP, ALAP and resource-constrained schedules
   (`cudaq_pulse.compiler.MachineModel`); per-kernel schedule policies and
   schedule blocks. `pulse.Lowered.mlir()` returns the scheduled Pulse MLIR
   or the LLVM-dialect module, `Lowered.schedule` the timed events
   (`cudaq_pulse.compiler.ScheduledEvent`), `Lowered.metrics` the compile
   times (`cudaq_pulse.compiler.CompileMetrics`), and `Lowered.timeline()` a
   plot (with the `[viz]` extra).
+- **Optimization passes.** `passes=` takes members of `pulse.Pass`, a
+  string enum, or their names, in any order and combination: `VERIFY`,
+  `FOLD_CONSTANTS` (constant arithmetic computed at compile time),
+  `REMOVE_UNUSED` (operations whose results nothing uses), `MERGE_WAITS`
+  (constant waits in a row on one line joined into one),
+  `SIMPLIFY_CONTROL_FLOW` (syncs that order nothing, blocks that take no
+  time, loops that run once or never), `FOLD_PHASES` (frame changes folded
+  into the next drive), `FUSE_PULSES` (square pulses of the same amplitude
+  in a row merged) and `HOIST_LOOP_INVARIANTS`. The default is `VERIFY`,
+  `FOLD_CONSTANTS`, `REMOVE_UNUSED`, `FOLD_PHASES` and `FUSE_PULSES`. An
+  unknown name is a `ValueError` that names the closest member. Pattern
+  passes that follow one another run as one rewrite, so compiling, binding
+  a call's values and exporting a new binding are faster. When a call binds
+  `float` parameters, `FOLD_PHASES` and `FUSE_PULSES` run again, if the
+  kernel compiled with them, where the values reach: a phase bound to a
+  number folds into the next drive, and square pulses whose amplitudes are
+  bound equal fuse. `cudaq-pulse-opt` runs each pass by name
+  (`pulse-fold-constants`, `pulse-remove-unused`, `pulse-merge-waits`,
+  `pulse-simplify-control-flow`, `pulse-fold-phases`, `pulse-fuse-pulses`,
+  `pulse-hoist-loop-invariants`), as well as `pulse-unroll-classical-loops`
+  and `pulse-schedule-rcp` with its machine model as options (`max-drives`,
+  `max-readouts`, `readout-latency`, `switch-penalty`, `alap`).
 - **Devices and targets.** `pulse.get_device` and `pulse.device` describe a
   machine as a target plus a qudit layout; devices compare by content and
   share compiled kernels. Target descriptions are
@@ -164,7 +208,13 @@ behavior may change in any 0.x release.
   669 (2022), and Rydberg chain and square arrays (compile only).
   A `Coupling`'s gate fields (`gate_type`, `gate_duration_ns`,
   `gate_buffer_ns`, `gate_fidelity`) default to `None`, unspecified; the
-  Krinner target gives its published CZ values.
+  Krinner target gives its published CZ values. A config or file with
+  problems raises `pulse.DeviceDefinitionError` (a `ValueError`) listing all
+  of them in `problems`, each a `pulse.Problem` with its path in the config
+  (`layout[2]`), the offending value and a fix, and for a file its line and
+  column; an unknown key or target name suggests the closest one, and the
+  reserved keys (`zones`, `sites`, `moves`, `transport`) are problems too.
+  `python -m cudaq_pulse.doctor --system FILE [--json]` runs the same checks.
 - **Calibrations and the transmon model.** `cudaq_pulse.targets.Calibration`
   loads fitted values, each with its kind, source, uncertainty and cooldown,
   apart from the published target, and a device config takes `"calibration"`
@@ -242,13 +292,24 @@ behavior may change in any 0.x release.
   both `BackendError`s. `examples/controller_backend/` is a toy backend, and
   the "Writing a Controller Backend" guide walks through one.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
-  `CompiledKernel`, `Lowered`, `simulate`, `SimulationResult`, `device`,
-  `get_device`, `Device`, `Qudit`, `Register`, `Target`, `PulseError`,
-  `CompilationError`, `NoTargetError`, `NoDeviceError`,
+  `CompiledKernel`, `Lowered`, `Pass`, `simulate`, `SimulationResult`,
+  `device`, `get_device`, `Device`, `Qudit`, `Register`, `Target`,
+  `PulseError`, `Problem`, `DeviceDefinitionError`, `InvalidValueError`,
+  `InvalidTypeError`, `NotFoundError`, `UnsupportedError`,
+  `CompilationError`, `TimingError`, `ExecutionError`, `InternalError`,
+  `PulseWarning`, `UpgradeNotice`, `NoTargetError`, `NoDeviceError`,
   `DeviceMismatchError`, `GpuRuntimeError`, `viz`, `classical`,
   `controller` and `backends`, plus `__version__`.
   Every error cudaq-pulse raises on purpose derives from `PulseError` and
-  keeps its built-in base (`NoTargetError` is still a `RuntimeError`).
+  has the built-in base of its kind: `InvalidValueError` is a `ValueError`,
+  `InvalidTypeError` a `TypeError`, `NotFoundError` a `KeyError`,
+  `UnsupportedError` a `NotImplementedError`, and `CompilationError`,
+  `ExecutionError` and `InternalError` are `RuntimeError`s. An
+  `InternalError` is a bug in cudaq-pulse, and its message asks for a
+  report. `Calibration.load` of a calibration that is neither shipped nor a
+  file raises `NotFoundError`, and a malformed request or answer on a
+  classical channel an `ExecutionError`. Every warning cudaq-pulse issues
+  is a `PulseWarning`.
   `cudaq_pulse.compiler`, `cudaq_pulse.runtime.simulate` and
   `cudaq_pulse.targets.transmon_model` list their public names in `__all__`,
   as the other documented modules do. `cudaq_pulse.targets.UnknownTargetError`

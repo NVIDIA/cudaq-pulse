@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .._errors import InvalidValueError
 from .ir_builder import CompilationError
 
 # Policies a called kernel can be scheduled with on its own.
@@ -36,11 +37,11 @@ def validate_kernel_schedule(schedule: str | None) -> str | None:
     if schedule is None or schedule in BLOCK_SCHEDULES:
         return schedule
     if schedule in ROOT_ONLY_SCHEDULES:
-        raise ValueError(
+        raise InvalidValueError(
             f"schedule={schedule!r} applies to a whole program, not to one kernel; "
             f"pass it to cudaq_pulse.compile(..., schedule={schedule!r}) instead"
         )
-    raise ValueError(
+    raise InvalidValueError(
         f"Unknown kernel schedule {schedule!r}. Choose from: "
         + ", ".join(sorted(BLOCK_SCHEDULES))
         + ", or None to schedule the kernel with its caller"

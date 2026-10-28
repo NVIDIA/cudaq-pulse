@@ -69,7 +69,9 @@ def test_cr_target_excitation(control):
 
 
 @pytest.mark.parametrize(("theta", "x"), [(0.5 * math.pi, -1.0), (-0.5 * math.pi, 1.0)])
-@pytest.mark.parametrize("passes", [(), ("verify", "virtual_z")])
+@pytest.mark.parametrize(
+    "passes", [(), ("verify", "fold_constants", "remove_unused", "fold_phases")]
+)
 def test_shift_phase_is_a_mckay_virtual_z(theta, x, passes):
     """shift_phase(theta) then an X90 is an X90 about the axis at -theta."""
     rate = math.pi / 2 / 20.0  # X90 in 20 ns

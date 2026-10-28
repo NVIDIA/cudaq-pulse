@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import _build_config
-from .._errors import PulseError
+from .._errors import ExecutionError
 
 __all__ = [
     "GpuDeviceUnavailableError",
@@ -90,7 +90,7 @@ _MINIMUM_DRIVER: dict[int, tuple[int, str]] = {
 }
 
 
-class GpuRuntimeError(PulseError, RuntimeError):
+class GpuRuntimeError(ExecutionError):
     """Base class for every reason GPU execution cannot proceed."""
 
 

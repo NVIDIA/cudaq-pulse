@@ -121,7 +121,7 @@ def test_round_trips():
     assert wire.decode_answer(fn, answer) == (0, 9, (0.125, [1, 1, 0]))
     failed = wire.encode_answer(fn, (0.0, [0, 0, 0]), status=3)
     assert wire.decode_answer(fn, failed)[0] == 3
-    with pytest.raises(ValueError, match="not a request"):
+    with pytest.raises(pulse.ExecutionError, match="not a request"):
         wire.decode_request(fn, answer)
 
 

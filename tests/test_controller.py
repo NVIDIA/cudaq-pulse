@@ -151,7 +151,7 @@ def detuned(q, r):
 
 
 def test_a_detuned_tone_gains_phase_between_its_drives():
-    # Virtual Z folds the phase shift into the last drive.
+    # fold_phases folds the phase shift into the last drive.
     lowered = pulse.compile(detuned, schedule="asap").lower(Q[0], Q[1])
     assert "frame_phase_offset" in lowered.mlir()
     program = lowered.export_controller()

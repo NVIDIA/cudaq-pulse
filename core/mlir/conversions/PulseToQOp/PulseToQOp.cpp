@@ -87,7 +87,7 @@ constantParameters(const WaveformCallbackData &callback) {
   return values;
 }
 
-/// The phase attributes that virtual-Z folding leaves on a drive.
+/// The phase attributes that pulse-fold-phases leaves on a drive.
 static double phaseOffsetOf(Operation *drive) {
   double offset = 0.0;
   for (StringRef name : {"phase_offset", "frame_phase_offset"})

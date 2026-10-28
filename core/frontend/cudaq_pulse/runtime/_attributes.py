@@ -13,6 +13,8 @@ import math
 import struct
 from typing import Any
 
+from .._errors import InvalidValueError
+
 _VALID_INTEGRATORS = frozenset(
     {
         "rk1",
@@ -31,7 +33,7 @@ def _level_attributes(
     module attributes that model them (indexed by device qudit)."""
     dims = tuple((levels.get(q, 2) if isinstance(levels, dict) else int(levels)) for q in qudits)
     if any(d < 2 for d in dims):
-        raise ValueError("every qudit needs at least two levels")
+        raise InvalidValueError("every qudit needs at least two levels")
     by_index = [2] * _extent(qudits)
     for q, d in zip(qudits, dims):
         by_index[q] = d
@@ -90,7 +92,7 @@ def _target_attributes(
         qubit = target.qubits[qi]
         t2_us = qubit.t2_star_us if dephasing == "t2_star" else qubit.t2_echo_us
         if t2_us is None:
-            raise ValueError(f"qudit {qi} has no Hahn-echo T2 to dephase at")
+            raise InvalidValueError(f"qudit {qi} has no Hahn-echo T2 to dephase at")
         t1_ns[qi] = max(0.0, float(qubit.t1_us)) * 1.0e3
         t2_ns[qi] = max(0.0, float(t2_us)) * 1.0e3
         thermal[qi] = float(qubit.thermal_population)

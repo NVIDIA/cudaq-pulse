@@ -39,6 +39,8 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from .._errors import InvalidValueError
+
 __all__ = [
     "GoldenSection",
     "NelderMead",
@@ -78,7 +80,7 @@ def t1_update(alpha: float, beta: float, survived: bool, wait_ns: float) -> tupl
     variance.
     """
     if alpha <= 0 or beta <= 0:
-        raise ValueError(f"alpha and beta must be positive, got {alpha}, {beta}")
+        raise InvalidValueError(f"alpha and beta must be positive, got {alpha}, {beta}")
     t = max(float(wait_ns), 0.0)
     if survived:
         return alpha, beta + t
@@ -116,7 +118,7 @@ def frequency_update(
     variance of prior times likelihood.
     """
     if sigma_hz <= 0:
-        raise ValueError(f"sigma_hz must be positive, got {sigma_hz}")
+        raise InvalidValueError(f"sigma_hz must be positive, got {sigma_hz}")
     k = 2 * math.pi * wait_ns * 1e-9
     m, s2 = k * mean_hz, (k * sigma_hz) ** 2
     sign = -1.0 if outcome else 1.0

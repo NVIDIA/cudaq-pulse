@@ -17,13 +17,15 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 
 namespace pulse {
 std::unique_ptr<mlir::Pass> createPulseToQOpPass();
 
 std::unique_ptr<mlir::Pass> createPulseVerifyPass();
 
-void populateCanonicalizePatterns(mlir::RewritePatternSet &patterns);
+void populateMergeWaitsPatterns(mlir::RewritePatternSet &patterns);
+void populateSimplifyControlFlowPatterns(mlir::RewritePatternSet &patterns);
 void populateVirtualZPatterns(mlir::RewritePatternSet &patterns);
 void populateFusionPatterns(mlir::RewritePatternSet &patterns);
 
@@ -31,20 +33,31 @@ void populateFusionPatterns(mlir::RewritePatternSet &patterns);
 struct RewriteStage {
   llvm::StringLiteral argument;
   llvm::StringLiteral description;
-  /// Adds the patterns; null for pulse-fold, which has none and only folds.
+  /// Adds the patterns; null for pulse-fold-constants and
+  /// pulse-remove-unused, which have none.
   void (*populate)(mlir::RewritePatternSet &);
+  /// The rewrite folds ops and merges equal constants.
+  bool foldConstants = false;
+  /// The rewrite removes unreachable blocks and unused block arguments.
+  bool removeUnused = false;
+  /// A call's values that reach the ops these patterns match run them again
+  /// (see foldBinding in the extension).
+  bool onBinding = false;
 };
 
-/// pulse-fold, pulse-canonicalize, pulse-virtual-z and pulse-fusion.
+/// The pattern passes: pulse-fold-constants, pulse-remove-unused,
+/// pulse-merge-waits, pulse-simplify-control-flow, pulse-fold-phases and
+/// pulse-fuse-pulses.
 llvm::ArrayRef<RewriteStage> rewriteStages();
 /// The stage registered as `argument`, or null.
 const RewriteStage *findRewriteStage(llvm::StringRef argument);
 /// One greedy rewrite of a function with the patterns of all `stages`, which
-/// also folds ops and merges equal constants when `fold`. The stages share a
-/// walk of the function, so a pipeline that runs several back to back pays
-/// for one.
+/// folds and removes as any of them does. The stages share a walk of the
+/// function, so a pipeline that runs several back to back pays for one.
 std::unique_ptr<mlir::Pass>
-createPulseRewritePass(llvm::ArrayRef<const RewriteStage *> stages, bool fold);
+createPulseRewritePass(llvm::ArrayRef<const RewriteStage *> stages);
+/// MLIR's loop-invariant code motion, as pulse-hoist-loop-invariants.
+std::unique_ptr<mlir::Pass> createPulseHoistLoopInvariantsPass();
 
 std::unique_ptr<mlir::Pass> createPulseScheduleAsapPass();
 std::unique_ptr<mlir::Pass> createPulseScheduleAlapPass();
@@ -59,6 +72,13 @@ std::unique_ptr<mlir::Pass> createPulseScheduleRcpOptionsPass();
 std::unique_ptr<mlir::Pass> createPulseInlineScheduleBlocksPass();
 std::unique_ptr<mlir::Pass> createPulseClassicalCheckPass();
 std::unique_ptr<mlir::Pass> createPulseUnrollClassicalLoopsPass();
+/// pulse-lower-selects with no parameter taken at run time, for
+/// cudaq-pulse-opt (where the `runtime` option sets them).
+std::unique_ptr<mlir::Pass> createPulseLowerSelectsPass();
+/// pulse-lower-selects keeping the selects of the parameter kinds in
+/// `runtime` (amplitude, phase, frequency).
+std::unique_ptr<mlir::Pass>
+createPulseLowerSelectsPass(llvm::ArrayRef<std::string> runtime);
 } // namespace pulse
 
 namespace qop {
@@ -79,14 +99,14 @@ inline void registerPulsePasses() {
 
   mlir::registerPass(createPulseVerifyPass);
   for (const RewriteStage &stage : rewriteStages())
-    mlir::registerPass([&stage] {
-      return createPulseRewritePass(&stage, stage.populate == nullptr);
-    });
+    mlir::registerPass([&stage] { return createPulseRewritePass(&stage); });
+  mlir::registerPass(createPulseHoistLoopInvariantsPass);
   mlir::registerPass(createPulseScheduleAsapPass);
   mlir::registerPass(createPulseScheduleAlapPass);
   mlir::registerPass(createPulseInlineScheduleBlocksPass);
   mlir::registerPass(createPulseClassicalCheckPass);
   mlir::registerPass(createPulseUnrollClassicalLoopsPass);
+  mlir::registerPass([] { return createPulseLowerSelectsPass(); });
   mlir::registerPass(createPulseScheduleRcpOptionsPass);
 }
 } // namespace pulse

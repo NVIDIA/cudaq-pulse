@@ -31,6 +31,8 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .._errors import InvalidValueError, NotFoundError
+
 if TYPE_CHECKING:
     from .transmon_model import ChargeCoupledPair, TransmonCircuit
 
@@ -51,7 +53,7 @@ class Calibration:
         cooldown = schema.get("default_cooldown") if cooldown is None else cooldown
         cooldowns = data.get("cooldowns", {})
         if cooldown not in cooldowns:
-            raise ValueError(
+            raise InvalidValueError(
                 f"calibration {name!r} has no cooldown {cooldown!r}; "
                 f"it has {', '.join(sorted(cooldowns))}"
             )
@@ -71,7 +73,7 @@ class Calibration:
             path = _SHIPPED / f"{name}.json"
         elif not path.is_file():
             shipped = sorted(p.stem for p in _SHIPPED.glob("*.json"))
-            raise FileNotFoundError(
+            raise NotFoundError(
                 f"no calibration {name!r}: not a file, and the shipped ones are "
                 + ", ".join(shipped)
             )
@@ -90,7 +92,7 @@ class Calibration:
         for key in path:
             node = node[key]
         if not (isinstance(node, Mapping) and "value" in node):
-            raise KeyError(f"{'/'.join(path)} is not a calibrated value")
+            raise NotFoundError(f"{'/'.join(path)} is not a calibrated value")
         return copy.deepcopy(dict(node))
 
     def value(self, *path: str) -> Any:
@@ -127,7 +129,7 @@ class Calibration:
         from .transmon_model import TransmonCircuit
 
         if qubit not in self.flux_qubits:
-            raise KeyError(f"calibration {self.name!r} has no circuit for qubit {qubit!r}")
+            raise NotFoundError(f"calibration {self.name!r} has no circuit for qubit {qubit!r}")
         q = self._data["qubits"][qubit]
         return TransmonCircuit(
             q["ec"]["value"], q["ej_max"]["value"], q["asymmetry_d"]["value"], qubit
@@ -145,7 +147,7 @@ class Calibration:
     def charge_coupling_hz(self, pair: str) -> float:
         """g_c of *pair* (``"X2-D4"``): the device-wide charge coupling."""
         if pair not in self._couplings()["idle_exchange"]:
-            raise KeyError(f"calibration {self.name!r} has no coupling for pair {pair!r}")
+            raise NotFoundError(f"calibration {self.name!r} has no coupling for pair {pair!r}")
         couplings = self._couplings()
         value: float = couplings[couplings["used"]]["value"]
         return value

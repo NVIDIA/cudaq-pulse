@@ -352,12 +352,13 @@ OperandRange ScheduleBlockOp::getEntrySuccessorOperands(RegionSuccessor) {
 
 // ===----------------------------------------------------------------------===//
 // Folders — fold away no-op operations (zero shift, scale by 1, double neg).
-// pulse-fold and every greedy rewrite apply them.
+// pulse-fold-constants applies them.
 //
-// Rewrites that need more than one op are passes: redundant syncs and
-// adjacent waits in pulse-canonicalize (transforms/Canonicalize.cpp), phase
-// folding into drives in pulse-virtual-z (transforms/VirtualZ.cpp), square
-// pulse fusion in pulse-fusion (transforms/Fusion.cpp).
+// Rewrites that need more than one op are passes: adjacent waits in
+// pulse-merge-waits and redundant syncs in pulse-simplify-control-flow
+// (transforms/Canonicalize.cpp), phase folding into drives in
+// pulse-fold-phases (transforms/VirtualZ.cpp), square pulse fusion in
+// pulse-fuse-pulses (transforms/Fusion.cpp).
 // ===----------------------------------------------------------------------===//
 
 OpFoldResult WaitOp::fold(FoldAdaptor adaptor) {
@@ -369,8 +370,8 @@ OpFoldResult WaitOp::fold(FoldAdaptor adaptor) {
 LogicalResult SyncOp::fold(FoldAdaptor adaptor,
                            SmallVectorImpl<OpFoldResult> &results) {
   // Whether a sync is redundant depends on the lines' times, a program-wide
-  // analysis that pulse-canonicalize (RemoveRedundantSync) does; one op on
-  // its own never folds.
+  // analysis that pulse-simplify-control-flow (RemoveRedundantSync) does; one
+  // op on its own never folds.
   return failure();
 }
 
