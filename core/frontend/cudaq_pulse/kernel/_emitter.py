@@ -852,10 +852,14 @@ def _sync_lines(fname: str, call_args: list[Any]) -> list[IRValue]:
     return lines
 
 
-def _sample_envelope(duration: Any, envelope: Any) -> list[float]:
+def _sample_envelope(
+    duration: Any, envelope: Any, rate: tuple[int, int] | None = None
+) -> list[float]:
     """The samples of ``custom(duration, envelope)``: *envelope* called at the
     middle of each clock cycle, ``t = k + 0.5`` for ``k`` in
-    ``range(duration)``, as ``wf_mul`` products are sampled."""
+    ``range(duration)``, as ``wf_mul`` products are sampled; with *rate*
+    (n samples every d cycles, the lines' rate), at the middle of each
+    sample instead, ``t = (k + 0.5) * d / n``."""
     if isinstance(envelope, str):
         raise CompilationError(
             f"custom(): got the name {envelope!r}; pass a callable f(t) that returns "
@@ -878,7 +882,11 @@ def _sample_envelope(duration: Any, envelope: Any) -> list[float]:
         ) from None
     if count <= 0:
         raise CompilationError(f"custom(): the duration must be positive, got {count}")
-    if count > MAX_CUSTOM_SAMPLES:
+    step = 1.0
+    if rate is not None:
+        count = _samples_at(count, rate)
+        step = rate[1] / rate[0]
+    elif count > MAX_CUSTOM_SAMPLES:
         raise CompilationError(
             f"custom(): a duration of {count} clock cycles is over the limit of "
             f"{MAX_CUSTOM_SAMPLES}, one sample per cycle; split the envelope into "
@@ -886,7 +894,7 @@ def _sample_envelope(duration: Any, envelope: Any) -> list[float]:
         )
     samples = []
     for k in range(count):
-        t = k + 0.5
+        t = (k + 0.5) * step
         value = envelope(t)
         if is_symbolic(value):
             raise CompilationError(
@@ -909,6 +917,28 @@ def _sample_envelope(duration: Any, envelope: Any) -> list[float]:
             raise CompilationError(f"custom(): the envelope returned {number.real} at t={t}")
         samples.append(number.real)
     return samples
+
+
+def _samples_at(cycles: int, rate: tuple[int, int]) -> int:
+    """How many samples ``custom()`` takes over *cycles* at the lines' *rate*."""
+    n, d = rate
+    if cycles * n % d:
+        step = d // math.gcd(n, d)
+        raise CompilationError(
+            f"custom(): a duration of {cycles} clock cycles is not a whole number of "
+            f"samples on these lines, which play {n} every {d} cycles (their "
+            f"controller's rate); give it a multiple of {step} cycles, as "
+            f"pulse.cycles_on(line, {cycles}) does"
+        )
+    count = cycles * n // d
+    most = MAX_CUSTOM_SAMPLES - 2
+    if count > most:
+        raise CompilationError(
+            f"custom(): a duration of {cycles} clock cycles is {count} samples at "
+            f"these lines' rate ({n} every {d} cycles), over the limit of {most}; "
+            "split the envelope into consecutive drives"
+        )
+    return count
 
 
 def _operand_error(fname: str, call_args: list[Any]) -> CompilationError:
@@ -2871,9 +2901,14 @@ class PulseIREmitter:
             if fname in _WAVEFORMS:
                 duration = attrs.get("duration")
                 if fname == "custom":
-                    attrs = {"samples": _sample_envelope(duration, attrs.get("name"))}
+                    rate = getattr(self.b, "sample_rate", None)
+                    attrs = {"samples": _sample_envelope(duration, attrs.get("name"), rate)}
                     op_name = _OP_NAMES["custom_samples"]
-                    duration = len(attrs["samples"])
+                    if rate is None:
+                        duration = len(attrs["samples"])
+                    else:
+                        attrs["rate"] = rate
+                        duration = len(attrs["samples"]) * rate[1] // rate[0]
                 elif duration.__class__ is not int:
                     duration = None
             else:

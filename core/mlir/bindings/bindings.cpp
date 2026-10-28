@@ -3448,16 +3448,20 @@ public:
       }
 
       case kOpWfCustomSamples: {
-        if (plen < 2 || p[1] < 0 || p[1] + 2 != plen)
+        // (result, count, samples...[, n, d]): n samples every d cycles.
+        if (plen < 2 || p[1] < 0 || (p[1] + 2 != plen && p[1] + 4 != plen))
           throw std::invalid_argument(
               "packed: custom sample payload is malformed");
         llvm::SmallVector<double> samples;
         samples.reserve(static_cast<size_t>(p[1]));
         for (int64_t i = 0; i < p[1]; ++i)
           samples.push_back(i2f(p[2 + i]));
+        mlir::DenseI64ArrayAttr rate;
+        if (p[1] + 4 == plen)
+          rate = builder_->getDenseI64ArrayAttr({p[2 + p[1]], p[3 + p[1]]});
         auto op = pulse::CustomSamplesOp::create(
             *builder_, loc, wfTy,
-            builder_->getF64ArrayAttr(llvm::ArrayRef<double>(samples)));
+            builder_->getF64ArrayAttr(llvm::ArrayRef<double>(samples)), rate);
         bind(p[0], op.getResult());
         break;
       }

@@ -234,6 +234,15 @@ def _plan(own: float | None, program_ghz: float, reference: float | None) -> Clo
     return ClockPlan(program_ghz, (controller,), reference)
 
 
+def sample_rate(limits: ControllerLimits, plan: ClockPlan | None) -> tuple[int, int] | None:
+    """The samples a line of *limits*' controller plays per program cycle, as
+    ``(n, d)``: ``n`` every ``d`` cycles; ``None`` when it is one."""
+    rate = Fraction(limits.samples_per_cycles or 1)
+    if plan is not None:
+        rate *= plan.controllers[0].ratio
+    return None if rate == 1 else (rate.numerator, rate.denominator)
+
+
 def off_grid(
     plan: ClockPlan,
     lines: Sequence[Mapping[str, Any]],

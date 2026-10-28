@@ -130,18 +130,21 @@ For ``gaussian_square``, ``width`` is the flat-top width in clock cycles;
 ``duration - width`` must be a positive even integer so the two edges have the
 same integer duration.
 
-``custom(duration, f)`` calls ``f`` once per clock cycle while the kernel is
-traced, at the middle of each cycle (``t = 0.5, 1.5, ..., duration - 0.5``),
-and holds each value for its cycle: the IR records the
-``custom_samples`` of those values, so a custom envelope compiles, schedules
-and simulates on the CPU and the GPU like the built-in ones. Built-in
+``custom(duration, f)`` calls ``f`` once per sample of the lines it plays on
+while the kernel is traced, at the middle of each sample, and holds each
+value until the next: the IR records the ``custom_samples`` of those values,
+so a custom envelope compiles, schedules and simulates on the CPU and the
+GPU like the built-in ones. On the program clock that is once per clock
+cycle (``t = 0.5, 1.5, ..., duration - 0.5``); a controller with its own
+clock, or several samples per cycle, plays at its own rate, and ``f`` is
+sampled at that rate (at half the clock, ``t = 1, 3, ...``). Built-in
 envelopes are evaluated continuously, so a function that reproduces one,
-such as a Gaussian for ``gaussian``, matches it up to that per-cycle
-sampling. ``f`` must be defined outside the kernel and return real numbers
-that do not depend on kernel parameters; scale the waveform by a parameter
-with ``wf_scale(custom(duration, f), amplitude)``. The duration must be known
-while tracing and at most 252 clock cycles, the length of one sample record;
-play a longer envelope as consecutive drives.
+such as a Gaussian for ``gaussian``, matches it up to that sampling. ``f``
+must be defined outside the kernel and return real numbers that do not
+depend on kernel parameters; scale the waveform by a parameter with
+``wf_scale(custom(duration, f), amplitude)``. The duration must be known
+while tracing and at most 252 samples (250 at a controller's own rate), the
+length of one sample record; play a longer envelope as consecutive drives.
 
 Waveform Arithmetic
 -------------------

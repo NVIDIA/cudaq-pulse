@@ -273,6 +273,14 @@ class PackedIRBuilder:
         # The grid of a (role, qudit) line, in program cycles; compile() sets
         # it when a controller runs a coarser clock. None: every line is 1.
         self.line_grid: Callable[[str, int], int] | None = None
+        # The samples every line plays per program cycle, as (n, d): n every d
+        # cycles; compile() sets it when that is not one. custom() samples at
+        # it, and a custom_samples array must be made for it.
+        self.sample_rate: tuple[int, int] | None = None
+        # Where every line can meet, in program cycles: a wait whose length
+        # comes from an answer moves every later op by it, so its bounds must
+        # be multiples of this.
+        self.wait_grid = 1
         self._classical_index: dict[int, int] = {}
         self._scope: list[int] = []
         # Loops and branch arms open now, as (id, is_loop): where a future
@@ -398,7 +406,7 @@ class PackedIRBuilder:
                 vals = [dur, amp_raw, sig_raw, rf_raw]
                 self._emit_wf(_WF_GAUSS_SQUARE, rv, vals, ["i64", "f64", "f64", "i64"])
             else:
-                self._emit_custom_samples(rv, a.get("samples", ()))
+                self._emit_custom_samples(rv, a.get("samples", ()), a.get("rate"))
             return results
 
         # --- drive ---
@@ -472,6 +480,8 @@ class PackedIRBuilder:
             if bounds is not None or symbolic:
                 lowest, highest = (0, -1) if bounds is None else _wait_bounds(bounds)
                 if symbolic and self.classical and contains_answer(dur_raw):
+                    if self.wait_grid > 1:
+                        self._check_answer_bounds(operands[0], lowest, highest)
                     self._variable_wait(lv, rlv, dur_raw, lowest, highest, answer=True)
                     return results
                 if symbolic and is_arithmetic(dur_raw):
@@ -1081,6 +1091,33 @@ class PackedIRBuilder:
             return int(value.vid)
         return self._get_numeric_vid(value, dtype, specializes)
 
+    def _check_answer_bounds(self, line: IRValue, lowest: int, highest: int) -> None:
+        """Reject the bounds of a wait whose length comes from an answer when
+        they are not on ``wait_grid``: the run clamps the length to them, and
+        every later op on every line moves by it."""
+        grid = self.wait_grid
+        off = [b for b in (lowest, highest) if b >= 0 and b % grid]
+        if not off:
+            return
+        role = line.vtype.removesuffix("_line")
+        qudit = self._line_qubit.get(line.vid)
+        if qudit is None:
+            # A later version of the line: its channel names the qudit.
+            held = getattr(line.chan, "held", None)
+            qudit = -1 if held is None else self._qref_to_qubit.get(held.key[0], -1)
+        top = "None" if highest < 0 else str(highest)
+
+        def nearest(b: int) -> str:
+            return f"{b // grid * grid} or {-(-b // grid) * grid}"
+
+        raise CompilationError(
+            f"wait() on the {role} line of qudit {qudit}: its length comes from a "
+            "classical answer, so every later operation on every line moves by it, and "
+            f"its bounds ({lowest}, {top}) must be multiples of {grid} program cycles, "
+            "where all the lines' controllers can start operations; "
+            + "; ".join(f"for {b}, use {nearest(b)}" for b in off)
+        )
+
     def _variable_wait(
         self, line: int, result: int, duration: Any, lowest: int, highest: int, answer: bool = False
     ) -> None:
@@ -1155,15 +1192,17 @@ class PackedIRBuilder:
         for e in encoded:
             self._w(e)
 
-    def _emit_custom_samples(self, rv: int, samples: Any) -> None:
+    def _emit_custom_samples(
+        self, rv: int, samples: Any, rate: tuple[int, int] | None = None
+    ) -> None:
+        """A custom_samples record; with *rate*, n samples every d cycles."""
         try:
             sample_values = list(samples)
         except TypeError as exc:
             raise CompilationError("custom_samples() requires a finite sequence") from exc
-        if len(sample_values) > MAX_CUSTOM_SAMPLES:
-            raise CompilationError(
-                f"custom_samples() supports at most {MAX_CUSTOM_SAMPLES} samples per waveform"
-            )
+        most = MAX_CUSTOM_SAMPLES if rate is None else MAX_CUSTOM_SAMPLES - 2
+        if len(sample_values) > most:
+            raise CompilationError(f"custom_samples() supports at most {most} samples per waveform")
         if not sample_values:
             raise CompilationError("custom_samples() requires at least one sample")
         encoded: list[int] = []
@@ -1175,12 +1214,16 @@ class PackedIRBuilder:
                     "real-valued envelope samples"
                 )
             encoded.append(_f2i(value.real))
-        self._ensure(3 + len(encoded))
-        self._w(_header(_WF_CUSTOM_SAMPLES, 2 + len(encoded)))
+        extra = 0 if rate is None else 2
+        self._ensure(3 + len(encoded) + extra)
+        self._w(_header(_WF_CUSTOM_SAMPLES, 2 + len(encoded) + extra))
         self._w(rv)
         self._w(len(encoded))
         for word in encoded:
             self._w(word)
+        if rate is not None:
+            self._w(rate[0])
+            self._w(rate[1])
 
     @property
     def param_names(self) -> list[str]:

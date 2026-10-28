@@ -266,6 +266,42 @@ def variable_wait(q, tau: float):
     drive(d, square(8, 0.1), t)
 
 
+@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=60, link="controller")
+def wait_length(x):
+    return x
+
+
+@pulse.kernel
+def answer_wait_on_grid(q):
+    d, t = get_drive_line(q)
+    drive(d, square(8, 0.1), t)
+    wait(d, wait_length.submit(1.0).result(), bounds=(8, 400))
+    drive(d, square(8, 0.1), t)
+
+
+@pulse.kernel
+def answer_wait_off_grid(q):
+    d, t = get_drive_line(q)
+    drive(d, square(8, 0.1), t)
+    wait(d, wait_length.submit(1.0).result(), bounds=(6, 402))
+    drive(d, square(8, 0.1), t)
+
+
+def test_a_wait_from_an_answer_has_its_bounds_on_every_lines_grid():
+    links = {"controller": Link(fixed_ns=10)}
+    machine = _machine(0.5, links=links)
+    assert pulse.compile(answer_wait_on_grid, machine=machine).lower(Q[0]).schedule
+    with pytest.raises(pulse.CompilationError) as caught:
+        pulse.compile(answer_wait_off_grid, machine=machine).lower(Q[0])
+    message = str(caught.value)
+    assert message.startswith("wait() on the drive line of qudit 0: its length comes from")
+    assert "every later operation on every line moves by it" in message
+    assert "bounds (6, 402) must be multiples of 4 program cycles" in message
+    assert "for 6, use 4 or 8; for 402, use 400 or 404" in message
+    # On the program clock every bound is on the grid.
+    assert pulse.compile(answer_wait_off_grid, machine=MachineModel(links=links)).lower(Q[0])
+
+
 def test_a_variable_wait_off_the_grid_fails_at_the_call():
     compiled = pulse.compile(variable_wait, machine=_machine(0.5))
     lowered = compiled.lower(Q[0], 6.0)
@@ -422,6 +458,68 @@ def test_without_a_reference_each_controller_start_is_known_to_one_own_cycle():
     shared = _clocks.ClockPlan(2.0, plan.controllers, reference_clock_ghz=0.5)
     assert shared.budget_uncertainty_ns("awg", "readout") == 0.0
     assert shared.start_uncertainty_ns({"readout": 1}) == {"awg": 0.0, "readout": 2.0}
+
+
+# ── Sampled waveforms ────────────────────────────────────────────────────────
+
+
+def ramp(t):
+    return 0.1 + 0.01 * t
+
+
+@pulse.kernel
+def shaped(q):
+    d, t = get_drive_line(q)
+    drive(d, custom(8, ramp), t)
+
+
+@pulse.kernel
+def shaped_off_grid(q):
+    d, t = get_drive_line(q)
+    drive(d, custom(9, ramp), t)
+
+
+def _played(lowered):
+    return next(e for e in lowered.export_controller()["events"] if e["kind"] == "drive")
+
+
+def test_custom_samples_the_envelope_at_the_lines_rate():
+    # One sample per program cycle, at the middle of each...
+    drive = _played(pulse.compile(shaped).lower(Q[0]))
+    assert drive["waveform"]["samples"] == pytest.approx([ramp(k + 0.5) for k in range(8)])
+    # ...one per cycle of a controller at half the clock, at t = 1, 3, 5, 7...
+    lowered = pulse.compile(shaped, machine=_machine(1.0)).lower(Q[0])
+    assert _durations(lowered) == [8]
+    assert "rate = array<i64: 1, 2>" in lowered.mlir()
+    drive = _played(lowered)
+    assert drive["duration_cycles"] == 4
+    assert drive["waveform"]["samples"] == pytest.approx([ramp(t) for t in (1, 3, 5, 7)])
+    # ...and two per cycle on a controller that plays two.
+    machine = MachineModel(controller=ControllerLimits(samples_per_cycles=2))
+    drive = _played(pulse.compile(shaped, machine=machine).lower(Q[0]))
+    assert drive["duration_cycles"] == 8
+    expected = [ramp((k + 0.5) / 2) for k in range(16)]
+    assert drive["waveform"]["samples"] == pytest.approx(expected)
+    with pytest.raises(pulse.CompilationError, match="a multiple of 2 cycles"):
+        pulse.compile(shaped_off_grid, machine=_machine(1.0)).lower(Q[0])
+
+
+HELD = [ramp(t) for t in (1, 1, 3, 3, 5, 5, 7, 7)]
+
+
+@pulse.kernel
+def held_for_two_cycles(q):
+    d, t = get_drive_line(q)
+    drive(d, custom_samples(HELD), t)
+
+
+def test_a_custom_envelope_is_simulated_at_its_controllers_rate():
+    # Each sample at half the clock is held for two cycles of the program's.
+    lowered = pulse.compile(shaped, machine=_machine(1.0)).lower(Q[0])
+    held = pulse.compile(held_for_two_cycles).lower(Q[0])
+    a = pulse.simulate(lowered).density_matrix
+    b = pulse.simulate(held).density_matrix
+    np.testing.assert_allclose(a, b, atol=1e-12)
 
 
 # ── Simulation ───────────────────────────────────────────────────────────────

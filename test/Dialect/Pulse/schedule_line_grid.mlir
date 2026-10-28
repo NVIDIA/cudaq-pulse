@@ -70,4 +70,22 @@ func.func @loop_on_grid() {
   return
 }
 
+// Samples made for qudit 0's controller, one every 4 cycles: 3 samples last
+// 12 cycles.
+// CHECK-LABEL: func.func @samples_at_the_lines_rate
+// CHECK: pulse.drive {{.*}}{duration_cycles = 12 : i64, start_cycles = 0 : i64}
+// CHECK: pulse.drive {{.*}}{duration_cycles = 8 : i64, start_cycles = 12 : i64}
+func.func @samples_at_the_lines_rate() {
+  %qa = pulse.qudit_alloc : !pulse.qref
+  %a0, %ta = pulse.get_drive_line %qa {qubit = 0 : i64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %w = pulse.custom_samples [0.1, 0.2, 0.3] {rate = array<i64: 1, 4>} : !pulse.waveform
+  %c8 = arith.constant 8 : i64
+  %amp = arith.constant 0.1 : f64
+  %zero = arith.constant 0.0 : f64
+  %w8 = pulse.square %c8, %amp, %zero : i64, f64, f64 -> !pulse.waveform
+  %a1, %ta1 = pulse.drive %a0, %w, %ta : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+  %a2, %ta2 = pulse.drive %a1, %w8, %ta1 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+  return
+}
+
 }

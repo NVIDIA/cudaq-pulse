@@ -111,7 +111,7 @@ static int64_t getWaveformDuration(mlir::Value waveform) {
   else if (auto op = mlir::dyn_cast<pulse::CustomOp>(definition))
     duration = op.getDuration();
   else if (auto op = mlir::dyn_cast<pulse::CustomSamplesOp>(definition))
-    return static_cast<int64_t>(op.getSamples().size());
+    return op.getDurationCycles();
   else if (auto op = mlir::dyn_cast<pulse::PulseAddOp>(definition))
     return getWaveformDuration(op.getLhs());
   else if (auto op = mlir::dyn_cast<pulse::PulseSubOp>(definition))

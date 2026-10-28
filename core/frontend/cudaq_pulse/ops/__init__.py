@@ -326,20 +326,25 @@ def gaussian_square(
 def custom(duration: int, envelope_fn: Callable[[float], float]) -> Waveform:
     """Create a waveform by sampling a Python function while the kernel is traced.
 
-    *envelope_fn* is called once per clock cycle, at the middle of each cycle:
-    ``t = 0.5, 1.5, ..., duration - 0.5``, in clock cycles from the start of
-    the pulse. Each value is held for its cycle, like ``custom_samples`` of
-    the values (which is what the kernel's IR records), so the waveform
-    compiles, schedules and simulates like the built-in envelopes. A function
-    that matches a built-in envelope, such as
+    *envelope_fn* is called once per sample of the lines it plays on, at the
+    middle of each: ``t = 0.5, 1.5, ..., duration - 0.5``, in clock cycles
+    from the start of the pulse, when a line plays one sample per clock
+    cycle. A controller with its own clock or several samples per cycle
+    plays at its own rate, and the envelope is sampled at that rate instead
+    (every 2 clock cycles at half the clock: ``t = 1, 3, ...``). Each value
+    is held until the next, like ``custom_samples`` of the values (which is
+    what the kernel's IR records), so the waveform compiles, schedules and
+    simulates like the built-in envelopes. A function that matches a
+    built-in envelope, such as
     ``lambda t: a * math.exp(-((t - duration / 2) ** 2) / (2 * sigma**2))``
     for ``gaussian(duration, a, sigma)``, gives the same waveform up to that
-    per-cycle sampling.
+    sampling.
 
     The duration must be known while tracing (an ``int`` argument or a
-    constant) and at most 252 clock cycles; play a longer envelope as
-    consecutive drives. The function must return real numbers that do not
-    depend on kernel parameters: scale the waveform by a parameter with
+    constant) and at most 252 samples (250 at a controller's own rate);
+    play a longer envelope as consecutive drives. The function must return
+    real numbers that do not depend on kernel parameters: scale the waveform
+    by a parameter with
     ``wf_scale(custom(duration, f), amplitude)``. Define the function outside
     the kernel: a lambda or ``def`` in a kernel body raises
     ``CompilationError``.

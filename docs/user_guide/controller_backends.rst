@@ -71,7 +71,8 @@ Drives and readouts also have:
     {"duration": ..., "amplitude": ..., "sigma": ...}}``, with ``scale``,
     ``neg``, ``add``, ``sub`` and ``mul`` nodes over ``of``, and
     ``samples`` for ``custom_samples`` (which ``custom()`` envelopes become
-    when the kernel is traced); and its overall complex amplitude,
+    when the kernel is traced), at the line's own rate (its controller's
+    clock times its ``samples_per_cycles``); and its overall complex amplitude,
     ``{"re": ..., "im": ...}``. Times in parameters are in cycles.
 ``samples``
     With ``export_controller(sample_rate_ghz=...)``, a whole multiple of the
