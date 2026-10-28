@@ -941,6 +941,53 @@ def _samples_at(cycles: int, rate: tuple[int, int]) -> int:
     return count
 
 
+def _samples_made_for(
+    samples: Any, sample_rate_ghz: Any, line_rate: tuple[int, int] | None, program_ghz: float
+) -> tuple[int, int] | None:
+    """The ``rate`` of ``custom_samples(samples, sample_rate_ghz)``: the
+    rate it was made for (the program clock without *sample_rate_ghz*),
+    which must be the lines' *line_rate*. ``None`` for one per cycle."""
+    made = (1, 1)
+    if sample_rate_ghz is not None:
+        try:
+            made = _clocks.made_for(sample_rate_ghz, program_ghz)
+        except ValueError as e:
+            raise CompilationError(f"custom_samples(): {e}") from None
+    plays = line_rate or (1, 1)
+    if made != plays:
+        made_ghz = program_ghz * made[0] / made[1]
+        plays_ghz = program_ghz * plays[0] / plays[1]
+        count = len(samples) if isinstance(samples, (list, tuple)) else "the"
+        raise CompilationError(
+            f"custom_samples(): {count} samples made for {made_ghz:g} GHz "
+            f"({_rate_text(made)}) on lines that play {plays_ghz:g} GHz "
+            f"({_rate_text(plays)}), which would change how long they last; "
+            f"resample them to {plays_ghz:g} GHz and pass "
+            f"sample_rate_ghz={plays_ghz:g}, or build the waveform with "
+            "custom(duration, f), which samples at the lines' rate"
+        )
+    if made == (1, 1):
+        return None
+    try:
+        count = len(samples)
+    except TypeError:
+        return made
+    if count * made[1] % made[0]:
+        raise CompilationError(
+            f"custom_samples(): {count} samples at {_rate_text(made)} do not last a "
+            f"whole number of clock cycles; give a multiple of "
+            f"{made[0] // math.gcd(*made)} samples"
+        )
+    return made
+
+
+def _rate_text(rate: tuple[int, int]) -> str:
+    n, d = rate
+    if d == 1:
+        return "one sample per clock cycle" if n == 1 else f"{n} samples per clock cycle"
+    return f"one sample every {d} clock cycles" if n == 1 else f"{n} samples every {d} cycles"
+
+
 def _operand_error(fname: str, call_args: list[Any]) -> CompilationError:
     """The error for the first operand of *fname* that is not of its type."""
     index, want = 0, _OPERAND_TYPES[fname][0]
@@ -2840,14 +2887,20 @@ class PulseIREmitter:
             attrs: dict[str, Any] = {}
             out_types = tuple(v.vtype for v in operands) if rtypes is None else rtypes
         else:
-            bounds = None
+            # The optional last argument of wait (bounds) or custom_samples
+            # (sample_rate_ghz).
+            optional = None
             if len(call_args) != n_val + len(attr_names):
-                if fname != "wait" or len(call_args) != 3:
+                if fname == "custom_samples" and len(call_args) == 2:
+                    optional = ("sample_rate_ghz", call_args[1])
+                    call_args = call_args[:1]
+                elif fname != "wait" or len(call_args) != 3:
                     raise CompilationError(
                         f"{fname}: expected {n_val + len(attr_names)} args, got {len(call_args)}"
                     )
-                bounds = call_args[2]
-                call_args = call_args[:2]
+                else:
+                    optional = ("bounds", call_args[2])
+                    call_args = call_args[:2]
             # Operands must have their op's types. A line or tone read from a
             # container the tracer does not rebind (a tuple in a list, a dict)
             # may be an old value of its channel; the op consumes the channel's
@@ -2891,8 +2944,8 @@ class PulseIREmitter:
                     call_args[i] = _current(v)
             operands = tuple(call_args[:n_val])
             attrs = dict(zip(attr_names, call_args[n_val:]))
-            if bounds is not None:
-                attrs["bounds"] = bounds
+            if optional is not None:
+                attrs[optional[0]] = optional[1]
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
 
         op_name = _OP_NAMES[fname]
@@ -2964,6 +3017,18 @@ class PulseIREmitter:
                 return left if left is not None else right
             return left
         if fname == "custom_samples":
+            line_rate = getattr(self.b, "sample_rate", None)
+            made_for = attrs.pop("sample_rate_ghz", None)
+            if line_rate is not None or made_for is not None:
+                rate = _samples_made_for(
+                    attrs["samples"], made_for, line_rate, getattr(self.b, "clock_ghz", 2.0)
+                )
+                if rate is not None:
+                    attrs["rate"] = rate
+                    try:
+                        return len(attrs["samples"]) * rate[1] // rate[0]
+                    except TypeError:
+                        return None
             try:
                 return len(attrs["samples"])
             except TypeError:

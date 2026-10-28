@@ -243,6 +243,28 @@ def sample_rate(limits: ControllerLimits, plan: ClockPlan | None) -> tuple[int, 
     return None if rate == 1 else (rate.numerator, rate.denominator)
 
 
+def made_for(sample_rate_ghz: Any, program_ghz: float) -> tuple[int, int]:
+    """The ``(n, d)`` of samples made at *sample_rate_ghz*: ``n`` every ``d``
+    program cycles. Raises ``ValueError`` when that is not a ratio of whole
+    numbers."""
+    if (
+        isinstance(sample_rate_ghz, bool)
+        or not isinstance(sample_rate_ghz, (int, float))
+        or not math.isfinite(sample_rate_ghz)
+        or not sample_rate_ghz > 0
+    ):
+        raise InvalidValueError(
+            f"sample_rate_ghz must be a positive number, got {sample_rate_ghz!r}"
+        )
+    rate = Fraction(sample_rate_ghz / program_ghz).limit_denominator(_MAX_DENOMINATOR)
+    if abs(float(rate) * program_ghz - sample_rate_ghz) > _TOLERANCE * sample_rate_ghz:
+        raise InvalidValueError(
+            f"sample_rate_ghz={sample_rate_ghz:g} has no whole-cycle ratio to the "
+            f"{_ghz(program_ghz)} program clock"
+        )
+    return rate.numerator, rate.denominator
+
+
 def line_delays(
     delays: Mapping[tuple[str, int], float],
     limits: ControllerLimits | None,

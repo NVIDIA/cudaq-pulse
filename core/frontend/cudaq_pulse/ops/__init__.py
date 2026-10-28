@@ -359,11 +359,21 @@ def custom(duration: int, envelope_fn: Callable[[float], float]) -> Waveform:
     return _require_context("custom")
 
 
-def custom_samples(samples: Sequence[float]) -> Waveform:
+def custom_samples(samples: Sequence[float], sample_rate_ghz: float | None = None) -> Waveform:
     """Create a waveform from pre-computed sample data.
+
+    Each sample is held until the next. The samples are made for one rate,
+    and play only on lines at that rate: by default one per clock cycle of
+    the device (``Device.clock_ghz``), or *sample_rate_ghz*. A line plays its
+    controller's rate, the controller's clock times its
+    ``samples_per_cycles``; samples made for another rate are a
+    ``CompilationError``, never a change in how long they last. Resample
+    them for the line, or use ``custom``, which samples at the line's rate.
 
     Args:
         samples: Non-empty array-like of real envelope sample values.
+        sample_rate_ghz: The rate the samples were made for, in GHz; they
+            must last a whole number of clock cycles.
 
     Returns:
         Waveform value.

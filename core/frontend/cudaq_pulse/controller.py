@@ -630,7 +630,43 @@ def check(lowered: Lowered, limits: ControllerLimits | None = None) -> list[str]
         else _clocks.plan(limits, lowered.target.clock_ghz, machine.reference_clock_ghz)
     )
     lines, events, off = _walk(lowered, values=False, own=_native_clock(clocks), waveforms=False)
-    return _violations(lowered, events, limits, lines, clocks, off, waveforms=False)
+    found = _violations(lowered, events, limits, lines, clocks, off, waveforms=False)
+    if limits is not machine.controller:
+        found.extend(_sample_rate_violations(lowered, limits, clocks, events))
+    return found
+
+
+def _sample_rate_violations(
+    lowered: Lowered,
+    limits: ControllerLimits,
+    clocks: _clocks.ClockPlan | None,
+    events: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    """The sample arrays that *limits*' lines would play at another rate than
+    the one they were made for: the rate of the lines *lowered* was compiled
+    for."""
+    machine = lowered.options.machine
+    made = None
+    if machine.controller is not None:
+        made = _clocks.sample_rate(machine.controller, (lowered.generic or lowered).clocks)
+    plays = _clocks.sample_rate(limits, clocks)
+    if made == plays:
+        return []
+    program = lowered.target.clock_ghz
+    made_ghz = program if made is None else program * made[0] / made[1]
+    plays_ghz = program if plays is None else program * plays[0] / plays[1]
+    return [
+        f"line {e['line']}: the {e['kind']} at {e['start_cycles']} plays samples made for "
+        f"{made_ghz:g} GHz, and the controller's lines play {plays_ghz:g} GHz"
+        for e in events
+        if e["kind"] in _PLAYED and _has_samples(e.get("waveform"))
+    ]
+
+
+def _has_samples(node: Mapping[str, Any] | None) -> bool:
+    if node is None:
+        return False
+    return node["shape"] == "custom_samples" or any(_has_samples(c) for c in node.get("of", ()))
 
 
 # ── What the classical functions cost ───────────────────────────────────────

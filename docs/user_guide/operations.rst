@@ -123,8 +123,10 @@ Each constructor returns a waveform value that can be passed to
    * - ``custom(duration, envelope_fn)``
      - A Python function ``f(t)`` of the time in clock cycles, sampled while
        tracing (below)
-   * - ``custom_samples(samples)``
-     - Waveform from a non-empty sequence of at most 252 real-valued samples
+   * - ``custom_samples(samples, sample_rate_ghz=None)``
+     - Waveform from a non-empty sequence of at most 252 real-valued samples,
+       made for one sample per clock cycle or for ``sample_rate_ghz``
+       (below)
 
 For ``gaussian_square``, ``width`` is the flat-top width in clock cycles;
 ``duration - width`` must be a positive even integer so the two edges have the
@@ -145,6 +147,23 @@ depend on kernel parameters; scale the waveform by a parameter with
 ``wf_scale(custom(duration, f), amplitude)``. The duration must be known
 while tracing and at most 252 samples (250 at a controller's own rate), the
 length of one sample record; play a longer envelope as consecutive drives.
+
+A ``custom_samples`` array is made for one rate and plays only at that
+rate: one sample per clock cycle, or ``sample_rate_ghz``. On lines whose
+controller plays another rate (its clock times its ``samples_per_cycles``)
+it is a compile error, never a pulse that lasts longer or shorter than the
+samples were made for; resample the array for the line and pass its rate,
+or use ``custom``:
+
+.. code-block:: python
+   :class: fragment
+
+   @pulse.kernel
+   def raw(q):
+       d, t = get_drive_line(q)
+       # 1 GHz samples, for a controller at half of a 2 GHz program clock:
+       # 8 samples last 16 clock cycles.
+       drive(d, custom_samples(samples_1ghz, sample_rate_ghz=1.0), t)
 
 Waveform Arithmetic
 -------------------

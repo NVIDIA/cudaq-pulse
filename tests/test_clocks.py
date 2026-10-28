@@ -522,6 +522,61 @@ def test_a_custom_envelope_is_simulated_at_its_controllers_rate():
     np.testing.assert_allclose(a, b, atol=1e-12)
 
 
+HALF_RATE = [ramp(t) for t in (1, 3, 5, 7)]
+
+
+@pulse.kernel
+def at_half_rate(q):
+    d, t = get_drive_line(q)
+    drive(d, custom_samples(HALF_RATE, 1.0), t)
+
+
+@pulse.kernel
+def at_program_rate(q):
+    d, t = get_drive_line(q)
+    drive(d, custom_samples([0.1, 0.2, 0.3, 0.4]), t)
+
+
+@pulse.kernel
+def at_double_rate(q):
+    d, t = get_drive_line(q)
+    drive(d, custom_samples([0.1, 0.2, 0.3], sample_rate_ghz=4.0), t)
+
+
+def test_sample_arrays_play_only_at_the_rate_they_were_made_for():
+    # Made for the program clock, they play on it...
+    assert _durations(pulse.compile(at_program_rate).lower(Q[0])) == [4]
+    # ...and nowhere else: never as a longer or shorter pulse.
+    with pytest.raises(pulse.CompilationError) as caught:
+        pulse.compile(at_program_rate, machine=_machine(1.0)).lower(Q[0])
+    message = str(caught.value)
+    assert message.startswith(
+        "custom_samples(): 4 samples made for 2 GHz (one sample per clock cycle) on lines "
+        "that play 1 GHz (one sample every 2 clock cycles)"
+    )
+    assert "pass sample_rate_ghz=1" in message and "custom(duration, f)" in message
+    machine = MachineModel(controller=ControllerLimits(samples_per_cycles=2))
+    with pytest.raises(pulse.CompilationError, match="lines that play 4 GHz"):
+        pulse.compile(at_program_rate, machine=machine).lower(Q[0])
+    # Made for the line's rate, they last their samples at it.
+    lowered = pulse.compile(at_half_rate, machine=_machine(1.0)).lower(Q[0])
+    assert _durations(lowered) == [8] and _played(lowered)["duration_cycles"] == 4
+    with pytest.raises(pulse.CompilationError, match="made for 1 GHz .* lines that play 2 GHz"):
+        pulse.compile(at_half_rate).lower(Q[0])
+    # Two per cycle, an odd count does not fill whole cycles.
+    with pytest.raises(pulse.CompilationError, match="give a multiple of 2 samples"):
+        pulse.compile(at_double_rate, machine=machine).lower(Q[0])
+
+
+def test_check_against_another_rate_reports_the_sample_arrays():
+    lowered = pulse.compile(at_program_rate).lower(Q[0])
+    found = check(lowered, ControllerLimits(clock_ghz=1.0))
+    assert found == [
+        "line 0: the drive at 0 plays samples made for 2 GHz, and the controller's lines play 1 GHz"
+    ]
+    assert check(lowered, ControllerLimits(issue_cycles=2)) == []
+
+
 # ── Simulation ───────────────────────────────────────────────────────────────
 
 
