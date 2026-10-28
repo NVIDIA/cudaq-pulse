@@ -42,9 +42,10 @@ from collections.abc import Callable, Iterator, Sequence
 from typing import Any, NoReturn
 
 from .. import _clocks
+from .._units import Time, in_cycles
 from ..classical import ClassicalFunction
 from . import _bytecode_normalize as bc
-from . import _classical
+from . import _classical, _durations
 from ._bytecode_normalize import (
     BINARY,
     CALL,
@@ -89,6 +90,10 @@ _WAVEFORMS = frozenset(
 )
 _WAVEFORM_ARITHMETIC = frozenset({"wf_add", "wf_sub", "wf_mul", "wf_scale", "wf_neg"})
 _MAKES_WAVEFORM = _WAVEFORMS | _WAVEFORM_ARITHMETIC | {"custom_samples"}
+_TIMES = {
+    fname: tuple((name, whole) for name, whole, _ in spec if name != "bounds")
+    for fname, spec in _durations.TIMES.items()
+}
 _PULSE_OP_NAMES = frozenset(OP_TABLE.keys())
 _OP_NAMES = {name: f"pulse.{name}" for name in OP_TABLE}
 
@@ -175,6 +180,10 @@ def _cycles_on(builder: Any, args: list[StackVal], kwargs: dict[str, StackVal] |
             names,
             "a cycles_on() length",
         )
+    if n.__class__ is Time:
+        n = float(in_cycles(n, getattr(builder, "clock_ghz", 2.0)))
+    elif isinstance(n, float) and n.__class__ is not _durations.Cycles:
+        raise _durations.float_duration("cycles_on", "length", n, "pulse.cycles_on(line, {})")
     grid_of = getattr(builder, "line_grid", None)
     grid = 1
     if grid_of is not None:
@@ -2944,8 +2953,20 @@ class PulseIREmitter:
                     call_args[i] = _current(v)
             operands = tuple(call_args[:n_val])
             attrs = dict(zip(attr_names, call_args[n_val:]))
+            times = _TIMES.get(fname)
             if optional is not None:
                 attrs[optional[0]] = optional[1]
+                if times is not None:
+                    _durations.in_program_cycles(fname, attrs, getattr(self.b, "clock_ghz", 2.0))
+                    times = None
+            if times is not None:
+                # Ints, and floats in shape times, are cycles already.
+                for name, whole in times:
+                    cls = attrs[name].__class__
+                    if cls is not int and (whole or cls is not float):
+                        clock = getattr(self.b, "clock_ghz", 2.0)
+                        _durations.in_program_cycles(fname, attrs, clock)
+                        break
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
 
         op_name = _OP_NAMES[fname]

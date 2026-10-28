@@ -16,10 +16,12 @@ only run it.
 
    import cudaq_pulse as pulse
 
+   cal = {"x_duration": 20 * pulse.ns, "x_sigma": 5 * pulse.ns}
+
    @pulse.kernel
    def rabi(qubit, amplitude: float):
        drive_line, tone = get_drive_line(qubit)
-       drive(drive_line, gaussian(40, amplitude, 10.0), tone)
+       drive(drive_line, gaussian(cal["x_duration"], amplitude, cal["x_sigma"]), tone)
 
    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
    q = dev.qudit_handles[0]
@@ -47,8 +49,10 @@ Annotations decide what a compilation depends on:
   value never recompiles. A call whose values set a wait length schedules
   the module again with them, without tracing it; see
   :ref:`wait-lengths`.
-- Every other parameter (qudit handles, ``int``, anything unannotated) is
-  *static*: the kernel is specialized on its value.
+- Every other parameter (qudit handles, ``int``, anything unannotated, such
+  as a duration passed as a time) is *static*: the kernel is specialized on
+  its value. A time passed to a ``float`` parameter is a ``TypeError``; see
+  :ref:`durations`.
 - A ``float`` the program needs while it compiles -- one that sets a
   waveform duration, goes through ``int()``, decides an ``if`` or bounds a
   loop -- is specialized on as well. ``kernel.static_parameters`` and

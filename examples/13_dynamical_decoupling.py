@@ -26,8 +26,7 @@ def xy4(qubit, sigma, amplitude_pi, tau, n_cycles):
     """
     drive_line, tone = get_drive_line(qubit)
 
-    dur_pi = int(4 * sigma)
-    pi_x = gaussian(dur_pi, amplitude_pi, sigma)
+    pi_x = gaussian(4 * sigma, amplitude_pi, sigma)
 
     for _cycle in range(n_cycles):
         # X refocus
@@ -52,31 +51,32 @@ def xy4(qubit, sigma, amplitude_pi, tau, n_cycles):
 
 
 @pulse.kernel
-def uhrig_dd(qubit, sigma, amplitude_pi, total_time, n_pulses):
+def uhrig_dd(qubit, sigma, amplitude_pi, total_cycles, n_pulses):
     """Uhrig dynamical decoupling (UDD).
 
     Places n refocusing pulses at non-uniform intervals:
         t_j = T * sin^2(pi * j / (2n + 2))
 
     Optimal for pure dephasing from a soft-cutoff noise spectrum.
-    The intervals are computed at compile time from n_pulses.
+    The intervals are computed at compile time from n_pulses, in whole
+    clock cycles of a sequence *total_cycles* long.
     """
     drive_line, tone = get_drive_line(qubit)
 
-    dur_pi = int(4 * sigma)
-    pi_pulse = gaussian(dur_pi, amplitude_pi, sigma)
+    pi_pulse = gaussian(4 * sigma, amplitude_pi, sigma)
+    dur_pi = pulse.cycles_on(drive_line, 4 * sigma)
 
     prev_time = 0
     for j in range(n_pulses):
         frac = math.sin(math.pi * (j + 1) / (2 * n_pulses + 2)) ** 2
-        tj = int(total_time * frac)
+        tj = int(total_cycles * frac)
         gap = tj - prev_time - dur_pi
         if gap > 0:
             wait(drive_line, gap)
         drive(drive_line, pi_pulse, tone)
         prev_time = tj
 
-    remaining = total_time - prev_time
+    remaining = total_cycles - prev_time
     if remaining > 0:
         wait(drive_line, remaining)
 
@@ -89,9 +89,8 @@ def cpmg(qubit, sigma, amplitude_half_pi, amplitude_pi, tau, n_refocus):
     """
     drive_line, tone = get_drive_line(qubit)
 
-    dur = int(4 * sigma)
-    half_pi_pulse = gaussian(dur, amplitude_half_pi, sigma)
-    pi_pulse = gaussian(dur, amplitude_pi, sigma)
+    half_pi_pulse = gaussian(4 * sigma, amplitude_half_pi, sigma)
+    pi_pulse = gaussian(4 * sigma, amplitude_pi, sigma)
 
     drive(drive_line, half_pi_pulse, tone)
 
@@ -115,8 +114,7 @@ def knill_dd(qubit, sigma, amplitude_pi, tau):
     """
     drive_line, tone = get_drive_line(qubit)
 
-    dur_pi = int(4 * sigma)
-    pi_pulse = gaussian(dur_pi, amplitude_pi, sigma)
+    pi_pulse = gaussian(4 * sigma, amplitude_pi, sigma)
 
     phases = [math.pi / 6, 0.0, math.pi / 2, 0.0, math.pi / 6]
 
@@ -129,10 +127,10 @@ def knill_dd(qubit, sigma, amplitude_pi, tau):
 
 if __name__ == "__main__":
     dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
-    sigma = 10.0
+    sigma = 5 * pulse.ns  # every pulse lasts 4 sigma
     amplitude_pi = 0.50
     amplitude_half_pi = 0.25
-    tau = 200
+    tau = 100 * pulse.ns
 
     print("=== XY4 (4 cycles) ===")
     compiled_kernel = pulse.compile(xy4, device=dev).lower(

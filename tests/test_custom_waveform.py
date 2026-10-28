@@ -168,7 +168,9 @@ def test_an_unusable_envelope_is_rejected_while_tracing(qubit, envelope, message
         bad.lower(qubit)
 
 
-@pytest.mark.parametrize("duration, message", [(0, "must be positive"), (2.5, "must be an int")])
+@pytest.mark.parametrize(
+    "duration, message", [(0, "must be positive"), (2.5, r"duration is a float \(2.5\)")]
+)
 def test_an_unusable_duration_is_rejected(qubit, duration, message):
     @pulse.kernel
     def bad(q):

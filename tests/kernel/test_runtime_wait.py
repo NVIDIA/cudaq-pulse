@@ -8,8 +8,8 @@
 """A wait whose length a float parameter sets compiles once.
 
 Each program is compiled twice from one function: with its lengths ``float``
-(one module, rescheduled per call) and unannotated (specialized on every
-value). The two must schedule every value alike.
+(one module, rescheduled per call) and with them static (specialized on
+every value). The two must schedule every value alike.
 """
 
 from __future__ import annotations
@@ -27,13 +27,11 @@ pytestmark = pytest.mark.filterwarnings("error::RuntimeWarning")
 POLICIES = ("alap", "asap", "rcp", "alap_rcp")
 
 
-def _static_twin(fn: types.FunctionType) -> types.FunctionType:
-    """*fn* without annotations: every parameter is static."""
-    twin = types.FunctionType(
-        fn.__code__, fn.__globals__, fn.__name__, fn.__defaults__, fn.__closure__
-    )
-    twin.__kwdefaults__ = fn.__kwdefaults__
-    twin.__annotations__ = {}
+def _static_twin(fn: types.FunctionType) -> pulse.Kernel:
+    """*fn* compiled for every value of its float parameters, as a float
+    parameter the program needs while compiling is."""
+    twin = pulse.kernel(fn)
+    twin._promote(set(twin._split[1]))
     return twin
 
 
@@ -43,7 +41,7 @@ def _events(lowered) -> list[tuple]:
 
 def _assert_same_schedules(fn, qudits, sweeps, policies=POLICIES):
     runtime = pulse.kernel(fn)
-    static = pulse.kernel(_static_twin(fn))
+    static = _static_twin(fn)
     for policy in policies:
         compiled = pulse.compile(runtime, schedule=policy)
         reference = pulse.compile(static, schedule=policy)
@@ -337,7 +335,7 @@ def test_bounds_may_be_positional_and_open_above():
         ("x", r"bounds= takes \(lowest, highest\) in clock cycles"),
         ((-1, 3), r"bounds= must satisfy 0 <= lowest <= highest"),
         ((5, 2), r"bounds= must satisfy 0 <= lowest <= highest"),
-        ((0.5, 2), r"must be an integer number of clock cycles"),
+        ((0.5, 2), r"bounds is a float \(0.5\)\. Durations are an int number of cycles"),
     ],
 )
 def test_malformed_bounds_fail_while_compiling(bounds, message):

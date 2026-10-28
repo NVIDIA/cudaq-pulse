@@ -510,8 +510,9 @@ def _round(n: float, grid: int, rounding: Rounding) -> int:
 
 
 def cycles_on(line: Any, n: float, rounding: Rounding | str = Rounding.UP) -> int:
-    """*n* program cycles rounded onto *line*'s grid: the nearest length (or
-    start) its controller can time, ``up`` (default), ``down`` or ``nearest``.
+    """*n*, an int number of program cycles or a time (``10.5 * pulse.ns``),
+    rounded onto *line*'s grid: the nearest length (or start) its
+    controller can time, ``up`` (default), ``down`` or ``nearest``.
 
     Call it in a kernel with a line from ``get_drive_line`` or
     ``get_readout_line``; *n* must be known while the kernel compiles. A line

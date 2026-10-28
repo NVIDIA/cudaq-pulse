@@ -84,7 +84,7 @@ def rounded(q):
     drive(d, square(pulse.cycles_on(d, 37), 0.1), t)
     drive(d, square(pulse.cycles_on(d, 37, "down"), 0.1), t)
     drive(d, square(pulse.cycles_on(d, 37, rounding=pulse.Rounding.NEAREST), 0.1), t)
-    drive(d, square(pulse.cycles_on(d, 2.5), 0.1), t)
+    drive(d, square(pulse.cycles_on(d, 1.25 * pulse.ns), 0.1), t)
 
 
 def _durations(lowered):

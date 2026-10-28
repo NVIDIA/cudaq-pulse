@@ -17,6 +17,14 @@ barriers, and the cross-resonance gate primitive.
 
 import cudaq_pulse as pulse
 
+cal = {
+    "x_duration": 20 * pulse.ns,
+    "x_sigma": 5 * pulse.ns,
+    "drag_beta": 0.25 * pulse.ns,
+    "cr_duration": 100 * pulse.ns,
+    "cr_width": 80 * pulse.ns,
+}
+
 
 @pulse.kernel
 def ghz_3(qubit_0, qubit_1, qubit_2):
@@ -30,10 +38,11 @@ def ghz_3(qubit_0, qubit_1, qubit_2):
     drive_line_1, tone_1 = get_drive_line(qubit_1)
     drive_line_2, tone_2 = get_drive_line(qubit_2)
 
-    sx_pulse = drag(40, 0.25, 10.0, 0.5)
-    x_pi = drag(40, 0.50, 10.0, 0.5)
-    cr_pos = gaussian_square(200, 0.05, 10.0, 160)
-    cr_neg = gaussian_square(200, -0.05, 10.0, 160)
+    x_duration, x_sigma, beta = cal["x_duration"], cal["x_sigma"], cal["drag_beta"]
+    sx_pulse = drag(x_duration, 0.25, x_sigma, beta)
+    x_pi = drag(x_duration, 0.50, x_sigma, beta)
+    cr_pos = gaussian_square(cal["cr_duration"], 0.05, x_sigma, cal["cr_width"])
+    cr_neg = gaussian_square(cal["cr_duration"], -0.05, x_sigma, cal["cr_width"])
 
     # H(qubit_0) = Rz(pi) SX Rz(pi/2)
     shift_phase(tone_0, 3.14159)
@@ -70,10 +79,11 @@ def ghz_n(qubit_0, qubit_1, qubit_count):
     drive_line_0, tone_0 = get_drive_line(qubit_0)
     drive_line_1, tone_1 = get_drive_line(qubit_1)
 
-    sx_pulse = drag(40, 0.25, 10.0, 0.5)
-    x_pi = drag(40, 0.50, 10.0, 0.5)
-    cr_pos = gaussian_square(200, 0.05, 10.0, 160)
-    cr_neg = gaussian_square(200, -0.05, 10.0, 160)
+    x_duration, x_sigma, beta = cal["x_duration"], cal["x_sigma"], cal["drag_beta"]
+    sx_pulse = drag(x_duration, 0.25, x_sigma, beta)
+    x_pi = drag(x_duration, 0.50, x_sigma, beta)
+    cr_pos = gaussian_square(cal["cr_duration"], 0.05, x_sigma, cal["cr_width"])
+    cr_neg = gaussian_square(cal["cr_duration"], -0.05, x_sigma, cal["cr_width"])
 
     # H(qubit_0)
     shift_phase(tone_0, 3.14159)

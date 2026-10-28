@@ -111,32 +111,35 @@ In a kernel, ``fn.submit(...)`` sends the request and returns a future, and
    def feed_forward(q):
        d, t = get_drive_line(q)
        r, rt = get_readout_line(q)
-       m = readout(r, square(1000, 0.05), rt)
+       m = readout(r, square(500 * pulse.ns, 0.05), rt)
        in_time, correction = decode.submit([m]).result(timeout_ns=350)
        sync(d, r)
        if in_time:
            if correction[0]:
-               drive(d, square(40, PI_AMP), t)
+               drive(d, square(20 * pulse.ns, PI_AMP), t)
        else:
            if m:
-               drive(d, square(40, PI_AMP), t)
+               drive(d, square(20 * pulse.ns, PI_AMP), t)
 
 With ``timeout_ns`` the result starts with a flag that is true when the
 answer came in time; the other values are zero when it did not, and the
-program takes its fallback. A future is taken in the loop iteration that
+program takes its fallback. ``timeout_ns`` is in nanoseconds, or a time such
+as ``350 * pulse.ns``. A future is taken in the loop iteration that
 submitted it. It may be passed to a kernel the program calls, or returned
 from one, and taken there; an answer taken inside a kernel called with its
 own ``schedule=`` is used only inside it, so return the future instead when
 the caller needs the answer. Answers may be carried from one iteration to
 the next, as an estimator's state is.
 
-A wait may take its length from an answer, between bounds:
+A wait may take its length from an answer, between bounds. An answer is a
+plain number, a number of cycles; multiply it by a unit for an answer in
+nanoseconds:
 
 .. code-block:: python
    :class: fragment
 
    alpha, beta, tau = update_t1.submit([m], alpha, beta, tau).result()
-   wait(d, tau, bounds=(200, 40000))
+   wait(d, tau * pulse.ns, bounds=(100 * pulse.ns, 20 * pulse.us))
 
 Such a variable wait is a barrier for the lines that depend on it, and it
 opens a new *epoch* for them. The static schedule places it at its lower
@@ -159,7 +162,7 @@ get a share of its slots and budget each request as sent after the others',
 so a request on a shared link is due a few cycles later than alone.
 
 A length may also add ``float`` kernel parameters to an answer, as in
-``wait(d, answer + tau, bounds=(8, 1000))``. The kernel still compiles once:
+``wait(d, (answer + tau) * pulse.ns, bounds=(4 * pulse.ns, 500 * pulse.ns))``. The kernel still compiles once:
 ``tau`` is taken when the kernel is called, and each call checks that the
 length with its answers taken as 0 (here ``tau``) is finite and at most the
 upper bound, raising ``ValueError`` otherwise; it may be below the lower
@@ -319,9 +322,9 @@ kernel calls between measurements and runs between shots:
    @pulse.classical(args=(Bits(1), Float(), Float(), Float()),
                     results=(Float(), Float(), Float()),
                     max_latency_ns=200, link="controller")
-   def t1_estimator(survived, alpha, beta, wait_cycles):
-       alpha, beta = cal.t1_update(alpha, beta, bool(survived[0]), wait_cycles / 2.0)
-       return alpha, beta, min(max(cal.t1_wait(alpha, beta) * 2.0, 200), 20000)
+   def t1_estimator(survived, alpha, beta, wait_ns):
+       alpha, beta = cal.t1_update(alpha, beta, bool(survived[0]), wait_ns)
+       return alpha, beta, min(max(cal.t1_wait(alpha, beta), 100), 10000)
 
 **The converged pattern.** A kernel's trip counts are fixed when it
 compiles. To stop early, the estimator carries a converged flag in its state,
@@ -364,19 +367,19 @@ when it is known.
 .. code-block:: python
    :class: fragment
 
-   store = ParameterStore(wait_cycles=4000.0)
-   read_wait = store.reader("wait_cycles", link="controller", bounds=(0.0, 40000.0))
+   store = ParameterStore(wait_ns=2000.0)
+   read_wait = store.reader("wait_ns", link="controller", bounds=(0.0, 20000.0))
 
    @pulse.kernel
    def shot(q, amplitude: float):
        ...
-       wait(d, read_wait.submit().result(), bounds=(0, 40000))
+       wait(d, read_wait.submit().result() * pulse.ns, bounds=(0, 20 * pulse.us))
 
    compiled = pulse.compile(shot, device=dev, machine=machine)
    for i in range(10_000):
        lowered = compiled.lower(q, amplitude)   # no compiling after the first
        ...
-       store.set("wait_cycles", next_wait, iteration=i)
+       store.set("wait_ns", next_wait, iteration=i)
 
 **A drifting device.** ``cudaq_pulse.runtime.drift.DriftingPlant`` moves one
 qubit's T1 (``TelegraphT1``, switching between two values), frequency and

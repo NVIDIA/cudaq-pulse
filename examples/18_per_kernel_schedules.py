@@ -32,28 +32,38 @@ import cudaq_pulse as pulse
 
 ROUNDS = 2
 DATA_QUBITS = 4
+cal = {
+    "x_duration": 20 * pulse.ns,
+    "x_sigma": 5 * pulse.ns,
+    "drag_beta": 0.25 * pulse.ns,
+    "cr_duration": 100 * pulse.ns,
+    "cr_width": 80 * pulse.ns,
+    "readout_duration": 400 * pulse.ns,
+    "dd_tau": 60 * pulse.ns,
+}
 
 
 @pulse.kernel(schedule="asap")
 def single_qubit_layer(lines, tones):
     """A sqrt(X) on every data qubit, all starting together."""
     for i in range(len(lines)):
-        drive(lines[i], drag(40, 0.25, 10.0, 0.5), tones[i])
+        drive(lines[i], drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["drag_beta"]), tones[i])
 
 
 @pulse.kernel
 def cross_resonance(control, target_tone):
     """Drive the control qubit at the target's frequency."""
-    drive(control, gaussian_square(200, 0.05, 10.0, 160), target_tone)
+    cr = gaussian_square(cal["cr_duration"], 0.05, cal["x_sigma"], cal["cr_width"])
+    drive(control, cr, target_tone)
 
 
 @pulse.kernel(schedule="alap")
 def measure_and_reset(drive_line, tone, readout_line, readout_tone):
     """Read the ancilla out, then flip it back to 0 if it was 1."""
     sync(drive_line, readout_line)
-    result = readout(readout_line, square(800, 0.05), readout_tone)
+    result = readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
     if result:
-        drive(drive_line, drag(40, 0.5, 10.0, 0.5), tone)
+        drive(drive_line, drag(cal["x_duration"], 0.5, cal["x_sigma"], cal["drag_beta"]), tone)
     return result
 
 
@@ -62,7 +72,7 @@ def xy4(line, tone, tau):
     """X, Y, X, Y pi pulses, each followed by an idle of tau."""
     for phase in (0.0, 1.5708, 0.0, 1.5708):
         shift_phase(tone, phase)
-        drive(line, drag(40, 0.5, 10.0, 0.5), tone)
+        drive(line, drag(cal["x_duration"], 0.5, cal["x_sigma"], cal["drag_beta"]), tone)
         shift_phase(tone, -phase)
         wait(line, tau)
 
@@ -84,7 +94,7 @@ def stabilizer_cycle(qubits):
         single_qubit_layer(lines, tones)
         measure_and_reset(ancilla, ancilla_tone, readout_line, readout_tone)
         for i in range(DATA_QUBITS):
-            xy4(lines[i], tones[i], 120)
+            xy4(lines[i], tones[i], cal["dd_tau"])
 
 
 def first_round(compiled: pulse.Lowered) -> dict[int, list[tuple[str, int, int]]]:

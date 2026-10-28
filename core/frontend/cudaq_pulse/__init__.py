@@ -23,8 +23,12 @@ Usage::
 
 The kernel language (``drive``, ``gaussian``, ``get_drive_line``, ...) lives
 in ``cudaq_pulse.ops``; inside a ``@pulse.kernel`` its names are used bare.
-``pulse.cycles_on(line, n)`` rounds a length onto the grid of the line's
-controller, for controllers whose clock is slower than the program's.
+A bare int duration is a number of cycles of the device's clock; a time
+with units, ``20 * pulse.ns`` (``pulse.us``, ``pulse.ms``, ``pulse.s``),
+converts to cycles exactly when the kernel compiles, so one kernel runs on
+devices with different clocks. ``pulse.cycles_on(line, n)`` rounds a length
+onto the grid of the line's controller, for controllers whose clock is
+slower than the program's.
 Compiler types (``CompileMetrics``, ``ScheduledEvent``, ``MachineModel``,
 ``DEFAULT_PASSES``) are in ``cudaq_pulse.compiler``, target descriptions and
 calibrations in ``cudaq_pulse.targets``. ``pulse.classical`` declares the
@@ -63,6 +67,11 @@ from ._errors import PulseWarning as PulseWarning
 from ._errors import TimingError as TimingError
 from ._errors import UnsupportedError as UnsupportedError
 from ._errors import UpgradeNotice as UpgradeNotice
+from ._units import Time as Time
+from ._units import ms as ms
+from ._units import ns as ns
+from ._units import s as s
+from ._units import us as us
 from .compiler import Lowered as Lowered
 from .compiler import Pass as Pass
 from .compiler import compile as compile
@@ -133,6 +142,11 @@ __all__ = [
     "GpuRuntimeError",
     "cycles_on",
     "Rounding",
+    "Time",
+    "ns",
+    "us",
+    "ms",
+    "s",
     "viz",
     "classical",
     "controller",

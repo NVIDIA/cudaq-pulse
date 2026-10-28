@@ -130,7 +130,8 @@ Clocks
 
 A kernel counts time in cycles of the device's program clock,
 ``Device.clock_ghz`` (a device config's ``"clock_ghz"``, else the
-target's). A controller may run its own clock, ``ControllerLimits.clock_ghz``,
+target's); a duration written as a time converts to them when the kernel
+compiles (see :ref:`durations`). A controller may run its own clock, ``ControllerLimits.clock_ghz``,
 at a whole-cycle ratio of it: at ``a / b`` of the program clock, in lowest
 terms, it starts and times operations only every ``b`` program cycles. The
 scheduler places every operation on its line's grid and meets a sync on
@@ -276,15 +277,16 @@ same name:
            "clock_ghz": 1.0,
        }
    )
+   cal = {"x_duration": 40 * pulse.ns, "x_sigma": 10 * pulse.ns, "readout_duration": 200 * pulse.ns}
 
 
    @pulse.kernel
    def drive_and_measure(q):
        drive_line, drive_tone = get_drive_line(q)
        readout_line, readout_tone = get_readout_line(q)
-       drive(drive_line, gaussian(40, 0.5, 10.0), drive_tone)
+       drive(drive_line, gaussian(cal["x_duration"], 0.5, cal["x_sigma"]), drive_tone)
        sync(drive_line, readout_line)
-       readout(readout_line, square(200, 0.05), readout_tone)
+       readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
 
 
    compiled = pulse.compile(drive_and_measure, device=dev, machine=backend.machine_model())

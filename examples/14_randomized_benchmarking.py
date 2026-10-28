@@ -21,7 +21,13 @@ import cudaq_pulse as pulse
 import numpy as np
 
 # A 20 ns DRAG X90 for the 17-qubit transmon device.
-HALF_PI_AMPLITUDE = 0.13
+cal = {
+    "x_duration": 20 * pulse.ns,
+    "x_sigma": 5 * pulse.ns,
+    "drag_beta": 0.25 * pulse.ns,
+    "half_pi_amp": 0.13,
+    "readout_duration": 500 * pulse.ns,
+}
 
 _NATIVE = {
     "X90": np.array([[1, -1j], [-1j, 1]]) / math.sqrt(2),
@@ -81,7 +87,7 @@ def clifford_sequence(qubit, gates):
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
 
-    x90 = drag(40, HALF_PI_AMPLITUDE, 10.0, 0.5)
+    x90 = drag(cal["x_duration"], cal["half_pi_amp"], cal["x_sigma"], cal["drag_beta"])
 
     for gate in gates:
         if gate == "Y90":
@@ -92,7 +98,7 @@ def clifford_sequence(qubit, gates):
             drive(drive_line, x90, drive_tone)
 
     sync(drive_line, readout_line)
-    readout(readout_line, square(1000, 0.05), readout_tone)
+    readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
 
 
 if __name__ == "__main__":

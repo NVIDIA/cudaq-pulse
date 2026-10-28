@@ -97,14 +97,19 @@ if __name__ == "__main__":
         qubits={0: Qubit(index=0, frequency_hz=5e9, anharmonicity_hz=-2e8, t1_us=0, t2_star_us=0)},
     )
     dev = pulse.device({"target": target, "clock_ghz": 1.0})
+    cal = {
+        "x_duration": 40 * pulse.ns,
+        "x_sigma": 10 * pulse.ns,
+        "readout_duration": 200 * pulse.ns,
+    }
 
     @pulse.kernel
     def drive_and_measure(q):
         drive_line, drive_tone = get_drive_line(q)
         readout_line, readout_tone = get_readout_line(q)
-        drive(drive_line, gaussian(40, 0.5, 10.0), drive_tone)
+        drive(drive_line, gaussian(cal["x_duration"], 0.5, cal["x_sigma"]), drive_tone)
         sync(drive_line, readout_line)
-        readout(readout_line, square(200, 0.05), readout_tone)
+        readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
 
     compiled = pulse.compile(drive_and_measure, device=dev, machine=backend.machine_model())
     program = backend.emit(compiled.lower(dev.qudit_handles[0]).export_controller())

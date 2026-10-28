@@ -30,7 +30,7 @@ from cudaq_pulse.targets import transmon_krinner_17q
 
 target = transmon_krinner_17q()
 dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
-clock_ghz = dev.clock_ghz  # the program clock kernels count cycles of
+clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
 labels = {q.index: q.label for q in target.qubits.values()}
 n_qubits = target.n_qubits
 data_qubits = [i for i in range(n_qubits) if labels[i].startswith("D")]
@@ -43,9 +43,7 @@ for c in target.couplings:
     steps.setdefault(int(c.gate_params["cz_step"]), []).append((c.qubit_a, c.qubit_b))
 z_steps = [[steps[1], steps[2]], [steps[3], steps[4]]]
 x_steps = [[steps[5], steps[6]], [steps[7], steps[8]]]
-cz_slot = round(
-    max(c.gate_duration_ns for c in target.couplings if c.gate_duration_ns is not None) * clock_ghz
-)
+cz_ns = max(c.gate_duration_ns for c in target.couplings if c.gate_duration_ns is not None)
 
 for s in sorted(steps):
     print(f"CZ step {s}: " + ", ".join(f"{labels[a]}-{labels[d]}" for a, d in steps[s]))
@@ -54,9 +52,13 @@ for s in sorted(steps):
 drive_params = target.get_drive_params(0)
 duration_ns, sigma_ns = drive_params["x_dur"], drive_params["x_sigma"]
 area_ns = sigma_ns * math.sqrt(2 * math.pi) * math.erf(duration_ns / (2 * math.sqrt(2) * sigma_ns))
-duration, sigma = round(duration_ns * clock_ghz), sigma_ns * clock_ghz
 pi_amplitude = math.pi / area_ns
 half_pi_amplitude = pi_amplitude / 2
+cal = {
+    "x_duration": duration_ns * pulse.ns,
+    "x_sigma": sigma_ns * pulse.ns,
+    "cz_slot": cz_ns * pulse.ns,
+}
 
 
 @pulse.kernel
@@ -67,6 +69,7 @@ def surface_code_cycle(qubits):
         line, tone = get_drive_line(qubits[i])
         lines.append(line)
         tones.append(tone)
+    duration, sigma, cz_slot = cal["x_duration"], cal["x_sigma"], cal["cz_slot"]
 
     for auxiliaries, basis_change, halves in (
         (z_auxiliaries, [], z_steps),

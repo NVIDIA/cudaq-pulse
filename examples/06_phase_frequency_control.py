@@ -16,6 +16,13 @@ import math
 
 import cudaq_pulse as pulse
 
+cal = {
+    "x_duration": 20 * pulse.ns,
+    "x_sigma": 5 * pulse.ns,
+    "step_duration": 10 * pulse.ns,
+    "park_wait": 50 * pulse.ns,
+}
+
 
 @pulse.kernel
 def phase_rotation_demo(qubit):
@@ -25,7 +32,7 @@ def phase_rotation_demo(qubit):
     """
     drive_line, tone = get_drive_line(qubit)
 
-    pi2_pulse = gaussian(40, 0.25, 10.0)
+    pi2_pulse = gaussian(cal["x_duration"], 0.25, cal["x_sigma"])
 
     drive(drive_line, pi2_pulse, tone)
 
@@ -47,7 +54,7 @@ def set_phase_vs_shift_phase(qubit):
     shift_phase accumulates relative to the current phase.
     """
     drive_line, tone = get_drive_line(qubit)
-    envelope = gaussian(40, 0.3, 10.0)
+    envelope = gaussian(cal["x_duration"], 0.3, cal["x_sigma"])
 
     shift_phase(tone, math.pi / 4)
     drive(drive_line, envelope, tone)
@@ -69,7 +76,7 @@ def chirped_drive(qubit, n_steps, total_shift_hz):
     step_size = total_shift_hz / n_steps
 
     for _i in range(n_steps):
-        drive(drive_line, square(20, 0.1), tone)
+        drive(drive_line, square(cal["step_duration"], 0.1), tone)
         shift_frequency(tone, step_size)
 
 
@@ -83,11 +90,11 @@ def sideband_modulation(qubit):
     drive_line, tone = get_drive_line(qubit)
 
     set_frequency(tone, 5.0e9)
-    drive(drive_line, gaussian(40, 0.25, 10.0), tone)
-    wait(drive_line, 100)
+    drive(drive_line, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]), tone)
+    wait(drive_line, cal["park_wait"])
 
     set_frequency(tone, 5.15e9)
-    drive(drive_line, gaussian(40, 0.25, 10.0), tone)
+    drive(drive_line, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]), tone)
 
 
 if __name__ == "__main__":

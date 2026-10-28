@@ -38,23 +38,26 @@ auxiliary, data = index["X1"], index["D2"]
 
 # The published 40 ns, sigma = 10 ns pulse; amplitudes are rates in rad/ns.
 drive_params = target.get_drive_params(data)
-clock_ghz = dev.clock_ghz  # the program clock kernels count cycles of
 duration_ns, sigma_ns = drive_params["x_dur"], drive_params["x_sigma"]
 area_ns = sigma_ns * math.sqrt(2 * math.pi) * math.erf(duration_ns / (2 * math.sqrt(2) * sigma_ns))
-duration, sigma = round(duration_ns * clock_ghz), sigma_ns * clock_ghz
 pi_amplitude = math.pi / area_ns
-cz_slot = round(98.0 * clock_ghz)
+cal = {
+    "x_duration": duration_ns * pulse.ns,
+    "x_sigma": sigma_ns * pulse.ns,
+    "cz_slot": 98 * pulse.ns,
+}
 
 
 @pulse.kernel
 def krinner_evolve(qubit_aux, qubit_data):
     drive_line_aux, tone_aux = get_drive_line(qubit_aux)
     drive_line_data, tone_data = get_drive_line(qubit_data)
+    duration, sigma = cal["x_duration"], cal["x_sigma"]
     drive(drive_line_aux, drag(duration, pi_amplitude / 2, sigma, 0.0), tone_aux)
     drive(drive_line_data, drag(duration, pi_amplitude, sigma, 0.0), tone_data)
     sync(drive_line_aux, drive_line_data)
-    wait(drive_line_aux, cz_slot)
-    wait(drive_line_data, cz_slot)
+    wait(drive_line_aux, cal["cz_slot"])
+    wait(drive_line_data, cal["cz_slot"])
 
 
 lowered = krinner_evolve.lower(dev.qudit_handles[auxiliary], dev.qudit_handles[data])

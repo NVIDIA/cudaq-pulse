@@ -51,8 +51,11 @@ print("\nSpacing = 4.0 um (within blockade radius)")
 print(f"V = {V_close:.1f} MHz >> Omega = {RABI_MHZ} MHz")
 print("Blockade regime: double excitation |rr> strongly suppressed")
 
-pi_duration = int(1000.0 / (2.0 * RABI_MHZ))
-pi_amplitude = complex(RABI_MHZ / 10.0, 0)
+cal = {
+    "pi_duration": 62.5 * pulse.ns,
+    "pi_amplitude": complex(RABI_MHZ / 10.0, 0),
+    "hold": 50 * pulse.ns,
+}
 
 
 @pulse.kernel
@@ -61,14 +64,14 @@ def blockade_2atom(qubit_0, qubit_1):
     drive_line_1, tone_1 = get_drive_line(qubit_1)
 
     # Global pi pulse: creates |W> = (|gr> + |rg>)/sqrt(2) in blockade regime
-    pi_pulse = square(pi_duration, pi_amplitude)
+    pi_pulse = square(cal["pi_duration"], cal["pi_amplitude"])
     drive(drive_line_0, pi_pulse, tone_0)
     drive(drive_line_1, pi_pulse, tone_1)
 
     sync(drive_line_0, drive_line_1)
 
-    wait(drive_line_0, 100)
-    wait(drive_line_1, 100)
+    wait(drive_line_0, cal["hold"])
+    wait(drive_line_1, cal["hold"])
 
 
 dev = pulse.device({"target": "rydberg_chain:2"})

@@ -47,10 +47,12 @@ Scheduling Operations
 
 .. function:: wait(line, duration, bounds=None)
 
-   Insert an idle delay of *duration* clock cycles on a line. A duration
-   computed from ``float`` parameters stays a runtime value, rounded to the
-   nearest cycle on each call; *bounds*, ``(lowest, highest)`` in cycles,
-   limits it. See :ref:`wait-lengths`.
+   Insert an idle delay of *duration* on a line: an ``int`` number of clock
+   cycles or a time, such as ``wait(line, 10 * pulse.ns)`` (see
+   :ref:`durations`). A duration computed from ``float`` parameters stays a
+   runtime value, rounded to the nearest cycle on each call; *bounds*,
+   ``(lowest, highest)`` in cycles or as times, limits it. See
+   :ref:`wait-lengths`.
 
 .. function:: sync(line1, line2, ...)
 
@@ -96,7 +98,10 @@ Waveform Constructors
 ---------------------
 
 Each constructor returns a waveform value that can be passed to
-``drive()`` or combined with waveform arithmetic.
+``drive()`` or combined with waveform arithmetic. A *duration* or *width* is
+an ``int`` number of clock cycles or a time such as ``20 * pulse.ns``;
+*sigma* and *beta* take clock cycles, fractional too, or times. See
+:ref:`durations`.
 
 .. list-table::
    :header-rows: 1
@@ -110,8 +115,8 @@ Each constructor returns a waveform value that can be passed to
      - Constant-amplitude (flat-top) envelope
    * - ``drag(duration, amplitude, sigma, beta)``
      - DRAG pulse for leakage suppression: ``G + i beta dG/dt`` for the
-       Gaussian ``G``, with *beta* in clock cycles like *sigma*. Leakage of a
-       transmon is smallest near ``beta = -1 / alpha``, for the
+       Gaussian ``G``, with *beta* in clock cycles or a time, like *sigma*.
+       Leakage of a transmon is smallest near ``beta = -1 / alpha``, for the
        anharmonicity ``alpha`` in radians per clock cycle (``2 pi f_alpha /
        f_clock``, negative for a transmon).
    * - ``cosine(duration, amplitude)``
@@ -128,9 +133,9 @@ Each constructor returns a waveform value that can be passed to
        made for one sample per clock cycle or for ``sample_rate_ghz``
        (below)
 
-For ``gaussian_square``, ``width`` is the flat-top width in clock cycles;
-``duration - width`` must be a positive even integer so the two edges have the
-same integer duration.
+For ``gaussian_square``, ``width`` is the flat-top width;
+``duration - width`` must be a positive even number of clock cycles so the
+two edges have the same integer duration.
 
 ``custom(duration, f)`` calls ``f`` once per sample of the lines it plays on
 while the kernel is traced, at the middle of each sample, and holds each
@@ -175,10 +180,10 @@ Waveforms can be combined algebraically inside kernels:
    import cudaq_pulse as pulse
 
    @pulse.kernel
-   def combined_waveform(qubit):
+   def combined_waveform(qubit, duration):
        drive_line, tone = get_drive_line(qubit)
-       envelope_a = gaussian(64, 0.5, 16.0)
-       envelope_b = gaussian(64, 0.3, 10.0)
+       envelope_a = gaussian(duration, 0.5, 8 * pulse.ns)
+       envelope_b = gaussian(duration, 0.3, 5 * pulse.ns)
        combined = wf_add(envelope_a, envelope_b)
        scaled = wf_scale(envelope_a, 0.5)
        inverted = wf_neg(envelope_a)

@@ -45,7 +45,7 @@ if len(ham_terms) > 5:
 print(f"Dissipators: {len(diss_terms)} terms")
 
 RAMP_STEPS = 20
-STEP_DURATION = 50
+STEP_DURATION = 25 * pulse.ns
 amplitude = chain.global_rabi_mhz / 10.0
 # The detuning ramps linearly from -DETUNING_HZ to +DETUNING_HZ, in steps.
 DETUNING_HZ = 2.5 * chain.global_rabi_mhz * 1e6
@@ -72,8 +72,9 @@ def rydberg_adiabatic(atoms):
 dev = pulse.device({"target": f"rydberg_chain:{N_ATOMS}"})
 compiled_kernel = pulse.compile(rydberg_adiabatic, device=dev).lower(dev.qudit_handles[:N_ATOMS])
 
+step_cycles = STEP_DURATION / pulse.ns * dev.clock_ghz
 print(
-    f"\nSweep: {RAMP_STEPS} steps of {STEP_DURATION} clock cycles, detuning "
+    f"\nSweep: {RAMP_STEPS} steps of {step_cycles:.0f} clock cycles, detuning "
     f"{-DETUNING_HZ / 1e6:+.1f} MHz to {DETUNING_HZ / 1e6:+.1f} MHz"
 )
 print(compiled_kernel.mlir())

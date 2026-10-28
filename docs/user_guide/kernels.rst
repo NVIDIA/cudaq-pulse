@@ -30,12 +30,12 @@ Infrastructure stays behind the ``pulse.`` prefix:
 .. code-block:: python
 
    @pulse.kernel
-   def rabi_oscillation(qubit):
+   def rabi_oscillation(qubit, duration, sigma):
        drive_line, tone = get_drive_line(qubit)
-       drive(drive_line, gaussian(64, 0.5, 16.0), tone)
+       drive(drive_line, gaussian(duration, 0.5, sigma), tone)
 
    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
-   rabi_oscillation(dev.qudit_handles[0])
+   rabi_oscillation(dev.qudit_handles[0], 32 * pulse.ns, 8 * pulse.ns)
 
 Defining a Kernel
 -----------------
@@ -44,11 +44,21 @@ Defining a Kernel
 
    import cudaq_pulse as pulse
 
+   cal = {
+       "x_duration": 20 * pulse.ns,
+       "x_sigma": 5 * pulse.ns,
+       "x_beta": 0.25 * pulse.ns,
+       "readout_duration": 500 * pulse.ns,
+   }
+
    @pulse.kernel
    def my_kernel(qubit):
        drive_line, tone = get_drive_line(qubit)
-       waveform = gaussian(40, 0.3, 10.0)
+       waveform = gaussian(cal["x_duration"], 0.3, cal["x_sigma"])
        drive(drive_line, waveform, tone)
+
+The kernels on this page read their pulse durations from this ``cal``; see
+:ref:`durations`.
 
 Qudit arguments are **qudit handles** of a device: ``dev.qudit_handles[i]``
 for one qudit, and ``dev.qudit_handles[0:4]`` or ``dev.qudit_handles[[0, 2]]``
@@ -75,6 +85,62 @@ call passes the device's handles (``dev.qudit_handles[i]``, or a register
 The kernel language (``get_drive_line``, ``drive``, ``gaussian``, ...) lives
 in ``cudaq_pulse.ops``; inside a kernel its names are used bare, as above.
 
+.. _durations:
+
+Durations: cycles or times
+--------------------------
+
+A kernel counts time in cycles of the device's clock (``dev.clock_ghz``).
+A duration (a waveform's length or flat top, a ``wait`` and its bounds, a
+``pulse.cycles_on`` length) is either an ``int`` number of cycles or a time
+with units: ``20 * pulse.ns``, ``4 * pulse.us``, also ``pulse.ms`` and
+``pulse.s``. A time converts to cycles exactly when the kernel compiles,
+for the device it compiles for, so a kernel whose durations are times
+runs unchanged on devices with different clocks. Shape parameters
+(``sigma``, DRAG ``beta``) take cycles, fractional too, or times.
+
+Keep durations out of the kernel body: pass them as arguments, or read
+them from a calibration the kernel closes over.
+
+.. code-block:: python
+
+   cal = {"x_duration": 20 * pulse.ns, "x_sigma": 5 * pulse.ns, "x_amp": 0.2}
+
+   @pulse.kernel
+   def x_then_wait(qubit, gap):
+       d, t = get_drive_line(qubit)
+       x = gaussian(cal["x_duration"], cal["x_amp"], cal["x_sigma"])
+       drive(d, x, t)
+       wait(d, gap)
+       drive(d, x, t)
+
+   fast = pulse.device({"target": "transmon_krinner_17q", "clock_ghz": 2.0})
+   slow = pulse.device({"target": "transmon_krinner_17q", "clock_ghz": 1.0})
+   x_then_wait.lower(fast.qudit_handles[0], 100 * pulse.ns)  # 40, 200, 40 cycles
+   x_then_wait.lower(slow.qudit_handles[0], 100 * pulse.ns)  # 20, 100, 20 cycles
+
+- A plain float in a duration is an error, since it could be cycles or
+  nanoseconds; the error shows both spellings::
+
+     gaussian(): duration is a float (20.0). Durations are an int number of cycles, or a time with units:
+         gaussian(20, ...)               # 20 cycles
+         gaussian(20 * pulse.ns, ...)    # 20 nanoseconds
+
+- A time that is not a whole number of cycles is an error that names its
+  cycles; ``pulse.cycles_on(line, 10.3 * pulse.ns)`` rounds it onto the
+  line's grid instead.
+- A time times a number, a time plus a time, a time over a number and minus
+  a time are times. A time plus a number of cycles, and a time times a
+  time, are errors. ``0.1 * pulse.us`` is exactly 100 ns: a time holds its
+  value as a fraction, from the digits it is written with.
+- A ``float`` parameter is a plain number, a number of cycles where it sets
+  a length. Write ``wait(d, tau * pulse.ns)`` for a ``tau`` in nanoseconds:
+  the length stays a runtime parameter, converted with one multiply. A time
+  passed to a ``float`` parameter is a ``TypeError``. The answer of a
+  classical call converts the same way: ``wait(d, f.result() * pulse.ns,
+  bounds=(0, 4 * pulse.us))``.
+- ``result(timeout_ns=...)`` takes nanoseconds or a time.
+
 Control Flow
 ------------
 
@@ -86,11 +152,11 @@ at trace time:
 .. code-block:: python
 
    @pulse.kernel
-   def echo_sequence(qubit):
+   def echo_sequence(qubit, gap):
        drive_line, tone = get_drive_line(qubit)
        for i in range(5):
-           drive(drive_line, gaussian(40, 0.3, 10.0), tone)
-           wait(drive_line, 20)
+           drive(drive_line, gaussian(cal["x_duration"], 0.3, cal["x_sigma"]), tone)
+           wait(drive_line, gap)
 
 A loop whose induction variable is never read, like the one above, is
 captured once as a structured ``scf.for`` in the kernel IR, so the IR size
@@ -140,7 +206,7 @@ the loop:
            tones.append(tone)
        for amplitude in [0.1, 0.2, 0.3]:
            for line, tone in zip(lines, tones):
-               drive(line, square(40, amplitude), tone)
+               drive(line, square(cal["x_duration"], amplitude), tone)
 
 **If/else** with compile-time conditions:
 
@@ -150,9 +216,9 @@ the loop:
    def conditional_pulse(qubit, use_drag):
        drive_line, tone = get_drive_line(qubit)
        if use_drag:
-           waveform = drag(40, 0.3, 10.0, 0.5)
+           waveform = drag(cal["x_duration"], 0.3, cal["x_sigma"], cal["x_beta"])
        else:
-           waveform = gaussian(40, 0.3, 10.0)
+           waveform = gaussian(cal["x_duration"], 0.3, cal["x_sigma"])
        drive(drive_line, waveform, tone)
 
 **Measurement feedback**: an ``if`` on a measurement result (``if result:`` or
@@ -164,10 +230,11 @@ the loop:
    def active_reset(qubit):
        drive_line, drive_tone = get_drive_line(qubit)
        readout_line, readout_tone = get_readout_line(qubit)
-       result = readout(readout_line, square(1000, 0.05), readout_tone)
+       result = readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
        sync(drive_line, readout_line)
        if result:
-           drive(drive_line, drag(40, 0.5, 10.0, 0.5), drive_tone)
+           x = drag(cal["x_duration"], 0.5, cal["x_sigma"], cal["x_beta"])
+           drive(drive_line, x, drive_tone)
 
 Both branches are traced, and lines and tones they rebind become the
 results of the region. Both branches must continue after the ``if``. A
@@ -265,22 +332,24 @@ runtime parameters, so a sweep over a delay compiles once:
    def echo(qubit, tau: float):
        d, t = get_drive_line(qubit)
        r, rt = get_readout_line(qubit)
-       drive(d, drag(40, 0.25, 10.0, 0.5), t)
-       wait(d, tau / 2)
-       drive(d, drag(40, 0.5, 10.0, 0.5), t)
-       wait(d, tau / 2)
-       drive(d, drag(40, 0.25, 10.0, 0.5), t)
+       x90 = drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["x_beta"])
+       x180 = drag(cal["x_duration"], 0.5, cal["x_sigma"], cal["x_beta"])
+       drive(d, x90, t)
+       wait(d, tau / 2 * pulse.ns)
+       drive(d, x180, t)
+       wait(d, tau / 2 * pulse.ns)
+       drive(d, x90, t)
        sync(d, r)
-       readout(r, square(1000, 0.05), rt)
+       readout(r, square(cal["readout_duration"], 0.05), rt)
 
    q = dev.qudit_handles[0]
    compiled_echo = pulse.compile(echo)
-   for tau in np.linspace(0, 20_000, 1000):
+   for tau in np.linspace(0, 10_000, 1000):  # nanoseconds
        compiled_echo.lower(q, tau)  # one compilation for the whole sweep
 
-- The length is in clock cycles, like every wait. Each call computes it
-  from its values and rounds it to the nearest cycle, ties up
-  (``floor(x + 0.5)``): 99.5 cycles is 100, 99.49 is 99.
+- Each call computes the length from its values, in clock cycles (here
+  nanoseconds times ``dev.clock_ghz``), and rounds it to the nearest cycle,
+  ties up (``floor(x + 0.5)``): 99.5 cycles is 100, 99.49 is 99.
 - The call's schedule is exactly that of the kernel compiled with that
   length: ``sync``, ALAP and ASAP placement, loops, branches and called
   kernels see the rounded length, and other lines are not held back by the
@@ -288,7 +357,7 @@ runtime parameters, so a sweep over a delay compiles once:
   simulation of a call come from the module with them bound and scheduled
   again, which takes tens of microseconds, not a compile.
 - ``wait(line, length, bounds=(lowest, highest))`` bounds the length, in
-  cycles; ``highest`` may be ``None``, and without ``bounds`` the length
+  cycles or as times; ``highest`` may be ``None``, and without ``bounds`` the length
   only has to be non-negative. A call whose length is not finite, is
   negative or falls outside the bounds raises ``ValueError`` naming the
   kernel, the expression and the value, before anything runs.
@@ -298,8 +367,9 @@ runtime parameters, so a sweep over a delay compiles once:
   otherwise.
 - A length that needs more than arithmetic (``int(tau)``, ``tau // 2``,
   ``round(tau)``) still makes the parameter static, with the warning.
-  A literal or static length is not rounded: it must be a whole number of
-  cycles, and ``bounds`` checks it while tracing.
+  A literal or static length is not rounded: it must be an ``int`` or a
+  time that is a whole number of cycles (see :ref:`durations`), and
+  ``bounds`` checks it while tracing.
 
 Operations check their arguments when they are traced. Passing a tone
 where a line belongs, a number where a waveform belongs, or a readout line

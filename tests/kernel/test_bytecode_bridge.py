@@ -184,7 +184,7 @@ class TestWaveforms:
 
         def wf_test(q0):
             d0, t0 = get_drive_line(q0)
-            wf = gaussian_square(200, 0.3, 10.0, 150.0)
+            wf = gaussian_square(200, 0.3, 10.0, 150)
             drive(d0, wf, t0)
 
         ir = compile_kernel_bytecode(wf_test)(Q[0])

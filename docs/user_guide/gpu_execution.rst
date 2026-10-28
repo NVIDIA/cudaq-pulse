@@ -136,7 +136,7 @@ To inspect the lowered LLVM IR:
    @pulse.kernel
    def my_kernel(qubit):
        drive_line, tone = get_drive_line(qubit)
-       drive(drive_line, gaussian(40, 0.3, 10.0), tone)
+       drive(drive_line, gaussian(20 * pulse.ns, 0.3, 5 * pulse.ns), tone)
 
    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
    llvm_ir = my_kernel.lower(dev.qudit_handles[0]).mlir("llvm")
@@ -184,13 +184,12 @@ To execute on a GPU (requires cuDensityMat runtime):
    )
 
    @pulse.kernel
-   def x_gate(qubit):
+   def x_gate(qubit, duration):
        drive_line, tone = get_drive_line(qubit)
-       # 40 virtual units at 2 GHz is 20 ns.
-       drive(drive_line, square(40, math.pi / 20.0), tone)
+       drive(drive_line, square(duration, math.pi / 20.0), tone)
 
    dev = pulse.device({"target": target})
-   lowered = x_gate.lower(dev.qudit_handles[0])
+   lowered = x_gate.lower(dev.qudit_handles[0], 20 * pulse.ns)
    result = pulse.simulate(lowered, backend="gpu", t_end=20.0, dt_ns=0.1, integrator="rk4")
    print(result.density_matrix)
 
@@ -301,10 +300,10 @@ of the outcomes from the same branch probabilities.
    def active_reset(qubit):
        drive_line, drive_tone = get_drive_line(qubit)
        readout_line, readout_tone = get_readout_line(qubit)
-       result = readout(readout_line, square(1000, 0.05), readout_tone)
+       result = readout(readout_line, square(500 * pulse.ns, 0.05), readout_tone)
        sync(drive_line, readout_line)
        if result:
-           drive(drive_line, square(40, math.pi / 20.0), drive_tone)
+           drive(drive_line, square(20 * pulse.ns, math.pi / 20.0), drive_tone)
 
    lowered = active_reset.lower(dev.qudit_handles[0])
    result = pulse.simulate(lowered, shots=1000, backend="cpu")

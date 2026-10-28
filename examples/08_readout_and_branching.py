@@ -15,6 +15,14 @@ import math
 
 import cudaq_pulse as pulse
 
+cal = {
+    "x_duration": 20 * pulse.ns,
+    "x_sigma": 5 * pulse.ns,
+    "drag_beta": 0.25 * pulse.ns,
+    "readout_duration": 500 * pulse.ns,
+    "shot_gap": 250 * pulse.ns,
+}
+
 
 @pulse.kernel
 def measure_single_qubit(qubit):
@@ -26,12 +34,12 @@ def measure_single_qubit(qubit):
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
 
-    x_pulse = drag(40, 0.5, 10.0, 0.5)
+    x_pulse = drag(cal["x_duration"], 0.5, cal["x_sigma"], cal["drag_beta"])
     drive(drive_line, x_pulse, drive_tone)
 
     sync(drive_line, readout_line)
 
-    readout_envelope = square(1000, 0.05)
+    readout_envelope = square(cal["readout_duration"], 0.05)
     readout(readout_line, readout_envelope, readout_tone)
 
 
@@ -45,15 +53,15 @@ def active_reset(qubit):
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
 
-    readout_envelope = square(1000, 0.05)
+    readout_envelope = square(cal["readout_duration"], 0.05)
     result = readout(readout_line, readout_envelope, readout_tone)
 
     sync(drive_line, readout_line)
 
     if result:
-        # A pi pulse: 40 virtual units at 2 GHz is 20 ns, and with
-        # H = amplitude * X / 2 this amplitude (rad/ns) rotates by pi.
-        x_pulse = square(40, math.pi / 20)
+        # A pi pulse: with H = amplitude * X / 2, this amplitude (rad/ns)
+        # rotates by pi in 20 ns.
+        x_pulse = square(cal["x_duration"], math.pi / 20)
         drive(drive_line, x_pulse, drive_tone)
 
 
@@ -66,16 +74,16 @@ def repeated_measurement(qubit, n_shots):
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
 
-    x_half = drag(40, 0.25, 10.0, 0.5)
+    x_half = drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["drag_beta"])
 
     for _shot in range(n_shots):
         drive(drive_line, x_half, drive_tone)
         sync(drive_line, readout_line)
 
-        readout(readout_line, square(1000, 0.05), readout_tone)
+        readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
 
         sync(drive_line, readout_line)
-        wait(drive_line, 500)
+        wait(drive_line, cal["shot_gap"])
 
 
 @pulse.kernel
@@ -87,7 +95,7 @@ def ramsey_with_readout(qubit, tau):
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
 
-    half_pi = drag(40, 0.25, 10.0, 0.5)
+    half_pi = drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["drag_beta"])
 
     drive(drive_line, half_pi, drive_tone)
 
@@ -96,7 +104,7 @@ def ramsey_with_readout(qubit, tau):
     drive(drive_line, half_pi, drive_tone)
 
     sync(drive_line, readout_line)
-    readout(readout_line, square(1000, 0.05), readout_tone)
+    readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
 
 
 if __name__ == "__main__":
@@ -133,7 +141,7 @@ if __name__ == "__main__":
 
     print("\n=== Ramsey with readout (tau=200) ===")
     compiled_kernel = pulse.compile(ramsey_with_readout, device=dev).lower(
-        dev.qudit_handles[0], 200
+        dev.qudit_handles[0], 100 * pulse.ns
     )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

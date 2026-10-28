@@ -16,7 +16,6 @@ replaced by the CPU integrator).
 from __future__ import annotations
 
 import math
-import types
 
 import cudaq_pulse as pulse
 import numpy as np
@@ -80,9 +79,9 @@ def echo(q, tau: float):
 
 
 def _static(fn):
-    twin = types.FunctionType(fn.__code__, fn.__globals__, fn.__name__)
-    twin.__annotations__ = {}
-    return pulse.kernel(twin)
+    twin = pulse.kernel(fn)
+    twin._promote(set(twin._split[1]))
+    return twin
 
 
 def _sweep(fn, taus, backend="cpu"):

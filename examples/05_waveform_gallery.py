@@ -15,11 +15,24 @@ import math
 
 import cudaq_pulse as pulse
 
+cal = {
+    "duration": 20 * pulse.ns,
+    "sigma": 5 * pulse.ns,
+    "drag_beta": 0.25 * pulse.ns,
+    "square_duration": 50 * pulse.ns,
+    "cosine_duration": 30 * pulse.ns,
+    "tanh_duration": 40 * pulse.ns,
+    "tanh_sigma": 2.5 * pulse.ns,
+    "flat_top_duration": 100 * pulse.ns,
+    "flat_top_width": 80 * pulse.ns,
+}
+
 # ── 1. Every waveform constructor ────────────────────────────────────────────
 
 
 def sine_envelope(t):
-    """Half a sine period over 40 clock cycles, for custom()."""
+    """Half a sine period over 40 clock cycles (20 ns at 2 GHz), for custom():
+    *t* is in clock cycles from the start of the pulse."""
     return 0.3 * math.sin(math.pi * t / 40)
 
 
@@ -27,27 +40,29 @@ def sine_envelope(t):
 def waveform_showcase(qubit):
     """Drive a qubit with each built-in waveform type sequentially."""
     drive_line, tone = get_drive_line(qubit)
+    duration, sigma = cal["duration"], cal["sigma"]
 
     # Gaussian — the workhorse of single-qubit gates
-    drive(drive_line, gaussian(40, 0.3, 10.0), tone)
+    drive(drive_line, gaussian(duration, 0.3, sigma), tone)
 
     # Square — constant amplitude, simplest envelope
-    drive(drive_line, square(100, 0.5), tone)
+    drive(drive_line, square(cal["square_duration"], 0.5), tone)
 
     # DRAG — derivative removal by adiabatic gate, reduces leakage
-    drive(drive_line, drag(40, 0.25, 10.0, 0.5), tone)
+    drive(drive_line, drag(duration, 0.25, sigma, cal["drag_beta"]), tone)
 
     # Cosine — smooth rise/fall for flux pulses
-    drive(drive_line, cosine(60, 0.4), tone)
+    drive(drive_line, cosine(cal["cosine_duration"], 0.4), tone)
 
     # Tanh ramp — sigmoidal edges for adiabatic state transfer
-    drive(drive_line, tanh_ramp(80, 0.35, 5.0), tone)
+    drive(drive_line, tanh_ramp(cal["tanh_duration"], 0.35, cal["tanh_sigma"]), tone)
 
     # Gaussian square — flat top with Gaussian rise/fall, used in echoed-CR
-    drive(drive_line, gaussian_square(200, 0.1, 10.0, 160), tone)
+    flat_top = gaussian_square(cal["flat_top_duration"], 0.1, sigma, cal["flat_top_width"])
+    drive(drive_line, flat_top, tone)
 
     # Custom — a Python function of time, sampled once per clock cycle
-    drive(drive_line, custom(40, sine_envelope), tone)
+    drive(drive_line, custom(duration, sine_envelope), tone)
 
     # Custom samples — an arbitrary real envelope from pre-computed data
     drive(drive_line, custom_samples([0.1, 0.3, 0.5, 0.3, 0.1]), tone)
@@ -61,8 +76,8 @@ def waveform_algebra(qubit):
     """Combine waveforms using the built-in algebraic operations."""
     drive_line, tone = get_drive_line(qubit)
 
-    gaussian_envelope = gaussian(40, 0.3, 10.0)
-    square_envelope = square(40, 0.1)
+    gaussian_envelope = gaussian(cal["duration"], 0.3, cal["sigma"])
+    square_envelope = square(cal["duration"], 0.1)
 
     # Addition — superpose two envelopes (e.g. DRAG = Gaussian + derivative)
     combined = wf_add(gaussian_envelope, square_envelope)
@@ -88,17 +103,20 @@ def waveform_algebra(qubit):
 # ── 3. Composing complex envelopes ───────────────────────────────────────────
 
 
-DERIVATIVE_DURATION = 40
-DERIVATIVE_SIGMA = 10.0
+DERIVATIVE_DURATION = 20 * pulse.ns
+DERIVATIVE_SIGMA = 5 * pulse.ns
 DERIVATIVE_AMPLITUDE = 0.3
+CLOCK_GHZ = 2.0  # the transmon device's program clock; one sample per cycle
 
 
 def gaussian_derivative_samples(duration, amplitude, sigma):
     """d/dt of a Gaussian centered in *duration*, one sample per clock cycle."""
-    center = (duration - 1) / 2
+    n_samples = round(duration / pulse.ns * CLOCK_GHZ)
+    sigma = sigma / pulse.ns * CLOCK_GHZ
+    center = (n_samples - 1) / 2
     return [
         -amplitude * (t - center) / sigma**2 * math.exp(-((t - center) ** 2) / (2 * sigma**2))
-        for t in range(duration)
+        for t in range(n_samples)
     ]
 
 

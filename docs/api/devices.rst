@@ -39,6 +39,31 @@ onto a line's grid in a kernel.
    :members:
    :undoc-members:
 
+Times with units
+----------------
+
+A bare int duration is a number of cycles of the program clock.
+``20 * pulse.ns`` is a time: the compiler converts it to cycles exactly,
+for the device the kernel compiles for, and rejects a time that is not a
+whole number of cycles. A plain float in a duration is an error, since it
+could mean either.
+
+.. autoclass:: cudaq_pulse.Time
+
+One nanosecond, microsecond, millisecond and second:
+
+.. autodata:: cudaq_pulse.ns
+   :no-value:
+
+.. autodata:: cudaq_pulse.us
+   :no-value:
+
+.. autodata:: cudaq_pulse.ms
+   :no-value:
+
+.. autodata:: cudaq_pulse.s
+   :no-value:
+
 Errors are on :doc:`errors`; the targets a device is built from are on
 :doc:`targets`.
 

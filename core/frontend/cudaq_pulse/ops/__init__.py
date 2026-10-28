@@ -20,6 +20,7 @@ from collections.abc import Callable, Sequence
 from typing import Any, NoReturn
 
 from .._errors import CompilationError
+from .._units import Time
 from ..kernel.ir_builder import Parameter
 
 __all__ = [
@@ -135,25 +136,30 @@ def readout(line: Line, waveform: Waveform, tone: Tone) -> MeasurementResult:
     _require_context("readout")
 
 
-def wait(target: Line, duration: Numeric, bounds: tuple[int, int | None] | None = None) -> None:
+def wait(
+    target: Line, duration: Numeric, bounds: tuple[int | Time, int | Time | None] | None = None
+) -> None:
     """Insert an idle delay on a line.
 
     Args:
         target: Drive or readout line.
-        duration: Wait duration in clock cycles. A literal must be a whole
-            number of cycles. It may be computed from ``float`` kernel
+        duration: Wait duration: an int number of clock cycles, or a time
+            (``20 * pulse.ns``) that is a whole number of them; a plain float
+            is an error. It may be computed from ``float`` kernel
             parameters with ``+``, ``-``, ``*`` and ``/``; the kernel then
             compiles once, and each call rounds the length to the nearest
             cycle (ties up) and schedules with it. When it is computed from
             the answer of a classical call, the wait is a variable region:
             every line syncs before it, and everything after it shifts with
-            its length, which is known only when the program runs.
-        bounds: ``(lowest, highest)`` in clock cycles; ``highest`` may be
-            ``None``. A call whose parameter-derived length falls outside
-            them raises ``ValueError``; a length from an answer is rounded
-            and clamped to them. Without bounds the length must not be
-            negative. Scheduling without the length puts the wait at
-            ``lowest``.
+            its length, which is known only when the program runs; an
+            answer in nanoseconds is ``f.result() * pulse.ns``, converted
+            with one multiply by a constant.
+        bounds: ``(lowest, highest)``, each in clock cycles or a time;
+            ``highest`` may be ``None``. A call whose parameter-derived
+            length falls outside them raises ``ValueError``; a length from
+            an answer is rounded and clamped to them. Without bounds the
+            length must not be negative. Scheduling without the length puts
+            the wait at ``lowest``.
     """
     _require_context("wait")
 
@@ -225,9 +231,10 @@ def gaussian(duration: Numeric, amplitude: Numeric, sigma: Numeric) -> Waveform:
     """Create a Gaussian envelope waveform.
 
     Args:
-        duration: Pulse duration in clock cycles.
+        duration: Pulse duration: an int number of clock cycles, or a time
+            (``20 * pulse.ns``).
         amplitude: Peak amplitude in ``[-1, 1]``.
-        sigma: Standard deviation in clock cycles.
+        sigma: Standard deviation in clock cycles, or a time.
 
     Returns:
         Waveform value for use with ``drive()`` or waveform arithmetic.
@@ -239,7 +246,8 @@ def square(duration: Numeric, amplitude: Numeric | complex | Sequence[float]) ->
     """Create a flat-top (square) envelope waveform.
 
     Args:
-        duration: Pulse duration in clock cycles.
+        duration: Pulse duration: an int number of clock cycles, or a time
+            (``20 * pulse.ns``).
         amplitude: Constant amplitude in ``[-1, 1]``: a real number, a
             complex number ``re + im*1j``, or ``[re, im]``.
 
@@ -263,10 +271,11 @@ def drag(
     ``beta = -1 / alpha``, with ``alpha`` in radians per clock cycle.
 
     Args:
-        duration: Pulse duration in clock cycles.
+        duration: Pulse duration: an int number of clock cycles, or a time
+            (``20 * pulse.ns``).
         amplitude: Peak amplitude in ``[-1, 1]``.
-        sigma: Gaussian standard deviation in clock cycles.
-        beta: DRAG coefficient in clock cycles.
+        sigma: Gaussian standard deviation in clock cycles, or a time.
+        beta: DRAG coefficient in clock cycles, or a time.
 
     Returns:
         Waveform value.
@@ -278,7 +287,8 @@ def cosine(duration: Numeric, amplitude: Numeric) -> Waveform:
     """Create a raised-cosine envelope waveform.
 
     Args:
-        duration: Pulse duration in clock cycles.
+        duration: Pulse duration: an int number of clock cycles, or a time
+            (``20 * pulse.ns``).
         amplitude: Peak amplitude in ``[-1, 1]``.
 
     Returns:
@@ -291,9 +301,10 @@ def tanh_ramp(duration: Numeric, amplitude: Numeric, sigma: Numeric) -> Waveform
     """Create a hyperbolic-tangent ramp waveform.
 
     Args:
-        duration: Pulse duration in clock cycles.
+        duration: Pulse duration: an int number of clock cycles, or a time
+            (``20 * pulse.ns``).
         amplitude: Peak amplitude in ``[-1, 1]``.
-        sigma: Rise/fall steepness in clock cycles.
+        sigma: Rise/fall steepness in clock cycles, or a time.
 
     Returns:
         Waveform value.
@@ -312,10 +323,11 @@ def gaussian_square(
     A square pulse with Gaussian rise and fall edges.
 
     Args:
-        duration: Total pulse duration in clock cycles.
+        duration: Total pulse duration: an int number of clock cycles, or
+            a time (``20 * pulse.ns``).
         amplitude: Peak amplitude in ``[-1, 1]``.
-        sigma: Gaussian edge standard deviation in clock cycles.
-        width: Flat-top width in clock cycles.
+        sigma: Gaussian edge standard deviation in clock cycles, or a time.
+        width: Flat-top width: an int number of clock cycles, or a time.
 
     Returns:
         Waveform value.
@@ -323,7 +335,7 @@ def gaussian_square(
     return _require_context("gaussian_square")
 
 
-def custom(duration: int, envelope_fn: Callable[[float], float]) -> Waveform:
+def custom(duration: int | Time, envelope_fn: Callable[[float], float]) -> Waveform:
     """Create a waveform by sampling a Python function while the kernel is traced.
 
     *envelope_fn* is called once per sample of the lines it plays on, at the
@@ -340,8 +352,8 @@ def custom(duration: int, envelope_fn: Callable[[float], float]) -> Waveform:
     for ``gaussian(duration, a, sigma)``, gives the same waveform up to that
     sampling.
 
-    The duration must be known while tracing (an ``int`` argument or a
-    constant) and at most 252 samples (250 at a controller's own rate);
+    The duration must be known while tracing (an ``int`` or a time, as an
+    argument or a constant) and at most 252 samples (250 at a controller's own rate);
     play a longer envelope as consecutive drives. The function must return
     real numbers that do not depend on kernel parameters: scale the waveform
     by a parameter with
@@ -350,7 +362,8 @@ def custom(duration: int, envelope_fn: Callable[[float], float]) -> Waveform:
     ``CompilationError``.
 
     Args:
-        duration: Pulse duration in clock cycles.
+        duration: Pulse duration: an int number of clock cycles, or a time
+            (``20 * pulse.ns``).
         envelope_fn: A function ``f(t) -> float`` of the time in clock cycles.
 
     Returns:

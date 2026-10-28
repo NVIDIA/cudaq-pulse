@@ -85,10 +85,12 @@ generated MLIR:
 
    import cudaq_pulse as pulse
 
+   cal = {"duration": 32 * pulse.ns, "sigma": 8 * pulse.ns}
+
    @pulse.kernel
    def rabi_oscillation(qubit, amplitude: float):
        drive_line, tone = get_drive_line(qubit)
-       drive(drive_line, gaussian(64, amplitude, 16.0), tone)
+       drive(drive_line, gaussian(cal["duration"], amplitude, cal["sigma"]), tone)
 
    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
    lowered = rabi_oscillation.lower(dev.qudit_handles[0], 0.5)
@@ -96,6 +98,9 @@ generated MLIR:
    print(f"P(1) = {result.density_matrix[1, 1].real:.3f}")   # P(1) = 0.973
    print(lowered.mlir())
    print(f"Compiled in {lowered.metrics.total_ms:.1f} ms")
+
+The pulse lasts 32 ns, 64 cycles of the device's 2 GHz clock. A duration is
+an ``int`` number of cycles or a time with units; see :ref:`durations`.
 
 The Compiler Pipeline
 ---------------------

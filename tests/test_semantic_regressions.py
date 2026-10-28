@@ -292,7 +292,7 @@ def test_virtual_time_arguments_are_not_silently_truncated():
         line, tone = get_drive_line(qubit)
         drive(line, square(10.5, 0.2), tone)
 
-    with pytest.raises(CompilationError, match="must be an integer"):
+    with pytest.raises(CompilationError, match=r"duration is a float \(10.5\)"):
         kernel.lower(Q[0])
 
 

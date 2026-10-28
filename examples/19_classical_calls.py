@@ -44,9 +44,14 @@ from cudaq_pulse.classical import Bits, Float, Link, emulation
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.targets import Qubit, TargetDescription
 
-# A pi pulse: 40 virtual units at 2 GHz is 20 ns, and with
-# H = amplitude * X / 2 this amplitude (rad/ns) rotates by pi.
-PI_AMP = math.pi / 20
+# A 20 ns pi pulse: with H = amplitude * X / 2, this amplitude (rad/ns)
+# rotates by pi.
+cal = {
+    "pi_duration": 20 * pulse.ns,
+    "pi_amp": math.pi / 20,
+    "readout_duration": 500 * pulse.ns,
+    "short_readout_duration": 200 * pulse.ns,
+}
 
 # Two links, by name: one to a GPU decoder, and the controller's own FPGA
 # logic. Functions name the link their requests travel on.
@@ -80,23 +85,24 @@ def decoded_feed_forward(qubit):
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
 
-    m = readout(readout_line, square(1000, 0.05), readout_tone)
+    m = readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
     in_time, correction = decode.submit([m]).result(timeout_ns=350)
     sync(drive_line, readout_line)
+    pi_pulse = square(cal["pi_duration"], cal["pi_amp"])
     if in_time:
         if correction[0]:
-            drive(drive_line, square(40, PI_AMP), drive_tone)
+            drive(drive_line, pi_pulse, drive_tone)
     else:
         if m:
-            drive(drive_line, square(40, PI_AMP), drive_tone)
+            drive(drive_line, pi_pulse, drive_tone)
 
 
 # ── 2. Adaptive Bayesian T1 tracking ────────────────────────────────────────
 
 # The next wait is C_WAIT times the current T1 estimate, within the bounds.
 C_WAIT = 1.0
-WAIT_BOUNDS_CYCLES = (200, 40000)  # 0.1 us to 20 us at 2 GHz
-CLOCK_GHZ = 2.0
+WAIT_BOUNDS = (100 * pulse.ns, 20 * pulse.us)
+WAIT_BOUNDS_NS = tuple(bound / pulse.ns for bound in WAIT_BOUNDS)
 
 
 @pulse.classical(
@@ -105,46 +111,48 @@ CLOCK_GHZ = 2.0
     max_latency_ns=200,
     link="controller",
 )
-def update_t1(survived, alpha, beta, last_wait):
+def update_t1(survived, alpha, beta, last_wait_ns):
     """One Bayesian update of a gamma posterior over the decay rate.
 
     The posterior over Gamma = 1/T1 is Gamma(alpha, beta), with mean
     alpha / beta. Simplified illustration of the paper's update: a qubit
     still excited after the wait multiplies the posterior by exp(-Gamma t),
     which adds t to beta exactly; a decay is treated as an observed event,
-    adding one to alpha. The next wait is C_WAIT times the estimated T1.
+    adding one to alpha. The next wait, in nanoseconds, is C_WAIT times the
+    estimated T1.
     """
-    t_ns = last_wait / CLOCK_GHZ
     if survived[0]:
-        beta = beta + t_ns
+        beta = beta + last_wait_ns
     else:
         alpha = alpha + 1.0
     t1_estimate_ns = beta / alpha
-    lo, hi = WAIT_BOUNDS_CYCLES
-    next_wait = min(max(C_WAIT * t1_estimate_ns * CLOCK_GHZ, lo), hi)
-    return alpha, beta, next_wait
+    lo, hi = WAIT_BOUNDS_NS
+    next_wait_ns = min(max(C_WAIT * t1_estimate_ns, lo), hi)
+    return alpha, beta, next_wait_ns
 
 
 @pulse.kernel
-def track_t1(qubit, rounds: int, alpha: float, beta: float, first_wait: int):
+def track_t1(qubit, rounds: int, alpha: float, beta: float, first_wait):
     """Excite, wait, measure, update the estimate, reset; repeat."""
     drive_line, drive_tone = get_drive_line(qubit)
     readout_line, readout_tone = get_readout_line(qubit)
+    pi_pulse = square(cal["pi_duration"], cal["pi_amp"])
+    readout_pulse = square(cal["short_readout_duration"], 0.05)
 
-    drive(drive_line, square(40, PI_AMP), drive_tone)
+    drive(drive_line, pi_pulse, drive_tone)
     wait(drive_line, first_wait)
-    tau = float(first_wait)
+    tau_ns = first_wait / pulse.ns
     for _ in range(rounds):
         sync(drive_line, readout_line)
-        m = readout(readout_line, square(400, 0.05), readout_tone)
-        alpha, beta, tau = update_t1.submit([m], alpha, beta, tau).result()
+        m = readout(readout_line, readout_pulse, readout_tone)
+        alpha, beta, tau_ns = update_t1.submit([m], alpha, beta, tau_ns).result()
         sync(drive_line, readout_line)
         if m:  # active reset
-            drive(drive_line, square(40, PI_AMP), drive_tone)
-        drive(drive_line, square(40, PI_AMP), drive_tone)
-        wait(drive_line, tau, bounds=WAIT_BOUNDS_CYCLES)
+            drive(drive_line, pi_pulse, drive_tone)
+        drive(drive_line, pi_pulse, drive_tone)
+        wait(drive_line, tau_ns * pulse.ns, bounds=WAIT_BOUNDS)
     sync(drive_line, readout_line)
-    readout(readout_line, square(400, 0.05), readout_tone)
+    readout(readout_line, readout_pulse, readout_tone)
 
 
 # ── 3. Report, simulation and emulation export ──────────────────────────────
@@ -207,7 +215,7 @@ if __name__ == "__main__":
     print(f"  final |0> population: {result.density_matrix[0, 0].real:.4f}")
 
     print("\n=== 2. Adaptive T1 tracking (3 rounds, true T1 = 10 us) ===")
-    rounds, alpha0, beta0, first_wait = 3, 1.0, 5000.0, 10000  # prior T1 = 5 us
+    rounds, alpha0, beta0, first_wait = 3, 1.0, 5000.0, 5 * pulse.us  # prior T1 = 5 us
     tracker = pulse.compile(track_t1, device=dev, machine=MACHINE).lower(
         q, rounds, alpha0, beta0, first_wait
     )
@@ -221,10 +229,8 @@ if __name__ == "__main__":
     best = max(zip(result.calls, result.branches), key=lambda pair: pair[1][1])
     print(f"  most likely path {best[1][0]} (p = {best[1][1]:.3f}):")
     for call in best[0]:
-        alpha, beta, tau = call.answer
-        print(
-            f"    T1 estimate {beta / alpha / 1e3:5.2f} us, next wait {tau / CLOCK_GHZ / 1e3:5.2f} us"
-        )
+        alpha, beta, tau_ns = call.answer
+        print(f"    T1 estimate {beta / alpha / 1e3:5.2f} us, next wait {tau_ns / 1e3:5.2f} us")
     mean_t1 = sum(
         p * (calls[-1].answer[1] / calls[-1].answer[0])
         for calls, (_, p) in zip(result.calls, result.branches)

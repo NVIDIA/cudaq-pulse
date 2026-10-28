@@ -18,6 +18,8 @@ into ``cudaq-pulse-opt`` as plugins; see ``cpp/DriveCount.cpp``.
 
 import cudaq_pulse as pulse
 
+cal = {"x_duration": 20 * pulse.ns, "x_sigma": 5 * pulse.ns, "drag_beta": 0.25 * pulse.ns}
+
 
 def concurrent_drive_violations(compiled: pulse.Lowered, max_drives: int) -> list[tuple[int, int]]:
     """Return (time, active drives) wherever more than *max_drives* overlap."""
@@ -41,7 +43,7 @@ def concurrent_drive_violations(compiled: pulse.Lowered, max_drives: int) -> lis
 def parallel_x(qs):
     for i in range(4):
         line, tone = get_drive_line(qs[i])
-        drive(line, drag(40, 0.25, 10.0, 0.5), tone)
+        drive(line, drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["drag_beta"]), tone)
 
 
 def main() -> None:

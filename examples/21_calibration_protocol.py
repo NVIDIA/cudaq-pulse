@@ -77,20 +77,29 @@ from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.targets import transmon_krinner_17q
 
-CLOCK_GHZ = 2.0
-PULSE = 40  # 20 ns square pulses
+CLOCK_GHZ = 2.0  # the program clock: the estimators count waits and T1 in its cycles
+PULSE = 20 * pulse.ns  # square pulses
 PI_AMP = math.pi / 20  # square(PULSE, PI_AMP) is a pi pulse on the twin
-READOUT = 600  # 300 ns
+READOUT = 300 * pulse.ns
 READOUT_AMP = 0.05
 SHOTS = 50  # per setting
 TRAIN = 21  # pi pulses per amplitude train
-RAMSEY = 4000  # 2 us between the centres of the Ramsey pi/2 pulses
-RAMSEY_NS = RAMSEY / CLOCK_GHZ
-T0 = 32  # the decay estimator's first delay, 16 ns
+RAMSEY = 2 * pulse.us  # between the centres of the Ramsey pi/2 pulses
+RAMSEY_NS = RAMSEY / pulse.ns
+T0 = 16 * pulse.ns  # the decay estimator's first delay
 ATT_SHOTS = 50
 ATT_SCALE = 0.51
-SETTLE = 200_000  # a 100 us passive reset, more than 5 T1
-WAITS = (32, 2_000_000)  # every variable wait: 16 ns to 1 ms
+SETTLE = 100 * pulse.us  # a passive reset, more than 5 T1
+
+
+def in_cycles(time):
+    """*time* in whole cycles of the program clock, the estimators' unit."""
+    return round(time / pulse.ns * CLOCK_GHZ)
+
+
+PULSE_CYCLES = in_cycles(PULSE)
+T0_CYCLES = in_cycles(T0)
+WAITS = (T0_CYCLES, in_cycles(1 * pulse.ms))  # every variable wait, in cycles: 16 ns to 1 ms
 
 # A generic controller: 4 ns per cycle, with these cycles per operation.
 LIMITS = controller.ControllerLimits(
@@ -156,8 +165,8 @@ def amplitude_estimator(minus, zero, plus, amplitude):
 def decay_delays(t1_cycles):
     """The decay estimator's second and third delays, spaced by the last
     T1 estimate."""
-    spacing = min(max(t1_cycles, 64.0), (WAITS[1] - T0) / 3.0)
-    return T0 + spacing, T0 + 3.0 * spacing
+    spacing = min(max(t1_cycles, 64.0), (WAITS[1] - T0_CYCLES) / 3.0)
+    return T0_CYCLES + spacing, T0_CYCLES + 3.0 * spacing
 
 
 @pulse.classical(
@@ -213,33 +222,33 @@ def shot_end(q, pi_amp: float):
 
 
 @pulse.kernel
-def settle_and_read(q, settle_cycles: int):
-    """Read out, then wait for the qubit to relax (passive reset)."""
+def settle_and_read(q, settle):
+    """Read out, then wait *settle* for the qubit to relax (passive reset)."""
     d, t = get_drive_line(q)
     r, rt = get_readout_line(q)
     sync(d, r)
     m = readout(r, square(READOUT, READOUT_AMP), rt)
     sync(d, r)
-    wait(d, settle_cycles)
+    wait(d, settle)
     return m
 
 
 @pulse.kernel
-def assignment(q, pi_amp: float, settle_cycles: int = 0):
-    """Assignment errors; with *settle_cycles*, a passive reset of that length
+def assignment(q, pi_amp: float, settle=0 * pulse.ns):
+    """Assignment errors; with a *settle* time, a passive reset of that length
     after each readout instead of the active one."""
     d, t = get_drive_line(q)
     ground = []
     excited = []
-    if settle_cycles:
-        wait(d, settle_cycles)
+    if settle:
+        wait(d, settle)
     else:
         shot_end(q, pi_amp)
     for _ in range(SHOTS):
-        if settle_cycles:
-            ground.append(settle_and_read(q, settle_cycles))
+        if settle:
+            ground.append(settle_and_read(q, settle))
             drive(d, square(PULSE, pi_amp), t)
-            excited.append(settle_and_read(q, settle_cycles))
+            excited.append(settle_and_read(q, settle))
         else:
             ground.append(shot_end(q, pi_amp))
             drive(d, square(PULSE, pi_amp), t)
@@ -313,7 +322,7 @@ def decay(q, pi_amp: float, t1_cycles: float):
         wait(d, third, bounds=WAITS)
         third_bits.append(shot_end(q, pi_amp))
     return decay_estimator.submit(
-        first_bits, second_bits, third_bits, second - T0, t1_cycles
+        first_bits, second_bits, third_bits, second - T0_CYCLES, t1_cycles
     ).result()
 
 
@@ -325,17 +334,17 @@ def tracked_t1(
     rate: float,
     error_1to0: float,
     error_0to1: float,
-    settle_cycles: int = 0,
+    settle=0 * pulse.ns,
 ):
-    """Adaptive T1; with *settle_cycles*, a passive reset of that length after
+    """Adaptive T1; with a *settle* time, a passive reset of that length after
     each readout instead of the active one."""
     d, t = get_drive_line(q)
     w = first_wait.submit(shape, rate).result()
     for _ in range(ATT_SHOTS):
         drive(d, square(PULSE, pi_amp), t)
         wait(d, w, bounds=WAITS)
-        if settle_cycles:
-            m = settle_and_read(q, settle_cycles)
+        if settle:
+            m = settle_and_read(q, settle)
         else:
             m = shot_end(q, pi_amp)
         shape, rate, w = adaptive_t1.submit([m], shape, rate, w, error_1to0, error_0to1).result()
@@ -361,15 +370,15 @@ def calibration_chain(q, t1_guess_cycles: float):
 
 SIGMA0_HZ = 1e6
 COHERENCE_NS = 10_000.0
-SEARCH_WAITS = (PULSE, 40_000)
+SEARCH_WAITS = (PULSE_CYCLES, in_cycles(20 * pulse.us))
 
 
 def _search_setting(mean_hz, sigma_hz):
     """The next binary-search wait (between the pi/2 pulses, in clock
     cycles) and phase."""
     wait_ns = cal.binary_search_wait(sigma_hz, COHERENCE_NS)
-    wait_cycles = min(max(wait_ns * CLOCK_GHZ - PULSE, SEARCH_WAITS[0]), SEARCH_WAITS[1])
-    return wait_cycles, cal.binary_search_phase(mean_hz, (wait_cycles + PULSE) / CLOCK_GHZ)
+    wait_cycles = min(max(wait_ns * CLOCK_GHZ - PULSE_CYCLES, SEARCH_WAITS[0]), SEARCH_WAITS[1])
+    return wait_cycles, cal.binary_search_phase(mean_hz, (wait_cycles + PULSE_CYCLES) / CLOCK_GHZ)
 
 
 WAIT0, PHASE0 = _search_setting(0.0, SIGMA0_HZ)
@@ -385,7 +394,13 @@ def search_step(bits, mean_hz, sigma_hz, wait_cycles):
     """Without a reset, a shot's outcome is whether the readout changed."""
     outcome = 2 * abs(bits[0] - bits[1]) - 1
     mean_hz, sigma_hz = cal.binary_search_update(
-        mean_hz, sigma_hz, outcome, (wait_cycles + PULSE) / CLOCK_GHZ, -0.02, 0.6, COHERENCE_NS
+        mean_hz,
+        sigma_hz,
+        outcome,
+        (wait_cycles + PULSE_CYCLES) / CLOCK_GHZ,
+        -0.02,
+        0.6,
+        COHERENCE_NS,
     )
     wait_cycles, phase = _search_setting(mean_hz, sigma_hz)
     return mean_hz, sigma_hz, wait_cycles, phase

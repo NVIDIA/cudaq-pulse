@@ -90,11 +90,13 @@ for CUDA 12 or 13 is chosen from the installed extra; set
 ```python
 import cudaq_pulse as pulse
 
+cal = {"duration": 32 * pulse.ns, "sigma": 8 * pulse.ns}
+
 
 @pulse.kernel
 def rabi_oscillation(qubit, amplitude: float):
     drive_line, tone = get_drive_line(qubit)
-    drive(drive_line, gaussian(64, amplitude, 16.0), tone)
+    drive(drive_line, gaussian(cal["duration"], amplitude, cal["sigma"]), tone)
 
 
 dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)

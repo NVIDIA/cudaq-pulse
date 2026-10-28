@@ -36,7 +36,10 @@ from dataclasses import replace
 from typing import Any, NamedTuple
 
 from .._device import Device, DeviceMismatchError, NoDeviceError, Qudit, Register
+from .._errors import InvalidTypeError
+from .._units import Time
 from ..compiler import CompileOptions, Lowered, build, with_line_delays
+from ._durations import Cycles
 from ._guard import Guard, build_guard
 from ._schedule_blocks import root_schedule, validate_kernel_schedule
 from ._unroll import resolve_unroll_threshold
@@ -413,6 +416,7 @@ class Kernel[**P]:
         # (static, runtime) parameter indices, replaced as one value when a
         # float parameter turns out to shape the program.
         self._split = (tuple(i for i in range(len(names)) if i not in runtime), runtime)
+        self._declared_float = runtime
         self._promote_lock = threading.Lock()
         # The latest scheduled specializations with line delays of the
         # programs it traced, the last _TRACED_KEPT of them, which other line
@@ -467,6 +471,14 @@ class Kernel[**P]:
         for i in runtime:
             v = values[i]
             if type(v) is not float:
+                if v.__class__ is Time:
+                    name = self._names[i]
+                    raise InvalidTypeError(
+                        f"{self.__name__}(): argument {name!r} is a time ({v}), and a float "
+                        f"parameter is a plain number; pass {name} in nanoseconds and write "
+                        f"{name} * pulse.ns in the kernel, or drop its float annotation to "
+                        "compile the kernel for it"
+                    )
                 if isinstance(v, bool) or not isinstance(v, (int, float)):
                     try:
                         v = v.__float__()
@@ -489,6 +501,9 @@ class Kernel[**P]:
         while True:
             static, runtime = self._split
             trace_args = list(values)
+            for i in self._declared_float:
+                if i not in runtime and values[i].__class__ is float:
+                    trace_args[i] = Cycles(values[i])
             for n, i in enumerate(runtime):
                 trace_args[i] = Parameter(names[i], n, "f64")
             try:
