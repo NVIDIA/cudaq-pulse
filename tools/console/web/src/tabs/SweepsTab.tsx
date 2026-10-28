@@ -358,6 +358,8 @@ const SweepsTab = () => {
   const [version, setVersion] = useState(0);
   const [running, setRunning] = useState(false);
   const [elapsed, setElapsed] = useState<number | null>(null);
+  // "precomputed" or "cached" when the sweeps replay a finished run.
+  const [served, setServed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState(0);
   const [seed, setSeed] = useState(3);
@@ -383,6 +385,7 @@ const SweepsTab = () => {
     arrived.current = [];
     setError(null);
     setElapsed(null);
+    setServed(null);
     setRunning(true);
     setVersion((v) => v + 1);
     const es = new EventSource(`/api/sweeps?target=${encodeURIComponent(target)}&seed=${draw}`);
@@ -400,11 +403,13 @@ const SweepsTab = () => {
           record("go → first qudit on screen", performance.now() - clicked);
           first = false;
         }
-        setElapsed(e.elapsed_s);
+        // A replayed run's elapsed_s is the original run's; show the time on screen.
+        if (e.cached) setServed(e.precomputed ? "precomputed" : "cached");
+        setElapsed(e.cached ? (performance.now() - clicked) / 1000 : e.elapsed_s);
         setVersion((v) => v + 1);
       } else if (e.type === "done" || e.type === "error") {
         if (e.type === "error") setError(e.message);
-        else setElapsed(e.elapsed_s);
+        else setElapsed(e.cached ? (performance.now() - clicked) / 1000 : e.elapsed_s);
         record("go → all qudits", performance.now() - clicked);
         setRunning(false);
         es.close();
@@ -466,7 +471,7 @@ const SweepsTab = () => {
             <div className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-300" style={{ width: `${count ? (100 * done) / count : 0}%` }} />
           </div>
           <span className="mono tabular-nums">
-            {done} / {count} qudits{elapsed != null && ` · ${elapsed.toFixed(1)} s`}
+            {done} / {count} qudits{served && ` · ${served}`}{elapsed != null && ` · ${elapsed.toFixed(1)} s`}
           </span>
         </div>
         {error && <div className="rounded border border-[var(--danger)]/50 bg-[var(--danger)]/10 p-2 text-xs text-[var(--danger)]">{error}</div>}

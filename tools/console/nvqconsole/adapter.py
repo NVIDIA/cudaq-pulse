@@ -1086,6 +1086,12 @@ def load_runs(path: Path) -> bool:
     data = json.loads(path.read_text())
     if data.get("version") != version():
         return False
+    # Marked so the web app says "precomputed" instead of the original run time.
+    for _, value in data["runs"] + data["sims"] + data["compiled"]:
+        value["precomputed"] = True
+    for _, events in data["sweeps"]:
+        for event in events:
+            event["precomputed"] = True
     with _RUNS_LOCK, _SIMS_LOCK, _SWEEPS_LOCK:
         _RUNS.update(data["runs"])
         _SIMS.update(data["sims"])

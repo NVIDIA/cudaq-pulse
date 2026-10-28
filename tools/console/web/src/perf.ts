@@ -35,3 +35,9 @@ export function afterPaint(name: string, t0: number) {
 }
 
 export const fmtMs = (ms: number) => (ms < 1 ? `${(ms * 1000).toFixed(0)} µs` : ms < 100 ? `${ms.toFixed(1)} ms` : `${ms.toFixed(0)} ms`);
+
+/** "precomputed · 23 ms" or "cached · 23 ms" for a cached result, with the
+ * time it took to arrive now: a cached result's own run time is from
+ * another run. */
+export const servedLabel = (r: { precomputed?: boolean }, ms: number | null) =>
+  `${r.precomputed ? "precomputed" : "cached"}${ms == null ? "" : ` · ${fmtMs(ms)}`}`;

@@ -5,7 +5,7 @@ import { useConsole } from "../store";
 import Plot, { type Series } from "../components/Plot";
 import GoButton from "../components/GoButton";
 import ErrorCard from "../components/ErrorCard";
-import { fmtMs } from "../perf";
+import { fmtMs, servedLabel } from "../perf";
 import { subClock, useReplay, useReplayStep, window01, type Clock, type Replay } from "../replay";
 
 const GREEN = "#76b900";
@@ -306,7 +306,7 @@ export const ChainConvergence = ({ simple }: { simple: boolean }) => {
   );
 };
 
-const ChainView = memo(({ data, replay, simple }: { data: Chain; replay: Replay; simple: boolean }) => {
+const ChainView = memo(({ data, replay, simple, live }: { data: Chain; replay: Replay; simple: boolean; live: boolean }) => {
   const stages = useMemo(() => stageOf(data.steps), [data]);
   const early = useMemo(() => stages.filter((s) => s < 5).length, [stages]);
   // Progress through the early calls, then through the adaptive shots.
@@ -347,7 +347,8 @@ const ChainView = memo(({ data, replay, simple }: { data: Chain; replay: Replay;
         <div className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
           {simple
             ? `One program: ${data.readouts.toLocaleString()} measurements, with every decision made next to the qubit between shots.`
-            : `${data.readouts.toLocaleString()} readouts, ${data.calls} classical calls on the controller · compiled in ${data.compile_s.toFixed(2)} s, one shot simulated in ${data.simulate_s.toFixed(1)} s.`}
+            : `${data.readouts.toLocaleString()} readouts, ${data.calls} classical calls on the controller` +
+              (live ? ` · compiled in ${data.compile_s.toFixed(2)} s, one shot simulated in ${data.simulate_s.toFixed(1)} s.` : ".")}
         </div>
       </div>
       <div className="flex min-h-0 flex-col gap-2">
@@ -435,6 +436,7 @@ const CalibrationTab = () => {
   const replay = useReplay();
   const [run, setRun] = useState<RunResult<any> | null>(null);
   const [busy, setBusy] = useState(false);
+  const [took, setTook] = useState(0);
   const [advanced, setAdvanced] = useState(false);
 
   useEffect(() => {
@@ -449,6 +451,7 @@ const CalibrationTab = () => {
     setBusy(true);
     try {
       const r = await api.run(exp.id, values);
+      setTook(performance.now() - clicked);
       setRun(r);
       if (r.ok) replay.start(REPLAY_MS[exp.id] ?? 4000, clicked);
     } finally {
@@ -507,11 +510,11 @@ const CalibrationTab = () => {
           )}
           {data && (exp.id === "rabi" || exp.id === "t1") && <SweepView kind={exp.id} data={data} replay={replay} simple={simple} />}
           {data && exp.id === "drift" && <DriftView data={data} replay={replay} simple={simple} />}
-          {data && exp.id === "chain" && <ChainView data={data} replay={replay} simple={simple} />}
+          {data && exp.id === "chain" && <ChainView data={data} replay={replay} simple={simple} live={!run?.cached} />}
         </div>
         {run?.ok && !simple && (
           <div className="-mb-1 text-[10.5px] text-[var(--muted)]">
-            {run.cached ? "same parameters · replayed from cache" : `simulated in ${fmtMs(run.server_ms!)}`}
+            {run.cached ? `${servedLabel(run, took)} · replayed` : `simulated in ${fmtMs(run.server_ms!)}`}
           </div>
         )}
       </section>

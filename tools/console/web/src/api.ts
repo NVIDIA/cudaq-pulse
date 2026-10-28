@@ -108,6 +108,7 @@ export interface CompileResult {
   events?: Events;
   events_truncated?: boolean;
   cached?: boolean;
+  precomputed?: boolean;
   server_ms?: number;
   epochs?: Record<string, unknown>[];
   calls?: Record<string, unknown>[];
@@ -134,6 +135,8 @@ export interface SimResult {
   clock_ghz?: number;
   branches?: { outcomes: number[]; p: number }[];
   wall_s?: number;
+  cached?: boolean;
+  precomputed?: boolean;
 }
 
 export interface DeviceInfo {
@@ -196,5 +199,6 @@ export interface RunResult<T> {
   data?: T;
   server_ms?: number;
   cached?: boolean;
+  precomputed?: boolean;
 }
 

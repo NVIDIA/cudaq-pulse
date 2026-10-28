@@ -8,7 +8,7 @@ import ErrorCard from "../components/ErrorCard";
 import Timeline from "../components/Timeline";
 import Plot, { type Series } from "../components/Plot";
 import GoButton from "../components/GoButton";
-import { afterPaint, fmtMs } from "../perf";
+import { afterPaint, fmtMs, servedLabel } from "../perf";
 import { useReplay } from "../replay";
 import { ChainConvergence } from "./CalibrationTab";
 
@@ -313,6 +313,8 @@ const ProgramView = memo(({ result }: { result: CompileResult }) => {
 
 const SIM_POINTS = 61;
 const simCache = new Map<string, SimResult>();
+/** How each cached simulation was first served: null when simulated then. */
+const simServed = new Map<string, string | null>();
 
 /** Populations over the kernel's run, simulated once and replayed against
  * the schedule. */
@@ -320,21 +322,31 @@ const RunView = memo(({ result, simple }: { result: CompileResult; simple: boole
   const replay = useReplay();
   const [sim, setSim] = useState<SimResult | null>(null);
   const [busy, setBusy] = useState(false);
+  // How a cached simulation was served, or null for one simulated now.
+  const [served, setServed] = useState<string | null>(null);
   const key = JSON.stringify(request(false));
   const ev = result.events!;
   const tooLong = ev.start.length > 4000;
 
-  useEffect(() => setSim(simCache.get(key) ?? null), [key]);
+  useEffect(() => {
+    const found = simCache.get(key) ?? null;
+    setSim(found);
+    setServed(simServed.has(key) ? simServed.get(key)! : found ? servedLabel(found, null) : null);
+  }, [key]);
 
   const go = async () => {
     const clicked = performance.now();
     let found = simCache.get(key);
+    const inBrowser = found !== undefined;
     if (!found) {
       setBusy(true);
       found = await api.simulate({ ...request(false), points: SIM_POINTS, levels: 2 });
       setBusy(false);
       if (found.ok) simCache.set(key, found);
     }
+    const label = inBrowser ? servedLabel(found, null) : found.cached ? servedLabel(found, performance.now() - clicked) : null;
+    if (!inBrowser && found.ok) simServed.set(key, label);
+    setServed(label);
     setSim(found);
     if (found.ok) replay.start(3000, clicked);
   };
@@ -376,7 +388,7 @@ const RunView = memo(({ result, simple }: { result: CompileResult; simple: boole
             ? "Simulate the qubits through the program and replay what happens."
             : `pulse.simulate at ${SIM_POINTS} times over the schedule, then replayed.`}
         </span>
-        {sim?.ok && !simple && <span className="ml-auto text-[11px] text-[var(--muted)]">simulated in {fmtMs(sim.wall_s! * 1000)}</span>}
+        {sim?.ok && !simple && <span className="ml-auto text-[11px] text-[var(--muted)]">{served ?? `simulated in ${fmtMs(sim.wall_s! * 1000)}`}</span>}
       </div>
       {sim && !sim.ok && sim.error && <ErrorCard error={sim.error} />}
       <div className="min-h-0 flex-[3] rounded border border-[var(--border)] bg-[var(--bg)]">
@@ -426,7 +438,7 @@ const StatusBar = ({ result, simple }: { result: CompileResult | null; simple: b
       {result.ok ? (
         <>
           <span>
-            {result.cached ? "unchanged · from cache" : `compiled in ${fmtMs(result.server_ms ?? m!.total_ms)}`}
+            {result.cached ? (result.precomputed ? "precomputed" : "unchanged · from cache") : `compiled in ${fmtMs(result.server_ms ?? m!.total_ms)}`}
           </span>
           {!simple && m && (
             <span className="mono">
