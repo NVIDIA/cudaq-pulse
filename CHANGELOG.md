@@ -156,6 +156,28 @@ behavior may change in any 0.x release.
   (`cudaq_pulse.compiler.ScheduledEvent`), `Lowered.metrics` the compile
   times (`cudaq_pulse.compiler.CompileMetrics`), and `Lowered.timeline()` a
   plot (with the `[viz]` extra).
+- **Optimization passes.** `passes=` takes members of `pulse.Pass`, a
+  string enum, or their names, in any order and combination: `VERIFY`,
+  `FOLD_CONSTANTS` (constant arithmetic computed at compile time),
+  `REMOVE_UNUSED` (operations whose results nothing uses), `MERGE_WAITS`
+  (constant waits in a row on one line joined into one),
+  `SIMPLIFY_CONTROL_FLOW` (syncs that order nothing, blocks that take no
+  time, loops that run once or never), `FOLD_PHASES` (frame changes folded
+  into the next drive), `FUSE_PULSES` (square pulses of the same amplitude
+  in a row merged) and `HOIST_LOOP_INVARIANTS`. The default is `VERIFY`,
+  `FOLD_CONSTANTS`, `REMOVE_UNUSED`, `FOLD_PHASES` and `FUSE_PULSES`. An
+  unknown name is a `ValueError` that names the closest member. Pattern
+  passes that follow one another run as one rewrite, so compiling, binding
+  a call's values and exporting a new binding are faster. When a call binds
+  `float` parameters, `FOLD_PHASES` and `FUSE_PULSES` run again, if the
+  kernel compiled with them, where the values reach: a phase bound to a
+  number folds into the next drive, and square pulses whose amplitudes are
+  bound equal fuse. `cudaq-pulse-opt` runs each pass by name
+  (`pulse-fold-constants`, `pulse-remove-unused`, `pulse-merge-waits`,
+  `pulse-simplify-control-flow`, `pulse-fold-phases`, `pulse-fuse-pulses`,
+  `pulse-hoist-loop-invariants`), as well as `pulse-unroll-classical-loops`
+  and `pulse-schedule-rcp` with its machine model as options (`max-drives`,
+  `max-readouts`, `readout-latency`, `switch-penalty`, `alap`).
 - **Devices and targets.** `pulse.get_device` and `pulse.device` describe a
   machine as a target plus a qudit layout; devices compare by content and
   share compiled kernels. Target descriptions are
