@@ -349,6 +349,11 @@ class Device:
         self.clock_ghz = float(target.clock_ghz)
         self.frequencies: Mapping[int, float] = target.frequencies
         self.fingerprint = _fingerprint(target, layout, calibration)
+        # What equality compares: the fingerprint alone without a control
+        # system, so comparing such devices costs one string comparison.
+        self._identity: Any = (
+            self.fingerprint if control_system is None else (self.fingerprint, control_system)
+        )
         self._structure = _structure(self)
         self.qudit_handles = _Handles(tuple(Qudit(self, p, i) for i, p in enumerate(layout)))
         self._arrays: tuple[Any, Any] | None = None
@@ -441,11 +446,7 @@ class Device:
         return _device_data(self)
 
     def __eq__(self, other: object) -> bool:
-        return (
-            isinstance(other, Device)
-            and other.fingerprint == self.fingerprint
-            and other.control_system == self.control_system
-        )
+        return isinstance(other, Device) and other._identity == self._identity
 
     def __hash__(self) -> int:
         return hash(self.fingerprint)
