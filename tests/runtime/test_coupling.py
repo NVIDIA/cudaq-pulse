@@ -365,9 +365,10 @@ def test_gpu_lowering_builds_the_cpu_operator(levels):
     pulse.simulate(lowered, levels=levels, t_end=20.0)
     dims = (levels, levels)
     times = [0.0, 3.3, 11.7, 19.9]
-    cpu_terms = list(_cpu_hamiltonian(lowered._module.operator_program([]), dims))
+    module = lowered._concrete()
+    cpu_terms = list(_cpu_hamiltonian(module.operator_program([]), dims))
     pipeline = MLIRPipeline()
-    text = pipeline.run_qop_to_cudm(pipeline.run_pulse_to_qop(lowered._module.print()))
+    text = pipeline.run_qop_to_cudm(pipeline.run_pulse_to_qop(module.print()))
     gpu_terms = list(_cudm_hamiltonian(text, dims))
     assert len(gpu_terms) == len(cpu_terms)
     cpu = _at(cpu_terms, times)

@@ -50,7 +50,7 @@ def _assert_same_schedules(fn, qudits, sweeps, policies=POLICIES):
             want = _events(reference.lower(*qudits, *values))
             assert got == want, (policy, values)
         assert compiled.cache_info().compiled == 1, policy
-    assert runtime.runtime_parameters == static.static_parameters[len(qudits) :]
+    assert runtime.runtime_parameters[len(qudits) :] == static.static_parameters
 
 
 TAUS = [(0.0,), (1.0,), (7.0,), (40.0,), (333.0,), (2000.0,)]
@@ -225,7 +225,7 @@ def test_a_sweep_compiles_once_and_never_evicts():
         kernel.lower(Q[0], 13.0 * i)
     info = kernel.cache_info()
     assert (info.compiled, info.evicted) == (1, 0)
-    assert kernel.runtime_parameters == ("tau",)
+    assert kernel.runtime_parameters == ("q", "tau")
 
 
 @pytest.mark.parametrize(
@@ -429,4 +429,4 @@ def test_a_length_that_needs_more_than_arithmetic_stays_static():
 
     with pytest.warns(RuntimeWarning, match="float argument 'tau'"):
         assert k.lower(Q[0], 30.0).schedule[0].duration_cycles == 2
-    assert k.runtime_parameters == ()
+    assert k.runtime_parameters == ("q",)

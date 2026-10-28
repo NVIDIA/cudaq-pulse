@@ -261,7 +261,7 @@ def test_range_errors_name_their_cause():
     # it does in Python.
     with pytest.raises(CompilationError, match=r"integers known at compile time; got \(float\)"):
         symbolic_bound.lower(Q[0], 3.0)
-    assert symbolic_bound.static_parameters == ("q", "n")
+    assert symbolic_bound.static_parameters == ("n",)
 
 
 def test_while_loops_point_at_for_loops():

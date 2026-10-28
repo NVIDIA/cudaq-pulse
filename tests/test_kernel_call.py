@@ -85,9 +85,10 @@ def test_varargs_kernels_are_rejected():
             pass
 
 
-def test_annotations_split_static_and_runtime_parameters():
-    assert rabi.runtime_parameters == ("amp",)
-    assert rabi.static_parameters == ("q", "duration")
+def test_annotations_and_qudit_values_split_static_and_runtime_parameters():
+    rabi.lower(_device().qudit_handles[0], 0.1)
+    assert rabi.runtime_parameters == ("q", "amp")
+    assert rabi.static_parameters == ("duration",)
 
 
 # ── Compile-only and caching ─────────────────────────────────────────────
@@ -118,7 +119,8 @@ def test_a_call_without_qudit_handles_has_no_device():
 
 
 def test_compiled_kernel_without_a_specialization_explains_lower():
-    with pytest.raises(TypeError, match=r"specialized on q, duration; inspect one .*\.lower"):
+    rabi.lower(_device().qudit_handles[0], 0.1)
+    with pytest.raises(TypeError, match=r"specialized on duration; inspect one .*\.lower"):
         pulse.compile(rabi).mlir()
 
 
@@ -447,8 +449,8 @@ def test_a_float_that_decides_control_flow_or_a_duration_is_specialized_on():
     ck = pulse.compile(shaped)
     assert ck.lower(q, 0.7, 16.0).schedule[-1].duration_cycles == 16
     assert len(ck.lower(q, 0.2, 8.0).schedule) == 1
-    assert shaped.static_parameters == ("q", "amp", "width")
-    assert shaped.runtime_parameters == ()
+    assert shaped.static_parameters == ("amp", "width")
+    assert shaped.runtime_parameters == ("q",)
 
 
 def test_a_float_only_used_as_a_value_stays_symbolic():

@@ -1,5 +1,6 @@
-"""Runtime qudits: a kernel whose qudit parameters are annotated ``Qudit`` or
-``Register`` compiles once and binds its qudits at each call."""
+"""Runtime qudits: a kernel's qudit and register parameters, annotated
+``Qudit`` or ``Register`` or passed a handle or a register on the first call,
+compile once and bind their qudits at each call."""
 
 import dataclasses
 import json
@@ -8,7 +9,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse import Device, Qudit, Register, Target, get_device
-from cudaq_pulse.controller import ControllerLimits, check
+from cudaq_pulse.controller import ControllerLimitError, ControllerLimits, check
 from cudaq_pulse.kernel.ir_builder import CompilationError
 from cudaq_pulse.ops import (
     drive,
@@ -18,6 +19,7 @@ from cudaq_pulse.ops import (
     get_readout_line,
     readout,
     set_frequency,
+    shift_frequency,
     shift_phase,
     square,
 )
@@ -44,9 +46,19 @@ def _body(q, r, amps):
     return readout(rl, square(100, 0.05), rt)
 
 
-@pulse.kernel
-def static_k(q, r, amps: list[float]):
+def _static(fn, **options):
+    """*fn* as a kernel that keeps its unannotated qudits static, as every
+    kernel did before qudits were runtime by default: the reference."""
+    k = pulse.kernel(fn, **options)
+    k._undecided = ()
+    return k
+
+
+def _static_k(q, r, amps: list[float]):
     return _body(q, r, amps)
+
+
+static_k = _static(_static_k)
 
 
 @pulse.kernel
@@ -73,7 +85,7 @@ def _recalibrated(device, carrier, shift_hz):
 @pytest.mark.parametrize("schedule", ["alap", "asap"])
 def test_runtime_qudits_match_static_compiles(schedule):
     options = {"schedule": schedule}
-    static = pulse.kernel(static_k.__wrapped__, **options)
+    static = _static(_static_k, **options)
     runtime = pulse.kernel(runtime_k.__wrapped__, **options)
     calls = [(H[3], H[[5, 7]], [0.2, 0.4]), (H[9], H[[0, 16]], [0.1, 0.3])]
     for args in calls:
@@ -112,26 +124,26 @@ def test_program_id_is_stable_and_symbols_bind():
     assert retuned and all(e["symbols"]["qudit"] == "s0" for e in retuned)
 
 
-def test_float_only_exports_have_no_symbols():
-    @pulse.kernel
+def test_static_qudit_exports_have_no_symbols():
     def k(q, a: float):
         d, t = get_drive_line(q)
         drive(d, square(20, a), t)
 
-    export = k.lower(H[3], 0.1).export_controller()
+    export = _static(k).lower(H[3], 0.1).export_controller()
     assert "symbols" not in export and "program_id" not in export
     assert all("symbols" not in e for e in export["events"])
 
 
-def test_frequency_of_a_static_qudit_is_a_constant():
-    @pulse.kernel
+def test_frequency_of_a_static_or_runtime_qudit_is_its_transition():
     def k(q):
         d, t = get_drive_line(q)
         drive(d, square(20, 0.1), set_frequency(t, frequency(q, (2, 1))))
 
-    events = k.lower(H[4]).export_controller()["events"]
     qubit = DEV.target.qubits[DEV.layout[4]]
-    assert events[0]["frequency_hz"] == pytest.approx(qubit.frequency_hz + qubit.anharmonicity_hz)
+    for kernel in (_static(k), pulse.kernel(k)):
+        events = kernel.lower(H[4]).export_controller()["events"]
+        want = qubit.frequency_hz + qubit.anharmonicity_hz
+        assert events[0]["frequency_hz"] == pytest.approx(want)
 
 
 @pytest.mark.parametrize("transition", [(0, 0), (0, 3), (-1, 1), (0, 1.0)])
@@ -267,6 +279,26 @@ def test_reading_a_register_element_attribute_names_the_list_rewrite():
     with pytest.raises(CompilationError, match=r"of qudit 'qs\[0\]'") as e:
         k.lower(H[[1, 2]])
     assert "values: list[float], called with [TABLE[q.index] for q in qs]" in str(e.value)
+
+
+def test_a_runtime_qudit_frequency_is_one_tone_until_its_line_is_retuned():
+    machine = pulse.compiler.MachineModel(controller=ControllerLimits(tones_per_line=1))
+
+    @pulse.kernel
+    def native(q):
+        d, t = get_drive_line(q)
+        drive(d, square(20, 0.1), t)
+        drive(d, square(20, 0.2), shift_phase(t, 0.5))
+
+    @pulse.kernel
+    def retuned(q):
+        d, t = get_drive_line(q)
+        drive(d, square(20, 0.1), t)
+        drive(d, square(20, 0.2), shift_frequency(t, 1e6))
+
+    assert pulse.compile(native, machine=machine).lower(H[3]).export_controller()
+    with pytest.raises(ControllerLimitError, match="2 tone frequencies"):
+        pulse.compile(retuned, machine=machine).lower(H[3])
 
 
 def test_list_promoted_to_static_warns():

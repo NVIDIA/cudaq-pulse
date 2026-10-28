@@ -11,13 +11,12 @@ from __future__ import annotations
 
 import json
 import math
-import struct
 
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.classical import Bits, Float, qec
-from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse.compiler import MachineModel, _CheckedPerCall
 from cudaq_pulse.controller import (
     FORMAT,
     ControllerLimitError,
@@ -521,10 +520,10 @@ def test_a_call_is_checked_once_per_distinct_values():
     compiled = pulse.compile(retuned, machine=machine)
     first = compiled.lower(Q[0], 0.0)
     compiled.lower(Q[0], 0.0)
-    assert first.generic._accepted == {struct.pack("d", 0.0)}
+    assert len(first.generic._accepted) == 1
     # A module no float value can push past a limit is not checked per call.
     lowered = pulse.compile(ramsey, machine=machine).lower(Q[0], 0.75)
-    assert type(lowered.generic) is pulse.Lowered
+    assert not isinstance(lowered.generic, _CheckedPerCall)
 
 
 @pulse.kernel

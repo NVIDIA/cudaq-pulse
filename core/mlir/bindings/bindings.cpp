@@ -354,6 +354,9 @@ struct ControllerWalk {
   bool track;
   using Dependencies = std::array<std::vector<int64_t>, 3>;
   std::vector<Dependencies> dependencies;
+  /// With `track`, parallel to `result`: the qref argument whose native
+  /// frequency an event's tone plays (its line was never retuned), or -1.
+  std::vector<int64_t> natives;
   /// What a tone's frequency, the frequency of its frame (where it
   /// started) and its phase depend on.
   struct FrameDependencies {
@@ -848,8 +851,19 @@ struct ControllerWalk {
     }
     if (track) {
       Dependencies found;
+      int64_t native = -1;
       if (!mlir::isa<pulse::WaitOp>(op)) {
         FrameDependencies &frame = frameDependenciesOf(op->getOperand(2));
+        mlir::Operation *root = toneRoots(op->getOperand(2));
+        if (!frame.retuned && root &&
+            mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(root) &&
+            !root->hasAttr("frequency_hz"))
+          if (auto argument =
+                  mlir::dyn_cast<mlir::BlockArgument>(root->getOperand(0)))
+            if (argument.getOwner()->isEntryBlock() &&
+                mlir::isa_and_nonnull<mlir::func::FuncOp>(
+                    argument.getOwner()->getParentOp()))
+              native = argument.getArgNumber();
         found[0] = frame.frequency;
         found[1] = frame.phase;
         // A retuned tone gains phase at its detuning from the frame.
@@ -861,6 +875,7 @@ struct ControllerWalk {
         merge(found[2], {});
       }
       dependencies.push_back(std::move(found));
+      natives.push_back(native);
     }
     if (mlir::isa<pulse::ReadoutOp>(op))
       latest[op] = static_cast<int64_t>(result.size());
@@ -958,8 +973,10 @@ struct ControllerWalk {
     if (time)
       for (mlir::Value value : op.getLines())
         reached[trace(value)] = time;
-    if (track)
+    if (track) {
       dependencies.emplace_back();
+      natives.push_back(-1);
+    }
     result.emplace_back(
         "sync", -1, -1, time,
         time ? std::optional<int64_t>(0) : std::optional<int64_t>(),
@@ -994,8 +1011,10 @@ struct ControllerWalk {
     if constexpr (RunTime)
       if (auto request = mlir::dyn_cast<classical::SubmitOp>(op))
         submission(request);
-    if (track)
+    if (track) {
       dependencies.emplace_back();
+      natives.push_back(-1);
+    }
     result.emplace_back(
         submit ? "submit" : "answer",
         classical::intAttr(op, "classical.device"), -1,
@@ -1901,6 +1920,21 @@ public:
     return std::move(walk.dependencies);
   }
 
+  /// For each event of controller_events(), in the same order, the qref
+  /// argument of `main` whose native frequency its tone plays, because the
+  /// tone is its line's and was never retuned; -1 for any other event.
+  std::vector<int64_t> controller_native_tones() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    ControllerWalk walk(clock(), /*track=*/true);
+    module_->walk([&](mlir::Operation *op) {
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+        walk.lineIndex.try_emplace(op,
+                                   static_cast<int64_t>(walk.lineIndex.size()));
+    });
+    walk.block<false>(*module_->getBody());
+    return std::move(walk.natives);
+  }
+
   /// The lines, (role, qubit, slot) in allocation order, and the timed ops of
   /// `events()`, in the same order, every sync and every classical call,
   /// with what a controller needs to play them: (kind, line, qubit,
@@ -2712,6 +2746,36 @@ public:
       entryBlock.eraseArgument(entryBlock.getNumArguments() - 1);
     funcOp.setType(mlir::FunctionType::get(module.getContext(), {}, {}));
     funcOp.removeArgAttrsAttr();
+  }
+
+  static void dropQrefArguments(mlir::ModuleOp module) {
+    auto funcOp = module.lookupSymbol<mlir::func::FuncOp>("main");
+    llvm::BitVector qrefs(funcOp.getNumArguments());
+    for (auto [i, type] : llvm::enumerate(funcOp.getArgumentTypes()))
+      if (mlir::isa<pulse::QrefType>(type))
+        qrefs.set(i);
+    (void)funcOp.eraseArguments(qrefs);
+  }
+
+  /// This module with its runtime qudits bound to *carriers*, and its float
+  /// arguments kept: a simulation evaluates it at each call's values.
+  PulseModule place_carriers(
+      const std::vector<int64_t> &carriers,
+      nb::ndarray<const double, nb::ndim<1>, nb::c_contig> frequencies) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    Slots slots{carriers};
+    slots.frequencies = frequencies.data();
+    slots.count = frequencies.shape(0);
+    auto owning = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
+    bindSlots(*owning, slots);
+    dropQrefArguments(*owning);
+    PulseModule result(ctx_, std::move(owning));
+    if (source_) {
+      result.source_ = mlir::OwningOpRef<mlir::ModuleOp>(source_->clone());
+      bindSlots(*result.source_, slots);
+      dropQrefArguments(*result.source_);
+    }
+    return result;
   }
 
   PulseModule specialize(const std::vector<double> &f64_args,
@@ -4698,6 +4762,13 @@ NB_MODULE(_cudaq_pulse_native, m) {
       .def("controller_dependencies", &PulseModule::controller_dependencies,
            "For each controller_events() event: the arguments its tone "
            "frequency, frame phase and waveform depend on")
+      .def("place_carriers", &PulseModule::place_carriers, nb::arg("carriers"),
+           nb::arg("frequencies"),
+           "This module with its runtime qudits bound to carriers and its "
+           "float arguments kept")
+      .def("controller_native_tones", &PulseModule::controller_native_tones,
+           "For each controller_events() event: the qref argument whose "
+           "native frequency its tone plays, or -1")
       .def("controller_events", &PulseModule::controller_events,
            nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
            nb::arg("slots").none() = nb::none(),

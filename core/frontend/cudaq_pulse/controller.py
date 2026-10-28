@@ -564,7 +564,7 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
     if role is not None:
         assert slots is not None
         exported["program_id"] = role.program_id
-        exported["symbols"] = _symbols(lowered, role, slots)
+        exported["symbols"] = _symbols(lowered, role, slots, events)
         _event_symbols(lowered, role, slots, events)
     return exported
 
@@ -572,11 +572,83 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
 _DEPENDENT_FIELDS = ("frequency_hz", "phase_rad", "waveform")
 
 
+# Where a symbol's value comes from in a call: its float arguments, the
+# carrier bound to a slot, or that carrier's native frequency.
+_ARGUMENT, _CARRIER, _NATIVE = range(3)
+
+
 def _event_symbols(
     lowered: Lowered, role: Any, slots: Sequence[int], events: list[dict[str, Any]]
 ) -> None:
     """Give each event of a call the symbols its fields come from: its qudit's
     slot, and those its tone frequency, frame phase and waveform depend on."""
+    plan = _export_plan(lowered, role, slots, events)
+    for event, template in zip(events, plan[1], strict=True):
+        if template is not None:
+            event["symbols"] = {k: v if type(v) is str else v[:] for k, v in template.items()}
+
+
+def _symbols(
+    lowered: Lowered, role: Any, slots: Sequence[int], events: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Every symbol of a call's module, with its value in the call: its
+    float arguments, its slots (the carriers bound) and the native frequency
+    of each slot that gets a line."""
+    arguments = lowered.arguments
+    carriers = lowered.carriers
+    frequencies = lowered.target.frequencies
+    found = []
+    for template, source, k in _export_plan(lowered, role, slots, events)[0]:
+        entry = template.copy()
+        if source == _ARGUMENT:
+            entry["value"] = arguments[k]
+        elif source == _CARRIER:
+            entry["value"] = carriers[k]
+        else:
+            entry["value"] = frequencies[carriers[k]]
+        if "transition" in entry:
+            entry["transition"] = entry["transition"][:]
+        found.append(entry)
+    return found
+
+
+_ExportPlan = tuple[list[tuple[dict[str, Any], int, int]], list[dict[str, Any] | None]]
+
+
+def _export_plan(
+    lowered: Lowered, role: Any, slots: Sequence[int], events: list[dict[str, Any]]
+) -> _ExportPlan:
+    """What a role's exports share: each symbol without its value and where
+    the value comes from, and each event's symbols. Built once per role."""
+    plan: _ExportPlan | None = role.export_plan
+    if plan is not None and len(plan[1]) == len(events):
+        return plan
+    lined = set(slots)
+    symbols: list[tuple[dict[str, Any], int, int]] = []
+    named: set[str] = set()
+    argument = 0
+    for name, kind, parameter, position in role.symbols:
+        entry: dict[str, Any] = {"symbol": name, "kind": kind, "parameter": parameter}
+        if position is not None:
+            entry["position"] = position
+        if kind == "slot":
+            slot = int(name[1:])
+            symbols.append((entry, _CARRIER, slot))
+            if slot in lined and f"{name}.f01" not in named:
+                named.add(f"{name}.f01")
+                native = {"symbol": f"{name}.f01", "kind": "frequency", "slot": name}
+                native["transition"] = [0, 1]
+                symbols.append((native, _NATIVE, slot))
+        elif kind == "frequency":
+            named.add(name)
+            entry = {"symbol": name, "kind": kind, "slot": parameter}
+            entry["transition"] = [int(name[-2]), int(name[-1])]
+            symbols.append((entry, _ARGUMENT, argument))
+            argument += 1
+        else:
+            symbols.append((entry, _ARGUMENT, argument))
+            argument += 1
+
     dependencies = role.dependencies
     if dependencies is None:
         with lowered._lock:
@@ -592,62 +664,18 @@ def _event_symbols(
             for item in found
         ]
     aligned = len(dependencies) == len(events)
+    templates: list[dict[str, Any] | None] = []
     for index, event in enumerate(events):
-        symbols: dict[str, Any] = {}
+        template: dict[str, Any] = {}
         line = event["line"]
         if (event["kind"] in _PLAYED or event["kind"] == "wait") and line is not None:
             if 0 <= line < len(slots) and slots[line] >= 0:
-                symbols["qudit"] = f"s{slots[line]}"
+                template["qudit"] = f"s{slots[line]}"
         if aligned:
-            symbols.update(dependencies[index])
-        if symbols:
-            event["symbols"] = symbols
-
-
-def _symbols(lowered: Lowered, role: Any, slots: Sequence[int]) -> list[dict[str, Any]]:
-    """Every symbol of a call's module, with its value in the call: its
-    float arguments, its slots (the carriers bound) and the native frequency
-    of each slot that gets a line."""
-    values = iter(lowered.arguments)
-    carriers = lowered.carriers
-    frequencies = lowered.target.frequencies
-    lined = set(slots)
-    found: list[dict[str, Any]] = []
-    named: set[str] = set()
-    for name, kind, parameter, position in role.symbols:
-        entry: dict[str, Any] = {"symbol": name, "kind": kind, "parameter": parameter}
-        if position is not None:
-            entry["position"] = position
-        if kind == "slot":
-            slot = int(name[1:])
-            entry["value"] = carriers[slot]
-            found.append(entry)
-            if slot in lined and f"{name}.f01" not in named:
-                named.add(f"{name}.f01")
-                found.append(
-                    {
-                        "symbol": f"{name}.f01",
-                        "kind": "frequency",
-                        "slot": name,
-                        "transition": [0, 1],
-                        "value": frequencies[carriers[slot]],
-                    }
-                )
-        elif kind == "frequency":
-            named.add(name)
-            found.append(
-                {
-                    "symbol": name,
-                    "kind": kind,
-                    "slot": parameter,
-                    "transition": [int(name[-2]), int(name[-1])],
-                    "value": next(values),
-                }
-            )
-        else:
-            entry["value"] = next(values)
-            found.append(entry)
-    return found
+            template.update(dependencies[index])
+        templates.append(template or None)
+    plan = role.export_plan = (symbols, templates)
+    return plan
 
 
 # ── Checks ───────────────────────────────────────────────────────────────────
@@ -690,6 +718,7 @@ def _violations(
     run_time: Sequence[str] = (),
     waveforms: bool = True,
     unresolved: list[str] | None = None,
+    natives: Sequence[int] | None = None,
 ) -> list[str]:
     """The limits *events* exceed. With *clocks*, the events are in the
     controller's own cycles: the native walk's, with *off* its line events
@@ -699,7 +728,8 @@ def _violations(
     waveforms alike either way). With *unresolved*, a tone or waveform
     whose value is not known yet counts only if the limit is exceeded
     whatever its value; a limit that only some values exceed is appended to
-    *unresolved* instead, to be checked with them."""
+    *unresolved* instead, to be checked with them. *natives* has, by event
+    index, the qudit argument whose native frequency the event plays, or -1."""
     if clocks is None:
         found = []
     else:
@@ -742,8 +772,15 @@ def _violations(
                     f"{limits.tones_per_line} per line"
                 )
             elif unresolved is not None:
-                unknown = sum(e.get("frequency_hz") is None for e in items)
-                if len(tones) + unknown > limits.tones_per_line:
+                unknown = [e for e in items if e.get("frequency_hz") is None]
+                if natives is None:
+                    count = len(unknown)
+                else:
+                    # A runtime qudit's own frequency is one tone however
+                    # often it plays: an upper bound for every placement.
+                    keys = [natives[e["index"]] for e in unknown]
+                    count = len({k for k in keys if k >= 0}) + keys.count(-1)
+                if len(tones) + count > limits.tones_per_line:
                     unresolved.append(f"line {line}: tone frequencies")
         if limits.max_amplitude is not None:
             found.extend(_over_amplitude(lines[line], items, limits.max_amplitude, unresolved))
@@ -909,6 +946,10 @@ def _compile_check(lowered: Lowered, limits: ControllerLimits) -> tuple[list[str
     )
     slots = lowered._role is not None and lowered._role.slots > 0
     unresolved: list[str] | None = [] if lowered.parameters or slots else None
+    natives = None
+    if slots and limits.tones_per_line is not None:
+        with lowered._lock:
+            natives = lowered._module.controller_native_tones()
     found = _violations(
         lowered,
         events,
@@ -919,6 +960,7 @@ def _compile_check(lowered: Lowered, limits: ControllerLimits) -> tuple[list[str
         problems,
         waveforms=False,
         unresolved=unresolved,
+        natives=natives,
     )
     if slots and limits.acquirers:
         assert unresolved is not None

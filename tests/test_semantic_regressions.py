@@ -183,7 +183,7 @@ def test_a_float_that_sets_a_duration_is_specialized_on():
 
     # sigma sets a duration, so the kernel is specialized on its value.
     specialized = pulse.compile(kernel, schedule="asap").lower(Q[0], sigma=5.0, delay=7)
-    assert kernel.static_parameters == ("q", "sigma", "delay")
+    assert kernel.static_parameters == ("sigma", "delay")
     assert _drive_timings(specialized.mlir()) == [(0, 20)]
     assert "duration_cycles = 15" in specialized.mlir()
 

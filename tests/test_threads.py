@@ -79,7 +79,7 @@ def test_one_module_used_from_several_threads():
 
 
 def test_lowering_runs_while_python_keeps_running():
-    module = _compile(_many_drives(400))._module
+    module = _compile(_many_drives(400))._concrete()
     done = threading.Event()
     elapsed = []
 

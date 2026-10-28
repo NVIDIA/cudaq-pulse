@@ -46,7 +46,7 @@ from .._errors import (
 )
 from .._native._cudaq_pulse_native import evaluate_callback
 from .._units import Time, as_nanoseconds
-from ..compiler import ScheduledEvent
+from ..compiler import ScheduledEvent, _placement
 from . import _propagate
 from ._attributes import _VALID_INTEGRATORS, _f64, _level_attributes, _target_attributes
 
@@ -509,12 +509,14 @@ def _simulate_compiled(
         module = compiled._concrete().simulation_module(*compiled.options.schedule_args())
         arguments = []
         lock = threading.RLock()
+    elif backend == "gpu" or compiled.waits is not None:
+        module = compiled._concrete()
+    elif compiled.carriers:
+        # With float values, the placement's module evaluated at them: no
+        # copy of the module per value.
+        module = _placement(compiled) if compiled.arguments else compiled._concrete()
     else:
-        module = (
-            compiled._concrete()
-            if backend == "gpu" or compiled.waits is not None or compiled.carriers
-            else compiled._module
-        )
+        module = compiled._module
     if compiled.runtime_selects:
         # A path plays the values its measurements select: on a copy, each op
         # that reads a run-time value runs in both arms of an if on the

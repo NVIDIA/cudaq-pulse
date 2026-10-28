@@ -51,7 +51,7 @@ def test_a_wait_length_from_the_friction_log_compiles_once_without_a_warning():
     caught, compiled = _lower_three(t1_shot, 2000.0, step=40.0)
     assert caught == []
     assert compiled == 1
-    assert t1_shot.runtime_parameters == ("wait_ns",)
+    assert t1_shot.runtime_parameters == ("q", "wait_ns")
 
 
 def test_a_waveform_duration_warns_once():

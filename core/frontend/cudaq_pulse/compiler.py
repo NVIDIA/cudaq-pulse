@@ -602,6 +602,8 @@ class CompileOptions:
 
 # Placements whose qudits a role remembers.
 _PLACEMENTS = 4096
+# Placed modules a role keeps for simulations: each is a copy of the module.
+_PLACED_MODULES = 16
 
 # Longest wait a call may ask for: lengths stay exact in a float.
 _MAX_WAIT_CYCLES = MAX_CYCLES
@@ -1284,6 +1286,9 @@ class _Role:
         "dependencies",
         "frequencies",
         "placed",
+        "views",
+        "modules",
+        "export_plan",
     )
 
     def __init__(self, symbols: tuple[tuple[str, str, str, int | None], ...]) -> None:
@@ -1300,6 +1305,14 @@ class _Role:
         self.frequencies: tuple[tuple[int, int, int], ...] = ()
         # The qudits a call uses, by its carriers (at most _PLACEMENTS).
         self.placed: dict[tuple[int, ...], tuple[int, ...]] = {}
+        # A call without float values is its carriers and device: its view,
+        # shared by the calls that repeat them (at most _PLACEMENTS).
+        self.views: dict[tuple[tuple[int, ...], Device], Lowered] = {}
+        # The module with a placement's carriers bound and its float
+        # arguments kept, for simulations (the latest _PLACED_MODULES).
+        self.modules: dict[tuple[tuple[int, ...], Device], Any] = {}
+        # What every export shares, built by the first (controller._export_plan).
+        self.export_plan: Any = None
 
     @staticmethod
     def identify(
@@ -1334,6 +1347,24 @@ class _Placed(Lowered):
         """This module with values for its float parameters and, with
         *carriers*, its runtime qudits bound on *target*, sharing it."""
         return _place(self, values, carriers, target)
+
+
+def _placement(view: Lowered) -> Any:
+    """*view*'s module with its carriers bound and its float arguments kept,
+    shared by the views of one placement."""
+    role = view._role
+    assert role is not None and view.carriers
+    key = (view.carriers, view.target)
+    module = role.modules.get(key)
+    if module is None:
+        with view._lock:
+            module = view._module.place_carriers(
+                list(view.carriers), view.target._frequency_table()
+            )
+        if len(role.modules) >= _PLACED_MODULES:
+            role.modules.clear()
+        role.modules[key] = module
+    return module
 
 
 def _place(

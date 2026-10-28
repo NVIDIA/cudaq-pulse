@@ -49,10 +49,15 @@ Annotations decide what a compilation depends on:
   value never recompiles. A call whose values set a wait length schedules
   the module again with them, without tracing it; see
   :ref:`wait-lengths`.
-- Every other parameter (qudit handles, ``int``, anything unannotated, such
-  as a duration passed as a time) is *static*: the kernel is specialized on
-  its value. A time passed to a ``float`` parameter is a ``TypeError``; see
-  :ref:`durations`.
+- A qudit handle or a ``Register`` is a runtime value too: the compiled
+  module takes the qudits as arguments, so calling on other qudits of the
+  device never recompiles. A parameter annotated ``Qudit`` or ``Register``
+  is one; so is an unannotated one that the kernel's first call passes a
+  handle or a register.
+- Every other parameter (``int``, a list of handles, anything else
+  unannotated, such as a duration passed as a time) is *static*: the kernel
+  is specialized on its value. A time passed to a ``float`` parameter is a
+  ``TypeError``; see :ref:`durations`.
 - A ``float`` the program needs while it compiles -- one that sets a
   waveform duration, goes through ``int()``, decides an ``if`` or bounds a
   loop -- is specialized on as well. ``kernel.static_parameters`` and

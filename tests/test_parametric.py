@@ -208,8 +208,8 @@ class TestParametricCompilation:
 
         ck = k.lower(Q[0], 0.5, 64).generic
         assert ck.parameters == ("amp",)
-        assert "%arg0" in ck.mlir()
-        assert "%arg1" not in ck.mlir()
+        # The arguments are amp and the runtime qudit; duration is not one.
+        assert "@main(%arg0: f64, %arg1: !pulse.qref {pulse.slot = 0 : i64})" in ck.mlir()
         assert "arith.constant 64 : i64" in ck.mlir()
 
     def test_mixed_concrete_and_param(self):
@@ -237,7 +237,7 @@ class TestParametricCompilation:
 
         ck = k.lower(Q[0])
         assert ck.parameters == ()
-        assert ck.generic is ck
+        assert ck.arguments == ()
         assert "func.func @main()" in ck.mlir()
         assert "start_cycles" in ck.mlir()  # scheduled
 
