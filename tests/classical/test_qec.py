@@ -82,7 +82,7 @@ def test_each_path_keeps_its_own_decoder_state():
 
 def test_a_decoder_without_decode_needs_handlers():
     decoder = _decoder()
-    with pytest.raises(TypeError, match="no reference implementation"):
+    with pytest.raises(TypeError, match="has no body to run here. Give it a handler"):
         decoder.corrections_function(3, 2, 0)
     handlers = qec.Decoder(3, syndromes=12, corrections=2, max_latency_ns=500).handlers()
     assert set(handlers) == {

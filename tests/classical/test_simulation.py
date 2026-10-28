@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import re
 
 import cudaq_pulse as pulse
 import numpy as np
@@ -307,9 +308,9 @@ def test_decay_during_readout_adds_to_the_one_to_zero_error():
 def test_handlers_override_and_are_required_for_external_functions():
     from cudaq_pulse import classical
 
-    @classical.external(max_latency_ns=0, lengths={"bits": 1})
-    def remote(bits: pulse.Bits) -> int:
-        raise NotImplementedError
+    @classical.external(max_latency_ns=0)
+    def remote(bits: pulse.Length[pulse.Bits, 1]) -> int:
+        return int()
 
     @pulse.kernel
     def k(q):
@@ -327,6 +328,45 @@ def test_handlers_override_and_are_required_for_external_functions():
         pulse.simulate(low, levels=2)
     result = pulse.simulate(low, handlers={"remote": lambda bits: 3}, levels=2)
     assert result.density_matrix[1, 1].real == pytest.approx(1.0, abs=1e-6)
+
+
+def test_an_answer_of_the_wrong_length_is_an_error_every_run():
+    from cudaq_pulse import classical
+
+    @classical.external(max_latency_ns=0, id=0x51)
+    def decode_surface(syndrome: pulse.Bits) -> pulse.Length[pulse.Bits, 2]:
+        return pulse.Bits()
+
+    @pulse.classical(max_latency_ns=0)
+    def flip(outcomes: pulse.Bits) -> pulse.Bits:
+        return [1 - b for b in outcomes]
+
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        r, rt = get_readout_line(q)
+        m = readout(r, square(100, 0.05), rt)
+        fix = decode_surface.submit([m, m, m]).result()
+        again = flip.submit([m]).result()
+        if fix[0] or again[0]:
+            drive(d, square(40, PI_AMP), t)
+
+    dev = _device()
+    low = pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
+    result = pulse.simulate(low, handlers={"decode_surface": lambda s: [1, 0]})
+    assert [(c.function, c.compiled_name) for c in result.calls[0]] == [
+        ("decode_surface", "decode_surface"),
+        ("flip", "flip__1"),
+    ]
+    message = "decode_surface returned 3 bits; its result is pulse.Length[pulse.Bits, 2] (id=0x51)"
+    with pytest.raises(TypeError, match=re.escape(message)):
+        pulse.simulate(low, handlers={"decode_surface": lambda s: [1, 0, 1]})
+    message = (
+        f"flip__1 returned 2 bits; its result is pulse.Length[pulse.Bits, 1]"
+        f" (id={flip.specialize(outcomes=1).id:#x})"
+    )
+    with pytest.raises(TypeError, match=re.escape(message)):
+        pulse.simulate(low, handlers={"decode_surface": lambda s: [1, 0], "flip": lambda o: [0, 1]})
 
 
 def test_calls_in_a_rolled_loop_are_bound_per_iteration():

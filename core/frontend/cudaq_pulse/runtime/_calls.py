@@ -32,9 +32,15 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class CallRecord:
-    """One call a path made: what went in, what came back, in time."""
+    """One call a path made: what went in, what came back, in time.
+
+    ``function`` is the name it is declared with and ``compiled_name`` the
+    name it is compiled and served under: a version's, such as
+    ``"flip__3"``, for a function whose list lengths come from its calls.
+    """
 
     function: str
+    compiled_name: str
     start_ns: float
     inputs: tuple[Any, ...]
     answer: Any
@@ -115,10 +121,10 @@ def _answer_values(function: ClassicalFunction[..., Any], answer: Any) -> list[f
         else:
             items = list(part)
             if len(items) != spec.answer_count:
-                raise InvalidTypeError(
-                    f"{function.name}: result {spec.descriptor} has {spec.answer_count} "
-                    f"values, got {len(items)}"
-                )
+                from ..classical import _wrong_length
+
+                position = [s is spec for s in results].index(True)
+                raise InvalidTypeError(_wrong_length(function, position, len(items)))
         for item in items:
             flat.append(float(bool(item)) if spec.answer == "i1" else float(item))
     return flat

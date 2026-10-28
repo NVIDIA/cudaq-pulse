@@ -90,14 +90,32 @@ def decode(syndrome: Bits) -> bool:
     return bool(syndrome[0])
 
 
-@pulse.classical(max_latency_ns=10, lengths={"return": ("x", None)})
-def _scale(x: list[float], k: float) -> tuple[list[float], float]:
+@pulse.classical(max_latency_ns=10)
+def _scale(x: list[float], k: float) -> tuple[pulse.Length[list[float], "x"], float]:  # noqa: F821, UP037
     return [k * v for v in x], k
 
 
-@pulse.classical.external(max_latency_ns=10, lengths={"index": 2})
-def table(index: Bits) -> float:
-    raise NotImplementedError
+@pulse.classical.external(max_latency_ns=10)
+def table(index: pulse.Length[Bits, 2]) -> float:
+    return float()
+
+
+@pulse.classical.external(max_latency_ns=10, id=0x51)
+def decode_surface(
+    syndrome: pulse.Length[pulse.Bits, 8],
+    counts: pulse.Length[list[int], 2, "numbers"],  # noqa: F821, UP037
+) -> tuple[float, pulse.Length[pulse.Bits, 2]]:
+    return (float(), pulse.Bits())
+
+
+@pulse.classical.external(max_latency_ns=10)
+def _halves(syndrome: pulse.Bits) -> tuple[float, pulse.Bits]:
+    return (float(), syndrome[:2])
+
+
+assert_type(pulse.Bits(), list[int])
+assert_type(decode_surface.submit([1] * 8, [3, 4]).result(), tuple[float, list[int]])
+assert_type(_halves.submit([0, 1, 1]).result(), tuple[float, list[int]])
 
 
 def _double(x: float) -> float:
@@ -126,7 +144,7 @@ decode.submit([1], [0])  # type: ignore[call-arg]
 _scale.submit([1.0], k="x")  # type: ignore[arg-type]
 pulse.classical(max_latency_ns="soon")  # type: ignore[call-overload]
 pulse.classical(_double)  # type: ignore[call-overload]
-pulse.classical(_double, max_latency_ns=1, lengths=3)  # type: ignore[call-overload]
+pulse.classical(_double, max_latency_ns=1, lengths=3)  # type: ignore[call-overload]  # remnant-ok
 pulse.classical.external(max_latency_ns=1, args=())  # type: ignore[call-arg]  # remnant-ok
 
 # pulse.controller is a module and the loader of controller descriptions.

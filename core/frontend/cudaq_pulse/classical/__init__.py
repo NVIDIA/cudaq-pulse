@@ -33,8 +33,9 @@ levels or numbers, ``list[complex]`` IQ points and ``list[float]`` numbers;
 ``float``, ``int`` and ``complex`` take one value. A list's length comes from
 the call: a function called with lists of two lengths compiles to two
 versions, each named by its lengths (``decode__4``). Results are typed the
-same way, and a list result's length is inferred from the body per version
-or stated with ``lengths={"return": n}``.
+same way, and a list result's length is inferred from the body per version.
+``pulse.Length[pulse.Bits, 8]`` states a fixed length, for a function with
+one wire schema (``id=``) or a device that takes one size.
 
 Inside a kernel, ``.submit(...)`` sends a request and returns a future at
 once; pulses that do not need the answer keep playing. ``.result()`` is where
@@ -106,21 +107,24 @@ def function_id(name: str) -> int:
     return value
 
 
-class Bits(Protocol):
-    """Measurements read as bits (``outcome != 0``), bit-packed on the wire.
+# Type checkers see a list of ints, so a body returns any list of bits and
+# ``pulse.Bits()``, an external's placeholder result, checks too (an alias made
+# with a ``type`` statement can't be called).
+if typing.TYPE_CHECKING:
+    Bits: typing.TypeAlias = list[int]  # noqa: UP040
+else:
 
-    A kernel passes a list of measurements, ``fn.submit([m0, m1])``; the body
-    reads ``bits[0]``, ``len(bits)`` or iterates. As a result, the bits are
-    answered as booleans a kernel can branch on. The length comes from the
-    call.
-    """
+    class Bits(list):
+        """Measurements read as bits (``outcome != 0``), bit-packed on the wire.
 
-    def __len__(self) -> int: ...
-    @overload
-    def __getitem__(self, index: int, /) -> int: ...
-    @overload
-    def __getitem__(self, index: slice, /) -> Sequence[int]: ...
-    def __iter__(self) -> Iterator[int]: ...
+        A kernel passes a list of measurements, ``fn.submit([m0, m1])``; the
+        body reads ``bits[0]``, ``len(bits)`` or iterates. As a result, the
+        bits are answered as booleans a kernel can branch on. The length
+        comes from the call, or is stated, ``pulse.Length[pulse.Bits, 8]``.
+        ``pulse.Bits()`` is an empty list, an external's placeholder result.
+        """
+
+        __slots__ = ()
 
 
 # ── Reading type hints ───────────────────────────────────────────────────────
@@ -215,18 +219,27 @@ def _name(t: str, g: dict[str, Any]) -> Any:
 
 
 def _subscript(t: str, g: dict[str, Any]) -> Any:
-    """``tuple[float, float]`` or ``list[int]``, one level deep, without eval."""
+    """``tuple[float, float]``, ``list[int]`` or ``pulse.Length[pulse.Bits,
+    8]``, one level deep, without eval."""
     i = t.find("[")
     if i <= 0 or t[-1] != "]" or "[" in t[i + 1 :]:
         return _NOT_A_NAME
     head = _name(t[:i].strip(), g)
-    items = [_name(s.strip(), g) for s in t[i + 1 : -1].split(",")]
+    items = [_item(s.strip(), g) for s in t[i + 1 : -1].split(",")]
     if head is _NOT_A_NAME or any(x is _NOT_A_NAME for x in items):
         return _NOT_A_NAME
     try:
         return head[tuple(items)] if len(items) > 1 else head[items[0]]
     except TypeError:
         return _NOT_A_NAME
+
+
+def _item(s: str, g: dict[str, Any]) -> Any:
+    if s.isdigit():
+        return int(s)
+    if len(s) > 1 and s[0] == s[-1] and s[0] in "\"'" and s[1:-1].isidentifier():
+        return s[1:-1]
+    return _name(s, g)
 
 
 def _result_items(t: Any) -> tuple[Any, ...]:
@@ -270,7 +283,7 @@ class _Shape:
         self.unsized, self.rules = unsized, rules
 
 
-def _read_hints(fn: Any, lengths: Mapping[str, Any], external: bool) -> _Shape:
+def _read_hints(fn: Any) -> _Shape:
     """Read a function's annotations from ``__code__`` and
     ``__annotations__`` (no ``inspect.signature`` or ``get_type_hints``)."""
     where = fn.__qualname__
@@ -292,34 +305,16 @@ def _read_hints(fn: Any, lengths: Mapping[str, Any], external: bool) -> _Shape:
         if spec is None:
             kind = _LIST_KIND.get(t)
             if kind is None:
-                _bad_parameter(where, name, t)
-            lists += 1
-            n = lengths.get(name)
-            if n is None:
+                spec = _stated_parameter(where, name, t)
+            else:
                 spec = kind
                 unsized += 1
-            elif isinstance(n, bool) or not isinstance(n, int) or n <= 0:
-                raise TypeError(f"{where}: lengths[{name!r}] must be a positive length, got {n!r}")
-            else:
-                spec = _sized(kind, n)
-        elif lengths and name in lengths:
-            raise TypeError(f"{where}: lengths gives {name!r} a length, but it is a single value")
+            lists += 1
         plan.append(spec)
-    if lengths:
-        unknown = set(lengths) - set(names) - {"return"}
-        if unknown:
-            raise TypeError(
-                f"{where}: lengths names {', '.join(sorted(unknown))}, which aren't parameters"
-            )
-    if external and unsized:
-        missing = [n for n, p in zip(names, plan, strict=True) if p.__class__ is int]
-        raise TypeError(
-            f"{where}: an external function has one schema; give lengths for {', '.join(missing)}"
-        )
     if "return" not in ann:
         raise TypeError(f"{where}: annotate what it returns (-> None if it answers nothing)")
     returned = _hint(ann["return"], fn)
-    if not lengths and len(plan) <= _MAX_ARGS:
+    if len(plan) <= _MAX_ARGS:
         try:
             scalar = _SCALAR_RESULT.get(returned)
         except TypeError:  # unhashable: not a type, the checks below say so
@@ -327,60 +322,22 @@ def _read_hints(fn: Any, lengths: Mapping[str, Any], external: bool) -> _Shape:
         if scalar is not None:
             return _Shape(tuple(names), tuple(plan), (scalar,), unsized, False)
     items = _result_items(returned)
-    stated: Any = lengths.get("return")
-    if len(items) > 1:
-        if stated is None:
-            stated = (None,) * len(items)
-        elif not isinstance(stated, (tuple, list)) or len(stated) != len(items):
-            raise TypeError(
-                f"{where}: lengths['return'] needs one entry per result ({len(items)}),"
-                " None for a scalar"
-            )
-    else:
-        stated = (stated,)
-    list_params = (
-        [n for n, p in zip(names, plan, strict=True) if p.__class__ is int or not p.is_scalar]
+    list_params: dict[str, Any] = (
+        {n: p for n, p in zip(names, plan, strict=True) if p.__class__ is int or not p.is_scalar}
         if lists
-        else []
+        else {}
     )
-    pinned = bool(list_params) and not unsized
     results: list[Any] = []
-    for t, rule in zip(items, stated, strict=False):
+    for t in items:
         spec = _SCALAR_RESULT.get(t)
         if spec is None:
             kind = _LIST_KIND.get(t)
-            if kind is None or kind == _KIND_IQ:
+            if kind is None:
+                spec = _stated_result(where, t, list_params)
+            elif kind == _KIND_IQ:
                 _bad_result(where, t)
-            if rule is None and (pinned or external):
-                why = (
-                    "an external function has one schema"
-                    if external
-                    else ("its inputs are pinned to one schema by lengths=")
-                )
-                raise TypeError(
-                    f"{where}: {why}, so state the {_LIST_NAME[kind]} result's length too:"
-                    " lengths={..., 'return': n}"
-                )
-            if rule.__class__ is str:
-                if rule not in list_params:
-                    raise TypeError(
-                        f"{where}: lengths['return'] names {rule!r}, which isn't a list parameter"
-                    )
-                if rule in lengths:
-                    spec = _sized(kind, int(lengths[rule]), measured=False)
-                else:
-                    spec = _Rule(kind, rule)
-            elif rule is None:
-                spec = _Rule(kind, None)
-            elif rule.__class__ is int and rule > 0:
-                spec = _sized(kind, rule, measured=False)
             else:
-                raise TypeError(
-                    f"{where}: lengths['return'] must be a positive length, an input's name or"
-                    f" None, got {rule!r}"
-                )
-        elif rule is not None:
-            raise TypeError(f"{where}: lengths['return'] gives a length for a scalar result")
+                spec = _Rule(kind, None)
         results.append(spec)
     if len(plan) > _MAX_ARGS:
         raise TypeError(f"{where}: at most {_MAX_ARGS} arguments, got {len(plan)}")
@@ -388,6 +345,132 @@ def _read_hints(fn: Any, lengths: Mapping[str, Any], external: bool) -> _Shape:
         raise TypeError(f"{where}: at most {_MAX_RESULTS} results, got {len(results)}")
     rules = any(r.__class__ is _Rule for r in results)
     return _Shape(tuple(names), tuple(plan), tuple(results), unsized, rules)
+
+
+_NUMBERS = "numbers"
+
+
+def _stated_parameter(where: str, name: str, t: Any) -> ValueType:
+    """A parameter of fixed length, ``pulse.Length[kind, n]``, and for a
+    ``list[int]`` of numbers rather than measured levels ``"numbers"``."""
+    if typing.get_origin(t) is not typing.Annotated:
+        _bad_parameter(where, name, t)
+    base, meta = t.__origin__, t.__metadata__
+    kind = _LIST_KIND.get(base)
+    if kind is None:
+        if base in _SCALAR_ARG or base is bool:
+            raise TypeError(
+                f"{where}: parameter {name!r} is {_spell(base)}; pulse.Length applies to"
+                " pulse.Bits and lists"
+            )
+        _bad_parameter(where, name, base)
+    spelled = _spell_length(kind, meta)
+    n, numbers = _length_items(where, spelled, kind, meta, None)
+    if n is None:
+        raise TypeError(
+            f"{where}: {spelled} gives no length; state one, such as"
+            f" pulse.Length[{_LIST_NAME[kind]}, 8]"
+        )
+    return _sized(kind, n, measured=not numbers)
+
+
+def _stated_result(where: str, t: Any, list_params: Mapping[str, Any]) -> Any:
+    """A list result of stated length: ``pulse.Length[kind, n]``, or
+    ``pulse.Length[kind, "x"]`` for list parameter ``x``'s length."""
+    if typing.get_origin(t) is not typing.Annotated:
+        _bad_result(where, t)
+    base, meta = t.__origin__, t.__metadata__
+    kind = _LIST_KIND.get(base)
+    if kind is None or kind == _KIND_IQ:
+        if base in _SCALAR_RESULT or base is complex:
+            raise TypeError(
+                f"{where}: its result is {_spell(base)}; pulse.Length applies to pulse.Bits"
+                " and lists"
+            )
+        _bad_result(where, base)
+    spelled = _spell_length(kind, meta)
+    n, _ = _length_items(where, spelled, kind, meta, list_params)
+    if n is None:
+        raise TypeError(
+            f"{where}: {spelled} gives no length; state one, such as"
+            f' pulse.Length[{_LIST_NAME[kind]}, 8] or pulse.Length[{_LIST_NAME[kind]}, "x"]'
+            " for list parameter x's length"
+        )
+    if n.__class__ is str:
+        source = list_params[n]
+        if source.__class__ is int:
+            return _Rule(kind, n)
+        return _sized(kind, source.count, measured=False)
+    return _sized(kind, n, measured=False)
+
+
+def _length_items(
+    where: str, spelled: str, kind: int, meta: tuple[Any, ...], list_params: Any
+) -> tuple[Any, bool]:
+    """What a ``pulse.Length`` states: its length (a parameter's name for
+    a result, *list_params* not None) and whether ``"numbers"`` is given."""
+    n: Any = None
+    numbers = False
+    for item in meta:
+        if item.__class__ is str and (list_params is None or item not in list_params):
+            if item != _NUMBERS:
+                if list_params is None:
+                    raise TypeError(
+                        f"{where}: {spelled}: a parameter's length is a number; a name states"
+                        " a result's length"
+                    )
+                import difflib
+
+                close = difflib.get_close_matches(item, list(list_params), n=1)
+                hint = f" (did you mean {close[0]!r}?)" if close else ""
+                raise TypeError(
+                    f"{where}: {spelled} names {item}, which isn't a list parameter{hint}"
+                )
+            if kind != _KIND_INTS:
+                raise TypeError(f'{where}: {spelled}: "numbers" applies to list[int] only')
+            numbers = True
+            continue
+        if item.__class__ is not str and (item.__class__ is not int or item <= 0):
+            raise TypeError(
+                f"{where}: {spelled}: a length is a positive whole number, got {item!r}"
+            )
+        if n is not None:
+            raise TypeError(f"{where}: {spelled}: state one length")
+        n = item
+    return n, numbers
+
+
+_SPELLED = {
+    "bits": ("pulse.Bits", "", "bit"),
+    "levels": ("list[int]", "", "measurement"),
+    "iq": ("list[complex]", "", "IQ point"),
+    "f64": ("list[float]", "", "number"),
+    "i32": ("list[int]", ', "numbers"', "number"),
+}
+
+
+def _spelled(spec: ValueType) -> tuple[str, str]:
+    """A list type's ``pulse.Length[...]`` spelling and what it counts
+    (``"bit"``, ``"number"``...), for errors."""
+    head = spec.descriptor.split(":")[0].split("[")[0]
+    name, flag, unit = _SPELLED.get(head, (spec.descriptor, "", "value"))
+    return f"pulse.Length[{name}, {spec.count}{flag}]", unit
+
+
+def _wrong_length(function: ClassicalFunction[..., Any], position: int, got: int) -> str:
+    """A handler's or body's answer of the wrong length, at run time."""
+    spec = function.results[position]
+    spelled, unit = _spelled(spec)
+    which = f" as result {position}" if len(function.results) > 1 else ""
+    return (
+        f"{function.name} returned {got} {unit}{'s' if got != 1 else ''}{which}; its result is"
+        f" {spelled} (id={function.id:#x})"
+    )
+
+
+def _spell_length(kind: int, meta: tuple[Any, ...]) -> str:
+    items = ", ".join(f'"{m}"' if m.__class__ is str else repr(m) for m in meta)
+    return f"pulse.Length[{_LIST_NAME[kind]}, {items}]"
 
 
 def _bad_parameter(where: str, name: str, t: Any) -> typing.NoReturn:
@@ -506,7 +589,6 @@ class ClassicalFunction[**P, R]:
         implementation: Callable[P, R] | None,
         *,
         name: str | None = None,
-        lengths: Mapping[str, Any] | None = None,
         max_latency_ns: float | Time,
         min_latency_ns: float | Time = 0.0,
         nominal_latency_ns: float | Time | None = None,
@@ -590,12 +672,9 @@ class ClassicalFunction[**P, R]:
         self.uniform: int | None = None
         self.__doc__ = hinted.__doc__ if hinted is not None else None
         self.__wrapped__ = hinted
-        if lengths is not None and not isinstance(lengths, Mapping):
-            raise TypeError(f"{name}: lengths must be a dict, got {lengths!r}")
         # Every attribute is set here, in one order, so all functions share
         # one attribute layout (attributes added later, or in other orders,
         # make every read slower).
-        self._lengths: Mapping[str, Any] = lengths or {}
         self._error: TypeError | None = None
         # A template's declaration, the plan its submit reads and how many
         # lengths its calls give; None, None, 0 for a function of one schema.
@@ -635,9 +714,13 @@ class ClassicalFunction[**P, R]:
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
         """Run the reference implementation on *args* (outside a kernel)."""
         if self.implementation is None:
+            how = ""
+            if self.__wrapped__ is not None:
+                how = " it is declared with @pulse.classical.external, so"
             raise InvalidTypeError(
-                f"{self.name} is external and has no reference implementation; "
-                "simulate it with handlers={...}, or declare it with a body"
+                f"{self.base_name} runs on link {self.link!r};{how} it has no body to run here."
+                " Give it a handler to simulate it:"
+                f' pulse.simulate(..., handlers={{"{self.base_name}": fn}})'
             )
         expected = len(self.args)
         if self._plan is not None:
@@ -721,7 +804,7 @@ def _resolve(function: ClassicalFunction[..., Any]) -> None:
         raise function._error
     hinted = function.__wrapped__
     try:
-        shape = _read_hints(hinted, function._lengths, function.implementation is None)
+        shape = _read_hints(hinted)
         if not shape.unsized:
             if shape.rules:
                 stated = {
@@ -779,18 +862,51 @@ def _result_specs(
             from ._infer import LengthRules
 
             bits = frozenset(n for n, p in zip(shape.names, shape.plan) if p is _KIND_BITS)
+            # An external's stub is a declaration: its placeholder return,
+            # such as `return outcomes`, gives the result's length.
             known = function._length_rules = LengthRules(
-                function.implementation, shape.names, inferred, len(out), bits
+                function.__wrapped__, shape.names, inferred, len(out), bits
             )
         where = f"{function.name} at {text}" if text else function.name
-        found = dict(zip((i for i, _ in inferred), known.lengths(where, lengths), strict=True))
+        try:
+            found = dict(zip((i for i, _ in inferred), known.lengths(where, lengths), strict=True))
+        except TypeError as error:
+            raise TypeError(f"{error} {_length_advice(function, shape, inferred)}") from None
     for i, r in rules:
         n = lengths[r.source] if r.source is not None else found[i]
         if n <= 0:
             where = f"{function.name} at {text}" if text else function.name
+            if function.implementation is None:
+                raise TypeError(
+                    f"{where}: its {_LIST_NAME[r.kind]} result has no length: the placeholder"
+                    f" says only its type. {_length_advice(function, shape, inferred)}"
+                )
             raise TypeError(f"{where}: its {_LIST_NAME[r.kind]} result would be empty")
         out[i] = _sized(r.kind, n, measured=False)
     return tuple(out)
+
+
+def _length_advice(
+    function: ClassicalFunction[..., Any], shape: _Shape, inferred: list[tuple[int, str]]
+) -> str:
+    """How to give a list result a length the compiler can see."""
+    kind = _LIST_NAME[shape.results[inferred[0][0]].kind]
+    plan = zip(shape.names, shape.plan, strict=True)
+    inputs = [n for n, p in plan if p.__class__ is int or not p.is_scalar]
+    if function.implementation is None:
+        stated = f"state it in the signature: -> pulse.Length[{kind}, n]"
+        if not inputs:
+            return f"An external's body is a placeholder; {stated}."
+        return (
+            f"An external's body is a placeholder: return {inputs[0]}, or a slice such as"
+            f" {inputs[0]}[:2], for a length the input gives, or {stated}."
+        )
+    if function.custom_id or not inputs:
+        return f"State it in the signature: -> pulse.Length[{kind}, n]."
+    return (
+        "Return a list whose length the inputs decide instead, such as a fixed maximum"
+        f" ([0] * len({inputs[0]})) and a count of the items used."
+    )
 
 
 # ── Versions ─────────────────────────────────────────────────────────────────
@@ -814,7 +930,6 @@ _COPIED = (
     "uniform",
     "__doc__",
     "__wrapped__",
-    "_lengths",
     "_error",
     "_shape",
     "_plan",
@@ -981,13 +1096,6 @@ class Answer[R]:
         return self._value
 
 
-# What ``lengths=`` holds: per list parameter its length, and for
-# ``"return"`` a length, a list parameter's name, or per item of a tuple
-# result one of those or None.
-_Length = int | str | None
-_Lengths = Mapping[str, int | str | tuple[_Length, ...]]
-
-
 class _Options(TypedDict, total=False):
     """The keyword options of ``pulse.classical`` and ``external``."""
 
@@ -1001,7 +1109,6 @@ class _Options(TypedDict, total=False):
     link: int | str
     id: int | None
     name: str | None
-    lengths: _Lengths
 
 
 @overload
@@ -1021,7 +1128,13 @@ def function(implementation: Callable[..., Any] | None = None, /, **options: Any
     levels, or numbers), ``list[complex]`` (IQ points) and ``list[float]``
     take a list whose length comes from the call. Results are ``float``,
     ``int``, ``bool``, ``pulse.Bits``, ``list[float]``, ``list[int]``, a tuple
-    of them or ``None``.
+    of them or ``None``; a list result's length is inferred from the body.
+
+    ``pulse.Length`` states a fixed length where one wire schema is wanted,
+    as with ``id=``: ``pulse.Length[pulse.Bits, 8]`` takes eight bits,
+    ``pulse.Length[list[int], 8, "numbers"]`` eight numbers rather than
+    measured levels, and a result ``-> pulse.Length[pulse.Bits, "outcomes"]``
+    has the length of list parameter ``outcomes``.
 
     Keyword options: ``max_latency_ns`` (required), ``min_latency_ns``,
     ``nominal_latency_ns``, ``latency_mode`` (``"bounded"``, ``"timeout"``
@@ -1029,16 +1142,8 @@ def function(implementation: Callable[..., Any] | None = None, /, **options: Any
     ``"lazy"``), ``deadline_ns``, ``link`` (the link its requests travel on:
     a name from ``MachineModel.links``, such as ``"controller"``, or a link
     id; default 0; ``device`` is not used for it, because a cudaq-pulse
-    device is the QPU), ``name``, ``id`` and ``lengths``. A
-    latency, timeout or deadline is a time (``400 * pulse.ns``) or a number
-    of ns.
-
-    ``lengths`` states list lengths the call or the body can't give:
-    ``{"return": n}`` for a list result (or ``{"return": "x"}`` for input
-    ``x``'s length; for a tuple result one entry per item, ``None`` for a
-    scalar), and ``{"x": n}`` to pin a parameter to one length. A function
-    whose every list parameter is pinned has one schema under its own name,
-    so its list results need stated lengths too.
+    device is the QPU), ``name`` and ``id``. A latency, timeout or deadline
+    is a time (``400 * pulse.ns``) or a number of ns.
 
     The hints are read at the next compile, and a mistake in them is raised
     where the function is used.
@@ -1075,17 +1180,28 @@ def _removed(options: Mapping[str, Any]) -> typing.NoReturn:
 def external[**Q, T](
     **options: Unpack[_Options],
 ) -> Callable[[Callable[Q, T]], ClassicalFunction[Q, T]]:
-    """Declare a classical function with no reference implementation, from
-    a stub whose hints give its schema; its body never runs, and
-    ``raise NotImplementedError`` is the one that type checkers accept::
+    """Declare a classical function served elsewhere: a declaration whose
+    hints give its schema and whose body is a placeholder for its result,
+    which never runs::
 
-        @pulse.classical.external(max_latency_ns=50, lengths={"index": 2})
-        def table(index: pulse.Bits) -> float:
-            raise NotImplementedError
+        @pulse.classical.external(max_latency_ns=50, link="feedback")
+        def table(index: pulse.Length[pulse.Bits, 3]) -> float:
+            return float()
 
-    It takes the keyword options of ``pulse.classical``. Its schema is fixed
-    by the device that serves it, so every list length is stated in
-    ``lengths``. Simulating a program that calls it needs a handler for it.
+        @pulse.classical.external(max_latency_ns=900, link="gpu")
+        def decode(syndrome: pulse.Bits) -> tuple[float, pulse.Bits]:
+            return (float(), syndrome[:2])
+
+    A placeholder is a value of the result's type: ``float()``,
+    ``pulse.Bits()`` (its length stated), an input (``return outcomes``) or a
+    slice of one, whose length the result takes; a ``None`` result needs no
+    return. A list parameter of no stated length takes its length from the
+    call, one version per length as for ``pulse.classical``; state the
+    length the device takes, ``pulse.Length[pulse.Bits, 3]``, and a call of
+    another length is a compile error.
+
+    It takes the keyword options of ``pulse.classical``. Simulating a program
+    that calls it needs a handler for it.
     """
     if "args" in options or "results" in options:
         _removed(options)

@@ -215,6 +215,8 @@ builtins = [
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP"]
+# An external's placeholder result names its type: return float().
+ignore = ["UP018"]
 
 [tool.ruff.lint.per-file-ignores]
 "test/**/lit*.cfg.py" = ["F821"]

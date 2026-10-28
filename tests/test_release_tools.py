@@ -253,17 +253,27 @@ def test_classical_remnants(tmp_path):
         "@pulse.classical(ar" + "gs=(Bi" + "ts(1),), max_latency_ns=1)",
         f"A ``{old}(7)`` argument.",
         "def f(b: Bi" + "ts[3]) -> None: ...",
+        "@pulse.classical(max_latency_ns=1, len" + "gths={'bits': 3})",
+        "A ``len" + "gths['return']`` entry.",
+        "@pulse.classical.external(max_latency_ns=1)",
+        "def table(index: pulse.Bits) -> float:",
+        "    raise Not" + "ImplementedError",
     ]
     good = [
         "@pulse.classical(ar" + "gs=()) is rejected  # remnant-ok",
-        "@pulse.classical(max_latency_ns=1, lengths={'bits': 3})",
-        "class Bits(Protocol):",
+        "class Bits(list):",
         "def _schema_function(name, args=(), results=()):",
         "_Floats(2)",
+        "n = lengths[r.source]",
+        "@pulse.classical.external(max_latency_ns=1)",
+        "def table(index: pulse.Length[pulse.Bits, 3]) -> float:",
+        "    return float()",
+        "def other() -> None:",
+        "    raise Not" + "ImplementedError",
     ]
     path = tmp_path / "f.py"
     path.write_text("\n".join(bad + good) + "\n")
-    assert [int(error.split(":")[1]) for error in check(path)] == [1, 2, 3, 3, 4, 5]
+    assert [int(error.split(":")[1]) for error in check(path)] == [1, 2, 3, 3, 4, 5, 6, 7, 10]
     notebook = tmp_path / "n.ipynb"
     notebook.write_text(json.dumps({"cells": [{"source": ["x = 1\n", bad[1]]}]}))
     assert [error.split(":")[1] for error in check(notebook)] == ["2"]

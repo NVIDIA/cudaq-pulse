@@ -63,9 +63,11 @@ result gives values a branch can test.
 **List lengths.** A list parameter takes its length from the call. A
 function called with lists of two lengths has two *versions*, each with its
 own wire id and schema, named by its lengths: ``flip.submit([m0, m1, m2])``
-and ``flip.submit([m0])`` call ``flip__3`` and ``flip__1``, and reports, the
-call manifest and ``controller.resources`` name the version. The length of a
-list result is read from the body, for each version:
+and ``flip.submit([m0])`` call ``flip__3`` and ``flip__1``. A call record or
+report row gives both names: ``call.function`` is ``"flip"`` and
+``call.compiled_name`` is ``"flip__3"``, and the call manifest lists every
+version with its id and layout. The length of a list result is read from
+the body, for each version:
 
 .. code-block:: python
    :class: fragment
@@ -81,32 +83,68 @@ counts that cancel (the set bits of a ``pulse.Bits`` and the items a
 comprehension keeps, padded back to an input's length). Where the values
 decide it (a comprehension with a condition, a ``while`` loop the values
 end, two returns of different lengths), compiling says so and names the
-line, and ``lengths=`` states it: ``{"return": 4}``, ``{"return": "outcomes"}`` for the
-length of an input, or for a tuple result one entry per item, ``None`` for a
-scalar, as in ``{"return": (None, "syndrome")}``. ``lengths={"outcomes": 3}``
-pins a parameter to one length; a function whose list parameters are all
-pinned has one schema under its own name, so its list results need stated
-lengths too. ``flip.specialize(outcomes=3)`` is the version of one length, for
-``wire.schema`` or ``wire.native``. A function given ``id=`` has one version,
-and calling it with a second length is an error.
+line; return a fixed maximum and a count instead (``positions = [0] *
+len(syndrome)``, fill the first ``count`` items, ``return count,
+positions``). ``flip.specialize(outcomes=3)`` is the version of one length,
+for ``wire.schema``, ``wire.native`` or ``controller.analyze``.
+
+**Fixed lengths.** A function given ``id=`` names one wire schema, so it has
+one version, and calling it with a second length is an error. Where one
+size is wanted, the signature states it with ``pulse.Length``
+(``typing.Annotated``, so checkers read the type inside it):
+
+.. code-block:: python
+   :class: fragment
+
+   @pulse.classical(max_latency_ns=900, link="gpu", id=0x51)
+   def frozen(
+       syndromes: pulse.Length[pulse.Bits, 24],
+       counts: pulse.Length[list[int], 4, "numbers"],
+   ) -> pulse.Length[pulse.Bits, 4]:
+       return [syndromes[i] ^ syndromes[i + 1] for i in range(4)]
+
+``pulse.Length[pulse.Bits, 24]`` takes 24 bits, and a call with another
+length is a compile error that names the size: ``frozen.submit():
+'syndromes' takes 24 bits (pulse.Length[pulse.Bits, 24]), got 23``. A
+``list[int]`` takes measured levels; ``"numbers"`` after its length makes it
+numbers. A result's length is a number, or a list parameter's name, as in
+``-> pulse.Length[pulse.Bits, "outcomes"]`` for the length of input
+``outcomes``. Functions whose lengths come from their calls need none of
+this.
 
 The hints are read when a program that calls the function is first
 compiled, and a mistake in them is raised there, naming the function. The
 body is a ``def``: a lambda has no hints.
 
-``pulse.classical.external`` declares a function that is served elsewhere,
-with no body to run, from a stub whose hints give its schema. The device
-that serves it fixes its layout, so every list length is stated:
+**External functions.** ``pulse.classical.external`` declares a function
+that is served elsewhere. Its stub is a declaration: the hints give its
+schema, and the body, which never runs, is a placeholder for its result
+that gives the result's shape:
 
 .. code-block:: python
    :class: fragment
 
-   @pulse.classical.external(max_latency_ns=50, lengths={"index": 2})
-   def table(index: pulse.Bits) -> float:
-       raise NotImplementedError
+   @pulse.classical.external(max_latency_ns=50, link="feedback")
+   def table(index: pulse.Length[pulse.Bits, 3]) -> float:
+       return float()
 
-The stub's body never runs; ``raise NotImplementedError`` is the body that
-mypy and pyright both accept for it.
+   @pulse.classical.external(max_latency_ns=900, link="gpu")
+   def decode(syndrome: pulse.Bits) -> tuple[float, pulse.Bits]:
+       return (float(), syndrome[:2])
+
+   @pulse.classical.external(max_latency_ns=900, link="gpu")
+   def echo(outcomes: pulse.Bits) -> pulse.Bits:
+       return outcomes
+
+A placeholder is a value of the result's type: ``float()``, ``int()``,
+``pulse.Bits()`` (an empty list, for a result whose length the signature
+states), an input or a slice of one. A ``None`` result needs no return.
+mypy and pyright check these bodies like any other. A list parameter of no
+stated length works as for ``pulse.classical``: ``decode`` called with 6 and
+with 8 bits is two versions, ``decode__6`` and ``decode__8``, each served
+under its own id and listed in the manifest with its layout. A device that
+takes one size is declared with it, as ``table`` is. Calling an external
+function in Python is an error that says to give it a handler.
 
 The latency has a minimum, a nominal value and a maximum. The scheduler
 budgets the maximum. Simulation and emulation use a triangular distribution
@@ -288,7 +326,11 @@ it.
 - ``handlers={"decode": fn}`` replaces a function's body in every version
   of it, or provides one for a function declared with
   ``pulse.classical.external``; a handler named by a version, such as
-  ``"flip__3"``, serves that version only.
+  ``"flip__3"``, serves that version only. Each answer's list lengths are
+  checked every time a body or handler runs, in simulation and emulation
+  (compiled controller code is not checked):
+  ``decode_surface returned 3 bits; its result is pulse.Length[pulse.Bits,
+  2] (id=0x51)``.
 - ``latency_branching=True`` branches a timeout on whether the answer came
   in time, with the probability of the latency model; with ``shots`` that
   outcome is sampled.
@@ -300,8 +342,9 @@ it.
   them synthesized per shot from a
   dispersive readout model, at the true level of each readout, from the
   frequency of its tone and the amplitude of its pulse. It needs ``shots``.
-- Each of ``result.branches`` lists its path's ``calls`` (inputs, answer,
-  and whether it came in time); ``branch.answers("decode")`` gives the
+- Each of ``result.branches`` lists its path's ``calls``: the function's
+  name and its version's (``function``, ``compiled_name``), inputs, answer,
+  and whether it came in time; ``branch.answers("decode")`` gives the
   answers of one function, in call order.
 
 A whole program with unanswered calls does not lower to LLVM:
@@ -569,5 +612,20 @@ Questions
 **Can a parameter be a** ``Sequence`` **rather than a** ``list``**?** Yes:
 ``Sequence[int]``, ``Sequence[float]`` and ``Sequence[complex]``, from
 ``collections.abc`` or ``typing``, mean what the ``list`` forms do. A type
-checker then also accepts a tuple, or a ``pulse.Bits``, where ``list[int]``
-takes only a list; this guide writes ``list``.
+checker then also accepts a tuple where ``list[int]`` takes only a list;
+this guide writes ``list``.
+
+**Why does a type checker show** ``pulse.Bits`` **as** ``list[int]``**?**
+Checkers see ``pulse.Bits`` as ``list[int]``, so a body may return any list
+of bits and an external's placeholder ``pulse.Bits()`` checks; at run time
+it is a list type of its own, which tells the compiler the items are bits.
+A list is invariant, so a variable typed as a list of another item type
+(``list[bool]``, say) is flagged where ``pulse.Bits`` is expected, while a
+list written in the call, ``decode.submit([m0, m1])``, is not.
+
+**Why does ruff flag** ``pulse.Length[pulse.Bits, "outcomes"]``**?** Ruff
+reads one file at a time, so it doesn't see that ``pulse.Length`` is
+``typing.Annotated`` and takes a quoted name or ``"numbers"`` for a type
+(F821, undefined name). mypy and pyright follow the import and accept it.
+Add ``# noqa: F821`` to the line. Don't let ruff's UP037 fix remove the
+quotes: the name must stay a string.

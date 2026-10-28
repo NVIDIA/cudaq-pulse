@@ -13,7 +13,7 @@ abstractly, with its input lengths as numbers. Every list gets a length:
 a number, or a sum over symbols with bounds where values decide it (how
 many items pass a comprehension's ``if``, how many bits are set), kept with
 the reason it isn't a number. A result needs a number; otherwise the
-version is rejected with the line and the reason, pointing at ``lengths=``.
+version is rejected with the line and the reason.
 
 Paths split at a test the lengths don't decide and merge where they meet;
 a ``try`` or ``with`` body also reaches its handler from wherever it can
@@ -23,9 +23,10 @@ amount each pass ends at entry + passes * step, and anything else that
 moves has no length after the loop. A ``while`` loop runs pass by pass
 while its test is decided. A list something unseen could change (passed
 to a call the analysis can't follow, captured by a nested function, put
-in a container such a call could reach) loses its length. Answers are not
-length-checked at run time, so inference is sound by rejection: it never
-guesses. Source text is read only to word an error.
+in a container such a call could reach) loses its length. Compiled code
+doesn't check an answer's length, so inference is sound by rejection: it
+never guesses. ``pulse.Bits()`` and ``list[float]()`` are empty lists.
+Source text is read only to word an error.
 
 A run's input lengths are ints that record what is made of them: each
 test of one is kept with its outcome, and each result length as a formula
@@ -42,10 +43,12 @@ import builtins
 import math
 import operator as _op
 import sys
+import types
 from typing import Any
 
 from .._errors import PulseError
 from ..kernel import _bytecode_normalize as _bc
+from . import Bits
 
 __all__ = ["InferenceError", "LengthRules", "infer_lengths"]
 
@@ -463,6 +466,7 @@ _KNOWN: dict[Any, int] = {
     abs: _FOLD,
     int: _FOLD,
     sum: _SUM,
+    Bits: _SAME,
 }
 for _f in (float, bool, round, any, all, complex, str, isinstance, divmod, pow, hash):
     _KNOWN[_f] = _PURE
@@ -1978,6 +1982,8 @@ class _Run:
                 kind = _KNOWN.get(o)
             except TypeError:
                 kind = None
+            if kind is None and o.__class__ is types.GenericAlias:
+                kind = _KNOWN.get(o.__origin__)  # list[float]()
             if kind is not None and names >= 0:
                 return self.builtin(kind, o, args[: len(args) - names], dec, i)
             if o is math:
@@ -2387,17 +2393,9 @@ def _run(
     except _NoLengthError as c:
         line = c.why[0] if c.why else 0
         which = f"its {type_name} result" if n_results == 1 else f"result {position} ({type_name})"
-        inputs = [n for n in names if n in input_lengths]
-        rule = f", or {{'return': {inputs[0]!r}}} for the length of an input" if inputs else ""
-        stated = (
-            "n"
-            if n_results == 1
-            else "(" + ", ".join("n" if i == position else "None" for i in range(n_results)) + ")"
-        )
         at = f" (line {line})" if line else ""
         raise InferenceError(
             f"{where}: can't tell the length of {which} from the body{at}: {_rare().say(c.why)}."
-            f" State it in the decorator: lengths={{'return': {stated}}}{rule}."
         ) from None
 
 

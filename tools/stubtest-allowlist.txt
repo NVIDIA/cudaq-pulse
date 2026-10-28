@@ -17,3 +17,6 @@ cudaq_pulse\._native\._cudaq_pulse_native\.(build_stamp|evaluate_callback|shared
 cudaq_pulse\.kernel\._kernel\.(CompiledKernel|Kernel)\.__type_params__
 cudaq_pulse\.targets\.base\._Cached\.__type_params__
 cudaq_pulse\.classical\.(Answer|ClassicalFunction|Pending)\.__type_params__
+# Type checkers see pulse.Bits as list[int]; at runtime it is a list subclass
+# that marks the items as bits.
+cudaq_pulse\.classical\.Bits

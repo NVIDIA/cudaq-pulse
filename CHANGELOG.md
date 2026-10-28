@@ -414,9 +414,17 @@ behavior may change in any 0.x release.
   runs and use their answers in the same shot. `@pulse.classical` declares a
   function from its type hints (`def decode(syndrome: pulse.Bits) -> bool`),
   with a latency model and a link; a list parameter takes its length from
-  the call, each length makes a version of the function (`flip__3`), list
-  results take theirs from the body, and `lengths=` states what neither
-  gives. `fn.submit(...).result()` calls it in a kernel, with `timeout=`
+  the call, each length makes a version of the function (`flip__3`), and
+  list results take theirs from the body. `pulse.Length` (`typing.Annotated`)
+  states a fixed length where one schema is wanted, as with `id=`:
+  `pulse.Length[pulse.Bits, 8]`, `pulse.Length[list[int], 8, "numbers"]`, and
+  a result `-> pulse.Length[pulse.Bits, "outcomes"]`. A call record or
+  report row names the function (`call.function`, `"flip"`) and its version
+  (`call.compiled_name`, `"flip__3"`). An external function's stub is a
+  declaration whose body is a placeholder for its result (`return float()`,
+  `return syndrome[:2]`); its unsized list parameters make versions as for
+  `@pulse.classical`. Simulation and emulation check every answer's list
+  lengths. `fn.submit(...).result()` calls it in a kernel, with `timeout=`
   (a time, `350 * pulse.ns`) for a fallback. Type checkers and editors see
   the function's own signature: a wrong argument is an error where it is
   passed, and

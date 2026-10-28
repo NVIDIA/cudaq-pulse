@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import math
+import re
 
 import cudaq_pulse as pulse
 import pytest
@@ -68,8 +69,8 @@ def _with_helper(x: float) -> float:
     return _square(x) + _square(x + 1.0)
 
 
-@pulse.classical(max_latency_ns=100, lengths={"bits": 50})
-def _counted(bits: pulse.Bits) -> float:
+@pulse.classical(max_latency_ns=100)
+def _counted(bits: pulse.Length[pulse.Bits, 50]) -> float:
     return cal.count_ones(bits[0:50]) / 50.0
 
 
@@ -86,7 +87,7 @@ def test_constants_fold_and_dividing_by_a_constant_is_a_multiply():
 
 
 def test_a_loop_multiplies_its_body_by_its_trip_count():
-    cost = analyze(_looped).cost
+    cost = analyze(_looped.specialize(values=N)).cost
     # Per trip: a load and a multiply, the accumulation, the counter and
     # the branch back.
     assert cost.ops["mul"] == N and cost.ops["load"] == N
@@ -109,6 +110,22 @@ def test_helpers_are_inlined():
 def test_counting_measurement_bits_is_by_word():
     cost = analyze(_counted).cost
     assert cost.ops["popcount"] == 2 and cost.in_controller_form
+
+
+def test_a_function_of_call_lengths_is_analyzed_per_version():
+    @pulse.classical(max_latency_ns=100)
+    def flip(outcomes: pulse.Bits) -> pulse.Bits:
+        return [1 - b for b in outcomes]
+
+    message = (
+        "flip's list lengths come from its calls (outcomes), so it has no single cost; analyze"
+        " one version, e.g. analyze(flip.specialize(outcomes=3))"
+    )
+    with pytest.raises(TypeError, match=re.escape(message)):
+        analyze(flip)
+    row = analyze(flip.specialize(outcomes=3))
+    assert (row.function, row.compiled_name) == ("flip", "flip__3")
+    assert (analyze(_counted).function, analyze(_counted).compiled_name) == ("_counted",) * 2
 
 
 def _bad(source_kind):
@@ -166,7 +183,12 @@ def _bad(source_kind):
         def f(x: float) -> float:
             return recurse(x)
 
-    return f
+    # A function of call lengths is analyzed one version at a time.
+    return (
+        f.specialize(bits=4)
+        if source_kind in ("while", "list", "comprehension", "unknown call")
+        else f
+    )
 
 
 @pytest.mark.parametrize(
@@ -276,7 +298,8 @@ def test_a_function_that_computes_past_its_budget_fails_to_compile():
 def test_only_functions_on_the_controller_links_are_checked():
     # _remote's while loop runs on the GPU link: reported, not checked.
     report = resources(_lower(_machine(controller_form=True)))
-    remote = next(row for row in report.functions if row.function == "_remote__1")
+    remote = next(row for row in report.functions if row.compiled_name == "_remote__1")
+    assert remote.function == "_remote"
     assert not remote.on_controller and not remote.cost.in_controller_form
     assert report.violations == ()
     with pytest.raises(ControllerLimitError, match="_remote__1 is not in controller form"):
@@ -286,7 +309,7 @@ def test_only_functions_on_the_controller_links_are_checked():
 def test_per_shot_limits_count_calls_and_bytes():
     lowered = _lower(_machine(), n=5)
     report = resources(lowered, ControllerLimits())
-    update = next(row for row in report.functions if row.function == "_update__1")
+    update = next(row for row in report.functions if row.compiled_name == "_update__1")
     assert update.calls_per_shot == 5 and report.calls_per_shot == 10
     per_call = update.request_bytes + update.answer_bytes  # 24 + 9, 24 + 8
     assert per_call == 65

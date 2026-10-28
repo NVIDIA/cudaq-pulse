@@ -125,6 +125,7 @@ def simulate_tree(
     *modes* gives the state's mode of each device qudit. With *sampled*,
     only the paths some shot takes are walked."""
     by_name = {f.name: f for f in functions}
+    with_lists = {f.name for f in functions if not all(s.is_scalar for s in f.results)}
     seen: dict[tuple[int, tuple[int, ...]], Any] = {}
     leaves: list[_Leaf] = []
     placeholder_cache: dict[int, Any] = {}
@@ -173,8 +174,11 @@ def simulate_tree(
     ) -> None:
         index, start, callee, arguments, answered, timeout = call
         function = by_name[callee]
+        name = function.base_name
         if not answered:
-            calls_here = [*calls, CallRecord(callee, start, inputs, answer, True)]
+            if callee in with_lists:
+                _answer_values(function, answer)
+            calls_here = [*calls, CallRecord(name, callee, start, inputs, answer, True)]
             run(
                 current.bind_call(index, [], *schedule_args),
                 path,
@@ -197,7 +201,7 @@ def simulate_tree(
                 t,
                 count,
                 weight,
-                [*calls, CallRecord(callee, start, inputs, answer, True)],
+                [*calls, CallRecord(name, callee, start, inputs, answer, True)],
             )
             return
         p_ok = latency_in_time_probability(function, limit)
@@ -221,7 +225,7 @@ def simulate_tree(
                 weight * p,
                 [
                     *calls,
-                    CallRecord(callee, start, inputs, answer if in_time else None, in_time),
+                    CallRecord(name, callee, start, inputs, answer if in_time else None, in_time),
                 ],
             )
         return

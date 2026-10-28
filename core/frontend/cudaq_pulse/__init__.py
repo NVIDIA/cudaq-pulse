@@ -32,7 +32,9 @@ operations only every few program cycles.
 Compiler types (``CompileMetrics``, ``ScheduledEvent``, ``MachineModel``,
 ``DEFAULT_PASSES``) are in ``cudaq_pulse.compiler``, target descriptions and
 calibrations in ``cudaq_pulse.targets``. ``pulse.classical`` declares the
-classical functions a kernel calls while the QPU runs. ``pulse.controller``
+classical functions a kernel calls while the QPU runs; ``pulse.Bits`` and
+``pulse.Length`` (``typing.Annotated``, for a fixed list length) type their
+parameters and results. ``pulse.controller``
 exports a compiled kernel to a controller and states a controller's limits,
 and ``pulse.backends`` finds the controller backends installed beside
 cudaq-pulse.
@@ -41,6 +43,7 @@ cudaq-pulse.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from typing import Annotated as Length
 
 from . import _build_config
 from . import ops as ops
@@ -173,6 +176,7 @@ __all__ = [
     "viz",
     "classical",
     "Bits",
+    "Length",
     "controller",
     "backends",
 ]

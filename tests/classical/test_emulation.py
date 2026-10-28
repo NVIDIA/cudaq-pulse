@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
+import re
 
 import cudaq_pulse as pulse
 import pytest
@@ -122,6 +123,23 @@ def test_udp_gives_the_same_answers_as_in_process():
         [c.answer for c in s] for s in local.calls
     ]
     assert udp.ends_ns == local.ends_ns
+
+
+def test_an_answer_of_the_wrong_length_is_an_error():
+    @pulse.classical(max_latency_ns=0)
+    def flip(outcomes: pulse.Bits) -> pulse.Bits:
+        return [1 - b for b in outcomes]
+
+    version = flip.specialize(outcomes=2)
+    assert wire.decode_answer(version, wire.encode_answer(version, [1, 0]))[2] == [1, 0]
+    message = (
+        f"flip__2 returned 3 bits; its result is pulse.Length[pulse.Bits, 2] (id={version.id:#x})"
+    )
+    with pytest.raises(ValueError, match=re.escape(message)):
+        wire.encode_answer(version, [1, 0, 1])
+    channel = emulation.InProcess([version], {"flip": lambda o: [0]})
+    with pytest.raises(ValueError, match="flip__2 returned 1 bit; its result"):
+        channel.call(version, wire.encode_request(version, [[1, 0]]))
 
 
 def test_throughput_is_reported():

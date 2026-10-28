@@ -29,7 +29,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from .._errors import ExecutionError, InvalidValueError
-from . import ClassicalFunction, _resolve, _unsized_names
+from . import ClassicalFunction, _resolve, _unsized_names, _wrong_length
 from ._values import ValueType
 
 __all__ = [
@@ -115,13 +115,24 @@ def _one_schema(function: ClassicalFunction[..., Any], what: str) -> None:
         )
 
 
-def _pack(specs: Sequence[ValueType], values: Sequence[Any], what: str) -> bytes:
+def _pack(
+    specs: Sequence[ValueType],
+    values: Sequence[Any],
+    what: str,
+    answering: ClassicalFunction[..., Any] | None = None,
+) -> bytes:
     if len(values) != len(specs):
         raise InvalidValueError(f"{len(specs)} {what} expected, got {len(values)}")
     out = bytearray()
     for spec, value in zip(specs, values):
         _, size, _, fmt = _layout(spec)
-        items = [value] if spec.is_scalar else list(value)
+        if spec.is_scalar:
+            items = [value]
+        else:
+            items = list(value)
+            if answering is not None and len(items) != spec.count:
+                position = [s is spec for s in specs].index(True)
+                raise ValueError(_wrong_length(answering, position, len(items)))
         if spec.descriptor.startswith("bits:"):
             packed = bytearray(size)
             for i, bit in enumerate(items):
@@ -198,7 +209,7 @@ def encode_answer(
     """The answer of *function* (as a handler returns it) to one request."""
     results = function.results
     values = list(answer) if len(results) > 1 else ([answer] if results else [])
-    payload = _pack(results, values, "results")
+    payload = _pack(results, values, "results", function)
     return _RESPONSE.pack(RESPONSE_MAGIC, status, len(payload), request_id, timestamp) + payload
 
 

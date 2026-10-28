@@ -10,8 +10,11 @@
 
 A classical function's type hints say what it takes and returns, so the
 declaration types (``Floats(2)``, ``classical.Levels``, ``Bits(3)`` and the
-rest) and the ``args=``/``results=`` options are gone from the API. This
-finds them in docs, examples, notebooks, docstrings, messages and tests. A
+rest) and the ``args=``/``results=`` options are gone from the API, and so
+is ``lengths=``: ``pulse.Length`` states a fixed length. An external's stub
+is a declaration whose body is a placeholder for its result, not ``raise
+NotImplementedError``. This finds them in docs, examples, notebooks,
+docstrings, messages and tests. A
 line that must name an old spelling (the error that says it is gone, the
 test of that error, the changelog entry) carries ``remnant-ok``.
 
@@ -45,7 +48,18 @@ _PATTERNS = (
             re.S,
         ),
     ),
+    (
+        "lengths= on a declaration",
+        re.compile(
+            r"(?<!\w)(?:classical|external|function|ClassicalFunction)\((?:[^()]|\([^()]*\))*?"
+            r"\blengths\s*=",
+            re.S,
+        ),
+    ),
+    ("a lengths= entry", re.compile(r"\blengths\[\s*['\"]")),
+    ("a lengths= entry", re.compile(r"\{\s*['\"]return['\"]\s*:")),
 )
+_EXTERNAL = re.compile(r"^([ \t]*)@(?:pulse\.)?(?:classical\.)?external\(", re.M)
 _SUFFIXES = {".py", ".pyi", ".md", ".rst", ".txt", ".ipynb", ".td", ".h"}
 
 
@@ -75,7 +89,29 @@ def check(path: Path) -> list[str]:
             number = text.count("\n", 0, match.start()) + 1
             if "remnant-ok" not in lines[number - 1]:
                 found.add((number, what))
+    for match in _EXTERNAL.finditer(text):
+        number = _stub_raises(lines, text.count("\n", 0, match.start()), len(match.group(1)))
+        if number and "remnant-ok" not in lines[number - 1]:
+            found.add((number, "raise NotImplementedError as an external's body"))
     return [f"{path}:{number}: {what}" for number, what in sorted(found)]
+
+
+def _stub_raises(lines: list[str], start: int, indent: int) -> int:
+    """The line number of ``raise NotImplementedError`` in the body of the
+    stub decorated at line *start* (0-based), or 0. An external's body is a
+    placeholder for its result, such as ``return float()``."""
+    i = start
+    while i < len(lines) and not lines[i].lstrip().startswith("def "):
+        i += 1
+    while i < len(lines) and not lines[i].rstrip().endswith(":"):
+        i += 1
+    for j in range(i + 1, len(lines)):
+        line = lines[j]
+        if line.strip() and len(line) - len(line.lstrip()) <= indent:
+            return 0
+        if line.strip() == "raise NotImplementedError":
+            return j + 1
+    return 0
 
 
 def main() -> int:
@@ -93,8 +129,9 @@ def main() -> int:
     if errors:
         print(
             f"{len(errors)} old classical spellings: declare with type hints"
-            " (def f(bits: pulse.Bits) -> float) and lengths=, or mark a line"
-            " that must name one with remnant-ok"
+            " (def f(bits: pulse.Bits) -> float), a fixed length with pulse.Length"
+            " (pulse.Length[pulse.Bits, 3]) and an external's result with a placeholder"
+            " (return float()), or mark a line that must name one with remnant-ok"
         )
     return 1 if errors else 0
 

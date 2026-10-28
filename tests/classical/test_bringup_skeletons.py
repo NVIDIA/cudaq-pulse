@@ -322,8 +322,10 @@ def test_k14_nelder_mead_optimizes_readout_frequency_and_amplitude(target):
 GOLDEN = cal.GoldenSection.start(-4e6, 4e6, tolerance=3e6)
 
 
-@pulse.classical(max_latency_ns=400, link="controller", lengths={"return": ("state", None, None)})
-def golden_step(bit: pulse.Bits, state: list[float]) -> tuple[list[float], float, float]:
+@pulse.classical(max_latency_ns=400, link="controller")
+def golden_step(
+    bit: pulse.Bits, state: list[float]
+) -> tuple[pulse.Length[list[float], "state"], float, float]:  # noqa: F821, UP037
     # A toy cost from one shot: 0 if the qubit was excited, else 1.
     state = cal.GoldenSection.from_floats(state)
     state, x, done = cal.golden_section_step(state, 1.0 - bit[0])

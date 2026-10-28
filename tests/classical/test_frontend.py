@@ -75,12 +75,16 @@ def test_function_id_is_fnv1a_as_cuda_q_hashes_handler_names():
 
 
 def test_declaration_keeps_the_schema_and_timing():
-    def fit(points: list[complex], xs: list[float], levels: list[int], n: int) -> list[float]:
+    def fit(
+        points: pulse.Length[list[complex], 4],
+        xs: pulse.Length[list[float], 3],
+        levels: pulse.Length[list[int], 2],
+        n: int,
+    ) -> pulse.Length[list[float], 2]:
         return xs[:2]
 
     fn = pulse.classical(
         fit,
-        lengths={"points": 4, "xs": 3, "levels": 2, "return": 2},
         min_latency_ns=10,
         nominal_latency_ns=20,
         max_latency_ns=30,
@@ -131,7 +135,6 @@ def test_hints_map_to_wire_types():
         ({"link": True}, "link must be"),
         ({"id": 2**32}, "32-bit"),
         ({"name": "not valid"}, "identifier"),
-        ({"lengths": [("return", 1)]}, "lengths must be a dict"),
     ],
 )
 def test_declaration_errors(options, message):
@@ -192,46 +195,83 @@ def _keyword(*, x: float) -> float:
     return x
 
 
-def _scalar_length(x: float) -> float:
+def _scalar_length(alpha: pulse.Length[float, 3]) -> float:
+    return alpha
+
+
+def _zero(index: pulse.Length[pulse.Bits, 0]) -> float:
+    return 0.0
+
+
+def _typo(outcomes: pulse.Bits) -> pulse.Length[pulse.Bits, "outcome"]:  # noqa: F821, UP037
+    return outcomes
+
+
+def _bad_rule(x: pulse.Bits, n: float) -> pulse.Length[pulse.Bits, "n"]:  # noqa: F821, UP037
     return x
 
 
-def _unknown_length(x: float) -> float:
-    return x
+def _float_numbers(x: pulse.Length[list[float], 4, "numbers"]) -> float:  # noqa: F821, UP037
+    return 0.0
 
 
-def _bad_rule(x: pulse.Bits, n: float) -> pulse.Bits:
-    return x
+def _named_parameter(x: pulse.Length[pulse.Bits, "x"]) -> float:  # noqa: F821, UP037
+    return 0.0
 
 
-def _tuple_rule(x: pulse.Bits) -> tuple[float, pulse.Bits]:
-    return 0.0, x
+def _two_lengths(x: pulse.Length[pulse.Bits, 2, 3]) -> float:
+    return 0.0
+
+
+def _no_length(x: pulse.Length[list[int], "numbers"]) -> float:  # noqa: F821, UP037
+    return 0.0
+
+
+def _scalar_result(x: pulse.Bits) -> pulse.Length[float, 2]:
+    return 0.0
 
 
 @pytest.mark.parametrize(
-    ("fn", "lengths", "message"),
+    ("fn", "message"),
     [
-        (_nine, {}, "at most 8 arguments"),
-        (_five, {}, "at most 4 results"),
-        (_no_hint, {}, "parameter 'x' needs a type"),
-        (_no_return, {}, "annotate what it returns"),
-        (_flag, {}, "a measured bit is pulse.Bits"),
-        (_measurement, {}, "say how to read it"),
-        (_dict, {}, "can't be dict"),
-        (_bools, {}, "lists hold float, int or complex"),
-        (_complex_out, {}, "return tuple\\[float, float\\] instead"),
-        (_keyword, {}, "only positional parameters"),
-        (_scalar_length, {"x": 3}, "it is a single value"),
-        (_unknown_length, {"y": 3}, "which aren't parameters"),
-        (_bad_rule, {"return": "n"}, "isn't a list parameter"),
-        (_bad_rule, {"x": 0}, "positive length"),
-        (_tuple_rule, {"return": 3}, "one entry per result"),
-        (_tuple_rule, {"return": (2, 3)}, "a length for a scalar result"),
-        (_tuple_rule, {"x": 3}, "pinned to one schema"),
+        (_nine, "at most 8 arguments"),
+        (_five, "at most 4 results"),
+        (_no_hint, "parameter 'x' needs a type"),
+        (_no_return, "annotate what it returns"),
+        (_flag, "a measured bit is pulse.Bits"),
+        (_measurement, "say how to read it"),
+        (_dict, "can't be dict"),
+        (_bools, "lists hold float, int or complex"),
+        (_complex_out, "return tuple\\[float, float\\] instead"),
+        (_keyword, "only positional parameters"),
+        (
+            _scalar_length,
+            "parameter 'alpha' is float; pulse.Length applies to pulse.Bits and lists",
+        ),
+        (
+            _zero,
+            re.escape("pulse.Length[pulse.Bits, 0]: a length is a positive whole number, got 0"),
+        ),
+        (
+            _typo,
+            re.escape(
+                'pulse.Length[pulse.Bits, "outcome"] names outcome, which isn\'t a list'
+                " parameter (did you mean 'outcomes'?)"
+            ),
+        ),
+        (_bad_rule, "names n, which isn't a list parameter(\n|$)"),
+        (
+            _float_numbers,
+            re.escape('pulse.Length[list[float], 4, "numbers"]: "numbers" applies to list[int]'),
+        ),
+        (_named_parameter, "a parameter's length is a number"),
+        (_two_lengths, "state one length"),
+        (_no_length, "gives no length"),
+        (_scalar_result, "its result is float; pulse.Length applies"),
     ],
 )
-def test_hint_errors_are_raised_where_the_function_is_used(fn, lengths, message):
-    declared = pulse.classical(fn, max_latency_ns=1, lengths=lengths)
+def test_hint_errors_are_raised_where_the_function_is_used(fn, message):
+    declared = pulse.classical(fn, max_latency_ns=1)
     with pytest.raises(TypeError, match=message):
         len(declared.args)
     with pytest.raises(TypeError, match=message):  # kept, raised again
@@ -244,11 +284,60 @@ def test_hint_errors_are_raised_where_the_function_is_used(fn, lengths, message)
 
 
 def test_sequence_hints_are_lists():
-    @pulse.classical(max_latency_ns=1, lengths={"xs": 2, "levels": 3})
-    def total(xs: Sequence[float], levels: Sequence[int]) -> float:
+    @pulse.classical(max_latency_ns=1)
+    def total(
+        xs: pulse.Length[Sequence[float], 2], levels: pulse.Length[Sequence[int], 3]
+    ) -> float:
         return sum(xs) + sum(levels)
 
     assert [a.descriptor for a in total.args] == ["f64[2]", "levels:3"]
+
+
+def test_stated_lengths():
+    @pulse.classical(max_latency_ns=1)
+    def scale(
+        counts: pulse.Length[list[int], 3, "numbers"],  # noqa: F821, UP037
+        levels: pulse.Length[list[int], 2],
+    ) -> tuple[pulse.Length[list[int], "counts"], pulse.Length[pulse.Bits, 4], float]:  # noqa: F821, UP037
+        return counts, [0] * 4, 0.0
+
+    assert [a.descriptor for a in scale.args] == ["i32[3]", "levels:2"]
+    assert [r.descriptor for r in scale.results] == ["i32[3]", "bits:4", "f64"]
+    assert scale._shape is None and scale.name == "scale"
+
+    @pulse.classical(max_latency_ns=1)
+    def flip(outcomes: pulse.Bits) -> pulse.Length[pulse.Bits, "outcomes"]:  # noqa: F821, UP037
+        return [1 - b for b in outcomes]
+
+    assert [r.descriptor for r in flip.specialize(outcomes=5).results] == ["bits:5"]
+
+    @pulse.classical(max_latency_ns=1)
+    def pinned(syndrome: pulse.Length[pulse.Bits, 6]) -> pulse.Bits:
+        return syndrome[1:]
+
+    assert [r.descriptor for r in pinned.results] == ["bits:5"]
+
+
+def test_a_length_the_body_cant_give_is_rejected():
+    @pulse.classical(max_latency_ns=1)
+    def fired(syndrome: pulse.Length[pulse.Bits, 6]) -> list[int]:
+        return [i for i, s in enumerate(syndrome) if s]
+
+    with pytest.raises(TypeError) as error:
+        len(fired.results)
+    assert "depends on the values" in str(error.value)
+    assert str(error.value).endswith(
+        "Return a list whose length the inputs decide instead, such as a fixed maximum"
+        " ([0] * len(syndrome)) and a count of the items used."
+    )
+
+
+def test_lengths_option_is_gone():
+    def f(x: pulse.Bits) -> float:
+        return 0.0
+
+    with pytest.raises(TypeError, match="unexpected keyword argument 'lengths'"):
+        pulse.classical(f, max_latency_ns=1, lengths={"x": 2})  # type: ignore[call-overload]  # remnant-ok
 
 
 def test_link_validation():
@@ -277,31 +366,70 @@ def test_calling_outside_a_kernel_runs_the_body():
 
 
 def test_external_function_has_no_body():
-    @classical.external(max_latency_ns=5, lengths={"syndrome": 4, "return": 2})
-    def remote(syndrome: pulse.Bits, gain: float) -> pulse.Bits:
-        raise NotImplementedError
+    @classical.external(max_latency_ns=5, link="feedback")
+    def remote(syndrome: pulse.Length[pulse.Bits, 4], gain: float) -> pulse.Length[pulse.Bits, 2]:
+        return pulse.Bits()
 
     assert remote.implementation is None and remote.name == "remote"
     assert [a.descriptor for a in remote.args] == ["bits:4", "f64"]
     assert [r.descriptor for r in remote.results] == ["bits:2"]
-    with pytest.raises(TypeError, match="no reference implementation"):
+    message = (
+        "remote runs on link 'feedback'; it is declared with @pulse.classical.external, so it"
+        " has no body to run here. Give it a handler to simulate it:"
+        ' pulse.simulate(..., handlers={"remote": fn})'
+    )
+    with pytest.raises(TypeError, match=re.escape(message)):
         remote([0, 1, 0, 1], 1.0)
     with pytest.raises(TypeError, match="needs a name"):
         classical.ClassicalFunction(None, max_latency_ns=1)
+    assert pulse.Bits() == [] and isinstance(pulse.Bits(), list)
 
 
-def test_external_functions_state_every_length_at_once():
-    with pytest.raises(TypeError, match="an external function has one schema; give lengths for"):
+def test_an_external_placeholder_gives_its_result_shape():
+    @classical.external(max_latency_ns=5)
+    def table(index: pulse.Length[pulse.Bits, 3]) -> float:
+        return float()
+
+    @classical.external(max_latency_ns=5)
+    def decode(syndrome: pulse.Bits) -> tuple[float, pulse.Bits]:
+        return (float(), syndrome[:2])
+
+    @classical.external(max_latency_ns=5)
+    def echo(outcomes: pulse.Bits) -> pulse.Bits:
+        return outcomes
+
+    @classical.external(max_latency_ns=5)
+    def anything(index: pulse.Length[pulse.Bits, 3]) -> pulse.Length[list[float], 2]:
+        raise NotImplementedError  # remnant-ok: any body is accepted
+
+    assert [a.descriptor for a in table.args] == ["bits:3"]
+    version = decode.specialize(syndrome=6)
+    assert version.name == "decode__6" and version.implementation is None
+    assert [r.descriptor for r in version.results] == ["f64", "bits:2"]
+    assert [r.descriptor for r in echo.specialize(outcomes=3).results] == ["bits:3"]
+    assert [r.descriptor for r in anything.results] == ["f64[2]"]
+    assert [a.descriptor for a in _sink.args] == ["f64"] and _sink.results == ()
+
+
+def test_an_external_list_result_needs_a_length():
+    advice = (
+        "An external's body is a placeholder: return index, or a slice such as index[:2], for"
+        " a length the input gives, or state it in the signature: -> pulse.Length[pulse.Bits, n]."
+    )
+    with pytest.raises(TypeError, match="the placeholder says only its type") as error:
 
         @classical.external(max_latency_ns=5)
-        def table(index: pulse.Bits) -> float:
-            raise NotImplementedError
+        def lookup(index: pulse.Length[pulse.Bits, 2]) -> pulse.Bits:
+            return pulse.Bits()
 
-    with pytest.raises(TypeError, match="state the pulse.Bits result's length"):
+    assert str(error.value).endswith(advice)
+    with pytest.raises(TypeError, match="it always raises an exception") as error:
 
-        @classical.external(max_latency_ns=5, lengths={"index": 2})
-        def lookup(index: pulse.Bits) -> pulse.Bits:
-            raise NotImplementedError
+        @classical.external(max_latency_ns=5)
+        def table(index: pulse.Length[pulse.Bits, 2]) -> pulse.Bits:
+            raise NotImplementedError  # remnant-ok
+
+    assert str(error.value).endswith(advice)
 
 
 # ── Tracing ──────────────────────────────────────────────────────────────────
@@ -525,6 +653,59 @@ def _compile_error(body, match):
         pulse.compile(pulse.kernel(body)).lower(Q[0])
 
 
+@classical.external(max_latency_ns=50)
+def _table(index: pulse.Length[pulse.Bits, 3]) -> float:
+    return float()
+
+
+@classical.external(max_latency_ns=50)
+def _syndromes(syndrome: pulse.Bits) -> tuple[float, pulse.Bits]:
+    return (float(), syndrome[:1])
+
+
+@classical.external(max_latency_ns=50, id=0x51)
+def _decode_surface(syndrome: pulse.Bits) -> pulse.Length[pulse.Bits, 2]:
+    return pulse.Bits()
+
+
+def test_a_call_of_the_wrong_length_names_the_fixed_size():
+    def k(q):
+        r, rt = get_readout_line(q)
+        m = readout(r, square(10, 0.1), rt)
+        _table.submit([m, m]).result()
+
+    _compile_error(
+        k, re.escape("_table.submit(): 'index' takes 3 bits (pulse.Length[pulse.Bits, 3]), got 2")
+    )
+
+
+def test_an_external_of_unsized_inputs_has_a_version_per_length():
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        r, rt = get_readout_line(q)
+        m = readout(r, square(10, 0.1), rt)
+        _, a = _syndromes.submit([m, m]).result()
+        _, b = _syndromes.submit([m, m, m]).result()
+        c = _decode_surface.submit([m, m, m, m]).result()
+        sync(d, r)
+        if a[0] or b[0] or c[1]:
+            drive(d, square(40, 0.1), t)
+
+    low = pulse.compile(k, schedule="asap").lower(Q[0])
+    names = [(c.function, c.compiled_name) for c in low.classical_report()]
+    assert names == [
+        ("_syndromes", "_syndromes__2"),
+        ("_syndromes", "_syndromes__3"),
+        ("_decode_surface", "_decode_surface"),
+    ]
+    entries = {e["name"]: e for e in low.export_emulation()["manifest"]["functions"]}
+    assert set(entries) == {"_syndromes__2", "_syndromes__3", "_decode_surface"}
+    assert entries["_syndromes__3"]["function_id"] == classical.function_id("_syndromes__3")
+    assert entries["_syndromes__3"]["schema"] == wire.schema(_syndromes.specialize(syndrome=3))
+    assert entries["_decode_surface"]["function_id"] == 0x51
+
+
 def test_a_duration_cannot_come_from_an_answer():
     def square_duration(q):
         d = get_drive_line(q)
@@ -677,7 +858,8 @@ def test_report_and_schedule_events():
     low = pulse.compile(_reset, schedule="asap").lower(Q[0])
     (call,) = low.classical_report()
     clock = low.target.clock_ghz
-    assert call.function == "echo__1" and call.link == 0 and call.iteration == ()
+    assert call.function == "echo" and call.compiled_name == "echo__1"
+    assert call.link == 0 and call.iteration == ()
     assert call.submit_cycles == 200 and call.submit_duration_cycles == 1
     assert call.due_cycles == 201 + math.ceil(500 * clock)
     assert call.taken_cycles == call.due_cycles == call.first_use_cycles

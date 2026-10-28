@@ -148,7 +148,7 @@ class Call(NamedTuple):
 def calls(low: Any) -> list[Call]:
     return [
         Call(
-            c.function,
+            c.compiled_name,
             c.link_name,
             c.submit_cycles,
             c.submit_duration_cycles,

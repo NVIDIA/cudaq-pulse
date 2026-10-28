@@ -488,6 +488,10 @@ class ClassicalCall:
     ``link_name`` is the link's name in the machine model, if it has one.
     ``controller`` is the controller whose instance of a per-controller link
     runs the call (``Link(per_controller=True)``), else ``None``.
+    ``function`` is the name the function is declared with and
+    ``compiled_name`` the name it is compiled and served under: a
+    version's, such as ``"adaptive_t1__1"``, for a function whose list
+    lengths come from its calls, else the same name.
 
     ``exposed_cycles`` is how long the first use waits for the answer beyond
     when it could start without the call: after its line is free and after
@@ -498,6 +502,7 @@ class ClassicalCall:
     """
 
     function: str
+    compiled_name: str
     link: int
     iteration: tuple[int, ...]
     submit_cycles: int

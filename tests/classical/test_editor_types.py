@@ -55,14 +55,20 @@ def scale(x: float) -> float:
     return 2 * x
 
 
-@pulse.classical.external(max_latency_ns=50, lengths={"index": 2})
-def table(index: pulse.Bits) -> float:
-    raise NotImplementedError
+@pulse.classical.external(max_latency_ns=50)
+def table(index: pulse.Length[pulse.Bits, 2]) -> float:
+    return float()
+
+
+@pulse.classical.external(max_latency_ns=50)
+def lookup(index: pulse.Bits) -> tuple[float, pulse.Length[pulse.Bits, 2]]:
+    return (float(), pulse.Bits())
 
 
 in_time, flip = decode.submit([1]).result(timeout=350 * pulse.ns)
 correction: bool = flip
 offset: float = table.submit([0, 1]).result()
+gain, bits = lookup.submit([1, 0, 1]).result()
 """
 
 

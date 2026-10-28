@@ -26,6 +26,7 @@ from ..classical import (
     _UNSIZED,
     ClassicalFunction,
     _enter_slow,
+    _spelled,
 )
 from ..classical._values import ValueType
 from .ir_builder import (
@@ -73,13 +74,28 @@ def _builder_supports(builder: Any) -> None:
         raise CompilationError("classical calls need the packed IR builder")
 
 
-def _measurements(value: Any, spec: ValueType, name: str, position: int) -> list[int]:
+def _wrong_count(
+    function: ClassicalFunction[..., Any], spec: ValueType, position: int, got: int
+) -> CompilationError:
+    """A call passing a list of another length than its parameter's."""
+    parameter = f"argument {position}"
+    code = getattr(function.__wrapped__, "__code__", None)
+    if code is not None and position < code.co_argcount:
+        parameter = repr(code.co_varnames[position])
+    spelled, unit = _spelled(spec)
+    return CompilationError(
+        f"{function.name}.submit(): {parameter} takes {spec.count} {unit}"
+        f"{'s' if spec.count != 1 else ''} ({spelled}), got {got}"
+    )
+
+
+def _measurements(
+    value: Any, spec: ValueType, function: ClassicalFunction[..., Any], position: int
+) -> list[int]:
+    name = function.name
     items = list(value) if isinstance(value, (list, tuple)) else [value]
     if len(items) != spec.count:
-        raise CompilationError(
-            f"{name}: argument {position} is {spec.descriptor}, which takes "
-            f"{spec.count} measurement result{'s' if spec.count != 1 else ''}, got {len(items)}"
-        )
+        raise _wrong_count(function, spec, position, len(items))
     vids = []
     for item in items:
         if not (isinstance(item, IRValue) and item.vtype == "measurement"):
@@ -91,7 +107,10 @@ def _measurements(value: Any, spec: ValueType, name: str, position: int) -> list
     return vids
 
 
-def _numbers(builder: Any, value: Any, spec: ValueType, name: str, position: int) -> list[int]:
+def _numbers(
+    builder: Any, value: Any, spec: ValueType, function: ClassicalFunction[..., Any], position: int
+) -> list[int]:
+    name = function.name
     if spec.is_scalar:
         items = [value]
     elif isinstance(value, (list, tuple)):
@@ -101,10 +120,7 @@ def _numbers(builder: Any, value: Any, spec: ValueType, name: str, position: int
             f"{name}: argument {position} is {spec.descriptor}; pass a list of {spec.count} numbers"
         )
     if len(items) != spec.count:
-        raise CompilationError(
-            f"{name}: argument {position} is {spec.descriptor}, which takes "
-            f"{spec.count} numbers, got {len(items)}"
-        )
+        raise _wrong_count(function, spec, position, len(items))
     dtype = "f64" if spec.source == "float" else "i64"
     vids = []
     builder._answer_integers = True
@@ -157,9 +173,9 @@ def submit(
             # What _numbers gives a plain number, without its checks.
             operands.append(builder._get_numeric_vid(value, "f64"))
         elif spec.source == "measurement":
-            operands.extend(_measurements(value, spec, function.name, position))
+            operands.extend(_measurements(value, spec, function, position))
         else:
-            operands.extend(_numbers(builder, value, spec, function.name, position))
+            operands.extend(_numbers(builder, value, spec, function, position))
     index = builder.classical_function(function)
     vid = builder.classical_submit(index, operands)
     return Future(function, index, vid, builder.flow)
@@ -185,9 +201,9 @@ def _submit_template(
                 # What _numbers gives a plain number, without its checks.
                 operands.append(builder._get_numeric_vid(value, "f64"))
             elif source == "measurement":
-                operands.extend(_measurements(value, p, name, position))
+                operands.extend(_measurements(value, p, template, position))
             else:
-                operands.extend(_numbers(builder, value, p, name, position))
+                operands.extend(_numbers(builder, value, p, template, position))
         else:
             kind = p.kind
             if value.__class__ is not list and value.__class__ is not tuple:

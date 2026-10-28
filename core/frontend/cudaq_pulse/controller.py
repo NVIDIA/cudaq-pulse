@@ -1278,10 +1278,13 @@ class FunctionResources:
     without them), against ``max_latency_ns``. ``calls_per_shot`` counts its
     executions in one shot of the program (0 from ``analyze``).
     ``on_controller`` says whether it runs on the controller (its link is
-    one of the limits' ``compute_links``).
+    one of the limits' ``compute_links``). ``function`` is the name it is
+    declared with and ``compiled_name`` the version's, such as
+    ``"adaptive_t1__1"`` (the same name for one of one schema).
     """
 
     function: str
+    compiled_name: str
     link: int | str
     on_controller: bool
     cost: FunctionCost
@@ -1414,7 +1417,8 @@ def _function_resources(
         if rate:
             compute_ns = cycles / rate
     return FunctionResources(
-        function=function.name,
+        function=function.base_name,
+        compiled_name=function.name,
         link=_link_key(function),
         on_controller=_on_controller(function, limits, machine),
         cost=cost,
@@ -1429,13 +1433,27 @@ def _function_resources(
 
 
 def analyze(function: Any, limits: ControllerLimits | None = None) -> FunctionResources:
-    """What one classical function costs, on its own (see ``resources``)."""
+    """What one classical function costs, on its own (see ``resources``).
+    A function whose list lengths come from its calls has a cost per
+    version: analyze one, ``analyze(flip.specialize(outcomes=3))``."""
+    from .classical import ClassicalFunction, _resolve, _unsized_names
+
+    if isinstance(function, ClassicalFunction):
+        _resolve(function)
+        if function._shape is not None:
+            names = _unsized_names(function)
+            example = ", ".join(f"{n}=3" for n in names)
+            raise TypeError(
+                f"{function.name}'s list lengths come from its calls ({', '.join(names)}), so it"
+                f" has no single cost; analyze one version, e.g."
+                f" analyze({function.name}.specialize({example}))"
+            )
     return _function_resources(function, limits, None)
 
 
 def _function_violations(row: FunctionResources, limits: ControllerLimits) -> list[str]:
     found = []
-    name = row.function
+    name = row.compiled_name
     if limits.controller_form and row.cost.violations:
         found.append(
             f"{name} is not in controller form: "
@@ -1477,17 +1495,17 @@ def resources(lowered: Lowered, limits: ControllerLimits | None = None) -> Resou
     calls = lowered.classical_report() if lowered.classical and lowered.scheduled else []
     per_function: dict[str, int] = {}
     for call in calls:
-        per_function[call.function] = per_function.get(call.function, 0) + 1
+        per_function[call.compiled_name] = per_function.get(call.compiled_name, 0) + 1
     rows = tuple(
         _function_resources(
             fn, limits, lowered.target.clock_ghz, machine, per_function.get(fn.name, 0)
         )
         for fn in lowered.classical
     )
-    by_name = {row.function: row for row in rows}
+    by_name = {row.compiled_name: row for row in rows}
     usage: dict[tuple[int, int], dict[str, Any]] = {}
     for call in calls:
-        row = by_name.get(call.function)
+        row = by_name.get(call.compiled_name)
         instance = -1 if call.controller is None else call.controller
         entry = usage.setdefault(
             (call.link, instance),
@@ -1576,7 +1594,7 @@ def format_report(report: ResourceReport) -> str:
         compute = "-" if row.compute_ns is None else f"{row.compute_ns:.0f} ns"
         form = "ok" if row.cost.in_controller_form else "no"
         lines.append(
-            f"  {row.function:<24} {str(row.link):<11} {row.cost.total:>5} {row.cost.size:>5} "
+            f"  {row.compiled_name:<24} {str(row.link):<11} {row.cost.total:>5} {row.cost.size:>5} "
             f"{row.state_bytes:>7} {compute:>9} {row.max_latency_ns:>5.0f} ns "
             f"{row.calls_per_shot:>5}  {form}"
         )
@@ -1733,7 +1751,7 @@ def usage(lowered: Lowered) -> UsageReport:
     spans: dict[tuple[str, int | None], list[tuple[int, int]]] = {}
     for call in calls:
         end = max(call.due_cycles, call.submit_cycles + 1)
-        spans.setdefault((call.function, call.controller), []).append((call.submit_cycles, end))
+        spans.setdefault((call.compiled_name, call.controller), []).append((call.submit_cycles, end))
     # Calls over a per-controller link whose instance is not known count on each.
     placed: dict[tuple[int, int], list[tuple[Any, list[tuple[int, int]]]]] = {}
     off_board = []

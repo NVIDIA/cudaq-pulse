@@ -81,6 +81,7 @@ def report(lowered: Lowered) -> list[ClassicalCall]:
         events = module.events()
     names = lowered.options.machine.link_name
     exposed = _Exposure(lowered, events)
+    declared = {function.name: function.base_name for function in lowered.classical}
     new = object.__new__
     entries: list[ClassicalCall] = []
     for name, link, iteration, start, length, due, taken, use, limit, epoch, owner in calls:
@@ -89,6 +90,7 @@ def report(lowered: Lowered) -> list[ClassicalCall]:
             zip(
                 _CALL_FIELDS,
                 (
+                    declared.get(name, name),
                     name,
                     link,
                     tuple(iteration),

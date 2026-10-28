@@ -90,6 +90,8 @@ def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
     estimates = []
     for branch in result.branches:
         assert len(branch.answers("adaptive_t1")) == P["tracker_shots"]
+        compiled = {c.compiled_name for c in branch.calls if c.function == "adaptive_t1"}
+        assert compiled == {"adaptive_t1__1"}
         shape, rate, _ = branch.calls[-1].answer
         estimates += [rate / shape / CLOCK / 1e3] * round(branch.probability * shots)
     # The paper: 159 us, 68% interval [131, 202] us; the benchmark's 400
@@ -127,8 +129,9 @@ def test_the_chain_fits_the_declared_controller():
     report = controller.resources(lowered)
     assert report.violations == ()
     assert all(row.on_controller and row.cost.in_controller_form for row in report.functions)
-    by_name = {row.function: row for row in report.functions}
+    by_name = {row.compiled_name: row for row in report.functions}
     assert by_name["adaptive_t1__1"].calls_per_shot == P["tracker_shots"]
+    assert by_name["adaptive_t1__1"].function == "adaptive_t1"
     assert report.calls_per_shot == 7 + P["tracker_shots"]
     assert all(row.compute_ns < row.max_latency_ns for row in report.functions)
 

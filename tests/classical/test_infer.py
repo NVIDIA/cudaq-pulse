@@ -423,7 +423,10 @@ def _head(x: pulse.Bits, k: int) -> pulse.Bits:
 def test_a_number_parameter_is_known_only_at_run_time():
     message = _rejected(_head, "`k` is a number parameter, known only when the function runs", x=5)
     assert f"(line {_line(_head, 'return')})" in message
-    assert "lengths={'return': n}, or {'return': 'x'}" in message
+    assert message.endswith(
+        "Return a list whose length the inputs decide instead, such as a fixed maximum"
+        " ([0] * len(x)) and a count of the items used."
+    )
 
 
 # ── One run for every version ───────────────────────────────────────────────

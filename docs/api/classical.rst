@@ -40,6 +40,15 @@ Measurements and randomness
 
 .. autoclass:: cudaq_pulse.classical.Bits
 
+.. autodata:: cudaq_pulse.Length
+   :no-value:
+
+   ``typing.Annotated``, re-exported to state a fixed list length:
+   ``pulse.Length[pulse.Bits, 8]`` takes or answers eight bits,
+   ``pulse.Length[list[int], 8, "numbers"]`` eight numbers rather than
+   measured levels, and a result ``pulse.Length[pulse.Bits, "outcomes"]``
+   has the length of list parameter ``outcomes``.
+
 .. autofunction:: cudaq_pulse.classical.random_index
 
 Reports

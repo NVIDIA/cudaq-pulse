@@ -122,21 +122,23 @@ def test_protocol_examples():
 def test_bits_pack_lsb_first():
     case = FIXTURE["bit_packing"]
 
-    @pulse.classical(name="bits", max_latency_ns=0, lengths={"b": len(case["bits"])})
-    def fn(b: pulse.Bits) -> None:
+    @pulse.classical(name="bits", max_latency_ns=0)
+    def bits(b: pulse.Bits) -> None:
         return None
 
+    fn = bits.specialize(b=len(case["bits"]))
     request = wire.encode_request(fn, (case["bits"],))
     assert list(request[24:]) == case["bytes"]
     assert wire.decode_request(fn, request)[2] == [case["bits"]]
 
 
 def test_round_trips():
-    @pulse.classical(
-        max_latency_ns=0, lengths={"bits": 10, "levels": 3, "points": 2, "return": (None, 3)}
-    )
+    @pulse.classical(max_latency_ns=0)
     def mixed(
-        bits: pulse.Bits, levels: list[int], points: list[complex], x: float
+        bits: pulse.Length[pulse.Bits, 10],
+        levels: pulse.Length[list[int], 3],
+        points: pulse.Length[list[complex], 2],
+        x: float,
     ) -> tuple[float, pulse.Bits]:
         return x, bits[:3]
 
