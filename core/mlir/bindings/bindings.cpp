@@ -1991,6 +1991,30 @@ public:
     return result;
   }
 
+  /// This module with its line delays replaced by `delays` (a
+  /// `pulse.line_delays` dictionary, or empty for none) and scheduled again
+  /// with `policy`: everything before scheduling is kept.
+  PulseModule with_line_delays(const std::string &delays,
+                               const std::string &policy, int64_t maxDrives,
+                               int64_t maxReadouts, int64_t readoutLatency,
+                               int64_t switchPenalty) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto copy = mlir::OwningOpRef<mlir::ModuleOp>(source().clone());
+    if (delays.empty())
+      copy->getOperation()->removeAttr("pulse.line_delays");
+    else
+      copy->getOperation()->setAttr("pulse.line_delays",
+                                    mlir::parseAttribute(delays, ctx_.get()));
+    PulseModule result(ctx_, std::move(copy));
+    result.runTime_ = runTime_;
+    result.keepSource();
+    mlir::PassManager pm(ctx_.get());
+    addSchedule(pm, *result.module_, true, policy, maxDrives, maxReadouts,
+                readoutLatency, switchPenalty);
+    runPipeline(pm, *result.module_, "pulse scheduling failed");
+    return result;
+  }
+
   /// One argument of a call: (kind, readout index, iteration, value), kind 0
   /// for a measurement and 1 for a number.
   using CallArgument =
@@ -4154,6 +4178,12 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::arg("num"), nb::arg("den"),
            "controller_events() in a controller's own cycles, num of them "
            "every den program cycles, with the line events off its grid")
+      .def("with_line_delays", &PulseModule::with_line_delays,
+           nb::call_guard<nb::gil_scoped_release>(),
+           "This module with other line delays, scheduled again",
+           nb::arg("delays"), nb::arg("policy"), nb::arg("max_drives") = 4,
+           nb::arg("max_readouts") = 2, nb::arg("readout_latency") = 0,
+           nb::arg("switch_penalty") = 0)
       .def("simulation_module", &PulseModule::simulation_module,
            "This module with loops holding calls unrolled, for simulation")
       .def("next_call", &PulseModule::next_call, nb::arg("path"),

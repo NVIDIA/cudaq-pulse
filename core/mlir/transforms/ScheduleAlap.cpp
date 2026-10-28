@@ -71,6 +71,7 @@
 
 #include "cudaq-pulse/Analysis/Affine.h"
 #include "cudaq-pulse/Analysis/ClassicalTiming.h"
+#include "cudaq-pulse/Analysis/LineDelay.h"
 #include "cudaq-pulse/Analysis/LineGrid.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
@@ -2264,8 +2265,11 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
   // read an answer do.
   bool data = classical || function->hasAttr("pulse.selected_values");
   pulse::LineGrid grid(function->getParentOfType<mlir::ModuleOp>());
-  return scheduleRegion(function.getBody(), function, resources, isAlap, data,
-                        timelines, grid);
+  if (mlir::failed(scheduleRegion(function.getBody(), function, resources,
+                                  isAlap, data, timelines, grid)))
+    return mlir::failure();
+  pulse::applyLineDelays(function);
+  return mlir::success();
 }
 
 template <bool IsAlap>

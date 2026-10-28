@@ -31,7 +31,8 @@ backend gets a new version.
 At the top level, ``target`` and ``clock_ghz`` name the device and its
 clock, ``schedule`` the schedule policy, ``qudits`` the device qudits the
 program uses, ``lines`` each line's index, ``role`` (``"drive"`` or
-``"readout"``) and qudit, and ``limits`` the controller limits it was
+``"readout"``) and qudit (and, with line delays, its ``fine_delay_ns``;
+see below), and ``limits`` the controller limits it was
 checked against (``null`` without). ``events`` lists every drive, readout,
 wait, sync and classical call in program order, once per loop iteration and
 both arms of a branch. ``epochs``, ``calls``, ``links`` and ``manifest`` are
@@ -152,6 +153,33 @@ states a clock the controllers share; every controller's clock must be a
 whole multiple of it, and the export gives it as ``reference_clock_ghz``.
 Without one, each controller's start is known only to within one of its own
 cycles, which budgets between controllers count.
+
+Line delays
+-----------
+
+Cables and electronics delay each line differently. The calibrated delays
+belong to the system, not to kernels: ``MachineModel(line_delays_ns=...)``
+gives them by line, ``("drive", qudit)`` or ``("readout", qudit)``, and
+every operation on a delayed line starts that much later than scheduled.
+Whole steps of the line's grid move its operations, which are then checked
+against the controller's limits like any others; the rest, less than one
+step, is the line's ``fine_delay_ns`` in the export, for a controller that
+can delay a line's output by less than a cycle
+(``ControllerLimits.max_fine_delay_ns``). A controller without fine delay
+rounds the delay to the nearest step if that is within its
+``alignment_tolerance_cycles``, and otherwise the program fails to compile
+with an error naming the line, the rest and the fixes::
+
+    machine = MachineModel(
+        controller=ControllerLimits(clock_ghz=1.0, max_fine_delay_ns=1.0),
+        line_delays_ns={("drive", 0): 2.3, ("readout", 0): 41.0},
+    )
+    # The drive line of qudit 0 moves 2 ns (4 cycles of a 2 GHz program
+    # clock) and plays with fine_delay_ns = 0.3.
+
+Compiling a kernel again with only other delays reuses its trace and
+optimized module and schedules it again, with the same result, byte for
+byte, as compiling it anew.
 
 Controller limits
 -----------------

@@ -243,6 +243,61 @@ def sample_rate(limits: ControllerLimits, plan: ClockPlan | None) -> tuple[int, 
     return None if rate == 1 else (rate.numerator, rate.denominator)
 
 
+def line_delays(
+    delays: Mapping[tuple[str, int], float],
+    limits: ControllerLimits | None,
+    plan: ClockPlan | None,
+    program_ghz: float,
+    n_qudits: int,
+) -> tuple[str | None, dict[tuple[str, int], float]]:
+    """The ``pulse.line_delays`` attribute that moves each delayed line by
+    whole steps of its grid (``None`` when none moves), and each line's fine
+    delay in ns, the rest. Raises ``ValueError`` for a rest its controller
+    can neither add nor tolerate."""
+    fine_max = 0.0 if limits is None else limits.max_fine_delay_ns
+    tolerance = 0.0 if limits is None else limits.alignment_tolerance_cycles
+    shifts: dict[tuple[str, int], int] = {}
+    fine: dict[tuple[str, int], float] = {}
+    for (role, qudit), ns in delays.items():
+        controller = None if plan is None else plan.controller_of(role, qudit)
+        grid = 1 if controller is None else controller.grid
+        own_ghz = program_ghz if controller is None else controller.clock_ghz
+        step_ns = grid / program_ghz
+        steps = ns / step_ns
+        whole = math.floor(steps + _TOLERANCE) if fine_max > 0 else round(steps)
+        rest = ns - whole * step_ns
+        if abs(rest) < _TOLERANCE:
+            rest = 0.0
+        if fine_max > 0 and rest > fine_max + _TOLERANCE:
+            raise InvalidValueError(
+                f"line_delays_ns: the {role} line of qudit {qudit} is delayed {ns:g} ns, "
+                f"{rest:g} ns past a whole number of its controller's {step_ns:g} ns steps, "
+                f"and the controller adds at most {fine_max:g} ns of fine delay; raise its "
+                f"max_fine_delay_ns to {rest:g}, or calibrate the delay to "
+                f"{whole * step_ns:g} or {(whole + 1) * step_ns:g} ns"
+            )
+        if fine_max == 0 and abs(rest) * own_ghz > tolerance + _TOLERANCE:
+            low = math.floor(steps + _TOLERANCE) * step_ns
+            raise InvalidValueError(
+                f"line_delays_ns: the {role} line of qudit {qudit} is delayed {ns:g} ns, "
+                f"{abs(rest):g} ns ({abs(rest) * own_ghz:g} of its controller's cycles) from "
+                f"a whole number of its {step_ns:g} ns steps, and the controller has no fine "
+                f"delay; give it max_fine_delay_ns, raise its alignment_tolerance_cycles to "
+                f"{abs(rest) * own_ghz:g}, or calibrate the delay to {low:g} or "
+                f"{low + step_ns:g} ns"
+            )
+        fine[(role, qudit)] = rest if fine_max > 0 else 0.0
+        if whole:
+            shifts[(role, qudit)] = whole * grid
+    if not shifts:
+        return None, fine
+    arrays = []
+    for role in ("drive", "readout"):
+        cycles = ", ".join(str(shifts.get((role, q), 0)) for q in range(n_qudits))
+        arrays.append(f"{role} = array<i64: {cycles}>")
+    return "{" + ", ".join(arrays) + "}", fine
+
+
 def off_grid(
     plan: ClockPlan,
     lines: Sequence[Mapping[str, Any]],

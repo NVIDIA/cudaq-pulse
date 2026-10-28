@@ -60,6 +60,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import _clocks, _controller_cost
 from ._controller_cost import OP_CLASSES, FunctionCost
+from ._errors import InvalidValueError
 from .kernel.ir_builder import CompilationError
 
 if TYPE_CHECKING:
@@ -152,6 +153,12 @@ class ControllerLimits:
     "timeout"``); without, only waits that block or are budgeted are
     allowed.
     ``max_events``: the drives and readouts of one program.
+    ``max_fine_delay_ns``: the longest delay, below one grid step, each line
+    can add to its output (0: none); it plays the part of a calibrated line
+    delay (``MachineModel.line_delays_ns``) that whole grid steps cannot.
+    ``alignment_tolerance_cycles``: without fine delay, how far a line's
+    delay may be from a whole number of grid steps; the compiler rounds it
+    to the nearest one.
 
     What it computes, for the classical functions on ``compute_links`` (link
     names or ids; by default the link named ``"controller"``):
@@ -179,6 +186,8 @@ class ControllerLimits:
     acquirer_hold_cycles: int = 0
     feedback_latency_cycles: int = 0
     max_events: int | None = None
+    max_fine_delay_ns: float = 0.0
+    alignment_tolerance_cycles: float = 0.0
     answer_timeouts: bool = True
     compute_links: tuple[int | str, ...] = ("controller",)
     op_cycles: Mapping[str, int] = field(default_factory=dict)
@@ -197,6 +206,9 @@ class ControllerLimits:
         for name in ("min_wait_cycles", "acquirer_hold_cycles", "feedback_latency_cycles"):
             if getattr(self, name) < 0:
                 raise ValueError(f"ControllerLimits.{name} cannot be negative")
+        for name in ("max_fine_delay_ns", "alignment_tolerance_cycles"):
+            if not math.isfinite(getattr(self, name)) or getattr(self, name) < 0:
+                raise InvalidValueError(f"ControllerLimits.{name} must be a finite number >= 0")
         for name in (
             "samples_per_cycles",
             "waveform_samples",
@@ -376,22 +388,28 @@ def _walk(
     # concrete module holds.
     module = lowered._concrete()
     epochs = lowered._event_epochs(syncs=True)
+    off_grid: Sequence[tuple[int, int, int]] = ()
     with lowered._lock:
         if own is None:
             lines, events = module.controller_events(_PARAMETERS, _AMPLITUDES, epochs)
-            return lines, events, ()
-        ratio = own.ratio
-        lines, events, off_grid, ends = module.controller_events_on(
-            _PARAMETERS, _AMPLITUDES, epochs, ratio.numerator, ratio.denominator
-        )
-    for index, end in ends:
-        events[index]["end_cycles"] = end
-    if waveforms:
-        factor = float(ratio)
-        for event in events:
-            tree = event.get("waveform")
-            if tree is not None:
-                _clocks._scale(tree, factor)
+        else:
+            ratio = own.ratio
+            lines, events, off_grid, ends = module.controller_events_on(
+                _PARAMETERS, _AMPLITUDES, epochs, ratio.numerator, ratio.denominator
+            )
+    if own is not None:
+        for index, end in ends:
+            events[index]["end_cycles"] = end
+        if waveforms:
+            factor = float(ratio)
+            for event in events:
+                tree = event.get("waveform")
+                if tree is not None:
+                    _clocks._scale(tree, factor)
+    fine = (lowered.generic or lowered).fine_delays
+    if fine is not None:
+        for line in lines:
+            line["fine_delay_ns"] = fine.get((line["role"], line["qudit"]), 0.0)
     return lines, events, off_grid
 
 

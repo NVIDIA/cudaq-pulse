@@ -36,7 +36,7 @@ from dataclasses import replace
 from typing import Any, NamedTuple
 
 from .._device import Device, DeviceMismatchError, NoDeviceError, Qudit, Register
-from ..compiler import CompileOptions, Lowered, build
+from ..compiler import CompileOptions, Lowered, build, with_line_delays
 from ._guard import Guard, build_guard
 from ._schedule_blocks import root_schedule, validate_kernel_schedule
 from ._unroll import resolve_unroll_threshold
@@ -58,6 +58,7 @@ def _release_compiled_modules() -> None:
     for dispatcher in list(_dispatchers):
         dispatcher._entries.clear()
         dispatcher.general = None
+        dispatcher.kernel._traced.clear()
 
 
 def _cache_size(value: int | None) -> int:
@@ -243,10 +244,14 @@ class CacheInfo(NamedTuple):
     capacity: int | None
 
 
+# Traced programs a kernel keeps for scheduling again with other line delays.
+_TRACED_KEPT = 8
+
+
 class _Entry:
     """One compiled specialization and the guard that keeps it valid."""
 
-    __slots__ = ("lowered", "guard", "returns", "tick", "pins", "runtime")
+    __slots__ = ("lowered", "guard", "returns", "tick", "pins", "runtime", "n_qudits")
 
     def __init__(
         self,
@@ -255,8 +260,10 @@ class _Entry:
         returns: Any,
         pins: tuple[Any, ...],
         runtime: tuple[int, ...],
+        n_qudits: int = 0,
     ):
         self.lowered = lowered
+        self.n_qudits = n_qudits
         self.guard = guard
         self.returns = returns
         self.tick = next(_ticks)
@@ -407,6 +414,10 @@ class Kernel[**P]:
         # float parameter turns out to shape the program.
         self._split = (tuple(i for i in range(len(names)) if i not in runtime), runtime)
         self._promote_lock = threading.Lock()
+        # The latest scheduled specializations with line delays of the
+        # programs it traced, the last _TRACED_KEPT of them, which other line
+        # delays schedule again without tracing.
+        self._traced: dict[Any, _Entry] = {}
         self._bind = _make_binder(fn)
         self._dispatch = _Dispatcher(
             self,
@@ -446,6 +457,7 @@ class Kernel[**P]:
 
     def cache_clear(self) -> None:
         self._dispatch.clear()
+        self._traced.clear()
 
     def __repr__(self) -> str:
         return f"<pulse kernel {self.__qualname__}{self.__signature__}>"
@@ -468,6 +480,10 @@ class Kernel[**P]:
         return out
 
     def _specialize(self, values: tuple[Any, ...], target: Any, options: CompileOptions) -> _Entry:
+        if options.machine.line_delays_ns or self._traced:
+            found = self._retimed(values, target, options)
+            if found is not None:
+                return found
         fn = self.__wrapped__
         names = self._names
         while True:
@@ -492,7 +508,46 @@ class Kernel[**P]:
         returns = _return_spec(builder.returned, builder.readouts, self.__name__)
         guard = build_guard(fn, impure=builder.impure)
         pins = tuple(values[i] for i in static)
-        return _Entry(lowered, guard, returns, pins, runtime)
+        entry = _Entry(lowered, guard, returns, pins, runtime, builder.n_qubits)
+        if lowered.scheduled and options.machine.line_delays_ns:
+            self._keep_traced(self._traced_key(values, target, options), entry)
+        return entry
+
+    def _keep_traced(self, key: Any, entry: _Entry) -> None:
+        traced = self._traced
+        traced.pop(key, None)
+        traced[key] = entry
+        if len(traced) > _TRACED_KEPT:
+            del traced[next(iter(traced))]
+
+    def _traced_key(self, values: tuple[Any, ...], target: Any, options: CompileOptions) -> Any:
+        """What a specialization is traced for: everything but line delays,
+        which only move its schedule."""
+        if options.machine.line_delays_ns:
+            options = replace(options, machine=replace(options.machine, line_delays_ns={}))
+        static = self._split[0]
+        return (target.fingerprint, options, static, *[_static_key(values[i]) for i in static])
+
+    def _retimed(
+        self, values: tuple[Any, ...], target: Any, options: CompileOptions
+    ) -> _Entry | None:
+        """The specialization for *values* scheduled again with the line
+        delays of *options*, from one traced with other delays, if any."""
+        prior = self._traced.get(self._traced_key(values, target, options))
+        if (
+            prior is None
+            or prior.lowered.options.machine.line_delays_ns == options.machine.line_delays_ns
+            or not prior.guard.check()
+        ):
+            return None
+        lowered = with_line_delays(prior.lowered, options, prior.n_qudits)
+        if lowered is None:
+            return None
+        entry = _Entry(
+            lowered, prior.guard, prior.returns, prior.pins, prior.runtime, prior.n_qudits
+        )
+        self._keep_traced(self._traced_key(values, target, options), entry)
+        return entry
 
     def _promote(self, indices: set[int]) -> list[int]:
         """Make float parameters static: the program needs their values.

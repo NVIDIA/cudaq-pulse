@@ -194,7 +194,14 @@ class MachineModel:
     program is checked against them. ``reference_clock_ghz`` is a clock the
     controllers share, if they do: each controller's clock must be a whole
     multiple of it, and without it each controller's start is known only to
-    within one of its own cycles.
+    within one of its own cycles. ``line_delays_ns`` gives calibrated
+    delays of lines, keyed by ``("drive", qudit)`` or ``("readout", qudit)``:
+    every operation on the line starts that much later than scheduled. Whole
+    steps of the line's grid move its operations, which are then checked
+    like any others; the rest is the line's ``fine_delay_ns`` in the
+    controller's program, which its controller must be able to add
+    (``ControllerLimits.max_fine_delay_ns``) or tolerate
+    (``ControllerLimits.alignment_tolerance_cycles``).
     """
 
     max_concurrent_drives: int = 4
@@ -204,6 +211,7 @@ class MachineModel:
     links: Mapping[int | str, Link] = field(default_factory=dict)
     controller: ControllerLimits | None = None
     reference_clock_ghz: float | None = None
+    line_delays_ns: Mapping[tuple[str, int], float] = field(default_factory=dict)
     link_names: Mapping[str, int] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -218,6 +226,31 @@ class MachineModel:
             raise InvalidValueError(
                 f"MachineModel.reference_clock_ghz must be positive, got {self.reference_clock_ghz}"
             )
+        delays: dict[tuple[str, int], float] = {}
+        for line, ns in dict(self.line_delays_ns).items():
+            if (
+                not isinstance(line, tuple)
+                or len(line) != 2
+                or line[0] not in ("drive", "readout")
+                or isinstance(line[1], bool)
+                or not isinstance(line[1], int)
+                or line[1] < 0
+            ):
+                raise InvalidValueError(
+                    "MachineModel.line_delays_ns keys are ('drive', qudit) or "
+                    f"('readout', qudit), got {line!r}"
+                )
+            if isinstance(ns, bool) or not isinstance(ns, (int, float)) or not math.isfinite(ns):
+                raise InvalidValueError(
+                    f"MachineModel.line_delays_ns[{line!r}] must be a number, got {ns!r}"
+                )
+            if ns < 0:
+                raise InvalidValueError(
+                    f"MachineModel.line_delays_ns[{line!r}] is {ns} ns; delays cannot be "
+                    "negative: to play a line earlier, delay every other line instead"
+                )
+            delays[line] = float(ns)
+        object.__setattr__(self, "line_delays_ns", MappingProxyType(dict(sorted(delays.items()))))
         if isinstance(self.links, _Links):
             # Another model's links, as dataclasses.replace passes them: by
             # id, with their names beside them.
@@ -265,6 +298,7 @@ class MachineModel:
                     tuple(sorted(by_name.items())),
                     self.controller,
                     self.reference_clock_ghz,
+                    tuple(self.line_delays_ns.items()),
                 )
             ),
         )
@@ -284,6 +318,7 @@ class MachineModel:
             dict(self.link_names),
             self.controller,
             self.reference_clock_ghz,
+            dict(self.line_delays_ns),
         ) == (
             other.max_concurrent_drives,
             other.max_concurrent_readouts,
@@ -293,6 +328,7 @@ class MachineModel:
             dict(other.link_names),
             other.controller,
             other.reference_clock_ghz,
+            dict(other.line_delays_ns),
         )
 
     def link_id(self, link: int | str) -> int:
@@ -662,6 +698,9 @@ class Lowered:
     # Its controllers' clocks, when one is not the program clock or they
     # share a reference clock; a call's view reads its generic module's.
     clocks: _clocks.ClockPlan | None = None
+    # Each line's fine delay in ns, when the machine has line delays; a
+    # call's view reads its generic module's.
+    fine_delays: Mapping[tuple[str, int], float] | None = None
 
     def __init__(
         self,
@@ -862,17 +901,24 @@ class Lowered:
 
 
 class _ClockedLowered(Lowered):
-    """A module with a clock plan. Its own class keeps it off every other
-    module and every call's view, which stay the size they are on one clock."""
+    """A module with a clock plan or line delays. Its own class keeps them off
+    every other module and every call's view, which stay the size they are
+    on one clock."""
 
-    __slots__ = ("clocks",)
+    __slots__ = ("clocks", "fine_delays")
 
 
-def _lowered(module: Any, clocks: _clocks.ClockPlan | None, **fields: Any) -> Lowered:
-    if clocks is None:
+def _lowered(
+    module: Any,
+    clocks: _clocks.ClockPlan | None,
+    fine_delays: Mapping[tuple[str, int], float] | None,
+    **fields: Any,
+) -> Lowered:
+    if clocks is None and fine_delays is None:
         return Lowered(module, **fields)
     lowered = _ClockedLowered(module, **fields)
     lowered.clocks = clocks
+    lowered.fine_delays = fine_delays
     return lowered
 
 
@@ -1019,6 +1065,11 @@ def build(
         grids = clocks.attributes(builder.n_qubits)
         if grids is not None:
             module.set_attributes(grids)
+    fine_delays = None
+    if machine.line_delays_ns:
+        shifts, fine_delays = _line_delays(machine, target, clocks, builder.n_qubits)
+        if shifts is not None:
+            module.set_attributes(f"{{pulse.line_delays = {shifts}}}")
     metrics.ffi_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
@@ -1049,6 +1100,7 @@ def build(
     lowered = _lowered(
         module,
         clocks,
+        fine_delays,
         target=target,
         metrics=metrics,
         parameters=parameters,
@@ -1063,13 +1115,68 @@ def build(
     )
     lowered.classical = tuple(builder.classical)
     lowered.runtime_selects = runtime_selects
-    if options.machine.controller is not None and scheduled:
+    _check_controller(lowered)
+    return lowered, builder
+
+
+def _line_delays(
+    machine: MachineModel, target: Device, clocks: _clocks.ClockPlan | None, n_qudits: int
+) -> tuple[str | None, dict[tuple[str, int], float]]:
+    try:
+        return _clocks.line_delays(
+            machine.line_delays_ns, machine.controller, clocks, target.clock_ghz, n_qudits
+        )
+    except ValueError as e:
+        raise CompilationError(str(e)) from None
+
+
+def _check_controller(lowered: Lowered) -> None:
+    if lowered.options.machine.controller is not None and lowered.scheduled:
         from .controller import ControllerLimitError, check
 
         violations = check(lowered)
         if violations:
             raise ControllerLimitError(violations)
-    return lowered, builder
+
+
+def with_line_delays(lowered: Lowered, options: CompileOptions, n_qudits: int) -> Lowered | None:
+    """*lowered*, a scheduled module of *n_qudits* qudits, compiled again for
+    *options*, which differ from its own only in ``machine.line_delays_ns``:
+    its module before scheduling is kept, and only scheduling, the checks and
+    the exports are done again. ``None`` when scheduling it again fails, for
+    a full compile to report."""
+    target = lowered.target
+    clocks = lowered.clocks
+    fine_delays = None
+    shifts = None
+    if options.machine.line_delays_ns:
+        shifts, fine_delays = _line_delays(options.machine, target, clocks, n_qudits)
+    t0 = time.perf_counter()
+    try:
+        with lowered._lock:
+            module = lowered._module.with_line_delays(shifts or "", *options.schedule_args())
+    except Exception:
+        return None
+    old = lowered.metrics
+    metrics = CompileMetrics(target=old.target)
+    metrics.op_count = old.op_count
+    metrics.schedule_ms = (time.perf_counter() - t0) * 1000
+    metrics.total_ms = metrics.schedule_ms
+    result = _lowered(
+        module,
+        clocks,
+        fine_delays,
+        target=target,
+        metrics=metrics,
+        parameters=lowered.parameters,
+        qudits=lowered.qudits,
+        options=options,
+        waits=lowered.waits,
+    )
+    result.classical = lowered.classical
+    result.runtime_selects = lowered.runtime_selects
+    _check_controller(result)
+    return result
 
 
 def compile[**P](
