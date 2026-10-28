@@ -1,6 +1,6 @@
-"""Runtime qudits: a kernel's qudit and register parameters, annotated
-``Qudit`` or ``Register`` or passed a handle or a register on the first call,
-compile once and bind their qudits at each call."""
+"""Runtime qudits: a kernel's parameters annotated ``Qudit`` or ``Register``
+compile once and bind their qudits at each call; unannotated ones are
+static."""
 
 import dataclasses
 import json
@@ -45,19 +45,9 @@ def _body(q, r, amps, f12):
     return readout(rl, square(100, 0.05), rt)
 
 
-def _static(fn, **options):
-    """*fn* as a kernel that keeps its unannotated qudits static, as every
-    kernel did before qudits were runtime by default: the reference."""
-    k = pulse.kernel(fn, **options)
-    k._undecided = ()
-    return k
-
-
-def _static_k(q, r, amps: list[float], f12: float):
+@pulse.kernel
+def static_k(q, r, amps: list[float], f12: float):
     return _body(q, r, amps, f12)
-
-
-static_k = _static(_static_k)
 
 
 def _f12(q):
@@ -89,7 +79,7 @@ def _recalibrated(device, carrier, shift_hz):
 @pytest.mark.parametrize("schedule", ["alap", "asap"])
 def test_runtime_qudits_match_static_compiles(schedule):
     options = {"schedule": schedule}
-    static = _static(_static_k, **options)
+    static = pulse.kernel(static_k.__wrapped__, **options)
     runtime = pulse.kernel(runtime_k.__wrapped__, **options)
     calls = [(H[3], H[[5, 7]], [0.2, 0.4], _f12(H[3])), (H[9], H[[0, 16]], [0.1, 0.3], _f12(H[9]))]
     for args in calls:
@@ -137,7 +127,7 @@ def test_static_qudit_exports_have_no_symbols():
         d, t = get_drive_line(q)
         drive(d, square(20, a), t)
 
-    export = _static(k).lower(H[3], 0.1).export_controller()
+    export = pulse.kernel(k).lower(H[3], 0.1).export_controller()
     assert "symbols" not in export and "program_id" not in export
     assert all("symbols" not in e for e in export["events"])
 
@@ -270,13 +260,13 @@ def test_a_runtime_qudit_frequency_is_one_tone_until_its_line_is_retuned():
     machine = pulse.compiler.MachineModel(controller=ControllerLimits(tones_per_line=1))
 
     @pulse.kernel
-    def native(q):
+    def native(q: Qudit):
         d, t = get_drive_line(q)
         drive(d, square(20, 0.1), t)
         drive(d, square(20, 0.2), shift_phase(t, 0.5))
 
     @pulse.kernel
-    def retuned(q):
+    def retuned(q: Qudit):
         d, t = get_drive_line(q)
         drive(d, square(20, 0.1), t)
         drive(d, square(20, 0.2), shift_frequency(t, 1e6))
@@ -294,3 +284,27 @@ def test_list_promoted_to_static_warns():
 
     with pytest.warns(RuntimeWarning, match="lengths"):
         k.lower(H[0], [20.0])
+
+
+def test_only_annotated_qudits_are_placed_at_call_time():
+    def body(q, r):
+        d, t = get_drive_line(q)
+        drive(d, square(20, 0.1), t)
+        for x in r:
+            dx, tx = get_drive_line(x)
+            drive(dx, square(20, 0.1), tx)
+
+    def annotated(q: Qudit, r: Register):
+        body(q, r)
+
+    def unannotated(q, r):
+        body(q, r)
+
+    placed, static = pulse.kernel(annotated), pulse.kernel(unannotated)
+    assert placed.runtime_parameters == ("q", "r") and placed.static_parameters == ()
+    assert static.runtime_parameters == () and static.static_parameters == ("q", "r")
+    for i in (3, 4, 5):
+        placed.lower(H[i], H[[i + 1]])
+        static.lower(H[i], H[[i + 1]])
+    assert placed.cache_info().compiled == 1
+    assert static.cache_info().compiled == 3

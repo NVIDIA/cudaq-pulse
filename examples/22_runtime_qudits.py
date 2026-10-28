@@ -7,8 +7,8 @@
 # ============================================================================ #
 """Runtime qudits: one compile for every qudit of a device.
 
-A kernel's qudit parameter is bound at each call, so the kernel compiles once
-and serves any qudit, and a recalibrated device, without compiling again.
+A kernel parameter annotated ``pulse.Qudit`` is bound at each call, so the
+kernel compiles once and serves any qudit, and a recalibrated device, without compiling again.
 Frequencies the kernel needs beyond a qudit's own drive frequency are
 ordinary float parameters: the host reads them from the device and passes
 them in, and each call binds them.
@@ -18,7 +18,7 @@ import cudaq_pulse as pulse
 
 
 @pulse.kernel
-def excite_to_two(qudit, f12_hz: float):
+def excite_to_two(qudit: pulse.Qudit, f12_hz: float):
     """Drive 0-1 on the qudit's own tone, then 1-2 at *f12_hz*, and read out."""
     drive_line, tone = get_drive_line(qudit)
     drive(drive_line, gaussian(40, 0.25, 10.0), tone)

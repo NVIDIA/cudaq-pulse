@@ -29,24 +29,13 @@ def test_module_builder_exposes_only_the_packed_decoder_and_the_pickle_loader():
 
 
 def test_pulse_module_methods():
-    # The cached specialization keeps ``amplitude`` and the qudit function
-    # arguments; specializing binds both.
+    # The cached specialization keeps ``amplitude`` a function argument.
     compiled = _x._dispatch.lookup((Q[0], 0.0)).lowered
     module = compiled._module
     assert module.param_names() == ["amplitude"]
     assert module.run_passes(["pulse-verify"]) is None
     assert "pulse.drive" in module.print()
-    with pytest.raises(ValueError, match="runtime qudits need carriers"):
-        module.specialize([0.1], [], "alap")
-    device = Q[0].device
-    concrete = module.specialize_placed(
-        [0.1],
-        [],
-        *compiled.options.schedule_args(),
-        [Q[0].index],
-        device._frequency_table(),
-        device.fingerprint,
-    )
+    concrete = module.specialize([0.1], [], "alap")
     assert "%arg0" not in concrete.print()
     assert concrete.schedule("asap") is None
     assert "start_cycles = 0" in concrete.print()

@@ -301,10 +301,11 @@ def test_a_runtime_qudit_exports_about_as_fast_as_a_static_one():
         d, t = get_drive_line(q)
         drive(d, square(20, 0.1), t)
 
-    static = pulse.kernel(one_drive)
-    static._undecided = ()
-    runtime = pulse.kernel(one_drive).lower(Q[0])
-    fixed = static.lower(Q[0])
+    def placed(q: pulse.Qudit):
+        one_drive(q)
+
+    runtime = pulse.kernel(placed).lower(Q[0])
+    fixed = pulse.kernel(one_drive).lower(Q[0])
     # The symbols a runtime export adds cost a few dict copies, not a walk.
     assert _best(runtime.export_controller, 200) < 1.3 * _best(fixed.export_controller, 200)
 

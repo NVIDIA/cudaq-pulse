@@ -544,29 +544,6 @@ class _Placing(_Dispatcher):
         return entry.lowered
 
 
-class _Deciding(_Dispatcher):
-    """The dispatcher of a kernel with unannotated parameters until its first
-    call: each one passed a qudit handle or a register becomes a runtime
-    parameter, and the dispatcher becomes the one for the kernel it makes."""
-
-    def _decide(self, values: tuple[Any, ...]) -> None:
-        kernel = self.kernel
-        kernel._adopt(values)
-        self.__class__ = kernel._dispatcher_class()  # type: ignore[assignment]
-
-    def lookup(self, values: tuple[Any, ...]) -> _Entry:
-        self._decide(values)
-        return self.lookup(values)
-
-    def call(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
-        self._decide(self.kernel._bind(*args, **kwargs))
-        return self.call(args, kwargs)
-
-    def lower(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Lowered:
-        self._decide(self.kernel._bind(*args, **kwargs))
-        return self.lower(args, kwargs)
-
-
 def _pin_mismatch(name: str, pin: Device, found: Device) -> DeviceMismatchError:
     return DeviceMismatchError(
         f"{name}() is compiled for device {pin.name!r} and got qudits of {found.name!r}"
@@ -629,17 +606,10 @@ class Kernel[**P]:
         names = code.co_varnames[: code.co_argcount + code.co_kwonlyargcount]
         self._names = names
         kinds = {}
-        unannotated = []
         for i, n in enumerate(names):
-            annotation = signature.parameters[n].annotation
-            kind = _runtime_kind(annotation, fn.__globals__)
+            kind = _runtime_kind(signature.parameters[n].annotation, fn.__globals__)
             if kind is not None:
                 kinds[i] = kind
-            elif annotation is inspect.Parameter.empty:
-                unannotated.append(i)
-        # Unannotated parameters, until the first call decides which of them
-        # are runtime qudits and registers.
-        self._undecided = tuple(unannotated)
         self._classify(kinds, tuple(i for i in range(len(names)) if i not in kinds))
         self._promote_lock = threading.Lock()
         # The latest scheduled specializations with line delays of the
@@ -659,8 +629,8 @@ class Kernel[**P]:
     @property
     def runtime_parameters(self) -> tuple[str, ...]:
         """Parameters annotated ``float``, ``list[float]``, ``Qudit`` or
-        ``Register``, and unannotated ones the first call passed a qudit
-        handle or a register: function arguments of the module."""
+        ``Register``: function arguments of the module. An unannotated qudit
+        or register parameter is static."""
         return tuple(self._names[i] for i in self._split[1])
 
     @property
@@ -917,28 +887,7 @@ class Kernel[**P]:
         self._declared_float = tuple(i for i in sorted(kinds) if kinds[i] in (_FLOAT, _VECTOR))
 
     def _dispatcher_class(self) -> type[_Dispatcher]:
-        if self._undecided:
-            return _Deciding
         return _Placing if self._relocatable else _Dispatcher
-
-    def _adopt(self, values: tuple[Any, ...]) -> None:
-        """Make the unannotated parameters passed a qudit handle or a register
-        runtime ones; the first call decides, once per kernel."""
-        with self._promote_lock:
-            undecided = self._undecided
-            if not undecided:
-                return
-            found = {}
-            for i in undecided:
-                t = type(values[i])
-                if t is Qudit:
-                    found[i] = _QUDIT
-                elif t is Register:
-                    found[i] = _REGISTER
-            if found:
-                static = tuple(i for i in self._split[0] if i not in found)
-                self._classify({**self._kinds, **found}, static)
-            self._undecided = ()
 
     def _promote(self, indices: set[int]) -> list[int]:
         """Make float parameters static: the program needs their values.
