@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -197,6 +198,10 @@ def test_the_checked_in_baseline_is_bootstrapping_or_has_every_count():
 
 def test_the_program_sizes_match_the_baseline(tmp_path):
     env = gate._run_env(str(Path(cudaq_pulse.__file__).parents[1]), str(tmp_path))
+    # Under the sanitizers the extension needs their runtime preloaded.
+    for name in ("LD_PRELOAD", "ASAN_OPTIONS", "UBSAN_OPTIONS", "TSAN_OPTIONS", "LSAN_OPTIONS"):
+        if name in os.environ:
+            env[name] = os.environ[name]
     sizes = gate._structural(sys.executable, env)
     expected = {
         name: {
