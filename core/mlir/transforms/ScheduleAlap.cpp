@@ -1167,15 +1167,14 @@ private:
         a = later ? std::max(a, b) : std::min(a, b);
   }
 
-  /// Whether what `branch` yields is there only once its condition is: in a
-  /// function with values a measurement selects, an arm may set a parameter
-  /// from one, and the op that reads it waits for the measurement as it
-  /// would reading the selected value itself.
-  bool yieldsSelected(mlir::scf::IfOp branch) const {
-    if (!classical)
-      return false;
-    auto function = branch->getParentOfType<mlir::func::FuncOp>();
-    return function && function->hasAttr("pulse.selected_values");
+  /// Whether what `branch` yields is there only once its condition is: when
+  /// the condition reads a measurement, or comes from a classical call, an
+  /// arm may set a tone or a parameter without a timed op, and the op that
+  /// reads it after the if still waits for the condition.
+  bool yieldsAfterCondition(mlir::scf::IfOp branch) const {
+    if (classical)
+      return true;
+    return !conditionMeasurements(branch.getCondition()).empty();
   }
 
   mlir::LogicalResult forwardIf(mlir::scf::IfOp branch) {
@@ -1211,7 +1210,7 @@ private:
           it->second = std::max(it->second, time);
       }
     }
-    if (yieldsSelected(branch))
+    if (yieldsAfterCondition(branch))
       for (int64_t &time : results)
         time = std::max(time, floor);
     for (auto [result, time] : llvm::zip(branch.getResults(), results))
@@ -1554,7 +1553,7 @@ private:
       if (classical)
         bound(branch.getCondition(), armStart);
     }
-    if (yieldsSelected(branch)) {
+    if (yieldsAfterCondition(branch)) {
       int64_t needed = kNever;
       for (mlir::Value result : branch.getResults())
         needed = std::min(needed, late(result));
