@@ -654,8 +654,9 @@ class _WaitLengths:
                 lower = cycles // self.grid * self.grid
                 raise InvalidValueError(
                     f"{wait.kernel}(): the wait length {wait.text} rounds to {cycles} clock "
-                    f"cycles, which its controller cannot time: it times every {self.grid} "
-                    f"cycles, so the nearest lengths are {lower} and {lower + self.grid}"
+                    f"cycles; its line moves in timesteps of {self.grid} cycles, and "
+                    f"{cycles} cycles isn't a whole number of timesteps: the nearest "
+                    f"lengths are {lower} and {lower + self.grid}"
                 )
 
 

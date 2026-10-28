@@ -169,8 +169,8 @@ def sync(*targets: Line) -> None:
 
     All lines are padded to the latest time among them before
     subsequent operations proceed. When their controllers start operations
-    only every few program cycles, they meet at the next time on every
-    line's grid.
+    only every few program cycles, they meet at the next time that is a
+    whole number of every line's timesteps.
 
     Args:
         targets: Two or more drive/readout lines to synchronize.

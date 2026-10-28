@@ -111,7 +111,8 @@ def test_a_rest_the_controller_cannot_add_fails_to_compile():
     message = str(caught.value)
     assert message.startswith("line_delays_ns: the drive line of qudit 1 is delayed 2.3 ns")
     assert (
-        "0.3 ns (0.3 of its controller's cycles) from a whole number of its 1 ns steps" in message
+        "0.3 ns (0.3 of its controller's cycles) from a whole number of its 1 ns timesteps"
+        in message
     )
     assert "give it max_fine_delay_ns, raise its alignment_tolerance_cycles to 0.3" in message
     assert "calibrate the delay to 2 or 3 ns" in message

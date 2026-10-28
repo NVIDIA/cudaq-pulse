@@ -10,11 +10,13 @@
 A kernel counts time in cycles of the device's *program clock*,
 ``Device.clock_ghz``. A controller may run its own clock: at ``f_k`` against
 the program's ``f_p`` it counts ``r = f_k / f_p`` of its cycles per program
-cycle, and starts an operation only every ``grid`` program cycles, where
-``r = a / grid`` in lowest terms. A line's operations start and last whole
-multiples of its controller's grid; a sync of lines meets on the least
-common multiple of theirs. A controller's program counts in its own cycles:
-the compiler converts once, when it exports.
+cycle, and may start operations only every ``cycles_per_timestep`` of them.
+Its lines' timestep (their ``grid``) is the fewest whole program cycles
+that are a whole number of those steps: ``b`` for ``r = a / b`` in lowest
+terms and one cycle per step. A line's operations start and last whole
+timesteps; a sync of lines meets on the least common multiple of theirs. A
+controller's program counts in its own cycles: the compiler converts once,
+when it exports.
 
 Without a shared reference clock, two controllers' starts are each known to
 within one of their own cycles, which budgets across controllers add.
@@ -134,11 +136,13 @@ class ControllerClock:
     clock_ghz: float
     # Own cycles per program cycle.
     ratio: Fraction
+    # Its lines' timestep: program cycles between the instants it can start
+    # an operation.
+    grid: int = 0
 
-    @property
-    def grid(self) -> int:
-        """Program cycles between the instants it can start an operation."""
-        return self.ratio.denominator
+    def __post_init__(self) -> None:
+        if not self.grid:
+            object.__setattr__(self, "grid", self.ratio.denominator)
 
     def own(self, cycles: int) -> int:
         """*cycles* program cycles in its own, rounded up."""
@@ -214,24 +218,36 @@ def plan(
 ) -> ClockPlan | None:
     """The clocks of a program for *limits*' controller, or ``None`` when every
     controller runs at the program clock and no reference clock is given."""
-    own = None if limits is None else limits.clock_ghz
-    if reference_clock_ghz is None and (own is None or own == program_ghz):
+    if limits is None:
+        own, steps = None, 1
+    else:
+        own, steps = limits.clock_ghz, limits.cycles_per_timestep
+    if reference_clock_ghz is None and steps == 1 and (own is None or own == program_ghz):
         return None
-    key = (own, program_ghz, reference_clock_ghz)
+    key = (own, program_ghz, reference_clock_ghz, steps)
     found = _PLANS.get(key)
     if found is None:
-        found = _PLANS[key] = _plan(own, program_ghz, reference_clock_ghz)
+        found = _PLANS[key] = _plan(own, program_ghz, reference_clock_ghz, steps)
     return found
 
 
-_PLANS: dict[tuple[float | None, float, float | None], ClockPlan] = {}
+_PLANS: dict[tuple[float | None, float, float | None, int], ClockPlan] = {}
 
 
-def _plan(own: float | None, program_ghz: float, reference: float | None) -> ClockPlan:
+def timestep(ratio: Fraction, cycles_per_timestep: int) -> int:
+    """A timestep in program cycles: the fewest whole program cycles that
+    are whole steps of *cycles_per_timestep* own cycles, at *ratio* own
+    cycles per program cycle."""
+    own = ratio.denominator * cycles_per_timestep
+    return own // math.gcd(ratio.numerator, own)
+
+
+def _plan(own: float | None, program_ghz: float, reference: float | None, steps: int) -> ClockPlan:
     clock = program_ghz if own is None else own
     if reference is not None:
         _check_reference(reference, {"controller": clock})
-    controller = ControllerClock("controller", clock, clock_ratio(clock, program_ghz))
+    ratio = clock_ratio(clock, program_ghz)
+    controller = ControllerClock("controller", clock, ratio, timestep(ratio, steps))
     return ClockPlan(program_ghz, (controller,), reference)
 
 
@@ -294,7 +310,7 @@ def line_delays(
         if fine_max > 0 and rest > fine_max + _TOLERANCE:
             raise InvalidValueError(
                 f"line_delays_ns: the {role} line of qudit {qudit} is delayed {ns:g} ns, "
-                f"{rest:g} ns past a whole number of its controller's {step_ns:g} ns steps, "
+                f"{rest:g} ns past a whole number of its {step_ns:g} ns timesteps, "
                 f"and the controller adds at most {fine_max:g} ns of fine delay; raise its "
                 f"max_fine_delay_ns to {rest:g}, or calibrate the delay to "
                 f"{whole * step_ns:g} or {(whole + 1) * step_ns:g} ns"
@@ -304,7 +320,7 @@ def line_delays(
             raise InvalidValueError(
                 f"line_delays_ns: the {role} line of qudit {qudit} is delayed {ns:g} ns, "
                 f"{abs(rest):g} ns ({abs(rest) * own_ghz:g} of its controller's cycles) from "
-                f"a whole number of its {step_ns:g} ns steps, and the controller has no fine "
+                f"a whole number of its {step_ns:g} ns timesteps, and the controller has no fine "
                 f"delay; give it max_fine_delay_ns, raise its alignment_tolerance_cycles to "
                 f"{abs(rest) * own_ghz:g}, or calibrate the delay to {low:g} or "
                 f"{low + step_ns:g} ns"
@@ -336,6 +352,7 @@ def off_grid(
     single = plan.controllers[0] if plan.owners is None else None
     controller = plan.controllers[0]
     a, b = controller.ratio.numerator, controller.ratio.denominator
+    grid = controller.grid
     for event in events:
         # A submit's or an answer's "line" is its link.
         line = event["line"] if event["kind"] in _GRIDDED else None
@@ -346,14 +363,15 @@ def off_grid(
                 else plan.controller_of(lines[line]["role"], lines[line]["qudit"])
             )
             a, b = controller.ratio.numerator, controller.ratio.denominator
+            grid = controller.grid
         start = event["start_cycles"]
         duration = event["duration_cycles"]
         if (
-            b > 1
+            grid > 1
             and line is not None
             and start is not None
             and duration is not None
-            and (start % b or duration % b)
+            and (start % grid or duration % grid)
         ):
             found.append(_off_grid(controller, lines[line], line, event["kind"], start, duration))
         if convert and a != b:
@@ -405,25 +423,32 @@ def _off_grid(
     start: int,
     duration: int,
 ) -> str:
-    role, qudit, grid = line["role"], line["qudit"], controller.grid
-    where = (
-        f"the {role} line of qudit {qudit} (line {index}), on the {controller.name} at "
-        f"{_ghz(controller.clock_ghz)}, which starts and times operations every {grid} "
-        "program cycles"
+    return off_timestep(
+        line_name(line["role"], line["qudit"]), controller.grid, kind, start, duration
     )
+
+
+def line_name(role: str, qudit: int) -> str:
+    """``d3`` for the drive line of qudit 3, ``r3`` for its readout line."""
+    return f"{role[0]}{qudit}"
+
+
+def off_timestep(name: str, grid: int, kind: str, start: int, duration: int) -> str:
+    """The violation of a *kind* on line *name* that does not start and last
+    whole timesteps of *grid* program cycles."""
     problems = []
     if duration % grid:
         problems.append(
-            f"lasts {duration} cycles; the nearest valid lengths are "
-            f"{duration // grid * grid} and {-(-duration // grid) * grid} "
-            f"(pulse.round_duration(line, {duration}) rounds onto the grid)"
+            f"{duration} cycles isn't a whole number of timesteps (the {kind} at cycle "
+            f"{start}; pulse.round_duration(line, {duration}) gives "
+            f"{-(-duration // grid) * grid}, or {duration // grid * grid} rounding down)"
         )
     if start % grid:
         problems.append(
-            "starts off the grid; the nearest valid starts are "
-            f"{start // grid * grid} and {-(-start // grid) * grid}"
+            f"the {kind} starts at cycle {start}, which isn't a whole number of timesteps "
+            f"(the nearest starts are {start // grid * grid} and {-(-start // grid) * grid})"
         )
-    return f"{where}: the {kind} at {start} " + ", and ".join(problems)
+    return f"line {name} moves in timesteps of {grid} cycles; " + "; ".join(problems)
 
 
 # The times of each kind of export record, in cycles; lower bounds round down.
@@ -514,14 +539,14 @@ def round_duration(
     line: Any, duration: float, direction: RoundDirection | str = RoundDirection.UP
 ) -> int:
     """*duration*, an int number of program cycles or a time
-    (``10.5 * pulse.ns``), rounded onto *line*'s grid: the nearest length
-    (or start) its controller can time, ``"up"`` (default), ``"down"`` or
-    ``"nearest"``, in program cycles.
+    (``10.5 * pulse.ns``), rounded to whole timesteps of *line*: the nearest
+    length (or start) its controller can time, ``"up"`` (default),
+    ``"down"`` or ``"nearest"``, in program cycles.
 
     Call it in a kernel with a line from ``get_drive_line`` or
     ``get_readout_line``; *duration* must be known while the kernel compiles.
-    A line whose controller runs at the program clock takes every whole
-    cycle, so ``round_duration(line, n)`` is ``ceil(n)``.
+    A line whose timestep is one cycle takes every whole cycle, so
+    ``round_duration(line, n)`` is ``ceil(n)``.
     """
     # In a kernel, a call whose line is a line never runs this; one whose
     # line is not reaches it as a plain call and fails like a bad argument.

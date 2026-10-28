@@ -26,9 +26,9 @@ in ``cudaq_pulse.ops``; inside a ``@pulse.kernel`` its names are used bare.
 A bare int duration is a number of cycles of the device's clock; a time
 with units, ``20 * pulse.ns`` (``pulse.us``, ``pulse.ms``, ``pulse.s``),
 converts to cycles exactly when the kernel compiles, so one kernel runs on
-devices with different clocks. ``pulse.round_duration(line, n)`` rounds a length
-onto the grid of the line's controller, for controllers whose clock is
-slower than the program's.
+devices with different clocks. ``pulse.round_duration(line, n)`` rounds a
+length to whole timesteps of the line, for controllers that start
+operations only every few program cycles.
 Compiler types (``CompileMetrics``, ``ScheduledEvent``, ``MachineModel``,
 ``DEFAULT_PASSES``) are in ``cudaq_pulse.compiler``, target descriptions and
 calibrations in ``cudaq_pulse.targets``. ``pulse.classical`` declares the

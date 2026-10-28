@@ -127,8 +127,8 @@ them from a calibration the kernel closes over.
          gaussian(20 * pulse.ns, ...)    # 20 nanoseconds
 
 - A time that is not a whole number of cycles is an error that names its
-  cycles; ``pulse.round_duration(line, 10.3 * pulse.ns)`` rounds it onto the
-  line's grid instead.
+  cycles; ``pulse.round_duration(line, 10.3 * pulse.ns)`` rounds it to whole
+  :ref:`timesteps <timestep>` of the line instead.
 - A time times a number, a time plus a time, a time over a number and minus
   a time are times. A time plus a number of cycles, and a time times a
   time, are errors. ``0.1 * pulse.us`` is exactly 100 ns: a time holds its

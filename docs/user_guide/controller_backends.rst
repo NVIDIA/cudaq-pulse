@@ -131,15 +131,28 @@ Clocks
 A kernel counts time in cycles of the device's program clock,
 ``Device.clock_ghz`` (a device config's ``"clock_ghz"``, else the
 target's); a duration written as a time converts to them when the kernel
-compiles (see :ref:`durations`). A controller may run its own clock, ``ControllerLimits.clock_ghz``,
-at a whole-cycle ratio of it: at ``a / b`` of the program clock, in lowest
-terms, it starts and times operations only every ``b`` program cycles. The
-scheduler places every operation on its line's grid and meets a sync on
-every synced line's grid; a length that is not a multiple of the grid fails
-to compile with ``ControllerLimitError``, which names the line, its
-controller and the nearest valid lengths. ``pulse.round_duration(line, n)`` in a
-kernel rounds a length onto the line's grid (up; ``direction="down"`` or
-``"nearest"``), so a kernel can be written for any controller clock::
+compiles (see :ref:`durations`). A controller may run its own clock,
+``ControllerLimits.clock_ghz``, at a whole-cycle ratio of it, and may start
+and time operations only every ``ControllerLimits.cycles_per_timestep`` of
+its own cycles (default 1).
+
+.. _timestep:
+
+A line's **timestep** is the shortest time, in program cycles, at whose
+multiples its controller can start and end operations: the fewest whole
+program cycles that are a whole number of the controller's steps. On the
+program clock it is ``cycles_per_timestep``; at ``a / b`` of the program
+clock (in lowest terms), with one cycle per step, it is ``b``.
+
+The scheduler places every operation on whole timesteps of its line and
+meets a sync on a multiple of every synced line's timestep; a length that
+is not a whole number of timesteps fails to compile with
+``ControllerLimitError``, which names the line and the fix:
+``line d3 moves in timesteps of 4 cycles; 22 cycles isn't a whole number of
+timesteps``. ``pulse.round_duration(line, duration)`` in a kernel rounds a
+length to whole timesteps (``direction="up"`` by default, ``"down"`` or
+``"nearest"``, or a ``pulse.RoundDirection``), so a kernel can be written
+for any controller::
 
     drive(line, gaussian(pulse.round_duration(line, 41), 0.1, 10.0), tone)
 
@@ -162,12 +175,12 @@ Cables and electronics delay each line differently. The calibrated delays
 belong to the system, not to kernels: ``MachineModel(line_delays_ns=...)``
 gives them by line, ``("drive", qudit)`` or ``("readout", qudit)``, and
 every operation on a delayed line starts that much later than scheduled.
-Whole steps of the line's grid move its operations, which are then checked
-against the controller's limits like any others; the rest, less than one
-step, is the line's ``fine_delay_ns`` in the export, for a controller that
-can delay a line's output by less than a cycle
+Whole :ref:`timesteps <timestep>` of the line move its operations, which
+are then checked against the controller's limits like any others; the rest,
+less than one timestep, is the line's ``fine_delay_ns`` in the export, for
+a controller that can delay a line's output by less than that
 (``ControllerLimits.max_fine_delay_ns``). A controller without fine delay
-rounds the delay to the nearest step if that is within its
+rounds the delay to the nearest timestep if that is within its
 ``alignment_tolerance_cycles``, and otherwise the program fails to compile
 with an error naming the line, the rest and the fixes::
 

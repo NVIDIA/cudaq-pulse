@@ -131,10 +131,11 @@ class ControllerLimits:
 
     ``clock_ghz``: the controller's clock (``None``: the program clock,
     ``Device.clock_ghz``). It must be a whole-cycle ratio of the program
-    clock: at ``a / b`` of it (in lowest terms) the controller starts and
-    times operations every ``b`` program cycles, so every operation on its
-    lines must start and last a multiple of ``b`` (``pulse.round_duration``
-    rounds a length onto that grid), and its program counts its own cycles.
+    clock; its program counts its own cycles.
+    ``cycles_per_timestep``: the controller starts and times operations only
+    every this many of its own cycles; every operation on its lines must
+    start and last whole timesteps (see "Clocks" in the controller backends
+    guide; ``pulse.round_duration`` rounds a length to them).
     ``issue_cycles`` and ``min_wait_cycles``: two operations on one line start
     exactly ``issue_cycles`` apart, or at least ``issue_cycles + min_wait_cycles``
     apart, because the controller issues one instruction per ``issue_cycles``
@@ -177,6 +178,7 @@ class ControllerLimits:
     """
 
     clock_ghz: float | None = None
+    cycles_per_timestep: int = 1
     issue_cycles: int = 1
     min_wait_cycles: int = 0
     samples_per_cycles: int | None = None
@@ -201,6 +203,11 @@ class ControllerLimits:
     def __post_init__(self) -> None:
         if self.clock_ghz is not None and not self.clock_ghz > 0:
             raise ValueError(f"ControllerLimits.clock_ghz must be positive, got {self.clock_ghz}")
+        steps = self.cycles_per_timestep
+        if isinstance(steps, bool) or not isinstance(steps, int) or steps < 1:
+            raise InvalidValueError(
+                f"ControllerLimits.cycles_per_timestep must be an int of at least 1, got {steps!r}"
+            )
         if self.issue_cycles < 1:
             raise ValueError("ControllerLimits.issue_cycles must be at least 1")
         for name in ("min_wait_cycles", "acquirer_hold_cycles", "feedback_latency_cycles"):
@@ -395,12 +402,12 @@ def _walk(
         else:
             ratio = own.ratio
             lines, events, off_grid, ends = module.controller_events_on(
-                _PARAMETERS, _AMPLITUDES, epochs, ratio.numerator, ratio.denominator
+                _PARAMETERS, _AMPLITUDES, epochs, ratio.numerator, ratio.denominator, own.grid
             )
     if own is not None:
         for index, end in ends:
             events[index]["end_cycles"] = end
-        if waveforms:
+        if waveforms and ratio != 1:
             factor = float(ratio)
             for event in events:
                 tree = event.get("waveform")
@@ -415,11 +422,12 @@ def _walk(
 
 def _native_clock(clocks: _clocks.ClockPlan | None) -> _clocks.ControllerClock | None:
     """The controller whose cycles the native walk counts the events in, when
-    the program has one and it is not on the program clock."""
+    the program has one and it is not on the program clock or times in
+    steps of more than one cycle."""
     if clocks is None or clocks.owners is not None:
         return None
     own = clocks.controllers[0]
-    return None if own.ratio == 1 else own
+    return None if own.ratio == 1 and own.grid == 1 else own
 
 
 def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, Any]:

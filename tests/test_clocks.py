@@ -243,11 +243,13 @@ def test_a_length_off_the_grid_fails_to_compile_naming_the_line_and_the_fix():
     with pytest.raises(ControllerLimitError) as caught:
         pulse.compile(off_grid, machine=_machine(1.0)).lower(Q[3])
     drive, wait = caught.value.violations
-    assert drive.startswith("the drive line of qudit 3 (line 0), on the controller at 1 GHz")
-    assert "every 2 program cycles" in drive
-    assert "the drive at 0 lasts 41 cycles; the nearest valid lengths are 40 and 42" in drive
-    assert "pulse.round_duration(line, 41)" in drive
-    assert "the wait at 42 lasts 5 cycles; the nearest valid lengths are 4 and 6" in wait
+    assert drive == (
+        "line d3 moves in timesteps of 2 cycles; 41 cycles isn't a whole number of "
+        "timesteps (the drive at cycle 0; pulse.round_duration(line, 41) gives 42, or "
+        "40 rounding down)"
+    )
+    assert wait.startswith("line d3 moves in timesteps of 2 cycles; 5 cycles isn't")
+    assert "(the wait at cycle 42; pulse.round_duration(line, 5) gives 6" in wait
     # A controller that starts every cycle takes it.
     assert pulse.compile(off_grid, machine=_machine(2.0)).lower(Q[3]).schedule
 
@@ -255,9 +257,12 @@ def test_a_length_off_the_grid_fails_to_compile_naming_the_line_and_the_fix():
 def test_check_against_a_slower_controller_reports_what_is_off_its_grid():
     lowered = pulse.compile(off_grid).lower(Q[0])
     found = check(lowered, ControllerLimits(clock_ghz=1.0))
-    assert len(found) == 2 and all("every 2 program cycles" in f for f in found)
-    assert "the wait at 41 lasts 5 cycles" in found[1]
-    assert "and starts off the grid; the nearest valid starts are 40 and 42" in found[1]
+    assert len(found) == 2 and all("moves in timesteps of 2 cycles" in f for f in found)
+    assert "(the wait at cycle 41;" in found[1]
+    assert (
+        "the wait starts at cycle 41, which isn't a whole number of timesteps "
+        "(the nearest starts are 40 and 42)"
+    ) in found[1]
     assert check(lowered, ControllerLimits(clock_ghz=4.0)) == []
 
 
@@ -297,9 +302,9 @@ def test_a_wait_from_an_answer_has_its_bounds_on_every_lines_grid():
     with pytest.raises(pulse.CompilationError) as caught:
         pulse.compile(answer_wait_off_grid, machine=machine).lower(Q[0])
     message = str(caught.value)
-    assert message.startswith("wait() on the drive line of qudit 0: its length comes from")
+    assert message.startswith("wait() on line d0: its length comes from")
     assert "every later operation on every line moves by it" in message
-    assert "bounds (6, 402) must be multiples of 4 program cycles" in message
+    assert "move in timesteps of 4 cycles; its bounds (6, 402) aren't whole" in message
     assert "for 6, use 4 or 8; for 402, use 400 or 404" in message
     # On the program clock every bound is on the grid.
     assert pulse.compile(answer_wait_off_grid, machine=MachineModel(links=links)).lower(Q[0])

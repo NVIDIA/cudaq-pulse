@@ -327,7 +327,7 @@ def test_limits_report_clock_tones_memory_and_size():
     # the clock; at an eighth, the readout and the two drives after it do not.
     assert check(lowered, ControllerLimits(clock_ghz=clock / 2)) == []
     found = check(lowered, ControllerLimits(clock_ghz=clock / 8))
-    assert len(found) == 3 and all("every 8 program cycles" in f for f in found)
+    assert len(found) == 3 and all("moves in timesteps of 8 cycles" in f for f in found)
     assert check(lowered, ControllerLimits(tones_per_line=1)) == []
     # Line 0 plays two shapes of 16 cycles, the readout line one of 100,
     # line 2 two of 20.

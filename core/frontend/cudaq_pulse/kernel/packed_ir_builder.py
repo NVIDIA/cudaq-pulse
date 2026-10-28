@@ -1111,11 +1111,10 @@ class PackedIRBuilder:
             return f"{b // grid * grid} or {-(-b // grid) * grid}"
 
         raise CompilationError(
-            f"wait() on the {role} line of qudit {qudit}: its length comes from a "
-            "classical answer, so every later operation on every line moves by it, and "
-            f"its bounds ({lowest}, {top}) must be multiples of {grid} program cycles, "
-            "where all the lines' controllers can start operations; "
-            + "; ".join(f"for {b}, use {nearest(b)}" for b in off)
+            f"wait() on line {role[0]}{qudit}: its length comes from a classical answer, "
+            "so every later operation on every line moves by it, and together the lines "
+            f"move in timesteps of {grid} cycles; its bounds ({lowest}, {top}) aren't "
+            "whole numbers of timesteps: " + "; ".join(f"for {b}, use {nearest(b)}" for b in off)
         )
 
     def _variable_wait(

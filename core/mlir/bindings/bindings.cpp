@@ -1772,14 +1772,16 @@ public:
   /// `controller_events()` for a controller counting `num` of its cycles
   /// every `den` program cycles: start, duration and a variable wait's
   /// longest length in its cycles, rounded up, and its shortest rounded
-  /// down; with the drives, readouts and waits off its grid of `den`, and
-  /// (index, end) for the events whose end, rounded up in its cycles, is not
-  /// its start plus its duration: (lines, events, off grid, ends).
+  /// down; with the drives, readouts and waits off its grid of `grid`
+  /// program cycles, and (index, end) for the events whose end, rounded up
+  /// in its cycles, is not its start plus its duration: (lines, events, off
+  /// grid, ends).
   nb::tuple controller_events_on(nb::handle parameters, nb::handle amplitudes,
-                                 nb::list epochs, int64_t num, int64_t den) {
-    if (num < 1 || den < 1)
-      throw std::invalid_argument("controller_events_on: the ratio must be "
-                                  "positive");
+                                 nb::list epochs, int64_t num, int64_t den,
+                                 int64_t grid) {
+    if (num < 1 || den < 1 || grid < 1)
+      throw std::invalid_argument("controller_events_on: the ratio and grid "
+                                  "must be positive");
     ControllerObjects objects(parameters, amplitudes);
     std::unique_ptr<ControllerWalk> walk;
     std::vector<ControllerLine> lines;
@@ -1788,14 +1790,14 @@ public:
     {
       nb::gil_scoped_release release;
       walk = controllerWalk(lines);
-      ownCycles(*walk, num, den, offGrid, ends);
+      ownCycles(*walk, num, den, grid, offGrid, ends);
     }
     return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs),
                           nb::cast(offGrid), nb::cast(ends));
   }
 
   static void ownCycles(ControllerWalk &walk, int64_t num, int64_t den,
-                        std::vector<OffGridEvent> &offGrid,
+                        int64_t grid, std::vector<OffGridEvent> &offGrid,
                         std::vector<std::tuple<int64_t, int64_t>> &ends) {
     auto own = [&](std::optional<int64_t> &cycles) {
       if (cycles)
@@ -1813,9 +1815,9 @@ public:
       const std::string &kind = std::get<0>(event);
       auto &start = std::get<3>(event);
       auto &duration = std::get<4>(event);
-      if (den > 1 && start && duration &&
+      if (grid > 1 && start && duration &&
           (kind == "drive" || kind == "readout" || kind == "wait") &&
-          (*start % den || *duration % den))
+          (*start % grid || *duration % grid))
         offGrid.emplace_back(static_cast<int64_t>(index), *start, *duration);
       if (num != den) {
         std::optional<int64_t> end;
@@ -4175,9 +4177,10 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "controller.export() gives them")
       .def("controller_events_on", &PulseModule::controller_events_on,
            nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
-           nb::arg("num"), nb::arg("den"),
+           nb::arg("num"), nb::arg("den"), nb::arg("grid"),
            "controller_events() in a controller's own cycles, num of them "
-           "every den program cycles, with the line events off its grid")
+           "every den program cycles, with the line events off its grid of "
+           "grid program cycles")
       .def("with_line_delays", &PulseModule::with_line_delays,
            nb::call_guard<nb::gil_scoped_release>(),
            "This module with other line delays, scheduled again",

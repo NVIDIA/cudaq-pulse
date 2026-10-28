@@ -29,9 +29,9 @@ Clocks
 ------
 
 A device's ``clock_ghz`` is its program clock. A controller with a slower
-clock starts operations only every few program cycles (see
-:doc:`../user_guide/controller_backends`); ``round_duration`` rounds a length
-onto a line's grid in a kernel.
+clock, or several cycles per timestep, starts operations only every few
+program cycles, its lines' :ref:`timestep <timestep>`; ``round_duration``
+rounds a length to whole timesteps in a kernel.
 
 .. autofunction:: cudaq_pulse.round_duration
 
