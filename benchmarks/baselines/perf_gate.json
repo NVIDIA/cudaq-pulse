@@ -1,0 +1,69 @@
+{
+  "format": 1,
+  "environment": {},
+  "cases": {
+    "bind_cached": {
+      "op_count": 8
+    },
+    "bind_new_value": {
+      "op_count": 8
+    },
+    "compile_bell": {
+      "op_count": 15,
+      "packed_bytes": 744
+    },
+    "compile_calls_large": {
+      "op_count": 1025,
+      "packed_bytes": 59872
+    },
+    "compile_calls_small": {
+      "op_count": 12,
+      "packed_bytes": 640
+    },
+    "compile_cnot_cr": {
+      "op_count": 12,
+      "packed_bytes": 616
+    },
+    "compile_dd_cpmg8": {
+      "op_count": 7,
+      "packed_bytes": 296
+    },
+    "compile_qaoa4": {
+      "op_count": 52,
+      "packed_bytes": 2656
+    },
+    "compile_surface_d5": {
+      "op_count": 295,
+      "packed_bytes": 17248
+    },
+    "compile_syndrome": {
+      "op_count": 53,
+      "packed_bytes": 2736
+    },
+    "compile_tone_list": {
+      "op_count": 9,
+      "packed_bytes": 440
+    },
+    "compile_vqe_hea": {
+      "op_count": 58,
+      "packed_bytes": 2872
+    },
+    "export_controller": {
+      "export_bytes": 87003
+    },
+    "export_controller_sampled": {
+      "export_bytes": 49138
+    },
+    "export_emulation": {
+      "export_bytes": 38994
+    },
+    "first_compile": {
+      "op_count": 15,
+      "packed_bytes": 744
+    },
+    "simulate_setup": {},
+    "specialize_amplitude": {},
+    "specialize_wait": {},
+    "submit": {}
+  }
+}
