@@ -612,7 +612,7 @@ class _WaitLengths:
             pass
         for wait in self.waits:
             wait.check(values)
-        for wait in self.waits:
+        for wait in self.waits if self.grid > 1 else ():
             cycles = math.floor(wait.length(values) + 0.5)
             if wait.lowest is not None and cycles % self.grid:
                 lower = cycles // self.grid * self.grid
@@ -658,6 +658,10 @@ class Lowered:
         "classical",
         "runtime_selects",
     )
+
+    # Its controllers' clocks, when one is not the program clock or they
+    # share a reference clock; a call's view reads its generic module's.
+    clocks: _clocks.ClockPlan | None = None
 
     def __init__(
         self,
@@ -857,6 +861,21 @@ class Lowered:
         return f"<Lowered {self.metrics.op_count} ops on {self.target.name}{params}>"
 
 
+class _ClockedLowered(Lowered):
+    """A module with a clock plan. Its own class keeps it off every other
+    module and every call's view, which stay the size they are on one clock."""
+
+    __slots__ = ("clocks",)
+
+
+def _lowered(module: Any, clocks: _clocks.ClockPlan | None, **fields: Any) -> Lowered:
+    if clocks is None:
+        return Lowered(module, **fields)
+    lowered = _ClockedLowered(module, **fields)
+    lowered.clocks = clocks
+    return lowered
+
+
 class _Exposure:
     """How long a call's first use waits beyond when it could start without
     the call (see ``ClassicalCall.exposed_cycles``), in O(log n) per call."""
@@ -931,7 +950,11 @@ def build(
     name = getattr(fn, "__name__", "kernel")
     t0 = time.perf_counter()
     machine = options.machine
-    clocks = _clocks.plan(machine.controller, target.clock_ghz, machine.reference_clock_ghz)
+    clocks = (
+        None
+        if machine.controller is None and machine.reference_clock_ghz is None
+        else _clocks.plan(machine.controller, target.clock_ghz, machine.reference_clock_ghz)
+    )
     builder = PackedIRBuilder(
         name=name,
         clock_ghz=target.clock_ghz,
@@ -1020,8 +1043,9 @@ def build(
     metrics.schedule_ms = (time.perf_counter() - t0) * 1000
     metrics.total_ms = metrics.trace_ms + metrics.ffi_ms + metrics.passes_ms + metrics.schedule_ms
 
-    lowered = Lowered(
+    lowered = _lowered(
         module,
+        clocks,
         target=target,
         metrics=metrics,
         parameters=parameters,

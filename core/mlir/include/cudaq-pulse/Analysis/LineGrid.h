@@ -10,9 +10,11 @@
 // controller's own clock can start an operation at.
 //
 // A module whose lines all start on every program cycle has no grid
-// attributes. Otherwise `pulse.line_grid` (i64) is the grid of every line,
-// and `pulse.drive_line_grid` / `pulse.readout_line_grid` (i64 arrays indexed
-// by qudit, 0 for the default) override it per line.
+// attributes, and reading its grid is one attribute lookup. Otherwise
+// `pulse.line_grid` (i64) is the grid of every line, and
+// `pulse.drive_line_grid` / `pulse.readout_line_grid` (i64 arrays indexed by
+// qudit, 0 for the default) override it per line; they are read only beside
+// `pulse.line_grid`.
 //
 // Include after the Pulse dialect op and type headers and LineTrace.h.
 
@@ -30,10 +32,12 @@ public:
   LineGrid() = default;
 
   explicit LineGrid(mlir::ModuleOp module) {
-    if (!module)
+    auto attr =
+        module ? module->getAttrOfType<mlir::IntegerAttr>("pulse.line_grid")
+               : mlir::IntegerAttr();
+    if (!attr)
       return;
-    if (auto attr = module->getAttrOfType<mlir::IntegerAttr>("pulse.line_grid"))
-      fallback = std::max<int64_t>(1, attr.getInt());
+    fallback = std::max<int64_t>(1, attr.getInt());
     drive =
         module->getAttrOfType<mlir::DenseI64ArrayAttr>("pulse.drive_line_grid");
     readout = module->getAttrOfType<mlir::DenseI64ArrayAttr>(

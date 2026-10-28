@@ -113,6 +113,11 @@ def test_cycles_on_needs_a_line_and_a_known_length():
         drive(d, square(pulse.cycles_on(t, 4), 0.1), t)
 
     @pulse.kernel
+    def a_number(q):
+        d, t = get_drive_line(q)
+        drive(d, square(pulse.cycles_on(3, 4), 0.1), t)
+
+    @pulse.kernel
     def bad_mode(q):
         d, t = get_drive_line(q)
         drive(d, square(pulse.cycles_on(d, 4, "sideways"), 0.1), t)
@@ -123,9 +128,11 @@ def test_cycles_on_needs_a_line_and_a_known_length():
     assert _durations(lowered) == [16]
     with pytest.raises(pulse.CompilationError, match="takes a line"):
         pulse.compile(not_a_line).lower(Q[0])
+    with pytest.raises(pulse.CompilationError, match="takes a line"):
+        pulse.compile(a_number).lower(Q[0])
     with pytest.raises(pulse.CompilationError, match="up, down, nearest"):
         pulse.compile(bad_mode).lower(Q[0])
-    with pytest.raises(RuntimeError, match="inside a @cudaq_pulse.kernel"):
+    with pytest.raises(TypeError, match="inside a @cudaq_pulse.kernel"):
         pulse.cycles_on(None, 4)
 
 

@@ -2361,9 +2361,6 @@ class PulseIREmitter:
                 call_args = _bind_positional(callable_val, call_args, kwargs)
             self._push_pulse_results(op_name, call_args)
             return
-        if callable_val is _CYCLES_ON:
-            self.stack.append(_cycles_on(self.b, call_args, kwargs))
-            return
 
         # Calls to classical functions: fn.submit(...) and future.result().
         if callable_val.__class__ is types.MethodType:
@@ -2405,6 +2402,9 @@ class PulseIREmitter:
         if isinstance(callable_val, types.FunctionType) and (
             _takes_ir(call_args, kwargs) or _uses_pulse_ops(callable_val)
         ):
+            if callable_val is _CYCLES_ON:
+                self.stack.append(_cycles_on(self.b, call_args, kwargs))
+                return
             self._inline_helper(callable_val, call_args, kwargs)
             return
         # A method of a helper object is inlined the same way, with its object

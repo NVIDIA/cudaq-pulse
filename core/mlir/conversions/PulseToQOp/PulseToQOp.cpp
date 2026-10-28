@@ -327,7 +327,8 @@ getWaveformCallbacks(const pulse::Occurrence &occurrence, double clockGHz,
       callbacks.push_back(std::move(*callback));
       continue;
     }
-    const int64_t step = occurrence.durationCycles % grid == 0 ? grid : 1;
+    const int64_t step =
+        grid > 1 && occurrence.durationCycles % grid == 0 ? grid : 1;
     const auto count = occurrence.durationCycles / step;
     SmallVector<double> real, imaginary;
     for (int64_t k = 0; k < count; ++k) {

@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any
 
-from ._errors import InvalidValueError
+from ._errors import InvalidTypeError, InvalidValueError
 
 if TYPE_CHECKING:
     from .controller import ControllerLimits
@@ -338,7 +338,12 @@ def cycles_on(line: Any, n: float, rounding: Rounding | str = Rounding.UP) -> in
     whose controller runs at the program clock takes every whole cycle, so
     ``cycles_on(line, n)`` is ``ceil(n)``.
     """
-    raise RuntimeError("cycles_on() must be called inside a @cudaq_pulse.kernel function")
+    # In a kernel, a call whose line is a line never runs this; one whose
+    # line is not reaches it as a plain call and fails like a bad argument.
+    raise InvalidTypeError(
+        "cycles_on() takes a line from get_drive_line or get_readout_line, inside a "
+        f"@cudaq_pulse.kernel function; got {line!r}"
+    )
 
 
 def round_on_grid(n: Any, grid: int, rounding: Rounding | str) -> int:
