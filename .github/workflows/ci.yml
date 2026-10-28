@@ -167,7 +167,9 @@ jobs:
   # informational (the test job's perf guard). The counts also depend on the
   # toolchain, so everything is pinned: the image by digest, its packages by
   # an Ubuntu archive snapshot, uv and Python by version. Changing a pin
-  # changes the counts: take a new baseline in the same pull request.
+  # changes the counts: take a new baseline in the same pull request. While
+  # the baseline says "bootstrap": true and has no counts, the counts are
+  # reported, not gated (CONTRIBUTING.md, The perf gate).
   perf-gate:
     name: perf gate (instructions and sizes, linux-x86_64)
     if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') }}

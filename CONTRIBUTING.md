@@ -192,7 +192,22 @@ measurements the baseline:
 gh run download <run-id> -R <owner>/<repo> -n perf-gate-baseline -D benchmarks/baselines
 ```
 
-Commit the updated `perf_gate.json` and say why in the pull request. The
+Commit the updated `perf_gate.json` and say why in the pull request.
+
+**Bootstrap mode.** A baseline that says `"bootstrap": true` and holds no
+instruction counts is in bootstrap mode. The job still measures every case
+twice and reports the counts and their spread, but they don't fail the run;
+program sizes block as always. The summary says so in a banner, together
+with the command above. Taking a run's measurements as the baseline removes
+the field, and `"bootstrap": true` next to any instruction count is an
+error (in the job and in `tests/test_perf_gate.py`), so the gate can't stay
+in bootstrap mode once it has counts. Without the field, a case with no
+count fails. If the two runs of a bootstrap differ at all for some case, the
+summary flags it: give that case its own `"tolerance"` before committing
+the baseline. A new case added later needs its count taken the same way,
+from the run that fails on it.
+
+The
 summary lists every case with its baseline, its count in this run, the
 change, and the spread between two identical runs made in the same job. A
 case whose own numbers move more than the default allows can carry a

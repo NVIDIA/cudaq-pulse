@@ -154,7 +154,45 @@ def test_a_baseline_without_instruction_counts_keeps_the_previous_ones():
     assert taken["cases"]["c"]["estimated_cycles"] == 3_000_000
 
 
+def test_in_bootstrap_mode_a_case_without_a_count_is_reported_and_passes():
+    baseline = {"bootstrap": True, "cases": {"c": {"op_count": 15}}}
+    row = _verdict([1_000_000, 1_000_000], baseline)
+    assert row.verdict == "bootstrap"
+    assert row.measured == 1_000_000 and row.spread == 0
+    assert "bootstrap" not in gate.FAILING
+
+
+def test_in_bootstrap_mode_sizes_still_block():
+    baseline = {"bootstrap": True, "cases": {"c": {"op_count": 15}}}
+    assert _verdict([1_000_000], baseline, sizes={"op_count": 16}).verdict == "sizes"
+
+
+def test_bootstrap_mode_is_allowed_only_while_no_case_has_a_count():
+    assert gate.bootstrap_error({"bootstrap": True, "cases": {"c": {"op_count": 1}}}) is None
+    assert gate.bootstrap_error(_baseline()) is None
+    error = gate.bootstrap_error({"bootstrap": True, **_baseline()})
+    assert error is not None and "remove" in error
+    assert gate.bootstrap_error({"bootstrap": "yes", "cases": {}}) is not None
+
+
+def test_taking_a_measured_run_as_the_baseline_ends_bootstrap_mode():
+    previous = {"bootstrap": True, "environment": {}, "cases": {"c": {"op_count": 15}}}
+    runs = {"c": gate.Measured([1_000_000.0, 1_000_000.0], [2.0, 2.0])}
+    taken = gate.as_baseline({"python": "3.12.15"}, {"c": {"op_count": 15}}, runs, previous)
+    assert "bootstrap" not in taken
+    assert gate.bootstrap_error(taken) is None
+    sizes_only = gate.as_baseline({}, {"c": {"op_count": 16}}, None, previous)
+    assert sizes_only["bootstrap"] is True
+
+
 BASELINE = json.loads(gate.BASELINE.read_text())
+
+
+def test_the_checked_in_baseline_is_bootstrapping_or_has_every_count():
+    assert gate.bootstrap_error(BASELINE) is None
+    if BASELINE.get("bootstrap") is not True:
+        missing = [n for n, c in BASELINE["cases"].items() if "instructions" not in c]
+        assert not missing, f"no instruction count for {missing}"
 
 
 def test_the_program_sizes_match_the_baseline(tmp_path):

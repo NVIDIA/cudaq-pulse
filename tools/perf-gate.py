@@ -25,6 +25,12 @@ The instruction counts repeat exactly only in the environment they were
 measured in: the baseline holds the one CI measures in (``environment``),
 and a difference is reported with the comparison.
 
+A baseline with ``"bootstrap": true`` and no instruction counts is in
+bootstrap mode: the counts are measured and reported but do not fail the
+run (sizes still do). Its measurements, taken as the baseline, drop the
+field; the field next to any count is an error, so the gate cannot stay in
+bootstrap mode once it has counts.
+
 Usage:
     python tools/perf-gate.py                 # compare with the baseline
     python tools/perf-gate.py --update        # rewrite the baseline from this run
@@ -255,8 +261,10 @@ def compare(
     """One row per case of the baseline or of this run, with its verdict:
     ``ok``, ``faster`` (within ``IMPROVEMENT``) or a failure: ``slower``,
     ``improved`` (update the baseline), ``sizes``, ``new``, ``removed``,
-    ``no baseline``."""
+    ``no baseline``. In bootstrap mode a case without an instruction count
+    is ``bootstrap``, which passes."""
     cases = baseline.get("cases", {})
+    bootstrap = baseline.get("bootstrap") is True
     rows = []
     for name in sorted(set(cases) | set(sizes)):
         expected = cases.get(name)
@@ -296,7 +304,8 @@ def compare(
                 row.spread = high / low - 1 if low else 0.0
                 row.cycles = min(m.estimated_cycles)
             if row.baseline is None:
-                row.verdict = "no baseline"
+                if row.verdict == "ok":
+                    row.verdict = "bootstrap" if bootstrap else "no baseline"
             elif row.verdict == "ok" and row.delta is not None:
                 if row.delta > tolerance:
                     row.verdict = "slower"
@@ -311,8 +320,33 @@ def compare(
 FAILING = {"slower", "improved", "sizes", "new", "removed", "no baseline"}
 
 
+def bootstrap_error(baseline: dict[str, Any]) -> str | None:
+    """Why the baseline's ``bootstrap`` field is not allowed, or None.
+
+    Bootstrap mode (instruction counts measured and reported, not gated)
+    is allowed only while no case has a count: taking a CI run's
+    measurements as the baseline drops the field, so the gate cannot stay
+    in bootstrap mode once it has counts."""
+    flag = baseline.get("bootstrap", False)
+    if flag not in (True, False):
+        return f"bootstrap must be true or false, not {flag!r}"
+    counted = sorted(n for n, c in baseline.get("cases", {}).items() if "instructions" in c)
+    if flag and counted:
+        return (
+            "bootstrap is true but the baseline has instruction counts "
+            f"({', '.join(counted[:3])}{', ...' if len(counted) > 3 else ''}); "
+            'remove "bootstrap" so the counts are gated'
+        )
+    return None
+
+
 def _pct(x: float | None) -> str:
     return "" if x is None else f"{100 * x:+.2f}%"
+
+
+def _spread(x: float) -> str:
+    # Any difference at all shows: identical runs should not differ.
+    return "0" if x == 0 else f"{100 * x:.3g}%"
 
 
 def _num(x: float | None) -> str:
@@ -336,7 +370,7 @@ def render(rows: list[Row], markdown: bool) -> str:
             _num(r.baseline),
             _num(r.measured),
             _pct(r.delta),
-            "" if r.spread is None else f"{100 * r.spread:.3f}%",
+            "" if r.spread is None else _spread(r.spread),
             _num(r.cycles),
             r.sizes,
             r.verdict,
@@ -382,8 +416,14 @@ def as_baseline(
         if "tolerance" in old.get(name, {}):
             entry["tolerance"] = old[name]["tolerance"]
         cases[name] = entry
-    env = environment if instructions is not None else previous.get("environment", {})
-    return {"format": FORMAT, "environment": env, "cases": cases}
+    if instructions is not None:
+        return {"format": FORMAT, "environment": environment, "cases": cases}
+    out: dict[str, Any] = {"format": FORMAT}
+    if previous.get("bootstrap") is True:
+        out["bootstrap"] = True
+    out["environment"] = previous.get("environment", {})
+    out["cases"] = cases
+    return out
 
 
 def _update_command() -> str:
@@ -463,12 +503,38 @@ def main() -> int:
         print("\nThe environment differs from the baseline's, so counts may differ with it:")
         for line in env_diff:
             print(f"  {line}")
-    spreads = [r for r in rows if r.spread is not None and r.spread > r.tolerance / 4]
-    for r in spreads:
-        print(
-            f"::warning title=Perf gate::{r.name} varied by {100 * r.spread:.3f}% between "
-            "identical runs"
+    bootstrapped = [r for r in rows if r.verdict == "bootstrap"]
+    # A case taken into the baseline must repeat exactly; once gated, a
+    # spread of a quarter of its tolerance is worth a warning.
+    unstable = [
+        r
+        for r in rows
+        if r.spread is not None
+        and (r.spread > 0 if r.verdict == "bootstrap" else r.spread > r.tolerance / 4)
+    ]
+    spread_lines = [
+        f"{r.name} varied by {_spread(r.spread)} ({r.spread * (r.measured or 0):.3g} "
+        f"instructions per repetition) between {args.processes} identical runs"
+        + (
+            ': give it its own "tolerance" in the baseline before it blocks'
+            if r.verdict == "bootstrap"
+            else ""
         )
+        for r in unstable
+    ]
+    for line in spread_lines:
+        print(f"::warning title=Perf gate::{line}")
+    if bootstrapped:
+        print(
+            "\nBOOTSTRAP MODE: the baseline has no instruction counts for "
+            f"{len(bootstrapped)} case(s); they are measured and reported, not gated."
+            f"\nTo gate them, take this run as the baseline and commit it:\n  {_update_command()}"
+        )
+        if os.environ.get("GITHUB_ACTIONS"):
+            print(
+                "::warning title=Perf gate::bootstrap mode: instruction counts are not gated "
+                "until this run's perf-gate-baseline artifact is committed"
+            )
 
     failures = [r for r in rows if r.verdict in FAILING]
     if args.update:
@@ -489,11 +555,33 @@ def main() -> int:
             "no baseline": "no instruction count in the baseline",
         }[r.verdict]
         lines.append(f"{r.name}: {reason}")
-        if os.environ.get("GITHUB_ACTIONS"):
-            print(f"::error title=Perf gate::{r.name}: {reason}")
+    invalid = bootstrap_error(baseline)
+    if invalid:
+        lines.append(f"{args.baseline.name}: {invalid}")
+    if os.environ.get("GITHUB_ACTIONS"):
+        for line in lines:
+            print(f"::error title=Perf gate::{line}")
     if args.summary:
         with args.summary.open("a") as f:
             f.write("## Perf gate: instructions and program sizes\n\n")
+            if bootstrapped:
+                f.write(
+                    "> [!WARNING]\n"
+                    f"> **Bootstrap mode.** {len(bootstrapped)} case(s) have no instruction "
+                    "count in the baseline: they are measured and reported below but not "
+                    "gated. Program sizes are gated as always. To make the gate blocking, "
+                    "take this run's measurements as the baseline and commit "
+                    "`benchmarks/baselines/perf_gate.json` (this drops `bootstrap`):\n"
+                    ">\n"
+                    f"> ```\n> {_update_command()}\n> ```\n\n"
+                )
+            if spread_lines:
+                f.write(
+                    "> [!CAUTION]\n"
+                    "> **Identical runs differed.** "
+                    + " ".join(f"{line}." for line in spread_lines)
+                    + "\n\n"
+                )
             f.write(render(rows, markdown=True) + "\n\n")
             f.write(
                 f"Fails above +{100 * REGRESSION:.1f}% or below -{100 * IMPROVEMENT:.1f}% "
@@ -504,19 +592,22 @@ def main() -> int:
                 f.write(f"{note}\n\n")
             if env_diff:
                 f.write("Environment differs from the baseline's: " + "; ".join(env_diff) + "\n\n")
-            if failures:
+            if lines:
                 f.write("**Failed:**\n\n" + "".join(f"- {line}\n" for line in lines) + "\n")
                 f.write(
                     "If the change is intended, take this run as the baseline and commit it:\n\n"
                     f"```\n{_update_command()}\n```\n"
                 )
-    if failures:
+    if lines:
         print("\nPerf gate failed:")
         for line in lines:
             print(f"  {line}")
         print(f"\nIf the change is intended, update the baseline:\n  {_update_command()}")
         return 1
-    print("\nPerf gate passed.")
+    if bootstrapped:
+        print("\nPerf gate passed in bootstrap mode: instruction counts were not gated.")
+    else:
+        print("\nPerf gate passed.")
     return 0
 
 
