@@ -8,13 +8,14 @@
 
 name: ci
 
+# A pull request reaches the GPU runners only as a pull-request/<N> branch:
+# a copy of the pull request that is pushed here after a maintainer has
+# vetted its commit (CONTRIBUTING.md, GPU CI). Those branches run the gpu
+# job alone; the pull_request event runs every job but gpu.
 on:
   push:
-    branches: [main, staging]
+    branches: [main, staging, "pull-request/[0-9]+"]
   pull_request:
-  # Nightly GPU build and tests, when the GPU_RUNNER variable names a runner.
-  schedule:
-    - cron: "41 6 * * *"
   workflow_dispatch:
     inputs:
       gpu:
@@ -23,7 +24,7 @@ on:
         default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'nightly' || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -32,7 +33,7 @@ permissions:
 jobs:
   lint:
     name: lint (pre-commit, zizmor)
-    if: github.event_name != 'schedule'
+    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -56,7 +57,7 @@ jobs:
 
   test:
     name: test (${{ matrix.platform }}, py${{ matrix.python }})
-    if: github.event_name != 'schedule'
+    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -163,7 +164,7 @@ jobs:
   # environment and no configuration; a typo is still reported.
   editor-types:
     name: editor types (pyright, no configuration)
-    if: github.event_name != 'schedule'
+    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') }}
     needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -197,7 +198,7 @@ jobs:
   # stay GIL-only until their free-threaded layout is chosen.
   test-free-threaded:
     name: test (linux-x86_64, py3.14t)
-    if: github.event_name != 'schedule'
+    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -233,52 +234,15 @@ jobs:
       - name: check-pulse (lit + pytest)
         run: uv run --no-sync cmake --build build/dev --target check-pulse
 
-  # Requires a runner with an NVIDIA GPU, a driver, and the CUDA 12.9 toolkit,
-  # selected by the GPU_RUNNER repository variable (a label, or a JSON list of
-  # labels; see wheels.yml). Runs nightly once the variable is set, and on
-  # manual runs with `gpu`; pull requests never reach it. Fails if any of
-  # those is missing; it never skips. Releases are gated by gpu-install-test
-  # in wheels.yml.
+  # A source build with GPU support and the GPU tests (gpu-tests.yml), in the
+  # CUDA 12.9 development image on a GPU runner, once the GPU_RUNNERS
+  # repository variable names the GPU runners: on pushes to main, staging and
+  # pull-request/<N>, and on manual runs with `gpu`. The CPU suites run in
+  # the jobs above. Releases are gated by gpu-install-test in wheels.yml.
   gpu:
     if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.gpu) ||
-      (github.event_name == 'schedule' && vars.GPU_RUNNER != '')
-    runs-on: ${{ startsWith(vars.GPU_RUNNER, '[') && fromJSON(vars.GPU_RUNNER) || vars.GPU_RUNNER }}
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          python-version: "3.12"
-      - run: uv sync --locked
-      - uses: ./.github/actions/mlir-toolchain
-
-      - name: Require a GPU and the CUDA toolkit
-        run: |
-          nvidia-smi
-          nvcc --version
-
-      # The toolkit supplies the CUDA 12 runtime headers (crt/host_defines.h
-      # among them); the [cu12] wheels in site-packages supply cuDensityMat.
-      - name: Install the [cu12] runtime libraries
-        run: |
-          uv pip install -r pyproject.toml --extra cu12
-          site="$(.venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-          echo "CUDAQ_PULSE_CUDA12_ROOT=/usr/local/cuda-12.9;$site" >> "$GITHUB_ENV"
-
-      - name: Configure
-        run: >
-          uv run --no-sync cmake -S . -B build/gpu -G Ninja
-          -DCUDAQ_PULSE_BUILD_TESTS=ON
-          -DCUDAQ_PULSE_ENABLE_GPU=ON
-          -DCUDAQ_PULSE_CUDA12_ROOT="$CUDAQ_PULSE_CUDA12_ROOT"
-          -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
-
-      - name: check-pulse
-        run: uv run --no-sync cmake --build build/gpu --target check-pulse
-
-      - name: check-pulse-gpu
-        run: uv run --no-sync cmake --build build/gpu --target check-pulse-gpu
+      vars.GPU_RUNNERS != '' &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.gpu))
+    uses: ./.github/workflows/gpu-tests.yml
+    with:
+      source: build
