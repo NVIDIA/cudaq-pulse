@@ -104,7 +104,13 @@ behavior may change in any 0.x release.
   while tracing, so `sync(*lines)` synchronizes a list of lines built in a
   loop. Helpers called from a kernel may take keyword-only, `*args` and
   `**kwargs` parameters; methods of helper objects, `functools.partial`
-  objects and decorated helpers that use pulse ops are inlined too. Lines
+  objects and decorated helpers that use pulse ops are inlined too. A
+  method is inlined like a plain helper, with its object as `self` (its
+  class as `cls`) and the globals of the module that defines it, also when
+  it reaches a pulse op only through `self`, `cls` or an object `self`
+  holds (`self.wf()`, `self.gates.x90(...)`), when it is inherited, a
+  `staticmethod` or `classmethod`, stored as a bound method, or an
+  object's `__call__`. Lines
   and tones may be kept in any container, such as a list of `(line, tone)`
   pairs or a dict, and lists of them support `pop`, `insert`, `extend`,
   `remove` and `del xs[i]`. `sync()` takes lists and tuples of lines, as

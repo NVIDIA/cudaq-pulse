@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import builtins as _builtins_mod
 import difflib
+import dis
 import functools
 import inspect
 import linecache
@@ -168,26 +169,112 @@ def _load_pulse_functions() -> None:
     _PULSE_FUNCTIONS.update(loaded)
 
 
-def _uses_pulse_ops(fn: types.FunctionType, seen: set[int] | None = None) -> bool:
-    """Whether *fn* directly or transitively calls the pulse DSL."""
+def _uses_pulse_ops(
+    fn: types.FunctionType,
+    seen: set[int] | None = None,
+    owner: Any = None,
+    strict: bool = False,
+) -> bool:
+    """Whether *fn* directly or transitively calls the pulse DSL.
+
+    *owner* is the object a method is bound to: its instance, or its class
+    for a classmethod. The attributes the method reads are looked up on it,
+    and on the objects those hold, so a method that calls the DSL through
+    ``self.other()``, ``cls.other()`` or ``self.gates.other()`` counts too.
+    Those methods, and *fn* when *strict*, count a DSL name only where they
+    load it as a global: ``self.lock.wait()`` is not ``wait``.
+    """
     seen = seen or set()
     if id(fn) in seen:
         return False
     seen.add(id(fn))
 
     closures = _extract_closures(fn) if fn.__closure__ else {}
+    names = _global_names(fn.__code__) if strict else fn.__code__.co_names
     # A helper that submits to a classical function emits IR when traced.
-    if "submit" in fn.__code__.co_names:
+    if "submit" in names:
         return True
-    for name in (*fn.__code__.co_names, *fn.__code__.co_freevars):
+    for name in (*names, *fn.__code__.co_freevars):
         if name in _PULSE_OP_NAMES:
             return True
         value = closures.get(name, fn.__globals__.get(name))
         if getattr(value, "__pulse_kernel_fn__", None) is not None:
             return True
-        if isinstance(value, types.FunctionType) and _uses_pulse_ops(value, seen):
+        if isinstance(value, types.FunctionType) and _uses_pulse_ops(value, seen, strict=strict):
             return True
+    if owner is None:
+        return False
+    owners = [owner]
+    for holder in owners:
+        for name in fn.__code__.co_names:
+            attr = _static_attr(holder, name)
+            if attr is _MISSING:
+                continue
+            if getattr(attr, "__pulse_kernel_fn__", None) is not None:
+                return True
+            if isinstance(attr, types.FunctionType):
+                if _uses_pulse_ops(attr, seen, holder, strict=True):
+                    return True
+            elif _may_own_helpers(attr) and all(attr is not o for o in owners):
+                owners.append(attr)
     return False
+
+
+# Shared by threads without a lock, as the decode cache is.
+_GLOBAL_NAMES: dict[int, tuple[types.CodeType, frozenset[str]]] = {}
+
+
+def _global_names(code: types.CodeType) -> frozenset[str]:
+    """The names *code* loads as globals, not those it reads as attributes."""
+    hit = _GLOBAL_NAMES.get(id(code))
+    if hit is not None and hit[0] is code:
+        return hit[1]
+    names = frozenset(
+        i.argval for i in dis.get_instructions(code) if i.opname in ("LOAD_GLOBAL", "LOAD_NAME")
+    )
+    if len(_GLOBAL_NAMES) >= 4096:
+        _GLOBAL_NAMES.clear()
+    _GLOBAL_NAMES[id(code)] = (code, names)
+    return names
+
+
+# Values whose attributes are never pulse helpers.
+_PLAIN_VALUES: tuple[type, ...] = (
+    int,
+    float,
+    complex,
+    str,
+    bytes,
+    bool,
+    list,
+    tuple,
+    dict,
+    set,
+    types.ModuleType,
+)
+
+
+def _may_own_helpers(value: Any) -> bool:
+    """Whether *value* is a class or object whose methods may be pulse
+    helpers: anything but builtin values and modules."""
+    if value is None or isinstance(value, _PLAIN_VALUES):
+        return False
+    cls = value if isinstance(value, type) else value.__class__
+    return cls.__module__ != "builtins"
+
+
+def _static_attr(holder: Any, name: str) -> Any:
+    """``holder.name`` without running descriptors or ``__getattr__``: the
+    function a method, staticmethod, classmethod or property wraps."""
+    try:
+        attr = inspect.getattr_static(holder, name)
+    except AttributeError:
+        return _MISSING
+    if isinstance(attr, (staticmethod, classmethod)):
+        return attr.__func__
+    if isinstance(attr, property):
+        return attr.fget
+    return attr
 
 
 def _takes_ir(args: Sequence[Any], kwargs: dict[str, Any] | None) -> bool:
@@ -915,6 +1002,21 @@ class _Lines:
 # arguments; any other C-level callable (``random.random``, ``time.time``)
 # makes the trace impure, so its cached compilation is never reused.
 _PURE_MODULES = frozenset({"math", "cmath", "builtins", "operator", "functools", "itertools"})
+
+# Callables that are not objects with a Python __call__.
+_NATIVE_CALLABLES = frozenset(
+    {
+        types.BuiltinFunctionType,
+        types.MethodWrapperType,
+        types.WrapperDescriptorType,
+        types.MethodDescriptorType,
+        types.ClassMethodDescriptorType,
+        types.FunctionType,
+        types.MethodType,
+        functools.partial,
+        type,
+    }
+)
 
 
 def _is_pure_host_call(fn: Any) -> bool:
@@ -2257,11 +2359,15 @@ class PulseIREmitter:
         ):
             self._inline_helper(callable_val, call_args, kwargs)
             return
-        # A method of a helper object is inlined the same way, with its object.
+        # A method of a helper object is inlined the same way, with its object
+        # (its class for a classmethod) as the first argument.
         if (
             callable_val.__class__ is types.MethodType
             and callable_val.__func__.__class__ is types.FunctionType
-            and (_takes_ir(call_args, kwargs) or _uses_pulse_ops(callable_val.__func__))
+            and (
+                _takes_ir(call_args, kwargs)
+                or _uses_pulse_ops(callable_val.__func__, owner=callable_val.__self__)
+            )
         ):
             self._inline_helper(callable_val.__func__, [callable_val.__self__, *call_args], kwargs)
             return
@@ -2277,6 +2383,20 @@ class PulseIREmitter:
         if callable_val.__class__ is _GenExpr:
             self._run_genexpr(callable_val.code, call_args)
             return
+        # An object whose class defines __call__ in Python is a method call.
+        if callable_val.__class__ not in _NATIVE_CALLABLES:
+            call = getattr(callable_val.__class__, "__call__", None)
+            if (
+                call.__class__ is types.FunctionType
+                and not isinstance(callable_val, type)
+                and (
+                    _takes_ir(call_args, kwargs)
+                    or _uses_pulse_ops(call, owner=callable_val, strict=True)
+                )
+            ):
+                self._inline_helper(call, [callable_val, *call_args], kwargs)
+                return
+
         # Regular Python callable (int, float, len, abs, math.sin, etc.)
         # int()/float() on a symbolic value create an explicit IR cast.
         if callable(callable_val):
