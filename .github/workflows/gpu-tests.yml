@@ -1,0 +1,129 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+
+name: gpu-tests
+
+# The GPU tests on the GPU runners, called by wheels.yml (the run's wheels,
+# installed in images without a CUDA toolkit) and by ci.yml (a source build
+# in the CUDA development image). tools/ci/gpu-matrix.py lists the rows; the
+# GPU_RUNNERS repository variable names their runners. Callers skip this
+# workflow while GPU_RUNNERS is unset. It uses no secrets, and its token can
+# only read the repository (see CONTRIBUTING.md, GPU CI).
+
+on:
+  workflow_call:
+    inputs:
+      source:
+        description: "`wheels`: test the calling run's wheels; `build`: build from source"
+        type: string
+        required: true
+      scope:
+        description: "`quick`: the rows for every push; `full`: every row"
+        type: string
+        default: quick
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/ci
+      - id: plan
+        env:
+          GPU_RUNNERS: ${{ vars.GPU_RUNNERS }}
+          SOURCE: ${{ inputs.source }}
+          SCOPE: ${{ inputs.scope }}
+        run: python3 tools/ci/gpu-matrix.py --source "$SOURCE" --scope "$SCOPE" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: ${{ matrix.name }}
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    # The GPU runners hand the job's GPU to its container through
+    # NVIDIA_VISIBLE_DEVICES; the container gets the driver and nothing else.
+    # The images are pinned by digest in tools/ci/gpu-matrix.py, and
+    # tests/test_release_tools.py checks it.
+    container:
+      image: ${{ matrix.image }} # zizmor: ignore[unpinned-images]
+      env:
+        NVIDIA_VISIBLE_DEVICES: ${{ env.NVIDIA_VISIBLE_DEVICES }}
+        NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    steps:
+      - name: Install the image's missing packages
+        env:
+          PACKAGES: ${{ matrix.packages }}
+        run: |
+          read -ra packages <<< "$PACKAGES"
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The source build reads its version from the git tags.
+          fetch-depth: ${{ inputs.source == 'wheels' && 1 || 0 }}
+          persist-credentials: false
+
+      # The wheels: one extra per row, in an image with only the driver.
+      - if: inputs.source == 'wheels'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels-${{ matrix.platform }}
+          path: wheelhouse
+      - name: Install [${{ matrix.extra }}] from the wheels and run the GPU tests
+        if: inputs.source == 'wheels'
+        env:
+          EXTRA: ${{ matrix.extra }}
+          FLAGS: ${{ matrix.flags }}
+        run: |
+          read -ra flags <<< "$FLAGS"
+          bash tools/ci/install-test.sh --python python3 --driver-only "${flags[@]}" "gpu-$EXTRA"
+
+      # The source build: the image's toolkit supplies the CUDA headers, the
+      # extra's wheels in the environment supply cuDensityMat.
+      - if: inputs.source == 'build'
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+      - if: inputs.source == 'build'
+        run: uv sync --locked
+      - if: inputs.source == 'build'
+        uses: ./.github/actions/mlir-toolchain
+      - name: Require a GPU and the CUDA toolkit
+        if: inputs.source == 'build'
+        run: |
+          nvidia-smi
+          nvcc --version
+      - name: Build with GPU support and run the GPU tests
+        if: inputs.source == 'build'
+        env:
+          EXTRA: ${{ matrix.extra }}
+        run: |
+          major="${EXTRA#cu}"
+          uv pip install -r pyproject.toml --extra "$EXTRA"
+          site="$(.venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+          uv run --no-sync cmake -S . -B build/gpu -G Ninja \
+            -DCUDAQ_PULSE_BUILD_TESTS=ON \
+            -DCUDAQ_PULSE_ENABLE_GPU=ON \
+            "-DCUDAQ_PULSE_CUDA${major}_ROOT=/usr/local/cuda;$site" \
+            -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
+          uv run --no-sync cmake --build build/gpu --target check-pulse-gpu

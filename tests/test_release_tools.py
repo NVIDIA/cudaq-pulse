@@ -130,8 +130,11 @@ def test_every_workflow_job_has_a_timeout(workflow):
     jobs = workflow.read_text().split("\njobs:\n", 1)[1]
     blocks = re.split(r"^  (?=[\w-]+:\s*$)", jobs, flags=re.M)[1:]
     assert blocks
+    # A job that calls a reusable workflow cannot set one; the called jobs do.
     missing = [
-        b.split(":", 1)[0] for b in blocks if not re.search(r"^    timeout-minutes:", b, re.M)
+        b.split(":", 1)[0]
+        for b in blocks
+        if not re.search(r"^    (timeout-minutes|uses):", b, re.M)
     ]
     assert not missing, f"{workflow.name}: jobs without timeout-minutes: {missing}"
 
