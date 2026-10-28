@@ -133,7 +133,7 @@ class ControllerLimits:
     ``Device.clock_ghz``). It must be a whole-cycle ratio of the program
     clock: at ``a / b`` of it (in lowest terms) the controller starts and
     times operations every ``b`` program cycles, so every operation on its
-    lines must start and last a multiple of ``b`` (``pulse.cycles_on``
+    lines must start and last a multiple of ``b`` (``pulse.round_duration``
     rounds a length onto that grid), and its program counts its own cycles.
     ``issue_cycles`` and ``min_wait_cycles``: two operations on one line start
     exactly ``issue_cycles`` apart, or at least ``issue_cycles + min_wait_cycles``

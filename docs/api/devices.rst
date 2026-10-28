@@ -30,12 +30,12 @@ Clocks
 
 A device's ``clock_ghz`` is its program clock. A controller with a slower
 clock starts operations only every few program cycles (see
-:doc:`../user_guide/controller_backends`); ``cycles_on`` rounds a length
+:doc:`../user_guide/controller_backends`); ``round_duration`` rounds a length
 onto a line's grid in a kernel.
 
-.. autofunction:: cudaq_pulse.cycles_on
+.. autofunction:: cudaq_pulse.round_duration
 
-.. autoclass:: cudaq_pulse.Rounding
+.. autoclass:: cudaq_pulse.RoundDirection
    :members:
    :undoc-members:
 

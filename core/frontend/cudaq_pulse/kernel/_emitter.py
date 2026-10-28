@@ -161,36 +161,38 @@ def _extract_closures(fn: Any) -> dict[str, Any]:
 _PULSE_FUNCTIONS: dict[Any, str] = {}
 _SUBMIT = ClassicalFunction.submit
 _RESULT = _classical.Future.result
-_CYCLES_ON = _clocks.cycles_on
+_ROUND_DURATION = _clocks.round_duration
 
 
-def _cycles_on(builder: Any, args: list[StackVal], kwargs: dict[str, StackVal] | None) -> int:
-    """``cycles_on(line, n, rounding)`` while tracing: a number, from the
-    grid of the line's controller."""
-    line, n, rounding = _bound(_CYCLES_ON, args, kwargs or {}).args
+def _round_duration(builder: Any, args: list[StackVal], kwargs: dict[str, StackVal] | None) -> int:
+    """``round_duration(line, duration, direction)`` while tracing: a number,
+    from the grid of the line's controller."""
+    line, n, direction = _bound(_ROUND_DURATION, args, kwargs or {}).args
     if not isinstance(line, IRValue) or line.vtype not in ("drive_line", "readout_line"):
         raise CompilationError(
-            f"cycles_on() takes a line from get_drive_line or get_readout_line, got {line!r}"
+            f"round_duration() takes a line from get_drive_line or get_readout_line, got {line!r}"
         )
     if is_symbolic(n):
         names = tuple(dict.fromkeys(_parameter_names(n)))
         raise SymbolicValueError(
-            f"cycles_on() needs a length known while the kernel compiles; it depends on "
-            f"{', '.join(map(repr, names))}",
+            "round_duration() needs a duration known while the kernel compiles; it "
+            f"depends on {', '.join(map(repr, names))}",
             names,
-            "a cycles_on() length",
+            "a round_duration() duration",
         )
     if n.__class__ is Time:
         n = float(in_cycles(n, getattr(builder, "clock_ghz", 2.0)))
     elif isinstance(n, float) and n.__class__ is not _durations.Cycles:
-        raise _durations.float_duration("cycles_on", "length", n, "pulse.cycles_on(line, {})")
+        raise _durations.float_duration(
+            "round_duration", "duration", n, "pulse.round_duration(line, {})"
+        )
     grid_of = getattr(builder, "line_grid", None)
     grid = 1
     if grid_of is not None:
         qudit = getattr(builder, "_line_qubit", {}).get(line.vid, -1)
         grid = grid_of(line.vtype.removesuffix("_line"), qudit)
     try:
-        return _clocks.round_on_grid(n, grid, rounding)
+        return _clocks.round_on_grid(n, grid, direction)
     except ValueError as e:
         raise CompilationError(str(e)) from None
 
@@ -937,7 +939,7 @@ def _samples_at(cycles: int, rate: tuple[int, int]) -> int:
             f"custom(): a duration of {cycles} clock cycles is not a whole number of "
             f"samples on these lines, which play {n} every {d} cycles (their "
             f"controller's rate); give it a multiple of {step} cycles, as "
-            f"pulse.cycles_on(line, {cycles}) does"
+            f"pulse.round_duration(line, {cycles}) does"
         )
     count = cycles * n // d
     most = MAX_CUSTOM_SAMPLES - 2
@@ -2488,8 +2490,8 @@ class PulseIREmitter:
         if isinstance(callable_val, types.FunctionType) and (
             _takes_ir(call_args, kwargs) or _uses_pulse_ops(callable_val)
         ):
-            if callable_val is _CYCLES_ON:
-                self.stack.append(_cycles_on(self.b, call_args, kwargs))
+            if callable_val is _ROUND_DURATION:
+                self.stack.append(_round_duration(self.b, call_args, kwargs))
                 return
             self._inline_helper(callable_val, call_args, kwargs)
             return

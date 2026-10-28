@@ -51,7 +51,7 @@ class Time(float):
     """A wall-clock time: a float of nanoseconds holding its exact value.
 
     Made by multiplying a unit, ``20 * pulse.ns``; durations, waits and
-    ``pulse.cycles_on`` take it, and convert it to cycles of the clock the
+    ``pulse.round_duration`` take it, and convert it to cycles of the clock the
     kernel compiles for.
     """
 

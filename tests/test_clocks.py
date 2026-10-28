@@ -6,7 +6,7 @@
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
 """Clocks: the device's program clock, a controller's own clock and the grid
-it puts its lines on, ``cycles_on``, the reference clock and the exports in a
+it puts its lines on, ``round_duration``, the reference clock and the exports in a
 controller's own cycles."""
 
 from __future__ import annotations
@@ -75,56 +75,59 @@ def test_a_clock_without_a_whole_cycle_ratio_is_an_error():
     assert _clocks.clock_ratio(2.4, 1.0).denominator == 5
 
 
-# ── cycles_on ────────────────────────────────────────────────────────────────
+# ── round_duration ───────────────────────────────────────────────────────────
 
 
 @pulse.kernel
 def rounded(q):
     d, t = get_drive_line(q)
-    drive(d, square(pulse.cycles_on(d, 37), 0.1), t)
-    drive(d, square(pulse.cycles_on(d, 37, "down"), 0.1), t)
-    drive(d, square(pulse.cycles_on(d, 37, rounding=pulse.Rounding.NEAREST), 0.1), t)
-    drive(d, square(pulse.cycles_on(d, 1.25 * pulse.ns), 0.1), t)
+    drive(d, square(pulse.round_duration(d, 37), 0.1), t)
+    drive(d, square(pulse.round_duration(d, 37, "down"), 0.1), t)
+    drive(d, square(pulse.round_duration(d, 37, direction=pulse.RoundDirection.NEAREST), 0.1), t)
+    drive(d, square(pulse.round_duration(d, 1.25 * pulse.ns), 0.1), t)
+    drive(d, square(pulse.round_duration(d, 21 * pulse.ns, pulse.RoundDirection.DOWN), 0.1), t)
 
 
 def _durations(lowered):
     return [e.duration_cycles for e in lowered.schedule if e.kind == "drive"]
 
 
-def test_cycles_on_rounds_onto_the_line_grid():
+def test_round_duration_rounds_onto_the_line_grid():
     def durations(machine=None):
         return _durations(pulse.compile(rounded, passes=[], machine=machine).lower(Q[0]))
 
-    assert durations() == [37, 37, 37, 3]
+    assert durations() == [37, 37, 37, 3, 42]
     # A 0.5 GHz controller starts every 4 cycles of the 2 GHz program clock.
-    assert durations(_machine(0.5)) == [40, 36, 36, 4]
+    assert durations(_machine(0.5)) == [40, 36, 36, 4, 40]
     # A faster controller times every program cycle.
-    assert durations(_machine(4.0)) == [37, 37, 37, 3]
+    assert durations(_machine(4.0)) == [37, 37, 37, 3, 42]
+    assert pulse.RoundDirection("nearest") is pulse.RoundDirection.NEAREST
+    assert not hasattr(pulse, "cycles_on")
 
 
-def test_cycles_on_needs_a_line_and_a_known_length():
+def test_round_duration_needs_a_line_and_a_known_length():
     @pulse.kernel
     def specialized(q, n: float):
         d, t = get_drive_line(q)
-        drive(d, square(pulse.cycles_on(d, n), 0.1), t)
+        drive(d, square(pulse.round_duration(d, n), 0.1), t)
 
     @pulse.kernel
     def not_a_line(q):
         d, t = get_drive_line(q)
-        drive(d, square(pulse.cycles_on(t, 4), 0.1), t)
+        drive(d, square(pulse.round_duration(t, 4), 0.1), t)
 
     @pulse.kernel
     def a_number(q):
         d, t = get_drive_line(q)
-        drive(d, square(pulse.cycles_on(3, 4), 0.1), t)
+        drive(d, square(pulse.round_duration(3, 4), 0.1), t)
 
     @pulse.kernel
     def bad_mode(q):
         d, t = get_drive_line(q)
-        drive(d, square(pulse.cycles_on(d, 4, "sideways"), 0.1), t)
+        drive(d, square(pulse.round_duration(d, 4, "sideways"), 0.1), t)
 
     # Like a duration, a float that reaches it is specialized on.
-    with pytest.warns(RuntimeWarning, match="cycles_on"):
+    with pytest.warns(RuntimeWarning, match="round_duration"):
         lowered = pulse.compile(specialized, machine=_machine(0.5)).lower(Q[0], 13.0)
     assert _durations(lowered) == [16]
     with pytest.raises(pulse.CompilationError, match="takes a line"):
@@ -134,7 +137,7 @@ def test_cycles_on_needs_a_line_and_a_known_length():
     with pytest.raises(pulse.CompilationError, match="up, down, nearest"):
         pulse.compile(bad_mode).lower(Q[0])
     with pytest.raises(TypeError, match="inside a @cudaq_pulse.kernel"):
-        pulse.cycles_on(None, 4)
+        pulse.round_duration(None, 4)
 
 
 # ── Scheduling on the grid ───────────────────────────────────────────────────
@@ -147,10 +150,10 @@ def mixed(a, b):
     ra, rta = get_readout_line(a)
     drive(da, gaussian(40, 0.1, 10.0), ta)
     wait(db, 8)
-    drive(db, square(pulse.cycles_on(db, 15), 0.1), tb)
+    drive(db, square(pulse.round_duration(db, 15), 0.1), tb)
     sync(da, db, ra)
     drive(da, gaussian(40, 0.1, 10.0), ta)
-    readout(ra, square(pulse.cycles_on(ra, 99), 0.05), rta)
+    readout(ra, square(pulse.round_duration(ra, 99), 0.05), rta)
     for _ in range(4):
         drive(db, square(12, 0.1), tb)
 
@@ -243,7 +246,7 @@ def test_a_length_off_the_grid_fails_to_compile_naming_the_line_and_the_fix():
     assert drive.startswith("the drive line of qudit 3 (line 0), on the controller at 1 GHz")
     assert "every 2 program cycles" in drive
     assert "the drive at 0 lasts 41 cycles; the nearest valid lengths are 40 and 42" in drive
-    assert "pulse.cycles_on(line, 41)" in drive
+    assert "pulse.round_duration(line, 41)" in drive
     assert "the wait at 42 lasts 5 cycles; the nearest valid lengths are 4 and 6" in wait
     # A controller that starts every cycle takes it.
     assert pulse.compile(off_grid, machine=_machine(2.0)).lower(Q[3]).schedule

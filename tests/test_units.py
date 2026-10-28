@@ -107,7 +107,7 @@ def test_a_float_duration_is_an_error_that_shows_both_spellings():
         ("drive(d, gaussian_square(40, 0.1, 4.0, 20.0), t)", "gaussian_square(): width"),
         ("wait(d, 8.0)", "wait(): duration"),
         ("wait(d, 8, bounds=(0, 40.0))", "wait(): bounds"),
-        ("wait(d, pulse.cycles_on(d, 2.5))", "cycles_on(): length"),
+        ("wait(d, pulse.round_duration(d, 2.5))", "round_duration(): duration"),
     ],
 )
 def test_every_duration_rejects_a_float(call, what):
@@ -198,15 +198,15 @@ def test_a_time_that_is_not_whole_cycles_is_an_error():
         k.lower(Q[0])
     assert str(caught.value).startswith(
         "wait(): duration 0.3 ns is 0.6 cycles of the 2 GHz program clock, and durations "
-        "are whole cycles; round it with pulse.cycles_on(line, 0.3 * pulse.ns)"
+        "are whole cycles; round it with pulse.round_duration(line, 0.3 * pulse.ns)"
     )
 
 
-def test_cycles_on_rounds_a_time_onto_the_grid():
+def test_round_duration_rounds_a_time_onto_the_grid():
     @pulse.kernel
     def k(q):
         d, t = get_drive_line(q)
-        drive(d, square(pulse.cycles_on(d, 10.3 * ns), 0.1), t)
+        drive(d, square(pulse.round_duration(d, 10.3 * ns), 0.1), t)
 
     machine = MachineModel(controller=ControllerLimits(clock_ghz=0.5))
     assert [e[2] for e in _events(k.lower(Q[0]))] == [21]

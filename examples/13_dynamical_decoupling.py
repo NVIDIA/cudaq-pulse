@@ -64,7 +64,7 @@ def uhrig_dd(qubit, sigma, amplitude_pi, total_cycles, n_pulses):
     drive_line, tone = get_drive_line(qubit)
 
     pi_pulse = gaussian(4 * sigma, amplitude_pi, sigma)
-    dur_pi = pulse.cycles_on(drive_line, 4 * sigma)
+    dur_pi = pulse.round_duration(drive_line, 4 * sigma)
 
     prev_time = 0
     for j in range(n_pulses):

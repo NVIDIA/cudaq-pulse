@@ -137,11 +137,11 @@ terms, it starts and times operations only every ``b`` program cycles. The
 scheduler places every operation on its line's grid and meets a sync on
 every synced line's grid; a length that is not a multiple of the grid fails
 to compile with ``ControllerLimitError``, which names the line, its
-controller and the nearest valid lengths. ``pulse.cycles_on(line, n)`` in a
-kernel rounds a length onto the line's grid (up; ``rounding="down"`` or
+controller and the nearest valid lengths. ``pulse.round_duration(line, n)`` in a
+kernel rounds a length onto the line's grid (up; ``direction="down"`` or
 ``"nearest"``), so a kernel can be written for any controller clock::
 
-    drive(line, gaussian(pulse.cycles_on(line, 41), 0.1, 10.0), tone)
+    drive(line, gaussian(pulse.round_duration(line, 41), 0.1, 10.0), tone)
 
 The export counts the controller's own cycles: ``clock_ghz`` is the
 controller's clock, and when that is not the program clock the export also

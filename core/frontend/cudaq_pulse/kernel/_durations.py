@@ -8,7 +8,7 @@
 """Durations while tracing: cycles, or times with units converted to cycles.
 
 A duration (a waveform's length or flat top, a wait and its bounds, a
-``cycles_on`` length) is an int number of cycles or a ``pulse.Time``; a
+``round_duration`` length) is an int number of cycles or a ``pulse.Time``; a
 plain float there is ambiguous and an error. A waveform's shape times
 (``sigma``, DRAG ``beta``) are cycles, fractional ones too, or times.
 
@@ -149,7 +149,7 @@ def cycles(fname: str, what: str, value: Any, whole: bool, call: str, clock_ghz:
             raise CompilationError(
                 f"{fname}(): {what} {value} is {float(exact):g} cycles of the "
                 f"{clock_ghz:g} GHz program clock, and durations are whole cycles; "
-                f"round it with pulse.cycles_on(line, {_written(value)})"
+                f"round it with pulse.round_duration(line, {_written(value)})"
             )
         return int(exact)
     if whole and isinstance(value, float) and cls is not Cycles:

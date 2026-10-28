@@ -35,7 +35,7 @@ from ._errors import InvalidTypeError, InvalidValueError
 if TYPE_CHECKING:
     from .controller import ControllerLimits
 
-__all__ = ["Rounding", "cycles_on"]
+__all__ = ["RoundDirection", "round_duration"]
 
 # Clocks are given in GHz as floats; their ratios are fractions with
 # denominators up to this.
@@ -43,8 +43,9 @@ _MAX_DENOMINATOR = 10_000
 _TOLERANCE = 1e-9
 
 
-class Rounding(enum.StrEnum):
-    """How ``cycles_on`` rounds a length onto its line's grid."""
+class RoundDirection(enum.StrEnum):
+    """Which way ``round_duration`` rounds a length onto its line's grid; the
+    strings ``"up"``, ``"down"`` and ``"nearest"`` mean the same."""
 
     UP = "up"
     DOWN = "down"
@@ -415,7 +416,7 @@ def _off_grid(
         problems.append(
             f"lasts {duration} cycles; the nearest valid lengths are "
             f"{duration // grid * grid} and {-(-duration // grid) * grid} "
-            f"(pulse.cycles_on(line, {duration}) rounds onto the grid)"
+            f"(pulse.round_duration(line, {duration}) rounds onto the grid)"
         )
     if start % grid:
         problems.append(
@@ -501,43 +502,46 @@ def clock_keys(plan: ClockPlan, controller: ControllerClock) -> dict[str, float]
     return keys
 
 
-def _round(n: float, grid: int, rounding: Rounding) -> int:
-    if rounding is Rounding.UP:
+def _round(n: float, grid: int, direction: RoundDirection) -> int:
+    if direction is RoundDirection.UP:
         return -(-math.ceil(n - _TOLERANCE) // grid) * grid
-    if rounding is Rounding.DOWN:
+    if direction is RoundDirection.DOWN:
         return math.floor(n + _TOLERANCE) // grid * grid
     return math.floor(n / grid + 0.5) * grid
 
 
-def cycles_on(line: Any, n: float, rounding: Rounding | str = Rounding.UP) -> int:
-    """*n*, an int number of program cycles or a time (``10.5 * pulse.ns``),
-    rounded onto *line*'s grid: the nearest length (or start) its
-    controller can time, ``up`` (default), ``down`` or ``nearest``.
+def round_duration(
+    line: Any, duration: float, direction: RoundDirection | str = RoundDirection.UP
+) -> int:
+    """*duration*, an int number of program cycles or a time
+    (``10.5 * pulse.ns``), rounded onto *line*'s grid: the nearest length
+    (or start) its controller can time, ``"up"`` (default), ``"down"`` or
+    ``"nearest"``, in program cycles.
 
     Call it in a kernel with a line from ``get_drive_line`` or
-    ``get_readout_line``; *n* must be known while the kernel compiles. A line
-    whose controller runs at the program clock takes every whole cycle, so
-    ``cycles_on(line, n)`` is ``ceil(n)``.
+    ``get_readout_line``; *duration* must be known while the kernel compiles.
+    A line whose controller runs at the program clock takes every whole
+    cycle, so ``round_duration(line, n)`` is ``ceil(n)``.
     """
     # In a kernel, a call whose line is a line never runs this; one whose
     # line is not reaches it as a plain call and fails like a bad argument.
     raise InvalidTypeError(
-        "cycles_on() takes a line from get_drive_line or get_readout_line, inside a "
+        "round_duration() takes a line from get_drive_line or get_readout_line, inside a "
         f"@cudaq_pulse.kernel function; got {line!r}"
     )
 
 
-def round_on_grid(n: Any, grid: int, rounding: Rounding | str) -> int:
-    """``cycles_on`` once its line's grid is known."""
+def round_on_grid(n: Any, grid: int, direction: RoundDirection | str) -> int:
+    """``round_duration`` once its line's timestep is known."""
     try:
-        mode = Rounding(rounding)
+        mode = RoundDirection(direction)
     except ValueError:
         raise InvalidValueError(
-            f"cycles_on() rounding must be one of {', '.join(m.value for m in Rounding)}, "
-            f"got {rounding!r}"
+            "round_duration() direction must be one of "
+            f"{', '.join(m.value for m in RoundDirection)}, got {direction!r}"
         ) from None
     if isinstance(n, bool) or not isinstance(n, (int, float)) or not math.isfinite(n) or n < 0:
         raise InvalidValueError(
-            f"cycles_on() takes a finite, non-negative number of cycles, got {n!r}"
+            f"round_duration() takes a finite, non-negative number of cycles, got {n!r}"
         )
     return _round(float(n), grid, mode)

@@ -92,7 +92,7 @@ Durations: cycles or times
 
 A kernel counts time in cycles of the device's clock (``dev.clock_ghz``).
 A duration (a waveform's length or flat top, a ``wait`` and its bounds, a
-``pulse.cycles_on`` length) is either an ``int`` number of cycles or a time
+``pulse.round_duration`` length) is either an ``int`` number of cycles or a time
 with units: ``20 * pulse.ns``, ``4 * pulse.us``, also ``pulse.ms`` and
 ``pulse.s``. A time converts to cycles exactly when the kernel compiles,
 for the device it compiles for, so a kernel whose durations are times
@@ -127,7 +127,7 @@ them from a calibration the kernel closes over.
          gaussian(20 * pulse.ns, ...)    # 20 nanoseconds
 
 - A time that is not a whole number of cycles is an error that names its
-  cycles; ``pulse.cycles_on(line, 10.3 * pulse.ns)`` rounds it onto the
+  cycles; ``pulse.round_duration(line, 10.3 * pulse.ns)`` rounds it onto the
   line's grid instead.
 - A time times a number, a time plus a time, a time over a number and minus
   a time are times. A time plus a number of cycles, and a time times a

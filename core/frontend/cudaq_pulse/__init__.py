@@ -26,7 +26,7 @@ in ``cudaq_pulse.ops``; inside a ``@pulse.kernel`` its names are used bare.
 A bare int duration is a number of cycles of the device's clock; a time
 with units, ``20 * pulse.ns`` (``pulse.us``, ``pulse.ms``, ``pulse.s``),
 converts to cycles exactly when the kernel compiles, so one kernel runs on
-devices with different clocks. ``pulse.cycles_on(line, n)`` rounds a length
+devices with different clocks. ``pulse.round_duration(line, n)`` rounds a length
 onto the grid of the line's controller, for controllers whose clock is
 slower than the program's.
 Compiler types (``CompileMetrics``, ``ScheduledEvent``, ``MachineModel``,
@@ -44,8 +44,8 @@ from typing import TYPE_CHECKING
 
 from . import _build_config
 from . import ops as ops
-from ._clocks import Rounding as Rounding
-from ._clocks import cycles_on as cycles_on
+from ._clocks import RoundDirection as RoundDirection
+from ._clocks import round_duration as round_duration
 from ._device import Device as Device
 from ._device import DeviceMismatchError as DeviceMismatchError
 from ._device import NoDeviceError as NoDeviceError
@@ -140,8 +140,8 @@ __all__ = [
     "NoDeviceError",
     "DeviceMismatchError",
     "GpuRuntimeError",
-    "cycles_on",
-    "Rounding",
+    "round_duration",
+    "RoundDirection",
     "Time",
     "ns",
     "us",

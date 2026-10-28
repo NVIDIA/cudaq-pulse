@@ -84,7 +84,7 @@ def binary_search(q, rounds: int):
     phase = PHASE0
     # A Ramsey shot: pi/2, wait, pi/2 with its tone shifted by pi - phase.
     drive(d, half_pi_pulse, t)
-    wait(d, pulse.cycles_on(d, gap_ns * pulse.ns, "down"))
+    wait(d, pulse.round_duration(d, gap_ns * pulse.ns, "down"))
     shift_phase(t, math.pi - phase)
     drive(d, half_pi_pulse, t)
     for _ in range(rounds):
