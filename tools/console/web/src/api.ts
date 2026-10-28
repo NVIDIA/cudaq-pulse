@@ -13,6 +13,25 @@ export interface Example {
   args: string;
 }
 
+export interface ParamSpec {
+  name: string;
+  label: string;
+  default: number;
+  min: number;
+  max: number;
+  step: number;
+  unit: string;
+}
+
+export interface ExperimentInfo {
+  id: string;
+  title: string;
+  plain: string;
+  detail: string;
+  example: string;
+  params: ParamSpec[];
+}
+
 export interface Meta {
   version: string;
   targets: { id: string; name: string }[];
@@ -20,6 +39,7 @@ export interface Meta {
   default_passes: string[];
   schedules: string[];
   examples: Example[];
+  experiments: ExperimentInfo[];
 }
 
 export interface KernelInfo {
@@ -28,12 +48,20 @@ export interface KernelInfo {
   schedule: string | null;
 }
 
-export interface ScheduleEvent {
-  kind: string;
+/** The schedule as columns; `kind` indexes `kinds`. Times in clock cycles. */
+export interface Events {
+  kinds: string[];
+  kind: number[];
+  line: number[];
+  qudit: number[];
+  start: number[];
+  duration: number[];
+}
+
+export interface LineInfo {
   line: number;
+  role: string;
   qudit: number;
-  start: number | null;
-  duration: number | null;
 }
 
 export interface Metrics {
@@ -52,13 +80,13 @@ export interface ControllerProgram {
   clock_ghz: number;
   schedule: string;
   qudits: number[];
-  lines: { line: number; role: string; qudit: number }[];
+  lines: LineInfo[];
   events: Record<string, unknown>[];
   epochs: Record<string, unknown>[];
   calls: Record<string, unknown>[];
   manifest: Record<string, unknown>;
   limits: Record<string, unknown> | null;
-  events_truncated?: boolean;
+  event_count?: number;
 }
 
 export interface CompileResult {
@@ -77,8 +105,10 @@ export interface CompileResult {
     optimized: { mlir: string; metrics: Metrics };
     llvm?: { mlir?: string; error?: string };
   };
-  events?: ScheduleEvent[];
+  events?: Events;
   events_truncated?: boolean;
+  cached?: boolean;
+  server_ms?: number;
   epochs?: Record<string, unknown>[];
   calls?: Record<string, unknown>[];
   controller?: ControllerProgram;
@@ -101,7 +131,6 @@ export interface SimResult {
   qudits?: number[];
   dims?: number[];
   series?: { t_ns: number; populations: number[][] }[];
-  events?: ScheduleEvent[];
   clock_ghz?: number;
   branches?: { outcomes: number[]; p: number }[];
   wall_s?: number;
@@ -155,29 +184,17 @@ export const api = {
   compile: (req: CompileRequest) => postJson<CompileResult>("/api/compile", req),
   simulate: (req: CompileRequest & { points: number; levels: number }) =>
     postJson<SimResult>("/api/simulate", req),
+  run: <T = any>(experiment: string, params: Record<string, number>) =>
+    postJson<RunResult<T>>("/api/run", { experiment, params }),
 };
 
-/** Server-sent events of a calibration run; returns a function that stops it. */
-export function stream(
-  path: string,
-  params: Record<string, string | number>,
-  onEvent: (event: Record<string, any>) => void,
-  onEnd: () => void,
-): () => void {
-  const query = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]));
-  const source = new EventSource(`${path}?${query}`);
-  let ended = false;
-  const finish = () => {
-    if (ended) return;
-    ended = true;
-    source.close();
-    onEnd();
-  };
-  source.onmessage = (msg) => {
-    const event = JSON.parse(msg.data);
-    onEvent(event);
-    if (event.type === "done" || event.type === "error") finish();
-  };
-  source.onerror = finish;
-  return finish;
+export interface RunResult<T> {
+  ok: boolean;
+  error?: ApiError | string;
+  experiment?: string;
+  params?: Record<string, number>;
+  data?: T;
+  server_ms?: number;
+  cached?: boolean;
 }
+

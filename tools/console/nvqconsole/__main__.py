@@ -5,7 +5,7 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""``python -m nvqconsole [--port N] [--build] [--no-warm]``"""
+"""``python -m nvqconsole [--port N] [--build] [--no-warm] [--runs FILE] [--precompute FILE]``"""
 
 from __future__ import annotations
 
@@ -13,8 +13,10 @@ import argparse
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
-from .server import WEB_DIST, serve
+from . import adapter
+from .server import WEB_DIST, serve, warm_all
 
 
 def main() -> None:
@@ -24,7 +26,21 @@ def main() -> None:
     parser.add_argument(
         "--no-warm", action="store_true", help="do not precompute the calibration chain"
     )
+    parser.add_argument(
+        "--runs",
+        type=Path,
+        default=WEB_DIST.parent.parent / "runs.json",
+        help="precomputed runs to start from (default: runs.json beside the console)",
+    )
+    parser.add_argument(
+        "--precompute", type=Path, metavar="FILE", help="run everything, save it to FILE and exit"
+    )
     args = parser.parse_args()
+    if args.precompute is not None:
+        warm_all()
+        adapter.save_runs(args.precompute)
+        print(f"saved {args.precompute}", flush=True)
+        return
     if args.build or not WEB_DIST.exists():
         npm = shutil.which("npm")
         if npm is None:
@@ -33,7 +49,7 @@ def main() -> None:
         if not (web / "node_modules").exists():
             subprocess.run([npm, "install", "--no-audit", "--no-fund"], cwd=web, check=True)
         subprocess.run([npm, "run", "build"], cwd=web, check=True)
-    serve(args.port, warm=not args.no_warm)
+    serve(args.port, warm=not args.no_warm, runs=args.runs)
 
 
 if __name__ == "__main__":

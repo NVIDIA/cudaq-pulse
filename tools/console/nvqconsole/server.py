@@ -5,14 +5,14 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""A local HTTP server for the console: JSON routes, server-sent events for
-calibration runs, and the built web app.
+"""A local HTTP server for the console: JSON routes and the built web app.
 
 It runs the code it is sent, so it listens on the loopback interface only.
 """
 
 from __future__ import annotations
 
+import gzip
 import json
 import mimetypes
 import threading
@@ -38,9 +38,52 @@ def _get_routes() -> dict[str, Callable[[dict[str, str]], Any]]:
             "default_passes": adapter.default_passes(),
             "schedules": adapter.SCHEDULES,
             "examples": adapter.examples(),
+            "experiments": adapter.experiments(),
         },
         "/api/example": lambda q: {"source": adapter.example_source(q["file"])},
         "/api/device": lambda q: adapter.device_info(q["target"]),
+    }
+
+
+def _example_request(name: str) -> dict[str, Any]:
+    """The request the compiler explorer sends for an example at its defaults."""
+    preset = adapter.EXAMPLE_PRESETS[name]
+    return {
+        "source": adapter.example_source(name),
+        "kernel": preset["kernel"],
+        "args": preset["args"],
+        "target": "transmon_krinner_17q",
+        "passes": adapter.default_passes(),
+        "schedule": "alap",
+        "llvm": False,
+    }
+
+
+def _example_request(name: str) -> dict[str, Any]:
+    """The request the compiler explorer sends for an example at its defaults."""
+    preset = adapter.EXAMPLE_PRESETS[name]
+    return {
+        "source": adapter.example_source(name),
+        "kernel": preset["kernel"],
+        "args": preset["args"],
+        "target": "transmon_krinner_17q",
+        "passes": adapter.default_passes(),
+        "schedule": "alap",
+        "llvm": False,
+    }
+
+
+def _example_request(name: str) -> dict[str, Any]:
+    """The request the compiler explorer sends for an example at its defaults."""
+    preset = adapter.EXAMPLE_PRESETS[name]
+    return {
+        "source": adapter.example_source(name),
+        "kernel": preset["kernel"],
+        "args": preset["args"],
+        "target": "transmon_krinner_17q",
+        "passes": adapter.default_passes(),
+        "schedule": "alap",
+        "llvm": False,
     }
 
 
@@ -55,16 +98,15 @@ def _post_routes() -> dict[str, Callable[[dict[str, Any]], Any]]:
         "/api/kernels": kernels,
         "/api/compile": adapter.compile_stages,
         "/api/simulate": adapter.simulate_populations,
+        "/api/run": lambda body: adapter.run_experiment(body["experiment"], body.get("params", {})),
     }
 
 
 def _streams() -> dict[str, Callable[[dict[str, str]], Iterator[dict[str, Any]]]]:
     return {
-        "/api/calibration/drift": lambda q: adapter.drift_tracking(
-            seed=int(q.get("seed", 21)), iterations=int(q.get("iterations", 6000))
+        "/api/sweeps": lambda q: adapter.device_sweeps(
+            q.get("target", "transmon_krinner_17q"), int(q.get("seed", 3))
         ),
-        "/api/calibration/search": lambda q: adapter.binary_search(rounds=int(q.get("rounds", 15))),
-        "/api/calibration/chain": lambda _: adapter.calibration_chain(),
     }
 
 
@@ -81,14 +123,22 @@ class Handler(BaseHTTPRequestHandler):
                 flush=True,
             )
 
-    def _json(self, payload: Any, status: int = 200) -> None:
-        data = json.dumps(payload, allow_nan=False, default=str).encode()
+    def _send(self, data: bytes, content_type: str, cache: str, status: int = 200) -> None:
+        gzipped = len(data) > 2048 and "gzip" in self.headers.get("Accept-Encoding", "")
+        if gzipped:
+            data = gzip.compress(data, compresslevel=1)
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
+        if gzipped:
+            self.send_header("Content-Encoding", "gzip")
         self.end_headers()
         self.wfile.write(data)
+
+    def _json(self, payload: Any, status: int = 200) -> None:
+        data = json.dumps(payload, allow_nan=False, default=str, separators=(",", ":")).encode()
+        self._send(data, "application/json", "no-store", status)
 
     def _fail(self, error: BaseException, status: int = 500) -> None:
         self._json(
@@ -99,7 +149,7 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         query = {k: v[-1] for k, v in parse_qs(url.query).items()}
         if url.path in self.STREAMS:
-            self._stream(self.STREAMS[url.path](query), float(query.get("delay", 0.0)))
+            self._stream(self.STREAMS[url.path](query))
             return
         route = self.GET.get(url.path)
         if route is not None:
@@ -124,23 +174,22 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:  # noqa: BLE001
             self._fail(error)
 
-    def _stream(self, events: Iterator[dict[str, Any]], delay: float) -> None:
+    def _stream(self, events: Iterator[dict[str, Any]]) -> None:
+        """Server-sent events, one per finished piece of work."""
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        delay = min(max(delay, 0.0), 1.0)
         try:
             for event in events:
-                self.wfile.write(f"data: {json.dumps(event, default=str)}\n\n".encode())
+                # A cached run is replayed at a pace the eye can follow.
+                if event.get("cached") and event.get("type") == "qudit":
+                    time.sleep(0.1)
+                data = json.dumps(event, default=str, separators=(",", ":"))
+                self.wfile.write(f"data: {data}\n\n".encode())
                 self.wfile.flush()
-                if delay and event.get("type") in ("point", "step"):
-                    time.sleep(delay)
         except (BrokenPipeError, ConnectionResetError):
             return
-        except Exception as error:  # noqa: BLE001
-            message = {"type": "error", "kind": type(error).__name__, "message": str(error)}
-            self.wfile.write(f"data: {json.dumps(message)}\n\n".encode())
 
     def _static(self, path: str) -> None:
         if not WEB_DIST.exists():
@@ -149,28 +198,40 @@ class Handler(BaseHTTPRequestHandler):
         file = (WEB_DIST / path.lstrip("/")).resolve()
         if not file.is_file() or WEB_DIST.resolve() not in file.parents:
             file = WEB_DIST / "index.html"
-        data = file.read_bytes()
-        self.send_response(200)
-        self.send_header(
-            "Content-Type", mimetypes.guess_type(file.name)[0] or "application/octet-stream"
+        # Vite hashes asset names, so they never change under a name.
+        immutable = file.parent.name == "assets"
+        self._send(
+            file.read_bytes(),
+            mimetypes.guess_type(file.name)[0] or "application/octet-stream",
+            "public, max-age=31536000, immutable" if immutable else "no-cache",
         )
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
 
 
-def serve(port: int = 8765, warm: bool = True) -> None:
+def warm_all() -> None:
+    """Every run the demo starts with, then the examples' compiles and the
+    slow GHZ simulation; cached runs return at once."""
+    started = time.perf_counter()
+    adapter.warm_up(lambda name, s: print(f"  {name} ready ({s:.1f} s)", flush=True))
+    print(f"  all runs ready ({time.perf_counter() - started:.1f} s)", flush=True)
+    started = time.perf_counter()
+    for name in adapter.EXAMPLE_PRESETS:
+        adapter.compile_stages(_example_request(name))
+    adapter.warm_simulations(["17_ghz_state_prep.py"], _example_request, points=61, levels=2)
+    print(f"  examples ready ({time.perf_counter() - started:.1f} s)", flush=True)
+
+
+def serve(port: int = 8765, warm: bool = True, runs: Path | None = None) -> None:
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     httpd.daemon_threads = True
     print(f"NVQConsole for cudaq-pulse {adapter.version()} on http://127.0.0.1:{port}", flush=True)
+    if runs is not None and runs.exists():
+        loaded = adapter.load_runs(runs)
+        print(
+            f"  precomputed runs {'loaded' if loaded else 'skipped: another cudaq-pulse'}",
+            flush=True,
+        )
     if warm:
-
-        def warm_up() -> None:
-            started = time.perf_counter()
-            adapter.warm_up()
-            print(f"  calibration chain ready ({time.perf_counter() - started:.1f} s)", flush=True)
-
-        threading.Thread(target=warm_up, daemon=True).start()
+        threading.Thread(target=warm_all, daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

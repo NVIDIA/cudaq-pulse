@@ -1,25 +1,34 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Editor, { DiffEditor, type OnMount } from "@monaco-editor/react";
 import clsx from "clsx";
-import { api, type CompileResult } from "../api";
-import { useConsole, KIND_COLORS } from "../store";
+import { api, type CompileRequest, type CompileResult, type SimResult } from "../api";
+import { useConsole, LEVEL_COLORS } from "../store";
 import { monaco } from "../monaco";
-import Panel from "../components/Panel";
 import ErrorCard from "../components/ErrorCard";
-import ScheduleTimeline from "../components/ScheduleTimeline";
+import Timeline from "../components/Timeline";
+import Plot, { type Series } from "../components/Plot";
+import GoButton from "../components/GoButton";
+import { afterPaint, fmtMs } from "../perf";
+import { useReplay } from "../replay";
+import { ChainConvergence } from "./CalibrationTab";
 
-type Stage = "traced" | "optimized" | "diff" | "schedule" | "controller" | "llvm";
+type Stage = "optimized" | "traced" | "diff" | "schedule" | "controller" | "llvm" | "program" | "run" | "converge";
 
-const STAGES: { id: Stage; label: string }[] = [
-  { id: "traced", label: "Traced IR" },
-  { id: "optimized", label: "After passes" },
+const EXPERT: { id: Stage; label: string }[] = [
+  { id: "optimized", label: "IR" },
+  { id: "traced", label: "Traced" },
   { id: "diff", label: "Diff" },
   { id: "schedule", label: "Schedule" },
-  { id: "controller", label: "Controller program" },
-  { id: "llvm", label: "LLVM IR" },
+  { id: "controller", label: "Controller" },
+  { id: "llvm", label: "LLVM" },
+  { id: "run", label: "Simulate" },
+];
+const OVERVIEW: { id: Stage; label: string }[] = [
+  { id: "program", label: "Program" },
+  { id: "run", label: "Simulate" },
 ];
 
-const fmtMs = (ms?: number) => (ms == null ? "–" : ms < 1 ? `${(ms * 1000).toFixed(0)} µs` : `${ms.toFixed(2)} ms`);
+const DEBOUNCE_MS = 200;
 
 const editorOptions = {
   minimap: { enabled: false },
@@ -29,138 +38,163 @@ const editorOptions = {
   automaticLayout: true,
   renderLineHighlight: "line" as const,
   padding: { top: 8 },
+  overviewRulerLanes: 0,
+  stickyScroll: { enabled: false },
+};
+const readOnly = { ...editorOptions, readOnly: true, domReadOnly: true, lineNumbersMinChars: 4 };
+
+const request = (llvm: boolean): CompileRequest => {
+  const s = useConsole.getState();
+  return { source: s.source, kernel: s.kernel, args: s.args, target: s.target, passes: s.passes, schedule: s.schedule, llvm };
 };
 
-export const useCompile = () => {
+let sequence = 0;
+
+/** Compiles the current state; a reply older than the latest request is
+ * dropped. `since` is when the user changed something. */
+export const compileNow = async (since = performance.now(), llvm = false) => {
+  const s = useConsole.getState();
+  if (!s.source || !s.kernel) return;
+  const seq = ++sequence;
+  const sent = performance.now();
+  s.set({ compiling: true });
+  try {
+    const [result, kernels] = await Promise.all([api.compile(request(llvm)), api.kernels(s.source)]);
+    if (seq !== sequence) return;
+    useConsole.getState().set({ result, kernels: kernels.ok ? kernels.kernels! : useConsole.getState().kernels, compiling: false });
+    afterPaint("compile round trip", sent);
+    afterPaint("edit → output on screen", since);
+  } catch (e) {
+    if (seq === sequence)
+      useConsole.getState().set({ result: { ok: false, error: { kind: "NetworkError", message: String(e) } }, compiling: false });
+  }
+};
+
+const sources = new Map<string, string>();
+
+export const loadExample = async (file: string) => {
+  const meta = useConsole.getState().meta;
+  const preset = meta?.examples.find((e) => e.file === file);
+  // An example opened before keeps its edits in its editor model.
+  let source = monaco.editor.getModel(monaco.Uri.parse(`file:///${file}`))?.getValue() ?? sources.get(file);
+  if (source === undefined) {
+    source = (await api.example(file)).source;
+    sources.set(file, source);
+  }
+  useConsole.getState().set({ exampleFile: file, source, kernel: preset?.kernel ?? "", args: preset?.args ?? "" });
+  await compileNow();
+};
+
+const Chip = ({ on, children, onClick }: { on: boolean; children: React.ReactNode; onClick: () => void }) => (
+  <button
+    onClick={onClick}
+    className={clsx(
+      "rounded-full border px-2.5 py-0.5 text-[11px] normal-case transition-colors",
+      on ? "border-[var(--accent)] bg-[var(--accent)]/15 text-[var(--accent)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)]",
+    )}
+  >
+    {children}
+  </button>
+);
+
+/** Device, schedule policy and passes: defaults that rarely change. */
+const Options = () => {
+  const meta = useConsole((s) => s.meta);
+  const target = useConsole((s) => s.target);
+  const schedule = useConsole((s) => s.schedule);
+  const passes = useConsole((s) => s.passes);
+  const expert = useConsole((s) => s.mode === "expert");
   const set = useConsole((s) => s.set);
-  return useCallback(
-    async (llvm = false) => {
-      const s = useConsole.getState();
-      if (!s.source || !s.kernel) return;
-      set({ compiling: true });
-      try {
-        const [result, kernels] = await Promise.all([
-          api.compile({
-            source: s.source,
-            kernel: s.kernel,
-            args: s.args,
-            target: s.target,
-            passes: s.passes,
-            schedule: s.schedule,
-            llvm,
-          }),
-          api.kernels(s.source),
-        ]);
-        set({ result, kernels: kernels.ok ? kernels.kernels! : s.kernels });
-      } catch (e) {
-        set({ result: { ok: false, error: { kind: "NetworkError", message: String(e) } } });
-      } finally {
-        set({ compiling: false });
-      }
-    },
-    [set],
-  );
-};
-
-export const useLoadExample = () => {
-  const set = useConsole((s) => s.set);
-  const compile = useCompile();
-  return useCallback(
-    async (file: string) => {
-      const meta = useConsole.getState().meta;
-      const preset = meta?.examples.find((e) => e.file === file);
-      const { source } = await api.example(file);
-      set({ exampleFile: file, source, kernel: preset?.kernel ?? "", args: preset?.args ?? "", result: null });
-      const k = await api.kernels(source);
-      if (k.ok) set({ kernels: k.kernels! });
-      await compile();
-    },
-    [set, compile],
-  );
-};
-
-const StageStrip = ({ result }: { result: CompileResult }) => {
-  const o = result.stages!.optimized.metrics;
-  const tracedLines = result.stages!.traced.mlir.split("\n").length;
-  const optLines = result.stages!.optimized.mlir.split("\n").length;
-  const items = [
-    { k: "Trace", v: fmtMs(o.trace_ms), d: `${o.op_count} ops` },
-    { k: "MLIR build", v: fmtMs(o.ffi_ms), d: `${tracedLines} lines` },
-    { k: "Passes", v: fmtMs(o.passes_ms), d: `${optLines} lines (${optLines - tracedLines >= 0 ? "+" : ""}${optLines - tracedLines})` },
-    { k: "Schedule", v: fmtMs(o.schedule_ms), d: `${result.events?.length ?? 0} events · ${result.schedule_policy}` },
-    { k: "Controller", v: result.controller ? `${result.controller.lines.length} lines` : "–", d: result.controller ? `${result.controller.events.length} timed ops` : "export failed" },
-  ];
+  const update = (patch: Parameters<typeof set>[0]) => {
+    set(patch);
+    compileNow();
+  };
+  const toggle = (p: string) => {
+    const next = passes.includes(p) ? passes.filter((x) => x !== p) : [...passes, p];
+    update({ passes: (meta?.passes ?? []).filter((x) => next.includes(x)) });
+  };
   return (
-    <div className="flex items-stretch gap-1">
-      {items.map((it, i) => (
-        <div key={it.k} className="flex items-center gap-1">
-          <div className="min-w-[96px] rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1">
-            <div className="text-[9px] uppercase tracking-wider text-[var(--muted)]">{it.k}</div>
-            <div className="text-sm font-bold tabular-nums text-[var(--accent)]">{it.v}</div>
-            <div className="text-[10px] text-[var(--muted)]">{it.d}</div>
-          </div>
-          {i < items.length - 1 && <span className="text-[var(--muted)]">→</span>}
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--border)] bg-[var(--bg)]/40 px-3 py-2 text-xs">
+      <label className="flex items-center gap-2">
+        <span className="text-[var(--muted)]">Device</span>
+        <select value={target} onChange={(e) => update({ target: e.target.value })}>
+          {meta?.targets.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.id}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex items-center gap-2">
+        <span className="text-[var(--muted)]">Schedule</span>
+        <select value={schedule} onChange={(e) => update({ schedule: e.target.value })}>
+          {meta?.schedules.map((p) => (
+            <option key={p}>{p}</option>
+          ))}
+        </select>
+      </label>
+      {expert && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mono text-[var(--muted)]">passes=</span>
+          {meta?.passes.map((p) => (
+            <Chip key={p} on={passes.includes(p)} onClick={() => toggle(p)}>
+              {p}
+            </Chip>
+          ))}
+          <button className="px-1 text-[10px] text-[var(--muted)] hover:text-[var(--text)]" onClick={() => update({ passes: meta?.default_passes ?? [] })}>
+            reset
+          </button>
         </div>
-      ))}
+      )}
     </div>
   );
 };
 
-const ControllerView = ({ result, theme }: { result: CompileResult; theme: string }) => {
-  const prog = result.controller;
-  if (!prog) return result.controller_error ? <ErrorCard error={result.controller_error} /> : null;
-  const kinds: Record<string, number> = {};
-  for (const e of prog.events) kinds[String(e.kind)] = (kinds[String(e.kind)] ?? 0) + 1;
-  return (
-    <div className="flex h-full min-h-0 flex-col gap-2">
-      <div className="flex flex-wrap gap-2 text-xs">
-        <span className="rounded border border-[var(--border)] px-2 py-1 mono">{prog.format}</span>
-        {prog.lines.map((l) => (
-          <span key={l.line} className="rounded border border-[var(--border)] px-2 py-1">
-            L{l.line} <b>{l.role}</b> q{l.qudit}
-          </span>
-        ))}
-        {Object.entries(kinds).map(([k, n]) => (
-          <span key={k} className="rounded px-2 py-1 font-semibold text-black" style={{ background: KIND_COLORS[k] ?? "#999" }}>
-            {n} {k}
-          </span>
-        ))}
-        <span className="rounded border border-[var(--border)] px-2 py-1">{prog.epochs.length} epochs</span>
-        <span className="rounded border border-[var(--border)] px-2 py-1">{prog.calls.length} calls</span>
-        {prog.limits && <span className="rounded border border-[var(--accent)] px-2 py-1 text-[var(--accent)]">limits checked</span>}
-      </div>
-      <div className="min-h-0 flex-1 overflow-hidden rounded border border-[var(--border)]">
-        <Editor
-          language="json"
-          value={JSON.stringify(prog, null, 2)}
-          theme={theme}
-          options={{ ...editorOptions, readOnly: true, folding: true }}
-        />
-      </div>
-    </div>
-  );
+let sourceEditor: Parameters<OnMount>[0] | null = null;
+
+const jumpTo = (line: number) => {
+  sourceEditor?.revealLineInCenter(line);
+  sourceEditor?.setPosition({ lineNumber: line, column: 1 });
+  sourceEditor?.focus();
 };
 
-const CompilerTab = () => {
-  const s = useConsole();
-  const compile = useCompile();
-  const loadExample = useLoadExample();
-  const [stage, setStage] = useState<Stage>("optimized");
-  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
-  const theme = s.theme === "nvidia-light" ? "nvq-light" : "nvq-dark";
-  const result = s.result;
+const SourcePane = () => {
+  const meta = useConsole((s) => s.meta);
+  const exampleFile = useConsole((s) => s.exampleFile);
+  const source = useConsole((s) => s.source);
+  const kernels = useConsole((s) => s.kernels);
+  const kernel = useConsole((s) => s.kernel);
+  const args = useConsole((s) => s.args);
+  const theme = useConsole((s) => (s.theme === "nvidia-light" ? "nvq-light" : "nvq-dark"));
+  const result = useConsole((s) => s.result);
+  const set = useConsole((s) => s.set);
+  const editor = useRef<Parameters<OnMount>[0] | null>(null);
+  const timer = useRef(0);
+  const firstEdit = useRef<number | null>(null);
 
   const onMount: OnMount = (ed) => {
-    editorRef.current = ed;
-    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => compile());
+    editor.current = ed;
+    sourceEditor = ed;
+    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => compileNow());
+  };
+
+  const onChange = (v?: string) => {
+    const t = performance.now();
+    firstEdit.current ??= t;
+    set({ source: v ?? "" });
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      firstEdit.current = null;
+      compileNow(t);
+    }, DEBOUNCE_MS);
   };
 
   useEffect(() => {
-    const ed = editorRef.current;
+    const ed = editor.current;
     const model = ed?.getModel();
     if (!ed || !model) return;
     const err = result && !result.ok ? result.error : null;
-    if (err?.line) {
+    if (err?.line && err.line <= model.getLineCount()) {
       monaco.editor.setModelMarkers(model, "nvq", [
         {
           startLineNumber: err.line,
@@ -171,194 +205,356 @@ const CompilerTab = () => {
           severity: monaco.MarkerSeverity.Error,
         },
       ]);
-      ed.revealLineInCenter(err.line);
-    } else {
-      monaco.editor.setModelMarkers(model, "nvq", []);
-    }
+    } else monaco.editor.setModelMarkers(model, "nvq", []);
   }, [result]);
 
-  useEffect(() => {
-    if (stage === "llvm" && result?.ok && !result.stages?.llvm) compile(true);
-  }, [stage, result, compile]);
-
-  const kernelParams = useMemo(
-    () => s.kernels.find((k) => k.name === s.kernel)?.params.map((p) => p.name + (p.annotation ? `: ${p.annotation}` : "")).join(", "),
-    [s.kernels, s.kernel],
+  return (
+    <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--panel)]">
+      <div className="flex items-center gap-2 border-b border-[var(--border)] px-2 py-1.5 text-xs">
+        <select value={exampleFile} onChange={(e) => loadExample(e.target.value)} className="max-w-[220px]" aria-label="Example">
+          {meta?.examples.map((e) => (
+            <option key={e.file} value={e.file} title={e.title}>
+              {e.file.replace(".py", "").replace(/_/g, " ")}
+            </option>
+          ))}
+        </select>
+        <div className="mono flex min-w-0 flex-1 items-center">
+          <select
+            value={kernel}
+            onChange={(e) => {
+              set({ kernel: e.target.value });
+              compileNow();
+            }}
+            className="mono border-transparent bg-transparent font-semibold text-[var(--accent)]"
+            aria-label="Kernel"
+          >
+            {kernels.map((k) => (
+              <option key={k.name} value={k.name}>
+                {k.name}
+              </option>
+            ))}
+          </select>
+          <span className="text-[var(--muted)]">(</span>
+          <input
+            type="text"
+            className="mono min-w-0 flex-1 border-transparent bg-transparent px-1"
+            value={args}
+            onChange={(e) => {
+              set({ args: e.target.value });
+              window.clearTimeout(timer.current);
+              const t = performance.now();
+              timer.current = window.setTimeout(() => compileNow(t), DEBOUNCE_MS);
+            }}
+            title={(() => {
+              const k = kernels.find((x) => x.name === kernel);
+              return k ? `${kernel}(${k.params.map((p) => p.name + (p.annotation ? `: ${p.annotation}` : "")).join(", ")}) · q = dev.qudit_handles` : "";
+            })()}
+            aria-label="Kernel arguments"
+          />
+          <span className="text-[var(--muted)]">)</span>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1">
+        <Editor
+          path={`file:///${exampleFile}`}
+          defaultValue={source}
+          language="python"
+          theme={theme}
+          onChange={onChange}
+          onMount={onMount}
+          options={editorOptions}
+        />
+      </div>
+    </section>
   );
+};
 
-  const togglePass = (p: string) => {
-    const order = s.meta?.passes ?? [];
-    const next = s.passes.includes(p) ? s.passes.filter((x) => x !== p) : [...s.passes, p];
-    s.set({ passes: order.filter((x) => next.includes(x)) });
+const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
+
+/** What the program does, without IR: for the overview mode. */
+const ProgramView = memo(({ result }: { result: CompileResult }) => {
+  const ev = result.events!;
+  const clock = result.clock_ghz!;
+  const count = (k: string) => {
+    const i = ev.kinds.indexOf(k);
+    return i < 0 ? 0 : ev.kind.reduce((n, x) => n + (x === i ? 1 : 0), 0);
+  };
+  let end = 0;
+  for (let i = 0; i < ev.start.length; i++) end = Math.max(end, ev.start[i] + ev.duration[i]);
+  const us = end / clock / 1000;
+  const facts = [
+    { k: "Length", v: us >= 1 ? `${us.toPrecision(3)} µs` : `${(us * 1000).toPrecision(3)} ns` },
+    { k: "Qubits", v: String(result.qudits?.length ?? 0) },
+    { k: "Pulses", v: count("drive").toLocaleString() },
+    { k: "Measurements", v: count("readout").toLocaleString() },
+    { k: "Decisions in the loop", v: (result.calls?.length ?? 0).toLocaleString() },
+  ];
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3 p-3">
+      <div className="grid grid-cols-5 gap-2">
+        {facts.map((f) => (
+          <div key={f.k} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2">
+            <div className="text-[10px] uppercase tracking-wider text-[var(--muted)]">{f.k}</div>
+            <div className="text-xl font-black tabular-nums text-[var(--accent)]">{f.v}</div>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs leading-relaxed text-[var(--muted)]">
+        The compiler turned the Python kernel into a timed program for the control electronics: {plural(count("drive"), "pulse")} and{" "}
+        {plural(count("readout"), "measurement")} across {plural(result.qudits?.length ?? 0, "qubit")}
+        {result.calls?.length ? `, with ${plural(result.calls.length, "decision")} computed next to the qubits while the program runs` : ""}.
+      </p>
+      <div className="min-h-0 flex-1 rounded border border-[var(--border)] bg-[var(--bg)] p-2">
+        <Timeline events={ev} clockGhz={clock} lines={result.controller?.lines} simple />
+      </div>
+    </div>
+  );
+});
+
+const SIM_POINTS = 61;
+const simCache = new Map<string, SimResult>();
+
+/** Populations over the kernel's run, simulated once and replayed against
+ * the schedule. */
+const RunView = memo(({ result, simple }: { result: CompileResult; simple: boolean }) => {
+  const replay = useReplay();
+  const [sim, setSim] = useState<SimResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const key = JSON.stringify(request(false));
+  const ev = result.events!;
+  const tooLong = ev.start.length > 4000;
+
+  useEffect(() => setSim(simCache.get(key) ?? null), [key]);
+
+  const go = async () => {
+    const clicked = performance.now();
+    let found = simCache.get(key);
+    if (!found) {
+      setBusy(true);
+      found = await api.simulate({ ...request(false), points: SIM_POINTS, levels: 2 });
+      setBusy(false);
+      if (found.ok) simCache.set(key, found);
+    }
+    setSim(found);
+    if (found.ok) replay.start(3000, clicked);
   };
 
-  const jump = (line: number) => {
-    editorRef.current?.revealLineInCenter(line);
-    editorRef.current?.setPosition({ lineNumber: line, column: 1 });
-    editorRef.current?.focus();
+  const series = useMemo<Series[]>(() => {
+    if (!sim?.ok) return [];
+    const t = sim.series!.map((p) => p.t_ns / 1000);
+    const n = sim.qudits!.length;
+    if (n === 1)
+      return [0, 1].map((level) => ({
+        x: t,
+        y: sim.series!.map((p) => p.populations[0][level]),
+        color: LEVEL_COLORS[level],
+        reveal: "progress" as const,
+        label: `P(${level})`,
+      }));
+    return sim.qudits!.map((q, i) => ({
+      x: t,
+      y: sim.series!.map((p) => p.populations[i][1] ?? 0),
+      color: LEVEL_COLORS[i % LEVEL_COLORS.length],
+      reveal: "progress" as const,
+      label: simple ? `qubit ${q} excited` : `q${q} P(1)`,
+    }));
+  }, [sim, simple]);
+
+  if (tooLong)
+    return (
+      <div className="p-6 text-sm text-[var(--muted)]">
+        This program is too long to simulate step by step here ({ev.start.length.toLocaleString()} scheduled operations). Its calibration run is under
+        Calibration.
+      </div>
+    );
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-2 p-3">
+      <div className="flex items-center gap-3">
+        <GoButton onClick={go} busy={busy} />
+        <span className="text-xs text-[var(--muted)]">
+          {simple
+            ? "Simulate the qubits through the program and replay what happens."
+            : `pulse.simulate at ${SIM_POINTS} times over the schedule, then replayed.`}
+        </span>
+        {sim?.ok && !simple && <span className="ml-auto text-[11px] text-[var(--muted)]">simulated in {fmtMs(sim.wall_s! * 1000)}</span>}
+      </div>
+      {sim && !sim.ok && sim.error && <ErrorCard error={sim.error} />}
+      <div className="min-h-0 flex-[3] rounded border border-[var(--border)] bg-[var(--bg)]">
+        {sim?.ok ? (
+          <Plot series={series} yDomain={[0, 1]} xLabel="time (µs)" yLabel={simple ? "probability" : "population"} replay={replay} cursor />
+        ) : (
+          <div className="flex h-full items-center justify-center text-xs text-[var(--muted)]">{busy ? "Simulating…" : "Press Go"}</div>
+        )}
+      </div>
+      <div className="min-h-0 flex-[2] rounded border border-[var(--border)] bg-[var(--bg)] p-2">
+        <Timeline events={ev} clockGhz={result.clock_ghz!} lines={result.controller?.lines} simple={simple} replay={sim?.ok ? replay : undefined} />
+      </div>
+    </div>
+  );
+});
+
+const ControllerSummary = ({ result }: { result: CompileResult }) => {
+  const prog = result.controller!;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--border)] px-3 py-1.5 text-[11px] text-[var(--muted)]">
+      <span className="mono text-[var(--text)]">{prog.format}</span>
+      <span>· {prog.lines.length} lines</span>
+      <span>· {(prog.event_count ?? prog.events.length).toLocaleString()} timed ops</span>
+      <span>· {prog.epochs.length} epochs</span>
+      <span>· {prog.calls.length} classical calls</span>
+      {prog.limits && <span className="text-[var(--accent)]">· limits checked</span>}
+      {(prog.event_count ?? 0) > prog.events.length && <span>· first {prog.events.length.toLocaleString()} ops shown</span>}
+    </div>
+  );
+};
+
+const StatusBar = ({ result, simple }: { result: CompileResult | null; simple: boolean }) => {
+  const compiling = useConsole((s) => s.compiling);
+  const [latency, setLatency] = useState<string>("");
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const last = [...window.__nvqPerf].reverse().find((s) => s.name === "edit → output on screen");
+      if (last) setLatency(fmtMs(last.ms));
+    }, 500);
+    return () => window.clearInterval(id);
+  }, []);
+  if (!result) return null;
+  const m = result.ok ? result.stages!.optimized.metrics : null;
+  return (
+    <div className="flex items-center gap-3 border-t border-[var(--border)] px-3 py-1 text-[11px] text-[var(--muted)]">
+      <span className={clsx("inline-block h-1.5 w-1.5 rounded-full", compiling ? "animate-pulse bg-amber-400" : result.ok ? "bg-[var(--accent)]" : "bg-[var(--danger)]")} />
+      {result.ok ? (
+        <>
+          <span>
+            {result.cached ? "unchanged · from cache" : `compiled in ${fmtMs(result.server_ms ?? m!.total_ms)}`}
+          </span>
+          {!simple && m && (
+            <span className="mono">
+              trace {fmtMs(m.trace_ms)} · mlir {fmtMs(m.ffi_ms)} · passes {fmtMs(m.passes_ms)} · schedule {fmtMs(m.schedule_ms)} · {m.op_count} ops ·{" "}
+              {result.schedule_policy}
+            </span>
+          )}
+        </>
+      ) : (
+        <span className="text-[var(--danger)]">{result.error?.stage ?? "error"} failed</span>
+      )}
+      {latency && <span className="ml-auto">edit → output {latency}</span>}
+    </div>
+  );
+};
+
+const OutputPane = () => {
+  const result = useConsole((s) => s.result);
+  const mode = useConsole((s) => s.mode);
+  const theme = useConsole((s) => (s.theme === "nvidia-light" ? "nvq-light" : "nvq-dark"));
+  const simple = mode === "overview";
+  const [expertStage, setExpertStage] = useState<Stage>("optimized");
+  const [overviewStage, setOverviewStage] = useState<Stage>("program");
+  const [options, setOptions] = useState(false);
+  const stage = simple ? overviewStage : expertStage;
+  const setStage = (s: Stage) => {
+    const t = performance.now();
+    (simple ? setOverviewStage : setExpertStage)(s);
+    afterPaint("output view switch", t);
   };
+  const good = useRef<CompileResult | null>(null);
+  if (result?.ok) good.current = result;
+  const shown = good.current;
+  const adaptive = !!shown?.calls?.some((c) => c.function === "adaptive_t1");
+  const stages = [...(simple ? OVERVIEW : EXPERT), ...(adaptive ? [{ id: "converge" as Stage, label: "Convergence" }] : [])];
+  const active = stages.some((s) => s.id === stage) ? stage : stages[0].id;
+  const passes = useConsole((s) => s.passes);
+
+  useEffect(() => {
+    if (active === "llvm" && shown && !shown.stages?.llvm) compileNow(performance.now(), true);
+  }, [active, shown]);
+
+  const text = useMemo(() => {
+    if (!shown) return "";
+    if (active === "traced") return shown.stages!.traced.mlir;
+    if (active === "optimized") return shown.stages!.optimized.mlir;
+    if (active === "controller") return shown.controller ? JSON.stringify(shown.controller, null, 1) : "";
+    if (active === "llvm") return shown.stages?.llvm?.mlir ?? shown.stages?.llvm?.error ?? "// lowering pulse → qop → cudm → LLVM…";
+    return "";
+  }, [shown, active]);
+  const textStage = ["traced", "optimized", "controller", "llvm"].includes(active);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-xs">
-        <label className="text-[10px] uppercase tracking-wider text-[var(--muted)]">Example</label>
-        <select value={s.exampleFile} onChange={(e) => loadExample(e.target.value)} className="max-w-[260px]">
-          {s.meta?.examples.map((e) => (
-            <option key={e.file} value={e.file}>
-              {e.file.replace(".py", "")}
-            </option>
-          ))}
-        </select>
-        <label className="ml-2 text-[10px] uppercase tracking-wider text-[var(--muted)]">Kernel</label>
-        <select value={s.kernel} onChange={(e) => s.set({ kernel: e.target.value })}>
-          {s.kernels.map((k) => (
-            <option key={k.name} value={k.name}>
-              {k.name}
-            </option>
-          ))}
-        </select>
-        <span className="mono text-[var(--muted)]">(</span>
-        <input
-          type="text"
-          className="mono w-56"
-          value={s.args}
-          onChange={(e) => s.set({ args: e.target.value })}
-          onKeyDown={(e) => e.key === "Enter" && compile()}
-          title={kernelParams ? `${s.kernel}(${kernelParams}); q = dev.qudit_handles` : ""}
-          aria-label="Kernel arguments"
-        />
-        <span className="mono text-[var(--muted)]">)</span>
-        <label className="ml-2 text-[10px] uppercase tracking-wider text-[var(--muted)]">Device</label>
-        <select value={s.target} onChange={(e) => s.set({ target: e.target.value })}>
-          {s.meta?.targets.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.id}
-            </option>
-          ))}
-        </select>
-        <label className="ml-2 text-[10px] uppercase tracking-wider text-[var(--muted)]">Schedule</label>
-        <select value={s.schedule} onChange={(e) => s.set({ schedule: e.target.value })}>
-          {s.meta?.schedules.map((p) => (
-            <option key={p}>{p}</option>
-          ))}
-        </select>
-        <button
-          onClick={() => compile(stage === "llvm")}
-          disabled={s.compiling}
-          className="ml-auto rounded-md bg-[var(--accent)] px-4 py-1.5 text-xs font-bold text-black hover:brightness-110 disabled:opacity-50"
-        >
-          {s.compiling ? "Compiling…" : "Compile ⌘↵"}
-        </button>
-      </div>
-      <div className="flex flex-wrap items-center gap-2 px-1 text-xs">
-        <span className="text-[10px] uppercase tracking-wider text-[var(--muted)]">passes=</span>
-        {s.meta?.passes.map((p) => (
+    <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--panel)]">
+      <div className="flex items-center gap-0.5 border-b border-[var(--border)] px-2 py-1">
+        {stages.map((st) => (
           <button
-            key={p}
-            onClick={() => togglePass(p)}
+            key={st.id}
+            onClick={() => setStage(st.id)}
             className={clsx(
-              "rounded-full border px-2.5 py-0.5 text-[11px] normal-case",
-              s.passes.includes(p)
-                ? "border-[var(--accent)] bg-[var(--accent)]/20 text-[var(--accent)]"
-                : "border-[var(--border)] text-[var(--muted)]",
+              "rounded px-2.5 py-1 text-[11px] normal-case transition-colors",
+              active === st.id ? "bg-[var(--accent)]/15 font-semibold text-[var(--accent)]" : "text-[var(--muted)] hover:text-[var(--text)]",
             )}
           >
-            {p}
+            {st.label}
           </button>
         ))}
         <button
-          className="rounded border border-[var(--border)] px-2 py-0.5 text-[10px] text-[var(--muted)]"
-          onClick={() => s.set({ passes: s.meta?.default_passes ?? [] })}
+          onClick={() => setOptions((o) => !o)}
+          className={clsx("mono ml-auto truncate rounded px-2 py-1 text-[10.5px] normal-case", options ? "text-[var(--accent)]" : "text-[var(--muted)] hover:text-[var(--text)]")}
+          title="Device, schedule and passes"
         >
-          default
+          {simple ? "options" : `passes=(${passes.join(", ")})`} ▾
         </button>
-        <button
-          className="rounded border border-[var(--border)] px-2 py-0.5 text-[10px] text-[var(--muted)]"
-          onClick={() => s.set({ passes: [] })}
-        >
-          none
-        </button>
-        <span className="mono ml-2 text-[var(--muted)]">({s.passes.map((p) => `"${p}"`).join(", ")})</span>
-        {result?.ok && result.machine && (
-          <span className="ml-auto rounded border border-[var(--accent-2)]/50 px-2 py-0.5 text-[10px] text-[var(--accent-2)]" title={result.machine}>
-            module MACHINE model
-          </span>
+      </div>
+      {options && <Options />}
+      {result && !result.ok && result.error && (
+        <div className="max-h-[45%] overflow-auto border-b border-[var(--border)] p-2">
+          <ErrorCard error={result.error} onJump={jumpTo} />
+        </div>
+      )}
+      <div className={clsx("relative min-h-0 flex-1 transition-opacity", result && !result.ok && "opacity-40")}>
+        {!shown && <div className="p-6 text-sm text-[var(--muted)]">Compiling…</div>}
+        {shown && active === "controller" && shown.controller && <ControllerSummary result={shown} />}
+        {shown && active === "controller" && !shown.controller && shown.controller_error && <ErrorCard error={shown.controller_error} />}
+        {shown && textStage && (
+          <div className={clsx("absolute inset-x-0 bottom-0", active === "controller" && shown.controller ? "top-[29px]" : "top-0")}>
+            <Editor path={`out:${active}`} value={text} language={active === "controller" ? "json" : "mlir"} theme={theme} options={readOnly} />
+          </div>
+        )}
+        {shown && active === "diff" && (
+          <DiffEditor
+            language="mlir"
+            original={shown.stages!.traced.mlir}
+            modified={shown.stages!.optimized.mlir}
+            originalModelPath="diff:traced"
+            modifiedModelPath="diff:optimized"
+            keepCurrentOriginalModel
+            keepCurrentModifiedModel
+            theme={theme}
+            options={{ ...readOnly, renderSideBySide: true }}
+          />
+        )}
+        {shown && active === "schedule" && (
+          <div className="h-full p-2">
+            <Timeline events={shown.events!} clockGhz={shown.clock_ghz!} lines={shown.controller?.lines} />
+          </div>
+        )}
+        {shown && active === "program" && <ProgramView result={shown} />}
+        {shown && active === "run" && <RunView result={shown} simple={simple} />}
+        {shown && active === "converge" && (
+          <div className="h-full p-3">
+            <ChainConvergence simple={simple} />
+          </div>
         )}
       </div>
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-2">
-        <Panel title={<>kernel.py <span className="normal-case text-[var(--muted)]">· {s.exampleFile}</span></>} bodyClassName="p-0">
-          <Editor
-            language="python"
-            value={s.source}
-            theme={theme}
-            onChange={(v) => s.set({ source: v ?? "" })}
-            onMount={onMount}
-            options={editorOptions}
-          />
-        </Panel>
-        <section className="flex min-h-0 flex-col rounded-lg border border-[var(--border)] bg-[var(--panel)]">
-          <div className="flex items-center gap-1 border-b border-[var(--border)] px-2 pt-2">
-            {STAGES.map((st) => (
-              <button
-                key={st.id}
-                onClick={() => setStage(st.id)}
-                className={clsx(
-                  "rounded-t px-3 py-1.5 text-[11px]",
-                  stage === st.id ? "bg-[var(--bg)] text-[var(--accent)]" : "text-[var(--muted)] hover:text-[var(--text)]",
-                )}
-              >
-                {st.label}
-              </button>
-            ))}
-          </div>
-          <div className="min-h-0 flex-1 p-2">
-            {!result && <div className="p-6 text-sm text-[var(--muted)]">Pick an example and compile.</div>}
-            {result && !result.ok && result.error && <ErrorCard error={result.error} onJump={jump} />}
-            {result?.ok && (
-              <div className="flex h-full min-h-0 flex-col gap-2">
-                <StageStrip result={result} />
-                <div className="min-h-0 flex-1 overflow-hidden rounded border border-[var(--border)]">
-                  {stage === "traced" && (
-                    <Editor language="mlir" value={result.stages!.traced.mlir} theme={theme} options={{ ...editorOptions, readOnly: true }} />
-                  )}
-                  {stage === "optimized" && (
-                    <Editor language="mlir" value={result.stages!.optimized.mlir} theme={theme} options={{ ...editorOptions, readOnly: true }} />
-                  )}
-                  {stage === "diff" && (
-                    <DiffEditor
-                      language="mlir"
-                      original={result.stages!.traced.mlir}
-                      modified={result.stages!.optimized.mlir}
-                      theme={theme}
-                      keepCurrentOriginalModel
-                      keepCurrentModifiedModel
-                      options={{ ...editorOptions, readOnly: true, renderSideBySide: true }}
-                    />
-                  )}
-                  {stage === "schedule" && (
-                    <div className="h-full p-2">
-                      <ScheduleTimeline events={result.events!} clockGhz={result.clock_ghz!} lines={result.controller?.lines} />
-                    </div>
-                  )}
-                  {stage === "controller" && (
-                    <div className="h-full p-2">
-                      <ControllerView result={result} theme={theme} />
-                    </div>
-                  )}
-                  {stage === "llvm" &&
-                    (result.stages?.llvm?.mlir ? (
-                      <Editor language="mlir" value={result.stages.llvm.mlir} theme={theme} options={{ ...editorOptions, readOnly: true }} />
-                    ) : (
-                      <div className="p-4 text-xs text-[var(--muted)]">
-                        {result.stages?.llvm?.error ?? "Lowering pulse → qop → cudm → LLVM…"}
-                      </div>
-                    ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
-      </div>
+      <StatusBar result={result} simple={simple} />
+    </section>
+  );
+};
+
+const CompilerTab = () => {
+  const ready = useConsole((s) => s.source !== "");
+  if (!ready) return <div className="p-6 text-sm text-[var(--muted)]">Loading…</div>;
+  return (
+    <div className="grid h-full min-h-0 grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-2">
+      <SourcePane />
+      <OutputPane />
     </div>
   );
 };

@@ -1,15 +1,31 @@
-import * as monaco from "monaco-editor";
+// The editor API with the few contributions the console uses, and one
+// language: a fraction of the full Monaco bundle.
+import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
+import "monaco-editor/esm/vs/editor/browser/coreCommands";
+import "monaco-editor/esm/vs/editor/browser/widget/codeEditor/codeEditorWidget";
+import "monaco-editor/esm/vs/editor/browser/widget/diffEditor/diffEditor.contribution";
+import "monaco-editor/esm/vs/editor/contrib/bracketMatching/browser/bracketMatching";
+import "monaco-editor/esm/vs/editor/contrib/clipboard/browser/clipboard";
+import "monaco-editor/esm/vs/editor/contrib/comment/browser/comment";
+import "monaco-editor/esm/vs/editor/contrib/cursorUndo/browser/cursorUndo";
+import "monaco-editor/esm/vs/editor/contrib/find/browser/findController";
+import "monaco-editor/esm/vs/editor/contrib/folding/browser/folding";
+import "monaco-editor/esm/vs/editor/contrib/hover/browser/hoverContribution";
+import "monaco-editor/esm/vs/editor/contrib/indentation/browser/indentation";
+import "monaco-editor/esm/vs/editor/contrib/linesOperations/browser/linesOperations";
+import "monaco-editor/esm/vs/editor/contrib/multicursor/browser/multicursor";
+import "monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/wordHighlighter";
+import "monaco-editor/esm/vs/editor/contrib/wordOperations/browser/wordOperations";
+import "monaco-editor/esm/vs/editor/contrib/readOnlyMessage/browser/contribution";
+import "monaco-editor/esm/vs/editor/common/standaloneStrings";
+import "monaco-editor/esm/vs/base/browser/ui/codicons/codiconStyles";
+import "monaco-editor/esm/vs/basic-languages/python/python.contribution";
 import { loader } from "@monaco-editor/react";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
-import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 
-// Bundle Monaco with the app instead of fetching it from a CDN, so the
-// console works offline.
-self.MonacoEnvironment = {
-  getWorker(_: unknown, label: string) {
-    return label === "json" ? new jsonWorker() : new editorWorker();
-  },
-};
+// Bundled with the app instead of fetched from a CDN, so the console works
+// offline.
+self.MonacoEnvironment = { getWorker: () => new editorWorker() };
 loader.config({ monaco });
 
 monaco.languages.register({ id: "mlir" });
@@ -26,6 +42,18 @@ monaco.languages.setMonarchTokensProvider("mlir", {
       [/\b(module|attributes|return|true|false)\b/, "keyword"],
       [/\b[a-z_]+(?= =)/, "attribute.name"],
       [/-?\d+(\.\d+)?(e[+-]?\d+)?/, "number"],
+    ],
+  },
+});
+
+monaco.languages.register({ id: "json" });
+monaco.languages.setMonarchTokensProvider("json", {
+  tokenizer: {
+    root: [
+      [/"[^"]*"(?=\s*:)/, "attribute.name"],
+      [/"[^"]*"/, "string"],
+      [/-?\d+(\.\d+)?([eE][+-]?\d+)?/, "number"],
+      [/\b(true|false|null)\b/, "keyword"],
     ],
   },
 });

@@ -11,14 +11,10 @@ export default defineConfig({
   },
   build: {
     target: "es2020",
-    chunkSizeWarningLimit: 4000,
+    chunkSizeWarningLimit: 2500,
     rollupOptions: {
       output: {
-        manualChunks: {
-          "vendor-react": ["react", "react-dom"],
-          "vendor-charts": ["recharts"],
-          "vendor-monaco": ["monaco-editor"],
-        },
+        manualChunks: (id) => (id.includes("monaco-editor") ? "monaco" : id.includes("node_modules") ? "vendor" : undefined),
       },
     },
   },

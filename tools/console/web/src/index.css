@@ -24,8 +24,10 @@ body {
   overflow: hidden;
 }
 
-/* Table headers carry units (µs) that uppercase would change. */
-[data-theme] th {
+/* Table headers carry units (µs) that uppercase would change; buttons
+ * marked normal-case hold identifiers (passes, kernels). */
+[data-theme] th,
+[data-theme] button.normal-case {
   text-transform: none;
 }
 
@@ -72,5 +74,16 @@ input:focus {
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes fadein {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
