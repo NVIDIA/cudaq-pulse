@@ -61,11 +61,8 @@ def version() -> str:
 
 
 def pass_names() -> list[str]:
-    """Every pass ``passes=`` accepts, and the default pipeline."""
-    enum = getattr(pulse, "Pass", None)
-    if enum is not None:
-        return [str(getattr(p, "value", p)) for p in enum]
-    return list(_compiler._PASS_MAP)
+    """Every pass ``passes=`` accepts: the members of ``pulse.Pass``."""
+    return [p.value for p in pulse.Pass]
 
 
 def default_passes() -> list[str]:

@@ -29,9 +29,31 @@ permissions:
   contents: read
 
 jobs:
+  # The console is always built on the latest staging: a branch that is
+  # behind it fails here, before anything is built.
+  staging-check:
+    if: github.ref == 'refs/heads/nvqconsole'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require origin/staging to be an ancestor of the branch
+        run: |
+          git rev-parse --verify --quiet origin/staging > /dev/null ||
+            { echo "::error::origin/staging was not fetched"; exit 1; }
+          staging="$(git rev-parse --short origin/staging)"
+          if ! git merge-base --is-ancestor origin/staging HEAD; then
+            echo "::error::nvqconsole is behind staging: merge origin/staging (staging is at $staging)"
+            exit 1
+          fi
+          echo "nvqconsole contains staging at $staging" >> "$GITHUB_STEP_SUMMARY"
+
   wheel:
     name: wheel (${{ matrix.platform }})
-    if: github.ref == 'refs/heads/nvqconsole'
+    needs: staging-check
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
