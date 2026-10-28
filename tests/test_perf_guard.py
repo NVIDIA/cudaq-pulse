@@ -296,6 +296,20 @@ def test_exporting_a_call_again_does_not_specialize_again():
 
 
 @pytest.mark.scaling
+def test_a_runtime_qudit_exports_about_as_fast_as_a_static_one():
+    def one_drive(q):
+        d, t = get_drive_line(q)
+        drive(d, square(20, 0.1), t)
+
+    static = pulse.kernel(one_drive)
+    static._undecided = ()
+    runtime = pulse.kernel(one_drive).lower(Q[0])
+    fixed = static.lower(Q[0])
+    # The symbols a runtime export adds cost a few dict copies, not a walk.
+    assert _best(runtime.export_controller, 200) < 1.3 * _best(fixed.export_controller, 200)
+
+
+@pytest.mark.scaling
 def test_a_sweep_of_a_wait_from_an_answer_and_a_float_compiles_once():
     from cudaq_pulse.classical import Float
 

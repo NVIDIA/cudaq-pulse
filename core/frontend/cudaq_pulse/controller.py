@@ -512,7 +512,8 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
     from .classical.emulation import export as emulation
 
     role = lowered._role
-    slots: list[int] | None = None if role is None else []
+    plan: _ExportPlan | None = None if role is None else role.export_plan
+    slots: list[int] | None = [] if role is not None and plan is None else None
     limits = lowered.options.machine.controller
     clocks = (lowered._generic or lowered).clocks
     native = None if clocks is None else _native_clock(clocks)
@@ -562,10 +563,19 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
         "limits": None if limits is None else limits.as_dict(),
     }
     if role is not None:
-        assert slots is not None
+        if plan is None or len(plan[1]) != len(events):
+            if slots is None:
+                slots = []
+                _walk(lowered, own=native, slots=slots)
+            plan = _export_plan(lowered, role, slots, events)
         exported["program_id"] = role.program_id
-        exported["symbols"] = _symbols(lowered, role, slots, events)
-        _event_symbols(lowered, role, slots, events)
+        exported["symbols"] = _symbols(lowered, plan[0])
+        for event, template in zip(events, plan[1], strict=True):
+            if template is not None:
+                symbols = template[0].copy()
+                for key in template[1]:
+                    symbols[key] = symbols[key][:]
+                event["symbols"] = symbols
     return exported
 
 
@@ -577,52 +587,40 @@ _DEPENDENT_FIELDS = ("frequency_hz", "phase_rad", "waveform")
 _ARGUMENT, _CARRIER, _NATIVE = range(3)
 
 
-def _event_symbols(
-    lowered: Lowered, role: Any, slots: Sequence[int], events: list[dict[str, Any]]
-) -> None:
-    """Give each event of a call the symbols its fields come from: its qudit's
-    slot, and those its tone frequency, frame phase and waveform depend on."""
-    plan = _export_plan(lowered, role, slots, events)
-    for event, template in zip(events, plan[1], strict=True):
-        if template is not None:
-            event["symbols"] = {k: v if type(v) is str else v[:] for k, v in template.items()}
-
-
 def _symbols(
-    lowered: Lowered, role: Any, slots: Sequence[int], events: list[dict[str, Any]]
+    lowered: Lowered, templates: list[tuple[dict[str, Any], int, int]]
 ) -> list[dict[str, Any]]:
     """Every symbol of a call's module, with its value in the call: its
     float arguments, its slots (the carriers bound) and the native frequency
     of each slot that gets a line."""
     arguments = lowered.arguments
     carriers = lowered.carriers
-    frequencies = lowered.target.frequencies
     found = []
-    for template, source, k in _export_plan(lowered, role, slots, events)[0]:
+    for template, source, k in templates:
         entry = template.copy()
         if source == _ARGUMENT:
             entry["value"] = arguments[k]
         elif source == _CARRIER:
             entry["value"] = carriers[k]
         else:
-            entry["value"] = frequencies[carriers[k]]
-        if "transition" in entry:
-            entry["transition"] = entry["transition"][:]
+            entry["value"] = lowered.target.frequencies[carriers[k]]
         found.append(entry)
     return found
 
 
-_ExportPlan = tuple[list[tuple[dict[str, Any], int, int]], list[dict[str, Any] | None]]
+# Each symbol without its value and where the value comes from; each event's
+# symbols, with the keys whose values are lists.
+_ExportPlan = tuple[
+    list[tuple[dict[str, Any], int, int]],
+    list[tuple[dict[str, Any], tuple[str, ...]] | None],
+]
 
 
 def _export_plan(
     lowered: Lowered, role: Any, slots: Sequence[int], events: list[dict[str, Any]]
 ) -> _ExportPlan:
-    """What a role's exports share: each symbol without its value and where
-    the value comes from, and each event's symbols. Built once per role."""
-    plan: _ExportPlan | None = role.export_plan
-    if plan is not None and len(plan[1]) == len(events):
-        return plan
+    """What a role's exports share, built once per role from a call's
+    *events* and the runtime-qudit *slots* of its lines."""
     lined = set(slots)
     symbols: list[tuple[dict[str, Any], int, int]] = []
     argument = 0
@@ -635,7 +633,6 @@ def _export_plan(
             symbols.append((entry, _CARRIER, slot))
             if slot in lined:
                 native = {"symbol": f"{name}.f01", "kind": "frequency", "slot": name}
-                native["transition"] = [0, 1]
                 symbols.append((native, _NATIVE, slot))
         else:
             symbols.append((entry, _ARGUMENT, argument))
@@ -656,7 +653,7 @@ def _export_plan(
             for item in found
         ]
     aligned = len(dependencies) == len(events)
-    templates: list[dict[str, Any] | None] = []
+    templates: list[tuple[dict[str, Any], tuple[str, ...]] | None] = []
     for index, event in enumerate(events):
         template: dict[str, Any] = {}
         line = event["line"]
@@ -665,8 +662,10 @@ def _export_plan(
                 template["qudit"] = f"s{slots[line]}"
         if aligned:
             template.update(dependencies[index])
-        templates.append(template or None)
-    plan = role.export_plan = (symbols, templates)
+        lists = tuple(k for k, v in template.items() if type(v) is list)
+        templates.append((template, lists) if template else None)
+    plan: _ExportPlan = (symbols, templates)
+    role.export_plan = plan
     return plan
 
 
