@@ -42,6 +42,9 @@ class SimulationModel:
 
     #: Levels per qudit, unless the instance sets a qudit's own.
     levels: ClassVar[int] = 2
+    #: The transition, as ``(lower, upper)`` levels, that a line's own tone
+    #: (``line.tone``, at the qudit's ``frequency_hz``) drives.
+    default_transition: ClassVar[tuple[int, int]] = (0, 1)
 
     __slots__ = ("_levels",)
 
@@ -73,6 +76,16 @@ class SimulationModel:
         """The energies of *qubit*'s first *levels* levels, in Hz from its ground
         level: evenly spaced by its 0-1 frequency."""
         return [k * qubit.frequency_hz for k in range(levels)]
+
+    def transitions_hz(self, qubit: Qubit, levels: int) -> dict[tuple[int, int], float]:
+        """The frequency in Hz of each transition between *qubit*'s first
+        *levels* levels, by ``(lower, upper)`` level, ordered by level."""
+        energies = self.energies_hz(qubit, levels)
+        return {
+            (lower, upper): abs(energies[upper] - energies[lower])
+            for lower in range(levels)
+            for upper in range(lower + 1, levels)
+        }
 
     def _simulate(self, *args: Any, **options: Any) -> Any:
         raise UnsupportedError(

@@ -27,7 +27,8 @@ def test_swapped_line_and_tone_from_the_friction_log():
 
     message = (
         r"drive\(\): argument 1 must be a drive line, got a tone; "
-        r"the line comes first and the tone last: drive\(line, waveform, tone\)"
+        r"the line comes first and the tone by keyword: drive\(line, waveform\) "
+        r"or drive\(line, waveform, tone=tone\)"
     )
     with pytest.raises(CompilationError, match=message):
         python_ir(k, Q[0])

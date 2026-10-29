@@ -325,6 +325,20 @@ class Device:
             self._arrays = (_read_only(f01), _read_only(transitions))
         return self._arrays
 
+    def _line_tones(
+        self, index: int, readout: bool
+    ) -> tuple[tuple[int, int], dict[tuple[int, int], float]]:
+        """The default transition of carrier *index*, and the frequency of
+        each transition its line has a tone for: every transition of a
+        drive line, only the default of a readout line."""
+        target = self.target
+        model = target.model if target.model is not None else SimulationModel()
+        default = model.default_transition
+        qubit = target.qubits[index]
+        if readout:
+            return default, {default: qubit.frequency_hz}
+        return default, model.transitions_hz(qubit, model.levels_of(index))
+
     @property
     def qubit_freq(self) -> Any:
         return self._frequency_arrays()[0]

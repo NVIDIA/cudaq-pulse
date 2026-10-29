@@ -67,8 +67,13 @@ def operand_error(fname: str, call_args: list[Any]) -> CompilationError:
     message = f"{fname}(): argument {index + 1} must be a {wanted}, got {_describe(value)}"
     vtype = value.vtype if value.__class__ is IRValue else None
     play = fname in ("drive", "readout")
-    if play and ((index == 0 and vtype == "tone") or (index == 2 and vtype in _LINE_TYPES)):
-        message += f"; the line comes first and the tone last: {fname}(line, waveform, tone)"
+    if play and index == 0 and vtype == "tone":
+        message += (
+            f"; the line comes first and the tone by keyword: {fname}(line, waveform) "
+            f"or {fname}(line, waveform, tone=tone)"
+        )
+    elif play and index == 2 and vtype in _LINE_TYPES:
+        message += f"; pass a tone, such as line.tone, not a line: {fname}(line, waveform, tone=t)"
     elif play and vtype in _LINE_TYPES:
         message += "; drive() takes a drive line and readout() a readout line"
     elif fname == "wf_scale":
@@ -86,6 +91,16 @@ def operand_error(fname: str, call_args: list[Any]) -> CompilationError:
             )
         else:
             message += "; pass one of the kernel's qudit arguments"
+    return CompilationError(message)
+
+
+def play_arity_error(fname: str, count: int) -> CompilationError:
+    """The error for *fname* (drive or readout) given *count* positional arguments."""
+    message = (
+        f"{fname}() takes a line and a waveform, and a tone only by keyword: "
+        f"{fname}(line, waveform) plays on the line's own tone, line.tone, and "
+        f"{fname}(line, waveform, tone=tone) on another; got {count} positional arguments"
+    )
     return CompilationError(message)
 
 

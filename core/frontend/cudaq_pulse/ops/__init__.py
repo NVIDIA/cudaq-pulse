@@ -17,7 +17,7 @@ to MLIR ops.  If called outside a kernel context they raise
 from __future__ import annotations
 
 import enum
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from .._errors import CompilationError, InvalidTypeError
@@ -61,12 +61,33 @@ class Waveform:
     """Opaque waveform handle returned by envelope constructors."""
 
 
-class Line:
-    """Opaque drive or readout line handle from ``get_drive_line()``."""
-
-
 class Tone:
     """Opaque tone handle for phase and frequency operations."""
+
+
+class Line:
+    """A qudit's drive line, from ``get_drive_line()``, or its readout line,
+    from ``get_readout_line()``. A line is one value, not a pair: it is not
+    iterable or unpackable."""
+
+    @property
+    def tone(self) -> Tone:
+        """The line's own tone, at its qudit's frequency: the tone of the
+        default transition of the system's model. ``drive(line, waveform)``
+        and ``readout(line, waveform)`` play on it, and the phase and
+        frequency ops change it, as in ``shift_phase(line.tone, phase)``."""
+        return _require_context("Line.tone")
+
+    @property
+    def tones(self) -> Mapping[tuple[int, int], Tone]:
+        """The tone of each transition of the line's qudit, by its
+        ``(lower, upper)`` levels, as the system's model numbers them: read
+        only. The default transition's is ``line.tone``; another's starts
+        at that transition's frequency with phase 0, as in
+        ``drive(line, waveform, tone=line.tones[(1, 2)])``. A readout line
+        has only its own tone. A transition the qudit does not have raises
+        a ``KeyError`` that lists those it has."""
+        return _require_context("Line.tones")
 
 
 class MeasurementResult:
@@ -115,7 +136,7 @@ def get_drive_line(qubit: Any) -> tuple[Line, Tone]:
 
     A qubit has one drive channel for the whole program: later calls, also
     from called kernels, return its current line and tone, so pulses on it
-    play in sequence.
+    play in sequence. The tone is also ``line.tone``.
 
     Args:
         qubit: The qudit whose drive channel to use.
@@ -130,7 +151,7 @@ def get_readout_line(qubit: Any) -> tuple[Line, Tone]:
     """Obtain the readout line and tone for a qubit.
 
     Like the drive channel, a qubit has one readout channel for the whole
-    program.
+    program. The tone is also ``line.tone``.
 
     Args:
         qubit: The qudit whose readout channel to use.
@@ -144,24 +165,27 @@ def get_readout_line(qubit: Any) -> tuple[Line, Tone]:
 # ── Scheduling ops ──────────────────────────────────────────────────────
 
 
-def drive(line: Line, waveform: Waveform, tone: Tone) -> None:
+def drive(line: Line, waveform: Waveform, *, tone: Tone | None = None) -> None:
     """Play a waveform on a drive line.
 
     Args:
         line: Drive line from ``get_drive_line()``.
         waveform: Waveform envelope to play (e.g. from ``gaussian()``).
-        tone: Tone handle from ``get_drive_line()``.
+        tone: The tone to play it at; by default the line's own,
+            ``line.tone``. Another transition's, ``line.tones[(1, 2)]``,
+            or another line's tone retunes the drive.
     """
     _require_context("drive")
 
 
-def readout(line: Line, waveform: Waveform, tone: Tone) -> MeasurementResult:
+def readout(line: Line, waveform: Waveform, *, tone: Tone | None = None) -> MeasurementResult:
     """Acquire a measurement through a readout line.
 
     Args:
         line: Readout line from ``get_readout_line()``.
         waveform: Readout waveform envelope.
-        tone: Tone handle from ``get_readout_line()``.
+        tone: The tone to play it at; by default the line's own,
+            ``line.tone``.
 
     Returns:
         Measurement result handle.
@@ -221,7 +245,7 @@ def shift_phase(tone: Tone, phase: Numeric) -> Tone:
     turns about an axis rotated by ``-phase``.
 
     Args:
-        tone: Tone handle (second element of ``get_drive_line()``).
+        tone: Tone handle, such as ``line.tone``.
         phase: Phase increment in radians.
     """
     _require_context("shift_phase")

@@ -100,6 +100,16 @@ behavior may change in any 0.x release.
   Kernels take their qudits as parameters; a call without qudit
   handles raises `NoDeviceError` unless the kernel was compiled for a device
   (`pulse.compile(k, device=dev)`).
+- **Lines and their tones.** `line.tone` is a line's own tone, and
+  `line.tones[(lower, upper)]`, a read-only mapping keyed by levels, the
+  tone of each transition of its qudit: the line's own tone is that of the
+  model's `default_transition` (`(0, 1)` in the shipped models), and
+  another transition's starts at its frequency from the model, with phase
+  0. `drive(line, waveform)` and `readout(line, waveform)` play on the
+  line's own tone and `tone=` on another, such as another line's; the
+  frame operations take the tone, as in `shift_phase(line.tone, phase)`.
+  A transition the qudit does not have raises a `KeyError`
+  (`pulse.NotFoundError`) that lists those it has.
 - **Loop unrolling.** A `range` loop whose variable is never read is kept
   as one rolled loop, unless its estimated unrolled size (trip count times
   the calls in its body) is at most the unroll threshold: 8 by default, the

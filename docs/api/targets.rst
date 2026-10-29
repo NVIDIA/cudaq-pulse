@@ -38,8 +38,14 @@ qudit's own, keyed by the target's qudit index:
 
    TargetDescription(name="chip", qubits=qubits, model=TransmonModel(levels={0: 4}))
 
+The model also gives a drive line its transitions: ``line.tones`` has a tone
+for each ``(lower, upper)`` pair of the qudit's levels, at the frequency
+``transitions_hz`` gives it, and the line's own tone, ``line.tone``, is the
+one of ``default_transition``. A model numbers its levels from 0; one whose
+levels have names says in its docstring which number each name has.
+
 .. autoclass:: cudaq_pulse.targets.SimulationModel
-   :members: levels, levels_of, energies_hz
+   :members: levels, default_transition, levels_of, energies_hz, transitions_hz
 
 .. autoclass:: cudaq_pulse.targets.TransmonModel
 

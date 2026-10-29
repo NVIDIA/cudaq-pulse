@@ -689,6 +689,14 @@ class PackedIRBuilder:
             self._w(scale_vid)
             return results
 
+        if kind == "pulse.tone":
+            self._ensure(4)
+            self._w(_header(_ALLOC_TONE, 3))
+            self._w(results[0].vid)
+            self._w(_f2i(a["frequency_hz"]))
+            self._w(_f2i(a["phase_rad"]))
+            return results
+
         raise CompilationError(f"unsupported packed pulse op: {kind}")
 
     def _record(self, opcode: int, payload: list[int]) -> None:

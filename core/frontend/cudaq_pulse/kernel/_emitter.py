@@ -13,9 +13,10 @@ concretely, so compile-time conditions, short-circuit operators and loop
 bounds resolve exactly as Python would; pulse operations (``drive``,
 ``gaussian``, ...) are emitted as IR operations instead of being called.
 
-``get_drive_line(q)`` and ``get_readout_line(q)`` return the qudit's one
-channel of that kind for the whole trace (``_Lines``), threaded linearly
-through every op and inlined call that advances it.
+``get_drive_line(q)`` and ``get_readout_line(q)`` return the line of the
+qudit's one channel of that kind for the whole trace (``_Lines``), threaded
+linearly through every op and inlined call that advances it; ``line.tone``
+is the channel's tone, and ``line.tones[(lower, upper)]`` a transition's.
 
 A ``for ... in range(n)`` loop whose induction variable is never read is
 emitted once as a structured ``scf.for`` when the builder supports regions.
@@ -37,9 +38,10 @@ import numbers
 import operator
 import sys
 import types
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, NoReturn
 
+from .._errors import NotFoundError, PulseError
 from ..classical import ClassicalFunction
 from . import _bytecode_normalize as bc
 from . import _classical
@@ -660,6 +662,8 @@ _MISSING = object()
 _UNBOUND = object()
 
 _LINE_OPS = frozenset({"get_drive_line", "get_readout_line"})
+# Ops that play a waveform on a line, at its tone or at the keyword tone.
+_PLAYS = frozenset({"drive", "readout"})
 
 _LINE_TYPES = ("drive_line", "readout_line")
 _QUDIT = ("qref",)
@@ -795,7 +799,7 @@ def _sync_lines(fname: str, call_args: list[Any]) -> list[IRValue]:
         else:
             message = f"{fname}(): {where} must be a line, got {_describe(value)}"
             if value.__class__ is IRValue and value.vtype == "tone":
-                message += f"; pass the lines only, as in {fname}(*[line for line, _ in pairs])"
+                message += f"; pass the lines, not their tones, as in {fname}(d, r)"
             raise CompilationError(message)
 
     for i, value in enumerate(call_args):
@@ -891,6 +895,11 @@ def _unpack_error(value: Any, count: int) -> str:
             "drive() or wait(), gives None; call it on its own line, not as "
             "`a, b = drive(...)` (its arguments stay usable after it)"
         )
+    if value.__class__ is IRValue and value.vtype in _LINE_TYPES:
+        return (
+            f"cannot unpack {_describe(value)} into {count} names: a line is one value, "
+            "not a pair; write `line = get_drive_line(q)` and use line.tone for its tone"
+        )
     return (
         f"cannot unpack {_describe(value)} into {count} names; "
         "only a tuple or list known while tracing can be unpacked"
@@ -912,7 +921,8 @@ class _Chan:
 
 
 class _Held:
-    """The current (line, tone) of one qudit's drive or readout channel.
+    """The current (line, tone) of one qudit's drive or readout channel, or
+    the current (tone,) of one of its transitions.
 
     Indexing reads and writes the line (0) and the tone (1); a value written
     records the channel in ``IRValue.chan``.
@@ -920,9 +930,13 @@ class _Held:
 
     __slots__ = ("cells", "key")
 
-    def __init__(self, values: tuple[IRValue, ...], key: tuple[int, str]) -> None:
-        line, tone = values
-        self.cells = (_Chan(line, self, 0), _Chan(tone, self, 1))
+    def __init__(self, values: tuple[IRValue, ...], key: tuple[Any, ...]) -> None:
+        try:
+            line, tone = values
+        except ValueError:
+            self.cells: tuple[_Chan, ...] = (_Chan(values[0], self, 0),)
+        else:
+            self.cells = (_Chan(line, self, 0), _Chan(tone, self, 1))
         self.key = key
 
     def __getitem__(self, index: int) -> IRValue:
@@ -941,32 +955,38 @@ class _Held:
 
     @property
     def label(self) -> str:
-        return f"{self.key[1].removeprefix('get_')}{self.key[0]}"
+        label = f"{self.key[1].removeprefix('get_')}{self.key[0]}"
+        if len(self.key) == 3:
+            lower, upper = self.key[2]
+            label += f"_tone_{lower}_{upper}"
+        return label
 
 
 class _Lines:
     """The drive and readout channels acquired so far in one trace.
 
-    ``get_drive_line(q)`` returns the one drive channel of ``q`` for the
-    whole program: the first call acquires it, later calls, in the kernel or
-    in a kernel it calls, return its current line and tone, so pulses on it
-    play one after another. Each value a channel takes records the channel
-    in ``IRValue.chan``, so an op that consumes it moves the channel to the
-    op's result, and a name left holding an old value of a shared channel
-    can be brought up to date.
+    ``get_drive_line(q)`` returns the line of the one drive channel of ``q``
+    for the whole program: the first call acquires it, later calls, in the
+    kernel or in a kernel it calls, return its current line, so pulses on
+    it play one after another. Each value a channel takes records the
+    channel in ``IRValue.chan``, so an op that consumes it moves the channel
+    to the op's result, and a name left holding an old value of a shared
+    channel can be brought up to date. The tone of a transition other than
+    the default is a channel of its own, keyed by the line's key and the
+    transition.
     """
 
     __slots__ = ("held", "shared", "log")
 
     def __init__(self) -> None:
-        self.held: dict[tuple[int, str], _Held] = {}
+        self.held: dict[tuple[Any, ...], _Held] = {}
         # Whether any channel was handed out more than once.
         self.shared = False
         # Line acquisitions, in order: those a rolled loop body makes are
         # hoisted before the loop.
         self.log: list[tuple[str, IRValue]] = []
 
-    def add(self, key: tuple[int, str], values: tuple[IRValue, ...]) -> None:
+    def add(self, key: tuple[Any, ...], values: tuple[IRValue, ...]) -> None:
         self.held[key] = _Held(values, key)
 
     def share(self, held: _Held) -> None:
@@ -979,6 +999,75 @@ class _Lines:
         """The channel value now standing for *value*, if it is a channel's."""
         chan: _Chan | None = value.chan
         return None if chan is None else chan.value
+
+
+class _Tones(Mapping[tuple[int, int], IRValue]):
+    """``line.tones`` while tracing: the current tone of each transition of
+    the line's qudit, by ``(lower, upper)`` level. The default transition's
+    is the line's own tone; the first read of another makes a tone at that
+    transition's frequency, with phase 0, which later reads return as it
+    then is."""
+
+    __slots__ = ("_emitter", "_held", "_default", "_frequencies")
+
+    def __init__(self, emitter: PulseIREmitter, held: _Held) -> None:
+        builder = emitter.b
+        line_tones = getattr(builder, "line_tones", None)
+        qudit = getattr(builder, "_qref_to_qubit", {}).get(held.key[0])
+        if line_tones is None or qudit is None:
+            raise CompilationError(
+                "line.tones needs the transitions of the system's model; this trace "
+                "has no device, so use line.tone"
+            )
+        self._emitter = emitter
+        self._held = held
+        self._default, self._frequencies = line_tones(qudit, held.key[1] == "get_readout_line")
+
+    def __getitem__(self, transition: tuple[int, int]) -> IRValue:
+        held = self._held
+        if transition == self._default:
+            return held.cells[1].value
+        frequency = self._frequencies.get(transition) if transition.__class__ is tuple else None
+        if frequency is None:
+            raise NotFoundError(self._missing(transition))
+        lines = self._emitter._lines
+        key = (*held.key, transition)
+        tone = lines.held.get(key)
+        if tone is not None:
+            lines.share(tone)
+            return tone.cells[0].value
+        (value,) = self._emitter.b.emit(
+            "pulse.tone", (), ("tone",), {"frequency_hz": frequency, "phase_rad": 0.0}
+        )
+        # Made once for the whole program, like a line: a rolled loop body
+        # that makes one is unrolled.
+        self._emitter._acquired[0] += 1
+        lines.add(key, (value,))
+        return value
+
+    def _missing(self, transition: Any) -> str:
+        if self._held.key[1] == "get_readout_line":
+            return (
+                f"a readout line has only its own tone, that of the default transition "
+                f"{self._default!r}; got {transition!r}"
+            )
+        known = ", ".join(map(repr, self._frequencies))
+        return (
+            f"the qudit has no transition {transition!r}; line.tones has the "
+            f"(lower, upper) levels {known}, the default {self._default!r} being line.tone"
+        )
+
+    def __contains__(self, transition: object) -> bool:
+        return transition in self._frequencies
+
+    def __iter__(self) -> Iterator[tuple[int, int]]:
+        return iter(self._frequencies)
+
+    def __len__(self) -> int:
+        return len(self._frequencies)
+
+    def __repr__(self) -> str:
+        return f"<tones of transitions {', '.join(map(repr, self._frequencies))}>"
 
 
 # Host calls evaluated at trace time whose result depends only on their
@@ -1028,10 +1117,13 @@ def _parameter_names(value: Any) -> list[str]:
 def _iterate(value: Any) -> Any:
     """``iter(value)`` for a ``for`` loop, with a kernel-specific error."""
     if isinstance(value, IRValue):
-        raise CompilationError(
+        message = (
             f"cannot iterate over a pulse {value.vtype} value; for loops "
             "in pulse kernels run over Python values known at compile time"
         )
+        if value.vtype in _LINE_TYPES:
+            message += "; a line is one value, and its tone is line.tone"
+        raise CompilationError(message)
     if is_symbolic(value):
         if value.__class__ is _Choice:
             raise CompilationError(f"cannot iterate over {value.origin}")
@@ -1360,7 +1452,14 @@ class PulseIREmitter:
 
                 elif op is _load_attr:
                     obj = pop()
-                    if isinstance(obj, tuple) and len(obj) == 2 and obj[0] == "__unresolved__":
+                    if obj.__class__ is IRValue:
+                        # line.tone, read in place: frame ops take it as their tone.
+                        chan = obj.chan
+                        if arg == "tone" and chan is not None and obj.vtype in _LINE_TYPES:
+                            push(chan.held.cells[1].value)
+                        else:
+                            push(self._value_attribute(obj, arg))
+                    elif isinstance(obj, tuple) and len(obj) == 2 and obj[0] == "__unresolved__":
                         push(("__unresolved__", arg))
                     else:
                         try:
@@ -1373,6 +1472,8 @@ class PulseIREmitter:
                     obj = pop()
                     try:
                         value = obj[index]
+                    except PulseError:
+                        raise
                     except (TypeError, IndexError, KeyError) as e:
                         raise CompilationError(
                             f"subscript failed: {type(obj).__name__}[{index!r}]: {e}"
@@ -2696,6 +2797,20 @@ class PulseIREmitter:
         else:
             self.stack.append(None)
 
+    def _value_attribute(self, value: IRValue, name: str) -> Any:
+        """``value.name`` for an IR value: a line's ``tones``; ``line.tone``
+        the loop reads in place."""
+        chan = value.chan
+        if value.vtype in _LINE_TYPES and chan is not None:
+            if name == "tones":
+                return _Tones(self, chan.held)
+            if name == "tone":
+                return chan.held.cells[1].value
+        word = _TYPE_WORDS.get(value.vtype, value.vtype)
+        article = "an" if word[0] in "aeiou" else "a"
+        hint = "its attributes are" if value.vtype in _LINE_TYPES else "only a line has attributes,"
+        raise CompilationError(f"{article} {word} has no attribute {name!r}; {hint} tone and tones")
+
     # ── Pulse IR emission ────────────────────────────────────────────
 
     def _emit_pulse_call(
@@ -2734,13 +2849,28 @@ class PulseIREmitter:
         else:
             optional: tuple[str, StackVal] | None = None
             if len(call_args) != n_val + len(attr_names):
-                last = _OPTIONAL_LAST.get(fname)
-                if last is None or len(call_args) != n_val + len(attr_names) + 1:
-                    raise CompilationError(
-                        f"{fname}: expected {n_val + len(attr_names)} args, got {len(call_args)}"
-                    )
-                optional = (last, call_args[-1])
-                call_args = call_args[:-1]
+                if n_val == 3:
+                    # drive(line, waveform) and readout(line, waveform): the
+                    # line's own tone; the operand checks name a non-line.
+                    if len(call_args) != 2:
+                        from ._emit_errors import play_arity_error
+
+                        raise play_arity_error(fname, len(call_args))
+                    line, waveform = call_args
+                    try:
+                        tone = line.chan.held.cells[1].value
+                    except (AttributeError, IndexError):
+                        tone = None
+                    call_args = [line, waveform, tone]
+                else:
+                    last = _OPTIONAL_LAST.get(fname)
+                    if last is None or len(call_args) != n_val + len(attr_names) + 1:
+                        raise CompilationError(
+                            f"{fname}: expected {n_val + len(attr_names)} args, "
+                            f"got {len(call_args)}"
+                        )
+                    optional = (last, call_args[-1])
+                    call_args = call_args[:-1]
             # Operands must have their op's types. A line or tone read from a
             # container the tracer does not rebind (a tuple in a list, a dict)
             # may be an old value of its channel; the op consumes the channel's
@@ -3143,10 +3273,15 @@ def _bound(fn: Any, args: list[StackVal], kwargs: dict[str, StackVal]) -> inspec
 
 
 def _bind_positional(fn: Any, args: list[StackVal], kwargs: dict[str, StackVal]) -> list[StackVal]:
-    """Bind a keyword call to *fn*'s parameters as a positional list."""
+    """Bind a keyword call to *fn*'s parameters as a positional list; the
+    keyword-only ``tone`` of drive and readout comes last, when given."""
     bound = _bound(fn, args, kwargs)
     if bound.kwargs:
-        raise CompilationError(f"{getattr(fn, '__name__', fn)}: keyword-only parameters")
+        keywords = dict(bound.kwargs)
+        tone = keywords.pop("tone", None)
+        if keywords:
+            raise CompilationError(f"{getattr(fn, '__name__', fn)}: keyword-only parameters")
+        return list(bound.args) if tone is None else [*bound.args, tone]
     return list(bound.args)
 
 

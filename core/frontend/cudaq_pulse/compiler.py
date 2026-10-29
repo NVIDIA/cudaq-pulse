@@ -1185,6 +1185,7 @@ def build(
         flatten_schedules=options.flatten_schedules,
     )
     builder.unroll_threshold = options.unroll_threshold
+    builder.line_tones = target._line_tones
     builder.link_id = machine.link_id
     builder.locate_structural = frozenset(parameters)
     plain = machine._plain
