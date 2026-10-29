@@ -229,9 +229,9 @@ def validate(
     'forward_outcome'; it should raise IncompatibleBackendError``.
     """
     if shots < 1:
-        raise ValueError(f"shots must be positive, got {shots}")
+        raise InvalidValueError(f"shots must be positive, got {shots}")
     if not tolerance >= 0:
-        raise ValueError(f"tolerance must be at least 0, got {tolerance}")
+        raise InvalidValueError(f"tolerance must be at least 0, got {tolerance}")
     found = get(backend) if isinstance(backend, str) else backend
     if not isinstance(found, Backend):
         raise IncompatibleBackendError(

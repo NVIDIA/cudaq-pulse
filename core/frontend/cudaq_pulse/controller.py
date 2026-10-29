@@ -308,17 +308,17 @@ class WaveformMemory:
 
     def __post_init__(self) -> None:
         if self.samples < 1 or self.granule < 1:
-            raise ValueError("WaveformMemory.samples and granule must be positive")
+            raise InvalidValueError("WaveformMemory.samples and granule must be positive")
         object.__setattr__(self, "synthesized", frozenset(self.synthesized))
         unknown = sorted(self.synthesized - set(_AMPLITUDES))
         if unknown:
-            raise ValueError(
+            raise InvalidValueError(
                 f"WaveformMemory.synthesized has unknown shapes {unknown}; "
                 f"the built-in shapes are {', '.join(_AMPLITUDES)}"
             )
         rate = self.upload_samples_per_cycle
         if rate is not None and not rate > 0:
-            raise ValueError(
+            raise InvalidValueError(
                 f"WaveformMemory.upload_samples_per_cycle must be positive, got {rate}"
             )
 
@@ -437,7 +437,7 @@ class ControllerLimits:
         if self.clock_ghz is not None and not self.clock_ghz > 0:
             raise ValueError(f"ControllerLimits.clock_ghz must be positive, got {self.clock_ghz}")
         if self.waveform_memory is not None and self.waveform_samples is not None:
-            raise ValueError(
+            raise InvalidValueError(
                 "give ControllerLimits.waveform_samples or waveform_memory, not both: "
                 "waveform_samples=n is waveform_memory=WaveformMemory(samples=n)"
             )
@@ -553,9 +553,11 @@ class ControllerLimits:
         for name in ("max_amplitude", "max_instructions", "max_program_duration"):
             if data[name] is None:
                 del data[name]
-        data["waveform_memory"] = (
-            None if self.waveform_memory is None else self.waveform_memory.as_dict()
-        )
+        # Limits without one export as they did before the key existed.
+        if self.waveform_memory is None:
+            del data["waveform_memory"]
+        else:
+            data["waveform_memory"] = self.waveform_memory.as_dict()
         return data
 
 
@@ -690,7 +692,7 @@ def _sample(node: Mapping[str, Any], duration_cycles: int, ratio: Fraction) -> n
         t = np.arange(count, dtype=float) / per
     else:
         if int(duration_cycles) * per % over:
-            raise ValueError(
+            raise InvalidValueError(
                 f"{duration_cycles} cycles at {per / over:g} samples per cycle is "
                 f"{int(duration_cycles) * per / over:g} samples, not a whole number"
             )
@@ -940,7 +942,7 @@ def export(
     from .classical.emulation import _export as emulation
 
     if version not in (1, 2):
-        raise ValueError(f"version must be 1 or 2, got {version!r}")
+        raise InvalidValueError(f"version must be 1 or 2, got {version!r}")
     machine = lowered.options.machine
     limits = machine.controller
     system = machine._system
@@ -1010,9 +1012,9 @@ def export(
         ratio: Fraction | None = None
         if version == 2:
             if not sample_rate_ghz > 0:
-                raise ValueError(f"sample_rate_ghz must be positive, got {sample_rate_ghz}")
+                raise InvalidValueError(f"sample_rate_ghz must be positive, got {sample_rate_ghz}")
             if own_rate is not None and sample_rate_ghz != own_rate:
-                raise ValueError(
+                raise InvalidValueError(
                     f"sample_rate_ghz={sample_rate_ghz}; the controller samples at {own_rate} GHz"
                 )
             from . import _clocks
@@ -1115,7 +1117,7 @@ def _flat_controller(data: Mapping[str, Any]) -> dict[str, Any]:
     """A format /2 controller under its /1 names, in /1 order."""
     processors = data["processors"]
     if len(processors) > 1:
-        raise ValueError("format /1 has at most one processor per controller")
+        raise InvalidValueError("format /1 has at most one processor per controller")
     if processors:
         compute = {old: processors[0][new] for new, old in _PROCESSOR_KEYS if old is not None}
     else:
@@ -1125,6 +1127,7 @@ def _flat_controller(data: Mapping[str, Any]) -> dict[str, Any]:
         if f.name in _COMPUTE_KEYS
         else data[_CONTROLLER_KEYS.get(f.name, f.name)]
         for f in fields(ControllerLimits)
+        if f.name in _COMPUTE_KEYS or _CONTROLLER_KEYS.get(f.name, f.name) in data
     }
 
 
@@ -1139,7 +1142,7 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
     if program["format"] == FORMAT:
         return dict(program)
     if program["format"] != _STRUCTURED:
-        raise ValueError(f"cannot unroll format {program['format']!r}")
+        raise InvalidValueError(f"cannot unroll format {program['format']!r}")
     qudit_of = {line["line"]: line["qudits"][0] for line in program["lines"]}
     waveforms = [
         None if entry is None else {k: v for k, v in entry.items() if k not in _IDS}
@@ -1160,7 +1163,7 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
     number(program["events"])
     unknown = _unknown_kinds(program["events"])
     if unknown:
-        raise ValueError(f"cannot unroll events of kind {', '.join(map(repr, unknown))}")
+        raise InvalidValueError(f"cannot unroll events of kind {', '.join(map(repr, unknown))}")
     events: list[dict[str, Any]] = []
     latest: dict[int, int] = {}
     branches: dict[tuple[Any, ...], int] = {}
@@ -1253,7 +1256,7 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
     # Format /1 states the rate after the schedule, and only when sampled.
     rate = program["sample_rate_ghz"] if "samples" in program else None
     if rate is not None and _clocks.made_for(rate, program["clock_ghz"])[1] != 1:
-        raise ValueError(
+        raise InvalidValueError(
             f"format /1 samples at a whole multiple of the clock; this program samples "
             f"at {rate} GHz on a {program['clock_ghz']} GHz clock"
         )
