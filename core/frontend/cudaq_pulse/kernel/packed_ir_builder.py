@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import numbers
 import struct
+import sys
 from array import array
 from collections.abc import Callable
 from typing import Any
@@ -1222,6 +1223,15 @@ class PackedIRBuilder:
     def _times(self, fname: str, attrs: dict[str, Any]) -> None:
         """Convert the times in *attrs*, a *fname* op's, to program cycles,
         and reject plain floats and out-of-range lengths in its durations."""
+        # No time exists before _units is imported, so neither does one
+        # inside a symbolic wait.
+        if (
+            fname == "wait"
+            and attrs.get("bounds") is None
+            and is_symbolic(attrs["duration"])
+            and "cudaq_pulse._units" not in sys.modules
+        ):
+            return
         from ._durations import in_program_cycles
 
         in_program_cycles(fname, attrs, self.clock_ghz)

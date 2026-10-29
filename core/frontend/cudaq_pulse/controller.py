@@ -58,7 +58,7 @@ from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from . import _clocks, _controller_cost
+from . import _controller_cost
 from ._controller_cost import OP_CLASSES, FunctionCost
 from ._errors import InvalidValueError
 from .kernel.ir_builder import CompilationError
@@ -66,6 +66,7 @@ from .kernel.ir_builder import CompilationError
 if TYPE_CHECKING:
     import numpy as np
 
+    from . import _clocks
     from .compiler import Lowered
 
 __all__ = [
@@ -423,6 +424,8 @@ def _walk(
                 _PARAMETERS, _AMPLITUDES, epochs, ratio.numerator, ratio.denominator, own.grid
             )
     if own is not None:
+        from . import _clocks
+
         for index, end in ends:
             events[index]["end_cycles"] = end
         if waveforms and ratio != 1:
@@ -469,7 +472,7 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
     ``ControllerLimitError`` when the machine model's controller limits are
     exceeded.
     """
-    from .classical.emulation import _export as emulation
+    from .classical.emulation import export as emulation
 
     limits = lowered.options.machine.controller
     clocks = (lowered.generic or lowered).clocks
@@ -480,7 +483,11 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
         violations = _violations(lowered, events, limits, lines, clocks, off, problems)
         if violations:
             raise ControllerLimitError(violations)
-    own = None if clocks is None else clocks.controllers[0]
+    own = None
+    if clocks is not None:
+        from . import _clocks
+
+        own = clocks.controllers[0]
     clock = lowered.target.clock_ghz if own is None else own.clock_ghz
     if sample_rate_ghz is not None:
         ratio = sample_rate_ghz / clock
@@ -565,13 +572,16 @@ def _violations(
     waveforms alike either way)."""
     if clocks is None:
         found = []
-    elif clocks.owners is None:
-        found = _clocks.off_grid_messages(clocks.controllers[0], lines, events, off)
-        found.extend(run_time)
     else:
-        found = _clocks.off_grid(
-            clocks, lines, events, True, waveforms, _computes_at_run_time(lowered)
-        )
+        from . import _clocks
+
+        if clocks.owners is None:
+            found = _clocks.off_grid_messages(clocks.controllers[0], lines, events, off)
+            found.extend(run_time)
+        else:
+            found = _clocks.off_grid(
+                clocks, lines, events, True, waveforms, _computes_at_run_time(lowered)
+            )
     timed: list[Mapping[str, Any]] = [
         e for e in events if e["kind"] in _PLAYED and e["end_cycles"] is not None
     ]
@@ -665,6 +675,8 @@ def _samples_per_own_cycle(limits: ControllerLimits, program_ghz: float) -> tupl
     """The controller's samples per cycle of its clock, as (num, den)."""
     if limits.sample_rate_ghz is None:
         return 1, 1
+    from . import _clocks
+
     return _clocks.made_for(limits.sample_rate_ghz, limits.clock_ghz or program_ghz)
 
 
@@ -674,11 +686,12 @@ def check(lowered: Lowered, limits: ControllerLimits | None = None) -> list[str]
     if limits is None:
         return []
     machine = lowered.options.machine
-    clocks = (
-        (lowered.generic or lowered).clocks
-        if limits is machine.controller
-        else _clocks.plan(limits, lowered.target.clock_ghz, machine.reference_clock_ghz)
-    )
+    if limits is machine.controller:
+        clocks = (lowered.generic or lowered).clocks
+    else:
+        from . import _clocks
+
+        clocks = _clocks.plan(limits, lowered.target.clock_ghz, machine.reference_clock_ghz)
     lines, events, off, problems = _walk(
         lowered, values=False, own=_native_clock(clocks), waveforms=False
     )
@@ -697,6 +710,8 @@ def _sample_rate_violations(
     """The sample arrays that *limits*' lines would play at another rate than
     the one they were made for: the rate of the lines *lowered* was compiled
     for."""
+    from . import _clocks
+
     machine = lowered.options.machine
     made = None
     program = lowered.target.clock_ghz

@@ -36,7 +36,6 @@ from typing import Any
 
 import numpy as np
 
-from .. import _clocks
 from .._errors import NotFoundError, UnsupportedError, _CallTimeoutError, _positive_int
 from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
 from . import ClassicalFunction, Link, wire
@@ -97,7 +96,7 @@ def manifest(lowered: Any) -> dict[str, Any]:
     return {"format": MANIFEST_FORMAT, "functions": functions}
 
 
-def export(lowered: Any) -> dict[str, Any]:
+def export(lowered: Any, with_events: bool = True) -> dict[str, Any]:
     """A compiled kernel for a controller emulator: schedule, epochs, calls,
     links and manifest, as JSON-serializable data. Times are in clock cycles
     of the controller, at ``clock_ghz`` (with ``program_clock_ghz`` when that
@@ -105,19 +104,13 @@ def export(lowered: Any) -> dict[str, Any]:
     ``epoch_start_cycles`` is the static start of its epoch, which moves at
     run time by the lengths of the run-time waits before it on its lines. An
     epoch's shift adds to that of the epoch it follows, the one before it
-    unless it names another in ``after``."""
-    return _export(lowered, True)
-
-
-def _export(lowered: Any, with_events: bool) -> dict[str, Any]:
-    """``export``; without *with_events*, its ``events`` are left empty."""
+    unless it names another in ``after``. Without *with_events*, ``events``
+    is left empty."""
     epochs, after = lowered._epochs()
     starts = [e.start_cycles for e in epochs]
     epoch_of = lowered._event_epochs(syncs=False) if with_events else None
-    events = []
-    for position, event in enumerate(lowered.schedule if with_events else ()):
-        index = epoch_of[position] if epoch_of and event.start_cycles is not None else 0
-        events.append(
+    events = (
+        [
             {
                 "kind": event.kind,
                 "line": event.line,
@@ -125,10 +118,18 @@ def _export(lowered: Any, with_events: bool) -> dict[str, Any]:
                 "qubit": event.qubit,
                 "start_cycles": event.start_cycles,
                 "duration_cycles": event.duration_cycles,
-                "epoch": index,
+                "epoch": (
+                    index := epoch_of[position]
+                    if epoch_of and event.start_cycles is not None
+                    else 0
+                ),
                 "epoch_start_cycles": starts[index],
             }
-        )
+            for position, event in enumerate(lowered.schedule)
+        ]
+        if with_events
+        else []
+    )
     machine = lowered.options.machine
     data = {
         "format": FORMAT,
@@ -150,9 +151,18 @@ def _export(lowered: Any, with_events: bool) -> dict[str, Any]:
         ],
         "manifest": manifest(lowered),
     }
+    if machine._plain:
+        return data
     clocks = (lowered.generic or lowered).clocks
     if clocks is None:
         return data
+    return _in_own_clock(data, events, clocks)
+
+
+def _in_own_clock(data: dict[str, Any], events: list[Any], clocks: Any) -> dict[str, Any]:
+    """*data*, an export of a program on *clocks*, in its controller's clock."""
+    from .. import _clocks
+
     own = clocks.controllers[0]
     if own.ratio != 1:
         _clocks.to_own(events, _clocks.EMULATION_EVENT_TIMES, own)
