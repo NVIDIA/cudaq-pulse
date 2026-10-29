@@ -39,6 +39,7 @@ from .._errors import (
     ExecutionError,
     InvalidTypeError,
     InvalidValueError,
+    NotFoundError,
     UnsupportedError,
     _positive_int,
 )
@@ -51,8 +52,9 @@ if TYPE_CHECKING:
     from .._device import Qudit
     from ..compiler import Lowered
     from ..kernel._kernel import CompiledKernel, Kernel
+    from ._calls import CallRecord
 
-__all__ = ["Measurement", "SimulationResult", "simulate"]
+__all__ = ["Branch", "Measurement", "SimulationResult", "simulate"]
 
 # Branches whose weight falls below this fraction of the initial state's are
 # not followed.
@@ -71,6 +73,34 @@ class Measurement:
     end_ns: float
 
 
+@dataclass(frozen=True)
+class Branch:
+    """One path of the ensemble: the levels its measurements gave, its
+    probability, and the classical calls it made.
+
+    ``levels`` holds one entry per entry of ``SimulationResult.measurements``,
+    -1 where this branch did not measure. With ``branches="sampled"``,
+    ``probability`` is the fraction of the shots that took the branch."""
+
+    levels: tuple[int, ...]
+    probability: float
+    #: The classical calls this branch made, in time order.
+    calls: tuple[CallRecord, ...] = ()
+
+    def answers(self, function: str) -> list[Any]:
+        """The answers of this branch's calls to *function* (its name), in
+        call order. A function it did not call is a ``KeyError`` listing
+        those it called."""
+        found = [call.answer for call in self.calls if call.function == function]
+        if not found:
+            called = list(dict.fromkeys(call.function for call in self.calls))
+            raise NotFoundError(
+                f"this branch made no call to {function!r}; it called "
+                + (", ".join(map(repr, called)) if called else "no classical function")
+            )
+        return found
+
+
 @dataclass
 class SimulationResult:
     """The ensemble final state, and per-shot records if shots were taken.
@@ -81,11 +111,12 @@ class SimulationResult:
     significant digit. Qudits the program does not use are left out, with
     their couplings, as classical spectators in their ground state.
     ``measurements`` lists every measurement any path made, in the order of
-    their end times; ``branches`` gives each path's outcomes (one
-    per entry of ``measurements``, -1 where that path did not measure) and
-    probability. ``records`` holds one such row per shot. With
-    ``paths="sampled"``, ``branches`` holds the paths the shots took, each
-    with the fraction of shots that took it, and the state is their
+    their end times; ``branches`` holds one ``Branch`` per path, with its
+    measured levels (one per entry of ``measurements``, -1 where that path
+    did not measure), its probability and its classical calls.
+    ``records`` holds one row of levels per shot. With
+    ``branches="sampled"``, ``branches`` holds the paths the shots took,
+    each with the fraction of shots that took it, and the state is their
     average.
     """
 
@@ -93,13 +124,10 @@ class SimulationResult:
     dims: tuple[int, ...]
     qudits: tuple[int, ...]
     measurements: list[Measurement]
-    branches: list[tuple[tuple[int, ...], float]]
+    branches: list[Branch]
     records: npt.NDArray[np.int64] | None = None
     times_ns: tuple[float, float] = (0.0, 0.0)
     _states: list[Any] = field(default_factory=list, repr=False)
-    #: For a program that calls classical functions: per entry of
-    #: ``branches``, the calls that path made, in time order.
-    calls: list[list[Any]] = field(default_factory=list)
 
     def level_populations(self, qudit: int | Qudit | None = None) -> list[float]:
         """The probability of each level of *qudit*, from level 0 up: the
@@ -598,7 +626,7 @@ def _simulate_compiled(
         outcomes = [-1] * len(measurements)
         for key, k in path:
             outcomes[column[key]] = k
-        branches.append((tuple(outcomes), float(np.real(np.trace(density)))))
+        branches.append(Branch(tuple(outcomes), float(np.real(np.trace(density)))))
         rows.extend([outcomes] * count)
     records = None
     if shots is not None:
@@ -680,7 +708,6 @@ def _simulate_tree(
     rho = np.zeros((dim, dim), dtype=np.complex128)
     branches = []
     rows = []
-    calls = []
     for leaf in leaves:
         density = engine.density(leaf.state)
         if sampled:
@@ -691,8 +718,9 @@ def _simulate_tree(
         outcomes = [-1] * len(measurements)
         for key, k in leaf.path:
             outcomes[column[key]] = k
-        branches.append((tuple(outcomes), float(np.real(np.trace(density)))))
-        calls.append(leaf.calls)
+        branches.append(
+            Branch(tuple(outcomes), float(np.real(np.trace(density))), tuple(leaf.calls))
+        )
         rows.extend([outcomes] * leaf.count)
     records = None
     if shots is not None:
@@ -707,7 +735,6 @@ def _simulate_tree(
         records=records,
         times_ns=(t_start, t_end),
         _states=[leaf.state for leaf in leaves],
-        calls=calls,
     )
 
 

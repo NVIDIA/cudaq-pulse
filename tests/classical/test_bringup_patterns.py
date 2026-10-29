@@ -114,7 +114,7 @@ def test_a_random_source_follows_every_value_without_shots():
     dev = _device()
     lowered = pulse.compile(random_rotation, device=dev).lower(dev.qudit_handles[0])
     result = pulse.simulate(lowered, levels=2)
-    assert sorted(c[0].answer for c in result.calls) == [0, 1, 2, 3]
+    assert sorted(branch.calls[0].answer for branch in result.branches) == [0, 1, 2, 3]
     assert result.density_matrix[1, 1].real == pytest.approx(_expected_p1())
     assert result.density_matrix.trace().real == pytest.approx(1.0)
 
@@ -223,8 +223,8 @@ def test_the_converged_pattern_stops_probing_and_keeps_its_trip_count():
     lowered = pulse.compile(converging, device=dev).lower(dev.qudit_handles[0])
     assert len(lowered.classical_report()) == 5
     result = pulse.simulate(lowered, initial_state=[1, 0], levels=2)
-    for calls in result.calls:
-        assert [c.answer for c in calls] == [
+    for branch in result.branches:
+        assert [c.answer for c in branch.calls] == [
             (1.0, 0.0),
             (2.0, 1.0),
             (2.0, 1.0),
@@ -233,11 +233,11 @@ def test_the_converged_pattern_stops_probing_and_keeps_its_trip_count():
         ]
     # Two pi/2 probes, then none: after the second measurement nothing
     # rotates the qubit, so every later outcome repeats it.
-    assert sum(p for _, p in result.branches) == pytest.approx(1.0)
-    for outcomes, p in result.branches:
-        assert len(outcomes) == 5
-        assert outcomes[2] == outcomes[3] == outcomes[4] == outcomes[1]
-    first = {o[0]: 0.0 for o, _ in result.branches}
-    for outcomes, p in result.branches:
-        first[outcomes[0]] += p
+    assert sum(branch.probability for branch in result.branches) == pytest.approx(1.0)
+    for branch in result.branches:
+        assert len(branch.levels) == 5
+        assert branch.levels[2] == branch.levels[3] == branch.levels[4] == branch.levels[1]
+    first = {branch.levels[0]: 0.0 for branch in result.branches}
+    for branch in result.branches:
+        first[branch.levels[0]] += branch.probability
     assert first == pytest.approx({0: 0.5, 1: 0.5})

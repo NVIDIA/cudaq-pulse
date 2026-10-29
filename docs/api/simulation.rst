@@ -24,6 +24,10 @@ Simulation API
    :members:
    :undoc-members:
 
+.. autoclass:: cudaq_pulse.runtime.simulate.Branch
+   :members:
+   :undoc-members:
+
 GPU runtime
 -----------
 

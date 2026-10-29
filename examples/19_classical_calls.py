@@ -209,7 +209,7 @@ if __name__ == "__main__":
     result = pulse.simulate(
         decoded, initial_state=[2**-0.5, 2**-0.5, 0.0], latency_branching=True, dt_ns=dt_ns
     )
-    in_time = sum(p for calls, (_, p) in zip(result.calls, result.branches) if calls[0].in_time)
+    in_time = sum(branch.probability for branch in result.branches if branch.calls[0].in_time)
     print(f"  answer in time with p = {in_time:.3f}")
     # Short of 1: the qubit can relax while the answer is in flight, and the
     # correction then excites it.
@@ -227,15 +227,14 @@ if __name__ == "__main__":
     print(f"  {len(epochs)} epochs, opened by: {[e.opened_by for e in epochs]}")
     result = pulse.simulate(tracker, dt_ns=dt_ns)
     print(f"  {len(result.branches)} measurement paths")
-    best = max(zip(result.calls, result.branches), key=lambda pair: pair[1][1])
-    print(f"  most likely path {best[1][0]} (p = {best[1][1]:.3f}):")
-    for call in best[0]:
-        alpha, beta, tau_ns = call.answer
+    likeliest = max(result.branches, key=lambda branch: branch.probability)
+    print(f"  most likely path {likeliest.levels} (p = {likeliest.probability:.3f}):")
+    for alpha, beta, tau_ns in likeliest.answers("update_t1"):
         print(f"    T1 estimate {beta / alpha / 1e3:5.2f} us, next wait {tau_ns / 1e3:5.2f} us")
-    mean_t1 = sum(
-        p * (calls[-1].answer[1] / calls[-1].answer[0])
-        for calls, (_, p) in zip(result.calls, result.branches)
-    )
+    mean_t1 = 0.0
+    for branch in result.branches:
+        alpha, beta, _ = branch.answers("update_t1")[-1]
+        mean_t1 += branch.probability * (beta / alpha)
     print(f"  T1 estimate after {rounds} rounds, averaged over paths: {mean_t1 / 1e3:.2f} us")
 
     print("\n=== 3. Emulation artifact and call manifest ===")

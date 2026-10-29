@@ -132,12 +132,16 @@ if __name__ == "__main__":
     lowered = pulse.compile(binary_search, device=dev, machine=machine).lower(q, 2)
     result = pulse.simulate(lowered, plant=detuned, dt_ns=1.0)
     print(f"  true detuning {offset_hz / 1e3:.0f} kHz; prior 0 +- {initial_sigma_hz / 1e6:.0f} MHz")
-    for calls, (outcomes, p) in sorted(zip(result.calls, result.branches), key=lambda c: -c[1][1]):
-        mean, sigma, _, _ = calls[-1].answer
+    for branch in sorted(result.branches, key=lambda branch: -branch.probability):
+        mean, sigma, _, _ = branch.answers("frequency_estimator")[-1]
         print(
-            f"  outcomes {outcomes}  p = {p:.3f}  estimate {mean / 1e3:+7.0f} +- {sigma / 1e3:.0f} kHz"
+            f"  outcomes {branch.levels}  p = {branch.probability:.3f}"
+            f"  estimate {mean / 1e3:+7.0f} +- {sigma / 1e3:.0f} kHz"
         )
-    expected = sum(p * calls[-1].answer[0] for calls, (_, p) in zip(result.calls, result.branches))
+    expected = sum(
+        branch.probability * branch.answers("frequency_estimator")[-1][0]
+        for branch in result.branches
+    )
     print(f"  mean estimate over paths: {expected / 1e3:+.0f} kHz")
 
     print("\n=== 2. Tracking a drifting device between shots ===")

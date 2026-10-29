@@ -182,7 +182,7 @@ def _simulate(kernel, n, backend, kwargs):
 
 
 def _weights(result):
-    return {o: p for o, p in result.branches if p > 1e-9}
+    return {b.levels: b.probability for b in result.branches if b.probability > 1e-9}
 
 
 # The stand-in keeps pure states as vectors, as the GPU backend does, and

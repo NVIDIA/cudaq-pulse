@@ -61,8 +61,8 @@ def test_the_pi_train_corrects_a_drive_amplitude_error():
     lowered = pulse.compile(_pi_step, device=dev, machine=P["machine"]).lower(q)
     plant = P["chain_plant"](target, amplitude_scale=1.02)
     result = pulse.simulate(lowered, plant=plant, shots=2, seed=3, paths="sampled", readout="model")
-    for calls in result.calls:
-        corrected, relative_sigma = calls[-1].answer
+    for branch in result.branches:
+        corrected, relative_sigma = branch.calls[-1].answer
         # 21 pulses amplify a 2% error to 0.84 rad; 50 shots per point.
         assert corrected == pytest.approx(PI_AMP / 1.02, rel=0.01)
         assert relative_sigma < 0.01
@@ -86,10 +86,10 @@ def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
     shots = 32
     result = pulse.simulate(lowered, shots=shots, seed=4, paths="sampled", readout="model")
     estimates = []
-    for calls, (_, share) in zip(result.calls, result.branches):
-        assert sum(c.function == "adaptive_t1" for c in calls) == P["tracker_shots"]
-        shape, rate, _ = calls[-1].answer
-        estimates += [rate / shape / CLOCK / 1e3] * round(share * shots)
+    for branch in result.branches:
+        assert len(branch.answers("adaptive_t1")) == P["tracker_shots"]
+        shape, rate, _ = branch.calls[-1].answer
+        estimates += [rate / shape / CLOCK / 1e3] * round(branch.probability * shots)
     # The paper: 159 us, 68% interval [131, 202] us; the benchmark's 400
     # seeds give a median near 151 us at a true 160 us.
     assert 125 < np.median(estimates) < 190
@@ -108,7 +108,7 @@ def test_the_binary_search_narrows_on_the_controller():
             paths="sampled",
             readout="model",
         )
-        mean, sigma, _, _ = result.calls[0][-1].answer
+        mean, sigma, _, _ = result.branches[0].calls[-1].answer
         assert 330e3 < sigma < 400e3
         assert abs(mean - offset) < 4 * sigma
 

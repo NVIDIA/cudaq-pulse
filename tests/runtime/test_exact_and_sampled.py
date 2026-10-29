@@ -148,14 +148,15 @@ def _three_measurements(q0):
 
 def test_sampled_paths_have_the_frequencies_of_the_exact_paths():
     lowered = on(_target(t1_us=0.0, t2_us=0.0, thermal=0.0), _three_measurements, Q[0])
-    exact = dict(pulse.simulate(lowered, levels=2).branches)
+    exact = {b.levels: b.probability for b in pulse.simulate(lowered, levels=2).branches}
     shots = 4000
     sampled = pulse.simulate(lowered, shots=shots, seed=5, paths="sampled", levels=2)
     assert len(sampled.branches) <= shots
-    assert sum(p for _, p in sampled.branches) == pytest.approx(1.0)
+    assert sum(b.probability for b in sampled.branches) == pytest.approx(1.0)
     assert np.trace(sampled.density_matrix).real == pytest.approx(1.0)
-    for outcomes, p in sampled.branches:
-        assert abs(p - exact[outcomes]) < 5 * math.sqrt(exact[outcomes] / shots)
+    for branch in sampled.branches:
+        p = exact[branch.levels]
+        assert abs(branch.probability - p) < 5 * math.sqrt(p / shots)
     assert sampled.records is not None and sampled.records.shape == (shots, 3)
 
 
@@ -201,7 +202,7 @@ def test_a_long_adaptive_loop_follows_one_path_per_shot():
     )
     result = pulse.simulate(lowered, shots=3, seed=1, paths="sampled", levels=2)
     assert 1 <= len(result.branches) <= 3
-    assert all(len(calls) == 60 for calls in result.calls)
+    assert all(len(branch.calls) == 60 for branch in result.branches)
     assert result.records is not None and result.records.shape == (3, 60)
 
 

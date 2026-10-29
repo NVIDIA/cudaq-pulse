@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import cudaq_pulse as pulse
@@ -67,8 +68,8 @@ def _by_outcome(result):
     """Branch probabilities summed per reported outcome (paths with one
     report but different true levels are separate branches)."""
     total: dict = {}
-    for outcomes, w in result.branches:
-        total[outcomes] = total.get(outcomes, 0.0) + w
+    for branch in result.branches:
+        total[branch.levels] = total.get(branch.levels, 0.0) + branch.probability
     return total
 
 
@@ -91,10 +92,12 @@ def test_a_decoder_reproduces_active_reset_exactly(shots):
         levels=2,
     )
     np.testing.assert_allclose(b.density_matrix, a.density_matrix, atol=1e-12)
-    assert b.branches == a.branches
+    assert [(x.levels, x.probability) for x in b.branches] == [
+        (x.levels, x.probability) for x in a.branches
+    ]
     if shots:
         assert (b.records == a.records).all()
-    assert [[c.answer for c in calls] for calls in b.calls] == [[[0]], [[1]]]
+    assert [branch.answers("decoder") for branch in b.branches] == [[[0]], [[1]]]
 
 
 def test_an_answer_amplitude_is_bound_per_path():
@@ -158,8 +161,8 @@ def test_a_variable_wait_matches_the_fixed_wait_and_t1_decay(tau):
     q = dev.qudit_handles[0]
     variable = pulse.simulate(pulse.compile(variable_t1, device=dev).lower(q, float(tau)), levels=2)
     fixed = pulse.simulate(pulse.compile(fixed_t1, device=dev).lower(q, tau), levels=2)
-    p_variable = dict(variable.branches)[(1,)]
-    p_fixed = dict(fixed.branches)[(1,)]
+    p_variable = _by_outcome(variable)[(1,)]
+    p_fixed = _by_outcome(fixed)[(1,)]
     assert p_variable == pytest.approx(p_fixed, abs=1e-9)
     # The pi pulse (40 cycles) plus the wait, then decay until the readout
     # ends: P(1) at the projection is exp(-(wait + readout) / T1).
@@ -197,7 +200,7 @@ def test_variable_waits_differ_per_path():
         initial_state=np.kron([1, 0], PLUS),
         levels=2,
     )
-    branches = dict(result.branches)
+    branches = _by_outcome(result)
     clock = dev.clock_ghz
     t1 = 5e3
     for first, waited in ((0, 0), (1, 4000)):
@@ -269,14 +272,14 @@ def test_timeouts_take_the_fallback_at_the_modelled_rate():
     p1 = sum(exact.density_matrix[i, i].real for i in (2, 3))
     assert p1 == pytest.approx(0.5, abs=1e-9)
     shots = pulse.simulate(low, shots=4000, seed=11, levels=2)
-    ok_weight = sum(w for (_, w), calls in zip(shots.branches, shots.calls) if calls[0].in_time)
+    ok_weight = sum(b.probability for b in shots.branches if b.calls[0].in_time)
     assert ok_weight == pytest.approx(0.5, abs=1e-9)
     # The sampled shots split between in time and late within 4 sigma.
     excited = shots.density_matrix[2, 2].real + shots.density_matrix[3, 3].real
     assert excited == pytest.approx(0.5, abs=1e-9)
     # Without shots or branching the nominal latency decides.
     nominal = pulse.simulate(low, levels=2)
-    assert all(c[0].in_time for c in nominal.calls)
+    assert all(branch.calls[0].in_time for branch in nominal.branches)
 
 
 def test_readout_errors_are_reported_and_seen_by_calls():
@@ -357,7 +360,7 @@ def test_calls_in_a_rolled_loop_are_bound_per_iteration():
 
     dev = _device()
     result = pulse.simulate(pulse.compile(k, device=dev).lower(dev.qudit_handles[0]), levels=2)
-    assert [c.answer for c in result.calls[0]] == [1.0, 2.0, 3.0, 4.0]
+    assert result.branches[0].answers("counter") == [1.0, 2.0, 3.0, 4.0]
     assert result.density_matrix[1, 1].real == pytest.approx(1.0, abs=1e-6)
 
 
@@ -464,7 +467,7 @@ def test_an_answer_crossing_a_block_is_bound_in_simulation(schedule, where):
         pulse.compile(active_reset, device=dev).lower(q), initial_state=PLUS, levels=2
     )
     np.testing.assert_allclose(result.density_matrix, reset.density_matrix, atol=1e-9)
-    assert [[c.answer for c in calls] for calls in result.calls] == [[[0]], [[1]]]
+    assert [[c.answer for c in branch.calls] for branch in result.branches] == [[[0]], [[1]]]
 
 
 def test_simulation_keeps_a_blocks_own_schedule():
@@ -499,3 +502,20 @@ def test_simulation_keeps_a_blocks_own_schedule():
     )
     at_end = 1.0 - alone.density_matrix[0, 0].real
     assert excited == pytest.approx(at_end * math.exp(-60 / 2.0 / 1000.0), abs=1e-4)
+
+
+def test_a_branch_gives_the_answers_of_one_function_and_names_those_it_called():
+    dev = _device()
+    q = dev.qudit_handles[0]
+    result = pulse.simulate(
+        pulse.compile(decoded_reset, device=dev).lower(q), initial_state=PLUS, levels=2
+    )
+    branch = result.branches[1]
+    assert branch.levels == (1,) and branch.answers("decoder") == [[1]]
+    with pytest.raises(KeyError, match="made no call to 'decode'; it called 'decoder'"):
+        branch.answers("decode")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        branch.probability = 1.0  # type: ignore[misc]
+    reset = pulse.simulate(pulse.compile(active_reset, device=dev).lower(q), levels=2)
+    with pytest.raises(KeyError, match="it called no classical function"):
+        reset.branches[0].answers("decoder")

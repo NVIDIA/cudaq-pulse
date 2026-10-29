@@ -296,7 +296,9 @@ behavior may change in any 0.x release.
   from its reduced state, for any number of levels; `qudit` (a device index
   or handle) may be left out when the result models one qudit, and a qudit
   or level the result does not have is an `InvalidValueError` listing those
-  it has.
+  it has. `result.branches` holds one `Branch` per measurement path: its
+  `levels`, `probability` and classical `calls`, with `answers(function)`
+  for the answers of one function.
 - **Classical calls at QPU runtime.** `classical`, a classical real-time
   dialect for co-processing at QPU runtime: pulse programs call GPU, host or
   FPGA services (decoders, estimators, calibration updates) while the QPU

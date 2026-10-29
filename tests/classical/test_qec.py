@@ -65,14 +65,19 @@ def test_each_path_keeps_its_own_decoder_state():
     state = np.kron(np.array([1, 0]), np.kron(plus, plus))  # a, b in |+>, flag in |0>
     result = pulse.simulate(low, initial_state=state, levels=2)
     assert len(result.branches) == 4
-    for (ma, mb), weight in [((o[0], o[1]), w) for o, w in result.branches]:
-        assert weight == pytest.approx(0.25)
+    for branch in result.branches:
+        assert branch.probability == pytest.approx(0.25)
     # The flag is flipped exactly on the odd-parity paths: P(flag) = 1/2.
     flag = sum(result.density_matrix[i, i].real for i in range(8) if i & 4)
     assert flag == pytest.approx(0.5, abs=1e-6)
-    for calls, (outcomes, _) in zip(result.calls, result.branches):
-        assert [c.function.split("_")[0] for c in calls] == ["reset", "enqueue", "enqueue", "get"]
-        assert calls[-1].answer == [(outcomes[0] + outcomes[1]) % 2]
+    for branch in result.branches:
+        assert [c.function.split("_")[0] for c in branch.calls] == [
+            "reset",
+            "enqueue",
+            "enqueue",
+            "get",
+        ]
+        assert branch.calls[-1].answer == [(branch.levels[0] + branch.levels[1]) % 2]
 
 
 def test_a_decoder_without_decode_needs_handlers():

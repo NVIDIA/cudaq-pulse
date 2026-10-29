@@ -190,9 +190,13 @@ def test_simulation_matches_an_explicit_schedule(case):
     assert matrix.pulses(reference) == matrix.pulses(low, shifts)
     simulated, expected = pulse.simulate(low, levels=2), pulse.simulate(reference, levels=2)
     np.testing.assert_allclose(simulated.density_matrix, expected.density_matrix, atol=1e-9)
-    paths, reference_paths = sorted(simulated.branches), sorted(expected.branches)
-    assert [o for o, _ in paths] == [o for o, _ in reference_paths]
-    np.testing.assert_allclose([w for _, w in paths], [w for _, w in reference_paths], atol=1e-9)
+    by_levels = lambda branch: branch.levels  # noqa: E731
+    paths = sorted(simulated.branches, key=by_levels)
+    reference_paths = sorted(expected.branches, key=by_levels)
+    assert [b.levels for b in paths] == [b.levels for b in reference_paths]
+    np.testing.assert_allclose(
+        [b.probability for b in paths], [b.probability for b in reference_paths], atol=1e-9
+    )
 
 
 # ── Kinds of call ────────────────────────────────────────────────────────────

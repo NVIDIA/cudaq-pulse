@@ -84,11 +84,7 @@ def test_discrimination_errors_match_the_gaussian_overlap():
     expected = 0.5 * math.erfc(abs(c1 - c0) / 2)  # sigma^2 = 1/2 per quadrature
     assert 0.1 < expected < 0.25
     tolerance = 4 * math.sqrt(expected * (1 - expected) / shots)
-    wrong = sum(
-        w
-        for calls, (outcomes, w) in zip(result.calls, result.branches)
-        if calls[0].answer[0] != outcomes[0]
-    )
+    wrong = sum(b.probability for b in result.branches if b.calls[0].answer[0] != b.levels[0])
     assert wrong == pytest.approx(expected, abs=tolerance)
     # A wrong answer leaves |1> in place or flips |0> to |1>.
     p1 = float(np.real(result.density_matrix[1, 1]))

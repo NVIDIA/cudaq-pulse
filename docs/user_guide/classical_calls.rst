@@ -230,8 +230,8 @@ it.
    :class: fragment
 
    result = pulse.simulate(lowered, initial_state=plus, latency_branching=True)
-   for calls, (outcomes, p) in zip(result.calls, result.branches):
-       print(outcomes, p, [c.answer for c in calls])
+   for branch in result.branches:
+       print(branch.levels, branch.probability, branch.answers("decode"))
 
 - ``handlers={"decode": fn}`` replaces a function's body, or provides one
   for a function declared with ``pulse.classical.external``.
@@ -245,8 +245,9 @@ it.
 - A function that takes ``IQ`` points gets them synthesized per shot from a
   dispersive readout model, at the true level of each readout, from the
   frequency of its tone and the amplitude of its pulse. It needs ``shots``.
-- ``SimulationResult.calls`` lists each path's calls: inputs, answer, and
-  whether it came in time.
+- Each of ``result.branches`` lists its path's ``calls`` (inputs, answer,
+  and whether it came in time); ``branch.answers("decode")`` gives the
+  answers of one function, in call order.
 
 A whole program with unanswered calls does not lower to LLVM:
 ``Lowered.mlir("llvm")`` points to ``pulse.simulate``, which lowers each

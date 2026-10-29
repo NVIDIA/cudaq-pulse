@@ -108,16 +108,16 @@ def test_k11_adaptive_t1_tracks_its_posterior_per_path(target):
     lowered = pulse.compile(adaptive_t1, device=dev, machine=MACHINE).lower(dev.qudit_handles[0], 2)
     assert [e.opened_by for e in lowered.epochs()] == ["start", "wait", "wait"]
     result = pulse.simulate(lowered, dt_ns=4.0, levels=2)
-    assert sum(p for _, p in result.branches) == pytest.approx(1.0)
-    for calls, (outcomes, _) in zip(result.calls, result.branches):
+    assert sum(branch.probability for branch in result.branches) == pytest.approx(1.0)
+    for branch in result.branches:
         alpha, beta, tau = 1.0, 5000.0, 10000.0
-        for call, outcome in zip(calls, outcomes):
+        for call, outcome in zip(branch.calls, branch.levels):
             alpha, beta, tau = t1_estimator(np.array([outcome]), alpha, beta, tau)
             assert call.answer == pytest.approx((alpha, beta, tau))
     # The first shot survives the 5 us wait (plus the 200 ns readout) at
     # exp(-t / T1).
     t1_ns = target.qubits[0].t1_us * 1e3
-    survived = sum(p for outcomes, p in result.branches if outcomes[0] == 1)
+    survived = sum(b.probability for b in result.branches if b.levels[0] == 1)
     assert survived == pytest.approx(math.exp(-(5000 + 200) / t1_ns), abs=0.02)
     artifact = json.loads(json.dumps(lowered.export_emulation()))
     assert len(artifact["epochs"]) == 3
@@ -191,15 +191,15 @@ def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
     # The first shot's outcome follows the surrogate's fringe (decay lowers
     # the contrast a little).
     plant.state = dataclasses.replace(plant.state, frequency_offset_hz=offset)
-    p1 = sum(p for outcomes, p in result.branches if outcomes[0] == 1)
+    p1 = sum(b.probability for b in result.branches if b.levels[0] == 1)
     assert p1 == pytest.approx(plant.p_ramsey(W0, PHASE0), abs=0.04)
-    for calls, (outcomes, _) in zip(result.calls, result.branches):
-        (call,) = calls
+    for branch in result.branches:
+        (call,) = branch.calls
         mean, sigma, _, _ = call.answer
-        expected = cal.frequency_update(0.0, SIGMA0, outcomes[0], W0, PHASE0)
+        expected = cal.frequency_update(0.0, SIGMA0, branch.levels[0], W0, PHASE0)
         assert (mean, sigma) == pytest.approx(expected)
     # On average the estimate moves toward the true detuning.
-    moved = sum(p * calls[0].answer[0] for calls, (_, p) in zip(result.calls, result.branches))
+    moved = sum(b.probability * b.calls[0].answer[0] for b in result.branches)
     assert moved > 0
 
 
@@ -368,14 +368,14 @@ def test_k14_golden_section_in_a_shot_uses_the_converged_pattern(target):
     )
     assert len(lowered.classical_report()) == 4
     result = pulse.simulate(lowered, dt_ns=1.0, levels=2)
-    for calls, (outcomes, _) in zip(result.calls, result.branches):
+    for branch in result.branches:
         state, done = GOLDEN, False
-        for call, outcome in zip(calls, outcomes):
+        for call, outcome in zip(branch.calls, branch.levels):
             state, x, done = cal.golden_section_step(state, 1.0 - outcome)
             assert call.answer[1] == pytest.approx(x)
             assert call.answer[2] == float(done)
         # The tolerance is reached in at most three costs.
-        assert calls[-1].answer[2] == 1.0
+        assert branch.calls[-1].answer[2] == 1.0
 
 
 # ── K15: closed-loop cadence between shots ──────────────────────────────────
@@ -404,7 +404,9 @@ def test_k15_the_closed_loop_runs_ten_thousand_iterations_on_one_compile(target)
         lowered = compiled.lower(q, PI_AMP * (1 + 1e-4 * (i % 10)))
         if i % 2500 == 0:
             result = pulse.simulate(lowered, dt_ns=4.0, levels=2)
-            log.record(i, "p_survive", dict(result.branches).get((1,), 0.0))
+            log.record(
+                i, "p_survive", {b.levels: b.probability for b in result.branches}.get((1,), 0.0)
+            )
     assert compiled.cache_info().compiled == 1
     assert len(log) == 4
 
@@ -506,10 +508,10 @@ def test_k18_readout_models_on_the_target(target):
         readout(r, square(800, 0.05))
 
     lowered = pulse.compile(excite_and_measure, device=dev).lower(dev.qudit_handles[0])
-    ideal = dict(pulse.simulate(lowered, dt_ns=1.0, levels=2).branches)
+    ideal = {b.levels: b.probability for b in pulse.simulate(lowered, dt_ns=1.0, levels=2).branches}
     model = pulse.simulate(lowered, dt_ns=1.0, readout="model", levels=2)
     decay = pulse.simulate(lowered, dt_ns=1.0, readout="model_with_decay", levels=2)
-    reported_zero = lambda r: sum(p for o, p in r.branches if o == (0,))  # noqa: E731
+    reported_zero = lambda r: sum(b.probability for b in r.branches if b.levels == (0,))  # noqa: E731
     # Asymmetric errors: |1> is reported 0 at error_1to0 (plus the little
     # it decayed before the readout); decay during the window adds more.
     p1 = ideal.get((1,), 0.0)

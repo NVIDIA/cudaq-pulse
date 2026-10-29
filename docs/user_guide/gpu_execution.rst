@@ -316,7 +316,7 @@ of the outcomes from the same branch probabilities.
    result.density_matrix   # ensemble state at the end
    result.level_population(1)   # P(1) of the one qudit; level_population(1, qudit=q) for one of several
    result.level_populations()   # [P(0), P(1), P(2)] for a three-level qudit
-   result.branches         # [(outcomes, probability), ...]
+   result.branches         # [Branch(levels=(0,), probability=0.5, calls=()), ...]
    result.records          # one row of outcomes per shot
 
 ``backend="cpu"`` integrates the same lowered operator with a NumPy RK4

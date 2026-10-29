@@ -177,7 +177,7 @@ def test_active_reset_of_a_superposition():
     result = _run(_active_reset(_HALF_PI), shots=4000, seed=2)
     # Either outcome ends in |0>: the ensemble is pure.
     np.testing.assert_allclose(result.density_matrix, np.diag([1.0, 0.0]), atol=1e-7)
-    probabilities = dict(result.branches)
+    probabilities = {b.levels: b.probability for b in result.branches}
     assert probabilities[(0,)] == pytest.approx(0.5, abs=1e-8)
     assert probabilities[(1,)] == pytest.approx(0.5, abs=1e-8)
     ones = result.records[:, 0].mean()
@@ -189,7 +189,10 @@ def test_conditional_flip_correlates_the_qubits():
     expected = np.zeros((4, 4))
     expected[0, 0] = expected[3, 3] = 0.5  # |00> and |11>, qubit 0 least significant
     np.testing.assert_allclose(result.density_matrix, expected, atol=1e-7)
-    assert sorted(result.branches) == [((0,), pytest.approx(0.5)), ((1,), pytest.approx(0.5))]
+    assert sorted((b.levels, b.probability) for b in result.branches) == [
+        ((0,), pytest.approx(0.5)),
+        ((1,), pytest.approx(0.5)),
+    ]
 
 
 def test_decay_during_the_readout_sets_the_outcome_probability():
@@ -197,7 +200,7 @@ def test_decay_during_the_readout_sets_the_outcome_probability():
     result = _run(measure, target=_target(1, t1_us), initial_state=[0.0, 1.0])
     # The readout is 100 ns; the measurement completes at its end.
     p1 = math.exp(-100.0 / (t1_us * 1e3))
-    assert dict(result.branches)[(1,)] == pytest.approx(p1, rel=1e-6)
+    assert {b.levels: b.probability for b in result.branches}[(1,)] == pytest.approx(p1, rel=1e-6)
     np.testing.assert_allclose(np.diag(result.density_matrix).real, [1 - p1, p1], atol=1e-7)
 
 
@@ -205,7 +208,9 @@ def test_measuring_a_qutrit_dephases_all_three_levels():
     psi = np.ones(3) / math.sqrt(3)
     result = _run(measure, levels=3, initial_state=psi, shots=3000, seed=4)
     np.testing.assert_allclose(result.density_matrix, np.eye(3) / 3, atol=1e-8)
-    assert {o: p for (o,), p in result.branches} == pytest.approx({0: 1 / 3, 1: 1 / 3, 2: 1 / 3})
+    assert {b.levels[0]: b.probability for b in result.branches} == pytest.approx(
+        {0: 1 / 3, 1: 1 / 3, 2: 1 / 3}
+    )
     counts = np.bincount(result.records[:, 0], minlength=3) / 3000
     assert np.all(np.abs(counts - 1 / 3) < 4 * math.sqrt(2 / 9 / 3000))
 
@@ -229,7 +234,7 @@ def test_resets_in_a_retained_loop():
     # Three measurements, one per iteration; after the first reset every
     # later one reads 0.
     assert [m.iteration for m in result.measurements] == [(0,), (1,), (2,)]
-    likely = sorted(o for o, p in result.branches if p > 1e-9)
+    likely = sorted(b.levels for b in result.branches if b.probability > 1e-9)
     assert likely == [(0, 0, 0), (1, 0, 0)]
     assert (result.records[:, 1:] == 0).all()
 
@@ -263,7 +268,7 @@ def test_gpu_backend_matches_the_reference(kernel, n):
     cpu = _run(kernel, n)
     gpu = _run(kernel, n, backend="gpu")
     np.testing.assert_allclose(gpu.density_matrix, cpu.density_matrix, atol=1e-6)
-    assert [o for o, _ in gpu.branches] == [o for o, _ in cpu.branches]
+    assert [b.levels for b in gpu.branches] == [b.levels for b in cpu.branches]
 
 
 def test_each_qudit_has_its_model_s_levels_unless_simulate_sets_them():

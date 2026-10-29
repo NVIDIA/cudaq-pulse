@@ -491,18 +491,16 @@ def search_plant(target, offset_hz):
     return dataclasses.replace(target, qubits={**target.qubits, 0: plant})
 
 
-def chain_results(calls):
-    """Each step's answer, from one shot's calls."""
-    answers = {}
-    for call in calls:
-        answers[call.function] = call.answer
-    shape, rate, _ = answers["adaptive_t1"]
+def chain_results(branch):
+    """Each step's answer, from the branch one shot took."""
+    shape, rate, _ = branch.answers("adaptive_t1")[-1]
+    pi_amplitude, half_pi_amplitude = branch.answers("amplitude_estimator")[:2]
     return {
-        "readout errors": answers["assignment_errors"],
-        "detuning (kHz)": answers["ramsey_estimator"][0] / 1e3,
-        "pi amplitude": [c.answer[0] for c in calls if c.function == "amplitude_estimator"][0],
-        "pi/2 amplitude": [c.answer[0] for c in calls if c.function == "amplitude_estimator"][1],
-        "T1, decay estimator (us)": answers["decay_estimator"][0] / clock_ghz / 1e3,
+        "readout errors": branch.answers("assignment_errors")[-1],
+        "detuning (kHz)": branch.answers("ramsey_estimator")[-1][0] / 1e3,
+        "pi amplitude": pi_amplitude[0],
+        "pi/2 amplitude": half_pi_amplitude[0],
+        "T1, decay estimator (us)": branch.answers("decay_estimator")[-1][0] / clock_ghz / 1e3,
         "T1, adaptive (us)": rate / shape / clock_ghz / 1e3,
     }
 
@@ -536,7 +534,7 @@ if __name__ == "__main__":
     start = time.perf_counter()
     result = pulse.simulate(lowered, plant=plant, shots=1, seed=7, paths="sampled", readout="model")
     print(f"  one shot of the chain simulated in {time.perf_counter() - start:.1f} s")
-    for name, value in chain_results(result.calls[0]).items():
+    for name, value in chain_results(result.branches[0]).items():
         shown = ", ".join(f"{v:.3f}" for v in value) if isinstance(value, tuple) else f"{value:.4f}"
         print(f"  {name:<26} {shown}")
     print(
@@ -558,7 +556,7 @@ if __name__ == "__main__":
             paths="sampled",
             readout="model",
         )
-        mean, sigma, _, _ = found.calls[0][-1].answer
+        mean, sigma, _, _ = found.branches[0].answers("search_step")[-1]
         errors.append(mean - offset)
         sigmas.append(sigma)
         print(

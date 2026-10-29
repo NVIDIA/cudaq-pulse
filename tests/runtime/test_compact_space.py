@@ -140,7 +140,9 @@ def test_measurements_report_device_qudits(measured):
     assert [m.qudit for m in on_chip.measurements] == [measured]
     assert [m.qudit for m in alone.measurements] == [new[measured]]
     _same(on_chip, alone)
-    assert on_chip.branches == [(o, pytest.approx(p)) for o, p in alone.branches]
+    assert [(b.levels, b.probability) for b in on_chip.branches] == [
+        (b.levels, pytest.approx(b.probability)) for b in alone.branches
+    ]
     np.testing.assert_array_equal(on_chip.records, alone.records)
 
 
@@ -166,4 +168,4 @@ def test_gpu_simulates_a_high_index_pair_like_the_cpu():
     gpu = pulse.simulate(lowered, levels=3, backend="gpu")
     assert gpu.qudits == cpu.qudits == (3, 13) and gpu.dims == (3, 3)
     np.testing.assert_allclose(gpu.density_matrix, cpu.density_matrix, atol=1e-6)
-    assert [o for o, _ in gpu.branches] == [o for o, _ in cpu.branches]
+    assert [b.levels for b in gpu.branches] == [b.levels for b in cpu.branches]

@@ -81,7 +81,9 @@ def test_ten_thousand_iterations_run_without_compiling_again():
         STORE.set("wait_cycles", wait_cycles)
         result = pulse.simulate(compiled.lower(q, STORE["amplitude"]), dt_ns=1.0, levels=2)
         elapsed_ns = wait_cycles / dev.clock_ghz + 20 + 200
-        assert dict(result.branches)[(1,)] == pytest.approx(math.exp(-elapsed_ns / 20e3), abs=5e-3)
+        assert {b.levels: b.probability for b in result.branches}[(1,)] == pytest.approx(
+            math.exp(-elapsed_ns / 20e3), abs=5e-3
+        )
     assert compiled.cache_info().compiled == 1
 
 

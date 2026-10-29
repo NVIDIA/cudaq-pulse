@@ -166,9 +166,10 @@ def check(kernel, reference, *, loops, n=1, qvec=False, sim=True, args=(), **sim
         want = _simulate(reference, n, qvec, args, **sim_kwargs)
         assert result.times_ns == want.times_ns
         np.testing.assert_allclose(result.density_matrix, want.density_matrix, atol=1e-9)
-        got, ref = sorted(result.branches), sorted(want.branches)
-        assert [o for o, _ in got] == [o for o, _ in ref]
-        assert [p for _, p in got] == pytest.approx([p for _, p in ref])
+        got = sorted(result.branches, key=lambda b: b.levels)
+        ref = sorted(want.branches, key=lambda b: b.levels)
+        assert [b.levels for b in got] == [b.levels for b in ref]
+        assert [b.probability for b in got] == pytest.approx([b.probability for b in ref])
     return ops, compiled
 
 
@@ -1087,7 +1088,7 @@ def test_measurement_feedback_inside_a_called_kernel():
     # Each round resets to |0>: the ensemble ends in the ground state.
     np.testing.assert_allclose(result.density_matrix, np.diag([1.0, 0.0]), atol=1e-7)
     assert [m.iteration for m in result.measurements] == [(0,), (1,)]
-    assert sorted(o for o, _ in result.branches) == [(0, 0), (0, 1), (1, 0), (1, 1)]
+    assert sorted(b.levels for b in result.branches) == [(0, 0), (0, 1), (1, 0), (1, 1)]
 
 
 @pulse.kernel

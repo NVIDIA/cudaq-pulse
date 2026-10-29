@@ -142,8 +142,8 @@ def step_tracked(q):
 
 def _shares(result, shots):
     """Each path's last calls and its number of shots."""
-    for calls, (_, p) in zip(result.calls, result.branches):
-        yield calls, round(p * shots)
+    for branch in result.branches:
+        yield branch.calls, round(branch.probability * shots)
 
 
 def adaptive_t1(n, seed):
@@ -195,7 +195,7 @@ def binary_search(n, seed):
             readout="model",
             levels=2,
         )
-        mean, sigma, _, _ = result.calls[0][-1].answer
+        mean, sigma, _, _ = result.branches[0].calls[-1].answer
         errors.append(mean - offset)
         sigmas.append(sigma)
     seconds = time.perf_counter() - start
@@ -229,7 +229,7 @@ def chain(n, seed):
             readout="model",
             levels=2,
         )
-        rows.append(P["chain_results"](result.calls[0]))
+        rows.append(P["chain_results"](result.branches[0]))
     seconds = time.perf_counter() - start
     truth = {
         "detuning (kHz)": 60.0,

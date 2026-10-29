@@ -122,7 +122,7 @@ def test_the_surrogates_match_simulating_the_plant():
         result = pulse.simulate(
             compiled_t1.lower(q, wait_cycles), plant=target, dt_ns=1.0, levels=2
         )
-        p1 = dict(result.branches).get((1,), 0.0)
+        p1 = {b.levels: b.probability for b in result.branches}.get((1,), 0.0)
         # The surrogate counts the wait; the pi pulse and readout add 40 ns.
         elapsed = wait_cycles / dev.clock_ghz + 40
         assert p1 == pytest.approx(plant.p_survive(elapsed), abs=0.03)
