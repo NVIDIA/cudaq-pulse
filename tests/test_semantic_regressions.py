@@ -41,7 +41,7 @@ def test_constant_loop_is_retained_and_scheduled_per_iteration():
         for _ in range(5):
             drive(line, waveform, tone)
 
-    compiled = pulse.compile(kernel, schedule="asap", passes=()).lower(Q[0])
+    compiled = pulse.compile(kernel, schedule="asap", passes=(), unroll_threshold=0).lower(Q[0])
     assert compiled.mlir().count("= pulse.drive ") == 1
     assert "scf.for" in compiled.mlir()
     assert [(e.start_cycles, e.duration_cycles) for e in compiled.schedule] == [

@@ -171,7 +171,7 @@ def test_round_duration_needs_a_line_and_a_known_length():
 # ── Scheduling on the grid ───────────────────────────────────────────────────
 
 
-@pulse.kernel
+@pulse.kernel(unroll_threshold=0)
 def mixed(a, b):
     da, ta = get_drive_line(a)
     db, tb = get_drive_line(b)

@@ -538,7 +538,7 @@ def test_a_kernel_called_in_a_range_loop_keeps_the_loop_rolled():
     def play(d, t, amp: float):
         drive(d, square(8, amp), t)
 
-    @pulse.kernel
+    @pulse.kernel(unroll_threshold=0)
     def train(q, n: int):
         d, t = get_drive_line(q)
         for _ in range(n):
@@ -596,7 +596,7 @@ def test_nested_kernel_calls_and_tone_state_carried_across_iterations():
             block(d, t)
 
     q = _device().qudit_handles[0]
-    lowered = pulse.compile(carried, passes=()).lower(q, 5)
+    lowered = pulse.compile(carried, passes=(), unroll_threshold=0).lower(q, 5)
     text = lowered.mlir()
     assert text.count("scf.for") == 1 and text.count("pulse.shift_phase") == 2
     # The tone, with its phase, is carried from one iteration to the next.
@@ -667,7 +667,7 @@ def test_two_names_for_one_line_stay_in_step():
 
 
 def test_a_callee_acquiring_the_line_in_a_rolled_loop_is_hoisted():
-    @pulse.kernel
+    @pulse.kernel(unroll_threshold=0)
     def train(q, n: int):
         for _ in range(n):
             x90(q)

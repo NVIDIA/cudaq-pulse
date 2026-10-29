@@ -88,7 +88,7 @@ def test_correct_corpus_compiles(case: BugCase):
         pytest.skip("not a kernel")
 
     nargs = fn_or_kern.__wrapped__.__code__.co_argcount
-    compiled = fn_or_kern.lower(*_make_qubits(nargs))
+    compiled = pulse.compile(fn_or_kern, unroll_threshold=0).lower(*_make_qubits(nargs))
     assert compiled.metrics.op_count > 0
 
 

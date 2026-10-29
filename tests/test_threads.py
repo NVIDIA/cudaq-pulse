@@ -32,7 +32,7 @@ def _many_drives(n):
 
 
 def _compile(kernel, schedule="alap"):
-    return pulse.compile(kernel, schedule=schedule).lower(Q[0])
+    return pulse.compile(kernel, schedule=schedule, unroll_threshold=0).lower(Q[0])
 
 
 def test_concurrent_compiles_match_sequential_ones():

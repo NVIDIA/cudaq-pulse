@@ -86,7 +86,7 @@ def test_enumerate_zip_reversed_and_dict_items():
 
 
 def test_lines_and_tones_from_lists_stay_threaded():
-    @pulse.kernel
+    @pulse.kernel(unroll_threshold=0)
     def zipped(qubits):
         lines = []
         tones = []
@@ -100,7 +100,7 @@ def test_lines_and_tones_from_lists_stay_threaded():
         for d in lines:
             wait(d, 8)
 
-    @pulse.kernel
+    @pulse.kernel(unroll_threshold=0)
     def by_index(qubits):
         lines = []
         tones = []

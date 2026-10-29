@@ -23,7 +23,7 @@ from tests._handles import Q
 def _lower_three(
     kernel, *args: float, step: float = 0.01
 ) -> tuple[list[warnings.WarningMessage], int]:
-    compiled = pulse.compile(kernel)
+    compiled = pulse.compile(kernel, unroll_threshold=0)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         for i in range(3):

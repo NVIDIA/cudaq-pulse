@@ -19,23 +19,29 @@ from typing import Any
 from .._device import Qudit, Register
 from ._bytecode_normalize import DecodedCode, decode
 from ._emitter import PulseIREmitter, _extract_closures, add_source_note
+from ._unroll import resolve_unroll_threshold
 from .ir_builder import CompilationError, PythonIRBuilder
 
 
-def compile_kernel_bytecode(fn: Callable[..., Any]) -> Callable[..., PythonIRBuilder]:
+def compile_kernel_bytecode(
+    fn: Callable[..., Any], *, unroll_threshold: int | None = None
+) -> Callable[..., PythonIRBuilder]:
     """Compile a pulse kernel function via bytecode analysis.
 
     Returns a callable that, given concrete arguments, produces a
     populated ``PythonIRBuilder``. Captured variables are read on every call.
+    *unroll_threshold* is that of ``cudaq_pulse.compile``.
     """
     code = fn.__code__
     prog = decode(code)
     params = code.co_varnames[: code.co_argcount]
+    unroll = resolve_unroll_threshold(unroll_threshold)
 
     def _emit(*args: Any, **kwargs: Any) -> PythonIRBuilder:
         if kwargs:
             raise CompilationError("keyword arguments not supported in pulse kernels")
         builder = PythonIRBuilder(name=fn.__name__)
+        builder.unroll_threshold = unroll
         _trace(fn, builder, args, "pulse.qudit_arg", prog, params)
         return builder
 

@@ -333,7 +333,7 @@ def test_calls_in_a_rolled_loop_are_bound_per_iteration():
         lambda x: x + 1.0, name="counter", args=(Float(),), results=(Float(),), max_latency_ns=0
     )
 
-    @pulse.kernel
+    @pulse.kernel(unroll_threshold=0)
     def k(q):
         d, t = get_drive_line(q)
         x = 0.0

@@ -40,6 +40,8 @@ FREQ_HZ = 5.0e9
 AMP = 0.05
 SIGNIFICANT = 1e-3
 UNFUSED = ("verify", "fold_constants", "remove_unused", "fold_phases")
+# The loops here are a few iterations long, which the default would unroll.
+ROLLED = 0
 
 # ── Call mechanics ───────────────────────────────────────────────────
 
@@ -55,18 +57,19 @@ def _device(n):
 
 def _trace(kernel, n=1, qvec=False, args=()):
     """The kernel's IR, as a list of ops."""
-    return python_ir(kernel, *_qubits(n, qvec), *args).ops
+    return python_ir(kernel, *_qubits(n, qvec), *args, unroll_threshold=ROLLED).ops
 
 
 def _compile(kernel, n=1, qvec=False, passes=None, args=()):
     """The compiled, scheduled kernel; *args* follow the qudits."""
     dev = _device(n)
-    return pulse.compile(kernel, passes=passes, device=dev).lower(*_qubits(n, qvec, dev), *args)
+    compiled = pulse.compile(kernel, passes=passes, device=dev, unroll_threshold=ROLLED)
+    return compiled.lower(*_qubits(n, qvec, dev), *args)
 
 
 def _compile_symbolic(kernel):
     """Compile a one-qudit kernel ahead of its other arguments."""
-    return pulse.compile(kernel, device=_device(1))
+    return pulse.compile(kernel, device=_device(1), unroll_threshold=ROLLED)
 
 
 def _evaluate(compiled, *values):

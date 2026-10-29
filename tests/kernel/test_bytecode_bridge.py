@@ -347,6 +347,11 @@ class TestLinearRebinding:
 # ── For loops ────────────────────────────────────────────────────────
 
 
+def _rolled(fn):
+    """*fn* traced with every loop that can stay rolled kept rolled."""
+    return compile_kernel_bytecode(fn, unroll_threshold=0)
+
+
 class TestForLoop:
     def test_for_range_emits_scf(self):
 
@@ -356,7 +361,7 @@ class TestForLoop:
             for i in range(5):
                 drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(loop_test)(Q[0])
+        ir = _rolled(loop_test)(Q[0])
         kinds = [op.kind for op in ir.ops]
         assert kinds.count("pulse.drive") == 1
         assert "scf.for_end" in kinds
@@ -371,7 +376,7 @@ class TestForLoop:
             for i in range(3):
                 drive(d0, wf, t0)
 
-        ir = compile_kernel_bytecode(loop_yield)(Q[0])
+        ir = _rolled(loop_yield)(Q[0])
         (yield_op,) = [op for op in ir.ops if op.kind == "scf.yield"]
         end = ir.ops[-1]
         assert end.kind == "scf.for_end"
@@ -385,7 +390,7 @@ class TestForLoop:
             for i in range(2, 9, 3):
                 shift_phase(t0, float(i))
 
-        ir = compile_kernel_bytecode(loop_test)(Q[0])
+        ir = _rolled(loop_test)(Q[0])
         phases = [op.attrs["phase_rad"] for op in ir.ops if op.kind == "pulse.shift_phase"]
         assert phases == [2.0, 5.0, 8.0]
         assert not any(op.kind.startswith("scf.") for op in ir.ops)
@@ -399,7 +404,7 @@ class TestForLoop:
                 drive(d0, square(10, amp), t0)
                 amp = amp * 2
 
-        ir = compile_kernel_bytecode(loop_test)(Q[0])
+        ir = _rolled(loop_test)(Q[0])
         amps = [op.attrs["amplitude"] for op in ir.ops if op.kind == "pulse.square"]
         assert amps == [0.1, 0.2, 0.4]
         assert not any(op.kind.startswith("scf.") for op in ir.ops)
@@ -414,7 +419,7 @@ class TestForLoop:
             for w in range(len(waves)):
                 drive(d0, waves[w], t0)
 
-        ir = compile_kernel_bytecode(loop_test)(Q[0])
+        ir = _rolled(loop_test)(Q[0])
         kinds = [op.kind for op in ir.ops]
         assert kinds.count("pulse.square") == 3
         assert kinds.count("pulse.drive") == 3
@@ -428,7 +433,7 @@ class TestForLoop:
                 drive(d0, square(10, 0.1), t0)
                 break
 
-        ir = compile_kernel_bytecode(loop_test)(Q[0])
+        ir = _rolled(loop_test)(Q[0])
         kinds = [op.kind for op in ir.ops]
         assert kinds.count("pulse.drive") == 1
         assert "scf.for" not in kinds
@@ -442,7 +447,7 @@ class TestForLoop:
                 for _ in range(4):
                     drive(d0, x, t0)
 
-        ir = compile_kernel_bytecode(loop_test)(Q[0])
+        ir = _rolled(loop_test)(Q[0])
         kinds = [op.kind for op in ir.ops]
         assert kinds.count("scf.for") == 2
         assert kinds.count("pulse.drive") == 1
@@ -459,7 +464,7 @@ class TestForLoop:
                 if 0 < r and r < 3:
                     drive(d0, x, t0)
 
-        ir = compile_kernel_bytecode(loop_test)(Q[0])
+        ir = _rolled(loop_test)(Q[0])
         assert [op.kind for op in ir.ops].count("pulse.drive") == 2
 
     def test_while_loop_rejected(self):
@@ -472,7 +477,7 @@ class TestForLoop:
                 n -= 1
 
         with pytest.raises(CompilationError, match="while loops"):
-            compile_kernel_bytecode(loop_test)(Q[0])
+            _rolled(loop_test)(Q[0])
 
 
 # ── Qudit allocation patterns ────────────────────────────────────────

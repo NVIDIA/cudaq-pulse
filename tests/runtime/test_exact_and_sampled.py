@@ -206,7 +206,7 @@ def test_a_long_adaptive_loop_follows_one_path_per_shot():
 
 
 def test_kept_propagators_are_keyed_compactly():
-    @pulse.kernel
+    @pulse.kernel(unroll_threshold=0)
     def train(q0):
         d, t = get_drive_line(q0)
         for _ in range(4):

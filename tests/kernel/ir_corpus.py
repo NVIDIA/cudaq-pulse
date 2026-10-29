@@ -38,6 +38,9 @@ from tests.workloads import (
     w6_vqe_hea,
 )
 
+# The corpus keeps its range loops rolled, so the golden IR shows them.
+UNROLL_THRESHOLD = 0
+
 # ── Canonical dumps ──────────────────────────────────────────────────
 
 
@@ -417,13 +420,14 @@ def trace(case: Case) -> dict[str, Any]:
     args = case.args()
     try:
         if case.path == "python":
-            ir = compile_kernel_bytecode(fn)(*args)
+            ir = compile_kernel_bytecode(fn, unroll_threshold=UNROLL_THRESHOLD)(*args)
             lines = dump_python(ir)
             n_ops = len(ir.ops)
         else:
             builder = PackedIRBuilder(
                 name=fn.__name__, clock_ghz=2.0, qubit_freq_hz={i: 5e9 + 1e6 * i for i in range(64)}
             )
+            builder.unroll_threshold = UNROLL_THRESHOLD
             _trace_kernel_with_builder(fn, builder, args)
             lines = dump_packed(builder)
             n_ops = builder.op_count

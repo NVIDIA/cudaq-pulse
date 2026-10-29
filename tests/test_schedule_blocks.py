@@ -210,7 +210,7 @@ def test_block_in_a_rolled_loop_keeps_the_loop():
         for _ in range(8):
             echo(d, t)
 
-    compiled = pulse.compile(top, schedule="asap").lower(Q[0])
+    compiled = pulse.compile(top, schedule="asap", unroll_threshold=0).lower(Q[0])
     assert "scf.for" in compiled.mlir()
     assert [(e.kind, e.start_cycles) for e in compiled.schedule][:4] == [
         ("drive", 0),
@@ -346,7 +346,7 @@ def asap_layer(d0, t0, d1, t1):
 
 
 def test_a_block_in_a_rolled_loop_keeps_its_timing_each_iteration():
-    @pulse.kernel
+    @pulse.kernel(unroll_threshold=0)
     def repeated(q0, q1, n: int):
         d0, t0 = get_drive_line(q0)
         d1, t1 = get_drive_line(q1)
@@ -382,7 +382,7 @@ def test_a_callee_that_acquires_its_lines_in_a_rolled_loop_stays_rolled():
         drive(d0, square(40, 0.1), t0)
         drive(d1, square(16, 0.1), t1)
 
-    @pulse.kernel
+    @pulse.kernel(unroll_threshold=0)
     def repeated(q0, q1, n: int):
         for _ in range(n):
             layer(q0, q1)

@@ -445,6 +445,8 @@ class PythonIRBuilder:
         self.name = name
         self.ops: list[Op] = []
         self._next_id = 0
+        # The trace's loop-unroll threshold; None for the default.
+        self.unroll_threshold: int | None = None
         # What the traced kernel returned.
         self.result: Any = None
 

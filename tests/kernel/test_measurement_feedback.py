@@ -111,7 +111,7 @@ def test_python_state_cannot_depend_on_a_measurement():
 
 def test_one_armed_return_is_rejected():
 
-    @pulse.kernel
+    @pulse.kernel(unroll_threshold=0)
     def k(q0):
         d0, t0 = get_drive_line(q0)
         r0, rt = get_readout_line(q0)
