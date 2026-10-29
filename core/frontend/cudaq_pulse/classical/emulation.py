@@ -198,7 +198,7 @@ def _export(lowered: Any, with_events: bool, part: _Part | None = None) -> dict[
         "calls": [
             _call_data(c)
             for c in (report(lowered) if lowered.classical else ())
-            if part is None or (c.function in part[2] and c.controller in (None, part[0]))
+            if part is None or (c.compiled_name in part[2] and c.controller in (None, part[0]))
         ],
         "manifest": manifest(lowered),
     }
@@ -219,9 +219,10 @@ def _export(lowered: Any, with_events: bool, part: _Part | None = None) -> dict[
 def _call_data(call: Any) -> dict[str, Any]:
     """A ``ClassicalCall`` as export data: its fields, in order (the
     ``asdict`` of one, made directly); ``controller`` only for a call over a
-    per-controller link."""
+    per-controller link. An emulator serves the compiled name:
+    ``"function"`` names it, as the manifest's ``"name"`` does."""
     data = {
-        "function": call.function,
+        "function": call.compiled_name,
         "link": call.link,
         "iteration": list(call.iteration),
         "submit_cycles": call.submit_cycles,

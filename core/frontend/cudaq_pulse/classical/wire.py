@@ -28,7 +28,7 @@ import struct
 from collections.abc import Sequence
 from typing import Any
 
-from .._errors import ExecutionError, InvalidValueError
+from .._errors import ExecutionError, InvalidTypeError, InvalidValueError
 from . import ClassicalFunction, _resolve, _unsized_names, _wrong_length
 from ._values import ValueType
 
@@ -108,7 +108,7 @@ def _one_schema(function: ClassicalFunction[..., Any], what: str) -> None:
     if function._shape is not None:
         names = _unsized_names(function)
         example = ", ".join(f"{n}=..." for n in names)
-        raise TypeError(
+        raise InvalidTypeError(
             f"{function.name}'s list lengths come from its calls ({', '.join(names)}), so it has"
             f" a schema per version; for one version use {what}("
             f"{function.name}.specialize({example}))"
@@ -132,7 +132,7 @@ def _pack(
             items = list(value)
             if answering is not None and len(items) != spec.count:
                 position = [s is spec for s in specs].index(True)
-                raise ValueError(_wrong_length(answering, position, len(items)))
+                raise InvalidValueError(_wrong_length(answering, position, len(items)))
         if spec.descriptor.startswith("bits:"):
             packed = bytearray(size)
             for i, bit in enumerate(items):

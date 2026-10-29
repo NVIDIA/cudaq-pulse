@@ -1443,7 +1443,7 @@ def analyze(function: Any, limits: ControllerLimits | None = None) -> FunctionRe
         if function._shape is not None:
             names = _unsized_names(function)
             example = ", ".join(f"{n}=3" for n in names)
-            raise TypeError(
+            raise InvalidTypeError(
                 f"{function.name}'s list lengths come from its calls ({', '.join(names)}), so it"
                 f" has no single cost; analyze one version, e.g."
                 f" analyze({function.name}.specialize({example}))"

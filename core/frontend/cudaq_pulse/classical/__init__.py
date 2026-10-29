@@ -191,7 +191,7 @@ def _hint(t: Any, fn: Any) -> Any:
         try:
             value = eval(t, g)  # noqa: S307 - the function's own annotation
         except Exception as error:
-            raise TypeError(
+            raise InvalidTypeError(
                 f"{fn.__qualname__}: can't read the type hint {t!r} ({error}); a hint is read"
                 " in the function's module, so the names it uses must be defined there"
             ) from None
@@ -289,7 +289,7 @@ def _read_hints(fn: Any) -> _Shape:
     where = fn.__qualname__
     code = fn.__code__
     if code.co_flags & _VARIADIC or code.co_kwonlyargcount:
-        raise TypeError(f"{where}: only positional parameters are sent")
+        raise InvalidTypeError(f"{where}: only positional parameters are sent")
     names = code.co_varnames[: code.co_argcount]
     ann = fn.__annotations__
     plan: list[Any] = []
@@ -297,7 +297,7 @@ def _read_hints(fn: Any) -> _Shape:
     unsized = 0
     for name in names:
         if name not in ann:
-            raise TypeError(
+            raise InvalidTypeError(
                 f"{where}: parameter {name!r} needs a type, such as float or pulse.Bits"
             )
         t = _hint(ann[name], fn)
@@ -312,7 +312,7 @@ def _read_hints(fn: Any) -> _Shape:
             lists += 1
         plan.append(spec)
     if "return" not in ann:
-        raise TypeError(f"{where}: annotate what it returns (-> None if it answers nothing)")
+        raise InvalidTypeError(f"{where}: annotate what it returns (-> None if it answers nothing)")
     returned = _hint(ann["return"], fn)
     if len(plan) <= _MAX_ARGS:
         try:
@@ -340,9 +340,9 @@ def _read_hints(fn: Any) -> _Shape:
                 spec = _Rule(kind, None)
         results.append(spec)
     if len(plan) > _MAX_ARGS:
-        raise TypeError(f"{where}: at most {_MAX_ARGS} arguments, got {len(plan)}")
+        raise InvalidTypeError(f"{where}: at most {_MAX_ARGS} arguments, got {len(plan)}")
     if len(results) > _MAX_RESULTS:
-        raise TypeError(f"{where}: at most {_MAX_RESULTS} results, got {len(results)}")
+        raise InvalidTypeError(f"{where}: at most {_MAX_RESULTS} results, got {len(results)}")
     rules = any(r.__class__ is _Rule for r in results)
     return _Shape(tuple(names), tuple(plan), tuple(results), unsized, rules)
 
@@ -359,7 +359,7 @@ def _stated_parameter(where: str, name: str, t: Any) -> ValueType:
     kind = _LIST_KIND.get(base)
     if kind is None:
         if base in _SCALAR_ARG or base is bool:
-            raise TypeError(
+            raise InvalidTypeError(
                 f"{where}: parameter {name!r} is {_spell(base)}; pulse.Length applies to"
                 " pulse.Bits and lists"
             )
@@ -367,7 +367,7 @@ def _stated_parameter(where: str, name: str, t: Any) -> ValueType:
     spelled = _spell_length(kind, meta)
     n, numbers = _length_items(where, spelled, kind, meta, None)
     if n is None:
-        raise TypeError(
+        raise InvalidTypeError(
             f"{where}: {spelled} gives no length; state one, such as"
             f" pulse.Length[{_LIST_NAME[kind]}, 8]"
         )
@@ -383,7 +383,7 @@ def _stated_result(where: str, t: Any, list_params: Mapping[str, Any]) -> Any:
     kind = _LIST_KIND.get(base)
     if kind is None or kind == _KIND_IQ:
         if base in _SCALAR_RESULT or base is complex:
-            raise TypeError(
+            raise InvalidTypeError(
                 f"{where}: its result is {_spell(base)}; pulse.Length applies to pulse.Bits"
                 " and lists"
             )
@@ -391,7 +391,7 @@ def _stated_result(where: str, t: Any, list_params: Mapping[str, Any]) -> Any:
     spelled = _spell_length(kind, meta)
     n, _ = _length_items(where, spelled, kind, meta, list_params)
     if n is None:
-        raise TypeError(
+        raise InvalidTypeError(
             f"{where}: {spelled} gives no length; state one, such as"
             f' pulse.Length[{_LIST_NAME[kind]}, 8] or pulse.Length[{_LIST_NAME[kind]}, "x"]'
             " for list parameter x's length"
@@ -415,7 +415,7 @@ def _length_items(
         if item.__class__ is str and (list_params is None or item not in list_params):
             if item != _NUMBERS:
                 if list_params is None:
-                    raise TypeError(
+                    raise InvalidTypeError(
                         f"{where}: {spelled}: a parameter's length is a number; a name states"
                         " a result's length"
                     )
@@ -423,19 +423,19 @@ def _length_items(
 
                 close = difflib.get_close_matches(item, list(list_params), n=1)
                 hint = f" (did you mean {close[0]!r}?)" if close else ""
-                raise TypeError(
+                raise InvalidTypeError(
                     f"{where}: {spelled} names {item}, which isn't a list parameter{hint}"
                 )
             if kind != _KIND_INTS:
-                raise TypeError(f'{where}: {spelled}: "numbers" applies to list[int] only')
+                raise InvalidTypeError(f'{where}: {spelled}: "numbers" applies to list[int] only')
             numbers = True
             continue
         if item.__class__ is not str and (item.__class__ is not int or item <= 0):
-            raise TypeError(
+            raise InvalidTypeError(
                 f"{where}: {spelled}: a length is a positive whole number, got {item!r}"
             )
         if n is not None:
-            raise TypeError(f"{where}: {spelled}: state one length")
+            raise InvalidTypeError(f"{where}: {spelled}: state one length")
         n = item
     return n, numbers
 
@@ -477,21 +477,21 @@ def _bad_parameter(where: str, name: str, t: Any) -> typing.NoReturn:
     from ..ops import MeasurementResult
 
     if t is bool:
-        raise TypeError(
+        raise InvalidTypeError(
             f"{where}: parameter {name!r} is bool; a measured bit is pulse.Bits"
             " (submit [m], read bits[0])"
         )
     if t is MeasurementResult:
-        raise TypeError(
+        raise InvalidTypeError(
             f"{where}: parameter {name!r} is MeasurementResult; say how to read it: pulse.Bits,"
             " list[int] (levels) or complex (an IQ point)"
         )
     if typing.get_origin(t) in (list, collections.abc.Sequence):
-        raise TypeError(
+        raise InvalidTypeError(
             f"{where}: parameter {name!r} is {_spell(t)}; lists hold float, int or complex,"
             " and measured bits are pulse.Bits"
         )
-    raise TypeError(
+    raise InvalidTypeError(
         f"{where}: parameter {name!r} can't be {_spell(t)}; use float, int, complex,"
         " pulse.Bits, list[float], list[int] or list[complex]"
     )
@@ -499,11 +499,11 @@ def _bad_parameter(where: str, name: str, t: Any) -> typing.NoReturn:
 
 def _bad_result(where: str, t: Any) -> typing.NoReturn:
     if t is complex or typing.get_args(t) == (complex,):
-        raise TypeError(
+        raise InvalidTypeError(
             f"{where}: can't return {_spell(t)}: a kernel can't use a complex answer;"
             " return tuple[float, float] instead"
         )
-    raise TypeError(
+    raise InvalidTypeError(
         f"{where}: can't return {_spell(t)}; use float, int, bool, pulse.Bits, list[float],"
         " list[int], a tuple of them, or None"
     )
@@ -726,7 +726,9 @@ class ClassicalFunction[**P, R]:
         if self._plan is not None:
             expected = len(self._plan)
         if kwargs or len(args) != expected:
-            raise TypeError(f"{self.name}() takes {expected} positional arguments, got {len(args)}")
+            raise InvalidTypeError(
+                f"{self.name}() takes {expected} positional arguments, got {len(args)}"
+            )
         return self.implementation(*args, **kwargs)
 
     def submit(self, *args: P.args, **kwargs: P.kwargs) -> Pending[R]:
@@ -740,23 +742,29 @@ class ClassicalFunction[**P, R]:
         _resolve(self)
         if self._shape is None:
             if lengths:
-                raise TypeError(f"{self.name} has one schema; it has no lengths to specialize")
+                raise InvalidTypeError(
+                    f"{self.name} has one schema; it has no lengths to specialize"
+                )
             return self
         names = _unsized_names(self)
         unknown = sorted(set(lengths) - set(names))
         if unknown:
-            raise TypeError(
+            raise InvalidTypeError(
                 f"{self.name}.specialize(): {', '.join(unknown)} isn't a list parameter of"
                 " unstated length"
             )
         missing = [n for n in names if n not in lengths]
         if missing:
-            raise TypeError(f"{self.name}.specialize(): give lengths for {', '.join(missing)}")
+            raise InvalidTypeError(
+                f"{self.name}.specialize(): give lengths for {', '.join(missing)}"
+            )
         key: list[int] = []
         for name in names:
             n = lengths[name]
             if isinstance(n, bool) or not isinstance(n, int) or n <= 0:
-                raise TypeError(f"{self.name}.specialize(): {name} must be a positive length")
+                raise InvalidTypeError(
+                    f"{self.name}.specialize(): {name} must be a positive length"
+                )
             key.append(n)
         version = _version(self, key[0] if self._n == 1 else tuple(key))
         return typing.cast("ClassicalFunction[P, R]", version)
@@ -871,17 +879,17 @@ def _result_specs(
         try:
             found = dict(zip((i for i, _ in inferred), known.lengths(where, lengths), strict=True))
         except TypeError as error:
-            raise TypeError(f"{error} {_length_advice(function, shape, inferred)}") from None
+            raise InvalidTypeError(f"{error} {_length_advice(function, shape, inferred)}") from None
     for i, r in rules:
         n = lengths[r.source] if r.source is not None else found[i]
         if n <= 0:
             where = f"{function.name} at {text}" if text else function.name
             if function.implementation is None:
-                raise TypeError(
+                raise InvalidTypeError(
                     f"{where}: its {_LIST_NAME[r.kind]} result has no length: the placeholder"
                     f" says only its type. {_length_advice(function, shape, inferred)}"
                 )
-            raise TypeError(f"{where}: its {_LIST_NAME[r.kind]} result would be empty")
+            raise InvalidTypeError(f"{where}: its {_LIST_NAME[r.kind]} result would be empty")
         out[i] = _sized(r.kind, n, measured=False)
     return tuple(out)
 
@@ -1161,7 +1169,7 @@ def function(implementation: Callable[..., Any] | None = None, /, **options: Any
 
 def _declare(fn: Callable[..., Any], options: dict[str, Any]) -> ClassicalFunction[..., Any]:
     if not isinstance(fn, types.FunctionType) or fn.__name__ == "<lambda>":
-        raise TypeError(
+        raise InvalidTypeError(
             f"@pulse.classical takes a function defined with def, whose type hints say what it"
             f" takes and returns; got {fn!r}"
         )
@@ -1171,7 +1179,7 @@ def _declare(fn: Callable[..., Any], options: dict[str, Any]) -> ClassicalFuncti
 
 
 def _removed(options: Mapping[str, Any]) -> typing.NoReturn:
-    raise TypeError(
+    raise InvalidTypeError(
         "args= and results= are gone: a classical function's type hints say what it"  # remnant-ok
         " takes and returns, such as def decode(syndromes: pulse.Bits) -> bool"
     )
@@ -1208,7 +1216,7 @@ def external[**Q, T](
 
     def decorate(stub: Callable[Q, T]) -> ClassicalFunction[Q, T]:
         if not isinstance(stub, types.FunctionType):
-            raise TypeError(
+            raise InvalidTypeError(
                 f"@pulse.classical.external takes a stub defined with def, got {stub!r}"
             )
         declared: ClassicalFunction[Q, T] = ClassicalFunction(None, _signature=stub, **options)

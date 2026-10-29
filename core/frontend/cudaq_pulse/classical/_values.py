@@ -15,6 +15,8 @@ what the IR, the wire schema and the simulator read; users never name them.
 
 from __future__ import annotations
 
+from .._errors import InvalidValueError
+
 __all__ = ["ValueType"]
 
 
@@ -61,7 +63,7 @@ class ValueType:
 
 def _count(n: int, what: str) -> int:
     if isinstance(n, bool) or not isinstance(n, int) or n <= 0:
-        raise ValueError(f"{what} needs a positive whole number of values, got {n!r}")
+        raise InvalidValueError(f"{what} needs a positive whole number of values, got {n!r}")
     return n
 
 
@@ -124,7 +126,7 @@ class _OnePoint(_IQ):
 
 def _width(bits: int) -> int:
     if bits not in (64, 32):
-        raise ValueError(f"a number has 64 or 32 bits, got {bits!r}")
+        raise InvalidValueError(f"a number has 64 or 32 bits, got {bits!r}")
     return bits
 
 

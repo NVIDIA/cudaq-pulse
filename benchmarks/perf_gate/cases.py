@@ -44,7 +44,6 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import cudaq_pulse as pulse  # noqa: E402
-from cudaq_pulse.classical import Bits, Float  # noqa: E402
 from cudaq_pulse.compiler import MachineModel  # noqa: E402
 from cudaq_pulse.controller import ControllerLimits  # noqa: E402
 from cudaq_pulse.kernel import packed_ir_builder  # noqa: E402
@@ -229,13 +228,14 @@ def _feedback_program(n: int) -> Any:
     return compiled.lower(Q[0])
 
 
-_SUBMIT = pulse.classical(
-    lambda bits, a, b, c, d, e: a + b + c + d + e + bits[0],
-    name="perf_gate_submit",
-    args=(Bits(1), Float(), Float(), Float(), Float(), Float()),
-    results=(Float(),),
-    max_latency_ns=50,
-)
+@pulse.classical(max_latency_ns=50)
+def perf_gate_submit(
+    bits: pulse.Length[pulse.Bits, 1], a: float, b: float, c: float, d: float, e: float
+) -> float:
+    return a + b + c + d + e + bits[0]
+
+
+_SUBMIT = perf_gate_submit
 
 
 # ── Setups ─────────────────────────────────────────────────────────────────

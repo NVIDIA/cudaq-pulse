@@ -13,7 +13,7 @@ import socket
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.classical import Bits, emulation, wire
+from cudaq_pulse.classical import emulation, wire
 from cudaq_pulse.kernel.ir_builder import Parameter, SymbolicValueError
 
 from tests._handles import Q
@@ -126,7 +126,10 @@ def test_a_udp_call_without_an_answer_is_a_timeout_and_an_execution_error():
     silent.bind(("127.0.0.1", 0))
     host, port = silent.getsockname()
 
-    f = pulse.classical.external("f", args=(Bits(1),), max_latency_ns=1)
+    @pulse.classical.external(max_latency_ns=1)
+    def f(bits: pulse.Length[pulse.Bits, 1]) -> None:
+        pass
+
     channel = emulation.UdpChannel((host, port), timeout_s=0.05)
     try:
         with pytest.raises(TimeoutError) as info:
