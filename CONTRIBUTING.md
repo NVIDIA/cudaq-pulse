@@ -268,10 +268,13 @@ as well. Timing is only gated when you pass `--gate FACTOR`.
 
 `benchmarks/compiler/mlir_pipeline_bench.py` breaks compile time down by
 stage and by pass and reports IR sizes; `benchmarks/simulation/qec_scaling.py`
-shows how compile time grows with surface-code distance. CI runs both at a
-small size to keep them working. `benchmarks/compiler/specialize_bench.py`
-compares a call with a new float value against a fresh compile and fails if
-the call is not at least ten times cheaper; the nightly workflow runs it.
+shows how compile time grows with surface-code distance, and
+`benchmarks/compiler/controller_export.py` the time, bytes and peak memory
+of checking and exporting large programs for a controller, in format /1
+and /2. CI runs these at a small size to keep them working.
+`benchmarks/compiler/specialize_bench.py` compares a call with a new float
+value against a fresh compile and fails if the call is not at least ten
+times cheaper; the nightly workflow runs it.
 
 ## GPU builds
 

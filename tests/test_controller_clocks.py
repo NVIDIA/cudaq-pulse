@@ -601,6 +601,17 @@ def test_each_controller_exports_the_reference_clock():
         assert lowered.export_controller(controller=index)["reference_clock_ghz"] == 0.25
 
 
+def test_drives_of_one_waveform_have_its_times_in_their_controllers_cycles():
+    qpu = _mixed()
+    lowered = pulse.compile(mixed, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
+    # The two gaussians of 40 program cycles at 2 GHz, on a 1 GHz controller.
+    drives = [e for e in lowered.export_controller(controller=0)["events"] if e["kind"] == "drive"]
+    assert len(drives) == 2
+    for drive in drives:
+        assert drive["duration_cycles"] == 20
+        assert drive["waveform"]["params"] == {"duration": 20.0, "amplitude": 0.1, "sigma": 5.0}
+
+
 def test_a_controller_faster_than_the_program_clock_counts_more_cycles():
     qpu = _device(4.0, 1.0, clock_ghz=2.0)
     lowered = pulse.compile(shaped_twice_plain, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])

@@ -30,8 +30,10 @@ controller's program; ``run(artifact, shots=...)`` runs it::
     artifact = backend.emit(lowered.export_controller())
     result = backend.run(artifact, shots=100)
 
-A backend may also list the export formats it reads in ``formats``; ``get``
-refuses one that does not read ``cudaq_pulse.controller.FORMAT``.
+A backend may also list the export formats it reads in ``formats``
+(``"cudaq-pulse.controller/1"``, ``cudaq_pulse.controller.FORMAT``, and the
+structured ``"cudaq-pulse.controller/2"`` of ``export_controller(version=2)``);
+``get`` refuses one that reads none of them.
 ``register(name, factory)`` adds a backend in this process, without a
 distribution. Nothing here runs until it is called: importing cudaq-pulse
 neither imports this module nor looks for backends.
@@ -93,8 +95,8 @@ class BackendNotFoundError(BackendError, NotFoundError):
 
 
 class IncompatibleBackendError(BackendError, TypeError):
-    """A backend fails to load, is not a ``Backend``, or does not read this
-    version's export format."""
+    """A backend fails to load, is not a ``Backend``, or reads none of the
+    export formats this version writes."""
 
 
 _lock = threading.Lock()
@@ -144,12 +146,12 @@ def _instance(name: str, loaded: Any) -> Backend:
         )
     formats = getattr(backend, "formats", None)
     if formats is not None:
-        from .controller import FORMAT
+        from .controller import _FORMATS
 
-        if FORMAT not in tuple(formats):
+        if not set(_FORMATS) & set(formats):
             raise IncompatibleBackendError(
                 f"backend {name!r} reads {', '.join(map(str, formats)) or 'no format'}; "
-                f"this cudaq-pulse exports {FORMAT}"
+                f"this cudaq-pulse exports {' and '.join(_FORMATS)}"
             )
     return backend
 

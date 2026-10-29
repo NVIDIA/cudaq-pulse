@@ -165,6 +165,7 @@ jobs:
         run: |
           uv run --no-sync python benchmarks/compiler/mlir_pipeline_bench.py --repeats 2
           uv run --no-sync python benchmarks/simulation/qec_scaling.py --distances 3 5 --repeats 1
+          uv run --no-sync python benchmarks/compiler/controller_export.py --small
 
       # Scaling guards compare two sizes in one process, so a shared
       # runner's speed cancels out: a regression fails the job.

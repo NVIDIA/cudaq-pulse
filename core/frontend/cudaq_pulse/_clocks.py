@@ -449,6 +449,8 @@ def off_grid(
     (the program computes values at run time), what the events compute at
     run time is converted too (``own_run_time``)."""
     found = []
+    # The events of one op share their waveform's parameters.
+    scaled: set[int] = set()
     single = plan.controllers[0] if plan.owners is None else None
     controller = plan.controllers[0]
     a, b = controller.ratio.numerator, controller.ratio.denominator
@@ -486,7 +488,7 @@ def off_grid(
                 event["end_cycles"] = -((-end * a) // b)
             tree = event.get("waveform") if waveforms else None
             if tree is not None:
-                _scale(tree, a / b)
+                _scale(tree, a / b, scaled)
     return found
 
 

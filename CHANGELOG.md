@@ -548,10 +548,25 @@ behavior may change in any 0.x release.
   as a tone shift, a waveform width or a wait length, is checked at the call
   with its values, so a call that lowers also exports. `cudaq_pulse.backends` finds backends installed under the
   `cudaq_pulse.backends` entry-point group; a backend that fails to load, is
-  not a `Backend` or does not read this export format raises
+  not a `Backend` or reads none of the export formats raises
   `IncompatibleBackendError`, and an unknown name `BackendNotFoundError`,
   both `BackendError`s. `examples/controller_backend/` is a toy backend, and
   the "Writing a Controller Backend" guide walks through one.
+- **Controller programs that keep their loops.**
+  `export_controller(version=2)` exports format `cudaq-pulse.controller/2`,
+  which grows with a program's operations rather than its executions: a
+  loop whose iterations repeat is one `loop` event holding its body, with
+  its trip count, period and each tone's phase step per iteration; each
+  distinct waveform is listed once; and what follows from the rest is left
+  out. A line lists its qudits and an event its tones, and `programs` and
+  `bindings` are reserved for programs shared by several controllers.
+  `controller.unroll()` turns it into format /1. The export and the
+  controller limit checks are native, and the checks reason about a
+  repeating loop from its first two iterations and its last, so checking a
+  rolled loop costs the same whatever its trip count. On a 320,000-event
+  rolled program, compiling with limits takes 25 ms instead of 6 s,
+  the /1 export 0.5 s instead of 4.6 s, and the /2 export 2 ms and 14 KB
+  instead of 117 MB.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
   `CompiledKernel`, `Lowered`, `Pass`, `simulate`, `SimulationResult`,
   `BranchCoverage`, `device`, `Device`, `Qudit`, `Register`,

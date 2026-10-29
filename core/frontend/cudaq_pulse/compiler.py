@@ -976,17 +976,23 @@ class Lowered:
         return export(self, controller)
 
     def export_controller(
-        self, sample_rate_ghz: float | None = None, *, controller: int | None = None
+        self,
+        sample_rate_ghz: float | None = None,
+        *,
+        controller: int | None = None,
+        version: int = 1,
     ) -> dict[str, Any]:
         """The program for an out-of-tree controller backend: its lines and
         every timed operation with its waveform, tone, frame and branches
         (see ``cudaq_pulse.controller``); with *sample_rate_ghz*, each
         envelope's samples too. On a control system of several controllers,
         the program of the one *controller* indexes, in its own cycles (a
-        program that plays the lines of more than one needs it)."""
+        program that plays the lines of more than one needs it).
+        ``version=2`` gives the structured format, which keeps loops
+        rolled."""
         from .controller import export
 
-        return export(self, sample_rate_ghz, controller)
+        return export(self, sample_rate_ghz, controller, version)
 
     def timeline(self, **kwargs: Any) -> Figure:
         """Plot the schedule, one row per line (needs matplotlib)."""

@@ -27,6 +27,8 @@ Export and limits
 
 .. autofunction:: cudaq_pulse.controller.export
 
+.. autofunction:: cudaq_pulse.controller.unroll
+
 .. autofunction:: cudaq_pulse.controller.sample_waveform
 
 .. autofunction:: cudaq_pulse.controller.shape_key

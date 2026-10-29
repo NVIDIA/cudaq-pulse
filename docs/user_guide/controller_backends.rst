@@ -125,6 +125,56 @@ measurement), each an expression; an answer has ``wait``,
 ``"bounded"`` (by the latency budget), ``"blocking"`` or ``"timeout"``,
 with ``timeout_ns``.
 
+The events of one operation, and of operations with the same waveform,
+share their ``waveform`` and ``amplitude`` objects; copy one before
+changing it.
+
+The structured format
+---------------------
+
+``export_controller(version=2)`` gives format
+``"cudaq-pulse.controller/2"``, which grows with a program's operations
+rather than with its executions, as a sequencer runs it. It has the keys of
+``/1``, except that:
+
+``events``
+    A tree. A loop whose iterations repeat (each event moves by one period,
+    and every tone keeps its frequency) is one ``loop`` event: ``trips``
+    iterations from ``first_iteration`` (omitted when 0), one
+    ``period_cycles`` apart, its ``start_cycles`` and ``duration_cycles``
+    spanning them, and its ``body``, the events of its first iteration. An
+    event in the body of loops starts ``start_cycles`` plus, for each loop
+    around it, the iterations since its first times its period. A first
+    iteration that differs from the rest is exported before its loop; a
+    loop that does not repeat is exported once per iteration, as in ``/1``.
+``waveforms``
+    Each distinct waveform expression once; a drive or readout gives the
+    index of its own in ``waveform``. With ``sample_rate_ghz``, ``samples``
+    holds each one's samples, in the same order.
+``lines``
+    Each line's ``qudits``, a list.
+Played events
+    ``tones``, a list of the tones the event plays, each with its
+    ``frequency_hz``, its ``phase_rad`` in the loops' first iterations, and
+    ``phase_step_rad``, the phase added per iteration of each loop around
+    it, outermost first.
+Left out
+    What follows from the rest or is the default: an event's ``index`` (its
+    place in a pre-order walk of the tree, loops included, which is what
+    references give), its ``qudit`` (its line's), its ``end_cycles``, an
+    empty ``iteration`` (``null`` for a loop kept rolled), an ``epoch`` of
+    0, empty ``conditions``, ``readouts`` and ``answers``, the ``line`` of
+    a sync or a classical call, a ``timeout_ns`` of ``null``, and the
+    ``amplitude``, which follows from the waveform. A reference is to the
+    latest execution of the event it names.
+``programs``, ``bindings``
+    Reserved for programs that several controllers share and the tables
+    that bind them to each; empty for now.
+
+``cudaq_pulse.controller.unroll(program)`` turns a ``/2`` program into the
+``/1`` program of the same kernel, for a backend that needs every
+execution; phases agree up to rounding and branches are numbered in the
+order they first appear.
 Clocks
 ------
 
@@ -430,7 +480,8 @@ Errors
 ``backends.get`` raises ``BackendNotFoundError`` (a ``LookupError``) for a
 name no backend has, listing the installed ones, and
 ``IncompatibleBackendError`` (a ``TypeError``) for a backend that fails to
-import, is not a ``Backend``, or does not read this version's ``FORMAT``;
+import, is not a ``Backend``, or reads none of the formats this version
+writes;
 both are ``BackendError``. Compiling a program that exceeds the backend's
 limits raises ``ControllerLimitError``, a ``CompilationError``.
 
@@ -439,5 +490,9 @@ Cost
 
 Importing cudaq-pulse neither imports the backend modules nor looks for
 installed backends; that happens on the first call to ``backends``. A
-machine model without ``controller`` adds nothing to compilation. Exporting
-and checking a program take time linear in its events.
+machine model without ``controller`` adds nothing to compilation. The
+export and the limit checks are native. Exporting in ``/1`` takes time and
+memory linear in a program's executions; in ``/2``, and for the checks, a
+loop whose iterations repeat costs as much as its first two iterations and
+its last, whatever its trip count. A violation inside it is still listed
+once per iteration, each message built when it is read.

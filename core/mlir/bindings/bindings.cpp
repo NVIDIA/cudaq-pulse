@@ -11,6 +11,7 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/array.h>
+#include <nanobind/stl/map.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/tuple.h>
@@ -321,10 +322,10 @@ static bool yieldsValue(mlir::Type type) {
       type);
 }
 
-/// The walk behind PulseModule::controller_events(): every timed op, sync
-/// and classical call once per loop iteration, both arms of every branch,
-/// with the frame of its tone and the branches it lies in.
-struct ControllerWalk {
+/// The walk behind PulseModule::controller_events() (format /1): every timed
+/// op, sync and classical call once per loop iteration, both arms of every
+/// branch, with the frame of its tone and the branches it lies in.
+struct ControllerEventWalk {
   using WaveformNode =
       std::tuple<std::string, std::vector<double>, std::vector<int64_t>>;
   using Condition = std::tuple<int64_t, int64_t, std::vector<int64_t>,
@@ -364,7 +365,7 @@ struct ControllerWalk {
     }
   };
 
-  explicit ControllerWalk(double clockGHz, bool track = false)
+  explicit ControllerEventWalk(double clockGHz, bool track = false)
       : clockGHz(clockGHz), track(track) {}
 
   double clockGHz;
@@ -1398,7 +1399,7 @@ struct ControllerWalk {
   }
 };
 
-/// The lines and events of a ControllerWalk as controller.export() gives
+/// The lines and events of a ControllerEventWalk as controller.export() gives
 /// them, built as Python objects in one pass; needs the GIL. A number the
 /// format has always written as JSON text and read back (an expression's
 /// constant, a frame change's value, a phase offset) is an int where that
@@ -1439,7 +1440,7 @@ public:
     return out;
   }
 
-  nb::list events(const ControllerWalk &walk, nb::list epochs) {
+  nb::list events(const ControllerEventWalk &walk, nb::list epochs) {
     // Nothing built here is garbage until it is returned: a collection now
     // would only walk the heap.
     CollectorPause pause;
@@ -1448,7 +1449,7 @@ public:
     nb::list out = list(walk.result.size());
     auto known = walk.known.begin();
     for (size_t i = 0; i < walk.result.size(); ++i) {
-      const ControllerWalk::Known *extra = nullptr;
+      const ControllerEventWalk::Known *extra = nullptr;
       if (known != walk.known.end() && known->event == static_cast<int64_t>(i))
         extra = &*known++;
       set(out, i, event(i, walk.result[i], extra, epochs, epochCount));
@@ -1473,7 +1474,7 @@ private:
   llvm::StringMap<Shape> shapes;
   llvm::StringMap<nb::object> strings;
   llvm::DenseMap<uint64_t, nb::object> floats;
-  const ControllerWalk *walk = nullptr;
+  const ControllerEventWalk *walk = nullptr;
 
   static nb::object key(const char *text) {
     return check(PyUnicode_InternFromString(text));
@@ -1577,7 +1578,7 @@ private:
 
   /// A branch an event lies in, keys in the order of the event's conditions,
   /// else (for a frame change's) sorted.
-  nb::object condition(const ControllerWalk::Condition &condition,
+  nb::object condition(const ControllerEventWalk::Condition &condition,
                        bool sorted) {
     const auto &[id, arm, readouts, answers, test] = condition;
     nb::object out = dict();
@@ -1596,7 +1597,7 @@ private:
     return out;
   }
 
-  nb::object conditions(const std::vector<ControllerWalk::Condition> &all,
+  nb::object conditions(const std::vector<ControllerEventWalk::Condition> &all,
                         bool sorted) {
     nb::list out = list(all.size());
     for (size_t i = 0; i < all.size(); ++i)
@@ -1605,7 +1606,7 @@ private:
   }
 
   nb::object expression(int32_t index) {
-    using Expression = ControllerWalk::Expression;
+    using Expression = ControllerEventWalk::Expression;
     const Expression &e = walk->expressions[index];
     if (e.kind == Expression::Number)
       return textNumber(e.number);
@@ -1648,7 +1649,8 @@ private:
   /// The waveform expression from node `index` down, with the operands
   /// computed at run time (`runtime`, sorted) on their nodes.
   nb::object
-  tree(const std::vector<ControllerWalk::WaveformNode> &nodes, int64_t index,
+  tree(const std::vector<ControllerEventWalk::WaveformNode> &nodes,
+       int64_t index,
        llvm::ArrayRef<std::tuple<int64_t, int64_t, int32_t>> runtime) {
     const auto &[name, numbers, children] = nodes[index];
     auto [shape, custom] = llvm::StringRef(name).split(':');
@@ -1697,8 +1699,9 @@ private:
 
   /// The overall complex amplitude of node `index`, through scale and neg,
   /// in Python's complex arithmetic; None where it is unknown.
-  nb::object amplitude(const std::vector<ControllerWalk::WaveformNode> &nodes,
-                       int64_t index) {
+  nb::object
+  amplitude(const std::vector<ControllerEventWalk::WaveformNode> &nodes,
+            int64_t index) {
     const auto &[name, numbers, children] = nodes[index];
     llvm::StringRef shape = llvm::StringRef(name).split(':').first;
     const Shape *names = named(shape, numbers.size());
@@ -1733,7 +1736,8 @@ private:
     return check(PyComplex_FromDoubles(re, im));
   }
 
-  nb::object frameUpdates(const std::vector<ControllerWalk::FrameUpdate> &all) {
+  nb::object
+  frameUpdates(const std::vector<ControllerEventWalk::FrameUpdate> &all) {
     nb::list out = list(all.size());
     for (size_t i = 0; i < all.size(); ++i) {
       const auto &update = all[i];
@@ -1747,8 +1751,8 @@ private:
     return out;
   }
 
-  nb::object event(size_t index, const ControllerWalk::Event &item,
-                   const ControllerWalk::Known *extra, nb::handle epochs,
+  nb::object event(size_t index, const ControllerEventWalk::Event &item,
+                   const ControllerEventWalk::Known *extra, nb::handle epochs,
                    size_t epochCount) {
     const auto &[kind, line, qudit, start, duration, iteration, nodes,
                  frequency, phase, branches, joined, refs, callee, mode,
@@ -1937,6 +1941,7 @@ struct Slots {
   const double *frequencies = nullptr;
   size_t count = 0;
 };
+#include "ControllerProgram.h"
 
 // -----------------------------------------------------------------------
 // PulseModule: opaque handle around an in-memory mlir::ModuleOp
@@ -2250,9 +2255,9 @@ public:
   /// For each event of controller_events(), in the same order, the
   /// arguments of `main` its tone frequency, frame phase and waveform are
   /// computed from; a qref argument stands for its qudit's native frequency.
-  std::vector<ControllerWalk::Dependencies> controller_dependencies() {
+  std::vector<ControllerEventWalk::Dependencies> controller_dependencies() {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
-    ControllerWalk walk(clock(), /*track=*/true);
+    ControllerEventWalk walk(clock(), /*track=*/true);
     module_->walk([&](mlir::Operation *op) {
       if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
         walk.lineIndex.try_emplace(op,
@@ -2267,7 +2272,7 @@ public:
   /// tone is its line's and was never retuned; -1 for any other event.
   std::vector<int64_t> controller_native_tones() {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
-    ControllerWalk walk(clock(), /*track=*/true);
+    ControllerEventWalk walk(clock(), /*track=*/true);
     module_->walk([&](mlir::Operation *op) {
       if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
         walk.lineIndex.try_emplace(op,
@@ -2310,12 +2315,12 @@ public:
   /// event's epoch (empty: all 0). A list `slots` gets each line's
   /// runtime-qudit slot (-1 for none). With `summarize`, for a check, a long
   /// rolled loop whose iterations repeat has its events once, and a third
-  /// list has each such loop's ControllerWalk::Repeat.
+  /// list has each such loop's ControllerEventWalk::Repeat.
   nb::tuple controller_events(nb::handle parameters, nb::handle amplitudes,
                               nb::list epochs, nb::object slots,
                               bool summarize) {
     ControllerObjects objects(parameters, amplitudes);
-    std::unique_ptr<ControllerWalk> walk;
+    std::unique_ptr<ControllerEventWalk> walk;
     std::vector<ControllerLine> lines;
     std::vector<int64_t> found;
     // Epochs number the events every iteration plays.
@@ -2355,14 +2360,14 @@ public:
       out.append(slot);
   }
 
-  /// A ControllerWalk of the module, its lines in `lines` and, unless
+  /// A ControllerEventWalk of the module, its lines in `lines` and, unless
   /// `slots` is null, each one's runtime-qudit slot (-1 for none) in
   /// `slots`; without the GIL.
-  std::unique_ptr<ControllerWalk>
+  std::unique_ptr<ControllerEventWalk>
   controllerWalk(std::vector<ControllerLine> &lines,
                  std::vector<int64_t> *slots, bool summarize = false) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
-    auto walk = std::make_unique<ControllerWalk>(clock());
+    auto walk = std::make_unique<ControllerEventWalk>(clock());
     walk->summarize = summarize;
     if (runTime_)
       controllerEvents<true>(*walk, lines, slots);
@@ -2386,7 +2391,7 @@ public:
   }
 
   template <bool RunTime>
-  void controllerEvents(ControllerWalk &walk,
+  void controllerEvents(ControllerEventWalk &walk,
                         std::vector<ControllerLine> &lines,
                         std::vector<int64_t> *slots) {
     module_->walk([&](mlir::Operation *op) {
@@ -2427,7 +2432,7 @@ public:
       throw std::invalid_argument("controller_events_on: the ratio and grid "
                                   "must be positive");
     ControllerObjects objects(parameters, amplitudes);
-    std::unique_ptr<ControllerWalk> walk;
+    std::unique_ptr<ControllerEventWalk> walk;
     std::vector<ControllerLine> lines;
     std::vector<int64_t> found;
     std::vector<OffGridEvent> offGrid;
@@ -2442,7 +2447,7 @@ public:
                           nb::cast(offGrid), nb::cast(ends));
   }
 
-  static void ownCycles(ControllerWalk &walk, int64_t num, int64_t den,
+  static void ownCycles(ControllerEventWalk &walk, int64_t num, int64_t den,
                         int64_t grid, std::vector<OffGridEvent> &offGrid,
                         std::vector<std::tuple<int64_t, int64_t>> &ends) {
     auto own = [&](std::optional<int64_t> &cycles) {
@@ -2470,6 +2475,93 @@ public:
           ends.emplace_back(static_cast<int64_t>(index), *end);
       }
     }
+  }
+
+  /// Walk the program for a controller (see ControllerProgram.h): its lines,
+  /// (role, qubit) in allocation order, into `lines`, and its records into
+  /// `walk`; with `waveforms`, the waveform of every drive and readout too.
+  void walkController(ControllerWalk &walk, std::vector<ControllerLine> &lines,
+                      ControllerWaveforms *waveforms) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    module_->walk([&](mlir::Operation *op) {
+      if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+        return;
+      if (!walk.lineIndex
+               .try_emplace(op, static_cast<int64_t>(walk.lineIndex.size()))
+               .second)
+        return;
+      int64_t qubit = -1;
+      if (auto attr = op->getAttrOfType<mlir::IntegerAttr>("qubit"))
+        qubit = attr.getInt();
+      lines.emplace_back(
+          mlir::isa<pulse::GetDriveLineOp>(op) ? "drive" : "readout", qubit);
+    });
+    walk.block(*module_->getBody());
+    if (waveforms)
+      for (const ControllerRecord &r : walk.result)
+        if (r.played())
+          waveforms->add(r.op);
+  }
+
+  /// The lines, as (role, qubit), and the events of the program as the
+  /// dictionaries of the controller export: every timed op, sync and
+  /// classical call once per loop iteration, or, with `rolled`, with each
+  /// loop whose iterations repeat kept as one "loop" event holding its body,
+  /// in the compact encoding of format /2. With `epochs`, each event is in
+  /// the epoch of its timeline (see EpochWalk), else in epoch 0; `waveform`
+  /// turns a waveform's nodes (op name without the
+  /// dialect, its numbers with NaN where one is not a number, the indices of
+  /// its waveform operands; children before their parent) into (expression,
+  /// amplitude), once per distinct waveform.
+  nb::tuple controller_program(bool rolled, bool epochs,
+                               nb::callable waveform) {
+    ControllerWalk walk(clock(), rolled ? ControllerWalk::Walk::Rolled
+                                        : ControllerWalk::Walk::Every);
+    if (epochs)
+      walk.epochs.emplace(*module_);
+    std::vector<ControllerLine> lines;
+    ControllerWaveforms waveforms;
+    {
+      nb::gil_scoped_release release;
+      walkController(walk, lines, &waveforms);
+    }
+    nb::list roles;
+    for (auto &[role, qubit] : lines)
+      roles.append(nb::make_tuple(role, qubit));
+    nb::list events =
+        ControllerEvents(walk.result, waveforms, std::move(waveform), rolled)
+            .build();
+    return nb::make_tuple(roles, events);
+  }
+
+  /// The controller limits the schedule exceeds, as messages; -1 for a
+  /// limit not set. A loop whose iterations repeat is checked at its first
+  /// two iterations and its last.
+  std::vector<std::string> controller_check(
+      int64_t issue, int64_t gap, int64_t samplesNum, int64_t samplesDen,
+      int64_t waveformSamples, int64_t tonesPerLine, int64_t maxEvents,
+      const std::map<int64_t, int64_t> &acquirers, int64_t acquirerHold,
+      int64_t feedbackLatency, bool answerTimeouts,
+      const std::vector<std::string> &timeoutFunctions) {
+    ControllerWalk walk(clock(), ControllerWalk::Walk::Sampled);
+    std::vector<ControllerLine> lines;
+    walkController(walk, lines, nullptr);
+    ControllerLimitSpec limits;
+    limits.issue = issue;
+    limits.gap = gap;
+    limits.samplesNum = samplesNum;
+    limits.samplesDen = samplesDen;
+    limits.waveformSamples = waveformSamples;
+    limits.tonesPerLine = tonesPerLine;
+    limits.maxEvents = maxEvents;
+    limits.acquirers = acquirers;
+    limits.acquirerHold = acquirerHold;
+    limits.feedbackLatency = feedbackLatency;
+    limits.answerTimeouts = answerTimeouts;
+    limits.timeoutFunctions = {timeoutFunctions.begin(),
+                               timeoutFunctions.end()};
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    return checkControllerLimits(walk.result, limits);
   }
 
   /// (function, link, iteration, submit start, submit duration, due,
@@ -5380,6 +5472,17 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "For waits whose length floats set: (serial cycles at their "
            "lowest lengths, the longest program, whether that is the "
            "controller's, the runs of each such wait)")
+      .def("controller_program", &PulseModule::controller_program,
+           nb::arg("rolled"), nb::arg("epochs"), nb::arg("waveform"),
+           "The lines and the events of the program, for a controller")
+      .def("controller_check", &PulseModule::controller_check,
+           nb::call_guard<nb::gil_scoped_release>(), nb::arg("issue"),
+           nb::arg("gap"), nb::arg("samples_num"), nb::arg("samples_den"),
+           nb::arg("waveform_samples"), nb::arg("tones_per_line"),
+           nb::arg("max_events"), nb::arg("acquirers"),
+           nb::arg("acquirer_hold"), nb::arg("feedback_latency"),
+           nb::arg("answer_timeouts"), nb::arg("timeout_functions"),
+           "The controller limits the schedule exceeds")
       .def("controller_events_on", &PulseModule::controller_events_on,
            nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
            nb::arg("num"), nb::arg("den"), nb::arg("grid"),

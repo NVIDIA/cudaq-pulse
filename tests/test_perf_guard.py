@@ -385,6 +385,40 @@ def _sweep(compiled, sweep: list[float], monkeypatch) -> None:
 
 
 @pytest.mark.scaling
+def test_a_rolled_loop_is_checked_and_exported_rolled_in_constant_time():
+    limits = ControllerLimits(
+        issue_cycles=2, acquirers={0: 0}, tones_per_line=2, waveform_samples=10**9
+    )
+    machine = MachineModel(controller=limits)
+
+    def program(n: int):
+        @pulse.kernel
+        def kernel(q):
+            line = get_drive_line(q)
+            probe = get_readout_line(q)
+            for _ in range(n):
+                drive(line, gaussian(16, 0.1, 4.0))
+                shift_phase(line.tone, 0.1)
+                sync(line, probe)
+                readout(probe, square(40, 0.05))
+                sync(probe, line)
+
+        return kernel
+
+    compile_s, export_s, size = {}, {}, {}
+    for n in (100, 100_000):
+        kernel = program(n)
+        compile_s[n] = _best(lambda k=kernel: pulse.compile(k, machine=machine).lower(Q[0]), 3, 0)
+        lowered = pulse.compile(kernel, machine=machine).lower(Q[0])
+        export_s[n] = _best(lambda m=lowered: m.export_controller(version=2), 3, 0)
+        size[n] = len(json.dumps(lowered.export_controller(version=2)))
+    # A thousand times the iterations: the same cost when the loop stays rolled.
+    assert compile_s[100_000] < compile_s[100] * FLAT_LOOP_LIMIT, compile_s
+    assert export_s[100_000] < export_s[100] * FLAT_LOOP_LIMIT, export_s
+    assert size[100_000] < size[100] + 64, size
+
+
+@pytest.mark.scaling
 def test_a_wait_length_sweep_compiles_once(monkeypatch):
     @pulse.kernel
     def t1(q, tau: float):
