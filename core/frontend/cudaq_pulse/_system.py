@@ -529,8 +529,8 @@ class ControlSystem:
     line_delays_ns: Mapping[tuple[str, int], float] = field(default_factory=dict)
     _machine: MachineModel = field(init=False, repr=False, compare=False)
     _plays_everything: bool = field(init=False, repr=False, compare=False)
-    # By link id, the controller and processor that run its calls.
-    _placement: Mapping[int, tuple[int, int]] = field(init=False, repr=False, compare=False)
+    # By link id and controller, the processor that runs its calls there.
+    _placement: Mapping[int, Mapping[int, int]] = field(init=False, repr=False, compare=False)
     # The clocks of the controllers that run their own, by label.
     _own_clocks: Mapping[str, float] = field(init=False, repr=False, compare=False)
     # Whether a device of it checks its program clock against its clocks.
@@ -800,11 +800,14 @@ class ControlSystem:
         """For each link of *used* that joins controllers, the start
         uncertainty between the two of them known least well, in ns: the
         budget of a call whose sender and taker the scheduler cannot tell
-        adds it."""
+        adds it. A per-controller link joins none: its calls stay on one."""
         each = self._start_uncertainty(self._clock_plan(program_ghz))
         found: dict[int, float] = {}
         for link_id in set(used):
-            reached = machine.link(link_id).controllers
+            link = machine.link(link_id)
+            if link.per_controller:
+                continue
+            reached = link.controllers
             indices = (
                 range(len(self.controllers))
                 if reached is None
@@ -1100,7 +1103,9 @@ class ControlSystem:
         *unresolved*, a tone or phase a call's values may set is noted there
         instead, to be checked with them."""
         checks_capabilities = any(c.supports is not None for c in self.controllers)
-        checks_reach = any(link.controllers is not None for link in self.links.values())
+        checks_reach = any(
+            link.controllers is not None or link.per_controller for link in self.links.values()
+        )
         if not (checks_capabilities or checks_reach):
             return []
         found: list[str] = []
@@ -1162,26 +1167,19 @@ class ControlSystem:
                     need(index, Capability.SYNC, event)
         for event in events:
             kind = event["kind"]
-            if kind == "submit":
-                callers = _known(owner(events[ref]) for ref in event["measurements"]) or used
+            if kind == "submit" or kind == "answer":
+                callers = self._callers(event, events, owners, used, users)
                 for index in callers:
-                    need(index, Capability.CALL, event)
-                self._reach(lowered, event, callers, "sends the measurements of", found)
-            elif kind == "answer":
-                takers = sorted(users.get(event["index"], ())) or used
-                for index in takers:
-                    need(index, Capability.ANSWER, event)
-                self._reach(lowered, event, takers, "answers", found)
+                    need(index, Capability.CALL if kind == "submit" else Capability.ANSWER, event)
+                verb = "sends the measurements of" if kind == "submit" else "answers"
+                self._reach(lowered, event, callers, verb, found)
         return found
 
     def _parts(
         self, events: Sequence[Mapping[str, Any]], owners: Sequence[int | None]
     ) -> list[list[int]]:
         """The controllers that take part in each event, as ``_needs`` counts
-        them: a line event's, a sync's lines', a submit's callers (those of
-        its measurements, else every controller used) and an answer's takers
-        (those of the events that test it or compute with it, else every one
-        used)."""
+        them: a line event's, a sync's lines', and a call's (``_callers``)."""
         used = _known(owners)
         takers = _takers(events, owners)
         parts: list[list[int]] = []
@@ -1192,14 +1190,48 @@ class ControlSystem:
                 parts.append([] if owner is None else [owner])
             elif kind == "sync":
                 parts.append(_known(owners[line] for line in event["lines"]))
-            elif kind == "submit":
-                measured = (owners[events[ref]["line"]] for ref in event["measurements"])
-                parts.append(_known(measured) or used)
-            elif kind == "answer":
-                parts.append(sorted(takers.get(event["index"], ())) or used)
+            elif kind == "submit" or kind == "answer":
+                parts.append(self._callers(event, events, owners, used, takers))
             else:
                 parts.append(used)
         return parts
+
+    def _callers(
+        self,
+        event: Mapping[str, Any],
+        events: Sequence[Mapping[str, Any]],
+        owners: Sequence[int | None],
+        used: list[int],
+        takers: Mapping[int, set[int]],
+    ) -> list[int]:
+        """The controllers that take part in a submit or answer *event*: for
+        a call over a per-controller link, the one whose instance runs it;
+        else a submit's callers (those of its measurements) and an answer's
+        takers (those of the events that test it or compute with it), else
+        every controller *used* when the link is shared, else the one its
+        link leads to (``_home``)."""
+        instance = event.get("controller")
+        if instance is not None:
+            return [instance]
+        if event["kind"] == "submit":
+            found = _known(owners[events[ref]["line"]] for ref in event["measurements"])
+        else:
+            found = sorted(takers.get(event["index"], ()))
+        if found:
+            return found
+        if used and not _per_controller(self, event["link"]):
+            return used
+        return [self._home(event["link"])]
+
+    def _home(self, link_id: int) -> int:
+        """The controller a call over *link_id* is made on when the program
+        plays no line: the first with a processor that runs it, else the
+        first the link reaches, else ``controllers[0]``."""
+        placed = self._placement.get(link_id)
+        if placed:
+            return min(placed)
+        reached = self._machine.link(link_id).controllers
+        return min(self._index(c) for c in reached) if reached else 0
 
     def _reach(
         self,
@@ -1211,6 +1243,15 @@ class ControlSystem:
     ) -> None:
         machine = lowered.options.machine
         link = machine.link(event["link"])
+        if link.per_controller and len(indices) > 1:
+            name = machine.link_name(event["link"]) or f"link {event['link']}"
+            on = ", ".join(_label(i, self.controllers[i]) for i in indices)
+            found.append(
+                f"the {event['kind']} of {event['function']} over link {name!r}, which has "
+                f"one instance per controller, is on {on}; a call over it runs on one "
+                "controller's instance: send its measurements and use its answer on one "
+                "controller, or make the link shared (drop per_controller)"
+            )
         if link.controllers is None:
             return
         reached = {self._index(c) for c in link.controllers}
@@ -1299,7 +1340,7 @@ def _structure_problems(system: ControlSystem, prefix: str) -> list[Problem]:
                     )
                 )
     names = list(system.links)
-    claimed: dict[int, str] = {}
+    claimed: dict[tuple[int, int], str] = {}
     for index, controller in enumerate(controllers):
         for number, processor in enumerate(controller.processors):
             here = f"controllers[{index}].processors[{number}]"
@@ -1319,28 +1360,42 @@ def _structure_problems(system: ControlSystem, prefix: str) -> list[Problem]:
                     )
                     continue
                 link_id = names.index(named) if isinstance(named, str) else named
-                if link_id in claimed:
+                own = _per_controller(system, link_id)
+                key = (link_id, index if own else -1)
+                if key in claimed:
                     problems.append(
                         Problem(
-                            f"is also a link of {claimed[link_id]}",
+                            f"is also a link of {claimed[key]}",
                             path=path,
                             value=named,
-                            fix="a link belongs to one processor",
+                            fix="a link with an instance per controller belongs to one "
+                            "processor of each controller"
+                            if own
+                            else "a link belongs to one processor, or with "
+                            "Link(per_controller=True) to one of each controller",
                         )
                     )
                 else:
-                    claimed[link_id] = here
+                    claimed[key] = here
     return problems
 
 
-def _placement(system: ControlSystem) -> dict[int, tuple[int, int]]:
-    """The controller and processor each processor's link ids lead to."""
+def _per_controller(system: ControlSystem, link_id: int) -> bool:
     names = list(system.links)
-    found = {}
+    return link_id < len(names) and system.links[names[link_id]].per_controller
+
+
+def _placement(system: ControlSystem) -> dict[int, dict[int, int]]:
+    """For each processor's link id, the processor that runs its calls on
+    each controller: one controller for a shared link, each controller with
+    a processor for it for a per-controller link."""
+    names = list(system.links)
+    found: dict[int, dict[int, int]] = {}
     for index, controller in enumerate(system.controllers):
         for number, processor in enumerate(controller.processors):
             for link in processor.links:
-                found[names.index(link) if isinstance(link, str) else link] = (index, number)
+                link_id = names.index(link) if isinstance(link, str) else link
+                found.setdefault(link_id, {})[index] = number
     return found
 
 
@@ -1637,6 +1692,7 @@ _LINK_KEYS = (
     "max_in_flight",
     "slot_bytes",
     "controllers",
+    "per_controller",
 )
 
 

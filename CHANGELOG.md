@@ -85,7 +85,16 @@ behavior may change in any 0.x release.
   export controller `k`'s part of the program in its own cycles: its
   lines, the events it plays, submits or takes the answer of, its calls and
   its limits, with the program's event and line ids. A program that plays
-  the lines of more than one controller needs `controller=`.
+  the lines of more than one controller needs `controller=`; a controller
+  the program does not use exports a valid empty program, and a program
+  of calls alone is exported by the controller that makes them.
+  `Link(per_controller=True)` (`per_controller = true` in a system file)
+  gives each controller its own instance of a link, shared by default:
+  its own slots, so its calls do not wait for another controller's, its own
+  calls in its export (tagged `"controller"`), its own processor to place
+  the link on, and no cross-controller start uncertainty in its budgets. A
+  call whose measurements and answer are on different controllers fails to
+  compile.
   Budgets between controllers add each one's start uncertainty, its
   `clock_skew_cycles` plus one of its own cycles without a
   `reference_clock_ghz`: a pulse that branches on, or computes with,
@@ -105,7 +114,7 @@ behavior may change in any 0.x release.
 - **Processors.** `pulse.Processor` is a classical processor on a
   controller (`Controller(processors=[...])`), which runs the classical
   functions called on its `links`; a link belongs to at most one processor
-  of a system. Compiling checks each function there: an operation in its
+  of a system (of each controller, for a per-controller link). Compiling checks each function there: an operation in its
   `unsupported` list (named with its line), `max_ops_per_function`,
   `max_state_bytes_per_function`, `fixed_cost_only`, and its compute time at
   the processor's `cycles_per_op` and `clock_ghz` against its

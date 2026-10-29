@@ -303,6 +303,13 @@ class Link:
     ``controllers`` are the controllers of a ``ControlSystem`` the link
     reaches (``None``: all of them): a call over it can send only their
     measurements, and only they can use its answers.
+
+    A link is one service the controllers share. With ``per_controller``,
+    each controller it reaches has an instance of its own, with its own
+    slots, its own processor (``Processor.links``) and its own dispatch
+    keys: a call over it runs on the instance of the controller that sends
+    its measurements and uses its answer, which must be one controller, so
+    no answer crosses between controllers.
     """
 
     fixed_ns: float | Time = 0.0
@@ -311,6 +318,7 @@ class Link:
     max_in_flight: int = 64
     slot_bytes: int = 1024
     controllers: Sequence[Controller] | None = None
+    per_controller: bool = False
 
     def __post_init__(self) -> None:
         # A program that uses a link it does not list makes a Link() as it
@@ -341,32 +349,44 @@ class Link:
             raise InvalidValueError(
                 f"Link.slot_bytes must exceed the 24-byte header, got {self.slot_bytes!r}"
             )
+        if not isinstance(self.per_controller, bool):
+            raise InvalidTypeError(
+                f"Link.per_controller is True or False, got {self.per_controller!r}"
+            )
 
     def cost(self) -> dict[str, float | int]:
-        """What the link costs, as JSON-serializable data."""
-        return {
+        """What the link costs, as JSON-serializable data (with
+        ``per_controller`` when it has an instance per controller)."""
+        data: dict[str, float | int] = {
             "fixed_ns": self.fixed_ns,
             "bytes_per_ns": self.bytes_per_ns,
             "feedback_ns": self.feedback_ns,
             "max_in_flight": self.max_in_flight,
             "slot_bytes": self.slot_bytes,
         }
+        if self.per_controller:
+            data["per_controller"] = True
+        return data
 
-    def attribute(self, uncertainty_ns: float = 0.0) -> str:
+    def attribute(self, uncertainty_ns: float = 0.0, name: str | None = None) -> str:
         """The link as an entry of the module attribute ``classical.links``;
         *uncertainty_ns* is how far apart the starts of the controllers it
         joins may be, which an answer taken on another controller than the
-        one that sent the request adds to its budget."""
+        one that sent the request adds to its budget. A per-controller link
+        is marked so, with its *name*."""
         uncertainty = (
             f"start_uncertainty_ns = {float(uncertainty_ns)!r} : f64, " if uncertainty_ns else ""
         )
+        instances = ""
+        if self.per_controller:
+            instances = f', per_controller, name = "{name or ""}"'
         return (
             f"{{fixed_ns = {float(self.fixed_ns)!r} : f64, "
             f"bytes_per_ns = {float(self.bytes_per_ns)!r} : f64, "
             f"feedback_ns = {float(self.feedback_ns)!r} : f64, "
             f"{uncertainty}"
             f"max_in_flight = {self.max_in_flight} : i64, "
-            f"slot_bytes = {self.slot_bytes} : i64}}"
+            f"slot_bytes = {self.slot_bytes} : i64{instances}}}"
         )
 
 

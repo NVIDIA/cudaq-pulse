@@ -438,11 +438,16 @@ class MachineModel:
             )
         else:
             entries = ", ".join(
-                f'"{link}" = '
-                f"{self.links.get(link, Link()).attribute(uncertainty_ns.get(link, 0.0))}"
+                f'"{link}" = {self._link_entry(link, uncertainty_ns.get(link, 0.0))}'
                 for link in sorted(set(used))
             )
         return f"{{classical.links = {{{entries}}}}}"
+
+    def _link_entry(self, link_id: int, uncertainty_ns: float) -> str:
+        link = self.links.get(link_id, Link())
+        if link.per_controller:
+            return link.attribute(uncertainty_ns, self.link_name(link_id))
+        return link.attribute(uncertainty_ns)
 
 
 _DEFAULT_MACHINE = MachineModel()

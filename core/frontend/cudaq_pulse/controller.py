@@ -658,11 +658,12 @@ def _part(
     and events in program cycles, each line's controller, the controllers
     taking part in each event, and the controller whose program is wanted:
     *controller*, else the only one the program uses (``ValueError`` when it
-    uses more)."""
+    uses more). A controller the program does not use gets an empty part."""
     system = lowered.options.machine._system
     assert system is not None
     lines, events, _, _ = _walk(lowered, slots=None)
     owners, _ = system._owners(lines)
+    parts = system._parts(events, owners)
     count = len(system.controllers)
     if controller is not None:
         index = _controller_index(controller, count)
@@ -674,8 +675,18 @@ def _part(
                 + ", ".join(f"controllers[{i}]" for i in used)
                 + f"); pass controller= (0 to {count - 1}) to export one controller's program"
             )
+        if not used:
+            # Without lines, the program is its calls.
+            used = sorted({c for part in parts for c in part})
+            if len(used) > 1:
+                raise InvalidValueError(
+                    f"the program's calls are made on {len(used)} controllers ("
+                    + ", ".join(f"controllers[{i}]" for i in used)
+                    + f"); pass controller= (0 to {count - 1}) to export one controller's "
+                    "program"
+                )
         index = used[0] if used else 0
-    return lines, events, owners, system._parts(events, owners), index
+    return lines, events, owners, parts, index
 
 
 def _export_part(
@@ -1300,7 +1311,8 @@ class FunctionResources:
 class LinkUsage:
     """One link's use in one shot: its calls, the most requests it holds
     at once against its slots, its largest message against its slot size,
-    and the bytes of all its requests and answers."""
+    and the bytes of all its requests and answers. A per-controller link has
+    a row for each controller's instance (``controller``)."""
 
     link: int | str
     calls_per_shot: int
@@ -1309,6 +1321,7 @@ class LinkUsage:
     largest_message_bytes: int
     slot_bytes: int
     bytes_per_shot: int
+    controller: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1480,11 +1493,13 @@ def resources(lowered: Lowered, limits: ControllerLimits | None = None) -> Resou
         for fn in lowered.classical
     )
     by_name = {row.function: row for row in rows}
-    usage: dict[int, dict[str, Any]] = {}
+    usage: dict[tuple[int, int], dict[str, Any]] = {}
     for call in calls:
         row = by_name.get(call.function)
+        instance = -1 if call.controller is None else call.controller
         entry = usage.setdefault(
-            call.link, {"calls": 0, "bytes": 0, "largest": 0, "spans": [], "name": call.link_name}
+            (call.link, instance),
+            {"calls": 0, "bytes": 0, "largest": 0, "spans": [], "name": call.link_name},
         )
         entry["calls"] += 1
         if row is not None:
@@ -1493,7 +1508,7 @@ def resources(lowered: Lowered, limits: ControllerLimits | None = None) -> Resou
         end = call.taken_cycles if call.taken_cycles is not None else call.due_cycles
         entry["spans"].append((call.submit_cycles, max(end, call.submit_cycles + 1)))
     links = []
-    for link_id, entry in sorted(usage.items()):
+    for (link_id, instance), entry in sorted(usage.items()):
         edges = sorted([(a, 1) for a, _ in entry["spans"]] + [(b, -1) for _, b in entry["spans"]])
         peak = held = 0
         for _, step in edges:
@@ -1509,6 +1524,7 @@ def resources(lowered: Lowered, limits: ControllerLimits | None = None) -> Resou
                 largest_message_bytes=entry["largest"],
                 slot_bytes=link.slot_bytes,
                 bytes_per_shot=entry["bytes"],
+                controller=None if instance < 0 else instance,
             )
         )
     found: list[str] = []
@@ -1531,14 +1547,19 @@ def resources(lowered: Lowered, limits: ControllerLimits | None = None) -> Resou
                 f"bytes; its buffer holds {limits.buffer_bytes}"
             )
     for usage_row in links:
+        where = (
+            f"link {usage_row.link!r}"
+            if usage_row.controller is None
+            else f"link {usage_row.link!r} on controllers[{usage_row.controller}]"
+        )
         if usage_row.peak_in_flight > usage_row.max_in_flight:
             found.append(
-                f"link {usage_row.link!r} holds {usage_row.peak_in_flight} requests at once; it "
+                f"{where} holds {usage_row.peak_in_flight} requests at once; it "
                 f"has {usage_row.max_in_flight} slots"
             )
         if usage_row.largest_message_bytes > usage_row.slot_bytes:
             found.append(
-                f"link {usage_row.link!r} carries a {usage_row.largest_message_bytes}-byte "
+                f"{where} carries a {usage_row.largest_message_bytes}-byte "
                 f"message; its slots hold {usage_row.slot_bytes}"
             )
     return ResourceReport(
@@ -1574,8 +1595,11 @@ def format_report(report: ResourceReport) -> str:
         lines.append("Links, per shot")
         lines.append(f"  {'link':<11} {'calls':>5} {'in flight':>9} {'largest B':>9} {'bytes':>7}")
         for usage in report.links:
+            name = str(usage.link)
+            if usage.controller is not None:
+                name += f"@{usage.controller}"
             lines.append(
-                f"  {str(usage.link):<11} {usage.calls_per_shot:>5} "
+                f"  {name:<11} {usage.calls_per_shot:>5} "
                 f"{usage.peak_in_flight:>4}/{usage.max_in_flight:<4} "
                 f"{usage.largest_message_bytes:>4}/{usage.slot_bytes:<4} {usage.bytes_per_shot:>7}"
             )
@@ -1712,20 +1736,25 @@ def usage(lowered: Lowered) -> UsageReport:
     if system is None or not placement:
         return UsageReport((), tuple(fn.name for fn in lowered.classical), ())
     calls = lowered.classical_report() if lowered.classical and lowered.scheduled else []
-    counts: dict[str, int] = {}
-    spans: dict[str, list[tuple[int, int]]] = {}
+    # By function and the controller whose instance of a per-controller
+    # link runs the call (None: shared, or not known).
+    spans: dict[tuple[str, int | None], list[tuple[int, int]]] = {}
     for call in calls:
-        counts[call.function] = counts.get(call.function, 0) + 1
         end = max(call.due_cycles, call.submit_cycles + 1)
-        spans.setdefault(call.function, []).append((call.submit_cycles, end))
-    placed: dict[tuple[int, int], list[Any]] = {}
+        spans.setdefault((call.function, call.controller), []).append((call.submit_cycles, end))
+    # Calls over a per-controller link whose instance is not known count on each.
+    placed: dict[tuple[int, int], list[tuple[Any, list[tuple[int, int]]]]] = {}
     off_board = []
     for fn in lowered.classical:
         where = placement.get(machine.link_id(fn.link))
         if where is None or fn.implementation is None:
             off_board.append(fn.name)
-        else:
-            placed.setdefault(where, []).append(fn)
+            continue
+        own = machine.link(fn.link).per_controller
+        unknown = spans.get((fn.name, None), [])
+        for index, number in where.items():
+            mine = spans.get((fn.name, index), []) + unknown if own else unknown
+            placed.setdefault((index, number), []).append((fn, mine))
     found = _Found()
     rows: list[ControllerUsage] = []
     for index, controller in enumerate(system.controllers):
@@ -1733,12 +1762,14 @@ def usage(lowered: Lowered) -> UsageReport:
         for number, processor in enumerate(controller.processors):
             label = f"processors[{number}] of {_system_label(index, controller)}"
             clock = processor.clock_ghz or controller.clock_ghz or lowered.target.clock_ghz
+            assigned = placed.get((index, number), [])
             functions = [
-                _function_usage(fn, processor, clock, counts.get(fn.name, 0), label, found)
-                for fn in placed.get((index, number), ())
+                _function_usage(fn, processor, clock, len(made), label, found)
+                for fn, made in assigned
             ]
+            local = {fn.name: made for fn, made in assigned}
             processors.append(
-                _processor_usage(index, number, processor, clock, functions, spans, label, found)
+                _processor_usage(index, number, processor, clock, functions, local, label, found)
             )
         if processors:
             rows.append(ControllerUsage(index, controller.model, tuple(processors)))

@@ -200,8 +200,38 @@ it reads and the answer it takes, whether to branch on or to compute with.
 Event and line ids stay the program's, so a value computed from an answer
 names the answer by the same ``index`` in every controller's program. A
 program that plays the lines of more than one controller needs
-``controller=``; one on a single controller exports it without.
-``export_emulation(controller=k)`` gives the same part for an emulator.
+``controller=``; one on a single controller exports it without, and one
+that plays no lines is exported by the controller that makes its calls.
+A controller the program does not use exports a valid empty program: no
+lines, events or calls. ``export_emulation(controller=k)`` gives the same
+part for an emulator.
+
+A link is shared by default: every controller it reaches sends its
+requests to one instance, which holds ``max_in_flight`` requests for all
+of them. A link that each controller has its own instance of, a decoder
+beside each controller for example, is declared per controller:
+
+.. code-block:: python
+
+   import cudaq_pulse as pulse
+
+   links = {"decoder": pulse.Link(fixed_ns=10, max_in_flight=1, per_controller=True)}
+
+or ``per_controller = true`` in the link's table of a system file
+(``[control_system.links.decoder]``). Each controller's calls over it then
+use that controller's slots, so calls on two controllers are scheduled
+without waiting for each other's slots, and each controller exports only
+its own calls, with the call's ``"controller"`` in its submit, answer and
+``calls`` entries. A call never crosses between controllers, so its
+answer is due without the start uncertainty of a second controller. The
+call's measurements and the pulses that use its answer must be on one
+controller, or the program fails to compile, naming both controllers.
+When the scheduler cannot tell a call's controller (it reads no
+measurement and its answer is unused, or leaves the kernel), the link's
+calls share one set of slots, as on a shared link. Each controller may
+place the link on one of its own processors; ``controller_usage`` counts
+each instance's calls on its controller's processor, and
+``resources(lowered).links`` has a row per instance.
 
 Times between controllers are budgeted with how well each one's start is
 known: its ``clock_skew_cycles``, plus one of its own cycles without a
