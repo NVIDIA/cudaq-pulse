@@ -156,10 +156,13 @@ def test_rcp_waits_the_feedback_latency_of_the_controllers():
     assert system._machine.readout_latency_cycles == 50
     assert _schedule(system) == by_model
     assert _schedule(MachineModel()) != by_model
-    # Of several, the slowest that plays readouts.
+    # Of several, the slowest that plays readouts, and on another controller
+    # the start uncertainty of both too: one cycle each without a reference.
     a, b = _two_boxes(feedback_latency_cycles=50)
     slow = pulse.Controller(drive_lines=[5], feedback_latency_cycles=900)
-    assert pulse.ControlSystem(controllers=[a, b, slow])._machine.readout_latency_cycles == 50
+    assert pulse.ControlSystem(controllers=[a, b, slow])._machine.readout_latency_cycles == 52
+    shared = pulse.ControlSystem(controllers=[a, b, slow], reference_clock_ghz=0.5)
+    assert shared._machine.readout_latency_cycles == 50
 
 
 # ── Compiling for a control system ───────────────────────────────────────────
@@ -185,13 +188,13 @@ def test_a_line_on_no_controller_does_not_compile():
         ControllerLimitError, match="the drive line of qudit 4\\) is on no controller"
     ):
         pulse.compile(drive_and_branch, device=qpu).lower(qpu.qudits[0], qpu.qudits[4])
-    pulse.compile(drive_and_branch, device=qpu).lower(qpu.qudits[0], qpu.qudits[3])
+    pulse.compile(drive_and_branch, schedule="rcp", device=qpu).lower(qpu.qudits[0], qpu.qudits[3])
 
 
 def test_each_controller_is_held_to_its_own_limits():
     a, b = _two_boxes(max_events=0 + 1)
     qpu = _qpu(a, b)
-    compiled = pulse.compile(drive_and_branch, device=qpu)
+    compiled = pulse.compile(drive_and_branch, schedule="rcp", device=qpu)
     # Two events on box.a, one on box.b.
     compiled.lower(qpu.qudits[0], qpu.qudits[2])
     a, b = _two_boxes()
@@ -284,7 +287,9 @@ def test_a_control_systems_line_delays_and_reference_clock_are_checked():
 
 def test_several_controllers_on_their_own_clocks_schedule_on_their_grids():
     qpu = _qpu(*_two_boxes(clock_ghz=1.0), clock_ghz=2.0)
-    lowered = pulse.compile(drive_and_branch, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
+    lowered = pulse.compile(drive_and_branch, schedule="rcp", device=qpu).lower(
+        qpu.qudits[0], qpu.qudits[2]
+    )
     starts = [e.start for e in lowered.schedule]
     assert starts and all(start % 2 == 0 for start in starts)
 
@@ -403,7 +408,9 @@ def test_a_controller_lacking_only_one_capability_rejects_what_needs_it(capabili
     qudits = [qpu.qudits[i] for i in placed]
     full = pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1])
     complete = _qpu(full, b, links={"feedback": pulse.Link(controllers=[full])})
-    pulse.compile(kernel, device=complete).lower(*[complete.qudits[i] for i in placed])
+    pulse.compile(kernel, schedule="rcp", device=complete).lower(
+        *[complete.qudits[i] for i in placed]
+    )
     if capability == pulse.Capability.LOOP:
         # Without it, the controller plays the loop unrolled.
         assert pulse.compile(kernel, device=qpu).lower(*qudits).export_controller()

@@ -425,11 +425,23 @@ class MachineModel:
         """The ``Link`` of *link* (a name or an id; ``Link()`` if unlisted)."""
         return self.links.get(self.link_id(link), Link())
 
-    def links_attribute(self, used: Sequence[int]) -> str:
-        """The module attribute ``classical.links`` for the links in *used*."""
-        entries = ", ".join(
-            f'"{link}" = {self.links.get(link, Link()).attribute()}' for link in sorted(set(used))
-        )
+    def links_attribute(
+        self, used: Sequence[int], uncertainty_ns: Mapping[int, float] | None = None
+    ) -> str:
+        """The module attribute ``classical.links`` for the links in *used*;
+        *uncertainty_ns* is the start uncertainty an answer's budget adds on
+        each link that joins controllers (see ``ControlSystem``)."""
+        if uncertainty_ns is None:
+            entries = ", ".join(
+                f'"{link}" = {self.links.get(link, Link()).attribute()}'
+                for link in sorted(set(used))
+            )
+        else:
+            entries = ", ".join(
+                f'"{link}" = '
+                f"{self.links.get(link, Link()).attribute(uncertainty_ns.get(link, 0.0))}"
+                for link in sorted(set(used))
+            )
         return f"{{classical.links = {{{entries}}}}}"
 
 
@@ -1696,7 +1708,12 @@ def build(
     except PackedValueError as error:
         raise _rejected_literal(fn, trace_args, builder, error) from None
     if links:
-        module.set_attributes(machine.links_attribute(links))
+        system = machine._system
+        if system is None or machine.controller is not None:
+            module.set_attributes(machine.links_attribute(links))
+        else:
+            uncertainty = system._link_uncertainty_ns(machine, links, target.clock_ghz)
+            module.set_attributes(machine.links_attribute(links, uncertainty))
     fine_delays = None if plain else _clocked_module(module, machine, target, clocks, builder)
     metrics.ffi_ms = (time.perf_counter() - t0) * 1000
 

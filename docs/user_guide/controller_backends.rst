@@ -203,6 +203,19 @@ program that plays the lines of more than one controller needs
 ``controller=``; one on a single controller exports it without.
 ``export_emulation(controller=k)`` gives the same part for an emulator.
 
+Times between controllers are budgeted with how well each one's start is
+known: its ``clock_skew_cycles``, plus one of its own cycles without a
+``reference_clock_ghz``. A pulse that branches on another controller's
+readout starts once the outcome can reach it: the reader's
+``feedback_latency_cycles`` and its ``peer_latency_cycles`` to the user,
+in the reader's cycles, and both controllers' start uncertainty. ``rcp``
+waits that long after every readout, since it holds one readout latency,
+and a program that starts the pulse sooner fails to compile with the
+cycle it may start at. An answer on a link that reaches several
+controllers is budgeted with the start uncertainty of the two of them
+known least well, since it may be taken on another controller than the
+one that sent the request; ``due_cycles`` includes it.
+
 What the program computes at run time is converted by the same rule. A
 variable wait's ``length`` is clamped to its bounds, as the run clamps it,
 and then wrapped in ``{"op": "pulse.own_cycles", "of": [x], "num": a,

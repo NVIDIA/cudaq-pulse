@@ -352,12 +352,13 @@ class Link:
             "slot_bytes": self.slot_bytes,
         }
 
-    def attribute(self) -> str:
-        """The link as an entry of the module attribute ``classical.links``."""
+    def attribute(self, uncertainty_ns: float = 0.0) -> str:
+        """The link as an entry of the module attribute ``classical.links``;
+        an answer's budget adds *uncertainty_ns* to its feedback latency."""
         return (
             f"{{fixed_ns = {float(self.fixed_ns)!r} : f64, "
             f"bytes_per_ns = {float(self.bytes_per_ns)!r} : f64, "
-            f"feedback_ns = {float(self.feedback_ns)!r} : f64, "
+            f"feedback_ns = {float(self.feedback_ns + uncertainty_ns)!r} : f64, "
             f"max_in_flight = {self.max_in_flight} : i64, "
             f"slot_bytes = {self.slot_bytes} : i64}}"
         )

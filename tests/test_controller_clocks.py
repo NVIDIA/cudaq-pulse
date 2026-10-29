@@ -625,3 +625,98 @@ def test_a_one_controller_device_exports_as_before():
     assert "controller" not in lowered.export_emulation()
     with pytest.raises(ValueError, match="has one controller"):
         lowered.export_controller(controller=1)
+
+
+# ── Budgets between controllers ──────────────────────────────────────────────
+#
+# Without a shared reference clock, each controller's start is known to one
+# of its own cycles: 2 program cycles at 1 GHz and 4 at 0.5 GHz.
+
+
+@pulse.kernel
+def branch_across(a, b):
+    ra, rta = get_readout_line(a)
+    db, tb = get_drive_line(b)
+    m = readout(ra, square(100, 0.05), rta)
+    sync(ra, db)
+    if m:
+        drive(db, square(8, 0.1), tb)
+
+
+def _forwarding(reference=None, skew=0):
+    controllers = [
+        pulse.Controller(
+            drive_lines=[0, 1],
+            readout_lines=[0, 1],
+            clock_ghz=1.0,
+            feedback_latency_cycles=3,
+            peer_latency_cycles={1: 2},
+        ),
+        pulse.Controller(
+            drive_lines=[2, 3], readout_lines=[2, 3], clock_ghz=0.5, clock_skew_cycles=skew
+        ),
+    ]
+    system = pulse.ControlSystem(controllers=controllers, reference_clock_ghz=reference)
+    return _device(system=system, clock_ghz=2.0)
+
+
+def _gap(qpu, schedule="rcp"):
+    lowered = pulse.compile(branch_across, schedule=schedule, device=qpu).lower(
+        qpu.qudits[0], qpu.qudits[2]
+    )
+    readout, drive = (e for e in lowered.schedule if e.kind in ("readout", "drive"))
+    return drive.start - readout.end
+
+
+def test_an_outcome_sent_to_another_controller_is_budgeted_with_both_start_uncertainties():
+    qpu = _forwarding()
+    # Feedback 3 and peer 2 cycles at 1 GHz are 10 program cycles; the start
+    # uncertainty adds 2 + 4.
+    with pytest.raises(ControllerLimitError) as caught:
+        _gap(qpu, schedule="asap")
+    [message] = caught.value.violations
+    assert message.startswith(
+        "controllers[1]: the drive on line 1 at 100 branches on the readout of controllers[0] "
+        "ending at 100, whose outcome reaches it 16 cycles later, at 116 (10 of feedback and "
+        "peer latency, and 6 of the two controllers' start uncertainty, without a shared "
+        "reference_clock_ghz); start it at 116 or later: schedule with rcp"
+    )
+    # rcp waits for it.
+    assert _gap(qpu) == 16
+    # A shared reference leaves the latency, and a skew adds its cycles, the
+    # drive starting on its line's grid of 4.
+    assert _gap(_forwarding(reference=0.5)) == 12
+    assert _gap(_forwarding(reference=0.5, skew=1)) == 16
+    assert _gap(_forwarding(skew=1)) == 20
+
+
+def test_an_outcome_used_on_its_own_controller_needs_only_its_feedback_latency():
+    qpu = _forwarding()
+    with pytest.raises(ControllerLimitError) as caught:
+        pulse.compile(feedback, schedule="asap", device=qpu).lower(qpu.qudits[0])
+    [message] = caught.value.violations
+    assert "needs 3 cycles of feedback latency" in message
+
+
+def _call_across(reference=None, reach_both=True):
+    a = pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], clock_ghz=1.0)
+    b = pulse.Controller(drive_lines=[2, 3], readout_lines=[2, 3], clock_ghz=0.5)
+    link = Link(fixed_ns=10, controllers=None if reach_both else [a])
+    system = pulse.ControlSystem(
+        controllers=[a, b], links={"controller": link}, reference_clock_ghz=reference
+    )
+    return _device(system=system, clock_ghz=2.0)
+
+
+def _due(qpu, b=2):
+    lowered = pulse.compile(read_then_correct, device=qpu).lower(qpu.qudits[0], qpu.qudits[b])
+    [call] = lowered.classical_report()
+    return call.due_cycles - call.submit_cycles
+
+
+def test_an_answer_on_a_link_between_controllers_is_budgeted_with_their_start_uncertainty():
+    shared = _due(_call_across(reference=0.5))
+    # 1 ns at 1 GHz and 2 ns at 0.5 GHz: 6 program cycles more.
+    assert _due(_call_across()) == shared + 6
+    # A link that reaches one controller joins none.
+    assert _due(_call_across(reach_both=False), b=1) == _due(_call_across(reference=0.5), b=1)
