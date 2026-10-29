@@ -394,13 +394,15 @@ def _walk(
     values: bool = True,
     own: _clocks.ControllerClock | None = None,
     waveforms: bool = True,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], Sequence[tuple[int, int, int]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], Sequence[tuple[int, int, int]], list[str]]:
     """The lines and events of *lowered*, at the values of its call; without
     *values*, a module with float parameters has ``None`` where they reach.
 
     With *own*, the events' times are in that controller's cycles (their
-    waveforms' too, with *waveforms*), and the line events off its grid are
-    returned as (index, start, duration) in program cycles."""
+    waveforms' too, with *waveforms*), what they compute at run time too
+    (``_clocks.own_run_time``), and the line events off its grid are
+    returned as (index, start, duration) in program cycles, with the
+    violations of what they compute at run time."""
     if values and lowered.parameters:
         raise ValueError(
             "the module has float parameters "
@@ -411,6 +413,7 @@ def _walk(
     module = lowered._concrete()
     epochs = lowered._event_epochs(syncs=True)
     off_grid: Sequence[tuple[int, int, int]] = ()
+    problems: list[str] = []
     with lowered._lock:
         if own is None:
             lines, events = module.controller_events(_PARAMETERS, _AMPLITUDES, epochs)
@@ -428,11 +431,23 @@ def _walk(
                 tree = event.get("waveform")
                 if tree is not None:
                     _clocks._scale(tree, factor)
+        if _computes_at_run_time(lowered):
+            for event in events:
+                if event["kind"] in _clocks._GRIDDED:
+                    problems.extend(
+                        _clocks.own_run_time(own, lines[event["line"]], event, waveforms)
+                    )
     fine = (lowered.generic or lowered).fine_delays
     if fine is not None:
         for line in lines:
             line["fine_delay_ns"] = fine.get((line["role"], line["qudit"]), 0.0)
-    return lines, events, off_grid
+    return lines, events, off_grid, problems
+
+
+def _computes_at_run_time(lowered: Lowered) -> bool:
+    """Whether the program computes values at run time: from the answers of
+    classical calls, or values a readout selects while it runs."""
+    return bool(lowered.classical) or lowered.runtime_selects
 
 
 def _native_clock(clocks: _clocks.ClockPlan | None) -> _clocks.ControllerClock | None:
@@ -460,9 +475,9 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
     clocks = (lowered.generic or lowered).clocks
     native = None if clocks is None else _native_clock(clocks)
     # In the controller's own cycles from here on.
-    lines, events, off = _walk(lowered, own=native)
+    lines, events, off, problems = _walk(lowered, own=native)
     if limits is not None:
-        violations = _violations(lowered, events, limits, lines, clocks, off)
+        violations = _violations(lowered, events, limits, lines, clocks, off, problems)
         if violations:
             raise ControllerLimitError(violations)
     own = None if clocks is None else clocks.controllers[0]
@@ -539,19 +554,24 @@ def _violations(
     lines: Sequence[Mapping[str, Any]],
     clocks: _clocks.ClockPlan | None,
     off: Sequence[tuple[int, int, int]] = (),
+    run_time: Sequence[str] = (),
     waveforms: bool = True,
 ) -> list[str]:
     """The limits *events* exceed. With *clocks*, the events are in the
     controller's own cycles: the native walk's, with *off* its line events
-    off the grid, or else (lines on several controllers) converted here in
-    place, their waveforms too unless *waveforms* is false (the limits count
+    off the grid and *run_time* the violations of what they compute at run
+    time, or else (lines on several controllers) converted here in place,
+    their waveforms too unless *waveforms* is false (the limits count
     waveforms alike either way)."""
     if clocks is None:
         found = []
     elif clocks.owners is None:
         found = _clocks.off_grid_messages(clocks.controllers[0], lines, events, off)
+        found.extend(run_time)
     else:
-        found = _clocks.off_grid(clocks, lines, events, True, waveforms)
+        found = _clocks.off_grid(
+            clocks, lines, events, True, waveforms, _computes_at_run_time(lowered)
+        )
     timed: list[Mapping[str, Any]] = [
         e for e in events if e["kind"] in _PLAYED and e["end_cycles"] is not None
     ]
@@ -659,8 +679,10 @@ def check(lowered: Lowered, limits: ControllerLimits | None = None) -> list[str]
         if limits is machine.controller
         else _clocks.plan(limits, lowered.target.clock_ghz, machine.reference_clock_ghz)
     )
-    lines, events, off = _walk(lowered, values=False, own=_native_clock(clocks), waveforms=False)
-    found = _violations(lowered, events, limits, lines, clocks, off, waveforms=False)
+    lines, events, off, problems = _walk(
+        lowered, values=False, own=_native_clock(clocks), waveforms=False
+    )
+    found = _violations(lowered, events, limits, lines, clocks, off, problems, waveforms=False)
     if limits is not machine.controller:
         found.extend(_sample_rate_violations(lowered, limits, clocks, events))
     return found

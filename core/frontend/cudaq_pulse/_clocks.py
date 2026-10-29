@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import enum
 import functools
+import itertools
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -371,11 +372,14 @@ def off_grid(
     events: Sequence[dict[str, Any]],
     convert: bool = False,
     waveforms: bool = True,
+    run_time: bool = False,
 ) -> list[str]:
     """A violation for each line event that does not start and last whole
     cycles of its controller; with *convert*, the events' times are then in
     their controller's own cycles, in place (and with *waveforms*, their
-    waveforms' time parameters scaled), in the same pass."""
+    waveforms' time parameters scaled), in the same pass. With *run_time*
+    (the program computes values at run time), what the events compute at
+    run time is converted too (``own_run_time``)."""
     found = []
     single = plan.controllers[0] if plan.owners is None else None
     controller = plan.controllers[0]
@@ -402,6 +406,8 @@ def off_grid(
             and (start % grid or duration % grid)
         ):
             found.append(_off_grid(controller, lines[line], line, event["kind"], start, duration))
+        if convert and run_time and line is not None and (a != b or grid > 1):
+            found.extend(own_run_time(controller, lines[line], event, waveforms))
         if convert and a != b:
             if start is not None:
                 event["start_cycles"] = -((-start * a) // b)
@@ -410,14 +416,6 @@ def off_grid(
             end = event["end_cycles"]
             if end is not None:
                 event["end_cycles"] = -((-end * a) // b)
-            for key in EVENT_BOUNDS:
-                value = event.get(key)
-                if value is not None:
-                    event[key] = -((-value * a) // b)
-            for key in EVENT_LOWER_BOUNDS:
-                value = event.get(key)
-                if value is not None:
-                    event[key] = value * a // b
             tree = event.get("waveform") if waveforms else None
             if tree is not None:
                 _scale(tree, a / b)
@@ -425,6 +423,173 @@ def off_grid(
 
 
 _GRIDDED = frozenset({"drive", "readout", "wait"})
+
+
+def own_run_time(
+    controller: ControllerClock,
+    line: Mapping[str, Any],
+    event: dict[str, Any],
+    waveforms: bool = True,
+) -> list[str]:
+    """Convert what a line event computes at run time to *controller*'s
+    cycles, in place, by the rule for its fixed times: a variable wait's
+    length, clamped to its bounds as the run clamps it, and its bounds; and
+    (with *waveforms*) its waveform's operands computed at run time. A
+    length becomes a ``pulse.own_cycles`` expression, which the controller
+    fails at run time when the length is off the line's timesteps. Returns
+    the violations: a length that is off them for a value it can be known
+    to take now, or an operand the export cannot tell is a time."""
+    a, b = controller.ratio.numerator, controller.ratio.denominator
+    grid = controller.grid
+    found: list[str] = []
+    length = event.get("length")
+    if length is not None:
+        low = event.get("min_cycles")
+        high = event.get("max_cycles")
+        if low is not None:
+            length = {"op": "arith.maxsi", "of": [length, {"const": low}]}
+            event["min_cycles"] = low * a // b
+        if high is not None:
+            length = {"op": "arith.minsi", "of": [length, {"const": high}]}
+            event["max_cycles"] = -((-high * a) // b)
+        event["length"] = _own_length(length, a, b, grid)
+        found.extend(_decided(controller, line, event, "length", length))
+    tree = event.get("waveform")
+    if tree is not None:
+        _own_operands(controller, line, event, tree, a, b, waveforms, found)
+    return found
+
+
+def _own_length(cycles: Any, a: int, b: int, grid: int) -> dict[str, Any]:
+    return {"op": "pulse.own_cycles", "of": [cycles], "num": a, "den": b, "timestep": grid}
+
+
+def _own_operands(
+    controller: ControllerClock,
+    line: Mapping[str, Any],
+    event: Mapping[str, Any],
+    node: dict[str, Any],
+    a: int,
+    b: int,
+    convert: bool,
+    found: list[str],
+) -> None:
+    computed = node.get("runtime")
+    if computed:
+        shape = node["shape"]
+        times = _TIMES_OF.get(shape, ())
+        named = "params" in node
+        for key, value in computed.items():
+            if not named:
+                if a != b:
+                    found.append(_unconvertible(controller, line, event, node, key))
+                continue
+            if key == "duration":
+                found.extend(_decided(controller, line, event, "waveform's duration", value))
+                if convert:
+                    computed[key] = _own_length(value, a, b, controller.grid)
+            elif key in times and a != b and convert:
+                factor = a / b
+                computed[key] = {
+                    "op": "arith.mulf",
+                    "of": [value, {"const": int(factor) if factor.is_integer() else factor}],
+                }
+    for child in node.get("of", ()):
+        _own_operands(controller, line, event, child, a, b, convert, found)
+
+
+def _where(controller: ControllerClock, line: Mapping[str, Any], event: Mapping[str, Any]) -> str:
+    return (
+        f"line {line_name(line['role'], line['qudit'])}, on the {controller.name} at "
+        f"{_ghz(controller.clock_ghz)}: the {event['kind']} that is event {event['index']}"
+    )
+
+
+def _decided(
+    controller: ControllerClock,
+    line: Mapping[str, Any],
+    event: Mapping[str, Any],
+    what: str,
+    cycles: Any,
+) -> list[str]:
+    """The violation of a run-time length that can take a value off the
+    line's timesteps, when the values it can take are known now."""
+    grid = controller.grid
+    values = _values(cycles)
+    if grid == 1 or values is None:
+        return []
+    off = sorted(v for v in values if v % grid)
+    if not off:
+        return []
+    shown = ", ".join(f"{v:g}" for v in off)
+    return [
+        f"{_where(controller, line, event)} has a {what}, computed at run time, of "
+        f"{shown} cycles for some outcomes, which isn't a whole number of the line's "
+        f"timesteps of {grid} cycles"
+    ]
+
+
+def _unconvertible(
+    controller: ControllerClock,
+    line: Mapping[str, Any],
+    event: Mapping[str, Any],
+    node: Mapping[str, Any],
+    key: str,
+) -> str:
+    shape = node.get("name", node["shape"])
+    return (
+        f"{_where(controller, line, event)} plays a {shape!r} waveform whose operand {key} "
+        "is computed at run time, and the export can't tell whether that operand is a time "
+        f"to convert to the controller's cycles ({controller.ratio} of a program cycle "
+        "each); compute it while the kernel compiles, or give it a waveform shape whose "
+        "parameters are named"
+    )
+
+
+# The results of the ops a set of values passes through unchanged in kind.
+_VALUE_OPS: Mapping[str, Any] = {
+    "arith.addf": lambda x, y: x + y,
+    "arith.addi": lambda x, y: x + y,
+    "arith.subf": lambda x, y: x - y,
+    "arith.subi": lambda x, y: x - y,
+    "arith.mulf": lambda x, y: x * y,
+    "arith.muli": lambda x, y: x * y,
+    "arith.maxsi": max,
+    "arith.minsi": min,
+    "arith.fptosi": lambda x: int(x),
+    "arith.sitofp": float,
+    "pulse.duration_from_int": lambda x: x,
+}
+
+
+def _values(expression: Any, limit: int = 64) -> set[float] | None:
+    """The values *expression* can take, when it computes from constants and
+    selects between them alone and they are few; else None."""
+    if isinstance(expression, (int, float)):
+        return {expression}
+    if not isinstance(expression, dict):
+        return None
+    if "const" in expression:
+        return {expression["const"]}
+    op: str = expression.get("op", "")
+    of = expression.get("of", ())
+    if op == "arith.select" and len(of) == 3:
+        then, other = _values(of[1], limit), _values(of[2], limit)
+        if then is None or other is None:
+            return None
+        return then | other
+    fn = _VALUE_OPS.get(op)
+    if fn is None:
+        return None
+    sets = [_values(x, limit) for x in of]
+    if any(s is None for s in sets):
+        return None
+    out: set[float] = set()
+    for args in itertools.product(*sets):  # type: ignore[arg-type]
+        out.add(fn(*args))
+        if len(out) > limit:
+            return None
+    return out
 
 
 def off_grid_messages(

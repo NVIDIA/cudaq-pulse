@@ -462,6 +462,180 @@ def test_a_run_time_wait_has_its_bounds_in_the_controllers_cycles():
         assert (wait["min_cycles"], wait["max_cycles"]) == bounds
 
 
+@pulse.classical(args=(Bits(1),), results=(Float(), Float()), max_latency_ns=200)
+def settings_of(bits):
+    return 0.1 * bits[0], 40.0 + bits[0]
+
+
+@pulse.kernel
+def timed_at_run_time(q):
+    d, t = get_drive_line(q)
+    ro, rt = get_readout_line(q)
+    m = readout(ro, square(100, 0.05), rt)
+    amp, delay = settings_of.submit([m]).result()
+    wait(d, delay, bounds=(8, 400))
+    drive(d, gaussian(40, 0.1, delay * 0.25), t)
+    drive(d, drag(40, amp, 8.0, delay), t)
+
+
+def _answer_of(program):
+    return {"answer": next(e for e in program["events"] if e["kind"] == "answer")["index"]}
+
+
+def test_what_a_program_computes_at_run_time_is_in_the_controllers_cycles():
+    machine = _machine(1.0)
+    program = pulse.compile(timed_at_run_time, machine=machine).lower(Q[0]).export_controller()
+    answer = _answer_of(program)
+    delay = {**answer, "result": 1}
+    wait = next(e for e in program["events"] if e["kind"] == "wait")
+    gaussian_, drag_ = (e for e in program["events"] if e["kind"] == "drive")
+    in_program_cycles = {
+        "op": "pulse.duration_from_int",
+        "of": [{"op": "arith.fptosi", "of": [{"op": "arith.addf", "of": [delay, {"const": 0.5}]}]}],
+    }
+    # The length clamped as the run clamps it, then in own cycles: 1 for 2.
+    clamped = {
+        "op": "arith.minsi",
+        "of": [{"op": "arith.maxsi", "of": [in_program_cycles, {"const": 8}]}, {"const": 400}],
+    }
+    assert json.loads(json.dumps(wait["length"])) == {
+        "op": "pulse.own_cycles",
+        "of": [clamped],
+        "num": 1,
+        "den": 2,
+        "timestep": 2,
+    }
+    assert (wait["min_cycles"], wait["max_cycles"]) == (4, 200)
+    # Time operands scale by the ratio as the fixed ones do; others don't.
+    assert gaussian_["waveform"]["params"]["duration"] == 20.0
+    assert gaussian_["waveform"]["runtime"] == {
+        "sigma": {
+            "op": "arith.mulf",
+            "of": [{"op": "arith.mulf", "of": [delay, {"const": 0.25}]}, {"const": 0.5}],
+        }
+    }
+    assert drag_["waveform"]["params"]["sigma"] == 4.0
+    assert drag_["waveform"]["runtime"] == {
+        "amplitude": {**answer, "result": 0},
+        "beta": {"op": "arith.mulf", "of": [delay, {"const": 0.5}]},
+    }
+    # On the program clock, nothing changes.
+    plain = pulse.compile(timed_at_run_time).lower(Q[0]).export_controller()
+    wait = next(e for e in plain["events"] if e["kind"] == "wait")
+    assert wait["length"] == in_program_cycles
+    assert (wait["min_cycles"], wait["max_cycles"]) == (8, 400)
+    assert next(e for e in plain["events"] if e["kind"] == "drive")["waveform"]["runtime"] == {
+        "sigma": {"op": "arith.mulf", "of": [delay, {"const": 0.25}]}
+    }
+
+
+def test_a_clock_that_only_steps_checks_a_run_time_length_on_its_timesteps():
+    # The ratio is 1, so only the timestep check is added; times keep their
+    # values.
+    machine = MachineModel(controller=ControllerLimits(clock_ghz=2.0, cycles_per_timestep=4))
+    program = pulse.compile(timed_at_run_time, machine=machine).lower(Q[0]).export_controller()
+    wait = next(e for e in program["events"] if e["kind"] == "wait")
+    assert wait["length"]["op"] == "pulse.own_cycles"
+    assert (wait["length"]["num"], wait["length"]["den"], wait["length"]["timestep"]) == (1, 1, 4)
+    assert (wait["min_cycles"], wait["max_cycles"]) == (8, 400)
+    drive = next(e for e in program["events"] if e["kind"] == "drive")
+    assert drive["waveform"]["runtime"]["sigma"]["of"][1] == {"const": 0.25}
+
+
+def _line_event(**parts):
+    return {"index": 3, "kind": "drive", "line": 0, **parts}
+
+
+_LINE = {"role": "drive", "qudit": 0}
+_HALF = _clocks.ControllerClock("awg", 1.0, _clocks.Fraction(1, 2))
+
+
+def test_a_run_time_length_known_now_to_be_off_the_timesteps_is_a_compile_error():
+    select = {
+        "op": "arith.select",
+        "of": [{"readout": 1}, {"const": 9}, {"const": 12}],
+    }
+    event = _line_event(kind="wait", length=select, min_cycles=None, max_cycles=None)
+    [message] = _clocks.own_run_time(_HALF, _LINE, event)
+    assert "line d0, on the awg at 1 GHz: the wait that is event 3" in message
+    assert "length, computed at run time, of 9 cycles" in message
+    assert "timesteps of 2 cycles" in message
+    event = _line_event(
+        waveform={"shape": "square", "params": {"duration": None}, "runtime": {"duration": select}}
+    )
+    [message] = _clocks.own_run_time(_HALF, _LINE, event)
+    assert "waveform's duration, computed at run time, of 9 cycles" in message
+    # On the timesteps for every outcome, or not known now: converted.
+    event = _line_event(kind="wait", length={**select, "of": [{"readout": 1}, *[{"const": 8}] * 2]})
+    assert _clocks.own_run_time(_HALF, _LINE, event) == []
+    event = _line_event(kind="wait", length={"answer": 0, "result": 0})
+    assert _clocks.own_run_time(_HALF, _LINE, event) == []
+    assert event["length"]["op"] == "pulse.own_cycles"
+
+
+def test_a_run_time_operand_the_export_cannot_tell_is_a_time_is_a_compile_error():
+    def unnamed():
+        computed = {"0": {"answer": 0, "result": 0}}
+        return {"shape": "chirp", "values": [None, 0.1], "runtime": computed}
+
+    event = _line_event(waveform=unnamed())
+    [message] = _clocks.own_run_time(_HALF, _LINE, event)
+    assert "plays a 'chirp' waveform whose operand 0 is computed at run time" in message
+    assert "compute it while the kernel compiles" in message
+    # Left as it was, never exported in the wrong cycles.
+    assert event["waveform"] == unnamed()
+    # Where the ratio is 1 there is nothing to convert.
+    steps = _clocks.ControllerClock("awg", 2.0, _clocks.Fraction(1), grid=4)
+    assert _clocks.own_run_time(steps, _LINE, _line_event(waveform=unnamed())) == []
+
+
+def test_a_run_time_violation_fails_the_export_and_the_check(monkeypatch):
+    lowered = pulse.compile(timed_at_run_time, machine=_machine(1.0)).lower(Q[0])
+    monkeypatch.setattr(_clocks, "own_run_time", lambda *args: ["not convertible"])
+    with pytest.raises(ControllerLimitError, match="not convertible"):
+        lowered.export_controller()
+    assert "not convertible" in check(lowered, ControllerLimits(clock_ghz=1.0))
+
+
+def test_lines_on_several_controllers_convert_what_they_compute_at_run_time():
+    plan = _clocks.ClockPlan(
+        2.0,
+        (
+            _clocks.ControllerClock("awg", 2.0, _clocks.Fraction(1)),
+            _clocks.ControllerClock("readout", 1.0, _clocks.Fraction(1, 2)),
+        ),
+        owners={("readout", 0): 1},
+    )
+    lines = [{"role": "drive", "qudit": 0}, {"role": "readout", "qudit": 0}]
+    length = {"answer": 0, "result": 0}
+
+    def events():
+        return [
+            {
+                "index": 0,
+                "kind": "wait",
+                "line": i,
+                "length": dict(length),
+                "min_cycles": 8,
+                "max_cycles": 40,
+                "start_cycles": 0,
+                "duration_cycles": None,
+                "end_cycles": None,
+            }
+            for i in (0, 1)
+        ]
+
+    converted = events()
+    assert _clocks.off_grid(plan, lines, converted, True, True, True) == []
+    assert converted[0]["length"] == length and converted[0]["max_cycles"] == 40
+    assert converted[1]["length"]["op"] == "pulse.own_cycles"
+    assert (converted[1]["min_cycles"], converted[1]["max_cycles"]) == (4, 20)
+    # A program that computes nothing at run time keeps its bounds.
+    kept = events()
+    assert _clocks.off_grid(plan, lines, kept, True, True) == []
+    assert kept == events()
+
+
 # ── The reference clock ──────────────────────────────────────────────────────
 
 

@@ -1770,12 +1770,12 @@ public:
   using OffGridEvent = std::tuple<int64_t, int64_t, int64_t>;
 
   /// `controller_events()` for a controller counting `num` of its cycles
-  /// every `den` program cycles: start, duration and a variable wait's
-  /// longest length in its cycles, rounded up, and its shortest rounded
-  /// down; with the drives, readouts and waits off its grid of `grid`
-  /// program cycles, and (index, end) for the events whose end, rounded up
-  /// in its cycles, is not its start plus its duration: (lines, events, off
-  /// grid, ends).
+  /// every `den` program cycles: start and duration in its cycles, rounded
+  /// up (what an event computes at run time stays in program cycles, for
+  /// the caller to convert), with the drives, readouts and waits off its grid
+  /// of `grid` program cycles, and (index, end) for the events whose end,
+  /// rounded up in its cycles, is not its start plus its duration: (lines,
+  /// events, off grid, ends).
   nb::tuple controller_events_on(nb::handle parameters, nb::handle amplitudes,
                                  nb::list epochs, int64_t num, int64_t den,
                                  int64_t grid) {
@@ -1803,12 +1803,6 @@ public:
       if (cycles)
         *cycles = (*cycles * num + den - 1) / den;
     };
-    if (num != den)
-      for (auto &known : walk.known) {
-        own(known.maxCycles);
-        if (known.minCycles)
-          *known.minCycles = *known.minCycles * num / den;
-      }
     auto &events = walk.result;
     for (size_t index = 0; index < events.size(); ++index) {
       auto &event = events[index];

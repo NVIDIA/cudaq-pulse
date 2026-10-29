@@ -173,6 +173,23 @@ whole multiple of it, and the export gives it as ``reference_clock_ghz``.
 Without one, each controller's start is known only to within one of its own
 cycles, which budgets between controllers count.
 
+What the program computes at run time is converted by the same rule. A
+variable wait's ``length`` is clamped to its bounds, as the run clamps it,
+and then wrapped in ``{"op": "pulse.own_cycles", "of": [x], "num": a,
+"den": b, "timestep": g}``: the length ``x`` program cycles is ``x * a / b``
+of the controller's, and the controller must fail the run when ``x`` is not
+a whole number of the line's timesteps of ``g`` program cycles. A
+controller with the program's clock but longer timesteps gets the wrapper
+too, with ``num`` and ``den`` 1, as that check. ``min_cycles`` rounds down
+and ``max_cycles`` up. A run-time ``duration`` is wrapped the same way, and
+a run-time ``sigma``, ``beta`` or ``risefall`` is multiplied by ``a / b``
+(``arith.mulf``). A run-time length whose values are all known while the
+kernel compiles (it selects between constants) and include one off the
+timesteps is a ``ControllerLimitError`` then. A run-time operand of a
+waveform whose parameters the export does not name can't be converted, so
+on a controller with its own clock it is a ``ControllerLimitError`` too,
+never exported in program cycles.
+
 Line delays
 -----------
 
