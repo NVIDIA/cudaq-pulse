@@ -18,7 +18,7 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse._errors import DeviceDefinitionError, UpgradeNotice
 from cudaq_pulse._system import installed_descriptions
-from cudaq_pulse.classical import Bits
+from cudaq_pulse.classical import Bits, Float
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, ControllerLimits
 from cudaq_pulse.targets.base import Coupling, Qubit, TargetDescription
@@ -251,6 +251,111 @@ def test_a_program_needing_a_capability_a_controller_lacks_does_not_compile():
         pulse.compile(drive_and_branch, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
     # Both on one controller: nothing to forward.
     pulse.compile(drive_and_branch, device=qpu).lower(qpu.qudits[0], qpu.qudits[1])
+
+
+@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=400, link="feedback")
+def settle(x):
+    return x
+
+
+@pulse.kernel
+def plays(q):
+    d, t = get_drive_line(q)
+    drive(d, square(20, 0.1), t)
+
+
+@pulse.kernel
+def acquires(q):
+    r, rt = get_readout_line(q)
+    readout(r, square(100, 0.05), rt)
+
+
+@pulse.kernel
+def waits_for_an_answer(q):
+    d, t = get_drive_line(q)
+    wait(d, settle.submit(8.0).result(), bounds=(0, 800))
+    drive(d, square(20, 0.1), t)
+
+
+@pulse.kernel
+def syncs(q):
+    d, t = get_drive_line(q)
+    r, rt = get_readout_line(q)
+    drive(d, square(20, 0.1), t)
+    sync(d, r)
+    readout(r, square(100, 0.05), rt)
+
+
+@pulse.kernel
+def turns_by_an_outcome(q):
+    d, t = get_drive_line(q)
+    r, rt = get_readout_line(q)
+    m = readout(r, square(100, 0.05), rt)
+    phase = 0.1
+    if m:
+        phase = 0.5
+    shift_phase(t, phase)
+    drive(d, square(20, 0.1), t)
+
+
+@pulse.kernel
+def turns_by_a_parameter(q, phase: float):
+    d, t = get_drive_line(q)
+    shift_phase(t, phase)
+    drive(d, square(20, 0.1), t)
+
+
+@pulse.kernel(unroll_threshold=0)
+def loops(q):
+    d, t = get_drive_line(q)
+    for _ in range(4):
+        drive(d, square(20, 0.1), t)
+
+
+# For each capability, a program that needs it and the qudits it runs on:
+# two on one controller, or (0, 2) across two.
+_NEEDING = {
+    pulse.Capability.PLAY: (plays, (0,)),
+    pulse.Capability.ACQUIRE: (acquires, (0,)),
+    pulse.Capability.WAIT: (waits_for_an_answer, (0,)),
+    pulse.Capability.SYNC: (syncs, (0,)),
+    pulse.Capability.CALL: (corrected, (0, 1)),
+    pulse.Capability.ANSWER: (corrected, (0, 1)),
+    pulse.Capability.BRANCH: (drive_and_branch, (0, 1)),
+    pulse.Capability.RUNTIME_FRAME_UPDATE: (turns_by_an_outcome, (0,)),
+    pulse.Capability.FORWARD_OUTCOME: (drive_and_branch, (0, 2)),
+    pulse.Capability.LOOP: (loops, (0,)),
+}
+
+
+def test_every_capability_has_a_program_that_needs_it():
+    assert set(_NEEDING) == set(pulse.Capability)
+
+
+@pytest.mark.parametrize("capability", list(pulse.Capability))
+def test_a_controller_lacking_only_one_capability_rejects_what_needs_it(capability):
+    kernel, placed = _NEEDING[capability]
+    others = [c for c in pulse.Capability if c != capability]
+    a = pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], supports=others)
+    b = pulse.Controller(drive_lines=[2, 3], readout_lines=[2, 3])
+    qpu = _qpu(a, b, links={"feedback": pulse.Link(controllers=[a])})
+    qudits = [qpu.qudits[i] for i in placed]
+    full = pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1])
+    complete = _qpu(full, b, links={"feedback": pulse.Link(controllers=[full])})
+    pulse.compile(kernel, device=complete).lower(*[complete.qudits[i] for i in placed])
+    if capability == pulse.Capability.LOOP:
+        # Without it, the controller plays the loop unrolled.
+        assert pulse.compile(kernel, device=qpu).lower(*qudits).export_controller()
+        return
+    with pytest.raises(ControllerLimitError, match=f"controllers\\[0\\]: .* needs '{capability}'"):
+        pulse.compile(kernel, device=qpu).lower(*qudits)
+
+
+def test_a_tone_a_parameter_sets_needs_no_runtime_frame_update():
+    others = [c for c in pulse.Capability if c != pulse.Capability.RUNTIME_FRAME_UPDATE]
+    qpu = _qpu(pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], supports=others))
+    compiled = pulse.compile(turns_by_a_parameter, device=qpu)
+    assert compiled.lower(qpu.qudits[0], 0.3).export_controller()["events"][0]["phase_rad"] == 0.3
 
 
 @pulse.kernel(unroll_threshold=0)

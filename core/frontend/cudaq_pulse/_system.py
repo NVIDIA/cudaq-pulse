@@ -445,7 +445,7 @@ class ControlSystem:
                         natives,
                     )
                 )
-        found.extend(self._needs(lowered, events, owners))
+        found.extend(self._needs(lowered, events, owners, unresolved))
         return found
 
     def _needs(
@@ -453,9 +453,12 @@ class ControlSystem:
         lowered: Lowered,
         events: Sequence[Mapping[str, Any]],
         owners: Sequence[int | None],
+        unresolved: list[str] | None = None,
     ) -> list[str]:
         """The capabilities the program needs that its controllers lack, and
-        the calls whose link does not reach the controllers taking part."""
+        the calls whose link does not reach the controllers taking part. With
+        *unresolved*, a tone or phase a call's values may set is noted there
+        instead, to be checked with them."""
         checks_capabilities = any(c.supports is not None for c in self.controllers)
         checks_reach = any(link.controllers is not None for link in self.links.values())
         if not (checks_capabilities or checks_reach):
@@ -495,6 +498,16 @@ class ControlSystem:
                 if index is None:
                     continue
                 need(index, _NEEDS[kind], event)
+                if kind in _PLAYED and (
+                    event["frequency_hz"] is None or event["phase_rad"] is None
+                ):
+                    # Without a call's values, the tone may be a parameter's.
+                    if unresolved is None:
+                        need(index, Capability.RUNTIME_FRAME_UPDATE, event)
+                    elif not self.controllers[index].supports_capability(
+                        Capability.RUNTIME_FRAME_UPDATE
+                    ):
+                        unresolved.append(f"line {event['line']}: frame")
                 if event["conditions"]:
                     need(index, Capability.BRANCH, event)
                 for condition in event["conditions"]:
