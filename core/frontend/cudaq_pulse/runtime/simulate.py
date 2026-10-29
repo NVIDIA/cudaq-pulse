@@ -48,6 +48,7 @@ from . import _propagate
 from ._attributes import _VALID_INTEGRATORS, _f64, _level_attributes, _target_attributes
 
 if TYPE_CHECKING:
+    from .._device import Qudit
     from ..compiler import Lowered
     from ..kernel._kernel import CompiledKernel, Kernel
 
@@ -99,6 +100,47 @@ class SimulationResult:
     #: For a program that calls classical functions: per entry of
     #: ``branches``, the calls that path made, in time order.
     calls: list[list[Any]] = field(default_factory=list)
+
+    def level_populations(self, qudit: int | Qudit | None = None) -> list[float]:
+        """The probability of each level of *qudit*, from level 0 up: the
+        diagonal of its reduced density matrix, summing to 1.
+
+        *qudit* is a device qudit index or a qudit handle, one of
+        ``qudits``; it may be left out when the result models one qudit."""
+        mode = self._mode(qudit)
+        dims = self.dims
+        diagonal = np.real(np.diagonal(self.density_matrix)).reshape(dims[::-1])
+        axis = len(dims) - 1 - mode
+        others = tuple(a for a in range(len(dims)) if a != axis)
+        return [float(p) for p in diagonal.sum(axis=others)]
+
+    def level_population(self, level: int, qudit: int | Qudit | None = None) -> float:
+        """The probability that *qudit* is in *level*, as in
+        ``level_populations(qudit)[level]``."""
+        populations = self.level_populations(qudit)
+        if level.__class__ is not int or not 0 <= level < len(populations):
+            which = f"qudit {self.qudits[self._mode(qudit)]}"
+            raise InvalidValueError(
+                f"{which} has levels 0 to {len(populations) - 1} in this result "
+                f"({len(populations)} levels); got level {level!r}"
+            )
+        return populations[level]
+
+    def _mode(self, qudit: int | Qudit | None) -> int:
+        """The position in ``qudits`` of *qudit*, a device index or handle."""
+        qudits = self.qudits
+        if qudit is None:
+            if len(qudits) == 1:
+                return 0
+            raise InvalidValueError(
+                f"the result models qudits {list(qudits)}; pass qudit=, one of them"
+            )
+        index = qudit if isinstance(qudit, int) else getattr(qudit, "index", None)
+        if index.__class__ is not int or index not in qudits:
+            raise InvalidValueError(
+                f"qudit {qudit!r} is not in the result; it models qudits {list(qudits)}"
+            )
+        return qudits.index(index)
 
 
 def simulate(

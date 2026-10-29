@@ -52,7 +52,7 @@ if __name__ == "__main__":
     sweep = pulse.compile(rabi, device=dev)
     for amplitude in [0.0, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12]:
         compiled_kernel = sweep.lower(qubit, cal["rabi_duration"], amplitude)
-        p1 = pulse.simulate(compiled_kernel).density_matrix[1, 1].real
+        p1 = pulse.simulate(compiled_kernel).level_population(1)
         print(f"  amplitude={amplitude:.2f}: P(1) = {p1:.3f}")
     print(f"  compiled {sweep.cache_info().compiled} time(s) for the whole sweep")
 

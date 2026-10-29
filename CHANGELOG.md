@@ -291,7 +291,12 @@ behavior may change in any 0.x release.
   only the qudits the program gets a line on, whatever their device indices
   (a pair at qudits 13 and 3 is a two-mode problem); `SimulationResult.qudits`
   and `Lowered.qudits` give the device qudit of each mode, and the other
-  qudits are classical spectators.
+  qudits are classical spectators. `result.level_population(level, qudit)`
+  and `result.level_populations(qudit)` give a qudit's level probabilities
+  from its reduced state, for any number of levels; `qudit` (a device index
+  or handle) may be left out when the result models one qudit, and a qudit
+  or level the result does not have is an `InvalidValueError` listing those
+  it has.
 - **Classical calls at QPU runtime.** `classical`, a classical real-time
   dialect for co-processing at QPU runtime: pulse programs call GPU, host or
   FPGA services (decoders, estimators, calibration updates) while the QPU

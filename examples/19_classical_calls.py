@@ -213,7 +213,7 @@ if __name__ == "__main__":
     print(f"  answer in time with p = {in_time:.3f}")
     # Short of 1: the qubit can relax while the answer is in flight, and the
     # correction then excites it.
-    print(f"  final |0> population: {result.density_matrix[0, 0].real:.4f}")
+    print(f"  final |0> population: {result.level_population(0):.4f}")
 
     print("\n=== 2. Adaptive T1 tracking (3 rounds, true T1 = 10 us) ===")
     rounds, alpha0, beta0, first_wait = 3, 1.0, 5000.0, 5 * pulse.us  # prior T1 = 5 us

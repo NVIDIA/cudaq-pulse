@@ -115,7 +115,7 @@ if __name__ == "__main__":
     for depth in [1, 5, 10, 20]:
         gates = rb_sequence(depth, seed=depth)
         compiled_kernel = rb.lower(qubit, gates)
-        survival = pulse.simulate(compiled_kernel, dt_ns=0.5).density_matrix[0, 0].real
+        survival = pulse.simulate(compiled_kernel, dt_ns=0.5).level_population(0)
         print(
             f"  depth={depth:3d} ({len(gates):3d} pulses): P(0) = {survival:.3f}, "
             f"compiled in {compiled_kernel.metrics.total_ms:.3f} ms"

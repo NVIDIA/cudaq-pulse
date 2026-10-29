@@ -314,6 +314,8 @@ of the outcomes from the same branch probabilities.
    lowered = active_reset.lower(dev.qudit_handles[0])
    result = pulse.simulate(lowered, shots=1000, backend="cpu")
    result.density_matrix   # ensemble state at the end
+   result.level_population(1)   # P(1) of the one qudit; level_population(1, qudit=q) for one of several
+   result.level_populations()   # [P(0), P(1), P(2)] for a three-level qudit
    result.branches         # [(outcomes, probability), ...]
    result.records          # one row of outcomes per shot
 

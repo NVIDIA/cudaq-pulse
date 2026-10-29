@@ -190,11 +190,9 @@ if __name__ == "__main__":
     # One iteration against full simulation of the plant as it is now; they
     # differ by the qubit's thermal population, which the surrogate leaves out.
     wait_ns = 8000
-    p_full = (
-        pulse.simulate(compiled.lower(q, wait_ns), plant=plant.target(), dt_ns=4.0)
-        .density_matrix[1, 1]
-        .real
-    )
+    p_full = pulse.simulate(
+        compiled.lower(q, wait_ns), plant=plant.target(), dt_ns=4.0
+    ).level_population(1)
     print(
         f"  check at {wait_ns / 1e3:.0f} us: simulated P(1) = {p_full:.3f}, "
         f"surrogate {plant.p_survive(wait_ns + 20):.3f}"

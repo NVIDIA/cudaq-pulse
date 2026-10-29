@@ -278,3 +278,36 @@ def test_each_qudit_has_its_model_s_levels_unless_simulate_sets_them():
     assert pulse.simulate(lowered).dims == (3, 4)
     assert pulse.simulate(lowered, levels=2).dims == (2, 2)
     assert pulse.simulate(lowered, levels={0: 2}).dims == (2, 4)
+
+
+def test_level_populations_are_the_diagonal_of_a_qudit_s_reduced_state():
+    one = _run(_rabi(_HALF_PI), levels=3)
+    rho = one.density_matrix
+    assert one.level_populations() == [float(rho[k, k].real) for k in range(3)]
+    assert one.level_population(1) == float(rho[1, 1].real)
+    assert one.level_population(1, qudit=0) == one.level_population(1, qudit=Q[0])
+
+    two = _run(conditional_flip, 2, levels={0: 2, 1: 3})
+    assert two.dims == (2, 3)
+    diagonal = np.real(np.diagonal(two.density_matrix)).reshape(3, 2)
+    assert two.level_populations(qudit=0) == pytest.approx(list(diagonal.sum(axis=0)), abs=1e-15)
+    assert two.level_populations(qudit=1) == pytest.approx(list(diagonal.sum(axis=1)), abs=1e-15)
+    assert sum(two.level_populations(1)) == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (lambda r: r.level_populations(), r"the result models qudits \[0, 1\]; pass qudit="),
+        (lambda r: r.level_population(1), r"models qudits \[0, 1\]; pass qudit="),
+        (lambda r: r.level_population(1, qudit=5), r"qudit 5 is not in the result; it models "),
+        (lambda r: r.level_population(2, qudit=0), r"qudit 0 has levels 0 to 1 .*got level 2"),
+        (lambda r: r.level_population(-1, qudit=1), r"qudit 1 has levels 0 to 2 .*got level -1"),
+        (lambda r: r.level_population(True, qudit=1), r"got level True"),
+        (lambda r: r.level_populations(qudit="q1"), r"qudit 'q1' is not in the result"),
+    ],
+)
+def test_level_population_names_the_qudits_and_levels_it_has(call, message):
+    result = _run(conditional_flip, 2, levels={0: 2, 1: 3})
+    with pytest.raises(pulse.InvalidValueError, match=message):
+        call(result)

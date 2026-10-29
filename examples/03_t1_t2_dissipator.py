@@ -96,7 +96,7 @@ if __name__ == "__main__":
         # A 0.5 ns step (one clock cycle) resolves these pulses and keeps
         # the long waits fast.
         result = pulse.simulate(t1.lower(qubit, wait_time), dt_ns=0.5)
-        p1 = result.density_matrix[1, 1].real
+        p1 = result.level_population(1)
         readout_ns = result.measurements[0].start_ns
         if first is None:
             first = (readout_ns, p1)

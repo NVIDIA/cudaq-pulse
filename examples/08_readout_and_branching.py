@@ -133,7 +133,7 @@ if __name__ == "__main__":
     result = pulse.simulate(lowered, initial_state=[2**-0.5, 2**-0.5, 0.0], shots=1000, seed=7)
     for outcomes, probability in result.branches:
         print(f"  measured {outcomes}: p = {probability:.3f}")
-    print(f"  final |0> population: {result.density_matrix[0, 0].real:.4f}")
+    print(f"  final |0> population: {result.level_population(0):.4f}")
 
     print("\n=== Repeated measurement (5 shots) ===")
     compiled_kernel = pulse.compile(repeated_measurement, device=dev).lower(dev.qudit_handles[0], 5)
