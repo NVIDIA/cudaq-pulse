@@ -115,8 +115,11 @@ behavior may change in any 0.x release.
 - **Loop unrolling.** A `range` loop whose variable is never read is kept
   as one rolled loop, unless its estimated unrolled size (trip count times
   the calls in its body) is at most the unroll threshold: 8 by default, the
-  measured break-even point, set with `pulse.compile(k, unroll_threshold=)`
-  or `@pulse.kernel(unroll_threshold=)`.
+  measured break-even point. The threshold is a compile option only, an
+  `int` of 0 or more set with `pulse.compile(k, unroll_threshold=)` or
+  `@pulse.kernel(unroll_threshold=)`; 0 means never unroll, so every such
+  loop stays rolled, even one of no or one iteration. No environment
+  variable sets it.
   Lines and tones kept in a list, tuple or dict, retuned with
   `set_frequency` or not, are carried through a rolled loop. A rolled body
   may iterate over qudits (`for q in qs`) and gather their lines in a list.
