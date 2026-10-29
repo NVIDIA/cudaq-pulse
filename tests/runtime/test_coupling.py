@@ -24,7 +24,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline, evaluate_callback
-from cudaq_pulse.targets import Coupling, CrosstalkEntry, Qubit, TargetDescription
+from cudaq_pulse.targets import Coupling, CrosstalkEntry, Qubit, SimulationModel, TargetDescription
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -184,8 +184,11 @@ def test_crosstalk_zz_is_the_conditional_frequency_shift(levels):
 
 @pytest.mark.parametrize("backend", ["cpu", "gpu"])
 def test_systems_without_a_simulation_model_are_refused(backend):
-    target = dataclasses.replace(_pair(5.0e9, 5.5e9, g_hz=10.0e6), architecture="other")
-    with pytest.raises(NotImplementedError, match=r"\(other\) has no simulation model"):
+    target = dataclasses.replace(_pair(5.0e9, 5.5e9, g_hz=10.0e6), model=None)
+    with pytest.raises(NotImplementedError, match=r"has no simulation model \(its model is None\)"):
+        pulse.simulate(_lowered(target), backend=backend)
+    target = dataclasses.replace(target, model=SimulationModel)
+    with pytest.raises(NotImplementedError, match="SimulationModel has no simulator"):
         pulse.simulate(_lowered(target), backend=backend)
 
 
@@ -246,7 +249,7 @@ def test_the_coupling_kind_cache_is_not_a_target_field():
         "qubits",
         "couplings",
         "crosstalk",
-        "architecture",
+        "model",
         "attribution",
         "clock_ghz",
     ]

@@ -92,7 +92,7 @@ For GPU execution, three dialect conversion passes lower the IR:
 The execution lowering supports transmon models with any number of levels in
 a rotating frame. A program that measures is lowered one segment at a time
 along a measurement-outcome path, and the segments are joined by projecting
-the state. Systems without a simulation model (any ``architecture`` other
-than ``"transmon"``) and unspecialized waveforms are rejected
+the state. Systems without a simulation model (a target whose ``model`` is
+``None`` or has no simulator) and unspecialized waveforms are rejected
 instead of silently approximated. See
 :doc:`../user_guide/gpu_execution` for the complete model and limitations.

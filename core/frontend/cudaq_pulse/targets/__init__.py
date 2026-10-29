@@ -10,6 +10,7 @@
 from ._registry import UnknownTargetError, available_targets, register_target
 from .base import Coupling, CrosstalkEntry, Qubit, TargetDescription
 from .calibration import Calibration
+from .models import SimulationModel, TransmonModel
 from .transmon import transmon_generic, transmon_krinner_17q
 
 __all__ = [
@@ -17,6 +18,8 @@ __all__ = [
     "Qubit",
     "Coupling",
     "CrosstalkEntry",
+    "SimulationModel",
+    "TransmonModel",
     "Calibration",
     "transmon_krinner_17q",
     "transmon_generic",

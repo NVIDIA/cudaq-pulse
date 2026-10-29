@@ -21,7 +21,10 @@ from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import Any, overload
 
-from .._errors import InvalidValueError, NotFoundError, UnsupportedError
+from .._errors import InvalidTypeError, InvalidValueError, NotFoundError, UnsupportedError
+from .models import SimulationModel, TransmonModel
+
+_TRANSMON = TransmonModel()
 
 _SECONDS_PER_NANOSECOND = 1.0e-9
 _NANOSECONDS_PER_MICROSECOND = 1.0e3
@@ -183,7 +186,11 @@ class TargetDescription:
 
     A target is read-only once built: ``qubits`` is a read-only mapping and
     ``couplings`` and ``crosstalk`` are tuples. ``clock_ghz`` is the pulse
-    clock that converts nanoseconds to clock cycles. Targets compare by
+    clock that converts nanoseconds to clock cycles. ``model`` is how the
+    simulator treats its qudits, and how many levels each has: a
+    ``SimulationModel`` class or instance (``TransmonModel`` by default,
+    ``TransmonModel(levels={0: 4})`` to give qudit 0 four levels), or
+    ``None`` for a system with no simulation model. Targets compare by
     content, so a target unpickled is equal to the one pickled.
     """
 
@@ -191,13 +198,21 @@ class TargetDescription:
     qubits: Mapping[int, Qubit] = field(default_factory=dict)
     couplings: Sequence[Coupling] = ()
     crosstalk: Sequence[CrosstalkEntry] = ()
-    architecture: str = "transmon"
+    model: SimulationModel | type[SimulationModel] | None = _TRANSMON
     attribution: str = ""
     clock_ghz: float = 2.0
 
     def __post_init__(self) -> None:
         if not self.clock_ghz > 0:
             raise InvalidValueError(f"clock_ghz must be positive, got {self.clock_ghz}")
+        model = self.model
+        if isinstance(model, type) and issubclass(model, SimulationModel):
+            object.__setattr__(self, "model", model())
+        elif model is not None and not isinstance(model, SimulationModel):
+            raise InvalidTypeError(
+                "model must be a SimulationModel class or instance, such as TransmonModel, "
+                f"or None; got {model!r}"
+            )
         object.__setattr__(self, "qubits", MappingProxyType(dict(self.qubits)))
         object.__setattr__(self, "couplings", tuple(self.couplings))
         object.__setattr__(self, "crosstalk", tuple(self.crosstalk))

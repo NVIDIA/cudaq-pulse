@@ -234,6 +234,11 @@ behavior may change in any 0.x release.
   `cudaq_pulse.targets.TargetDescription`; `pulse.Target` names the shipped
   target: a 17-qubit transmon device built from Krinner et al., Nature 605,
   669 (2022).
+  A target's `model` (`cudaq_pulse.targets.TransmonModel` by default, a
+  `SimulationModel` class or instance, or `None`) says how the simulator
+  treats its qudits; each model class declares its levels (3 for
+  transmons), and `TransmonModel(levels={0: 4})` sets a qudit's own. No
+  label changes the physics: targets have no `architecture`.
   A `Coupling`'s gate fields (`gate_type`, `gate_duration_ns`,
   `gate_buffer_ns`, `gate_fidelity`) default to `None`, unspecified; the
   Krinner target gives its published CZ values. A config or file with

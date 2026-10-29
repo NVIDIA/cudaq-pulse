@@ -318,16 +318,15 @@ def _simulate_lowered(
 
 
 def _simulation_model(target: Any) -> Callable[..., SimulationResult]:
-    """The simulation model of *target*'s architecture, the one place a
-    system is matched to a model."""
-    architecture = getattr(target, "architecture", None)
-    model = _SIMULATION_MODELS.get(architecture) if isinstance(architecture, str) else None
+    """The simulator of *target*'s model, the one place a system is matched
+    to a model."""
+    model = target.model
     if model is None:
         raise UnsupportedError(
-            f"the simulator has a transmon model; this system ({architecture}) has no "
-            "simulation model. Export and hardware runs work."
+            f"the system {target.name!r} has no simulation model (its model is None). "
+            "Export and hardware runs work."
         )
-    return model
+    return model._simulate
 
 
 def _check_plant(lowered: Lowered, plant: Any) -> Any:
@@ -558,13 +557,6 @@ def _simulate_compiled(
         times_ns=(t_start, t_end),
         _states=[leaf for leaf, _, _ in leaves],
     )
-
-
-# Each architecture's simulation model, by the system's ``architecture``.
-# Only these lower a system's Hamiltonian; every other system is refused.
-_SIMULATION_MODELS: dict[str, Callable[..., SimulationResult]] = {
-    "transmon": _simulate_compiled,
-}
 
 
 def _simulate_tree(

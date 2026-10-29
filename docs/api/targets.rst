@@ -27,6 +27,22 @@ A target describes a device's qudits, couplings and decoherence; a device
    :members:
    :undoc-members:
 
+Simulation models
+-----------------
+
+A target's ``model`` says how the simulator treats its qudits and how many
+levels each has. Each model class declares its levels; an instance sets a
+qudit's own, keyed by the target's qudit index:
+
+.. code-block:: python
+
+   TargetDescription(name="chip", qubits=qubits, model=TransmonModel(levels={0: 4}))
+
+.. autoclass:: cudaq_pulse.targets.SimulationModel
+   :members: levels, levels_of, energies_hz
+
+.. autoclass:: cudaq_pulse.targets.TransmonModel
+
 Shipped targets
 ---------------
 

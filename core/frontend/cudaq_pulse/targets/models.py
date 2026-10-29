@@ -1,0 +1,110 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+"""Simulation models: how the simulator treats the qudits of a system.
+
+A target names its model (``TargetDescription.model``); the model, never a
+label, decides the physics. Each model class declares the levels of its
+qudits as the class attribute ``levels``, and an instance overrides them per
+qudit:
+
+    TransmonModel(levels={0: 4, 2: 2})
+
+keyed by the target's qudit index, the key of ``TargetDescription.qubits``
+and of ``simulate(levels=...)``.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, ClassVar
+
+from .._errors import InvalidTypeError, InvalidValueError, UnsupportedError
+
+if TYPE_CHECKING:
+    from .base import Qubit
+
+__all__ = ["SimulationModel", "TransmonModel"]
+
+
+class SimulationModel:
+    """A model of a system's qudits, with ``levels`` levels each.
+
+    The base model describes qudits by their 0-1 frequency alone, as evenly
+    spaced levels, and has no simulator: a system with it compiles and
+    exports, and ``simulate`` refuses it. Subclasses that simulate override
+    ``_simulate``.
+    """
+
+    #: Levels per qudit, unless the instance sets a qudit's own.
+    levels: ClassVar[int] = 2
+
+    __slots__ = ("_levels",)
+
+    def __init__(self, levels: dict[int, int] | None = None) -> None:
+        own: dict[int, int] = {}
+        if levels is not None:
+            if not isinstance(levels, Mapping):
+                raise InvalidTypeError(
+                    f"levels must be a dict of levels by qudit index, as in "
+                    f"{type(self).__name__}(levels={{0: 4}}); got {type(levels).__name__}"
+                )
+            for qudit, n in sorted(levels.items()):
+                if qudit.__class__ is not int or qudit < 0:
+                    raise InvalidValueError(
+                        f"levels keys are qudit indices (ints from 0), got {qudit!r}"
+                    )
+                if n.__class__ is not int or n < 2:
+                    raise InvalidValueError(
+                        f"qudit {qudit} needs 2 or more levels (an int), got {n!r}"
+                    )
+                own[qudit] = n
+        self._levels = own
+
+    def levels_of(self, qudit: int) -> int:
+        """The levels of qudit *qudit*: its own, else the model's."""
+        return self._levels.get(qudit, self.levels)
+
+    def energies_hz(self, qubit: Qubit, levels: int) -> list[float]:
+        """The energies of *qubit*'s first *levels* levels, in Hz from its ground
+        level: evenly spaced by its 0-1 frequency."""
+        return [k * qubit.frequency_hz for k in range(levels)]
+
+    def _simulate(self, *args: Any, **options: Any) -> Any:
+        raise UnsupportedError(
+            f"{type(self).__name__} has no simulator; this system compiles and "
+            "exports, and a model that simulates it is a SimulationModel subclass"
+        )
+
+    def __eq__(self, other: object) -> bool:
+        return other.__class__ is self.__class__ and other._levels == self._levels  # type: ignore[attr-defined]
+
+    def __hash__(self) -> int:
+        return hash((self.__class__, tuple(self._levels.items())))
+
+    def __repr__(self) -> str:
+        own = f"levels={self._levels!r}" if self._levels else ""
+        return f"{type(self).__name__}({own})"
+
+
+class TransmonModel(SimulationModel):
+    """Transmons: anharmonic oscillators, each level ``k`` at
+    ``k f01 + k (k - 1) / 2 alpha`` with ``alpha`` the qubit's anharmonicity,
+    coupled by exchange."""
+
+    levels: ClassVar[int] = 3
+
+    __slots__ = ()
+
+    def energies_hz(self, qubit: Qubit, levels: int) -> list[float]:
+        f01, alpha = qubit.frequency_hz, qubit.anharmonicity_hz
+        return [k * f01 + k * (k - 1) / 2 * alpha for k in range(levels)]
+
+    def _simulate(self, *args: Any, **options: Any) -> Any:
+        from ..runtime.simulate import _simulate_compiled
+
+        return _simulate_compiled(*args, **options)

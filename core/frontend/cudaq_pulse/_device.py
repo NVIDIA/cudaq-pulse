@@ -43,6 +43,7 @@ from ._errors import (
 )
 from .targets._registry import NoTargetError, UnknownTargetError
 from .targets.base import _EXCHANGE, TargetDescription, _coupling_kind
+from .targets.models import SimulationModel
 
 __all__ = [
     "Device",
@@ -113,7 +114,7 @@ def _fingerprint(target: TargetDescription, layout: tuple[int, ...], calibration
         ]
     crosstalk = [(x.qubit_a, x.qubit_b, x.static_zz_hz) for x in target.crosstalk]
     content: tuple[Any, ...] = (
-        target.architecture,
+        target.model,
         target.clock_ghz,
         qubits,
         couplings,
@@ -275,8 +276,10 @@ class Device:
     run its own clock, a whole-cycle ratio of it (see ``cudaq_pulse.controller``).
 
     ``qubit_freq[q]`` is the 0-1 transition frequency of qudit ``q`` (Hz) and
-    ``transition_freq[q, i, j]`` that of levels ``i`` and ``j``; both are
-    indexed by the user's qudit numbering and are read-only arrays.
+    ``transition_freq[q, i, j]`` that of levels ``i`` and ``j``, over the
+    levels the target's model gives each qudit (NaN past a qudit's last
+    level); both are indexed by the user's qudit numbering and are read-only
+    arrays.
     """
 
     def __init__(
@@ -319,14 +322,14 @@ class Device:
         if self._arrays is None:
             import numpy as np
 
-            levels = 3 if self.target.architecture == "transmon" else 2
-            n = len(self.layout)
-            f01 = np.array([self.target.qubits[p].frequency_hz for p in self.layout], dtype=float)
-            energies = np.zeros((n, levels))
-            energies[:, 1] = f01
-            if levels > 2:
-                alpha = np.array([self.target.qubits[p].anharmonicity_hz for p in self.layout])
-                energies[:, 2] = 2 * f01 + alpha
+            target = self.target
+            model = target.model if target.model is not None else SimulationModel()
+            qubits = [target.qubits[p] for p in self.layout]
+            levels = [model.levels_of(p) for p in self.layout]
+            f01 = np.array([q.frequency_hz for q in qubits], dtype=float)
+            energies = np.full((len(qubits), max(levels, default=2)), np.nan)
+            for row, qubit, n in zip(energies, qubits, levels):
+                row[:n] = model.energies_hz(qubit, n)
             transitions = np.abs(energies[:, None, :] - energies[:, :, None])
             self._arrays = (_read_only(f01), _read_only(transitions))
         return self._arrays

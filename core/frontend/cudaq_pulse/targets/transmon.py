@@ -139,7 +139,6 @@ def _build_published_krinner() -> TargetDescription:
         name="transmon_krinner_17q",
         qubits=qubits,
         couplings=couplings,
-        architecture="transmon",
         attribution=_k.CITATION,
     )
 
@@ -234,5 +233,4 @@ def transmon_generic(
         name=f"transmon_generic_{n_qubits}q_{topology}",
         qubits=qubits,
         couplings=couplings,
-        architecture="transmon",
     )
