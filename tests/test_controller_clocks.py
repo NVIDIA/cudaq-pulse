@@ -722,6 +722,14 @@ def test_an_answer_on_a_link_between_controllers_is_budgeted_with_their_start_un
     assert _due(_call_across(reach_both=False), b=1) == _due(_call_across(reference=0.5), b=1)
 
 
+def test_an_answer_sent_and_taken_on_one_controller_is_budgeted_without_uncertainty():
+    # Measured and corrected on controllers[0], over a link that reaches both.
+    assert _due(_call_across(), b=1) == _due(_call_across(reference=0.5), b=1)
+    # Taken on controllers[1], the same call adds both uncertainties.
+    qpu = _call_across()
+    assert _due(qpu) == _due(qpu, b=1) + 6
+
+
 @pulse.kernel
 def branch_on_both(a, b):
     ra, rta = get_readout_line(a)

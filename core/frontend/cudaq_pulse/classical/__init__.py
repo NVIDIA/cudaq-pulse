@@ -354,11 +354,17 @@ class Link:
 
     def attribute(self, uncertainty_ns: float = 0.0) -> str:
         """The link as an entry of the module attribute ``classical.links``;
-        an answer's budget adds *uncertainty_ns* to its feedback latency."""
+        *uncertainty_ns* is how far apart the starts of the controllers it
+        joins may be, which an answer taken on another controller than the
+        one that sent the request adds to its budget."""
+        uncertainty = (
+            f"start_uncertainty_ns = {float(uncertainty_ns)!r} : f64, " if uncertainty_ns else ""
+        )
         return (
             f"{{fixed_ns = {float(self.fixed_ns)!r} : f64, "
             f"bytes_per_ns = {float(self.bytes_per_ns)!r} : f64, "
-            f"feedback_ns = {float(self.feedback_ns + uncertainty_ns)!r} : f64, "
+            f"feedback_ns = {float(self.feedback_ns)!r} : f64, "
+            f"{uncertainty}"
             f"max_in_flight = {self.max_in_flight} : i64, "
             f"slot_bytes = {self.slot_bytes} : i64}}"
         )

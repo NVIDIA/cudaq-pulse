@@ -795,9 +795,9 @@ class ControlSystem:
         self, machine: MachineModel, used: Sequence[int], program_ghz: float
     ) -> dict[int, float]:
         """For each link of *used* that joins controllers, the start
-        uncertainty between the two of them known least well, in ns: a
-        request may leave one and its answer be taken on the other, so its
-        budget adds it."""
+        uncertainty between the two of them known least well, in ns: the
+        budget of a call whose sender and taker the scheduler cannot tell
+        adds it."""
         each = self._start_uncertainty(self._clock_plan(program_ghz))
         found: dict[int, float] = {}
         for link_id in set(used):

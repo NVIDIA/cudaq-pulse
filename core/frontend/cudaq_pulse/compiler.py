@@ -429,8 +429,8 @@ class MachineModel:
         self, used: Sequence[int], uncertainty_ns: Mapping[int, float] | None = None
     ) -> str:
         """The module attribute ``classical.links`` for the links in *used*;
-        *uncertainty_ns* is the start uncertainty an answer's budget adds on
-        each link that joins controllers (see ``ControlSystem``)."""
+        *uncertainty_ns* is the start uncertainty of each link that joins
+        controllers (see ``ControlSystem``)."""
         if uncertainty_ns is None:
             entries = ", ".join(
                 f'"{link}" = {self.links.get(link, Link()).attribute()}'

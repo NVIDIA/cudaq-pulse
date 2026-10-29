@@ -13,8 +13,15 @@
 // dictionary from the link id (as a string) to a dictionary with any of
 // `fixed_ns` (fixed cost of sending a request), `bytes_per_ns` (bandwidth;
 // 0 for unbounded), `feedback_ns` (from an answer arriving to a pulse being
-// able to use it), `max_in_flight` (requests a link holds at once) and
-// `slot_bytes` (the largest request or answer, header included).
+// able to use it), `start_uncertainty_ns` (on a link that joins controllers,
+// how far apart the starts of the two it joins known least well may be),
+// `max_in_flight` (requests a link holds at once) and `slot_bytes` (the
+// largest request or answer, header included).
+//
+// An answer's budget adds the start uncertainty between the controller that
+// sends the request and the one that takes the answer: none when one
+// controller does both, the link's `start_uncertainty_ns` when the module's
+// `pulse.controllers` (see Controllers.h) does not say which they are.
 //
 // `annotateClassicalCalls` writes on every `classical.submit` the attributes
 // scheduling reads: `classical.submit_cycles` (how long the submission holds
@@ -33,9 +40,11 @@
 
 #pragma once
 
+#include "cudaq-pulse/Analysis/Controllers.h"
 #include "cudaq-pulse/Dialect/Classical/Schema.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
 
@@ -51,6 +60,7 @@ struct LinkModel {
   double fixedNs = 0.0;
   double bytesPerNs = 0.0;
   double feedbackNs = 0.0;
+  double uncertaintyNs = 0.0;
   int64_t maxInFlight = 64;
   int64_t slotBytes = 1024;
 };
@@ -74,6 +84,7 @@ inline LinkModel linkModel(mlir::ModuleOp module, int64_t device) {
   link.fixedNs = number("fixed_ns", link.fixedNs);
   link.bytesPerNs = number("bytes_per_ns", link.bytesPerNs);
   link.feedbackNs = number("feedback_ns", link.feedbackNs);
+  link.uncertaintyNs = number("start_uncertainty_ns", link.uncertaintyNs);
   link.maxInFlight = static_cast<int64_t>(
       number("max_in_flight", static_cast<double>(link.maxInFlight)));
   link.slotBytes = static_cast<int64_t>(
@@ -111,15 +122,20 @@ inline int64_t submitCycles(CallableOp callable, const LinkModel &link,
 
 /// From the end of a submission until its answer is due: the maximum
 /// latency (the timeout in timeout mode, or the timeout of the wait that
-/// takes the answer) and the link's feedback latency.
+/// takes the answer), the link's feedback latency and the start uncertainty
+/// between sender and taker (`uncertaintyNs`, else the link's).
 inline int64_t
 budgetCycles(CallableOp callable, const LinkModel &link, double clockGHz,
-             std::optional<double> waitTimeoutNs = std::nullopt) {
+             std::optional<double> waitTimeoutNs = std::nullopt,
+             std::optional<double> uncertaintyNs = std::nullopt) {
   double latency = waitTimeoutNs ? *waitTimeoutNs
                    : callable.getMode() == "timeout"
                        ? callable.getTimeoutNs()->convertToDouble()
                        : callable.getLatencyMaxNs().convertToDouble();
-  return ceilCycles(latency, clockGHz) + ceilCycles(link.feedbackNs, clockGHz);
+  return ceilCycles(latency, clockGHz) +
+         ceilCycles(link.feedbackNs +
+                        uncertaintyNs.value_or(link.uncertaintyNs),
+                    clockGHz);
 }
 
 /// The waits that take `future`, following it into and out of
@@ -142,6 +158,110 @@ inline llvm::SmallVector<WaitOp, 1> waitsOf(SubmitOp submit) {
   llvm::SmallVector<WaitOp, 1> found;
   waitsOf(submit.getFuture(), found);
   return found;
+}
+
+/// Adds to `found` the controllers of the readouts `value` is computed from;
+/// false if one is on no known controller.
+inline bool readers(mlir::Value value, const pulse::Controllers &controllers,
+                    pulse::AllocationTracer &trace,
+                    llvm::SmallVectorImpl<int64_t> &found,
+                    llvm::DenseSet<mlir::Value> &seen) {
+  if (!seen.insert(value).second)
+    return true;
+  if (auto readout = value.getDefiningOp<pulse::ReadoutOp>()) {
+    if (value != readout.getResult())
+      return true;
+    int64_t reader = controllers.of(readout->getOperand(0), trace);
+    found.push_back(reader);
+    return reader >= 0;
+  }
+  if (mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType, pulse::ToneType,
+                LinkType>(value.getType()))
+    return true;
+  mlir::Operation *def = value.getDefiningOp();
+  if (!def || mlir::isa<WaitOp, SubmitOp>(def) || def->getNumRegions())
+    return true;
+  for (mlir::Value operand : def->getOperands())
+    if (!readers(operand, controllers, trace, found, seen))
+      return false;
+  return true;
+}
+
+/// Adds to `found` the controllers of the pulses that use `value`, or of
+/// the branches on it; false if one of them is unknown, or `value` leaves
+/// what can be followed.
+inline bool takers(mlir::Value value, const pulse::Controllers &controllers,
+                   pulse::AllocationTracer &trace,
+                   llvm::SmallVectorImpl<int64_t> &found,
+                   llvm::DenseSet<mlir::Value> &seen) {
+  if (!seen.insert(value).second)
+    return true;
+  auto pulse = [&](mlir::Operation *op) {
+    int64_t taker = controllers.of(op->getOperand(0), trace);
+    found.push_back(taker);
+    return taker >= 0;
+  };
+  for (mlir::OpOperand &use : value.getUses()) {
+    mlir::Operation *user = use.getOwner();
+    if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(user)) {
+      if (!pulse(user))
+        return false;
+    } else if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(user)) {
+      bool known = true;
+      branch->walk([&](mlir::Operation *inner) {
+        if (known &&
+            mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(inner))
+          known = pulse(inner);
+      });
+      if (!known)
+        return false;
+      for (mlir::Value result : branch.getResults())
+        if (!takers(result, controllers, trace, found, seen))
+          return false;
+    } else if (mlir::isa<mlir::scf::YieldOp>(user)) {
+      auto branch = mlir::dyn_cast<mlir::scf::IfOp>(user->getParentOp());
+      if (!branch || !takers(branch->getResult(use.getOperandNumber()),
+                             controllers, trace, found, seen))
+        return false;
+    } else if (user->getNumRegions() || user->getNumResults() == 0 ||
+               mlir::isa<SubmitOp>(user)) {
+      return false;
+    } else {
+      for (mlir::Value result : user->getResults())
+        if (!takers(result, controllers, trace, found, seen))
+          return false;
+    }
+  }
+  return true;
+}
+
+/// On several controllers, the start uncertainty between the controllers
+/// that send the request of `submit` and take its answer, in ns: none when
+/// one controller does both. Empty when they are not known.
+inline std::optional<double>
+callUncertaintyNs(SubmitOp submit, const pulse::Controllers &controllers,
+                  pulse::AllocationTracer &trace) {
+  if (!controllers.enabled())
+    return std::nullopt;
+  llvm::SmallVector<int64_t, 2> senders, users;
+  llvm::DenseSet<mlir::Value> seen;
+  for (mlir::Value operand : submit->getOperands())
+    if (!readers(operand, controllers, trace, senders, seen))
+      return std::nullopt;
+  seen.clear();
+  for (WaitOp wait : waitsOf(submit))
+    for (mlir::Value value : wait.getValues())
+      if (!takers(value, controllers, trace, users, seen))
+        return std::nullopt;
+  if (senders.empty() || users.empty())
+    return std::nullopt;
+  double most = 0.0;
+  for (int64_t sender : senders)
+    for (int64_t user : users)
+      if (sender != user)
+        most = std::max(most, controllers.uncertainty(sender) +
+                                  controllers.uncertainty(user));
+  return most;
 }
 
 /// The timeout of the wait that takes the answer of `submit`, if it has one.
@@ -178,6 +298,8 @@ inline bool annotateClassicalCalls(mlir::func::FuncOp function) {
   double clock = moduleClockGHz(module);
   mlir::SymbolTable symbols(module);
   mlir::Builder b(function.getContext());
+  pulse::Controllers controllers(module);
+  pulse::AllocationTracer trace;
   bool any = false;
   // The timelines on each link, for the submissions that have one.
   std::vector<std::pair<mlir::Operation *, int64_t>> shared;
@@ -193,8 +315,9 @@ inline bool annotateClassicalCalls(mlir::func::FuncOp function) {
       attrs.set("classical.submit_cycles",
                 b.getI64IntegerAttr(submitCycles(callable, link, clock)));
       attrs.set("classical.budget_cycles",
-                b.getI64IntegerAttr(budgetCycles(callable, link, clock,
-                                                 waitTimeoutNs(submit))));
+                b.getI64IntegerAttr(budgetCycles(
+                    callable, link, clock, waitTimeoutNs(submit),
+                    callUncertaintyNs(submit, controllers, trace))));
       attrs.set("classical.device", b.getI64IntegerAttr(callable.getDevice()));
       attrs.set("classical.max_in_flight",
                 b.getI64IntegerAttr(link.maxInFlight));

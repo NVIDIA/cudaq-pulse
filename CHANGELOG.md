@@ -93,8 +93,9 @@ behavior may change in any 0.x release.
   latency and both uncertainties (`rcp` waits that long for each pair of
   reader and user, and a pulse on the reader's controller its feedback
   latency alone; starting sooner is a `ControllerLimitError` naming the
-  cycle), and an answer on a link that
-  reaches several controllers is due that much later.
+  cycle), and an answer taken on another controller than the one that sent
+  the request is due that much later (the two controllers' uncertainty; the
+  link's worst pair when the scheduler cannot tell which they are).
 - **Processors.** `pulse.Processor` is a classical processor on a
   controller (`Controller(processors=[...])`), which runs the classical
   functions called on its `links`; a link belongs to at most one processor

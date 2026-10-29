@@ -21,6 +21,7 @@
 // order are per timeline: each holds no more requests than its share and
 // sends its own in program order.
 
+#include "llvm/ADT/StringMap.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -114,6 +115,23 @@ struct PulseClassicalCheckPass
     bool failed = false;
     double clock = classical::moduleClockGHz(module);
 
+    // On several controllers, the most start uncertainty a function's calls
+    // add to its budget (the link's when a call's is not known).
+    pulse::Controllers controllers(module);
+    llvm::StringMap<std::optional<double>> uncertainty;
+    if (controllers.enabled()) {
+      pulse::AllocationTracer trace;
+      module.walk([&](classical::SubmitOp submit) {
+        auto found = classical::callUncertaintyNs(submit, controllers, trace);
+        auto [it, inserted] =
+            uncertainty.try_emplace(submit.getCallee(), found);
+        if (!inserted && it->second)
+          it->second =
+              found ? std::optional<double>(std::max(*it->second, *found))
+                    : std::nullopt;
+      });
+    }
+
     for (auto callable : module.getOps<classical::CallableOp>()) {
       classical::LinkModel link =
           classical::linkModel(module, callable.getDevice());
@@ -127,8 +145,12 @@ struct PulseClassicalCheckPass
         failed = true;
       }
       if (auto deadline = callable.getDeadlineNs()) {
-        int64_t due = classical::submitCycles(callable, link, clock) +
-                      classical::budgetCycles(callable, link, clock);
+        auto calls = uncertainty.find(callable.getSymName());
+        int64_t due =
+            classical::submitCycles(callable, link, clock) +
+            classical::budgetCycles(callable, link, clock, std::nullopt,
+                                    calls == uncertainty.end() ? std::nullopt
+                                                               : calls->second);
         int64_t limit =
             classical::ceilCycles(deadline->convertToDouble(), clock);
         if (due > limit) {

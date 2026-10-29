@@ -212,10 +212,13 @@ user, in the reader's cycles, and both controllers' start uncertainty.
 ``rcp`` and ``alap_rcp`` wait that long for each pair of reader and user,
 and a pulse on the reader's own controller waits its feedback latency
 alone; a program that starts the pulse sooner fails to compile with the
-cycle it may start at. An answer on a link that reaches several
-controllers is budgeted with the start uncertainty of the two of them
-known least well, since it may be taken on another controller than the
-one that sent the request; ``due_cycles`` includes it.
+cycle it may start at. An answer taken on another controller than the one
+that sent the request is budgeted with the two controllers' start
+uncertainty, and ``due_cycles`` includes it; one controller sending and
+taking it adds none. When the scheduler cannot tell which controllers they
+are (the request carries no measurement, or the answer leaves the kernel),
+the budget adds the start uncertainty of the two controllers the link
+reaches that are known least well.
 
 What the program computes at run time is converted by the same rule. A
 variable wait's ``length`` is clamped to its bounds, as the run clamps it,
