@@ -615,15 +615,16 @@ class _WaitLength:
 class _WaitLengths:
     """The variable waits of a module, checked together on every call."""
 
-    __slots__ = ("grid", "ok", "waits")
+    __slots__ = ("ok", "waits")
+
+    # Lengths a controller with a coarser clock than the program's can time.
+    grid = 1
 
     def __init__(self, waits: Sequence[tuple[Any, ...]], kernel: str, grid: int = 1) -> None:
         self.waits = tuple(
             _WaitLength(wait[0], wait[1], wait[2], kernel, wait[3] if len(wait) > 3 else None)
             for wait in waits
         )
-        # Lengths a controller with a coarser clock than the program's can time.
-        self.grid = grid
         # floor(x + 0.5) is in [lowest, highest] exactly when
         # lowest <= x + 0.5 < highest + 1, which NaN fails; without a lowest,
         # -1e400 (minus infinity) < x + 0.5 also fails for minus infinity.
@@ -658,6 +659,21 @@ class _WaitLengths:
                     f"{cycles} cycles isn't a whole number of timesteps: the nearest "
                     f"lengths are {lower} and {lower + self.grid}"
                 )
+
+
+class _GridWaitLengths(_WaitLengths):
+    """Variable waits on lines that move in timesteps of *grid* cycles. Its
+    own class keeps the grid off the waits of every module on one clock."""
+
+    __slots__ = ("grid",)
+
+    def __init__(self, waits: Sequence[tuple[Any, ...]], kernel: str, grid: int) -> None:
+        self.grid = grid
+        super().__init__(waits, kernel, grid)
+
+
+def _wait_lengths(waits: Sequence[tuple[Any, ...]], kernel: str, grid: int) -> _WaitLengths:
+    return _WaitLengths(waits, kernel) if grid == 1 else _GridWaitLengths(waits, kernel, grid)
 
 
 class Lowered:
@@ -1109,7 +1125,7 @@ def build(
         options=options,
         scheduled=scheduled,
         waits=(
-            _WaitLengths(builder.variable_waits, name, 1 if clocks is None else clocks.lcm)
+            _wait_lengths(builder.variable_waits, name, 1 if clocks is None else clocks.lcm)
             if builder.variable_waits
             else None
         ),
