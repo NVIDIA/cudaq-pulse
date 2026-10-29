@@ -56,6 +56,40 @@ def attribute_error(obj: Any, attr: str) -> str:
     return f"cannot resolve attribute {attr!r} on {type(obj).__name__}" + did_you_mean(attr, names)
 
 
+def _qudit_name(local_vars: dict[str, Any], qudit: IRValue) -> str | None:
+    """The name *local_vars* give *qudit*: ``"qs[1]"`` for an element of a
+    list of qudits, else the first name bound to it."""
+    for name, value in local_vars.items():
+        if isinstance(value, list):
+            for i, item in enumerate(value):
+                if item is qudit:
+                    return f"{name}[{i}]"
+    for name, value in local_vars.items():
+        if value is qudit and not name.startswith("."):
+            return name
+    return None
+
+
+def qudit_attribute_error(
+    local_vars: dict[str, Any], qudit: IRValue, attr: str
+) -> CompilationError:
+    """The error for reading attribute *attr* of *qudit* while tracing."""
+    name = _qudit_name(local_vars, qudit)
+    if name is None or "[" not in name:
+        where = "a qudit" if name is None else f"qudit {name!r}"
+        handle = "q" if name is None else name
+        example = f"value: float, called with TABLE[{handle}.{attr}]"
+    else:
+        where = f"qudit {name!r}"
+        register = name.split("[")[0]
+        example = f"values: list[float], called with [TABLE[q.{attr}] for q in {register}]"
+    return CompilationError(
+        f"cannot read .{attr} of {where} while the kernel is traced: in a kernel a qudit "
+        "is a value of the program, not a handle. Look the value up on the host and pass "
+        f"it in as a parameter, e.g. {example}"
+    )
+
+
 def operand_error(fname: str, call_args: list[Any]) -> CompilationError:
     """The error for the first operand of *fname* that is not of its type."""
     index, want = 0, _OPERAND_TYPES[fname][0]

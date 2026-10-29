@@ -350,12 +350,6 @@ class PackedIRBuilder:
 
         # --- Qubit alloc (not encoded, just tracked) ---
         if kind in ("pulse.qudit_arg", "pulse.qudit_alloc"):
-            slot = a.get("slot")
-            if slot is not None:
-                # A runtime qudit: slot k is recorded as -1 - k.
-                for r in results:
-                    self._qref_to_qubit[r.vid] = -1 - slot
-                return results
             idx = a.get("index", self._next_qubit)
             for r in results:
                 self._qref_to_qubit[r.vid] = idx
@@ -1407,14 +1401,14 @@ class PackedIRBuilder:
 
     @property
     def qubits(self) -> tuple[int, ...]:
-        """Indices of the allocated qudits, not counting runtime qudits."""
-        return tuple(sorted(q for q in set(self._qref_to_qubit.values()) if q >= 0))
+        """Indices of the allocated qudits (runtime qudit k: -1 - k)."""
+        return tuple(sorted(set(self._qref_to_qubit.values())))
 
     @property
     def used_qubits(self) -> tuple[int, ...]:
-        """Indices of the qudits the program gets a drive or readout line on,
-        not counting runtime qudits."""
-        return tuple(sorted(q for q in set(self._line_qubit.values()) if q >= 0))
+        """Indices of the qudits the program gets a drive or readout line on
+        (runtime qudit k: -1 - k)."""
+        return tuple(sorted(set(self._line_qubit.values())))
 
     @property
     def used_slots(self) -> tuple[int, ...]:

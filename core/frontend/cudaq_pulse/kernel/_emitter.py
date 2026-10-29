@@ -768,24 +768,6 @@ def _attribute_error(obj: Any, attr: str) -> str:
     return attribute_error(obj, attr)
 
 
-def _qudit_attribute_error(name: str | None, attr: str) -> str:
-    """The error for reading attribute *attr* of qudit parameter *name*
-    while tracing."""
-    if name is None or "[" not in name:
-        where = "a qudit" if name is None else f"qudit {name!r}"
-        handle = "q" if name is None else name
-        example = f"value: float, called with TABLE[{handle}.{attr}]"
-    else:
-        where = f"qudit {name!r}"
-        register = name.split("[")[0]
-        example = f"values: list[float], called with [TABLE[q.{attr}] for q in {register}]"
-    return (
-        f"cannot read .{attr} of {where} while the kernel is traced: in a kernel a qudit "
-        "is a value of the program, not a handle. Look the value up on the host and pass "
-        f"it in as a parameter, e.g. {example}"
-    )
-
-
 def _describe(value: Any) -> str:
     """How an operand error names what the kernel passed."""
     if value.__class__ is IRValue:
@@ -906,15 +888,6 @@ def _sample_envelope(
             )
         samples.append(number.real)
     return samples
-
-
-# Of a sampled waveform: the rates its samples were made for (None: one per
-# program cycle), and how to make it again (None: it can't be): ("custom",
-# duration, envelope, result types) or ("op", op name, operands, result
-# types, attributes).
-_Sampled = tuple[frozenset[Any], tuple[Any, ...] | None]
-# The ops that play a waveform (their second operand) on a line.
-_PLAYS = frozenset({"drive", "readout"})
 
 
 def _unpack_error(value: Any, count: int) -> str:
@@ -1294,20 +1267,17 @@ class PulseIREmitter:
         "_can_roll",
         "_slots",
         "_durations",
-        "_sampled",
         "_mutated",
         "_depth",
         "_acquired",
         "_lines",
         "_unroll",
         "_one_arm",
-        "_qudit_names",
     )
 
     _can_roll: bool
     _slots: dict[int, tuple[list[Any], int, IRValue]]
     _durations: dict[int, int]
-    _sampled: dict[int, _Sampled] | None
     _mutated: dict[int, tuple[Any, Any]] | None
     _depth: int
     _acquired: list[int]
@@ -1316,7 +1286,6 @@ class PulseIREmitter:
     # Names a measurement-conditioned if bound in one arm only, with the
     # branch instruction; set by the first such if.
     _one_arm: dict[str, tuple[bc.DecodedCode, int]]
-    _qudit_names: dict[int, str]
 
     def __init__(
         self,
@@ -1336,13 +1305,11 @@ class PulseIREmitter:
             self._can_roll = caller._can_roll
             self._slots = caller._slots
             self._durations = caller._durations
-            self._sampled = caller._sampled
             self._mutated = caller._mutated
             self._depth = caller._depth + 1
             self._acquired = caller._acquired
             self._lines = caller._lines
             self._unroll = caller._unroll
-            self._qudit_names = caller._qudit_names
             return
         self._can_roll = getattr(builder, "supports_regions", False)
         self._unroll = resolve_unroll_threshold(getattr(builder, "unroll_threshold", None))
@@ -1351,15 +1318,6 @@ class PulseIREmitter:
         self._slots = {}
         # Waveform vid -> duration in clock cycles, when known at trace time.
         self._durations = {}
-        # When the lines play different sample rates: waveform vid -> the
-        # rates its samples were made for, and how custom() makes them again
-        # for the rate of the line that plays it (None: the samples were given,
-        # or come through other waveforms).
-        try:
-            mixed = builder.sample_rate_of is not None
-        except AttributeError:
-            mixed = False
-        self._sampled = {} if mixed else None
         # While a rolled loop body or a branch arm is traced: id -> (container,
         # contents before) for each list, dict or set a Python call changed.
         self._mutated = None
@@ -1368,8 +1326,6 @@ class PulseIREmitter:
         # Lines acquired so far, counted across inlined calls.
         self._acquired = [0]
         self._lines = _Lines()
-        # Qudit vid -> the kernel parameter it is ("q", "qs[1]"), for errors.
-        self._qudit_names = {}
         if not _PULSE_FUNCTIONS:
             _load_pulse_functions()
 
@@ -1515,9 +1471,9 @@ class PulseIREmitter:
                             push(getattr(obj, arg))
                         except (AttributeError, TypeError) as e:
                             if obj.__class__ is IRValue and obj.vtype == "qref":
-                                raise CompilationError(
-                                    _qudit_attribute_error(self._qudit_names.get(obj.vid), arg)
-                                ) from e
+                                from ._emit_errors import qudit_attribute_error
+
+                                raise qudit_attribute_error(self.locals, obj, arg) from e
                             raise CompilationError(_attribute_error(obj, arg)) from e
 
                 elif op is _subscr:
@@ -2812,8 +2768,10 @@ class PulseIREmitter:
         operands = tuple(
             self._select_waveform(v) if v.__class__ is _Choice else v for v in operands
         )
-        if self._sampled is not None and fname in _PLAYS:
-            operands = self._for_line(fname, operands)
+        if getattr(self, "_sampled", None) is not None and fname in ("drive", "readout"):
+            from ._durations import for_line
+
+            operands = for_line(self, fname, operands)
         results: tuple[Any, ...] = b._unwatched_emit(op_name, operands, out_types, attrs)
         if fname in _MAKES_WAVEFORM:
             if fname in _WAVEFORMS:
@@ -2824,8 +2782,10 @@ class PulseIREmitter:
                 self._durations[results[0].vid] = duration
             else:
                 self._durations.pop(results[0].vid, None)
-            if self._sampled is not None:
-                self._track_samples(fname, None, operands, out_types, attrs, results[0].vid)
+            if getattr(self, "_sampled", None) is not None:
+                from ._durations import track_samples
+
+                track_samples(self, fname, None, operands, out_types, attrs, results[0].vid)
         return results
 
     def _select_waveform(self, choice: _Choice) -> IRValue:
@@ -2839,8 +2799,10 @@ class PulseIREmitter:
             known.pop(value.vid, None)
         else:
             known[value.vid] = duration
-        if self._sampled is not None:
-            self._track_samples("select", None, tuple(_choice_leaves(choice)), (), {}, value.vid)
+        if getattr(self, "_sampled", None) is not None:
+            from ._durations import track_samples
+
+            track_samples(self, "select", None, tuple(_choice_leaves(choice)), (), {}, value.vid)
         return value
 
     def _emit_per_arm(
@@ -2888,8 +2850,10 @@ class PulseIREmitter:
         out_types: tuple[str, ...],
     ) -> tuple[Any, ...]:
         """Emit the op *fname* with the values an arm of a choice gives it."""
-        if self._sampled is not None and fname in _PLAYS:
-            operands = self._for_line(fname, operands)
+        if getattr(self, "_sampled", None) is not None and fname in ("drive", "readout"):
+            from ._durations import for_line
+
+            operands = for_line(self, fname, operands)
         try:
             results: tuple[Any, ...] = self.b.emit(op_name, operands, out_types, attrs)
         except _ChosenOperandError:
@@ -2901,8 +2865,10 @@ class PulseIREmitter:
                 duration = self._waveform_duration(fname, operands, attrs)
             if duration.__class__ is int:
                 self._durations[results[0].vid] = duration
-            if self._sampled is not None:
-                self._track_samples(fname, op_name, operands, out_types, attrs, results[0].vid)
+            if getattr(self, "_sampled", None) is not None:
+                from ._durations import track_samples
+
+                track_samples(self, fname, op_name, operands, out_types, attrs, results[0].vid)
         return results
 
     def _run_genexpr(self, code: types.CodeType, call_args: list[StackVal]) -> None:
@@ -2915,7 +2881,7 @@ class PulseIREmitter:
             closures[name] = (
                 self._fn_closures.get(name, _EMPTY_CELL) if value is _MISSING else value
             )
-        helper = PulseIREmitter(
+        helper = self.__class__(
             self.b, fn_globals=self._fn_globals, fn_closures=closures, caller=self
         )
         yielded: list[Any] = []
@@ -2963,7 +2929,7 @@ class PulseIREmitter:
                     f"{fn.__name__}: expected {len(params)} args, got {len(call_args)}"
                 )
 
-        helper = PulseIREmitter(
+        helper = self.__class__(
             self.b,
             fn_globals=fn.__globals__,
             fn_closures=_extract_closures(fn) if fn.__closure__ else {},
@@ -3148,17 +3114,12 @@ class PulseIREmitter:
                 attrs[optional[0]] = optional[1]
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
 
-        if self._sampled is not None and fname in _PLAYS:
-            operands = self._for_line(fname, operands)
         op_name = _OP_NAMES[fname]
         results: tuple[IRValue, ...]
         if fname in _MAKES_WAVEFORM:
-            envelope = None
             if fname in _WAVEFORMS:
                 duration = attrs.get("duration")
                 if fname == "custom":
-                    if self._sampled is not None:
-                        envelope = (duration, attrs.get("name"))
                     attrs, duration = self._custom_samples(duration, attrs)
                     op_name = _OP_NAMES["custom_samples"]
                 elif duration.__class__ is not int:
@@ -3177,10 +3138,6 @@ class PulseIREmitter:
                     self._durations.pop(results[0].vid, None)
                 else:
                     self._durations[results[0].vid] = duration
-                if self._sampled is not None:
-                    self._track_samples(
-                        fname, op_name, operands, out_types, attrs, results[0].vid, envelope
-                    )
         else:
             try:
                 results = self.b.emit(op_name, operands, out_types, attrs)
@@ -3210,16 +3167,6 @@ class PulseIREmitter:
                 current = lines.current(value)
                 if current is not None and current is not value:
                     local_vars[name] = current
-
-    def _track_samples(self, *args: Any) -> None:
-        from ._durations import track_samples
-
-        track_samples(self, *args)
-
-    def _for_line(self, fname: str, operands: tuple[Any, ...]) -> tuple[Any, ...]:
-        from ._durations import for_line
-
-        return for_line(self, fname, operands)
 
     def _waveform_duration(
         self, fname: str, operands: tuple[IRValue, ...], attrs: dict[str, Any]

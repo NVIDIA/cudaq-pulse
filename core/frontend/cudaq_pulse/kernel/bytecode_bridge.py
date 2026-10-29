@@ -20,7 +20,7 @@ from .._device import Qudit, Register
 from ._bytecode_normalize import DecodedCode, decode
 from ._emitter import PulseIREmitter, _extract_closures, add_source_note
 from ._unroll import resolve_unroll_threshold
-from .ir_builder import CompilationError, PythonIRBuilder, Slot, SlotRegister
+from .ir_builder import CompilationError, PythonIRBuilder
 
 
 def compile_kernel_bytecode(
@@ -71,24 +71,21 @@ def _trace(
         raise CompilationError(f"{fn.__name__}: expected {len(params)} args, got {len(args)}")
 
     closures = _extract_closures(fn) if fn.__closure__ else {}
-    emitter = PulseIREmitter(builder, fn.__globals__, closures)
+    if builder.sample_rate_of is None:
+        emitter = PulseIREmitter(builder, fn.__globals__, closures)
+    else:
+        from ._mixed_rates import MixedRates
+
+        emitter = MixedRates(builder, fn.__globals__, closures)
     local_vars = emitter.locals
-    named = emitter._qudit_names
     for name, val in zip(params, args):
-        t = type(val)
-        if t is Qudit or t is Slot:
-            key = "index" if t is Qudit else "slot"
-            (ir_val,) = builder.emit(qudit_op, (), ("qref",), {key: val.index})
-            named[ir_val.vid] = name
+        if type(val) is Qudit:
+            (ir_val,) = builder.emit(qudit_op, (), ("qref",), {"index": val.index})
             local_vars[name] = ir_val
-        elif t is Register or t is SlotRegister:
-            key = "index" if t is Register else "slot"
-            values = []
-            for i, q in enumerate(val):
-                (ir_val,) = builder.emit(qudit_op, (), ("qref",), {key: q.index})
-                named[ir_val.vid] = f"{name}[{i}]"
-                values.append(ir_val)
-            local_vars[name] = values
+        elif type(val) is Register:
+            local_vars[name] = [
+                builder.emit(qudit_op, (), ("qref",), {"index": q.index})[0] for q in val
+            ]
         else:
             local_vars[name] = val
 

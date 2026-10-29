@@ -51,8 +51,6 @@ from .ir_builder import (
     CompilationError,
     IRValue,
     Parameter,
-    Slot,
-    SlotRegister,
     SymbolicValueError,
     is_symbolic,
 )
@@ -338,7 +336,6 @@ class _Entry:
         "pins",
         "runtime",
         "n_qudits",
-        "relocated",
     )
     # Set only on the entries kept to be scheduled again.
     n_qudits: int
@@ -350,7 +347,6 @@ class _Entry:
         returns: Any,
         pins: tuple[Any, ...],
         runtime: tuple[int, ...],
-        relocated: bool = False,
     ):
         self.lowered = lowered
         self.guard = guard
@@ -358,8 +354,6 @@ class _Entry:
         self.tick = next(_ticks)
         # The parameters that are function arguments of the module.
         self.runtime = runtime
-        # Whether some are list[float], Qudit or Register parameters.
-        self.relocated = relocated
         # Static arguments keyed by identity are kept alive with the entry.
         self.pins = pins
 
@@ -537,7 +531,7 @@ class _Placing(_Dispatcher):
 
     def _bound(self, entry: _Entry, values: tuple[Any, ...]) -> Lowered:
         kernel = self.kernel
-        if entry.relocated:
+        if entry.lowered._role is not None:
             return kernel._relocate(entry.lowered, values, entry.runtime)
         if entry.runtime:
             return entry.lowered.bind(kernel._runtime_values(values, entry.runtime))
@@ -617,7 +611,7 @@ class Kernel[**P]:
         # delays schedule again without tracing.
         self._traced: dict[Any, _Entry] = {}
         self._bind = _make_binder(fn)
-        self._dispatch = self._dispatcher_class()(
+        self._dispatch = self._dispatcher_type(
             self,
             CompileOptions(
                 schedule=root_schedule(self.schedule, None),
@@ -760,56 +754,26 @@ class Kernel[**P]:
                 return found
         fn = self.__wrapped__
         names = self._names
-        kinds = self._kinds
         while True:
             static, runtime = self._split
             trace_args = list(values)
-            for i in self._declared_float:
-                if i in runtime:
-                    continue
-                value = values[i]
-                if value.__class__ is float:
-                    from ._durations import Cycles
-
-                    trace_args[i] = Cycles(value)
-                elif kinds.get(i) == _VECTOR:
-                    from ._durations import Cycles
-
-                    # Each element is a float parameter's value, so a duration too.
-                    trace_args[i] = [Cycles(v) if v.__class__ is float else v for v in value]
-            parameters: list[str] = []
-            symbols: list[tuple[str, str, str, int | None]] = []
-            slotted: list[tuple[str, str, str, int | None]] = []
-            for i in runtime:
-                kind = kinds[i]
-                if kind == _FLOAT:
-                    trace_args[i] = Parameter(names[i], len(parameters), "f64")
-                    parameters.append(names[i])
-                    symbols.append((names[i], "float", names[i], None))
-                elif kind == _VECTOR:
-                    elements = []
-                    for k in range(len(values[i])):
-                        element = f"{names[i]}[{k}]"
-                        elements.append(Parameter(element, len(parameters), "f64"))
-                        parameters.append(element)
-                        symbols.append((element, "vector", names[i], k))
-                    trace_args[i] = elements
-                elif kind == _QUDIT:
-                    trace_args[i] = Slot(len(slotted))
-                    slotted.append((f"s{len(slotted)}", "slot", names[i], None))
-                else:
-                    first = len(slotted)
-                    trace_args[i] = SlotRegister(Slot(first + k) for k in range(len(values[i])))
-                    for k in range(len(values[i])):
-                        slotted.append((f"s{first + k}", "slot", names[i], k))
-            relocated = any(kinds[i] != _FLOAT for i in runtime)
-            role = _Role((*symbols, *slotted)) if relocated else None
             try:
-                lowered, builder = build(
-                    fn, trace_args, tuple(parameters), target, options, len(slotted), role
-                )
+                if self._relocatable:
+                    lowered, builder = self._build_placed(fn, trace_args, runtime, target, options)
+                else:
+                    for i in self._declared_float:
+                        if i not in runtime and values[i].__class__ is float:
+                            from ._durations import Cycles
+
+                            trace_args[i] = Cycles(values[i])
+                    for n, i in enumerate(runtime):
+                        trace_args[i] = Parameter(names[i], n, "f64")
+                    lowered, builder = build(
+                        fn, trace_args, tuple(names[i] for i in runtime), target, options
+                    )
                 break
             except SymbolicValueError as e:
+                kinds = self._kinds
                 promote = {
                     i
                     for i in runtime
@@ -826,12 +790,72 @@ class Kernel[**P]:
         returns = _return_spec(builder.returned, builder.readouts, self.__name__)
         guard = build_guard(fn, impure=builder.impure)
         pins = tuple(values[i] for i in static)
-        entry = _Entry(lowered, guard, returns, pins, runtime, relocated)
+        entry = _Entry(lowered, guard, returns, pins, runtime)
         if options.machine.line_delays_ns and lowered.scheduled:
             # Only a kept entry is scheduled again, for its qudits.
             entry.n_qudits = builder.n_qubits
             self._keep_traced(self._traced_key(values, target, options), entry)
         return entry
+
+    def _build_placed(
+        self,
+        fn: Any,
+        trace_args: list[Any],
+        runtime: tuple[int, ...],
+        target: Any,
+        options: CompileOptions,
+    ) -> tuple[Lowered, Any]:
+        """``build`` for a kernel with list, qudit or register parameters:
+        *trace_args*, the call's values, gets their tracing stand-ins."""
+        names = self._names
+        kinds = self._kinds
+        for i in self._declared_float:
+            if i in runtime:
+                continue
+            value = trace_args[i]
+            if value.__class__ is float:
+                from ._durations import Cycles
+
+                trace_args[i] = Cycles(value)
+            elif kinds.get(i) == _VECTOR:
+                from ._durations import Cycles
+
+                # Each element is a float parameter's value, so a duration too.
+                trace_args[i] = [Cycles(v) if v.__class__ is float else v for v in value]
+        parameters: list[str] = []
+        symbols: list[tuple[str, str, str, int | None]] = []
+        slotted: list[tuple[str, str, str, int | None]] = []
+        for i in runtime:
+            kind = kinds[i]
+            value = trace_args[i]
+            if kind == _FLOAT:
+                trace_args[i] = Parameter(names[i], len(parameters), "f64")
+                parameters.append(names[i])
+                symbols.append((names[i], "float", names[i], None))
+            elif kind == _VECTOR:
+                elements = []
+                for k in range(len(value)):
+                    element = f"{names[i]}[{k}]"
+                    elements.append(Parameter(element, len(parameters), "f64"))
+                    parameters.append(element)
+                    symbols.append((element, "vector", names[i], k))
+                trace_args[i] = elements
+            elif kind == _QUDIT:
+                # Slot k of the module traces as the qudit of index -1 - k.
+                trace_args[i] = Qudit(target, -1 - len(slotted), value.logical)
+                slotted.append((f"s{len(slotted)}", "slot", names[i], None))
+            else:
+                first = len(slotted)
+                trace_args[i] = Register(
+                    [Qudit(target, -1 - first - k, q.logical) for k, q in enumerate(value)]
+                )
+                for k in range(len(value)):
+                    slotted.append((f"s{first + k}", "slot", names[i], k))
+        # Promoting list parameters may leave only floats: a module of float
+        # parameters, bound as any other.
+        relocated = any(kinds[i] != _FLOAT for i in runtime)
+        role = _Role((*symbols, *slotted)) if relocated else None
+        return build(fn, trace_args, tuple(parameters), target, options, len(slotted), role)
 
     def _keep_traced(self, key: Any, entry: _Entry) -> None:
         traced = self._traced
@@ -867,9 +891,7 @@ class Kernel[**P]:
         lowered = with_line_delays(prior.lowered, options, prior.n_qudits)
         if lowered is None:
             return None
-        entry = _Entry(
-            lowered, prior.guard, prior.returns, prior.pins, prior.runtime, prior.relocated
-        )
+        entry = _Entry(lowered, prior.guard, prior.returns, prior.pins, prior.runtime)
         entry.n_qudits = prior.n_qudits
         self._keep_traced(self._traced_key(values, target, options), entry)
         return entry
@@ -883,15 +905,13 @@ class Kernel[**P]:
         self._slotted = tuple(i for i in runtime if kinds[i] in (_QUDIT, _REGISTER))
         self._shaped = tuple(i for i in runtime if kinds[i] in (_VECTOR, _REGISTER))
         self._relocatable = bool(self._slotted or self._shaped)
+        self._dispatcher_type = _Placing if self._relocatable else _Dispatcher
         # (static, runtime) parameter indices, replaced as one value when a
         # float parameter turns out to shape the program.
         self._split = (static, runtime)
         # The float and list[float] parameters, static or not: a static one's
         # values trace as cycles, so that a duration may take them.
         self._declared_float = tuple(i for i in sorted(kinds) if kinds[i] in (_FLOAT, _VECTOR))
-
-    def _dispatcher_class(self) -> type[_Dispatcher]:
-        return _Placing if self._relocatable else _Dispatcher
 
     def _promote(self, indices: set[int]) -> list[int]:
         """Make float parameters static: the program needs their values.
@@ -976,14 +996,9 @@ class CompiledKernel[**P]:
             raise TypeError(f"device must be a cudaq_pulse device, got {type(device).__name__}")
         self.kernel = kernel
         self.device = device
-        self._dispatch = kernel._dispatcher_class()(kernel, options, None)
+        self._dispatch = kernel._dispatcher_type(kernel, options, None)
         self._dispatch.pin = device
-        if (
-            device is not None
-            and not kernel._split[0]
-            and not kernel._shaped
-            and not kernel._slotted
-        ):
+        if device is not None and not kernel._split[0] and not kernel._relocatable:
             # Every parameter is a float: the values are not needed to build
             # it, unless one of them shapes the program.
             try:

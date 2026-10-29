@@ -1075,9 +1075,9 @@ class Lowered:
         return self._role is not None and self._role.slots > 0 and not self.carriers
 
     def _concrete(self) -> Any:
-        """The module with the values and carriers substituted, shared by
-        every view with the same ones, or the module itself without them."""
-        if not self.arguments and not self.carriers:
+        """The module with the values substituted (a private copy), or the
+        module itself when there are no values."""
+        if not self.arguments:
             return self._module
         if self._concrete_module is None:
             arguments: Sequence[float] = self.arguments
@@ -1085,24 +1085,8 @@ class Lowered:
                 if v.__class__ is not float and v.__class__ is not int or v - v != 0.0:
                     arguments = self._checked_arguments()
                     break
-            clocks = self.clocks
-            args = (
-                self.options.schedule_args()
-                if clocks is None or clocks.readout_latency_cycles is None
-                else _schedule_args(self.options, clocks)
-            )
             with self._lock:
-                if self.carriers:
-                    module = self._module.specialize_placed(
-                        list(arguments),
-                        [],
-                        *args,
-                        list(self.carriers),
-                        self.target._frequency_table(),
-                        self.target.fingerprint,
-                    )
-                else:
-                    module = self._module.specialize(list(arguments), [], *args)
+                module = self._module.specialize(list(arguments), [], *self.options.schedule_args())
             self._concrete_module = module
         return self._concrete_module
 
@@ -1323,12 +1307,42 @@ class _View(Lowered):
         __init__ = object.__init__
 
 
+def _concrete_general(self: Lowered) -> Any:
+    """``Lowered._concrete`` of a module with clocks or runtime qudits: the
+    module with the values and carriers substituted, shared by every view
+    with the same ones, or the module itself without them."""
+    if not self.arguments and not self.carriers:
+        return self._module
+    if self._concrete_module is None:
+        arguments: Sequence[float] = self.arguments
+        for v in arguments:
+            if v.__class__ is not float and v.__class__ is not int or v - v != 0.0:
+                arguments = self._checked_arguments()
+                break
+        args = _schedule_args(self.options, self.clocks)
+        with self._lock:
+            if self.carriers:
+                module = self._module.specialize_placed(
+                    list(arguments),
+                    [],
+                    *args,
+                    list(self.carriers),
+                    self.target._frequency_table(),
+                    self.target.fingerprint,
+                )
+            else:
+                module = self._module.specialize(list(arguments), [], *args)
+        self._concrete_module = module
+    return self._concrete_module
+
+
 class _ClockedLowered(Lowered):
     """A module with a clock plan or line delays. Its own class keeps them off
     every other module and every call's view, which stay the size they are
     on one clock."""
 
     __slots__ = ("clocks", "fine_delays")
+    _concrete = _concrete_general
 
 
 def _lowered(
@@ -1411,6 +1425,7 @@ class _Placed(Lowered):
     """A module with list or qudit parameters, or a call's view of one."""
 
     __slots__ = ("_role", "carriers", "clocks", "fine_delays")
+    _concrete = _concrete_general
 
     def __init__(self, *args: Any, role: _Role, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -1496,6 +1511,7 @@ class _CheckedPerCall(Lowered):
     distinct values, so that no limit fails first at export."""
 
     __slots__ = ("_accepted", "clocks", "fine_delays")
+    _concrete = _concrete_general
 
     def __init__(self, lowered: Lowered) -> None:
         super().__init__(
@@ -1644,7 +1660,8 @@ def build(
 
     *trace_args* holds a ``Parameter`` sentinel for every float parameter
     named in *parameters*; those stay function arguments of the module, as
-    do the *slots* runtime qudits (``Slot`` sentinels). A *role* names the
+    do the *slots* runtime qudits (slot k traces as the qudit of index
+    -1 - k). A *role* names the
     symbols of a module with list or qudit parameters, and gets the rest of
     what its calls share.
     Returns the module and the builder, whose record of readouts and host
@@ -1688,12 +1705,15 @@ def build(
     qudits = builder.qubits
     missing = [q for q in qudits if q not in target.frequencies]
     if missing:
-        defined = sorted(target.frequencies)
-        span = f"{defined[0]}..{defined[-1]}" if defined else "none"
-        raise CompilationError(
-            f"{name}() uses qudit {', '.join(map(str, missing))}, which target "
-            f"{target.name!r} does not define (it defines qudits {span})"
-        )
+        # Runtime qudit k is qudit -1 - k, of no target.
+        missing = [q for q in missing if q >= 0]
+        if missing:
+            defined = sorted(target.frequencies)
+            span = f"{defined[0]}..{defined[-1]}" if defined else "none"
+            raise CompilationError(
+                f"{name}() uses qudit {', '.join(map(str, missing))}, which target "
+                f"{target.name!r} does not define (it defines qudits {span})"
+            )
     buf: Any = builder.get_buffer()
     freq: Any = builder.get_freq_array()
     links = [machine.link_id(function.link) for function in builder.classical]
@@ -1756,13 +1776,7 @@ def build(
     t0 = time.perf_counter()
     scheduled = True
     try:
-        module.schedule(
-            *(
-                options.schedule_args()
-                if clocks is None or clocks.readout_latency_cycles is None
-                else _schedule_args(options, clocks)
-            )
-        )
+        module.schedule(*(options.schedule_args() if plain else _schedule_args(options, clocks)))
     except Exception:
         if not parameters:
             raise
@@ -1782,6 +1796,10 @@ def build(
             waits=_WaitLengths(builder.variable_waits, name) if builder.variable_waits else None,
         )
     else:
+        used = builder.used_qubits
+        if slots:
+            qudits = tuple(q for q in qudits if q >= 0)
+            used = tuple(q for q in used if q >= 0)
         lowered = _lowered(
             module,
             clocks,
@@ -1790,7 +1808,7 @@ def build(
             target=target,
             metrics=metrics,
             parameters=parameters,
-            qudits=builder.used_qubits or qudits,
+            qudits=used or qudits,
             options=options,
             scheduled=scheduled,
             waits=(
@@ -1809,7 +1827,7 @@ def build(
     if role is not None:
         role.slots = slots
         role.lines = builder.used_slots
-        role.used = builder.used_qubits
+        role.used = used
         role.every = qudits
         role.program_id = role.identify(buf, name, parameters, target, options)
     if not plain:
@@ -2034,9 +2052,10 @@ def compile[**P](
 
     if not isinstance(kernel, Kernel):
         raise TypeError(f"compile() expects a @cudaq_pulse.kernel, got {type(kernel).__name__}")
-    if machine is None and device is not None:
-        machine = device.control_system
-    if machine is not None and not isinstance(machine, MachineModel):
+    if machine is None:
+        if device is not None and device.control_system is not None:
+            machine = device.control_system._machine
+    elif not isinstance(machine, MachineModel):
         from ._system import ControlSystem
 
         if not isinstance(machine, ControlSystem):
