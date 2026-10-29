@@ -267,6 +267,11 @@ def test_driving_the_second_transition_moves_the_qudit_to_level_two():
             r"write `line = get_drive_line\(q\)` and use line.tone for its tone",
         ),
         (
+            "line, tone = r",
+            r"cannot unpack a readout line into 2 names: .* write "
+            r"`line = get_readout_line\(q\)` and use line.tone for its tone",
+        ),
+        (
             "for line in r:\n        wait(line, 8)",
             r"a line is one value, and its tone is line.tone",
         ),

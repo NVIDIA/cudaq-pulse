@@ -902,7 +902,7 @@ def _unpack_error(value: Any, count: int) -> str:
     if value.__class__ is IRValue and value.vtype in _LINE_TYPES:
         return (
             f"cannot unpack {_describe(value)} into {count} names: a line is one value, "
-            "not a pair; write `line = get_drive_line(q)` and use line.tone for its tone"
+            f"not a pair; write `line = get_{value.vtype}(q)` and use line.tone for its tone"
         )
     return (
         f"cannot unpack {_describe(value)} into {count} names; "
