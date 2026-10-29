@@ -426,9 +426,11 @@ def compare(
 FAILING = {"slower", "improved", "sizes", "new", "removed", "no baseline"}
 
 
-def baseline_error(baseline: dict[str, Any]) -> str | None:
+def baseline_error(baseline: dict[str, Any], frozen: bool = False) -> str | None:
     """Why the baseline is not allowed, or None: an instruction count that
-    is not a positive number, or a ``bootstrap`` field next to counts.
+    is not a positive number, a ``bootstrap`` field next to counts, or any
+    ``bootstrap`` field on a *frozen* branch (main, which releases are cut
+    from; tools/release-meta.py refuses it for a release tag too).
 
     Bootstrap mode (instruction counts measured and reported, not gated)
     is allowed only while no case has a count: taking a CI run's
@@ -446,6 +448,11 @@ def baseline_error(baseline: dict[str, Any]) -> str | None:
     flag = baseline.get("bootstrap", False)
     if flag not in (True, False):
         return f"bootstrap must be true or false, not {flag!r}"
+    if frozen and "bootstrap" in baseline:
+        return (
+            '"bootstrap" is not allowed on main: adopt a measured baseline before the '
+            "freeze (CONTRIBUTING.md, The perf gate)"
+        )
     counted = sorted(n for n, c in cases.items() if "instructions" in c)
     if flag and counted:
         return (
@@ -696,7 +703,7 @@ def main() -> int:
             "no baseline": "no instruction count in the baseline",
         }[r.verdict]
         lines.append(f"{r.name}: {reason}")
-    invalid = baseline_error(baseline)
+    invalid = baseline_error(baseline, frozen=os.environ.get("GITHUB_REF") == "refs/heads/main")
     if invalid:
         lines.append(f"{args.baseline.name}: {invalid}")
     if os.environ.get("GITHUB_ACTIONS"):

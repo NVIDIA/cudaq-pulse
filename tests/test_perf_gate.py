@@ -276,6 +276,13 @@ def test_bootstrap_mode_is_allowed_only_while_no_case_has_a_count():
     assert gate.baseline_error({"bootstrap": "yes", "cases": {}}) is not None
 
 
+def test_bootstrap_mode_is_an_error_on_main():
+    bootstrapping = {"bootstrap": True, "cases": {"c": {"op_count": 1}}}
+    assert "main" in gate.baseline_error(bootstrapping, frozen=True)
+    assert gate.baseline_error({"bootstrap": False, **_baseline()}, frozen=True) is not None
+    assert gate.baseline_error(_baseline(), frozen=True) is None
+
+
 def test_a_baseline_count_of_zero_is_an_error():
     assert "positive" in gate.baseline_error(_baseline(instructions=0))
     assert "positive" in gate.baseline_error(_baseline(instructions=None))

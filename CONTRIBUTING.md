@@ -204,7 +204,9 @@ program sizes block as always. The summary says so in a banner, together
 with the command above. Taking a run's measurements as the baseline removes
 the field, and `"bootstrap": true` next to any instruction count is an
 error (in the job and in `tests/test_perf_gate.py`), so the gate can't stay
-in bootstrap mode once it has counts. Without the field, a case with no
+in bootstrap mode once it has counts. Bootstrap mode also can't reach a
+release: the field fails the perf gate on `main`, and `tools/release-meta.py`
+refuses a release tag while it is there. Without the field, a case with no
 count fails. If the two runs of a bootstrap differ at all for some case, the
 summary flags it: give that case its own `"tolerance"` before committing
 the baseline. A new case added later needs its count taken the same way,
