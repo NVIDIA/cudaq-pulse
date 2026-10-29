@@ -192,6 +192,17 @@ plays it, the waveforms made from it too; samples given to
 on a runtime qudit's line, whose rate depends on the call, ``custom()`` is
 a compile error when the controllers' rates differ.
 
+Each controller gets its own program: ``lowered.export_controller(controller=k)``
+is controller ``k``'s part, in its own cycles, with ``"controller": k``,
+its ``lines`` and ``limits``, and the events it takes part in: those on its
+lines, a sync with only its lines, the submit of a call whose measurements
+it reads and the answer it takes, whether to branch on or to compute with.
+Event and line ids stay the program's, so a value computed from an answer
+names the answer by the same ``index`` in every controller's program. A
+program that plays the lines of more than one controller needs
+``controller=``; one on a single controller exports it without.
+``export_emulation(controller=k)`` gives the same part for an emulator.
+
 What the program computes at run time is converted by the same rule. A
 variable wait's ``length`` is clamped to its bounds, as the run clamps it,
 and then wrapped in ``{"op": "pulse.own_cycles", "of": [x], "num": a,

@@ -63,7 +63,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from . import _controller_cost
 from ._controller_cost import OP_CLASSES, FunctionCost
-from ._errors import InvalidValueError
+from ._errors import InvalidTypeError, InvalidValueError
 from ._units import Time, as_nanoseconds
 from .kernel.ir_builder import CompilationError
 
@@ -543,23 +543,31 @@ def _native_clock(clocks: _clocks.ClockPlan | None) -> _clocks.ControllerClock |
     return None if own.ratio == 1 and own.grid == 1 else own
 
 
-def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, Any]:
+def export(
+    lowered: Lowered, sample_rate_ghz: float | None = None, controller: int | None = None
+) -> dict[str, Any]:
     """A scheduled kernel for a controller backend, as JSON-serializable data.
 
     With *sample_rate_ghz*, each drive and readout also carries its
     envelope's samples at that rate (``samples``: real and imaginary parts),
     which must be a whole multiple of the clock. Raises
     ``ControllerLimitError`` when the machine model's controller limits are
-    exceeded.
+    exceeded. On a control system of several controllers, the program of
+    the one *controller* indexes (see ``_export_part``); without it, a
+    program on more than one is a ``ValueError``.
     """
-    from .classical.emulation import export as emulation
+    from .classical.emulation import _export as emulation
 
-    role = lowered._role
-    plan: _ExportPlan | None = None if role is None else role.export_plan
-    slots: list[int] | None = [] if role is not None and plan is None else None
     machine = lowered.options.machine
     limits = machine.controller
     system = machine._system
+    if system is not None and limits is None:
+        return _export_part(lowered, sample_rate_ghz, controller)
+    if controller is not None:
+        _controller_index(controller, 1)
+    role = lowered._role
+    plan: _ExportPlan | None = None if role is None else role.export_plan
+    slots: list[int] | None = [] if role is not None and plan is None else None
     clocks = (lowered._generic or lowered).clocks
     native = None if clocks is None else _native_clock(clocks)
     # In the controller's own cycles from here on.
@@ -575,21 +583,7 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
         own = clocks.controllers[0]
     clock = lowered.target.clock_ghz if own is None else own.clock_ghz
     if sample_rate_ghz is not None:
-        ratio = sample_rate_ghz / clock
-        per_cycles = round(ratio)
-        if per_cycles < 1 or abs(ratio - per_cycles) > 1e-9:
-            raise ValueError(
-                f"sample_rate_ghz={sample_rate_ghz} is not a whole multiple of the "
-                f"{clock} GHz clock"
-            )
-        for event in events:
-            if event.get("waveform") is None or event["duration_cycles"] is None:
-                continue
-            try:
-                samples = sample_waveform(event["waveform"], event["duration_cycles"], per_cycles)
-            except ValueError as e:
-                raise ValueError(f"event {event['index']} ({event['kind']}): {e}") from None
-            event["samples"] = {"re": samples.real.tolist(), "im": samples.imag.tolist()}
+        _add_samples(events, sample_rate_ghz, clock)
     base = emulation(lowered, False)
     exported = {
         "format": FORMAT,
@@ -621,6 +615,148 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
                 for key in template[1]:
                     symbols[key] = symbols[key][:]
                 event["symbols"] = symbols
+    return exported
+
+
+def _add_samples(events: Sequence[dict[str, Any]], sample_rate_ghz: float, clock: float) -> None:
+    """Give each drive and readout of *events* its envelope's samples at
+    *sample_rate_ghz*, a whole multiple of the *clock* its times count."""
+    ratio = sample_rate_ghz / clock
+    per_cycles = round(ratio)
+    if per_cycles < 1 or abs(ratio - per_cycles) > 1e-9:
+        raise ValueError(
+            f"sample_rate_ghz={sample_rate_ghz} is not a whole multiple of the {clock} GHz clock"
+        )
+    for event in events:
+        if event.get("waveform") is None or event["duration_cycles"] is None:
+            continue
+        try:
+            samples = sample_waveform(event["waveform"], event["duration_cycles"], per_cycles)
+        except ValueError as e:
+            raise ValueError(f"event {event['index']} ({event['kind']}): {e}") from None
+        event["samples"] = {"re": samples.real.tolist(), "im": samples.imag.tolist()}
+
+
+def _controller_index(controller: Any, count: int) -> int:
+    """*controller*, checked as the index of one of *count* controllers."""
+    if isinstance(controller, bool) or not isinstance(controller, int):
+        raise InvalidTypeError(
+            f"controller= is the index of a controller of the control system, got {controller!r}"
+        )
+    if not 0 <= controller < count:
+        raise InvalidValueError(
+            f"controller={controller}, and the program's control system has "
+            + ("one controller (0)" if count == 1 else f"{count} controllers (0 to {count - 1})")
+        )
+    return controller
+
+
+def _part(
+    lowered: Lowered, controller: int | None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[int | None], list[list[int]], int]:
+    """Of a program on a control system of several controllers: its lines
+    and events in program cycles, each line's controller, the controllers
+    taking part in each event, and the controller whose program is wanted:
+    *controller*, else the only one the program uses (``ValueError`` when it
+    uses more)."""
+    system = lowered.options.machine._system
+    assert system is not None
+    lines, events, _, _ = _walk(lowered, slots=None)
+    owners, _ = system._owners(lines)
+    count = len(system.controllers)
+    if controller is not None:
+        index = _controller_index(controller, count)
+    else:
+        used = sorted({o for o in owners if o is not None})
+        if len(used) > 1:
+            raise InvalidValueError(
+                f"the program plays lines of {len(used)} controllers ("
+                + ", ".join(f"controllers[{i}]" for i in used)
+                + f"); pass controller= (0 to {count - 1}) to export one controller's program"
+            )
+        index = used[0] if used else 0
+    return lines, events, owners, system._parts(events, owners), index
+
+
+def _export_part(
+    lowered: Lowered, sample_rate_ghz: float | None, controller: int | None
+) -> dict[str, Any]:
+    """``export`` on a control system of several controllers: the program of
+    one, in its own cycles, with its lines and limits and the events it
+    takes part in (see ``ControlSystem._parts``); a sync lists its lines
+    alone. Line and event ids are the program's, so an event names one
+    another controller plays (a readout whose outcome it is sent) by the id
+    that controller's program gives it."""
+    import copy
+
+    from .classical.emulation import _export as emulation
+
+    machine = lowered.options.machine
+    system = machine._system
+    assert system is not None
+    clocks = (lowered._generic or lowered).clocks
+    lines, events, owners, parts, index = _part(lowered, controller)
+    # The checks count each controller's events in its cycles, in place.
+    checked = events if clocks is None else copy.deepcopy(events)
+    violations = system._violations(lowered, lines, checked, clocks, (), (), True, None, None)
+    if violations:
+        raise _limit_error(lowered, violations)
+    role = lowered._role
+    plan: _ExportPlan | None = None if role is None else role.export_plan
+    if role is not None:
+        if plan is None or len(plan[1]) != len(events):
+            slots: list[int] = []
+            _walk(lowered, slots=slots)
+            plan = _export_plan(lowered, role, slots, events)
+        for event, template in zip(events, plan[1], strict=True):
+            if template is not None:
+                symbols = template[0].copy()
+                for key in template[1]:
+                    symbols[key] = symbols[key][:]
+                event["symbols"] = symbols
+    mine = []
+    for event, part in zip(events, parts, strict=True):
+        if index in part:
+            if event["kind"] == "sync":
+                event["lines"] = [line for line in event["lines"] if owners[line] == index]
+            mine.append(event)
+    own = None
+    keys: dict[str, float] = {}
+    if clocks is not None:
+        from . import _clocks
+
+        own = clocks.controllers[index]
+        keys = _clocks.clock_keys(clocks, own)
+        if own.ratio != 1 or own.grid > 1:
+            alone = _clocks.ClockPlan(clocks.program_ghz, (own,), clocks.reference_clock_ghz)
+            _clocks.off_grid(alone, lines, mine, True, True, _computes_at_run_time(lowered))
+    clock = lowered.target.clock_ghz if own is None else own.clock_ghz
+    if sample_rate_ghz is not None:
+        _add_samples(mine, sample_rate_ghz, clock)
+    functions = frozenset(e["function"] for e in mine if e["kind"] in ("submit", "answer"))
+    base = emulation(lowered, False, (index, own, functions, ()))
+    played = [line for line, owner in zip(lines, owners, strict=True) if owner == index]
+    exported = {
+        "format": FORMAT,
+        "target": lowered.target.name,
+        "clock_ghz": clock,
+        **keys,
+        "controller": index,
+        "schedule": lowered.options.schedule,
+        "sample_rate_ghz": sample_rate_ghz,
+        "qudits": sorted({line["qudit"] for line in played}),
+        "lines": played,
+        "events": mine,
+        "epochs": base["epochs"],
+        "calls": base["calls"],
+        "links": base["links"],
+        "manifest": base["manifest"],
+        "limits": system.controllers[index].as_dict(),
+    }
+    if role is not None:
+        assert plan is not None
+        exported["program_id"] = role.program_id
+        exported["symbols"] = _symbols(lowered, plan[0])
     return exported
 
 

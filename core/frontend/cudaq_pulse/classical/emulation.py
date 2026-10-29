@@ -32,13 +32,16 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from .._errors import NotFoundError, UnsupportedError, _CallTimeoutError, _positive_int
 from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
 from . import ClassicalFunction, Link, wire
+
+if TYPE_CHECKING:
+    from .. import _clocks
 
 __all__ = [
     "CallTrace",
@@ -96,7 +99,7 @@ def manifest(lowered: Any) -> dict[str, Any]:
     return {"format": MANIFEST_FORMAT, "functions": functions}
 
 
-def export(lowered: Any, with_events: bool = True) -> dict[str, Any]:
+def export(lowered: Any, controller: int | None = None) -> dict[str, Any]:
     """A compiled kernel for a controller emulator: schedule, epochs, calls,
     links and manifest, as JSON-serializable data. Times are in clock cycles
     of the controller, at ``clock_ghz`` (with ``program_clock_ghz`` when that
@@ -104,11 +107,52 @@ def export(lowered: Any, with_events: bool = True) -> dict[str, Any]:
     ``epoch_start_cycles`` is the static start of its epoch, which moves at
     run time by the lengths of the run-time waits before it on its lines. An
     epoch's shift adds to that of the epoch it follows, the one before it
-    unless it names another in ``after``. Without *with_events*, ``events``
-    is left empty."""
+    unless it names another in ``after``. On a control system of several
+    controllers, the part of the one *controller* indexes, with only its
+    events, calls, links and functions, and ``controller`` its index."""
+    machine = lowered.options.machine
+    if machine._system is not None and machine.controller is None:
+        return export_part(lowered, controller)
+    if controller is not None:
+        from ..controller import _controller_index
+
+        _controller_index(controller, 1)
+    return _export(lowered, True)
+
+
+_Part = tuple[int, "_clocks.ControllerClock | None", frozenset[str], Sequence[bool]]
+
+
+def export_part(lowered: Any, controller: int | None) -> dict[str, Any]:
+    """``export`` on a control system of several controllers: the part of
+    one (as ``cudaq_pulse.controller.export`` chooses it), in its cycles."""
+    from ..controller import _part
+
+    _, events, _, parts, index = _part(lowered, controller)
+    functions = frozenset(
+        event["function"]
+        for event, part in zip(events, parts, strict=True)
+        if index in part and event["kind"] in ("submit", "answer")
+    )
+    # The schedule holds the controller events but their syncs, in order.
+    takes_part = [
+        index in part for event, part in zip(events, parts, strict=True) if event["kind"] != "sync"
+    ]
+    clocks = (lowered._generic or lowered).clocks
+    own = None if clocks is None else clocks.controllers[index]
+    return _export(lowered, True, (index, own, functions, takes_part))
+
+
+def _export(lowered: Any, with_events: bool, part: _Part | None = None) -> dict[str, Any]:
+    """``export``; without *with_events*, its ``events`` are left empty. With
+    *part* (a controller's index and clock, the functions it calls or takes
+    answers of, and whether it takes part in each scheduled event), only
+    that controller's part, in its cycles."""
     epochs, after = lowered._epochs()
     starts = [e.start_cycles for e in epochs]
     epoch_of = lowered._event_epochs(syncs=False) if with_events else None
+    takes = None if part is None else part[3]
+    assert takes is None or not with_events or len(takes) == len(lowered.schedule)
     events = (
         [
             {
@@ -126,6 +170,7 @@ def export(lowered: Any, with_events: bool = True) -> dict[str, Any]:
                 "epoch_start_cycles": starts[index],
             }
             for position, event in enumerate(lowered.schedule)
+            if takes is None or takes[position]
         ]
         if with_events
         else []
@@ -140,6 +185,7 @@ def export(lowered: Any, with_events: bool = True) -> dict[str, Any]:
                 "name": machine.link_name(machine.link_id(fn.link)),
             }
             for fn in lowered.classical
+            if part is None or fn.name in part[2]
         },
         "epochs": [
             {**asdict(e), "after": a} if k and a != k - 1 else asdict(e)
@@ -147,23 +193,31 @@ def export(lowered: Any, with_events: bool = True) -> dict[str, Any]:
         ],
         "events": events,
         "calls": [
-            {**asdict(c), "iteration": list(c.iteration)} for c in lowered.classical_report()
+            {**asdict(c), "iteration": list(c.iteration)}
+            for c in lowered.classical_report()
+            if part is None or c.function in part[2]
         ],
         "manifest": manifest(lowered),
     }
     if machine._plain:
         return data
+    if part is not None:
+        data["manifest"]["functions"] = [
+            fn for fn in data["manifest"]["functions"] if fn["name"] in part[2]
+        ]
+        data["controller"] = part[0]
     clocks = (lowered._generic or lowered).clocks
     if clocks is None:
         return data
-    return _in_own_clock(data, events, clocks)
+    own = clocks.controllers[0] if part is None or part[1] is None else part[1]
+    return _in_own_clock(data, events, clocks, own)
 
 
-def _in_own_clock(data: dict[str, Any], events: list[Any], clocks: Any) -> dict[str, Any]:
-    """*data*, an export of a program on *clocks*, in its controller's clock."""
+def _in_own_clock(data: dict[str, Any], events: list[Any], clocks: Any, own: Any) -> dict[str, Any]:
+    """*data*, an export of a program on *clocks*, in the clock *own* of its
+    controller."""
     from .. import _clocks
 
-    own = clocks.controllers[0]
     if own.ratio != 1:
         _clocks.to_own(events, _clocks.EMULATION_EVENT_TIMES, own)
         _clocks.to_own(data["epochs"], _clocks.EPOCH_TIMES, own, _clocks.EPOCH_LOWER_BOUNDS)

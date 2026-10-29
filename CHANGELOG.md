@@ -81,6 +81,11 @@ behavior may change in any 0.x release.
   controller's limits, line delays and `rcp` readout latency count its own
   cycles, and `custom()` samples an envelope at the rate of the line that
   plays it, while samples given at another rate fail to compile.
+  `export_controller(controller=k)` and `export_emulation(controller=k)`
+  export controller `k`'s part of the program in its own cycles: its
+  lines, the events it plays, submits or takes the answer of, its calls and
+  its limits, with the program's event and line ids. A program that plays
+  the lines of more than one controller needs `controller=`.
 - **Processors.** `pulse.Processor` is a classical processor on a
   controller (`Controller(processors=[...])`), which runs the classical
   functions called on its `links`; a link belongs to at most one processor

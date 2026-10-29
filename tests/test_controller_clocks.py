@@ -465,3 +465,163 @@ def test_a_waveform_made_of_custom_is_made_again_at_its_lines_rate():
     lowered = pulse.compile(scaled_custom, device=qpu).lower(qpu.qudits[2])
     assert "rate = array<i64: 1, 4>" in lowered.mlir()
     assert [e.duration_cycles for e in lowered.schedule if e.kind == "drive"] == [8]
+
+
+# ── One export per controller, in its own cycles ─────────────────────────────
+
+
+def _timed(program):
+    return [e for e in program["events"] if e["kind"] in ("drive", "readout", "wait")]
+
+
+def test_each_controller_exports_its_part_of_the_program_in_its_own_cycles():
+    qpu = _mixed()
+    lowered = pulse.compile(mixed, schedule="asap", device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
+    with pytest.raises(ValueError) as caught:
+        lowered.export_controller()
+    assert str(caught.value) == (
+        "the program plays lines of 2 controllers (controllers[0], controllers[1]); "
+        "pass controller= (0 to 1) to export one controller's program"
+    )
+    for index, qudit, cycles in ((0, 0, 2), (1, 2, 4)):
+        program = lowered.export_controller(controller=index)
+        assert program["controller"] == index
+        assert program["clock_ghz"] == (1.0, 0.5)[index] and program["program_clock_ghz"] == 2.0
+        assert program["limits"] == qpu.control_system.controllers[index].as_dict()
+        assert program["qudits"] == [qudit] and {line["qudit"] for line in program["lines"]} == {
+            qudit
+        }
+        mine = [e for e in lowered.schedule if e.kind in ("drive", "readout", "wait")]
+        mine = [e for e in mine if e.qubit == qudit]
+        assert [(e["start_cycles"], e["duration_cycles"]) for e in _timed(program)] == [
+            (e.start // cycles, e.duration_cycles // cycles) for e in mine
+        ]
+        # The sync lists only the lines this controller plays.
+        [sync] = [e for e in program["events"] if e["kind"] == "sync"]
+        ids = {line["line"] for line in program["lines"]}
+        assert sync["lines"] and set(sync["lines"]) <= ids
+        json.dumps(program)
+    with pytest.raises(ValueError, match=r"controller=2, and the program's control system has 2"):
+        lowered.export_controller(controller=2)
+    with pytest.raises(TypeError, match="index of a controller"):
+        lowered.export_controller(controller="1")  # type: ignore[arg-type]
+
+
+def test_a_program_on_one_controller_exports_without_naming_it():
+    qpu = _mixed(links=LINKS)
+    lowered = pulse.compile(with_a_call, device=qpu).lower(qpu.qudits[2])
+    program = lowered.export_controller()
+    assert program["controller"] == 1 and program["clock_ghz"] == 0.5
+    assert program == lowered.export_controller(controller=1)
+    drive = next(e for e in program["events"] if e["kind"] == "drive")
+    assert drive["duration_cycles"] == 2 and drive["waveform"]["params"]["duration"] == 2.0
+    # The other controller takes no part: no lines, events or calls.
+    other = lowered.export_controller(controller=0)
+    assert other["lines"] == [] and other["events"] == [] and other["calls"] == []
+
+
+def test_samples_at_a_rate_of_each_controllers_clock():
+    qpu = _mixed()
+    lowered = pulse.compile(mixed, schedule="asap", device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
+    program = lowered.export_controller(sample_rate_ghz=1.0, controller=1)
+    first = next(e for e in program["events"] if e["kind"] == "drive")
+    assert len(first["samples"]["re"]) == 2 * first["duration_cycles"]
+    with pytest.raises(ValueError, match="whole multiple of the 0.5 GHz clock"):
+        lowered.export_controller(sample_rate_ghz=0.75, controller=1)
+    assert lowered.export_controller(sample_rate_ghz=1.0, controller=0)["events"]
+
+
+@pulse.kernel
+def read_then_correct(a, b):
+    ra, rta = get_readout_line(a)
+    db, tb = get_drive_line(b)
+    m = readout(ra, square(100, 0.05), rta)
+    amplitude = correction.submit([m]).result()
+    drive(db, square(8, amplitude), tb)
+
+
+def test_a_call_is_submitted_by_its_measuring_controller_and_answered_to_its_taker():
+    qpu = _mixed(links=LINKS)
+    lowered = pulse.compile(read_then_correct, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
+    first, second = (lowered.export_controller(controller=k) for k in (0, 1))
+    assert [e["kind"] for e in first["events"]] == ["readout", "submit"]
+    assert [e["kind"] for e in second["events"]] == ["answer", "drive"]
+    answer, drive = second["events"]
+    # Event ids are the program's, so the answer's value keeps its name.
+    assert drive["waveform"]["runtime"]["amplitude"]["answer"] == answer["index"]
+    for program in (first, second):
+        assert [c["function"] for c in program["calls"]] == ["correction"]
+        assert [f["name"] for f in program["manifest"]["functions"]] == ["correction"]
+    starts = {e.kind: e.start for e in lowered.schedule}
+    assert first["events"][1]["start_cycles"] == starts["submit"] // 2
+    assert answer["start_cycles"] == starts["answer"] // 4
+
+
+def test_each_controllers_emulation_export_is_its_part_in_its_cycles():
+    qpu = _mixed(links=LINKS)
+    lowered = pulse.compile(read_then_correct, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
+    with pytest.raises(ValueError, match="pass controller="):
+        lowered.export_emulation()
+    first, second = (lowered.export_emulation(controller=k) for k in (0, 1))
+    assert first["controller"] == 0 and first["clock_ghz"] == 1.0
+    assert second["controller"] == 1 and second["clock_ghz"] == 0.5
+    assert [e["kind"] for e in first["events"]] == ["readout", "submit"]
+    assert [e["kind"] for e in second["events"]] == ["answer", "drive"]
+    starts = {e.kind: e.start for e in lowered.schedule}
+    assert first["events"][0]["start_cycles"] == starts["readout"] // 2
+    assert second["events"][1]["start_cycles"] == starts["drive"] // 4
+    assert list(first["links"]) == list(second["links"]) == ["0"]
+
+
+@pulse.kernel
+def answer_wait(q):
+    d, t = get_drive_line(q)
+    drive(d, square(8, 0.1), t)
+    wait(d, wait_length.submit(1.0).result(), bounds=(8, 400))
+    drive(d, square(8, 0.1), t)
+
+
+def test_a_run_time_wait_is_exported_in_its_controllers_cycles():
+    qpu = _mixed(links=LINKS)
+    lowered = pulse.compile(answer_wait, device=qpu).lower(qpu.qudits[2])
+    wait = next(e for e in lowered.export_controller()["events"] if e["kind"] == "wait")
+    assert (wait["min_cycles"], wait["max_cycles"]) == (2, 100)
+    assert wait["length"]["op"] == "pulse.own_cycles" and wait["length"]["den"] == 4
+
+
+def test_each_controller_exports_the_reference_clock():
+    qpu = _mixed(reference_clock_ghz=0.25)
+    lowered = pulse.compile(mixed, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
+    for index in (0, 1):
+        assert lowered.export_controller(controller=index)["reference_clock_ghz"] == 0.25
+
+
+def test_a_controller_faster_than_the_program_clock_counts_more_cycles():
+    qpu = _device(4.0, 1.0, clock_ghz=2.0)
+    lowered = pulse.compile(shaped_twice_plain, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
+    program = lowered.export_controller(controller=0)
+    assert program["clock_ghz"] == 4.0 and program["program_clock_ghz"] == 2.0
+    drive = next(e for e in program["events"] if e["kind"] == "drive")
+    assert drive["duration_cycles"] == 16 and drive["waveform"]["params"]["duration"] == 16.0
+    drive = next(
+        e for e in lowered.export_controller(controller=1)["events"] if e["kind"] == "drive"
+    )
+    assert drive["duration_cycles"] == 4
+
+
+@pulse.kernel
+def shaped_twice_plain(a, b):
+    da, ta = get_drive_line(a)
+    db, tb = get_drive_line(b)
+    drive(da, square(8, 0.1), ta)
+    drive(db, square(8, 0.1), tb)
+
+
+def test_a_one_controller_device_exports_as_before():
+    qpu = _device(0.5)
+    lowered = pulse.compile(mixed, schedule="asap", device=qpu).lower(qpu.qudits[0], qpu.qudits[1])
+    program = lowered.export_controller()
+    assert "controller" not in program and program == lowered.export_controller(controller=0)
+    assert "controller" not in lowered.export_emulation()
+    with pytest.raises(ValueError, match="has one controller"):
+        lowered.export_controller(controller=1)

@@ -1231,22 +1231,27 @@ class Lowered:
             for name, link, iteration, start, length, due, taken, use, limit, epoch in calls
         ]
 
-    def export_emulation(self) -> dict[str, Any]:
+    def export_emulation(self, *, controller: int | None = None) -> dict[str, Any]:
         """The program for a controller emulator: its schedule by epoch, its
         calls and the manifest of its classical functions (see
-        ``cudaq_pulse.classical.emulation``)."""
+        ``cudaq_pulse.classical.emulation``). On a control system of several
+        controllers, that of the one *controller* indexes, in its cycles."""
         from .classical.emulation import export
 
-        return export(self)
+        return export(self, controller)
 
-    def export_controller(self, sample_rate_ghz: float | None = None) -> dict[str, Any]:
+    def export_controller(
+        self, sample_rate_ghz: float | None = None, *, controller: int | None = None
+    ) -> dict[str, Any]:
         """The program for an out-of-tree controller backend: its lines and
         every timed operation with its waveform, tone, frame and branches
         (see ``cudaq_pulse.controller``); with *sample_rate_ghz*, each
-        envelope's samples too."""
+        envelope's samples too. On a control system of several controllers,
+        the program of the one *controller* indexes, in its own cycles (a
+        program that plays the lines of more than one needs it)."""
         from .controller import export
 
-        return export(self, sample_rate_ghz)
+        return export(self, sample_rate_ghz, controller)
 
     def timeline(self, **kwargs: Any) -> Figure:
         """Plot the schedule, one row per line (needs matplotlib)."""

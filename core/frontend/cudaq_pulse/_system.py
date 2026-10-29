@@ -457,6 +457,34 @@ def _known(owners: Iterable[int | None]) -> list[int]:
     return sorted({o for o in owners if o is not None})
 
 
+def _takers(
+    events: Sequence[Mapping[str, Any]], owners: Sequence[int | None]
+) -> dict[int, set[int]]:
+    """The controllers that take each answer: those playing a line event
+    that tests it or computes a value from it at run time."""
+    takers: dict[int, set[int]] = {}
+    for event in events:
+        if event["kind"] not in _NEEDS:
+            continue
+        owner = owners[event["line"]]
+        if owner is None:
+            continue
+        for condition in event["conditions"]:
+            for ref in condition["answers"]:
+                takers.setdefault(ref, set()).add(owner)
+        stack = [value for key, value in event.items() if key != "conditions"]
+        while stack:
+            value = stack.pop()
+            if isinstance(value, dict):
+                ref = value.get("answer")
+                if type(ref) is int:
+                    takers.setdefault(ref, set()).add(owner)
+                stack.extend(value.values())
+            elif isinstance(value, list):
+                stack.extend(value)
+    return takers
+
+
 def _label(index: int, controller: Controller) -> str:
     name = f"controllers[{index}]"
     return f"{name} ({controller.model})" if controller.model else name
@@ -808,7 +836,7 @@ class ControlSystem:
             return []
         found: list[str] = []
         used = _known(owners)
-        users: dict[int, set[int]] = {}
+        users = _takers(events, owners)
 
         def owner(event: Mapping[str, Any]) -> int | None:
             found: int | None = owners[event["line"]]
@@ -860,7 +888,6 @@ class ControlSystem:
                             need(source, Capability.FORWARD_OUTCOME, events[ref])
                     for ref in condition["answers"]:
                         need(index, Capability.ANSWER, events[ref])
-                        users.setdefault(ref, set()).add(index)
             elif kind == "sync":
                 for index in _known(owners[line] for line in event["lines"]):
                     need(index, Capability.SYNC, event)
@@ -877,6 +904,33 @@ class ControlSystem:
                     need(index, Capability.ANSWER, event)
                 self._reach(lowered, event, takers, "answers", found)
         return found
+
+    def _parts(
+        self, events: Sequence[Mapping[str, Any]], owners: Sequence[int | None]
+    ) -> list[list[int]]:
+        """The controllers that take part in each event, as ``_needs`` counts
+        them: a line event's, a sync's lines', a submit's callers (those of
+        its measurements, else every controller used) and an answer's takers
+        (those of the events that test it or compute with it, else every one
+        used)."""
+        used = _known(owners)
+        takers = _takers(events, owners)
+        parts: list[list[int]] = []
+        for event in events:
+            kind = event["kind"]
+            if kind in _NEEDS:
+                owner = owners[event["line"]]
+                parts.append([] if owner is None else [owner])
+            elif kind == "sync":
+                parts.append(_known(owners[line] for line in event["lines"]))
+            elif kind == "submit":
+                measured = (owners[events[ref]["line"]] for ref in event["measurements"])
+                parts.append(_known(measured) or used)
+            elif kind == "answer":
+                parts.append(sorted(takers.get(event["index"], ())) or used)
+            else:
+                parts.append(used)
+        return parts
 
     def _reach(
         self,

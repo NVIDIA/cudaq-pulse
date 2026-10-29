@@ -54,8 +54,10 @@ def measure_and_correct(measured, partner):
 compiled = pulse.compile(measure_and_correct, schedule="rcp", device=qpu)
 # Read out on the left controller, correct on the right one.
 lowered = compiled.lower(qpu.qudits[0], qpu.qudits[2])
-program = lowered.export_controller()
-print("events:", [(e["kind"], e["line"], e["start_cycles"]) for e in program["events"]])
+for index in range(len(control.controllers)):
+    program = lowered.export_controller(controller=index)
+    events = [(e["kind"], e["line"], e["start_cycles"]) for e in program["events"]]
+    print(f"controllers[{index}] events:", events)
 
 with tempfile.TemporaryDirectory() as folder:
     path = Path(folder) / "qpu.json"
