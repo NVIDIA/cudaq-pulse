@@ -98,7 +98,7 @@ def test_bound_but_unused_qudits_are_not_simulated():
         da = get_drive_line(a)
         drive(da, gaussian(40, 0.08, 10.0))
 
-    result = pulse.simulate(one_of_two.lower(q[13], q[3]), t_end=2.0)
+    result = pulse.simulate(one_of_two.lower(q[13], q[3]), t_end=2.0, levels=2)
     assert result.qudits == (13,) and result.dims == (2,)
 
 
@@ -116,13 +116,13 @@ def test_modes_are_ordered_by_device_index_whatever_the_argument_order():
     q = _KRINNER.qudit_handles
     h, new = _slice((13, 0, 3))
     for order in ((13, 0, 3), (3, 13, 0), (0, 3, 13)):
-        on_chip = pulse.simulate(triple.lower(*(q[i] for i in order)))
-        alone = pulse.simulate(triple.lower(*(h[new[i]] for i in order)))
+        on_chip = pulse.simulate(triple.lower(*(q[i] for i in order)), levels=2)
+        alone = pulse.simulate(triple.lower(*(h[new[i]] for i in order)), levels=2)
         assert on_chip.qudits == (0, 3, 13)
         _same(on_chip, alone)
     # The argument order changes which qudit gets which drive.
-    first = pulse.simulate(triple.lower(q[13], q[0], q[3]))
-    second = pulse.simulate(triple.lower(q[3], q[13], q[0]))
+    first = pulse.simulate(triple.lower(q[13], q[0], q[3]), levels=2)
+    second = pulse.simulate(triple.lower(q[3], q[13], q[0]), levels=2)
     assert not np.allclose(first.density_matrix, second.density_matrix, atol=1e-6)
 
 
@@ -131,9 +131,11 @@ def test_measurements_report_device_qudits(measured):
     q = _KRINNER.qudit_handles
     h, new = _slice((13, 3))
     other = 3 if measured == 13 else 13
-    on_chip = pulse.simulate(drive_and_measure.lower(q[measured], q[other]), shots=200, seed=5)
+    on_chip = pulse.simulate(
+        drive_and_measure.lower(q[measured], q[other]), shots=200, seed=5, levels=2
+    )
     alone = pulse.simulate(
-        drive_and_measure.lower(h[new[measured]], h[new[other]]), shots=200, seed=5
+        drive_and_measure.lower(h[new[measured]], h[new[other]]), shots=200, seed=5, levels=2
     )
     assert [m.qudit for m in on_chip.measurements] == [measured]
     assert [m.qudit for m in alone.measurements] == [new[measured]]
@@ -147,11 +149,13 @@ def test_an_initial_state_spans_the_used_qudits():
     h, new = _slice((13, 3))
     psi = np.zeros(4)
     psi[0b10] = 1.0  # qudits[1] = 13 excited
-    on_chip = pulse.simulate(pair.lower(q[13], q[3]), initial_state=psi, t_end=5.0)
-    alone = pulse.simulate(pair.lower(h[new[13]], h[new[3]]), initial_state=psi, t_end=5.0)
+    on_chip = pulse.simulate(pair.lower(q[13], q[3]), initial_state=psi, t_end=5.0, levels=2)
+    alone = pulse.simulate(
+        pair.lower(h[new[13]], h[new[3]]), initial_state=psi, t_end=5.0, levels=2
+    )
     _same(on_chip, alone)
     with pytest.raises(ValueError, match=r"shape \(4,\)"):
-        pulse.simulate(pair.lower(q[13], q[3]), initial_state=np.zeros(2**14))
+        pulse.simulate(pair.lower(q[13], q[3]), initial_state=np.zeros(2**14), levels=2)
 
 
 @pytest.mark.gpu

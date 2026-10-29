@@ -195,9 +195,12 @@ def test_a_native_handler_drives_a_simulation(handler_library):
 
     rho0 = np.zeros(32)
     rho0[0b00111] = 1.0  # three data qubits in |1>: odd parity
-    python = pulse.simulate(low, initial_state=rho0)
+    python = pulse.simulate(low, initial_state=rho0, levels=2)
     native = pulse.simulate(
-        low, initial_state=rho0, handlers={"parity": wire.native(handler_library, "parity", parity)}
+        low,
+        initial_state=rho0,
+        handlers={"parity": wire.native(handler_library, "parity", parity)},
+        levels=2,
     )
     np.testing.assert_allclose(native.density_matrix, python.density_matrix, atol=1e-12)
     assert native.density_matrix[0b10111, 0b10111].real == pytest.approx(1.0, abs=1e-6)

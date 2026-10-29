@@ -105,7 +105,7 @@ def simulate(
     program: Kernel[Any] | CompiledKernel[Any] | Lowered,
     /,
     *args: Any,
-    levels: int | dict[int, int] = 2,
+    levels: int | dict[int, int] | None = None,
     initial_state: npt.ArrayLike | None = None,
     shots: int | None = None,
     seed: int | None = None,
@@ -141,8 +141,11 @@ def simulate(
         other parameters. For a module with run-time parameters, their
         values, in the order of ``program.parameters``.
     levels:
-        Levels per qudit (an int for all, or a dict by device qudit index).
-        A transmon with three or more levels includes its anharmonicity.
+        Levels per qudit. By default each qudit has the levels its target's
+        simulation model declares for it (``TargetDescription.model``; 3 for
+        a ``TransmonModel``); an int sets every qudit's, and a dict by device
+        qudit index sets those it names. A transmon with three or more
+        levels includes its anharmonicity.
     initial_state:
         A state vector or density matrix over ``lowered.qudits``, the
         qudits the program uses, with the first the least significant
@@ -259,7 +262,7 @@ def simulate(
 def _simulate_lowered(
     lowered: Lowered,
     *,
-    levels: int | dict[int, int] = 2,
+    levels: int | dict[int, int] | None = None,
     initial_state: npt.ArrayLike | None = None,
     shots: int | None = None,
     seed: int | None = None,
@@ -382,7 +385,7 @@ def _simulate_compiled(
     compiled: Any,
     target: Any,
     *,
-    levels: int | dict[int, int],
+    levels: int | dict[int, int] | None,
     initial_state: npt.ArrayLike | None,
     shots: int | None,
     seed: int | None,

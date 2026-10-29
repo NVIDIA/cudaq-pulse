@@ -181,8 +181,8 @@ def bench_simulate(repeats: int) -> None:
     plain = pulse.compile(waiting_reset, device=dev).lower(q)
     called = pulse.compile(decoded_reset, device=dev).lower(q)
     plus = [2**-0.5, 2**-0.5]
-    a = _median(lambda: pulse.simulate(plain, initial_state=plus), repeats)
-    b = _median(lambda: pulse.simulate(called, initial_state=plus), repeats)
+    a = _median(lambda: pulse.simulate(plain, initial_state=plus, levels=2), repeats)
+    b = _median(lambda: pulse.simulate(called, initial_state=plus, levels=2), repeats)
     print(
         f"simulate: active reset idling for the decoder's budget {a * 1e3:.1f} ms, "
         f"with the decoder call {b * 1e3:.1f} ms ({(b / a - 1) * 100:+.1f}%)"

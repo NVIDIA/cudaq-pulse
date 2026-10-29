@@ -87,3 +87,24 @@ def test_devices_of_different_models_are_different_devices():
     assert devices[0] != devices[1]
     assert devices[0] == pulse.device({"target": _target(TransmonModel())})
     assert devices[0] != pulse.device({"target": _target(TransmonModel(levels={0: 4}))})
+
+
+@pulse.kernel
+def _drive_last(q):
+    drive(get_drive_line(q), square(8, 0.1))
+
+
+@pytest.mark.parametrize(
+    ("model", "levels", "expected"),
+    [
+        (TransmonModel(levels={0: 4}), None, "4, 3, 3"),
+        (TransmonModel, {2: 2}, "3, 3, 2"),
+        (TransmonModel, 2, "2, 2, 2"),
+    ],
+)
+def test_qudits_a_program_leaves_out_keep_the_levels_they_would_have(model, levels, expected):
+    device = pulse.device({"target": _target(model)})
+    lowered = pulse.compile(_drive_last, device=device).lower(device.qudit_handles[2])
+    result = pulse.simulate(lowered, levels=levels)
+    assert result.qudits == (2,)
+    assert f"pulse.levels = array<i64: {expected}>" in lowered.mlir()

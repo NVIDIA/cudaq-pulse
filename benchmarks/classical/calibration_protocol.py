@@ -151,7 +151,7 @@ def adaptive_t1(n, seed):
     dev = pulse.device({"target": target})
     lowered = pulse.compile(att_paper, device=dev, machine=P["MACHINE"]).lower(dev.qudit_handles[0])
     start = time.perf_counter()
-    result = pulse.simulate(lowered, shots=n, seed=seed, paths="sampled", readout="model")
+    result = pulse.simulate(lowered, shots=n, seed=seed, paths="sampled", readout="model", levels=2)
     seconds = time.perf_counter() - start
     estimates, posteriors = [], []
     for calls, count in _shares(result, n):
@@ -193,6 +193,7 @@ def binary_search(n, seed):
             seed=seed * 100_003 + k,
             paths="sampled",
             readout="model",
+            levels=2,
         )
         mean, sigma, _, _ = result.calls[0][-1].answer
         errors.append(mean - offset)
@@ -220,7 +221,13 @@ def chain(n, seed):
     start = time.perf_counter()
     for k in range(n):
         result = pulse.simulate(
-            lowered, plant=plant, shots=1, seed=seed * 7919 + k, paths="sampled", readout="model"
+            lowered,
+            plant=plant,
+            shots=1,
+            seed=seed * 7919 + k,
+            paths="sampled",
+            readout="model",
+            levels=2,
         )
         rows.append(P["chain_results"](result.calls[0]))
     seconds = time.perf_counter() - start
@@ -271,14 +278,16 @@ def steps(seed):
         compile_s = time.perf_counter() - start
         start = time.perf_counter()
         result = pulse.simulate(
-            lowered, plant=plant, shots=1, seed=seed, paths="sampled", readout="model"
+            lowered, plant=plant, shots=1, seed=seed, paths="sampled", readout="model", levels=2
         )
         simulate_s = time.perf_counter() - start
         # Tracing allocations slows NumPy several times over: measure apart,
         # from cold (no propagators kept).
         _propagate.clear_cache()
         tracemalloc.start()
-        pulse.simulate(lowered, plant=plant, shots=1, seed=seed, paths="sampled", readout="model")
+        pulse.simulate(
+            lowered, plant=plant, shots=1, seed=seed, paths="sampled", readout="model", levels=2
+        )
         peak = tracemalloc.get_traced_memory()[1]
         tracemalloc.stop()
         m = lowered.metrics

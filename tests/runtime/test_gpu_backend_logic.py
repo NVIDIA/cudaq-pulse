@@ -176,6 +176,7 @@ CASES = {
 def _simulate(kernel, n, backend, kwargs):
     kwargs = dict(kwargs)
     target = kwargs.pop("target", None) or _target(n)
+    kwargs.setdefault("levels", 2)
     program = (kernel, *[Q[i] for i in range(n)])
     return pulse.simulate(on(target, *program), backend=backend, seed=7, **kwargs)
 
@@ -220,6 +221,7 @@ def test_gpu_setup_lowers_a_program_that_measures_at_any_start(t_start, t1_us, g
         backend="gpu",
         t_start=t_start,
         t_end=t_start + 200.0,
+        levels=2,
     )
     assert np.trace(result.density_matrix).real == pytest.approx(1.0, abs=1e-9)
 
@@ -250,6 +252,7 @@ def test_a_late_start_evolves_from_the_start_not_the_measurement(backend, gpu_on
         backend=backend,
         t_start=120.0,
         t_end=140.0,
+        levels=2,
     )
     np.testing.assert_allclose(result.density_matrix, np.diag([1.0, 0.0]), atol=1e-12)
     assert result.times_ns == (120.0, 140.0)

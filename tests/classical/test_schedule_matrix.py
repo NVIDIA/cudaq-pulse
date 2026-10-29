@@ -188,7 +188,7 @@ def test_simulation_matches_an_explicit_schedule(case):
     shifts = matrix.epoch_shifts(case, low)
     reference = matrix.explicit_reference(low, shifts).lower(Q[0], Q[1])
     assert matrix.pulses(reference) == matrix.pulses(low, shifts)
-    simulated, expected = pulse.simulate(low), pulse.simulate(reference)
+    simulated, expected = pulse.simulate(low, levels=2), pulse.simulate(reference, levels=2)
     np.testing.assert_allclose(simulated.density_matrix, expected.density_matrix, atol=1e-9)
     paths, reference_paths = sorted(simulated.branches), sorted(expected.branches)
     assert [o for o, _ in paths] == [o for o, _ in reference_paths]

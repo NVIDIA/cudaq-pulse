@@ -82,7 +82,7 @@ def test_an_n_way_switch_takes_the_arm_of_its_index(kernel):
     drives = [e for e in lowered.schedule if e.kind == "drive"]
     assert {e.start_cycles + e.duration_cycles for e in drives} == {call.due_cycles + 160}
     for index in range(4):
-        result = pulse.simulate(lowered, handlers={"pick": lambda bits, i=index: i})
+        result = pulse.simulate(lowered, handlers={"pick": lambda bits, i=index: i}, levels=2)
         angle = math.pi * 0.25 * (index + 1)
         assert result.density_matrix[1, 1].real == pytest.approx(math.sin(angle / 2) ** 2)
 
@@ -113,7 +113,7 @@ def _expected_p1():
 def test_a_random_source_follows_every_value_without_shots():
     dev = _device()
     lowered = pulse.compile(random_rotation, device=dev).lower(dev.qudit_handles[0])
-    result = pulse.simulate(lowered)
+    result = pulse.simulate(lowered, levels=2)
     assert sorted(c[0].answer for c in result.calls) == [0, 1, 2, 3]
     assert result.density_matrix[1, 1].real == pytest.approx(_expected_p1())
     assert result.density_matrix.trace().real == pytest.approx(1.0)
@@ -122,12 +122,12 @@ def test_a_random_source_follows_every_value_without_shots():
 def test_a_random_source_draws_per_shot():
     dev = _device()
     lowered = pulse.compile(random_rotation, device=dev).lower(dev.qudit_handles[0])
-    result = pulse.simulate(lowered, shots=4000, seed=2)
+    result = pulse.simulate(lowered, shots=4000, seed=2, levels=2)
     assert result.records is not None and len(result.records) == 4000
     # The ensemble state is exact; the shots split about evenly.
     assert result.density_matrix[1, 1].real == pytest.approx(_expected_p1())
-    a = pulse.simulate(lowered, shots=100, seed=9)
-    b = pulse.simulate(lowered, shots=100, seed=9)
+    a = pulse.simulate(lowered, shots=100, seed=9, levels=2)
+    b = pulse.simulate(lowered, shots=100, seed=9, levels=2)
     assert np.array_equal(a.records, b.records)
 
 
@@ -222,7 +222,7 @@ def test_the_converged_pattern_stops_probing_and_keeps_its_trip_count():
     dev = _device()
     lowered = pulse.compile(converging, device=dev).lower(dev.qudit_handles[0])
     assert len(lowered.classical_report()) == 5
-    result = pulse.simulate(lowered, initial_state=[1, 0])
+    result = pulse.simulate(lowered, initial_state=[1, 0], levels=2)
     for calls in result.calls:
         assert [c.answer for c in calls] == [
             (1.0, 0.0),

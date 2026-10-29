@@ -228,7 +228,8 @@ each mode: ``result.qudits[i]`` has ``result.dims[i]`` levels and is digit
 uses the same layout, and measurements report device qudits.
 
 The native execution lowering is a transmon model in one rotating frame per
-qudit, with two levels unless ``levels`` asks for more. Drive envelopes are converted to X/Y Hamiltonian
+qudit, with the levels the target's simulation model declares for it (three
+for a ``TransmonModel``) unless ``levels`` sets them. Drive envelopes are converted to X/Y Hamiltonian
 coefficients in radians per nanosecond; tone frequency and phase determine the
 rotating-frame detuning and quadrature. A target may supply
 ``amplitude_scale_rad_per_ns`` explicitly, or pulse infers a scale from its
@@ -318,5 +319,7 @@ of the outcomes from the same branch probabilities.
 
 ``backend="cpu"`` integrates the same lowered operator with a NumPy RK4
 reference; ``backend="gpu"`` evolves each segment with cuDensityMat, starting
-from the projected state. ``levels`` gives qudits more than two levels; a
-transmon target then includes its anharmonicity.
+from the projected state. By default each qudit has the levels its target's
+model declares (three for a transmon); ``levels=2`` simulates qubits, an int
+sets every qudit's levels and a dict by device qudit index sets those it
+names. With three or more levels a transmon includes its anharmonicity.

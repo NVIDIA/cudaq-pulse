@@ -44,7 +44,7 @@ def _target():
 
 
 def _simulate(kernel):
-    result = pulse.simulate(on(_target(), kernel, Q[0]))
+    result = pulse.simulate(on(_target(), kernel, Q[0]), levels=2)
     return np.asarray(result.density_matrix)
 
 

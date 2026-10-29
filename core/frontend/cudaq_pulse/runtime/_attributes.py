@@ -28,14 +28,30 @@ _VALID_INTEGRATORS = frozenset(
 
 
 def _level_attributes(
-    target: Any, qudits: tuple[int, ...], levels: int | dict[int, int]
+    target: Any, qudits: tuple[int, ...], levels: int | dict[int, int] | None
 ) -> tuple[tuple[int, ...], str]:
     """Levels of each simulated qudit, in the order of *qudits*, and the
-    module attributes that model them (indexed by device qudit)."""
-    dims = tuple((levels.get(q, 2) if isinstance(levels, dict) else int(levels)) for q in qudits)
+    module attributes that model them (indexed by device qudit).
+
+    A qudit has the levels its target's model declares for it
+    (``model.levels_of``) unless *levels* sets them: an int for every
+    qudit, a dict by device qudit index for those it names."""
+    model = target.model
+    if levels is None:
+        dims = tuple(model.levels_of(q) for q in qudits)
+    elif isinstance(levels, dict):
+        dims = tuple(levels[q] if q in levels else model.levels_of(q) for q in qudits)
+    else:
+        dims = (int(levels),) * len(qudits)
     if any(d < 2 for d in dims):
         raise InvalidValueError("every qudit needs at least two levels")
-    by_index = [2] * _extent(qudits)
+    # Qudits the program does not use are not simulated, and keep the levels
+    # they would have.
+    extent = _extent(qudits)
+    if levels is None or isinstance(levels, dict):
+        by_index = [model.levels_of(q) for q in range(extent)]
+    else:
+        by_index = [int(levels)] * extent
     for q, d in zip(qudits, dims):
         by_index[q] = d
     attrs = [f"pulse.levels = array<i64: {', '.join(map(str, by_index))}>"]

@@ -63,7 +63,7 @@ def test_each_path_keeps_its_own_decoder_state():
     low = pulse.compile(k, device=dev).lower(*dev.qudit_handles[:3])
     plus = np.array([1, 1]) / np.sqrt(2)
     state = np.kron(np.array([1, 0]), np.kron(plus, plus))  # a, b in |+>, flag in |0>
-    result = pulse.simulate(low, initial_state=state)
+    result = pulse.simulate(low, initial_state=state, levels=2)
     assert len(result.branches) == 4
     for (ma, mb), weight in [((o[0], o[1]), w) for o, w in result.branches]:
         assert weight == pytest.approx(0.25)
@@ -104,5 +104,7 @@ def test_a_mapped_enqueue_sends_its_mapping_row():
 
     dev = _device()
     lowered = pulse.compile(rounds, device=dev).lower(dev.qudit_handles[0])
-    pulse.simulate(lowered, handlers={decoder.enqueue_function.name: enqueue}, shots=1, seed=0)
+    pulse.simulate(
+        lowered, handlers={decoder.enqueue_function.name: enqueue}, shots=1, seed=0, levels=2
+    )
     assert set(seen) == {(3, 4, 2, 12)}

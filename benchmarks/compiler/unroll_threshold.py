@@ -78,7 +78,7 @@ def measure(kernel, threshold, reps, simulate):
         t1 = time.perf_counter()
         compile_ms.append((t1 - t0) * 1e3)
         if simulate:
-            pulse.simulate(lowered, dt_ns=0.25)
+            pulse.simulate(lowered, dt_ns=0.25, levels=2)
             simulate_ms.append((time.perf_counter() - t1) * 1e3)
     return statistics.median(compile_ms), statistics.median(simulate_ms) if simulate else 0.0
 

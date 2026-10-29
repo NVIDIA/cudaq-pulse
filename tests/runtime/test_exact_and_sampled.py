@@ -108,9 +108,9 @@ def _excite_and_wait(q0, wait_cycles: int):
 
 def test_a_long_idle_decays_exactly_and_quickly():
     target = _target(t1_us=30.0, thermal=0.0)
-    short = pulse.simulate(on(target, _excite_and_wait, Q[0], 200_000)).density_matrix
+    short = pulse.simulate(on(target, _excite_and_wait, Q[0], 200_000), levels=2).density_matrix
     start = time.perf_counter()
-    long = pulse.simulate(on(target, _excite_and_wait, Q[0], 400_000)).density_matrix
+    long = pulse.simulate(on(target, _excite_and_wait, Q[0], 400_000), levels=2).density_matrix
     elapsed = time.perf_counter() - start
     # 100 us more of pure decay.
     assert long[1, 1].real / short[1, 1].real == pytest.approx(math.exp(-100.0 / 30.0), rel=1e-9)
@@ -148,9 +148,9 @@ def _three_measurements(q0):
 
 def test_sampled_paths_have_the_frequencies_of_the_exact_paths():
     lowered = on(_target(t1_us=0.0, t2_us=0.0, thermal=0.0), _three_measurements, Q[0])
-    exact = dict(pulse.simulate(lowered).branches)
+    exact = dict(pulse.simulate(lowered, levels=2).branches)
     shots = 4000
-    sampled = pulse.simulate(lowered, shots=shots, seed=5, paths="sampled")
+    sampled = pulse.simulate(lowered, shots=shots, seed=5, paths="sampled", levels=2)
     assert len(sampled.branches) <= shots
     assert sum(p for _, p in sampled.branches) == pytest.approx(1.0)
     assert np.trace(sampled.density_matrix).real == pytest.approx(1.0)
@@ -162,9 +162,9 @@ def test_sampled_paths_have_the_frequencies_of_the_exact_paths():
 def test_sampled_paths_need_shots():
     lowered = on(_target(), _three_measurements, Q[0])
     with pytest.raises(ValueError, match="shots"):
-        pulse.simulate(lowered, paths="sampled")
+        pulse.simulate(lowered, paths="sampled", levels=2)
     with pytest.raises(ValueError, match="paths"):
-        pulse.simulate(lowered, shots=1, paths="some")
+        pulse.simulate(lowered, shots=1, paths="some", levels=2)
 
 
 _MACHINE = MachineModel(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
@@ -199,7 +199,7 @@ def test_a_long_adaptive_loop_follows_one_path_per_shot():
     lowered = pulse.compile(_adaptive_loop, device=dev, machine=_MACHINE).lower(
         dev.qudit_handles[0], 60
     )
-    result = pulse.simulate(lowered, shots=3, seed=1, paths="sampled")
+    result = pulse.simulate(lowered, shots=3, seed=1, paths="sampled", levels=2)
     assert 1 <= len(result.branches) <= 3
     assert all(len(calls) == 60 for calls in result.calls)
     assert result.records is not None and result.records.shape == (3, 60)
@@ -213,7 +213,7 @@ def test_kept_propagators_are_keyed_compactly():
             drive(d, gaussian(400, _PI, 100))
 
     _propagate.clear_cache()
-    pulse.simulate(on(_target(), train, Q[0]))
+    pulse.simulate(on(_target(), train, Q[0]), levels=2)
     sizes = [
         sum(len(part) for part in key[2:] if isinstance(part, bytes)) for key in _propagate._cache
     ]

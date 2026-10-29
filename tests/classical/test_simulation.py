@@ -77,10 +77,18 @@ def test_a_decoder_reproduces_active_reset_exactly(shots):
     dev = _device()
     q = dev.qudit_handles[0]
     a = pulse.simulate(
-        pulse.compile(active_reset, device=dev).lower(q), initial_state=PLUS, shots=shots, seed=3
+        pulse.compile(active_reset, device=dev).lower(q),
+        initial_state=PLUS,
+        shots=shots,
+        seed=3,
+        levels=2,
     )
     b = pulse.simulate(
-        pulse.compile(decoded_reset, device=dev).lower(q), initial_state=PLUS, shots=shots, seed=3
+        pulse.compile(decoded_reset, device=dev).lower(q),
+        initial_state=PLUS,
+        shots=shots,
+        seed=3,
+        levels=2,
     )
     np.testing.assert_allclose(b.density_matrix, a.density_matrix, atol=1e-12)
     assert b.branches == a.branches
@@ -109,8 +117,10 @@ def test_an_answer_amplitude_is_bound_per_path():
 
     dev = _device()
     q = dev.qudit_handles[0]
-    result = pulse.simulate(pulse.compile(k, device=dev).lower(q), initial_state=PLUS)
-    reset = pulse.simulate(pulse.compile(active_reset, device=dev).lower(q), initial_state=PLUS)
+    result = pulse.simulate(pulse.compile(k, device=dev).lower(q), initial_state=PLUS, levels=2)
+    reset = pulse.simulate(
+        pulse.compile(active_reset, device=dev).lower(q), initial_state=PLUS, levels=2
+    )
     np.testing.assert_allclose(result.density_matrix, reset.density_matrix, atol=1e-9)
 
 
@@ -146,8 +156,8 @@ def test_a_variable_wait_matches_the_fixed_wait_and_t1_decay(tau):
     t1_us = 5.0
     dev = _device(t1_us=t1_us)
     q = dev.qudit_handles[0]
-    variable = pulse.simulate(pulse.compile(variable_t1, device=dev).lower(q, float(tau)))
-    fixed = pulse.simulate(pulse.compile(fixed_t1, device=dev).lower(q, tau))
+    variable = pulse.simulate(pulse.compile(variable_t1, device=dev).lower(q, float(tau)), levels=2)
+    fixed = pulse.simulate(pulse.compile(fixed_t1, device=dev).lower(q, tau), levels=2)
     p_variable = dict(variable.branches)[(1,)]
     p_fixed = dict(fixed.branches)[(1,)]
     assert p_variable == pytest.approx(p_fixed, abs=1e-9)
@@ -183,7 +193,9 @@ def test_variable_waits_differ_per_path():
     dev = _device(t1_us=5.0, n=2)
     qs = dev.qudit_handles
     result = pulse.simulate(
-        pulse.compile(k, device=dev).lower(qs[0], qs[1]), initial_state=np.kron([1, 0], PLUS)
+        pulse.compile(k, device=dev).lower(qs[0], qs[1]),
+        initial_state=np.kron([1, 0], PLUS),
+        levels=2,
     )
     branches = dict(result.branches)
     clock = dev.clock_ghz
@@ -219,7 +231,7 @@ def test_a_d2_repetition_round_flags_double_flips_with_probability_p_squared():
     noisy = np.diag([1 - p, p])
     rho = np.kron(np.diag([1.0, 0.0]), np.kron(noisy, noisy))  # qudit 0 least significant
     result = pulse.simulate(
-        pulse.compile(k, device=dev).lower(*dev.qudit_handles[:3]), initial_state=rho
+        pulse.compile(k, device=dev).lower(*dev.qudit_handles[:3]), initial_state=rho, levels=2
     )
     dims = result.dims
     flag_excited = sum(
@@ -252,18 +264,18 @@ def test_timeouts_take_the_fallback_at_the_modelled_rate():
     qs = dev.qudit_handles[:2]
     low = pulse.compile(k, device=dev).lower(*qs)
     # Triangular latency on [0, 1000] with mode 500: P(L <= 500) = 1/2.
-    exact = pulse.simulate(low, latency_branching=True)
+    exact = pulse.simulate(low, latency_branching=True, levels=2)
     assert np.trace(exact.density_matrix).real == pytest.approx(1.0)
     p1 = sum(exact.density_matrix[i, i].real for i in (2, 3))
     assert p1 == pytest.approx(0.5, abs=1e-9)
-    shots = pulse.simulate(low, shots=4000, seed=11)
+    shots = pulse.simulate(low, shots=4000, seed=11, levels=2)
     ok_weight = sum(w for (_, w), calls in zip(shots.branches, shots.calls) if calls[0].in_time)
     assert ok_weight == pytest.approx(0.5, abs=1e-9)
     # The sampled shots split between in time and late within 4 sigma.
     excited = shots.density_matrix[2, 2].real + shots.density_matrix[3, 3].real
     assert excited == pytest.approx(0.5, abs=1e-9)
     # Without shots or branching the nominal latency decides.
-    nominal = pulse.simulate(low)
+    nominal = pulse.simulate(low, levels=2)
     assert all(c[0].in_time for c in nominal.calls)
 
 
@@ -278,7 +290,7 @@ def test_readout_errors_are_reported_and_seen_by_calls():
     q = dev.qudit_handles[0]
     low = pulse.compile(decoded_reset, device=dev).lower(q)
     result = pulse.simulate(
-        low, initial_state=[0, 1], readout="model", handlers={"decoder": record}
+        low, initial_state=[0, 1], readout="model", handlers={"decoder": record}, levels=2
     )
     branches = _by_outcome(result)
     assert branches[(0,)] == pytest.approx(0.1)
@@ -298,8 +310,10 @@ def test_decay_during_readout_adds_to_the_one_to_zero_error():
         readout(r, square(2, 0.05))
 
     low = pulse.compile(measure, device=dev).lower(q)
-    plain = _by_outcome(pulse.simulate(low, initial_state=[0, 1], readout="model"))
-    decayed = _by_outcome(pulse.simulate(low, initial_state=[0, 1], readout="model_with_decay"))
+    plain = _by_outcome(pulse.simulate(low, initial_state=[0, 1], readout="model", levels=2))
+    decayed = _by_outcome(
+        pulse.simulate(low, initial_state=[0, 1], readout="model_with_decay", levels=2)
+    )
     extra = 1 - math.exp(-500 / (2 * 10e3))
     # The extra error applies to what is in |1> when the readout ends.
     assert decayed[(0,)] - plain.get((0,), 0.0) == pytest.approx(plain[(1,)] * extra, rel=1e-6)
@@ -323,8 +337,8 @@ def test_handlers_override_and_are_required_for_external_functions():
     with pytest.raises(
         KeyError, match="classical function 'remote' is external and has no handler"
     ):
-        pulse.simulate(low)
-    result = pulse.simulate(low, handlers={"remote": lambda bits: 3})
+        pulse.simulate(low, levels=2)
+    result = pulse.simulate(low, handlers={"remote": lambda bits: 3}, levels=2)
     assert result.density_matrix[1, 1].real == pytest.approx(1.0, abs=1e-6)
 
 
@@ -342,7 +356,7 @@ def test_calls_in_a_rolled_loop_are_bound_per_iteration():
         drive(d, square(40, PI_AMP * x / 4))
 
     dev = _device()
-    result = pulse.simulate(pulse.compile(k, device=dev).lower(dev.qudit_handles[0]))
+    result = pulse.simulate(pulse.compile(k, device=dev).lower(dev.qudit_handles[0]), levels=2)
     assert [c.answer for c in result.calls[0]] == [1.0, 2.0, 3.0, 4.0]
     assert result.density_matrix[1, 1].real == pytest.approx(1.0, abs=1e-6)
 
@@ -398,14 +412,21 @@ def test_gpu_simulation_of_calls_matches_the_cpu(case):
 def test_calls_on_a_high_index_qudit_use_its_mode():
     dev = _device(n=3, readout_params={"error_1to0": 0.1})
     q = dev.qudit_handles[2]
-    a = pulse.simulate(pulse.compile(active_reset, device=dev).lower(q), initial_state=PLUS)
-    b = pulse.simulate(pulse.compile(decoded_reset, device=dev).lower(q), initial_state=PLUS)
+    a = pulse.simulate(
+        pulse.compile(active_reset, device=dev).lower(q), initial_state=PLUS, levels=2
+    )
+    b = pulse.simulate(
+        pulse.compile(decoded_reset, device=dev).lower(q), initial_state=PLUS, levels=2
+    )
     assert b.qudits == (2,)
     assert b.measurements[0].qudit == 2
     assert _by_outcome(b) == pytest.approx(_by_outcome(a), abs=1e-9)
     assert np.allclose(b.density_matrix, a.density_matrix, atol=1e-9)
     modelled = pulse.simulate(
-        pulse.compile(decoded_reset, device=dev).lower(q), initial_state=PLUS, readout="model"
+        pulse.compile(decoded_reset, device=dev).lower(q),
+        initial_state=PLUS,
+        readout="model",
+        levels=2,
     )
     assert _by_outcome(modelled)[(0,)] == pytest.approx(0.5 + 0.5 * 0.1, abs=1e-6)
 
@@ -438,8 +459,10 @@ def test_an_answer_crossing_a_block_is_bound_in_simulation(schedule, where):
 
     dev = _device()
     q = dev.qudit_handles[0]
-    result = pulse.simulate(pulse.compile(k, device=dev).lower(q), initial_state=PLUS)
-    reset = pulse.simulate(pulse.compile(active_reset, device=dev).lower(q), initial_state=PLUS)
+    result = pulse.simulate(pulse.compile(k, device=dev).lower(q), initial_state=PLUS, levels=2)
+    reset = pulse.simulate(
+        pulse.compile(active_reset, device=dev).lower(q), initial_state=PLUS, levels=2
+    )
     np.testing.assert_allclose(result.density_matrix, reset.density_matrix, atol=1e-9)
     assert [[c.answer for c in calls] for calls in result.calls] == [[[0]], [[1]]]
 
@@ -464,13 +487,15 @@ def test_simulation_keeps_a_blocks_own_schedule():
     # before the end, where a flattened ALAP schedule would end it at the end.
     end = max(e.end for e in low.schedule)
     assert end - pi.end == 60
-    excited = 1.0 - pulse.simulate(low).density_matrix[0, 0].real
+    excited = 1.0 - pulse.simulate(low, levels=2).density_matrix[0, 0].real
 
     @pulse.kernel
     def pi_alone(q):
         d = get_drive_line(q)
         drive(d, square(40, PI_AMP))
 
-    alone = pulse.simulate(pulse.compile(pi_alone, device=dev).lower(dev.qudit_handles[0]))
+    alone = pulse.simulate(
+        pulse.compile(pi_alone, device=dev).lower(dev.qudit_handles[0]), levels=2
+    )
     at_end = 1.0 - alone.density_matrix[0, 0].real
     assert excited == pytest.approx(at_end * math.exp(-60 / 2.0 / 1000.0), abs=1e-4)

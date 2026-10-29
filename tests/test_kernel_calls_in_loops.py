@@ -77,11 +77,11 @@ def _evaluate(compiled, *values):
     return compiled.lower(_device(1).qudit_handles[0], *values)
 
 
-def _simulate(kernel, n=1, qvec=False, args=(), **kwargs):
-    """The CPU simulation of the kernel."""
+def _simulate(kernel, n=1, qvec=False, args=(), levels=2, **kwargs):
+    """The CPU simulation of the kernel, with two levels per qudit."""
     passes = (*UNFUSED, "merge_waits", "simplify_control_flow", "fuse_pulses")
     lowered = _compile(kernel, n, qvec, passes=passes, args=args)
-    return pulse.simulate(lowered, **kwargs)
+    return pulse.simulate(lowered, levels=levels, **kwargs)
 
 
 # ── Checks ───────────────────────────────────────────────────────────

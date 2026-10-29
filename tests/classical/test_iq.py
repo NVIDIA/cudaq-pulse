@@ -78,6 +78,7 @@ def test_discrimination_errors_match_the_gaussian_overlap():
         initial_state=PLUS,
         shots=shots,
         seed=11,
+        levels=2,
     )
     c0, c1 = _centers(dev)
     expected = 0.5 * math.erfc(abs(c1 - c0) / 2)  # sigma^2 = 1/2 per quadrature
@@ -113,7 +114,9 @@ def test_iq_points_scale_with_the_readout_amplitude():
             result = readout(r, square(1000, a))
             record.submit([result]).result()
 
-        pulse.simulate(pulse.compile(probe, device=dev).lower(q, amplitude), shots=600, seed=5)
+        pulse.simulate(
+            pulse.compile(probe, device=dev).lower(q, amplitude), shots=600, seed=5, levels=2
+        )
 
     mean_low = np.mean(seen[0.05])
     mean_high = np.mean(seen[0.1])
@@ -159,9 +162,9 @@ def test_iq_calls_need_shots_and_are_seeded():
     q = dev.qudit_handles[0]
     lowered = pulse.compile(_iq_reset(_threshold(dev)), device=dev).lower(q)
     with pytest.raises(ValueError, match="simulate with shots"):
-        pulse.simulate(lowered, initial_state=PLUS)
-    a = pulse.simulate(lowered, initial_state=PLUS, shots=50, seed=4)
-    b = pulse.simulate(lowered, initial_state=PLUS, shots=50, seed=4)
+        pulse.simulate(lowered, initial_state=PLUS, levels=2)
+    a = pulse.simulate(lowered, initial_state=PLUS, shots=50, seed=4, levels=2)
+    b = pulse.simulate(lowered, initial_state=PLUS, shots=50, seed=4, levels=2)
     assert np.array_equal(a.density_matrix, b.density_matrix)
 
 

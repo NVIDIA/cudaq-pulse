@@ -318,7 +318,7 @@ class Device:
             qubits = [target.qubits[p] for p in self.layout]
             levels = [model.levels_of(p) for p in self.layout]
             f01 = np.array([q.frequency_hz for q in qubits], dtype=float)
-            energies = np.full((len(qubits), max(levels, default=2)), np.nan)
+            energies = np.full((len(qubits), max(levels, default=model.levels)), np.nan)
             for row, qubit, n in zip(energies, qubits, levels):
                 row[:n] = model.energies_hz(qubit, n)
             transitions = np.abs(energies[:, None, :] - energies[:, :, None])

@@ -207,7 +207,7 @@ if __name__ == "__main__":
     # Branch on whether the answer is in time, with the decoder's latency
     # model (triangular over 200-400 ns, mode 300 ns): P(L <= 350) = 0.875.
     result = pulse.simulate(
-        decoded, initial_state=[2**-0.5, 2**-0.5], latency_branching=True, dt_ns=dt_ns
+        decoded, initial_state=[2**-0.5, 2**-0.5, 0.0], latency_branching=True, dt_ns=dt_ns
     )
     in_time = sum(p for calls, (_, p) in zip(result.calls, result.branches) if calls[0].in_time)
     print(f"  answer in time with p = {in_time:.3f}")

@@ -107,7 +107,7 @@ def test_k11_adaptive_t1_tracks_its_posterior_per_path(target):
     dev = _device(target)
     lowered = pulse.compile(adaptive_t1, device=dev, machine=MACHINE).lower(dev.qudit_handles[0], 2)
     assert [e.opened_by for e in lowered.epochs()] == ["start", "wait", "wait"]
-    result = pulse.simulate(lowered, dt_ns=4.0)
+    result = pulse.simulate(lowered, dt_ns=4.0, levels=2)
     assert sum(p for _, p in result.branches) == pytest.approx(1.0)
     for calls, (outcomes, _) in zip(result.calls, result.branches):
         alpha, beta, tau = 1.0, 5000.0, 10000.0
@@ -187,7 +187,7 @@ def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
     lowered = pulse.compile(binary_search, device=dev, machine=MACHINE).lower(
         dev.qudit_handles[0], 1
     )
-    result = pulse.simulate(lowered, plant=detuned, dt_ns=1.0)
+    result = pulse.simulate(lowered, plant=detuned, dt_ns=1.0, levels=2)
     # The first shot's outcome follows the surrogate's fringe (decay lowers
     # the contrast a little).
     plant.state = dataclasses.replace(plant.state, frequency_offset_hz=offset)
@@ -228,7 +228,7 @@ def test_k13_three_point_decay_and_phase_recover_the_device(target):
     compiled = pulse.compile(t1_shot, device=dev)
     spacing_cycles = 8000
     p = [
-        pulse.simulate(compiled.lower(q, 2000 + k * spacing_cycles), dt_ns=4.0)
+        pulse.simulate(compiled.lower(q, 2000 + k * spacing_cycles), dt_ns=4.0, levels=2)
         .density_matrix[1, 1]
         .real
         for k in range(3)
@@ -250,7 +250,9 @@ def test_k13_three_point_decay_and_phase_recover_the_device(target):
     wait_cycles, theta, delta = 600, math.pi / 2, 0.5
     # The simulated fringe is a - b cos(theta + e) at kernel phase pi - theta.
     p = [
-        pulse.simulate(ramsey.lower(q, wait_cycles, math.pi - (theta + k * delta)), plant=detuned)
+        pulse.simulate(
+            ramsey.lower(q, wait_cycles, math.pi - (theta + k * delta)), plant=detuned, levels=2
+        )
         .density_matrix[1, 1]
         .real
         for k in (-1, 0, 1)
@@ -288,7 +290,9 @@ def test_k14_golden_section_finds_the_qubit_frequency(target):
     x, done, steps = state.next_point(), False, 0
     while not done:
         p1 = (
-            pulse.simulate(compiled.lower(q, x), plant=detuned, dt_ns=1.0).density_matrix[1, 1].real
+            pulse.simulate(compiled.lower(q, x), plant=detuned, dt_ns=1.0, levels=2)
+            .density_matrix[1, 1]
+            .real
         )
         state, x, done = cal.golden_section_step(state, 1 - p1)
         steps += 1
@@ -363,7 +367,7 @@ def test_k14_golden_section_in_a_shot_uses_the_converged_pattern(target):
         dev.qudit_handles[0], 4
     )
     assert len(lowered.classical_report()) == 4
-    result = pulse.simulate(lowered, dt_ns=1.0)
+    result = pulse.simulate(lowered, dt_ns=1.0, levels=2)
     for calls, (outcomes, _) in zip(result.calls, result.branches):
         state, done = GOLDEN, False
         for call, outcome in zip(calls, outcomes):
@@ -399,7 +403,7 @@ def test_k15_the_closed_loop_runs_ten_thousand_iterations_on_one_compile(target)
         STORE.set("wait_cycles", 2000.0 + (i % 100) * 20.0, iteration=i)
         lowered = compiled.lower(q, PI_AMP * (1 + 1e-4 * (i % 10)))
         if i % 2500 == 0:
-            result = pulse.simulate(lowered, dt_ns=4.0)
+            result = pulse.simulate(lowered, dt_ns=4.0, levels=2)
             log.record(i, "p_survive", dict(result.branches).get((1,), 0.0))
     assert compiled.cache_info().compiled == 1
     assert len(log) == 4
@@ -502,9 +506,9 @@ def test_k18_readout_models_on_the_target(target):
         readout(r, square(800, 0.05))
 
     lowered = pulse.compile(excite_and_measure, device=dev).lower(dev.qudit_handles[0])
-    ideal = dict(pulse.simulate(lowered, dt_ns=1.0).branches)
-    model = pulse.simulate(lowered, dt_ns=1.0, readout="model")
-    decay = pulse.simulate(lowered, dt_ns=1.0, readout="model_with_decay")
+    ideal = dict(pulse.simulate(lowered, dt_ns=1.0, levels=2).branches)
+    model = pulse.simulate(lowered, dt_ns=1.0, readout="model", levels=2)
+    decay = pulse.simulate(lowered, dt_ns=1.0, readout="model_with_decay", levels=2)
     reported_zero = lambda r: sum(p for o, p in r.branches if o == (0,))  # noqa: E731
     # Asymmetric errors: |1> is reported 0 at error_1to0 (plus the little
     # it decayed before the readout); decay during the window adds more.
@@ -565,13 +569,15 @@ def pauli_rb(q):
 def test_k19_pauli_benchmarking_returns_to_zero_unless_miscalibrated(target):
     dev = _device(target)
     lowered = pulse.compile(pauli_rb, device=dev, machine=MACHINE).lower(dev.qudit_handles[0])
-    ideal = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0)
+    ideal = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0, levels=2)
     assert len(ideal.branches) == 64  # every sequence of three Paulis
     # Each sequence and its recovery multiply to the identity.
     assert ideal.density_matrix[0, 0].real == pytest.approx(1.0, abs=0.01)
     plant = DriftingPlant(target, amplitude=OrnsteinUhlenbeck(1e-9, 1.0), seed=1)
     plant.state = dataclasses.replace(plant.state, amplitude_scale=1.1)
-    drifted = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0, plant=plant.target())
+    drifted = pulse.simulate(
+        lowered, initial_state=[1, 0], dt_ns=1.0, plant=plant.target(), levels=2
+    )
     assert drifted.density_matrix[0, 0].real < ideal.density_matrix[0, 0].real - 0.01
-    shots = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0, shots=200, seed=3)
+    shots = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0, shots=200, seed=3, levels=2)
     assert shots.records is not None and len(shots.records) == 200

@@ -279,7 +279,9 @@ behavior may change in any 0.x release.
   predicted phase and leakage, flags and alternatives.
 - **Simulation.** `pulse.simulate` evolves a compiled call with T1, T2 or
   Hahn-echo dephasing, thermal populations, exchange couplings, residual ZZ
-  and any number of transmon levels, either with a NumPy reference
+  and any number of transmon levels (by default those the target's model
+  declares, 3 for a transmon; `levels=` sets them for every qudit or, as a
+  dict, per qudit), either with a NumPy reference
   integrator (`backend="cpu"`) or on NVIDIA GPUs through cuDensityMat
   (`backend="gpu"`, Linux, experimental). Programs that measure and branch
   are evolved as an exact ensemble over outcomes. The simulated space holds
