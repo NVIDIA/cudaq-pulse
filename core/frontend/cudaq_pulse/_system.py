@@ -150,6 +150,29 @@ def _op_name(given: Any, field_name: str) -> str:
     )
 
 
+def _dispatch_keys(given: Any, owner: str) -> Mapping[str, int]:
+    if not isinstance(given, Mapping):
+        raise InvalidTypeError(f"{owner}.dispatch_keys maps function names to keys, got {given!r}")
+    owners: dict[int, str] = {}
+    for name, key in given.items():
+        if not isinstance(name, str) or not name.isidentifier():
+            raise InvalidValueError(
+                f"{owner}.dispatch_keys is keyed by function name, got {name!r}"
+            )
+        if isinstance(key, bool) or not isinstance(key, int) or not 0 <= key <= 0xFFFFFFFF:
+            raise InvalidValueError(
+                f"{owner}.dispatch_keys[{name!r}] is {key!r}; a dispatch key is a whole "
+                "number from 0 to 0xFFFFFFFF"
+            )
+        if key in owners:
+            raise InvalidValueError(
+                f"{owner}.dispatch_keys gives {key} to both {owners[key]!r} and {name!r}; "
+                "give each function its own key"
+            )
+        owners[key] = name
+    return MappingProxyType(dict(given))
+
+
 @dataclass(frozen=True)
 class Processor:
     """A classical processor on a controller, which runs the classical
@@ -263,28 +286,7 @@ class Processor:
             raise InvalidTypeError(
                 f"Processor.fixed_cost_only is True or False, got {self.fixed_cost_only!r}"
             )
-        if not isinstance(self.dispatch_keys, Mapping):
-            raise InvalidTypeError(
-                f"Processor.dispatch_keys maps function names to keys, got {self.dispatch_keys!r}"
-            )
-        owners: dict[int, str] = {}
-        for name, key in self.dispatch_keys.items():
-            if not isinstance(name, str) or not name.isidentifier():
-                raise InvalidValueError(
-                    f"Processor.dispatch_keys is keyed by function name, got {name!r}"
-                )
-            if isinstance(key, bool) or not isinstance(key, int) or not 0 <= key <= 0xFFFFFFFF:
-                raise InvalidValueError(
-                    f"Processor.dispatch_keys[{name!r}] is {key!r}; a dispatch key is a whole "
-                    "number from 0 to 0xFFFFFFFF"
-                )
-            if key in owners:
-                raise InvalidValueError(
-                    f"Processor.dispatch_keys gives {key} to both {owners[key]!r} and {name!r}; "
-                    "give each function its own key"
-                )
-            owners[key] = name
-        object.__setattr__(self, "dispatch_keys", MappingProxyType(dict(self.dispatch_keys)))
+        object.__setattr__(self, "dispatch_keys", _dispatch_keys(self.dispatch_keys, "Processor"))
 
     def __hash__(self) -> int:
         return hash(
@@ -330,7 +332,10 @@ class Controller(ControllerLimits):
     ``version`` identify the description it was made from. ``processors``
     are its classical processors (``Processor``); a controller with
     processors states what it computes on them, not with the compute fields
-    of ``ControllerLimits``.
+    of ``ControllerLimits``. ``dispatch_keys``: for a controller that
+    computes with those fields, the dispatch key of each function on its
+    ``compute_links``, by function name, when it fixes them (a processor
+    states its own).
     """
 
     drive_lines: Sequence[int] = ()
@@ -343,6 +348,7 @@ class Controller(ControllerLimits):
     model: str | None = None
     version: str | None = None
     processors: Sequence[Processor] = ()
+    dispatch_keys: Mapping[str, int] = field(default_factory=dict)
 
     __hash__ = ControllerLimits.__hash__
 
@@ -406,13 +412,16 @@ class Controller(ControllerLimits):
                     f"Controller.processors[{index}] is not a pulse.Processor: {item!r}"
                 )
             processors.append(item)
-        if processors and (self.computes or self.compute_links != ("controller",)):
+        keys = _dispatch_keys(self.dispatch_keys, "Controller")
+        if processors and (self.computes or self.compute_links != ("controller",) or keys):
             raise InvalidValueError(
                 "a Controller with processors states what it computes on them; move its "
                 "compute_links, op_cycles, compute_clock_ghz, max_ops, state_bytes, "
-                "max_calls_per_shot, buffer_bytes and controller_form to a pulse.Processor"
+                "max_calls_per_shot, buffer_bytes, controller_form and dispatch_keys to a "
+                "pulse.Processor"
             )
         object.__setattr__(self, "processors", tuple(processors))
+        object.__setattr__(self, "dispatch_keys", keys)
 
     def as_dict(self) -> dict[str, Any]:
         """The controller as JSON-serializable data, which ``Controller(**data)``
@@ -429,6 +438,10 @@ class Controller(ControllerLimits):
             data["processors"] = [p.as_dict() for p in self.processors]
         else:
             del data["processors"]
+        if self.dispatch_keys:
+            data["dispatch_keys"] = dict(self.dispatch_keys)
+        else:
+            del data["dispatch_keys"]
         return data
 
     def supports_capability(self, capability: Capability) -> bool:

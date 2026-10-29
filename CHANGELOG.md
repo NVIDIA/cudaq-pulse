@@ -80,7 +80,9 @@ behavior may change in any 0.x release.
   processor operation too: its cost is a rolled loop's counter and jump per
   iteration, and a processor without it runs loops unrolled, so their size
   counts unrolled. `dispatch_keys={"name": key}` gives the functions a
-  processor runs fixed dispatch keys. `lowered.controller_usage` reports
+  processor runs fixed dispatch keys; a controller that computes with its
+  own fields states them as `Controller(dispatch_keys=...)` (a
+  `[dispatch_keys]` table in its description). `lowered.controller_usage` reports
   each processor's functions and totals against its limits
   (`.within_limits`; `print` it for a table). Descriptions and system files
   state processors as `[[processors]]` tables.

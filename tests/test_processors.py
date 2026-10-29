@@ -161,8 +161,27 @@ def test_a_controller_computes_on_its_processors_or_with_its_own_fields_not_both
         pulse.Controller(processors=cores)  # type: ignore[arg-type]
     with pytest.raises(pulse.InvalidValueError, match=r"processors\[0\]: .*'link'"):
         pulse.Controller(processors=[{"link": ["cores"]}])
+    with pytest.raises(pulse.InvalidValueError, match="dispatch_keys to a pulse.Processor"):
+        pulse.Controller(processors=[cores], dispatch_keys={"_parity": 7})
     # A controller without processors writes what it did before.
-    assert "processors" not in pulse.Controller().as_dict()
+    assert {"processors", "dispatch_keys"}.isdisjoint(pulse.Controller().as_dict())
+
+
+def test_a_controller_computing_on_its_own_fields_states_its_dispatch_keys(tmp_path):
+    box = pulse.Controller(compute_links=("cores",), max_ops=40, dispatch_keys={"_parity": 7})
+    assert box.dispatch_keys == {"_parity": 7}
+    assert pulse.Controller(**json.loads(json.dumps(box.as_dict()))) == box
+    with pytest.raises(pulse.InvalidValueError, match="gives 7 to both '_a' and '_b'"):
+        pulse.Controller(dispatch_keys={"_a": 7, "_b": 7})
+    with pytest.raises(pulse.InvalidValueError, match=r"Controller.dispatch_keys\['_a'\] is -1"):
+        pulse.Controller(dispatch_keys={"_a": -1})
+    path = tmp_path / "box.toml"
+    path.write_text(
+        'model = "acme.box"\nversion = "1"\ncompute_links = ["cores"]\n\n'
+        "[dispatch_keys]\n_parity = 7\n"
+    )
+    loaded = pulse.controller(str(path), drive_lines=[0])
+    assert loaded.dispatch_keys == {"_parity": 7} and loaded.model == "acme.box"
 
 
 def test_a_link_belongs_to_one_processor_of_the_system():
