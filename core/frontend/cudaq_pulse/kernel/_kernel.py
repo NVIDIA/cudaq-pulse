@@ -387,7 +387,7 @@ class _Dispatcher:
         entry = self.lookup(values)
         lowered = entry.lowered
         if entry.runtime:
-            lowered = lowered.bind(kernel._runtime_values(values, entry.runtime))
+            lowered = lowered._with_values(kernel._runtime_values(values, entry.runtime))
         return _execute(lowered, entry.returns)
 
     def lower(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Lowered:
@@ -396,7 +396,7 @@ class _Dispatcher:
         entry = self.lookup(values)
         lowered = entry.lowered
         if entry.runtime:
-            lowered = lowered.bind(kernel._runtime_values(values, entry.runtime))
+            lowered = lowered._with_values(kernel._runtime_values(values, entry.runtime))
         return lowered
 
     def clear(self) -> None:

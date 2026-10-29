@@ -410,8 +410,9 @@ def _simulate_compiled(
     lock = compiled._lock
     arguments = list(compiled.arguments)
     for v in arguments:
-        if v - v != 0.0:
-            raise compiled._not_finite()
+        if v.__class__ is not float and v.__class__ is not int or v - v != 0.0:
+            arguments = compiled._checked_arguments()
+            break
     functions = tuple(getattr(compiled, "classical", ()))
     tree = bool(functions) or readout != "ideal"
     if functions:

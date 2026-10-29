@@ -189,6 +189,86 @@ def test_lower_binds_arguments_like_python():
         _bell.lower()
 
 
+@pulse.kernel
+def _two_amplitudes(q0, amplitude: float, detuning: float):
+    d0 = get_drive_line(q0)
+    drive(d0, square(40, amplitude))
+    shift_frequency(d0.tone, detuning)
+    drive(d0, square(40, amplitude))
+
+
+def test_bind_takes_one_real_number_per_parameter():
+    generic = _two_amplitudes.lower(Q[0], 0.1, 1e6).generic
+    assert generic.parameters == ("amplitude", "detuning")
+    expected = generic.bind([0.2, 2e6])
+    values = ([0.2, 2e6], (0.2, 2_000_000), [_Real(0.2), 2e6], iter([0.2, 2e6]))
+    bound = [generic.bind(v) for v in values]
+    assert all(b.mlir() == expected.mlir() for b in bound)
+    density = pulse.simulate(expected).density_matrix
+    assert all((pulse.simulate(b).density_matrix == density).all() for b in bound)
+
+
+class _Real:
+    def __init__(self, x):
+        self.x = x
+
+    def __float__(self):
+        return self.x
+
+
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        (
+            [0.2],
+            r"got 1 value for 2 float parameters "
+            r"\(amplitude, detuning\); missing the value of 'detuning'",
+        ),
+        ([], r"missing the value of 'amplitude', 'detuning'"),
+        ([0.2, 1e6, 3.0], r"got 3 values .*; 1 more than it has"),
+        (0.2, r"takes a list or tuple of values, .*got float"),
+    ],
+)
+def test_bind_names_the_parameters_when_the_count_does_not_fit(values, message):
+    generic = _two_amplitudes.lower(Q[0], 0.1, 1e6).generic
+    with pytest.raises(pulse.InvalidTypeError, match=message):
+        generic.bind(values)
+
+
+@pytest.mark.parametrize(
+    ("values", "error", "message"),
+    [
+        (
+            [True, 1e6],
+            pulse.InvalidTypeError,
+            r"the value of 'amplitude' must be a real number, got bool True",
+        ),
+        (
+            [0.2, "1e6"],
+            pulse.InvalidTypeError,
+            r"the value of 'detuning' must be a real number, got str '1e6'",
+        ),
+        ([0.2, 1j], pulse.InvalidTypeError, r"'detuning' must be a real number, got complex"),
+        ([0.2, None], pulse.InvalidTypeError, r"'detuning' must be a real number, got NoneType"),
+        ([math.nan, 1e6], pulse.InvalidValueError, r"argument 'amplitude' is nan; a float"),
+        ([0.2, -math.inf], pulse.InvalidValueError, r"argument 'detuning' is -inf; a float"),
+    ],
+)
+def test_a_bound_value_that_does_not_fit_fails_where_the_module_is_used(values, error, message):
+    bound = _two_amplitudes.lower(Q[0], 0.1, 1e6).generic.bind(values)
+    for use in (bound.mlir, lambda: pulse.simulate(bound)):
+        with pytest.raises(error, match=message):
+            use()
+
+
+def test_bind_of_a_module_with_its_values_takes_none():
+    bound = _two_amplitudes.lower(Q[0], 0.1, 1e6)
+    assert bound.parameters == ()
+    assert bound.bind([]).arguments == ()
+    with pytest.raises(pulse.InvalidTypeError, match=r"no float parameters; a module of one call"):
+        bound.bind([0.2])
+
+
 # ---------------------------------------------------------------------------
 # PackedIRBuilder tests
 # ---------------------------------------------------------------------------

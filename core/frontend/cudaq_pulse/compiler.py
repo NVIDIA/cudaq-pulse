@@ -27,7 +27,7 @@ from fractions import Fraction
 from types import FunctionType, MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from ._errors import InvalidValueError
+from ._errors import InvalidTypeError, InvalidValueError
 from ._native import PackedValueError, PulseModuleBuilder
 from ._units import Time
 from .classical import Link
@@ -759,6 +759,55 @@ def _rebuilt_wait_lengths(
     return lengths
 
 
+def _bind_count_error(parameters: tuple[str, ...], values: Any) -> InvalidTypeError:
+    """The error for ``bind(values)`` with the wrong number of *values*."""
+    try:
+        count = len(values)
+    except TypeError:
+        return InvalidTypeError(
+            f"bind() takes a list or tuple of values, one per float parameter, "
+            f"got {type(values).__name__}"
+        )
+    got = f"{count} value" if count == 1 else f"{count} values"
+    if not parameters:
+        return InvalidTypeError(
+            f"bind() got {got} for a module with no float parameters; a module of one "
+            "call has its values already"
+        )
+    names = ", ".join(parameters)
+    if count < len(parameters):
+        missing = ", ".join(repr(p) for p in parameters[count:])
+        detail = f"missing the value of {missing}"
+    else:
+        detail = f"{count - len(parameters)} more than it has parameters"
+    return InvalidTypeError(
+        f"bind() got {got} for {len(parameters)} float parameters ({names}); {detail}"
+    )
+
+
+def _bind_checked(parameters: tuple[str, ...], values: Any) -> list[float]:
+    """*values* as floats, one per parameter, or the error for their count or
+    naming the first parameter whose value is not a real number."""
+    try:
+        fits = len(values) == len(parameters)
+    except TypeError:
+        fits = False
+    if not fits:
+        raise _bind_count_error(parameters, values)
+    out = []
+    for name, v in zip(parameters, values):
+        if isinstance(v, (bool, str, bytes)) or not hasattr(v, "__float__"):
+            raise InvalidTypeError(
+                f"bind(): the value of {name!r} must be a real number, got {type(v).__name__} {v!r}"
+            )
+        if isinstance(v, complex):
+            raise InvalidTypeError(
+                f"bind(): the value of {name!r} must be a real number, got complex {v!r}"
+            )
+        out.append(float(v))
+    return out
+
+
 class Lowered:
     """One compiled module of a kernel: read-only text, schedule and metrics.
 
@@ -798,6 +847,7 @@ class Lowered:
         "waits",
         "classical",
         "runtime_selects",
+        "_arity",
     )
 
     # Its controllers' clocks, when one is not the program clock or they
@@ -840,12 +890,60 @@ class Lowered:
     def bind(self, values: Sequence[float]) -> Lowered:
         """This module with values for its float parameters, sharing it.
 
-        Raises ``ValueError`` if a wait length computed from them is not a
-        finite, non-negative number of cycles within the wait's bounds."""
+        *values* holds one real number per entry of ``parameters``, in that
+        order. Too few or too many values are an ``InvalidTypeError`` naming
+        the parameters, and a wait length computed from the values that is not
+        a non-negative number of cycles within the wait's bounds a
+        ``ValueError``. A value that is not a real number (a bool or a str) is
+        an ``InvalidTypeError``, and a NaN or infinity an
+        ``InvalidValueError``, each naming the parameter, where the module is
+        used: run, simulated, exported or printed."""
+        try:
+            arity = self._arity
+            arguments = tuple(values)
+        except (TypeError, AttributeError):
+            # How many values a generic module takes is kept by its first
+            # bind; a call's view keeps none and takes none.
+            if self.generic is None:
+                self._arity = len(self.parameters)
+            return self._with_values(_bind_checked(self.parameters, values))
+        if len(arguments) != arity:
+            raise _bind_count_error(self.parameters, arguments)
+        # The view is made here as in _with_values: a call to it would be a
+        # third of a bind.
+        waits = self.waits
+        if waits is not None:
+            try:
+                waits.check(arguments)
+            except TypeError:
+                _bind_checked(self.parameters, arguments)
+                raise
+        view = _View()
+        view._module = self._module
+        view._text = None
+        view._lock = self._lock
+        view._concrete_module = None
+        view.target = self.target
+        view.metrics = self.metrics
+        view.parameters = ()
+        view.arguments = arguments
+        view.qudits = self.qudits
+        view.options = self.options
+        view.scheduled = self.scheduled
+        view.generic = self
+        view.waits = waits
+        view.classical = self.classical
+        view.runtime_selects = self.runtime_selects
+        return view
+
+    def _with_values(self, values: Sequence[float]) -> Lowered:
+        """``bind`` for *values* known to be one real number per parameter,
+        such as a kernel call's. Whether each is a finite float is checked
+        where the module uses them (``_concrete`` and simulation)."""
         waits = self.waits
         if waits is not None:
             waits.check(values)
-        view = Lowered.__new__(Lowered)
+        view = _View()
         view._module = self._module
         view._text = None
         view._lock = self._lock
@@ -875,26 +973,27 @@ class Lowered:
         if not self.arguments:
             return self._module
         if self._concrete_module is None:
-            for v in self.arguments:
-                if v - v != 0.0:
-                    raise self._not_finite()
+            arguments = self.arguments
+            for v in arguments:
+                if v.__class__ is not float and v.__class__ is not int or v - v != 0.0:
+                    arguments = self._checked_arguments()
+                    break
             with self._lock:
-                module = self._module.specialize(
-                    list(self.arguments), [], *self.options.schedule_args()
-                )
+                module = self._module.specialize(list(arguments), [], *self.options.schedule_args())
             self._concrete_module = module
         return self._concrete_module
 
-    def _not_finite(self) -> InvalidValueError:
-        """The error for the first of the call's values that is NaN or infinite."""
+    def _checked_arguments(self) -> list[float]:
+        """The call's values as floats, or the error naming the first that is
+        not a real number or not finite."""
         names = self.generic.parameters if self.generic is not None else ()
-        for i, v in enumerate(self.arguments):
+        values = _bind_checked(names, self.arguments)
+        for name, v in zip(names, values):
             if v - v != 0.0:
-                name = names[i] if i < len(names) else f"#{i}"
-                return InvalidValueError(
+                raise InvalidValueError(
                     f"argument {name!r} is {v!r}; a float argument must be a finite number"
                 )
-        raise AssertionError("every value is finite")
+        return values
 
     def mlir(self, level: IRLevel | str = IRLevel.PULSE) -> str:
         """The module as MLIR text at *level* (an ``IRLevel`` or its name):
@@ -1056,6 +1155,14 @@ class Lowered:
     def __repr__(self) -> str:
         params = f", parameters={list(self.parameters)}" if self.parameters else ""
         return f"<Lowered {self.metrics.op_count} ops on {self.target.name}{params}>"
+
+
+class _View(Lowered):
+    """A call's view of a module, made by ``bind``: ``_View()`` runs no
+    ``__init__`` and is the cheapest way to make a ``Lowered``."""
+
+    __slots__ = ()
+    __init__ = object.__init__
 
 
 class _ClockedLowered(Lowered):

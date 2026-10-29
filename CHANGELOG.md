@@ -369,7 +369,12 @@ behavior may change in any 0.x release.
   program compiled already, such as one a worker process receives pickled,
   without compiling it again. A module with run-time float parameters
   (`lowered.generic`) takes their values as `bind` does; the module of a
-  call, from `kernel.lower(*args)` or `bind`, takes none.
+  call, from `kernel.lower(*args)` or `bind`, takes none. `bind(values)`
+  takes one real number per parameter, in the order of `parameters`; too
+  few or too many values are an `InvalidTypeError` naming the parameters.
+  A bool, str or other non-number is an `InvalidTypeError`, and a NaN or
+  infinity an `InvalidValueError`, naming the parameter where the module
+  is used, as for a kernel call's float arguments.
   Every error cudaq-pulse raises on purpose derives from `PulseError` and
   has the built-in base of its kind: `InvalidValueError` is a `ValueError`,
   `InvalidTypeError` a `TypeError`, `NotFoundError` a `KeyError`,
