@@ -61,6 +61,8 @@ class Calibration:
         self.name = name
         self.cooldown: str = cooldown
         self.target: str | None = schema.get("target")
+        # The digest of the shipped file this was loaded from, if it was.
+        self._shipped: str | None = None
 
     @classmethod
     def load(
@@ -69,8 +71,11 @@ class Calibration:
         """A shipped calibration by name, or a calibration file by path."""
         path = Path(source)
         name = os.fspath(source)
+        digest = None
         if not path.suffix and (_SHIPPED / f"{name}.json").is_file():
-            path = _SHIPPED / f"{name}.json"
+            from .._source_stamp import CALIBRATIONS
+
+            path, digest = _SHIPPED / f"{name}.json", CALIBRATIONS.get(name)
         elif not path.is_file():
             shipped = sorted(p.stem for p in _SHIPPED.glob("*.json"))
             raise NotFoundError(
@@ -79,7 +84,9 @@ class Calibration:
             )
         else:
             name = path.stem
-        return cls(json.loads(path.read_text(encoding="utf-8")), name=name, cooldown=cooldown)
+        loaded = cls(json.loads(path.read_text(encoding="utf-8")), name=name, cooldown=cooldown)
+        loaded._shipped = digest
+        return loaded
 
     @property
     def cooldowns(self) -> Mapping[str, str]:
@@ -114,6 +121,15 @@ class Calibration:
 
         content = json.dumps(self._data, sort_keys=True).encode() + self.cooldown.encode()
         return hashlib.blake2b(content, digest_size=16).hexdigest()
+
+    @property
+    def _identity(self) -> tuple[str, ...]:
+        """What a device's fingerprint takes of it: a shipped calibration's
+        name, cooldown and the file's digest, recorded when the package was
+        built; any other's ``fingerprint``, a hash of its contents."""
+        if self._shipped is not None:
+            return ("shipped", self.name, self.cooldown, self._shipped)
+        return ("contents", self.fingerprint)
 
     # ── Circuits and couplings ──────────────────────────────────────────
 

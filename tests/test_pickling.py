@@ -29,6 +29,8 @@ from cudaq_pulse.controller import ControllerLimitError, ControllerLimits
 from cudaq_pulse.kernel import _kernel
 from cudaq_pulse.kernel.ir_builder import SymbolicValueError
 from cudaq_pulse.targets import Coupling, Qubit, TargetDescription
+from cudaq_pulse.targets._registry import make_target
+from cudaq_pulse.targets.calibration import Calibration
 
 from tests._handles import LADDER, Q
 
@@ -185,6 +187,61 @@ def test_a_device_unpickles_equal_and_is_built_once_per_process(make, monkeypatc
     assert built.target == device.target
     assert (built.calibration is None) == (device.calibration is None)
     assert pickle.loads(data) is built
+
+
+def _shipped_and_uncalibrated():
+    shipped = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    uncalibrated = pulse.device({"target": make_target("transmon_krinner_17q")})
+    assert shipped.calibration is not None and uncalibrated.calibration is None
+    return shipped, uncalibrated
+
+
+def test_a_device_and_its_target_without_the_calibration_are_two_devices():
+    shipped, uncalibrated = _shipped_and_uncalibrated()
+    assert shipped.fingerprint != uncalibrated.fingerprint and shipped != uncalibrated
+    assert shipped.qudit_handles[0] != uncalibrated.qudit_handles[0]
+    named = pulse.device({"target": "transmon_krinner_17q", "calibration": "krinner17"})
+    assert named == shipped and named.calibration == shipped.calibration
+    # One kernel, called on each, returns each its own device.
+    assert rabi.lower(shipped.qudit_handles[0], 0.1).target is shipped
+    assert rabi.lower(uncalibrated.qudit_handles[0], 0.1).target is uncalibrated
+
+
+@pytest.mark.parametrize("kept_first", [1, 0], ids=["uncalibrated kept", "shipped kept"])
+def test_a_process_holding_one_unpickles_the_other_as_itself(kept_first, monkeypatch):
+    devices = _shipped_and_uncalibrated()
+    kept, sent = devices[kept_first], devices[1 - kept_first]
+    data = pickle.dumps(sent)
+    monkeypatch.setattr(_pickling, "_devices", {})
+    assert _round_trip(kept) is kept
+    back = pickle.loads(data)
+    assert back == sent and back != kept
+    assert back.calibration == sent.calibration
+
+
+def test_a_device_unpickles_with_its_own_name_and_source(monkeypatch):
+    target = make_target("transmon_krinner_17q")
+    first = pulse.Device(target, name="first", source="a")
+    second = pulse.Device(target, name="second", source="b")
+    assert first == second
+    data = pickle.dumps(second)
+    monkeypatch.setattr(_pickling, "_devices", {})
+    assert _round_trip(first) is first
+    back = pickle.loads(data)
+    assert (back.name, back.source) == ("second", "b")
+
+
+def test_a_calibration_of_other_values_makes_another_device():
+    shipped = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).calibration
+    data = copy.deepcopy(shipped._data)
+    same = Calibration(data, name="mine")
+    data["cooldowns"]["K22-main"] = "edited"
+    other = Calibration(data, name="mine")
+    target = make_target("transmon_krinner_17q")
+    devices = [pulse.device({"target": target, "calibration": c}) for c in (same, other)]
+    assert devices[0] != devices[1]
+    again = pulse.device({"target": target, "calibration": Calibration(shipped._data, name="m")})
+    assert again == devices[0]
 
 
 def test_handles_and_registers_unpickle_as_their_device_and_indices(monkeypatch):

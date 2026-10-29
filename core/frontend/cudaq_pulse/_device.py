@@ -14,7 +14,10 @@ names one carrier of that device. A kernel called with handles runs on their
 device, so one compiled kernel serves every device it is called with.
 
 Devices compare by content: two devices built from the same config are equal
-and share compiled kernels.
+and share compiled kernels. The content is the target, layout and
+calibration (a shipped one by name, cooldown and file, any other by its
+values); ``name`` and ``source`` are labels, and equal devices may differ
+in them.
 """
 
 from __future__ import annotations
@@ -80,8 +83,9 @@ def _read_only(array: Any) -> Any:
     return array
 
 
-def _fingerprint(target: TargetDescription, layout: tuple[int, ...]) -> str:
-    """Content hash of everything a compiled kernel depends on."""
+def _fingerprint(target: TargetDescription, layout: tuple[int, ...], calibration: Any) -> str:
+    """Content hash of everything a compiled kernel depends on, and of the
+    calibration the device holds: devices of one fingerprint are one device."""
     qubits = [
         (
             q.index,
@@ -108,10 +112,18 @@ def _fingerprint(target: TargetDescription, layout: tuple[int, ...]) -> str:
             for entry, c in zip(couplings, target.couplings)
         ]
     crosstalk = [(x.qubit_a, x.qubit_b, x.static_zz_hz) for x in target.crosstalk]
-    content = repr(
-        (target.architecture, target.clock_ghz, qubits, couplings, crosstalk, layout)
-    ).encode()
-    return hashlib.blake2b(content, digest_size=16).hexdigest()
+    content: tuple[Any, ...] = (
+        target.architecture,
+        target.clock_ghz,
+        qubits,
+        couplings,
+        crosstalk,
+        layout,
+    )
+    # Uncalibrated devices keep their fingerprints.
+    if calibration is not None:
+        content += (calibration._identity,)
+    return hashlib.blake2b(repr(content).encode(), digest_size=16).hexdigest()
 
 
 class Qudit:
@@ -299,7 +311,7 @@ class Device:
         self.layout = layout
         self.clock_ghz = float(target.clock_ghz)
         self.frequencies: Mapping[int, float] = target.frequencies
-        self.fingerprint = _fingerprint(target, layout)
+        self.fingerprint = _fingerprint(target, layout, calibration)
         self.qudit_handles = _Handles(tuple(Qudit(self, p, i) for i, p in enumerate(layout)))
         self._arrays: tuple[Any, Any] | None = None
 

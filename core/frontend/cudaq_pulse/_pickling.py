@@ -20,8 +20,9 @@
 - A target pickles as the inputs it was built from, and a device as its
   target and the inputs it was built from; both are built again, equal to
   the originals. A process keeps the last ``_KEPT_DEVICES`` devices it
-  unpickled by fingerprint, so that programs of one device unpickled one
-  by one share it without building it again. Qudit handles and registers
+  unpickled by fingerprint (which covers the calibration), name and source,
+  so that programs of one device unpickled one by one share it without
+  building it again. Qudit handles and registers
   pickle as their device and indices.
 - A program (``Lowered``, and a call's view of one) pickles as MLIR
   bytecode and its metadata, stamped with the build that compiled it, and
@@ -98,34 +99,41 @@ def rebuilt_links(cls: Any, links: dict[int, Any], names: dict[str, int]) -> Any
 # ── Devices ─────────────────────────────────────────────────────────────────
 
 _KEPT_DEVICES = 16
-_devices: dict[str, Any] = {}
+_devices: dict[tuple[str, str, str], Any] = {}
 _devices_lock = threading.Lock()
 
 
-def _keep(device: Any) -> None:
+def _device_key(device: Any) -> tuple[str, str, str]:
+    # The fingerprint, and the labels it leaves out, so that an unpickled
+    # device is the one pickled in every attribute.
+    return (device.fingerprint, device.name, device.source)
+
+
+def _keep(key: tuple[str, str, str], device: Any) -> None:
     with _devices_lock:
-        _devices.pop(device.fingerprint, None)
-        _devices[device.fingerprint] = device
+        _devices.pop(key, None)
+        _devices[key] = device
         while len(_devices) > _KEPT_DEVICES:
             del _devices[next(iter(_devices))]
 
 
 def device_reduce(device: Any, inputs: dict[str, Any]) -> tuple[Any, ...]:
-    """*device* as its fingerprint and, pickled apart, its class, target
-    and the other *inputs* of its constructor: a process that has the device
-    of that fingerprint does not unpickle the rest."""
-    _keep(device)
+    """*device* as its fingerprint and labels and, pickled apart, its class,
+    target and the other *inputs* of its constructor: a process that has the
+    device of that key does not unpickle the rest."""
+    key = _device_key(device)
+    _keep(key, device)
     description = pickle.dumps((type(device), device.target, inputs), pickle.HIGHEST_PROTOCOL)
-    return (rebuilt_device, (device.fingerprint, description))
+    return (rebuilt_device, (key, description))
 
 
-def rebuilt_device(fingerprint: str, description: bytes) -> Any:
-    found = _devices.get(fingerprint)
+def rebuilt_device(key: tuple[str, str, str], description: bytes) -> Any:
+    found = _devices.get(key)
     if found is not None:
         return found
     cls, target, inputs = pickle.loads(description)
     device = cls(target, **inputs)
-    _keep(device)
+    _keep(key, device)
     return device
 
 
