@@ -73,7 +73,8 @@ def kernel[**P](
     ``cudaq_pulse.compile(k, schedule=...)`` overrides it.
 
     *unroll_threshold* sets which ``for ... in range(n)`` loops are unrolled
-    while tracing (see ``cudaq_pulse.compile``); 8 by default.
+    while tracing (see ``cudaq_pulse.compile``): a non-negative ``int``, 8 by
+    default, and 0 never unrolls.
     """
     from ._bytecode_normalize import check_interpreter
     from ._kernel import Kernel

@@ -12,6 +12,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.kernel._unroll import DEFAULT_UNROLL_THRESHOLD
+from cudaq_pulse.kernel.bytecode_bridge import compile_kernel_bytecode
 from cudaq_pulse.targets import Coupling, Qubit, TargetDescription
 
 TARGET = TargetDescription(
@@ -66,11 +67,14 @@ def test_the_kernel_option_and_compile_override():
     assert not _rolled(k.lower(Q[0]))
     assert not _rolled(pulse.compile(k).lower(Q[0]))
     assert _rolled(pulse.compile(k, unroll_threshold=0).lower(Q[0]))
-    for bad in (-1, 1.5, True):
-        with pytest.raises(ValueError, match="non-negative integer"):
+    message = r"must be a non-negative int \(0 means never unroll\), got "
+    for bad in (-1, 1.5, "8", True, np.int64(8)):
+        with pytest.raises(ValueError, match=message):
             pulse.compile(k, unroll_threshold=bad)
-        with pytest.raises(ValueError, match="non-negative integer"):
+        with pytest.raises(ValueError, match=message):
             pulse.kernel(unroll_threshold=bad)
+        with pytest.raises(ValueError, match=message):
+            compile_kernel_bytecode(k.__wrapped__, unroll_threshold=bad)
 
 
 def test_a_loop_whose_variable_is_read_is_unrolled_at_any_threshold():

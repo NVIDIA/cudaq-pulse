@@ -515,7 +515,8 @@ class CompileMetrics:
 @dataclass(frozen=True)
 class CompileOptions:
     """Passes, schedule policy, machine model and unroll threshold of a
-    compilation."""
+    compilation. ``unroll_threshold`` is a non-negative ``int``, 8 by
+    default; 0 never unrolls (see ``cudaq_pulse.compile``)."""
 
     schedule: str = "alap"
     passes: tuple[Pass, ...] = DEFAULT_PASSES
@@ -1322,8 +1323,9 @@ def compile[**P](
         A ``for ... in range(n)`` loop whose variable the body never reads is
         unrolled while tracing when n times the number of calls in its body
         is at most this, and emitted once as a rolled loop otherwise. By
-        default the kernel's own ``unroll_threshold=``, else 8; 0 rolls
-        every such loop. Either way the
+        default the kernel's own ``unroll_threshold=``, else 8. A
+        non-negative ``int``; 0 never unrolls, so every such loop stays
+        rolled, even one of no or one iteration. Either way the
         program, its schedule and its simulation are the same.
     device:
         Pin the compiled kernel to one device: a call with handles of

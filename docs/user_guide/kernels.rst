@@ -172,8 +172,8 @@ iteration. A loop bound given by a ``float`` argument specializes the kernel
 on its value; ``while`` loops are rejected.
 
 **The unroll threshold** is ``pulse.compile(k, unroll_threshold=n)``, else
-``@pulse.kernel(unroll_threshold=n)``, else 8; 0 keeps every such loop
-rolled. Both forms are the same program: without passes their
+``@pulse.kernel(unroll_threshold=n)``, else 8. It is a non-negative ``int``;
+0 never unrolls, so every such loop stays rolled. Both forms are the same program: without passes their
 schedules are identical, and with the default passes ``fuse_pulses`` may merge
 back-to-back pulses of the unrolled form, with the same evolution. A kernel
 or compiled kernel keeps the threshold it was given; compile it again for

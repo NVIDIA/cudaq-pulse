@@ -24,9 +24,11 @@ DEFAULT_UNROLL_THRESHOLD = 8
 
 def resolve_unroll_threshold(value: int | None = None) -> int:
     """The unroll threshold: *value* if given, else
-    ``DEFAULT_UNROLL_THRESHOLD``. 0 rolls every loop that can be rolled."""
+    ``DEFAULT_UNROLL_THRESHOLD``. 0 never unrolls."""
     if value is None:
         return DEFAULT_UNROLL_THRESHOLD
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise InvalidValueError(f"unroll_threshold must be a non-negative integer, got {value!r}")
+    if type(value) is not int or value < 0:
+        raise InvalidValueError(
+            f"unroll_threshold must be a non-negative int (0 means never unroll), got {value!r}"
+        )
     return value
