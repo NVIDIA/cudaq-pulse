@@ -23,6 +23,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <set>
 #include <thread>
 
 #include "mlir/Analysis/SliceAnalysis.h"
@@ -232,6 +233,14 @@ inline double i2f(int64_t bits) {
   return d;
 }
 
+/// Whether a branch that yields a value of `type` can leave something known
+/// only at run time: anything but a line, a tone or a link.
+static bool yieldsValue(mlir::Type type) {
+  return !mlir::isa<pulse::DriveLineType, pulse::ReadoutLineType,
+                    pulse::ToneType, pulse::QrefType, classical::LinkType>(
+      type);
+}
+
 /// The walk behind PulseModule::controller_events(): every timed op, sync
 /// and classical call once per loop iteration, both arms of every branch,
 /// with the frame of its tone and the branches it lies in.
@@ -327,6 +336,267 @@ struct ControllerWalk {
     return it->second;
   }
 
+  /// Whether `value` depends on a readout or an answer.
+  static bool fromRunTime(mlir::Value value) {
+    mlir::Operation *first = value.getDefiningOp();
+    if (!first || first->hasTrait<mlir::OpTrait::ConstantLike>())
+      return false;
+    llvm::SmallVector<mlir::Value> work{value};
+    llvm::DenseSet<mlir::Value> seen;
+    while (!work.empty()) {
+      mlir::Value v = work.pop_back_val();
+      if (!seen.insert(v).second)
+        continue;
+      mlir::Operation *def = v.getDefiningOp();
+      if (!def)
+        continue;
+      if (mlir::isa<pulse::ReadoutOp, classical::WaitOp, mlir::scf::IfOp>(def))
+        return true;
+      work.append(def->getOperands().begin(), def->getOperands().end());
+    }
+    return false;
+  }
+
+  /// Whether a measurement reaches anything but branch conditions and
+  /// submissions; true past a few ops, which only costs a slower walk.
+  static bool measurementIsUsed(mlir::Value value, int depth = 0) {
+    for (mlir::Operation *user : value.getUsers()) {
+      if (mlir::isa<mlir::scf::IfOp, classical::SubmitOp>(user))
+        continue;
+      if (depth == 4 ||
+          (!mlir::isa<pulse::IsSetOp, pulse::OutcomeOp>(user) &&
+           !mlir::isa<mlir::arith::ArithDialect>(user->getDialect())))
+        return true;
+      for (mlir::Value next : user->getResults())
+        if (measurementIsUsed(next, depth + 1))
+          return true;
+    }
+    return false;
+  }
+
+  /// The tones whose frame a controller tracks at run time: those with a
+  /// frame change computed from a readout or an answer, or made in a branch.
+  llvm::DenseSet<mlir::Operation *> tracked;
+  /// Whether any event can have something known only at run time: a tracked
+  /// tone, a classical call, or a measurement used other than as a branch
+  /// condition.
+  bool detail = false;
+
+  void scan(mlir::Operation *op) {
+    if (mlir::isa<pulse::ShiftPhaseOp, pulse::SetPhaseOp,
+                  pulse::ShiftFrequencyOp, pulse::SetFrequencyOp>(op)) {
+      if (fromRunTime(op->getOperand(1)) ||
+          op->getParentOfType<mlir::scf::IfOp>()) {
+        tracked.insert(toneRoots(op->getOperand(0)));
+        detail = true;
+      }
+    } else if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
+      // A virtual Z folded into a drive in an arm is a frame change there.
+      branch->walk([&](pulse::DriveOp drive) {
+        if (drive->hasAttr("frame_phase_offset")) {
+          tracked.insert(toneRoots(drive->getOperand(2)));
+          detail = true;
+        }
+      });
+    } else if (mlir::isa<classical::SubmitOp>(op)) {
+      detail = true;
+    } else if (mlir::isa<pulse::ReadoutOp>(op) && !detail) {
+      detail = measurementIsUsed(op->getResult(2));
+    }
+  }
+
+  /// How a value is computed at run time, children before their parent: a
+  /// number (a frame change's value), a constant, an unknown (`name`: what),
+  /// the result of a readout or answer event, or an op (`name`, and a
+  /// comparison's `predicate`) over the expressions `of`.
+  struct Expression {
+    enum Kind : uint8_t { Number, Constant, Unknown, Readout, Answer, Op };
+    Kind kind = Number;
+    double number = 0.0;
+    int64_t event = 0, result = 0;
+    llvm::StringRef name, predicate;
+    std::vector<int32_t> of;
+  };
+  std::vector<Expression> expressions;
+
+  // Each tracked tone's id, in the order tones are first played, and the
+  // frame changes on it since its latest drive or readout.
+  struct FrameUpdate {
+    uint64_t seq;
+    llvm::StringRef op;
+    int32_t value; // an expression
+    std::vector<Condition> conditions;
+  };
+  llvm::DenseMap<mlir::Operation *, int64_t> toneIds;
+  std::map<mlir::Operation *, std::vector<FrameUpdate>> pending;
+  uint64_t nextUpdate = 0;
+
+  /// What an event has that is known only at run time: on a tracked tone
+  /// (`tone` at least 0), the frame changes since its latest drive or readout
+  /// and its own phase offset; the waveform operands computed from a readout
+  /// or an answer, as (node, operand index, expression); a variable wait's
+  /// length (at least 0) and bounds; a submission's operands.
+  struct Known {
+    int64_t event = 0;
+    int64_t tone = -1;
+    std::vector<FrameUpdate> updates;
+    std::optional<double> offset;
+    std::vector<std::tuple<int64_t, int64_t, int32_t>> waveform;
+    int32_t length = -1;
+    std::optional<int64_t> minCycles, maxCycles;
+    std::optional<std::vector<int32_t>> operands;
+  };
+  /// In event order, only for the events that have any.
+  std::vector<Known> known;
+
+  int32_t add(Expression expression) {
+    expressions.push_back(std::move(expression));
+    return static_cast<int32_t>(expressions.size()) - 1;
+  }
+
+  int32_t add(Expression::Kind kind, double number, int64_t event = 0,
+              int64_t result = 0, llvm::StringRef name = {}) {
+    Expression expression;
+    expression.kind = kind;
+    expression.number = number;
+    expression.event = event;
+    expression.result = result;
+    expression.name = name;
+    return add(std::move(expression));
+  }
+
+  int32_t numberExpression(double value) {
+    return add(Expression::Number, value);
+  }
+
+  /// How `value` is computed at run time: a constant, a result of a readout
+  /// or answer event, or an op (by its MLIR name) over such expressions.
+  int32_t expression(mlir::Value value, int depth = 0) {
+    double constant = number(value);
+    if (!std::isnan(constant))
+      return add(Expression::Constant, constant);
+    mlir::Operation *def = value.getDefiningOp();
+    if (!def)
+      return add(Expression::Unknown, 0.0, 0, 0, "argument");
+    llvm::StringRef name = def->getName().getStringRef();
+    if (mlir::isa<pulse::ReadoutOp, classical::WaitOp>(def)) {
+      auto found = latest.find(def);
+      if (found == latest.end())
+        return add(Expression::Unknown, 0.0, 0, 0, name);
+      if (mlir::isa<pulse::ReadoutOp>(def))
+        return add(Expression::Readout, 0.0, found->second);
+      return add(Expression::Answer, 0.0, found->second,
+                 static_cast<int64_t>(
+                     mlir::cast<mlir::OpResult>(value).getResultNumber()));
+    }
+    if (depth > 64 || def->getNumRegions() != 0 || def->getNumResults() != 1)
+      return add(Expression::Unknown, 0.0, 0, 0, name);
+    Expression op;
+    op.kind = Expression::Op;
+    op.name = name;
+    for (mlir::Value operand : def->getOperands())
+      op.of.push_back(expression(operand, depth + 1));
+    if (auto cmp = mlir::dyn_cast<mlir::arith::CmpFOp>(def))
+      op.predicate = mlir::arith::stringifyCmpFPredicate(cmp.getPredicate());
+    else if (auto cmp = mlir::dyn_cast<mlir::arith::CmpIOp>(def))
+      op.predicate = mlir::arith::stringifyCmpIPredicate(cmp.getPredicate());
+    return add(std::move(op));
+  }
+
+  /// A frame change's value: its number, else its expression.
+  int32_t frameValue(mlir::Value value) {
+    double constant = number(value);
+    return std::isnan(constant) ? expression(value)
+                                : numberExpression(constant);
+  }
+
+  void frameUpdate(mlir::Operation *root, llvm::StringRef op, int32_t value) {
+    pending[root].push_back({nextUpdate++, op, value, branches});
+  }
+
+  // The run-time work of the walk stays out of line, so that the per-op
+  // path of a walk without tracked tones or detail is unchanged.
+
+  /// A frame change `op` (named `name`), on a tone that may be tracked.
+  LLVM_ATTRIBUTE_NOINLINE void frameChange(mlir::Operation *op,
+                                           llvm::StringRef name) {
+    if (mlir::Operation *root = toneRoots(op->getOperand(0));
+        tracked.contains(root))
+      frameUpdate(root, name, frameValue(op->getOperand(1)));
+  }
+
+  // The frame changes pending before each open branch, and after its then
+  // arm.
+  std::vector<std::pair<decltype(pending), decltype(pending)>> pendingArms;
+
+  LLVM_ATTRIBUTE_NOINLINE void enterBranch() {
+    pendingArms.emplace_back(pending, decltype(pending){});
+  }
+
+  LLVM_ATTRIBUTE_NOINLINE void enterElse() {
+    auto &[before, then] = pendingArms.back();
+    then = std::move(pending);
+    pending = before;
+  }
+
+  LLVM_ATTRIBUTE_NOINLINE void leaveBranch(const Condition &arms) {
+    auto [before, then] = std::move(pendingArms.back());
+    pendingArms.pop_back();
+    mergePending(before, then, arms);
+  }
+
+  /// The frame changes pending after a branch: those of both arms, by
+  /// program order. One pending before the branch that a drive or readout
+  /// in one arm took is pending only on the other arm's path.
+  void
+  mergePending(std::map<mlir::Operation *, std::vector<FrameUpdate>> &before,
+               std::map<mlir::Operation *, std::vector<FrameUpdate>> &then,
+               const Condition &branch) {
+    std::set<mlir::Operation *> roots;
+    for (auto *side : {&before, &then, &pending})
+      for (auto &entry : *side)
+        roots.insert(entry.first);
+    auto seqs = [](std::map<mlir::Operation *, std::vector<FrameUpdate>> &side,
+                   mlir::Operation *root) {
+      std::set<uint64_t> out;
+      auto found = side.find(root);
+      if (found != side.end())
+        for (auto &update : found->second)
+          out.insert(update.seq);
+      return out;
+    };
+    for (mlir::Operation *root : roots) {
+      std::set<uint64_t> old = seqs(before, root), inThen = seqs(then, root),
+                         inElse = seqs(pending, root);
+      std::map<uint64_t, FrameUpdate> merged;
+      auto take =
+          [&](std::map<mlir::Operation *, std::vector<FrameUpdate>> &side,
+              bool arm, const std::set<uint64_t> &other) {
+            auto found = side.find(root);
+            if (found == side.end())
+              return;
+            for (auto &update : found->second) {
+              if (merged.count(update.seq))
+                continue;
+              if (old.count(update.seq) && !other.count(update.seq)) {
+                update.conditions.push_back(branch);
+                std::get<1>(update.conditions.back()) = arm;
+              }
+              merged.emplace(update.seq, std::move(update));
+            }
+          };
+      take(then, true, inElse);
+      take(pending, false, inThen);
+      std::vector<FrameUpdate> out;
+      for (auto &[seq, update] : merged)
+        out.push_back(std::move(update));
+      if (out.empty())
+        pending.erase(root);
+      else
+        pending[root] = std::move(out);
+    }
+  }
+
   static int64_t waveform(mlir::Value value, std::vector<WaveformNode> &nodes) {
     mlir::Operation *def = value.getDefiningOp();
     if (!def) {
@@ -351,6 +621,32 @@ struct ControllerWalk {
       name += ":" + custom.getValue().str();
     nodes.emplace_back(name, std::move(numbers), std::move(children));
     return static_cast<int64_t>(nodes.size()) - 1;
+  }
+
+  /// The operands of `value`'s waveform nodes (numbered as `waveform` does,
+  /// `nodes` its result) computed from a readout or an answer, as (node,
+  /// operand index, operand).
+  static void
+  runTimeOperands(mlir::Value value, const std::vector<WaveformNode> &nodes,
+                  int64_t &next,
+                  std::vector<std::tuple<int64_t, int64_t, mlir::Value>> &out) {
+    mlir::Operation *def = value.getDefiningOp();
+    if (!def) {
+      ++next;
+      return;
+    }
+    llvm::SmallVector<std::pair<int64_t, mlir::Value>, 4> numbers;
+    for (mlir::Value operand : def->getOperands()) {
+      if (mlir::isa<pulse::WaveformType>(operand.getType()))
+        runTimeOperands(operand, nodes, next, out);
+      else
+        numbers.emplace_back(static_cast<int64_t>(numbers.size()), operand);
+    }
+    int64_t node = next++;
+    const std::vector<double> &known = std::get<1>(nodes[node]);
+    for (auto &[index, operand] : numbers)
+      if (std::isnan(known[index]) && fromRunTime(operand))
+        out.emplace_back(node, index, operand);
   }
 
   /// The readout events and answer events `value` is computed from.
@@ -383,11 +679,16 @@ struct ControllerWalk {
     return allocation ? lineIndex.lookup(allocation) : -1;
   }
 
+  // The walk is compiled twice: RunTime is false for a module that computes
+  // nothing at run time, so that its walk has none of the run-time work.
+
+  template <bool RunTime>
   void block(mlir::Block &body) {
     for (mlir::Operation &op : body)
-      step(&op);
+      step<RunTime>(&op);
   }
 
+  template <bool RunTime>
   void timed(mlir::Operation *op) {
     mlir::Operation *allocation = trace(op->getOperand(0));
     int64_t qubit = -1;
@@ -430,11 +731,76 @@ struct ControllerWalk {
       line->second = std::max(*line->second, *start + *duration);
     else
       line->second = std::nullopt;
+    if constexpr (RunTime)
+      if (detail)
+        runTime(op, nodes);
     result.emplace_back(
         op->getName().stripDialect().str(), lineOf(allocation), qubit, start,
         duration, std::vector<int64_t>(iteration.begin(), iteration.end()),
         std::move(nodes), frequency, phase, branches, std::vector<int64_t>{},
         std::vector<int64_t>{}, std::string(), std::string(), kUnknown);
+  }
+
+  /// What the next event, a drive, readout or wait, has that is known only
+  /// at run time.
+  LLVM_ATTRIBUTE_NOINLINE void runTime(mlir::Operation *op,
+                                       const std::vector<WaveformNode> &nodes) {
+    Known next;
+    next.event = static_cast<int64_t>(result.size());
+    if (mlir::isa<pulse::WaitOp>(op)) {
+      if (!fromRunTime(op->getOperand(1)) ||
+          !op->hasAttr("pulse.variable_wait"))
+        return;
+      next.length = expression(op->getOperand(1));
+      if (auto bound = op->getAttrOfType<mlir::IntegerAttr>("pulse.max_cycles"))
+        next.maxCycles = bound.getInt();
+      if (auto bound = op->getAttrOfType<mlir::IntegerAttr>("pulse.min_cycles"))
+        next.minCycles = bound.getInt();
+      known.push_back(std::move(next));
+      return;
+    }
+    bool unknown = llvm::any_of(nodes, [](const WaveformNode &node) {
+      return llvm::any_of(std::get<1>(node),
+                          [](double v) { return std::isnan(v); });
+    });
+    if (unknown) {
+      std::vector<std::tuple<int64_t, int64_t, mlir::Value>> operands;
+      int64_t count = 0;
+      runTimeOperands(op->getOperand(1), nodes, count, operands);
+      for (auto &[node, index, operand] : operands)
+        next.waveform.emplace_back(node, index, expression(operand));
+    }
+    mlir::Operation *root =
+        tracked.empty() ? nullptr : toneRoots(op->getOperand(2));
+    if (root && tracked.contains(root)) {
+      next.tone =
+          toneIds.try_emplace(root, static_cast<int64_t>(toneIds.size()))
+              .first->second;
+      if (mlir::isa<pulse::DriveOp>(op)) {
+        if (auto shift =
+                op->getAttrOfType<mlir::FloatAttr>("frame_phase_offset"))
+          frameUpdate(root, "shift_phase",
+                      numberExpression(shift.getValueAsDouble()));
+        if (auto own = op->getAttrOfType<mlir::FloatAttr>("phase_offset"))
+          next.offset = own.getValueAsDouble();
+      }
+      if (auto found = pending.find(root); found != pending.end()) {
+        next.updates = std::move(found->second);
+        pending.erase(found);
+      }
+    }
+    if (next.tone >= 0 || !next.waveform.empty())
+      known.push_back(std::move(next));
+  }
+
+  /// The operands of a submission, in argument order.
+  LLVM_ATTRIBUTE_NOINLINE void submission(classical::SubmitOp request) {
+    Known next;
+    next.event = static_cast<int64_t>(result.size());
+    next.operands.emplace();
+    for (mlir::Value arg : request.getArgs())
+      next.operands->push_back(expression(arg));
+    known.push_back(std::move(next));
   }
 
   void sync(pulse::SyncOp op) {
@@ -465,6 +831,7 @@ struct ControllerWalk {
 
   /// A submission (with the readout events whose measurements it sends) or
   /// the wait for its answer, on its link.
+  template <bool RunTime>
   void call(mlir::Operation *op) {
     bool submit = mlir::isa<classical::SubmitOp>(op);
     std::vector<int64_t> refs, answers;
@@ -484,6 +851,9 @@ struct ControllerWalk {
         timeoutNs = timeout.getValueAsDouble();
       }
     }
+    if constexpr (RunTime)
+      if (auto request = mlir::dyn_cast<classical::SubmitOp>(op))
+        submission(request);
     result.emplace_back(
         submit ? "submit" : "answer",
         classical::intAttr(op, "classical.device"), -1,
@@ -494,10 +864,11 @@ struct ControllerWalk {
         std::move(mode), timeoutNs);
   }
 
+  template <bool RunTime>
   void step(mlir::Operation *op) {
     llvm::StringRef name = op->getName().getStringRef();
     if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op)) {
-      timed(op);
+      timed<RunTime>(op);
       return;
     }
     if (auto barrier = mlir::dyn_cast<pulse::SyncOp>(op)) {
@@ -505,13 +876,16 @@ struct ControllerWalk {
       return;
     }
     if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op)) {
-      call(op);
+      call<RunTime>(op);
       return;
     }
     if (name == "pulse.shift_phase" || name == "pulse.set_phase" ||
         name == "pulse.shift_frequency" || name == "pulse.set_frequency") {
       double value = number(op->getOperand(1));
       Frame &frame = frameOf(op->getOperand(0));
+      if constexpr (RunTime)
+        if (!tracked.empty())
+          frameChange(op, name.drop_front(6));
       if (name == "pulse.shift_phase")
         frame.phase += value;
       else if (name == "pulse.set_phase")
@@ -527,7 +901,7 @@ struct ControllerWalk {
       iteration.push_back(0);
       for (int64_t k = 0; k < trips; ++k) {
         iteration.back() = k;
-        block(*loop.getBody());
+        block<RunTime>(*loop.getBody());
       }
       iteration.pop_back();
       return;
@@ -546,16 +920,23 @@ struct ControllerWalk {
       int64_t id = nextBranch++;
       auto framesBefore = frames;
       auto reachedBefore = reached;
+      bool tracking = RunTime && !tracked.empty();
+      if (tracking)
+        enterBranch();
       branches.emplace_back(id, 1, std::move(readouts), std::move(answers),
                             std::move(test));
-      block(*branch.thenBlock());
+      block<RunTime>(*branch.thenBlock());
       auto framesThen = std::move(frames);
       auto reachedThen = std::move(reached);
       frames = std::move(framesBefore);
       reached = std::move(reachedBefore);
+      if (tracking)
+        enterElse();
       std::get<1>(branches.back()) = 0;
       if (!branch.getElseRegion().empty())
-        block(*branch.elseBlock());
+        block<RunTime>(*branch.elseBlock());
+      if (tracking)
+        leaveBranch(branches.back());
       branches.pop_back();
       mergeFrames(framesThen);
       for (auto &[allocation, time] : reachedThen) {
@@ -571,7 +952,7 @@ struct ControllerWalk {
     }
     for (mlir::Region &region : op->getRegions())
       for (mlir::Block &nested : region)
-        block(nested);
+        block<RunTime>(nested);
   }
 
   /// The frames after a branch: those both arms leave the same, else
@@ -588,6 +969,442 @@ struct ControllerWalk {
       else
         frame.timeNs = std::max(frame.timeNs, theirs.timeNs);
     }
+  }
+};
+
+/// The lines and events of a ControllerWalk as controller.export() gives
+/// them, built as Python objects in one pass; needs the GIL. A number the
+/// format has always written as JSON text and read back (an expression's
+/// constant, a frame change's value, a phase offset) is an int where that
+/// text has no fraction or exponent.
+class ControllerObjects {
+public:
+  /// `parameters`: the parameter names of each waveform shape, in operand
+  /// order; `amplitudes`: the shapes with an overall amplitude.
+  ControllerObjects(nb::handle parameters, nb::handle amplitudes)
+      : keys(sharedKeys()) {
+    for (nb::handle shape : parameters) {
+      nb::object names = parameters[shape];
+      Shape &info = shapes[nb::cast<std::string>(shape)];
+      info.amplitude = PySequence_Contains(amplitudes.ptr(), shape.ptr()) == 1;
+      for (nb::handle name : names) {
+        auto text = nb::cast<std::string>(name);
+        int index = static_cast<int>(info.names.size());
+        if (text == "amplitude")
+          info.real = index;
+        else if (text == "amplitude_imag")
+          info.imag = index;
+        else if (text == "factor")
+          info.factor = index;
+        info.names.push_back(nb::borrow(name));
+      }
+    }
+  }
+
+  nb::list lines(const std::vector<std::tuple<std::string, int64_t>> &lines) {
+    nb::list out = list(lines.size());
+    for (size_t i = 0; i < lines.size(); ++i) {
+      nb::object line = dict();
+      put(line, keys.line, integer(static_cast<int64_t>(i)));
+      put(line, keys.role, string(std::get<0>(lines[i])));
+      put(line, keys.qudit, integer(std::get<1>(lines[i])));
+      set(out, i, std::move(line));
+    }
+    return out;
+  }
+
+  nb::list events(const ControllerWalk &walk, nb::list epochs) {
+    // Nothing built here is garbage until it is returned: a collection now
+    // would only walk the heap.
+    CollectorPause pause;
+    this->walk = &walk;
+    size_t epochCount = nb::len(epochs);
+    nb::list out = list(walk.result.size());
+    auto known = walk.known.begin();
+    for (size_t i = 0; i < walk.result.size(); ++i) {
+      const ControllerWalk::Known *extra = nullptr;
+      if (known != walk.known.end() && known->event == static_cast<int64_t>(i))
+        extra = &*known++;
+      set(out, i, event(i, walk.result[i], extra, epochs, epochCount));
+    }
+    return out;
+  }
+
+private:
+  struct CollectorPause {
+    int enabled = PyGC_Disable();
+    ~CollectorPause() {
+      if (enabled)
+        PyGC_Enable();
+    }
+  };
+
+  struct Shape {
+    std::vector<nb::object> names;
+    int real = -1, imag = -1, factor = -1;
+    bool amplitude = false;
+  };
+  llvm::StringMap<Shape> shapes;
+  llvm::StringMap<nb::object> strings;
+  llvm::DenseMap<uint64_t, nb::object> floats;
+  const ControllerWalk *walk = nullptr;
+
+  static nb::object key(const char *text) {
+    return check(PyUnicode_InternFromString(text));
+  }
+  struct Keys {
+    nb::object amplitude = key("amplitude"), answer = key("answer"),
+               answers = key("answers"), arm = key("arm"),
+               branch = key("branch"), conditions = key("conditions"),
+               constant = key("const"), duration = key("duration_cycles"),
+               end = key("end_cycles"), epoch = key("epoch"),
+               frameUpdates = key("frame_updates"),
+               frequency = key("frequency_hz"), function = key("function"),
+               id = key("id"), im = key("im"), index = key("index"),
+               iteration = key("iteration"), kind = key("kind"),
+               length = key("length"), line = key("line"), lines = key("lines"),
+               link = key("link"), maxCycles = key("max_cycles"),
+               measurements = key("measurements"),
+               minCycles = key("min_cycles"), name = key("name"),
+               of = key("of"), op = key("op"), operands = key("operands"),
+               params = key("params"), phase = key("phase_rad"),
+               phaseOffset = key("phase_offset_rad"),
+               predicate = key("predicate"), qudit = key("qudit"),
+               re = key("re"), readout = key("readout"),
+               readouts = key("readouts"), result = key("result"),
+               role = key("role"), runtime = key("runtime"),
+               samples = key("samples"), shape = key("shape"),
+               start = key("start_cycles"), test = key("test"),
+               timeout = key("timeout_ns"), tone = key("tone"),
+               unknown = key("unknown"), value = key("value"),
+               values = key("values"), wait = key("wait"),
+               waveform = key("waveform");
+  };
+  /// Interned once, for the life of the process.
+  static const Keys &sharedKeys() {
+    static const Keys *keys = new Keys();
+    return *keys;
+  }
+  const Keys &keys;
+
+  static nb::object check(PyObject *object) {
+    if (!object)
+      throw nb::python_error();
+    return nb::steal(object);
+  }
+  static nb::object dict() { return check(PyDict_New()); }
+  static nb::list list(size_t size) {
+    return nb::steal<nb::list>(
+        check(PyList_New(static_cast<Py_ssize_t>(size))).release());
+  }
+  static void put(nb::handle dict, nb::handle key, nb::handle value) {
+    if (PyDict_SetItem(dict.ptr(), key.ptr(), value.ptr()) != 0)
+      throw nb::python_error();
+  }
+  static void set(nb::handle list, size_t index, nb::object value) {
+    if (PyList_SetItem(list.ptr(), static_cast<Py_ssize_t>(index),
+                       value.release().ptr()) != 0)
+      throw nb::python_error();
+  }
+  static nb::object integer(int64_t value) {
+    return check(PyLong_FromLongLong(value));
+  }
+  /// A float, one object per value: an export repeats few numbers many
+  /// times.
+  nb::object real(double value) {
+    auto bits = std::bit_cast<uint64_t>(value);
+    // Two NaNs are the map's own empty and erased keys.
+    if (bits >= llvm::DenseMapInfo<uint64_t>::getTombstoneKey())
+      return check(PyFloat_FromDouble(value));
+    auto [it, inserted] = floats.try_emplace(bits);
+    if (inserted)
+      it->second = check(PyFloat_FromDouble(value));
+    return it->second;
+  }
+  /// A number, None where it is NaN.
+  nb::object number(double value) {
+    return std::isnan(value) ? nb::none() : real(value);
+  }
+  /// A number as the JSON text "%.17g" of it reads back.
+  nb::object textNumber(double value) {
+    if (std::isfinite(value) && value == std::trunc(value) &&
+        std::fabs(value) < 1e17)
+      return integer(static_cast<int64_t>(value));
+    return real(value);
+  }
+  static nb::object optional(std::optional<int64_t> value) {
+    return value ? integer(*value) : nb::none();
+  }
+  static nb::object integers(const std::vector<int64_t> &values) {
+    nb::list out = list(values.size());
+    for (size_t i = 0; i < values.size(); ++i)
+      set(out, i, integer(values[i]));
+    return out;
+  }
+  nb::object string(llvm::StringRef text) {
+    auto [it, inserted] = strings.try_emplace(text);
+    if (inserted)
+      it->second = check(PyUnicode_FromStringAndSize(
+          text.data(), static_cast<Py_ssize_t>(text.size())));
+    return it->second;
+  }
+
+  /// A branch an event lies in, keys in the order of the event's conditions,
+  /// else (for a frame change's) sorted.
+  nb::object condition(const ControllerWalk::Condition &condition,
+                       bool sorted) {
+    const auto &[id, arm, readouts, answers, test] = condition;
+    nb::object out = dict();
+    if (sorted) {
+      put(out, keys.answers, integers(answers));
+      put(out, keys.arm, nb::bool_(arm != 0));
+      put(out, keys.branch, integer(id));
+      put(out, keys.readouts, integers(readouts));
+    } else {
+      put(out, keys.branch, integer(id));
+      put(out, keys.arm, nb::bool_(arm != 0));
+      put(out, keys.readouts, integers(readouts));
+      put(out, keys.answers, integers(answers));
+    }
+    put(out, keys.test, string(test));
+    return out;
+  }
+
+  nb::object conditions(const std::vector<ControllerWalk::Condition> &all,
+                        bool sorted) {
+    nb::list out = list(all.size());
+    for (size_t i = 0; i < all.size(); ++i)
+      set(out, i, condition(all[i], sorted));
+    return out;
+  }
+
+  nb::object expression(int32_t index) {
+    using Expression = ControllerWalk::Expression;
+    const Expression &e = walk->expressions[index];
+    if (e.kind == Expression::Number)
+      return textNumber(e.number);
+    nb::object out = dict();
+    switch (e.kind) {
+    case Expression::Constant:
+      put(out, keys.constant, textNumber(e.number));
+      break;
+    case Expression::Unknown:
+      put(out, keys.unknown, string(e.name));
+      break;
+    case Expression::Readout:
+      put(out, keys.readout, integer(e.event));
+      break;
+    case Expression::Answer:
+      put(out, keys.answer, integer(e.event));
+      put(out, keys.result, integer(e.result));
+      break;
+    default: {
+      nb::list of = list(e.of.size());
+      for (size_t i = 0; i < e.of.size(); ++i)
+        set(of, i, expression(e.of[i]));
+      put(out, keys.of, of);
+      put(out, keys.op, string(e.name));
+      if (!e.predicate.empty())
+        put(out, keys.predicate, string(e.predicate));
+    }
+    }
+    return out;
+  }
+
+  /// The names of a node's numbers, if its shape names them all.
+  const Shape *named(llvm::StringRef shape, size_t numbers) const {
+    auto found = shapes.find(shape);
+    if (found == shapes.end() || found->second.names.size() != numbers)
+      return nullptr;
+    return &found->second;
+  }
+
+  /// The waveform expression from node `index` down, with the operands
+  /// computed at run time (`runtime`, sorted) on their nodes.
+  nb::object
+  tree(const std::vector<ControllerWalk::WaveformNode> &nodes, int64_t index,
+       llvm::ArrayRef<std::tuple<int64_t, int64_t, int32_t>> runtime) {
+    const auto &[name, numbers, children] = nodes[index];
+    auto [shape, custom] = llvm::StringRef(name).split(':');
+    nb::object node = dict();
+    put(node, keys.shape, string(shape));
+    if (!custom.empty())
+      put(node, keys.name, string(custom));
+    const Shape *names = named(shape, numbers.size());
+    if (shape == "custom_samples") {
+      nb::list samples = list(numbers.size());
+      for (size_t i = 0; i < numbers.size(); ++i)
+        set(samples, i, real(numbers[i]));
+      put(node, keys.samples, samples);
+    } else if (names) {
+      nb::object params = dict();
+      for (size_t i = 0; i < numbers.size(); ++i)
+        put(params, names->names[i], number(numbers[i]));
+      put(node, keys.params, params);
+    } else if (!numbers.empty()) {
+      nb::list values = list(numbers.size());
+      for (size_t i = 0; i < numbers.size(); ++i)
+        set(values, i, number(numbers[i]));
+      put(node, keys.values, values);
+    }
+    if (!children.empty()) {
+      nb::list of = list(children.size());
+      for (size_t i = 0; i < children.size(); ++i)
+        set(of, i, tree(nodes, children[i], runtime));
+      put(node, keys.of, of);
+    }
+    nb::object computed;
+    for (const auto &[at, operand, expr] : runtime) {
+      if (at != index)
+        continue;
+      if (!computed)
+        computed = dict();
+      put(computed,
+          names ? nb::handle(names->names[operand])
+                : nb::handle(string(std::to_string(operand))),
+          expression(expr));
+    }
+    if (computed)
+      put(node, keys.runtime, computed);
+    return node;
+  }
+
+  /// The overall complex amplitude of node `index`, through scale and neg,
+  /// in Python's complex arithmetic; None where it is unknown.
+  nb::object amplitude(const std::vector<ControllerWalk::WaveformNode> &nodes,
+                       int64_t index) {
+    const auto &[name, numbers, children] = nodes[index];
+    llvm::StringRef shape = llvm::StringRef(name).split(':').first;
+    const Shape *names = named(shape, numbers.size());
+    if (shape == "scale" || shape == "neg") {
+      if (children.empty())
+        return nb::none();
+      nb::object inner = amplitude(nodes, children[0]);
+      if (inner.is_none())
+        return inner;
+      if (shape == "neg")
+        return check(PyNumber_Negative(inner.ptr()));
+      if (!names || names->factor < 0 || std::isnan(numbers[names->factor]))
+        return nb::none();
+      return check(
+          PyNumber_Multiply(inner.ptr(), real(numbers[names->factor]).ptr()));
+    }
+    if (shape == "custom_samples") {
+      if (numbers.empty())
+        return nb::none();
+      double peak = numbers[0];
+      for (double sample : numbers)
+        if (std::fabs(sample) > std::fabs(peak))
+          peak = sample;
+      return check(PyComplex_FromDoubles(peak, 0.0));
+    }
+    if (!names || !names->amplitude || names->real < 0)
+      return nb::none();
+    double re = numbers[names->real];
+    double im = names->imag < 0 ? 0.0 : numbers[names->imag];
+    if (std::isnan(re) || std::isnan(im))
+      return nb::none();
+    return check(PyComplex_FromDoubles(re, im));
+  }
+
+  nb::object frameUpdates(const std::vector<ControllerWalk::FrameUpdate> &all) {
+    nb::list out = list(all.size());
+    for (size_t i = 0; i < all.size(); ++i) {
+      const auto &update = all[i];
+      nb::object item = dict();
+      put(item, keys.conditions, conditions(update.conditions, true));
+      put(item, keys.id, integer(static_cast<int64_t>(update.seq)));
+      put(item, keys.op, string(update.op));
+      put(item, keys.value, expression(update.value));
+      set(out, i, std::move(item));
+    }
+    return out;
+  }
+
+  nb::object event(size_t index, const ControllerWalk::Event &item,
+                   const ControllerWalk::Known *extra, nb::handle epochs,
+                   size_t epochCount) {
+    const auto &[kind, line, qudit, start, duration, iteration, nodes,
+                 frequency, phase, branches, joined, refs, callee, mode,
+                 timeout] = item;
+    bool sync = kind == "sync";
+    nb::object event = dict();
+    put(event, keys.index, integer(static_cast<int64_t>(index)));
+    put(event, keys.kind, string(kind));
+    put(event, keys.line, sync ? nb::none() : integer(line));
+    put(event, keys.qudit, sync ? nb::none() : integer(qudit));
+    put(event, keys.start, optional(start));
+    put(event, keys.duration, optional(duration));
+    put(event, keys.end,
+        start && duration ? integer(*start + *duration) : nb::none());
+    put(event, keys.iteration, integers(iteration));
+    if (epochCount && start) {
+      PyObject *epoch =
+          PyList_GetItem(epochs.ptr(), static_cast<Py_ssize_t>(index));
+      if (!epoch)
+        throw nb::python_error();
+      put(event, keys.epoch, epoch);
+    } else {
+      put(event, keys.epoch, integer(0));
+    }
+    put(event, keys.conditions, conditions(branches, false));
+    if (kind == "drive" || kind == "readout") {
+      llvm::ArrayRef<std::tuple<int64_t, int64_t, int32_t>> runtime;
+      std::vector<std::tuple<int64_t, int64_t, int32_t>> sortedRuntime;
+      if (extra && !extra->waveform.empty()) {
+        sortedRuntime = extra->waveform;
+        llvm::stable_sort(sortedRuntime, [](const auto &a, const auto &b) {
+          return std::make_pair(std::get<0>(a), std::get<1>(a)) <
+                 std::make_pair(std::get<0>(b), std::get<1>(b));
+        });
+        runtime = sortedRuntime;
+      }
+      int64_t root = static_cast<int64_t>(nodes.size()) - 1;
+      put(event, keys.waveform,
+          nodes.empty() ? nb::none() : tree(nodes, root, runtime));
+      nb::object overall = nodes.empty() ? nb::none() : amplitude(nodes, root);
+      if (overall.is_none()) {
+        put(event, keys.amplitude, overall);
+      } else {
+        nb::object parts = dict();
+        put(parts, keys.re, real(PyComplex_RealAsDouble(overall.ptr())));
+        put(parts, keys.im, real(PyComplex_ImagAsDouble(overall.ptr())));
+        put(event, keys.amplitude, parts);
+      }
+      put(event, keys.frequency, number(frequency));
+      put(event, keys.phase, number(phase));
+    } else if (sync) {
+      put(event, keys.lines, integers(joined));
+    } else if (kind == "submit" || kind == "answer") {
+      put(event, keys.link, integer(line));
+      put(event, keys.function, string(callee));
+      if (kind == "submit") {
+        put(event, keys.measurements, integers(refs));
+      } else {
+        put(event, keys.wait, string(mode));
+        put(event, keys.timeout, number(timeout));
+      }
+    }
+    if (!extra)
+      return event;
+    if (extra->tone >= 0) {
+      put(event, keys.tone, integer(extra->tone));
+      put(event, keys.frameUpdates, frameUpdates(extra->updates));
+      if (extra->offset)
+        put(event, keys.phaseOffset, textNumber(*extra->offset));
+    }
+    if (extra->length >= 0) {
+      put(event, keys.length, expression(extra->length));
+      put(event, keys.minCycles, optional(extra->minCycles));
+      put(event, keys.maxCycles, optional(extra->maxCycles));
+    }
+    if (extra->operands) {
+      nb::list operands = list(extra->operands->size());
+      for (size_t i = 0; i < extra->operands->size(); ++i)
+        set(operands, i, expression((*extra->operands)[i]));
+      put(event, keys.operands, operands);
+    }
+    return event;
   }
 };
 
@@ -759,7 +1576,7 @@ public:
         pulse::createPulseLowerSelectsPass(runtime));
     programs_.clear();
     runPipeline(pm, *module_, "lowering selects failed");
-    return keepsSelects(*module_);
+    return keepsSelects();
   }
 
   /// This module, scheduled, with every op that reads a run-time select in
@@ -871,8 +1688,6 @@ public:
   }
 
   using ControllerLine = std::tuple<std::string, int64_t>;
-  using ControllerProgram = std::tuple<std::vector<ControllerLine>,
-                                       std::vector<ControllerWalk::Event>>;
 
   /// The lines, (role, qubit) in allocation order, and the timed ops of
   /// `events()`, in the same order, every sync and every classical call,
@@ -893,12 +1708,41 @@ public:
   /// its link: the references of a submission are the readout events whose
   /// measurements it sends, the callee is its function, and an answer's wait is
   /// "bounded", "blocking" or "timeout", with its timeout in ns (NaN for
-  /// none).
-  ControllerProgram controller_events() {
-    std::lock_guard<std::recursive_mutex> guard(*lock_);
-    ControllerWalk walk(clock());
+  /// none). Then what is known only at run time: a drive or readout on a
+  /// tone whose frame depends on run time (a frame change computed from a
+  /// readout or an answer, or made in a branch) has its tone's id and the
+  /// frame changes on the tone since its latest drive or readout; a drive or
+  /// readout has the expression of each waveform operand computed from a
+  /// readout or an answer; a variable wait has the expression of its length
+  /// and its bounds; a submission has the expression of each argument.
+  ///
+  /// Returned as controller.export() gives them: (lines, events), lists of
+  /// dicts, with `parameters` the parameter names of each waveform shape,
+  /// `amplitudes` the shapes with an overall amplitude and `epochs` each
+  /// event's epoch (empty: all 0).
+  nb::tuple controller_events(nb::handle parameters, nb::handle amplitudes,
+                              nb::list epochs) {
+    ControllerObjects objects(parameters, amplitudes);
+    std::unique_ptr<ControllerWalk> walk;
     std::vector<ControllerLine> lines;
+    {
+      nb::gil_scoped_release release;
+      std::lock_guard<std::recursive_mutex> guard(*lock_);
+      walk = std::make_unique<ControllerWalk>(clock());
+      if (runTime_)
+        controllerEvents<true>(*walk, lines);
+      else
+        controllerEvents<false>(*walk, lines);
+    }
+    return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs));
+  }
+
+  template <bool RunTime>
+  void controllerEvents(ControllerWalk &walk,
+                        std::vector<ControllerLine> &lines) {
     module_->walk([&](mlir::Operation *op) {
+      if constexpr (RunTime)
+        walk.scan(op);
       if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
         return;
       if (!walk.lineIndex
@@ -911,8 +1755,7 @@ public:
       lines.emplace_back(
           mlir::isa<pulse::GetDriveLineOp>(op) ? "drive" : "readout", qubit);
     });
-    walk.block(*module_->getBody());
-    return {std::move(lines), std::move(walk.result)};
+    walk.block<RunTime>(*module_->getBody());
   }
 
   /// (function, link, iteration, submit start, submit duration, due,
@@ -1419,6 +2262,7 @@ public:
     foldBinding(clonedModule, bound);
     auto owning = mlir::OwningOpRef<mlir::ModuleOp>(clonedModule);
     PulseModule result(ctx_, std::move(owning));
+    result.runTime_ = runTime_;
     result.keepSource();
     mlir::PassManager pm(ctx_.get());
     addSchedule(pm, *result.module_, true, schedule, maxDrives, maxReadouts,
@@ -1682,17 +2526,36 @@ private:
   /// scheduled, if it had blocks, else the module.
   mlir::ModuleOp source() { return source_ ? *source_ : *module_; }
 
-  static bool keepsSelects(mlir::ModuleOp module) {
-    bool kept = false;
-    module.walk([&](mlir::arith::SelectOp) {
-      kept = true;
-      return mlir::WalkResult::interrupt();
+  /// Whether the module keeps a select; notes (in runTime_) whether it
+  /// computes something at run time or changes a frame in a branch.
+  bool keepsSelects() {
+    bool kept = false, runTime = false;
+    module_->walk([&](mlir::Operation *op) {
+      if (mlir::isa<mlir::arith::SelectOp>(op)) {
+        kept = true;
+        return mlir::WalkResult::interrupt();
+      }
+      if (mlir::isa<pulse::ShiftPhaseOp, pulse::SetPhaseOp,
+                    pulse::ShiftFrequencyOp, pulse::SetFrequencyOp>(op))
+        runTime |= op->getParentOfType<mlir::scf::IfOp>() != nullptr;
+      else if (mlir::isa<classical::SubmitOp>(op))
+        runTime = true;
+      else if (mlir::isa<mlir::scf::IfOp>(op))
+        runTime |= llvm::any_of(op->getResultTypes(), yieldsValue);
+      return mlir::WalkResult::advance();
     });
+    runTime_ = kept || runTime;
     return kept;
   }
 
+  friend class PulseModuleBuilder;
+
   std::shared_ptr<mlir::MLIRContext> ctx_;
   mlir::OwningOpRef<mlir::ModuleOp> module_;
+  // Whether the program can compute something at run time or change a frame
+  // in a branch: false only where the builder saw neither, so that
+  // controller_events() looks for them only where there can be any.
+  bool runTime_ = true;
   // The module before scheduling, while it has schedule blocks (see
   // keepSource).
   mlir::OwningOpRef<mlir::ModuleOp> source_;
@@ -2045,6 +2908,11 @@ public:
     // take them over when it closes.
     std::vector<std::pair<std::string, std::string>> blocks;
     llvm::DenseMap<mlir::Value, llvm::SmallVector<int64_t, 1>> blockVids;
+    // Whether the program computes something at run time (a select, a
+    // classical call, a value an if yields) or changes a frame in a branch;
+    // `openIfs` counts the ifs being built.
+    bool runTime = false;
+    int64_t openIfs = 0;
 
     auto bind = [&](int64_t vid, mlir::Value v) {
       ssa[vid] = v;
@@ -2276,6 +3144,7 @@ public:
         region.linksBefore = links;
         builder_->setInsertionPointToEnd(region.body.get());
         regions.push_back(std::move(region));
+        ++openIfs;
         break;
       }
       case kOpElse: {
@@ -2296,6 +3165,7 @@ public:
           throw std::invalid_argument("packed: malformed if end");
         Region region = std::move(regions.back());
         regions.pop_back();
+        --openIfs;
         builder_->setInsertionPointToEnd(region.parent);
         const int64_t n = p[0];
         llvm::SmallVector<mlir::Value> thenValues, elseValues;
@@ -2304,6 +3174,7 @@ public:
           thenValues.push_back(look(p[1 + i]));
           elseValues.push_back(look(p[1 + n + i]));
           types.push_back(thenValues.back().getType());
+          runTime |= yieldsValue(types.back());
         }
         // A link either arm sent on leaves the branch as a result.
         const auto &thenLinks = region.elseBody ? region.linksThen : links;
@@ -2548,6 +3419,7 @@ public:
               "packed: a select's values must have one type");
         bind(p[0], mlir::arith::SelectOp::create(*builder_, loc, condition,
                                                  then, other));
+        runTime = true;
         break;
       }
 
@@ -2774,6 +3646,7 @@ public:
         auto spOp = pulse::ShiftPhaseOp::create(*builder_, loc, toneTy,
                                                 look(p[0]), phaseVal);
         bind(p[1], spOp.getResult());
+        runTime |= openIfs > 0;
         break;
       }
 
@@ -2788,6 +3661,7 @@ public:
         auto spOp = pulse::SetPhaseOp::create(*builder_, loc, toneTy,
                                               look(p[0]), phaseVal);
         bind(p[1], spOp.getResult());
+        runTime |= openIfs > 0;
         break;
       }
 
@@ -2802,6 +3676,7 @@ public:
         auto sfOp = pulse::ShiftFrequencyOp::create(*builder_, loc, toneTy,
                                                     look(p[0]), fVal);
         bind(p[1], sfOp.getResult());
+        runTime |= openIfs > 0;
         break;
       }
 
@@ -2816,6 +3691,7 @@ public:
         auto sfOp = pulse::SetFrequencyOp::create(*builder_, loc, toneTy,
                                                   look(p[0]), fVal);
         bind(p[1], sfOp.getResult());
+        runTime |= openIfs > 0;
         break;
       }
 
@@ -2879,6 +3755,7 @@ public:
             mlir::FlatSymbolRefAttr::get(callable.getSymNameAttr()), args);
         links[device] = submit.getUpdatedLink();
         bind(p[1], submit.getFuture());
+        runTime = true;
         break;
       }
       case kOpClassicalWait: {
@@ -2939,7 +3816,9 @@ public:
 
     mlir::func::ReturnOp::create(*builder_, loc);
     auto owningModule = mlir::OwningOpRef<mlir::ModuleOp>(module);
-    return PulseModule(ctx_, std::move(owningModule));
+    PulseModule result(ctx_, std::move(owningModule));
+    result.runTime_ = runTime;
+    return result;
   }
 
 private:
@@ -3191,9 +4070,9 @@ NB_MODULE(_cudaq_pulse_native, m) {
           nb::call_guard<nb::gil_scoped_release>(),
           "(kind, line, qubit, start_cycles, duration_cycles) of each timed op")
       .def("controller_events", &PulseModule::controller_events,
-           nb::call_guard<nb::gil_scoped_release>(),
-           "Each timed op with its iteration, waveform, tone frame, "
-           "branches, references, callee and wait, for a controller")
+           nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
+           "The lines and events of the export for a controller, as "
+           "controller.export() gives them")
       .def("simulation_module", &PulseModule::simulation_module,
            "This module with loops holding calls unrolled, for simulation")
       .def("next_call", &PulseModule::next_call, nb::arg("path"),

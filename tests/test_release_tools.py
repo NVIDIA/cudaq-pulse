@@ -50,6 +50,16 @@ def test_invalid_release_tags(tag):
         _load("release-meta").release_version(tag)
 
 
+def test_a_release_is_blocked_while_the_perf_gate_is_bootstrapping(tmp_path):
+    meta = _load("release-meta")
+    baseline = tmp_path / "perf_gate.json"
+    baseline.write_text(json.dumps({"format": 1, "bootstrap": True, "cases": {}}))
+    assert "bootstrap" in meta.release_blockers(baseline)[0]
+    baseline.write_text(json.dumps({"format": 1, "cases": {"c": {"instructions": 1}}}))
+    assert meta.release_blockers(baseline) == []
+    assert meta.release_blockers(tmp_path / "absent.json") == []
+
+
 _CHANGELOG = """# Changelog
 
 ## [Unreleased]

@@ -34,7 +34,12 @@ _SCALE = 2.0
 
 @pulse.classical(args=(Float(), Float(), Float()), results=(Float(),), max_latency_ns=100)
 def _arithmetic(x, y, z):
-    return x * y + z / 2.0 - math.sqrt(x)
+    return x * y + z / y - math.sqrt(x)
+
+
+@pulse.classical(args=(Float(), Float()), results=(Float(),), max_latency_ns=100)
+def _by_constants(x, y):
+    return x / _SCALE + y / (2.0 * math.pi * 1e-9) + x / y
 
 
 @pulse.classical(args=(Floats(N),), results=(Float(),), max_latency_ns=100)
@@ -72,6 +77,12 @@ def test_operations_are_counted_by_class():
     cost = analyze(_arithmetic).cost
     assert dict(cost.ops) == {"add": 2, "div": 1, "mul": 1, "sqrt": 1}
     assert cost.in_controller_form and cost.size == cost.total == 5
+
+
+def test_constants_fold_and_dividing_by_a_constant_is_a_multiply():
+    cost = analyze(_by_constants).cost
+    # 2 pi 1e-9 folds; dividing by it or by _SCALE multiplies by a reciprocal.
+    assert dict(cost.ops) == {"add": 2, "mul": 2, "div": 1}
 
 
 def test_a_loop_multiplies_its_body_by_its_trip_count():

@@ -152,10 +152,9 @@ def _can_select_at_runtime(target: Device, parameter_kind: str) -> bool:
     once the measurement is in. Everywhere else, each op that uses the value
     runs in both arms of an if on the measurement, with that arm's value.
     Simulation gives the same result either way. No target takes any kind
-    at run time: ``export_controller`` gives an op's parameters as
-    constants, so a run-time value exports as ``null`` with nothing naming
-    the measurement that selects it, and ``export_emulation`` carries no
-    parameters.
+    at run time: ``export_controller`` gives a kept value as ``null`` with
+    its expression beside it (the select on the measurement), and
+    ``export_emulation`` carries no parameters.
     """
     return parameter_kind in _SELECTED_AT_RUNTIME
 

@@ -147,7 +147,10 @@ cudaq-pulse's own C++; the prebuilt MLIR toolchain stays uninstrumented. The
 `sanitizers` workflow builds both variants on Linux. The address and
 undefined-behavior build runs `check-pulse-mlir`, `check-pulse-runtime` and
 the Python suite; the thread build runs `check-pulse-runtime`, whose GPU
-runtime host test evolves runs concurrently. For the Python suite, preload the
+runtime host test evolves runs concurrently. Under address and undefined
+behavior, `check-pulse-mlir` and `check-pulse-runtime` block a merge. The
+Python suite there and the thread build are informational until the MLIR
+toolchain is built with the sanitizers too. For the Python suite, preload the
 runtimes into the uninstrumented interpreter:
 
 ```bash
@@ -157,15 +160,93 @@ ASAN_OPTIONS=detect_leaks=0 PYTHONPATH=build/san/python python -m pytest tests -
 
 ## Benchmarks
 
+### The perf gate
+
+The `perf-gate` CI job blocks a pull request on measurements that repeat
+exactly from run to run, not on wall-clock time. It runs the cases in
+`benchmarks/perf_gate/cases.py`: compiles of small and large kernels,
+including kernels over lists of qudits and kernels with classical calls,
+plus the first compile in a process, binding and specializing new values,
+`submit()`, the controller and emulator exports, and the setup of a
+simulation. It compares each case with `benchmarks/baselines/perf_gate.json`
+on two measures:
+
+- **Instructions** executed per repetition, counted by Valgrind's Callgrind
+  on Linux x86-64. A case fails at more than 0.4% above its baseline. It
+  also fails at more than 1% below, so that a speedup is recorded in the
+  baseline instead of hiding a later regression.
+- **Program sizes**: op count, packed program bytes and export bytes. Any
+  change fails. These are the same on every platform, and
+  `tests/test_perf_gate.py` checks them in the regular test suite too.
+
+```bash
+PYTHONPATH=build/dev/python python tools/perf-gate.py      # compare
+PYTHONPATH=build/dev/python python tools/perf-gate.py --update
+```
+
+Without Valgrind (macOS, or Linux on another architecture), the tool
+compares and updates only the program sizes. The instruction counts depend
+on the toolchain, so they are taken in CI's environment, where the image,
+its packages, uv and Python are pinned. If a change is intended, the job
+summary of the failed run prints the one command that makes that run's
+measurements the baseline:
+
+```bash
+gh run download <run-id> -R <owner>/<repo> -n perf-gate-baseline -D benchmarks/baselines
+```
+
+Commit the updated `perf_gate.json` and say why in the pull request.
+
+**Bootstrap mode.** A baseline that says `"bootstrap": true` and holds no
+instruction counts is in bootstrap mode. The job still measures every case
+twice and reports the counts and their spread, but they don't fail the run;
+program sizes block as always. The summary says so in a banner, together
+with the command above. Taking a run's measurements as the baseline removes
+the field, and `"bootstrap": true` next to any instruction count is an
+error (in the job and in `tests/test_perf_gate.py`), so the gate can't stay
+in bootstrap mode once it has counts. Bootstrap mode also can't reach a
+release: the field fails the perf gate on `main`, and `tools/release-meta.py`
+refuses a release tag while it is there. Without the field, a case with no
+count fails. If the two runs of a bootstrap differ at all for some case, the
+summary flags it: give that case its own `"tolerance"` before committing
+the baseline. A new case added later needs its count taken the same way,
+from the run that fails on it.
+
+**Counts that can't be right fail in every mode**, bootstrap included: a
+case without a count, a count of zero, a compile under 100,000 instructions
+per repetition, or a heavier case (a large compile, the first compile)
+measuring less than twice a lighter one. Such a run's counts are left out of
+its `perf-gate-baseline` artifact. The `perf-gate-callgrind-dumps` artifact
+holds each run's raw Callgrind dumps and Valgrind log for inspection
+(`callgrind_annotate` reads them); locally, `--dumps DIR` keeps them.
+
+The
+summary lists every case with its baseline, its count in this run, the
+change, and the spread between two identical runs made in the same job. A
+case whose own numbers move more than the default allows can carry a
+`"tolerance"` (a fraction) in the baseline. Changing a pin in the job (image
+digest, `UBUNTU_SNAPSHOT`, uv or Python version, MLIR toolchain) changes the
+counts, so take a new baseline in the same pull request.
+
+Wall-clock times are informational only: shared runners are too noisy to
+block on. The test job still reports `tests/test_perf_guard.py`'s
+baseline ratios as a warning, and fails on its `scaling` tests, which
+compare two sizes of one program in one process. Release-time wall-clock
+comparisons stay a manual A/B run on a quiet machine.
+
+### Other benchmarks
+
 ```bash
 PYTHONPATH=build/dev/python python benchmarks/compiler/compile_time.py \
   --baseline benchmarks/baselines/compile_time.json
 ```
 
-CI fails if any workload's op count differs from the baseline. If a change
-alters op counts on purpose, regenerate it with `--write-baseline` and
-explain the change in the pull request. Timing is only gated when you pass
-`--gate FACTOR`; it is too noisy on shared runners to gate in CI.
+`compile_time.py` times the canonical workloads and checks their op counts
+against `compile_time.json`. `tests/classical/test_no_call_identity.py`
+checks the same op counts on every platform and in the wheels, and
+`tests/test_perf_gate.py` checks that they agree with `perf_gate.json`. If a
+change alters them on purpose, regenerate the file with `--write-baseline`
+as well. Timing is only gated when you pass `--gate FACTOR`.
 
 `benchmarks/compiler/mlir_pipeline_bench.py` breaks compile time down by
 stage and by pass and reports IR sizes; `benchmarks/simulation/qec_scaling.py`
