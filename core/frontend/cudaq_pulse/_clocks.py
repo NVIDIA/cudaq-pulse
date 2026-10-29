@@ -282,7 +282,7 @@ def sample_rate(limits: ControllerLimits, program_ghz: float) -> tuple[int, int]
     if limits.sample_rate_ghz is not None:
         n, d = made_for(limits.sample_rate_ghz, program_ghz)
         return None if n == d else (n, d)
-    if limits.clock_ghz is None:
+    if limits.clock_ghz is None or limits.clock_ghz == program_ghz:
         return None
     rate = clock_ratio(limits.clock_ghz, program_ghz)
     return None if rate == 1 else (rate.numerator, rate.denominator)

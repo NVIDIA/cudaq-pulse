@@ -1114,10 +1114,9 @@ def build(
     metrics.schedule_ms = (time.perf_counter() - t0) * 1000
     metrics.total_ms = metrics.trace_ms + metrics.ffi_ms + metrics.passes_ms + metrics.schedule_ms
 
-    lowered = _lowered(
+    cls = Lowered if clocks is None and fine_delays is None else _ClockedLowered
+    lowered = cls(
         module,
-        clocks,
-        fine_delays,
         target=target,
         metrics=metrics,
         parameters=parameters,
@@ -1130,6 +1129,9 @@ def build(
             else None
         ),
     )
+    if isinstance(lowered, _ClockedLowered):
+        lowered.clocks = clocks
+        lowered.fine_delays = fine_delays
     lowered.classical = tuple(builder.classical)
     lowered.runtime_selects = runtime_selects
     _check_controller(lowered)
