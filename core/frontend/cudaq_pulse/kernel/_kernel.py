@@ -459,8 +459,19 @@ class _Placing(_Dispatcher):
 
     def _device(self, values: tuple[Any, ...]) -> Device:
         kernel = self.kernel
+        slotted = kernel._slotted
+        if len(slotted) == 1 and not kernel._split[0]:
+            value = values[slotted[0]]
+            if type(value) is Qudit:
+                device: Device = value.device
+                pin = self.pin
+                if pin is None or pin is device:
+                    return device
+                if device != pin:
+                    raise _pin_mismatch(kernel.__name__, pin, device)
+                return pin
         name = kernel.__name__
-        found = None
+        found: Device | None = None
         seen: set[int] = set()
         for i in kernel._split[0]:
             found = _devices(values[i], found, name, seen)
@@ -483,21 +494,17 @@ class _Placing(_Dispatcher):
             return found
         raise _no_device(name)
 
-    def _key(self, target: Device, unroll: int, values: tuple[Any, ...]) -> Any:
+    def _key(self, target: Device, values: tuple[Any, ...]) -> Any:
         kernel = self.kernel
         static = kernel._split[0]
         fingerprint = target._structure if kernel._slotted else target.fingerprint
         lengths = [len(values[i]) for i in kernel._shaped]
-        return (fingerprint, unroll, static, *[_static_key(values[i]) for i in static], *lengths)
+        return (fingerprint, static, *[_static_key(values[i]) for i in static], *lengths)
 
     def lookup(self, values: tuple[Any, ...]) -> _Entry:
         kernel = self.kernel
         target = self._device(values)
-        options = self.options
-        unroll = options.unroll_threshold
-        if unroll is None:
-            unroll = resolve_unroll_threshold()
-        key = self._key(target, unroll, values)
+        key = self._key(target, values)
         entry = self._entries.get(key)
         if entry is not None and entry.guard.check():
             entry.tick = next(_ticks)
@@ -506,11 +513,10 @@ class _Placing(_Dispatcher):
             entry = self._entries.get(key)
             if entry is not None and entry.guard.check():
                 return entry
-            if options.unroll_threshold is None:
-                options = replace(options, unroll_threshold=unroll)
-            entry = kernel._specialize(values, target, options)
+            entry = kernel._specialize(values, target, self.options)
             self.misses += 1
-            key = self._key(target, unroll, values)
+            # Tracing may have made float parameters static.
+            key = self._key(target, values)
             self._insert(key, entry)
         return entry
 
