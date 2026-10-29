@@ -22,7 +22,8 @@ behavior may change in any 0.x release.
   pickle as what they were built from and unpickle equal, with equal
   hashes; a process builds each device it unpickles once. Programs
   (`ck.lower(...)`, bound or not) pickle as MLIR bytecode stamped with the
-  build and Python that compiled them, and run unpickled (export, simulate, bind)
+  build that compiled them (hashes of its native and Python sources, taken
+  when it was built) and the Python, and run unpickled (export, simulate, bind)
   without compiling again; another build refuses them with
   `UnsupportedError`, saying to compile again. Errors pickle with what they
   report, so a process pool re-raises them in the parent as they were

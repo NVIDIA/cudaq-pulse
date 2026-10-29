@@ -26,7 +26,9 @@
 - A program (``Lowered``, and a call's view of one) pickles as MLIR
   bytecode and its metadata, stamped with the build that compiled it, and
   runs without compiling again. Only that build unpickles it: another
-  raises ``UnsupportedError`` saying to compile it again.
+  raises ``UnsupportedError`` saying to compile it again. The stamp hashes
+  the native and the Python sources when the package is built, so any
+  change to either refuses older programs.
 - An error pickles with its attributes and unpickles without calling its
   ``__init__`` again, so errors raised in a process pool reach the parent
   as they were raised.
@@ -44,23 +46,24 @@ import types
 from types import MappingProxyType
 from typing import Any
 
-# Changed whenever what a program pickles changes.
-_FORMAT = 2
-_stamp: tuple[int, str, str, str] | None = None
+_stamp: tuple[str, str, str, str] | None = None
 
 
-def build_stamp() -> tuple[int, str, str, str]:
-    """What a pickled program records of the build that compiled it, and of
-    the Python, whose marshal format its wait-length check is pickled in."""
+def build_stamp() -> tuple[str, str, str, str]:
+    """What a pickled program records of the build that compiled it: its
+    version, the hashes of its native and of its Python sources, both taken
+    when it was built, and the Python, whose marshal format its wait-length
+    check is pickled in."""
     global _stamp
     if _stamp is None:
         import sys
 
         from ._build_config import PACKAGE_VERSION
         from ._native import _cudaq_pulse_native as native
+        from ._source_stamp import SOURCE_STAMP
 
         python = str(sys.implementation.cache_tag)
-        _stamp = (_FORMAT, PACKAGE_VERSION, native.build_stamp(), python)
+        _stamp = (PACKAGE_VERSION, native.build_stamp(), SOURCE_STAMP, python)
     return _stamp
 
 
@@ -317,7 +320,7 @@ def rebuilt_program(
 
 def _build_name(stamp: tuple[Any, ...]) -> str:
     if len(stamp) == 4:
-        return f"{stamp[1]} (build {stamp[2]}, {stamp[3]}, format {stamp[0]})"
+        return f"{stamp[0]} (build {stamp[1]}, sources {stamp[2]}, {stamp[3]})"
     return repr(stamp)
 
 

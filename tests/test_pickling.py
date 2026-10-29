@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import copy
+import hashlib
 import multiprocessing
 import os
 import pathlib
@@ -392,33 +393,55 @@ def test_calls_pickled_together_share_their_module():
     assert first.arguments == (0.1,) and second.arguments == (0.2,)
 
 
-def test_a_program_of_another_build_is_refused(monkeypatch):
+@pytest.mark.parametrize(
+    "part, other, named",
+    [
+        (0, "0.0.1", "0.0.1 (build"),
+        (1, "0123456789abcdef", "build 0123456789abcdef"),
+        (2, "fedcba9876543210", "sources fedcba9876543210"),
+        (3, "cpython-0", "cpython-0)"),
+    ],
+    ids=["version", "native", "python sources", "python"],
+)
+def test_a_program_of_another_build_is_refused(part, other, named, monkeypatch):
     program = rabi.lower(Q[0], 0.3)
-    stale = (_pickling._FORMAT, "0.0.1", "0123456789abcdef", sys.implementation.cache_tag)
-    monkeypatch.setattr(_pickling, "_stamp", stale)
+    stale = list(_pickling.build_stamp())
+    stale[part] = other
+    monkeypatch.setattr(_pickling, "_stamp", tuple(stale))
     data = pickle.dumps(program)
     monkeypatch.setattr(_pickling, "_stamp", None)
     with pytest.raises(pulse.UnsupportedError, match="compile the kernel again") as caught:
         pickle.loads(data)
-    assert "0.0.1 (build 0123456789abcdef" in str(caught.value)
+    assert named in str(caught.value)
     assert pulse.__version__ in str(caught.value)
 
 
-def test_a_program_of_another_python_is_refused(monkeypatch):
-    program = rabi.lower(Q[0], 0.3)
-    format_, version, build, _ = _pickling.build_stamp()
-    monkeypatch.setattr(_pickling, "_stamp", (format_, version, build, "cpython-0"))
-    data = pickle.dumps(program)
-    monkeypatch.setattr(_pickling, "_stamp", None)
-    with pytest.raises(pulse.UnsupportedError, match="cpython-0, format"):
-        pickle.loads(data)
-
-
 def test_the_build_stamp_names_this_build():
-    format_, version, build, python = _pickling.build_stamp()
-    assert format_ == _pickling._FORMAT and version == pulse.__version__
-    assert len(build) == 16 and int(build, 16) >= 0
+    version, build, sources, python = _pickling.build_stamp()
+    assert version == pulse.__version__
+    assert len(build) == len(sources) == 16 and int(build, 16) >= 0 and int(sources, 16) >= 0
     assert python == sys.implementation.cache_tag
+
+
+def test_the_source_stamp_hashes_the_sources_as_they_are():
+    staged = pathlib.Path(_pickling.__file__)
+    if not staged.is_symlink():
+        pytest.skip("an installed package: its sources were hashed when it was built")
+    root = staged.resolve().parent
+    found = sorted(
+        p.relative_to(root).as_posix()
+        for pattern in ("*.py", "*.pyi", "*.json")
+        for p in root.rglob(pattern)
+    )
+    digests = "".join(
+        f" {name} {hashlib.sha256((root / name).read_bytes()).hexdigest()}"
+        for name in [*found, "py.typed"]
+    )
+    from cudaq_pulse._source_stamp import SOURCE_STAMP
+
+    assert SOURCE_STAMP == hashlib.sha256(digests.encode()).hexdigest()[:16], (
+        "the sources changed since the build: build again"
+    )
 
 
 # ── Errors ───────────────────────────────────────────────────────────────────
