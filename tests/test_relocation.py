@@ -1,9 +1,17 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
 """Runtime qudits: a kernel's parameters annotated ``Qudit`` or ``Register``
 compile once and bind their qudits at each call; unannotated ones are
 static."""
 
 import dataclasses
 import json
+import sys
 
 import cudaq_pulse as pulse
 import numpy as np
@@ -162,7 +170,7 @@ def test_unbound_view_cannot_lower_to_llvm():
     assert "llvm" in lowered.mlir("llvm")
     generic = lowered.generic
     assert generic is not None and generic._unbound()
-    with pytest.raises(Exception, match="carrier|bound|qudit"):
+    with pytest.raises(pulse.InvalidValueError, match="runtime qudits; lower it with handles"):
         generic.mlir("llvm")
 
 
@@ -308,3 +316,39 @@ def test_only_annotated_qudits_are_placed_at_call_time():
         static.lower(H[i], H[[i + 1]])
     assert placed.cache_info().compiled == 1
     assert static.cache_info().compiled == 3
+
+
+def _calls(fn):
+    """The Python and the C function calls one run of *fn* makes, warm."""
+    fn()
+    counts = {"call": 0, "c_call": 0}
+
+    def count(frame, event, arg):
+        if event in counts:
+            counts[event] += 1
+
+    sys.setprofile(count)
+    try:
+        fn()
+    finally:
+        sys.setprofile(None)
+    return counts["call"], counts["c_call"]
+
+
+def test_a_runtime_qudit_export_adds_calls_that_do_not_grow_with_the_program():
+    gaps = []
+    for n in (1, 64):
+
+        def drives(q):
+            d, t = get_drive_line(q)
+            for k in range(n):
+                drive(d, square(20, 0.1 + 0.001 * k), t)
+
+        def placed(q: Qudit):
+            drives(q)
+
+        runtime = _calls(pulse.kernel(placed).lower(H[0]).export_controller)
+        fixed = _calls(pulse.kernel(drives).lower(H[0]).export_controller)
+        # Beyond each event's own copy of its symbols, a fixed few calls.
+        gaps.append((runtime[0] - fixed[0], runtime[1] - fixed[1] - n))
+    assert all(python <= 8 and native <= 16 for python, native in gaps), gaps
