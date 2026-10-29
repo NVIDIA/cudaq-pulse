@@ -6,6 +6,13 @@
 # plays and its acquirers are the installation's, given when it is loaded:
 #
 #     pulse.controller("reference.controller", drive_lines=[0, 1], readout_lines=[0, 1])
+#
+# So is how this controller's outcomes reach the others: peer_latency_cycles
+# is the latency of an outcome it reads to a receiving controller, in this
+# controller's own cycles, one number for every receiver or keyed by the
+# receiver's index in the control system (peer_latency_cycles={1: 12}; in a
+# system file, {"1": 12}). A receiver it does not list gets the outcome with
+# no peer latency.
 
 model = "reference.controller"
 version = "1"

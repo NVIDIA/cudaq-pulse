@@ -322,10 +322,12 @@ class Controller(ControllerLimits):
     ``drive_lines`` and ``readout_lines`` are the carriers whose drive and
     readout lines it plays (carrier indices of the quantum system); the only
     controller of a system that lists none plays every line.
-    ``peer_latency_cycles`` is the time an outcome takes to reach another
-    controller: one number for all, or a mapping from the other controller's
-    index in the system. ``clock_skew_cycles`` bounds how far its clock is
-    from the system's, and ``alignment_tolerance_cycles`` how far its pulses
+    ``peer_latency_cycles`` is the time an outcome this controller reads
+    takes to reach another controller, in this controller's own cycles: one
+    number for every receiver, or a mapping from the receiving controller's
+    index in the system (a receiver it does not list: 0).
+    ``clock_skew_cycles`` bounds how far its clock is from the system's, and
+    ``alignment_tolerance_cycles`` how far its pulses
     may land from where they are meant to be on other controllers.
     ``supports`` lists its capabilities (``None``: everything); a program
     that needs one it lacks fails to compile. ``backend`` is the controller

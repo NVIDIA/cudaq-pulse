@@ -68,7 +68,11 @@ A device's ``control_system`` is the controllers that play it, their wiring
 and the links beside them. ``pulse.controller("vendor.model", drive_lines=...,
 readout_lines=...)`` loads a ``Controller`` from an installed description (or
 a TOML file, by path) with the installation's wiring; each file is parsed
-once. ``Device.as_dict()`` writes the whole QPU as one system file, format
+once. The wiring includes ``peer_latency_cycles``: the latency of an
+outcome the controller reads to each receiving controller, counted in the
+sending controller's own cycles and keyed by the receiver's index in the
+control system (one number for every receiver; a receiver not listed: 0).
+``Device.as_dict()`` writes the whole QPU as one system file, format
 ``cudaq-pulse.system/1``, which ``pulse.device()`` reads back, raising a
 ``DeviceDefinitionError`` that lists every problem with its line.
 ``python -m cudaq_pulse.doctor --system FILE`` checks a system file.
