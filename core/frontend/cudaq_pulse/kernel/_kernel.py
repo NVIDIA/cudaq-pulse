@@ -315,11 +315,7 @@ class _Dispatcher:
         kernel = self.kernel
         target = self._device(values)
         static = kernel._split[0]
-        options = self.options
-        unroll = options.unroll_threshold
-        if unroll is None:
-            unroll = resolve_unroll_threshold()
-        key = (target.fingerprint, unroll, static, *[_static_key(values[i]) for i in static])
+        key = (target.fingerprint, static, *[_static_key(values[i]) for i in static])
         entry = self._entries.get(key)
         if entry is not None and entry.guard.check():
             entry.tick = next(_ticks)
@@ -328,13 +324,11 @@ class _Dispatcher:
             entry = self._entries.get(key)
             if entry is not None and entry.guard.check():
                 return entry
-            if options.unroll_threshold is None:
-                options = replace(options, unroll_threshold=unroll)
-            entry = kernel._specialize(values, target, options)
+            entry = kernel._specialize(values, target, self.options)
             self.misses += 1
             # Tracing may have made float parameters static.
             static = kernel._split[0]
-            key = (target.fingerprint, unroll, static, *[_static_key(values[i]) for i in static])
+            key = (target.fingerprint, static, *[_static_key(values[i]) for i in static])
             self._insert(key, entry)
         return entry
 
@@ -398,7 +392,7 @@ class Kernel[**P]:
         # Called from another kernel, the kernel is scheduled on its own with
         # this policy; None schedules it with its caller.
         self.schedule = validate_kernel_schedule(schedule)
-        # None takes the environment's or the default threshold per call.
+        # None leaves the threshold to cudaq_pulse.compile(), else the default.
         self.unroll_threshold = (
             None if unroll_threshold is None else resolve_unroll_threshold(unroll_threshold)
         )
@@ -425,7 +419,7 @@ class Kernel[**P]:
             self,
             CompileOptions(
                 schedule=root_schedule(self.schedule, None),
-                unroll_threshold=self.unroll_threshold,
+                unroll_threshold=resolve_unroll_threshold(self.unroll_threshold),
             ),
             _cache_size(cache_size),
         )

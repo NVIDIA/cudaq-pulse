@@ -30,7 +30,7 @@ from ._native import PackedValueError, PulseModuleBuilder
 from .classical import Link
 from .kernel._bytecode_normalize import UnsupportedInterpreterError
 from .kernel._schedule_blocks import check_root_schedule, root_schedule
-from .kernel._unroll import resolve_unroll_threshold
+from .kernel._unroll import DEFAULT_UNROLL_THRESHOLD, resolve_unroll_threshold
 from .kernel.ir_builder import MAX_CYCLES, CompilationError, SymbolicValueError
 
 if TYPE_CHECKING:
@@ -515,14 +515,13 @@ class CompileMetrics:
 @dataclass(frozen=True)
 class CompileOptions:
     """Passes, schedule policy, machine model and unroll threshold of a
-    compilation. An ``unroll_threshold`` of None is resolved when a call is
-    specialized: from ``CUDAQ_PULSE_UNROLL_THRESHOLD``, else the default."""
+    compilation."""
 
     schedule: str = "alap"
     passes: tuple[Pass, ...] = DEFAULT_PASSES
     machine: MachineModel = _DEFAULT_MACHINE
     flatten_schedules: bool = False
-    unroll_threshold: int | None = None
+    unroll_threshold: int = DEFAULT_UNROLL_THRESHOLD
 
     @staticmethod
     def make(
@@ -547,9 +546,13 @@ class CompileOptions:
             raise ValueError("machine.readout_latency_cycles cannot be negative")
         if machine.line_switch_penalty_cycles < 0:
             raise ValueError("machine.line_switch_penalty_cycles cannot be negative")
-        if unroll_threshold is not None:
-            unroll_threshold = resolve_unroll_threshold(unroll_threshold)
-        return CompileOptions(schedule, passes, machine, bool(flatten_schedules), unroll_threshold)
+        return CompileOptions(
+            schedule,
+            passes,
+            machine,
+            bool(flatten_schedules),
+            resolve_unroll_threshold(unroll_threshold),
+        )
 
     def schedule_args(self) -> tuple[str, int, int, int, int]:
         m = self.machine
@@ -1319,9 +1322,8 @@ def compile[**P](
         A ``for ... in range(n)`` loop whose variable the body never reads is
         unrolled while tracing when n times the number of calls in its body
         is at most this, and emitted once as a rolled loop otherwise. By
-        default the kernel's own ``unroll_threshold=``, else the
-        ``CUDAQ_PULSE_UNROLL_THRESHOLD`` environment variable, else
-        ``DEFAULT_UNROLL_THRESHOLD``; 0 rolls every such loop. Either way the
+        default the kernel's own ``unroll_threshold=``, else 8; 0 rolls
+        every such loop. Either way the
         program, its schedule and its simulation are the same.
     device:
         Pin the compiled kernel to one device: a call with handles of

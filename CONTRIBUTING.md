@@ -88,9 +88,9 @@ fails instead of skipping), `physics` (everything in `tests/physics`),
 `nightly` (slow physics checks, skipped without `--run-nightly`),
 `benchmark` (timing guards, skipped without `--run-benchmarks`) and
 `scaling` (benchmarks that compare two sizes in one run). `tests/conftest.py`
-sets `CUDAQ_PULSE_TARGET=ladder:8192` and `CUDAQ_PULSE_UNROLL_THRESHOLD=0`
-for the whole session, so a kernel's loops stay rolled unless a test says
-otherwise.
+sets `CUDAQ_PULSE_TARGET=ladder:8192` for the whole session. Tests run with
+the default unroll threshold; a test of a rolled loop of a few iterations
+passes `unroll_threshold=` to `pulse.compile` or `@pulse.kernel`.
 
 The property tests use hypothesis profiles (`tests/property_settings.py`),
 chosen with `HYPOTHESIS_PROFILE`: `ci`, the default, is derandomized so every

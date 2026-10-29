@@ -17,28 +17,16 @@ the size of the module.
 
 from __future__ import annotations
 
-import os
-
 from .._errors import InvalidValueError
 
 DEFAULT_UNROLL_THRESHOLD = 8
-UNROLL_THRESHOLD_ENV = "CUDAQ_PULSE_UNROLL_THRESHOLD"
 
 
 def resolve_unroll_threshold(value: int | None = None) -> int:
-    """The unroll threshold: *value* if given, else the
-    ``CUDAQ_PULSE_UNROLL_THRESHOLD`` environment variable, else
+    """The unroll threshold: *value* if given, else
     ``DEFAULT_UNROLL_THRESHOLD``. 0 rolls every loop that can be rolled."""
     if value is None:
-        raw = os.environ.get(UNROLL_THRESHOLD_ENV)
-        if raw is None:
-            return DEFAULT_UNROLL_THRESHOLD
-        try:
-            value = int(raw)
-        except ValueError:
-            raise InvalidValueError(
-                f"{UNROLL_THRESHOLD_ENV} must be an integer, got {raw!r}"
-            ) from None
+        return DEFAULT_UNROLL_THRESHOLD
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise InvalidValueError(f"unroll_threshold must be a non-negative integer, got {value!r}")
     return value

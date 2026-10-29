@@ -171,13 +171,13 @@ carries the lines and tones its body advances; the scheduler times every
 iteration. A loop bound given by a ``float`` argument specializes the kernel
 on its value; ``while`` loops are rejected.
 
-**The unroll threshold** is ``pulse.compile(k, unroll_threshold=n)``,
-``@pulse.kernel(unroll_threshold=n)`` or the ``CUDAQ_PULSE_UNROLL_THRESHOLD``
-environment variable, in that order, and 8 by default; 0 keeps every such
-loop rolled. Both forms are the same program: without passes their
+**The unroll threshold** is ``pulse.compile(k, unroll_threshold=n)``, else
+``@pulse.kernel(unroll_threshold=n)``, else 8; 0 keeps every such loop
+rolled. Both forms are the same program: without passes their
 schedules are identical, and with the default passes ``fuse_pulses`` may merge
-back-to-back pulses of the unrolled form, with the same evolution. The
-threshold is part of the cache key, so changing the variable recompiles.
+back-to-back pulses of the unrolled form, with the same evolution. A kernel
+or compiled kernel keeps the threshold it was given; compile it again for
+another.
 
 The default comes from timing both forms, on one transmon, of loops of 1 to
 512 iterations whose bodies hold 2, 3 or 6 calls: compiling (trace, lowering

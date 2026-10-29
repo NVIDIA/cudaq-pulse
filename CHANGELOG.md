@@ -88,8 +88,8 @@ behavior may change in any 0.x release.
 - **Loop unrolling.** A `range` loop whose variable is never read is kept
   as one rolled loop, unless its estimated unrolled size (trip count times
   the calls in its body) is at most the unroll threshold: 8 by default, the
-  measured break-even point, set with `pulse.compile(k, unroll_threshold=)`,
-  `@pulse.kernel(unroll_threshold=)` or `CUDAQ_PULSE_UNROLL_THRESHOLD`.
+  measured break-even point, set with `pulse.compile(k, unroll_threshold=)`
+  or `@pulse.kernel(unroll_threshold=)`.
   Lines and tones kept in a list, tuple or dict, retuned with
   `set_frequency` or not, are carried through a rolled loop. A rolled body
   may iterate over qudits (`for q in qs`) and gather their lines in a list.
