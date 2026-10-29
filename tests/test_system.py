@@ -505,14 +505,17 @@ def test_doctor_checks_a_system_file(tmp_path):
 
 
 def test_the_simulator_names_systems_it_has_no_model_for():
-    qpu = pulse.get_device(pulse.Target.RYDBERG_CHAIN_8)
+    target = TargetDescription(
+        name="other-pair",
+        qubits={i: Qubit(i, 5e9 + i * 1e8, 0.0, 50.0, 40.0) for i in range(2)},
+        architecture="other",
+    )
+    qpu = pulse.device({"target": target})
 
     @pulse.kernel
     def nothing(q):
         d, t = get_drive_line(q)
         drive(d, square(20, 0.1), t)
 
-    with pytest.raises(
-        NotImplementedError, match="this system \\(neutral_atom\\) has no simulation"
-    ):
+    with pytest.raises(NotImplementedError, match="this system \\(other\\) has no simulation"):
         pulse.simulate(pulse.compile(nothing).lower(qpu.qudits[0]))
