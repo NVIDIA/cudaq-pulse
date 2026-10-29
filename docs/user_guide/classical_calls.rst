@@ -111,15 +111,18 @@ In a kernel, ``fn.submit(...)`` sends the request and returns a future, and
    def feed_forward(q):
        d = get_drive_line(q)
        r = get_readout_line(q)
-       m = readout(r, square(500 * pulse.ns, 0.05))
-       in_time, correction = decode.submit([m]).result(timeout=350 * pulse.ns)
+       readout_time = 500 * pulse.ns
+       decode_deadline = 350 * pulse.ns
+       pi_time = 20 * pulse.ns
+       m = readout(r, square(readout_time, 0.05))
+       in_time, correction = decode.submit([m]).result(timeout=decode_deadline)
        sync(d, r)
        if in_time:
            if correction[0]:
-               drive(d, square(20 * pulse.ns, PI_AMP))
+               drive(d, square(pi_time, PI_AMP))
        else:
            if m:
-               drive(d, square(20 * pulse.ns, PI_AMP))
+               drive(d, square(pi_time, PI_AMP))
 
 With ``timeout`` the result starts with a flag that is true when the
 answer came in time; the other values are zero when it did not, and the
@@ -139,8 +142,10 @@ nanoseconds:
 .. code-block:: python
    :class: fragment
 
+   shortest_wait = 100 * pulse.ns
+   longest_wait = 20 * pulse.us
    alpha, beta, tau = update_t1.submit([m], alpha, beta, tau).result()
-   wait(d, tau * pulse.ns, bounds=(100 * pulse.ns, 20 * pulse.us))
+   wait(d, tau * pulse.ns, bounds=(shortest_wait, longest_wait))
 
 Such a variable wait is a barrier for the lines that depend on it, and it
 opens a new *epoch* for them. The static schedule places it at its lower
@@ -374,7 +379,8 @@ when it is known.
    @pulse.kernel
    def shot(q, amplitude: float):
        ...
-       wait(d, read_wait.submit().result() * pulse.ns, bounds=(0, 20 * pulse.us))
+       longest_wait = 20 * pulse.us
+       wait(d, read_wait.submit().result() * pulse.ns, bounds=(0, longest_wait))
 
    compiled = pulse.compile(shot, device=dev, machine=machine)
    for i in range(10_000):

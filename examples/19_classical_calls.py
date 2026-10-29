@@ -85,8 +85,9 @@ def decoded_feed_forward(qubit):
     drive_line = get_drive_line(qubit)
     readout_line = get_readout_line(qubit)
 
+    decode_deadline = 350 * pulse.ns
     m = readout(readout_line, square(cal["readout_duration"], 0.05))
-    in_time, correction = decode.submit([m]).result(timeout=350 * pulse.ns)
+    in_time, correction = decode.submit([m]).result(timeout=decode_deadline)
     sync(drive_line, readout_line)
     pi_pulse = square(cal["pi_duration"], cal["pi_amp"])
     if in_time:

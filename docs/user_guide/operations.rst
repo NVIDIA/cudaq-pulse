@@ -196,8 +196,10 @@ Waveforms can be combined algebraically inside kernels:
    @pulse.kernel
    def combined_waveform(qubit, duration):
        drive_line = get_drive_line(qubit)
-       envelope_a = gaussian(duration, 0.5, 8 * pulse.ns)
-       envelope_b = gaussian(duration, 0.3, 5 * pulse.ns)
+       wide_sigma = 8 * pulse.ns
+       narrow_sigma = 5 * pulse.ns
+       envelope_a = gaussian(duration, 0.5, wide_sigma)
+       envelope_b = gaussian(duration, 0.3, narrow_sigma)
        combined = wf_add(envelope_a, envelope_b)
        scaled = wf_scale(envelope_a, 0.5)
        inverted = wf_neg(envelope_a)

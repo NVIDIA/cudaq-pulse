@@ -140,8 +140,9 @@ if __name__ == "__main__":
     print(compiled_kernel.mlir())
 
     print("\n=== Ramsey with readout (tau=200) ===")
+    tau = 100 * pulse.ns
     compiled_kernel = pulse.compile(ramsey_with_readout, device=dev).lower(
-        dev.qudit_handles[0], 100 * pulse.ns
+        dev.qudit_handles[0], tau
     )
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")

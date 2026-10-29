@@ -35,7 +35,9 @@ Infrastructure stays behind the ``pulse.`` prefix:
        drive(drive_line, gaussian(duration, 0.5, sigma))
 
    dev = pulse.device("transmon_krinner_17q")
-   rabi_oscillation(dev.qudit_handles[0], 32 * pulse.ns, 8 * pulse.ns)
+   duration = 32 * pulse.ns
+   sigma = 8 * pulse.ns
+   rabi_oscillation(dev.qudit_handles[0], duration, sigma)
 
 Defining a Kernel
 -----------------
@@ -116,8 +118,9 @@ them from a calibration the kernel closes over.
 
    fast = pulse.device({"target": "transmon_krinner_17q", "clock_ghz": 2.0})
    slow = pulse.device({"target": "transmon_krinner_17q", "clock_ghz": 1.0})
-   x_then_wait.lower(fast.qudit_handles[0], 100 * pulse.ns)  # 40, 200, 40 cycles
-   x_then_wait.lower(slow.qudit_handles[0], 100 * pulse.ns)  # 20, 100, 20 cycles
+   gap = 100 * pulse.ns
+   x_then_wait.lower(fast.qudit_handles[0], gap)  # 40, 200, 40 cycles
+   x_then_wait.lower(slow.qudit_handles[0], gap)  # 20, 100, 20 cycles
 
 - A plain float in a duration is an error, since it could be cycles or
   nanoseconds; the error shows both spellings::
