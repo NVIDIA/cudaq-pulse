@@ -109,6 +109,7 @@ class _Role:
         "views",
         "modules",
         "export_plan",
+        "structured",
     )
 
     def __init__(self, symbols: tuple[tuple[str, str, str, int | None], ...]) -> None:
@@ -130,6 +131,8 @@ class _Role:
         self.modules: dict[tuple[tuple[int, ...], Device], Any] = {}
         # What every export shares, built by the first (controller._export_plan).
         self.export_plan: Any = None
+        # The format /2 export's: each event's kind, trips and symbols.
+        self.structured: list[tuple[str, int, dict[str, list[str]]]] | None = None
 
     def __reduce__(self) -> tuple[Any, ...]:
         # Without what its calls made, which holds native modules.

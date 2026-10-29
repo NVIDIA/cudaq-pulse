@@ -99,6 +99,9 @@ Drives and readouts also have:
     A controller tracks such a tone's frame itself, applying these instead
     of reading ``frequency_hz`` and ``phase_rad``, each ``id`` once. A drive
     whose own phase offset does not change the frame has ``phase_offset_rad``.
+    A frame change after the tone's last drive or readout, which no event
+    takes, is in the program's ``frame_updates`` (after ``events``, only
+    when there is one), each with its ``tone`` first.
 
 A waveform parameter computed from a readout or an answer is ``null`` in
 ``params`` and has an expression in the node's ``runtime``, by parameter
@@ -217,6 +220,25 @@ Played events
     ``frequency_hz``, its ``phase_rad`` in the loops' first iterations, and
     ``phase_step_rad``, the phase added per iteration of each loop around
     it, outermost first.
+Values known at run time
+    As in ``/1``, and only where a value is computed from a readout or an
+    answer: ``tone``, ``frame_updates`` and ``phase_offset_rad`` on a play
+    or acquire, ``length``, ``min_cycles`` and ``max_cycles`` on a wait, and
+    ``operands`` on a call; an expression's ``readout`` and ``answer`` are
+    places, like other references, and resolve to the latest execution of
+    that place before the event, so a rolled body refers to its own
+    events. A waveform parameter known only at run time is its expression
+    in the entry of the program's ``waveforms`` the event plays, where
+    ``/1`` has ``null`` and the node's ``runtime``. The program's
+    ``frame_updates`` are as in ``/1``. A loop whose body changes or plays a tone whose frame
+    is tracked at run time is exported once per iteration, so that each
+    frame change keeps its own ``id``; a loop whose run-time values repeat
+    with its iterations stays one loop.
+Symbols
+    A kernel with list or qudit parameters has ``program_id`` and
+    ``symbols`` as in ``/1``, and each event the ``symbols`` its fields
+    depend on; an event in a loop's body names those of any of its
+    iterations.
 Left out
     What follows from the rest or is the default: an event's ``index`` (its
     place in a pre-order walk of the tree, loops included, which is what
@@ -586,9 +608,9 @@ Validating a backend
 
 ``backends.validate(backend, controller=...)`` runs the export test corpus,
 which ships with cudaq-pulse, through a backend: a program for each kind of
-event (``cudaq_pulse.Event``) and one with a branch, compiled for the
-controller (by default the backend's machine model's) and exported in each
-format the backend reads. Each must be emitted or refused with
+event (``cudaq_pulse.Event``), one with a branch and one with values known
+only at run time, compiled for the controller (by default the backend's
+machine model's) and exported in each format the backend reads. Each must be emitted or refused with
 ``IncompatibleBackendError``, and a program with an event kind no format
 has, or in a newer format, must be refused. A program that exceeds the
 controller's limits is skipped.
@@ -606,7 +628,7 @@ controller's limits is skipped.
    # ...
    # PASS unsupported_event
    # PASS newer_format
-   # backend 'text': 7 passed, 3 refused
+   # backend 'text': 7 passed, 4 refused
    print(report.ok)  # True
 
 A backend that accepted the unknown event would instead report ``FAIL

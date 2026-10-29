@@ -130,6 +130,47 @@ def test_program_id_is_stable_and_symbols_bind():
     assert retuned and all(e["symbols"]["qudit"] == "s0" for e in retuned)
 
 
+@pulse.kernel
+def looped_k(q: Qudit, a: float, step: float):
+    d = get_drive_line(q)
+    for _ in range(6):
+        drive(d, square(20, a))
+        shift_phase(d.tone, step)
+    return readout(get_readout_line(q), square(100, 0.05))
+
+
+@pytest.mark.parametrize("kernel", [runtime_k, looped_k], ids=["lines", "loop"])
+def test_format_2_names_the_symbols_format_1_names(kernel):
+    args = (H[9], H[[0, 16]], [0.1, 0.3], _f12(H[9])) if kernel is runtime_k else (H[9], 0.2, 0.4)
+    lowered = kernel.lower(*args)
+    flat, structured = lowered.export_controller(), lowered.export_controller(version=2)
+    assert structured["program_id"] == flat["program_id"]
+    assert structured["symbols"] == flat["symbols"]
+    # An event of a loop's body names what any of its iterations depends on.
+    by_op: dict[tuple, dict[str, set[str]]] = {}
+    for event in flat["events"]:
+        key = (event["kind"], event["line"], tuple(event["iteration"][:-1]))
+        for field, names in event.get("symbols", {}).items():
+            by_op.setdefault(key, {}).setdefault(field, set()).update(
+                [names] if isinstance(names, str) else names
+            )
+    unrolled = pulse.controller.unroll(structured)["events"]
+    assert len(unrolled) == len(flat["events"])
+    for mine, theirs in zip(unrolled, flat["events"], strict=True):
+        if not theirs["iteration"]:
+            assert mine.get("symbols") == theirs.get("symbols")
+    if kernel is looped_k:
+        (loop,) = [e for e in structured["events"] if e["kind"] == "loop"]
+        (play,) = [e for e in loop["body"] if e["kind"] == "play"]
+        assert play["symbols"] == {
+            "qudit": "s0",
+            "frequency_hz": ["s0.f01"],
+            "phase_rad": ["step"],
+            "waveform": ["a"],
+        }
+        assert set(play["symbols"]["phase_rad"]) == by_op[("drive", play["line"], ())]["phase_rad"]
+
+
 def test_static_qudit_exports_have_no_symbols():
     def k(q, a: float):
         d = get_drive_line(q)

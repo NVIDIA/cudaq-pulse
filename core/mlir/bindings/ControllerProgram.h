@@ -28,8 +28,10 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <optional>
 #include <set>
@@ -58,6 +60,9 @@ struct ControllerRecord {
   std::string mode;
   double timeout = std::numeric_limits<double>::quiet_NaN();
   int64_t epoch = 0;
+  // What the event has that is known only at run time: its index in the
+  // walk's `known`, else -1.
+  int32_t known = -1;
   // Sampled: the executions this record stands for, and (loop instance, 1
   // for its iteration 1, 2 for its last) for each sampled loop around it.
   int64_t weight = 1;
@@ -127,6 +132,109 @@ struct ControllerWalk {
   llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
   std::vector<ControllerRecord> result;
 
+  /// With `track`, the arguments of `main` each record's tone frequency,
+  /// frame phase and waveform depend on, parallel to `result`. A qref
+  /// argument stands for its qudit's native frequency.
+  bool track = false;
+  using Dependencies = std::array<std::vector<int64_t>, 3>;
+  std::vector<Dependencies> dependencies;
+  /// With `track`, parallel to `result`: the qref argument whose native
+  /// frequency a record's tone plays (its line was never retuned), or -1.
+  std::vector<int64_t> natives;
+  /// What a tone's frequency, the frequency of its frame (where it
+  /// started) and its phase depend on.
+  struct FrameDependencies {
+    std::vector<int64_t> frequency, frame, phase;
+    bool retuned = false;
+  };
+  std::map<mlir::Operation *, FrameDependencies> frameDependencies;
+
+  /// The arguments of `main` *value* is computed from.
+  static void argumentsOf(mlir::Value value, std::vector<int64_t> &out) {
+    llvm::SmallVector<mlir::Value> work{value};
+    llvm::DenseSet<mlir::Value> seen;
+    while (!work.empty()) {
+      mlir::Value v = work.pop_back_val();
+      if (!seen.insert(v).second)
+        continue;
+      if (auto argument = mlir::dyn_cast<mlir::BlockArgument>(v)) {
+        mlir::Block *owner = argument.getOwner();
+        if (owner->isEntryBlock() &&
+            mlir::isa_and_nonnull<mlir::func::FuncOp>(owner->getParentOp()))
+          out.push_back(argument.getArgNumber());
+        continue;
+      }
+      mlir::Operation *def = v.getDefiningOp();
+      if (def && def->getNumRegions() == 0)
+        work.append(def->getOperands().begin(), def->getOperands().end());
+    }
+  }
+
+  static void merge(std::vector<int64_t> &into,
+                    const std::vector<int64_t> &from) {
+    into.insert(into.end(), from.begin(), from.end());
+    std::sort(into.begin(), into.end());
+    into.erase(std::unique(into.begin(), into.end()), into.end());
+  }
+
+  FrameDependencies &frameDependenciesOf(mlir::Value tone) {
+    mlir::Operation *root = toneRoots(tone);
+    auto [it, inserted] = frameDependencies.try_emplace(root);
+    if (inserted && root) {
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(root) &&
+          !root->hasAttr("frequency_hz"))
+        argumentsOf(root->getOperand(0), it->second.frequency);
+      else if (root->getName().getStringRef() == "pulse.tone" &&
+               root->getNumOperands() == 2) {
+        argumentsOf(root->getOperand(0), it->second.frequency);
+        argumentsOf(root->getOperand(1), it->second.phase);
+      }
+      merge(it->second.frequency, {});
+      merge(it->second.phase, {});
+      it->second.frame = it->second.frequency;
+    }
+    return it->second;
+  }
+
+  /// The dependencies and native tone of drive or readout `op`.
+  LLVM_ATTRIBUTE_NOINLINE void trackPlayed(mlir::Operation *op) {
+    Dependencies &found = dependencies.back();
+    FrameDependencies &frame = frameDependenciesOf(op->getOperand(2));
+    mlir::Operation *root = toneRoots(op->getOperand(2));
+    if (!frame.retuned && root &&
+        mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(root) &&
+        !root->hasAttr("frequency_hz"))
+      if (auto argument =
+              mlir::dyn_cast<mlir::BlockArgument>(root->getOperand(0)))
+        if (argument.getOwner()->isEntryBlock() &&
+            mlir::isa_and_nonnull<mlir::func::FuncOp>(
+                argument.getOwner()->getParentOp()))
+          natives.back() = argument.getArgNumber();
+    found[0] = frame.frequency;
+    found[1] = frame.phase;
+    // A retuned tone gains phase at its detuning from the frame.
+    if (frame.retuned) {
+      merge(found[1], frame.frequency);
+      merge(found[1], frame.frame);
+    }
+    argumentsOf(op->getOperand(1), found[2]);
+    merge(found[2], {});
+  }
+
+  /// What frame change `op` (named `name`) makes its tone depend on.
+  LLVM_ATTRIBUTE_NOINLINE void trackFrameChange(mlir::Operation *op,
+                                                llvm::StringRef name) {
+    FrameDependencies &frame = frameDependenciesOf(op->getOperand(0));
+    std::vector<int64_t> found;
+    argumentsOf(op->getOperand(1), found);
+    bool phase = name == "pulse.shift_phase" || name == "pulse.set_phase";
+    auto &field = phase ? frame.phase : frame.frequency;
+    if (name.starts_with("pulse.set_"))
+      field.clear();
+    merge(field, found);
+    frame.retuned |= !phase;
+  }
+
   static constexpr double kUnknown = std::numeric_limits<double>::quiet_NaN();
 
   /// A number computed from constants alone, else NaN.
@@ -165,6 +273,9 @@ struct ControllerWalk {
     if (auto frequency = root->getAttrOfType<mlir::FloatAttr>("frequency_hz"))
       return {frequency.getValueAsDouble(), frequency.getValueAsDouble(), 0.0,
               0.0};
+    // A runtime qudit's line: its frequency is the carrier's.
+    if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(root))
+      return {kUnknown, kUnknown, 0.0, 0.0};
     if (root->getName().getStringRef() == "pulse.tone" &&
         root->getNumOperands() == 2) {
       double frequency = number(root->getOperand(0));
@@ -179,6 +290,454 @@ struct ControllerWalk {
     if (inserted)
       it->second = initialFrame(root);
     return it->second;
+  }
+
+  // ── Run-time values ──────────────────────────────────────────────────
+  //
+  // What an event has that is known only at run time: on a tone whose frame
+  // depends on run time, the frame changes since its latest drive or readout;
+  // the expressions of the waveform operands, a variable wait's length and a
+  // submission's operands computed from readouts and answers. Looked for
+  // only where the module can compute something at run time (`runTime`).
+
+  bool runTime = false;
+
+  /// Whether `value` depends on a readout or an answer.
+  static bool fromRunTime(mlir::Value value) {
+    mlir::Operation *first = value.getDefiningOp();
+    if (!first || first->hasTrait<mlir::OpTrait::ConstantLike>())
+      return false;
+    llvm::SmallVector<mlir::Value> work{value};
+    llvm::DenseSet<mlir::Value> seen;
+    while (!work.empty()) {
+      mlir::Value v = work.pop_back_val();
+      if (!seen.insert(v).second)
+        continue;
+      mlir::Operation *def = v.getDefiningOp();
+      if (!def)
+        continue;
+      if (mlir::isa<pulse::ReadoutOp, classical::WaitOp, mlir::scf::IfOp>(def))
+        return true;
+      work.append(def->getOperands().begin(), def->getOperands().end());
+    }
+    return false;
+  }
+
+  /// Whether a measurement reaches anything but branch conditions and
+  /// submissions; true past a few ops, which only costs a slower walk.
+  static bool measurementIsUsed(mlir::Value value, int depth = 0) {
+    for (mlir::Operation *user : value.getUsers()) {
+      if (mlir::isa<mlir::scf::IfOp, classical::SubmitOp>(user))
+        continue;
+      if (depth == 4 ||
+          (!mlir::isa<pulse::IsSetOp, pulse::OutcomeOp>(user) &&
+           !mlir::isa<mlir::arith::ArithDialect>(user->getDialect())))
+        return true;
+      for (mlir::Value next : user->getResults())
+        if (measurementIsUsed(next, depth + 1))
+          return true;
+    }
+    return false;
+  }
+
+  /// The tones whose frame a controller tracks at run time: those with a
+  /// frame change computed from a readout or an answer, or made in a branch.
+  llvm::DenseSet<mlir::Operation *> tracked;
+  /// Whether any event can have something known only at run time: a tracked
+  /// tone, a classical call, or a measurement used other than as a branch
+  /// condition.
+  bool detail = false;
+
+  void scan(mlir::Operation *op) {
+    if (mlir::isa<pulse::ShiftPhaseOp, pulse::SetPhaseOp,
+                  pulse::ShiftFrequencyOp, pulse::SetFrequencyOp>(op)) {
+      if (fromRunTime(op->getOperand(1)) ||
+          op->getParentOfType<mlir::scf::IfOp>()) {
+        tracked.insert(toneRoots(op->getOperand(0)));
+        detail = true;
+      }
+    } else if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
+      // A virtual Z folded into a drive in an arm is a frame change there.
+      branch->walk([&](pulse::DriveOp drive) {
+        if (drive->hasAttr("frame_phase_offset")) {
+          tracked.insert(toneRoots(drive->getOperand(2)));
+          detail = true;
+        }
+      });
+    } else if (mlir::isa<classical::SubmitOp>(op)) {
+      detail = true;
+    } else if (mlir::isa<pulse::ReadoutOp>(op) && !detail) {
+      detail = measurementIsUsed(op->getResult(2));
+    }
+  }
+
+  /// How a value is computed at run time, children before their parent: a
+  /// number (a frame change's value), a constant, an unknown (`name`: what),
+  /// the result of a readout or answer record, or an op (`name`, and a
+  /// comparison's `predicate`) over the expressions `of`.
+  struct Expression {
+    enum Kind : uint8_t { Number, Constant, Unknown, Readout, Answer, Op };
+    Kind kind = Number;
+    double number = 0.0;
+    int64_t event = 0, result = 0;
+    llvm::StringRef name, predicate;
+    std::vector<int32_t> of;
+  };
+  std::vector<Expression> expressions;
+
+  struct FrameUpdate {
+    uint64_t seq;
+    llvm::StringRef op;
+    int32_t value; // an expression
+    std::vector<Condition> conditions;
+  };
+  // Each tracked tone's id, in the order tones are first played, and the
+  // frame changes on it since its latest drive or readout.
+  llvm::DenseMap<mlir::Operation *, int64_t> toneIds;
+  std::map<mlir::Operation *, std::vector<FrameUpdate>> pending;
+  uint64_t nextUpdate = 0;
+
+  /// The frame changes still pending once the walk is done, which no drive
+  /// or readout took, in program order with their tone's id; a tone never
+  /// played is numbered after those that are.
+  std::vector<std::pair<int64_t, FrameUpdate>> unapplied() {
+    std::vector<std::pair<mlir::Operation *, FrameUpdate>> all;
+    for (auto &[root, updates] : pending)
+      for (FrameUpdate &update : updates)
+        all.emplace_back(root, std::move(update));
+    pending.clear();
+    std::sort(all.begin(), all.end(), [](const auto &a, const auto &b) {
+      return a.second.seq < b.second.seq;
+    });
+    std::vector<std::pair<int64_t, FrameUpdate>> out;
+    for (auto &[root, update] : all)
+      out.emplace_back(
+          toneIds.try_emplace(root, static_cast<int64_t>(toneIds.size()))
+              .first->second,
+          std::move(update));
+    return out;
+  }
+
+  /// On a tracked tone (`tone` at least 0), the frame changes since its
+  /// latest drive or readout and its own phase offset; the waveform
+  /// operands computed from a readout or an answer, as (node, operand
+  /// index, expression); a variable wait's length (at least 0) and bounds;
+  /// a submission's operands.
+  struct Known {
+    int64_t tone = -1;
+    std::vector<FrameUpdate> updates;
+    std::optional<double> offset;
+    std::vector<std::tuple<int64_t, int64_t, int32_t>> waveform;
+    int32_t length = -1;
+    std::optional<int64_t> minCycles, maxCycles;
+    std::optional<std::vector<int32_t>> operands;
+  };
+  std::vector<Known> known;
+
+  int32_t add(Expression expression) {
+    expressions.push_back(std::move(expression));
+    return static_cast<int32_t>(expressions.size()) - 1;
+  }
+
+  int32_t add(Expression::Kind kind, double number, int64_t event = 0,
+              int64_t result = 0, llvm::StringRef name = {}) {
+    Expression expression;
+    expression.kind = kind;
+    expression.number = number;
+    expression.event = event;
+    expression.result = result;
+    expression.name = name;
+    return add(std::move(expression));
+  }
+
+  /// How `value` is computed at run time: a constant, a result of a readout
+  /// or answer record, or an op (by its MLIR name) over such expressions.
+  int32_t expression(mlir::Value value, int depth = 0) {
+    double constant = number(value);
+    if (!std::isnan(constant))
+      return add(Expression::Constant, constant);
+    mlir::Operation *def = value.getDefiningOp();
+    if (!def)
+      return add(Expression::Unknown, 0.0, 0, 0, "argument");
+    llvm::StringRef name = def->getName().getStringRef();
+    if (mlir::isa<pulse::ReadoutOp, classical::WaitOp>(def)) {
+      auto found = latest.find(def);
+      if (found == latest.end())
+        return add(Expression::Unknown, 0.0, 0, 0, name);
+      if (mlir::isa<pulse::ReadoutOp>(def))
+        return add(Expression::Readout, 0.0, found->second);
+      return add(Expression::Answer, 0.0, found->second,
+                 static_cast<int64_t>(
+                     mlir::cast<mlir::OpResult>(value).getResultNumber()));
+    }
+    if (depth > 64 || def->getNumRegions() != 0 || def->getNumResults() != 1)
+      return add(Expression::Unknown, 0.0, 0, 0, name);
+    Expression op;
+    op.kind = Expression::Op;
+    op.name = name;
+    for (mlir::Value operand : def->getOperands())
+      op.of.push_back(expression(operand, depth + 1));
+    if (auto cmp = mlir::dyn_cast<mlir::arith::CmpFOp>(def))
+      op.predicate = mlir::arith::stringifyCmpFPredicate(cmp.getPredicate());
+    else if (auto cmp = mlir::dyn_cast<mlir::arith::CmpIOp>(def))
+      op.predicate = mlir::arith::stringifyCmpIPredicate(cmp.getPredicate());
+    return add(std::move(op));
+  }
+
+  /// Whether expression `y` is `x` one iteration on: records [a, b) moved
+  /// to [b, 2b - a), the rest the same.
+  bool sameExpression(int32_t x, int32_t y, int64_t a, int64_t b) const {
+    const Expression &p = expressions[x], &q = expressions[y];
+    if (p.kind != q.kind || p.name != q.name || p.predicate != q.predicate ||
+        p.result != q.result || p.of.size() != q.of.size() ||
+        !same(p.number, q.number))
+      return false;
+    if (p.kind == Expression::Readout || p.kind == Expression::Answer) {
+      int64_t moved = p.event >= a && p.event < b ? p.event + (b - a) : p.event;
+      if (q.event != moved)
+        return false;
+    }
+    for (size_t i = 0; i < p.of.size(); ++i)
+      if (!sameExpression(p.of[i], q.of[i], a, b))
+        return false;
+    return true;
+  }
+
+  /// Whether record `y`'s run-time values are record `x`'s one iteration on
+  /// (see sameExpression); a tracked tone never repeats.
+  bool sameKnown(const ControllerRecord &x, const ControllerRecord &y,
+                 int64_t a, int64_t b) const {
+    if (x.known < 0 || y.known < 0)
+      return x.known == y.known;
+    const Known &p = known[x.known], &q = known[y.known];
+    if (p.tone >= 0 || q.tone >= 0 || p.waveform.size() != q.waveform.size() ||
+        (p.length < 0) != (q.length < 0) || p.minCycles != q.minCycles ||
+        p.maxCycles != q.maxCycles ||
+        p.operands.has_value() != q.operands.has_value())
+      return false;
+    for (size_t i = 0; i < p.waveform.size(); ++i) {
+      const auto &[n, k, e] = p.waveform[i];
+      const auto &[m, l, f] = q.waveform[i];
+      if (n != m || k != l || !sameExpression(e, f, a, b))
+        return false;
+    }
+    if (p.length >= 0 && !sameExpression(p.length, q.length, a, b))
+      return false;
+    if (p.operands) {
+      if (p.operands->size() != q.operands->size())
+        return false;
+      for (size_t i = 0; i < p.operands->size(); ++i)
+        if (!sameExpression((*p.operands)[i], (*q.operands)[i], a, b))
+          return false;
+    }
+    return true;
+  }
+
+  /// Moves the record references of record `r`'s run-time values with
+  /// `shift`.
+  template <typename Shift>
+  void shiftKnown(const ControllerRecord &r, Shift shift) {
+    if (r.known < 0)
+      return;
+    auto move = [&](int32_t index, auto &self) -> void {
+      Expression &e = expressions[index];
+      if (e.kind == Expression::Readout || e.kind == Expression::Answer)
+        shift(e.event);
+      for (int32_t child : e.of)
+        self(child, self);
+    };
+    Known &k = known[r.known];
+    for (auto &[node, operand, expr] : k.waveform)
+      move(expr, move);
+    if (k.length >= 0)
+      move(k.length, move);
+    if (k.operands)
+      for (int32_t expr : *k.operands)
+        move(expr, move);
+  }
+
+  /// A frame change's value: its number, else its expression.
+  int32_t frameValue(mlir::Value value) {
+    double constant = number(value);
+    return std::isnan(constant) ? expression(value)
+                                : add(Expression::Number, constant);
+  }
+
+  void frameUpdate(mlir::Operation *root, llvm::StringRef op, int32_t value) {
+    pending[root].push_back({nextUpdate++, op, value, branches});
+  }
+
+  // The run-time work of the walk stays out of line, so that the per-op
+  // path of a walk without it is unchanged.
+
+  /// A frame change `op` (named `name`), on a tone that may be tracked.
+  LLVM_ATTRIBUTE_NOINLINE void frameChange(mlir::Operation *op,
+                                           llvm::StringRef name) {
+    if (mlir::Operation *root = toneRoots(op->getOperand(0));
+        tracked.contains(root))
+      frameUpdate(root, name, frameValue(op->getOperand(1)));
+  }
+
+  // The frame changes pending before each open branch, and after its then
+  // arm.
+  std::vector<std::pair<decltype(pending), decltype(pending)>> pendingArms;
+
+  LLVM_ATTRIBUTE_NOINLINE void enterBranch() {
+    pendingArms.emplace_back(pending, decltype(pending){});
+  }
+
+  LLVM_ATTRIBUTE_NOINLINE void enterElse() {
+    auto &[before, then] = pendingArms.back();
+    then = std::move(pending);
+    pending = before;
+  }
+
+  LLVM_ATTRIBUTE_NOINLINE void leaveBranch(const Condition &arms) {
+    auto [before, then] = std::move(pendingArms.back());
+    pendingArms.pop_back();
+    mergePending(before, then, arms);
+  }
+
+  /// The frame changes pending after a branch: those of both arms, by
+  /// program order. One pending before the branch that a drive or readout
+  /// in one arm took is pending only on the other arm's path.
+  void
+  mergePending(std::map<mlir::Operation *, std::vector<FrameUpdate>> &before,
+               std::map<mlir::Operation *, std::vector<FrameUpdate>> &then,
+               const Condition &branch) {
+    std::set<mlir::Operation *> roots;
+    for (auto *side : {&before, &then, &pending})
+      for (auto &entry : *side)
+        roots.insert(entry.first);
+    auto seqs = [](std::map<mlir::Operation *, std::vector<FrameUpdate>> &side,
+                   mlir::Operation *root) {
+      std::set<uint64_t> out;
+      auto found = side.find(root);
+      if (found != side.end())
+        for (auto &update : found->second)
+          out.insert(update.seq);
+      return out;
+    };
+    for (mlir::Operation *root : roots) {
+      std::set<uint64_t> old = seqs(before, root), inThen = seqs(then, root),
+                         inElse = seqs(pending, root);
+      std::map<uint64_t, FrameUpdate> merged;
+      auto take =
+          [&](std::map<mlir::Operation *, std::vector<FrameUpdate>> &side,
+              bool arm, const std::set<uint64_t> &other) {
+            auto found = side.find(root);
+            if (found == side.end())
+              return;
+            for (auto &update : found->second) {
+              if (merged.count(update.seq))
+                continue;
+              if (old.count(update.seq) && !other.count(update.seq)) {
+                update.conditions.push_back(branch);
+                std::get<1>(update.conditions.back()) = arm;
+              }
+              merged.emplace(update.seq, std::move(update));
+            }
+          };
+      take(then, true, inElse);
+      take(pending, false, inThen);
+      std::vector<FrameUpdate> out;
+      for (auto &[seq, update] : merged)
+        out.push_back(std::move(update));
+      if (out.empty())
+        pending.erase(root);
+      else
+        pending[root] = std::move(out);
+    }
+  }
+
+  /// The operands of `value`'s waveform nodes (numbered as `waveform` does,
+  /// `nodes` its result) computed from a readout or an answer, as (node,
+  /// operand index, operand).
+  static void
+  runTimeOperands(mlir::Value value, const std::vector<WaveformNode> &nodes,
+                  int64_t &next,
+                  std::vector<std::tuple<int64_t, int64_t, mlir::Value>> &out) {
+    mlir::Operation *def = value.getDefiningOp();
+    if (!def) {
+      ++next;
+      return;
+    }
+    llvm::SmallVector<std::pair<int64_t, mlir::Value>, 4> numbers;
+    for (mlir::Value operand : def->getOperands()) {
+      if (mlir::isa<pulse::WaveformType>(operand.getType()))
+        runTimeOperands(operand, nodes, next, out);
+      else
+        numbers.emplace_back(static_cast<int64_t>(numbers.size()), operand);
+    }
+    int64_t node = next++;
+    const std::vector<double> &numbersKnown = std::get<1>(nodes[node]);
+    for (auto &[index, operand] : numbers)
+      if (std::isnan(numbersKnown[index]) && fromRunTime(operand))
+        out.emplace_back(node, index, operand);
+  }
+
+  /// What the next record, a drive, readout or wait, has that is known only
+  /// at run time: its index in `known`, else -1.
+  LLVM_ATTRIBUTE_NOINLINE int32_t runTimeOf(mlir::Operation *op) {
+    Known next;
+    if (mlir::isa<pulse::WaitOp>(op)) {
+      if (!fromRunTime(op->getOperand(1)) ||
+          !op->hasAttr("pulse.variable_wait"))
+        return -1;
+      next.length = expression(op->getOperand(1));
+      if (auto bound = op->getAttrOfType<mlir::IntegerAttr>("pulse.max_cycles"))
+        next.maxCycles = bound.getInt();
+      if (auto bound = op->getAttrOfType<mlir::IntegerAttr>("pulse.min_cycles"))
+        next.minCycles = bound.getInt();
+      known.push_back(std::move(next));
+      return static_cast<int32_t>(known.size()) - 1;
+    }
+    std::vector<WaveformNode> nodes;
+    waveform(op->getOperand(1), nodes);
+    bool unknown = llvm::any_of(nodes, [](const WaveformNode &node) {
+      return llvm::any_of(std::get<1>(node),
+                          [](double v) { return std::isnan(v); });
+    });
+    if (unknown) {
+      std::vector<std::tuple<int64_t, int64_t, mlir::Value>> operands;
+      int64_t count = 0;
+      runTimeOperands(op->getOperand(1), nodes, count, operands);
+      for (auto &[node, index, operand] : operands)
+        next.waveform.emplace_back(node, index, expression(operand));
+    }
+    mlir::Operation *root =
+        tracked.empty() ? nullptr : toneRoots(op->getOperand(2));
+    if (root && tracked.contains(root)) {
+      next.tone =
+          toneIds.try_emplace(root, static_cast<int64_t>(toneIds.size()))
+              .first->second;
+      if (mlir::isa<pulse::DriveOp>(op)) {
+        if (auto shift =
+                op->getAttrOfType<mlir::FloatAttr>("frame_phase_offset"))
+          frameUpdate(root, "shift_phase",
+                      add(Expression::Number, shift.getValueAsDouble()));
+        if (auto own = op->getAttrOfType<mlir::FloatAttr>("phase_offset"))
+          next.offset = own.getValueAsDouble();
+      }
+      if (auto found = pending.find(root); found != pending.end()) {
+        next.updates = std::move(found->second);
+        pending.erase(found);
+      }
+    }
+    if (next.tone < 0 && next.waveform.empty())
+      return -1;
+    known.push_back(std::move(next));
+    return static_cast<int32_t>(known.size()) - 1;
+  }
+
+  /// The operands of a submission, in argument order.
+  LLVM_ATTRIBUTE_NOINLINE int32_t submission(classical::SubmitOp request) {
+    Known next;
+    next.operands.emplace();
+    for (mlir::Value arg : request.getArgs())
+      next.operands->push_back(expression(arg));
+    known.push_back(std::move(next));
+    return static_cast<int32_t>(known.size()) - 1;
   }
 
   /// The waveform expression of `value`, children before their parent.
@@ -248,6 +807,10 @@ struct ControllerWalk {
       r.samples = sampling;
     if (epochs)
       r.epoch = epochs->visit(op, iteration);
+    if (track) {
+      dependencies.emplace_back();
+      natives.push_back(-1);
+    }
     return r;
   }
 
@@ -296,6 +859,7 @@ struct ControllerWalk {
       line->second = std::max(*line->second, *start + *duration);
     else
       line->second = std::nullopt;
+    int32_t knownIndex = runTime && detail ? runTimeOf(op) : -1;
     const char *kind = mlir::isa<pulse::DriveOp>(op)     ? "drive"
                        : mlir::isa<pulse::ReadoutOp>(op) ? "readout"
                                                          : "wait";
@@ -306,6 +870,9 @@ struct ControllerWalk {
     r.duration = duration;
     r.frequency = frequency;
     r.phase = phase;
+    r.known = knownIndex;
+    if (track && kind[0] != 'w')
+      trackPlayed(op);
   }
 
   void sync(pulse::SyncOp op) {
@@ -352,8 +919,16 @@ struct ControllerWalk {
         timeoutNs = timeout.getValueAsDouble();
       }
     }
+    int32_t knownIndex = -1;
+    if (runTime)
+      if (auto request = mlir::dyn_cast<classical::SubmitOp>(op))
+        knownIndex = submission(request);
     ControllerRecord &r = record(submit ? "submit" : "answer", op);
+    r.known = knownIndex;
     r.line = classical::intAttr(op, "classical.device");
+    // A call has no qudit: its slot holds the controller whose instance of
+    // a per-controller link runs it (-1: none).
+    r.qudit = classical::intAttr(op, classical::kInstanceAttr, -1);
     r.start = pulse::scheduledStart(op, iteration);
     r.duration = pulse::scheduledDuration(op);
     r.refs = std::move(refs);
@@ -378,8 +953,12 @@ struct ControllerWalk {
     }
     if (name == "pulse.shift_phase" || name == "pulse.set_phase" ||
         name == "pulse.shift_frequency" || name == "pulse.set_frequency") {
+      if (track)
+        trackFrameChange(op, name);
       double value = number(op->getOperand(1));
       Frame &frame = frameOf(op->getOperand(0));
+      if (runTime && !tracked.empty())
+        frameChange(op, name.drop_front(6));
       if (name == "pulse.shift_phase")
         frame.phase += value;
       else if (name == "pulse.set_phase")
@@ -414,6 +993,12 @@ struct ControllerWalk {
       int64_t id = nextBranch++;
       auto framesBefore = frames;
       auto reachedBefore = reached;
+      bool tracking = runTime && !tracked.empty();
+      if (tracking)
+        enterBranch();
+      decltype(frameDependencies) dependenciesBefore, dependenciesThen;
+      if (track)
+        dependenciesBefore = frameDependencies;
       branches.emplace_back(id, 1, std::move(readouts), std::move(answers),
                             std::move(test));
       block(*branch.thenBlock());
@@ -421,11 +1006,27 @@ struct ControllerWalk {
       auto reachedThen = std::move(reached);
       frames = std::move(framesBefore);
       reached = std::move(reachedBefore);
+      if (track) {
+        dependenciesThen = std::move(frameDependencies);
+        frameDependencies = std::move(dependenciesBefore);
+      }
+      if (tracking)
+        enterElse();
       std::get<1>(branches.back()) = 0;
       if (!branch.getElseRegion().empty())
         block(*branch.elseBlock());
+      if (tracking)
+        leaveBranch(branches.back());
       branches.pop_back();
       mergeFrames(framesThen);
+      // After the branch, a frame depends on what either arm set.
+      for (auto &[root, theirs] : dependenciesThen) {
+        auto &ours = frameDependencies[root];
+        merge(ours.frequency, theirs.frequency);
+        merge(ours.frame, theirs.frame);
+        merge(ours.phase, theirs.phase);
+        ours.retuned |= theirs.retuned;
+      }
       for (auto &[allocation, time] : reachedThen) {
         auto [it, inserted] = reached.try_emplace(allocation, time);
         if (inserted)
@@ -488,10 +1089,23 @@ struct ControllerWalk {
     llvm::DenseMap<mlir::Operation *, int64_t> latest;
     int64_t nextBranch;
     size_t size;
+    std::map<mlir::Operation *, std::vector<FrameUpdate>> pending;
+    llvm::DenseMap<mlir::Operation *, int64_t> toneIds;
+    uint64_t nextUpdate;
+    std::map<mlir::Operation *, FrameDependencies> frameDependencies;
   };
 
   State save() const {
-    return {frames, reached, latest, nextBranch, result.size()};
+    return {frames,
+            reached,
+            latest,
+            nextBranch,
+            result.size(),
+            pending,
+            toneIds,
+            nextUpdate,
+            track ? frameDependencies
+                  : std::map<mlir::Operation *, FrameDependencies>()};
   }
 
   void restore(State &state) {
@@ -500,6 +1114,14 @@ struct ControllerWalk {
     latest = std::move(state.latest);
     nextBranch = state.nextBranch;
     result.resize(state.size);
+    pending = std::move(state.pending);
+    toneIds = std::move(state.toneIds);
+    nextUpdate = state.nextUpdate;
+    if (track) {
+      dependencies.resize(state.size);
+      natives.resize(state.size);
+      frameDependencies = std::move(state.frameDependencies);
+    }
   }
 
   /// Whether two frame states have the same frequencies, so that the body
@@ -534,7 +1156,8 @@ struct ControllerWalk {
       if (std::strcmp(x.kind, y.kind) != 0 || x.op != y.op ||
           x.start.has_value() != y.start.has_value() || x.trips != y.trips ||
           x.first != y.first || x.size != y.size ||
-          x.phaseSteps.size() != y.phaseSteps.size())
+          x.phaseSteps.size() != y.phaseSteps.size() ||
+          !sameKnown(x, y, static_cast<int64_t>(a), static_cast<int64_t>(b)))
         return std::nullopt;
       if (!x.start)
         continue;
@@ -609,6 +1232,16 @@ struct ControllerWalk {
 
   void rolled(mlir::scf::ForOp loop, int64_t trips) {
     State entry = save();
+    // A body that changes or plays a tracked tone's frame lists frame
+    // changes that differ from one iteration to the next.
+    auto tracks = [&] {
+      if (nextUpdate != entry.nextUpdate)
+        return true;
+      for (size_t i = entry.size; i < result.size(); ++i)
+        if (result[i].known >= 0 && known[result[i].known].tone >= 0)
+          return true;
+      return false;
+    };
     size_t depth = iteration.size();
     iteration.push_back(0);
     auto frames0 = frames;
@@ -641,7 +1274,8 @@ struct ControllerWalk {
       }
     }
     std::optional<int64_t> period =
-        e ? periodOf(a, b, e, false) : std::optional<int64_t>();
+        e && !tracks() ? periodOf(a, b, e, false) : std::optional<int64_t>();
+
     std::vector<double> steps;
     for (size_t i = 0; period && i < b - a; ++i) {
       const ControllerRecord &x = result[a + i], &y = result[b + i];
@@ -685,6 +1319,22 @@ struct ControllerWalk {
     }
     frames = std::move(framesAfter);
     result.resize(b);
+    if (track) {
+      // A record of the body stands for every iteration: it depends on
+      // what any does. A shift adds to what a frame depends on and a set
+      // replaces it, so from the second iteration on each depends alike.
+      for (size_t i = a; i < b; ++i) {
+        for (size_t f = 0; f < dependencies[i].size(); ++f)
+          merge(dependencies[i][f], dependencies[i + (b - a)][f]);
+        if (natives[i] != natives[i + (b - a)])
+          natives[i] = -1;
+      }
+      dependencies.resize(b);
+      natives.resize(b);
+      dependencies.insert(dependencies.begin() + static_cast<std::ptrdiff_t>(a),
+                          Dependencies());
+      natives.insert(natives.begin() + static_cast<std::ptrdiff_t>(a), -1);
+    }
     ControllerRecord node;
     node.kind = "loop";
     node.op = loop;
@@ -717,6 +1367,7 @@ struct ControllerWalk {
     };
     for (size_t i = a; i < b; ++i) {
       ControllerRecord &r = result[i];
+      shiftKnown(r, shift);
       for (int64_t &ref : r.refs)
         shift(ref);
       for (Condition &c : r.conditions) {
@@ -771,6 +1422,45 @@ struct ControllerWaveforms {
 private:
   std::unordered_map<std::string, int64_t> index;
 };
+
+// ── Controller clocks ─────────────────────────────────────────────────────
+
+/// A line event that does not start and last whole multiples of its
+/// controller's grid: (index, start, duration) in program cycles.
+using OffGridEvent = std::tuple<int64_t, int64_t, int64_t>;
+
+/// The records of a walk of every execution in the cycles of a controller
+/// counting `num` of its cycles every `den` program cycles: each start,
+/// duration and end rounded up, an end kept apart where it is not the start
+/// plus the duration. Returns the drives, readouts and waits off its grid of
+/// `grid` program cycles.
+inline std::vector<OffGridEvent>
+ownCycles(std::vector<ControllerRecord> &records, int64_t num, int64_t den,
+          int64_t grid) {
+  std::vector<OffGridEvent> offGrid;
+  auto own = [&](std::optional<int64_t> &cycles) {
+    if (cycles)
+      *cycles = (*cycles * num + den - 1) / den;
+  };
+  for (size_t index = 0; index < records.size(); ++index) {
+    ControllerRecord &r = records[index];
+    if (grid > 1 && r.start && r.duration &&
+        (std::strcmp(r.kind, "drive") == 0 ||
+         std::strcmp(r.kind, "readout") == 0 ||
+         std::strcmp(r.kind, "wait") == 0) &&
+        (*r.start % grid || *r.duration % grid))
+      offGrid.emplace_back(static_cast<int64_t>(index), *r.start, *r.duration);
+    if (num == den)
+      continue;
+    std::optional<int64_t> end = r.stop();
+    own(r.start);
+    own(r.duration);
+    own(end);
+    if (end && *end != *r.start + *r.duration)
+      r.end = end;
+  }
+  return offGrid;
+}
 
 // ── Limit checks ──────────────────────────────────────────────────────────
 
@@ -1124,7 +1814,10 @@ checkControllerLimits(const std::vector<ControllerRecord> &records,
 /// Builds the events of a walk as the dictionaries of the export format,
 /// without reading the IR. `waveform` turns the nodes of a waveform into
 /// (expression, amplitude); it is called once per distinct waveform, and
-/// the events that play one share what it returns.
+/// the events that play one share what it returns. Without it, the
+/// expression and amplitude are built here. `parameters` names the numbers
+/// of each waveform shape, and `amplitudes` holds the shapes with an
+/// overall amplitude.
 class ControllerEvents {
 public:
   /// `compact` (format /2) leaves out what is derivable or the default: the
@@ -1132,23 +1825,176 @@ public:
   /// an empty iteration, epoch 0, empty conditions and lists, a sync's or
   /// call's line, a timeout that is none and a first iteration of 0; its
   /// `waveform` returns (index into the program's waveforms, None).
-  ControllerEvents(const std::vector<ControllerRecord> &records,
-                   const ControllerWaveforms &waveforms, nb::callable waveform,
-                   bool compact)
-      : records(records), waveforms(waveforms), waveform(std::move(waveform)),
-        compact(compact), made(waveforms.distinct.size()) {}
+  ControllerEvents(const ControllerWalk &walk,
+                   const ControllerWaveforms &waveforms, nb::object waveform,
+                   nb::handle parameters, nb::handle amplitudes, bool compact)
+      : records(walk.result), walk(walk), waveforms(waveforms),
+        waveform(std::move(waveform)), parameters(parameters), compact(compact),
+        made(waveforms.distinct.size()) {
+    if (this->waveform.is_none())
+      readShapes(amplitudes);
+  }
 
   nb::list build() {
     size_t at = 0;
     return range(at, records.size());
   }
 
+  /// Frame changes no drive or readout took, each with its `tone` first.
+  nb::list unapplied(
+      const std::vector<std::pair<int64_t, ControllerWalk::FrameUpdate>> &all)
+      const {
+    nb::list out;
+    for (const auto &[tone, update] : all) {
+      nb::dict item;
+      item["tone"] = tone;
+      nb::dict rest = nb::cast<nb::dict>(frameUpdates({update})[0]);
+      for (auto [key, value] : rest)
+        item[key] = value;
+      out.append(item);
+    }
+    return out;
+  }
+
 private:
+  using Expression = ControllerWalk::Expression;
+  using Nodes = ControllerWaveforms::Nodes;
+  using Operands = std::vector<std::tuple<int64_t, int64_t, int32_t>>;
+
   const std::vector<ControllerRecord> &records;
+  const ControllerWalk &walk;
   const ControllerWaveforms &waveforms;
-  nb::callable waveform;
+  nb::object waveform;
+  nb::handle parameters;
   bool compact;
   std::vector<std::optional<std::pair<nb::object, nb::object>>> made;
+
+  // The names of a waveform shape's numbers, where its amplitude and scale
+  // factor are among them, and whether it has an overall amplitude.
+  struct Shape {
+    std::vector<nb::object> names;
+    int real = -1, imag = -1, factor = -1;
+    bool amplitude = false;
+  };
+  llvm::StringMap<Shape> shapes;
+
+  void readShapes(nb::handle amplitudes) {
+    for (nb::handle shape : parameters) {
+      Shape &info = shapes[nb::cast<std::string>(shape)];
+      info.amplitude = PySequence_Contains(amplitudes.ptr(), shape.ptr()) == 1;
+      for (nb::handle name : parameters[shape]) {
+        auto text = nb::cast<std::string>(name);
+        int index = static_cast<int>(info.names.size());
+        if (text == "amplitude")
+          info.real = index;
+        else if (text == "amplitude_imag")
+          info.imag = index;
+        else if (text == "factor")
+          info.factor = index;
+        info.names.push_back(nb::borrow(name));
+      }
+    }
+  }
+
+  /// The names of a node's numbers, if its shape names them all.
+  const Shape *named(llvm::StringRef shape, size_t numbers) const {
+    auto found = shapes.find(shape);
+    if (found == shapes.end() || found->second.names.size() != numbers)
+      return nullptr;
+    return &found->second;
+  }
+
+  /// The waveform expression from node `index` down.
+  nb::object tree(const Nodes &nodes, int64_t index) const {
+    const auto &[name, numbers, children] = nodes[index];
+    auto [shape, custom] = llvm::StringRef(name).split(':');
+    nb::dict node;
+    node["shape"] = nb::str(shape.data(), shape.size());
+    if (!custom.empty())
+      node["name"] = nb::str(custom.data(), custom.size());
+    const Shape *names = named(shape, numbers.size());
+    if (shape == "custom_samples") {
+      nb::list samples;
+      for (double v : numbers)
+        samples.append(nb::float_(v));
+      node["samples"] = samples;
+    } else if (names) {
+      nb::dict params;
+      for (size_t i = 0; i < numbers.size(); ++i)
+        params[names->names[i]] = number(numbers[i]);
+      node["params"] = params;
+    } else if (!numbers.empty()) {
+      nb::list values;
+      for (double v : numbers)
+        values.append(number(v));
+      node["values"] = values;
+    }
+    if (!children.empty()) {
+      nb::list of;
+      for (int64_t child : children)
+        of.append(tree(nodes, child));
+      node["of"] = of;
+    }
+    return node;
+  }
+
+  /// The overall complex amplitude of node `index`, through scale and neg,
+  /// in Python's complex arithmetic; None where it is unknown.
+  nb::object complexAmplitude(const Nodes &nodes, int64_t index) const {
+    const auto &[name, numbers, children] = nodes[index];
+    llvm::StringRef shape = llvm::StringRef(name).split(':').first;
+    const Shape *names = named(shape, numbers.size());
+    if (shape == "scale" || shape == "neg") {
+      if (children.empty())
+        return nb::none();
+      nb::object inner = complexAmplitude(nodes, children[0]);
+      if (inner.is_none())
+        return inner;
+      if (shape == "neg")
+        return checked(PyNumber_Negative(inner.ptr()));
+      if (!names || names->factor < 0 || std::isnan(numbers[names->factor]))
+        return nb::none();
+      nb::float_ factor(numbers[names->factor]);
+      return checked(PyNumber_Multiply(inner.ptr(), factor.ptr()));
+    }
+    if (shape == "custom_samples") {
+      if (numbers.empty())
+        return nb::none();
+      double peak = numbers[0];
+      for (double sample : numbers)
+        if (std::fabs(sample) > std::fabs(peak))
+          peak = sample;
+      return checked(PyComplex_FromDoubles(peak, 0.0));
+    }
+    if (!names || !names->amplitude || names->real < 0)
+      return nb::none();
+    double re = numbers[names->real];
+    double im = names->imag < 0 ? 0.0 : numbers[names->imag];
+    if (std::isnan(re) || std::isnan(im))
+      return nb::none();
+    return checked(PyComplex_FromDoubles(re, im));
+  }
+
+  static nb::object checked(PyObject *object) {
+    if (!object)
+      throw nb::python_error();
+    return nb::steal(object);
+  }
+
+  /// (expression, amplitude as {re, im}) of a waveform, as the export has
+  /// them.
+  std::pair<nb::object, nb::object> built(const Nodes &nodes) const {
+    if (nodes.empty())
+      return {nb::none(), nb::none()};
+    int64_t root = static_cast<int64_t>(nodes.size()) - 1;
+    nb::object overall = complexAmplitude(nodes, root);
+    if (overall.is_none())
+      return {tree(nodes, root), nb::none()};
+    nb::dict parts;
+    parts["re"] = nb::float_(PyComplex_RealAsDouble(overall.ptr()));
+    parts["im"] = nb::float_(PyComplex_ImagAsDouble(overall.ptr()));
+    return {tree(nodes, root), parts};
+  }
 
   static nb::object number(double v) {
     return std::isnan(v) ? nb::none() : nb::object(nb::float_(v));
@@ -1177,6 +2023,8 @@ private:
         event["body"] = range(at, at + static_cast<size_t>(r.size));
       } else {
         details(r, event);
+        if (r.known >= 0)
+          runTime(r, walk.known[r.known], event);
       }
       out.append(event);
     }
@@ -1209,7 +2057,7 @@ private:
       event["line"] = r.line;
     if (!compact)
       event["qudit"] =
-          sync || loop ? nb::none() : nb::object(nb::int_(r.qudit));
+          sync || loop ? nb::none() : nb::object(nb::int_(call ? -1 : r.qudit));
     event["start_cycles"] = optional(r.start);
     event["duration_cycles"] = optional(r.duration);
     if (!compact)
@@ -1245,9 +2093,13 @@ private:
     if (r.played()) {
       auto &shape = made[static_cast<size_t>(waveforms.of.lookup(r.op))];
       if (!shape) {
-        nb::tuple pair = nb::cast<nb::tuple>(
-            waveform(waveforms.distinct[waveforms.of.lookup(r.op)]));
-        shape.emplace(pair[0], pair[1]);
+        const Nodes &nodes = waveforms.distinct[waveforms.of.lookup(r.op)];
+        if (waveform.is_none()) {
+          shape.emplace(built(nodes));
+        } else {
+          nb::tuple pair = nb::cast<nb::tuple>(waveform(nodes));
+          shape.emplace(pair[0], pair[1]);
+        }
       }
       event["waveform"] = shape->first;
       if (!compact) {
@@ -1273,6 +2125,8 @@ private:
       event["lines"] = ints(r.joined);
     } else if (r.kind[0] == 's' || r.kind[0] == 'a') {
       event["link"] = r.line;
+      if (r.qudit >= 0)
+        event["controller"] = r.qudit;
       event["function"] = r.callee;
       if (r.kind[0] == 's') {
         event["measurements"] = ints(r.refs);
@@ -1281,6 +2135,181 @@ private:
         if (!compact || !std::isnan(r.timeout))
           event["timeout_ns"] = number(r.timeout);
       }
+    }
+  }
+
+  // ── Run-time values ──────────────────────────────────────────────────
+
+  /// A number as the JSON text "%.17g" of it reads back: an int where that
+  /// text has no fraction or exponent.
+  static nb::object textNumber(double value) {
+    if (std::isfinite(value) && value == std::trunc(value) &&
+        std::fabs(value) < 1e17)
+      return nb::int_(static_cast<int64_t>(value));
+    return nb::float_(value);
+  }
+
+  nb::object expression(int32_t index) const {
+    const Expression &e = walk.expressions[index];
+    if (e.kind == Expression::Number)
+      return textNumber(e.number);
+    nb::dict out;
+    switch (e.kind) {
+    case Expression::Constant:
+      out["const"] = textNumber(e.number);
+      break;
+    case Expression::Unknown:
+      out["unknown"] = nb::str(e.name.data(), e.name.size());
+      break;
+    case Expression::Readout:
+      out["readout"] = e.event;
+      break;
+    case Expression::Answer:
+      out["answer"] = e.event;
+      out["result"] = e.result;
+      break;
+    default: {
+      nb::list of;
+      for (int32_t child : e.of)
+        of.append(expression(child));
+      out["of"] = of;
+      out["op"] = nb::str(e.name.data(), e.name.size());
+      if (!e.predicate.empty())
+        out["predicate"] = nb::str(e.predicate.data(), e.predicate.size());
+    }
+    }
+    return out;
+  }
+
+  /// The name of number `operand` of a node: its parameter's, where the
+  /// shape names all its numbers, else its index.
+  nb::object parameter(const std::string &name, size_t numbers,
+                       int64_t operand) const {
+    nb::object names =
+        parameters.attr("get")(nb::str(name.substr(0, name.find(':')).c_str()));
+    if (!names.is_none() && nb::len(names) == numbers)
+      return names[static_cast<size_t>(operand)];
+    return nb::str(std::to_string(operand).c_str());
+  }
+
+  /// The run-time operands of node `index`, by parameter name; none when it
+  /// has none.
+  nb::object computed(const Nodes &nodes, int64_t index,
+                      const Operands &operands) const {
+    const auto &[name, numbers, children] = nodes[index];
+    nb::dict out;
+    for (const auto &[at, operand, expr] : operands)
+      if (at == index)
+        out[parameter(name, numbers.size(), operand)] = expression(expr);
+    return nb::len(out) ? nb::object(out) : nb::none();
+  }
+
+  /// A copy of waveform `tree` (node `index` of `nodes`) with its operands
+  /// known only at run time in the `runtime` of their nodes.
+  nb::object withRunTime(const Nodes &nodes, int64_t index, nb::handle tree,
+                         const Operands &operands) const {
+    const auto &children = std::get<2>(nodes[index]);
+    nb::dict node = nb::steal<nb::dict>(PyDict_Copy(tree.ptr()));
+    if (!children.empty()) {
+      nb::object old = node["of"];
+      nb::list of;
+      for (size_t i = 0; i < children.size(); ++i)
+        of.append(withRunTime(nodes, children[i], old[i], operands));
+      node["of"] = of;
+    }
+    nb::object here = computed(nodes, index, operands);
+    if (!here.is_none())
+      node["runtime"] = here;
+    return node;
+  }
+
+  /// Format /2: the run-time operands of a waveform as a list of the paths
+  /// to their nodes (the index in `of` at each node from the root) with
+  /// their operands by parameter name.
+  void paths(const Nodes &nodes, int64_t index, nb::list &path, nb::list &out,
+             const Operands &operands) const {
+    nb::object here = computed(nodes, index, operands);
+    if (!here.is_none()) {
+      nb::dict item;
+      item["path"] = nb::list(path);
+      item["params"] = here;
+      out.append(item);
+    }
+    const auto &children = std::get<2>(nodes[index]);
+    for (size_t i = 0; i < children.size(); ++i) {
+      path.append(i);
+      paths(nodes, children[i], path, out, operands);
+      PyList_SetSlice(path.ptr(), nb::len(path) - 1, nb::len(path), nullptr);
+    }
+  }
+
+  nb::object
+  frameUpdates(const std::vector<ControllerWalk::FrameUpdate> &all) const {
+    nb::list out;
+    for (const auto &update : all) {
+      nb::list conditions;
+      for (const auto &[branch, arm, readouts, answers, test] :
+           update.conditions) {
+        nb::dict condition;
+        if (!compact || !answers.empty())
+          condition["answers"] = ints(answers);
+        condition["arm"] = static_cast<bool>(arm);
+        condition["branch"] = branch;
+        if (!compact || !readouts.empty())
+          condition["readouts"] = ints(readouts);
+        condition["test"] = test;
+        conditions.append(condition);
+      }
+      nb::dict item;
+      if (!compact || nb::len(conditions))
+        item["conditions"] = conditions;
+      item["id"] = update.seq;
+      item["op"] = nb::str(update.op.data(), update.op.size());
+      item["value"] = expression(update.value);
+      out.append(item);
+    }
+    return out;
+  }
+
+  /// What `r` has that is known only at run time, after the rest of
+  /// `event`; format /1 adds the waveform's in place, in its nodes.
+  void runTime(const ControllerRecord &r, const ControllerWalk::Known &known,
+               nb::dict &event) {
+    if (!known.waveform.empty() && r.played()) {
+      const Nodes &nodes = waveforms.distinct[waveforms.of.lookup(r.op)];
+      Operands sorted = known.waveform;
+      std::stable_sort(sorted.begin(), sorted.end(),
+                       [](const auto &a, const auto &b) {
+                         return std::make_pair(std::get<0>(a), std::get<1>(a)) <
+                                std::make_pair(std::get<0>(b), std::get<1>(b));
+                       });
+      int64_t root = static_cast<int64_t>(nodes.size()) - 1;
+      if (!compact) {
+        event["waveform"] = withRunTime(nodes, root, event["waveform"], sorted);
+      } else {
+        nb::list path, out;
+        paths(nodes, root, path, out, sorted);
+        event["runtime"] = out;
+      }
+    }
+    if (known.tone >= 0) {
+      event["tone"] = known.tone;
+      event["frame_updates"] = frameUpdates(known.updates);
+      if (known.offset)
+        event["phase_offset_rad"] = textNumber(*known.offset);
+    }
+    if (known.length >= 0) {
+      event["length"] = expression(known.length);
+      if (!compact || known.minCycles)
+        event["min_cycles"] = optional(known.minCycles);
+      if (!compact || known.maxCycles)
+        event["max_cycles"] = optional(known.maxCycles);
+    }
+    if (known.operands) {
+      nb::list operands;
+      for (int32_t expr : *known.operands)
+        operands.append(expression(expr));
+      event["operands"] = operands;
     }
   }
 };

@@ -164,9 +164,9 @@ def test_a_shared_memory_holds_the_waveforms_of_every_line_once():
 def test_without_scaling_a_float_amplitude_is_checked_at_the_call():
     @pulse.kernel
     def two_amplitudes(q, a: float, b: float):
-        d, t = get_drive_line(q)
-        drive(d, gaussian(40, a, 10.0), t)
-        drive(d, gaussian(40, b, 10.0), t)
+        line = get_drive_line(q)
+        drive(line, gaussian(40, a, 10.0))
+        drive(line, gaussian(40, b, 10.0))
 
     memory = WaveformMemory(samples=60, scaling=False)
     compiled = pulse.compile(

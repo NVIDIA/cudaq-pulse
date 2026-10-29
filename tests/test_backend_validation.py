@@ -86,7 +86,7 @@ def test_a_conforming_backend_passes_in_every_format_it_reads(ideal):
     lines = str(report).splitlines()
     assert "PASS play (/1)" in lines and "PASS loop (/2)" in lines
     assert "PASS unsupported_event" in lines and "PASS newer_format" in lines
-    assert lines[-1] == "backend 'toy': 18 passed"
+    assert lines[-1] == "backend 'toy': 20 passed"
 
 
 def test_a_backend_that_accepts_what_it_cannot_read_fails(monkeypatch):

@@ -55,6 +55,7 @@ exceptions. ``analyze`` does the same for one function on its own.
 
 from __future__ import annotations
 
+import copy
 import math
 import os
 import sys
@@ -656,7 +657,7 @@ def shape_key(node: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
         return (shape, tuple(node.get("values", ())), children)
     skip = _AMPLITUDE_NAMES.get(shape, frozenset())
     kept = tuple((k, v) for k, v in params.items() if k not in skip)
-    if any(v is None for _, v in kept):
+    if any(v is None or isinstance(v, dict) for _, v in kept):
         return None
     return (shape, node.get("name"), kept)
 
@@ -719,7 +720,9 @@ def _sample(node: Mapping[str, Any], duration_cycles: int, ratio: Fraction) -> n
                 return np.zeros(count, complex)
             index = (t * len(values) / max(duration_cycles, 1)).astype(int)
             return values[np.minimum(index, len(values) - 1)].astype(complex)
-        if shape not in _AMPLITUDES or any(v is None for v in params.values()):
+        if shape not in _AMPLITUDES or any(
+            not isinstance(v, (int, float)) for v in params.values()
+        ):
             raise ValueError(f"cannot sample a {shape!r} waveform without numeric parameters")
         d = params["duration"]
         a = params["amplitude"]
@@ -768,6 +771,23 @@ class _Waveforms:
             self.table.append(tree)
         return index, None
 
+    def inline(self, events: Sequence[dict[str, Any]]) -> None:
+        """Give each event of *events* with ``runtime`` a waveform with
+        those operands in place, keeping only the waveforms events play."""
+        table: list[dict[str, Any] | None] = []
+        index: dict[str, int] = {}
+        for event in _played(events):
+            tree = self.table[event["waveform"]]
+            runtime = event.pop("runtime", None)
+            if runtime is not None and tree is not None:
+                tree = _with_expressions(tree, runtime)
+            key = repr(tree)
+            if key not in index:
+                index[key] = len(table)
+                table.append(tree)
+            event["waveform"] = index[key]
+        self.table, self._index = table, index
+
     def identified(self) -> list[dict[str, Any] | None]:
         """The table, each waveform with its ``id`` and ``shape_id``."""
         out: list[dict[str, Any] | None] = []
@@ -795,17 +815,22 @@ def _walk(
     waveforms: bool = True,
     slots: list[int] | None = None,
     repeats: list[tuple[int, ...]] | None = None,
-    table: _Waveforms | None = None,
-) -> tuple[list[Any], list[dict[str, Any]], Sequence[tuple[int, int, int]], list[str]]:
-    """The lines and events of *lowered*, at the values of its call; without
-    *values*, a module with float parameters has ``None`` where they reach.
-    With *repeats* (and no *own*), for a check: a long rolled loop whose
+) -> tuple[
+    list[Any],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    Sequence[tuple[int, int, int]],
+    list[str],
+]:
+    """The lines, events, and frame changes no event takes of *lowered*, at
+    the values of its call; without *values*, a module with float parameters
+    has ``None`` where they reach.
+
+    The lines are the dictionaries of format /1. With *repeats* (and no
+    *own*), for a check, the events are those the check walk gives: in a
+    module that computes nothing at run time, a long rolled loop whose
     iterations repeat has its events once, and *repeats* gets its copies
     (``_loops``).
-
-    Format /1 has the lines as its dictionaries. With *table*, format /2,
-    on the program clock: the lines as (role, qudit), loops whose iterations
-    repeat stay loops, and events give their waveform's index in *table*.
 
     With *own*, the events' times are in that controller's cycles (their
     waveforms' too, with *waveforms*), what they compute at run time too
@@ -826,42 +851,40 @@ def _walk(
     module = lowered._concrete()
     off_grid: Sequence[tuple[int, int, int]] = ()
     problems: list[str] = []
-    if table is not None:
-        with lowered._lock:
-            lines, events = module.controller_program(True, bool(lowered.classical), table)
-        return lines, events, off_grid, problems
-    epochs = lowered._event_epochs(syncs=True)
+    epochs = None if repeats is None or own is not None else lowered._event_epochs(syncs=True)
     with lowered._lock:
         if own is None:
-            if repeats is None:
-                lines, events = module.controller_events(_PARAMETERS, _AMPLITUDES, epochs, slots)
-            else:
+            if epochs is not None:
+                assert repeats is not None
                 lines, events, found = module.controller_events(
                     _PARAMETERS, _AMPLITUDES, epochs, slots, True
                 )
                 repeats += found
+                unapplied = []
+            else:
+                lines, events, unapplied = module.controller_program(
+                    _PARAMETERS, _AMPLITUDES, lowered.classical != (), slots=slots
+                )
         else:
             ratio = own.ratio
-            lines, events, off_grid, ends = module.controller_events_on(
+            lines, events, unapplied, off_grid = module.controller_program(
                 _PARAMETERS,
                 _AMPLITUDES,
-                epochs,
-                ratio.numerator,
-                ratio.denominator,
-                own.grid,
-                slots,
+                lowered.classical != (),
+                own=(ratio.numerator, ratio.denominator, own.grid),
+                slots=slots,
             )
     if own is not None:
         from . import _clocks
 
-        for index, end in ends:
-            events[index]["end_cycles"] = end
         if waveforms and ratio != 1:
+            # The events of one op share its waveform's parameters.
             factor = float(ratio)
-            for event in events:
-                tree = event.get("waveform")
+            scaled: set[int] = set()
+            for event in _played(events):
+                tree = event["waveform"]
                 if tree is not None:
-                    _clocks._scale(tree, factor)
+                    _clocks._scale(tree, factor, scaled)
         if _computes_at_run_time(lowered):
             for event in events:
                 if event["kind"] in _clocks._GRIDDED:
@@ -872,7 +895,36 @@ def _walk(
     if fine is not None:
         for line in lines:
             line["fine_delay_ns"] = fine.get((line["role"], line["qudit"]), 0.0)
-    return lines, events, off_grid, problems
+    return lines, events, unapplied, off_grid, problems
+
+
+def _walk_structured(
+    lowered: Lowered, table: _Waveforms, slots: list[int] | None = None
+) -> tuple[list[Any], list[dict[str, Any]], list[dict[str, Any]], tuple[()], list[str]]:
+    """``_walk`` for format /2, on the program clock: the lines as (role,
+    qudit), loops whose iterations repeat stay loops, and events give their
+    waveform's index in *table*. *slots* gets each line's runtime-qudit
+    slot (-1 for none)."""
+    if lowered.parameters:
+        raise InvalidValueError(
+            "the module has float parameters "
+            f"({', '.join(lowered.parameters)}); lower it with their values first"
+        )
+    if lowered._role is not None and lowered._unbound():
+        raise InvalidValueError("the module has runtime qudits; lower it with handles first")
+    module = lowered._concrete()
+    with lowered._lock:
+        lines, events, unapplied = module.controller_program(
+            _PARAMETERS,
+            _AMPLITUDES,
+            lowered.classical != (),
+            True,
+            table,
+            slots=slots,
+        )
+    if any("runtime" in event for event in _played(events)):
+        table.inline(events)
+    return lines, events, unapplied, (), []
 
 
 def _computes_at_run_time(lowered: Lowered) -> bool:
@@ -947,11 +999,10 @@ def export(
     limits = machine.controller
     system = machine._system
     role = lowered._role
-    waveforms = _Waveforms() if version == 2 else None
     plan: _ExportPlan | None = None
     slots: list[int] | None = None
     if system is not None or role is not None or controller is not None:
-        if system is not None and waveforms is not None:
+        if system is not None and version == 2:
             raise UnsupportedError(
                 "format /2 is written for one controller; export version 1 for a control system"
             )
@@ -959,117 +1010,53 @@ def export(
             return _export_part(lowered, sample_rate_ghz, controller)
         if controller is not None:
             _controller_index(controller, 1)
-        if role is not None:
-            if waveforms is not None:
-                raise UnsupportedError(
-                    "format /2 does not yet name the symbols of a module with list or "
-                    "qudit parameters; export version 1 for it"
-                )
+        if role is not None and version == 1:
             plan = role.export_plan
             if plan is None:
                 slots = []
+    if version == 2:
+        return _export_structured(lowered, sample_rate_ghz, emulation, role)
     clocks = (lowered._generic or lowered).clocks
-    if waveforms is not None and (
-        not _one_clock(clocks) or (lowered._generic or lowered).fine_delays is not None
-    ):
-        raise UnsupportedError(
-            "format /2 is written for a controller on the program clock, without line "
-            "delays; export version 1 for this machine"
-        )
     native = None if clocks is None else _native_clock(clocks)
     # In the controller's own cycles from here on.
-    walked = _walk(lowered, True, native, True, slots, waveforms)
-    raw_lines, events = walked[0], walked[1]
+    walked = _walk(lowered, True, native, True, slots)
+    lines, events, unapplied = walked[0], walked[1], walked[2]
     if system is not None:
         violations = system._violations(
-            lowered, raw_lines, events, clocks, walked[2], walked[3], True, None, None
+            lowered, lines, events, clocks, walked[3], walked[4], True, None, None
         )
         if violations:
             raise _limit_error(lowered, violations)
-    # On one clock, compile() checked the module it scheduled, and a call
-    # whose values some limit depends on was checked when it bound them; on
-    # another, the events in the controller's cycles are checked here.
-    elif limits is not None and (
-        not _one_clock(clocks) or (not lowered.scheduled and not lowered.arguments)
-    ):
-        violations = _limit_violations(
-            lowered, limits, clocks, walked if waveforms is None else None
-        )
-        if violations:
-            raise _limit_error(lowered, violations)
+    elif limits is not None:
+        _check_at_export(lowered, limits, clocks, walked)
     own = None
     if clocks is not None:
         from . import _clocks
 
         own = clocks.controllers[0]
     clock = lowered.target.clock_ghz if own is None else own.clock_ghz
-    samples_of: list[dict[str, list[float]] | None] = []
-    # The controller's converter rate, else sample_rate_ghz, else one sample
-    # per cycle.
-    own_rate = None if limits is None else limits.sample_rate_ghz
-    rate = clock if own_rate is None else own_rate
     if sample_rate_ghz is not None:
-        ratio: Fraction | None = None
-        if version == 2:
-            if not sample_rate_ghz > 0:
-                raise InvalidValueError(f"sample_rate_ghz must be positive, got {sample_rate_ghz}")
-            if own_rate is not None and sample_rate_ghz != own_rate:
-                raise InvalidValueError(
-                    f"sample_rate_ghz={sample_rate_ghz}; the controller samples at {own_rate} GHz"
-                )
-            from . import _clocks
-
-            ratio = Fraction(*_clocks.made_for(sample_rate_ghz, clock))
-            rate = sample_rate_ghz
-        samples_of = _add_samples(events, sample_rate_ghz, clock, waveforms, ratio)
+        _add_samples(events, sample_rate_ghz, clock)
     base = emulation(lowered, False)
-    if waveforms is None:
-        lines: list[dict[str, Any]] = raw_lines
-    else:
-        # A list, so that a line may later address many qudits.
-        lines = [
-            {"line": index, "role": name, "qudits": [qudit]}
-            for index, (name, qudit) in enumerate(raw_lines)
-        ]
     program: dict[str, Any] = {
-        "format": FORMAT if version == 1 else _STRUCTURED,
+        "format": FORMAT,
         "target": lowered.target.name,
         "clock_ghz": clock,
     }
     if clocks is not None:
         program.update(_clocks.clock_keys(clocks, clocks.controllers[0]))
-    if waveforms is None:
-        program["schedule"] = lowered.options.schedule
-        program["sample_rate_ghz"] = sample_rate_ghz
-    else:
-        program["sample_rate_ghz"] = rate
-        program["schedule"] = lowered.options.schedule
+    program["schedule"] = lowered.options.schedule
+    program["sample_rate_ghz"] = sample_rate_ghz
     program["qudits"] = list(lowered.qudits)
     program["lines"] = lines
-    if waveforms is not None:
-        program["waveforms"] = waveforms.identified()
-        if sample_rate_ghz is not None:
-            program["samples"] = samples_of
-        generic = lowered.generic
-        if generic is not None and generic.parameters:
-            with lowered._lock:
-                roles = generic._module.parameter_roles()
-            program["parameters"] = {
-                name: {"value": value, "reaches": reaches}
-                for name, value, reaches in zip(
-                    generic.parameters, lowered.arguments, roles, strict=True
-                )
-            }
-    program.update(
-        {
-            "events": events,
-            "epochs": base["epochs"],
-            "calls": base["calls"],
-            "links": base["links"],
-            "manifest": base["manifest"],
-            "limits": None if limits is None else limits.as_dict(),
-        }
-    )
+    program["events"] = events
+    if unapplied:
+        program["frame_updates"] = unapplied
+    program["epochs"] = base["epochs"]
+    program["calls"] = base["calls"]
+    program["links"] = base["links"]
+    program["manifest"] = base["manifest"]
+    program["limits"] = None if limits is None else limits.as_dict()
     if role is not None:
         if plan is None or len(plan[1]) != len(events):
             if slots is None:
@@ -1084,16 +1071,114 @@ def export(
                 for key in template[1]:
                     symbols[key] = symbols[key][:]
                 event["symbols"] = symbols
-    if version == 2:
-        renamed = {"limits": "controller", **_SYSTEM_KEYS}
-        program = {renamed.get(k, k): v for k, v in program.items()}
-        program["controller"] = None if limits is None else _structured_controller(limits)
-        program["links"] = {
-            k: {_LINK_KEYS.get(f, f): v for f, v in link.items()}
-            for k, link in program["links"].items()
+    return program
+
+
+def _check_at_export(
+    lowered: Lowered,
+    limits: ControllerLimits,
+    clocks: Any,
+    walked: tuple[Any, Any, Any, Any, Any] | None,
+) -> None:
+    """Raises ``ControllerLimitError`` for the limits an export exceeds.
+
+    On one clock, compile() checked the module it scheduled, and a call
+    whose values some limit depends on was checked when it bound them; on
+    another, the events in the controller's cycles are checked here, from
+    the format /1 *walked* (``None``: walk them).
+    """
+    if not _one_clock(clocks) or (not lowered.scheduled and not lowered.arguments):
+        violations = _limit_violations(lowered, limits, clocks, walked)
+        if violations:
+            raise _limit_error(lowered, violations)
+
+
+def _export_structured(
+    lowered: Lowered, sample_rate_ghz: float | None, emulation: Any, role: Any = None
+) -> dict[str, Any]:
+    """``export`` in format ``cudaq-pulse.controller/2``; with the *role* of
+    a module of list or qudit parameters, its symbols as format /1 gives
+    them."""
+    from . import _clocks
+
+    waveforms = _Waveforms()
+    limits = lowered.options.machine.controller
+    clocks = (lowered._generic or lowered).clocks
+    if not _one_clock(clocks) or (lowered._generic or lowered).fine_delays is not None:
+        raise UnsupportedError(
+            "format /2 is written for a controller on the program clock, without line "
+            "delays; export version 1 for this machine"
+        )
+    slots: list[int] | None = None if role is None else []
+    raw_lines, events, unapplied, _, _ = _walk_structured(lowered, waveforms, slots)
+    if limits is not None:
+        _check_at_export(lowered, limits, clocks, None)
+    own = None if clocks is None else clocks.controllers[0]
+    clock = lowered.target.clock_ghz if own is None else own.clock_ghz
+    samples_of: list[dict[str, list[float]] | None] = []
+    # The controller's converter rate, else sample_rate_ghz, else one sample
+    # per cycle.
+    own_rate = None if limits is None else limits.sample_rate_ghz
+    rate = clock if own_rate is None else own_rate
+    if sample_rate_ghz is not None:
+        if not sample_rate_ghz > 0:
+            raise InvalidValueError(f"sample_rate_ghz must be positive, got {sample_rate_ghz}")
+        if own_rate is not None and sample_rate_ghz != own_rate:
+            raise InvalidValueError(
+                f"sample_rate_ghz={sample_rate_ghz}; the controller samples at {own_rate} GHz"
+            )
+        ratio = Fraction(*_clocks.made_for(sample_rate_ghz, clock))
+        rate = sample_rate_ghz
+        samples_of = _add_samples(events, sample_rate_ghz, clock, waveforms, ratio)
+    base = emulation(lowered, False)
+    program: dict[str, Any] = {
+        "format": _STRUCTURED,
+        "target": lowered.target.name,
+        "clock_ghz": clock,
+    }
+    if clocks is not None:
+        program.update(_clocks.clock_keys(clocks, clocks.controllers[0]))
+    program["sample_rate_ghz"] = rate
+    program["schedule"] = lowered.options.schedule
+    program["qudits"] = list(lowered.qudits)
+    # A list, so that a line may later address many qudits.
+    program["lines"] = [
+        {"line": index, "role": role, "qudits": [qudit]}
+        for index, (role, qudit) in enumerate(raw_lines)
+    ]
+    program["waveforms"] = waveforms.identified()
+    if sample_rate_ghz is not None:
+        program["samples"] = samples_of
+    generic = lowered._generic
+    if generic is not None and generic.parameters:
+        with lowered._lock:
+            roles = generic._module.parameter_roles()
+        program["parameters"] = {
+            name: {"value": value, "reaches": reaches}
+            for name, value, reaches in zip(
+                generic.parameters, lowered.arguments, roles, strict=True
+            )
         }
-        program["programs"] = {}
-        program["bindings"] = {}
+    program["events"] = events
+    if unapplied:
+        program["frame_updates"] = unapplied
+    program["epochs"] = base["epochs"]
+    program["calls"] = base["calls"]
+    program["links"] = base["links"]
+    program["manifest"] = base["manifest"]
+    program["controller"] = None if limits is None else _structured_controller(limits)
+    if role is not None:
+        assert slots is not None
+        program["program_id"] = role.program_id
+        program["symbols"] = _symbols(lowered, _symbol_plan(role, slots))
+        _structured_symbols(lowered, role, events, slots)
+    program = {_SYSTEM_KEYS.get(k, k): v for k, v in program.items()}
+    program["links"] = {
+        k: {_LINK_KEYS.get(f, f): v for f, v in link.items()}
+        for k, link in program["links"].items()
+    }
+    program["programs"] = {}
+    program["bindings"] = {}
     return program
 
 
@@ -1131,6 +1216,65 @@ def _flat_controller(data: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _with_expressions(
+    tree: Mapping[str, Any], runtime: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
+    """A copy of waveform *tree* with the operands known at run time
+    (``path`` to a node, its ``params`` by name) as expressions in its
+    parameters; one the node has no parameter for stays in its ``runtime``."""
+    out = copy.deepcopy(dict(tree))
+    for item in runtime:
+        node = out
+        for step in item["path"]:
+            node = node["of"][step]
+        params = node.get("params", {})
+        for name, expression in item["params"].items():
+            if name in params:
+                params[name] = expression
+            else:
+                node.setdefault("runtime", {})[name] = expression
+    return out
+
+
+def _run_time_operands(tree: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """The operands of format /2 waveform *tree* that are expressions, as
+    (``path``, ``params``) items in pre-order."""
+    out: list[dict[str, Any]] = []
+
+    def visit(node: Mapping[str, Any], path: list[int]) -> None:
+        params = {k: v for k, v in node.get("params", {}).items() if isinstance(v, dict)}
+        params.update(node.get("runtime", {}))
+        if params:
+            out.append({"path": list(path), "params": params})
+        for i, child in enumerate(node.get("of", ())):
+            visit(child, [*path, i])
+
+    if tree is not None:
+        visit(tree, [])
+    return out
+
+
+def _with_runtime(
+    tree: Mapping[str, Any], runtime: Sequence[Mapping[str, Any]], resolve: Any = None
+) -> dict[str, Any]:
+    """A copy of waveform *tree* in format /1: each operand of *runtime*
+    (paths to nodes, their operands by name) ``None`` in its node's
+    parameters and, with *resolve*, resolved in the node's ``runtime``."""
+    out = copy.deepcopy(dict(tree))
+    for item in runtime:
+        node = out
+        for step in item["path"]:
+            node = node["of"][step]
+        node.pop("runtime", None)
+        params = node.get("params", {})
+        for name in item["params"]:
+            if name in params:
+                params[name] = None
+        if resolve is not None:
+            node["runtime"] = {k: resolve(v) for k, v in item["params"].items()}
+    return out
+
+
 def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
     """A format /2 export in format /1: every event once per loop iteration.
 
@@ -1147,6 +1291,11 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
     waveforms = [
         None if entry is None else {k: v for k, v in entry.items() if k not in _IDS}
         for entry in program["waveforms"]
+    ]
+    run_time = [_run_time_operands(tree) for tree in waveforms]
+    waveforms = [
+        _with_runtime(tree, operands) if tree is not None and operands else tree
+        for tree, operands in zip(waveforms, run_time, strict=True)
     ]
     amplitudes = [_amplitude(tree) for tree in waveforms]
     samples = program.get("samples")
@@ -1168,6 +1317,40 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
     latest: dict[int, int] = {}
     branches: dict[tuple[Any, ...], int] = {}
 
+    def resolve(expression: Any) -> Any:
+        """A run-time expression with its /2 places as /1 indices."""
+        if not isinstance(expression, dict):
+            return expression
+        if "readout" in expression:
+            return {"readout": latest[expression["readout"]]}
+        if "answer" in expression:
+            return {"answer": latest[expression["answer"]], "result": expression["result"]}
+        if "of" in expression:
+            return {**expression, "of": [resolve(e) for e in expression["of"]]}
+        return dict(expression)
+
+    def frame_updates(updates: Sequence[Mapping[str, Any]], branch: Any) -> list[dict[str, Any]]:
+        """Frame changes with their /2 places as /1 indices."""
+        return [
+            {
+                **({"tone": update["tone"]} if "tone" in update else {}),
+                "conditions": [
+                    {
+                        "answers": [latest[r] for r in c.get("answers", ())],
+                        "arm": c["arm"],
+                        "branch": branch(c),
+                        "readouts": [latest[r] for r in c.get("readouts", ())],
+                        "test": c["test"],
+                    }
+                    for c in update.get("conditions", ())
+                ],
+                "id": update["id"],
+                "op": update["op"],
+                "value": resolve(update["value"]),
+            }
+            for update in updates
+        ]
+
     def expand(items: Sequence[Mapping[str, Any]], loops: list[tuple[Any, ...]]) -> None:
         # loops: (depth, iteration, iterations since the first, period, the
         # branches around the loop) for each rolled loop around *items*.
@@ -1188,18 +1371,21 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
             iteration = list(item.get("iteration", ()))
             for depth, k, _, _, _ in loops:
                 iteration[depth] = k
-            conditions = []
-            for condition in item.get("conditions", ()):
+
+            def branch(condition: Mapping[str, Any]) -> int:
                 inner = tuple(j for _, _, j, _, outer in loops if condition["branch"] not in outer)
-                conditions.append(
-                    {
-                        "branch": branches.setdefault((condition["branch"], inner), len(branches)),
-                        "arm": condition["arm"],
-                        "readouts": [latest[r] for r in condition.get("readouts", ())],
-                        "answers": [latest[r] for r in condition.get("answers", ())],
-                        "test": condition["test"],
-                    }
-                )
+                return branches.setdefault((condition["branch"], inner), len(branches))
+
+            conditions = [
+                {
+                    "branch": branch(condition),
+                    "arm": condition["arm"],
+                    "readouts": [latest[r] for r in condition.get("readouts", ())],
+                    "answers": [latest[r] for r in condition.get("answers", ())],
+                    "test": condition["test"],
+                }
+                for condition in item.get("conditions", ())
+            ]
             if kind == "sync":
                 line, qudit = None, None
             elif kind in ("submit", "answer"):
@@ -1234,22 +1420,47 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
                 )
                 event["frequency_hz"] = tone["frequency_hz"]
                 event["phase_rad"] = phase
-                if samples is not None and samples[item["waveform"]] is not None:
-                    event["samples"] = samples[item["waveform"]]
+                if run_time[item["waveform"]]:
+                    event["waveform"] = _with_runtime(
+                        event["waveform"], run_time[item["waveform"]], resolve
+                    )
             elif kind == "sync":
                 event["lines"] = list(item["lines"])
             elif kind in ("submit", "answer"):
                 event["link"] = item["link"]
+                if "controller" in item:
+                    event["controller"] = item["controller"]
                 event["function"] = item["function"]
                 if kind == "submit":
                     event["measurements"] = [latest[r] for r in item["measurements"]]
                 else:
                     event["wait"] = item["wait"]
                     event["timeout_ns"] = item.get("timeout_ns")
+            if "tone" in item:
+                event["tone"] = item["tone"]
+                event["frame_updates"] = frame_updates(item["frame_updates"], branch)
+                if "phase_offset_rad" in item:
+                    event["phase_offset_rad"] = item["phase_offset_rad"]
+            if "length" in item:
+                event["length"] = resolve(item["length"])
+                event["min_cycles"] = item.get("min_cycles")
+                event["max_cycles"] = item.get("max_cycles")
+            if "operands" in item:
+                event["operands"] = [resolve(operand) for operand in item["operands"]]
+            if kind in _PLAYED and samples is not None and samples[item["waveform"]] is not None:
+                event["samples"] = samples[item["waveform"]]
+            if "symbols" in item:
+                event["symbols"] = {
+                    k: v[:] if type(v) is list else v for k, v in item["symbols"].items()
+                }
             latest[place[id(item)]] = event["index"]
             events.append(event)
 
     expand(program["events"], [])
+    unapplied = frame_updates(
+        program.get("frame_updates", ()),
+        lambda c: branches.setdefault((c["branch"], ()), len(branches)),
+    )
     flat_keys = {"controller": "limits", **{v: k for k, v in _SYSTEM_KEYS.items()}}
     from . import _clocks
 
@@ -1279,6 +1490,8 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
         for line in program["lines"]
     ]
     flat["events"] = events
+    if "frame_updates" in flat:
+        flat["frame_updates"] = unapplied
     return flat
 
 
@@ -1351,7 +1564,7 @@ def _part(
     uses more). A controller the program does not use gets an empty part."""
     system = lowered.options.machine._system
     assert system is not None
-    lines, events, _, _ = _walk(lowered, slots=None)
+    lines, events, _, _, _ = _walk(lowered, slots=None)
     owners, _ = system._owners(lines)
     parts = system._parts(events, owners)
     count = len(system.controllers)
@@ -1498,11 +1711,10 @@ _ExportPlan = tuple[
 ]
 
 
-def _export_plan(
-    lowered: Lowered, role: Any, slots: Sequence[int], events: list[dict[str, Any]]
-) -> _ExportPlan:
-    """What a role's exports share, built once per role from a call's
-    *events* and the runtime-qudit *slots* of its lines."""
+def _symbol_plan(role: Any, slots: Sequence[int]) -> list[tuple[dict[str, Any], int, int]]:
+    """Each symbol of a role without its value, and where the value comes
+    from (see ``_symbols``); a slot has a native frequency if one of the
+    lines of runtime-qudit *slots* is on it."""
     lined = set(slots)
     symbols: list[tuple[dict[str, Any], int, int]] = []
     argument = 0
@@ -1519,21 +1731,79 @@ def _export_plan(
         else:
             symbols.append((entry, _ARGUMENT, argument))
             argument += 1
+    return symbols
 
+
+def _named_dependencies(role: Any, found: Sequence[Sequence[Any]]) -> list[dict[str, list[str]]]:
+    """The arguments of `main` each event depends on (see
+    ``controller_dependencies``), as the names of their symbols by field."""
+    names = [name for name, kind, _, _ in role.symbols if kind != "slot"]
+    names += [f"s{k}.f01" for k in range(role.slots)]
+    return [
+        {
+            field: [names[a] for a in arguments]
+            for field, arguments in zip(_DEPENDENT_FIELDS, item, strict=True)
+            if arguments
+        }
+        for item in found
+    ]
+
+
+def _structured_symbols(
+    lowered: Lowered, role: Any, events: list[dict[str, Any]], slots: Sequence[int]
+) -> None:
+    """Gives each event of a format /2 program the symbols its fields depend
+    on, as format /1 gives them; an event of a loop's body, those of any of
+    its iterations. They come from the module the role compiled; a loop
+    that rolls only at this call's values is ``UnsupportedError``."""
+    structured = role.structured
+    if structured is None:
+        with lowered._lock:
+            found = lowered._module.controller_rolled_dependencies()
+        named = _named_dependencies(role, [item for _, _, item in found])
+        structured = role.structured = [
+            (_KINDS.get(kind, kind), trips, symbols)
+            for (kind, trips, _), symbols in zip(found, named, strict=True)
+        ]
+    place = iter(structured)
+
+    def give(items: list[dict[str, Any]]) -> bool:
+        for event in items:
+            entry = next(place, None)
+            kind = event["kind"]
+            if entry is None or entry[0] != kind or entry[1] != event.get("trips", -1):
+                return False
+            symbols: dict[str, Any] = {}
+            line = event.get("line")
+            if (kind in _PLAYED or kind == "wait") and line is not None:
+                if 0 <= line < len(slots) and slots[line] >= 0:
+                    symbols["qudit"] = f"s{slots[line]}"
+            for key, names in entry[2].items():
+                symbols[key] = names[:]
+            if symbols:
+                event["symbols"] = symbols
+            if kind == "loop" and not give(event["body"]):
+                return False
+        return True
+
+    if not give(events) or next(place, None) is not None:
+        raise UnsupportedError(
+            "format /2 cannot name the symbols of this call: a loop repeats only at "
+            "its values; export version 1 for it"
+        )
+
+
+def _export_plan(
+    lowered: Lowered, role: Any, slots: Sequence[int], events: list[dict[str, Any]]
+) -> _ExportPlan:
+    """What a role's exports share, built once per role from a call's
+    *events* and the runtime-qudit *slots* of its lines."""
+    symbols = _symbol_plan(role, slots)
     dependencies = role.dependencies
     if dependencies is None:
         with lowered._lock:
             found = lowered._module.controller_dependencies()
-        names = [name for name, kind, _, _ in role.symbols if kind != "slot"]
-        names += [f"s{k}.f01" for k in range(role.slots)]
-        dependencies = role.dependencies = [
-            {
-                field: [names[a] for a in arguments]
-                for field, arguments in zip(_DEPENDENT_FIELDS, item, strict=True)
-                if arguments
-            }
-            for item in found
-        ]
+        dependencies = role.dependencies = _named_dependencies(role, found)
     aligned = len(dependencies) == len(events)
     templates: list[tuple[dict[str, Any], tuple[str, ...]] | None] = []
     for index, event in enumerate(events):
@@ -1651,7 +1921,7 @@ def _limit_violations(
     lowered: Lowered,
     limits: ControllerLimits,
     clocks: _clocks.ClockPlan | None,
-    walked: tuple[Any, Any, Any, Any] | None = None,
+    walked: tuple[Any, Any, Any, Any, Any] | None = None,
     unresolved: list[str] | None = None,
 ) -> Sequence[str]:
     """The limits a call's schedule exceeds, as ``_violations`` finds them,
@@ -1674,11 +1944,11 @@ def _limit_violations(
             return []
         native = found_natively
     if walked is not None:
-        lines, events, off, problems = walked
+        lines, events, _, off, problems = walked
         found = _violations(lowered, events, limits, lines, clocks, off, problems, True, unresolved)
         return _with_memory(found, native, limits, unresolved, maybe)
     repeats: list[tuple[int, ...]] = []
-    lines, events, off, problems = _walk(
+    lines, events, _, off, problems = _walk(
         lowered, unresolved is None, _native_clock(clocks), False, repeats=repeats
     )
     if repeats:
@@ -2007,7 +2277,7 @@ def _compile_check(
                 return [], not maybe
             native = found_natively
     repeats: list[tuple[int, ...]] | None = None if system is not None or slots else []
-    lines, events, off, problems = _walk(
+    lines, events, _, off, problems = _walk(
         lowered, values=False, own=_native_clock(clocks), waveforms=False, repeats=repeats
     )
     if repeats:
@@ -2052,7 +2322,7 @@ def _call_violations(lowered: Lowered) -> Sequence[str]:
     machine = lowered.options.machine
     clocks = (lowered._generic or lowered).clocks
     if machine._system is not None:
-        lines, events, off, problems = _walk(lowered, own=_native_clock(clocks))
+        lines, events, _, off, problems = _walk(lowered, own=_native_clock(clocks))
         return machine._system._violations(
             lowered, lines, events, clocks, off, problems, True, None, None
         )

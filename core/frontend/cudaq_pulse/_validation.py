@@ -62,11 +62,16 @@ _QUDITS = 2
 
 
 def _build() -> dict[str, Kernel[[Qudit, Qudit]]]:
-    """One program per kind of event, named for it, and one with a branch."""
+    """One program per kind of event, named for it, one with a branch and
+    one whose amplitude and phase come from an answer."""
 
     @pulse.classical(max_latency_ns=200, name="echo")
     def echo(bits: pulse.Bits) -> pulse.Bits:
         return [bits[0]]
+
+    @pulse.classical(max_latency_ns=200, name="gain")
+    def gain(bits: pulse.Bits) -> float:
+        return 0.1 + 0.2 * bits[0]
 
     @pulse.kernel
     def plays(q: Qudit, r: Qudit) -> None:
@@ -140,6 +145,15 @@ def _build() -> dict[str, Kernel[[Qudit, Qudit]]]:
         if echo.submit([m]).result()[0]:
             drive(d, gaussian(32, 0.5, 8.0))
 
+    @pulse.kernel
+    def runtime(q: Qudit, r: Qudit) -> None:
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        m = readout(ro, square(80, 0.05))
+        amp = gain.submit([m]).result()
+        shift_phase(d.tone, amp)
+        drive(d, square(16, amp))
+
     return {
         Event.PLAY: plays,
         Event.ACQUIRE: acquires,
@@ -149,6 +163,7 @@ def _build() -> dict[str, Kernel[[Qudit, Qudit]]]:
         Event.CALL: calls,
         Event.ANSWER: answers,
         "branch": branches,
+        "runtime": runtime,
     }
 
 

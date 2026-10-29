@@ -569,8 +569,13 @@ behavior may change in any 0.x release.
   repeating loop from its first two iterations and its last, so checking a
   rolled loop costs the same whatever its trip count. On a 320,000-event
   rolled program, compiling with limits takes 25 ms instead of 6 s,
-  the /1 export 0.5 s instead of 4.6 s, and the /2 export 2 ms and 14 KB
-  instead of 117 MB.
+  and the /2 export 2 ms and 14 KB instead of 117 MB; /1 is built on the
+  same walk, 3 to 4 times faster than before. Values known only at run
+  time are in /2 as in /1, with references as places in the tree and a
+  waveform's run-time parameters as expressions in its entry, so a loop of
+  calls whose answers set its amplitudes stays one loop. A frame change
+  after its tone's last drive or readout, which no event takes, is in the
+  program's `frame_updates`, in both formats.
 - **Timing budgets.** `@pulse.kernel(max_duration_cycles=n)` fails
   compilation when an execution of the kernel can take more than `n`
   cycles: each call of a kernel with its own `schedule=` (a loop body that

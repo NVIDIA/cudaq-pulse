@@ -759,9 +759,14 @@ def to_own(
                 record[key] = value * a // b
 
 
-def _scale(node: dict[str, Any], factor: float) -> None:
+def _scale(node: dict[str, Any], factor: float, scaled: set[int] | None = None) -> None:
+    """Scale the time parameters of waveform *node* by *factor*, in place;
+    with *scaled*, only those not yet scaled, by the ids of their
+    ``params``, which it adds to."""
     params = node.get("params")
-    if params is not None:
+    if params is not None and (scaled is None or id(params) not in scaled):
+        if scaled is not None:
+            scaled.add(id(params))
         for key in _TIMES_OF.get(node["shape"], ()):
             value = params[key]
             if value is not None:
@@ -769,7 +774,7 @@ def _scale(node: dict[str, Any], factor: float) -> None:
     children = node.get("of")
     if children:
         for child in children:
-            _scale(child, factor)
+            _scale(child, factor, scaled)
 
 
 # The time parameters of each waveform shape, as ``controller._PARAMETERS``

@@ -323,9 +323,12 @@ static bool yieldsValue(mlir::Type type) {
       type);
 }
 
-/// The walk behind PulseModule::controller_events() (format /1): every timed
-/// op, sync and classical call once per loop iteration, both arms of every
-/// branch, with the frame of its tone and the branches it lies in.
+/// The walk behind PulseModule::controller_events(), a check's walk of a
+/// module that computes nothing at run time (its events are those of
+/// ControllerWalk::Walk::Every): every timed op, sync and classical call once
+/// per loop iteration, both arms of every branch, with the frame of its tone
+/// and the branches it lies in; with `summarize`, a long rolled loop whose
+/// iterations repeat walked three times.
 struct ControllerEventWalk {
   using WaveformNode =
       std::tuple<std::string, std::vector<double>, std::vector<int64_t>>;
@@ -2253,36 +2256,6 @@ public:
   /// (role, qudit): a runtime qudit's line has qudit -1.
   using ControllerLine = std::tuple<std::string, int64_t>;
 
-  /// For each event of controller_events(), in the same order, the
-  /// arguments of `main` its tone frequency, frame phase and waveform are
-  /// computed from; a qref argument stands for its qudit's native frequency.
-  std::vector<ControllerEventWalk::Dependencies> controller_dependencies() {
-    std::lock_guard<std::recursive_mutex> guard(*lock_);
-    ControllerEventWalk walk(clock(), /*track=*/true);
-    module_->walk([&](mlir::Operation *op) {
-      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
-        walk.lineIndex.try_emplace(op,
-                                   static_cast<int64_t>(walk.lineIndex.size()));
-    });
-    walk.block<false>(*module_->getBody());
-    return std::move(walk.dependencies);
-  }
-
-  /// For each event of controller_events(), in the same order, the qref
-  /// argument of `main` whose native frequency its tone plays, because the
-  /// tone is its line's and was never retuned; -1 for any other event.
-  std::vector<int64_t> controller_native_tones() {
-    std::lock_guard<std::recursive_mutex> guard(*lock_);
-    ControllerEventWalk walk(clock(), /*track=*/true);
-    module_->walk([&](mlir::Operation *op) {
-      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
-        walk.lineIndex.try_emplace(op,
-                                   static_cast<int64_t>(walk.lineIndex.size()));
-    });
-    walk.block<false>(*module_->getBody());
-    return std::move(walk.natives);
-  }
-
   /// The lines, (role, qubit, slot) in allocation order, and the timed ops of
   /// `events()`, in the same order, every sync and every classical call,
   /// with what a controller needs to play them: (kind, line, qubit,
@@ -2415,76 +2388,67 @@ public:
     walk.block<RunTime>(*module_->getBody());
   }
 
-  /// A line event that does not start and last whole multiples of its
-  /// controller's grid: (index, start, duration) in program cycles.
-  using OffGridEvent = std::tuple<int64_t, int64_t, int64_t>;
-
-  /// `controller_events()` for a controller counting `num` of its cycles
-  /// every `den` program cycles: start and duration in its cycles, rounded
-  /// up (what an event computes at run time stays in program cycles, for
-  /// the caller to convert), with the drives, readouts and waits off its grid
-  /// of `grid` program cycles, and (index, end) for the events whose end,
-  /// rounded up in its cycles, is not its start plus its duration: (lines,
-  /// events, off grid, ends).
-  nb::tuple controller_events_on(nb::handle parameters, nb::handle amplitudes,
-                                 nb::list epochs, int64_t num, int64_t den,
-                                 int64_t grid, nb::object slots) {
-    if (num < 1 || den < 1 || grid < 1)
-      throw std::invalid_argument("controller_events_on: the ratio and grid "
-                                  "must be positive");
-    ControllerObjects objects(parameters, amplitudes);
-    std::unique_ptr<ControllerEventWalk> walk;
+  /// The walk of every execution with what each record depends on (see
+  /// ControllerWalk::track).
+  std::unique_ptr<ControllerWalk> trackedWalk() {
+    auto walk =
+        std::make_unique<ControllerWalk>(clock(), ControllerWalk::Walk::Every);
+    walk->track = true;
     std::vector<ControllerLine> lines;
-    std::vector<int64_t> found;
-    std::vector<OffGridEvent> offGrid;
-    std::vector<std::tuple<int64_t, int64_t>> ends;
-    {
-      nb::gil_scoped_release release;
-      walk = controllerWalk(lines, slots.is_none() ? nullptr : &found);
-      ownCycles(*walk, num, den, grid, offGrid, ends);
-    }
-    lineSlots(found, slots);
-    return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs),
-                          nb::cast(offGrid), nb::cast(ends));
+    walkController(*walk, lines, nullptr);
+    return walk;
   }
 
-  static void ownCycles(ControllerEventWalk &walk, int64_t num, int64_t den,
-                        int64_t grid, std::vector<OffGridEvent> &offGrid,
-                        std::vector<std::tuple<int64_t, int64_t>> &ends) {
-    auto own = [&](std::optional<int64_t> &cycles) {
-      if (cycles)
-        *cycles = (*cycles * num + den - 1) / den;
-    };
-    auto &events = walk.result;
-    for (size_t index = 0; index < events.size(); ++index) {
-      auto &event = events[index];
-      const std::string &kind = std::get<0>(event);
-      auto &start = std::get<3>(event);
-      auto &duration = std::get<4>(event);
-      if (grid > 1 && start && duration &&
-          (kind == "drive" || kind == "readout" || kind == "wait") &&
-          (*start % grid || *duration % grid))
-        offGrid.emplace_back(static_cast<int64_t>(index), *start, *duration);
-      if (num != den) {
-        std::optional<int64_t> end;
-        if (start && duration)
-          end = *start + *duration;
-        own(start);
-        own(duration);
-        own(end);
-        if (end && *end != *start + *duration)
-          ends.emplace_back(static_cast<int64_t>(index), *end);
-      }
+  /// For each event of controller_program(), not rolled, in the same order,
+  /// the arguments of `main` its tone frequency, frame phase and waveform
+  /// are computed from; a qref argument stands for its qudit's native
+  /// frequency.
+  std::vector<ControllerWalk::Dependencies> controller_dependencies() {
+    return std::move(trackedWalk()->dependencies);
+  }
+
+  /// For each event of controller_program(), not rolled, in the same order,
+  /// the qref argument of `main` whose native frequency its tone plays,
+  /// because the tone is its line's and was never retuned; -1 for any other
+  /// event.
+  std::vector<int64_t> controller_native_tones() {
+    return std::move(trackedWalk()->natives);
+  }
+
+  /// For each event of controller_program() rolled, in the same order (a
+  /// loop before its body): its kind, its trips for a loop (else -1), and
+  /// what it depends on, as controller_dependencies() gives it; an event of
+  /// a rolled loop's body depends on what any of its iterations does. On
+  /// the module of a call's values, the events match where loops roll alike.
+  std::vector<std::tuple<std::string, int64_t, ControllerWalk::Dependencies>>
+  controller_rolled_dependencies() {
+    ControllerWalk walk(clock(), ControllerWalk::Walk::Rolled);
+    walk.runTime = runTime_;
+    walk.track = true;
+    std::vector<ControllerLine> lines;
+    walkController(walk, lines, nullptr);
+    std::vector<std::tuple<std::string, int64_t, ControllerWalk::Dependencies>>
+        out;
+    out.reserve(walk.result.size());
+    for (size_t i = 0; i < walk.result.size(); ++i) {
+      const ControllerRecord &r = walk.result[i];
+      bool loop = std::strcmp(r.kind, "loop") == 0;
+      out.emplace_back(r.kind, loop ? r.trips : -1,
+                       std::move(walk.dependencies[i]));
     }
+    return out;
   }
 
   /// Walk the program for a controller (see ControllerProgram.h): its lines,
   /// (role, qubit) in allocation order, into `lines`, and its records into
   /// `walk`; with `waveforms`, the waveform of every drive and readout too.
   void walkController(ControllerWalk &walk, std::vector<ControllerLine> &lines,
-                      ControllerWaveforms *waveforms) {
+                      ControllerWaveforms *waveforms,
+                      std::vector<int64_t> *slots = nullptr) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     module_->walk([&](mlir::Operation *op) {
+      if (walk.runTime)
+        walk.scan(op);
       if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
         return;
       if (!walk.lineIndex
@@ -2496,6 +2460,8 @@ public:
         qubit = attr.getInt();
       lines.emplace_back(
           mlir::isa<pulse::GetDriveLineOp>(op) ? "drive" : "readout", qubit);
+      if (slots)
+        slots->push_back(lineSlot(op));
     });
     walk.block(*module_->getBody());
     if (waveforms)
@@ -2504,35 +2470,82 @@ public:
           waveforms->add(r.op);
   }
 
-  /// The lines, as (role, qubit), and the events of the program as the
-  /// dictionaries of the controller export: every timed op, sync and
+  /// The lines and the events of the program as the dictionaries of the
+  /// controller export: every timed op, sync and
   /// classical call once per loop iteration, or, with `rolled`, with each
   /// loop whose iterations repeat kept as one "loop" event holding its body,
-  /// in the compact encoding of format /2. With `epochs`, each event is in
-  /// the epoch of its timeline (see EpochWalk), else in epoch 0; `waveform`
-  /// turns a waveform's nodes (op name without the
-  /// dialect, its numbers with NaN where one is not a number, the indices of
-  /// its waveform operands; children before their parent) into (expression,
-  /// amplitude), once per distinct waveform.
-  nb::tuple controller_program(bool rolled, bool epochs,
-                               nb::callable waveform) {
+  /// in the compact encoding of format /2, its lines as (role, qubit). With
+  /// `epochs`, each event is in the epoch of its timeline (see EpochWalk),
+  /// else in epoch 0; `waveform`, when given, turns a waveform's nodes (op
+  /// name without the dialect, its numbers with NaN where one is not a
+  /// number, the indices of its waveform operands; children before their
+  /// parent) into (expression, amplitude), once per distinct waveform;
+  /// without it the expression is built here, its numbers named by
+  /// `parameters`, and the amplitude is that of the shapes in `amplitudes`.
+  /// What is known only at run time is an expression over readouts, answers
+  /// and constants (see ControllerWalk), its operands named by `parameters`.
+  /// Third, the frame changes on a tone after its last drive or readout.
+  ///
+  /// With `own`, (num, den, grid) and not `rolled`: the times in the cycles
+  /// of a controller counting `num` of its cycles every `den` program
+  /// cycles (see ownCycles; what an event computes at run time stays in
+  /// program cycles, for the caller to convert), and fourth, the drives,
+  /// readouts and waits off its grid of `grid` program cycles. A list
+  /// `slots` gets each line's runtime-qudit slot (-1 for none).
+  nb::tuple
+  controller_program(nb::handle parameters, nb::handle amplitudes, bool epochs,
+                     bool rolled, nb::object waveform,
+                     std::optional<std::tuple<int64_t, int64_t, int64_t>> own,
+                     nb::object slots) {
+    if (own && (rolled || std::get<0>(*own) < 1 || std::get<1>(*own) < 1 ||
+                std::get<2>(*own) < 1))
+      throw std::invalid_argument("controller_program: a controller's ratio "
+                                  "and grid are positive, on a walk of every "
+                                  "execution");
     ControllerWalk walk(clock(), rolled ? ControllerWalk::Walk::Rolled
                                         : ControllerWalk::Walk::Every);
+    walk.runTime = runTime_;
     if (epochs)
       walk.epochs.emplace(*module_);
     std::vector<ControllerLine> lines;
     ControllerWaveforms waveforms;
+    std::vector<OffGridEvent> offGrid;
+    std::vector<int64_t> found;
     {
       nb::gil_scoped_release release;
-      walkController(walk, lines, &waveforms);
+      walkController(walk, lines, &waveforms,
+                     slots.is_none() ? nullptr : &found);
+      if (own)
+        offGrid = ownCycles(walk.result, std::get<0>(*own), std::get<1>(*own),
+                            std::get<2>(*own));
+    }
+    if (!slots.is_none()) {
+      auto out = nb::borrow<nb::list>(slots);
+      for (int64_t slot : found)
+        out.append(slot);
     }
     nb::list roles;
-    for (auto &[role, qubit] : lines)
-      roles.append(nb::make_tuple(role, qubit));
-    nb::list events =
-        ControllerEvents(walk.result, waveforms, std::move(waveform), rolled)
-            .build();
-    return nb::make_tuple(roles, events);
+    if (rolled) {
+      for (auto &[role, qubit] : lines)
+        roles.append(nb::make_tuple(role, qubit));
+    } else {
+      nb::str lineKey("line"), roleKey("role"), quditKey("qudit");
+      for (size_t i = 0; i < lines.size(); ++i) {
+        nb::dict line;
+        line[lineKey] = i;
+        line[roleKey] = std::get<0>(lines[i]);
+        line[quditKey] = std::get<1>(lines[i]);
+        roles.append(line);
+      }
+    }
+    auto unapplied = walk.unapplied();
+    ControllerEvents program(walk, waveforms, std::move(waveform), parameters,
+                             amplitudes, rolled);
+    nb::list events = program.build();
+    if (own)
+      return nb::make_tuple(roles, events, program.unapplied(unapplied),
+                            nb::cast(offGrid));
+    return nb::make_tuple(roles, events, program.unapplied(unapplied));
   }
 
   /// The controller limits the schedule exceeds, as messages; -1 for a
@@ -2794,7 +2807,7 @@ public:
   }
 
   /// The epoch of each event of `events()` (with `syncs`, of
-  /// `controller_events()`), in the same order.
+  /// `controller_program()` not rolled), in the same order.
   std::vector<int64_t> event_epochs(bool syncs) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     std::vector<int64_t> epochs;
@@ -3786,7 +3799,7 @@ private:
   mlir::OwningOpRef<mlir::ModuleOp> module_;
   // Whether the program can compute something at run time or change a frame
   // in a branch: false only where the builder saw neither, so that
-  // controller_events() looks for them only where there can be any.
+  // controller_program() looks for them only where there can be any.
   bool runTime_ = true;
   // False only for a module built from a program with no loop, whose
   // event_tree() is its events().
@@ -5554,15 +5567,19 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "events(), or past `limit` events the ops once each with the "
            "loops they repeat in")
       .def("controller_dependencies", &PulseModule::controller_dependencies,
-           "For each controller_events() event: the arguments its tone "
-           "frequency, frame phase and waveform depend on")
+           "For each event of controller_program(), not rolled: the "
+           "arguments its tone frequency, frame phase and waveform depend on")
       .def("place_carriers", &PulseModule::place_carriers, nb::arg("carriers"),
            nb::arg("frequencies"),
            "This module with its runtime qudits bound to carriers and its "
            "float arguments kept")
       .def("controller_native_tones", &PulseModule::controller_native_tones,
-           "For each controller_events() event: the qref argument whose "
-           "native frequency its tone plays, or -1")
+           "For each event of controller_program(), not rolled: the qref "
+           "argument whose native frequency its tone plays, or -1")
+      .def("controller_rolled_dependencies",
+           &PulseModule::controller_rolled_dependencies,
+           "For each event of controller_program() rolled: its kind, its "
+           "trips for a loop (else -1), and what it depends on")
       .def("controller_events", &PulseModule::controller_events,
            nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
            nb::arg("slots").none() = nb::none(), nb::arg("summarize") = false,
@@ -5574,8 +5591,11 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "lowest lengths, the longest program, whether that is the "
            "controller's, the runs of each such wait)")
       .def("controller_program", &PulseModule::controller_program,
-           nb::arg("rolled"), nb::arg("epochs"), nb::arg("waveform"),
-           "The lines and the events of the program, for a controller")
+           nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
+           nb::arg("rolled") = false, nb::arg("waveform").none() = nb::none(),
+           nb::arg("own") = nb::none(), nb::arg("slots").none() = nb::none(),
+           "The lines and the events of the program, for a controller; a "
+           "list `slots` gets each line's runtime-qudit slot")
       .def("controller_check", &PulseModule::controller_check,
            nb::call_guard<nb::gil_scoped_release>(), nb::arg("issue"),
            nb::arg("gap"), nb::arg("samples_num"), nb::arg("samples_den"),
@@ -5586,13 +5606,6 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "The controller limits the schedule exceeds")
       .def("parameter_roles", &PulseModule::parameter_roles,
            "What each float argument of main reaches")
-      .def("controller_events_on", &PulseModule::controller_events_on,
-           nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
-           nb::arg("num"), nb::arg("den"), nb::arg("grid"),
-           nb::arg("slots").none() = nb::none(),
-           "controller_events() in a controller's own cycles, num of them "
-           "every den program cycles, with the line events off its grid of "
-           "grid program cycles")
       .def("with_line_delays", &PulseModule::with_line_delays,
            nb::call_guard<nb::gil_scoped_release>(),
            "This module with other line delays, scheduled again",

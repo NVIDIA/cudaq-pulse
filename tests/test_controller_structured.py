@@ -27,6 +27,8 @@ from cudaq_pulse.controller import (
 )
 from cudaq_pulse.targets import Qubit, TargetDescription
 
+from tests.test_controller import answered, chained, chosen_by_readout, frame_in_arms, settings
+
 _TARGET = TargetDescription(
     name="structured",
     clock_ghz=2.0,
@@ -142,43 +144,17 @@ def _lower(name):
 def _canonical(program):
     """Branches renumbered in the order they first appear."""
     ids: dict[int, int] = {}
-    events = []
-    for event in program["events"]:
-        conditions = [
-            {**c, "branch": ids.setdefault(c["branch"], len(ids))} for c in event["conditions"]
-        ]
-        events.append({**event, "conditions": conditions})
-    return {**program, "events": events}
 
-
-_RUN_TIME_KEYS = {
-    "tone",
-    "frame_updates",
-    "phase_offset_rad",
-    "length",
-    "min_cycles",
-    "max_cycles",
-    "operands",
-}
-
-
-def _without_run_time(program):
-    """*program* without the values known only at run time, which format /2
-    does not have."""
-
-    def node(tree):
-        if not isinstance(tree, dict):
-            return tree
-        out = {k: v for k, v in tree.items() if k != "runtime"}
-        if "of" in out:
-            out["of"] = [node(child) for child in out["of"]]
-        return out
+    def renumber(conditions):
+        return [{**c, "branch": ids.setdefault(c["branch"], len(ids))} for c in conditions]
 
     events = []
     for event in program["events"]:
-        event = {k: v for k, v in event.items() if k not in _RUN_TIME_KEYS}
-        if "waveform" in event:
-            event["waveform"] = node(event["waveform"])
+        event = {**event, "conditions": renumber(event["conditions"])}
+        if "frame_updates" in event:
+            event["frame_updates"] = [
+                {**u, "conditions": renumber(u["conditions"])} for u in event["frame_updates"]
+            ]
         events.append(event)
     return {**program, "events": events}
 
@@ -211,8 +187,7 @@ def test_unrolling_the_structured_export_gives_the_flat_one(name):
     structured = lowered.export_controller(**export, version=2)
     assert structured["format"] == "cudaq-pulse.controller/2"
     assert structured["programs"] == {} and structured["bindings"] == {}
-    expected = _canonical(_without_run_time(flat))
-    assert _differences(expected, _canonical(unroll(structured))) == []
+    assert _differences(_canonical(flat), _canonical(unroll(structured))) == []
     assert len(json.dumps(structured)) < len(json.dumps(flat))
 
 
@@ -480,3 +455,183 @@ def test_a_backend_reading_only_the_structured_format_is_accepted():
     finally:
         backends.unregister("structured_only")
         backends.unregister("unknown_format")
+
+
+# ── Values known at run time ────────────────────────────────────────────────
+
+
+@pulse.kernel
+def _fed_back(q):
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    for _ in range(50):
+        m = readout(ro, square(100, 0.05))
+        amp, detuning, delay = settings.submit([m]).result()
+        drive(d, square(20, amp * 0.5))
+        sync(d, ro)
+
+
+@pulse.kernel
+def _tracked_in_loop(q):
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    for _ in range(6):
+        m = readout(ro, square(100, 0.05))
+        amp, detuning, delay = settings.submit([m]).result()
+        shift_phase(d.tone, amp)
+        drive(d, square(20, 0.2))
+        sync(d, ro)
+
+
+@pulse.classical(max_latency_ns=200)
+def _amp_and_phase(bits: pulse.Bits) -> tuple[pulse.Bits, float, float]:
+    return [bits[0]], 0.5, 12.0
+
+
+@pulse.kernel
+def _answer_amplitude(q):
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    m = readout(ro, square(100, 0.05))
+    amp, phase = _amp_and_phase.submit([m]).result()[1:]
+    drive(d, square(20, amp))
+    shift_phase(d.tone, phase)
+
+
+@pulse.kernel
+def _answer_amplitude_unshifted(q):
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    m = readout(ro, square(100, 0.05))
+    amp, phase = _amp_and_phase.submit([m]).result()[1:]
+    drive(d, square(20, amp))
+
+
+@pulse.kernel
+def _answer_phase_then_drive(q):
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    m = readout(ro, square(100, 0.05))
+    amp, phase = _amp_and_phase.submit([m]).result()[1:]
+    drive(d, square(20, amp))
+    shift_phase(d.tone, phase)
+    drive(d, square(20, 0.1))
+
+
+_RUN_TIME = {
+    "answer_amplitude": (_answer_amplitude, (Q[0],)),
+    "answer_phase_then_drive": (_answer_phase_then_drive, (Q[0],)),
+    "answered": (answered, (Q[0],)),
+    "chained": (chained, (Q[0],)),
+    "frame_in_arms": (frame_in_arms, (Q[0], Q[1])),
+    "fed_back": (_fed_back, (Q[0],)),
+    "tracked_in_loop": (_tracked_in_loop, (Q[0],)),
+}
+_RUN_TIME_KEYS = {"tone", "frame_updates", "phase_offset_rad", "length", "operands"}
+
+
+def _run_time_keys(program):
+    """The keys of values known only at run time in *program*, in either
+    format; ``runtime`` stands for a waveform operand computed at run time."""
+
+    def operand(node):
+        if not isinstance(node, dict):
+            return False
+        params = node.get("params", {}).values()
+        return (
+            "runtime" in node
+            or any(isinstance(v, dict) for v in params)
+            or any(operand(child) for child in node.get("of", ()))
+        )
+
+    def visit(events):
+        for event in events:
+            found.update(_RUN_TIME_KEYS & event.keys())
+            waveform = event.get("waveform")
+            if isinstance(waveform, int):
+                waveform = program["waveforms"][waveform]
+            if operand(waveform):
+                found.add("runtime")
+            if event["kind"] == "loop":
+                visit(event["body"])
+
+    found = set()
+    if "frame_updates" in program:
+        found.add("frame_updates")
+    visit(program["events"])
+    return found
+
+
+def _amplitude_of(structured, event):
+    return structured["waveforms"][event["waveform"]]["params"]["amplitude"]
+
+
+@pytest.mark.parametrize("name", sorted(_RUN_TIME))
+def test_run_time_values_in_format_2_unroll_to_those_of_format_1(name):
+    kernel, args = _RUN_TIME[name]
+    lowered = pulse.compile(kernel).lower(*args)
+    flat = lowered.export_controller()
+    structured = lowered.export_controller(version=2)
+    assert _run_time_keys(flat) == _run_time_keys(structured) != set()
+    assert _differences(_canonical(flat), _canonical(unroll(structured))) == []
+    assert json.loads(json.dumps(structured)) == structured
+    assert "null" not in json.dumps(structured["waveforms"])
+
+
+def test_a_value_a_readout_selects_unrolls_to_its_select(monkeypatch):
+    monkeypatch.setattr(pulse.compiler, "_can_select_at_runtime", lambda target, kind: True)
+    lowered = pulse.compile(chosen_by_readout).lower(Q[0])
+    flat = lowered.export_controller()
+    structured = lowered.export_controller(version=2)
+    [play] = (e for e in structured["events"] if e["kind"] == "play")
+    assert _amplitude_of(structured, play)["op"] == "arith.select"
+    assert _differences(_canonical(flat), _canonical(unroll(structured))) == []
+
+
+def test_an_amplitude_and_a_phase_from_an_answer_are_exported_with_their_source():
+    lowered = pulse.compile(_answer_amplitude).lower(Q[0])
+    structured = lowered.export_controller(version=2)
+    answer = next(i for i, e in enumerate(structured["events"]) if e["kind"] == "answer")
+    [play] = (e for e in structured["events"] if e["kind"] == "play")
+    assert _amplitude_of(structured, play) == {"answer": answer, "result": 1}
+    # The phase shift comes after the last drive on its tone, so no event
+    # takes it: the program lists it.
+    assert (play["tone"], play["frame_updates"]) == (0, [])
+    phase = {"answer": answer, "result": 2}
+    [update] = structured["frame_updates"]
+    assert update == {"tone": 0, "id": 0, "op": "shift_phase", "value": phase}
+    [flat_update] = lowered.export_controller()["frame_updates"]
+    assert flat_update == {**update, "conditions": []}
+    assert "frame_updates" not in pulse.compile(_answer_amplitude_unshifted).lower(
+        Q[0]
+    ).export_controller(version=2)
+
+    structured = pulse.compile(_answer_phase_then_drive).lower(Q[0]).export_controller(version=2)
+    assert "frame_updates" not in structured
+    first, second = (e for e in structured["events"] if e["kind"] == "play")
+    assert first["frame_updates"] == []
+    [update] = second["frame_updates"]
+    assert (update["op"], update["value"]) == ("shift_phase", phase)
+    assert second["tone"] == first["tone"]
+
+
+def test_a_loop_whose_calls_and_amplitudes_come_from_answers_stays_rolled():
+    structured = pulse.compile(_fed_back).lower(Q[0]).export_controller(version=2)
+    [loop] = (e for e in structured["events"] if e["kind"] == "loop")
+    assert loop["trips"] == 50
+    body = loop["body"]
+    place = {e["kind"]: structured["events"].index(loop) + 1 + i for i, e in enumerate(body)}
+    by_kind = {e["kind"]: e for e in body}
+    # References are places in the export: the body's own events.
+    assert by_kind["call"]["operands"] == [{"readout": place["acquire"]}]
+    assert _amplitude_of(structured, by_kind["play"]) == {
+        "of": [{"answer": place["answer"], "result": 0}, {"const": 0.5}],
+        "op": "arith.mulf",
+    }
+
+
+def test_a_loop_that_changes_a_tracked_frame_is_listed_per_iteration():
+    structured = pulse.compile(_tracked_in_loop).lower(Q[0]).export_controller(version=2)
+    assert not any(e["kind"] == "loop" for e in structured["events"])
+    ids = [u["id"] for e in structured["events"] for u in e.get("frame_updates", ())]
+    assert len(ids) == len(set(ids)) == 6

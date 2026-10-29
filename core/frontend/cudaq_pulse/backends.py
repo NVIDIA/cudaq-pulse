@@ -205,10 +205,11 @@ def validate(
     """Run the export test corpus through *backend* (a ``Backend`` or the
     name of one) and report what it does wrong.
 
-    The corpus has a program for each kind of event (``cudaq_pulse.Event``)
-    and one with a branch, compiled for *controller* (by default the
-    backend's machine model's), in each format the backend reads. Each
-    must be emitted or refused with ``IncompatibleBackendError``; a program
+    The corpus has a program for each kind of event (``cudaq_pulse.Event``),
+    one with a branch and one with values known only at run time, compiled
+    for *controller* (by default the backend's machine model's), in each
+    format the backend reads. Each must be emitted or refused with
+    ``IncompatibleBackendError``; a program
     with an event kind no format has, and one in a newer format, must be
     refused. A program that exceeds the controller's limits is skipped.
 
