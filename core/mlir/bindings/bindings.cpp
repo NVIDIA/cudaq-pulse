@@ -53,7 +53,6 @@
 #include "mlir/Transforms/Passes.h"
 
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
-#include "llvm/Support/JSON.h"
 #include "llvm/Support/TargetSelect.h"
 
 #include <dlfcn.h>
@@ -406,108 +405,113 @@ struct ControllerWalk {
     }
   }
 
+  /// How a value is computed at run time, children before their parent: a
+  /// number (a frame change's value), a constant, an unknown (`name`: what),
+  /// the result of a readout or answer event, or an op (`name`, and a
+  /// comparison's `predicate`) over the expressions `of`.
+  struct Expression {
+    enum Kind : uint8_t { Number, Constant, Unknown, Readout, Answer, Op };
+    Kind kind = Number;
+    double number = 0.0;
+    int64_t event = 0, result = 0;
+    llvm::StringRef name, predicate;
+    std::vector<int32_t> of;
+  };
+  std::vector<Expression> expressions;
+
   // Each tracked tone's id, in the order tones are first played, and the
   // frame changes on it since its latest drive or readout.
   struct FrameUpdate {
     uint64_t seq;
     llvm::StringRef op;
-    std::string value; // JSON
+    int32_t value; // an expression
     std::vector<Condition> conditions;
   };
-  // A JSON array of [event index, tone id or -1, object], open at its end.
-  // Its objects are written as they are known, keys in sorted order.
-  std::string extras;
   llvm::DenseMap<mlir::Operation *, int64_t> toneIds;
   std::map<mlir::Operation *, std::vector<FrameUpdate>> pending;
   uint64_t nextUpdate = 0;
 
-  static void write(llvm::json::OStream &json, const Condition &condition) {
-    const auto &[id, arm, readouts, answers, test] = condition;
-    json.object([&] {
-      json.attributeArray("answers", [&] {
-        for (int64_t answer : answers)
-          json.value(answer);
-      });
-      json.attribute("arm", arm != 0);
-      json.attribute("branch", id);
-      json.attributeArray("readouts", [&] {
-        for (int64_t readout : readouts)
-          json.value(readout);
-      });
-      json.attribute("test", test);
-    });
+  /// What an event has that is known only at run time: on a tracked tone
+  /// (`tone` at least 0), the frame changes since its latest drive or readout
+  /// and its own phase offset; the waveform operands computed from a readout
+  /// or an answer, as (node, operand index, expression); a variable wait's
+  /// length (at least 0) and bounds; a submission's operands.
+  struct Known {
+    int64_t event = 0;
+    int64_t tone = -1;
+    std::vector<FrameUpdate> updates;
+    std::optional<double> offset;
+    std::vector<std::tuple<int64_t, int64_t, int32_t>> waveform;
+    int32_t length = -1;
+    std::optional<int64_t> minCycles, maxCycles;
+    std::optional<std::vector<int32_t>> operands;
+  };
+  /// In event order, only for the events that have any.
+  std::vector<Known> known;
+
+  int32_t add(Expression expression) {
+    expressions.push_back(std::move(expression));
+    return static_cast<int32_t>(expressions.size()) - 1;
   }
 
-  static void write(llvm::json::OStream &json, const FrameUpdate &update) {
-    json.object([&] {
-      json.attributeArray("conditions", [&] {
-        for (const Condition &condition : update.conditions)
-          write(json, condition);
-      });
-      json.attribute("id", static_cast<int64_t>(update.seq));
-      json.attribute("op", update.op);
-      json.attributeBegin("value");
-      json.rawValue(update.value);
-      json.attributeEnd();
-    });
+  int32_t add(Expression::Kind kind, double number, int64_t event = 0,
+              int64_t result = 0, llvm::StringRef name = {}) {
+    Expression expression;
+    expression.kind = kind;
+    expression.number = number;
+    expression.event = event;
+    expression.result = result;
+    expression.name = name;
+    return add(std::move(expression));
   }
 
-  /// How `value` is computed at run time: a constant, a result of an answer
-  /// event, or an op (by its MLIR name) over such expressions.
-  void expression(llvm::json::OStream &json, mlir::Value value, int depth = 0) {
+  int32_t numberExpression(double value) {
+    return add(Expression::Number, value);
+  }
+
+  /// How `value` is computed at run time: a constant, a result of a readout
+  /// or answer event, or an op (by its MLIR name) over such expressions.
+  int32_t expression(mlir::Value value, int depth = 0) {
     double constant = number(value);
     if (!std::isnan(constant))
-      return json.object([&] { json.attribute("const", constant); });
+      return add(Expression::Constant, constant);
     mlir::Operation *def = value.getDefiningOp();
     if (!def)
-      return json.object([&] { json.attribute("unknown", "argument"); });
+      return add(Expression::Unknown, 0.0, 0, 0, "argument");
     llvm::StringRef name = def->getName().getStringRef();
     if (mlir::isa<pulse::ReadoutOp, classical::WaitOp>(def)) {
       auto found = latest.find(def);
       if (found == latest.end())
-        return json.object([&] { json.attribute("unknown", name); });
+        return add(Expression::Unknown, 0.0, 0, 0, name);
       if (mlir::isa<pulse::ReadoutOp>(def))
-        return json.object([&] { json.attribute("readout", found->second); });
-      return json.object([&] {
-        json.attribute("answer", found->second);
-        json.attribute(
-            "result", static_cast<int64_t>(
-                          mlir::cast<mlir::OpResult>(value).getResultNumber()));
-      });
+        return add(Expression::Readout, 0.0, found->second);
+      return add(Expression::Answer, 0.0, found->second,
+                 static_cast<int64_t>(
+                     mlir::cast<mlir::OpResult>(value).getResultNumber()));
     }
     if (depth > 64 || def->getNumRegions() != 0 || def->getNumResults() != 1)
-      return json.object([&] { json.attribute("unknown", name); });
-    json.object([&] {
-      json.attributeArray("of", [&] {
-        for (mlir::Value operand : def->getOperands())
-          expression(json, operand, depth + 1);
-      });
-      json.attribute("op", name);
-      if (auto cmp = mlir::dyn_cast<mlir::arith::CmpFOp>(def))
-        json.attribute("predicate",
-                       mlir::arith::stringifyCmpFPredicate(cmp.getPredicate()));
-      else if (auto cmp = mlir::dyn_cast<mlir::arith::CmpIOp>(def))
-        json.attribute("predicate",
-                       mlir::arith::stringifyCmpIPredicate(cmp.getPredicate()));
-    });
+      return add(Expression::Unknown, 0.0, 0, 0, name);
+    Expression op;
+    op.kind = Expression::Op;
+    op.name = name;
+    for (mlir::Value operand : def->getOperands())
+      op.of.push_back(expression(operand, depth + 1));
+    if (auto cmp = mlir::dyn_cast<mlir::arith::CmpFOp>(def))
+      op.predicate = mlir::arith::stringifyCmpFPredicate(cmp.getPredicate());
+    else if (auto cmp = mlir::dyn_cast<mlir::arith::CmpIOp>(def))
+      op.predicate = mlir::arith::stringifyCmpIPredicate(cmp.getPredicate());
+    return add(std::move(op));
   }
 
-  /// A frame change's value, as JSON: its number, else its expression.
-  std::string frameValue(mlir::Value value) {
-    std::string text;
-    llvm::raw_string_ostream os(text);
-    llvm::json::OStream json(os);
+  /// A frame change's value: its number, else its expression.
+  int32_t frameValue(mlir::Value value) {
     double constant = number(value);
-    if (!std::isnan(constant))
-      json.value(constant);
-    else
-      expression(json, value);
-    return text;
+    return std::isnan(constant) ? expression(value)
+                                : numberExpression(constant);
   }
 
-  void frameUpdate(mlir::Operation *root, llvm::StringRef op,
-                   std::string value) {
-    pending[root].push_back({nextUpdate++, op, std::move(value), branches});
+  void frameUpdate(mlir::Operation *root, llvm::StringRef op, int32_t value) {
+    pending[root].push_back({nextUpdate++, op, value, branches});
   }
 
   // The run-time work of the walk stays out of line, so that the per-op
@@ -741,102 +745,62 @@ struct ControllerWalk {
   /// at run time.
   LLVM_ATTRIBUTE_NOINLINE void runTime(mlir::Operation *op,
                                        const std::vector<WaveformNode> &nodes) {
+    Known next;
+    next.event = static_cast<int64_t>(result.size());
     if (mlir::isa<pulse::WaitOp>(op)) {
       if (!fromRunTime(op->getOperand(1)) ||
           !op->hasAttr("pulse.variable_wait"))
         return;
-      extra(-1, [&](llvm::json::OStream &json) {
-        json.attributeBegin("length");
-        expression(json, op->getOperand(1));
-        json.attributeEnd();
-        if (auto bound =
-                op->getAttrOfType<mlir::IntegerAttr>("pulse.max_cycles"))
-          json.attribute("max_cycles", bound.getInt());
-        if (auto bound =
-                op->getAttrOfType<mlir::IntegerAttr>("pulse.min_cycles"))
-          json.attribute("min_cycles", bound.getInt());
-      });
+      next.length = expression(op->getOperand(1));
+      if (auto bound = op->getAttrOfType<mlir::IntegerAttr>("pulse.max_cycles"))
+        next.maxCycles = bound.getInt();
+      if (auto bound = op->getAttrOfType<mlir::IntegerAttr>("pulse.min_cycles"))
+        next.minCycles = bound.getInt();
+      known.push_back(std::move(next));
       return;
     }
-    std::vector<std::tuple<int64_t, int64_t, mlir::Value>> operands;
     bool unknown = llvm::any_of(nodes, [](const WaveformNode &node) {
       return llvm::any_of(std::get<1>(node),
                           [](double v) { return std::isnan(v); });
     });
     if (unknown) {
-      int64_t next = 0;
-      runTimeOperands(op->getOperand(1), nodes, next, operands);
+      std::vector<std::tuple<int64_t, int64_t, mlir::Value>> operands;
+      int64_t count = 0;
+      runTimeOperands(op->getOperand(1), nodes, count, operands);
+      for (auto &[node, index, operand] : operands)
+        next.waveform.emplace_back(node, index, expression(operand));
     }
-    int64_t tone = -1;
-    std::vector<FrameUpdate> updates;
-    std::optional<double> offset;
     mlir::Operation *root =
         tracked.empty() ? nullptr : toneRoots(op->getOperand(2));
     if (root && tracked.contains(root)) {
-      tone = toneIds.try_emplace(root, static_cast<int64_t>(toneIds.size()))
-                 .first->second;
+      next.tone =
+          toneIds.try_emplace(root, static_cast<int64_t>(toneIds.size()))
+              .first->second;
       if (mlir::isa<pulse::DriveOp>(op)) {
         if (auto shift =
                 op->getAttrOfType<mlir::FloatAttr>("frame_phase_offset"))
-          frameUpdate(root, "shift_phase", text(shift.getValueAsDouble()));
+          frameUpdate(root, "shift_phase",
+                      numberExpression(shift.getValueAsDouble()));
         if (auto own = op->getAttrOfType<mlir::FloatAttr>("phase_offset"))
-          offset = own.getValueAsDouble();
+          next.offset = own.getValueAsDouble();
       }
       if (auto found = pending.find(root); found != pending.end()) {
-        updates = std::move(found->second);
+        next.updates = std::move(found->second);
         pending.erase(found);
       }
     }
-    if (tone < 0 && operands.empty())
-      return;
-    extra(tone, [&](llvm::json::OStream &json) {
-      if (tone >= 0)
-        json.attributeArray("frame_updates", [&] {
-          for (const FrameUpdate &update : updates)
-            write(json, update);
-        });
-      if (offset)
-        json.attribute("phase_offset_rad", *offset);
-      if (!operands.empty())
-        json.attributeArray("waveform", [&] {
-          for (auto &[node, index, operand] : operands)
-            json.object([&] {
-              json.attributeBegin("expr");
-              expression(json, operand);
-              json.attributeEnd();
-              json.attribute("node", node);
-              json.attribute("operand", index);
-            });
-        });
-    });
+    if (next.tone >= 0 || !next.waveform.empty())
+      known.push_back(std::move(next));
   }
 
   /// The operands of a submission, in argument order.
   LLVM_ATTRIBUTE_NOINLINE void submission(classical::SubmitOp request) {
-    extra(-1, [&](llvm::json::OStream &json) {
-      json.attributeArray("operands", [&] {
-        for (mlir::Value arg : request.getArgs())
-          expression(json, arg);
-      });
-    });
-  }
-
-  static std::string text(double number) {
-    std::string out;
-    llvm::raw_string_ostream os(out);
-    llvm::json::OStream(os).value(number);
-    return out;
-  }
-
-  /// Records what the next event has that is known only at run time: the
-  /// attributes `body` writes.
-  template <typename Body>
-  void extra(int64_t tone, Body body) {
-    llvm::raw_string_ostream os(extras);
-    os << (extras.empty() ? "[[" : ",[") << result.size() << ',' << tone << ',';
-    llvm::json::OStream json(os);
-    json.object([&] { body(json); });
-    os << ']';
+    Known next;
+    next.event = static_cast<int64_t>(result.size());
+    next.operands.emplace();
+    for (mlir::Value arg : request.getArgs())
+      next.operands->push_back(expression(arg));
+    known.push_back(std::move(next));
   }
 
   void sync(pulse::SyncOp op) {
@@ -1005,6 +969,442 @@ struct ControllerWalk {
       else
         frame.timeNs = std::max(frame.timeNs, theirs.timeNs);
     }
+  }
+};
+
+/// The lines and events of a ControllerWalk as controller.export() gives
+/// them, built as Python objects in one pass; needs the GIL. A number the
+/// format has always written as JSON text and read back (an expression's
+/// constant, a frame change's value, a phase offset) is an int where that
+/// text has no fraction or exponent.
+class ControllerObjects {
+public:
+  /// `parameters`: the parameter names of each waveform shape, in operand
+  /// order; `amplitudes`: the shapes with an overall amplitude.
+  ControllerObjects(nb::handle parameters, nb::handle amplitudes)
+      : keys(sharedKeys()) {
+    for (nb::handle shape : parameters) {
+      nb::object names = parameters[shape];
+      Shape &info = shapes[nb::cast<std::string>(shape)];
+      info.amplitude = PySequence_Contains(amplitudes.ptr(), shape.ptr()) == 1;
+      for (nb::handle name : names) {
+        auto text = nb::cast<std::string>(name);
+        int index = static_cast<int>(info.names.size());
+        if (text == "amplitude")
+          info.real = index;
+        else if (text == "amplitude_imag")
+          info.imag = index;
+        else if (text == "factor")
+          info.factor = index;
+        info.names.push_back(nb::borrow(name));
+      }
+    }
+  }
+
+  nb::list lines(const std::vector<std::tuple<std::string, int64_t>> &lines) {
+    nb::list out = list(lines.size());
+    for (size_t i = 0; i < lines.size(); ++i) {
+      nb::object line = dict();
+      put(line, keys.line, integer(static_cast<int64_t>(i)));
+      put(line, keys.role, string(std::get<0>(lines[i])));
+      put(line, keys.qudit, integer(std::get<1>(lines[i])));
+      set(out, i, std::move(line));
+    }
+    return out;
+  }
+
+  nb::list events(const ControllerWalk &walk, nb::list epochs) {
+    // Nothing built here is garbage until it is returned: a collection now
+    // would only walk the heap.
+    CollectorPause pause;
+    this->walk = &walk;
+    size_t epochCount = nb::len(epochs);
+    nb::list out = list(walk.result.size());
+    auto known = walk.known.begin();
+    for (size_t i = 0; i < walk.result.size(); ++i) {
+      const ControllerWalk::Known *extra = nullptr;
+      if (known != walk.known.end() && known->event == static_cast<int64_t>(i))
+        extra = &*known++;
+      set(out, i, event(i, walk.result[i], extra, epochs, epochCount));
+    }
+    return out;
+  }
+
+private:
+  struct CollectorPause {
+    int enabled = PyGC_Disable();
+    ~CollectorPause() {
+      if (enabled)
+        PyGC_Enable();
+    }
+  };
+
+  struct Shape {
+    std::vector<nb::object> names;
+    int real = -1, imag = -1, factor = -1;
+    bool amplitude = false;
+  };
+  llvm::StringMap<Shape> shapes;
+  llvm::StringMap<nb::object> strings;
+  llvm::DenseMap<uint64_t, nb::object> floats;
+  const ControllerWalk *walk = nullptr;
+
+  static nb::object key(const char *text) {
+    return check(PyUnicode_InternFromString(text));
+  }
+  struct Keys {
+    nb::object amplitude = key("amplitude"), answer = key("answer"),
+               answers = key("answers"), arm = key("arm"),
+               branch = key("branch"), conditions = key("conditions"),
+               constant = key("const"), duration = key("duration_cycles"),
+               end = key("end_cycles"), epoch = key("epoch"),
+               frameUpdates = key("frame_updates"),
+               frequency = key("frequency_hz"), function = key("function"),
+               id = key("id"), im = key("im"), index = key("index"),
+               iteration = key("iteration"), kind = key("kind"),
+               length = key("length"), line = key("line"), lines = key("lines"),
+               link = key("link"), maxCycles = key("max_cycles"),
+               measurements = key("measurements"),
+               minCycles = key("min_cycles"), name = key("name"),
+               of = key("of"), op = key("op"), operands = key("operands"),
+               params = key("params"), phase = key("phase_rad"),
+               phaseOffset = key("phase_offset_rad"),
+               predicate = key("predicate"), qudit = key("qudit"),
+               re = key("re"), readout = key("readout"),
+               readouts = key("readouts"), result = key("result"),
+               role = key("role"), runtime = key("runtime"),
+               samples = key("samples"), shape = key("shape"),
+               start = key("start_cycles"), test = key("test"),
+               timeout = key("timeout_ns"), tone = key("tone"),
+               unknown = key("unknown"), value = key("value"),
+               values = key("values"), wait = key("wait"),
+               waveform = key("waveform");
+  };
+  /// Interned once, for the life of the process.
+  static const Keys &sharedKeys() {
+    static const Keys *keys = new Keys();
+    return *keys;
+  }
+  const Keys &keys;
+
+  static nb::object check(PyObject *object) {
+    if (!object)
+      throw nb::python_error();
+    return nb::steal(object);
+  }
+  static nb::object dict() { return check(PyDict_New()); }
+  static nb::list list(size_t size) {
+    return nb::steal<nb::list>(
+        check(PyList_New(static_cast<Py_ssize_t>(size))).release());
+  }
+  static void put(nb::handle dict, nb::handle key, nb::handle value) {
+    if (PyDict_SetItem(dict.ptr(), key.ptr(), value.ptr()) != 0)
+      throw nb::python_error();
+  }
+  static void set(nb::handle list, size_t index, nb::object value) {
+    if (PyList_SetItem(list.ptr(), static_cast<Py_ssize_t>(index),
+                       value.release().ptr()) != 0)
+      throw nb::python_error();
+  }
+  static nb::object integer(int64_t value) {
+    return check(PyLong_FromLongLong(value));
+  }
+  /// A float, one object per value: an export repeats few numbers many
+  /// times.
+  nb::object real(double value) {
+    auto bits = std::bit_cast<uint64_t>(value);
+    // Two NaNs are the map's own empty and erased keys.
+    if (bits >= llvm::DenseMapInfo<uint64_t>::getTombstoneKey())
+      return check(PyFloat_FromDouble(value));
+    auto [it, inserted] = floats.try_emplace(bits);
+    if (inserted)
+      it->second = check(PyFloat_FromDouble(value));
+    return it->second;
+  }
+  /// A number, None where it is NaN.
+  nb::object number(double value) {
+    return std::isnan(value) ? nb::none() : real(value);
+  }
+  /// A number as the JSON text "%.17g" of it reads back.
+  nb::object textNumber(double value) {
+    if (std::isfinite(value) && value == std::trunc(value) &&
+        std::fabs(value) < 1e17)
+      return integer(static_cast<int64_t>(value));
+    return real(value);
+  }
+  static nb::object optional(std::optional<int64_t> value) {
+    return value ? integer(*value) : nb::none();
+  }
+  static nb::object integers(const std::vector<int64_t> &values) {
+    nb::list out = list(values.size());
+    for (size_t i = 0; i < values.size(); ++i)
+      set(out, i, integer(values[i]));
+    return out;
+  }
+  nb::object string(llvm::StringRef text) {
+    auto [it, inserted] = strings.try_emplace(text);
+    if (inserted)
+      it->second = check(PyUnicode_FromStringAndSize(
+          text.data(), static_cast<Py_ssize_t>(text.size())));
+    return it->second;
+  }
+
+  /// A branch an event lies in, keys in the order of the event's conditions,
+  /// else (for a frame change's) sorted.
+  nb::object condition(const ControllerWalk::Condition &condition,
+                       bool sorted) {
+    const auto &[id, arm, readouts, answers, test] = condition;
+    nb::object out = dict();
+    if (sorted) {
+      put(out, keys.answers, integers(answers));
+      put(out, keys.arm, nb::bool_(arm != 0));
+      put(out, keys.branch, integer(id));
+      put(out, keys.readouts, integers(readouts));
+    } else {
+      put(out, keys.branch, integer(id));
+      put(out, keys.arm, nb::bool_(arm != 0));
+      put(out, keys.readouts, integers(readouts));
+      put(out, keys.answers, integers(answers));
+    }
+    put(out, keys.test, string(test));
+    return out;
+  }
+
+  nb::object conditions(const std::vector<ControllerWalk::Condition> &all,
+                        bool sorted) {
+    nb::list out = list(all.size());
+    for (size_t i = 0; i < all.size(); ++i)
+      set(out, i, condition(all[i], sorted));
+    return out;
+  }
+
+  nb::object expression(int32_t index) {
+    using Expression = ControllerWalk::Expression;
+    const Expression &e = walk->expressions[index];
+    if (e.kind == Expression::Number)
+      return textNumber(e.number);
+    nb::object out = dict();
+    switch (e.kind) {
+    case Expression::Constant:
+      put(out, keys.constant, textNumber(e.number));
+      break;
+    case Expression::Unknown:
+      put(out, keys.unknown, string(e.name));
+      break;
+    case Expression::Readout:
+      put(out, keys.readout, integer(e.event));
+      break;
+    case Expression::Answer:
+      put(out, keys.answer, integer(e.event));
+      put(out, keys.result, integer(e.result));
+      break;
+    default: {
+      nb::list of = list(e.of.size());
+      for (size_t i = 0; i < e.of.size(); ++i)
+        set(of, i, expression(e.of[i]));
+      put(out, keys.of, of);
+      put(out, keys.op, string(e.name));
+      if (!e.predicate.empty())
+        put(out, keys.predicate, string(e.predicate));
+    }
+    }
+    return out;
+  }
+
+  /// The names of a node's numbers, if its shape names them all.
+  const Shape *named(llvm::StringRef shape, size_t numbers) const {
+    auto found = shapes.find(shape);
+    if (found == shapes.end() || found->second.names.size() != numbers)
+      return nullptr;
+    return &found->second;
+  }
+
+  /// The waveform expression from node `index` down, with the operands
+  /// computed at run time (`runtime`, sorted) on their nodes.
+  nb::object
+  tree(const std::vector<ControllerWalk::WaveformNode> &nodes, int64_t index,
+       llvm::ArrayRef<std::tuple<int64_t, int64_t, int32_t>> runtime) {
+    const auto &[name, numbers, children] = nodes[index];
+    auto [shape, custom] = llvm::StringRef(name).split(':');
+    nb::object node = dict();
+    put(node, keys.shape, string(shape));
+    if (!custom.empty())
+      put(node, keys.name, string(custom));
+    const Shape *names = named(shape, numbers.size());
+    if (shape == "custom_samples") {
+      nb::list samples = list(numbers.size());
+      for (size_t i = 0; i < numbers.size(); ++i)
+        set(samples, i, real(numbers[i]));
+      put(node, keys.samples, samples);
+    } else if (names) {
+      nb::object params = dict();
+      for (size_t i = 0; i < numbers.size(); ++i)
+        put(params, names->names[i], number(numbers[i]));
+      put(node, keys.params, params);
+    } else if (!numbers.empty()) {
+      nb::list values = list(numbers.size());
+      for (size_t i = 0; i < numbers.size(); ++i)
+        set(values, i, number(numbers[i]));
+      put(node, keys.values, values);
+    }
+    if (!children.empty()) {
+      nb::list of = list(children.size());
+      for (size_t i = 0; i < children.size(); ++i)
+        set(of, i, tree(nodes, children[i], runtime));
+      put(node, keys.of, of);
+    }
+    nb::object computed;
+    for (const auto &[at, operand, expr] : runtime) {
+      if (at != index)
+        continue;
+      if (!computed)
+        computed = dict();
+      put(computed,
+          names ? nb::handle(names->names[operand])
+                : nb::handle(string(std::to_string(operand))),
+          expression(expr));
+    }
+    if (computed)
+      put(node, keys.runtime, computed);
+    return node;
+  }
+
+  /// The overall complex amplitude of node `index`, through scale and neg,
+  /// in Python's complex arithmetic; None where it is unknown.
+  nb::object amplitude(const std::vector<ControllerWalk::WaveformNode> &nodes,
+                       int64_t index) {
+    const auto &[name, numbers, children] = nodes[index];
+    llvm::StringRef shape = llvm::StringRef(name).split(':').first;
+    const Shape *names = named(shape, numbers.size());
+    if (shape == "scale" || shape == "neg") {
+      if (children.empty())
+        return nb::none();
+      nb::object inner = amplitude(nodes, children[0]);
+      if (inner.is_none())
+        return inner;
+      if (shape == "neg")
+        return check(PyNumber_Negative(inner.ptr()));
+      if (!names || names->factor < 0 || std::isnan(numbers[names->factor]))
+        return nb::none();
+      return check(
+          PyNumber_Multiply(inner.ptr(), real(numbers[names->factor]).ptr()));
+    }
+    if (shape == "custom_samples") {
+      if (numbers.empty())
+        return nb::none();
+      double peak = numbers[0];
+      for (double sample : numbers)
+        if (std::fabs(sample) > std::fabs(peak))
+          peak = sample;
+      return check(PyComplex_FromDoubles(peak, 0.0));
+    }
+    if (!names || !names->amplitude || names->real < 0)
+      return nb::none();
+    double re = numbers[names->real];
+    double im = names->imag < 0 ? 0.0 : numbers[names->imag];
+    if (std::isnan(re) || std::isnan(im))
+      return nb::none();
+    return check(PyComplex_FromDoubles(re, im));
+  }
+
+  nb::object frameUpdates(const std::vector<ControllerWalk::FrameUpdate> &all) {
+    nb::list out = list(all.size());
+    for (size_t i = 0; i < all.size(); ++i) {
+      const auto &update = all[i];
+      nb::object item = dict();
+      put(item, keys.conditions, conditions(update.conditions, true));
+      put(item, keys.id, integer(static_cast<int64_t>(update.seq)));
+      put(item, keys.op, string(update.op));
+      put(item, keys.value, expression(update.value));
+      set(out, i, std::move(item));
+    }
+    return out;
+  }
+
+  nb::object event(size_t index, const ControllerWalk::Event &item,
+                   const ControllerWalk::Known *extra, nb::handle epochs,
+                   size_t epochCount) {
+    const auto &[kind, line, qudit, start, duration, iteration, nodes,
+                 frequency, phase, branches, joined, refs, callee, mode,
+                 timeout] = item;
+    bool sync = kind == "sync";
+    nb::object event = dict();
+    put(event, keys.index, integer(static_cast<int64_t>(index)));
+    put(event, keys.kind, string(kind));
+    put(event, keys.line, sync ? nb::none() : integer(line));
+    put(event, keys.qudit, sync ? nb::none() : integer(qudit));
+    put(event, keys.start, optional(start));
+    put(event, keys.duration, optional(duration));
+    put(event, keys.end,
+        start && duration ? integer(*start + *duration) : nb::none());
+    put(event, keys.iteration, integers(iteration));
+    if (epochCount && start) {
+      PyObject *epoch =
+          PyList_GetItem(epochs.ptr(), static_cast<Py_ssize_t>(index));
+      if (!epoch)
+        throw nb::python_error();
+      put(event, keys.epoch, epoch);
+    } else {
+      put(event, keys.epoch, integer(0));
+    }
+    put(event, keys.conditions, conditions(branches, false));
+    if (kind == "drive" || kind == "readout") {
+      llvm::ArrayRef<std::tuple<int64_t, int64_t, int32_t>> runtime;
+      std::vector<std::tuple<int64_t, int64_t, int32_t>> sortedRuntime;
+      if (extra && !extra->waveform.empty()) {
+        sortedRuntime = extra->waveform;
+        llvm::stable_sort(sortedRuntime, [](const auto &a, const auto &b) {
+          return std::make_pair(std::get<0>(a), std::get<1>(a)) <
+                 std::make_pair(std::get<0>(b), std::get<1>(b));
+        });
+        runtime = sortedRuntime;
+      }
+      int64_t root = static_cast<int64_t>(nodes.size()) - 1;
+      put(event, keys.waveform,
+          nodes.empty() ? nb::none() : tree(nodes, root, runtime));
+      nb::object overall = nodes.empty() ? nb::none() : amplitude(nodes, root);
+      if (overall.is_none()) {
+        put(event, keys.amplitude, overall);
+      } else {
+        nb::object parts = dict();
+        put(parts, keys.re, real(PyComplex_RealAsDouble(overall.ptr())));
+        put(parts, keys.im, real(PyComplex_ImagAsDouble(overall.ptr())));
+        put(event, keys.amplitude, parts);
+      }
+      put(event, keys.frequency, number(frequency));
+      put(event, keys.phase, number(phase));
+    } else if (sync) {
+      put(event, keys.lines, integers(joined));
+    } else if (kind == "submit" || kind == "answer") {
+      put(event, keys.link, integer(line));
+      put(event, keys.function, string(callee));
+      if (kind == "submit") {
+        put(event, keys.measurements, integers(refs));
+      } else {
+        put(event, keys.wait, string(mode));
+        put(event, keys.timeout, number(timeout));
+      }
+    }
+    if (!extra)
+      return event;
+    if (extra->tone >= 0) {
+      put(event, keys.tone, integer(extra->tone));
+      put(event, keys.frameUpdates, frameUpdates(extra->updates));
+      if (extra->offset)
+        put(event, keys.phaseOffset, textNumber(*extra->offset));
+    }
+    if (extra->length >= 0) {
+      put(event, keys.length, expression(extra->length));
+      put(event, keys.minCycles, optional(extra->minCycles));
+      put(event, keys.maxCycles, optional(extra->maxCycles));
+    }
+    if (extra->operands) {
+      nb::list operands = list(extra->operands->size());
+      for (size_t i = 0; i < extra->operands->size(); ++i)
+        set(operands, i, expression((*extra->operands)[i]));
+      put(event, keys.operands, operands);
+    }
+    return event;
   }
 };
 
@@ -1288,9 +1688,6 @@ public:
   }
 
   using ControllerLine = std::tuple<std::string, int64_t>;
-  using ControllerProgram =
-      std::tuple<std::vector<ControllerLine>,
-                 std::vector<ControllerWalk::Event>, std::string>;
 
   /// The lines, (role, qubit) in allocation order, and the timed ops of
   /// `events()`, in the same order, every sync and every classical call,
@@ -1311,24 +1708,38 @@ public:
   /// its link: the references of a submission are the readout events whose
   /// measurements it sends, the callee is its function, and an answer's wait is
   /// "bounded", "blocking" or "timeout", with its timeout in ns (NaN for
-  /// none). Then what is known only at run time, as a JSON array of [event
-  /// index, tone id or -1, object] for the events that have any (empty text
-  /// when none has). A drive or readout on a tone whose frame depends on run
-  /// time (a frame change computed from a readout or an answer, or made in a
-  /// branch) has its tone's id and the frame changes on the tone since its
-  /// latest drive or readout; a drive or readout has the expression of each
-  /// waveform operand computed from a readout or an answer; a variable wait
-  /// has the expression of its length and its bounds; a submission has the
-  /// expression of each argument.
-  ControllerProgram controller_events() {
-    std::lock_guard<std::recursive_mutex> guard(*lock_);
-    return runTime_ ? controllerEvents<true>() : controllerEvents<false>();
+  /// none). Then what is known only at run time: a drive or readout on a
+  /// tone whose frame depends on run time (a frame change computed from a
+  /// readout or an answer, or made in a branch) has its tone's id and the
+  /// frame changes on the tone since its latest drive or readout; a drive or
+  /// readout has the expression of each waveform operand computed from a
+  /// readout or an answer; a variable wait has the expression of its length
+  /// and its bounds; a submission has the expression of each argument.
+  ///
+  /// Returned as controller.export() gives them: (lines, events), lists of
+  /// dicts, with `parameters` the parameter names of each waveform shape,
+  /// `amplitudes` the shapes with an overall amplitude and `epochs` each
+  /// event's epoch (empty: all 0).
+  nb::tuple controller_events(nb::handle parameters, nb::handle amplitudes,
+                              nb::list epochs) {
+    ControllerObjects objects(parameters, amplitudes);
+    std::unique_ptr<ControllerWalk> walk;
+    std::vector<ControllerLine> lines;
+    {
+      nb::gil_scoped_release release;
+      std::lock_guard<std::recursive_mutex> guard(*lock_);
+      walk = std::make_unique<ControllerWalk>(clock());
+      if (runTime_)
+        controllerEvents<true>(*walk, lines);
+      else
+        controllerEvents<false>(*walk, lines);
+    }
+    return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs));
   }
 
   template <bool RunTime>
-  ControllerProgram controllerEvents() {
-    ControllerWalk walk(clock());
-    std::vector<ControllerLine> lines;
+  void controllerEvents(ControllerWalk &walk,
+                        std::vector<ControllerLine> &lines) {
     module_->walk([&](mlir::Operation *op) {
       if constexpr (RunTime)
         walk.scan(op);
@@ -1345,9 +1756,6 @@ public:
           mlir::isa<pulse::GetDriveLineOp>(op) ? "drive" : "readout", qubit);
     });
     walk.block<RunTime>(*module_->getBody());
-    if (!walk.extras.empty())
-      walk.extras += ']';
-    return {std::move(lines), std::move(walk.result), std::move(walk.extras)};
   }
 
   /// (function, link, iteration, submit start, submit duration, due,
@@ -3662,9 +4070,9 @@ NB_MODULE(_cudaq_pulse_native, m) {
           nb::call_guard<nb::gil_scoped_release>(),
           "(kind, line, qubit, start_cycles, duration_cycles) of each timed op")
       .def("controller_events", &PulseModule::controller_events,
-           nb::call_guard<nb::gil_scoped_release>(),
-           "Each timed op with its iteration, waveform, tone frame, "
-           "branches, references, callee and wait, for a controller")
+           nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
+           "The lines and events of the export for a controller, as "
+           "controller.export() gives them")
       .def("simulation_module", &PulseModule::simulation_module,
            "This module with loops holding calls unrolled, for simulation")
       .def("next_call", &PulseModule::next_call, nb::arg("path"),

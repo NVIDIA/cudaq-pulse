@@ -44,7 +44,6 @@ exceptions. ``analyze`` does the same for one function on its own.
 
 from __future__ import annotations
 
-import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
@@ -248,88 +247,6 @@ class ControllerLimits:
 # ── Waveforms ────────────────────────────────────────────────────────────────
 
 
-def _number(value: float) -> float | None:
-    return None if math.isnan(value) else float(value)
-
-
-def _tree(nodes: Sequence[tuple[str, Sequence[float], Sequence[int]]]) -> dict[str, Any] | None:
-    """The waveform expression of an event as nested dictionaries."""
-    if not nodes:
-        return None
-
-    def build(index: int) -> dict[str, Any]:
-        name, numbers, children = nodes[index]
-        shape, _, custom = name.partition(":")
-        node: dict[str, Any] = {"shape": shape}
-        if custom:
-            node["name"] = custom
-        names = _PARAMETERS.get(shape)
-        if shape == "custom_samples":
-            node["samples"] = [float(v) for v in numbers]
-        elif names is not None and len(names) == len(numbers):
-            node["params"] = {k: _number(v) for k, v in zip(names, numbers, strict=True)}
-        elif numbers:
-            node["values"] = [_number(v) for v in numbers]
-        if children:
-            node["of"] = [build(child) for child in children]
-        return node
-
-    return build(len(nodes) - 1)
-
-
-def _runtime_operands(
-    tree: dict[str, Any],
-    nodes: Sequence[tuple[str, Sequence[float], Sequence[int]]],
-    runtime: Sequence[Mapping[str, Any]],
-) -> None:
-    """Adds to each node of *tree* the expression of its operands computed
-    from a readout or an answer (``runtime``), by parameter name."""
-    computed: dict[int, dict[int, Any]] = {}
-    for item in runtime:
-        computed.setdefault(item["node"], {})[item["operand"]] = item["expr"]
-
-    def attach(index: int, node: dict[str, Any]) -> None:
-        name, numbers, children = nodes[index]
-        if index in computed:
-            names = _PARAMETERS.get(name.partition(":")[0])
-            if names is not None and len(names) != len(numbers):
-                names = None
-            node["runtime"] = {
-                (names[k] if names is not None else str(k)): expr
-                for k, expr in sorted(computed[index].items())
-            }
-        for child, sub in zip(children, node.get("of", ()), strict=True):
-            attach(child, sub)
-
-    attach(len(nodes) - 1, tree)
-
-
-def _amplitude(node: Mapping[str, Any] | None) -> complex | None:
-    """The overall complex amplitude of a waveform, through scale and neg."""
-    if node is None:
-        return None
-    shape = node["shape"]
-    if shape == "scale":
-        inner = _amplitude(node["of"][0])
-        factor = node.get("params", {}).get("factor")
-        return None if inner is None or factor is None else inner * factor
-    if shape == "neg":
-        inner = _amplitude(node["of"][0])
-        return None if inner is None else -inner
-    if shape == "custom_samples":
-        return complex(max(node["samples"], key=abs)) if node.get("samples") else None
-    if shape not in _AMPLITUDES:
-        return None
-    params = node.get("params")
-    if params is None:
-        return None
-    real = params.get("amplitude")
-    imag = params.get("amplitude_imag", 0.0)
-    if real is None or imag is None:
-        return None
-    return complex(real, imag)
-
-
 def shape_key(node: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
     """A key equal for waveforms that differ only in overall amplitude.
 
@@ -438,91 +355,9 @@ def _walk(
     # Waveforms and frames depend on the call's values, which only the
     # concrete module holds.
     module = lowered._concrete()
-    with lowered._lock:
-        raw_lines, raw_events, extras = module.controller_events()
-    lines = [
-        {"line": index, "role": role, "qudit": qudit}
-        for index, (role, qudit) in enumerate(raw_lines)
-    ]
     epochs = lowered._event_epochs(syncs=True)
-    events = []
-    for index, item in enumerate(raw_events):
-        (
-            kind,
-            line,
-            qudit,
-            start,
-            duration,
-            iteration,
-            nodes,
-            frequency,
-            phase,
-            conditions,
-            joined,
-            refs,
-            callee,
-            mode,
-            timeout,
-        ) = item
-        event: dict[str, Any] = {
-            "index": index,
-            "kind": kind,
-            "line": line,
-            "qudit": qudit,
-            "start_cycles": start,
-            "duration_cycles": duration,
-            "end_cycles": None if start is None or duration is None else start + duration,
-            "iteration": list(iteration),
-            "epoch": epochs[index] if epochs and start is not None else 0,
-            "conditions": [
-                {
-                    "branch": branch,
-                    "arm": bool(arm),
-                    "readouts": list(readouts),
-                    "answers": list(answers),
-                    "test": test,
-                }
-                for branch, arm, readouts, answers, test in conditions
-            ],
-        }
-        if kind in _PLAYED:
-            tree = _tree(nodes)
-            amplitude = _amplitude(tree)
-            event["waveform"] = tree
-            event["amplitude"] = (
-                None if amplitude is None else {"re": amplitude.real, "im": amplitude.imag}
-            )
-            event["frequency_hz"] = _number(frequency)
-            event["phase_rad"] = _number(phase)
-        elif kind == "sync":
-            event["line"] = None
-            event["qudit"] = None
-            event["lines"] = list(joined)
-        elif kind in ("submit", "answer"):
-            event["link"] = line
-            event["function"] = callee
-            if kind == "submit":
-                event["measurements"] = list(refs)
-            else:
-                event["wait"] = mode
-                event["timeout_ns"] = _number(timeout)
-        events.append(event)
-    # What is known only at run time, on the few events that have any.
-    for index, tone, known in json.loads(extras) if extras else ():
-        event = events[index]
-        if "waveform" in known:
-            _runtime_operands(event["waveform"], raw_events[index][6], known["waveform"])
-        if tone >= 0:
-            event["tone"] = tone
-            event["frame_updates"] = known["frame_updates"]
-            if "phase_offset_rad" in known:
-                event["phase_offset_rad"] = known["phase_offset_rad"]
-        if "length" in known:
-            event["length"] = known["length"]
-            event["min_cycles"] = known.get("min_cycles")
-            event["max_cycles"] = known.get("max_cycles")
-        if "operands" in known:
-            event["operands"] = known["operands"]
+    with lowered._lock:
+        lines, events = module.controller_events(_PARAMETERS, _AMPLITUDES, epochs)
     return lines, events
 
 
