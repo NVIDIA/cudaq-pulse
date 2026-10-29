@@ -97,11 +97,20 @@ class Coupling:
 # coupling.
 _EXCHANGE = "exchange"
 _DENSITY_DENSITY = "density_density"
+_KINDLESS = "kind" not in Coupling.__dataclass_fields__
+_PLAIN_COUPLING = frozenset({Coupling})
 
 
 def _coupling_kind(coupling: Any) -> str:
     """The kind of interaction *coupling* stands for."""
+    if _KINDLESS and type(coupling) is Coupling:
+        return _EXCHANGE
     return str(getattr(coupling, "kind", _EXCHANGE))
+
+
+def _all_exchange(couplings: Any) -> bool:
+    """Whether every coupling is a plain kindless Coupling, so exchange."""
+    return _KINDLESS and _PLAIN_COUPLING.issuperset(map(type, couplings))
 
 
 @dataclass(frozen=True)
@@ -258,14 +267,15 @@ class TargetDescription:
                     "time_dependent": False,
                 }
             )
+        if not _all_exchange(self.couplings):
+            for c in self.couplings:
+                if (kind := _coupling_kind(c)) != _EXCHANGE:
+                    raise UnsupportedError(
+                        f"the coupling of qubits {c.qubit_a} and {c.qubit_b} is a {kind} "
+                        "coupling; the two-level terms model exchange couplings only"
+                    )
         for c in self.couplings:
             g = c.coupling_strength_hz * 2.0 * math.pi * _SECONDS_PER_NANOSECOND
-            kind = _coupling_kind(c)
-            if kind != _EXCHANGE:
-                raise UnsupportedError(
-                    f"the coupling of qubits {c.qubit_a} and {c.qubit_b} is a {kind} "
-                    "coupling; the two-level terms model exchange couplings only"
-                )
             terms.append(
                 {
                     "kind": "coupling_xx",

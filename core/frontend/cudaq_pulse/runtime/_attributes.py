@@ -14,10 +14,7 @@ import struct
 from typing import Any
 
 from .._errors import InvalidValueError, UnsupportedError
-from ..targets.base import _DENSITY_DENSITY, _EXCHANGE, _coupling_kind
-
-# The kinds of coupling the lowering models, each with its own attributes.
-_MODELED_COUPLINGS = (_EXCHANGE, _DENSITY_DENSITY)
+from ..targets.base import _DENSITY_DENSITY, _EXCHANGE, _all_exchange, _coupling_kind
 
 _VALID_INTEGRATORS = frozenset(
     {
@@ -115,24 +112,28 @@ def _target_attributes(
     if any(thermal):
         attrs.append(f"pulse.thermal_populations = {_f64_array(thermal)}")
     active = set(qubits)
-    couplings: dict[str, list[Any]] = {kind: [] for kind in _MODELED_COUPLINGS}
-    for c in target.couplings:
-        if c.qubit_a in active and c.qubit_b in active:
+    exchange: Any = target.couplings
+    density_density: list[Any] = []
+    if not _all_exchange(exchange):
+        exchange = []
+        for c in target.couplings:
             kind = _coupling_kind(c)
-            if kind not in couplings:
+            if kind == _EXCHANGE:
+                exchange.append(c)
+            elif kind == _DENSITY_DENSITY:
+                density_density.append(c)
+            elif c.qubit_a in active and c.qubit_b in active:
                 raise UnsupportedError(
                     f"the coupling of qudits {c.qubit_a} and {c.qubit_b} is a {kind} "
                     "coupling, which the simulator does not model; it models "
-                    + " and ".join(_MODELED_COUPLINGS)
-                    + " couplings"
+                    f"{_EXCHANGE} and {_DENSITY_DENSITY} couplings"
                 )
-            couplings[kind].append(c)
-    crosstalk = [e for e in target.crosstalk if e.qubit_a in active and e.qubit_b in active]
     for name, entries, strength in (
-        ("coupling", couplings[_EXCHANGE], "coupling_strength_hz"),
-        ("crosstalk", crosstalk, "static_zz_hz"),
-        ("density_density", couplings[_DENSITY_DENSITY], "coupling_strength_hz"),
+        ("coupling", exchange, "coupling_strength_hz"),
+        ("crosstalk", target.crosstalk, "static_zz_hz"),
+        ("density_density", density_density, "coupling_strength_hz"),
     ):
+        entries = [e for e in entries if e.qubit_a in active and e.qubit_b in active]
         if entries:
             pairs = ", ".join(f"{e.qubit_a}, {e.qubit_b}" for e in entries)
             attrs.append(f"pulse.{name}_pairs = array<i64: {pairs}>")

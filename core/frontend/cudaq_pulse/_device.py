@@ -99,7 +99,7 @@ def _fingerprint(target: TargetDescription, layout: tuple[int, ...]) -> str:
     # fingerprints.
     couplings = [
         (c.qubit_a, c.qubit_b, c.coupling_strength_hz, c.gate_type, sorted(c.gate_params.items()))
-        + (() if _coupling_kind(c) == _EXCHANGE else (_coupling_kind(c),))
+        + (() if (kind := _coupling_kind(c)) == _EXCHANGE else (kind,))
         for c in target.couplings
     ]
     crosstalk = [(x.qubit_a, x.qubit_b, x.static_zz_hz) for x in target.crosstalk]
