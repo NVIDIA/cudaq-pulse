@@ -418,7 +418,9 @@ behavior may change in any 0.x release.
   list results take theirs from the body. `pulse.Length` (`typing.Annotated`)
   states a fixed length where one schema is wanted:
   `pulse.Length[pulse.Bits, 8]` (eight measurements read as bits) and
-  `pulse.Length[list[int], 8]` (eight numbers). A call record or
+  `pulse.Length[list[int], 8]` (eight numbers). One readout passed where a
+  list is taken is a compile error that gives the fix
+  (`decode.submit([m])`). A call record or
   report row names the function (`call.function`, `"flip"`), its version
   (`call.compiled_name`, `"flip__3"`) and the key its requests are
   dispatched by (`call.dispatch_key`: the FNV-1a hash of the compiled name,

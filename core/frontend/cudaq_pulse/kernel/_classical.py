@@ -16,12 +16,15 @@ methods themselves.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from ..classical import (
     _F64,
+    _KIND_BITS,
     _KIND_FLOATS,
+    _KIND_IQ,
     _LIST_NAME,
     _UNSIZED,
     ClassicalFunction,
@@ -89,10 +92,57 @@ def _wrong_count(
     )
 
 
+# What a list of each kind holds, for an error.
+_HOLDS = {
+    _KIND_BITS: "a list of outcomes",
+    _KIND_IQ: "a list of IQ points",
+    _KIND_FLOATS: "a list of numbers",
+}
+
+
+def _is_readout(value: Any) -> bool:
+    return isinstance(value, IRValue) and value.vtype == "measurement"
+
+
+def _local_name(value: Any) -> str | None:
+    """The name the traced kernel binds *value* to, if it has one: a local
+    of the emitter running its code (``_emitter``'s ``locals``)."""
+    frame = sys._getframe(1)
+    while frame is not None:
+        found = getattr(frame.f_locals.get("self"), "locals", None)
+        if found.__class__ is dict:
+            for name, bound in found.items():
+                if bound is value and name.isidentifier():
+                    return str(name)
+            return None
+        frame = frame.f_back  # type: ignore[assignment]
+    return None
+
+
+def _one_readout(
+    function: ClassicalFunction[..., Any], position: int, kind: str, holds: str, value: Any
+) -> CompilationError:
+    """A call passing one readout where its parameter takes a list."""
+    code = getattr(function.__wrapped__, "__code__", None)
+    names = list(code.co_varnames[: code.co_argcount]) if code is not None else []
+    parameter = names[position] if position < len(names) else f"argument {position}"
+    shown = _local_name(value)
+    listed = f"[{shown or 'm'}]"
+    arguments = [listed if k == position else n for k, n in enumerate(names)] or [listed]
+    called = function.base_name
+    return CompilationError(
+        f"{called}.submit(): {parameter} is {kind} ({holds}) but {shown or 'the argument'} is"
+        f" one readout. Write {called}.submit({', '.join(arguments)})."
+    )
+
+
 def _measurements(
     value: Any, spec: ValueType, function: ClassicalFunction[..., Any], position: int
 ) -> list[int]:
     name = function.name
+    if _is_readout(value) and not spec.is_scalar:
+        holds = "a list of IQ points" if spec.descriptor.startswith("iq") else "a list of outcomes"
+        raise _one_readout(function, position, _spelled(spec)[0], holds, value)
     items = list(value) if isinstance(value, (list, tuple)) else [value]
     if len(items) != spec.count:
         raise _wrong_count(function, spec, position, len(items))
@@ -115,6 +165,8 @@ def _numbers(
         items = [value]
     elif isinstance(value, (list, tuple)):
         items = list(value)
+    elif _is_readout(value):
+        raise _one_readout(function, position, _spelled(spec)[0], "a list of numbers", value)
     else:
         raise CompilationError(
             f"{name}: argument {position} is {spec.descriptor}; pass a list of {spec.count} numbers"
@@ -284,12 +336,11 @@ def _not_a_list(template: ClassicalFunction[..., Any], position: int, value: Any
     parameter = _parameter(template, position)
     shape = template._shape
     assert shape is not None
-    kind = _LIST_NAME[shape.plan[position]]
-    if isinstance(value, IRValue) and value.vtype == "measurement":
-        raise CompilationError(
-            f"{template.name}.submit(): {parameter!r} is {kind}, a list; got one measurement,"
-            " so pass [m]"
-        )
+    plan = shape.plan[position]
+    kind = _LIST_NAME[plan]
+    if _is_readout(value):
+        holds = _HOLDS.get(plan, "a list of outcomes or numbers")
+        raise _one_readout(template, position, kind, holds, value)
     raise CompilationError(
         f"{template.name}.submit(): {parameter!r} is {kind}; pass a list, got {value!r}"
     )

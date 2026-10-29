@@ -780,6 +780,50 @@ def _compile_error(body, match):
         pulse.compile(pulse.kernel(body)).lower(Q[0])
 
 
+@pulse.classical(max_latency_ns=10)
+def _fixed_pair(outcomes: pulse.Length[pulse.Bits, 1], k: float) -> bool:
+    return bool(outcomes[0])
+
+
+@pulse.classical(max_latency_ns=10)
+def _one_count(n: pulse.Length[list[int], 1]) -> bool:
+    return bool(n[0])
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (
+            lambda m: echo.submit(m),
+            "echo.submit(): bits is pulse.Bits (a list of outcomes) but m is one readout."
+            " Write echo.submit([m]).",
+        ),
+        (
+            lambda m: _fixed_pair.submit(m, 1.0),
+            "_fixed_pair.submit(): outcomes is pulse.Length[pulse.Bits, 1] (a list of outcomes)"
+            " but m is one readout. Write _fixed_pair.submit([m], k).",
+        ),
+        (
+            lambda m: _one_count.submit(m),
+            "_one_count.submit(): n is pulse.Length[list[int], 1] (a list of numbers) but m is"
+            " one readout. Write _one_count.submit([m]).",
+        ),
+        (
+            lambda m: choose.submit(m),
+            "choose.submit(): levels is list[int] (a list of outcomes or numbers) but m is one"
+            " readout. Write choose.submit([m]).",
+        ),
+    ],
+)
+def test_one_readout_for_a_list_parameter_is_an_error(call, message):
+    def k(q):
+        r, rt = get_readout_line(q)
+        m = readout(r, square(10, 0.1), rt)
+        call(m)
+
+    _compile_error(k, re.escape(message))
+
+
 @classical.external(max_latency_ns=50)
 def _table(index: pulse.Length[pulse.Bits, 3]) -> float:
     return float()
@@ -877,7 +921,13 @@ def test_argument_errors():
     _compile_error(wrong_count, "takes 1 arguments, got 0")
     _compile_error(number_for_bits, "takes measurement results")
     _compile_error(measurement_for_float, "takes numbers")
-    _compile_error(one_measurement_for_bits, r"a list; got one measurement, so pass \[m\]")
+    _compile_error(
+        one_measurement_for_bits,
+        re.escape(
+            "echo.submit(): bits is pulse.Bits (a list of outcomes) but the argument is one"
+            " readout. Write echo.submit([m])."
+        ),
+    )
     _compile_error(mixed_levels, "all measurements .sent as levels. or all numbers")
     _compile_error(keyword, "positional arguments only")
 
