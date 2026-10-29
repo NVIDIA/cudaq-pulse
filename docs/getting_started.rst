@@ -121,6 +121,9 @@ cudaq-pulse is a Python-first compiler pipeline with four stages:
    call and evolves it with the NumPy reference, and
    ``pulse.simulate(kernel, *args, backend="gpu")`` on the GPU, through the native
    Pulse -> QOp -> CuDensityMat -> LLVM lowering (``lowered.mlir("llvm")``).
+   A program compiled already is simulated the same way without compiling
+   it again: ``pulse.simulate(program, *values)`` binds the values of its
+   run-time float parameters as ``program.bind(values)`` does.
 
 GPU simulation via NVIDIA cuDensityMat is a preview capability; see
 :doc:`user_guide/gpu_execution`.

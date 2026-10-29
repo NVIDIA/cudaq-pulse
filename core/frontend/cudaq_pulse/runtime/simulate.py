@@ -102,7 +102,7 @@ class SimulationResult:
 
 
 def simulate(
-    kernel: Kernel[Any] | CompiledKernel[Any] | Lowered,
+    program: Kernel[Any] | CompiledKernel[Any] | Lowered,
     /,
     *args: Any,
     levels: int | dict[int, int] = 2,
@@ -124,17 +124,22 @@ def simulate(
 
     ``simulate(kernel, *args)`` compiles the call as ``kernel.lower(*args)``
     does and simulates it, as ``compile(kernel)`` takes the kernel first and
-    its options by keyword.
+    its options by keyword. A program compiled already is simulated without
+    compiling it again, such as one a worker process receives pickled:
+    ``simulate(program, *values)`` binds the values of its run-time float
+    parameters as ``program.bind(values)`` does.
 
     Parameters
     ----------
-    kernel:
+    program:
         A ``@cudaq_pulse.kernel`` or the ``CompiledKernel`` of one, called
-        with *args*; or the module of one call, from ``kernel.lower(*args)``,
-        with no *args*.
+        with *args*; a module with run-time float parameters, such as
+        ``lowered.generic``, bound with *args*; or the module of one call,
+        from ``kernel.lower(*args)`` or ``bind``, with no *args*.
     args:
-        The kernel's arguments, by position: the qudit handles, then its
-        other parameters.
+        For a kernel, its arguments by position: the qudit handles, then its
+        other parameters. For a module with run-time parameters, their
+        values, in the order of ``program.parameters``.
     levels:
         Levels per qudit (an int for all, or a dict by device qudit index).
         A transmon with three or more levels includes its anharmonicity.
@@ -212,20 +217,25 @@ def simulate(
     from ..compiler import Lowered
     from ..kernel._kernel import CompiledKernel, Kernel
 
-    if isinstance(kernel, Lowered):
-        if args:
+    if isinstance(program, Lowered):
+        if not args:
+            lowered = program
+        elif program.parameters:
+            lowered = program.bind(args)
+        else:
             raise InvalidTypeError(
                 "simulate() got arguments with the module of a call, which has its "
                 "arguments already; pass the kernel and its arguments, as in "
                 "simulate(kernel, q), or the module alone"
             )
-        lowered = kernel
-    elif isinstance(kernel, (Kernel, CompiledKernel)):
-        lowered = kernel.lower(*args)
+    elif isinstance(program, (Kernel, CompiledKernel)):
+        lowered = program.lower(*args)
     else:
         raise InvalidTypeError(
             "simulate() expects a kernel and its arguments, as in simulate(kernel, q), "
-            f"or the module of one call, from kernel.lower(q); got {type(kernel).__name__}"
+            "a module and the values of its run-time parameters, as in "
+            "simulate(lowered.generic, 0.5), or the module of one call; "
+            f"got {type(program).__name__}"
         )
     return _simulate_lowered(
         lowered,
@@ -291,7 +301,8 @@ def _simulate_lowered(
     if lowered.parameters:
         raise InvalidValueError(
             "the module has float parameters "
-            f"({', '.join(lowered.parameters)}); lower it with their values first"
+            f"({', '.join(lowered.parameters)}); pass their values, as in "
+            "simulate(program, 0.5), or lower the kernel with them"
         )
     target = lowered.target.target if plant is None else _check_plant(lowered, plant)
     model = _simulation_model(target)

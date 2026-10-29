@@ -120,6 +120,51 @@ def test_simulate_takes_the_kernel_and_its_arguments():
         pulse.simulate("rabi", q)  # type: ignore[arg-type]
 
 
+@pulse.kernel
+def _rabi_with_amplitude(q0, amplitude: float):
+    d0 = get_drive_line(q0)
+    drive(d0, square(40, amplitude))
+
+
+@pytest.mark.parametrize("kind", ["kernel", "compiled", "with_parameters", "bound", "call"])
+def test_simulate_takes_a_kernel_or_a_program_compiled_already(kind):
+    dev = pulse.device({"target": _target()})
+    q = dev.qudit_handles[0]
+    compiled = pulse.compile(_rabi_with_amplitude)
+    generic = compiled.lower(q, _PI).generic
+    assert generic is not None and generic.parameters == ("amplitude",)
+    program, args = {
+        "kernel": (_rabi_with_amplitude, (q, _PI)),
+        "compiled": (compiled, (q, _PI)),
+        "with_parameters": (generic, (_PI,)),
+        "bound": (generic.bind([_PI]), ()),
+        "call": (compiled.lower(q, _PI), ()),
+    }[kind]
+    rho = pulse.simulate(program, *args).density_matrix
+    assert rho[1, 1].real == pytest.approx(math.sin(_PI * 20.0 / 2) ** 2, abs=1e-8)
+
+
+def test_simulate_binds_a_program_s_parameters_as_bind_does():
+    @pulse.kernel
+    def wait_for(q0, gap: float):
+        d0 = get_drive_line(q0)
+        wait(d0, gap, bounds=(0, 100))
+        drive(d0, square(40, _PI))
+
+    dev = pulse.device({"target": _target()})
+    q = dev.qudit_handles[0]
+    generic = pulse.compile(wait_for).lower(q, 10.0).generic
+    assert generic is not None
+    with pytest.raises(pulse.InvalidValueError, match=r"float parameters \(gap\); pass their"):
+        pulse.simulate(generic)
+    with pytest.raises(ValueError, match="bounds") as from_bind:
+        generic.bind([500.0])
+    with pytest.raises(type(from_bind.value), match="bounds"):
+        pulse.simulate(generic, 500.0)
+    with pytest.raises(pulse.InvalidTypeError, match="module of a call, which has its arguments"):
+        pulse.simulate(generic.bind([10.0]), 10.0)
+
+
 def test_active_reset_returns_the_excited_state_to_ground():
     result = _run(_active_reset(_PI), shots=200, seed=1)
     np.testing.assert_allclose(result.density_matrix, np.diag([1.0, 0.0]), atol=1e-7)
