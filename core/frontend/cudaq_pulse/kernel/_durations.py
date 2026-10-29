@@ -222,14 +222,22 @@ def cycles(fname: str, what: str, value: Any, whole: bool, call: str, clock_ghz:
     return value
 
 
-def float_duration(fname: str, what: str, value: float, call: str) -> CompilationError:
-    """The error for the plain float *value* in a duration."""
+def float_duration(
+    fname: str, what: str, value: float, call: str, cycles_only: bool = False
+) -> CompilationError:
+    """The error for the plain float *value* in a duration; *cycles_only*
+    for one whose name gives its unit, which takes no time."""
     shown = f"{value:g}"
     whole = str(round(value)) if value == value and abs(value) != float("inf") else shown
     in_cycles_call = call.format(whole)
+    plural = "" if whole == "1" else "s"
+    if cycles_only:
+        return CompilationError(
+            f"{fname}(): {what} is a float ({value!r}); use an int number of cycles:\n"
+            f"    {in_cycles_call}    # {whole} cycle{plural}"
+        )
     in_ns_call = call.format(f"{shown} * pulse.ns")
     width = max(len(in_cycles_call), len(in_ns_call)) + 4
-    plural = "" if whole == "1" else "s"
     return CompilationError(
         f"{fname}(): {what} is a float ({value!r}). Durations are an int number of "
         "cycles, or a time with units:\n"

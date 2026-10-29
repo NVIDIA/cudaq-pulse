@@ -60,8 +60,18 @@ def validate_max_duration(cycles: int | None) -> int | None:
     """Check a ``@kernel(max_duration_cycles=...)`` value."""
     if cycles is None:
         return None
+    if isinstance(cycles, float):
+        from ._durations import float_duration
+
+        raise float_duration(
+            "kernel",
+            "max_duration_cycles",
+            cycles,
+            "@pulse.kernel(max_duration_cycles={})",
+            cycles_only=True,
+        )
     if isinstance(cycles, bool) or not isinstance(cycles, int) or cycles <= 0:
-        raise ValueError(
+        raise InvalidValueError(
             f"max_duration_cycles must be a whole number of cycles > 0, got {cycles!r}"
         )
     return cycles

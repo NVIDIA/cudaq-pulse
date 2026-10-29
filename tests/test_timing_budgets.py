@@ -144,10 +144,23 @@ def test_a_blocking_answer_has_no_bound():
         run.lower(Q[0])
 
 
-@pytest.mark.parametrize("value", [0, -3, 1.5, True, "80"])
+@pytest.mark.parametrize("value", [0, -3, True, "80"])
 def test_max_duration_cycles_is_a_positive_whole_number(value):
     with pytest.raises(ValueError, match="max_duration_cycles must be a whole number of cycles"):
         pulse.kernel(max_duration_cycles=value)
+
+
+@pytest.mark.parametrize(
+    ("value", "whole"), [(2.5, "2 cycles"), (2000.0, "2000 cycles"), (1.0, "1 cycle")]
+)
+def test_a_float_max_duration_cycles_gets_the_float_duration_error(value, whole):
+    with pytest.raises(pulse.CompilationError) as error:
+        pulse.kernel(max_duration_cycles=value)
+    cycles = whole.split()[0]
+    assert str(error.value) == (
+        f"kernel(): max_duration_cycles is a float ({value!r}); use an int number of "
+        f"cycles:\n    @pulse.kernel(max_duration_cycles={cycles})    # {whole}"
+    )
 
 
 def test_a_program_without_budgets_keeps_its_module():
