@@ -130,12 +130,19 @@ def in_program_cycles(fname: str, attrs: dict[str, Any], clock_ghz: float) -> No
         if value.__class__ is int or value is None:
             continue
         if name == "bounds":
-            if isinstance(value, (tuple, list)):
+            if isinstance(value, (tuple, list)) and not _whole(value):
                 attrs[name] = type(value)(
                     v if v is None else cycles(fname, name, v, True, call, clock_ghz) for v in value
                 )
             continue
         attrs[name] = cycles(fname, name, value, whole, call, clock_ghz)
+
+
+def _whole(bounds: tuple[Any, ...] | list[Any]) -> bool:
+    for v in bounds:
+        if v is not None and v.__class__ is not int:
+            return False
+    return True
 
 
 _MAX_CYCLES = 2**63 - 1

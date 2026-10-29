@@ -745,7 +745,7 @@ _OPERAND_TYPES: dict[str, tuple[tuple[str, ...], ...]] = {
     "wf_neg": (_WAVEFORM,),
 }
 _EMIT_TABLE = {
-    name: (n_val, attrs, rtypes, _OPERAND_TYPES.get(name, ()))
+    name: (n_val, attrs, rtypes, _OPERAND_TYPES.get(name, ()), _IN_CYCLES.get(name))
     for name, (n_val, attrs, rtypes) in OP_TABLE.items()
 }
 _TYPE_WORDS = {
@@ -2901,7 +2901,7 @@ class PulseIREmitter:
         if entry is None:
             raise CompilationError(f"unknown pulse op: {fname}")
 
-        n_val, attr_names, rtypes, operand_types = entry
+        n_val, attr_names, rtypes, operand_types, cycles_already = entry
         acquires = fname in _ACQUIRES
         line_op = False
         if acquires:
@@ -2979,12 +2979,13 @@ class PulseIREmitter:
                     call_args[i] = _current(v)
             operands = tuple(call_args[:n_val])
             attrs = dict(zip(attr_names, call_args[n_val:]))
-            in_cycles = _IN_CYCLES.get(fname)
             if optional is not None:
                 attrs[optional[0]] = optional[1]
-                if in_cycles is not None and not (in_cycles(attrs) and _whole_bounds(optional[1])):
+                if cycles_already is not None and not (
+                    cycles_already(attrs) and _whole_bounds(optional[1])
+                ):
                     _durations.in_program_cycles(fname, attrs, getattr(self.b, "clock_ghz", 2.0))
-            elif in_cycles is not None and not in_cycles(attrs):
+            elif cycles_already is not None and not cycles_already(attrs):
                 _durations.in_program_cycles(fname, attrs, getattr(self.b, "clock_ghz", 2.0))
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
 

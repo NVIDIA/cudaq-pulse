@@ -174,6 +174,9 @@ def _timeout_ns(builder: Any, timeout: Any) -> float:
         n = int(n)
     if not n > 0:
         raise CompilationError(f"result(): timeout must be positive, got {timeout!r}")
+    if timeout.__class__ is Time:
+        # Whole cycles of it are exactly its nanoseconds, which its float rounds.
+        return float(timeout)
     per_ns = cycles_per_ns(clock_ghz)
     # An int over an int rounds as float(Fraction(n) / per_ns) does.
     return n * per_ns.denominator / per_ns.numerator
