@@ -289,8 +289,11 @@ class Device:
     """A read-only machine description; see the module docstring.
 
     ``clock_ghz`` is the program clock: kernels count time in its cycles. A
-    config's ``"clock_ghz"`` sets it, else the target's. Each controller may
-    run its own clock, a whole-cycle ratio of it (see ``cudaq_pulse.controller``).
+    config's ``"clock_ghz"`` sets it; else the fastest clock of the control
+    system's controllers, when every other one divides it (controllers whose
+    clocks do not divide evenly need it declared); else the target's. Each
+    controller may run its own clock, a whole-cycle ratio of it (see
+    ``cudaq_pulse.controller``).
 
     ``qubit_freq[q]`` is the 0-1 transition frequency of qudit ``q`` (Hz) and
     ``transition_freq[q, i, j]`` that of levels ``i`` and ``j``, over the
@@ -315,25 +318,30 @@ class Device:
         control_system: ControlSystem | None = None,
         clock_ghz: float | None = None,
     ) -> None:
-        if clock_ghz is not None:
-            from ._clocks import program_clock_ghz
+        if control_system is not None:
+            from ._system import ControlSystem
 
-            clock = program_clock_ghz(clock_ghz, {}, target.clock_ghz)
+            if not isinstance(control_system, ControlSystem):
+                raise InvalidTypeError(
+                    f"Device control_system must be a ControlSystem, got {control_system!r}"
+                )
+        problems: list[Problem] = []
+        if clock_ghz is not None or (control_system is not None and control_system._needs_clock):
+            from ._system import _program_clock
+
+            clock, problems = _program_clock(control_system, clock_ghz, target.clock_ghz)
+            if clock is None:
+                raise DeviceDefinitionError(problems=problems)
             if clock != target.clock_ghz:
                 target = dataclasses.replace(target, clock_ghz=clock)
-        problems: list[Problem] = []
         layout = (
             tuple(sorted(target.qubits))
             if layout is None
             else _layout(layout, target, name, problems)
         )
         if control_system is not None:
-            from ._system import ControlSystem, _wiring_problems
+            from ._system import _wiring_problems
 
-            if not isinstance(control_system, ControlSystem):
-                raise InvalidTypeError(
-                    f"Device control_system must be a ControlSystem, got {control_system!r}"
-                )
             problems.extend(_wiring_problems(control_system, target))
         if layout is None or problems:
             raise DeviceDefinitionError(problems=problems)
@@ -740,13 +748,12 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
         layout = _layout(layout, target, name, problems)
     calibration = _calibration(config, problems)
     clock_ghz = config.get("clock_ghz")
-    if clock_ghz is not None:
-        from ._clocks import program_clock_ghz
+    if clock_ghz is not None or (control is not None and control._needs_clock):
+        from ._system import _program_clock
 
-        try:
-            program_clock_ghz(clock_ghz, {}, 0.0)
-        except ValueError as error:
-            problems.append(Problem(str(error), path="clock_ghz", value=clock_ghz))
+        problems.extend(
+            _program_clock(control, clock_ghz, 0.0 if target is None else target.clock_ghz)[1]
+        )
     if problems or target is None:
         return None
     try:
@@ -848,7 +855,10 @@ def device(config: Mapping[str, Any] | str | os.PathLike[str] | None = None) -> 
     target uses the shipped ``transmon_17q`` calibration by default.
     ``control_system`` is a ``ControlSystem``, whose lines must be carriers
     of the quantum system. ``clock_ghz`` is the program clock kernels count
-    cycles of (``Device.clock_ghz``); by default the quantum system's.
+    cycles of (``Device.clock_ghz``); by default the fastest controller clock
+    when the others divide it, else the quantum system's. Controller clocks
+    that do not divide evenly into one need it, and the problem lists the
+    clocks that work.
     ``"target"`` is the former name of ``"quantum_system"``. A system file,
     as ``Device.as_dict()`` writes it, gives each of these as data.
 

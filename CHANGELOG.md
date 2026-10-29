@@ -69,7 +69,12 @@ behavior may change in any 0.x release.
   on a readout the `feedback_latency_cycles` of the controllers that read out.
   A control system's `line_delays_ns` and `reference_clock_ghz` are its
   calibrated line delays and shared clock, as on a `MachineModel`; new
-  delays alone schedule its programs again without tracing them.
+  delays alone schedule its programs again without tracing them. Without a
+  declared `"clock_ghz"`, a device's program clock is its fastest
+  controller clock when every other one divides it; clocks that do not
+  divide evenly are a `DeviceDefinitionError` that lists the program clocks
+  that work, and every controller clock must be a whole multiple of the
+  reference clock.
 - **Processors.** `pulse.Processor` is a classical processor on a
   controller (`Controller(processors=[...])`), which runs the classical
   functions called on its `links`; a link belongs to at most one processor

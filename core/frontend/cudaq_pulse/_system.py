@@ -493,6 +493,10 @@ class ControlSystem:
     _plays_everything: bool = field(init=False, repr=False, compare=False)
     # By link id, the controller and processor that run its calls.
     _placement: Mapping[int, tuple[int, int]] = field(init=False, repr=False, compare=False)
+    # The clocks of the controllers that run their own, by label.
+    _own_clocks: Mapping[str, float] = field(init=False, repr=False, compare=False)
+    # Whether a device of it checks its program clock against its clocks.
+    _needs_clock: bool = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         from .compiler import MachineModel, _check_reference_clock, _checked_line_delays
@@ -545,6 +549,22 @@ class ControlSystem:
             and not (controllers[0].drive_lines or controllers[0].readout_lines),
         )
         object.__setattr__(self, "_placement", MappingProxyType(_placement(self)))
+        object.__setattr__(
+            self,
+            "_own_clocks",
+            MappingProxyType(
+                {
+                    _label(index, c): c.clock_ghz
+                    for index, c in enumerate(controllers)
+                    if c.clock_ghz is not None
+                }
+            ),
+        )
+        object.__setattr__(
+            self,
+            "_needs_clock",
+            bool(self._own_clocks) or self.reference_clock_ghz is not None,
+        )
         # rcp holds one readout latency: the feedback latency of the slowest
         # controller that plays readouts.
         readers = [c for c in controllers if c.readout_lines] or list(controllers)
@@ -985,6 +1005,42 @@ def _wiring_problems(system: ControlSystem, target: TargetDescription) -> list[P
                 )
             )
     return problems
+
+
+def _program_clock(
+    system: ControlSystem | None, declared: Any, default: float
+) -> tuple[float | None, list[Problem]]:
+    """The program clock of a device of *system*: *declared* (its config's
+    ``clock_ghz``), else the fastest of the controllers' own clocks when the
+    others divide it, else *default*; with the problems that keep it from
+    one, and the controllers' clocks that are not whole multiples of the
+    system's reference clock."""
+    clocks = {} if system is None else system._own_clocks
+    try:
+        program = _clocks.program_clock_ghz(declared, clocks, default)
+    except ValueError as error:
+        return None, [Problem(str(error), path="clock_ghz", value=declared)]
+    reference = None if system is None else system.reference_clock_ghz
+    if reference is None:
+        return program, []
+    problems = []
+    for index, controller in enumerate(system.controllers):  # type: ignore[union-attr]
+        clock = program if controller.clock_ghz is None else controller.clock_ghz
+        try:
+            _clocks._check_reference(reference, {"controller": clock})
+        except ValueError:
+            problems.append(
+                Problem(
+                    f"its {clock:g} GHz clock"
+                    + (" (the program clock)" if controller.clock_ghz is None else "")
+                    + f" is not a whole multiple of the {reference:g} GHz reference clock",
+                    path=f"control_system.controllers[{index}].clock_ghz",
+                    value=controller.clock_ghz,
+                    fix="give it a clock the reference clock divides, or change "
+                    "the control system's reference_clock_ghz",
+                )
+            )
+    return program, problems
 
 
 # ── Controller descriptions ──────────────────────────────────────────────────

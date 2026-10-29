@@ -55,10 +55,10 @@ def corrected(q, r):
         drive(d, square(20, 0.3), t)
 
 
-def _qpu(*controllers, links=None, layout=(0, 1, 2, 3)):
+def _qpu(*controllers, links=None, layout=(0, 1, 2, 3), **config):
     system = pulse.ControlSystem(controllers=list(controllers), links=links or {})
     return pulse.device(
-        {"quantum_system": KRINNER, "layout": list(layout), "control_system": system}
+        {"quantum_system": KRINNER, "layout": list(layout), "control_system": system, **config}
     )
 
 
@@ -203,7 +203,9 @@ def test_each_controller_is_held_to_its_own_limits():
 
 def test_one_controller_on_its_own_clock_is_timed_as_on_a_machine_model():
     box = pulse.Controller(drive_lines=range(4), readout_lines=range(4), clock_ghz=1.0)
-    qpu = _qpu(box)
+    # Without a declared program clock, the controller's is the program's.
+    assert _qpu(box).clock_ghz == 1.0
+    qpu = _qpu(box, clock_ghz=2.0)
     by_system = pulse.compile(drive_and_branch, device=qpu).lower(qpu.qudits[0], qpu.qudits[1])
     machine = MachineModel(controller=ControllerLimits(clock_ghz=1.0))
     by_model = pulse.compile(drive_and_branch, machine=machine).lower(qpu.qudits[0], qpu.qudits[1])
@@ -281,7 +283,7 @@ def test_a_control_systems_line_delays_and_reference_clock_are_checked():
 
 
 def test_several_controllers_on_their_own_clocks_do_not_compile():
-    qpu = _qpu(*_two_boxes(clock_ghz=1.0))
+    qpu = _qpu(*_two_boxes(clock_ghz=1.0), clock_ghz=2.0)
     with pytest.raises(
         ControllerLimitError, match=r"controllers\[1\] \(box.b\): runs on its own clock"
     ):
