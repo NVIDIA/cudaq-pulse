@@ -88,10 +88,12 @@ behavior may change in any 0.x release.
   the lines of more than one controller needs `controller=`.
   Budgets between controllers add each one's start uncertainty, its
   `clock_skew_cycles` plus one of its own cycles without a
-  `reference_clock_ghz`: a pulse that branches on another controller's
-  readout waits for the reader's feedback and peer latency and both
-  uncertainties (`rcp` waits for it; starting sooner is a
-  `ControllerLimitError` naming the cycle), and an answer on a link that
+  `reference_clock_ghz`: a pulse that branches on, or computes with,
+  another controller's readout waits for the reader's feedback and peer
+  latency and both uncertainties (`rcp` waits that long for each pair of
+  reader and user, and a pulse on the reader's controller its feedback
+  latency alone; starting sooner is a `ControllerLimitError` naming the
+  cycle), and an answer on a link that
   reaches several controllers is due that much later.
 - **Processors.** `pulse.Processor` is a classical processor on a
   controller (`Controller(processors=[...])`), which runs the classical

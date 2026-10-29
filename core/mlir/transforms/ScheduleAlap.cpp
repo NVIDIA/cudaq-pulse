@@ -71,6 +71,7 @@
 
 #include "cudaq-pulse/Analysis/Affine.h"
 #include "cudaq-pulse/Analysis/ClassicalTiming.h"
+#include "cudaq-pulse/Analysis/Controllers.h"
 #include "cudaq-pulse/Analysis/LineDelay.h"
 #include "cudaq-pulse/Analysis/LineGrid.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
@@ -581,21 +582,26 @@ struct NoLineTrace {};
 
 /// Schedules one region: a function body, or a schedule block's body with
 /// every block argument available at time 0. `Gridded` when some line is on
-/// a grid coarser than one program cycle (see LineGrid): without, a schedule
-/// does no grid work at all.
+/// a grid coarser than one program cycle (see LineGrid) or, under rcp, lines
+/// are on several controllers (see Controllers): both trace lines to their
+/// allocations. Without, a schedule does no grid or controller work at all.
 template <bool Gridded>
 class Scheduler {
 public:
   Scheduler(mlir::Region &region, Resources resources, bool classical,
-            const pulse::LineGrid &grid, const Timelines *timelines = nullptr)
+            const pulse::LineGrid &grid, const pulse::Controllers &controllers,
+            const Timelines *timelines = nullptr)
       : region(&region), resources(resources), classical(classical),
         lanesPer(timelines && timelines->count > 1 ? timelines : nullptr),
-        grid(grid) {
+        grid(grid),
+        controllers(resources.enabled ? controllers : pulse::Controllers()) {
     auto count = static_cast<size_t>(isolated() ? lanesPer->count : 1);
     floors.assign(count, 0);
     ends.assign(count, 0);
     iterationEnds.assign(count, -1);
     ceilings.assign(count, kNever);
+    if (this->several())
+      armStarts.assign(static_cast<size_t>(this->controllers.count()), kNever);
   }
 
   mlir::LogicalResult forward() {
@@ -647,6 +653,90 @@ private:
       readoutLanes[t].assign(
           static_cast<size_t>(std::max<int64_t>(1, readouts)), value);
     }
+  }
+
+  // ── Controllers ───────────────────────────────────────────────────────
+
+  /// An op on a line of no known controller, or on any.
+  static constexpr int64_t kAnyOwner = -1;
+
+  /// Whether the lines are on several controllers: never without line
+  /// tracing.
+  bool several() const {
+    if constexpr (Gridded)
+      return controllers.enabled();
+    else
+      return false;
+  }
+
+  /// The controller that plays the line `line` is a version of, or -1.
+  int64_t controllerOfLine(mlir::Value line) {
+    if constexpr (Gridded)
+      return controllers.of(line, lines);
+    else
+      return kAnyOwner;
+  }
+
+  /// The controller that plays the line `op` is on, or -1.
+  int64_t controllerOf(mlir::Operation *op) {
+    return controllerOfLine(op->getOperand(0));
+  }
+
+  /// The controller that read `measurement`, or -1.
+  int64_t readerOf(mlir::Value measurement) {
+    auto readout = measurement.getDefiningOp<pulse::ReadoutOp>();
+    return readout ? controllerOf(readout) : -1;
+  }
+
+  /// In a branch on readouts, no op of `controller` (-1: any) starts before
+  /// their outcomes reach it.
+  int64_t armFloorOf(int64_t controller) const {
+    if (armFloors.empty())
+      return 0;
+    return controller < 0 ? *llvm::max_element(armFloors)
+                          : armFloors[controller];
+  }
+
+  /// The measurements a value is computed from, not through other timed
+  /// values or answers.
+  static void valueMeasurements(mlir::Value value,
+                                llvm::SmallVectorImpl<mlir::Value> &found,
+                                llvm::DenseSet<mlir::Value> &seen) {
+    if (!seen.insert(value).second)
+      return;
+    if (mlir::isa<pulse::MeasurementType>(value.getType())) {
+      found.push_back(value);
+      return;
+    }
+    if (isTimedType(value.getType()))
+      return;
+    mlir::Operation *def = value.getDefiningOp();
+    if (!def || mlir::isa<classical::WaitOp>(def))
+      return;
+    if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(def)) {
+      valueMeasurements(branch.getCondition(), found, seen);
+      auto index = mlir::cast<mlir::OpResult>(value).getResultNumber();
+      valueMeasurements(branch.thenYield().getOperand(index), found, seen);
+      if (!branch.getElseRegion().empty())
+        valueMeasurements(branch.elseYield().getOperand(index), found, seen);
+      return;
+    }
+    if (def->getNumRegions())
+      return;
+    for (mlir::Value operand : def->getOperands())
+      valueMeasurements(operand, found, seen);
+  }
+
+  /// The measurements the operands of timed op `op` other than its line and
+  /// tone are computed from.
+  static llvm::SmallVector<mlir::Value> valueMeasurements(mlir::Operation *op) {
+    llvm::SmallVector<mlir::Value> found;
+    llvm::DenseSet<mlir::Value> seen;
+    mlir::Value tone = toneOperand(op);
+    for (mlir::Value operand : op->getOperands().drop_front())
+      if (operand != tone)
+        valueMeasurements(operand, found, seen);
+    return found;
   }
 
   // ── Timelines ─────────────────────────────────────────────────────────
@@ -940,7 +1030,8 @@ private:
     mlir::Operation *op = submit;
     int64_t t = timelineOf(op);
     int64_t link = isolated() ? linkReady[linkOf(op)] : ready(submit.getLink());
-    int64_t start = std::max({link, floorOf(t), operandsReady(op)});
+    int64_t start =
+        std::max({link, floorOf(t), operandsReady(op), armFloorOf(kAnyOwner)});
     int64_t duration = durationOf(op), budget = budgetOf(op);
     start = takeSlot(op, start, duration + budget);
     record(op, start);
@@ -953,7 +1044,8 @@ private:
 
   void forwardWait(classical::WaitOp wait) {
     int64_t t = timelineOf(wait);
-    int64_t start = std::max(ready(wait.getFuture()), floorOf(t));
+    int64_t start =
+        std::max({ready(wait.getFuture()), floorOf(t), armFloorOf(kAnyOwner)});
     // A blocking wait is a barrier: every line of its timeline is done
     // before it.
     if (wait->hasAttr("classical.blocking"))
@@ -972,9 +1064,11 @@ private:
     int64_t end = start + duration;
     int64_t lineEnd = end;
     if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op)) {
+      int64_t latency = several() ? controllers.own(controllerOf(op))
+                                  : resources.readoutLatency;
       if (resources.enabled)
-        lineEnd += resources.readoutLatency;
-      readyAt[readout.getResult()] = end + resources.readoutLatency;
+        lineEnd += latency;
+      readyAt[readout.getResult()] = end + latency;
     }
     readyAt[op->getResult(0)] = lineEnd;
     if (mlir::Value tone = toneResult(op))
@@ -1010,10 +1104,20 @@ private:
     if (isTimedOp(op)) {
       int64_t t = timelineOf(op);
       int64_t start = std::max(ready(op->getOperand(0)), floorOf(t));
+      int64_t owner = several() ? controllerOf(op) : kAnyOwner;
+      if (!armFloors.empty())
+        start = std::max(start, armFloorOf(owner));
       if (mlir::Value tone = toneOperand(op))
         start = std::max(start, ready(tone));
       if (classical) {
         start = std::max(start, operandsReady(op));
+        // An outcome it computes with reaches its controller later than the
+        // reader's.
+        if (several())
+          for (mlir::Value measurement : valueMeasurements(op))
+            start = std::max(
+                start, ready(measurement) +
+                           controllers.extra(readerOf(measurement), owner));
         // A variable wait is a barrier: every line of its timeline is done
         // before it.
         if (op->hasAttr("classical.variable"))
@@ -1045,8 +1149,12 @@ private:
     if (auto sync = mlir::dyn_cast<pulse::SyncOp>(op)) {
       int64_t t = timelineOf(op);
       int64_t time = floorOf(t);
-      for (mlir::Value line : sync.getLines())
+      for (mlir::Value line : sync.getLines()) {
         time = std::max(time, ready(line));
+        if constexpr (Gridded)
+          if (!armFloors.empty())
+            time = std::max(time, armFloorOf(controllerOfLine(line)));
+      }
       if constexpr (Gridded)
         time = pulse::LineGrid::roundUp(time, syncGrid(sync));
       for (mlir::Value result : sync.getResults())
@@ -1215,8 +1323,21 @@ private:
 
   mlir::LogicalResult forwardIf(mlir::scf::IfOp branch) {
     int64_t savedFloor = floor;
-    for (mlir::Value measurement : conditionMeasurements(branch.getCondition()))
+    auto savedArmFloors = armFloors;
+    for (mlir::Value measurement :
+         conditionMeasurements(branch.getCondition())) {
       floor = std::max(floor, ready(measurement));
+      // Each controller's ops wait until the outcome reaches it.
+      if (several()) {
+        if (armFloors.empty())
+          armFloors.assign(static_cast<size_t>(controllers.count()), 0);
+        int64_t reader = readerOf(measurement);
+        for (auto [c, at] : llvm::enumerate(armFloors))
+          at = std::max(at,
+                        ready(measurement) +
+                            controllers.extra(reader, static_cast<int64_t>(c)));
+      }
+    }
     if (classical)
       floor = std::max(floor, ready(branch.getCondition()));
 
@@ -1248,10 +1369,11 @@ private:
     }
     if (yieldsAfterCondition(branch))
       for (int64_t &time : results)
-        time = std::max(time, floor);
+        time = std::max({time, floor, armFloorOf(kAnyOwner)});
     for (auto [result, time] : llvm::zip(branch.getResults(), results))
       readyAt[result] = time;
     floor = savedFloor;
+    armFloors = std::move(savedArmFloors);
     return mlir::success();
   }
 
@@ -1400,8 +1522,10 @@ private:
       if (classical)
         end = std::min(end, ceilings[t]);
       bool isReadout = mlir::isa<pulse::ReadoutOp>(op);
+      int64_t owner = several() ? controllerOf(op) : kAnyOwner;
       if (isReadout) {
-        int64_t latency = resources.readoutLatency;
+        int64_t latency =
+            several() ? controllers.own(owner) : resources.readoutLatency;
         if (resources.enabled)
           end -= latency;
         int64_t needed = late(mlir::cast<pulse::ReadoutOp>(op).getResult());
@@ -1425,13 +1549,21 @@ private:
       if (step > 1)
         start = pulse::LineGrid::roundDown(start, step);
       record(op, start);
-      armStart = std::min(armStart, start);
+      if (owner >= 0)
+        armStarts[owner] = std::min(armStarts[owner], start);
+      else
+        armStart = std::min(armStart, start);
       bound(op->getOperand(0), start);
       if (mlir::Value tone = toneOperand(op))
         bound(tone, start);
-      if (classical)
+      if (classical) {
         for (mlir::Value operand : op->getOperands())
           bound(operand, start);
+        if (several())
+          for (mlir::Value measurement : valueMeasurements(op))
+            bound(measurement,
+                  start - controllers.extra(readerOf(measurement), owner));
+      }
       return mlir::success();
     }
     if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op)) {
@@ -1446,7 +1578,16 @@ private:
         time = pulse::LineGrid::roundDown(time, syncGrid(sync));
       for (mlir::Value line : sync.getLines())
         bound(line, time);
-      armStart = std::min(armStart, time);
+      if (!several() || sync.getLines().empty())
+        armStart = std::min(armStart, time);
+      else
+        for (mlir::Value line : sync.getLines()) {
+          int64_t owner = controllerOfLine(line);
+          if (owner >= 0)
+            armStarts[owner] = std::min(armStarts[owner], time);
+          else
+            armStart = std::min(armStart, time);
+        }
       return mlir::success();
     }
     if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op))
@@ -1568,6 +1709,8 @@ private:
   mlir::LogicalResult backwardIf(mlir::scf::IfOp branch) {
     int64_t savedArmStart = armStart;
     armStart = kNever;
+    auto savedArmStarts = armStarts;
+    std::fill(armStarts.begin(), armStarts.end(), kNever);
     auto savedDrive = driveLanes, savedReadout = readoutLanes;
     auto savedLinks = linkLate;
     for (auto [value, result] :
@@ -1594,7 +1737,29 @@ private:
           it->second = std::min(it->second, time);
       }
     }
-    if (armStart != kNever) {
+    if (several()) {
+      // Each outcome reaches every controller of an arm before its ops.
+      int64_t earliest = armStart;
+      for (int64_t start : armStarts)
+        earliest = std::min(earliest, start);
+      if (earliest != kNever) {
+        for (mlir::Value measurement :
+             conditionMeasurements(branch.getCondition())) {
+          int64_t reader = readerOf(measurement);
+          int64_t latest = armStart == kNever
+                               ? kNever
+                               : armStart - controllers.extra(reader, -1);
+          for (auto [c, start] : llvm::enumerate(armStarts))
+            if (start != kNever)
+              latest = std::min(
+                  latest,
+                  start - controllers.extra(reader, static_cast<int64_t>(c)));
+          bound(measurement, latest);
+        }
+        if (classical)
+          bound(branch.getCondition(), earliest);
+      }
+    } else if (armStart != kNever) {
       for (mlir::Value measurement :
            conditionMeasurements(branch.getCondition()))
         bound(measurement, armStart);
@@ -1608,11 +1773,15 @@ private:
       if (needed != kNever) {
         for (mlir::Value measurement :
              conditionMeasurements(branch.getCondition()))
-          bound(measurement, needed);
+          bound(measurement, several() ? needed - controllers.extra(
+                                                      readerOf(measurement), -1)
+                                       : needed);
         bound(branch.getCondition(), needed);
       }
     }
     armStart = std::min(savedArmStart, armStart);
+    for (auto [start, saved] : llvm::zip(armStarts, savedArmStarts))
+      start = std::min(start, saved);
     return mlir::success();
   }
 
@@ -1658,6 +1827,15 @@ private:
   pulse::LineGrid grid;
   [[no_unique_address]] std::conditional_t<Gridded, pulse::AllocationTracer,
                                            NoLineTrace> lines;
+  /// Under rcp on several controllers: which plays each line, and what
+  /// crossing between two costs.
+  pulse::Controllers controllers;
+  /// In a branch on readouts, per controller: when their outcomes reach it
+  /// (forward; empty outside one).
+  llvm::SmallVector<int64_t, 4> armFloors;
+  /// Per controller, the earliest start of an op of it in the arm being
+  /// scheduled; `armStart` has those of no one controller (backward).
+  llvm::SmallVector<int64_t, 4> armStarts;
 };
 
 // ── Writing the schedule ─────────────────────────────────────────────────
@@ -2182,12 +2360,13 @@ template <bool Gridded>
 static mlir::LogicalResult
 scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
                bool isAlap, bool classical, const Timelines &timelines,
-               const pulse::LineGrid &grid) {
+               const pulse::LineGrid &grid,
+               const pulse::Controllers &controllers) {
   // Each round either writes an affine schedule or removes an iteration from
   // a loop, so this terminates.
   while (true) {
     Scheduler<Gridded> scheduler(region, resources, classical, grid,
-                                 &timelines);
+                                 controllers, &timelines);
     if (mlir::failed(scheduler.forward()))
       return mlir::failure();
     if (isAlap) {
@@ -2200,8 +2379,8 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
                             [](const Sample &s) { return s.start >= 0; });
       });
       if (!feasible) {
-        scheduler =
-            Scheduler<Gridded>(region, resources, classical, grid, &timelines);
+        scheduler = Scheduler<Gridded>(region, resources, classical, grid,
+                                       controllers, &timelines);
         if (mlir::failed(scheduler.forward()))
           return mlir::failure();
       }
@@ -2235,19 +2414,22 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
 static mlir::LogicalResult
 scheduleRegion(mlir::Region &region, mlir::Operation *root, Resources resources,
                bool isAlap, bool classical, const Timelines &timelines,
-               const pulse::LineGrid &grid) {
+               const pulse::LineGrid &grid,
+               const pulse::Controllers &controllers) {
   for (pulse::ScheduleBlockOp block : outermostBlocks(region)) {
     if (mlir::failed(scheduleRegion(block.getBody(), block, Resources{},
                                     block.getPolicy() == "alap", classical,
-                                    timelines, grid)))
+                                    timelines, grid, controllers)))
       return mlir::failure();
     writeShape(block);
   }
-  if (mlir::failed(grid.enabled()
-                       ? scheduleRounds<true>(region, root, resources, isAlap,
-                                              classical, timelines, grid)
-                       : scheduleRounds<false>(region, root, resources, isAlap,
-                                               classical, timelines, grid)))
+  bool traced = grid.enabled() || (resources.enabled && controllers.enabled());
+  if (mlir::failed(
+          traced
+              ? scheduleRounds<true>(region, root, resources, isAlap, classical,
+                                     timelines, grid, controllers)
+              : scheduleRounds<false>(region, root, resources, isAlap,
+                                      classical, timelines, grid, controllers)))
     return mlir::failure();
 
   // Peeling may have copied blocks, so collect them again.
@@ -2295,9 +2477,9 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
   bool data = classical || function->hasAttr("pulse.selected_values");
   const pulse::ClockAttributes clocks(
       function->getParentOfType<mlir::ModuleOp>());
-  if (mlir::failed(scheduleRegion(function.getBody(), function, resources,
-                                  isAlap, data, timelines,
-                                  pulse::LineGrid(clocks))))
+  if (mlir::failed(scheduleRegion(
+          function.getBody(), function, resources, isAlap, data, timelines,
+          pulse::LineGrid(clocks), pulse::Controllers(clocks.controllers))))
     return mlir::failure();
   pulse::applyLineDelays(function, clocks.delays);
   return mlir::success();

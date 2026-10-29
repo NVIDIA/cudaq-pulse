@@ -720,3 +720,65 @@ def test_an_answer_on_a_link_between_controllers_is_budgeted_with_their_start_un
     assert _due(_call_across()) == shared + 6
     # A link that reaches one controller joins none.
     assert _due(_call_across(reach_both=False), b=1) == _due(_call_across(reference=0.5), b=1)
+
+
+@pulse.kernel
+def branch_on_both(a, b):
+    ra, rta = get_readout_line(a)
+    da, ta = get_drive_line(a)
+    db, tb = get_drive_line(b)
+    m = readout(ra, square(100, 0.05), rta)
+    sync(da, db)
+    if m:
+        drive(da, square(8, 0.1), ta)
+        drive(db, square(8, 0.1), tb)
+
+
+@pytest.mark.parametrize("schedule", ["rcp", "alap_rcp"])
+def test_rcp_waits_for_an_outcome_only_as_long_as_it_takes_to_reach_each_controller(schedule):
+    qpu = _forwarding()
+    lowered = pulse.compile(branch_on_both, schedule=schedule, device=qpu).lower(
+        qpu.qudits[0], qpu.qudits[2]
+    )
+    readout = next(e for e in lowered.schedule if e.kind == "readout")
+    mine, other = (e for e in lowered.schedule if e.kind == "drive")
+    # On the reader: its feedback latency, 3 cycles at 1 GHz (alap_rcp then
+    # ends it with the other); on the other controller: 16, as in
+    # test_an_outcome_sent_to_another_controller_is_budgeted_with_both_start_uncertainties.
+    assert mine.start - readout.end == (6 if schedule == "rcp" else 16)
+    assert other.start - readout.end == 16
+    # One controller's program waits its own feedback latency alone.
+    lowered = pulse.compile(feedback, schedule=schedule, device=qpu).lower(qpu.qudits[0])
+    readout, drive = (e for e in lowered.schedule if e.kind in ("readout", "drive"))
+    assert drive.start - readout.end == 6
+
+
+@pulse.kernel
+def chosen_across(a, b):
+    ra, rta = get_readout_line(a)
+    db, tb = get_drive_line(b)
+    m = readout(ra, square(100, 0.05), rta)
+    if m:
+        value = 0.3
+    else:
+        value = 0.1
+    drive(db, square(8, value), tb)
+
+
+def test_rcp_waits_for_an_outcome_a_pulse_computes_with_to_reach_its_controller(monkeypatch):
+    monkeypatch.setattr(pulse.compiler, "_can_select_at_runtime", lambda target, kind: True)
+    qpu = _forwarding()
+
+    def gap(b):
+        lowered = pulse.compile(chosen_across, schedule="rcp", device=qpu).lower(
+            qpu.qudits[0], qpu.qudits[b]
+        )
+        readout, drive = (e for e in lowered.schedule if e.kind in ("readout", "drive"))
+        return drive.start - readout.end
+
+    assert gap(1) == 6
+    assert gap(2) == 16
+    # Scheduled too early, the check names it.
+    early = pulse.compile(chosen_across, schedule="asap", device=qpu)
+    with pytest.raises(ControllerLimitError, match="computes with the readout of controllers"):
+        early.lower(qpu.qudits[0], qpu.qudits[2])

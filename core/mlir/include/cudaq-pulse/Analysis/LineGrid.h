@@ -27,12 +27,14 @@
 
 namespace pulse {
 
-/// The attributes of a module that put its lines on other clocks, read in
-/// one pass over its attributes: a module without them pays only that.
+/// The attributes of a module that put its lines on other clocks or
+/// controllers, read in one pass over its attributes: a module without them
+/// pays only that.
 struct ClockAttributes {
   mlir::IntegerAttr grid;
   mlir::DenseI64ArrayAttr driveGrid, readoutGrid;
   mlir::DictionaryAttr delays;
+  mlir::DictionaryAttr controllers;
 
   ClockAttributes() = default;
 
@@ -53,6 +55,8 @@ struct ClockAttributes {
         readoutGrid = mlir::dyn_cast<mlir::DenseI64ArrayAttr>(value);
       else if (name == "line_delays")
         delays = mlir::dyn_cast<mlir::DictionaryAttr>(value);
+      else if (name == "controllers")
+        controllers = mlir::dyn_cast<mlir::DictionaryAttr>(value);
     }
   }
 };

@@ -1834,11 +1834,15 @@ def _clocked_module(
     clocks: _clocks.ClockPlan | None,
     builder: Any,
 ) -> Mapping[tuple[str, int], float] | None:
-    """Set the grid and line delay attributes of *module*; the fine delays."""
+    """Set the grid, controller and line delay attributes of *module*; the
+    fine delays."""
     if clocks is not None:
         grids = clocks.attributes(builder.n_qubits)
         if grids is not None:
             module.set_attributes(grids)
+    system = machine._system
+    if system is not None and machine.controller is None:
+        module.set_attributes(system._controllers_attribute(target.clock_ghz, builder.n_qubits))
     fine_delays = None
     if machine.line_delays_ns:
         shifts, fine_delays = _line_delays(machine, target, clocks, builder.n_qubits)

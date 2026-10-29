@@ -739,6 +739,58 @@ class ControlSystem:
             for i, c in enumerate(self.controllers)
         ]
 
+    def _outcome_latencies(self, clocks: _clocks.ClockPlan | None) -> list[list[int]]:
+        """By reader, then user: how long after a readout ends its outcome is
+        usable on each controller, in program cycles (its feedback latency on
+        the reader; with its ``peer_latency_cycles`` and both controllers'
+        start uncertainty on another)."""
+        controllers = self.controllers
+        uncertainty = self._start_uncertainty(clocks)
+        table = []
+        for reader, source in enumerate(controllers):
+            ratio = Fraction(1) if clocks is None else clocks.controllers[reader].ratio
+            peers = source.peer_latency_cycles
+            row = []
+            for user in range(len(controllers)):
+                if user == reader:
+                    row.append(math.ceil(source.feedback_latency_cycles / ratio))
+                    continue
+                peer = peers.get(user, 0) if isinstance(peers, Mapping) else peers
+                latency = (source.feedback_latency_cycles + peer) / ratio
+                row.append(math.ceil(latency + uncertainty[reader] + uncertainty[user]))
+            table.append(row)
+        return table
+
+    def _controllers_attribute(self, program_ghz: float, n_qudits: int) -> str:
+        """The module attribute ``pulse.controllers`` of a program at
+        *program_ghz* on *n_qudits* qudits: the controller of each line, the
+        outcome latencies between controllers, how far apart their starts may
+        be (in program cycles) and each one's start uncertainty in ns."""
+        clocks = self._clock_plan(program_ghz)
+        uncertainty = self._start_uncertainty(clocks)
+        count = len(self.controllers)
+        owners = self._line_owners
+
+        def array(kind: str, values: Iterable[Any]) -> str:
+            text = ", ".join(map(str, values))
+            return f"array<{kind}: {text}>" if text else f"array<{kind}>"
+
+        fields = [
+            f"{role} = " + array("i64", (owners.get((role, q), -1) for q in range(n_qudits)))
+            for role in ("drive", "readout")
+        ]
+        latency = (v for row in self._outcome_latencies(clocks) for v in row)
+        spread = (
+            0 if a == b else math.ceil(uncertainty[a] + uncertainty[b])
+            for a in range(count)
+            for b in range(count)
+        )
+        ns = (repr(float(u / Fraction(program_ghz))) for u in uncertainty)
+        fields.append(f"outcome_latency = {array('i64', latency)}")
+        fields.append(f"spread = {array('i64', spread)}")
+        fields.append(f"uncertainty_ns = {array('f64', ns)}")
+        return "{pulse.controllers = {" + ", ".join(fields) + "}}"
+
     def _link_uncertainty_ns(
         self, machine: MachineModel, used: Sequence[int], program_ghz: float
     ) -> dict[int, float]:
@@ -766,52 +818,67 @@ class ControlSystem:
         owners: Sequence[int | None],
         clocks: _clocks.ClockPlan | None,
     ) -> list[str]:
-        """The pulses that branch on a readout of another controller before
-        its outcome can reach them: the reader's feedback latency, its
-        ``peer_latency_cycles`` to the user, and both controllers' start
-        uncertainty, each in its own cycles (events in program cycles)."""
+        """The pulses that branch on, or compute with, a readout of another
+        controller before its outcome can reach them: the reader's feedback
+        latency, its ``peer_latency_cycles`` to the user, and both
+        controllers' start uncertainty, each in its own cycles (events in
+        program cycles)."""
         found: list[str] = []
         uncertainty: list[Fraction] | None = None
         for event in events:
-            if event["kind"] not in _PLAYED or not event["conditions"]:
+            if event["kind"] not in _PLAYED:
                 continue
             user = owners[event["line"]]
             if user is None or event["start_cycles"] is None:
                 continue
-            for condition in event["conditions"]:
-                for ref in condition["readouts"]:
-                    readout = events[ref]
-                    reader = owners[readout["line"]]
-                    if reader is None or reader == user or readout["end_cycles"] is None:
-                        continue
-                    if uncertainty is None:
-                        uncertainty = self._start_uncertainty(clocks)
-                    source = self.controllers[reader]
-                    peers = source.peer_latency_cycles
-                    peer = peers.get(user, 0) if isinstance(peers, Mapping) else peers
-                    ratio = Fraction(1) if clocks is None else clocks.controllers[reader].ratio
-                    latency = (source.feedback_latency_cycles + peer) / ratio
-                    spread = uncertainty[reader] + uncertainty[user]
-                    total = latency + spread
-                    ready = readout["end_cycles"] + math.ceil(total)
-                    if event["start_cycles"] >= ready:
-                        continue
-                    found.append(
-                        f"{_label(user, self.controllers[user])}: the {event['kind']} on line "
-                        f"{event['line']} at {event['start_cycles']} branches on the readout "
-                        f"of {_label(reader, source)} ending at {readout['end_cycles']}, whose "
-                        f"outcome reaches it {_cycles_text(total)} cycles later, at {ready} "
-                        f"({_cycles_text(latency)} of feedback and peer latency, and "
-                        f"{_cycles_text(spread)} of the two controllers' start uncertainty"
-                        + (
-                            ""
-                            if self.reference_clock_ghz is not None
-                            else ", without a shared reference_clock_ghz"
-                        )
-                        + f"); start it at {ready} or later: schedule with rcp, which waits "
-                        f"for it, or wait {ready - event['start_cycles']} cycles before it on "
-                        "its line"
+            uses = [
+                (ref, "branches on")
+                for condition in event["conditions"]
+                for ref in condition["readouts"]
+            ]
+            stack = [value for key, value in event.items() if key != "conditions"]
+            while stack:
+                value = stack.pop()
+                if isinstance(value, dict):
+                    ref = value.get("readout")
+                    if type(ref) is int:
+                        uses.append((ref, "computes with"))
+                    stack.extend(value.values())
+                elif isinstance(value, list):
+                    stack.extend(value)
+            for ref, verb in dict.fromkeys(uses):
+                readout = events[ref]
+                reader = owners[readout["line"]]
+                if reader is None or reader == user or readout["end_cycles"] is None:
+                    continue
+                if uncertainty is None:
+                    uncertainty = self._start_uncertainty(clocks)
+                source = self.controllers[reader]
+                peers = source.peer_latency_cycles
+                peer = peers.get(user, 0) if isinstance(peers, Mapping) else peers
+                ratio = Fraction(1) if clocks is None else clocks.controllers[reader].ratio
+                latency = (source.feedback_latency_cycles + peer) / ratio
+                spread = uncertainty[reader] + uncertainty[user]
+                total = latency + spread
+                ready = readout["end_cycles"] + math.ceil(total)
+                if event["start_cycles"] >= ready:
+                    continue
+                found.append(
+                    f"{_label(user, self.controllers[user])}: the {event['kind']} on line "
+                    f"{event['line']} at {event['start_cycles']} {verb} the readout "
+                    f"of {_label(reader, source)} ending at {readout['end_cycles']}, whose "
+                    f"outcome reaches it {_cycles_text(total)} cycles later, at {ready} "
+                    f"({_cycles_text(latency)} of feedback and peer latency, and "
+                    f"{_cycles_text(spread)} of the two controllers' start uncertainty"
+                    + (
+                        ""
+                        if self.reference_clock_ghz is not None
+                        else ", without a shared reference_clock_ghz"
                     )
+                    + f"); start it at {ready} or later: schedule with rcp, which waits "
+                    f"for it, or wait {ready - event['start_cycles']} cycles before it on "
+                    "its line"
+                )
         return found
 
     def _index(self, controller: Controller) -> int:
