@@ -127,7 +127,7 @@ def in_program_cycles(fname: str, attrs: dict[str, Any], clock_ghz: float) -> No
     durations."""
     for name, whole, call in TIMES[fname]:
         value = attrs.get(name)
-        if value.__class__ is int or value is None:
+        if value is None:
             continue
         if name == "bounds":
             if isinstance(value, (tuple, list)) and not _whole(value):
@@ -135,7 +135,23 @@ def in_program_cycles(fname: str, attrs: dict[str, Any], clock_ghz: float) -> No
                     v if v is None else cycles(fname, name, v, True, call, clock_ghz) for v in value
                 )
             continue
-        attrs[name] = cycles(fname, name, value, whole, call, clock_ghz)
+        n = value
+        if n.__class__ is not int:
+            n = attrs[name] = cycles(fname, name, value, whole, call, clock_ghz)
+            if n.__class__ is not int:
+                continue
+        if whole and not 0 <= n <= MAX_CYCLES:
+            raise _out_of_range(fname, name, value, n)
+
+
+def _out_of_range(fname: str, what: str, value: Any, n: int) -> CompilationError:
+    """The error for *value*, a duration of *n* whole cycles outside 0 to MAX_CYCLES."""
+    given = f"{what} {value} is {n} cycles" if value.__class__ is Time else f"{what} is {n} cycles"
+    if n < 0:
+        rule = "a wait cannot be negative" if fname == "wait" else "a duration cannot be negative"
+    else:
+        rule = "a duration is at most 2**53 cycles"
+    return CompilationError(f"{fname}(): {given}; {rule}")
 
 
 def _whole(bounds: tuple[Any, ...] | list[Any]) -> bool:
@@ -145,7 +161,8 @@ def _whole(bounds: tuple[Any, ...] | list[Any]) -> bool:
     return True
 
 
-_MAX_CYCLES = 2**63 - 1
+# The longest duration, in cycles: a time a float holds to the cycle.
+MAX_CYCLES = 2**53
 
 
 def cycles(fname: str, what: str, value: Any, whole: bool, call: str, clock_ghz: float) -> Any:
@@ -161,13 +178,7 @@ def cycles(fname: str, what: str, value: Any, whole: bool, call: str, clock_ghz:
                 f"{clock_ghz:g} GHz program clock, and durations are whole cycles; "
                 f"round it with pulse.round_duration(line, {_written(value)})"
             )
-        n = int(exact)
-        if not -_MAX_CYCLES <= n <= _MAX_CYCLES:
-            raise CompilationError(
-                f"{fname}(): {what} {value} is {float(exact):g} cycles of the "
-                f"{clock_ghz:g} GHz program clock; a duration is at most 2**63 - 1 cycles"
-            )
-        return n
+        return int(exact)
     if whole and isinstance(value, float) and cls is not Cycles:
         raise float_duration(fname, what, value, call)
     if is_symbolic(value) and _has_time(value):

@@ -90,13 +90,13 @@ _WAVEFORMS = frozenset(
 )
 _WAVEFORM_ARITHMETIC = frozenset({"wf_add", "wf_sub", "wf_mul", "wf_scale", "wf_neg"})
 _MAKES_WAVEFORM = _WAVEFORMS | _WAVEFORM_ARITHMETIC | {"custom_samples"}
-# Per call with times: whether its times are cycles already (ints, and
-# floats in shape times), so there is nothing to convert.
+# Per call with times: whether its times are cycles already (ints in range,
+# and floats in shape times), so there is nothing to convert or reject.
 _IN_CYCLES = {
     fname: eval(
         "lambda a: "
         + " and ".join(
-            f"a[{name!r}].__class__ is int"
+            f"(v := a[{name!r}]).__class__ is int and 0 <= v <= {_durations.MAX_CYCLES}"
             if whole
             else f"((c := a[{name!r}].__class__) is int or c is float)"
             for name, whole, _ in spec

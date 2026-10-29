@@ -97,19 +97,51 @@ def test_a_time_that_is_not_a_finite_float_is_an_error(expression, message):
         expression()
 
 
-def test_a_duration_longer_than_63_bits_of_cycles_is_an_error():
-    def lower(length):
-        @pulse.kernel
-        def k(q):
-            d, t = get_drive_line(q)
-            wait(d, length)
+_LONGEST = "a duration is at most 2**53 cycles"
 
-        return k.lower(Q[0])
 
-    assert lower((2**62 - 1) * ns).schedule
-    for length in (2**62 * ns, 1e300 * ns):
-        with pytest.raises(pulse.CompilationError, match=r"at most 2\*\*63 - 1 cycles"):
-            lower(length)
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        ("wait(d, -5)", "wait(): duration is -5 cycles; a wait cannot be negative"),
+        ("wait(d, -4 * pulse.ns)", "wait(): duration -4 ns is -8 cycles; a wait cannot be"),
+        ("drive(d, square(-8, 0.1), t)", "square(): duration is -8 cycles; a duration cannot be"),
+        ("wait(d, 2**53 + 1)", f"wait(): duration is {2**53 + 1} cycles; {_LONGEST}"),
+        ("drive(d, square(2**62, 0.1), t)", f"square(): duration is {2**62} cycles; {_LONGEST}"),
+        ("drive(d, square(2**63, 0.1), t)", f"square(): duration is {2**63} cycles; {_LONGEST}"),
+        ("wait(d, 1e30 * pulse.ns)", f"wait(): duration 1e+21 s is {2 * 10**30} cycles"),
+    ],
+)
+def test_a_duration_outside_0_to_2_53_cycles_is_an_error_naming_the_line(call, message):
+    source = f"def k(q):\n    d, t = get_drive_line(q)\n    {call}\n"
+    namespace = {"pulse": pulse}
+    exec(compile(source, "<kernel>", "exec"), namespace)
+    with pytest.raises(pulse.CompilationError) as caught:
+        pulse.kernel(namespace["k"]).lower(Q[0])
+    assert str(caught.value).startswith(message)
+    assert 'File "<kernel>", line 3, in k' in "\n".join(caught.value.__notes__)
+
+
+def test_a_negative_wait_parameter_is_an_error():
+    @pulse.kernel
+    def k(q, n: int):
+        d, t = get_drive_line(q)
+        wait(d, n)
+
+    with pytest.raises(pulse.CompilationError, match="duration is -1 cycles; a wait cannot be"):
+        k.lower(Q[0], -1)
+
+
+def test_the_longest_duration_is_2_53_cycles():
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        wait(d, 2**53)
+        wait(d, 2**52 * ns)
+        wait(d, 0)
+
+    waits = [e.duration_cycles for e in k.lower(Q[0]).schedule if e.kind == "wait"]
+    assert waits == [2**53, 2**53, 0]
 
 
 # ── Durations ────────────────────────────────────────────────────────────────

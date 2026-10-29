@@ -29,6 +29,7 @@ from . import _clocks
 from ._errors import InvalidValueError
 from ._native import PulseModuleBuilder
 from .classical import Link
+from .kernel import _durations
 from .kernel._bytecode_normalize import UnsupportedInterpreterError
 from .kernel._schedule_blocks import check_root_schedule, root_schedule
 from .kernel._unroll import resolve_unroll_threshold
@@ -546,7 +547,7 @@ class CompileOptions:
 
 
 # Longest wait a call may ask for: lengths stay exact in a float.
-_MAX_WAIT_CYCLES = 2**53
+_MAX_WAIT_CYCLES = _durations.MAX_CYCLES
 
 
 class _WaitLength:
