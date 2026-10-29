@@ -214,12 +214,25 @@ def _export(lowered: Any, with_events: bool, part: _Part | None = None) -> dict[
 
 
 def _call_data(call: Any) -> dict[str, Any]:
-    """A ``ClassicalCall`` as export data; ``controller`` only for a call
-    over a per-controller link."""
-    data = asdict(call)
-    data["iteration"] = list(call.iteration)
-    if call.controller is None:
-        del data["controller"]
+    """A ``ClassicalCall`` as export data: its fields, in order (the
+    ``asdict`` of one, made directly); ``controller`` only for a call over a
+    per-controller link."""
+    data = {
+        "function": call.function,
+        "link": call.link,
+        "iteration": list(call.iteration),
+        "submit_cycles": call.submit_cycles,
+        "submit_duration_cycles": call.submit_duration_cycles,
+        "due_cycles": call.due_cycles,
+        "taken_cycles": call.taken_cycles,
+        "first_use_cycles": call.first_use_cycles,
+        "deadline_cycles": call.deadline_cycles,
+        "epoch": call.epoch,
+        "link_name": call.link_name,
+        "exposed_cycles": call.exposed_cycles,
+    }
+    if call.controller is not None:
+        data["controller"] = call.controller
     return data
 
 

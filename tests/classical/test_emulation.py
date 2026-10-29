@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 
@@ -66,6 +67,15 @@ def test_export_and_manifest_are_json():
     assert entry["schema"] == wire.schema(next_wait)
     assert entry["request_bytes"] == 25 and entry["answer_bytes"] == 32
     assert artifact["links"]["0"]["max_in_flight"] == 8
+
+
+def test_a_call_exports_its_fields_in_order():
+    (call,) = pulse.compile(adaptive).lower(Q[0]).classical_report()
+    fields = {**dataclasses.asdict(call), "iteration": list(call.iteration)}
+    del fields["controller"]
+    assert list(emulation._call_data(call).items()) == list(fields.items())
+    placed = dataclasses.replace(call, controller=1)
+    assert list(emulation._call_data(placed).items()) == list({**fields, "controller": 1}.items())
 
 
 def test_variable_waits_take_their_emulated_lengths():
