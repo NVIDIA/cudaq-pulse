@@ -21,7 +21,6 @@ from cudaq_pulse.controller import (
     FORMAT,
     ControllerLimitError,
     ControllerLimits,
-    WaveformMemory,
     check,
     unroll,
 )
@@ -374,9 +373,7 @@ _LIMITS = {
     "issue": lambda: ControllerLimits(issue_cycles=3, min_wait_cycles=5),
     "tones": lambda: ControllerLimits(tones_per_line=1),
     "waveform_samples": lambda: _sampled(2, waveform_samples=60),
-    "shared_memory": lambda: ControllerLimits(
-        waveform_memory=WaveformMemory(samples=60, granule=32, scaling=False, shared=True)
-    ),
+    "shared_memory": lambda: _sampled(2, waveform_samples=60, waveform_memory="shared"),
     "acquirers": lambda: ControllerLimits(acquirers={0: 0, 1: 0}, acquirer_hold_cycles=500),
     "feedback": lambda: ControllerLimits(feedback_latency_cycles=50),
     "max_events": lambda: ControllerLimits(max_events=7),

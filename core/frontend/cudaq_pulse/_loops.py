@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, overload
 from .controller import (
     _PLAYED,
     ControllerLimits,
+    WaveformMemoryScope,
     _exclusive,
     _peak_amplitude,
     _samples_per_own_cycle,
@@ -539,6 +540,10 @@ def violations(
     issue, gap = limits.issue_cycles, limits.issue_cycles + limits.min_wait_cycles
     num, den = _samples_per_own_cycle(limits, lowered.target.clock_ghz)
     on_lines = sorted({events[i]["line"] for i in _events_of(timed)})
+    shared = limits.waveform_memory is WaveformMemoryScope.SHARED
+    stored: dict[Any, int] = {}
+    stored_each = 0
+    unknown_stored = 0
 
     def spacing(
         previous: Mapping[str, Any], dp: int, event: Mapping[str, Any], de: int
@@ -576,7 +581,7 @@ def violations(
         if limits.max_amplitude is not None:
             found.extend(_amplitudes(lines[line], items, events, limits.max_amplitude, unresolved))
         if limits.waveform_samples is not None:
-            shapes: dict[Any, int] = {}
+            shapes = stored if shared else {}
             unknown_samples = 0
             each = 0
             for i in templates:
@@ -592,13 +597,25 @@ def violations(
                     else:
                         each += copies * samples
             used = sum(shapes.values()) + each
-            if used > limits.waveform_samples:
+            if not shared and used > limits.waveform_samples:
                 found.append(
                     f"line {line}: its waveforms take {used} samples; the controller's "
                     f"waveform memory holds {limits.waveform_samples}"
                 )
-            elif unresolved is not None and used + unknown_samples > limits.waveform_samples:
-                unresolved.append(f"line {line}: waveform memory")
+            elif not shared and unresolved is not None:
+                if used + unknown_samples > limits.waveform_samples:
+                    unresolved.append(f"line {line}: waveform memory")
+            stored_each += each
+            unknown_stored += unknown_samples
+    if shared and limits.waveform_samples is not None:
+        used = sum(stored.values()) + stored_each
+        if used > limits.waveform_samples:
+            found.append(
+                f"its waveforms take {used} samples; the controller's shared waveform "
+                f"memory holds {limits.waveform_samples}"
+            )
+        elif unresolved is not None and used + unknown_stored > limits.waveform_samples:
+            unresolved.append("waveform memory")
     if limits.acquirers:
         acquirers = limits.acquirers
         hold = limits.acquirer_hold_cycles

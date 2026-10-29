@@ -443,35 +443,28 @@ system lacks, is a ``DeviceDefinitionError``.
 Waveform memory
 ---------------
 
-``ControllerLimits(waveform_memory=WaveformMemory(...))`` describes the
-memory a controller plays waveforms from, in samples:
+Two plain values of ``ControllerLimits`` describe the memory a controller
+plays waveforms from, the same in Python and in a controller description
+in TOML (``waveform_samples = 65536``, ``waveform_memory = "shared"``):
 
 .. code-block:: python
 
-   from cudaq_pulse.controller import ControllerLimits, WaveformMemory
+   from cudaq_pulse.controller import ControllerLimits
 
-   memory = WaveformMemory(
-       samples=65536,             # what it holds
-       granule=32,                # each waveform rounds up to whole granules
-       shared=True,               # one memory for every line
-       synthesized=frozenset({"square", "gaussian"}),  # generated, not stored
-       upload_samples_per_cycle=4.0,
-       upload_while_playing=True,
+   limits = ControllerLimits(
+       sample_rate_ghz=2.0,
+       waveform_samples=65536,     # what one memory holds, in samples
+       waveform_memory="shared",   # one memory for every line; "per_line" by default
    )
-   limits = ControllerLimits(sample_rate_ghz=2.0, waveform_memory=memory)
 
-Compiling checks that every waveform of a program fits at once: per line, or
-once over all lines when ``shared``, each distinct waveform takes its
-samples rounded up to ``granule``. With ``scaling`` (the default), the
+Compiling checks that every waveform of a program fits at once: in the
+memory of its line, or once over all lines when ``"shared"``. The
 controller plays one stored shape at any amplitude and phase, so waveforms
 that differ only in those share memory, even when a ``float`` parameter sets
-the amplitude; without it, only equal waveforms do. Shapes in
-``synthesized``, and with ``hold`` a waveform that is constant, take none.
-The upload rate, whether uploads overlap playing, and ``persistent`` (the
-memory keeps its waveforms from one program to the next) are not checked;
-they reach a backend, or a planner that places waveforms in memory, through
-the export's ``controller``, with the waveform ids and parameter roles of
-``/2``. ``waveform_samples=n`` is ``waveform_memory=WaveformMemory(samples=n)``.
+the amplitude. A limit that only some ``float`` values exceed is checked once
+when a call binds them, never per shot. A shared memory reaches the export's
+``controller`` as ``waveform_memory``, with the waveform ids and parameter
+roles of ``/2``; a memory per line leaves the key out.
 
 Controller limits
 -----------------

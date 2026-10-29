@@ -23,8 +23,9 @@ Export and limits
 .. autoclass:: cudaq_pulse.controller.ControllerLimits
    :members: as_dict
 
-.. autoclass:: cudaq_pulse.controller.WaveformMemory
-   :members: as_dict
+.. autoclass:: cudaq_pulse.controller.WaveformMemoryScope
+   :members:
+   :undoc-members:
 
 .. autoclass:: cudaq_pulse.Event
    :members:

@@ -232,6 +232,7 @@ LIMITS = [
         feedback_latency_cycles=60,
     ),
     ControllerLimits(feedback_latency_cycles=500, max_events=10),
+    ControllerLimits(issue_cycles=2, waveform_samples=10, waveform_memory="shared"),
 ]
 
 

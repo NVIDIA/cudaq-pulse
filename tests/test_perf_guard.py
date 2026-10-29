@@ -445,12 +445,9 @@ def test_duration_budgets_of_a_rolled_loop_are_checked_in_constant_time():
 
 @pytest.mark.scaling
 def test_a_waveform_memory_of_a_rolled_loop_is_checked_in_constant_time():
-    from cudaq_pulse.controller import WaveformMemory, check
+    from cudaq_pulse.controller import check
 
-    memory = WaveformMemory(
-        samples=4096, granule=32, shared=True, synthesized=frozenset({"square"})
-    )
-    limits = ControllerLimits(waveform_memory=memory)
+    limits = ControllerLimits(waveform_samples=4096, waveform_memory="shared")
 
     def program(n: int):
         @pulse.kernel

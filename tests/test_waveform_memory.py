@@ -11,7 +11,7 @@ model of ``ControllerLimits``."""
 from __future__ import annotations
 
 import json
-from typing import Any
+import tomllib
 
 import cudaq_pulse as pulse
 import pytest
@@ -20,7 +20,7 @@ from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import (
     ControllerLimitError,
     ControllerLimits,
-    WaveformMemory,
+    WaveformMemoryScope,
     check,
     unroll,
 )
@@ -121,113 +121,62 @@ def test_a_program_without_float_parameters_lists_none():
 # ── The memory model ────────────────────────────────────────────────────
 
 
-def test_waveform_samples_is_a_memory_of_that_many_samples():
+def test_waveform_samples_is_the_memory_of_each_line():
     lowered = pulse.compile(tuned).lower(Q[0], 0.25, 0.1, 0.0)
-    for samples in (95, 96):
-        short = ControllerLimits(waveform_samples=samples)
-        full = ControllerLimits(waveform_memory=WaveformMemory(samples=samples))
-        assert check(lowered, short) == check(lowered, full)
     # gaussian, drag and square: 40 + 40 + 16 samples.
     assert check(lowered, ControllerLimits(waveform_samples=96)) == []
     assert check(lowered, ControllerLimits(waveform_samples=95)) == [
         "line 0: its waveforms take 96 samples; the controller's waveform memory holds 95"
     ]
-
-
-@pytest.mark.parametrize(
-    ("memory", "used"),
-    [
-        (WaveformMemory(samples=1, granule=64), 192),
-        (WaveformMemory(samples=1, scaling=False), 136),
-        (WaveformMemory(samples=1, hold=True), 80),
-        (WaveformMemory(samples=1, synthesized=frozenset({"gaussian", "drag"})), 16),
-    ],
-    ids=["granule", "no scaling", "hold", "synthesized"],
-)
-def test_the_memory_model_decides_what_a_program_takes(memory, used):
-    lowered = pulse.compile(tuned).lower(Q[0], 0.25, 0.1, 0.0)
-    (message,) = check(lowered, ControllerLimits(waveform_memory=memory))
-    assert f"take {used} samples" in message
+    per_line = ControllerLimits(waveform_samples=95, waveform_memory="per_line")
+    assert per_line == ControllerLimits(waveform_samples=95)
+    assert check(lowered, per_line) == check(lowered, ControllerLimits(waveform_samples=95))
 
 
 def test_a_shared_memory_holds_the_waveforms_of_every_line_once():
     lowered = pulse.compile(two_lines).lower(Q[0], Q[1])
-    per_line = ControllerLimits(waveform_memory=WaveformMemory(samples=56))
-    shared = ControllerLimits(waveform_memory=WaveformMemory(samples=56, shared=True))
-    assert check(lowered, per_line) == []
-    assert check(lowered, shared) == []
-    assert check(
-        lowered, ControllerLimits(waveform_memory=WaveformMemory(samples=55, shared=True))
-    ) == ["its waveforms take 56 samples; the controller's shared waveform memory holds 55"]
+    # A gaussian at two amplitudes is one shape: 40 + 16 samples over both lines.
+    assert check(lowered, ControllerLimits(waveform_samples=56, waveform_memory="shared")) == []
+    assert check(lowered, ControllerLimits(waveform_samples=55, waveform_memory="shared")) == [
+        "its waveforms take 56 samples; the controller's shared waveform memory holds 55"
+    ]
+    # Per line, the second line alone takes 56.
+    assert check(lowered, ControllerLimits(waveform_samples=55)) == [
+        "line 1: its waveforms take 56 samples; the controller's waveform memory holds 55"
+    ]
 
 
-def test_without_scaling_a_float_amplitude_is_checked_at_the_call():
-    @pulse.kernel
-    def two_amplitudes(q, a: float, b: float):
-        line = get_drive_line(q)
-        drive(line, gaussian(40, a, 10.0))
-        drive(line, gaussian(40, b, 10.0))
-
-    memory = WaveformMemory(samples=60, scaling=False)
-    compiled = pulse.compile(
-        two_amplitudes, machine=MachineModel(controller=ControllerLimits(waveform_memory=memory))
-    )
-    assert len(compiled.lower(Q[0], 0.5, 0.5).export_controller()["events"]) == 2
-    with pytest.raises(ControllerLimitError, match="80 samples"):
-        compiled.lower(Q[0], 0.5, 0.25)
-    # With scaling, any two amplitudes share one waveform: compiling decides.
-    scaled = MachineModel(controller=ControllerLimits(waveform_memory=WaveformMemory(samples=60)))
-    lowered = pulse.compile(two_amplitudes, machine=scaled).lower(Q[0], 0.5, 0.25)
-    assert type(lowered.generic) is pulse.Lowered
-
-
-def test_the_memory_reaches_the_export():
-    memory = WaveformMemory(
-        samples=4096,
-        granule=16,
-        synthesized=frozenset({"square"}),
-        upload_samples_per_cycle=0.5,
-        upload_while_playing=True,
-        persistent=True,
-    )
-    machine = MachineModel(controller=ControllerLimits(waveform_memory=memory))
-    program = (
-        pulse.compile(two_lines, machine=machine).lower(Q[0], Q[1]).export_controller(version=2)
-    )
-    assert program["controller"]["waveform_memory"] == {
-        "samples": 4096,
-        "granule": 16,
-        "shared": False,
-        "scaling": True,
-        "synthesized": ["square"],
-        "hold": False,
-        "upload_samples_per_cycle": 0.5,
-        "upload_while_playing": True,
-        "persistent": True,
-    }
+def test_the_memory_reaches_the_export_only_when_shared():
+    shared = ControllerLimits(waveform_samples=4096, waveform_memory="shared")
+    lowered = pulse.compile(two_lines, machine=MachineModel(controller=shared)).lower(Q[0], Q[1])
+    program = lowered.export_controller(version=2)
+    assert program["controller"]["waveform_memory_samples"] == 4096
+    assert program["controller"]["waveform_memory"] == "shared"
+    assert lowered.export_controller()["limits"]["waveform_memory"] == "shared"
+    assert unroll(program)["limits"] == shared.as_dict()
     json.dumps(program)
+    per_line = ControllerLimits(waveform_samples=4096)
+    assert "waveform_memory" not in per_line.as_dict()
+    plain = pulse.compile(two_lines, machine=MachineModel(controller=per_line)).lower(Q[0], Q[1])
+    assert "waveform_memory" not in plain.export_controller(version=2)["controller"]
+    assert unroll(plain.export_controller(version=2))["limits"] == per_line.as_dict()
 
 
-def test_a_memory_is_validated():
-    with pytest.raises(ValueError, match="not both"):
-        ControllerLimits(waveform_samples=10, waveform_memory=WaveformMemory(samples=10))
-    with pytest.raises(ValueError, match="must be positive"):
-        WaveformMemory(samples=0)
-    with pytest.raises(ValueError, match="must be positive"):
-        WaveformMemory(samples=8, granule=0)
-    with pytest.raises(ValueError, match="unknown shapes"):
-        WaveformMemory(samples=8, synthesized=frozenset({"chirp"}))
-    with pytest.raises(ValueError, match="upload_samples_per_cycle"):
-        WaveformMemory(samples=8, upload_samples_per_cycle=0.0)
-    shapes: Any = {"drag"}
-    limits = ControllerLimits(waveform_memory=WaveformMemory(samples=8, synthesized=shapes))
-    assert limits.waveform_memory is not None and limits.waveform_memory.synthesized == frozenset(
-        {"drag"}
+def test_the_memory_takes_its_strings_or_its_members():
+    by_string = ControllerLimits(waveform_samples=8, waveform_memory="shared")
+    by_member = ControllerLimits(waveform_samples=8, waveform_memory=WaveformMemoryScope.SHARED)
+    assert by_string == by_member and hash(by_string) == hash(by_member)
+    assert by_string.waveform_memory is WaveformMemoryScope.SHARED
+    assert ControllerLimits().waveform_memory == "per_line"
+    with pytest.raises(pulse.InvalidValueError, match="'per_line' or 'shared', got 'global'"):
+        ControllerLimits(waveform_memory="global")
+
+
+def test_a_controller_description_in_toml_gives_the_same_limits():
+    description = tomllib.loads('waveform_samples = 65536\nwaveform_memory = "shared"\n')
+    assert ControllerLimits(**description) == ControllerLimits(
+        waveform_samples=65536, waveform_memory="shared"
     )
-    same = ControllerLimits(
-        waveform_memory=WaveformMemory(samples=8, synthesized=frozenset({"drag"}))
-    )
-    assert limits == same and hash(limits) == hash(same)
 
 
 def test_the_structured_format_names_the_controller_and_its_links_anew():

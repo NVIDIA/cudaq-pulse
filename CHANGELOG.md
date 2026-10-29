@@ -584,11 +584,12 @@ behavior may change in any 0.x release.
   fails it when a call's answer is due later than that after the end of
   the readouts its request carries, in any iteration. Waits whose length
   is known only at run time count at their highest length.
-- **Waveform memory.** `ControllerLimits(waveform_memory=WaveformMemory(...))`
-  describes a controller's waveform memory: its size and allocation unit,
-  one per line or shared, whether a stored shape plays at any amplitude,
-  the shapes it generates without memory, and its upload rate, overlap and
-  persistence; `waveform_samples=n` is its simplest case. In format /2,
+- **Waveform memory.** `ControllerLimits(waveform_samples=65536,
+  waveform_memory="shared")` describes a controller's waveform memory in
+  plain values, the same in Python and in a TOML description: its size in
+  samples, and whether each line has one (`"per_line"`, the default) or one
+  serves every line (`"shared"`, holding a waveform the lines share once);
+  `WaveformMemoryScope` names the two. In format /2,
   each waveform has an `id` from its content and a `shape_id` equal for
   waveforms that differ only in amplitude and phase, and `parameters` says
   what each `float` parameter reaches, so a planner can tell which values
