@@ -138,6 +138,9 @@ def in_program_cycles(fname: str, attrs: dict[str, Any], clock_ghz: float) -> No
         attrs[name] = cycles(fname, name, value, whole, call, clock_ghz)
 
 
+_MAX_CYCLES = 2**63 - 1
+
+
 def cycles(fname: str, what: str, value: Any, whole: bool, call: str, clock_ghz: float) -> Any:
     """*value*, the *what* of a *fname* call, in program cycles."""
     cls = value.__class__
@@ -151,7 +154,13 @@ def cycles(fname: str, what: str, value: Any, whole: bool, call: str, clock_ghz:
                 f"{clock_ghz:g} GHz program clock, and durations are whole cycles; "
                 f"round it with pulse.round_duration(line, {_written(value)})"
             )
-        return int(exact)
+        n = int(exact)
+        if not -_MAX_CYCLES <= n <= _MAX_CYCLES:
+            raise CompilationError(
+                f"{fname}(): {what} {value} is {float(exact):g} cycles of the "
+                f"{clock_ghz:g} GHz program clock; a duration is at most 2**63 - 1 cycles"
+            )
+        return n
     if whole and isinstance(value, float) and cls is not Cycles:
         raise float_duration(fname, what, value, call)
     if is_symbolic(value) and _has_time(value):

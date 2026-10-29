@@ -81,6 +81,37 @@ def test_arithmetic_that_is_not_a_time_is_an_error(expression, message):
         expression(20 * ns)
 
 
+@pytest.mark.parametrize(
+    ("expression", "message"),
+    [
+        (lambda: float("nan") * ns, "finite number of nanoseconds, not nan"),
+        (lambda: float("inf") * ns, "finite number of nanoseconds, not inf"),
+        (lambda: ns * float("-inf"), "finite number of nanoseconds, not -inf"),
+        (lambda: ns / float("inf"), "finite number of nanoseconds, not inf"),
+        (lambda: 10**400 * ns, r"at most 1\.7976931348623157e\+308 ns"),
+        (lambda: 1e308 * pulse.us, r"at most 1\.7976931348623157e\+308 ns"),
+    ],
+)
+def test_a_time_that_is_not_a_finite_float_is_an_error(expression, message):
+    with pytest.raises(pulse.InvalidValueError, match=message):
+        expression()
+
+
+def test_a_duration_longer_than_63_bits_of_cycles_is_an_error():
+    def lower(length):
+        @pulse.kernel
+        def k(q):
+            d, t = get_drive_line(q)
+            wait(d, length)
+
+        return k.lower(Q[0])
+
+    assert lower((2**62 - 1) * ns).schedule
+    for length in (2**62 * ns, 1e300 * ns):
+        with pytest.raises(pulse.CompilationError, match=r"at most 2\*\*63 - 1 cycles"):
+            lower(length)
+
+
 # ── Durations ────────────────────────────────────────────────────────────────
 
 

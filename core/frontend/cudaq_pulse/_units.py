@@ -21,9 +21,13 @@ time) and rejects the rest (time times time, time plus a number of cycles).
 
 from __future__ import annotations
 
+import math
 import numbers
+import sys
 from fractions import Fraction
 from typing import Any
+
+from ._errors import InvalidValueError
 
 __all__ = ["Time", "ns", "us", "ms", "s"]
 
@@ -41,7 +45,10 @@ def _exact(value: Any) -> Fraction:
         return value
     if isinstance(value, numbers.Rational):
         return Fraction(int(value.numerator), int(value.denominator))
-    return Fraction(repr(float(value)))
+    value = float(value)
+    if not math.isfinite(value):
+        raise InvalidValueError(f"a time is a finite number of nanoseconds, not {value!r}")
+    return Fraction(repr(value))
 
 
 def _is_number(value: Any) -> bool:
@@ -69,7 +76,12 @@ class Time(float):
 
     def __new__(cls, nanoseconds: Fraction | int | float) -> Time:
         exact = _exact(nanoseconds)
-        self = super().__new__(cls, float(exact))
+        try:
+            self = super().__new__(cls, float(exact))
+        except OverflowError:
+            raise InvalidValueError(
+                f"a time is at most {sys.float_info.max!r} ns; this one is longer"
+            ) from None
         self.exact_ns = exact
         return self
 
