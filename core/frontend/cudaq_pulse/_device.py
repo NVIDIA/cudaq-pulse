@@ -97,11 +97,15 @@ def _fingerprint(target: TargetDescription, layout: tuple[int, ...]) -> str:
     ]
     # An exchange coupling adds no kind, so exchange-only devices keep their
     # fingerprints.
-    couplings = [
+    couplings: list[tuple[Any, ...]] = [
         (c.qubit_a, c.qubit_b, c.coupling_strength_hz, c.gate_type, sorted(c.gate_params.items()))
-        + (() if (kind := _coupling_kind(c)) == _EXCHANGE else (kind,))
         for c in target.couplings
     ]
+    if target._exchange_view is not target.couplings:
+        couplings = [
+            entry + (() if (kind := _coupling_kind(c)) == _EXCHANGE else (kind,))
+            for entry, c in zip(couplings, target.couplings)
+        ]
     crosstalk = [(x.qubit_a, x.qubit_b, x.static_zz_hz) for x in target.crosstalk]
     content = repr(
         (target.architecture, target.clock_ghz, qubits, couplings, crosstalk, layout)

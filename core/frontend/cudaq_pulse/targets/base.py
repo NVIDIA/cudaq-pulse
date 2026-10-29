@@ -16,10 +16,10 @@ QOp lowering.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any
+from typing import Any, overload
 
 from .._errors import InvalidValueError, NotFoundError, UnsupportedError
 
@@ -113,6 +113,36 @@ def _all_exchange(couplings: Any) -> bool:
     return _KINDLESS and _PLAIN_COUPLING.issuperset(map(type, couplings))
 
 
+class _Cached[T]:
+    """A value computed from a frozen object on first access, then stored on
+    it, so later reads are plain attribute loads.
+
+    Unlike functools.cached_property it stores with object.__setattr__ rather
+    than through ``__dict__``: touching ``__dict__`` makes every later
+    attribute load on the object slower. Not being an annotation, it is no
+    dataclass field.
+    """
+
+    def __init__(self, compute: Callable[[Any], T]) -> None:
+        self._compute = compute
+        self._name = compute.__name__
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self._name = name
+
+    @overload
+    def __get__(self, obj: None, owner: type | None = None) -> _Cached[T]: ...
+    @overload
+    def __get__(self, obj: object, owner: type | None = None) -> T: ...
+
+    def __get__(self, obj: object | None, owner: type | None = None) -> T | _Cached[T]:
+        if obj is None:
+            return self
+        value = self._compute(obj)
+        object.__setattr__(obj, self._name, value)
+        return value
+
+
 @dataclass(frozen=True)
 class CrosstalkEntry:
     """Residual ZZ or other parasitic coupling between qubit pairs.
@@ -154,6 +184,30 @@ class TargetDescription:
         object.__setattr__(self, "qubits", MappingProxyType(dict(self.qubits)))
         object.__setattr__(self, "couplings", tuple(self.couplings))
         object.__setattr__(self, "crosstalk", tuple(self.crosstalk))
+
+    # Cached on first use; sound because the target is frozen and its
+    # couplings are a tuple of frozen Couplings.
+
+    @_Cached
+    def _exchange_view(self) -> Sequence[Coupling]:
+        """The exchange couplings: ``couplings`` itself (the same object) when
+        every coupling is a plain Coupling, else those whose kind is exchange."""
+        if _all_exchange(self.couplings):
+            return self.couplings
+        return tuple(c for c in self.couplings if _coupling_kind(c) == _EXCHANGE)
+
+    @_Cached
+    def _two_level_couplings(self) -> Sequence[Coupling]:
+        """``couplings``, which the two-level terms model; refused, and not
+        cached, unless every coupling is exchange."""
+        if self._exchange_view is not self.couplings:
+            for c in self.couplings:
+                if (kind := _coupling_kind(c)) != _EXCHANGE:
+                    raise UnsupportedError(
+                        f"the coupling of qubits {c.qubit_a} and {c.qubit_b} is a {kind} "
+                        "coupling; the two-level terms model exchange couplings only"
+                    )
+        return self.couplings
 
     @property
     def n_qubits(self) -> int:
@@ -267,14 +321,7 @@ class TargetDescription:
                     "time_dependent": False,
                 }
             )
-        if not _all_exchange(self.couplings):
-            for c in self.couplings:
-                if (kind := _coupling_kind(c)) != _EXCHANGE:
-                    raise UnsupportedError(
-                        f"the coupling of qubits {c.qubit_a} and {c.qubit_b} is a {kind} "
-                        "coupling; the two-level terms model exchange couplings only"
-                    )
-        for c in self.couplings:
+        for c in self._two_level_couplings:
             g = c.coupling_strength_hz * 2.0 * math.pi * _SECONDS_PER_NANOSECOND
             terms.append(
                 {

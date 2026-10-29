@@ -15,3 +15,4 @@ cudaq_pulse\._native\._cudaq_pulse_native\.(evaluate_callback|shared_context_bud
 # PEP 695 generic classes carry __type_params__ at runtime, which stubtest
 # looks for in the stub even when the stub is the same source.
 cudaq_pulse\.kernel\._kernel\.(CompiledKernel|Kernel)\.__type_params__
+cudaq_pulse\.targets\.base\._Cached\.__type_params__

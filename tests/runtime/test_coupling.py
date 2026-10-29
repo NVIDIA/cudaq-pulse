@@ -231,8 +231,37 @@ def test_the_coupling_kind_is_part_of_the_fingerprint():
 
 
 def test_two_level_terms_refuse_a_coupling_that_is_not_exchange():
-    with pytest.raises(NotImplementedError, match="density_density coupling"):
-        _kinded_pair("density_density").hamiltonian_terms()
+    target = _kinded_pair("density_density")
+    for _ in range(2):
+        with pytest.raises(NotImplementedError, match="density_density coupling"):
+            target.hamiltonian_terms()
+
+
+def test_the_coupling_kind_cache_is_not_a_target_field():
+    target = _pair(5.0e9, 5.5e9, g_hz=10.0e6)
+    assert target.hamiltonian_terms() == target.hamiltonian_terms()
+    names = [f.name for f in dataclasses.fields(TargetDescription)]
+    assert names == [
+        "name",
+        "qubits",
+        "couplings",
+        "crosstalk",
+        "architecture",
+        "attribution",
+        "clock_ghz",
+    ]
+    assert list(TargetDescription.__dataclass_fields__) == names
+    assert target._exchange_view is target.couplings
+    kinded = _kinded_pair("exchange")
+    assert kinded._exchange_view == kinded.couplings
+    assert kinded._two_level_couplings is kinded.couplings
+    replaced = dataclasses.replace(target, couplings=_kinded_pair("density_density").couplings)
+    assert "_exchange_view" not in vars(replaced)
+    assert replaced._exchange_view == ()
+    for _ in range(2):
+        with pytest.raises(NotImplementedError, match="density_density coupling"):
+            replaced.hamiltonian_terms()
+    assert "_two_level_couplings" not in vars(replaced)
 
 
 # The GPU path lowers the same pulse-to-qop operator to cuDensityMat terms:

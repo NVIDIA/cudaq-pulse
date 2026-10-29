@@ -38,7 +38,6 @@ import numpy.typing as npt
 from .._errors import ExecutionError, InvalidTypeError, InvalidValueError, UnsupportedError
 from .._native._cudaq_pulse_native import evaluate_callback
 from ..compiler import ScheduledEvent
-from ..targets.base import _EXCHANGE, _coupling_kind
 from . import _propagate
 from ._attributes import _VALID_INTEGRATORS, _f64, _level_attributes, _target_attributes
 
@@ -328,8 +327,8 @@ def _default_step(lowered: Lowered) -> float:
     detuning = max(
         (
             abs(target.qubits[c.qubit_a].frequency_hz - target.qubits[c.qubit_b].frequency_hz)
-            for c in target.couplings
-            if c.qubit_a in active and c.qubit_b in active and _coupling_kind(c) == _EXCHANGE
+            for c in target._exchange_view
+            if c.qubit_a in active and c.qubit_b in active
         ),
         default=0.0,
     )
