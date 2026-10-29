@@ -31,6 +31,12 @@ __all__ = ["Time", "ns", "us", "ms", "s"]
 def _exact(value: Any) -> Fraction:
     """*value*, a real number, as the fraction its decimal digits give:
     ``0.1`` is 1/10."""
+    cls = value.__class__
+    if cls is int:
+        return Fraction(value)
+    # Below 1e15 an integral float's digits are the integer itself.
+    if cls is float and value.is_integer() and abs(value) < 1e15:
+        return Fraction(int(value))
     if isinstance(value, Fraction):
         return value
     if isinstance(value, numbers.Rational):
@@ -39,6 +45,9 @@ def _exact(value: Any) -> Fraction:
 
 
 def _is_number(value: Any) -> bool:
+    cls = value.__class__
+    if cls is int or cls is float:
+        return True
     return isinstance(value, numbers.Real) and not isinstance(value, (bool, Time))
 
 

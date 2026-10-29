@@ -17,7 +17,6 @@ methods themselves.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from fractions import Fraction
 from typing import Any
 
 from .._units import Time, cycles_per_ns
@@ -161,7 +160,11 @@ def _timeout_ns(builder: Any, timeout: Any) -> float:
             "an int number of cycles, or a time with units"
         )
     clock_ghz = getattr(builder, "clock_ghz", 2.0)
-    n = cycles("result", "timeout", timeout, True, "f(...).result(timeout={})", clock_ghz)
+    n = (
+        timeout
+        if timeout.__class__ is int
+        else cycles("result", "timeout", timeout, True, "f(...).result(timeout={})", clock_ghz)
+    )
     if isinstance(n, float):
         if not n.is_integer():
             raise CompilationError(
@@ -171,7 +174,9 @@ def _timeout_ns(builder: Any, timeout: Any) -> float:
         n = int(n)
     if not n > 0:
         raise CompilationError(f"result(): timeout must be positive, got {timeout!r}")
-    return float(Fraction(n) / cycles_per_ns(clock_ghz))
+    per_ns = cycles_per_ns(clock_ghz)
+    # An int over an int rounds as float(Fraction(n) / per_ns) does.
+    return n * per_ns.denominator / per_ns.numerator
 
 
 def take(builder: Any, future: Future, args: Sequence[Any], kwargs: dict[str, Any] | None) -> Any:
