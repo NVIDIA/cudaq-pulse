@@ -235,80 +235,174 @@ def _plan(own: float | None, program_ghz: float, reference: float | None) -> Clo
 
 
 def off_grid(
-    plan: ClockPlan, lines: Sequence[Mapping[str, Any]], events: Sequence[Mapping[str, Any]]
+    plan: ClockPlan,
+    lines: Sequence[Mapping[str, Any]],
+    events: Sequence[dict[str, Any]],
+    convert: bool = False,
+    waveforms: bool = True,
 ) -> list[str]:
     """A violation for each line event that does not start and last whole
-    cycles of its controller."""
+    cycles of its controller; with *convert*, the events' times are then in
+    their controller's own cycles, in place (and with *waveforms*, their
+    waveforms' time parameters scaled), in the same pass."""
     found = []
+    single = plan.controllers[0] if plan.owners is None else None
+    controller = plan.controllers[0]
+    a, b = controller.ratio.numerator, controller.ratio.denominator
     for event in events:
-        line = event.get("line")
-        if line is None or event["kind"] not in ("drive", "readout", "wait"):
-            continue
-        start, duration = event["start_cycles"], event["duration_cycles"]
-        if start is None or duration is None:
-            continue
-        role, qudit = lines[line]["role"], lines[line]["qudit"]
-        controller = plan.controller_of(role, qudit)
-        grid = controller.grid
-        if start % grid == 0 and duration % grid == 0:
-            continue
-        where = (
-            f"the {role} line of qudit {qudit} (line {line}), on the {controller.name} at "
-            f"{_ghz(controller.clock_ghz)}, which starts and times operations every {grid} "
-            "program cycles"
-        )
-        problems = []
-        if duration % grid:
-            problems.append(
-                f"lasts {duration} cycles; the nearest valid lengths are "
-                f"{duration // grid * grid} and {-(-duration // grid) * grid} "
-                f"(pulse.cycles_on(line, {duration}) rounds onto the grid)"
+        # A submit's or an answer's "line" is its link.
+        line = event["line"] if event["kind"] in _GRIDDED else None
+        if single is None:
+            controller = (
+                plan.controllers[0]
+                if line is None
+                else plan.controller_of(lines[line]["role"], lines[line]["qudit"])
             )
-        if start % grid:
-            problems.append(
-                "starts off the grid; the nearest valid starts are "
-                f"{start // grid * grid} and {-(-start // grid) * grid}"
-            )
-        found.append(f"{where}: the {event['kind']} at {start} " + ", and ".join(problems))
+            a, b = controller.ratio.numerator, controller.ratio.denominator
+        start = event["start_cycles"]
+        duration = event["duration_cycles"]
+        if (
+            b > 1
+            and line is not None
+            and start is not None
+            and duration is not None
+            and (start % b or duration % b)
+        ):
+            found.append(_off_grid(controller, lines[line], line, event["kind"], start, duration))
+        if convert and a != b:
+            if start is not None:
+                event["start_cycles"] = -((-start * a) // b)
+            if duration is not None:
+                event["duration_cycles"] = -((-duration * a) // b)
+            end = event["end_cycles"]
+            if end is not None:
+                event["end_cycles"] = -((-end * a) // b)
+            for key in EVENT_BOUNDS:
+                value = event.get(key)
+                if value is not None:
+                    event[key] = -((-value * a) // b)
+            for key in EVENT_LOWER_BOUNDS:
+                value = event.get(key)
+                if value is not None:
+                    event[key] = value * a // b
+            tree = event.get("waveform") if waveforms else None
+            if tree is not None:
+                _scale(tree, a / b)
     return found
 
 
-_TIME_PARAMETERS = frozenset({"duration", "sigma", "beta", "risefall"})
+_GRIDDED = frozenset({"drive", "readout", "wait"})
 
 
-def _scaled_waveform(node: Mapping[str, Any], ratio: Fraction) -> dict[str, Any]:
-    out = dict(node)
+def off_grid_messages(
+    controller: ControllerClock,
+    lines: Sequence[Mapping[str, Any]],
+    events: Sequence[Mapping[str, Any]],
+    off: Sequence[tuple[int, int, int]],
+) -> list[str]:
+    """The violations of the line events the native walk found off
+    *controller*'s grid, each (index, start, duration) in program cycles."""
+    found = []
+    for index, start, duration in off:
+        event = events[index]
+        line = event["line"]
+        found.append(_off_grid(controller, lines[line], line, event["kind"], start, duration))
+    return found
+
+
+def _off_grid(
+    controller: ControllerClock,
+    line: Mapping[str, Any],
+    index: int,
+    kind: str,
+    start: int,
+    duration: int,
+) -> str:
+    role, qudit, grid = line["role"], line["qudit"], controller.grid
+    where = (
+        f"the {role} line of qudit {qudit} (line {index}), on the {controller.name} at "
+        f"{_ghz(controller.clock_ghz)}, which starts and times operations every {grid} "
+        "program cycles"
+    )
+    problems = []
+    if duration % grid:
+        problems.append(
+            f"lasts {duration} cycles; the nearest valid lengths are "
+            f"{duration // grid * grid} and {-(-duration // grid) * grid} "
+            f"(pulse.cycles_on(line, {duration}) rounds onto the grid)"
+        )
+    if start % grid:
+        problems.append(
+            "starts off the grid; the nearest valid starts are "
+            f"{start // grid * grid} and {-(-start // grid) * grid}"
+        )
+    return f"{where}: the {kind} at {start} " + ", and ".join(problems)
+
+
+# The times of each kind of export record, in cycles; lower bounds round down.
+EVENT_TIMES = ("start_cycles", "duration_cycles", "end_cycles")
+# A run-time wait's bounds, which only some events have.
+EVENT_BOUNDS = ("max_cycles",)
+EVENT_LOWER_BOUNDS = ("min_cycles",)
+EMULATION_EVENT_TIMES = ("start_cycles", "duration_cycles", "epoch_start_cycles")
+EPOCH_TIMES = ("start_cycles", "max_shift_cycles")
+EPOCH_LOWER_BOUNDS = ("min_shift_cycles",)
+CALL_TIMES = (
+    "submit_cycles",
+    "submit_duration_cycles",
+    "due_cycles",
+    "deadline_cycles",
+    "exposed_cycles",
+    "first_use_cycles",
+    "taken_cycles",
+)
+
+
+def to_own(
+    records: Sequence[dict[str, Any]],
+    keys: Sequence[str],
+    controller: ControllerClock,
+    lower_bounds: Sequence[str] = (),
+) -> None:
+    """Convert the *keys* times of *records* (each has every key) to
+    *controller*'s own cycles, in place, rounded up (line times are on its
+    grid, so exact), and the *lower_bounds* rounded down."""
+    a, b = controller.ratio.numerator, controller.ratio.denominator
+    for record in records:
+        for key in keys:
+            value = record[key]
+            if value is not None:
+                record[key] = -((-value * a) // b)
+        for key in lower_bounds:
+            value = record[key]
+            if value is not None:
+                record[key] = value * a // b
+
+
+def _scale(node: dict[str, Any], factor: float) -> None:
     params = node.get("params")
     if params is not None:
-        factor = float(ratio)
-        out["params"] = {
-            k: (v * factor if k in _TIME_PARAMETERS and v is not None else v)
-            for k, v in params.items()
-        }
-    if "of" in node:
-        out["of"] = [_scaled_waveform(child, ratio) for child in node["of"]]
-    return out
+        for key in _TIMES_OF.get(node["shape"], ()):
+            value = params[key]
+            if value is not None:
+                params[key] = value * factor
+    children = node.get("of")
+    if children:
+        for child in children:
+            _scale(child, factor)
 
 
-def own_cycles(data: Any, controller: ControllerClock) -> Any:
-    """*data* with every ``*_cycles`` time in *controller*'s own cycles,
-    rounded up (line times are on its grid, so exact), and every waveform's
-    time parameters scaled."""
-    if isinstance(data, list):
-        return [own_cycles(item, controller) for item in data]
-    if not isinstance(data, dict):
-        return data
-    out: dict[str, Any] = {}
-    for key, value in data.items():
-        if key.endswith("_cycles") and isinstance(value, int) and not isinstance(value, bool):
-            out[key] = controller.own(value)
-        elif key == "waveform" and isinstance(value, dict):
-            out[key] = _scaled_waveform(value, controller.ratio)
-        elif isinstance(value, (dict, list)):
-            out[key] = own_cycles(value, controller)
-        else:
-            out[key] = value
-    return out
+# The time parameters of each waveform shape, as ``controller._PARAMETERS``
+# names them.
+_TIMES_OF = {
+    "square": ("duration",),
+    "gaussian": ("duration", "sigma"),
+    "gaussian_square": ("duration", "sigma", "risefall"),
+    "drag": ("duration", "sigma", "beta"),
+    "cosine": ("duration",),
+    "tanh_ramp": ("duration", "sigma"),
+    "custom": ("duration",),
+}
 
 
 def clock_keys(plan: ClockPlan, controller: ControllerClock) -> dict[str, float]:

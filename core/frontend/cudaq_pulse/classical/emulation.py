@@ -106,11 +106,16 @@ def export(lowered: Any) -> dict[str, Any]:
     run time by the lengths of the run-time waits before it on its lines. An
     epoch's shift adds to that of the epoch it follows, the one before it
     unless it names another in ``after``."""
+    return _export(lowered, True)
+
+
+def _export(lowered: Any, with_events: bool) -> dict[str, Any]:
+    """``export``; without *with_events*, its ``events`` are left empty."""
     epochs, after = lowered._epochs()
     starts = [e.start_cycles for e in epochs]
-    epoch_of = lowered._event_epochs(syncs=False)
+    epoch_of = lowered._event_epochs(syncs=False) if with_events else None
     events = []
-    for position, event in enumerate(lowered.schedule):
+    for position, event in enumerate(lowered.schedule if with_events else ()):
         index = epoch_of[position] if epoch_of and event.start_cycles is not None else 0
         events.append(
             {
@@ -145,15 +150,21 @@ def export(lowered: Any) -> dict[str, Any]:
         ],
         "manifest": manifest(lowered),
     }
-    clocks = _clocks.plan(machine.controller, lowered.target.clock_ghz, machine.reference_clock_ghz)
+    clocks = (lowered.generic or lowered).clocks
     if clocks is None:
         return data
     own = clocks.controllers[0]
     if own.ratio != 1:
-        data = _clocks.own_cycles(data, own)
+        _clocks.to_own(events, _clocks.EMULATION_EVENT_TIMES, own)
+        _clocks.to_own(data["epochs"], _clocks.EPOCH_TIMES, own, _clocks.EPOCH_LOWER_BOUNDS)
+        _clocks.to_own(data["calls"], _clocks.CALL_TIMES, own)
         data["clock_ghz"] = own.clock_ghz
-    keys = _clocks.clock_keys(clocks, own)
-    return {"format": FORMAT, "clock_ghz": data["clock_ghz"], **keys, **data}
+    return {
+        "format": FORMAT,
+        "clock_ghz": data["clock_ghz"],
+        **_clocks.clock_keys(clocks, own),
+        **data,
+    }
 
 
 # ── Transport and channels ───────────────────────────────────────────────────

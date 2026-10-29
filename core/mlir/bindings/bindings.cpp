@@ -1727,14 +1727,21 @@ public:
     std::vector<ControllerLine> lines;
     {
       nb::gil_scoped_release release;
-      std::lock_guard<std::recursive_mutex> guard(*lock_);
-      walk = std::make_unique<ControllerWalk>(clock());
-      if (runTime_)
-        controllerEvents<true>(*walk, lines);
-      else
-        controllerEvents<false>(*walk, lines);
+      walk = controllerWalk(lines);
     }
     return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs));
+  }
+
+  /// A ControllerWalk of the module, its lines in `lines`; without the GIL.
+  std::unique_ptr<ControllerWalk>
+  controllerWalk(std::vector<ControllerLine> &lines) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto walk = std::make_unique<ControllerWalk>(clock());
+    if (runTime_)
+      controllerEvents<true>(*walk, lines);
+    else
+      controllerEvents<false>(*walk, lines);
+    return walk;
   }
 
   template <bool RunTime>
@@ -1756,6 +1763,71 @@ public:
           mlir::isa<pulse::GetDriveLineOp>(op) ? "drive" : "readout", qubit);
     });
     walk.block<RunTime>(*module_->getBody());
+  }
+
+  /// A line event that does not start and last whole multiples of its
+  /// controller's grid: (index, start, duration) in program cycles.
+  using OffGridEvent = std::tuple<int64_t, int64_t, int64_t>;
+
+  /// `controller_events()` for a controller counting `num` of its cycles
+  /// every `den` program cycles: start, duration and a variable wait's
+  /// longest length in its cycles, rounded up, and its shortest rounded
+  /// down; with the drives, readouts and waits off its grid of `den`, and
+  /// (index, end) for the events whose end, rounded up in its cycles, is not
+  /// its start plus its duration: (lines, events, off grid, ends).
+  nb::tuple controller_events_on(nb::handle parameters, nb::handle amplitudes,
+                                 nb::list epochs, int64_t num, int64_t den) {
+    if (num < 1 || den < 1)
+      throw std::invalid_argument("controller_events_on: the ratio must be "
+                                  "positive");
+    ControllerObjects objects(parameters, amplitudes);
+    std::unique_ptr<ControllerWalk> walk;
+    std::vector<ControllerLine> lines;
+    std::vector<OffGridEvent> offGrid;
+    std::vector<std::tuple<int64_t, int64_t>> ends;
+    {
+      nb::gil_scoped_release release;
+      walk = controllerWalk(lines);
+      ownCycles(*walk, num, den, offGrid, ends);
+    }
+    return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs),
+                          nb::cast(offGrid), nb::cast(ends));
+  }
+
+  static void ownCycles(ControllerWalk &walk, int64_t num, int64_t den,
+                        std::vector<OffGridEvent> &offGrid,
+                        std::vector<std::tuple<int64_t, int64_t>> &ends) {
+    auto own = [&](std::optional<int64_t> &cycles) {
+      if (cycles)
+        *cycles = (*cycles * num + den - 1) / den;
+    };
+    if (num != den)
+      for (auto &known : walk.known) {
+        own(known.maxCycles);
+        if (known.minCycles)
+          *known.minCycles = *known.minCycles * num / den;
+      }
+    auto &events = walk.result;
+    for (size_t index = 0; index < events.size(); ++index) {
+      auto &event = events[index];
+      const std::string &kind = std::get<0>(event);
+      auto &start = std::get<3>(event);
+      auto &duration = std::get<4>(event);
+      if (den > 1 && start && duration &&
+          (kind == "drive" || kind == "readout" || kind == "wait") &&
+          (*start % den || *duration % den))
+        offGrid.emplace_back(static_cast<int64_t>(index), *start, *duration);
+      if (num != den) {
+        std::optional<int64_t> end;
+        if (start && duration)
+          end = *start + *duration;
+        own(start);
+        own(duration);
+        own(end);
+        if (end && *end != *start + *duration)
+          ends.emplace_back(static_cast<int64_t>(index), *end);
+      }
+    }
   }
 
   /// (function, link, iteration, submit start, submit duration, due,
@@ -4073,6 +4145,11 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
            "The lines and events of the export for a controller, as "
            "controller.export() gives them")
+      .def("controller_events_on", &PulseModule::controller_events_on,
+           nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
+           nb::arg("num"), nb::arg("den"),
+           "controller_events() in a controller's own cycles, num of them "
+           "every den program cycles, with the line events off its grid")
       .def("simulation_module", &PulseModule::simulation_module,
            "This module with loops holding calls unrolled, for simulation")
       .def("next_call", &PulseModule::next_call, nb::arg("path"),

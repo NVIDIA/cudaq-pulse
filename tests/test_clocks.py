@@ -11,6 +11,7 @@ controller's own cycles."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 
@@ -314,6 +315,54 @@ def test_the_emulation_export_counts_the_controllers_own_cycles():
     assert starts == [e.start // 4 for e in lowered.schedule]
 
 
+def test_every_waveform_time_is_scaled():
+    from cudaq_pulse.controller import _PARAMETERS
+
+    times = {"duration", "sigma", "beta", "risefall"}
+    shapes = {s for s, names in _PARAMETERS.items() if "duration" in names}
+    assert set(_clocks._TIMES_OF) == shapes
+    for shape in shapes:
+        assert _clocks._TIMES_OF[shape] == tuple(k for k in _PARAMETERS[shape] if k in times)
+
+
+def test_every_time_in_the_exports_is_converted():
+    from tests.classical import _schedule_matrix as matrix
+
+    known = {
+        *_clocks.EVENT_TIMES,
+        *_clocks.EVENT_BOUNDS,
+        *_clocks.EVENT_LOWER_BOUNDS,
+        *_clocks.EMULATION_EVENT_TIMES,
+        *_clocks.EPOCH_TIMES,
+        *_clocks.EPOCH_LOWER_BOUNDS,
+        *_clocks.CALL_TIMES,
+    }
+    found = set()
+
+    def walk(data):
+        if isinstance(data, dict):
+            found.update(k for k in data if k.endswith("_cycles"))
+            for key, value in data.items():
+                if key != "limits":  # the controller's own, as given
+                    walk(value)
+        elif isinstance(data, list):
+            for value in data:
+                walk(value)
+
+    machine = dataclasses.replace(matrix.MACHINE, controller=ControllerLimits(clock_ghz=1.0))
+    for case in matrix.all_cases()[::7]:
+        if matrix.expected_error(case) is not None:
+            continue
+        try:
+            lowered = matrix.lower_case(case, Q, machine=machine)
+        except (ControllerLimitError, ValueError):
+            continue
+        walk(lowered.export_controller())
+        walk(lowered.export_emulation())
+    assert "submit_cycles" in found and "min_shift_cycles" in found
+    assert found <= known
+
+
 def test_a_single_clock_export_is_unchanged():
     lowered = pulse.compile(mixed, machine=_machine(2.0)).lower(Q[0], Q[1])
     program = lowered.export_controller()
@@ -329,6 +378,16 @@ def test_a_faster_controller_counts_more_cycles():
     drive = next(e for e in program["events"] if e["kind"] == "drive")
     assert drive["duration_cycles"] == 82 and drive["waveform"]["params"]["duration"] == 82.0
     assert "line_grid" not in lowered.mlir()
+
+
+def test_a_run_time_wait_has_its_bounds_in_the_controllers_cycles():
+    from tests.test_controller import answered
+
+    for clock_ghz, bounds in ((None, (8, 400)), (1.0, (4, 200)), (4.0, (16, 800))):
+        machine = MachineModel() if clock_ghz is None else _machine(clock_ghz)
+        program = pulse.compile(answered, machine=machine).lower(Q[0]).export_controller()
+        wait = next(e for e in program["events"] if e["kind"] == "wait")
+        assert (wait["min_cycles"], wait["max_cycles"]) == bounds
 
 
 # ── The reference clock ──────────────────────────────────────────────────────
