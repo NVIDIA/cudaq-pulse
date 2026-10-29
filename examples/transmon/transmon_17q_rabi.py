@@ -6,7 +6,7 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""Rabi oscillation on qubit D5 using the Krinner 17-qubit target.
+"""Rabi oscillation on qubit D5 using the 17-qubit transmon target.
 
 Demonstrates:
   - Loading the pre-defined transmon target
@@ -21,10 +21,10 @@ import shutil
 import subprocess
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import transmon_krinner_17q
+from cudaq_pulse.targets import transmon_17q
 
-target = transmon_krinner_17q()
-dev = pulse.device("transmon_krinner_17q")
+target = transmon_17q()
+dev = pulse.device("transmon_17q")
 qubit_idx = 4  # D5 -- central data qubit
 
 qubit_d5 = target.qubits[qubit_idx]

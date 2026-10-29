@@ -6,7 +6,7 @@
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
 """The simulated space holds the qudits a program uses, not every index up to
-the largest: a pair at indices 13 and 3 of the 17-qudit Krinner device is a
+the largest: a pair at indices 13 and 3 of the 17-qudit transmon_17q device is a
 two-mode problem, with the same physics as on a device of just those two."""
 
 from __future__ import annotations
@@ -18,13 +18,13 @@ import numpy as np
 import pytest
 from cudaq_pulse.targets import TargetDescription
 
-_KRINNER = pulse.device("transmon_krinner_17q")
+_TRANSMON_17Q = pulse.device("transmon_17q")
 
 
 def _slice(indices):
-    """A device of the Krinner qudits *indices*, renumbered 0, 1, ... in
+    """A device of the transmon_17q qudits *indices*, renumbered 0, 1, ... in
     increasing order, with the couplings and crosstalk between them."""
-    target = _KRINNER.target
+    target = _TRANSMON_17Q.target
     new = {q: i for i, q in enumerate(sorted(indices))}
 
     def renumbered(entries):
@@ -35,7 +35,7 @@ def _slice(indices):
         ]
 
     sliced = TargetDescription(
-        name="krinner-slice",
+        name="transmon-17q-slice",
         qubits={i: dataclasses.replace(target.qubits[q], index=i) for q, i in new.items()},
         couplings=renumbered(target.couplings),
         crosstalk=renumbered(target.crosstalk),
@@ -81,7 +81,7 @@ def _same(a, b):
 
 
 def test_a_high_index_pair_is_a_two_mode_problem():
-    q = _KRINNER.qudit_handles
+    q = _TRANSMON_17Q.qudit_handles
     lowered = pair.lower(q[13], q[3])
     assert lowered.qudits == (3, 13)
     result = pulse.simulate(lowered, levels=3, t_end=2.0)
@@ -91,7 +91,7 @@ def test_a_high_index_pair_is_a_two_mode_problem():
 
 
 def test_bound_but_unused_qudits_are_not_simulated():
-    q = _KRINNER.qudit_handles
+    q = _TRANSMON_17Q.qudit_handles
 
     @pulse.kernel
     def one_of_two(a, b):
@@ -104,7 +104,7 @@ def test_bound_but_unused_qudits_are_not_simulated():
 
 @pytest.mark.parametrize("levels", [2, 3])
 def test_a_slice_simulates_like_the_device_of_its_qudits(levels):
-    q = _KRINNER.qudit_handles
+    q = _TRANSMON_17Q.qudit_handles
     h, new = _slice((13, 3))
     on_chip = pulse.simulate(pair.lower(q[13], q[3]), levels=levels)
     alone = pulse.simulate(pair.lower(h[new[13]], h[new[3]]), levels=levels)
@@ -113,7 +113,7 @@ def test_a_slice_simulates_like_the_device_of_its_qudits(levels):
 
 
 def test_modes_are_ordered_by_device_index_whatever_the_argument_order():
-    q = _KRINNER.qudit_handles
+    q = _TRANSMON_17Q.qudit_handles
     h, new = _slice((13, 0, 3))
     for order in ((13, 0, 3), (3, 13, 0), (0, 3, 13)):
         on_chip = pulse.simulate(triple.lower(*(q[i] for i in order)), levels=2)
@@ -128,7 +128,7 @@ def test_modes_are_ordered_by_device_index_whatever_the_argument_order():
 
 @pytest.mark.parametrize("measured", [13, 3])
 def test_measurements_report_device_qudits(measured):
-    q = _KRINNER.qudit_handles
+    q = _TRANSMON_17Q.qudit_handles
     h, new = _slice((13, 3))
     other = 3 if measured == 13 else 13
     on_chip = pulse.simulate(
@@ -147,7 +147,7 @@ def test_measurements_report_device_qudits(measured):
 
 
 def test_an_initial_state_spans_the_used_qudits():
-    q = _KRINNER.qudit_handles
+    q = _TRANSMON_17Q.qudit_handles
     h, new = _slice((13, 3))
     psi = np.zeros(4)
     psi[0b10] = 1.0  # qudits[1] = 13 excited
@@ -162,7 +162,7 @@ def test_an_initial_state_spans_the_used_qudits():
 
 @pytest.mark.gpu
 def test_gpu_simulates_a_high_index_pair_like_the_cpu():
-    q = _KRINNER.qudit_handles
+    q = _TRANSMON_17Q.qudit_handles
     lowered = drive_and_measure.lower(q[13], q[3])
     cpu = pulse.simulate(lowered, levels=3)
     gpu = pulse.simulate(lowered, levels=3, backend="gpu")

@@ -52,7 +52,7 @@ levels have names says in its docstring which number each name has.
 Shipped targets
 ---------------
 
-.. autofunction:: cudaq_pulse.targets.transmon_krinner_17q
+.. autofunction:: cudaq_pulse.targets.transmon_17q
 
 .. autofunction:: cudaq_pulse.targets.transmon_generic
 

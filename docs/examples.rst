@@ -10,7 +10,7 @@ Examples
 
 The examples in the ``examples/`` directory cover pulse-level programming
 from single-qubit Rabi oscillations to multi-qubit error-correction cycles.
-Every example except ``transmon/krinner_evolve_gpu.py`` runs on a CPU-only
+Every example except ``transmon/transmon_17q_evolve_gpu.py`` runs on a CPU-only
 machine, Linux or macOS, and the test suite runs each of them. Those marked
 *(simulates)* also evolve the program with the NumPy reference
 (``pulse.simulate``); the others compile kernels and print their MLIR,
@@ -149,15 +149,15 @@ Hardware Target Examples
 
    * - File
      - Description
-   * - ``krinner_rabi.py``
-     - Rabi oscillation on the Krinner 17-qubit transmon target
-   * - ``krinner_full_pipeline.py``
+   * - ``transmon_17q_rabi.py``
+     - Rabi oscillation on the 17-qubit transmon target
+   * - ``transmon_17q_full_pipeline.py``
      - Each stage of the native lowering: Pulse MLIR, QOp, and LLVM IR
-   * - ``krinner_evolve_gpu.py``
-     - ``pulse.simulate(..., backend="gpu")`` on the Krinner target (needs an
+   * - ``transmon_17q_evolve_gpu.py``
+     - ``pulse.simulate(..., backend="gpu")`` on the 17-qubit transmon target (needs an
        NVIDIA GPU and the ``[cu12]`` or ``[cu13]`` extra)
-   * - ``krinner_surface_code_cycle.py``
-     - Timeline of one error correction cycle from the Krinner lattice and CZ schedule
+   * - ``transmon_17q_surface_code_cycle.py``
+     - Timeline of one error correction cycle from the 17-qubit lattice and CZ schedule
 
 Running Examples
 ----------------

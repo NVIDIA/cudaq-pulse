@@ -35,8 +35,8 @@ from cudaq_pulse.targets.calibration import Calibration
 from tests._handles import LADDER, Q
 
 # The shipped target and the calibration it carries by default.
-_SHIPPED_TARGET = "transmon_krinner_17q"
-_SHIPPED_CALIBRATION = "krinner17"
+_SHIPPED_TARGET = "transmon_17q"
+_SHIPPED_CALIBRATION = "transmon_17q"
 
 
 def _round_trip(value):

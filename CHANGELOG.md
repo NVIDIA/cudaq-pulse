@@ -248,11 +248,11 @@ behavior may change in any 0.x release.
   `max-readouts`, `readout-latency`, `switch-penalty`, `alap`).
 - **Devices and targets.** `pulse.device` is the one device getter: it
   describes a machine as a target plus a qudit layout, from a registered
-  target name (`pulse.device("transmon_krinner_17q")`), a config mapping
+  target name (`pulse.device("transmon_17q")`), a config mapping
   or file, or, with no argument, the process target. Devices compare by
   content and share compiled kernels. Target descriptions are
   `cudaq_pulse.targets.TargetDescription`; the shipped target,
-  `"transmon_krinner_17q"`, is a 17-qubit transmon device built from
+  `"transmon_17q"`, is a 17-qubit transmon device built from
   Krinner et al., Nature 605, 669 (2022).
   A target's `model` (`cudaq_pulse.targets.TransmonModel` by default, a
   `SimulationModel` class or instance, or `None`) says how the simulator
@@ -261,7 +261,7 @@ behavior may change in any 0.x release.
   label changes the physics: targets have no `architecture`.
   A `Coupling`'s gate fields (`gate_type`, `gate_duration_ns`,
   `gate_buffer_ns`, `gate_fidelity`) default to `None`, unspecified; the
-  Krinner target gives its published CZ values. A config or file with
+  `transmon_17q` target gives its published CZ values. A config or file with
   problems raises `pulse.DeviceDefinitionError` (a `ValueError`) listing all
   of them in `problems`, each a `pulse.Problem` with its path in the config
   (`layout[2]`), the offending value and a fix, and for a file its line and
@@ -273,9 +273,9 @@ behavior may change in any 0.x release.
   apart from the published target, and a device config takes `"calibration"`
   and `"cooldown"`. `cudaq_pulse.targets.transmon_model` computes
   flux-tunable transmon levels and charge-coupled pairs from circuit values.
-  The shipped `krinner17` calibration has one device-wide charge coupling,
-  fitted to the measured `|11>`-`|20>` coupling of X2-D4, so the Krinner
-  target's exchange (5.67-6.08 MHz) and idle ZZ (-4.5 to -7.3 kHz) depend on
+  The shipped `transmon_17q` calibration has one device-wide charge coupling,
+  fitted to the measured `|11>`-`|20>` coupling of X2-D4, so the
+  `transmon_17q` target's exchange (5.67-6.08 MHz) and idle ZZ (-4.5 to -7.3 kHz) depend on
   each pair's frequencies; calibrated qubits convert detunings to and from flux quanta.
   It also holds in-model sudden-net-zero CZ knobs for all 24 pairs (mean
   duration 65.0 +- 4.8 ns against the published 68(7) ns), each with its

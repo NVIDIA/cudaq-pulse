@@ -63,10 +63,10 @@ def _count(name: str, factory: Callable[[int], Any]) -> TargetFactory:
 
 
 def _builtin_factories() -> dict[str, TargetFactory]:
-    from .transmon import transmon_generic, transmon_krinner_17q
+    from .transmon import transmon_17q, transmon_generic
 
     return {
-        "transmon_krinner_17q": _no_argument("transmon_krinner_17q", transmon_krinner_17q),
+        "transmon_17q": _no_argument("transmon_17q", transmon_17q),
         "transmon_generic": _count("transmon_generic", transmon_generic),
     }
 
@@ -150,9 +150,9 @@ def current_target() -> Device:
 def _no_target_message() -> str:
     return (
         "device() with no argument returns the process target, and none is "
-        'configured: name a target, as device("transmon_krinner_17q"), '
+        'configured: name a target, as device("transmon_17q"), '
         "or set one of:\n"
-        f"    {ENV_VAR}=transmon_krinner_17q python script.py\n"
-        "    python -m cudaq_pulse --target transmon_krinner_17q script.py\n"
+        f"    {ENV_VAR}=transmon_17q python script.py\n"
+        "    python -m cudaq_pulse --target transmon_17q script.py\n"
         f"Available targets: {', '.join(available_targets())}"
     )

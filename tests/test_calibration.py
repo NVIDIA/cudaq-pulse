@@ -5,7 +5,7 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""The shipped Krinner calibration and loading calibrations onto devices."""
+"""The shipped transmon_17q calibration and loading calibrations onto devices."""
 
 import json
 import math
@@ -13,8 +13,8 @@ import re
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.targets import _krinner17 as _k
-from cudaq_pulse.targets import transmon_krinner_17q
+from cudaq_pulse.targets import _transmon_17q as _k
+from cudaq_pulse.targets import transmon_17q
 from cudaq_pulse.targets.calibration import _SHIPPED, Calibration
 from cudaq_pulse.targets.transmon_model import anchored_charge_coupling_hz
 
@@ -23,7 +23,7 @@ KINDS = {"published", "digitized", "fitted"}
 
 @pytest.fixture(scope="module")
 def cal():
-    return Calibration.load("krinner17")
+    return Calibration.load("transmon_17q")
 
 
 def _leaves(node, path=()):
@@ -39,7 +39,7 @@ def _leaves(node, path=()):
 
 
 def test_every_value_carries_its_kind_source_and_cooldown():
-    data = json.loads((_SHIPPED / "krinner17.json").read_text())
+    data = json.loads((_SHIPPED / "transmon_17q.json").read_text())
     leaves = list(_leaves(data))
     assert len(leaves) > 200
     for path, leaf in leaves:
@@ -51,7 +51,7 @@ def test_every_value_carries_its_kind_source_and_cooldown():
 
 
 def test_the_shipped_file_holds_no_local_paths_or_working_notes():
-    text = (_SHIPPED / "krinner17.json").read_text()
+    text = (_SHIPPED / "transmon_17q.json").read_text()
     assert not re.search(
         r"\.py\b|/(?:Users|home)/|\bTODO\b|\bdraft\b|unpublished", text, re.IGNORECASE
     )
@@ -63,17 +63,17 @@ def test_cooldowns_and_provenance(cal):
     assert ec["kind"] == "fitted" and ec["units"] == "Hz" and "Tab. I" in ec["source"]
     assert cal.value("coupling", "device_default", "g_11_20") == 7.0e6
     with pytest.raises(ValueError, match="no cooldown"):
-        Calibration.load("krinner17", cooldown="nope")
-    with pytest.raises(pulse.NotFoundError, match="krinner17"):
+        Calibration.load("transmon_17q", cooldown="nope")
+    with pytest.raises(pulse.NotFoundError, match="transmon_17q"):
         Calibration.load("missing")
 
 
 def test_a_loaded_calibration_keeps_the_values_it_parsed():
     # Calibration.load keeps the dict it parsed without copying it, and the
     # shipped one is shared by every device: no use of it may change it.
-    shipped = pulse.device("transmon_krinner_17q").calibration
-    parsed = json.loads((_SHIPPED / "krinner17.json").read_text())
-    for cal in (shipped, Calibration.load("krinner17", cooldown="HEL25")):
+    shipped = pulse.device("transmon_17q").calibration
+    parsed = json.loads((_SHIPPED / "transmon_17q.json").read_text())
+    for cal in (shipped, Calibration.load("transmon_17q", cooldown="HEL25")):
         pair = cal.pairs[0]
         qubit = cal.flux_qubits[0]
         cal.cooldowns["K22-main"] = "changed"
@@ -83,7 +83,7 @@ def test_a_loaded_calibration_keeps_the_values_it_parsed():
         cal.circuit(qubit), cal.idle_flux(qubit), cal.charge_coupling_hz(pair)
         cal.pair(pair), cal.exchange_hz(pair), cal.idle_zz_hz(pair)
         cal.flux_for_detuning(qubit, cal.detuning_for_flux(qubit, 0.1))
-        cal.apply(transmon_krinner_17q()), cal.fingerprint, cal.target
+        cal.apply(transmon_17q()), cal.fingerprint, cal.target
         assert cal._data == parsed
     assert shipped._data is not parsed
 
@@ -146,24 +146,24 @@ def test_flux_quanta_and_detuning_convert_both_ways(cal):
     assert cal.detuning_for_flux("D4", 0.3) > 0
 
 
-def test_the_krinner_device_carries_the_shipped_calibration(cal):
-    dev = pulse.device({"target": "transmon_krinner_17q"})
+def test_the_17_qubit_device_carries_the_shipped_calibration(cal):
+    dev = pulse.device({"target": "transmon_17q"})
     assert dev.calibration == cal
-    assert dev.target is transmon_krinner_17q()
+    assert dev.target is transmon_17q()
 
 
 def test_a_device_loads_a_calibration_from_its_config(tmp_path, cal):
     # A calibration whose charge coupling is 10 % higher strengthens every
     # pair; without the stored idle exchange, the device computes it.
-    data = json.loads((_SHIPPED / "krinner17.json").read_text())
+    data = json.loads((_SHIPPED / "transmon_17q.json").read_text())
     couplings = data["coupling"]["charge_coupling_g_c"]
     couplings["calibration_A"]["value"] *= 1.1
     for entry in couplings["idle_exchange"].values():
         del entry["idle_frequencies_hz"]
     path = tmp_path / "custom.json"
     path.write_text(json.dumps(data))
-    base = pulse.device({"target": "transmon_krinner_17q"})
-    custom = pulse.device({"target": "transmon_krinner_17q", "calibration": str(path)})
+    base = pulse.device({"target": "transmon_17q"})
+    custom = pulse.device({"target": "transmon_17q", "calibration": str(path)})
     assert custom.calibration.name == "custom" and custom != base
 
     def x2_d4(dev):
@@ -177,15 +177,15 @@ def test_a_device_loads_a_calibration_from_its_config(tmp_path, cal):
 
     assert x2_d4(custom) == pytest.approx(1.1 * x2_d4(base), rel=1e-9)
     with pytest.raises(ValueError, match="cooldown"):
-        pulse.device({"target": "transmon_krinner_17q", "cooldown": "HEL25"})
+        pulse.device({"target": "transmon_17q", "cooldown": "HEL25"})
     other = pulse.device(
-        {"target": "transmon_krinner_17q", "calibration": "krinner17", "cooldown": "HEL25"}
+        {"target": "transmon_17q", "calibration": "transmon_17q", "cooldown": "HEL25"}
     )
     assert other.calibration.cooldown == "HEL25"
 
 
 def test_a_published_only_target_uses_the_published_value_over_sqrt2():
-    target = transmon_krinner_17q(calibration=None)
+    target = transmon_17q(calibration=None)
     assert {round(c.coupling_strength_hz) for c in target.couplings} == {
         round(7.0e6 / math.sqrt(2.0)),
         round(7.4e6 / math.sqrt(2.0)),

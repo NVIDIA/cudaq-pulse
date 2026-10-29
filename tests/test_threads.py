@@ -128,7 +128,7 @@ def test_concurrent_first_loads_build_each_target_and_calibration_once(monkeypat
         "load",
         staticmethod(lambda *a, **k: loads.append(a) or load(*a, **k)),
     )
-    targets = _together(16, lambda i: transmon.transmon_krinner_17q())
+    targets = _together(16, lambda i: transmon.transmon_17q())
     assert len(loads) == 1
     assert all(t is targets[0] for t in targets)
 

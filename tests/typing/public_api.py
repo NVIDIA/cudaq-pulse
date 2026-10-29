@@ -28,9 +28,9 @@ pulse.ops.wf_scale(0.5, wave)  # type: ignore[arg-type]
 pulse.ops.wf_scale(waveform=wave, scalar=0.5)  # type: ignore[call-arg]
 assert_type(pulse.ops.wf_add(wave, wave), Waveform)
 
-dev = pulse.device("transmon_krinner_17q")
+dev = pulse.device("transmon_17q")
 assert_type(dev, pulse.Device)
-assert_type(pulse.device({"target": "transmon_krinner_17q"}), pulse.Device)
+assert_type(pulse.device({"target": "transmon_17q"}), pulse.Device)
 assert_type(dev.qudit_handles[0], pulse.Qudit)
 assert_type(dev.qudit_handles[0:2], pulse.Register)
 assert_type(dev.qudit_handles[[0, 1]], pulse.Register)

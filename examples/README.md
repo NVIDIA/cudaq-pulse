@@ -6,7 +6,7 @@ Run any example with the package installed:
 python examples/01_single_qubit_rabi.py
 ```
 
-Every example except `transmon/krinner_evolve_gpu.py` runs on a CPU-only
+Every example except `transmon/transmon_17q_evolve_gpu.py` runs on a CPU-only
 machine, Linux or macOS, and the test suite runs each of them. **Simulates**
 means the example also evolves the program with the NumPy reference
 (`pulse.simulate`); the others compile kernels and print their MLIR,
@@ -36,10 +36,10 @@ schedules or metrics. `cudaq-pulse-opt` is installed with the package.
 | [`custom_passes/python_pass.py`](custom_passes/python_pass.py) | A schedule check written in Python | CPU |
 | [`custom_passes/cpp/`](custom_passes/cpp) | An MLIR pass plugin for `cudaq-pulse-opt --load-pass-plugin` | CPU (builds with CMake) |
 | [`controller_backend/toy_controller/__init__.py`](controller_backend/toy_controller/__init__.py) | A toy controller backend found by its entry point: limits, `emit` and `run` | CPU |
-| [`transmon/krinner_rabi.py`](transmon/krinner_rabi.py) | Rabi drive on the 17-qubit transmon device | CPU |
-| [`transmon/krinner_full_pipeline.py`](transmon/krinner_full_pipeline.py) | Each stage of the lowering: Pulse, QOp and LLVM IR | CPU |
-| [`transmon/krinner_surface_code_cycle.py`](transmon/krinner_surface_code_cycle.py) | The timeline of one surface-code cycle | CPU |
-| [`transmon/krinner_evolve_gpu.py`](transmon/krinner_evolve_gpu.py) | `pulse.simulate(..., backend="gpu")` | GPU: Linux, an NVIDIA GPU and the `[cu12]` or `[cu13]` extra |
+| [`transmon/transmon_17q_rabi.py`](transmon/transmon_17q_rabi.py) | Rabi drive on the 17-qubit transmon device | CPU |
+| [`transmon/transmon_17q_full_pipeline.py`](transmon/transmon_17q_full_pipeline.py) | Each stage of the lowering: Pulse, QOp and LLVM IR | CPU |
+| [`transmon/transmon_17q_surface_code_cycle.py`](transmon/transmon_17q_surface_code_cycle.py) | The timeline of one surface-code cycle | CPU |
+| [`transmon/transmon_17q_evolve_gpu.py`](transmon/transmon_17q_evolve_gpu.py) | `pulse.simulate(..., backend="gpu")` | GPU: Linux, an NVIDIA GPU and the `[cu12]` or `[cu13]` extra |
 
 Numbers 11 and 15 were removed and are not reused. The
 [examples page](https://nvidia.github.io/cudaq-pulse/examples.html) of the

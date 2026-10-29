@@ -86,7 +86,7 @@ class Coupling:
     ``gate_type``, ``gate_duration_ns``, ``gate_buffer_ns`` (the idle time
     around the gate) and ``gate_fidelity`` describe the edge's two-qubit gate.
     Each defaults to ``None``: the target does not specify it. Neither
-    compilation nor simulation reads them; ``transmon_krinner_17q`` gives the
+    compilation nor simulation reads them; ``transmon_17q`` gives the
     published values.
     """
 

@@ -15,7 +15,7 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.targets import Calibration, Qubit, TargetDescription
 
-KRINNER = "transmon_krinner_17q"
+TRANSMON_17Q = "transmon_17q"
 
 
 def _pair():
@@ -34,7 +34,7 @@ def _problems(config):
 
 def test_every_problem_of_a_config_is_reported_in_its_key_order():
     error = _problems(
-        {"layout": [0, 99, 0], "cooldown": "x", "target": KRINNER, "laout": [], "zones": []}
+        {"layout": [0, 99, 0], "cooldown": "x", "target": TRANSMON_17Q, "laout": [], "zones": []}
     )
     assert [(p.path, p.value) for p in error.problems] == [
         ("layout[1]", 99),
@@ -51,7 +51,7 @@ def test_every_problem_of_a_config_is_reported_in_its_key_order():
 
 
 def test_a_device_definition_error_is_a_value_error_and_a_pulse_error():
-    error = _problems({"target": KRINNER, "cooldown": "x"})
+    error = _problems({"target": TRANSMON_17Q, "cooldown": "x"})
     assert isinstance(error, ValueError) and isinstance(error, pulse.PulseError)
     assert not isinstance(error, TypeError)
 
@@ -61,18 +61,22 @@ def test_a_device_definition_error_is_a_value_error_and_a_pulse_error():
     [
         ({}, "target", "is missing; give a registered target name"),
         ({"target": 4}, "target", "must be a registered target name or a TargetDescription"),
-        ({"target": "transmon_krinner"}, "target", "did you mean 'transmon_krinner_17q'?"),
+        ({"target": "transmon_17"}, "target", "did you mean 'transmon_17q'?"),
         ({"target": "transmon_generic"}, "target", "needs a qudit count"),
-        ({"target": KRINNER, "layout": "0,1"}, "layout", "must be a list of carrier indices"),
-        ({"target": KRINNER, "layout": [0, True]}, "layout[1]", "must be a carrier index"),
-        ({"target": KRINNER, "calibration": "nope"}, "calibration", "no calibration 'nope'"),
-        ({"target": KRINNER, "calibration": 3}, "calibration", "must be a shipped calibration"),
+        ({"target": TRANSMON_17Q, "layout": "0,1"}, "layout", "must be a list of carrier indices"),
+        ({"target": TRANSMON_17Q, "layout": [0, True]}, "layout[1]", "must be a carrier index"),
+        ({"target": TRANSMON_17Q, "calibration": "nope"}, "calibration", "no calibration 'nope'"),
         (
-            {"target": KRINNER, "calibration": "krinner17", "cooldown": "nope"},
+            {"target": TRANSMON_17Q, "calibration": 3},
+            "calibration",
+            "must be a shipped calibration",
+        ),
+        (
+            {"target": TRANSMON_17Q, "calibration": "transmon_17q", "cooldown": "nope"},
             "cooldown",
             "has no cooldown 'nope'",
         ),
-        ({"target": KRINNER, "transport": {}}, "transport", "is reserved"),
+        ({"target": TRANSMON_17Q, "transport": {}}, "transport", "is reserved"),
     ],
 )
 def test_each_check_names_its_path(config, path, text):
@@ -82,9 +86,9 @@ def test_each_check_names_its_path(config, path, text):
 
 
 def test_a_calibration_loaded_for_another_cooldown():
-    calibration = Calibration.load("krinner17", cooldown="HEL25")
+    calibration = Calibration.load("transmon_17q", cooldown="HEL25")
     (problem,) = _problems(
-        {"target": KRINNER, "calibration": calibration, "cooldown": "K22-main"}
+        {"target": TRANSMON_17Q, "calibration": calibration, "cooldown": "K22-main"}
     ).problems
     assert problem.path == "cooldown"
     assert problem.fix == "pass Calibration.load(..., cooldown='K22-main')"
@@ -106,7 +110,7 @@ def test_the_device_constructor_checks_its_layout():
 def test_a_file_problem_gives_its_file_line_and_column(tmp_path: Path):
     path = tmp_path / "lab.json"
     path.write_text(
-        '{\n  "target": "transmon_krinner_17q",\n  "layout": [4, 5, 99],\n  "cooldown": "x"\n}\n'
+        '{\n  "target": "transmon_17q",\n  "layout": [4, 5, 99],\n  "cooldown": "x"\n}\n'
     )
     error = _problems(path)
     assert [(p.file, p.line, p.column, p.path) for p in error.problems] == [
@@ -115,8 +119,7 @@ def test_a_file_problem_gives_its_file_line_and_column(tmp_path: Path):
     ]
     assert str(error).splitlines() == [
         f"2 problems in device file {path}:",
-        f"  {path}:3:20: layout[2]: carrier 99 is not in target "
-        f"'transmon_krinner_17q' (it has 0..16)",
+        f"  {path}:3:20: layout[2]: carrier 99 is not in target 'transmon_17q' (it has 0..16)",
         f"  {path}:4:15: cooldown: 'x' is given without a calibration; add "
         '"calibration", a shipped name or a file path, or remove "cooldown"',
     ]
@@ -125,7 +128,7 @@ def test_a_file_problem_gives_its_file_line_and_column(tmp_path: Path):
 
 def test_a_file_that_is_not_json_or_not_an_object(tmp_path: Path):
     path = tmp_path / "lab.json"
-    path.write_text('{"target": "transmon_krinner_17q",\n  , }')
+    path.write_text('{"target": "transmon_17q",\n  , }')
     (problem,) = _problems(path).problems
     assert (problem.line, problem.column) == (2, 3)
     assert problem.message.startswith("not valid JSON: ")
@@ -141,15 +144,15 @@ def test_a_missing_file_is_an_os_error(tmp_path: Path):
 
 
 def test_a_target_name_is_a_device(tmp_path: Path, monkeypatch):
-    dev = pulse.device(KRINNER)
-    assert dev == pulse.device({"target": KRINNER}) and dev.name == KRINNER
+    dev = pulse.device(TRANSMON_17Q)
+    assert dev == pulse.device({"target": TRANSMON_17Q}) and dev.name == TRANSMON_17Q
     assert len(pulse.device("transmon_generic:4").qudit_handles) == 4
-    with pytest.raises(pulse.NotFoundError, match=r"did you mean 'transmon_krinner_17q'\?"):
-        pulse.device("transmon_krinner17q")
+    with pytest.raises(pulse.NotFoundError, match=r"did you mean 'transmon_17q'\?"):
+        pulse.device("transmon_transmon_17qq")
     with pytest.raises(FileNotFoundError):
         pulse.device("absent.json")
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "lab").write_text(json.dumps({"target": KRINNER, "layout": [4]}))
+    (tmp_path / "lab").write_text(json.dumps({"target": TRANSMON_17Q, "layout": [4]}))
     assert pulse.device("lab").layout == (4,)
 
 
@@ -157,7 +160,7 @@ def test_no_argument_is_the_process_target(monkeypatch):
     monkeypatch.setenv("CUDAQ_PULSE_TARGET", "transmon_generic:3")
     assert len(pulse.device().qudit_handles) == 3
     monkeypatch.delenv("CUDAQ_PULSE_TARGET")
-    with pytest.raises(pulse.NoTargetError, match=r'name a target, as device\("transmon_krinner'):
+    with pytest.raises(pulse.NoTargetError, match=r'name a target, as device\("transmon_17q'):
         pulse.device()
 
 
@@ -168,7 +171,7 @@ def test_a_config_that_is_not_a_mapping_is_a_type_error():
 
 def test_problems_survive_pickling(tmp_path: Path):
     path = tmp_path / "lab.json"
-    path.write_text(json.dumps({"target": KRINNER, "layout": [99]}))
+    path.write_text(json.dumps({"target": TRANSMON_17Q, "layout": [99]}))
     error = _problems(path)
     copy = pickle.loads(pickle.dumps(error))
     assert type(copy) is pulse.DeviceDefinitionError
@@ -177,7 +180,7 @@ def test_problems_survive_pickling(tmp_path: Path):
 
 
 def test_a_long_list_is_cut_at_ten():
-    error = _problems({"target": KRINNER, "layout": list(range(100, 112))})
+    error = _problems({"target": TRANSMON_17Q, "layout": list(range(100, 112))})
     assert len(error.problems) == 12
     lines = str(error).splitlines()
     assert lines[0] == "12 problems in the device config:"

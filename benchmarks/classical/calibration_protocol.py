@@ -43,7 +43,7 @@ sampled path per shot of the protocol:
 - the frequency binary search, 15 shots without reset,
   from a 1 MHz prior over detunings drawn from it;
 - the calibration chain of Marciniak et al. (2026) on the
-  Krinner twin's qubit 0 at T1 = 18.3 us; the paper reports T1 =
+  17-qubit transmon twin's qubit 0 at T1 = 18.3 us; the paper reports T1 =
   18.3 +- 4.7 us from the decay estimator;
 - for each step on its own: compile time, simulation time per protocol
   shot and per step, the step's time to decision on the device's timeline,
@@ -67,7 +67,7 @@ from pathlib import Path
 import cudaq_pulse as pulse
 import numpy as np
 from cudaq_pulse.runtime import _propagate
-from cudaq_pulse.targets import transmon_krinner_17q
+from cudaq_pulse.targets import transmon_17q
 
 _EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "21_calibration_protocol.py"
 P = runpy.run_path(str(_EXAMPLE), run_name="calibration_protocol")
@@ -82,7 +82,7 @@ def _bootstrap(values, stat, rng, n=2000):
 
 
 def _att_target():
-    base = transmon_krinner_17q()
+    base = transmon_17q()
     qubit = base.qubits[0]
     att = dataclasses.replace(
         qubit,
@@ -178,7 +178,7 @@ def adaptive_t1(n, seed):
 
 
 def binary_search(n, seed):
-    target = transmon_krinner_17q()
+    target = transmon_17q()
     dev = pulse.device({"target": target})
     lowered = pulse.compile(P["binary_search"], device=dev, machine=P["machine"]).lower(
         dev.qudit_handles[0], 15
@@ -213,7 +213,7 @@ def binary_search(n, seed):
 
 
 def chain(n, seed):
-    target = transmon_krinner_17q()
+    target = transmon_17q()
     dev = pulse.device({"target": target})
     lowered = pulse.compile(P["calibration_chain"], device=dev, machine=P["machine"]).lower(
         dev.qudit_handles[0], 20_000.0 * CLOCK
@@ -261,7 +261,7 @@ def chain(n, seed):
 
 
 def steps(seed):
-    target = transmon_krinner_17q()
+    target = transmon_17q()
     dev = pulse.device({"target": target})
     q = dev.qudit_handles[0]
     plant = P["chain_plant"](target)

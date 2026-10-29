@@ -184,11 +184,11 @@ def test_emulation_draws_iq_points_at_the_reported_levels():
     assert abs(complex(*np.mean(points, axis=0)) - c1) < 0.2
 
 
-def test_the_krinner_twin_separates_its_readout_states():
+def test_the_17_qubit_twin_separates_its_readout_states():
     from cudaq_pulse.classical import emulation
-    from cudaq_pulse.targets import transmon_krinner_17q
+    from cudaq_pulse.targets import transmon_17q
 
-    dev = pulse.device({"target": transmon_krinner_17q()})
+    dev = pulse.device({"target": transmon_17q()})
     q = dev.qudit_handles[0]
     target = dev.target
     model = IQModel(target, (0,), decay=False)
@@ -198,7 +198,11 @@ def test_the_krinner_twin_separates_its_readout_states():
     assert abs(c1 - c0) > 3  # a high-fidelity single-shot readout
 
     record = pulse.classical(
-        lambda points: [0], name="krinner_iq", args=(IQ(1),), results=(Bits(1),), max_latency_ns=0
+        lambda points: [0],
+        name="transmon_17q_iq",
+        args=(IQ(1),),
+        results=(Bits(1),),
+        max_latency_ns=0,
     )
 
     @pulse.kernel

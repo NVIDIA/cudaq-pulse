@@ -418,10 +418,10 @@ def _calibrated(
     given) its program clock."""
     if calibration is not None:
         target = calibration.apply(target)
-    elif spec == "transmon_krinner_17q":
+    elif spec == "transmon_17q":
         from .targets.calibration import shipped_calibration
 
-        calibration = shipped_calibration("krinner17")
+        calibration = shipped_calibration("transmon_17q")
     name = target.name if spec is None else spec
     return Device(
         target,
@@ -684,7 +684,7 @@ def _located(problems: list[Problem], file: str, text: str) -> list[Problem]:
 def device(config: Mapping[str, Any] | str | os.PathLike[str] | None = None) -> Device:
     """The device of a target name, a config, or the path of a JSON config file.
 
-    ``device("transmon_krinner_17q")`` is the device of a registered target,
+    ``device("transmon_17q")`` is the device of a registered target,
     with every carrier in order (a name takes its argument after a colon, as
     in ``"transmon_generic:4"``); ``cudaq_pulse.targets.available_targets()``
     lists the names. ``device()`` is the process target, named by
@@ -695,15 +695,15 @@ def device(config: Mapping[str, Any] | str | os.PathLike[str] | None = None) -> 
     A config gives the target, by registered name or as a ``TargetDescription``,
     and may give a layout, a calibration and a program clock::
 
-        {"target": "transmon_krinner_17q", "layout": [4, 5, 6],
-         "calibration": "krinner17", "cooldown": "K22-main", "clock_ghz": 2.0}
+        {"target": "transmon_17q", "layout": [4, 5, 6],
+         "calibration": "transmon_17q", "cooldown": "K22-main", "clock_ghz": 2.0}
 
     ``layout[i]`` is the carrier that qudit ``i`` names; by default every
     carrier of the target, in order. ``calibration`` is a ``Calibration``,
     the name of a shipped one or the path of a calibration file, and
     ``cooldown`` one of its cooldowns; the calibration's couplings replace
-    the target's, and ``Device.calibration`` holds it. The Krinner target
-    uses the shipped ``krinner17`` calibration by default. ``clock_ghz`` is
+    the target's, and ``Device.calibration`` holds it. The ``transmon_17q``
+    target uses the shipped ``transmon_17q`` calibration by default. ``clock_ghz`` is
     the program clock kernels count cycles of (``Device.clock_ghz``); by
     default the target's.
 

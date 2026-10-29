@@ -126,7 +126,7 @@ def knill_dd(qubit, sigma, amplitude_pi, tau):
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_krinner_17q")
+    dev = pulse.device("transmon_17q")
     sigma = 5 * pulse.ns  # every pulse lasts 4 sigma
     amplitude_pi = 0.50
     amplitude_half_pi = 0.25

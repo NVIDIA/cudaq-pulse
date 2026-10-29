@@ -126,7 +126,7 @@ def rabi(qubit, duration: int, amplitude: float):
     drive(drive_line, square(duration, amplitude))
 
 
-device = pulse.device("transmon_krinner_17q")
+device = pulse.device("transmon_17q")
 compiled = pulse.compile(rabi).lower(device.qudit_handles[0], 100, 0.5)
 assert compiled.mlir().strip(), "compile produced no MLIR"
 Path("kernel.mlir").write_text(compiled.mlir())

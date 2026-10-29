@@ -102,7 +102,7 @@ def ghz_n(qubit_0, qubit_1, qubit_count):
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_krinner_17q")
+    dev = pulse.device("transmon_17q")
     print("=== 3-qubit GHZ (explicit) ===")
     compiled_kernel = pulse.compile(ghz_3, device=dev).lower(
         dev.qudit_handles[0], dev.qudit_handles[1], dev.qudit_handles[2]

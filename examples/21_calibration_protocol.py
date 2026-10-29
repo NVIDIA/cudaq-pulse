@@ -58,7 +58,7 @@ Compile with ALAP scheduling (the default): the pulse before each variable
 wait then ends where the wait starts, so the qubit decays for exactly the
 wait the estimator chose, not also through the call's latency.
 
-The device is qubit 0 of the Krinner 17-qubit transmon twin with its T1 set
+The device is qubit 0 of the 17-qubit transmon twin with its T1 set
 to 18.3 us (the analytical decay estimate reported by Marciniak et al.),
 detuned by 60 kHz from the drive and with a 1.5% drive-amplitude error.
 
@@ -75,7 +75,7 @@ from cudaq_pulse import controller
 from cudaq_pulse.classical import Bits, Float, Link
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.targets import transmon_krinner_17q
+from cudaq_pulse.targets import transmon_17q
 
 clock_ghz = 2.0  # the program clock: the estimators count waits and T1 in its cycles
 pulse_time = 20 * pulse.ns  # square pulses
@@ -510,7 +510,7 @@ if __name__ == "__main__":
         "The millisecond calibration chain of Marciniak et al., arXiv:2602.11912 (2026),\n"
         "with the adaptive T1 tracker of Berritta et al., arXiv:2506.09576 (2025).\n"
     )
-    target = transmon_krinner_17q()
+    target = transmon_17q()
     dev = pulse.device({"target": target})
     q = dev.qudit_handles[0]
     plant = chain_plant(target)

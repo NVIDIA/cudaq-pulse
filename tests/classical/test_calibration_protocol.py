@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 from cudaq_pulse import controller
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.targets import transmon_krinner_17q
+from cudaq_pulse.targets import transmon_17q
 
 _EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "21_calibration_protocol.py"
 if not _EXAMPLE.exists():
@@ -56,7 +56,7 @@ def _device(target):
 
 
 def test_the_pi_train_corrects_a_drive_amplitude_error():
-    target = transmon_krinner_17q()
+    target = transmon_17q()
     dev, q = _device(target)
     lowered = pulse.compile(_pi_step, device=dev, machine=P["machine"]).lower(q)
     plant = P["chain_plant"](target, amplitude_scale=1.02)
@@ -71,7 +71,7 @@ def test_the_pi_train_corrects_a_drive_amplitude_error():
 
 
 def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
-    base = transmon_krinner_17q()
+    base = transmon_17q()
     qubit = base.qubits[0]
     device_qubit = dataclasses.replace(
         qubit,
@@ -98,7 +98,7 @@ def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
 
 
 def test_the_binary_search_narrows_on_the_controller():
-    target = transmon_krinner_17q()
+    target = transmon_17q()
     dev, q = _device(target)
     lowered = pulse.compile(P["binary_search"], device=dev, machine=P["machine"]).lower(q, 15)
     for seed, offset in enumerate((-200e3, 120e3)):
@@ -116,7 +116,7 @@ def test_the_binary_search_narrows_on_the_controller():
 
 
 def _chain():
-    target = transmon_krinner_17q()
+    target = transmon_17q()
     dev, q = _device(target)
     return pulse.compile(P["calibration_chain"], device=dev, machine=P["machine"]), dev, q
 
@@ -145,7 +145,7 @@ def test_a_slower_controller_rejects_the_chain_at_compile_time():
 
 
 def test_two_qubits_calibrate_side_by_side():
-    target = transmon_krinner_17q()
+    target = transmon_17q()
     dev = pulse.device({"target": target})
     q, p = dev.qudit_handles[:2]
     one = _chain()[0].lower(q, 20_000.0 * CLOCK)

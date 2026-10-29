@@ -78,5 +78,5 @@ def main():
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_krinner_17q")
+    dev = pulse.device("transmon_17q")
     main()

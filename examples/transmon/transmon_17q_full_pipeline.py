@@ -6,7 +6,7 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""Target-aware lowering demo on the Krinner target.
+"""Target-aware lowering demo on the 17-qubit transmon target.
 
   kernel -> pulse.compile (default passes, ALAP) -> Pulse MLIR
          -> QOp (operator algebra) -> CuDensityMat -> LLVM
@@ -25,14 +25,14 @@ import shutil
 import subprocess
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import transmon_krinner_17q
+from cudaq_pulse.targets import transmon_17q
 
-target = transmon_krinner_17q()
-dev = pulse.device("transmon_krinner_17q")
+target = transmon_17q()
+dev = pulse.device("transmon_17q")
 index = {q.label: q.index for q in target.qubits.values()}
 auxiliary, data = index["X1"], index["D2"]
 coupling = next(c for c in target.couplings if {c.qubit_a, c.qubit_b} == {auxiliary, data})
-# The Krinner target gives each CZ's published duration; a generic Coupling
+# The transmon_17q target gives each CZ's published duration; a generic Coupling
 # leaves it unspecified (None).
 cz_ns = coupling.gate_duration_ns
 assert cz_ns is not None
@@ -58,7 +58,7 @@ cal = {
 
 
 @pulse.kernel
-def krinner_pair(qubit_aux, qubit_data):
+def cz_pair(qubit_aux, qubit_data):
     drive_line_aux = get_drive_line(qubit_aux)
     drive_line_data = get_drive_line(qubit_data)
     duration, sigma = cal["x_duration"], cal["x_sigma"]
@@ -77,7 +77,7 @@ def krinner_pair(qubit_aux, qubit_data):
 
 
 print("=== Stage 1: compile (default passes, ALAP schedule) ===")
-compiled = pulse.compile(krinner_pair, device=dev).lower(
+compiled = pulse.compile(cz_pair, device=dev).lower(
     dev.qudit_handles[auxiliary], dev.qudit_handles[data]
 )
 total_cycles = max(e.end for e in compiled.schedule)

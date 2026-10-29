@@ -16,7 +16,7 @@ Usage::
         drive_line = get_drive_line(qubit)
         drive(drive_line, gaussian(64, amplitude, 16.0))
 
-    dev = pulse.device("transmon_krinner_17q")
+    dev = pulse.device("transmon_17q")
     rabi(dev.qudit_handles[0], 0.5)            # compile on first call, then run
     lowered = rabi.lower(dev.qudit_handles[0], 0.5)
     print(lowered.mlir())

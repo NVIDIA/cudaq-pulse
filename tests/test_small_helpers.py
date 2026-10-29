@@ -13,16 +13,16 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.compiler import IRLevel
 
-KRINNER = "transmon_krinner_17q"
+TRANSMON_17Q = "transmon_17q"
 
 
 def test_a_qudit_by_its_label():
-    dev = pulse.device(KRINNER)
+    dev = pulse.device(TRANSMON_17Q)
     assert dev.qudit("D1") is dev.qudit_handles[0]
     assert dev.qudit("Z4").index == 16
     with pytest.raises(pulse.NotFoundError, match=r"no qudit labelled 'D10'; did you mean 'D1'\?"):
         dev.qudit("D10")
-    chip = pulse.device({"target": KRINNER, "layout": [4, 5]})
+    chip = pulse.device({"target": TRANSMON_17Q, "layout": [4, 5]})
     assert chip.qudit("D6") is chip.qudit_handles[1]
     with pytest.raises(pulse.NotFoundError, match="'D1' is carrier 0 of .* layout .* leaves out"):
         chip.qudit("D1")
@@ -33,7 +33,7 @@ def test_a_qudit_by_its_label():
 
 
 def test_a_coupling_by_its_qudits():
-    target = pulse.device(KRINNER).target
+    target = pulse.device(TRANSMON_17Q).target
     first = target.couplings[0]
     assert target.coupling(first.qubit_a, first.qubit_b) is first
     assert target.coupling(first.qubit_b, first.qubit_a) is first
@@ -53,7 +53,7 @@ def _rabi_then_wait(q, tau: float):
 
 
 def test_the_duration_of_a_program_is_a_time():
-    q = pulse.device(KRINNER).qudit_handles[0]
+    q = pulse.device(TRANSMON_17Q).qudit_handles[0]
     duration = _rabi_then_wait.lower(q, 6.0).duration
     assert duration.__class__ is pulse.Time
     assert duration == 35 * pulse.ns and float(duration) == 35.0
@@ -62,7 +62,7 @@ def test_the_duration_of_a_program_is_a_time():
 
 
 def test_the_ir_dump_takes_a_level():
-    lowered = _rabi_then_wait.lower(pulse.device(KRINNER).qudit_handles[0], 6.0)
+    lowered = _rabi_then_wait.lower(pulse.device(TRANSMON_17Q).qudit_handles[0], 6.0)
     assert "pulse.drive" in lowered.mlir() == lowered.mlir("pulse")
     assert "qop." in lowered.mlir("qop") and "pulse.drive" not in lowered.mlir("qop")
     assert "cudm." in lowered.mlir(IRLevel.CUDM)

@@ -102,7 +102,7 @@ def clifford_sequence(qubit, gates):
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_krinner_17q")
+    dev = pulse.device("transmon_17q")
     qubit = dev.qudit_handles[0]
     rb = pulse.compile(clifford_sequence, device=dev)
 

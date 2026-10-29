@@ -44,7 +44,7 @@ def echoed_cr(qubit_ctrl, qubit_tgt):
 
 
 if __name__ == "__main__":
-    dev = pulse.device("transmon_krinner_17q")
+    dev = pulse.device("transmon_17q")
     compiled_kernel = pulse.compile(echoed_cr, device=dev).lower(
         dev.qudit_handles[0], dev.qudit_handles[1]
     )

@@ -181,13 +181,13 @@ def test_no_shots_is_the_documented_simulate_default(idle):
 @pytest.mark.parametrize(
     ("index", "message"),
     [
-        (999, "qudit index 999 is out of range: device 'transmon_krinner_17q' has 17 qudits"),
-        (-18, "qudit index -18 is out of range: device 'transmon_krinner_17q' has 17 qudits"),
+        (999, "qudit index 999 is out of range: device 'transmon_17q' has 17 qudits"),
+        (-18, "qudit index -18 is out of range: device 'transmon_17q' has 17 qudits"),
         ([0, 999], "qudit index 999 is out of range"),
     ],
 )
 def test_a_qudit_index_past_the_device_says_how_many_qudits_it_has(index, message):
-    handles = pulse.device("transmon_krinner_17q").qudit_handles
+    handles = pulse.device("transmon_17q").qudit_handles
     with pytest.raises(IndexError, match=message) as info:
         handles[index]
     assert isinstance(info.value, pulse.PulseError)
@@ -195,7 +195,7 @@ def test_a_qudit_index_past_the_device_says_how_many_qudits_it_has(index, messag
 
 
 def test_a_qudit_index_past_a_register_says_how_many_qudits_it_has():
-    register = pulse.device("transmon_krinner_17q").qudit_handles[0:3]
+    register = pulse.device("transmon_17q").qudit_handles[0:3]
     with pytest.raises(IndexError) as info:
         register[5]
     assert str(info.value) == (

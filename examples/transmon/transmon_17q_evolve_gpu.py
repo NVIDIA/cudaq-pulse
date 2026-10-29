@@ -6,7 +6,7 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""End-to-end GPU time evolution on the Krinner 17-qubit target.
+"""End-to-end GPU time evolution on the 17-qubit transmon target.
 
 HARDWARE REQUIREMENT: This example requires an NVIDIA GPU and
 the `[cu12]` or `[cu13]` extra. If either is missing it raises an error
@@ -31,7 +31,7 @@ from cudaq_pulse.runtime import require_gpu_runtime
 
 require_gpu_runtime()
 
-dev = pulse.device("transmon_krinner_17q")
+dev = pulse.device("transmon_17q")
 target = dev.target
 index = {q.label: q.index for q in target.qubits.values()}
 auxiliary, data = index["X1"], index["D2"]
@@ -49,7 +49,7 @@ cal = {
 
 
 @pulse.kernel
-def krinner_evolve(qubit_aux, qubit_data):
+def evolve_pair(qubit_aux, qubit_data):
     drive_line_aux = get_drive_line(qubit_aux)
     drive_line_data = get_drive_line(qubit_data)
     duration, sigma = cal["x_duration"], cal["x_sigma"]
@@ -60,7 +60,7 @@ def krinner_evolve(qubit_aux, qubit_data):
     wait(drive_line_data, cal["cz_slot"])
 
 
-lowered = krinner_evolve.lower(dev.qudit_handles[auxiliary], dev.qudit_handles[data])
+lowered = evolve_pair.lower(dev.qudit_handles[auxiliary], dev.qudit_handles[data])
 # The coupling turns at the 2.1 GHz detuning of the two frames: the step
 # resolves it.
 result = pulse.simulate(lowered, backend="gpu", dt_ns=0.025, integrator="rk4")

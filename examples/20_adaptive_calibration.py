@@ -7,8 +7,8 @@
 # ============================================================================ #
 """Adaptive calibration against a drifting device.
 
-Builds on ``19_classical_calls.py``. On qubit 0 of the Krinner 17-qubit
-transmon twin, this example:
+Builds on ``19_classical_calls.py``. On qubit 0 of the 17-qubit transmon
+twin (``transmon_17q``), this example:
 
 1. Runs a frequency binary search inside one shot: after each Ramsey shot an
    estimator on the controller link updates a Gaussian posterior over the
@@ -35,7 +35,7 @@ from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck, TelegraphT1
-from cudaq_pulse.targets import transmon_krinner_17q
+from cudaq_pulse.targets import transmon_17q
 
 # square(pi_duration, pi_amp) is a pi pulse; at half the amplitude, a pi/2.
 pulse_cal = {
@@ -115,7 +115,7 @@ def t1_shot(q, wait_ns: int):
 
 
 if __name__ == "__main__":
-    target = transmon_krinner_17q()
+    target = transmon_17q()
     dev = pulse.device({"target": target})
     q = dev.qudit_handles[0]
     qubit = target.qubits[0]

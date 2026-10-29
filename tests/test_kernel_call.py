@@ -315,15 +315,15 @@ def test_device_values_are_read_only():
 
 def test_a_device_from_a_config_file(tmp_path: Path):
     path = tmp_path / "dev.json"
-    path.write_text(json.dumps({"target": "transmon_krinner_17q", "layout": [4, 5]}))
+    path.write_text(json.dumps({"target": "transmon_17q", "layout": [4, 5]}))
     dev = pulse.device(path)
     assert [q.index for q in dev.qudit_handles] == [4, 5]
-    assert dev == pulse.device({"target": "transmon_krinner_17q", "layout": [4, 5]})
-    assert dev != pulse.device("transmon_krinner_17q")
+    assert dev == pulse.device({"target": "transmon_17q", "layout": [4, 5]})
+    assert dev != pulse.device("transmon_17q")
     with pytest.raises(pulse.DeviceDefinitionError, match="lattice: unknown device config key"):
-        pulse.device({"target": "transmon_krinner_17q", "lattice": []})
+        pulse.device({"target": "transmon_17q", "lattice": []})
     with pytest.raises(pulse.DeviceDefinitionError, match="zones: is reserved"):
-        pulse.device({"target": "transmon_krinner_17q", "zones": []})
+        pulse.device({"target": "transmon_17q", "zones": []})
 
 
 def test_a_waveform_as_a_frequency_is_reserved():

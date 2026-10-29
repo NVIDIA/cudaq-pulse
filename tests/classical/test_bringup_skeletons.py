@@ -6,7 +6,7 @@
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
 """Skeletons of fast bring-up experiments, with toy estimators, each on a
-generic transmon and on the Krinner 17-qubit twin.
+generic transmon and on the 17-qubit transmon twin.
 
 Each skeleton is expressed, scheduled, simulated and, where it calls
 estimators while the QPU runs, exported for emulation. They check the
@@ -29,7 +29,7 @@ from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.runtime._calls import IQModel
 from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck, TelegraphT1
-from cudaq_pulse.targets import transmon_generic, transmon_krinner_17q
+from cudaq_pulse.targets import transmon_17q, transmon_generic
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse (unit drive scale)
 CLOCK = 2.0  # GHz on both targets
@@ -54,7 +54,7 @@ def _generic():
     return dataclasses.replace(target, qubits={0: qubit})
 
 
-TARGETS = {"generic": _generic, "krinner": transmon_krinner_17q}
+TARGETS = {"generic": _generic, "transmon_17q": transmon_17q}
 
 
 @pytest.fixture(params=sorted(TARGETS))

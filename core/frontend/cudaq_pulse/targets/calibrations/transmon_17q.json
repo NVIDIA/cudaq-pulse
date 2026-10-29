@@ -2,7 +2,7 @@
  "_schema": {
   "title": "Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708: device calibration",
   "readme": "Every leaf quantity is an object {value, units, kind, source, uncertainty, cooldown[, method]}. kind: 'published' (printed number in a paper), 'digitized' (read from a figure: the source names figure/panel/page), 'fitted' (computed by our numpy models: 'method' says how). uncertainty: {sigma, units[, basis/note]} as 1 sigma, or null when no estimate exists. cooldown: a key of 'cooldowns'. Units are SI (Hz, s); flux in flux quanta. Coupling convention: g_11_20 = sqrt(2) J_qq. Top-level sections: cooldowns, coupling, qubits (per-qubit circuit values, flux_quanta_capable flag), flux_line (Hellings 2025 distortion model), cz (per-pair published values + knobs), crosstalk, defects, readout. Published values here duplicate the target only where a calibration consumer needs them alongside fitted values; the target remains the source of truth for published numbers.",
-  "target": "transmon_krinner_17q",
+  "target": "transmon_17q",
   "default_cooldown": "K22-main"
  },
  "cooldowns": {
