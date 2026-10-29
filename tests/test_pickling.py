@@ -432,6 +432,32 @@ def test_pickle_sends_a_kernel_of_main_by_reference(tmp_path):
         pickle.loads(data)
 
 
+def _repeated(unroll_threshold):
+    @pulse.kernel(unroll_threshold=unroll_threshold)
+    def repeated(q):
+        d, t = get_drive_line(q)
+        for _ in range(4):
+            drive(d, square(20, 0.1), t)
+
+    return repeated
+
+
+@pytest.mark.parametrize("threshold", [None, 0, 3])
+def test_kernels_and_compiled_kernels_unpickle_with_their_unroll_threshold(
+    threshold, cloudpickle, monkeypatch
+):
+    kernel = _repeated(threshold)
+    data = cloudpickle.dumps(kernel)
+    monkeypatch.setattr(_pickling, "_kernels", {})
+    back = cloudpickle.loads(data)
+    assert back.unroll_threshold == threshold
+    assert back.lower(Q[0]).mlir() == kernel.lower(Q[0]).mlir()
+    given = {} if threshold is None else {"unroll_threshold": threshold}
+    compiled = pulse.compile(rabi, device=LADDER, **given)
+    resolved = 8 if threshold is None else threshold
+    assert _round_trip(compiled)._dispatch.options.unroll_threshold == resolved
+
+
 def test_a_compiled_kernel_unpickles_without_its_specializations():
     compiled = pulse.compile(rabi, device=LADDER, schedule="asap")
     compiled.lower(Q[0], 0.1)
