@@ -293,3 +293,44 @@ def test_the_structured_format_names_the_controller_and_its_links_anew():
     program = pulse.compile(feedback, machine=plain).lower(Q[0]).export_controller(version=2)
     assert program["controller"]["processors"] == []
     assert unroll(program)["limits"] == ControllerLimits().as_dict()
+
+
+def test_values_no_limit_depends_on_are_bound_without_a_check(monkeypatch):
+    from cudaq_pulse import controller
+
+    checked = []
+    original = controller._call_violations
+
+    def counting(view):
+        checked.append(view.arguments)
+        return original(view)
+
+    monkeypatch.setattr(controller, "_call_violations", counting)
+    machine = MachineModel(controller=ControllerLimits(waveform_samples=16, tones_per_line=1))
+
+    @pulse.kernel
+    def sweep(q, amp: float):
+        line = get_drive_line(q)
+        for _ in range(1000):
+            drive(line, gaussian(16, amp, 4.0))
+            drive(line, gaussian(16, 0.5, 4.0))
+
+    # One shape at any amplitude fits whatever the value: no check per call.
+    compiled = pulse.compile(sweep, machine=machine)
+    for value in (0.1, 0.2, 0.1):
+        compiled.lower(Q[0], value)
+    assert checked == []
+
+    @pulse.kernel
+    def widths(q, sigma: float):
+        line = get_drive_line(q)
+        drive(line, gaussian(16, 0.5, sigma))
+        drive(line, gaussian(16, 0.5, 4.0))
+
+    # A width sets whether the two share memory: each distinct value is checked once.
+    compiled = pulse.compile(widths, machine=machine)
+    for value in (4.0, 4.0):
+        compiled.lower(Q[0], value)
+    with pytest.raises(ControllerLimitError, match="waveform memory"):
+        compiled.lower(Q[0], 5.0)
+    assert [tuple(arguments) for arguments in checked] == [(4.0,), (5.0,)]

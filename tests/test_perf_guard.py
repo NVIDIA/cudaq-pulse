@@ -444,57 +444,6 @@ def test_duration_budgets_of_a_rolled_loop_are_checked_in_constant_time():
 
 
 @pytest.mark.scaling
-def test_reaction_times_add_nothing_to_the_checks_of_a_call():
-    def program(reaction_deadline_ns: float | None):
-        @pulse.classical(
-            max_latency_ns=200, reaction_deadline_ns=reaction_deadline_ns, name="perf_react"
-        )
-        def react(bits: pulse.Bits) -> pulse.Bits:
-            return [bits[0]]
-
-        @pulse.kernel
-        def kernel(q):
-            line, tone = get_drive_line(q)
-            probe, probe_tone = get_readout_line(q)
-            for _ in range(20_000):
-                m = readout(probe, square(40, 0.05), probe_tone)
-                if react.submit([m]).result()[0]:
-                    drive(line, gaussian(16, 0.1, 4.0), tone)
-
-        return kernel
-
-    # The calls are already checked once per execution; their reaction times
-    # are checked once per call, at the corners of its loop.
-    compile_s = {
-        r: _best(lambda k=program(r): pulse.compile(k).lower(Q[0]), 3, 0) for r in (None, 1000.0)
-    }
-    assert compile_s[1000.0] < compile_s[None] * 1.25, compile_s
-
-
-@pytest.mark.scaling
-def test_values_no_limit_depends_on_are_bound_without_a_check():
-    @pulse.kernel
-    def sweep(q, amp: float):
-        line, tone = get_drive_line(q)
-        for _ in range(1000):
-            drive(line, gaussian(16, amp, 4.0), tone)
-            drive(line, gaussian(16, 0.5, 4.0), tone)
-
-    limits = ControllerLimits(waveform_samples=64, tones_per_line=1)
-    compiled = {
-        "limits": pulse.compile(sweep, machine=MachineModel(controller=limits)),
-        "plain": pulse.compile(sweep),
-    }
-    values = [0.001 * i for i in range(200)]
-    bind_s = {
-        name: _best(lambda c=c: [c.lower(Q[0], v) for v in values], 3, 0)
-        for name, c in compiled.items()
-    }
-    # One shape at any amplitude fits whatever the value: no check per call.
-    assert bind_s["limits"] < bind_s["plain"] * 1.25, bind_s
-
-
-@pytest.mark.scaling
 def test_a_waveform_memory_of_a_rolled_loop_is_checked_in_constant_time():
     from cudaq_pulse.controller import WaveformMemory, check
 

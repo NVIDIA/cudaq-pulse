@@ -218,6 +218,16 @@ def test_a_reaction_time_holds_in_every_iteration_of_a_loop():
         reacting(responder(300.0), rounds=1000).lower(Q[0])
 
 
+def test_a_reaction_time_is_checked_once_per_call_not_once_per_iteration():
+    rolled = reacting(responder(2000.0), rounds=20_000).lower(Q[0])
+    assert "scf.for" in rolled.mlir()
+    with pytest.raises(RuntimeError) as error:
+        reacting(responder(300.0), rounds=20_000).lower(Q[0])
+    # One error for the call, at the worst corner of its loop.
+    assert str(error.value).count("cannot react in time") == 1
+    assert "in iteration (" in str(error.value)
+
+
 def test_a_call_without_readouts_reacts_from_its_submission():
     @pulse.classical(max_latency_ns=400, reaction_deadline_ns=300, name="react_no_readout")
     def respond() -> pulse.Bits:
