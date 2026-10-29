@@ -68,6 +68,26 @@ def test_cooldowns_and_provenance(cal):
         Calibration.load("missing")
 
 
+def test_a_loaded_calibration_keeps_the_values_it_parsed():
+    # Calibration.load keeps the dict it parsed without copying it, and the
+    # shipped one is shared by every device: no use of it may change it.
+    shipped = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).calibration
+    parsed = json.loads((_SHIPPED / "krinner17.json").read_text())
+    for cal in (shipped, Calibration.load("krinner17", cooldown="HEL25")):
+        pair = cal.pairs[0]
+        qubit = cal.flux_qubits[0]
+        cal.cooldowns["K22-main"] = "changed"
+        cal.entry("qubits", qubit, "ec")["value"] = 0.0
+        cal.entry("coupling", "device_default", "g_11_20")["uncertainty"] = None
+        cal.value("coupling", "device_default", "g_11_20")
+        cal.circuit(qubit), cal.idle_flux(qubit), cal.charge_coupling_hz(pair)
+        cal.pair(pair), cal.exchange_hz(pair), cal.idle_zz_hz(pair)
+        cal.flux_for_detuning(qubit, cal.detuning_for_flux(qubit, 0.1))
+        cal.apply(transmon_krinner_17q()), cal.fingerprint, cal.target
+        assert cal._data == parsed
+    assert shipped._data is not parsed
+
+
 def test_every_qubit_has_a_circuit_that_reproduces_its_idle_frequency(cal):
     assert len(cal.flux_qubits) == 17
     for q in _k.QUBITS:

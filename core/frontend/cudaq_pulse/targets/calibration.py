@@ -49,6 +49,10 @@ class Calibration:
     """
 
     def __init__(self, data: Mapping[str, Any], *, name: str, cooldown: str | None = None) -> None:
+        self._name(data, name, cooldown)
+        self._data = copy.deepcopy(dict(data))
+
+    def _name(self, data: Mapping[str, Any], name: str, cooldown: str | None) -> None:
         schema = data.get("_schema", {})
         cooldown = schema.get("default_cooldown") if cooldown is None else cooldown
         cooldowns = data.get("cooldowns", {})
@@ -57,7 +61,6 @@ class Calibration:
                 f"calibration {name!r} has no cooldown {cooldown!r}; "
                 f"it has {', '.join(sorted(cooldowns))}"
             )
-        self._data = copy.deepcopy(dict(data))
         self.name = name
         self.cooldown: str = cooldown
         # The digest of the shipped file this was loaded from, if it was.
@@ -96,7 +99,12 @@ class Calibration:
             )
         else:
             name = path.stem
-        loaded = cls(json.loads(path.read_text(encoding="utf-8")), name=name, cooldown=cooldown)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        loaded = cls.__new__(cls)
+        loaded._name(data, name, cooldown)
+        # Not copied: parsed here, it is held by this calibration alone, which
+        # only reads it and hands out copies (entry, value, cooldowns).
+        loaded._data = data
         loaded._shipped = digest
         return loaded
 
