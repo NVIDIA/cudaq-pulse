@@ -34,6 +34,7 @@ CLOCK = 2.0  # GHz, the test device's clock
 SPECTATOR, X90, RO, ARM, TAIL = 1200, 24, 200, 40, 30
 LATENCY_NS = 150.0
 TIMEOUT_NS = 200.0  # longer than the latency: in simulation the answer is in time
+TIMEOUT = TIMEOUT_NS * pulse.ns
 TAU_BOUNDS = (8, 400)
 TAU_ANSWER = 120.0  # what a variable wait's length function answers
 FLOAT_TAU = 37.4  # the kernels' float parameter: a wait length in cycles
@@ -282,14 +283,14 @@ def _calls(case: Case) -> tuple[Any, Any, Any]:
 
     def answer(future):
         if take == "timeout":
-            _, bits = future.result(timeout=TIMEOUT_NS * pulse.ns)
+            _, bits = future.result(timeout=TIMEOUT)
             return bits[0]
         return future.result()[0]
 
     def length():
         future = tau_fn.submit(1.0)
         if take == "timeout":
-            _, x = future.result(timeout=TIMEOUT_NS * pulse.ns)
+            _, x = future.result(timeout=TIMEOUT)
             return x
         return future.result()
 
