@@ -90,10 +90,34 @@ _WAVEFORMS = frozenset(
 )
 _WAVEFORM_ARITHMETIC = frozenset({"wf_add", "wf_sub", "wf_mul", "wf_scale", "wf_neg"})
 _MAKES_WAVEFORM = _WAVEFORMS | _WAVEFORM_ARITHMETIC | {"custom_samples"}
-_TIMES = {
-    fname: tuple((name, whole) for name, whole, _ in spec if name != "bounds")
+# Per call with times: whether its times are cycles already (ints, and
+# floats in shape times), so there is nothing to convert.
+_IN_CYCLES = {
+    fname: eval(
+        "lambda a: "
+        + " and ".join(
+            f"a[{name!r}].__class__ is int"
+            if whole
+            else f"((c := a[{name!r}].__class__) is int or c is float)"
+            for name, whole, _ in spec
+            if name != "bounds"
+        ),
+        {"__builtins__": {}, "int": int, "float": float},
+    )
     for fname, spec in _durations.TIMES.items()
 }
+
+
+def _whole_bounds(bounds: Any) -> bool:
+    """Whether wait *bounds* are cycles already: ints, or None for no bound."""
+    if bounds.__class__ is not tuple:
+        return False
+    for b in bounds:
+        if b is not None and b.__class__ is not int:
+            return False
+    return True
+
+
 _PULSE_OP_NAMES = frozenset(OP_TABLE.keys())
 _OP_NAMES = {name: f"pulse.{name}" for name in OP_TABLE}
 
@@ -2955,20 +2979,13 @@ class PulseIREmitter:
                     call_args[i] = _current(v)
             operands = tuple(call_args[:n_val])
             attrs = dict(zip(attr_names, call_args[n_val:]))
-            times = _TIMES.get(fname)
+            in_cycles = _IN_CYCLES.get(fname)
             if optional is not None:
                 attrs[optional[0]] = optional[1]
-                if times is not None:
+                if in_cycles is not None and not (in_cycles(attrs) and _whole_bounds(optional[1])):
                     _durations.in_program_cycles(fname, attrs, getattr(self.b, "clock_ghz", 2.0))
-                    times = None
-            if times is not None:
-                # Ints, and floats in shape times, are cycles already.
-                for name, whole in times:
-                    cls = attrs[name].__class__
-                    if cls is not int and (whole or cls is not float):
-                        clock = getattr(self.b, "clock_ghz", 2.0)
-                        _durations.in_program_cycles(fname, attrs, clock)
-                        break
+            elif in_cycles is not None and not in_cycles(attrs):
+                _durations.in_program_cycles(fname, attrs, getattr(self.b, "clock_ghz", 2.0))
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
 
         op_name = _OP_NAMES[fname]
