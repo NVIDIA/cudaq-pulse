@@ -16,7 +16,7 @@ from fractions import Fraction
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import _clocks
+from cudaq_pulse import _clocks, compiler
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, ControllerLimits, check
 
@@ -175,6 +175,22 @@ def test_waveform_memory_counts_samples_at_the_rate():
     limits = dataclasses.replace(AWG, waveform_samples=20)
     (found,) = check(lowered, limits)
     assert "its waveforms take 24 samples" in found
+
+
+@pulse.kernel
+def waits_for(q, tau: float):
+    d, t = get_drive_line(q)
+    drive(d, square(8, 0.1), t)
+    wait(d, tau, bounds=(0, 400))
+
+
+def test_only_a_timestep_grid_checks_variable_waits_against_it():
+    one = pulse.compile(waits_for).lower(Q[0], 64.0)
+    assert type(one.waits) is compiler._WaitLengths and one.waits.grid == 1
+    grid = pulse.compile(waits_for, machine=_steps(4)).lower(Q[0], 64.0)
+    assert type(grid.waits) is compiler._GridWaitLengths and grid.waits.grid == 4
+    with pytest.raises(ValueError, match="moves in timesteps of 4 cycles"):
+        pulse.compile(waits_for, machine=_steps(4)).lower(Q[0], 66.0)
 
 
 def test_a_whole_sample_rate_on_the_clock_changes_nothing():

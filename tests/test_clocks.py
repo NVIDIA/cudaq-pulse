@@ -105,6 +105,34 @@ def test_round_duration_rounds_onto_the_line_grid():
     assert not hasattr(pulse, "cycles_on")
 
 
+@pytest.mark.parametrize(
+    ("member", "text", "cycles"),
+    [
+        (pulse.RoundDirection.UP, "up", 40),
+        (pulse.RoundDirection.DOWN, "down", 36),
+        (pulse.RoundDirection.NEAREST, "nearest", 36),
+    ],
+)
+def test_each_round_direction_is_its_string(member, text, cycles):
+    assert list(pulse.RoundDirection) == [
+        pulse.RoundDirection.UP,
+        pulse.RoundDirection.DOWN,
+        pulse.RoundDirection.NEAREST,
+    ]
+    assert member == text and str(member) == text and pulse.RoundDirection(text) is member
+
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        drive(d, square(pulse.round_duration(d, 37, member), 0.1), t)
+        drive(d, square(pulse.round_duration(d, 37, text), 0.1), t)
+
+    assert _durations(pulse.compile(k, passes=[], machine=_machine(0.5)).lower(Q[0])) == [
+        cycles,
+        cycles,
+    ]
+
+
 def test_round_duration_needs_a_line_and_a_known_length():
     @pulse.kernel
     def specialized(q, n: float):
