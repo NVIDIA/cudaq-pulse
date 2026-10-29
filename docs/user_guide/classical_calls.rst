@@ -62,11 +62,11 @@ result gives values a branch can test.
 
 **List lengths.** A list parameter takes its length from the call. A
 function called with lists of two lengths has two *versions*, each with its
-own wire id and schema, named by its lengths: ``flip.submit([m0, m1, m2])``
-and ``flip.submit([m0])`` call ``flip__3`` and ``flip__1``. A call record or
+own schema, named by its lengths: ``flip.submit([m0, m1, m2])`` and
+``flip.submit([m0])`` call ``flip__3`` and ``flip__1``. A call record or
 report row gives both names: ``call.function`` is ``"flip"`` and
 ``call.compiled_name`` is ``"flip__3"``, and the call manifest lists every
-version with its id and layout. The length of a list result is read from
+version with its dispatch key and layout. The length of a list result is read from
 the body, for each version:
 
 .. code-block:: python
@@ -88,15 +88,14 @@ len(syndrome)``, fill the first ``count`` items, ``return count,
 positions``). ``flip.specialize(outcomes=3)`` is the version of one length,
 for ``wire.schema``, ``wire.native`` or ``controller.analyze``.
 
-**Fixed lengths.** A function given ``id=`` names one wire schema, so it has
-one version, and calling it with a second length is an error. Where one
-size is wanted, the signature states it with ``pulse.Length``
-(``typing.Annotated``, so checkers read the type inside it):
+**Fixed lengths.** Where one size is wanted, the signature states it with
+``pulse.Length`` (``typing.Annotated``, so checkers read the type inside
+it); the function then has one version, named as declared:
 
 .. code-block:: python
    :class: fragment
 
-   @pulse.classical(max_latency_ns=900, link="gpu", id=0x51)
+   @pulse.classical(max_latency_ns=900, link="gpu")
    def frozen(
        syndromes: pulse.Length[pulse.Bits, 24],
        counts: pulse.Length[list[int], 4],
@@ -110,6 +109,18 @@ fixed-size signature ``pulse.Bits`` takes measurement outcomes and
 ``list[int]`` plain numbers. A length is a positive whole number; a list
 result without one takes its length from the body, per version. Functions
 whose lengths come from their calls need none of this.
+
+**Dispatch keys.** Each request carries the key its service is registered
+under: the 32-bit FNV-1a hash of the compiled name
+(``classical.function_id("flip__3")``), the hash CUDA-Q Realtime registers
+handlers by. ``call.dispatch_key`` gives it next to ``call.compiled_name``,
+and the call manifest's ``"dispatch_key"``. A controller whose firmware
+fixes the keys of the functions it runs lists them by name in its
+description's ``dispatch_keys``; every function on its links must be
+listed, with a fixed size, and the manifest marks each such entry with
+``"dispatch_key_fixed_by"``. Two names of one program that hash to one key
+on one link are a compile error that asks to rename one; the keys of
+``classical.qec`` are reserved for its decoder messages.
 
 The hints are read when a program that calls the function is first
 compiled, and a mistake in them is raised there, naming the function. The
@@ -329,7 +340,7 @@ it.
   checked every time a body or handler runs, in simulation and emulation
   (compiled controller code is not checked):
   ``decode_surface returned 3 bits; its result is pulse.Length[pulse.Bits,
-  2] (id=0x51)``.
+  2]``.
 - ``latency_branching=True`` branches a timeout on whether the answer came
   in time, with the probability of the latency model; with ``shots`` that
   outcome is sampled.
@@ -376,7 +387,7 @@ Emulation
 ``Lowered.export_emulation()`` writes what a controller or an emulator runs
 the program from, as JSON-ready data: the static schedule, each event's
 epoch, the epochs, the calls, the links and the call manifest (every
-function's wire id, link, payload sizes, latency and slots).
+function's dispatch key, link, payload sizes, latency and slots).
 
 ``cudaq_pulse.classical.emulation.emulate`` runs the program shot by shot in
 virtual time without physics. Outcomes come from a source you give; each

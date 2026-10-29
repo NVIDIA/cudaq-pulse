@@ -333,8 +333,8 @@ def test_handlers_override_and_are_required_for_external_functions():
 def test_an_answer_of_the_wrong_length_is_an_error_every_run():
     from cudaq_pulse import classical
 
-    @classical.external(max_latency_ns=0, id=0x51)
-    def decode_surface(syndrome: pulse.Bits) -> pulse.Length[pulse.Bits, 2]:
+    @classical.external(max_latency_ns=0)
+    def decode_surface(syndrome: pulse.Length[pulse.Bits, 3]) -> pulse.Length[pulse.Bits, 2]:
         return pulse.Bits()
 
     @pulse.classical(max_latency_ns=0)
@@ -358,13 +358,10 @@ def test_an_answer_of_the_wrong_length_is_an_error_every_run():
         ("decode_surface", "decode_surface"),
         ("flip", "flip__1"),
     ]
-    message = "decode_surface returned 3 bits; its result is pulse.Length[pulse.Bits, 2] (id=0x51)"
+    message = "decode_surface returned 3 bits; its result is pulse.Length[pulse.Bits, 2]"
     with pytest.raises(TypeError, match=re.escape(message)):
         pulse.simulate(low, handlers={"decode_surface": lambda s: [1, 0, 1]})
-    message = (
-        f"flip__1 returned 2 bits; its result is pulse.Length[pulse.Bits, 1]"
-        f" (id={flip.specialize(outcomes=1).id:#x})"
-    )
+    message = "flip__1 returned 2 bits; its result is pulse.Length[pulse.Bits, 1]"
     with pytest.raises(TypeError, match=re.escape(message)):
         pulse.simulate(low, handlers={"decode_surface": lambda s: [1, 0], "flip": lambda o: [0, 1]})
 

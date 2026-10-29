@@ -11,7 +11,9 @@
 A classical function's type hints say what it takes and returns, so the
 declaration types (``Floats(2)``, ``classical.Levels``, ``Bits(3)`` and the
 rest) and the ``args=``/``results=`` options are gone from the API, and so
-is ``lengths=``: ``pulse.Length`` states a fixed length. An external's stub
+are ``lengths=`` and ``id=``: ``pulse.Length`` states a fixed length, a
+positive whole number, and a function is dispatched by the hash of its
+compiled name or the key its controller fixes. An external's stub
 is a declaration whose body is a placeholder for its result, not ``raise
 NotImplementedError``. This finds them in docs, examples, notebooks,
 docstrings, messages and tests. A
@@ -55,6 +57,18 @@ _PATTERNS = (
             r"\blengths\s*=",
             re.S,
         ),
+    ),
+    (
+        "id= on a declaration",
+        re.compile(
+            r"(?<!\w)(?:classical|external|function|ClassicalFunction)\((?:[^()]|\([^()]*\))*?"
+            r"\bid\s*=",
+            re.S,
+        ),
+    ),
+    (
+        "a length that isn't a whole number",
+        re.compile(r"\bLength\[(?:[^\[\]\n]|\[[^\]\n]*\])*,\s*['\"]"),
     ),
     ("a lengths= entry", re.compile(r"\blengths\[\s*['\"]")),
     ("a lengths= entry", re.compile(r"\{\s*['\"]return['\"]\s*:")),
@@ -130,7 +144,7 @@ def main() -> int:
         print(
             f"{len(errors)} old classical spellings: declare with type hints"
             " (def f(bits: pulse.Bits) -> float), a fixed length with pulse.Length"
-            " (pulse.Length[pulse.Bits, 3]) and an external's result with a placeholder"
+            " (pulse.Length[pulse.Bits, 3]), no id=, and an external's result with a placeholder"
             " (return float()), or mark a line that must name one with remnant-ok"
         )
     return 1 if errors else 0

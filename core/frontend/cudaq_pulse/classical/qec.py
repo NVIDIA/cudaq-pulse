@@ -8,8 +8,9 @@
 """Real-time decoding with the messages of the CUDA-Q QEC decoders.
 
 A ``Decoder`` declares the three calls of a CUDA-QX real-time decoder with
-their wire ids and payloads, so a program built with it talks to a CUDA-QX
-decoding server unchanged:
+their dispatch keys and payloads, so a program built with it talks to a
+CUDA-QX decoding server unchanged. Every decoder sends the same three keys;
+the server tells them apart by the decoder id in the payload:
 
 - ``enqueue_syndromes(decoder, measurements, round)``: send one round's
   syndrome bits (``{decoder id, round, mapping id, count}`` and the bits);
@@ -89,7 +90,8 @@ class Decoder:
             name=f"enqueue_syndromes_{suffix}",
             max_latency_ns=enqueue_latency_ns,
             link=link,
-            id=ENQUEUE_SYNDROMES_ID,
+            _dispatch_key=ENQUEUE_SYNDROMES_ID,
+            _key_route=decoder_id,
         )
         self.corrections_function = ClassicalFunction._declared(
             None,
@@ -98,7 +100,8 @@ class Decoder:
             name=f"get_corrections_{suffix}",
             max_latency_ns=max_latency_ns,
             link=link,
-            id=GET_CORRECTIONS_ID,
+            _dispatch_key=GET_CORRECTIONS_ID,
+            _key_route=decoder_id,
         )
         self.reset_function = ClassicalFunction._declared(
             None,
@@ -107,7 +110,8 @@ class Decoder:
             name=f"reset_decoder_{suffix}",
             max_latency_ns=enqueue_latency_ns,
             link=link,
-            id=RESET_DECODER_ID,
+            _dispatch_key=RESET_DECODER_ID,
+            _key_route=decoder_id,
         )
         if decode is not None:
             for fn, handler in zip(

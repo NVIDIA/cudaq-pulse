@@ -17,7 +17,7 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import classical
 from cudaq_pulse.classical import Link, wire
-from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse.compiler import MachineModel, _dispatch_tables
 
 from tests._handles import Q
 
@@ -67,11 +67,10 @@ def test_module_is_the_decorator():
 
 
 def test_function_id_is_fnv1a_as_cuda_q_hashes_handler_names():
-    # The ids CUDA-QX pins for its decoder messages.
+    # The keys CUDA-QX pins for its decoder messages.
     assert classical.function_id("enqueue_syndromes") == 0x7ED8BE82
     assert classical.function_id("get_corrections") == 0x882D5BA1
     assert classical.function_id("reset_decoder") == 0x977A59CF
-    assert echo.id == classical.function_id("echo")
 
 
 def test_declaration_keeps_the_schema_and_timing():
@@ -93,7 +92,6 @@ def test_declaration_keeps_the_schema_and_timing():
         submit="lazy",
         deadline_ns=50,
         link=3,
-        id=7,
     )
     assert [a.descriptor for a in fn.args] == ["iq:4", "f64[3]", "i32[2]", "i64"]
     assert [r.descriptor for r in fn.results] == ["f64[2]"]
@@ -104,7 +102,7 @@ def test_declaration_keeps_the_schema_and_timing():
         "lazy",
         50,
     )
-    assert (fn.link, fn.id, fn.custom_id) == (3, 7, True)
+    assert fn.link == 3 and not hasattr(fn, "id")
     assert fn.nominal_latency_ns == 20
     assert "fit" in repr(fn)
 
@@ -133,7 +131,7 @@ def test_hints_map_to_wire_types():
         ({"deadline_ns": 0}, "deadline_ns must be positive"),
         ({"link": -1}, "link must be"),
         ({"link": True}, "link must be"),
-        ({"id": 2**32}, "32-bit"),
+        ({"id": 0x51}, "id= is gone: a function is dispatched by the hash of its compiled name"),
         ({"name": "not valid"}, "identifier"),
     ],
 )
@@ -209,28 +207,28 @@ def _named_result(outcomes: pulse.Bits) -> pulse.Bits:
     return outcomes
 
 
-_named_result.__annotations__["return"] = pulse.Length[pulse.Bits, "outcomes"]
+_named_result.__annotations__["return"] = pulse.Length[pulse.Bits, "outcomes"]  # remnant-ok
 
 
 def _named_parameter(x: pulse.Bits) -> float:
     return 0.0
 
 
-_named_parameter.__annotations__["x"] = pulse.Length[pulse.Bits, "x"]
+_named_parameter.__annotations__["x"] = pulse.Length[pulse.Bits, "x"]  # remnant-ok
 
 
 def _numbers_flag(x: list[int]) -> float:
     return 0.0
 
 
-_numbers_flag.__annotations__["x"] = pulse.Length[list[int], 4, "numbers"]
+_numbers_flag.__annotations__["x"] = pulse.Length[list[int], 4, "numbers"]  # remnant-ok
 
 
 def _no_length(x: list[int]) -> float:
     return 0.0
 
 
-_no_length.__annotations__["x"] = pulse.Length[list[int], "numbers"]
+_no_length.__annotations__["x"] = pulse.Length[list[int], "numbers"]  # remnant-ok
 
 
 def _true_length(x: pulse.Length[pulse.Bits, True]) -> float:
@@ -269,9 +267,9 @@ def _scalar_result(x: pulse.Bits) -> pulse.Length[float, 2]:
         (
             _named_result,
             re.escape(
-                'pulse.Length[pulse.Bits, "outcomes"]: a length is a positive whole number,'
-                " got 'outcomes'; a list result without one takes its length from the body:"
-                " -> pulse.Bits"
+                'pulse.Length[pulse.Bits, "outcomes"]: a length is'  # remnant-ok
+                " a positive whole number, got 'outcomes'; a list result without one takes"
+                " its length from the body: -> pulse.Bits"
             ),
         ),
         (
@@ -283,7 +281,7 @@ def _scalar_result(x: pulse.Bits) -> pulse.Length[float, 2]:
         (
             _numbers_flag,
             re.escape(
-                'pulse.Length[list[int], 4, "numbers"]: state one length, such as'
+                'pulse.Length[list[int], 4, "numbers"]: state one length, such as'  # remnant-ok
                 " pulse.Length[list[int], 8]"
             ),
         ),
@@ -646,25 +644,132 @@ def test_several_results_come_back_as_a_tuple():
     assert re.search(r"classical.wait .*: f64, f64, f64", _mlir(k, Q[0]))
 
 
-def test_a_function_with_an_id_has_one_version_per_program():
-    @pulse.classical(max_latency_ns=10, id=0x51)
+def _fixed_machine(**keys):
+    return MachineModel(
+        links={"controller": Link(), "gpu": Link()},
+        controller=pulse.Controller(dispatch_keys=keys, model="vendor.fpga"),
+    )
+
+
+def _program(*functions, machine=None):
+    @pulse.kernel
+    def k(q):
+        r, rt = get_readout_line(q)
+        m = readout(r, square(100, 0.05), rt)
+        for f in functions:
+            f.submit([m]).result()
+
+    return pulse.compile(k, machine=machine).lower(Q[0])
+
+
+def _one(name: str, link: int | str = "controller"):
+    def body(o: pulse.Length[pulse.Bits, 1]) -> bool:
+        return bool(o[0])
+
+    body.__name__ = body.__qualname__ = name
+    return pulse.classical(body, max_latency_ns=10, link=link)
+
+
+def test_a_call_is_dispatched_by_the_hash_of_its_compiled_name():
+    @pulse.classical(max_latency_ns=10)
     def first(o: pulse.Bits) -> bool:
         return bool(o[0])
 
-    def calls(*sizes):
-        @pulse.kernel
-        def k(q):
-            r = get_readout_line(q)
-            for n in sizes:
-                first.submit([readout(r, square(100, 0.05)) for _ in range(n)]).result()
+    low = _program(first)
+    (call,) = low.classical_report()
+    assert (call.compiled_name, call.dispatch_key) == (
+        "first__1",
+        classical.function_id("first__1"),
+    )
+    (entry,) = low.export_emulation()["manifest"]["functions"]
+    assert entry["dispatch_key"] == call.dispatch_key and "dispatch_key_fixed_by" not in entry
+    assert "function_id" not in entry and "dispatch_key" not in low.export_emulation()["calls"][0]
 
-        return pulse.compile(k).lower(Q[0])
 
-    # Each program may pick its length, again and again.
-    for n in (2, 3, 2):
-        assert [(f.name, f.id) for f in calls(n, n).classical] == [("first", 0x51)]
-    with pytest.raises(pulse.CompilationError, match=r"has id=0x51, .* o=3 here and o=2 earlier"):
-        calls(2, 3)
+def test_a_controller_fixes_the_keys_of_the_functions_it_runs():
+    table = _one("table")
+    gpu = _one("decode", link="gpu")
+    low = _program(table, gpu, machine=_fixed_machine(table=3, vote=4))
+    assert [(c.compiled_name, c.dispatch_key) for c in low.classical_report()] == [
+        ("table", 3),
+        ("decode", classical.function_id("decode")),
+    ]
+    entries = {e["name"]: e for e in low.export_emulation()["manifest"]["functions"]}
+    assert entries["table"]["dispatch_key_fixed_by"] == "controllers[0] (vendor.fpga)"
+    assert "dispatch_key_fixed_by" not in entries["decode"]
+    assert "function_id_override" in low.mlir()
+
+
+def test_a_function_on_a_controller_that_fixes_keys_must_be_listed():
+    with pytest.raises(pulse.CompilationError) as error:
+        _program(_one("decode_patch"), machine=_fixed_machine(decode_pach=1, table=3))
+    assert str(error.value) == (
+        "decode_patch runs on controllers[0] (vendor.fpga), whose dispatch_keys have no"
+        " 'decode_patch' (did you mean 'decode_pach'?); its firmware answers decode_pach, table."
+        " Add it to the controller's dispatch_keys, or call it on another link"
+    )
+
+
+def test_two_names_that_hash_alike_are_an_error():
+    a, b = _one("fit_332789", link=0), _one("fit_529192", link=0)
+    with pytest.raises(pulse.CompilationError) as error:
+        _program(a, b)
+    assert str(error.value).endswith(
+        "hash to the same dispatch key 0x54b57d4b on link 0; rename one of them"
+    )
+
+
+def test_a_name_that_hashes_to_a_reserved_key_is_an_error():
+    with pytest.raises(pulse.CompilationError, match="which cudaq_pulse.classical.qec uses"):
+        _program(_one("enqueue_syndromes", link=0))
+
+
+def test_a_template_on_a_controller_that_fixes_keys_needs_a_length():
+    @pulse.classical(max_latency_ns=10, link="controller")
+    def table(o: pulse.Bits) -> bool:
+        return bool(o[0])
+
+    with pytest.raises(pulse.CompilationError) as error:
+        _program(table, machine=_fixed_machine(table=3))
+    assert str(error.value).endswith(
+        "its parameter 'o' is pulse.Bits with no length. Give it a fixed size:"
+        " o: pulse.Length[pulse.Bits, 8]"
+    )
+
+
+def test_a_processor_fixes_the_keys_of_the_functions_it_runs():
+    cores = pulse.Processor(links=["controller"], dispatch_keys={"table": 5})
+    box = pulse.Controller(model="vendor.fpga", processors=[cores])
+    system = pulse.ControlSystem(controllers=[box], links={"controller": Link(), "gpu": Link()})
+    low = _program(_one("table"), _one("decode", link="gpu"), machine=system)
+    assert [(c.compiled_name, c.dispatch_key) for c in low.classical_report()] == [
+        ("table", 5),
+        ("decode", classical.function_id("decode")),
+    ]
+    entries = {e["name"]: e for e in low.export_emulation()["manifest"]["functions"]}
+    assert entries["table"]["dispatch_key_fixed_by"] == "controllers[0] (vendor.fpga).processors[0]"
+    with pytest.raises(pulse.CompilationError, match="processors\\[0\\]"):
+        _program(_one("vote"), machine=system)
+
+
+def test_two_controllers_on_one_link_agree_on_its_keys():
+    first = pulse.Controller(drive_lines=[0], model="vendor.fpga", dispatch_keys={"a": 3})
+    for keys, message in (
+        (
+            {"a": 4},
+            "gives a 4, but controllers[0] (vendor.fpga) also serves link 'controller'"
+            " and gives it 3",
+        ),
+        (
+            {"b": 3},
+            "gives b 3, but controllers[0] (vendor.fpga) also serves link 'controller'"
+            " and gives that key to a",
+        ),
+    ):
+        second = pulse.Controller(drive_lines=[1], dispatch_keys=keys)
+        system = pulse.ControlSystem(controllers=[first, second], links={"controller": Link()})
+        with pytest.raises(pulse.CompilationError, match=re.escape(message)):
+            _dispatch_tables(system._machine)
 
 
 # ── Errors ───────────────────────────────────────────────────────────────────
@@ -685,7 +790,7 @@ def _syndromes(syndrome: pulse.Bits) -> tuple[float, pulse.Bits]:
     return (float(), syndrome[:1])
 
 
-@classical.external(max_latency_ns=50, id=0x51)
+@classical.external(max_latency_ns=50)
 def _decode_surface(syndrome: pulse.Bits) -> pulse.Length[pulse.Bits, 2]:
     return pulse.Bits()
 
@@ -719,13 +824,14 @@ def test_an_external_of_unsized_inputs_has_a_version_per_length():
     assert names == [
         ("_syndromes", "_syndromes__2"),
         ("_syndromes", "_syndromes__3"),
-        ("_decode_surface", "_decode_surface"),
+        ("_decode_surface", "_decode_surface__4"),
     ]
     entries = {e["name"]: e for e in low.export_emulation()["manifest"]["functions"]}
-    assert set(entries) == {"_syndromes__2", "_syndromes__3", "_decode_surface"}
-    assert entries["_syndromes__3"]["function_id"] == classical.function_id("_syndromes__3")
+    assert set(entries) == {"_syndromes__2", "_syndromes__3", "_decode_surface__4"}
+    assert entries["_syndromes__3"]["dispatch_key"] == classical.function_id("_syndromes__3")
     assert entries["_syndromes__3"]["schema"] == wire.schema(_syndromes.specialize(syndrome=3))
-    assert entries["_decode_surface"]["function_id"] == 0x51
+    key = classical.function_id("_decode_surface__4")
+    assert entries["_decode_surface__4"]["dispatch_key"] == key
 
 
 def test_a_duration_cannot_come_from_an_answer():

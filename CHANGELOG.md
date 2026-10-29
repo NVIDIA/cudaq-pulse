@@ -416,11 +416,15 @@ behavior may change in any 0.x release.
   with a latency model and a link; a list parameter takes its length from
   the call, each length makes a version of the function (`flip__3`), and
   list results take theirs from the body. `pulse.Length` (`typing.Annotated`)
-  states a fixed length where one schema is wanted, as with `id=`:
+  states a fixed length where one schema is wanted:
   `pulse.Length[pulse.Bits, 8]` (eight measurements read as bits) and
   `pulse.Length[list[int], 8]` (eight numbers). A call record or
-  report row names the function (`call.function`, `"flip"`) and its version
-  (`call.compiled_name`, `"flip__3"`). An external function's stub is a
+  report row names the function (`call.function`, `"flip"`), its version
+  (`call.compiled_name`, `"flip__3"`) and the key its requests are
+  dispatched by (`call.dispatch_key`: the FNV-1a hash of the compiled name,
+  or the key a controller's `dispatch_keys` fixes; the call manifest's
+  `"dispatch_key"`). Two names that hash to one key on one link are a
+  compile error. An external function's stub is a
   declaration whose body is a placeholder for its result (`return float()`,
   `return syndrome[:2]`); its unsized list parameters make versions as for
   `@pulse.classical`. Simulation and emulation check every answer's list

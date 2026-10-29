@@ -176,7 +176,8 @@ def export(lowered, name, directory):
     )
     for entry in artifact["manifest"]["functions"]:
         print(
-            f"    {entry['name']}: id 0x{entry['function_id']:08x} on {entry['link_name']}, "
+            f"    {entry['name']}: dispatch key 0x{entry['dispatch_key']:08x} on"
+            f" {entry['link_name']}, "
             f"request {entry['request_bytes']} B, answer {entry['answer_bytes']} B"
         )
 

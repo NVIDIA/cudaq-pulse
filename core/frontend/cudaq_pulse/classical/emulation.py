@@ -10,8 +10,8 @@
 ``export(lowered)`` writes what a controller needs to run a compiled kernel:
 its static schedule with each event's epoch, the epoch boundaries, its calls,
 and the **manifest** of the classical functions it calls (``manifest``): per
-function its wire id, link, handler schema and latency budget, which is what
-a CUDA-Q Realtime dispatcher's function table holds.
+function its dispatch key, link, handler schema and latency budget, which is
+what a CUDA-Q Realtime dispatcher's function table holds.
 
 ``emulate(lowered, ...)`` runs the program shot by shot in virtual time,
 without physics: measurement outcomes come from a source, each call is sent
@@ -34,7 +34,13 @@ from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from .._classical_report import report
-from .._errors import NotFoundError, UnsupportedError, _CallTimeoutError, _positive_int
+from .._errors import (
+    InvalidValueError,
+    NotFoundError,
+    UnsupportedError,
+    _CallTimeoutError,
+    _positive_int,
+)
 from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
 from . import ClassicalFunction, Link, _handlers_for, wire
 
@@ -72,10 +78,13 @@ def manifest(lowered: Any) -> dict[str, Any]:
     for fn in lowered.classical:
         link = machine.link(fn.link)
         link_id = machine.link_id(fn.link)
+        key, fixed_by = lowered._dispatch_keys[fn.name]
+        entry = {"name": fn.name, "dispatch_key": key}
+        if fixed_by is not None:
+            entry["dispatch_key_fixed_by"] = fixed_by
         functions.append(
             {
-                "name": fn.name,
-                "function_id": fn.id,
+                **entry,
                 "random": fn.uniform,
                 "link": link_id,
                 "link_name": machine.link_name(link_id),
@@ -220,7 +229,8 @@ def _call_data(call: Any) -> dict[str, Any]:
     """A ``ClassicalCall`` as export data: its fields, in order (the
     ``asdict`` of one, made directly); ``controller`` only for a call over a
     per-controller link. An emulator serves the compiled name:
-    ``"function"`` names it, as the manifest's ``"name"`` does."""
+    ``"function"`` names it, as the manifest's ``"name"`` does, and the
+    manifest gives its dispatch key."""
     data = {
         "function": call.compiled_name,
         "link": call.link,
@@ -283,23 +293,26 @@ class Transport:
 class InProcess:
     """A channel to services in this process: handlers by function name,
     called on the decoded request. A handler named for a function whose
-    list lengths come from its calls serves each of its versions."""
+    list lengths come from its calls serves each of its versions.
+    *dispatch_keys* gives the program's key per compiled name (``emulate``
+    passes them); a function not in it is at the hash of its name."""
 
     def __init__(
         self,
         functions: Sequence[ClassicalFunction[..., Any]],
         handlers: Mapping[str, Callable[..., Any]],
+        dispatch_keys: Mapping[str, int] | None = None,
     ):
-        self._by_id = {fn.id: fn for fn in functions}
-        self._by_name = {fn.name: fn for fn in functions}
         self._handlers = dict(handlers)
+        self._keys = dict(dispatch_keys or {})
 
     def call(self, function: ClassicalFunction[..., Any], request: bytes) -> tuple[bytes, float]:
         """Deliver *request*; returns the answer bytes and the service's time in ns."""
         handler = self._handlers.get(function.name) or self._handlers.get(function.base_name)
         if handler is None:
             raise NotFoundError(f"no service for {function.name!r}")
-        request_id, timestamp, args = wire.decode_request(function, request)
+        key = self._keys.get(function.name)
+        request_id, timestamp, args = wire.decode_request(function, request, key)
         t0 = time.perf_counter_ns()
         answer = handler(*args)
         service_ns = float(time.perf_counter_ns() - t0)
@@ -315,13 +328,18 @@ def serve_udp(
     host: str = "127.0.0.1",
     port: int = 0,
     slot_bytes: int = 65536,
+    dispatch_keys: Mapping[str, int] | None = None,
 ) -> tuple[threading.Thread, tuple[str, int], Callable[[], None]]:
     """Serve *handlers* over UDP: one datagram per request and per answer, in
     the wire format. Returns the server thread, its address and a stop
-    function. The service's own time is appended to each answer as 8 bytes."""
+    function. The service's own time is appended to each answer as 8 bytes.
+    A request goes to the function at its dispatch key (*dispatch_keys* by
+    compiled name, else the hash of the name). Built-in functions that share
+    a key, such as QEC decoders, are told apart by their payload: its length,
+    then its first argument (the decoder id)."""
     import socket
 
-    by_id = {fn.id: fn for fn in functions}
+    by_key = _by_dispatch_key(functions, dispatch_keys or {})
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port))
     sock.settimeout(0.05)
@@ -336,9 +354,9 @@ def serve_udp(
                 continue
             except OSError:
                 return
-            fid = struct.unpack_from("<I", data, 4)[0]
-            fn = by_id[fid]
-            request_id, timestamp, args = wire.decode_request(fn, data)
+            key, length = struct.unpack_from("<II", data, 4)
+            fn = _served(by_key, key, length, data)
+            request_id, timestamp, args = wire.decode_request(fn, data, key)
             t0 = time.perf_counter_ns()
             handler = handlers.get(fn.name) or handlers[fn.base_name]
             answer = handler(*args)
@@ -355,6 +373,43 @@ def serve_udp(
         sock.close()
 
     return thread, sock.getsockname(), stop
+
+
+def _by_dispatch_key(
+    functions: Sequence[ClassicalFunction[..., Any]], keys: Mapping[str, int]
+) -> dict[int, dict[int, list[ClassicalFunction[..., Any]]]]:
+    """Per dispatch key, per request payload length, the functions there."""
+    by_key: dict[int, dict[int, list[ClassicalFunction[..., Any]]]] = {}
+    for fn in functions:
+        key = keys.get(fn.name, fn._dispatch_key)
+        length = sum(a.wire_bytes for a in fn.args)
+        there = by_key.setdefault(key, {}).setdefault(length, [])
+        if there and (fn._key_route is None or there[0]._key_route is None):
+            raise InvalidValueError(
+                f"{there[0].name} and {fn.name} are both at dispatch key {key:#x}; a server"
+                " tells them apart only by key"
+            )
+        there.append(fn)
+    return by_key
+
+
+def _served(
+    by_key: dict[int, dict[int, list[ClassicalFunction[..., Any]]]],
+    key: int,
+    length: int,
+    data: bytes,
+) -> ClassicalFunction[..., Any]:
+    """The function a request at *key* with a payload of *length* bytes is for."""
+    there = by_key.get(key, {}).get(length)
+    if not there:
+        raise NotFoundError(f"no function served at dispatch key {key:#x} takes {length} bytes")
+    if len(there) == 1:
+        return there[0]
+    route = wire.decode_request(there[0], data, key)[2][0]
+    for fn in there:
+        if fn._key_route == route:
+            return fn
+    raise NotFoundError(f"no function served at dispatch key {key:#x} for decoder {route}")
 
 
 class RealtimeChannel:
@@ -375,7 +430,7 @@ def device_call_text(lowered: Any) -> str:
     """CUDA-Q kernel text that makes a compiled program's calls as
     ``cc.device_call`` operations. Not available yet: export the program
     with ``export`` (or ``Lowered.export_emulation()``), whose manifest holds
-    each function's wire id, payload types and link."""
+    each function's dispatch key, payload types and link."""
     raise UnsupportedError(
         "exporting calls as CUDA-Q cc.device_call operations is not available yet; "
         "use Lowered.export_emulation(), whose manifest lists every call"
@@ -481,7 +536,8 @@ def emulate(
     functions = tuple(lowered.classical)
     by_name = {fn.name: fn for fn in functions}
     chosen = _handlers_for(functions, handlers)
-    channel = channel or InProcess(functions, chosen)
+    keys = {name: key for name, (key, _) in lowered._dispatch_keys.items()}
+    channel = channel or InProcess(functions, chosen, keys)
     import numpy as np
 
     rng = np.random.default_rng(seed)
@@ -552,7 +608,7 @@ def emulate(
                     )
                     module = module.bind_call(index, [float(value)], *schedule_args)
                     continue
-                request = wire.encode_request(fn, inputs, request_id)
+                request = wire.encode_request(fn, inputs, request_id, dispatch_key=keys[callee])
                 request_id += 1
                 answer_bytes, service_ns = channel.call(fn, request)
                 status, answered_id, answer = wire.decode_answer(fn, answer_bytes)

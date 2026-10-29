@@ -34,8 +34,8 @@ levels or numbers, ``list[complex]`` IQ points and ``list[float]`` numbers;
 the call: a function called with lists of two lengths compiles to two
 versions, each named by its lengths (``decode__4``). Results are typed the
 same way, and a list result's length is inferred from the body per version.
-``pulse.Length[pulse.Bits, 8]`` states a fixed length, for a function with
-one wire schema (``id=``) or a device that takes one size.
+``pulse.Length[pulse.Bits, 8]`` states a fixed length, for a device that
+takes one size.
 
 Inside a kernel, ``.submit(...)`` sends a request and returns a future at
 once; pulses that do not need the answer keep playing. ``.result()`` is where
@@ -47,8 +47,10 @@ the timeline. Outside a kernel, calling the function runs its body, its
 reference implementation, directly.
 
 The body is what simulation runs. On hardware the service registered under
-the function's id (the 32-bit FNV-1a hash of its name, as CUDA-Q Realtime
-uses) answers instead.
+the function's dispatch key answers instead: the 32-bit FNV-1a hash of its
+compiled name, as CUDA-Q Realtime uses, unless the controller's firmware
+fixes it (its ``dispatch_keys``). ``call.dispatch_key`` and the call
+manifest give each one.
 """
 
 from __future__ import annotations
@@ -100,11 +102,21 @@ _MAX_RESULTS = 4
 
 
 def function_id(name: str) -> int:
-    """The id of a function named *name* on the wire: 32-bit FNV-1a."""
+    """The dispatch key of a function compiled as *name*, unless its
+    controller fixes one: 32-bit FNV-1a, the hash CUDA-Q Realtime registers
+    handlers by."""
     value = 2166136261
     for byte in name.encode("utf-8"):
         value = ((value ^ byte) * 16777619) & 0xFFFFFFFF
     return value
+
+
+# Keys built-in protocols send, by the protocol: a user function given one
+# (by its name's hash or a controller) is a compile error.
+_RESERVED_KEYS = {
+    function_id(name): "cudaq_pulse.classical.qec"
+    for name in ("enqueue_syndromes", "get_corrections", "reset_decoder")
+}
 
 
 # Type checkers see a list of ints, so a body returns any list of bits and
@@ -416,7 +428,7 @@ def _wrong_length(function: ClassicalFunction[..., Any], position: int, got: int
     which = f" as result {position}" if len(function.results) > 1 else ""
     return (
         f"{function.name} returned {got} {unit}{'s' if got != 1 else ''}{which}; its result is"
-        f" {spelled} (id={function.id:#x})"
+        f" {spelled}"
     )
 
 
@@ -532,8 +544,8 @@ class ClassicalFunction[**P, R]:
 
     A function with a list parameter of no stated length is a template: each
     set of list lengths it is called with in a kernel is a version, named
-    ``name__<lengths>`` (``decode__4``, ``levels__i3`` for three i32 numbers)
-    with the id of that name. ``specialize(...)`` gives one version.
+    ``name__<lengths>`` (``decode__4``, ``levels__i3`` for three i32 numbers),
+    dispatched by the hash of that name. ``specialize(...)`` gives one version.
     """
 
     def __init__(
@@ -549,8 +561,9 @@ class ClassicalFunction[**P, R]:
         submit: str = "eager",
         deadline_ns: float | Time | None = None,
         link: int | str = 0,
-        id: int | None = None,
         _signature: Callable[..., Any] | None = None,
+        _dispatch_key: int | None = None,
+        _key_route: int | None = None,
     ) -> None:
         max_latency_ns = as_nanoseconds(max_latency_ns)
         min_latency_ns = as_nanoseconds(min_latency_ns)
@@ -616,10 +629,13 @@ class ClassicalFunction[**P, R]:
                 f"{name}: link must be a link name or a whole number >= 0, got {link!r}"
             )
         self.link = link
-        if id is not None and not (isinstance(id, int) and 0 <= id <= 0xFFFFFFFF):
-            raise InvalidValueError(f"{name}: id must be a 32-bit unsigned integer, got {id!r}")
-        self.id = function_id(name) if id is None else id
-        self.custom_id = id is not None
+        # The key it is dispatched by unless its controller fixes one: its
+        # compiled name's hash, or a built-in protocol's key.
+        self._dispatch_key = function_id(name) if _dispatch_key is None else _dispatch_key
+        # For a built-in that shares its key (QEC's decoder calls): the first
+        # argument that picks it out, CUDA-QX's decoder id. None for a
+        # function with a key of its own.
+        self._key_route = _key_route
         # For an on-device random source: how many equally likely values.
         self.uniform: int | None = None
         self.__doc__ = hinted.__doc__ if hinted is not None else None
@@ -634,8 +650,7 @@ class ClassicalFunction[**P, R]:
         self._plan: tuple[Any, ...] | None = None
         self._n = 0
         self._made: dict[Any, ClassicalFunction[P, R]] | None = None
-        # The versions a submit takes without a per-program check: _made, or
-        # none with id= (its one version per program is checked each time).
+        # The versions a submit takes without a per-program check: _made.
         self._fast: Mapping[Any, ClassicalFunction[P, R]] = _NO_VERSIONS
         # A version's template and lengths.
         self._template: ClassicalFunction[P, R] | None = None
@@ -788,8 +803,7 @@ def _resolve(function: ClassicalFunction[..., Any]) -> None:
     function._plan = tuple(_Unsized(p) if p.__class__ is int else p for p in shape.plan)
     function._n = shape.unsized
     function._made = {}
-    if not function.custom_id:
-        function._fast = function._made
+    function._fast = function._made
 
 
 def flush() -> None:
@@ -880,8 +894,8 @@ _COPIED = (
     "submit_policy",
     "deadline_ns",
     "link",
-    "id",
-    "custom_id",
+    "_dispatch_key",
+    "_key_route",
     "uniform",
     "__doc__",
     "__wrapped__",
@@ -942,10 +956,9 @@ def _make(template: ClassicalFunction[..., Any], key: Any) -> ClassicalFunction[
             version.results = _result_specs(template, shape, lengths, text)
         except TypeError as error:
             raise CompilationError(str(error)) from None
-    if not template.custom_id:
-        suffix = "_".join(str(n) if n >= 0 else f"i{-n}" for n in _key_items(key))
-        version.name = f"{template.name}__{suffix}"
-        version.id = function_id(version.name)
+    suffix = "_".join(str(n) if n >= 0 else f"i{-n}" for n in _key_items(key))
+    version.name = f"{template.name}__{suffix}"
+    version._dispatch_key = function_id(version.name)
     version._template = template
     version._key = key
     version.base_name = template.name
@@ -962,12 +975,8 @@ def _version(template: ClassicalFunction[..., Any], key: Any) -> ClassicalFuncti
 
 
 def _enter_slow(builder: Any, template: ClassicalFunction[..., Any], key: Any) -> Any:
-    """A submit whose version isn't made yet, or of a function with ``id=``
-    (every one): ``builder._versions[template]`` maps each key to its
-    version, in first use order. With ``id=`` the function has one version
-    per program."""
-    from ..kernel.ir_builder import CompilationError
-
+    """A submit whose version isn't made yet: ``builder._versions[template]``
+    maps each key to its version, in first use order."""
     inner = builder._versions.get(template)
     if inner is None:
         inner = builder._versions[template] = {}
@@ -975,14 +984,6 @@ def _enter_slow(builder: Any, template: ClassicalFunction[..., Any], key: Any) -
         entered = inner.get(key)
         if entered is not None:
             return entered
-    if inner and template.custom_id:
-        first = next(iter(inner))
-        raise CompilationError(
-            f"{template.name}.submit(): {template.name} has id={template.id:#x}, which names one"
-            f" wire schema, but this program calls it with {_lengths_text(template, key)} here"
-            f" and {_lengths_text(template, first)} earlier. Call it with one length, or drop"
-            " id= to compile one version per length."
-        )
     version = _version(template, key)
     inner[key] = version
     return version
@@ -1062,7 +1063,6 @@ class _Options(TypedDict, total=False):
     submit: str
     deadline_ns: float | Time | None
     link: int | str
-    id: int | None
     name: str | None
 
 
@@ -1085,8 +1085,8 @@ def function(implementation: Callable[..., Any] | None = None, /, **options: Any
     ``int``, ``bool``, ``pulse.Bits``, ``list[float]``, ``list[int]``, a tuple
     of them or ``None``; a list result's length is inferred from the body.
 
-    ``pulse.Length`` states a fixed length where one wire schema is wanted,
-    as with ``id=``: ``pulse.Length[pulse.Bits, 8]`` takes eight measurements
+    ``pulse.Length`` states a fixed length where one wire schema is wanted:
+    ``pulse.Length[pulse.Bits, 8]`` takes eight measurements
     read as bits and ``pulse.Length[list[int], 8]`` eight numbers; a result
     ``-> pulse.Length[pulse.Bits, 2]`` answers two bits.
 
@@ -1096,13 +1096,13 @@ def function(implementation: Callable[..., Any] | None = None, /, **options: Any
     ``"lazy"``), ``deadline_ns``, ``link`` (the link its requests travel on:
     a name from ``MachineModel.links``, such as ``"controller"``, or a link
     id; default 0; ``device`` is not used for it, because a cudaq-pulse
-    device is the QPU), ``name`` and ``id``. A latency, timeout or deadline
-    is a time (``400 * pulse.ns``) or a number of ns.
+    device is the QPU) and ``name``. A latency, timeout or deadline is a time
+    (``400 * pulse.ns``) or a number of ns.
 
     The hints are read at the next compile, and a mistake in them is raised
     where the function is used.
     """
-    if "args" in options or "results" in options:
+    if "args" in options or "results" in options or "id" in options:
         _removed(options)
     if implementation is not None:
         return _declare(implementation, options)
@@ -1125,6 +1125,12 @@ def _declare(fn: Callable[..., Any], options: dict[str, Any]) -> ClassicalFuncti
 
 
 def _removed(options: Mapping[str, Any]) -> typing.NoReturn:
+    if "id" in options:
+        raise InvalidTypeError(
+            "id= is gone: a function is dispatched by the hash of its compiled name"  # remnant-ok
+            " (call.dispatch_key and the call manifest give it); a controller whose firmware"
+            " fixes keys lists them by name in its dispatch_keys"
+        )
     raise InvalidTypeError(
         "args= and results= are gone: a classical function's type hints say what it"  # remnant-ok
         " takes and returns, such as def decode(syndromes: pulse.Bits) -> bool"
@@ -1157,7 +1163,7 @@ def external[**Q, T](
     It takes the keyword options of ``pulse.classical``. Simulating a program
     that calls it needs a handler for it.
     """
-    if "args" in options or "results" in options:
+    if "args" in options or "results" in options or "id" in options:
         _removed(options)
 
     def decorate(stub: Callable[Q, T]) -> ClassicalFunction[Q, T]:

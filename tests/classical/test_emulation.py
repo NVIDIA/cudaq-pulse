@@ -16,6 +16,7 @@ import re
 
 import cudaq_pulse as pulse
 import pytest
+from cudaq_pulse import classical
 from cudaq_pulse.classical import Link, emulation, wire
 from cudaq_pulse.compiler import MachineModel
 
@@ -66,7 +67,8 @@ def test_export_and_manifest_are_json():
     (entry,) = artifact["manifest"]["functions"]
     version = next_wait.specialize(bits=1)
     assert version.name == "next_wait__1"
-    assert entry["function_id"] == version.id and entry["slot_bytes"] == 256
+    assert entry["dispatch_key"] == classical.function_id("next_wait__1")
+    assert entry["slot_bytes"] == 256
     assert entry["schema"] == wire.schema(version)
     assert entry["request_bytes"] == 25 and entry["answer_bytes"] == 32
     assert artifact["links"]["0"]["max_in_flight"] == 8
@@ -132,9 +134,7 @@ def test_an_answer_of_the_wrong_length_is_an_error():
 
     version = flip.specialize(outcomes=2)
     assert wire.decode_answer(version, wire.encode_answer(version, [1, 0]))[2] == [1, 0]
-    message = (
-        f"flip__2 returned 3 bits; its result is pulse.Length[pulse.Bits, 2] (id={version.id:#x})"
-    )
+    message = "flip__2 returned 3 bits; its result is pulse.Length[pulse.Bits, 2]"
     with pytest.raises(ValueError, match=re.escape(message)):
         wire.encode_answer(version, [1, 0, 1])
     channel = emulation.InProcess([version], {"flip": lambda o: [0]})

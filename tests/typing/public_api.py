@@ -100,7 +100,7 @@ def table(index: pulse.Length[Bits, 2]) -> float:
     return float()
 
 
-@pulse.classical.external(max_latency_ns=10, id=0x51)
+@pulse.classical.external(max_latency_ns=10)
 def decode_surface(
     syndrome: pulse.Length[pulse.Bits, 8],
     counts: pulse.Length[list[int], 2],

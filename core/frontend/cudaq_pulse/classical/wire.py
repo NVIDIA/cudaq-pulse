@@ -7,7 +7,7 @@
 # ============================================================================ #
 """The wire format of a call: what a request and an answer look like.
 
-A request is a 24-byte header (magic ``'CUQR'``, function id, argument
+A request is a 24-byte header (magic ``'CUQR'``, dispatch key, argument
 length, request id, timestamp) followed by the arguments, tightly packed and
 little-endian in the order of the function's argument types; an answer is a
 24-byte header (magic ``'CUQS'``, status, result length, request id,
@@ -97,7 +97,6 @@ def schema(function: ClassicalFunction[..., Any]) -> dict[str, Any]:
         return out
 
     return {
-        "function_id": function.id,
         "args": describe(function.args),
         "results": describe(function.results),
     }
@@ -178,23 +177,29 @@ def encode_request(
     args: Sequence[Any],
     request_id: int = 0,
     timestamp: int = 0,
+    dispatch_key: int | None = None,
 ) -> bytes:
-    """A request to *function* with *args* (as a handler receives them)."""
+    """A request to *function* with *args* (as a handler receives them),
+    sent to *dispatch_key*: the program's (``call.dispatch_key``), by default
+    the hash of the function's compiled name."""
     payload = _pack(function.args, args, "arguments")
-    header = _REQUEST.pack(REQUEST_MAGIC, function.id, len(payload), request_id, timestamp)
+    key = function._dispatch_key if dispatch_key is None else dispatch_key
+    header = _REQUEST.pack(REQUEST_MAGIC, key, len(payload), request_id, timestamp)
     return header + payload
 
 
 def decode_request(
-    function: ClassicalFunction[..., Any], data: bytes
+    function: ClassicalFunction[..., Any], data: bytes, dispatch_key: int | None = None
 ) -> tuple[int, int, list[Any]]:
-    """``(request id, timestamp, arguments)`` of a request to *function*."""
-    magic, fid, length, request_id, timestamp = _REQUEST.unpack_from(data)
+    """``(request id, timestamp, arguments)`` of a request to *function* at
+    *dispatch_key* (as for ``encode_request``)."""
+    magic, key, length, request_id, timestamp = _REQUEST.unpack_from(data)
     if magic != REQUEST_MAGIC:
         raise ExecutionError(f"not a request: magic {magic:#x}")
-    if fid != function.id:
+    expected = function._dispatch_key if dispatch_key is None else dispatch_key
+    if key != expected:
         raise ExecutionError(
-            f"request for function {fid:#x}, not {function.name} ({function.id:#x})"
+            f"request for dispatch key {key:#x}, not {function.name}'s ({expected:#x})"
         )
     return request_id, timestamp, _unpack(function.args, data[HEADER_BYTES : HEADER_BYTES + length])
 

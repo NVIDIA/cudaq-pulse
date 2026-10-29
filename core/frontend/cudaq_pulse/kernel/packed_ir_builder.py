@@ -21,6 +21,7 @@ from array import array
 from collections.abc import Callable
 from typing import Any
 
+from ..classical import _LIST_NAME, _RESERVED_KEYS, _unsized_names
 from .ir_builder import (
     MAX_CYCLES,
     UNDEFINED_VID,
@@ -143,6 +144,45 @@ def _link_without_machine(link: Any) -> int:
             f"link {link!r} is a name; compile with a MachineModel whose links name it"
         )
     return int(link)
+
+
+def _fixed_key(function: Any, table: dict[str, tuple[int, str]]) -> tuple[int, str]:
+    """The key a controller's firmware gives *function*: a function on its
+    links must be listed, and has one layout."""
+    name = function.base_name
+    found = table.get(name)
+    if found is None:
+        from .._errors import _closest
+
+        served = sorted(table)
+        close = _closest(name, served)
+        hint = f" (did you mean {close!r}?)" if close else ""
+        raise CompilationError(
+            f"{name} runs on {table[served[0]][1]}, whose dispatch_keys have no {name!r}{hint};"
+            f" its firmware answers {', '.join(served)}. Add it to the controller's"
+            " dispatch_keys, or call it on another link"
+        )
+    key, label = found
+    template = function._template
+    if template is not None:
+        unsized = _unsized_names(template)[0]
+        kind = _LIST_NAME[template._shape.plan[template._shape.names.index(unsized)]]
+        raise CompilationError(
+            f"{name} has the fixed dispatch key {key} from {label}.dispatch_keys[{name!r}], so"
+            f" it has one layout, but its parameter {unsized!r} is {kind} with no length. Give"
+            f" it a fixed size: {unsized}: pulse.Length[{kind}, 8]"
+        )
+    return key, label
+
+
+def _collision(first: Any, second: Any, key: int) -> str:
+    """Two functions of one program whose names hash to one key on one link
+    (a controller that fixes keys lists every function on its links)."""
+    link = f"{second.link!r}" if isinstance(second.link, str) else str(second.link)
+    return (
+        f"{first.name} and {second.name} hash to the same dispatch key {key:#x} on link"
+        f" {link}; rename one of them"
+    )
 
 
 def _f2i(x: float) -> int:
@@ -320,6 +360,14 @@ class PackedIRBuilder:
         # compile() sets it from the machine model.
         self.link_id: Callable[[Any], int] = _link_without_machine
         self._classical_index: dict[int, int] = {}
+        # Per link id, the keys its controllers' firmware fixes, by function
+        # name, each with the controller that fixes it (compile() sets it).
+        self.dispatch_tables: dict[int, dict[str, tuple[int, str]]] = {}
+        # Per entry of classical, its dispatch key and the controller that
+        # fixes it (None for a hashed or built-in key).
+        self.dispatch_keys: list[tuple[int, str | None]] = []
+        # Per (link id, dispatch key), the entry of classical sent to it.
+        self._dispatched: dict[tuple[int, int], int] = {}
         self._scope: list[int] = []
         # Loops and branch arms open now, as (id, is_loop): where a future
         # submitted in one may be waited on.
@@ -876,9 +924,12 @@ class PackedIRBuilder:
                     f"two different classical functions are named {function.name!r}"
                 )
         index = len(self.classical)
+        link = self.link_id(function.link)
+        key, fixed_by = self._dispatch_key(function, link)
         mode = _LATENCY_MODE[function.latency_mode]
         flags = mode | (4 if function.submit_policy == "lazy" else 0)
-        flags |= 8 if function.custom_id else 0
+        # Its own key is its name's hash, unless a built-in's.
+        flags |= 8 if key != function._dispatch_key or function._key_route is not None else 0
         flags |= 16 if function.timeout_ns is not None else 0
         flags |= 32 if function.deadline_ns is not None else 0
         name = function.name.encode("utf-8")
@@ -891,8 +942,8 @@ class PackedIRBuilder:
             _CLASSICAL_DECLARE,
             [
                 index,
-                function.id,
-                self.link_id(function.link),
+                key,
+                link,
                 flags,
                 _f2i(function.min_latency_ns),
                 _f2i(function.nominal_latency_ns),
@@ -906,8 +957,30 @@ class PackedIRBuilder:
             ],
         )
         self.classical.append(function)
+        self.dispatch_keys.append((key, fixed_by))
+        self._dispatched[(link, key)] = index
         self._classical_index[id(function)] = index
         return index
+
+    def _dispatch_key(self, function: Any, link: int) -> tuple[int, str | None]:
+        """*function*'s key on *link* and the controller that fixes it: its
+        controller's, else its own; one function per key on a link."""
+        fixed_by = None
+        key = function._dispatch_key
+        table = self.dispatch_tables.get(link) if self.dispatch_tables else None
+        if table is not None and function._key_route is None:
+            key, fixed_by = _fixed_key(function, table)
+        if function._key_route is None and key in _RESERVED_KEYS:
+            raise CompilationError(
+                f"{function.name} is dispatch key {key:#x}, which {_RESERVED_KEYS[key]} uses"
+                " for its decoder messages; rename it"
+            )
+        other = self._dispatched.get((link, key))
+        if other is not None:
+            first = self.classical[other]
+            if function._key_route is None or first._key_route is None:
+                raise CompilationError(_collision(first, function, key))
+        return key, fixed_by
 
     def classical_submit(self, index: int, operands: list[int]) -> int:
         """Record a submission; returns the future's id."""
@@ -1002,6 +1075,10 @@ class PackedIRBuilder:
         del self._block_marks[blocks:]
         self._scope = scope
         self._flow = flow
+        for sent, entry in list(self._dispatched.items()):
+            if entry >= n_classical:
+                del self._dispatched[sent]
+        del self.dispatch_keys[n_classical:]
         for function in self.classical[n_classical:]:
             del self._classical_index[id(function)]
             template = function._template

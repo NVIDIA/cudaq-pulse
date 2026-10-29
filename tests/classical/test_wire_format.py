@@ -60,7 +60,13 @@ def test_header_layout_and_magics():
 
     request = wire.encode_request(fn, (), request_id=7, timestamp=2**40)
     magic, fid, length, rid, ts = struct.unpack("<IIIIQ", request)
-    assert (magic, fid, length, rid, ts) == (wire.REQUEST_MAGIC, fn.id, 0, 7, 2**40)
+    key = classical.function_id("probe")
+    assert (magic, fid, length, rid, ts) == (wire.REQUEST_MAGIC, key, 0, 7, 2**40)
+    assert wire.decode_request(fn, request)[0] == 7
+    moved = wire.encode_request(fn, (), dispatch_key=3)
+    assert struct.unpack_from("<I", moved, 4)[0] == 3 and wire.decode_request(fn, moved, 3)[0] == 0
+    with pytest.raises(pulse.ExecutionError, match="request for dispatch key 0x3, not probe's"):
+        wire.decode_request(fn, moved)
 
 
 def test_payload_type_ids():

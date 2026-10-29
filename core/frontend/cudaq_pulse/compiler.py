@@ -491,7 +491,10 @@ class ClassicalCall:
     ``function`` is the name the function is declared with and
     ``compiled_name`` the name it is compiled and served under: a
     version's, such as ``"adaptive_t1__1"``, for a function whose list
-    lengths come from its calls, else the same name.
+    lengths come from its calls, else the same name. ``dispatch_key`` is the
+    key its requests carry: the hash of ``compiled_name``
+    (``classical.function_id``), or the key its controller's firmware fixes
+    (the controller's ``dispatch_keys``).
 
     ``exposed_cycles`` is how long the first use waits for the answer beyond
     when it could start without the call: after its line is free and after
@@ -503,6 +506,7 @@ class ClassicalCall:
 
     function: str
     compiled_name: str
+    dispatch_key: int
     link: int
     iteration: tuple[int, ...]
     submit_cycles: int
@@ -698,6 +702,7 @@ class Lowered:
         "_generic",
         "waits",
         "classical",
+        "_dispatch_keys",
         "runtime_selects",
         "_arity",
     )
@@ -743,6 +748,9 @@ class Lowered:
         self.waits = waits
         # The classical functions the program calls, in declaration order.
         self.classical: tuple[Any, ...] = ()
+        # Per compiled name, its dispatch key and the controller that fixes
+        # it (None for a hashed or built-in key).
+        self._dispatch_keys: dict[str, tuple[int, str | None]] = {}
         # Whether ops read values measurements select while the program runs.
         self.runtime_selects = False
 
@@ -817,6 +825,7 @@ class Lowered:
         view._generic = self
         view.waits = waits
         view.classical = self.classical
+        view._dispatch_keys = self._dispatch_keys
         view.runtime_selects = self.runtime_selects
         return view
 
@@ -1132,6 +1141,7 @@ def build(
     builder.unroll_threshold = options.unroll_threshold
     builder.line_tones = target._line_tones
     builder.link_id = machine.link_id
+    builder.dispatch_tables = _dispatch_tables(machine)
     builder.locate_structural = frozenset(parameters)
     plain = machine._plain
     clocks = None if plain else _clocked_builder(builder, machine, target)
@@ -1274,6 +1284,9 @@ def build(
             waits=waits,
         )
     lowered.classical = tuple(builder.classical)
+    lowered._dispatch_keys = {
+        fn.name: key for fn, key in zip(builder.classical, builder.dispatch_keys, strict=True)
+    }
     lowered.runtime_selects = runtime_selects
     if role is not None:
         role.slots = slots
@@ -1431,8 +1444,73 @@ def with_line_delays(lowered: Lowered, options: CompileOptions, n_qudits: int) -
         waits=lowered.waits,
     )
     result.classical = lowered.classical
+    result._dispatch_keys = lowered._dispatch_keys
     result.runtime_selects = lowered.runtime_selects
     return _check_controller(result)
+
+
+def _dispatch_tables(machine: MachineModel) -> dict[int, dict[str, tuple[int, str]]]:
+    """Per link id, the keys fixed on it (by function name), each with what
+    fixes them: a processor's ``dispatch_keys`` on its ``links``, or, for a
+    controller without processors, its own on its ``compute_links``."""
+    system = machine._system
+    if system is not None and machine.controller is None:
+        controllers: Sequence[Any] = system.controllers
+    else:
+        controllers = () if machine.controller is None else (machine.controller,)
+    tables: dict[int, dict[str, tuple[int, str]]] = {}
+    for position, controller in enumerate(controllers):
+        model = getattr(controller, "model", None)
+        label = f"controllers[{position}]" + (f" ({model})" if model else "")
+        processors = getattr(controller, "processors", ())
+        if processors:
+            sources = [
+                (f"{label}.processors[{index}]", processor.links, processor.dispatch_keys)
+                for index, processor in enumerate(processors)
+            ]
+        else:
+            sources = [
+                (
+                    label,
+                    getattr(controller, "compute_links", ("controller",)),
+                    getattr(controller, "dispatch_keys", None),
+                )
+            ]
+        for owner, links, given in sources:
+            if given:
+                _fix_keys(machine, tables, owner, links, given)
+    return tables
+
+
+def _fix_keys(
+    machine: MachineModel,
+    tables: dict[int, dict[str, tuple[int, str]]],
+    label: str,
+    links: Sequence[int | str],
+    given: Mapping[str, int],
+) -> None:
+    """Enter the keys *given* by *label* in *tables*, on each of *links*."""
+    for link in links:
+        if isinstance(link, str) and link not in machine.link_names:
+            continue
+        table = tables.setdefault(machine.link_id(link), {})
+        taken = {key: name for name, (key, _) in table.items()}
+        for name, key in given.items():
+            known = table.get(name)
+            if known is not None and known[0] != key:
+                raise CompilationError(
+                    f"{label}.dispatch_keys gives {name} {key}, but {known[1]} also serves"
+                    f" link {link!r} and gives it {known[0]}; give {name} one key, or put"
+                    " the controllers on different compute links"
+                )
+            owner = taken.get(key, name)
+            if owner != name:
+                raise CompilationError(
+                    f"{label}.dispatch_keys gives {name} {key}, but {table[owner][1]} also"
+                    f" serves link {link!r} and gives that key to {owner}; give each"
+                    " function its own key, or put the controllers on different compute links"
+                )
+            table[name] = (key, label)
 
 
 def compile[**P](

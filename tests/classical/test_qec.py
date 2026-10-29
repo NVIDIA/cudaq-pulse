@@ -16,7 +16,7 @@ from pathlib import Path
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import qec, wire
+from cudaq_pulse.classical import emulation, qec, wire
 
 from tests.classical.test_simulation import PI_AMP, _device
 
@@ -28,20 +28,75 @@ def _decoder(decode=None):
     return qec.Decoder(3, syndromes=12, corrections=2, max_latency_ns=500, decode=decode)
 
 
+def _key(request):
+    return struct.unpack_from("<I", request, 4)[0]
+
+
 def test_calls_carry_the_cudaqx_ids_and_payloads():
     decoder = _decoder()
-    assert decoder.enqueue_function.id == CUDAQX["function_ids"]["enqueue_syndromes"]
-    assert decoder.corrections_function.id == CUDAQX["function_ids"]["get_corrections"]
-    assert decoder.reset_function.id == CUDAQX["function_ids"]["reset_decoder"]
     bits = [1, 0] * 6
     enqueue = wire.encode_request(decoder.enqueue_function, (3, 5, 0, 12, bits))
+    assert _key(enqueue) == CUDAQX["function_ids"]["enqueue_syndromes"]
     header = CUDAQX["payload_bytes"]["enqueue_syndromes_header"]
     assert len(enqueue) - 24 == header + 2
     assert struct.unpack_from("<qqqq", enqueue, 24) == (3, 5, 0, 12)
     get = wire.encode_request(decoder.corrections_function, (3, 2, 1))
+    assert _key(get) == CUDAQX["function_ids"]["get_corrections"]
     assert len(get) - 24 == CUDAQX["payload_bytes"]["get_corrections"]
     reset = wire.encode_request(decoder.reset_function, (3,))
+    assert _key(reset) == CUDAQX["function_ids"]["reset_decoder"]
     assert len(reset) - 24 == CUDAQX["payload_bytes"]["reset_decoder"]
+
+
+def _two_decoders():
+    small = qec.Decoder(0, syndromes=1, corrections=1, max_latency_ns=100, decode=lambda b: [b[0]])
+    same = qec.Decoder(1, syndromes=1, corrections=1, max_latency_ns=100, decode=lambda b: [0])
+    large = qec.Decoder(
+        2, syndromes=2, corrections=1, max_latency_ns=100, decode=lambda b: [b[0] ^ b[1]]
+    )
+    return small, same, large
+
+
+def test_decoders_share_the_cudaqx_keys_in_one_program():
+    decoders = _two_decoders()
+
+    @pulse.kernel
+    def k(q):
+        r, rt = get_readout_line(q)
+        m = readout(r, square(100, 0.05), rt)
+        for decoder in decoders:
+            qec.enqueue_syndromes(decoder, [m] * decoder.syndromes)
+            qec.get_corrections(decoder).result()
+
+    dev = _device()
+    low = pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
+    keys = {c.dispatch_key for c in low.classical_report()}
+    assert keys == {CUDAQX["function_ids"][n] for n in ("enqueue_syndromes", "get_corrections")}
+
+
+def test_a_udp_server_tells_decoders_that_share_a_key_apart():
+    decoders = _two_decoders()
+    functions = [f for d in decoders for f in (d.enqueue_function, d.corrections_function)]
+    handlers = {n: h for d in decoders for n, h in d.handlers().items()}
+    served = {}
+    for d in decoders:
+        get = d.corrections_function.name
+        served[get] = lambda *args, decoder=d: [decoder.decoder_id % 2]
+    _, address, stop = emulation.serve_udp(functions, {**handlers, **served})
+    channel = emulation.UdpChannel(address)
+    try:
+        for d in decoders:
+            fn = d.enqueue_function
+            request = wire.encode_request(fn, (d.decoder_id, 0, 0, d.syndromes, [1] * d.syndromes))
+            answer, _ = channel.call(fn, request)
+            assert wire.decode_answer(fn, answer)[0] == 0
+            fn = d.corrections_function
+            request = wire.encode_request(fn, (d.decoder_id, 1, 0))
+            answer, _ = channel.call(fn, request)
+            assert wire.decode_answer(fn, answer)[2] == [d.decoder_id % 2]
+    finally:
+        channel.close()
+        stop()
 
 
 def test_each_path_keeps_its_own_decoder_state():
