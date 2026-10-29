@@ -153,39 +153,6 @@ def _group(function: ClassicalFunction, answers: list[AnswerValue]) -> Any:
     return grouped[0] if len(grouped) == 1 else tuple(grouped)
 
 
-def _timeout_ns(builder: Any, timeout: Any) -> float:
-    """*timeout*, cycles of the program clock or a time, in nanoseconds."""
-    from .._units import Time, cycles_per_ns
-    from ._durations import cycles
-
-    if is_symbolic(timeout) or isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
-        raise CompilationError(
-            "result(timeout=...) takes a duration known when compiling: "
-            "an int number of cycles, or a time with units"
-        )
-    clock_ghz = getattr(builder, "clock_ghz", 2.0)
-    n = (
-        timeout
-        if timeout.__class__ is int
-        else cycles("result", "timeout", timeout, True, "f(...).result(timeout={})", clock_ghz)
-    )
-    if isinstance(n, float):
-        if not n.is_integer():
-            raise CompilationError(
-                f"result(): timeout {n:g} is not a whole number of cycles; "
-                "durations are whole cycles"
-            )
-        n = int(n)
-    if not n > 0:
-        raise CompilationError(f"result(): timeout must be positive, got {timeout!r}")
-    if timeout.__class__ is Time:
-        # Whole cycles of it are exactly its nanoseconds, which its float rounds.
-        return float(timeout)
-    per_ns = cycles_per_ns(clock_ghz)
-    # An int over an int rounds as float(Fraction(n) / per_ns) does.
-    return n * per_ns.denominator / per_ns.numerator
-
-
 def take(builder: Any, future: Future, args: Sequence[Any], kwargs: dict[str, Any] | None) -> Any:
     """Record ``future.result(timeout=...)``."""
     timeout = None
@@ -200,6 +167,8 @@ def take(builder: Any, future: Future, args: Sequence[Any], kwargs: dict[str, An
     function = future.function
     timeout_ns = None
     if timeout is not None:
+        from ._durations import timeout_ns as _timeout_ns
+
         timeout_ns = _timeout_ns(builder, timeout)
         if function.latency_mode == "blocking":
             raise CompilationError(f"{function.name} blocks until it answers; it has no timeout")

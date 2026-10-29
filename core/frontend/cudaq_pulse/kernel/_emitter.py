@@ -28,7 +28,6 @@ vector, ...) run as Python runs them, one traced iteration per element.
 from __future__ import annotations
 
 import builtins as _builtins_mod
-import difflib
 import dis
 import functools
 import inspect
@@ -156,43 +155,6 @@ def _extract_closures(fn: Any) -> dict[str, Any]:
 _PULSE_FUNCTIONS: dict[Any, str] = {}
 _SUBMIT = ClassicalFunction.submit
 _RESULT = _classical.Future.result
-
-
-def _round_duration(builder: Any, args: list[StackVal], kwargs: dict[str, StackVal] | None) -> int:
-    """``round_duration(line, duration, direction)`` while tracing: a number,
-    from the grid of the line's controller."""
-    from .. import _clocks
-    from .._units import Time, in_cycles
-    from . import _durations
-
-    line, n, direction = _bound(_clocks.round_duration, args, kwargs or {}).args
-    if not isinstance(line, IRValue) or line.vtype not in ("drive_line", "readout_line"):
-        raise CompilationError(
-            f"round_duration() takes a line from get_drive_line or get_readout_line, got {line!r}"
-        )
-    if is_symbolic(n):
-        names = tuple(dict.fromkeys(_parameter_names(n)))
-        raise SymbolicValueError(
-            "round_duration() needs a duration known while the kernel compiles; it "
-            f"depends on {', '.join(map(repr, names))}",
-            names,
-            "a round_duration() duration",
-        )
-    if n.__class__ is Time:
-        n = float(in_cycles(n, getattr(builder, "clock_ghz", 2.0)))
-    elif isinstance(n, float) and n.__class__ is not _durations.Cycles:
-        raise _durations.float_duration(
-            "round_duration", "duration", n, "pulse.round_duration(line, {})"
-        )
-    grid_of = getattr(builder, "line_grid", None)
-    grid = 1
-    if grid_of is not None:
-        qudit = getattr(builder, "_line_qubit", {}).get(line.vid, -1)
-        grid = grid_of(line.vtype.removesuffix("_line"), qudit)
-    try:
-        return _clocks.round_on_grid(n, grid, direction)
-    except ValueError as e:
-        raise CompilationError(str(e)) from None
 
 
 def _load_pulse_functions() -> None:
@@ -720,6 +682,9 @@ _OPERAND_TYPES: dict[str, tuple[tuple[str, ...], ...]] = {
     "wf_scale": (_WAVEFORM,),
     "wf_neg": (_WAVEFORM,),
 }
+# The ops with an optional last argument, and its attribute.
+_OPTIONAL_LAST = {"wait": "bounds", "custom_samples": "sample_rate_ghz"}
+
 _EMIT_TABLE = {
     name: (n_val, attrs, rtypes, _OPERAND_TYPES.get(name, ()))
     for name, (n_val, attrs, rtypes) in OP_TABLE.items()
@@ -788,32 +753,11 @@ def add_source_note(e: BaseException) -> None:
         pass
 
 
-def _did_you_mean(name: str, candidates: Any, call: bool = False) -> str:
-    """``"; did you mean 'x'?"`` for the closest of *candidates*, or ``""``."""
-    names = [c for c in dict.fromkeys(candidates) if isinstance(c, str) and not c.startswith("__")]
-    close = difflib.get_close_matches(name, names, n=1)
-    if not close:
-        return ""
-    return f"; did you mean {close[0]}()?" if call else f"; did you mean {close[0]!r}?"
-
-
 def _attribute_error(obj: Any, attr: str) -> str:
     """The error for ``obj.attr`` when *obj* has no attribute *attr*."""
-    if isinstance(obj, types.ModuleType):
-        module = obj.__name__
-        if module.split(".")[0] == "cudaq_pulse" and attr in OP_TABLE:
-            return (
-                f"module {module!r} has no attribute {attr!r}: the kernel language is in "
-                f"cudaq_pulse.ops; write {attr}(...) or cudaq_pulse.ops.{attr}(...)"
-            )
-        return f"cannot resolve attribute {attr!r} on module {module!r}" + _did_you_mean(
-            attr, dir(obj)
-        )
-    try:
-        names = dir(obj)
-    except Exception:  # a broken __dir__ only loses the suggestion
-        names = []
-    return f"cannot resolve attribute {attr!r} on {type(obj).__name__}" + _did_you_mean(attr, names)
+    from ._emit_errors import attribute_error
+
+    return attribute_error(obj, attr)
 
 
 def _describe(value: Any) -> str:
@@ -871,6 +815,7 @@ def _sample_envelope(
     ``range(duration)``, as ``wf_mul`` products are sampled; with *rate*
     (n samples every d cycles, the lines' rate), at the middle of each
     sample instead, ``t = (k + 0.5) * d / n``."""
+    scale = 1.0
     if isinstance(envelope, str):
         raise CompilationError(
             f"custom(): got the name {envelope!r}; pass a callable f(t) that returns "
@@ -891,11 +836,11 @@ def _sample_envelope(
         raise CompilationError(
             f"custom(): the duration must be an int number of clock cycles, got {duration!r}"
         ) from None
-    step = 1.0
     if rate is not None:
-        count = _samples_at(count, rate)
-        step = rate[1] / rate[0]
-    elif count > MAX_CUSTOM_SAMPLES:
+        from ._durations import at_rate
+
+        count, scale, envelope = at_rate(count, rate, envelope)
+    if count > MAX_CUSTOM_SAMPLES:
         raise CompilationError(
             f"custom(): a duration of {count} clock cycles is over the limit of "
             f"{MAX_CUSTOM_SAMPLES}, one sample per cycle; split the envelope into "
@@ -903,7 +848,7 @@ def _sample_envelope(
         )
     samples = []
     for k in range(count):
-        t = (k + 0.5) * step
+        t = k + 0.5
         value = envelope(t)
         if is_symbolic(value):
             raise CompilationError(
@@ -915,121 +860,19 @@ def _sample_envelope(
             number = complex(value)
         except (TypeError, ValueError):
             raise CompilationError(
-                f"custom(): the envelope returned {_describe(value)} at t={t}, not a number"
+                f"custom(): the envelope returned {_describe(value)} at t={t * scale}, not a number"
             ) from None
         if number.imag != 0.0:
             raise CompilationError(
-                f"custom(): the envelope returned {number} at t={t}; complex envelopes "
+                f"custom(): the envelope returned {number} at t={t * scale}; complex envelopes "
                 "are not supported yet, so return real values"
             )
         if not math.isfinite(number.real):
-            raise CompilationError(f"custom(): the envelope returned {number.real} at t={t}")
+            raise CompilationError(
+                f"custom(): the envelope returned {number.real} at t={t * scale}"
+            )
         samples.append(number.real)
     return samples
-
-
-def _samples_at(cycles: int, rate: tuple[int, int]) -> int:
-    """How many samples ``custom()`` takes over *cycles* at the lines' *rate*."""
-    n, d = rate
-    if cycles * n % d:
-        step = d // math.gcd(n, d)
-        raise CompilationError(
-            f"custom(): a duration of {cycles} clock cycles is not a whole number of "
-            f"samples on these lines, which play {n} every {d} cycles (their "
-            f"controller's rate); give it a multiple of {step} cycles, as "
-            f"pulse.round_duration(line, {cycles}) does"
-        )
-    count = cycles * n // d
-    most = MAX_CUSTOM_SAMPLES - 2
-    if count > most:
-        raise CompilationError(
-            f"custom(): a duration of {cycles} clock cycles is {count} samples at "
-            f"these lines' rate ({n} every {d} cycles), over the limit of {most}; "
-            "split the envelope into consecutive drives"
-        )
-    return count
-
-
-def _samples_made_for(
-    samples: Any, sample_rate_ghz: Any, line_rate: tuple[int, int] | None, program_ghz: float
-) -> tuple[int, int] | None:
-    """The ``rate`` of ``custom_samples(samples, sample_rate_ghz)``: the
-    rate it was made for (the program clock without *sample_rate_ghz*),
-    which must be the lines' *line_rate*. ``None`` for one per cycle."""
-    made = (1, 1)
-    if sample_rate_ghz is not None:
-        try:
-            from .. import _clocks
-
-            made = _clocks.made_for(sample_rate_ghz, program_ghz)
-        except ValueError as e:
-            raise CompilationError(f"custom_samples(): {e}") from None
-    plays = line_rate or (1, 1)
-    if made != plays:
-        made_ghz = program_ghz * made[0] / made[1]
-        plays_ghz = program_ghz * plays[0] / plays[1]
-        count = len(samples) if isinstance(samples, (list, tuple)) else "the"
-        raise CompilationError(
-            f"custom_samples(): {count} samples made for {made_ghz:g} GHz "
-            f"({_rate_text(made)}) on lines that play {plays_ghz:g} GHz "
-            f"({_rate_text(plays)}), which would change how long they last; "
-            f"resample them to {plays_ghz:g} GHz and pass "
-            f"sample_rate_ghz={plays_ghz:g}, or build the waveform with "
-            "custom(duration, f), which samples at the lines' rate"
-        )
-    if made == (1, 1):
-        return None
-    try:
-        count = len(samples)
-    except TypeError:
-        return made
-    if count * made[1] % made[0]:
-        raise CompilationError(
-            f"custom_samples(): {count} samples at {_rate_text(made)} do not last a "
-            f"whole number of clock cycles; give a multiple of "
-            f"{made[0] // math.gcd(*made)} samples"
-        )
-    return made
-
-
-def _rate_text(rate: tuple[int, int]) -> str:
-    n, d = rate
-    if d == 1:
-        return "one sample per clock cycle" if n == 1 else f"{n} samples per clock cycle"
-    return f"one sample every {d} clock cycles" if n == 1 else f"{n} samples every {d} cycles"
-
-
-def _operand_error(fname: str, call_args: list[Any]) -> CompilationError:
-    """The error for the first operand of *fname* that is not of its type."""
-    index, want = 0, _OPERAND_TYPES[fname][0]
-    for index, (v, want) in enumerate(zip(call_args, _OPERAND_TYPES[fname])):
-        if v.__class__ is not IRValue or v.vtype not in want:
-            break
-    value = call_args[index]
-    wanted = " or ".join(_TYPE_WORDS[t] for t in want)
-    message = f"{fname}(): argument {index + 1} must be a {wanted}, got {_describe(value)}"
-    vtype = value.vtype if value.__class__ is IRValue else None
-    play = fname in ("drive", "readout")
-    if play and ((index == 0 and vtype == "tone") or (index == 2 and vtype in _LINE_TYPES)):
-        message += f"; the line comes first and the tone last: {fname}(line, waveform, tone)"
-    elif play and vtype in _LINE_TYPES:
-        message += "; drive() takes a drive line and readout() a readout line"
-    elif fname == "wf_scale":
-        message += "; call it as wf_scale(waveform, scalar)"
-    elif want is _WAVEFORM and vtype is None:
-        message += "; pass a waveform such as square(duration, amplitude)"
-    elif want is _QUDIT and vtype is None:
-        from .._device import Qudit
-
-        if isinstance(value, Qudit):
-            message = (
-                f"{fname}(): argument {index + 1} is a qudit handle that reached the kernel "
-                "inside a list; pass qudits as separate arguments, a Register "
-                "(dev.qudit_handles[0:4]) or a tuple, not a list"
-            )
-        else:
-            message += "; pass one of the kernel's qudit arguments"
-    return CompilationError(message)
 
 
 def _unpack_error(value: Any, count: int) -> str:
@@ -1173,27 +1016,6 @@ def _parameter_names(value: Any) -> list[str]:
     if isinstance(value, ParameterExpression):
         return _parameter_names(value.lhs) + _parameter_names(value.rhs)
     return []
-
-
-def _range_error(args: list[Any]) -> CompilationError:
-    choice = _find_choice(args)
-    if choice is not None:
-        return CompilationError(
-            f"a range() bound is {choice.origin}, which is known only when the program "
-            "runs; loop inside each arm of the if instead"
-        )
-    names = sorted({n for a in args for n in _parameter_names(a)})
-    if names:
-        return SymbolicValueError(
-            "range() bound depends on kernel parameter "
-            + ", ".join(repr(n) for n in names)
-            + "; a float parameter stays symbolic, so annotate it as int to "
-            "specialize the kernel on its value",
-            tuple(names),
-            "a range() bound",
-        )
-    kinds = ", ".join(type(a).__name__ for a in args)
-    return CompilationError(f"range() bounds must be integers known at compile time; got ({kinds})")
 
 
 def _iterate(value: Any) -> Any:
@@ -2406,7 +2228,9 @@ class PulseIREmitter:
     def _unknown_name(self, name: str) -> str:
         """The error for calling *name*, which nothing in scope defines."""
         known = [*OP_TABLE, *self.locals, *self._fn_globals, *self._fn_closures, *self._builtins]
-        return f"unknown pulse op: {name}" + _did_you_mean(name, known, call=True)
+        from ._emit_errors import did_you_mean
+
+        return f"unknown pulse op: {name}" + did_you_mean(name, known, call=True)
 
     # ── Call dispatch ────────────────────────────────────────────────
 
@@ -2775,7 +2599,9 @@ class PulseIREmitter:
         if not 1 <= len(call_args) <= 3:
             raise CompilationError(f"range() takes 1 to 3 arguments, got {len(call_args)}")
         if not all(isinstance(a, int) for a in call_args):
-            raise _range_error(call_args)
+            from ._emit_errors import range_error
+
+            raise range_error(call_args)
         try:
             self.stack.append(range(*call_args))
         except ValueError as exc:
@@ -2873,7 +2699,9 @@ class PulseIREmitter:
         entry = _EMIT_TABLE.get(fname)
         if entry is None:
             if fname == "round_duration":
-                return (_round_duration(self.b, call_args, None),)
+                from ._durations import traced_round_duration
+
+                return (traced_round_duration(self.b, call_args, None),)
             raise CompilationError(f"unknown pulse op: {fname}")
 
         n_val, attr_names, rtypes, operand_types = entry
@@ -2897,20 +2725,15 @@ class PulseIREmitter:
             attrs: dict[str, Any] = {}
             out_types = tuple(v.vtype for v in operands) if rtypes is None else rtypes
         else:
-            # The optional last argument of wait (bounds) or custom_samples
-            # (sample_rate_ghz).
-            optional = None
+            optional: tuple[str, StackVal] | None = None
             if len(call_args) != n_val + len(attr_names):
-                if fname == "custom_samples" and len(call_args) == 2:
-                    optional = ("sample_rate_ghz", call_args[1])
-                    call_args = call_args[:1]
-                elif fname != "wait" or len(call_args) != 3:
+                last = _OPTIONAL_LAST.get(fname)
+                if last is None or len(call_args) != n_val + len(attr_names) + 1:
                     raise CompilationError(
                         f"{fname}: expected {n_val + len(attr_names)} args, got {len(call_args)}"
                     )
-                else:
-                    optional = ("bounds", call_args[2])
-                    call_args = call_args[:2]
+                optional = (last, call_args[-1])
+                call_args = call_args[:-1]
             # Operands must have their op's types. A line or tone read from a
             # container the tracer does not rebind (a tuple in a list, a dict)
             # may be an old value of its channel; the op consumes the channel's
@@ -2928,7 +2751,9 @@ class PulseIREmitter:
                 except AttributeError:
                     bad = True
                 if bad:
-                    raise _operand_error(fname, call_args)
+                    from ._emit_errors import operand_error
+
+                    raise operand_error(fname, call_args)
                 ca = a.chan
                 cc = c.chan
                 if (ca is not None and ca.value is not a) or (cc is not None and cc.value is not c):
@@ -2941,7 +2766,9 @@ class PulseIREmitter:
                 except AttributeError:
                     bad = True
                 if bad:
-                    raise _operand_error(fname, call_args)
+                    from ._emit_errors import operand_error
+
+                    raise operand_error(fname, call_args)
                 ca = a.chan
                 if ca is not None and ca.value is not a:
                     call_args[0] = ca.value
@@ -2950,7 +2777,9 @@ class PulseIREmitter:
                     v = call_args[i]
                     if v.__class__ is not IRValue or v.vtype not in operand_types[i]:
                         if v.__class__ is not _Choice or v.vtype not in operand_types[i]:
-                            raise _operand_error(fname, call_args)
+                            from ._emit_errors import operand_error
+
+                            raise operand_error(fname, call_args)
                     call_args[i] = _current(v)
             operands = tuple(call_args[:n_val])
             attrs = dict(zip(attr_names, call_args[n_val:]))
@@ -2964,20 +2793,12 @@ class PulseIREmitter:
             if fname in _WAVEFORMS:
                 duration = attrs.get("duration")
                 if fname == "custom":
-                    if duration.__class__ is not int or not 1 <= duration <= MAX_CYCLES:
-                        duration = self._in_cycles(fname, attrs)
-                    rate = getattr(self.b, "sample_rate", None)
-                    attrs = {"samples": _sample_envelope(duration, attrs.get("name"), rate)}
+                    attrs, duration = self._custom_samples(duration, attrs)
                     op_name = _OP_NAMES["custom_samples"]
-                    if rate is None:
-                        duration = len(attrs["samples"])
-                    else:
-                        attrs["rate"] = rate
-                        duration = len(attrs["samples"]) * rate[1] // rate[0]
                 elif duration.__class__ is not int:
-                    duration = self._in_cycles(fname, attrs)
-                    if duration.__class__ is not int:
-                        duration = None
+                    from ._durations import traced_duration
+
+                    duration = traced_duration(self.b, fname, attrs)
             else:
                 duration = self._waveform_duration(fname, operands, attrs)
             try:
@@ -3002,6 +2823,14 @@ class PulseIREmitter:
             self._rebind_linear(fname, call_args, results)
         return results
 
+    def _custom_samples(self, duration: Any, attrs: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        if duration.__class__ is int and 1 <= duration <= MAX_CYCLES and self.b.sample_rate is None:
+            samples = _sample_envelope(duration, attrs.get("name"))
+            return {"samples": samples}, len(samples)
+        from ._durations import custom_samples
+
+        return custom_samples(self.b, duration, attrs)
+
     def _refresh_lines(self) -> None:
         """Bring names holding an old value of a shared channel up to date."""
         lines = self._lines
@@ -3011,14 +2840,6 @@ class PulseIREmitter:
                 current = lines.current(value)
                 if current is not None and current is not value:
                     local_vars[name] = current
-
-    def _in_cycles(self, fname: str, attrs: dict[str, Any]) -> Any:
-        """The duration of a *fname* waveform once the times in its *attrs*
-        are converted to program cycles (the builder checks the rest)."""
-        from ._durations import in_program_cycles
-
-        in_program_cycles(fname, attrs, getattr(self.b, "clock_ghz", 2.0))
-        return attrs.get("duration")
 
     def _waveform_duration(
         self, fname: str, operands: tuple[IRValue, ...], attrs: dict[str, Any]
@@ -3039,18 +2860,10 @@ class PulseIREmitter:
                 return left if left is not None else right
             return left
         if fname == "custom_samples":
-            line_rate = getattr(self.b, "sample_rate", None)
-            made_for = attrs.pop("sample_rate_ghz", None)
-            if line_rate is not None or made_for is not None:
-                rate = _samples_made_for(
-                    attrs["samples"], made_for, line_rate, getattr(self.b, "clock_ghz", 2.0)
-                )
-                if rate is not None:
-                    attrs["rate"] = rate
-                    try:
-                        return len(attrs["samples"]) * rate[1] // rate[0]
-                    except TypeError:
-                        return None
+            if "sample_rate_ghz" in attrs or self.b.sample_rate is not None:
+                from ._durations import custom_samples_duration
+
+                return custom_samples_duration(self.b, attrs)
             try:
                 return len(attrs["samples"])
             except TypeError:

@@ -438,6 +438,8 @@ class PythonIRBuilder:
 
     # Accepts scf.for regions, so the tracer may emit a loop once.
     supports_regions = True
+    # The samples every line plays per program cycle; see PackedIRBuilder.
+    sample_rate: tuple[int, int] | None = None
 
     def __init__(self, name: str = "main"):
         self.name = name

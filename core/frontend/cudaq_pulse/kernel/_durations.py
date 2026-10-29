@@ -20,6 +20,7 @@ cycles: one multiply by a constant the compile fixes.
 
 from __future__ import annotations
 
+import math
 import numbers
 import operator
 from typing import Any
@@ -32,6 +33,7 @@ from .ir_builder import (
     arithmetic_text,
     is_symbolic,
 )
+from .packed_ir_builder import MAX_CUSTOM_SAMPLES
 
 # The times of each op: (attribute, whole cycles, the call with it as {}).
 TIMES: dict[str, tuple[tuple[str, bool, str], ...]] = {
@@ -297,3 +299,199 @@ def _replaced(value: Any, clock_ghz: float) -> Any:
             dtype=value.dtype,
         )
     return value
+
+
+def timeout_ns(builder: Any, timeout: Any) -> float:
+    """*timeout*, cycles of the program clock or a time, in nanoseconds."""
+    from .._units import cycles_per_ns
+
+    if is_symbolic(timeout) or isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise CompilationError(
+            "result(timeout=...) takes a duration known when compiling: "
+            "an int number of cycles, or a time with units"
+        )
+    clock_ghz = getattr(builder, "clock_ghz", 2.0)
+    n = (
+        timeout
+        if timeout.__class__ is int
+        else cycles("result", "timeout", timeout, True, "f(...).result(timeout={})", clock_ghz)
+    )
+    if isinstance(n, float):
+        if not n.is_integer():
+            raise CompilationError(
+                f"result(): timeout {n:g} is not a whole number of cycles; "
+                "durations are whole cycles"
+            )
+        n = int(n)
+    if not n > 0:
+        raise CompilationError(f"result(): timeout must be positive, got {timeout!r}")
+    if timeout.__class__ is Time:
+        # Whole cycles of it are exactly its nanoseconds, which its float rounds.
+        return float(timeout)
+    per_ns = cycles_per_ns(clock_ghz)
+    # An int over an int rounds as float(Fraction(n) / per_ns) does.
+    return n * per_ns.denominator / per_ns.numerator
+
+
+# ── Lines on other clocks ─────────────────────────────────────────────────────
+
+
+def traced_round_duration(builder: Any, args: list[Any], kwargs: dict[str, Any] | None) -> int:
+    """``round_duration(line, duration, direction)`` while tracing: a number,
+    from the grid of the line's controller."""
+    from .. import _clocks
+    from ._emitter import _bound, _parameter_names
+    from .ir_builder import IRValue, SymbolicValueError
+
+    line, n, direction = _bound(_clocks.round_duration, args, kwargs or {}).args
+    if not isinstance(line, IRValue) or line.vtype not in ("drive_line", "readout_line"):
+        raise CompilationError(
+            f"round_duration() takes a line from get_drive_line or get_readout_line, got {line!r}"
+        )
+    if is_symbolic(n):
+        names = tuple(dict.fromkeys(_parameter_names(n)))
+        raise SymbolicValueError(
+            "round_duration() needs a duration known while the kernel compiles; it "
+            f"depends on {', '.join(map(repr, names))}",
+            names,
+            "a round_duration() duration",
+        )
+    if n.__class__ is Time:
+        n = float(in_cycles(n, getattr(builder, "clock_ghz", 2.0)))
+    elif isinstance(n, float) and n.__class__ is not Cycles:
+        raise float_duration("round_duration", "duration", n, "pulse.round_duration(line, {})")
+    grid_of = getattr(builder, "line_grid", None)
+    grid = 1
+    if grid_of is not None:
+        qudit = getattr(builder, "_line_qubit", {}).get(line.vid, -1)
+        grid = grid_of(line.vtype.removesuffix("_line"), qudit)
+    try:
+        return _clocks.round_on_grid(n, grid, direction)
+    except ValueError as e:
+        raise CompilationError(str(e)) from None
+
+
+def at_rate(count: int, rate: tuple[int, int], envelope: Any) -> tuple[int, float, Any]:
+    """For ``custom()`` over *count* cycles at the lines' *rate*: its number
+    of samples, the cycles between them, and *envelope* of the sample times
+    in those (``t = k + 0.5``) instead of cycles."""
+    count = samples_at(count, rate)
+    scale = rate[1] / rate[0]
+    return count, scale, lambda t: envelope(t * scale)
+
+
+def samples_at(cycles: int, rate: tuple[int, int]) -> int:
+    """How many samples ``custom()`` takes over *cycles* at the lines' *rate*."""
+    n, d = rate
+    if cycles * n % d:
+        step = d // math.gcd(n, d)
+        raise CompilationError(
+            f"custom(): a duration of {cycles} clock cycles is not a whole number of "
+            f"samples on these lines, which play {n} every {d} cycles (their "
+            f"controller's rate); give it a multiple of {step} cycles, as "
+            f"pulse.round_duration(line, {cycles}) does"
+        )
+    count = cycles * n // d
+    most = MAX_CUSTOM_SAMPLES - 2
+    if count > most:
+        raise CompilationError(
+            f"custom(): a duration of {cycles} clock cycles is {count} samples at "
+            f"these lines' rate ({n} every {d} cycles), over the limit of {most}; "
+            "split the envelope into consecutive drives"
+        )
+    return count
+
+
+def samples_made_for(
+    samples: Any, sample_rate_ghz: Any, line_rate: tuple[int, int] | None, program_ghz: float
+) -> tuple[int, int] | None:
+    """The ``rate`` of ``custom_samples(samples, sample_rate_ghz)``: the
+    rate it was made for (the program clock without *sample_rate_ghz*),
+    which must be the lines' *line_rate*. ``None`` for one per cycle."""
+    made = (1, 1)
+    if sample_rate_ghz is not None:
+        try:
+            from .. import _clocks
+
+            made = _clocks.made_for(sample_rate_ghz, program_ghz)
+        except ValueError as e:
+            raise CompilationError(f"custom_samples(): {e}") from None
+    plays = line_rate or (1, 1)
+    if made != plays:
+        made_ghz = program_ghz * made[0] / made[1]
+        plays_ghz = program_ghz * plays[0] / plays[1]
+        count = len(samples) if isinstance(samples, (list, tuple)) else "the"
+        raise CompilationError(
+            f"custom_samples(): {count} samples made for {made_ghz:g} GHz "
+            f"({_rate_text(made)}) on lines that play {plays_ghz:g} GHz "
+            f"({_rate_text(plays)}), which would change how long they last; "
+            f"resample them to {plays_ghz:g} GHz and pass "
+            f"sample_rate_ghz={plays_ghz:g}, or build the waveform with "
+            "custom(duration, f), which samples at the lines' rate"
+        )
+    if made == (1, 1):
+        return None
+    try:
+        count = len(samples)
+    except TypeError:
+        return made
+    if count * made[1] % made[0]:
+        raise CompilationError(
+            f"custom_samples(): {count} samples at {_rate_text(made)} do not last a "
+            f"whole number of clock cycles; give a multiple of "
+            f"{made[0] // math.gcd(*made)} samples"
+        )
+    return made
+
+
+def _rate_text(rate: tuple[int, int]) -> str:
+    n, d = rate
+    if d == 1:
+        return "one sample per clock cycle" if n == 1 else f"{n} samples per clock cycle"
+    return f"one sample every {d} clock cycles" if n == 1 else f"{n} samples every {d} cycles"
+
+
+def custom_samples_duration(builder: Any, attrs: dict[str, Any]) -> int | None:
+    """The duration in program cycles of a ``custom_samples`` op of *attrs*
+    (its ``rate`` set) on lines that play *builder*'s sample rate."""
+    line_rate = getattr(builder, "sample_rate", None)
+    made_for = attrs.pop("sample_rate_ghz", None)
+    rate = None
+    if line_rate is not None or made_for is not None:
+        rate = samples_made_for(
+            attrs["samples"], made_for, line_rate, getattr(builder, "clock_ghz", 2.0)
+        )
+    try:
+        if rate is None:
+            return len(attrs["samples"])
+        attrs["rate"] = rate
+        return len(attrs["samples"]) * rate[1] // rate[0]
+    except TypeError:
+        return None
+
+
+def traced_duration(builder: Any, fname: str, attrs: dict[str, Any]) -> int | None:
+    """The duration in program cycles of a *fname* waveform once the times
+    in its *attrs* are converted (the builder checks the rest); ``None`` when
+    not known while tracing."""
+    in_program_cycles(fname, attrs, getattr(builder, "clock_ghz", 2.0))
+    duration = attrs.get("duration")
+    return duration if duration.__class__ is int else None
+
+
+def custom_samples(
+    builder: Any, duration: Any, attrs: dict[str, Any]
+) -> tuple[dict[str, Any], int]:
+    """The attributes of the custom_samples op a custom() call of *duration*
+    makes on *builder*'s lines, and its duration in program cycles."""
+    from ._emitter import _sample_envelope
+
+    if duration.__class__ is not int or not 1 <= duration <= MAX_CYCLES:
+        in_program_cycles("custom", attrs, getattr(builder, "clock_ghz", 2.0))
+        duration = attrs.get("duration")
+    rate = getattr(builder, "sample_rate", None)
+    attrs = {"samples": _sample_envelope(duration, attrs.get("name"), rate)}
+    if rate is None:
+        return attrs, len(attrs["samples"])
+    attrs["rate"] = rate
+    return attrs, len(attrs["samples"]) * rate[1] // rate[0]
