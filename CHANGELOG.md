@@ -415,7 +415,8 @@ behavior may change in any 0.x release.
   function from its type hints (`def decode(syndrome: pulse.Bits) -> bool`),
   with a latency model and a link; a list parameter takes its length from
   the call, each length makes a version of the function (`flip__3`), and
-  list results take theirs from the body. `pulse.Length` (`typing.Annotated`)
+  list results take theirs from the body (and the plain Python helpers it
+  calls). `pulse.Length` (`typing.Annotated`)
   states a fixed length where one schema is wanted:
   `pulse.Length[pulse.Bits, 8]` (eight measurements read as bits) and
   `pulse.Length[list[int], 8]` (eight numbers). One readout passed where a

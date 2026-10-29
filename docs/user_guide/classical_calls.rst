@@ -80,7 +80,9 @@ Lengths are read from the function's bytecode, not its source: from
 slices, concatenation, comprehensions, ``for`` loops, ``while`` loops the
 lengths end, branches the lengths decide, a table of equal-length lists, and
 counts that cancel (the set bits of a ``pulse.Bits`` and the items a
-comprehension keeps, padded back to an input's length). Where the values
+comprehension keeps, padded back to an input's length), and through the
+plain Python functions the body calls (a function that calls itself is not
+followed). Where the values
 decide it (a comprehension with a condition, a ``while`` loop the values
 end, two returns of different lengths), compiling says so and names the
 line; return a fixed maximum and a count instead (``positions = [0] *

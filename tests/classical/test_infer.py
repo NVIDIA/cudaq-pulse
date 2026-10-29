@@ -4,6 +4,7 @@ reason a version is rejected (with the line it points at)."""
 
 import contextlib
 import inspect
+import sys
 
 import cudaq_pulse as pulse
 import pytest
@@ -15,6 +16,10 @@ SHARED = [0, 0]
 
 def _helper(bits):
     return sum(bits)
+
+
+def _starred(*lists):
+    return len(lists)
 
 
 def _lengths(fn, **n):
@@ -304,7 +309,7 @@ def test_a_module_table_of_equal_lists_gives_their_length():
 
 
 def _passed(syndrome: pulse.Bits) -> pulse.Bits:
-    w = _helper(syndrome)
+    w = _starred(syndrome)
     return [w > len(syndrome) // 2] * len(syndrome)
 
 
@@ -356,7 +361,7 @@ def _aliased(x: pulse.Bits) -> pulse.Bits:
 
 
 def test_a_list_something_unseen_could_change_has_no_length():
-    message = _rejected(_passed, "is passed to `_helper\\(\\)`", syndrome=6)
+    message = _rejected(_passed, "is passed to `_starred\\(\\)`", syndrome=6)
     assert f"at line {_line(_passed, 'w = ')}, which could change its length" in message
     _rejected(_passed_by_keyword, "is passed to `_helper\\(\\)`", x=2)
     _rejected(_in_a_container, "could change it", x=2)
@@ -364,6 +369,95 @@ def test_a_list_something_unseen_could_change_has_no_length():
     _rejected(_nonlocal, "`n` is used by a nested function", x=2)
     _rejected(_shared, "`SHARED` is a module-level variable the function changes", x=2)
     assert _lengths(_aliased, x=3) == (4,)
+
+
+# ── Plain Python helpers ────────────────────────────────────────────────────
+
+
+def _pad(xs, n=2):
+    return xs + [0] * n
+
+
+def _twice(xs):
+    return [*xs, *xs]
+
+
+def _grow_if_long(xs):
+    if len(xs) > 3:
+        xs.append(1)
+
+
+def _same(xs):
+    return xs
+
+
+def _first_ones(xs):
+    return xs[: xs[0]]
+
+
+def _halves(xs):
+    return _halves(xs[1:]) if xs else []
+
+
+def _majority(x: pulse.Bits) -> pulse.Bits:
+    w = _helper(x)
+    return [w > len(x) // 2] * len(x)
+
+
+def _nested_helpers(x: pulse.Bits) -> pulse.Bits:
+    return _pad(_twice(x))
+
+
+def _changed_by_a_helper(x: pulse.Bits) -> pulse.Bits:
+    out = list(x)
+    _grow_if_long(out)
+    _grow_if_long(out)
+    return out
+
+
+def _returned_alias(x: pulse.Bits) -> pulse.Bits:
+    out = _same(list(x))
+    out.append(0)
+    return out
+
+
+def _value_dependent_helper(x: pulse.Bits) -> pulse.Bits:
+    return _first_ones(x)
+
+
+def _recursive_helper(x: pulse.Bits) -> pulse.Bits:
+    return _halves(x)
+
+
+def _swapped(x: pulse.Bits) -> pulse.Bits:
+    return _pad(x)
+
+
+@pytest.mark.parametrize(
+    ("fn", "n", "expected"),
+    [
+        (_majority, 6, (6,)),
+        (_nested_helpers, 3, (8,)),
+        (_changed_by_a_helper, 3, (3,)),
+        (_changed_by_a_helper, 4, (6,)),
+        (_returned_alias, 2, (3,)),
+    ],
+)
+def test_lengths_follow_plain_python_helpers(fn, n, expected):
+    assert _lengths(fn, x=n) == expected
+
+
+def test_a_helper_reason_names_the_call():
+    message = _rejected(_value_dependent_helper, "in `_first_ones\\(x\\)`, `xs\\[0\\]`", x=3)
+    assert f"(line {_line(_value_dependent_helper, 'return _first_ones')})" in message
+    _rejected(_recursive_helper, "`_halves\\(xs\\[1:\\]\\)` calls itself", x=3)
+
+
+def test_a_version_rereads_the_helpers_it_called(monkeypatch):
+    declared = pulse.classical(_swapped, max_latency_ns=1)
+    assert declared.specialize(x=3).results[0].count == 5
+    monkeypatch.setattr(sys.modules[__name__], "_pad", _twice)
+    assert declared.specialize(x=4).results[0].count == 8
 
 
 # ── Exceptions and with ─────────────────────────────────────────────────────

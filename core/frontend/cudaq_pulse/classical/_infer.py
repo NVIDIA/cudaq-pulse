@@ -519,6 +519,9 @@ _QUIET = frozenset(
 _CALLS = frozenset((_bc.CALL, _bc.CALL_KW, _bc.CALL_EX))
 _CO_ASYNC = 0x80 | 0x100 | 0x200
 _CO_GENERATOR = 0x20
+_CO_STARRED = 0x04 | 0x08  # *args, **kwargs
+_HELPER_DEPTH = 16  # helpers inside helpers the analysis follows
+_ITSELF = object()  # a helper that calls itself
 _UNROLL = 4096  # while-loop passes run one by one
 _BUDGET = 200_000  # instructions per version
 
@@ -582,6 +585,34 @@ def _sig(v: Any) -> Any:
     return ("x", id(v))
 
 
+def _whys(values: list[Any]) -> list[Any]:
+    out = []
+    for v in values:
+        c = v.__class__
+        if c is Tup:
+            out.extend(_whys(v.items))
+        elif c in (Seq, Const, Opq, It) and v.why is not None:
+            out.append(v.why)
+    return out
+
+
+def _rewhy(v: Any, within: Any) -> Any:
+    """*v* with the reasons it gives for an unknown length or value passed
+    through *within*."""
+    c = v.__class__
+    if c is Tup:
+        return Tup([_rewhy(x, within) for x in v.items])
+    if c is Seq:
+        v.why = within(v.why)
+    elif c is Const and v.why is not None:
+        return Const(v.v, within(v.why))
+    elif c is Opq and v.why is not None:
+        return Opq(within(v.why), v.truth)
+    elif c is It and v.why is not None:
+        v.why = within(v.why)
+    return v
+
+
 def _boxes(v: Any, out: list[Seq] | None = None) -> list[Seq]:
     if out is None:
         out = []
@@ -631,6 +662,7 @@ class _Run:
         self.escaped = 0
         self.steps = 0
         self.placeholders: set[int] = set()
+        self.active: list[Any] = [code]  # the bodies running, outermost first
 
     # symbols and bounds
 
@@ -1976,12 +2008,19 @@ class _Run:
 
     def call(self, st: _State, f: Any, args: list[Any], names: int, dec: Any, i: int) -> Any:
         c = f.__class__
+        recursive = False
         if c is Obj:
             o = f.obj
             try:
                 kind = _KNOWN.get(o)
             except TypeError:
                 kind = None
+            if kind is None and o.__class__ is types.FunctionType and names == 0:
+                got = self.helper(st, o, f.name, args, dec, i)
+                if got is _ITSELF:
+                    recursive = True
+                elif got is not None:
+                    return got
             if kind is None and o.__class__ is types.GenericAlias:
                 kind = _KNOWN.get(o.__origin__)  # list[float]()
             if kind is not None and names >= 0:
@@ -2019,9 +2058,88 @@ class _Run:
                 ),
             )
         self.lose_escaped(st, _why(line, "`{}()` at line {} could change it", ("fn", dec, i), line))
+        if recursive:
+            return Opq(
+                _why(line, "`{}` calls itself, and the compiler doesn't follow that", ("x", dec, i))
+            )
         return Opq(
             _why(line, "`{}` returns something whose length the compiler can't see", ("x", dec, i))
         )
+
+    def helper(
+        self, st: _State, fn: types.FunctionType, name: str, args: list[Any], dec: Any, i: int
+    ) -> Any:
+        """A call of a plain Python function: its body run on *args*, or None
+        when the analysis doesn't follow it (it calls itself, takes keyword
+        or starred arguments, or does something the analysis can't follow).
+        The caller's values ride at the bottom of the body's stack, so a list
+        it changes on any of its paths comes back joined."""
+        code = self.read(_ATTR, fn, "__code__")
+        if code in self.active:
+            return _ITSELF
+        if (
+            len(self.active) > _HELPER_DEPTH
+            or code.co_flags & (_CO_ASYNC | _CO_GENERATOR | _CO_STARRED)
+            or code.co_kwonlyargcount
+            or len(args) > code.co_argcount
+        ):
+            return None
+        defaults = self.read(_ATTR, fn, "__defaults__") or ()
+        missing = code.co_argcount - len(args)
+        if missing > len(defaults):
+            return None
+        try:
+            body = _bc.decode(code)
+        except PulseError:
+            return None
+        line = _line(dec, i)
+        env = dict(zip(code.co_varnames, args, strict=False))
+        for k, value in enumerate(defaults[len(defaults) - missing :] if missing else ()):
+            env[code.co_varnames[len(args) + k]] = self.from_object(value, name, line)
+        carried = [*st.stack, *st.env.values(), *args]
+        known = {id(why) for why in _whys(carried)}
+        before = (self.g, self.cells)
+        self.g = self.read(_ATTR, fn, "__globals__")
+        self.cells = dict(zip(code.co_freevars, fn.__closure__ or (), strict=False))
+        self.active.append(code)
+        rets: list[Any] = []
+        try:
+            self.sweep(
+                body, _State(list(carried), env, st.path), 0, len(body.instrs), -1, None, rets
+            )
+        except (_GiveUpError, RecursionError):
+            return None
+        finally:
+            self.active.pop()
+            self.g, self.cells = before
+        ends = [
+            _State([value, *s.stack], {}, s.path)
+            for value, _, _, s in rets
+            if len(s.stack) == len(carried)
+        ]
+        if not ends or len(ends) != len(rets):
+            return None
+        try:
+            out = self.merge(body, ends, None, len(st.path)).stack
+        except _GiveUpError:
+            return None
+        boxes, joined = _boxes(Tup(carried)), _boxes(Tup(out[1:]))
+        if len(boxes) != len(joined):
+            return None
+
+        def within(why: Any) -> Any:
+            if why is None or id(why) in known:
+                return why
+            return _why(line, "in `{}`, {}", ("x", dec, i), why)
+
+        for box, now in zip(boxes, joined, strict=True):
+            if now is not box:
+                box.n, box.why, box.src, box.esc = now.n, within(now.why), now.src, now.esc
+        result = out[0]
+        for box, now in zip(boxes, joined, strict=True):
+            if result is now:
+                return box
+        return _rewhy(result, within)
 
     def builtin(self, kind: int, o: Any, args: list[Any], dec: Any, i: int) -> Any:
         line = _line(dec, i)
