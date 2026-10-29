@@ -41,11 +41,9 @@ import types
 from collections.abc import Callable, Iterator, Sequence
 from typing import Any, NoReturn
 
-from .. import _clocks
-from .._units import Time, in_cycles
 from ..classical import ClassicalFunction
 from . import _bytecode_normalize as bc
-from . import _classical, _durations
+from . import _classical
 from ._bytecode_normalize import (
     BINARY,
     CALL,
@@ -70,6 +68,7 @@ from ._bytecode_normalize import (
 from ._unroll import resolve_unroll_threshold
 from .ir_builder import (
     LINEAR_TYPES,
+    MAX_CYCLES,
     OP_TABLE,
     UNDEFINED_VID,
     AnswerValue,
@@ -90,35 +89,6 @@ _WAVEFORMS = frozenset(
 )
 _WAVEFORM_ARITHMETIC = frozenset({"wf_add", "wf_sub", "wf_mul", "wf_scale", "wf_neg"})
 _MAKES_WAVEFORM = _WAVEFORMS | _WAVEFORM_ARITHMETIC | {"custom_samples"}
-# Per call with times: whether its times are cycles already (ints in range,
-# and floats in shape times), so there is nothing to convert or reject.
-_IN_CYCLES = {
-    fname: eval(
-        "lambda a: "
-        + " and ".join(
-            f"(v := a[{name!r}]).__class__ is int and "
-            f"{_durations.LEAST[fname, name]} <= v <= {_durations.MAX_CYCLES}"
-            if whole
-            else f"((c := a[{name!r}].__class__) is int or c is float)"
-            for name, whole, _ in spec
-            if name != "bounds"
-        ),
-        {"__builtins__": {}, "int": int, "float": float},
-    )
-    for fname, spec in _durations.TIMES.items()
-}
-
-
-def _whole_bounds(bounds: Any) -> bool:
-    """Whether wait *bounds* are cycles already: ints, or None for no bound."""
-    if bounds.__class__ is not tuple:
-        return False
-    for b in bounds:
-        if b is not None and b.__class__ is not int:
-            return False
-    return True
-
-
 _PULSE_OP_NAMES = frozenset(OP_TABLE.keys())
 _OP_NAMES = {name: f"pulse.{name}" for name in OP_TABLE}
 
@@ -186,13 +156,16 @@ def _extract_closures(fn: Any) -> dict[str, Any]:
 _PULSE_FUNCTIONS: dict[Any, str] = {}
 _SUBMIT = ClassicalFunction.submit
 _RESULT = _classical.Future.result
-_ROUND_DURATION = _clocks.round_duration
 
 
 def _round_duration(builder: Any, args: list[StackVal], kwargs: dict[str, StackVal] | None) -> int:
     """``round_duration(line, duration, direction)`` while tracing: a number,
     from the grid of the line's controller."""
-    line, n, direction = _bound(_ROUND_DURATION, args, kwargs or {}).args
+    from .. import _clocks
+    from .._units import Time, in_cycles
+    from . import _durations
+
+    line, n, direction = _bound(_clocks.round_duration, args, kwargs or {}).args
     if not isinstance(line, IRValue) or line.vtype not in ("drive_line", "readout_line"):
         raise CompilationError(
             f"round_duration() takes a line from get_drive_line or get_readout_line, got {line!r}"
@@ -231,6 +204,8 @@ def _load_pulse_functions() -> None:
         op = getattr(ops, name, None)
         if op is not None:
             loaded[op] = name
+    # Not an op: _emit_pulse_call computes it while tracing.
+    loaded[ops.round_duration] = "round_duration"
     # One update, so another thread never sees part of the map.
     _PULSE_FUNCTIONS.update(loaded)
 
@@ -746,7 +721,7 @@ _OPERAND_TYPES: dict[str, tuple[tuple[str, ...], ...]] = {
     "wf_neg": (_WAVEFORM,),
 }
 _EMIT_TABLE = {
-    name: (n_val, attrs, rtypes, _OPERAND_TYPES.get(name, ()), _IN_CYCLES.get(name))
+    name: (n_val, attrs, rtypes, _OPERAND_TYPES.get(name, ()))
     for name, (n_val, attrs, rtypes) in OP_TABLE.items()
 }
 _TYPE_WORDS = {
@@ -984,6 +959,8 @@ def _samples_made_for(
     made = (1, 1)
     if sample_rate_ghz is not None:
         try:
+            from .. import _clocks
+
             made = _clocks.made_for(sample_rate_ghz, program_ghz)
         except ValueError as e:
             raise CompilationError(f"custom_samples(): {e}") from None
@@ -2513,9 +2490,6 @@ class PulseIREmitter:
         if isinstance(callable_val, types.FunctionType) and (
             _takes_ir(call_args, kwargs) or _uses_pulse_ops(callable_val)
         ):
-            if callable_val is _ROUND_DURATION:
-                self.stack.append(_round_duration(self.b, call_args, kwargs))
-                return
             self._inline_helper(callable_val, call_args, kwargs)
             return
         # A method of a helper object is inlined the same way, with its object
@@ -2895,12 +2869,14 @@ class PulseIREmitter:
         self,
         fname: str,
         call_args: list[StackVal],
-    ) -> tuple[IRValue, ...]:
+    ) -> tuple[StackVal, ...]:
         entry = _EMIT_TABLE.get(fname)
         if entry is None:
+            if fname == "round_duration":
+                return (_round_duration(self.b, call_args, None),)
             raise CompilationError(f"unknown pulse op: {fname}")
 
-        n_val, attr_names, rtypes, operand_types, cycles_already = entry
+        n_val, attr_names, rtypes, operand_types = entry
         acquires = fname in _ACQUIRES
         line_op = False
         if acquires:
@@ -2980,12 +2956,6 @@ class PulseIREmitter:
             attrs = dict(zip(attr_names, call_args[n_val:]))
             if optional is not None:
                 attrs[optional[0]] = optional[1]
-                if cycles_already is not None and not (
-                    cycles_already(attrs) and _whole_bounds(optional[1])
-                ):
-                    _durations.in_program_cycles(fname, attrs, getattr(self.b, "clock_ghz", 2.0))
-            elif cycles_already is not None and not cycles_already(attrs):
-                _durations.in_program_cycles(fname, attrs, getattr(self.b, "clock_ghz", 2.0))
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
 
         op_name = _OP_NAMES[fname]
@@ -2994,6 +2964,8 @@ class PulseIREmitter:
             if fname in _WAVEFORMS:
                 duration = attrs.get("duration")
                 if fname == "custom":
+                    if duration.__class__ is not int or not 1 <= duration <= MAX_CYCLES:
+                        duration = self._in_cycles(fname, attrs)
                     rate = getattr(self.b, "sample_rate", None)
                     attrs = {"samples": _sample_envelope(duration, attrs.get("name"), rate)}
                     op_name = _OP_NAMES["custom_samples"]
@@ -3003,7 +2975,9 @@ class PulseIREmitter:
                         attrs["rate"] = rate
                         duration = len(attrs["samples"]) * rate[1] // rate[0]
                 elif duration.__class__ is not int:
-                    duration = None
+                    duration = self._in_cycles(fname, attrs)
+                    if duration.__class__ is not int:
+                        duration = None
             else:
                 duration = self._waveform_duration(fname, operands, attrs)
             try:
@@ -3037,6 +3011,14 @@ class PulseIREmitter:
                 current = lines.current(value)
                 if current is not None and current is not value:
                     local_vars[name] = current
+
+    def _in_cycles(self, fname: str, attrs: dict[str, Any]) -> Any:
+        """The duration of a *fname* waveform once the times in its *attrs*
+        are converted to program cycles (the builder checks the rest)."""
+        from ._durations import in_program_cycles
+
+        in_program_cycles(fname, attrs, getattr(self.b, "clock_ghz", 2.0))
+        return attrs.get("duration")
 
     def _waveform_duration(
         self, fname: str, operands: tuple[IRValue, ...], attrs: dict[str, Any]

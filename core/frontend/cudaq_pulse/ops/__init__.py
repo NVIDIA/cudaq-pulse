@@ -16,12 +16,15 @@ to MLIR ops.  If called outside a kernel context they raise
 
 from __future__ import annotations
 
+import enum
 from collections.abc import Callable, Sequence
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
-from .._errors import CompilationError
-from .._units import Time
+from .._errors import CompilationError, InvalidTypeError
 from ..kernel.ir_builder import Parameter
+
+if TYPE_CHECKING:
+    from .._units import Time
 
 __all__ = [
     "cosine",
@@ -68,6 +71,36 @@ class Tone:
 
 class MeasurementResult:
     """Opaque measurement result from ``readout()``."""
+
+
+class RoundDirection(enum.StrEnum):
+    """Which way ``round_duration`` rounds a length onto its line's grid; the
+    strings ``"up"``, ``"down"`` and ``"nearest"`` mean the same."""
+
+    UP = "up"
+    DOWN = "down"
+    NEAREST = "nearest"
+
+
+def round_duration(
+    line: Any, duration: float, direction: RoundDirection | str = RoundDirection.UP
+) -> int:
+    """*duration*, an int number of program cycles or a time
+    (``10.5 * pulse.ns``), rounded to whole timesteps of *line*: the nearest
+    length (or start) its controller can time, ``"up"`` (default),
+    ``"down"`` or ``"nearest"``, in program cycles.
+
+    Call it in a kernel with a line from ``get_drive_line`` or
+    ``get_readout_line``; *duration* must be known while the kernel compiles.
+    A line whose timestep is one cycle takes every whole cycle, so
+    ``round_duration(line, n)`` is ``ceil(n)``.
+    """
+    # In a kernel, a call whose line is a line never runs this; one whose
+    # line is not reaches it as a plain call and fails like a bad argument.
+    raise InvalidTypeError(
+        "round_duration() takes a line from get_drive_line or get_readout_line, inside a "
+        f"@cudaq_pulse.kernel function; got {line!r}"
+    )
 
 
 def _require_context(op_name: str) -> NoReturn:

@@ -26,6 +26,7 @@ from typing import Any
 
 from .._units import Time, UnitError, in_cycles
 from .ir_builder import (
+    MAX_CYCLES,
     CompilationError,
     ParameterExpression,
     arithmetic_text,
@@ -189,10 +190,6 @@ def _whole(bounds: tuple[Any, ...] | list[Any]) -> bool:
         if v is not None and v.__class__ is not int:
             return False
     return True
-
-
-# The longest duration, in cycles: a time a float holds to the cycle.
-MAX_CYCLES = 2**53
 
 
 def cycles(fname: str, what: str, value: Any, whole: bool, call: str, clock_ghz: float) -> Any:

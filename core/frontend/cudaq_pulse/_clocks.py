@@ -24,7 +24,6 @@ within one of their own cycles, which budgets across controllers add.
 
 from __future__ import annotations
 
-import enum
 import functools
 import itertools
 import math
@@ -33,7 +32,8 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any
 
-from ._errors import InvalidTypeError, InvalidValueError
+from ._errors import InvalidValueError
+from .ops import RoundDirection, round_duration
 
 if TYPE_CHECKING:
     from .controller import ControllerLimits
@@ -44,15 +44,6 @@ __all__ = ["RoundDirection", "round_duration"]
 # denominators up to this.
 _MAX_DENOMINATOR = 10_000
 _TOLERANCE = 1e-9
-
-
-class RoundDirection(enum.StrEnum):
-    """Which way ``round_duration`` rounds a length onto its line's grid; the
-    strings ``"up"``, ``"down"`` and ``"nearest"`` mean the same."""
-
-    UP = "up"
-    DOWN = "down"
-    NEAREST = "nearest"
 
 
 def _definition_error(message: str) -> Exception:
@@ -726,27 +717,6 @@ def _round(n: float, grid: int, direction: RoundDirection) -> int:
     if direction is RoundDirection.DOWN:
         return math.floor(n + _TOLERANCE) // grid * grid
     return math.floor(n / grid + 0.5) * grid
-
-
-def round_duration(
-    line: Any, duration: float, direction: RoundDirection | str = RoundDirection.UP
-) -> int:
-    """*duration*, an int number of program cycles or a time
-    (``10.5 * pulse.ns``), rounded to whole timesteps of *line*: the nearest
-    length (or start) its controller can time, ``"up"`` (default),
-    ``"down"`` or ``"nearest"``, in program cycles.
-
-    Call it in a kernel with a line from ``get_drive_line`` or
-    ``get_readout_line``; *duration* must be known while the kernel compiles.
-    A line whose timestep is one cycle takes every whole cycle, so
-    ``round_duration(line, n)`` is ``ceil(n)``.
-    """
-    # In a kernel, a call whose line is a line never runs this; one whose
-    # line is not reaches it as a plain call and fails like a bad argument.
-    raise InvalidTypeError(
-        "round_duration() takes a line from get_drive_line or get_readout_line, inside a "
-        f"@cudaq_pulse.kernel function; got {line!r}"
-    )
 
 
 def round_on_grid(n: Any, grid: int, direction: RoundDirection | str) -> int:

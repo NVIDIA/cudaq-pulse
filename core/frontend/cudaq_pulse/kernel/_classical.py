@@ -17,11 +17,9 @@ methods themselves.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .._units import Time, cycles_per_ns
 from ..classical import ClassicalFunction, ValueType
-from ._durations import cycles
 from .ir_builder import (
     AnswerValue,
     CompilationError,
@@ -30,6 +28,9 @@ from .ir_builder import (
     contains_answer,
     is_symbolic,
 )
+
+if TYPE_CHECKING:
+    from .._units import Time
 
 
 class Future:
@@ -154,6 +155,9 @@ def _group(function: ClassicalFunction, answers: list[AnswerValue]) -> Any:
 
 def _timeout_ns(builder: Any, timeout: Any) -> float:
     """*timeout*, cycles of the program clock or a time, in nanoseconds."""
+    from .._units import Time, cycles_per_ns
+    from ._durations import cycles
+
     if is_symbolic(timeout) or isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
         raise CompilationError(
             "result(timeout=...) takes a duration known when compiling: "

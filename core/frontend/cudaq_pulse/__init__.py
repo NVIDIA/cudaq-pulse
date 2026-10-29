@@ -44,8 +44,6 @@ from typing import TYPE_CHECKING
 
 from . import _build_config
 from . import ops as ops
-from ._clocks import RoundDirection as RoundDirection
-from ._clocks import round_duration as round_duration
 from ._device import Device as Device
 from ._device import DeviceMismatchError as DeviceMismatchError
 from ._device import NoDeviceError as NoDeviceError
@@ -67,17 +65,14 @@ from ._errors import PulseWarning as PulseWarning
 from ._errors import TimingError as TimingError
 from ._errors import UnsupportedError as UnsupportedError
 from ._errors import UpgradeNotice as UpgradeNotice
-from ._units import Time as Time
-from ._units import ms as ms
-from ._units import ns as ns
-from ._units import s as s
-from ._units import us as us
 from .compiler import Lowered as Lowered
 from .compiler import Pass as Pass
 from .compiler import compile as compile
 from .kernel import kernel as kernel
 from .kernel._kernel import CompiledKernel as CompiledKernel
 from .kernel._kernel import Kernel as Kernel
+from .ops import RoundDirection as RoundDirection
+from .ops import round_duration as round_duration
 from .targets._registry import NoTargetError as NoTargetError
 
 # A module can't be declared callable, so checkers see the decorator's type.
@@ -97,6 +92,11 @@ if TYPE_CHECKING:
     from . import backends as backends
     from . import controller as controller
     from . import viz as viz
+    from ._units import Time as Time
+    from ._units import ms as ms
+    from ._units import ns as ns
+    from ._units import s as s
+    from ._units import us as us
     from .runtime.gpu import GpuRuntimeError as GpuRuntimeError
     from .runtime.simulate import SimulationResult as SimulationResult
     from .runtime.simulate import simulate as simulate
@@ -105,6 +105,13 @@ _LAZY_EXPORTS = {
     "SimulationResult": ".runtime.simulate",
     "simulate": ".runtime.simulate",
     "GpuRuntimeError": ".runtime.gpu",
+    # Times with units load exact arithmetic (fractions), which a program in
+    # cycles does not need.
+    "Time": "._units",
+    "ns": "._units",
+    "us": "._units",
+    "ms": "._units",
+    "s": "._units",
 }
 _LAZY_MODULES = {"viz": ".viz", "backends": ".backends", "controller": ".controller"}
 

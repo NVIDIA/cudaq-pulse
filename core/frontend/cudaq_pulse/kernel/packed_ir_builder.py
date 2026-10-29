@@ -21,6 +21,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .ir_builder import (
+    MAX_CYCLES,
     UNDEFINED_VID,
     AnswerValue,
     CompilationError,
@@ -110,6 +111,7 @@ _WF_MAP = {
     "tanh_ramp": _WF_TANH_RAMP,
     "gaussian_square": _WF_GAUSS_SQUARE,
 }
+_WF_NAMES = {code: name for name, code in _WF_MAP.items()}
 
 # The name of each waveform and of its slots, as the kernel writes them.
 _WF_FIELDS = {
@@ -228,6 +230,17 @@ class PackedIRBuilder:
 
     # Loops and measurement-conditioned branches become region records.
     supports_regions = True
+    # The grid of a (role, qudit) line, in program cycles; compile() sets it
+    # when a controller runs a coarser clock. None: every line is 1.
+    line_grid: Callable[[str, int], int] | None = None
+    # The samples every line plays per program cycle, as (n, d): n every d
+    # cycles; compile() sets it when that is not one. custom() samples at
+    # it, and a custom_samples array must be made for it.
+    sample_rate: tuple[int, int] | None = None
+    # Where every line can meet, in program cycles: a wait whose length
+    # comes from an answer moves every later op by it, so its bounds must be
+    # multiples of this.
+    wait_grid = 1
     # Of the float arguments that reach an integer, those named here record
     # the instructions being traced then, innermost first, in structural_at.
     locate_structural: frozenset[str] = frozenset()
@@ -289,17 +302,6 @@ class PackedIRBuilder:
         # Resolves a classical function's link (a name or an id) to its id;
         # compile() sets it from the machine model.
         self.link_id: Callable[[Any], int] = _link_without_machine
-        # The grid of a (role, qudit) line, in program cycles; compile() sets
-        # it when a controller runs a coarser clock. None: every line is 1.
-        self.line_grid: Callable[[str, int], int] | None = None
-        # The samples every line plays per program cycle, as (n, d): n every d
-        # cycles; compile() sets it when that is not one. custom() samples at
-        # it, and a custom_samples array must be made for it.
-        self.sample_rate: tuple[int, int] | None = None
-        # Where every line can meet, in program cycles: a wait whose length
-        # comes from an answer moves every later op by it, so its bounds must
-        # be multiples of this.
-        self.wait_grid = 1
         self._classical_index: dict[int, int] = {}
         self._scope: list[int] = []
         # Loops and branch arms open now, as (id, is_loop): where a future
@@ -371,14 +373,15 @@ class PackedIRBuilder:
         wf_code = _WF_MAP.get(wf_name)
         if wf_code is not None or wf_name == "custom_samples":
             rv = results[0].vid
-            dur_raw = a.get("duration", 0)
-            dur = dur_raw if is_symbolic(dur_raw) else _as_i64(dur_raw, f"{wf_name} duration")
+            dur = a.get("duration", 0)
+            if dur.__class__ is not int or dur < 1 or dur > MAX_CYCLES:
+                dur = self._duration(wf_name, a)
 
             if wf_code == _WF_GAUSSIAN:
                 amp_raw = a.get("amplitude", 0.0)
                 sig_raw = a.get("sigma", 1.0)
                 vals: list[Any] = [dur, amp_raw, sig_raw]
-                self._emit_wf(_WF_GAUSSIAN, rv, vals, ["i64", "f64", "f64"])
+                self._emit_wf(_WF_GAUSSIAN, rv, vals, ["i64", "f64", "t64"])
             elif wf_code == _WF_SQUARE:
                 amp_raw = a.get("amplitude", 0.0)
                 if is_symbolic(amp_raw):
@@ -397,7 +400,7 @@ class PackedIRBuilder:
                 sig_raw = a.get("sigma", 1.0)
                 beta_raw = a.get("beta", 0.0)
                 vals = [dur, amp_raw, sig_raw, beta_raw]
-                self._emit_wf(_WF_DRAG, rv, vals, ["i64", "f64", "f64", "f64"])
+                self._emit_wf(_WF_DRAG, rv, vals, ["i64", "f64", "t64", "t64"])
             elif wf_code == _WF_COSINE:
                 amp_raw = a.get("amplitude", 0.0)
                 vals = [dur, amp_raw]
@@ -406,15 +409,18 @@ class PackedIRBuilder:
                 amp_raw = a.get("amplitude", 0.0)
                 sig_raw = a.get("sigma", 1.0)
                 vals = [dur, amp_raw, sig_raw]
-                self._emit_wf(_WF_TANH_RAMP, rv, vals, ["i64", "f64", "f64"])
+                self._emit_wf(_WF_TANH_RAMP, rv, vals, ["i64", "f64", "t64"])
             elif wf_code == _WF_GAUSS_SQUARE:
                 amp_raw = a.get("amplitude", 0.0)
                 sig_raw = a.get("sigma", 1.0)
                 width_raw = a.get("width", 0)
                 # The Python API specifies flat-top width while the dialect
                 # stores the duration of each rise/fall edge.
-                if not is_symbolic(width_raw):
-                    width_raw = _as_i64(width_raw, "gaussian_square flat-top width")
+                if width_raw.__class__ is not int or width_raw < 0 or width_raw > MAX_CYCLES:
+                    self._times(wf_name, a)
+                    width_raw = a.get("width", 0)
+                    if not is_symbolic(width_raw):
+                        width_raw = _as_i64(width_raw, "gaussian_square flat-top width")
                 if not is_symbolic(dur) and not is_symbolic(width_raw):
                     if width_raw < 0 or width_raw >= dur:
                         raise CompilationError(
@@ -428,7 +434,7 @@ class PackedIRBuilder:
                         )
                 rf_raw = (dur - width_raw) // 2
                 vals = [dur, amp_raw, sig_raw, rf_raw]
-                self._emit_wf(_WF_GAUSS_SQUARE, rv, vals, ["i64", "f64", "f64", "i64"])
+                self._emit_wf(_WF_GAUSS_SQUARE, rv, vals, ["i64", "f64", "t64", "i64"])
             else:
                 self._emit_custom_samples(rv, a.get("samples", ()), a.get("rate"))
             return results
@@ -500,6 +506,17 @@ class PackedIRBuilder:
             rlv = results[0].vid
             dur_raw = a.get("duration", 0)
             bounds = a.get("bounds")
+            if bounds is None and dur_raw.__class__ is int and 0 <= dur_raw <= MAX_CYCLES:
+                self._ensure(4)
+                self._w(_header(_WAIT, 3))
+                self._w(lv)
+                self._w(rlv)
+                self._w(dur_raw)
+                return results
+            if "duration" in a:
+                self._times("wait", a)
+                dur_raw = a["duration"]
+                bounds = a.get("bounds")
             symbolic = is_symbolic(dur_raw)
             if bounds is not None or symbolic:
                 lowest, highest = (0, -1) if bounds is None else _wait_bounds(bounds)
@@ -1202,6 +1219,29 @@ class PackedIRBuilder:
         self._w(operand)
         return result
 
+    def _times(self, fname: str, attrs: dict[str, Any]) -> None:
+        """Convert the times in *attrs*, a *fname* op's, to program cycles,
+        and reject plain floats and out-of-range lengths in its durations."""
+        from ._durations import in_program_cycles
+
+        in_program_cycles(fname, attrs, self.clock_ghz)
+
+    def _duration(self, wf_name: str, attrs: dict[str, Any]) -> Any:
+        """The duration of a waveform whose duration is not a whole number
+        of cycles in range, after its times are converted."""
+        if wf_name != "custom_samples":
+            self._times(wf_name, attrs)
+        dur_raw = attrs.get("duration", 0)
+        return dur_raw if is_symbolic(dur_raw) else _as_i64(dur_raw, f"{wf_name} duration")
+
+    def _shape_time(self, wf_code: int, slot: int, value: Any) -> Any:
+        """*value*, a waveform's shape time (sigma or beta) in operand *slot*,
+        in program cycles."""
+        from ._durations import cycles
+
+        what = ("duration", "amplitude", "sigma", "beta")[slot]
+        return cycles(_WF_NAMES[wf_code], what, value, False, "", self.clock_ghz)
+
     def _emit_wf(self, wf_code: int, rv: int, vals: list[Any], dtypes: list[str]) -> None:
         """Emit a waveform record, handling mixed Parameter/concrete values.
 
@@ -1213,6 +1253,19 @@ class PackedIRBuilder:
         param_mask = 0
         try:
             for i, (v, dtype) in enumerate(zip(vals, dtypes)):
+                # A float or a whole number in an integer slot as it is; "t64" is
+                # a shape time ("f64"), which may be a time to convert.
+                cls = v.__class__
+                if cls is float:
+                    encoded.append(_f2i(v))
+                    continue
+                if cls is int and dtype == "i64":
+                    encoded.append(v)
+                    continue
+                if dtype == "t64":
+                    if cls is not int:
+                        v = self._shape_time(wf_code, i, v)
+                    dtype = "f64"
                 if is_symbolic(v):
                     pvid = self._get_numeric_vid(v, dtype)
                     encoded.append(pvid)
@@ -1224,7 +1277,7 @@ class PackedIRBuilder:
         except (TypeError, ValueError):
             op, fields = _WF_FIELDS[wf_code]
             for v, dtype, field in zip(vals, dtypes, fields):
-                if dtype == "f64" and not is_symbolic(v):
+                if dtype != "i64" and not is_symbolic(v):
                     _real(v, f"{op} {field}")
             raise
         payload_len = 1 + len(encoded)  # rv + values

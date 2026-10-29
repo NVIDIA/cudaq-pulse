@@ -51,10 +51,12 @@ import sys
 import types
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, Required, TypedDict, Unpack, overload
+from typing import TYPE_CHECKING, Any, Protocol, Required, TypedDict, Unpack, overload
 
 from .._errors import InvalidTypeError, InvalidValueError
-from .._units import Time
+
+if TYPE_CHECKING:
+    from .._units import Time
 
 __all__ = [
     "Bits",

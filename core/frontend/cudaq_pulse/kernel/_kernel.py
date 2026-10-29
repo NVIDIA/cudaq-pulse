@@ -37,9 +37,7 @@ from typing import Any, NamedTuple
 
 from .._device import Device, DeviceMismatchError, NoDeviceError, Qudit, Register
 from .._errors import InvalidTypeError
-from .._units import Time
 from ..compiler import CompileOptions, Lowered, build, with_line_delays
-from ._durations import Cycles
 from ._guard import Guard, build_guard
 from ._schedule_blocks import root_schedule, validate_kernel_schedule
 from ._unroll import resolve_unroll_threshold
@@ -255,6 +253,8 @@ class _Entry:
     """One compiled specialization and the guard that keeps it valid."""
 
     __slots__ = ("lowered", "guard", "returns", "tick", "pins", "runtime", "n_qudits")
+    # Set only on the entries kept to be scheduled again.
+    n_qudits: int
 
     def __init__(
         self,
@@ -263,10 +263,8 @@ class _Entry:
         returns: Any,
         pins: tuple[Any, ...],
         runtime: tuple[int, ...],
-        n_qudits: int = 0,
     ):
         self.lowered = lowered
-        self.n_qudits = n_qudits
         self.guard = guard
         self.returns = returns
         self.tick = next(_ticks)
@@ -471,6 +469,8 @@ class Kernel[**P]:
         for i in runtime:
             v = values[i]
             if type(v) is not float:
+                from .._units import Time
+
                 if v.__class__ is Time:
                     name = self._names[i]
                     raise InvalidTypeError(
@@ -503,6 +503,8 @@ class Kernel[**P]:
             trace_args = list(values)
             for i in self._declared_float:
                 if i not in runtime and values[i].__class__ is float:
+                    from ._durations import Cycles
+
                     trace_args[i] = Cycles(values[i])
             for n, i in enumerate(runtime):
                 trace_args[i] = Parameter(names[i], n, "f64")
@@ -523,8 +525,10 @@ class Kernel[**P]:
         returns = _return_spec(builder.returned, builder.readouts, self.__name__)
         guard = build_guard(fn, impure=builder.impure)
         pins = tuple(values[i] for i in static)
-        entry = _Entry(lowered, guard, returns, pins, runtime, builder.n_qubits)
-        if lowered.scheduled and options.machine.line_delays_ns:
+        entry = _Entry(lowered, guard, returns, pins, runtime)
+        if options.machine.line_delays_ns and lowered.scheduled:
+            # Only a kept entry is scheduled again, for its qudits.
+            entry.n_qudits = builder.n_qubits
             self._keep_traced(self._traced_key(values, target, options), entry)
         return entry
 
@@ -558,9 +562,8 @@ class Kernel[**P]:
         lowered = with_line_delays(prior.lowered, options, prior.n_qudits)
         if lowered is None:
             return None
-        entry = _Entry(
-            lowered, prior.guard, prior.returns, prior.pins, prior.runtime, prior.n_qudits
-        )
+        entry = _Entry(lowered, prior.guard, prior.returns, prior.pins, prior.runtime)
+        entry.n_qudits = prior.n_qudits
         self._keep_traced(self._traced_key(values, target, options), entry)
         return entry
 

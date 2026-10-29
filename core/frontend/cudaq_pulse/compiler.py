@@ -25,19 +25,18 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from . import _clocks
 from ._errors import InvalidValueError
 from ._native import PackedValueError, PulseModuleBuilder
 from .classical import Link
-from .kernel import _durations
 from .kernel._bytecode_normalize import UnsupportedInterpreterError
 from .kernel._schedule_blocks import check_root_schedule, root_schedule
 from .kernel._unroll import resolve_unroll_threshold
-from .kernel.ir_builder import CompilationError, SymbolicValueError
+from .kernel.ir_builder import MAX_CYCLES, CompilationError, SymbolicValueError
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
+    from . import _clocks
     from ._device import Device
     from .controller import ControllerLimits
     from .kernel._kernel import CompiledKernel, Kernel
@@ -177,6 +176,9 @@ class _Links(dict[int, Link]):
     __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = _readonly  # type: ignore[assignment]
 
 
+_NO_DELAYS: Mapping[tuple[str, int], float] = MappingProxyType({})
+
+
 @dataclass(frozen=True)
 class MachineModel:
     """Hardware resource limits.
@@ -214,6 +216,7 @@ class MachineModel:
     reference_clock_ghz: float | None = None
     line_delays_ns: Mapping[tuple[str, int], float] = field(default_factory=dict)
     link_names: Mapping[str, int] = field(init=False, repr=False, compare=False)
+    _plain: bool = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.controller is not None:
@@ -228,7 +231,7 @@ class MachineModel:
                 f"MachineModel.reference_clock_ghz must be positive, got {self.reference_clock_ghz}"
             )
         delays: dict[tuple[str, int], float] = {}
-        for line, ns in dict(self.line_delays_ns).items():
+        for line, ns in dict(self.line_delays_ns).items() if self.line_delays_ns else ():
             if (
                 not isinstance(line, tuple)
                 or len(line) != 2
@@ -251,7 +254,17 @@ class MachineModel:
                     "negative: to play a line earlier, delay every other line instead"
                 )
             delays[line] = float(ns)
-        object.__setattr__(self, "line_delays_ns", MappingProxyType(dict(sorted(delays.items()))))
+        object.__setattr__(
+            self,
+            "line_delays_ns",
+            MappingProxyType(dict(sorted(delays.items()))) if delays else _NO_DELAYS,
+        )
+        # Nothing of clocks to do: no controller, reference clock or delays.
+        object.__setattr__(
+            self,
+            "_plain",
+            self.controller is None and self.reference_clock_ghz is None and not delays,
+        )
         if isinstance(self.links, _Links):
             # Another model's links, as dataclasses.replace passes them: by
             # id, with their names beside them.
@@ -362,6 +375,9 @@ class MachineModel:
             f'"{link}" = {self.links.get(link, Link()).attribute()}' for link in sorted(set(used))
         )
         return f"{{classical.links = {{{entries}}}}}"
+
+
+_DEFAULT_MACHINE = MachineModel()
 
 
 @dataclass(frozen=True)
@@ -504,7 +520,7 @@ class CompileOptions:
 
     schedule: str = "alap"
     passes: tuple[Pass, ...] = DEFAULT_PASSES
-    machine: MachineModel = MachineModel()
+    machine: MachineModel = _DEFAULT_MACHINE
     flatten_schedules: bool = False
     unroll_threshold: int | None = None
 
@@ -522,7 +538,7 @@ class CompileOptions:
                 f"Choose from: {', '.join(sorted(_VALID_SCHEDULES))}"
             )
         passes = DEFAULT_PASSES if passes is None else _passes(passes)
-        machine = machine or MachineModel()
+        machine = machine or _DEFAULT_MACHINE
         if machine.max_concurrent_drives <= 0:
             raise ValueError("machine.max_concurrent_drives must be positive")
         if machine.max_concurrent_readouts <= 0:
@@ -547,7 +563,7 @@ class CompileOptions:
 
 
 # Longest wait a call may ask for: lengths stay exact in a float.
-_MAX_WAIT_CYCLES = _durations.MAX_CYCLES
+_MAX_WAIT_CYCLES = MAX_CYCLES
 
 
 class _WaitLength:
@@ -1038,11 +1054,6 @@ def build(
     name = getattr(fn, "__name__", "kernel")
     t0 = time.perf_counter()
     machine = options.machine
-    clocks = (
-        None
-        if machine.controller is None and machine.reference_clock_ghz is None
-        else _clocks.plan(machine.controller, target.clock_ghz, machine.reference_clock_ghz)
-    )
     builder = PackedIRBuilder(
         name=name,
         clock_ghz=target.clock_ghz,
@@ -1052,11 +1063,8 @@ def build(
     builder.unroll_threshold = options.unroll_threshold
     builder.link_id = machine.link_id
     builder.locate_structural = frozenset(parameters)
-    if clocks is not None:
-        builder.line_grid = clocks.grid_of
-        builder.wait_grid = clocks.lcm
-    if machine.controller is not None:
-        builder.sample_rate = _clocks.sample_rate(machine.controller, target.clock_ghz)
+    plain = machine._plain
+    clocks = None if plain else _clocked_builder(builder, machine, target)
     builder.returned = _trace_kernel_with_builder(fn, builder, trace_args)
     needed = tuple(sorted(builder.structural & set(parameters)))
     if needed:
@@ -1082,7 +1090,7 @@ def build(
         )
     buf: Any = builder.get_buffer()
     freq: Any = builder.get_freq_array()
-    links = [options.machine.link_id(function.link) for function in builder.classical]
+    links = [machine.link_id(function.link) for function in builder.classical]
     metrics.trace_ms = (time.perf_counter() - t0) * 1000
     metrics.op_count = builder.op_count
 
@@ -1105,16 +1113,8 @@ def build(
     except PackedValueError as error:
         raise _rejected_literal(fn, trace_args, builder, error) from None
     if links:
-        module.set_attributes(options.machine.links_attribute(links))
-    if clocks is not None:
-        grids = clocks.attributes(builder.n_qubits)
-        if grids is not None:
-            module.set_attributes(grids)
-    fine_delays = None
-    if machine.line_delays_ns:
-        shifts, fine_delays = _line_delays(machine, target, clocks, builder.n_qubits)
-        if shifts is not None:
-            module.set_attributes(f"{{pulse.line_delays = {shifts}}}")
+        module.set_attributes(machine.links_attribute(links))
+    fine_delays = None if plain else _clocked_module(module, machine, target, clocks, builder)
     metrics.ffi_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
@@ -1142,33 +1142,85 @@ def build(
     metrics.schedule_ms = (time.perf_counter() - t0) * 1000
     metrics.total_ms = metrics.trace_ms + metrics.ffi_ms + metrics.passes_ms + metrics.schedule_ms
 
-    cls = Lowered if clocks is None and fine_delays is None else _ClockedLowered
-    lowered = cls(
-        module,
-        target=target,
-        metrics=metrics,
-        parameters=parameters,
-        qudits=builder.used_qubits or qudits,
-        options=options,
-        scheduled=scheduled,
-        waits=(
-            _wait_lengths(builder.variable_waits, name, 1 if clocks is None else clocks.lcm)
-            if builder.variable_waits
-            else None
-        ),
-    )
-    if isinstance(lowered, _ClockedLowered):
-        lowered.clocks = clocks
-        lowered.fine_delays = fine_delays
+    if plain:
+        lowered = Lowered(
+            module,
+            target=target,
+            metrics=metrics,
+            parameters=parameters,
+            qudits=builder.used_qubits or qudits,
+            options=options,
+            scheduled=scheduled,
+            waits=_WaitLengths(builder.variable_waits, name) if builder.variable_waits else None,
+        )
+    else:
+        lowered = _lowered(
+            module,
+            clocks,
+            fine_delays,
+            target=target,
+            metrics=metrics,
+            parameters=parameters,
+            qudits=builder.used_qubits or qudits,
+            options=options,
+            scheduled=scheduled,
+            waits=(
+                _wait_lengths(builder.variable_waits, name, 1 if clocks is None else clocks.lcm)
+                if builder.variable_waits
+                else None
+            ),
+        )
     lowered.classical = tuple(builder.classical)
     lowered.runtime_selects = runtime_selects
-    _check_controller(lowered)
+    if machine.controller is not None and scheduled:
+        _check_controller(lowered)
     return lowered, builder
+
+
+def _clocked_builder(
+    builder: Any, machine: MachineModel, target: Device
+) -> _clocks.ClockPlan | None:
+    """Set *builder* up for *machine*'s controllers; their clock plan."""
+    from . import _clocks
+
+    clocks = (
+        None
+        if machine.controller is None and machine.reference_clock_ghz is None
+        else _clocks.plan(machine.controller, target.clock_ghz, machine.reference_clock_ghz)
+    )
+    if clocks is not None:
+        builder.line_grid = clocks.grid_of
+        builder.wait_grid = clocks.lcm
+    if machine.controller is not None:
+        builder.sample_rate = _clocks.sample_rate(machine.controller, target.clock_ghz)
+    return clocks
+
+
+def _clocked_module(
+    module: Any,
+    machine: MachineModel,
+    target: Device,
+    clocks: _clocks.ClockPlan | None,
+    builder: Any,
+) -> Mapping[tuple[str, int], float] | None:
+    """Set the grid and line delay attributes of *module*; the fine delays."""
+    if clocks is not None:
+        grids = clocks.attributes(builder.n_qubits)
+        if grids is not None:
+            module.set_attributes(grids)
+    fine_delays = None
+    if machine.line_delays_ns:
+        shifts, fine_delays = _line_delays(machine, target, clocks, builder.n_qubits)
+        if shifts is not None:
+            module.set_attributes(f"{{pulse.line_delays = {shifts}}}")
+    return fine_delays
 
 
 def _line_delays(
     machine: MachineModel, target: Device, clocks: _clocks.ClockPlan | None, n_qudits: int
 ) -> tuple[str | None, dict[tuple[str, int], float]]:
+    from . import _clocks
+
     try:
         return _clocks.line_delays(
             machine.line_delays_ns, machine.controller, clocks, target.clock_ghz, n_qudits
