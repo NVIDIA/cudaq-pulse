@@ -22,7 +22,10 @@
   the originals. A process keeps the last ``_KEPT_DEVICES`` devices it
   unpickled by fingerprint (which covers the calibration), name and source,
   so that programs of one device unpickled one by one share it without
-  building it again. Qudit handles and registers
+  building it again. A device makes its description once. A calibration
+  the package ships pickles as its name, cooldown and the digest of its
+  file, and unpickles as the one shipped here if that has the same digest;
+  any other pickles as its values. Qudit handles and registers
   pickle as their device and indices.
 - A program (``Lowered``, and a call's view of one) pickles as MLIR
   bytecode and its metadata, stamped with the build that compiled it, and
@@ -120,11 +123,36 @@ def _keep(key: tuple[str, str, str], device: Any) -> None:
 def device_reduce(device: Any, inputs: dict[str, Any]) -> tuple[Any, ...]:
     """*device* as its fingerprint and labels and, pickled apart, its class,
     target and the other *inputs* of its constructor: a process that has the
-    device of that key does not unpickle the rest."""
+    device of that key does not unpickle the rest. The description is made
+    once per device: a device is read-only."""
     key = _device_key(device)
     _keep(key, device)
-    description = pickle.dumps((type(device), device.target, inputs), pickle.HIGHEST_PROTOCOL)
+    description: bytes | None = device.__dict__.get("_pickled")
+    if description is None:
+        description = pickle.dumps((type(device), device.target, inputs), pickle.HIGHEST_PROTOCOL)
+        device._pickled = description
     return (rebuilt_device, (key, description))
+
+
+def rebuilt_shipped_calibration(name: str, cooldown: str, digest: str, version: str) -> Any:
+    """The calibration *name* (*cooldown*) that this package ships, if it is
+    the file of that *digest* that cudaq-pulse *version* shipped."""
+    from .targets.calibration import _shipped_unread
+
+    found = _shipped_unread(name, cooldown, digest)
+    if found is None:
+        from ._build_config import PACKAGE_VERSION
+        from ._errors import UnsupportedError
+        from ._source_stamp import CALIBRATIONS
+
+        here = CALIBRATIONS.get(name)
+        ships = "does not ship it" if here is None else f"ships another (file {here})"
+        raise UnsupportedError(
+            f"calibration {name!r} was pickled as the one cudaq-pulse {version} ships "
+            f"(file {digest}), and cudaq-pulse {PACKAGE_VERSION} {ships}: load the "
+            "calibration here, or pickle a Calibration made from its values"
+        )
+    return found
 
 
 def rebuilt_device(key: tuple[str, str, str], description: bytes) -> Any:

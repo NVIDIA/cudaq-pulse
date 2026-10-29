@@ -22,13 +22,13 @@ import sys
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import _pickling
+from cudaq_pulse import _pickling, _source_stamp
 from cudaq_pulse.classical import Bits
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, ControllerLimits
 from cudaq_pulse.kernel import _kernel
 from cudaq_pulse.kernel.ir_builder import SymbolicValueError
-from cudaq_pulse.targets import Coupling, Qubit, TargetDescription
+from cudaq_pulse.targets import Coupling, Qubit, TargetDescription, calibration
 from cudaq_pulse.targets._registry import make_target
 from cudaq_pulse.targets.calibration import Calibration
 
@@ -229,6 +229,52 @@ def test_a_device_unpickles_with_its_own_name_and_source(monkeypatch):
     assert _round_trip(first) is first
     back = pickle.loads(data)
     assert (back.name, back.source) == ("second", "b")
+
+
+def test_a_shipped_calibration_pickles_as_its_name(monkeypatch):
+    shipped = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    program = rabi.lower(shipped.qudit_handles[0], 0.3)
+    data = pickle.dumps(program)
+    assert len(data) < 20_000 and len(pickle.dumps(shipped.calibration)) < 200
+    monkeypatch.setattr(_pickling, "_devices", {})
+    back = pickle.loads(data)
+    assert back.target is not shipped and back.target == shipped
+    assert back.target.calibration is shipped.calibration
+    assert _views(back) == _views(program)
+
+
+def test_an_unpickled_shipped_calibration_reads_its_file_when_used(monkeypatch):
+    shipped = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).calibration
+    data = pickle.dumps(shipped)
+    monkeypatch.setattr(calibration, "_LOADED", {})
+    back = pickle.loads(data)
+    assert back is not shipped and "_data" not in vars(back)
+    assert (back.name, back.cooldown) == (shipped.name, shipped.cooldown)
+    assert back.target == shipped.target and back.cooldowns == shipped.cooldowns
+    assert back == shipped and back.idle_zz_hz(back.pairs[0]) == shipped.idle_zz_hz(back.pairs[0])
+    assert pickle.loads(data) is back
+
+
+def test_a_shipped_calibration_of_another_file_is_refused(monkeypatch):
+    data = pickle.dumps(pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).calibration)
+    monkeypatch.setattr(_source_stamp, "CALIBRATIONS", {"krinner17": "0123456789abcdef"})
+    with pytest.raises(pulse.UnsupportedError, match="ships another .file 0123456789abcdef"):
+        pickle.loads(data)
+    monkeypatch.setattr(_source_stamp, "CALIBRATIONS", {})
+    with pytest.raises(pulse.UnsupportedError, match="does not ship it"):
+        pickle.loads(data)
+
+
+def test_a_calibration_of_its_own_values_pickles_by_value_once_per_pickle():
+    shipped = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).calibration
+    mine = Calibration(shipped._data, name="mine")
+    device = pulse.device({"target": make_target("transmon_krinner_17q"), "calibration": mine})
+    back = _round_trip(mine)
+    assert back is not mine and back == mine and back.name == "mine"
+    one = len(pickle.dumps(rabi.lower(device.qudit_handles[0], 0.1)))
+    ten = len(pickle.dumps([rabi.lower(device.qudit_handles[i], 0.1) for i in range(10)]))
+    assert one > 100_000 and ten < one + 20_000
+    assert copy.copy(mine) is mine and copy.deepcopy(mine) is mine
 
 
 def test_a_calibration_of_other_values_makes_another_device():

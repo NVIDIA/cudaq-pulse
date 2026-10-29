@@ -60,9 +60,21 @@ class Calibration:
         self._data = copy.deepcopy(dict(data))
         self.name = name
         self.cooldown: str = cooldown
-        self.target: str | None = schema.get("target")
         # The digest of the shipped file this was loaded from, if it was.
         self._shipped: str | None = None
+
+    @cached_property
+    def _data(self) -> dict[str, Any]:
+        # Set by __init__; a shipped calibration that was unpickled reads its
+        # file when its values are first used.
+        data: dict[str, Any] = json.loads((_SHIPPED / f"{self.name}.json").read_text("utf-8"))
+        return data
+
+    @cached_property
+    def target(self) -> str | None:
+        """The target the calibration was made for, if its file names one."""
+        target: str | None = self._data.get("_schema", {}).get("target")
+        return target
 
     @classmethod
     def load(
@@ -114,6 +126,26 @@ class Calibration:
 
     def __hash__(self) -> int:
         return hash(self.fingerprint)
+
+    # Read-only: a copy is the calibration itself.
+    def __copy__(self) -> Calibration:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Calibration:
+        return self
+
+    def __reduce_ex__(self, protocol: Any) -> Any:
+        # A shipped calibration pickles as its name, not its values: the
+        # package that unpickles it ships it, checked by the file's digest.
+        if self._shipped is None or type(self) is not Calibration:
+            return super().__reduce_ex__(protocol)
+        from .._build_config import PACKAGE_VERSION
+        from .._pickling import rebuilt_shipped_calibration
+
+        return (
+            rebuilt_shipped_calibration,
+            (self.name, self.cooldown, self._shipped, PACKAGE_VERSION),
+        )
 
     @cached_property
     def fingerprint(self) -> str:
@@ -248,12 +280,31 @@ _LOADED_LOCK = threading.Lock()
 
 
 def shipped_calibration(name: str, cooldown: str | None = None) -> Calibration:
-    """A shipped calibration, loaded once."""
+    """A shipped calibration, loaded once: its default cooldown asked for by
+    name or as ``None`` is one calibration."""
     key = (name, cooldown)
     loaded = _LOADED.get(key)
     if loaded is None:
         with _LOADED_LOCK:
             loaded = _LOADED.get(key)
             if loaded is None:
-                loaded = _LOADED[key] = Calibration.load(name, cooldown=cooldown)
+                loaded = Calibration.load(name, cooldown=cooldown)
+                loaded = _LOADED.setdefault((name, loaded.cooldown), loaded)
+                _LOADED[key] = loaded
     return loaded
+
+
+def _shipped_unread(name: str, cooldown: str, digest: str) -> Calibration | None:
+    """The shipped calibration *name* (*cooldown*), if this package ships the
+    file of that *digest*, without reading the file until its values are used."""
+    from .._source_stamp import CALIBRATIONS
+
+    if CALIBRATIONS.get(name) != digest:
+        return None
+    found = _LOADED.get((name, cooldown))
+    if found is None:
+        unread = Calibration.__new__(Calibration)
+        unread.name, unread.cooldown, unread._shipped = name, cooldown, digest
+        with _LOADED_LOCK:
+            found = _LOADED.setdefault((name, cooldown), unread)
+    return found

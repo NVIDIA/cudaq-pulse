@@ -22,7 +22,8 @@ behavior may change in any 0.x release.
   pickle as what they were built from and unpickle equal, with equal
   hashes; a process builds each device it unpickles once. A device's
   fingerprint covers its calibration: a target with and without one are
-  two devices. Programs
+  two devices. A shipped calibration pickles as its name, checked against
+  the file shipped where it unpickles; any other, as its values. Programs
   (`ck.lower(...)`, bound or not) pickle as MLIR bytecode stamped with the
   build that compiled them (hashes of its native and Python sources, taken
   when it was built) and the Python, and run unpickled (export, simulate, bind)
