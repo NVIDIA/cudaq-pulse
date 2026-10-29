@@ -20,6 +20,10 @@ Compilation API
    :members:
    :undoc-members:
 
+.. autoclass:: cudaq_pulse.compiler.IRLevel
+   :members:
+   :undoc-members:
+
 .. autoclass:: cudaq_pulse.compiler.MachineModel
    :members:
    :undoc-members:

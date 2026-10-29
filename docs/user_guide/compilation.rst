@@ -172,16 +172,24 @@ Inspecting a compilation
 ``kernel.lower(*args)`` and ``compiled.lower(*args)`` return a ``Lowered``,
 the module of one call:
 
-``.mlir(stage="pulse")``
-   MLIR text: ``"pulse"`` for the scheduled pulse dialect (with the call's
-   float values substituted), ``"llvm"`` after the full Pulse -> QOp ->
-   CuDensityMat -> LLVM lowering.
+``.mlir(level="pulse")``
+   MLIR text at an IR level (``cudaq_pulse.compiler.IRLevel``, or its
+   name): ``"pulse"`` for the scheduled pulse dialect (with the call's float
+   values substituted), and ``"qop"``, ``"cudm"`` and ``"llvm"`` after
+   lowering it that far along Pulse -> QOp -> CuDensityMat -> LLVM.
 
 ``.schedule``
    The drives, readouts and waits with their start and duration in clock
    cycles (``ScheduledEvent``). ``event.start`` and ``event.end`` are the
    scheduled times as ``int``; they raise ``ValueError`` on an event that is
    not scheduled yet, whose ``start_cycles`` and ``duration_cycles`` are ``None``.
+
+``.duration``
+   How long the program runs, as a time: the latest end of its operations,
+   over both arms of every branch (``float(duration)`` is in ns).
+
+The device's handles find a qudit by its label, ``dev.qudit("D1")``, and a
+target gives the coupling of two qudits, ``dev.target.coupling(a, b)``.
 
 ``.timeline(**kwargs)``
    A matplotlib figure of the schedule, one row per line.

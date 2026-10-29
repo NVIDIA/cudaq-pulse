@@ -333,6 +333,25 @@ class Device:
     def transition_freq(self) -> Any:
         return self._frequency_arrays()[1]
 
+    def qudit(self, label: str) -> Qudit:
+        """The handle of the qudit labelled *label* (``Qubit.label``), as in
+        ``dev.qudit("D1")``; a ``NotFoundError`` names the labels there are."""
+        qubits = self.target.qubits
+        for handle in self.qudit_handles:
+            if qubits[handle.index].label == label:
+                return handle
+        labels = [qubits[p].label for p in self.layout if qubits[p].label]
+        carrier = next((q.index for q in qubits.values() if q.label == label), None)
+        if carrier is not None:
+            raise NotFoundError(
+                f"qudit {label!r} is carrier {carrier} of {self.target.name}, which the "
+                f"layout of device {self.name!r} leaves out"
+            )
+        close = _closest(str(label), labels)
+        hint = f"did you mean {close!r}? " if close else ""
+        known = f"its labels are {', '.join(labels)}" if labels else "its qudits have no labels"
+        raise NotFoundError(f"device {self.name!r} has no qudit labelled {label!r}; {hint}{known}")
+
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Device) and other.fingerprint == self.fingerprint
 

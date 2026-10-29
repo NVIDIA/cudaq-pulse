@@ -294,6 +294,24 @@ class TargetDescription:
     def coupling_map(self) -> list[tuple[int, int]]:
         return [(c.qubit_a, c.qubit_b) for c in self.couplings]
 
+    def coupling(self, a: int, b: int) -> Coupling:
+        """The coupling of qudits *a* and *b*, in either order (the target's
+        qudit indices, as ``Qudit.index``); a ``NotFoundError`` names the
+        qudits *a* couples to."""
+        for c in self.couplings:
+            if (c.qubit_a == a and c.qubit_b == b) or (c.qubit_a == b and c.qubit_b == a):
+                return c
+        partners = sorted(
+            c.qubit_b if c.qubit_a == a else c.qubit_a
+            for c in self.couplings
+            if a in (c.qubit_a, c.qubit_b)
+        )
+        if partners:
+            which = f"qudit {a} couples to {', '.join(map(str, partners))}"
+        else:
+            which = f"qudit {a} has no couplings"
+        raise NotFoundError(f"qudits {a} and {b} of {self.name} are not coupled; {which}")
+
     def connectivity_graph(self) -> dict[int, list[int]]:
         """Adjacency list representation of qubit connectivity."""
         g: dict[int, list[int]] = {idx: [] for idx in self.qubits}

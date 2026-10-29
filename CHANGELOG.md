@@ -201,11 +201,14 @@ behavior may change in any 0.x release.
 - **Compilation.** Verification, constant and phase folding and pulse
   fusion by default; ASAP, ALAP and resource-constrained schedules
   (`cudaq_pulse.compiler.MachineModel`); per-kernel schedule policies and
-  schedule blocks. `pulse.Lowered.mlir()` returns the scheduled Pulse MLIR
-  or the LLVM-dialect module, `Lowered.schedule` the timed events
-  (`cudaq_pulse.compiler.ScheduledEvent`), `Lowered.metrics` the compile
+  schedule blocks. `pulse.Lowered.mlir(level)` returns the module at an IR
+  level (`cudaq_pulse.compiler.IRLevel`: `"pulse"`, the scheduled Pulse
+  MLIR, `"qop"`, `"cudm"` or `"llvm"`), `Lowered.schedule` the timed events
+  (`cudaq_pulse.compiler.ScheduledEvent`), `Lowered.duration` how long the
+  program runs as a `pulse.Time`, `Lowered.metrics` the compile
   times (`cudaq_pulse.compiler.CompileMetrics`), and `Lowered.timeline()` a
-  plot (with the `[viz]` extra).
+  plot (with the `[viz]` extra). `Device.qudit(label)` finds a qudit by
+  its label and `TargetDescription.coupling(a, b)` the coupling of two.
 - **Optimization passes.** `passes=` takes members of `pulse.Pass`, a
   string enum, or their names, in any order and combination: `VERIFY`,
   `FOLD_CONSTANTS` (constant arithmetic computed at compile time),

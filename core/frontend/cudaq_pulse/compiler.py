@@ -23,11 +23,13 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from fractions import Fraction
 from types import FunctionType, MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from ._errors import InvalidValueError
 from ._native import PackedValueError, PulseModuleBuilder
+from ._units import Time
 from .classical import Link
 from .kernel._bytecode_normalize import UnsupportedInterpreterError
 from .kernel._schedule_blocks import check_root_schedule, root_schedule
@@ -45,6 +47,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DEFAULT_PASSES",
     "CompileMetrics",
+    "IRLevel",
     "Lowered",
     "MachineModel",
     "Pass",
@@ -131,7 +134,22 @@ def _passes(passes: Sequence[str]) -> tuple[Pass, ...]:
     return tuple(members)
 
 
-_STAGES = ("pulse", "llvm")
+class IRLevel(StrEnum):
+    """A level of the program's IR, for ``mlir(level)``: each lowers the one
+    before it. The plain string (``"qop"``) is accepted wherever a member is.
+    """
+
+    #: The scheduled Pulse dialect.
+    PULSE = "pulse"
+    #: Quantum operators: the program's Hamiltonian and dissipators.
+    QOP = "qop"
+    #: cuDensityMat operators and evolution.
+    CUDM = "cudm"
+    #: LLVM dialect, ready to compile.
+    LLVM = "llvm"
+
+
+_LEVELS = tuple(IRLevel)
 
 # The parameters a measurement can select while the program runs, in the
 # order lowering asks about them, and those any target takes that way.
@@ -878,26 +896,53 @@ class Lowered:
                 )
         raise AssertionError("every value is finite")
 
-    def mlir(self, stage: str = "pulse") -> str:
-        """The module as MLIR text: ``"pulse"`` (scheduled pulse dialect) or
-        ``"llvm"`` (after the full pulse -> qop -> cudm -> LLVM lowering)."""
-        if stage == "pulse":
+    def mlir(self, level: IRLevel | str = IRLevel.PULSE) -> str:
+        """The module as MLIR text at *level* (an ``IRLevel`` or its name):
+        ``"pulse"``, the scheduled Pulse dialect; ``"qop"``, ``"cudm"`` and
+        ``"llvm"``, after lowering it that far (pulse -> qop -> cudm ->
+        LLVM). Every level but ``"pulse"`` needs the float parameters' values,
+        and a program that measures lowers only along a measurement-outcome
+        path, as ``simulate`` does."""
+        if level == "pulse":
             if self._text is None:
                 module = self._concrete()
                 with self._lock:
                     self._text = module.print()
             return self._text
-        if stage == "llvm":
-            if self.parameters:
-                raise ValueError(
-                    "the module has float parameters "
-                    f"({', '.join(self.parameters)}); lower it with their values first"
-                )
+        if level not in _LEVELS:
+            raise InvalidValueError(f"unknown IR level {level!r}; choose from {', '.join(_LEVELS)}")
+        if self.parameters:
+            raise ValueError(
+                "the module has float parameters "
+                f"({', '.join(self.parameters)}); lower it with their values first"
+            )
+        if level == "llvm":
             module = self._concrete()
             with self._lock:
                 text: str = module.run_full_lowering()
             return text
-        raise ValueError(f"unknown stage {stage!r}; choose from {', '.join(_STAGES)}")
+        from ._native._cudaq_pulse_native import MLIRPipeline
+
+        pipeline = MLIRPipeline()
+        text = pipeline.run_pulse_to_qop(self.mlir())
+        return text if level == "qop" else pipeline.run_qop_to_cudm(text)
+
+    @property
+    def duration(self) -> Time:
+        """How long the program runs: the latest end of its operations, over
+        both arms of every branch, as a time (``float(duration)`` is in ns).
+
+        A wait a float parameter sets counts once the module has values."""
+        clock = Fraction(self.target.clock_ghz)
+        end = 0
+        for event in self.schedule:
+            if event.start_cycles is None or event.duration_cycles is None:
+                raise ValueError(
+                    "the module is scheduled when it has the values of its float "
+                    f"parameters ({', '.join(self.parameters)}); lower it with them first"
+                )
+            end = max(end, event.start_cycles + event.duration_cycles)
+        return Time(end / clock)
 
     @property
     def schedule(self) -> list[ScheduledEvent]:
