@@ -98,6 +98,28 @@ def test_rabi_matches_the_analytic_rotation():
         assert rho[1, 1].real == pytest.approx(math.sin(amplitude * 20.0 / 2) ** 2, abs=1e-8)
 
 
+def test_simulate_takes_the_kernel_and_its_arguments():
+    @pulse.kernel
+    def rabi(q0, amplitude: float):
+        d0, t0 = get_drive_line(q0)
+        drive(d0, square(40, amplitude), t0)
+
+    dev = pulse.device({"target": _target()})
+    q = dev.qudit_handles[0]
+    expected = pulse.simulate(rabi.lower(q, _PI)).density_matrix
+    np.testing.assert_array_equal(pulse.simulate(rabi, q, _PI).density_matrix, expected)
+    compiled = pulse.compile(rabi)
+    np.testing.assert_array_equal(
+        pulse.simulate(compiled, q, _PI, shots=2, seed=1).density_matrix, expected
+    )
+    with pytest.raises(pulse.InvalidTypeError, match="module of a call, which has its arguments"):
+        pulse.simulate(rabi.lower(q, _PI), q)
+    with pytest.raises(
+        pulse.InvalidTypeError, match=r"expects a kernel and its arguments.*got str"
+    ):
+        pulse.simulate("rabi", q)  # type: ignore[arg-type]
+
+
 def test_active_reset_returns_the_excited_state_to_ground():
     result = _run(_active_reset(_PI), shots=200, seed=1)
     np.testing.assert_allclose(result.density_matrix, np.diag([1.0, 0.0]), atol=1e-7)

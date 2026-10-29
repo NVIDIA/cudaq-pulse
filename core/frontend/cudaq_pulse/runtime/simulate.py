@@ -49,6 +49,7 @@ from ._attributes import _VALID_INTEGRATORS, _f64, _level_attributes, _target_at
 
 if TYPE_CHECKING:
     from ..compiler import Lowered
+    from ..kernel._kernel import CompiledKernel, Kernel
 
 __all__ = ["Measurement", "SimulationResult", "simulate"]
 
@@ -101,8 +102,9 @@ class SimulationResult:
 
 
 def simulate(
-    lowered: Lowered,
-    *,
+    kernel: Kernel[Any] | CompiledKernel[Any] | Lowered,
+    /,
+    *args: Any,
     levels: int | dict[int, int] = 2,
     initial_state: npt.ArrayLike | None = None,
     shots: int | None = None,
@@ -118,13 +120,21 @@ def simulate(
     plant: Any = None,
     paths: str = "all",
 ) -> SimulationResult:
-    """Simulate one compiled kernel call on the target it was compiled for.
+    """Simulate one kernel call on the target it is compiled for.
+
+    ``simulate(kernel, *args)`` compiles the call as ``kernel.lower(*args)``
+    does and simulates it, as ``compile(kernel)`` takes the kernel first and
+    its options by keyword.
 
     Parameters
     ----------
-    lowered:
-        The module of one call, from ``kernel.lower(*args)`` or
-        ``compiled.lower(*args)``.
+    kernel:
+        A ``@cudaq_pulse.kernel`` or the ``CompiledKernel`` of one, called
+        with *args*; or the module of one call, from ``kernel.lower(*args)``,
+        with no *args*.
+    args:
+        The kernel's arguments, by position: the qudit handles, then its
+        other parameters.
     levels:
         Levels per qudit (an int for all, or a dict by device qudit index).
         A transmon with three or more levels includes its anharmonicity.
@@ -200,11 +210,22 @@ def simulate(
         ``shots``.
     """
     from ..compiler import Lowered
+    from ..kernel._kernel import CompiledKernel, Kernel
 
-    if not isinstance(lowered, Lowered):
+    if isinstance(kernel, Lowered):
+        if args:
+            raise InvalidTypeError(
+                "simulate() got arguments with the module of a call, which has its "
+                "arguments already; pass the kernel and its arguments, as in "
+                "simulate(kernel, q), or the module alone"
+            )
+        lowered = kernel
+    elif isinstance(kernel, (Kernel, CompiledKernel)):
+        lowered = kernel.lower(*args)
+    else:
         raise InvalidTypeError(
-            "simulate() expects the module of one kernel call, from "
-            f"kernel.lower(*args); got {type(lowered).__name__}"
+            "simulate() expects a kernel and its arguments, as in simulate(kernel, q), "
+            f"or the module of one call, from kernel.lower(q); got {type(kernel).__name__}"
         )
     return _simulate_lowered(
         lowered,

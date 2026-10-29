@@ -102,15 +102,15 @@ def rabi_oscillation(qubit, amplitude: float):
 dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
 qubit = dev.qudit_handles[0]
 
-lowered = rabi_oscillation.lower(qubit, 0.5)  # compile for the qubit's device
-result = pulse.simulate(lowered)  # NumPy reference, no GPU needed
+result = pulse.simulate(rabi_oscillation, qubit, 0.5)  # NumPy reference, no GPU needed
 print(f"P(1) = {result.density_matrix[1, 1].real:.3f}")  # P(1) = 0.973
-print(lowered.mlir())  # the scheduled Pulse MLIR
+print(rabi_oscillation.lower(qubit, 0.5).mlir())  # the scheduled Pulse MLIR
 ```
 
-`kernel.lower(...)` compiles a kernel for the device of its qudit handles,
-with frequencies from the device, and `pulse.simulate` evolves the result;
-this pulse leaves the qubit almost fully excited. Calling the
+`pulse.simulate(kernel, *args)` compiles the call for the device of its
+qudit handles, with frequencies from the device, and evolves it; this
+pulse leaves the qubit almost fully excited. `kernel.lower(*args)`
+compiles the call without running it. Calling the
 kernel, `rabi_oscillation(qubit, 0.5)`, compiles and runs it in one step, and
 `pulse.compile(kernel)` compiles ahead of the call. A `float`
 parameter stays symbolic, so a sweep over it compiles once. The compiler

@@ -337,6 +337,9 @@ behavior may change in any 0.x release.
   `PulseWarning`, `UpgradeNotice`, `NoTargetError`, `NoDeviceError`,
   `DeviceMismatchError`, `GpuRuntimeError`, `viz`, `classical`,
   `controller` and `backends`, plus `__version__`.
+  `simulate(kernel, *args, **options)` is the one way to simulate: it takes
+  a kernel and its arguments as `compile` takes a kernel, or the module of
+  a call from `kernel.lower(*args)`.
   Every error cudaq-pulse raises on purpose derives from `PulseError` and
   has the built-in base of its kind: `InvalidValueError` is a `ValueError`,
   `InvalidTypeError` a `TypeError`, `NotFoundError` a `KeyError`,
