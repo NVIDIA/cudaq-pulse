@@ -1455,13 +1455,11 @@ class _CheckedPerCall(Lowered):
         """*view*, once its values are within the limits (checked once per
         distinct *key*)."""
         if key not in self._accepted:
-            from .controller import ControllerLimitError, _call_violations
+            from .controller import _call_violations, _limit_error
 
             violations = _call_violations(view)
             if violations:
-                raise ControllerLimitError(
-                    violations, system=view.options.machine._system is not None
-                )
+                raise _limit_error(view, violations)
             if len(self._accepted) >= _ACCEPTED_CALLS:
                 self._accepted.clear()
             self._accepted.add(key)
@@ -1797,7 +1795,7 @@ def _check_controller(lowered: Lowered) -> Lowered:
     system = machine._system
     if limits is None and system is None:
         return lowered
-    from .controller import ControllerLimitError, _compile_check
+    from .controller import _compile_check, _limit_error
 
     exact = False
     # A float wait length places the ops after it per call: the schedule
@@ -1805,7 +1803,7 @@ def _check_controller(lowered: Lowered) -> Lowered:
     if lowered.scheduled and lowered.waits is None:
         violations, exact = _compile_check(lowered, limits, system)
         if violations:
-            raise ControllerLimitError(violations, system=system is not None)
+            raise _limit_error(lowered, violations)
     if exact:
         return lowered
     return (_CheckedPerCall if lowered._role is None else _CheckedPlaced)(lowered)

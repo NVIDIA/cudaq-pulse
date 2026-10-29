@@ -83,6 +83,7 @@ __all__ = [
     "FunctionCost",
     "FunctionResources",
     "FunctionUsage",
+    "LimitExceeded",
     "LinkUsage",
     "ProcessorUsage",
     "ResourceReport",
@@ -126,15 +127,42 @@ _PLAYED = frozenset({"drive", "readout"})
 
 
 class ControllerLimitError(CompilationError):
-    """A scheduled program exceeds a limit of the controller it is for."""
+    """A scheduled program exceeds a limit of the controller it is for.
 
-    def __init__(self, violations: Sequence[str], *, system: bool = False) -> None:
+    ``violations`` has every limit exceeded. For a control system with
+    processors, ``usage`` is the program's ``UsageReport``: what each
+    processor holds against its limits, and each limit exceeded with by how
+    much (``usage.exceeded``); the message ends with its table.
+    """
+
+    def __init__(
+        self,
+        violations: Sequence[str],
+        *,
+        system: bool = False,
+        usage: UsageReport | None = None,
+    ) -> None:
         self.violations = tuple(violations)
+        self.usage = usage
         shown = "\n  ".join(self.violations[:10])
         more = len(self.violations) - 10
         tail = f"\n  ... and {more} more" if more > 0 else ""
         what = "does not fit the control system" if system else "exceeds the controller's limits"
-        super().__init__(f"the program {what}:\n  {shown}{tail}")
+        table = "" if usage is None else "\n" + _format_usage(usage, exceeds=False)
+        super().__init__(f"the program {what}:\n  {shown}{tail}{table}")
+
+
+def _limit_error(lowered: Lowered, violations: Sequence[str]) -> ControllerLimitError:
+    """The error for the *violations* of *lowered*, with its usage report
+    when its control system has processors and they were checked: always
+    for one call, and at compile time without float or qudit parameters."""
+    system = lowered.options.machine._system
+    report = None
+    if system is not None and system._placement:
+        placed = lowered._role is not None and lowered._role.slots > 0
+        if lowered._generic is not None or not (lowered.parameters or placed):
+            report = usage(lowered)
+    return ControllerLimitError(violations, system=system is not None, usage=report)
 
 
 @dataclass(frozen=True)
@@ -539,7 +567,7 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
     if limits is not None or system is not None:
         violations = _all_violations(lowered, lines, events, limits, system, clocks, off, problems)
         if violations:
-            raise ControllerLimitError(violations, system=system is not None)
+            raise _limit_error(lowered, violations)
     own = None
     if clocks is not None:
         from . import _clocks
@@ -1487,16 +1515,39 @@ class ControllerUsage:
 
 
 @dataclass(frozen=True)
+class LimitExceeded:
+    """A limit of a processor that a program exceeds, in
+    ``UsageReport.exceeded``: the function, or the processor, that exceeds
+    it (``where``), the limit (a ``Processor`` field, or the function's
+    ``max_latency_ns``), what the program needs of it (``value``, in
+    ``unit``) and what the limit allows (``most``)."""
+
+    where: str
+    limit: str
+    value: float
+    most: float
+    unit: str
+
+    @property
+    def over(self) -> float:
+        """By how much the program exceeds the limit."""
+        return self.value - self.most
+
+
+@dataclass(frozen=True)
 class UsageReport:
     """What a program's classical functions use of the processors of its
     control system (``Lowered.controller_usage``): one row per controller
     with processors, the functions that run off them (``off_board``, by
-    name, whose links alone are checked) and the limits exceeded.
-    ``str(report)`` is a table."""
+    name, whose links alone are checked) and the limits exceeded, as text
+    (``violations``) and for each numeric limit by how much (``exceeded``).
+    ``str(report)`` is a table. A program over a limit does not compile:
+    its ``ControllerLimitError`` carries the report as ``usage``."""
 
     controllers: tuple[ControllerUsage, ...]
     off_board: tuple[str, ...]
     violations: tuple[str, ...]
+    exceeded: tuple[LimitExceeded, ...] = ()
 
     @property
     def within_limits(self) -> bool:
@@ -1539,7 +1590,7 @@ def usage(lowered: Lowered) -> UsageReport:
             off_board.append(fn.name)
         else:
             placed.setdefault(where, []).append(fn)
-    found: list[str] = []
+    found = _Found()
     rows: list[ControllerUsage] = []
     for index, controller in enumerate(system.controllers):
         processors = []
@@ -1555,7 +1606,23 @@ def usage(lowered: Lowered) -> UsageReport:
             )
         if processors:
             rows.append(ControllerUsage(index, controller.model, tuple(processors)))
-    return UsageReport(tuple(rows), tuple(off_board), tuple(found))
+    return UsageReport(tuple(rows), tuple(off_board), tuple(found), tuple(found.exceeded))
+
+
+class _Found(list[str]):
+    """The limits a program exceeds, as text, and the numeric ones also as
+    ``LimitExceeded`` (``exceeded``)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.exceeded: list[LimitExceeded] = []
+
+    def over(self, text: str, where: str, limit: str, value: float, most: float, unit: str) -> None:
+        """*text*, with by how much *value* exceeds *most*."""
+        found = LimitExceeded(where, limit, value, most, unit)
+        self.exceeded.append(found)
+        amount = f"{found.over:.0f}" if isinstance(value, float) else str(found.over)
+        self.append(f"{text}: {amount} {unit} over")
 
 
 def _system_label(index: int, controller: Controller) -> str:
@@ -1564,7 +1631,7 @@ def _system_label(index: int, controller: Controller) -> str:
 
 
 def _function_usage(
-    fn: Any, processor: Processor, clock: float, calls: int, label: str, found: list[str]
+    fn: Any, processor: Processor, clock: float, calls: int, label: str, found: _Found
 ) -> FunctionUsage:
     base = _function_resources(fn, None, clock)
     cost = base.cost
@@ -1599,21 +1666,36 @@ def _function_usage(
     most = processor.max_ops_per_function
     if most is not None and ops > most:
         how = f" with its loops unrolled ({label} does not support 'loop')" if unrolled else ""
-        found.append(
+        found.over(
             f"{name} holds {ops} operations{how}; {label} holds {most} per function "
-            "(max_ops_per_function)"
+            "(max_ops_per_function)",
+            name,
+            "max_ops_per_function",
+            ops,
+            most,
+            "operations",
         )
     most = processor.max_state_bytes_per_function
     if most is not None and row.state_bytes > most:
-        found.append(
+        found.over(
             f"{name} needs {row.state_bytes} bytes of state (arguments, results and "
             f"{cost.locals} locals); {label} holds {most} per function "
-            "(max_state_bytes_per_function)"
+            "(max_state_bytes_per_function)",
+            name,
+            "max_state_bytes_per_function",
+            row.state_bytes,
+            most,
+            "bytes",
         )
     if row.compute_ns > row.max_latency_ns:
-        found.append(
+        found.over(
             f"{name} computes for about {row.compute_ns:.0f} ns on {label} ({cycles} cycles on "
-            f"its longest path), beyond its max_latency_ns={row.max_latency_ns:g}"
+            f"its longest path), beyond its max_latency_ns={row.max_latency_ns:g}",
+            name,
+            "max_latency_ns",
+            row.compute_ns,
+            float(row.max_latency_ns),
+            "ns",
         )
     return row
 
@@ -1626,7 +1708,7 @@ def _processor_usage(
     functions: list[FunctionUsage],
     spans: Mapping[str, list[tuple[int, int]]],
     label: str,
-    found: list[str],
+    found: _Found,
 ) -> ProcessorUsage:
     ops = sum(row.ops for row in functions)
     state = sum(row.state_bytes for row in functions)
@@ -1635,30 +1717,57 @@ def _processor_usage(
         row.calls_per_shot * (row.request_bytes + row.answer_bytes) for row in functions
     )
     peak = _peak([span for row in functions for span in spans.get(row.function, ())])
-    for value, most, what in (
-        (ops, processor.max_ops_total, "operations"),
-        (state, processor.max_state_bytes_total, "bytes of state"),
+    for value, most, what, field_name, unit in (
+        (ops, processor.max_ops_total, "operations", "max_ops_total", "operations"),
+        (
+            state,
+            processor.max_state_bytes_total,
+            "bytes of state",
+            "max_state_bytes_total",
+            "bytes",
+        ),
     ):
         if most is not None and value > most:
-            field_name = "max_ops_total" if what == "operations" else "max_state_bytes_total"
-            found.append(
+            found.over(
                 f"{label}: its classical functions hold {value} {what}; it holds {most} in all "
-                f"({field_name})"
+                f"({field_name})",
+                label,
+                field_name,
+                value,
+                most,
+                unit,
             )
-    if processor.max_calls_per_shot is not None and calls > processor.max_calls_per_shot:
-        found.append(
-            f"{label}: one shot makes {calls} calls to it; it takes "
-            f"{processor.max_calls_per_shot} (max_calls_per_shot)"
+    most = processor.max_calls_per_shot
+    if most is not None and calls > most:
+        found.over(
+            f"{label}: one shot makes {calls} calls to it; it takes {most} (max_calls_per_shot)",
+            label,
+            "max_calls_per_shot",
+            calls,
+            most,
+            "calls",
         )
-    if processor.max_bytes_per_shot is not None and bytes_per_shot > processor.max_bytes_per_shot:
-        found.append(
+    most = processor.max_bytes_per_shot
+    if most is not None and bytes_per_shot > most:
+        found.over(
             f"{label}: one shot's requests and answers to it take {bytes_per_shot} bytes; it "
-            f"takes {processor.max_bytes_per_shot} (max_bytes_per_shot)"
+            f"takes {most} (max_bytes_per_shot)",
+            label,
+            "max_bytes_per_shot",
+            bytes_per_shot,
+            most,
+            "bytes",
         )
-    if peak > processor.max_concurrent_calls:
-        found.append(
-            f"{label}: {peak} calls compute on it at once; it computes "
-            f"{processor.max_concurrent_calls} (max_concurrent_calls)"
+    most = processor.max_concurrent_calls
+    if peak > most:
+        found.over(
+            f"{label}: {peak} calls compute on it at once; it computes {most} "
+            "(max_concurrent_calls)",
+            label,
+            "max_concurrent_calls",
+            peak,
+            most,
+            "calls",
         )
     return ProcessorUsage(
         controller=controller,
@@ -1678,7 +1787,7 @@ def _of(value: int, most: int | None, unit: str = "") -> str:
     return f"{value}{unit}" if most is None else f"{value} / {most}{unit}"
 
 
-def _format_usage(report: UsageReport) -> str:
+def _format_usage(report: UsageReport, exceeds: bool = True) -> str:
     lines = ["Controller usage: " + ("within limits" if report.within_limits else "over limits")]
     for row in report.controllers:
         name = f"controller {row.controller}" + (f" ({row.model})" if row.model else "")
@@ -1711,7 +1820,7 @@ def _format_usage(report: UsageReport) -> str:
                 )
     if report.off_board:
         lines.append("Off the processors: " + ", ".join(report.off_board))
-    if report.violations:
+    if exceeds and report.violations:
         lines.append("Exceeds:")
         lines.extend(f"  {v}" for v in report.violations)
     return "\n".join(lines)
@@ -1744,6 +1853,7 @@ class ControllerModule(Protocol):
     ControllerLimits: type[ControllerLimits]
     FunctionCost: type[FunctionCost]
     FunctionResources: type[FunctionResources]
+    LimitExceeded: type[LimitExceeded]
     LinkUsage: type[LinkUsage]
     ResourceReport: type[ResourceReport]
     ControllerUsage: type[ControllerUsage]

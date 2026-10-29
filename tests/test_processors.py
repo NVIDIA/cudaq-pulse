@@ -290,6 +290,69 @@ def test_totals_and_per_shot_limits_count_every_function_of_a_processor():
     assert fits.controller_usage.controllers[0].processors[0].ops == 7
 
 
+def test_the_error_carries_the_usage_report_with_by_how_much_each_limit_is_exceeded():
+    cores = pulse.Processor(
+        links=["cores"],
+        clock_ghz=0.1,
+        max_concurrent_calls=2,
+        max_ops_total=6,
+        max_calls_per_shot=1,
+    )
+    with pytest.raises(ControllerLimitError) as raised:
+        _lower(both, cores)
+    error = raised.value
+    report = error.usage
+    assert report is not None and not report.within_limits
+    assert report.controllers[0].processors[0].ops == 7
+    label = "processors[0] of controllers[0] (box.a)"
+    exceeded = {(e.where, e.limit): (e.value, e.most, e.over, e.unit) for e in report.exceeded}
+    assert exceeded[(label, "max_ops_total")] == (7, 6, 1, "operations")
+    assert exceeded[(label, "max_calls_per_shot")] == (2, 1, 1, "calls")
+    value, most, over, unit = exceeded[("_parity", "max_latency_ns")]
+    assert (most, unit) == (60.0, "ns") and over == value - 60.0 > 0
+    assert len(report.exceeded) == len(report.violations)
+    assert error.violations == report.violations
+    text = str(error)
+    assert "(max_ops_total): 1 operations over" in text
+    assert (
+        f"{label}: one shot makes 2 calls to it; it takes 1 (max_calls_per_shot): 1 calls over"
+        in text
+    )
+    assert text.endswith(str(report).split("\nExceeds:")[0])
+    assert text.count("max_ops_total") == 1
+
+
+def test_a_call_over_a_processor_limit_carries_the_report_of_its_values():
+    @pulse.kernel
+    def waits(q, tau: float):
+        d, t = get_drive_line(q)
+        r, rt = get_readout_line(q)
+        m = readout(r, square(100, 0.05), rt)
+        fix = parity.submit([m, m, m, m]).result()
+        wait(d, tau)
+        sync(r, d)
+        if fix[0]:
+            drive(d, square(20, 0.1), t)
+
+    qpu = _qpu(pulse.Processor(links=["cores"], max_ops_per_function=2))
+    with pytest.raises(ControllerLimitError) as raised:
+        pulse.compile(waits, device=qpu).lower(qpu.qudits[0], 8.0)
+    (exceeded,) = raised.value.usage.exceeded
+    assert (exceeded.where, exceeded.limit, exceeded.over) == ("_parity", "max_ops_per_function", 2)
+    # Limits of a system without processors have no usage report.
+    box = pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], max_events=1)
+    plain = pulse.device(
+        {
+            "quantum_system": KRINNER,
+            "layout": [0, 1],
+            "control_system": pulse.ControlSystem(controllers=[box], links={"cores": pulse.Link()}),
+        }
+    )
+    with pytest.raises(ControllerLimitError) as raised:
+        pulse.compile(corrected, device=plain).lower(plain.qudits[0])
+    assert raised.value.usage is None
+
+
 def test_calls_computing_at_once_are_held_to_max_concurrent_calls():
     text = _fails(both, pulse.Processor(links=["cores"]))
     assert "2 calls compute on it at once; it computes 1 (max_concurrent_calls)" in text

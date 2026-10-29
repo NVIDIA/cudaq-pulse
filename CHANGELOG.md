@@ -84,8 +84,11 @@ behavior may change in any 0.x release.
   own fields states them as `Controller(dispatch_keys=...)` (a
   `[dispatch_keys]` table in its description). `lowered.controller_usage` reports
   each processor's functions and totals against its limits
-  (`.within_limits`; `print` it for a table). Descriptions and system files
-  state processors as `[[processors]]` tables.
+  (`.within_limits`; `print` it for a table). A program over them does not
+  compile: its `ControllerLimitError` carries the report as `usage`, every
+  limit exceeded with by how much (`usage.exceeded`, `LimitExceeded`), and
+  ends its message with the table. Descriptions and system files state
+  processors as `[[processors]]` tables.
 - **Controller descriptions.** `pulse.controller("vendor.model",
   drive_lines=..., readout_lines=...)` loads a controller from a TOML
   description installed with cudaq-pulse (or one given by path), parsed
