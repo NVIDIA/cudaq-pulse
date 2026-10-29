@@ -26,7 +26,6 @@ import dataclasses
 import hashlib
 import json
 import os
-from array import array
 from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, overload
 
@@ -46,6 +45,8 @@ from .targets.base import _EXCHANGE, TargetDescription, _coupling_kind
 from .targets.models import SimulationModel
 
 if TYPE_CHECKING:
+    from array import array
+
     from ._system import ControlSystem
 
 __all__ = [
@@ -371,6 +372,8 @@ class Device:
         """The 0-1 frequency of every carrier, by carrier index (0 where the
         target has none), as a compiled module records it."""
         if self._table is None:
+            from array import array
+
             table = array("d", bytes(8 * (max(self.frequencies, default=-1) + 1)))
             for carrier, frequency in self.frequencies.items():
                 table[carrier] = frequency

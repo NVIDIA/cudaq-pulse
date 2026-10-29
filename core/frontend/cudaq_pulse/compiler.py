@@ -18,7 +18,6 @@ from __future__ import annotations
 import difflib
 import marshal
 import math
-import struct
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -661,6 +660,8 @@ def _bits(values: tuple[float, ...]) -> bytes:
     try:
         return _PACKERS[len(values)](*values)
     except KeyError:
+        import struct
+
         pack = _PACKERS[len(values)] = struct.Struct(f"{len(values)}d").pack
         return pack(*values)
 
