@@ -205,6 +205,45 @@ class _Links(dict[int, Link]):
 _NO_DELAYS: Mapping[tuple[str, int], float] = MappingProxyType({})
 
 
+def _check_reference_clock(ghz: float | None, owner: str) -> None:
+    if ghz is not None and not ghz > 0:
+        raise InvalidValueError(f"{owner}.reference_clock_ghz must be positive, got {ghz}")
+
+
+def _checked_line_delays(
+    given: Mapping[tuple[str, int], float | Time], owner: str
+) -> Mapping[tuple[str, int], float]:
+    """*given*, line delays of *owner* (``MachineModel`` or
+    ``ControlSystem``) as times or numbers of ns, checked, as floats of ns in
+    line order."""
+    delays: dict[tuple[str, int], float] = {}
+    for line, ns in dict(given).items():
+        if (
+            not isinstance(line, tuple)
+            or len(line) != 2
+            or line[0] not in ("drive", "readout")
+            or isinstance(line[1], bool)
+            or not isinstance(line[1], int)
+            or line[1] < 0
+        ):
+            raise InvalidValueError(
+                f"{owner}.line_delays_ns keys are ('drive', qudit) or "
+                f"('readout', qudit), got {line!r}"
+            )
+        ns = as_nanoseconds(ns)
+        if isinstance(ns, bool) or not isinstance(ns, (int, float)) or not math.isfinite(ns):
+            raise InvalidValueError(
+                f"{owner}.line_delays_ns[{line!r}] must be a number, got {ns!r}"
+            )
+        if ns < 0:
+            raise InvalidValueError(
+                f"{owner}.line_delays_ns[{line!r}] is {ns} ns; delays cannot be "
+                "negative: to play a line earlier, delay every other line instead"
+            )
+        delays[line] = float(ns)
+    return MappingProxyType(dict(sorted(delays.items()))) if delays else _NO_DELAYS
+
+
 @dataclass(frozen=True)
 class MachineModel:
     """Hardware resource limits.
@@ -256,40 +295,14 @@ class MachineModel:
                 raise TypeError(
                     f"MachineModel.controller must be a ControllerLimits, got {self.controller!r}"
                 )
-        if self.reference_clock_ghz is not None and not self.reference_clock_ghz > 0:
-            raise InvalidValueError(
-                f"MachineModel.reference_clock_ghz must be positive, got {self.reference_clock_ghz}"
-            )
-        delays: dict[tuple[str, int], float] = {}
-        for line, ns in dict(self.line_delays_ns).items() if self.line_delays_ns else ():
-            if (
-                not isinstance(line, tuple)
-                or len(line) != 2
-                or line[0] not in ("drive", "readout")
-                or isinstance(line[1], bool)
-                or not isinstance(line[1], int)
-                or line[1] < 0
-            ):
-                raise InvalidValueError(
-                    "MachineModel.line_delays_ns keys are ('drive', qudit) or "
-                    f"('readout', qudit), got {line!r}"
-                )
-            ns = as_nanoseconds(ns)
-            if isinstance(ns, bool) or not isinstance(ns, (int, float)) or not math.isfinite(ns):
-                raise InvalidValueError(
-                    f"MachineModel.line_delays_ns[{line!r}] must be a number, got {ns!r}"
-                )
-            if ns < 0:
-                raise InvalidValueError(
-                    f"MachineModel.line_delays_ns[{line!r}] is {ns} ns; delays cannot be "
-                    "negative: to play a line earlier, delay every other line instead"
-                )
-            delays[line] = float(ns)
-        object.__setattr__(
-            self,
-            "line_delays_ns",
-            MappingProxyType(dict(sorted(delays.items()))) if delays else _NO_DELAYS,
+        if self.reference_clock_ghz is not None:
+            _check_reference_clock(self.reference_clock_ghz, "MachineModel")
+        delays = (
+            _checked_line_delays(self.line_delays_ns, "MachineModel")
+            if self.line_delays_ns
+            else _NO_DELAYS
         )
+        object.__setattr__(self, "line_delays_ns", delays)
         # Nothing of clocks to do: no controller, control system, reference
         # clock or delays.
         object.__setattr__(

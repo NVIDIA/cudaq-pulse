@@ -474,6 +474,12 @@ class ControlSystem:
     ``line_switch_penalty_cycles`` apply to the ``rcp`` and ``alap_rcp``
     schedules, which keep a branch on a readout at least the
     ``feedback_latency_cycles`` of the controllers that play readouts after it.
+    ``reference_clock_ghz`` is a clock every controller locks to, if they
+    share one: each controller's clock must be a whole multiple of it, and
+    without it each controller's start is known only to within one of its
+    own cycles. ``line_delays_ns`` are the calibrated delays of the lines
+    the controllers play, keyed by ``("drive", qudit)`` or
+    ``("readout", qudit)``, as ``MachineModel.line_delays_ns`` takes them.
     """
 
     controllers: Sequence[Controller] = ()
@@ -481,13 +487,15 @@ class ControlSystem:
     max_concurrent_drives: int = 4
     max_concurrent_readouts: int = 2
     line_switch_penalty_cycles: int = 0
+    reference_clock_ghz: float | None = None
+    line_delays_ns: Mapping[tuple[str, int], float] = field(default_factory=dict)
     _machine: MachineModel = field(init=False, repr=False, compare=False)
     _plays_everything: bool = field(init=False, repr=False, compare=False)
     # By link id, the controller and processor that run its calls.
     _placement: Mapping[int, tuple[int, int]] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        from .compiler import MachineModel
+        from .compiler import MachineModel, _check_reference_clock, _checked_line_delays
 
         if isinstance(self.controllers, Controller) or not isinstance(self.controllers, Iterable):
             raise InvalidTypeError(
@@ -520,6 +528,10 @@ class ControlSystem:
                     f"ControlSystem.links[{name!r}] must be a Link, got {link!r}"
                 )
         object.__setattr__(self, "links", MappingProxyType(dict(self.links)))
+        _check_reference_clock(self.reference_clock_ghz, "ControlSystem")
+        object.__setattr__(
+            self, "line_delays_ns", _checked_line_delays(self.line_delays_ns, "ControlSystem")
+        )
         problems = _structure_problems(self, "")
         if problems:
             raise DeviceDefinitionError(
@@ -547,6 +559,8 @@ class ControlSystem:
                 line_switch_penalty_cycles=self.line_switch_penalty_cycles,
                 links=links,
                 controller=controllers[0] if len(controllers) == 1 else None,
+                reference_clock_ghz=self.reference_clock_ghz,
+                line_delays_ns=self.line_delays_ns,
                 _system=self,
             ),
         )
@@ -559,13 +573,16 @@ class ControlSystem:
                 self.max_concurrent_drives,
                 self.max_concurrent_readouts,
                 self.line_switch_penalty_cycles,
+                self.reference_clock_ghz,
+                tuple(self.line_delays_ns.items()),
             )
         )
 
     def as_dict(self) -> dict[str, Any]:
         """The control system as JSON-serializable data; links name the
-        controllers they reach by index."""
-        return {
+        controllers they reach by index, and line delays are keyed by role,
+        then qudit."""
+        data = {
             "controllers": [c.as_dict() for c in self.controllers],
             "links": {
                 name: {
@@ -582,6 +599,14 @@ class ControlSystem:
             "max_concurrent_readouts": self.max_concurrent_readouts,
             "line_switch_penalty_cycles": self.line_switch_penalty_cycles,
         }
+        if self.reference_clock_ghz is not None:
+            data["reference_clock_ghz"] = self.reference_clock_ghz
+        if self.line_delays_ns:
+            delays: dict[str, dict[str, float]] = {}
+            for (role, qudit), ns in self.line_delays_ns.items():
+                delays.setdefault(role, {})[str(qudit)] = ns
+            data["line_delays_ns"] = delays
+        return data
 
     def _index(self, controller: Controller) -> int:
         for index, candidate in enumerate(self.controllers):
@@ -834,6 +859,23 @@ def _structure_problems(system: ControlSystem, prefix: str) -> list[Problem]:
                     )
                 else:
                     first[carrier] = index
+    if any(c.drive_lines or c.readout_lines for c in controllers):
+        played = {
+            (role[:-6], carrier)
+            for c in controllers
+            for role in ("drive_lines", "readout_lines")
+            for carrier in getattr(c, role)
+        }
+        for role, carrier in system.line_delays_ns:
+            if (role, carrier) not in played:
+                problems.append(
+                    Problem(
+                        f"delays qudit {carrier}'s {role} line, which no controller plays",
+                        path=f"{prefix}line_delays_ns",
+                        value=(role, carrier),
+                        fix=f"add {carrier} to the {role}_lines of the controller that plays it",
+                    )
+                )
     for index, controller in enumerate(controllers):
         peers = controller.peer_latency_cycles
         if isinstance(peers, Mapping):
@@ -932,6 +974,16 @@ def _wiring_problems(system: ControlSystem, target: TargetDescription) -> list[P
                         fix=f"it has qudits {_ranges(sorted(carriers))}",
                     )
                 )
+    for role, carrier in system.line_delays_ns:
+        if carrier not in carriers:
+            problems.append(
+                Problem(
+                    f"delays qudit {carrier}'s {role} line; the qudit is not in the quantum system",
+                    path="control_system.line_delays_ns",
+                    value=(role, carrier),
+                    fix=f"it has qudits {_ranges(sorted(carriers))}",
+                )
+            )
     return problems
 
 
@@ -1142,6 +1194,8 @@ _CONTROL_KEYS = (
     "max_concurrent_drives",
     "max_concurrent_readouts",
     "line_switch_penalty_cycles",
+    "reference_clock_ghz",
+    "line_delays_ns",
 )
 _LINK_KEYS = (
     "fixed_ns",
@@ -1348,6 +1402,24 @@ class _Reader:
             _notice_version(controller, path if self.file is None else f"{self.file}: {path}")
         return controller
 
+    def line_delays(self, data: Any, path: str) -> dict[tuple[str, int], Any] | None:
+        """System-file line delays, ``{"drive": {"5": 4.0}}``, keyed as
+        ``ControlSystem.line_delays_ns`` takes them."""
+        roles = self.mapping(data, path, ("drive", "readout"))
+        if roles is None:
+            return None
+        delays: dict[tuple[str, int], Any] = {}
+        for role, by_qudit in roles.items():
+            if not isinstance(by_qudit, Mapping):
+                self.problem(f"{path}.{role}", "maps qudits to delays in ns", by_qudit)
+                return None
+            for qudit, ns in by_qudit.items():
+                if not str(qudit).isdigit():
+                    self.problem(f"{path}.{role}", "is keyed by qudit indices", qudit)
+                    return None
+                delays[(role, int(qudit))] = ns
+        return delays
+
     def control_system(self, data: Any, path: str) -> ControlSystem | None:
         system = self.mapping(data, path, _CONTROL_KEYS)
         if system is None:
@@ -1381,6 +1453,11 @@ class _Reader:
             if link is not None:
                 links[name] = link
         rest = {k: system[k] for k in _CONTROL_KEYS[2:] if k in system}
+        if "line_delays_ns" in rest:
+            delays = self.line_delays(rest["line_delays_ns"], f"{path}.line_delays_ns")
+            if delays is None:
+                return None
+            rest["line_delays_ns"] = delays
         try:
             return ControlSystem(controllers=controllers, links=links, **rest)  # type: ignore[arg-type]
         except DeviceDefinitionError as error:

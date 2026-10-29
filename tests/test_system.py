@@ -220,6 +220,66 @@ def test_one_controller_on_its_own_clock_is_timed_as_on_a_machine_model():
         pulse.compile(odd, device=qpu).lower(qpu.qudits[0])
 
 
+def _outputs(lowered):
+    return (
+        lowered.mlir(),
+        json.dumps(lowered.export_controller(), sort_keys=True),
+        json.dumps(lowered.export_emulation(), sort_keys=True),
+    )
+
+
+def test_line_delays_and_a_reference_clock_are_the_control_systems():
+    delays = {("drive", 0): 2.3, ("readout", 0): 1.0}
+    box = pulse.Controller(
+        drive_lines=range(4), readout_lines=range(4), clock_ghz=1.0, max_fine_delay_ns=1.0
+    )
+    system = pulse.ControlSystem(controllers=[box], reference_clock_ghz=0.5, line_delays_ns=delays)
+    assert system._machine.line_delays_ns == delays and system._machine.reference_clock_ghz == 0.5
+    timed = pulse.device(
+        {"quantum_system": KRINNER, "layout": [0, 1, 2, 3], "control_system": system}
+    )
+    by_system = pulse.compile(drive_and_branch, device=timed).lower(
+        timed.qudits[0], timed.qudits[1]
+    )
+    machine = MachineModel(controller=box, reference_clock_ghz=0.5, line_delays_ns=delays)
+    by_model = pulse.compile(drive_and_branch, machine=machine).lower(
+        timed.qudits[0], timed.qudits[1]
+    )
+    assert _outputs(by_system) == _outputs(by_model)
+    assert by_system.export_controller()["reference_clock_ghz"] == 0.5
+    lines = {(line["role"], line["qudit"]): line for line in by_system.export_controller()["lines"]}
+    assert lines[("drive", 0)]["fine_delay_ns"] == pytest.approx(0.3)
+
+
+def test_new_line_delays_of_a_control_system_schedule_again_to_the_same_bytes():
+    box = pulse.Controller(drive_lines=range(4), readout_lines=range(4))
+    kernel = pulse.kernel(drive_and_branch.__pulse_kernel_fn__)
+    for k, delays in enumerate(({("drive", 0): 1.0}, {("drive", 1): 4.0, ("readout", 0): 1.5})):
+        system = pulse.ControlSystem(controllers=[box], line_delays_ns=delays)
+        qpu = pulse.device({"quantum_system": KRINNER, "layout": [0, 1], "control_system": system})
+        again = pulse.compile(kernel, device=qpu).lower(qpu.qudits[0], qpu.qudits[1])
+        assert (again.metrics.trace_ms == 0.0) == (k > 0)
+        fresh = pulse.kernel(drive_and_branch.__pulse_kernel_fn__)
+        full = pulse.compile(fresh, device=qpu).lower(qpu.qudits[0], qpu.qudits[1])
+        assert _outputs(again) == _outputs(full)
+
+
+def test_a_control_systems_line_delays_and_reference_clock_are_checked():
+    with pytest.raises(ValueError, match=r"ControlSystem.line_delays_ns\[\('drive', 0\)\] is -1"):
+        pulse.ControlSystem(line_delays_ns={("drive", 0): -1.0})
+    with pytest.raises(ValueError, match="ControlSystem.reference_clock_ghz must be positive"):
+        pulse.ControlSystem(reference_clock_ghz=0.0)
+    with pytest.raises(
+        DeviceDefinitionError, match="delays qudit 4's drive line, which no controller plays"
+    ):
+        pulse.ControlSystem(controllers=list(_two_boxes()), line_delays_ns={("drive", 4): 1.0})
+    system = pulse.ControlSystem(
+        controllers=[pulse.Controller()], line_delays_ns={("readout", 40): 1.0}
+    )
+    with pytest.raises(DeviceDefinitionError, match="the qudit is not in the quantum system"):
+        pulse.device({"quantum_system": KRINNER, "control_system": system})
+
+
 def test_several_controllers_on_their_own_clocks_do_not_compile():
     qpu = _qpu(*_two_boxes(clock_ghz=1.0))
     with pytest.raises(
@@ -453,6 +513,24 @@ def test_a_qpu_round_trips_through_its_system_file():
     assert system["links"]["feedback"]["controllers"] == [1]
     assert system["controllers"][1]["peer_latency_cycles"] == {"0": 12}
     assert system["controllers"][1]["supports"] == ["play", "acquire", "sync"]
+
+
+def test_line_delays_and_a_reference_clock_round_trip_through_the_system_file():
+    system = pulse.ControlSystem(
+        controllers=list(_two_boxes()),
+        reference_clock_ghz=0.25,
+        line_delays_ns={("drive", 0): 1.5, ("readout", 3): 2.0},
+    )
+    qpu = pulse.device(
+        {"quantum_system": KRINNER, "layout": [0, 1, 2, 3], "control_system": system}
+    )
+    data = _round_trip(qpu)["control_system"]
+    assert data["line_delays_ns"] == {"drive": {"0": 1.5}, "readout": {"3": 2.0}}
+    assert data["reference_clock_ghz"] == 0.25
+    assert "line_delays_ns" not in _qpu(*_two_boxes()).as_dict()["control_system"]
+    data["line_delays_ns"] = {"drive": {"zero": 1.0}}
+    with pytest.raises(DeviceDefinitionError, match="line_delays_ns.drive: is keyed by qudit"):
+        pulse.device({"quantum_system": KRINNER, "layout": [0, 1, 2, 3], "control_system": data})
 
 
 def test_a_program_clock_round_trips_through_the_system_file():

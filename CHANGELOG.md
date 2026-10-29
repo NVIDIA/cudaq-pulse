@@ -67,6 +67,9 @@ behavior may change in any 0.x release.
   that does not plays it unrolled, and its limit error names the loop; unrolling adds pulses,
   not waveform memory, which holds each shape once. `rcp` keeps a branch
   on a readout the `feedback_latency_cycles` of the controllers that read out.
+  A control system's `line_delays_ns` and `reference_clock_ghz` are its
+  calibrated line delays and shared clock, as on a `MachineModel`; new
+  delays alone schedule its programs again without tracing them.
 - **Processors.** `pulse.Processor` is a classical processor on a
   controller (`Controller(processors=[...])`), which runs the classical
   functions called on its `links`; a link belongs to at most one processor

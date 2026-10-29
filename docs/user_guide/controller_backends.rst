@@ -167,7 +167,8 @@ gives ``program_clock_ghz``, converts every time to the controller's cycles
 (exactly for operations on its lines; rounded up for classical calls and
 epochs) and scales each waveform's time parameters (``duration``,
 ``sigma``, ``beta``, ``risefall``) with them. A program for a controller at
-the program clock is unchanged. ``MachineModel(reference_clock_ghz=...)``
+the program clock is unchanged. ``ControlSystem(reference_clock_ghz=...)``
+(or ``MachineModel(reference_clock_ghz=...)`` without a control system)
 states a clock the controllers share; every controller's clock must be a
 whole multiple of it, and the export gives it as ``reference_clock_ghz``.
 Without one, each controller's start is known only to within one of its own
@@ -194,8 +195,9 @@ Line delays
 -----------
 
 Cables and electronics delay each line differently. The calibrated delays
-belong to the system, not to kernels: ``MachineModel(line_delays_ns=...)``
-gives them by line, ``("drive", qudit)`` or ``("readout", qudit)``, and
+belong to the system, not to kernels: ``ControlSystem(line_delays_ns=...)``
+(or ``MachineModel(line_delays_ns=...)`` without a control system) gives
+them by line, ``("drive", qudit)`` or ``("readout", qudit)``, and
 every operation on a delayed line starts that much later than scheduled.
 Whole :ref:`timesteps <timestep>` of the line move its operations, which
 are then checked against the controller's limits like any others; the rest,
@@ -213,9 +215,11 @@ with an error naming the line, the rest and the fixes::
     # The drive line of qudit 0 moves 2 ns (4 cycles of a 2 GHz program
     # clock) and plays with fine_delay_ns = 0.3.
 
-Compiling a kernel again with only other delays reuses its trace and
-optimized module and schedules it again, with the same result, byte for
-byte, as compiling it anew.
+Compiling a kernel again with only other delays, such as a control system
+calibrated again, reuses its trace and optimized module and schedules it
+again, with the same result, byte for byte, as compiling it anew. A delay
+of a line no controller of the system plays, or of a qudit the quantum
+system lacks, is a ``DeviceDefinitionError``.
 
 Controller limits
 -----------------

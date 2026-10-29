@@ -843,8 +843,12 @@ class Kernel[**P]:
     def _traced_key(self, values: tuple[Any, ...], target: Any, options: CompileOptions) -> Any:
         """What a specialization is traced for: everything but line delays,
         which only move its schedule."""
-        if options.machine.line_delays_ns:
-            options = replace(options, machine=replace(options.machine, line_delays_ns={}))
+        machine = options.machine
+        if machine.line_delays_ns:
+            system = machine._system
+            if system is not None:
+                system = replace(system, line_delays_ns={})
+            options = replace(options, machine=replace(machine, line_delays_ns={}, _system=system))
         static = self._split[0]
         return (target.fingerprint, options, static, *[_static_key(values[i]) for i in static])
 
