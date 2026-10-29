@@ -2484,7 +2484,8 @@ public:
   /// `parameters`, and the amplitude is that of the shapes in `amplitudes`.
   /// What is known only at run time is an expression over readouts, answers
   /// and constants (see ControllerWalk), its operands named by `parameters`.
-  /// Third, the frame changes on a tone after its last drive or readout.
+  /// Third, with frames that persist from shot to shot, the frame each tone
+  /// ends the shot in, else an empty list.
   ///
   /// With `own`, (num, den, grid) and not `rolled`: the times in the cycles
   /// of a controller counting `num` of its cycles every `den` program
@@ -2505,6 +2506,8 @@ public:
     ControllerWalk walk(clock(), rolled ? ControllerWalk::Walk::Rolled
                                         : ControllerWalk::Walk::Every);
     walk.runTime = runTime_;
+    walk.persistent =
+        module_->getOperation()->hasAttr("pulse.persistent_frames");
     if (epochs)
       walk.epochs.emplace(*module_);
     std::vector<ControllerLine> lines;
@@ -2538,14 +2541,21 @@ public:
         roles.append(line);
       }
     }
-    auto unapplied = walk.unapplied();
+    std::vector<ControllerWalk::FinalFrame> finals;
+    if (walk.persistent) {
+      int64_t end = 0;
+      for (const ControllerRecord &r : walk.result)
+        if (auto stop = r.stop())
+          end = std::max(end, *stop);
+      finals = walk.finalFrames(static_cast<double>(end) / walk.clockGHz);
+    }
     ControllerEvents program(walk, waveforms, std::move(waveform), parameters,
                              amplitudes, rolled);
     nb::list events = program.build();
     if (own)
-      return nb::make_tuple(roles, events, program.unapplied(unapplied),
+      return nb::make_tuple(roles, events, program.frameState(finals),
                             nb::cast(offGrid));
-    return nb::make_tuple(roles, events, program.unapplied(unapplied));
+    return nb::make_tuple(roles, events, program.frameState(finals));
   }
 
   /// The controller limits the schedule exceeds, as messages; -1 for a
@@ -3068,6 +3078,76 @@ public:
     if (!walker.run(function))
       throw std::runtime_error(walker.error);
     return result;
+  }
+
+  using DriveFrame =
+      std::tuple<int64_t, std::vector<int64_t>, int64_t, double, double>;
+  using FinalTone = std::tuple<int64_t, std::string, double, double, double>;
+
+  /// Every drive on `path` as (drive index, iteration, start cycles, tone
+  /// frequency in Hz, phase in radians it plays with: its tone's frame
+  /// phase at its start plus its own phase offset), and the frame each line's
+  /// tone ends the walk in as (qudit, "drive" or "readout", frequency in
+  /// Hz, phase in radians at `time` ns, `time`); NaN where a value is not a
+  /// number. With `outcome` at least 0, a measurement the path gives no
+  /// outcome has that one.
+  std::pair<std::vector<DriveFrame>, std::vector<FinalTone>>
+  drive_frames(const std::vector<std::vector<int64_t>> &path, int64_t outcome) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto readouts = readoutOps();
+    pulse::Path chosen = toPath(path, readouts);
+    llvm::DenseMap<mlir::Operation *, int64_t> indexOf;
+    module_->walk([&](pulse::DriveOp drive) {
+      indexOf.try_emplace(drive, static_cast<int64_t>(indexOf.size()));
+    });
+    double clockGHz = clock();
+    constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+    auto value = [&](const pulse::Affine &a) {
+      return a.isConstant() ? a.evaluate({}) : nan;
+    };
+    std::vector<DriveFrame> drives;
+    pulse::ExecutionWalker walker(clockGHz, chosen);
+    walker.onDrive = [&](const pulse::Occurrence &occurrence) {
+      const pulse::ToneState &tone = occurrence.tone;
+      double startNs = static_cast<double>(occurrence.startCycles) / clockGHz;
+      double offset = 0.0;
+      for (llvm::StringRef name : {"phase_offset", "frame_phase_offset"})
+        if (auto attr = occurrence.op->getAttrOfType<mlir::FloatAttr>(name))
+          offset += attr.getValueAsDouble();
+      pulse::Affine phase = tone.phase +
+                            (tone.frequencyHz - tone.frameFrequencyHz) *
+                                (2.0 * M_PI) * 1.0e-9 *
+                                (startNs - tone.timeNs) +
+                            pulse::Affine(offset);
+      drives.emplace_back(indexOf.lookup(occurrence.op), occurrence.iteration,
+                          occurrence.startCycles, value(tone.frequencyHz),
+                          value(phase));
+    };
+    if (outcome >= 0)
+      walker.onReadout = [&](const pulse::Occurrence &,
+                             const pulse::MeasurementKey &key) {
+        chosen.try_emplace(key, outcome);
+        return false;
+      };
+    auto function = getFuncOp();
+    if (!function)
+      throw std::runtime_error("no 'main' func in module");
+    if (!walker.run(function))
+      throw std::runtime_error(walker.error);
+    std::vector<FinalTone> finals;
+    for (auto &[root, tone] : walker.toneStates()) {
+      auto qudit = root ? root->getAttrOfType<mlir::IntegerAttr>("qubit")
+                        : mlir::IntegerAttr();
+      if (!qudit ||
+          !mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(root))
+        continue;
+      finals.emplace_back(
+          qudit.getInt(),
+          mlir::isa<pulse::GetDriveLineOp>(root) ? "drive" : "readout",
+          value(tone.frequencyHz), value(tone.phase), tone.timeNs);
+    }
+    std::sort(finals.begin(), finals.end());
+    return {std::move(drives), std::move(finals)};
   }
 
   /// The peak amplitude of a built-in waveform (its operand 1), through
@@ -3664,8 +3744,10 @@ private:
   /// Passes that run on every module once it is scheduled and checked, by
   /// schedule(), for a call's values (specialize) and for simulation: a
   /// pass that needs the times of the ops, or that must see each binding,
-  /// goes here. None yet.
-  static void addAfterSchedulePasses(mlir::PassManager &) {}
+  /// goes here.
+  static void addAfterSchedulePasses(mlir::PassManager &pm) {
+    pm.addPass(pulse::createPulseFrameChangesPass());
+  }
 
   /// Bind `values` to the results of `wait`: the wait stays, so what it
   /// feeds keeps waiting for it, and its results read as the values.
@@ -5630,6 +5712,10 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::call_guard<nb::gil_scoped_release>(),
            "Every readout on a path: (index, iteration, frequency Hz, "
            "amplitude)")
+      .def("drive_frames", &PulseModule::drive_frames, nb::arg("path"),
+           nb::arg("outcome") = -1, nb::call_guard<nb::gil_scoped_release>(),
+           "Every drive on a path with the frame it plays with, and the "
+           "frame each line's tone ends in")
       .def("next_measurement", &PulseModule::next_measurement,
            nb::call_guard<nb::gil_scoped_release>(),
            "The next measurement without an outcome on a path", nb::arg("path"))

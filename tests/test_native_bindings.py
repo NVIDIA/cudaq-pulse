@@ -92,7 +92,7 @@ def test_a_pass_by_name_takes_its_options():
     scheduled.schedule("alap_rcp", 1, 1, 3, 2)
     by_name = pipeline.parse_to_module(text)
     options = "max-drives=1 max-readouts=1 readout-latency=3 switch-penalty=2 alap=true"
-    by_name.run_passes([f"pulse-schedule-rcp{{{options}}}"])
+    by_name.run_passes([f"pulse-schedule-rcp{{{options}}}", "pulse-frame-changes"])
     assert by_name.print() == scheduled.print() != pipeline.parse_to_module(text).print()
 
 

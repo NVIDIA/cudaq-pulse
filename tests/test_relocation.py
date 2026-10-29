@@ -171,6 +171,21 @@ def test_format_2_names_the_symbols_format_1_names(kernel):
         assert set(play["symbols"]["phase_rad"]) == by_op[("drive", play["line"], ())]["phase_rad"]
 
 
+def test_a_frame_update_names_the_symbols_its_frame_depends_on():
+    @pulse.kernel
+    def last_shift(q: Qudit, a: float, step: float):
+        d = get_drive_line(q)
+        drive(d, square(20, a))
+        shift_phase(d.tone, step)
+
+    lowered = last_shift.lower(H[9], 0.2, 0.4)
+    expected = {"qudit": "s0", "frequency_hz": ["s0.f01"], "phase_rad": ["step"]}
+    for version in (1, 2):
+        events = lowered.export_controller(version=version)["events"]
+        (update,) = [e for e in events if e["kind"] == "frame_update"]
+        assert update["symbols"] == expected
+
+
 def test_static_qudit_exports_have_no_symbols():
     def k(q, a: float):
         d = get_drive_line(q)

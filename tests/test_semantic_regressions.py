@@ -60,6 +60,7 @@ def test_range_start_stop_step_values_are_preserved():
         d = get_drive_line(q)
         for index in range(2, 9, 3):
             shift_phase(d.tone, float(index))
+        drive(d, square(8, 0.1))
 
     compiled = pulse.compile(kernel, passes=()).lower(Q[0])
     assert compiled.mlir().count("pulse.shift_phase") == 3

@@ -34,14 +34,15 @@ program uses, ``lines`` each line's index, ``role`` (``"drive"`` or
 ``"readout"``) and qudit (and, with line delays, its ``fine_delay_ns``;
 see below), and ``limits`` the controller limits it was
 checked against (``null`` without). ``events`` lists every drive, readout,
-wait, sync and classical call in program order, once per loop iteration and
-both arms of a branch. ``epochs``, ``calls``, ``links`` and ``manifest`` are
-those of ``Lowered.export_emulation()`` (see :doc:`classical_calls`). Each
-event has:
+wait, sync, classical call and frame update in program order, once per loop
+iteration and both arms of a branch. ``epochs``, ``calls``, ``links`` and
+``manifest`` are those of ``Lowered.export_emulation()`` (see
+:doc:`classical_calls`). Each event has:
 
 ``index``, ``kind``
     Its position in ``events`` and one of ``"drive"``, ``"readout"``,
-    ``"wait"``, ``"sync"``, ``"submit"`` and ``"answer"``.
+    ``"wait"``, ``"sync"``, ``"submit"``, ``"answer"`` and
+    ``"frame_update"``.
 ``line``, ``qudit``
     The line it plays on and that line's qudit; ``null`` for a sync. For a
     classical call, ``line`` is its link and ``qudit`` is -1.
@@ -99,9 +100,48 @@ Drives and readouts also have:
     A controller tracks such a tone's frame itself, applying these instead
     of reading ``frequency_hz`` and ``phase_rad``, each ``id`` once. A drive
     whose own phase offset does not change the frame has ``phase_offset_rad``.
-    A frame change after the tone's last drive or readout, which no event
-    takes, is in the program's ``frame_updates`` (after ``events``, only
-    when there is one), each with its ``tone`` first.
+
+Every shot starts from the reset frame: each tone at its own frequency, with
+phase 0. A frame change (``shift_phase``, ``set_phase``, ``shift_frequency``,
+``set_frequency``) is a point on the timeline: in the scheduled IR it has
+``start_cycles`` and a ``duration_cycles`` of 0. The next drive or readout on
+its tone takes it in its ``frequency_hz`` and ``phase_rad``; in a loop, the
+next iteration's do. In a loop whose iterations do not play its tone, a
+change is at the start of each iteration. A change takes no time: every
+drive, readout, wait and loop, and the program, starts and lasts as it does
+without it.
+
+The compiler keeps every change the program makes, and where no later
+drive or readout takes a change on some path, the export gives that
+execution as a ``"frame_update"`` event of its own, decided from the
+program alone:
+
+- A change nothing takes is a frame update where it is made, in every
+  iteration of a loop around it; a loop kept rolled stays rolled, the frame
+  update in its body.
+- A change a loop carries out of its last iteration, which nothing after
+  the loop takes, is a frame update after the loop, at its place in the
+  last iteration.
+- A change made before a branch that only one arm takes is a frame update
+  at the start of the other arm (or of the missing ``else``), with that
+  arm's ``conditions``; the arm that takes it plays with it as before.
+- A change a loop carries through a branch, or out of a loop whose
+  iterations do not play its tone, is a frame update at every execution;
+  a drive or readout that takes it on another path has it in its frame as
+  well.
+
+A frame update has ``op`` and ``value``, as in ``frame_updates``, its
+``start_cycles`` (its place) and a ``duration_cycles`` of 0, and the tone's
+``frequency_hz`` and ``phase_rad`` with the change applied; on a tone whose
+frame depends on run time, ``tone`` and the ``frame_updates`` it applies,
+as a drive has. Its ``line`` is its tone's, else the line the tone last
+played on, else ``null``. A controller whose frames persist from one shot to the next
+declares ``ControllerLimits(persistent_frames=True)``; such changes then
+have no event, and the program's ``frame_state`` (after ``events``) gives
+the frame each tone ends the shot in, by line: its ``line``, and its
+``frequency_hz`` and ``phase_rad`` at the end of the shot, or, for a tone
+whose frame depends on run time, its ``tone`` and the ``frame_updates`` not
+yet taken.
 
 A waveform parameter computed from a readout or an answer is ``null`` in
 ``params`` and has an expression in the node's ``runtime``, by parameter
@@ -144,10 +184,11 @@ rather than with its executions, as a sequencer runs it. It has the keys of
     Each event's ``kind`` is one of ``cudaq_pulse.Event``, named for what a
     controller does whatever the modality: ``"play"`` (a ``/1`` drive),
     ``"acquire"`` (a readout), ``"wait"``, ``"sync"``, ``"loop"``,
-    ``"call"`` (a ``/1`` submit) and ``"answer"``. An event in a branch
-    keeps its kind and lists its ``conditions``, and phase and frequency
-    changes are in the ``tones`` of the events that play them, so neither
-    has a kind of its own. A backend refuses a kind it does not know.
+    ``"call"`` (a ``/1`` submit), ``"answer"`` and ``"frame_update"``. An
+    event in a branch keeps its kind and lists its ``conditions``, and phase
+    and frequency changes are in the ``tones`` of the events that play
+    them; a change no event plays is a ``"frame_update"``, with its frame
+    in ``tones``. A backend refuses a kind it does not know.
 
     A tree. A loop whose iterations repeat (each event moves by one period,
     and every tone keeps its frequency) is one ``loop`` event: ``trips``
@@ -215,11 +256,11 @@ rather than with its executions, as a sequencer runs it. It has the keys of
     ``bytes_per_ns``, ``feedback_ns`` and ``max_in_flight``.
 ``lines``
     Each line's ``qudits``, a list.
-Played events
-    ``tones``, a list of the tones the event plays, each with its
-    ``frequency_hz``, its ``phase_rad`` in the loops' first iterations, and
-    ``phase_step_rad``, the phase added per iteration of each loop around
-    it, outermost first.
+Played events and frame updates
+    ``tones``, a list of the tones the event plays (a frame update's
+    frame), each with its ``frequency_hz``, its ``phase_rad`` in the loops'
+    first iterations, and ``phase_step_rad``, the phase added per iteration
+    of each loop around it, outermost first.
 Values known at run time
     As in ``/1``, and only where a value is computed from a readout or an
     answer: ``tone``, ``frame_updates`` and ``phase_offset_rad`` on a play
@@ -230,7 +271,7 @@ Values known at run time
     events. A waveform parameter known only at run time is its expression
     in the entry of the program's ``waveforms`` the event plays, where
     ``/1`` has ``null`` and the node's ``runtime``. The program's
-    ``frame_updates`` are as in ``/1``. A loop whose body changes or plays a tone whose frame
+    ``frame_state`` is as in ``/1``. A loop whose body changes or plays a tone whose frame
     is tracked at run time is exported once per iteration, so that each
     frame change keeps its own ``id``; a loop whose run-time values repeat
     with its iterations stays one loop.
@@ -621,7 +662,7 @@ controller's limits is skipped.
    # ...
    # PASS unsupported_event
    # PASS newer_format
-   # backend 'text': 7 passed, 4 refused
+   # backend 'text': 7 passed, 5 refused
    print(report.ok)  # True
 
 A backend that accepted the unknown event would instead report ``FAIL

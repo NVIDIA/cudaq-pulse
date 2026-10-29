@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import math
+import warnings
 
 import cudaq_pulse as pulse
 import pytest
@@ -91,6 +92,16 @@ def _chirp(a):
 
 
 @pulse.kernel
+def _kept_frames(a):
+    d = get_drive_line(a)
+    ro = get_readout_line(a)
+    for _ in range(3):
+        drive(d, gaussian(16, 0.1, 4.0))
+        shift_phase(ro.tone, 0.2)
+    shift_frequency(d.tone, 2.0e5)
+
+
+@pulse.kernel
 def _first_differs(a):
     d = get_drive_line(a)
     for _ in range(5):
@@ -128,6 +139,7 @@ _CASES = {
     "unrolled": (_rounds(5), (Q[0], Q[1]), {"schedule": "alap", "unroll_threshold": 10**6}, {}),
     "detuned": (_detuned, (Q[0],), {}, {}),
     "chirp": (_chirp, (Q[0],), {}, {}),
+    "kept_frames": (_kept_frames, (Q[0],), {}, {}),
     "first_differs": (_first_differs, (Q[0],), {}, {}),
     "arithmetic": (_arithmetic, (Q[0], Q[1]), {}, {}),
     "samples": (_arithmetic, (Q[0], Q[1]), {}, {"sample_rate_ghz": 4.0}),
@@ -217,6 +229,7 @@ _EVENT_TABLE = [
     (pulse.Event.LOOP, "loop", None),
     (pulse.Event.CALL, "call", "submit"),
     (pulse.Event.ANSWER, "answer", "answer"),
+    (pulse.Event.FRAME_UPDATE, "frame_update", "frame_update"),
 ]
 
 
@@ -557,8 +570,8 @@ def _run_time_keys(program):
                 visit(event["body"])
 
     found = set()
-    if "frame_updates" in program:
-        found.add("frame_updates")
+    if "frame_state" in program:
+        found.add("frame_state")
     visit(program["events"])
     return found
 
@@ -590,22 +603,57 @@ def test_a_value_a_readout_selects_unrolls_to_its_select(monkeypatch):
 
 
 def test_an_amplitude_and_a_phase_from_an_answer_are_exported_with_their_source():
-    lowered = pulse.compile(_answer_amplitude, unroll_threshold=0).lower(Q[0])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        lowered = pulse.compile(_answer_amplitude, unroll_threshold=0).lower(Q[0])
     structured = lowered.export_controller(version=2)
     answer = next(i for i, e in enumerate(structured["events"]) if e["kind"] == "answer")
     [play] = (e for e in structured["events"] if e["kind"] == "play")
     assert _amplitude_of(structured, play) == {"answer": answer, "result": 1}
-    # The phase shift comes after the last drive on its tone, so no event
-    # takes it: the program lists it.
+    # The phase shift comes after the last drive on its tone: it is kept, as
+    # a frame update of its own where the drive ends.
+    phase = {"answer": answer, "result": 2}
+    update = {"id": 0, "op": "shift_phase", "value": phase}
+    assert (play["tone"], play["frame_updates"]) == (0, [])
+    [kept] = (e for e in structured["events"] if e["kind"] == "frame_update")
+    assert kept == {
+        "kind": "frame_update",
+        "line": 0,
+        "start_cycles": play["start_cycles"] + play["duration_cycles"],
+        "duration_cycles": 0,
+        "op": "shift_phase",
+        "value": phase,
+        "tones": [{"frequency_hz": 5.0e9, "phase_rad": None}],
+        "tone": 0,
+        "frame_updates": [update],
+    }
+    assert "frame_state" not in structured
+    unshifted = pulse.compile(_answer_amplitude_unshifted, unroll_threshold=0).lower(Q[0])
+    assert unshifted.export_controller(version=2)["events"] == [
+        {k: v for k, v in e.items() if k not in ("tone", "frame_updates")}
+        for e in structured["events"]
+        if e is not kept
+    ]
+
+    # Frames that persist keep it, as the frame the tone ends the shot in.
+    persistent = MachineModel(controller=ControllerLimits(persistent_frames=True))
+    lowered = pulse.compile(_answer_amplitude, unroll_threshold=0, machine=persistent).lower(Q[0])
+    structured = lowered.export_controller(version=2)
+    [play] = (e for e in structured["events"] if e["kind"] == "play")
     assert (play["tone"], play["frame_updates"]) == (0, [])
     phase = {"answer": answer, "result": 2}
-    [update] = structured["frame_updates"]
-    assert update == {"tone": 0, "id": 0, "op": "shift_phase", "value": phase}
-    [flat_update] = lowered.export_controller()["frame_updates"]
-    assert flat_update == {**update, "conditions": []}
-    assert "frame_updates" not in pulse.compile(
-        _answer_amplitude_unshifted, unroll_threshold=0
-    ).lower(Q[0]).export_controller(version=2)
+    drive_frame, readout_frame = structured["frame_state"]
+    update = {"id": 0, "op": "shift_phase", "value": phase}
+    assert drive_frame == {"line": 0, "tone": 0, "frame_updates": [update]}
+    assert readout_frame == {"line": 1, "frequency_hz": 5.0e9, "phase_rad": 0.0}
+    flat = lowered.export_controller()
+    keys = list(flat)
+    assert keys[keys.index("events") + 1] == "frame_state"
+    assert flat["frame_state"] == [
+        {**drive_frame, "frame_updates": [{**update, "conditions": []}]},
+        readout_frame,
+    ]
+    assert unroll(structured)["frame_state"] == flat["frame_state"]
 
     structured = (
         pulse.compile(_answer_phase_then_drive, unroll_threshold=0)

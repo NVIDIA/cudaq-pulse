@@ -459,10 +459,11 @@ def off_grid(
         # A submit's or an answer's "line" is its link.
         line = event["line"] if event["kind"] in _GRIDDED else None
         if single is None:
+            on = event["line"] if event["kind"] == "frame_update" else line
             controller = (
                 plan.controllers[0]
-                if line is None
-                else plan.controller_of(lines[line]["role"], lines[line]["qudit"])
+                if on is None
+                else plan.controller_of(lines[on]["role"], lines[on]["qudit"])
             )
             a, b = controller.ratio.numerator, controller.ratio.denominator
             grid = controller.grid

@@ -573,9 +573,23 @@ behavior may change in any 0.x release.
   same walk, 3 to 4 times faster than before. Values known only at run
   time are in /2 as in /1, with references as places in the tree and a
   waveform's run-time parameters as expressions in its entry, so a loop of
-  calls whose answers set its amplitudes stays one loop. A frame change
-  after its tone's last drive or readout, which no event takes, is in the
-  program's `frame_updates`, in both formats.
+  calls whose answers set its amplitudes stays one loop.
+- **Frames on the timeline.** Every shot starts from the reset frame. The
+  four frame changes (`shift_phase`, `set_phase`, `shift_frequency`,
+  `set_frequency`) are points on the timeline, with a start and no
+  duration in the scheduled IR; the next drive or readout on the tone takes
+  each, in a loop the next iteration does. The compiler keeps every change:
+  where nothing takes one on some path, the export gives it as a
+  `frame_update` event of its own (`Event.FRAME_UPDATE`), with its change
+  and the tone's frame after it. A change nothing takes is one where it is
+  made, also in a rolled loop's body; the change a loop carries out of its
+  last iteration follows the loop; one made before a branch that only one
+  arm takes starts the other arm. A loop kept rolled stays rolled, and no
+  event, loop or program starts or lasts otherwise for a change.
+  `ControllerLimits(persistent_frames=True)` declares a controller whose
+  frames persist from shot to shot: such changes then have no event, and
+  the export's `frame_state` gives the frame each tone ends the shot in.
+  Programs without such changes export as before.
 - **Timing budgets.** `@pulse.kernel(max_duration_cycles=n)` fails
   compilation when an execution of the kernel can take more than `n`
   cycles: each call of a kernel with its own `schedule=` (a loop body that

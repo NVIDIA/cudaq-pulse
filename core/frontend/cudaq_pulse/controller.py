@@ -173,8 +173,10 @@ class Event(StrEnum):
     lines and ``LOOP`` repeats its body. ``CALL`` sends a request to a
     classical function over a link and ``ANSWER`` takes its answer. An event
     in a branch keeps its kind and lists its ``conditions``; a frame's
-    phase and frequency are carried by the events that play on it. The
-    export holds the plain strings, so ``Event.PLAY == "play"``.
+    phase and frequency are carried by the events that play on it, and
+    ``FRAME_UPDATE`` is a phase or frequency change that no later event
+    plays with on some path, at its place on the timeline. The export holds
+    the plain strings, so ``Event.PLAY == "play"``.
     """
 
     PLAY = "play"
@@ -184,6 +186,7 @@ class Event(StrEnum):
     LOOP = "loop"
     CALL = "call"
     ANSWER = "answer"
+    FRAME_UPDATE = "frame_update"
 
 
 _EVENT_KINDS = frozenset(Event)
@@ -347,6 +350,11 @@ class ControllerLimits:
     ``alignment_tolerance_cycles``: without fine delay, how far a line's
     delay may be from a whole number of grid steps; the compiler rounds it
     to the nearest one.
+    ``persistent_frames``: whether the frame of each tone, its frequency and
+    phase, persists from one shot to the next. Without, every shot starts
+    from the reset frame, and the export gives a frame change no later
+    operation uses on some path as a frame update of its own; with, it
+    exports instead the frame each tone ends the shot in (``frame_state``).
 
     What it computes, for the classical functions on ``compute_links`` (link
     names or ids; by default the link named ``"controller"``):
@@ -390,8 +398,13 @@ class ControllerLimits:
     max_instructions: int | None = None
     max_program_duration: float | Time | None = None
     waveform_memory: WaveformMemoryScope | str = WaveformMemoryScope.PER_LINE
+    persistent_frames: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.persistent_frames, bool):
+            raise InvalidValueError(
+                f"ControllerLimits.persistent_frames must be a bool, got {self.persistent_frames!r}"
+            )
         if self.clock_ghz is not None and not self.clock_ghz > 0:
             raise ValueError(f"ControllerLimits.clock_ghz must be positive, got {self.clock_ghz}")
         try:
@@ -519,6 +532,8 @@ class ControllerLimits:
             del data["waveform_memory"]
         else:
             data["waveform_memory"] = str(self.waveform_memory)
+        if not self.persistent_frames:
+            del data["persistent_frames"]
         return data
 
 
@@ -820,14 +835,14 @@ def _walk(
                     _PARAMETERS, _AMPLITUDES, epochs, slots, True
                 )
                 repeats += found
-                unapplied = []
+                frame_state = []
             else:
-                lines, events, unapplied = module.controller_program(
+                lines, events, frame_state = module.controller_program(
                     _PARAMETERS, _AMPLITUDES, lowered.classical != (), slots=slots
                 )
         else:
             ratio = own.ratio
-            lines, events, unapplied, off_grid = module.controller_program(
+            lines, events, frame_state, off_grid = module.controller_program(
                 _PARAMETERS,
                 _AMPLITUDES,
                 lowered.classical != (),
@@ -855,7 +870,7 @@ def _walk(
     if fine is not None:
         for line in lines:
             line["fine_delay_ns"] = fine.get((line["role"], line["qudit"]), 0.0)
-    return lines, events, unapplied, off_grid, problems
+    return lines, events, frame_state, off_grid, problems
 
 
 def _walk_structured(
@@ -874,7 +889,7 @@ def _walk_structured(
         raise InvalidValueError("the module has runtime qudits; lower it with handles first")
     module = lowered._concrete()
     with lowered._lock:
-        lines, events, unapplied = module.controller_program(
+        lines, events, frame_state = module.controller_program(
             _PARAMETERS,
             _AMPLITUDES,
             lowered.classical != (),
@@ -884,7 +899,7 @@ def _walk_structured(
         )
     if any("runtime" in event for event in _played(events)):
         table.inline(events)
-    return lines, events, unapplied, (), []
+    return lines, events, frame_state, (), []
 
 
 def _computes_at_run_time(lowered: Lowered) -> bool:
@@ -953,70 +968,70 @@ def export(
     """
     from .classical.emulation import _export as emulation
 
-    if version not in (1, 2):
-        raise InvalidValueError(f"version must be 1 or 2, got {version!r}")
     machine = lowered.options.machine
     limits = machine.controller
     system = machine._system
     role = lowered._role
-    plan: _ExportPlan | None = None
-    slots: list[int] | None = None
-    if system is not None or role is not None or controller is not None:
-        if system is not None and version == 2:
+    if version != 1:
+        if version != 2:
+            raise InvalidValueError(f"version must be 1 or 2, got {version!r}")
+        if system is not None:
             raise UnsupportedError(
                 "format /2 is written for one controller; export version 1 for a control system"
             )
+        if controller is not None:
+            _controller_index(controller, 1)
+        return _export_structured(lowered, sample_rate_ghz, emulation, role)
+    plan: _ExportPlan | None = None
+    slots: list[int] | None = None
+    if system is not None or role is not None or controller is not None:
         if system is not None and limits is None:
             return _export_part(lowered, sample_rate_ghz, controller)
         if controller is not None:
             _controller_index(controller, 1)
-        if role is not None and version == 1:
+        if role is not None:
             plan = role.export_plan
             if plan is None:
                 slots = []
-    if version == 2:
-        return _export_structured(lowered, sample_rate_ghz, emulation, role)
     clocks = (lowered._generic or lowered).clocks
     native = None if clocks is None else _native_clock(clocks)
     # In the controller's own cycles from here on.
-    walked = _walk(lowered, True, native, True, slots)
-    lines, events, unapplied = walked[0], walked[1], walked[2]
+    lines, events, frame_state, off, problems = _walk(lowered, True, native, True, slots)
     if system is not None:
         violations = system._violations(
-            lowered, lines, events, clocks, walked[3], walked[4], True, None, None
+            lowered, lines, events, clocks, off, problems, True, None, None
         )
         if violations:
             raise _limit_error(lowered, violations)
     elif limits is not None:
-        _check_at_export(lowered, limits, clocks, walked)
-    own = None
-    if clocks is not None:
+        _check_at_export(lowered, limits, clocks, (lines, events, frame_state, off, problems))
+    if clocks is None:
+        clock = lowered.target.clock_ghz
+    else:
         from . import _clocks
 
-        own = clocks.controllers[0]
-    clock = lowered.target.clock_ghz if own is None else own.clock_ghz
+        clock = clocks.controllers[0].clock_ghz
     if sample_rate_ghz is not None:
         _add_samples(events, sample_rate_ghz, clock)
     base = emulation(lowered, False)
-    program: dict[str, Any] = {
+    program = {
         "format": FORMAT,
         "target": lowered.target.name,
         "clock_ghz": clock,
+        **({} if clocks is None else _clocks.clock_keys(clocks, clocks.controllers[0])),
+        "schedule": lowered.options.schedule,
+        "sample_rate_ghz": sample_rate_ghz,
+        "qudits": list(lowered.qudits),
+        "lines": lines,
+        "events": events,
+        "epochs": base["epochs"],
+        "calls": base["calls"],
+        "links": base["links"],
+        "manifest": base["manifest"],
+        "limits": None if limits is None else limits.as_dict(),
     }
-    if clocks is not None:
-        program.update(_clocks.clock_keys(clocks, clocks.controllers[0]))
-    program["schedule"] = lowered.options.schedule
-    program["sample_rate_ghz"] = sample_rate_ghz
-    program["qudits"] = list(lowered.qudits)
-    program["lines"] = lines
-    program["events"] = events
-    if unapplied:
-        program["frame_updates"] = unapplied
-    program["epochs"] = base["epochs"]
-    program["calls"] = base["calls"]
-    program["links"] = base["links"]
-    program["manifest"] = base["manifest"]
-    program["limits"] = None if limits is None else limits.as_dict()
+    if frame_state:
+        program = _after_events(program, "frame_state", frame_state)
     if role is not None:
         if plan is None or len(plan[1]) != len(events):
             if slots is None:
@@ -1032,6 +1047,13 @@ def export(
                     symbols[key] = symbols[key][:]
                 event["symbols"] = symbols
     return program
+
+
+def _after_events(program: dict[str, Any], key: str, value: Any) -> dict[str, Any]:
+    """*program* with *key* inserted right after its ``events``."""
+    items = list(program.items())
+    at = list(program).index("events") + 1
+    return dict([*items[:at], (key, value), *items[at:]])
 
 
 def _check_at_export(
@@ -1070,7 +1092,7 @@ def _export_structured(
             "delays; export version 1 for this machine"
         )
     slots: list[int] | None = None if role is None else []
-    raw_lines, events, unapplied, _, _ = _walk_structured(lowered, waveforms, slots)
+    raw_lines, events, frame_state, _, _ = _walk_structured(lowered, waveforms, slots)
     if limits is not None:
         _check_at_export(lowered, limits, clocks, None)
     own = None if clocks is None else clocks.controllers[0]
@@ -1120,8 +1142,8 @@ def _export_structured(
             )
         }
     program["events"] = events
-    if unapplied:
-        program["frame_updates"] = unapplied
+    if frame_state:
+        program["frame_state"] = frame_state
     program["epochs"] = base["epochs"]
     program["calls"] = base["calls"]
     program["links"] = base["links"]
@@ -1364,7 +1386,7 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
                 "epoch": item.get("epoch", 0),
                 "conditions": conditions,
             }
-            if kind in _PLAYED:
+            if kind in _PLAYED or kind == "frame_update":
                 (tone,) = item["tones"]
                 phase = tone["phase_rad"]
                 if phase is not None:
@@ -1373,6 +1395,12 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
                         for (_, _, j, _, _), step in zip(loops, tone.get("phase_step_rad", ()))
                         if j and step is not None
                     )
+            if kind == "frame_update":
+                event["op"] = item["op"]
+                event["value"] = item["value"]
+                event["frequency_hz"] = tone["frequency_hz"]
+                event["phase_rad"] = phase
+            elif kind in _PLAYED:
                 amplitude = amplitudes[item["waveform"]]
                 event["waveform"] = waveforms[item["waveform"]]
                 event["amplitude"] = (
@@ -1417,10 +1445,18 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
             events.append(event)
 
     expand(program["events"], [])
-    unapplied = frame_updates(
-        program.get("frame_updates", ()),
-        lambda c: branches.setdefault((c["branch"], ()), len(branches)),
-    )
+    frame_state = [
+        {
+            **frame,
+            "frame_updates": frame_updates(
+                frame["frame_updates"],
+                lambda c: branches.setdefault((c["branch"], ()), len(branches)),
+            ),
+        }
+        if "frame_updates" in frame
+        else dict(frame)
+        for frame in program.get("frame_state", ())
+    ]
     flat_keys = {"controller": "limits", **{v: k for k, v in _SYSTEM_KEYS.items()}}
     from . import _clocks
 
@@ -1450,8 +1486,8 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
         for line in program["lines"]
     ]
     flat["events"] = events
-    if "frame_updates" in flat:
-        flat["frame_updates"] = unapplied
+    if "frame_state" in flat:
+        flat["frame_state"] = frame_state
     return flat
 
 
@@ -1635,6 +1671,8 @@ def _export_part(
 
 
 _DEPENDENT_FIELDS = ("frequency_hz", "phase_rad", "waveform")
+# The kinds of event, in either format, that name their line's qudit.
+_ON_LINE = _PLAYED | {"wait", "frame_update"}
 
 
 # Where a symbol's value comes from in a call: its float arguments, the
@@ -1735,7 +1773,7 @@ def _structured_symbols(
                 return False
             symbols: dict[str, Any] = {}
             line = event.get("line")
-            if (kind in _PLAYED or kind == "wait") and line is not None:
+            if kind in _ON_LINE and line is not None:
                 if 0 <= line < len(slots) and slots[line] >= 0:
                     symbols["qudit"] = f"s{slots[line]}"
             for key, names in entry[2].items():
@@ -1769,7 +1807,7 @@ def _export_plan(
     for index, event in enumerate(events):
         template: dict[str, Any] = {}
         line = event["line"]
-        if (event["kind"] in _PLAYED or event["kind"] == "wait") and line is not None:
+        if event["kind"] in _ON_LINE and line is not None:
             if 0 <= line < len(slots) and slots[line] >= 0:
                 template["qudit"] = f"s{slots[line]}"
         if aligned:

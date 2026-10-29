@@ -160,6 +160,12 @@ public:
     return block(function.getBody().front());
   }
 
+  /// Each tone's frame where the walk ended, by the allocation or
+  /// `pulse.tone` it descends from.
+  const llvm::DenseMap<mlir::Operation *, ToneState> &toneStates() const {
+    return tones;
+  }
+
   /// Measurements without an outcome on the path that a branch tested. The
   /// walk skips such a branch: its arms run after the measurement completes.
   std::vector<MeasurementKey> undecided;

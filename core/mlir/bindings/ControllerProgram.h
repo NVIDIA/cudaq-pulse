@@ -59,6 +59,10 @@ struct ControllerRecord {
   std::string callee;
   std::string mode;
   double timeout = std::numeric_limits<double>::quiet_NaN();
+  // A frame update: its change (shift_phase, ...) and its value, an
+  // expression of the walk.
+  llvm::StringRef update;
+  int32_t value = -1;
   int64_t epoch = 0;
   // What the event has that is known only at run time: its index in the
   // walk's `known`, else -1.
@@ -88,6 +92,7 @@ struct ControllerRecord {
   bool played() const {
     return kind[0] == 'd' || (kind[0] == 'r' && kind[2] == 'a');
   }
+  bool frameUpdate() const { return !update.empty(); }
 };
 
 struct ControllerWalk {
@@ -397,24 +402,64 @@ struct ControllerWalk {
   std::map<mlir::Operation *, std::vector<FrameUpdate>> pending;
   uint64_t nextUpdate = 0;
 
-  /// The frame changes still pending once the walk is done, which no drive
-  /// or readout took, in program order with their tone's id; a tone never
-  /// played is numbered after those that are.
-  std::vector<std::pair<int64_t, FrameUpdate>> unapplied() {
-    std::vector<std::pair<mlir::Operation *, FrameUpdate>> all;
-    for (auto &[root, updates] : pending)
-      for (FrameUpdate &update : updates)
-        all.emplace_back(root, std::move(update));
-    pending.clear();
-    std::sort(all.begin(), all.end(), [](const auto &a, const auto &b) {
-      return a.second.seq < b.second.seq;
+  /// Whether the controller's frames persist from one shot to the next
+  /// (`pulse.persistent_frames`): then the walk keeps the line each tone
+  /// last played on, for finalFrames().
+  bool persistent = false;
+  std::map<mlir::Operation *, int64_t> playedOn;
+
+  /// The frame a tone ends the shot in: on line `line`, its frequency and
+  /// its phase at `endNs`; a tracked tone has its id and the frame changes
+  /// on it since its latest drive or readout instead.
+  struct FinalFrame {
+    int64_t line;
+    double frequencyHz = kUnknown, phase = kUnknown;
+    int64_t tone = -1;
+    std::vector<FrameUpdate> updates;
+  };
+
+  /// The frame each tone with a line ends the shot in, by line, the tone a
+  /// line allocates first; the shot ends at `endNs`.
+  std::vector<FinalFrame> finalFrames(double endNs) {
+    std::vector<std::pair<mlir::Operation *, int64_t>> tones;
+    for (auto &[root, frame] : frames) {
+      int64_t line = -1;
+      if (mlir::isa_and_nonnull<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(
+              root))
+        line = lineOf(root);
+      else if (auto found = playedOn.find(root); found != playedOn.end())
+        line = found->second;
+      if (line >= 0)
+        tones.emplace_back(root, line);
+    }
+    auto allocates = [](mlir::Operation *root) {
+      return mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(root);
+    };
+    std::sort(tones.begin(), tones.end(), [&](const auto &a, const auto &b) {
+      if (a.second != b.second)
+        return a.second < b.second;
+      if (allocates(a.first) != allocates(b.first))
+        return allocates(a.first);
+      if (a.first->getBlock() == b.first->getBlock())
+        return a.first->isBeforeInBlock(b.first);
+      return a.first < b.first;
     });
-    std::vector<std::pair<int64_t, FrameUpdate>> out;
-    for (auto &[root, update] : all)
-      out.emplace_back(
-          toneIds.try_emplace(root, static_cast<int64_t>(toneIds.size()))
-              .first->second,
-          std::move(update));
+    std::vector<FinalFrame> out;
+    for (auto &[root, line] : tones) {
+      FinalFrame &final = out.emplace_back();
+      final.line = line;
+      if (tracked.contains(root)) {
+        final.tone =
+            toneIds.try_emplace(root, static_cast<int64_t>(toneIds.size()))
+                .first->second;
+        if (auto found = pending.find(root); found != pending.end())
+          final.updates = found->second;
+        continue;
+      }
+      const Frame &frame = frames[root];
+      final.frequencyHz = frame.frequencyHz;
+      final.phase = frame.phaseAt(endNs);
+    }
     return out;
   }
 
@@ -854,6 +899,8 @@ struct ControllerWalk {
     }
     if (mlir::isa<pulse::ReadoutOp>(op))
       latest[op] = static_cast<int64_t>(result.size());
+    if (persistent && !mlir::isa<pulse::WaitOp>(op))
+      playedOn[toneRoots(op->getOperand(2))] = lineOf(allocation);
     auto line = reached.try_emplace(allocation, 0).first;
     if (start && duration && line->second)
       line->second = std::max(*line->second, *start + *duration);
@@ -873,6 +920,166 @@ struct ControllerWalk {
     r.known = knownIndex;
     if (track && kind[0] != 'w')
       trackPlayed(op);
+  }
+
+  /// A frame change some path does not play with: the frame of its tone
+  /// after it, at an execution.
+  struct Carried {
+    mlir::Operation *op = nullptr;
+    std::vector<int64_t> iteration;
+    std::optional<int64_t> start;
+    double frequency = kUnknown, phase = kUnknown;
+    // Its value: a number, else an expression of the walk.
+    double number = kUnknown;
+    int32_t value = -1;
+    // Its update on a tracked tone.
+    uint64_t seq = std::numeric_limits<uint64_t>::max();
+    // With `track`, what the frequency and phase after it depend on.
+    std::vector<int64_t> frequencyDependencies, phaseDependencies;
+  };
+  /// The latest executions of each change a loop or branch lists
+  /// (`pulse.carried`); a loop leaves its last iteration's.
+  std::map<int64_t, std::vector<Carried>> carried;
+
+  Carried capture(mlir::Operation *op) {
+    Carried c;
+    c.op = op;
+    c.iteration.assign(iteration.begin(), iteration.end());
+    c.start = pulse::scheduledStart(op, iteration);
+    const Frame &frame = frameOf(op->getOperand(0));
+    c.frequency = frame.frequencyHz;
+    if (c.start)
+      c.phase = frame.phaseAt(static_cast<double>(*c.start) / clockGHz);
+    c.number = number(op->getOperand(1));
+    if (std::isnan(c.number))
+      c.value = expression(op->getOperand(1));
+    if (runTime && tracked.contains(toneRoots(op->getOperand(0))))
+      c.seq = nextUpdate - 1;
+    if (track) {
+      const FrameDependencies &depends = frameDependenciesOf(op->getOperand(0));
+      c.frequencyDependencies = depends.frequency;
+      c.phaseDependencies = depends.phase;
+      if (depends.retuned) {
+        merge(c.phaseDependencies, depends.frequency);
+        merge(c.phaseDependencies, depends.frame);
+      }
+    }
+    return c;
+  }
+
+  /// A frame update of its own for an execution of a change, with the
+  /// tone's frame after it. On a tracked tone it takes the changes pending
+  /// on it up to this one, as the next drive would.
+  LLVM_ATTRIBUTE_NOINLINE void frameUpdateRecord(const Carried &c) {
+    mlir::Value tone = c.op->getOperand(0);
+    mlir::Operation *root = toneRoots(tone);
+    int64_t line = -1, qudit = -1;
+    if (mlir::isa_and_nonnull<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(
+            root)) {
+      line = lineOf(root);
+      if (auto attr = root->getAttrOfType<mlir::IntegerAttr>("qubit"))
+        qudit = attr.getInt();
+    } else {
+      // A tone of its own: the line it last played on.
+      for (size_t i = result.size(); i-- > 0;)
+        if (result[i].played() &&
+            toneRoots(result[i].op->getOperand(2)) == root) {
+          line = result[i].line;
+          qudit = result[i].qudit;
+          break;
+        }
+    }
+    int32_t knownIndex = -1;
+    if (runTime && root && tracked.contains(root)) {
+      Known next;
+      next.tone =
+          toneIds.try_emplace(root, static_cast<int64_t>(toneIds.size()))
+              .first->second;
+      if (auto found = pending.find(root); found != pending.end()) {
+        auto &updates = found->second;
+        auto taken = std::stable_partition(
+            updates.begin(), updates.end(),
+            [&](const FrameUpdate &u) { return u.seq <= c.seq; });
+        next.updates.assign(updates.begin(), taken);
+        updates.erase(updates.begin(), taken);
+        if (updates.empty())
+          pending.erase(found);
+      }
+      known.push_back(std::move(next));
+      knownIndex = static_cast<int32_t>(known.size()) - 1;
+    }
+    ControllerRecord &r = record("frame_update", c.op);
+    if (track) {
+      dependencies.back()[0] = c.frequencyDependencies;
+      dependencies.back()[1] = c.phaseDependencies;
+    }
+    r.line = line;
+    r.qudit = qudit;
+    r.start = c.start;
+    r.duration = c.start ? std::optional<int64_t>(0) : std::optional<int64_t>();
+    r.frequency = c.frequency;
+    r.phase = c.phase;
+    r.update = c.op->getName().getStringRef().drop_front(6);
+    r.value = c.value >= 0 ? c.value : add(Expression::Number, c.number);
+    r.known = knownIndex;
+  }
+
+  /// A change marked `pulse.unconsumed`, or one a loop or branch lists.
+  LLVM_ATTRIBUTE_NOINLINE void pendingChange(mlir::Operation *op) {
+    if (op->hasAttr("pulse.unconsumed"))
+      return frameUpdateRecord(capture(op));
+    if (auto id = op->getAttrOfType<mlir::IntegerAttr>("pulse.carried"))
+      carried[id.getInt()].push_back(capture(op));
+  }
+
+  /// The frame updates `site` lists in `name`: the latest execution of
+  /// each.
+  LLVM_ATTRIBUTE_NOINLINE void listedUpdates(mlir::Operation *site,
+                                             llvm::StringRef name) {
+    auto ids = site->getAttrOfType<mlir::DenseI64ArrayAttr>(name);
+    if (!ids)
+      return;
+    for (int64_t id : ids.asArrayRef())
+      if (auto found = carried.find(id);
+          found != carried.end() && !found->second.empty())
+        frameUpdateRecord(found->second.back());
+  }
+
+  /// The executions of the changes listed in `loop` that its walk added
+  /// since `sizes`: only the last.
+  void lastIteration(mlir::DenseI64ArrayAttr ids,
+                     const std::vector<size_t> &sizes) {
+    for (size_t i = 0; i < sizes.size(); ++i) {
+      std::vector<Carried> &all = carried[ids[i]];
+      if (all.size() > sizes[i] + 1)
+        all.erase(all.begin() + static_cast<std::ptrdiff_t>(sizes[i]),
+                  all.end() - 1);
+    }
+  }
+
+  /// A rolled loop: the executions of its changes walked since `entry`
+  /// become the one of its last iteration, moved from the last two walked
+  /// as every number moves from one iteration to the next.
+  void rolledIterations(mlir::scf::ForOp loop, size_t depth, int64_t trips,
+                        const std::map<int64_t, std::vector<Carried>> &entry) {
+    auto ids = loop->getAttrOfType<mlir::DenseI64ArrayAttr>("pulse.carried_in");
+    if (!ids)
+      return;
+    for (int64_t id : ids.asArrayRef()) {
+      std::vector<Carried> &all = carried[id];
+      auto before = entry.find(id);
+      size_t from = before == entry.end() ? 0 : before->second.size();
+      if (all.size() < from + 2)
+        continue;
+      const Carried &previous = all[all.size() - 2];
+      Carried last = all.back();
+      int64_t more = trips - 1 - last.iteration[depth];
+      last.iteration[depth] = trips - 1;
+      last.start = pulse::scheduledStart(last.op, last.iteration);
+      last.phase = extend(previous.phase, last.phase, more);
+      all.resize(from);
+      all.push_back(std::move(last));
+    }
   }
 
   void sync(pulse::SyncOp op) {
@@ -967,16 +1174,28 @@ struct ControllerWalk {
         frame.frequencyHz += value;
       else
         frame.frequencyHz = value;
+      if (op->hasAttr("pulse.unconsumed") || op->hasAttr("pulse.carried"))
+        pendingChange(op);
       return;
     }
     if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
       int64_t trips = pulse::constantTripCount(loop).value_or(0);
+      auto ids =
+          loop->getAttrOfType<mlir::DenseI64ArrayAttr>("pulse.carried_in");
+      std::vector<size_t> sizes;
+      if (ids)
+        for (int64_t id : ids.asArrayRef())
+          sizes.push_back(carried[id].size());
       if (walk == Walk::Every || trips < 2 || holdsBoundary(loop))
         everyIteration(loop, trips);
       else if (walk == Walk::Sampled)
         sampled(loop, trips);
       else
         rolled(loop, trips);
+      if (ids)
+        lastIteration(ids, sizes);
+      if (loop->hasAttr("pulse.exit_updates"))
+        listedUpdates(loop, "pulse.exit_updates");
       return;
     }
     if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
@@ -1001,6 +1220,8 @@ struct ControllerWalk {
         dependenciesBefore = frameDependencies;
       branches.emplace_back(id, 1, std::move(readouts), std::move(answers),
                             std::move(test));
+      if (branch->hasAttr("pulse.then_updates"))
+        listedUpdates(branch, "pulse.then_updates");
       block(*branch.thenBlock());
       auto framesThen = std::move(frames);
       auto reachedThen = std::move(reached);
@@ -1013,6 +1234,8 @@ struct ControllerWalk {
       if (tracking)
         enterElse();
       std::get<1>(branches.back()) = 0;
+      if (branch->hasAttr("pulse.else_updates"))
+        listedUpdates(branch, "pulse.else_updates");
       if (!branch.getElseRegion().empty())
         block(*branch.elseBlock());
       if (tracking)
@@ -1092,6 +1315,7 @@ struct ControllerWalk {
     std::map<mlir::Operation *, std::vector<FrameUpdate>> pending;
     llvm::DenseMap<mlir::Operation *, int64_t> toneIds;
     uint64_t nextUpdate;
+    std::map<int64_t, std::vector<Carried>> carried;
     std::map<mlir::Operation *, FrameDependencies> frameDependencies;
   };
 
@@ -1104,6 +1328,7 @@ struct ControllerWalk {
             pending,
             toneIds,
             nextUpdate,
+            carried,
             track ? frameDependencies
                   : std::map<mlir::Operation *, FrameDependencies>()};
   }
@@ -1117,6 +1342,7 @@ struct ControllerWalk {
     pending = std::move(state.pending);
     toneIds = std::move(state.toneIds);
     nextUpdate = state.nextUpdate;
+    carried = std::move(state.carried);
     if (track) {
       dependencies.resize(state.size);
       natives.resize(state.size);
@@ -1165,6 +1391,8 @@ struct ControllerWalk {
       if (period && *period != shift)
         return std::nullopt;
       period = shift;
+      if (x.frameUpdate())
+        continue;
       earliest = earliest ? std::min(*earliest, *x.start) : *x.start;
       if (auto stop = x.stop())
         latestEnd = latestEnd ? std::max(*latestEnd, *stop) : *stop;
@@ -1318,6 +1546,8 @@ struct ControllerWalk {
       time = now;
     }
     frames = std::move(framesAfter);
+    if (!carried.empty())
+      rolledIterations(loop, depth, trips, entry.carried);
     result.resize(b);
     if (track) {
       // A record of the body stands for every iteration: it depends on
@@ -1344,10 +1574,17 @@ struct ControllerWalk {
     node.first = first;
     node.period = *period;
     node.size = static_cast<int64_t>(b - a);
+    // Frame updates take no time: the loop spans the rest of its body,
+    // unless the body has nothing else.
+    bool timed = std::any_of(
+        result.begin() + a, result.begin() + b,
+        [](const ControllerRecord &r) { return r.start && !r.frameUpdate(); });
     for (size_t i = a; i < b; ++i) {
       ControllerRecord &r = result[i];
       r.iteration[depth] = -1;
       r.phaseSteps.insert(r.phaseSteps.begin(), steps[i - a]);
+      if (timed && r.frameUpdate())
+        continue;
       if (r.start && !node.start)
         node.start = r.start;
       else if (r.start)
@@ -1840,17 +2077,21 @@ public:
     return range(at, records.size());
   }
 
-  /// Frame changes no drive or readout took, each with its `tone` first.
-  nb::list unapplied(
-      const std::vector<std::pair<int64_t, ControllerWalk::FrameUpdate>> &all)
-      const {
+  /// The frame each tone ends the shot in (ControllerWalk::finalFrames),
+  /// as the export's `frame_state`.
+  nb::list
+  frameState(const std::vector<ControllerWalk::FinalFrame> &all) const {
     nb::list out;
-    for (const auto &[tone, update] : all) {
+    for (const ControllerWalk::FinalFrame &final : all) {
       nb::dict item;
-      item["tone"] = tone;
-      nb::dict rest = nb::cast<nb::dict>(frameUpdates({update})[0]);
-      for (auto [key, value] : rest)
-        item[key] = value;
+      item["line"] = final.line;
+      if (final.tone >= 0) {
+        item["tone"] = final.tone;
+        item["frame_updates"] = frameUpdates(final.updates);
+      } else {
+        item["frequency_hz"] = number(final.frequencyHz);
+        item["phase_rad"] = number(final.phase);
+      }
       out.append(item);
     }
     return out;
@@ -2051,10 +2292,13 @@ private:
     if (!compact)
       event["index"] = index;
     event["kind"] = compact ? structuredKind(r.kind) : r.kind;
+    // A frame update on a tone that plays on no line has none.
+    bool unplaced = r.kind[0] == 'f' && r.line < 0;
     if (!compact)
-      event["line"] = sync || loop ? nb::none() : nb::object(nb::int_(r.line));
+      event["line"] =
+          sync || loop || unplaced ? nb::none() : nb::object(nb::int_(r.line));
     else if (!sync && !loop && !call)
-      event["line"] = r.line;
+      event["line"] = unplaced ? nb::none() : nb::object(nb::int_(r.line));
     if (!compact)
       event["qudit"] =
           sync || loop ? nb::none() : nb::object(nb::int_(call ? -1 : r.qudit));
@@ -2089,6 +2333,29 @@ private:
     return event;
   }
 
+  /// The frame of the tone of a play, acquire or frame update: in format /2
+  /// as its `tones`.
+  void frame(const ControllerRecord &r, nb::dict &event) const {
+    if (!compact) {
+      event["frequency_hz"] = number(r.frequency);
+      event["phase_rad"] = number(r.phase);
+      return;
+    }
+    // A list, so that an event may later play more than one carrier.
+    nb::dict tone;
+    tone["frequency_hz"] = number(r.frequency);
+    tone["phase_rad"] = number(r.phase);
+    if (!r.phaseSteps.empty()) {
+      nb::list steps;
+      for (double step : r.phaseSteps)
+        steps.append(number(step));
+      tone["phase_step_rad"] = steps;
+    }
+    nb::list tones;
+    tones.append(tone);
+    event["tones"] = tones;
+  }
+
   void details(const ControllerRecord &r, nb::dict &event) {
     if (r.played()) {
       auto &shape = made[static_cast<size_t>(waveforms.of.lookup(r.op))];
@@ -2102,25 +2369,13 @@ private:
         }
       }
       event["waveform"] = shape->first;
-      if (!compact) {
+      if (!compact)
         event["amplitude"] = shape->second;
-        event["frequency_hz"] = number(r.frequency);
-        event["phase_rad"] = number(r.phase);
-        return;
-      }
-      // A list, so that an event may later play more than one carrier.
-      nb::dict tone;
-      tone["frequency_hz"] = number(r.frequency);
-      tone["phase_rad"] = number(r.phase);
-      if (!r.phaseSteps.empty()) {
-        nb::list steps;
-        for (double step : r.phaseSteps)
-          steps.append(number(step));
-        tone["phase_step_rad"] = steps;
-      }
-      nb::list tones;
-      tones.append(tone);
-      event["tones"] = tones;
+      frame(r, event);
+    } else if (r.kind[0] == 'f') {
+      event["op"] = nb::str(r.update.data(), r.update.size());
+      event["value"] = expression(r.value);
+      frame(r, event);
     } else if (std::strcmp(r.kind, "sync") == 0) {
       event["lines"] = ints(r.joined);
     } else if (r.kind[0] == 's' || r.kind[0] == 'a') {

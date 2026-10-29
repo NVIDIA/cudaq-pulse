@@ -1217,6 +1217,8 @@ def build(
         )
     if max_duration_cycles is not None:
         module.set_attributes(f"{{pulse.max_duration_cycles = {int(max_duration_cycles)} : i64}}")
+    if machine.controller is not None and machine.controller.persistent_frames:
+        module.set_attributes("{pulse.persistent_frames}")
     fine_delays = None if plain else _clocked_module(module, machine, target, clocks, builder)
     metrics.ffi_ms = (time.perf_counter() - t0) * 1000
 

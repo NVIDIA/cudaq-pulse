@@ -42,6 +42,7 @@ from .ops import (
     get_drive_line,
     get_readout_line,
     readout,
+    shift_frequency,
     shift_phase,
     square,
     sync,
@@ -154,6 +155,13 @@ def _build() -> dict[str, Kernel[[Qudit, Qudit]]]:
         shift_phase(d.tone, amp)
         drive(d, square(16, amp))
 
+    @pulse.kernel
+    def frame_updates(q: Qudit, r: Qudit) -> None:
+        d = get_drive_line(q)
+        drive(d, gaussian(32, 0.4, 8.0))
+        shift_phase(d.tone, 0.5)
+        shift_frequency(d.tone, 1.0e6)
+
     return {
         Event.PLAY: plays,
         Event.ACQUIRE: acquires,
@@ -162,6 +170,7 @@ def _build() -> dict[str, Kernel[[Qudit, Qudit]]]:
         Event.LOOP: loops,
         Event.CALL: calls,
         Event.ANSWER: answers,
+        Event.FRAME_UPDATE: frame_updates,
         "branch": branches,
         "runtime": runtime,
     }
