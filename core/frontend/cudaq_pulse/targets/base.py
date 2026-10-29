@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import Any, overload
 
@@ -48,6 +48,14 @@ class Qubit:
     def __post_init__(self) -> None:
         object.__setattr__(self, "drive_params", MappingProxyType(dict(self.drive_params)))
         object.__setattr__(self, "readout_params", MappingProxyType(dict(self.readout_params)))
+
+    def __hash__(self) -> int:
+        return hash((self.index, self.frequency_hz, self.label))
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        from .._pickling import frozen_reduce
+
+        return frozen_reduce(self)
 
     @property
     def depletion_ns(self) -> float:
@@ -90,6 +98,14 @@ class Coupling:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "gate_params", MappingProxyType(dict(self.gate_params)))
+
+    def __hash__(self) -> int:
+        return hash((self.qubit_a, self.qubit_b, self.coupling_strength_hz))
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        from .._pickling import frozen_reduce
+
+        return frozen_reduce(self)
 
 
 # The interactions a coupling can stand for: exchange g (a^dagger b + a b^dagger)
@@ -167,7 +183,8 @@ class TargetDescription:
 
     A target is read-only once built: ``qubits`` is a read-only mapping and
     ``couplings`` and ``crosstalk`` are tuples. ``clock_ghz`` is the pulse
-    clock that converts nanoseconds to clock cycles.
+    clock that converts nanoseconds to clock cycles. Targets compare by
+    content, so a target unpickled is equal to the one pickled.
     """
 
     name: str
@@ -184,6 +201,19 @@ class TargetDescription:
         object.__setattr__(self, "qubits", MappingProxyType(dict(self.qubits)))
         object.__setattr__(self, "couplings", tuple(self.couplings))
         object.__setattr__(self, "crosstalk", tuple(self.crosstalk))
+
+    def __eq__(self, other: object) -> bool:
+        if type(other) is not type(self):
+            return NotImplemented
+        return all(getattr(self, f.name) == getattr(other, f.name) for f in fields(self))
+
+    def __hash__(self) -> int:
+        return hash((self.name, self.clock_ghz, len(self.qubits), len(self.couplings)))
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        from .._pickling import frozen_reduce
+
+        return frozen_reduce(self)
 
     # Cached on first use; sound because the target is frozen and its
     # couplings are a tuple of frozen Couplings.

@@ -271,6 +271,11 @@ class ControllerLimits:
             )
         )
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        from ._pickling import frozen_reduce
+
+        return frozen_reduce(self)
+
     @property
     def computes(self) -> bool:
         """Whether any limit on what the controller computes is set."""

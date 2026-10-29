@@ -31,6 +31,7 @@
 
 #include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/AsmParser/AsmParser.h"
+#include "mlir/Bytecode/BytecodeWriter.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVMPass.h"
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
@@ -87,6 +88,9 @@
 #include "cudaq-pulse/Dialect/QOp/QOpDialect.h.inc"
 
 namespace nb = nanobind;
+
+// Generated at build time by cmake/write_build_stamp.cmake.
+extern const char *const cudaqPulseBuildStamp;
 
 namespace {
 
@@ -1644,6 +1648,27 @@ public:
     if (source_)
       result.source_ = resolve(*source_);
     return result;
+  }
+
+  /// The module and, if kept, its source before scheduling, as MLIR
+  /// bytecode (the source empty if not kept), with what the builder and
+  /// run_passes() noted of them: what PulseModuleBuilder::load() takes.
+  std::tuple<std::string, std::string, bool, std::vector<std::string>>
+  serialize() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto write = [](mlir::ModuleOp module) {
+      std::string bytes;
+      llvm::raw_string_ostream os(bytes);
+      if (mlir::failed(mlir::writeBytecodeToFile(
+              module, os, mlir::BytecodeWriterConfig("cudaq-pulse"))))
+        throw std::runtime_error("cannot write the module as bytecode");
+      return bytes;
+    };
+    std::vector<std::string> rewrites;
+    for (const pulse::RewriteStage *stage : rewrites_)
+      rewrites.push_back(stage->argument.str());
+    return {write(*module_), source_ ? write(*source_) : std::string(),
+            runTime_, std::move(rewrites)};
   }
 
   std::string run_full_lowering() {
@@ -3965,6 +3990,29 @@ public:
     return result;
   }
 
+  /// A module PulseModule::serialize() wrote, read into this builder's
+  /// context; counted against its budget as bytes / 8 packed words.
+  PulseModule load(const std::string &module, const std::string &source,
+                   bool runTime, const std::vector<std::string> &rewrites) {
+    std::lock_guard<std::mutex> guard(lock_);
+    SharedContextPool::charge(
+        ctx_.get(), static_cast<int64_t>((module.size() + source.size()) / 8));
+    PulseModule result(
+        ctx_, parseModule(module, ctx_.get(), "cannot read a pickled module"));
+    if (!source.empty())
+      result.source_ =
+          parseModule(source, ctx_.get(), "cannot read a pickled module");
+    result.runTime_ = runTime;
+    for (const std::string &name : rewrites) {
+      const pulse::RewriteStage *stage = pulse::findRewriteStage(name);
+      if (!stage)
+        throw std::runtime_error("a pickled module names an unknown rewrite: " +
+                                 name);
+      result.rewrites_.push_back(stage);
+    }
+    return result;
+  }
+
 private:
   std::shared_ptr<mlir::MLIRContext> ctx_;
   std::unique_ptr<mlir::OpBuilder> builder_;
@@ -4286,7 +4334,23 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::arg("f64_args"), nb::arg("i64_args"),
            nb::arg("schedule") = "alap", nb::arg("max_drives") = 4,
            nb::arg("max_readouts") = 2, nb::arg("readout_latency") = 0,
-           nb::arg("switch_penalty") = 0);
+           nb::arg("switch_penalty") = 0)
+      .def(
+          "serialize",
+          [](PulseModule &self) {
+            std::tuple<std::string, std::string, bool, std::vector<std::string>>
+                state;
+            {
+              nb::gil_scoped_release release;
+              state = self.serialize();
+            }
+            auto &[module, source, runTime, rewrites] = state;
+            return nb::make_tuple(nb::bytes(module.data(), module.size()),
+                                  nb::bytes(source.data(), source.size()),
+                                  runTime, rewrites);
+          },
+          "(module bytecode, source bytecode or b'', computes at run time, "
+          "rewrites rerun on a binding): what PulseModuleBuilder.load takes");
 
   nb::class_<PulseModuleBuilder>(m, "PulseModuleBuilder")
       .def(nb::init<>())
@@ -4297,7 +4361,23 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::arg("qubit_freqs"),
            nb::arg("param_names") = std::vector<std::string>{},
            nb::arg("param_types") = std::vector<std::string>{},
-           nb::arg("name") = "main");
+           nb::arg("name") = "main")
+      .def(
+          "load",
+          [](PulseModuleBuilder &self, nb::bytes module, nb::bytes source,
+             bool runTime, const std::vector<std::string> &rewrites) {
+            std::string moduleBytes(module.c_str(), module.size());
+            std::string sourceBytes(source.c_str(), source.size());
+            nb::gil_scoped_release release;
+            return self.load(moduleBytes, sourceBytes, runTime, rewrites);
+          },
+          "Read a PulseModule from what PulseModule.serialize returned",
+          nb::arg("module"), nb::arg("source"), nb::arg("run_time"),
+          nb::arg("rewrites"));
+
+  m.def(
+      "build_stamp", [] { return std::string(cudaqPulseBuildStamp); },
+      "A hash of the sources and LLVM this extension was built from");
 
   m.def(
       "shared_context_budget",

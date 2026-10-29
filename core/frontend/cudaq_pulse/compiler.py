@@ -170,6 +170,11 @@ class _Links(dict[int, Link]):
     def __hash__(self) -> int:  # type: ignore[override]
         return hash(tuple(sorted(self.items(), key=lambda item: item[0])))
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        from ._pickling import rebuilt_links
+
+        return (rebuilt_links, (_Links, dict(self), dict(self.names)))
+
     def _readonly(self, *args: Any, **kwargs: Any) -> None:
         raise TypeError("MachineModel.links is read-only")
 
@@ -319,6 +324,11 @@ class MachineModel:
 
     def __hash__(self) -> int:
         return self._hash  # type: ignore[no-any-return,attr-defined]
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        from ._pickling import frozen_reduce
+
+        return frozen_reduce(self)
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, MachineModel):
@@ -600,6 +610,9 @@ class _WaitLength:
         self.text = arithmetic_text(expression) if text is None else text
         self.kernel = kernel
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (_rebuilt_wait, (self.source, self.lowest, self.highest, self.text, self.kernel))
+
     def check(self, values: Sequence[float]) -> None:
         """Raise ``ValueError`` saying why the length is not allowed."""
         try:
@@ -662,6 +675,9 @@ class _WaitLengths:
             )
         self.ok = eval(f"lambda a: {tests}", {"__builtins__": {}})
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (_rebuilt_wait_lengths, (type(self), self.waits, self.grid))
+
     def check(self, values: Sequence[float]) -> None:
         try:
             if self.ok(values):
@@ -697,6 +713,36 @@ def _wait_lengths(waits: Sequence[tuple[Any, ...]], kernel: str, grid: int) -> _
     return _WaitLengths(waits, kernel) if grid == 1 else _GridWaitLengths(waits, kernel, grid)
 
 
+def _checks_each_wait(values: Sequence[float]) -> bool:
+    return False
+
+
+def _rebuilt_wait(
+    source: str, lowest: int | None, highest: int | None, text: str, kernel: str
+) -> _WaitLength:
+    wait = _WaitLength.__new__(_WaitLength)
+    wait.source = source
+    wait.length = eval(f"lambda a: {source}", {"__builtins__": {}})
+    wait.lowest = lowest
+    wait.highest = highest
+    wait.text = text
+    wait.kernel = kernel
+    return wait
+
+
+def _rebuilt_wait_lengths(
+    cls: type[_WaitLengths], waits: tuple[_WaitLength, ...], grid: int
+) -> _WaitLengths:
+    lengths = cls.__new__(cls)
+    lengths.waits = waits
+    if isinstance(lengths, _GridWaitLengths):
+        lengths.grid = grid
+    # Unpickled, check() checks each wait: the single expression that passes
+    # the lengths in bounds at once is made only where the module compiles.
+    lengths.ok = _checks_each_wait
+    return lengths
+
+
 class Lowered:
     """One compiled module of a kernel: read-only text, schedule and metrics.
 
@@ -713,6 +759,11 @@ class Lowered:
 
     ``qudits`` holds the device qudits the program drives or measures (gets
     a line on), in increasing order: the qudits ``simulate()`` models.
+
+    A module pickles as MLIR bytecode with its device and options, and runs
+    unpickled without compiling again, in any process of the build that
+    compiled it; another build raises ``UnsupportedError``. A call's view
+    pickles its values with its generic module.
     """
 
     __slots__ = (
@@ -932,6 +983,18 @@ class Lowered:
         from .viz.timeline import plot_schedule
 
         return plot_schedule(self, **kwargs)
+
+    # Read-only: a copy is the module itself.
+    def __copy__(self) -> Lowered:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Lowered:
+        return self
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        from ._pickling import program_reduce
+
+        return program_reduce(self)
 
     def __repr__(self) -> str:
         params = f", parameters={list(self.parameters)}" if self.parameters else ""

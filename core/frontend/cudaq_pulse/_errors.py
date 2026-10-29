@@ -105,6 +105,11 @@ class PulseError(Exception):
         if problems:
             self.problems = tuple(problems)
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        from ._pickling import error_reduce
+
+        return error_reduce(self)
+
     @property
     def location(self) -> Problem | None:
         """The first problem that names a file, if any."""

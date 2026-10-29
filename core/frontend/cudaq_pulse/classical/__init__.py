@@ -456,6 +456,18 @@ class ClassicalFunction:
         """Call the function; outside a kernel this runs it at once."""
         return Answer(self(*args), self)
 
+    # A declaration, like a function: a copy is the function itself.
+    def __copy__(self) -> ClassicalFunction:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> ClassicalFunction:
+        return self
+
+    def __reduce_ex__(self, protocol: Any) -> Any:
+        from .._pickling import classical_reduce
+
+        return classical_reduce(self, protocol)
+
     def __repr__(self) -> str:
         args = ", ".join(a.descriptor for a in self.args)
         results = ", ".join(r.descriptor for r in self.results)

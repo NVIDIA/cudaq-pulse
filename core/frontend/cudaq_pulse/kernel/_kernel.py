@@ -369,6 +369,9 @@ class Kernel[**P]:
     ``k.lower(*args)`` returns the compiled module without running it.
     ``cudaq_pulse.compile(k)`` compiles ahead of the call. ``P`` is the
     decorated function's signature, so calls are checked against it.
+
+    A kernel pickles as a function does, by its module and qualified name:
+    one defined inside a function cannot be pickled.
     """
 
     __name__: str
@@ -454,6 +457,10 @@ class Kernel[**P]:
     def cache_clear(self) -> None:
         self._dispatch.clear()
         self._traced.clear()
+
+    def __reduce__(self) -> str:
+        # By reference, as a function pickles: the kernel of this name.
+        return self.__qualname__
 
     def __repr__(self) -> str:
         return f"<pulse kernel {self.__qualname__}{self.__signature__}>"
@@ -622,6 +629,11 @@ class CompiledKernel[**P]:
     device and static argument values, built on first use and never
     evicted. A kernel pinned to a device and without static parameters is
     built when it is compiled.
+
+    It pickles as its kernel (by reference), options and device, without
+    its specializations, which compile again on first use where it is
+    unpickled; pickle ``ck.lower(*args)`` to send a program that runs
+    without compiling.
     """
 
     def __init__(self, kernel: Kernel[P], options: CompileOptions, device: Device | None) -> None:
@@ -682,6 +694,12 @@ class CompiledKernel[**P]:
     def cache_info(self) -> CacheInfo:
         d = self._dispatch
         return CacheInfo(len(d._entries), d.misses, d.evictions, None)
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        from .._pickling import rebuilt_compiled
+
+        d = self._dispatch
+        return (rebuilt_compiled, (self.kernel, d.options, self.device, d.general))
 
     def __repr__(self) -> str:
         return f"<compiled pulse kernel {self.kernel.__qualname__}{self.kernel.__signature__}>"

@@ -24,8 +24,8 @@ def _public(cls):
     return {name for name in dir(cls) if not name.startswith("_")}
 
 
-def test_module_builder_exposes_only_the_packed_decoder():
-    assert _public(native.PulseModuleBuilder) == {"build_from_packed"}
+def test_module_builder_exposes_only_the_packed_decoder_and_the_pickle_loader():
+    assert _public(native.PulseModuleBuilder) == {"build_from_packed", "load"}
 
 
 def test_pulse_module_methods():

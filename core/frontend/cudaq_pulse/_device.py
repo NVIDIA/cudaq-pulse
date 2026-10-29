@@ -142,6 +142,16 @@ class Qudit:
     def __hash__(self) -> int:
         return hash(self._key)
 
+    # Read-only: a copy is the handle itself.
+    def __copy__(self) -> Qudit:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Qudit:
+        return self
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (Qudit, (self.device, self.index, self.logical))
+
     def __repr__(self) -> str:
         return f"<Qudit {self.logical} -> {self.carrier} {self.index} of {self.device.name}>"
 
@@ -189,6 +199,9 @@ class Register(Sequence[Qudit]):
     def __hash__(self) -> int:
         return hash(self._qudits)
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (type(self), (self._qudits,))
+
     def __repr__(self) -> str:
         return f"Register({[q.logical for q in self._qudits]})"
 
@@ -215,6 +228,9 @@ class _Handles:
     def __getitem__(self, index: Any) -> Qudit | Register:
         handles: Qudit | Register = self._all[index]
         return handles
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (_Handles, (self._all._qudits,))
 
 
 class _DeviceRegister(Register):
@@ -316,6 +332,27 @@ class Device:
 
     def __hash__(self) -> int:
         return hash(self.fingerprint)
+
+    # Read-only: a copy is the device itself.
+    def __copy__(self) -> Device:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Device:
+        return self
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        from ._pickling import device_reduce
+
+        # The constructor's inputs; its target already has the program clock.
+        return device_reduce(
+            self,
+            {
+                "name": self.name,
+                "layout": self.layout,
+                "source": self.source,
+                "calibration": self.calibration,
+            },
+        )
 
     def __repr__(self) -> str:
         return f"<Device {self.name} ({len(self.layout)} qudits)>"
