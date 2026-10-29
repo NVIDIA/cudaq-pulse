@@ -497,6 +497,10 @@ class ControlSystem:
     _own_clocks: Mapping[str, float] = field(init=False, repr=False, compare=False)
     # Whether a device of it checks its program clock against its clocks.
     _needs_clock: bool = field(init=False, repr=False, compare=False)
+    # (role, carrier) -> the index of the controller that plays the line.
+    _line_owners: Mapping[tuple[str, int], int] = field(init=False, repr=False, compare=False)
+    # By program clock, the clocks of a program on several controllers.
+    _plans: dict[float, _clocks.ClockPlan | None] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         from .compiler import MachineModel, _check_reference_clock, _checked_line_delays
@@ -565,6 +569,19 @@ class ControlSystem:
             "_needs_clock",
             bool(self._own_clocks) or self.reference_clock_ghz is not None,
         )
+        object.__setattr__(
+            self,
+            "_line_owners",
+            MappingProxyType(
+                {
+                    (role, carrier): index
+                    for index, controller in enumerate(controllers)
+                    for role in ("drive", "readout")
+                    for carrier in getattr(controller, f"{role}_lines")
+                }
+            ),
+        )
+        object.__setattr__(self, "_plans", {})
         # rcp holds one readout latency: the feedback latency of the slowest
         # controller that plays readouts.
         readers = [c for c in controllers if c.readout_lines] or list(controllers)
@@ -628,6 +645,41 @@ class ControlSystem:
             data["line_delays_ns"] = delays
         return data
 
+    def _clock_plan(self, program_ghz: float) -> _clocks.ClockPlan | None:
+        """The clocks of a program at *program_ghz* on the controllers (of a
+        system of several), with each line's controller and the readout
+        latency in program cycles; ``None`` when all run at the program clock
+        in steps of one cycle and no reference clock is given."""
+        try:
+            return self._plans[program_ghz]
+        except KeyError:
+            pass
+        controllers = self.controllers
+        found = _clocks.controllers_plan(
+            controllers,
+            [_label(index, c) for index, c in enumerate(controllers)],
+            self._line_owners,
+            program_ghz,
+            self.reference_clock_ghz,
+        )
+        if found is not None:
+            readers = [i for i, c in enumerate(controllers) if c.readout_lines] or range(
+                len(controllers)
+            )
+            latency = max(
+                -(
+                    (
+                        -controllers[i].feedback_latency_cycles
+                        * found.controllers[i].ratio.denominator
+                    )
+                    // found.controllers[i].ratio.numerator
+                )
+                for i in readers
+            )
+            found = dataclasses.replace(found, readout_latency_cycles=latency)
+        self._plans[program_ghz] = found
+        return found
+
     def _index(self, controller: Controller) -> int:
         for index, candidate in enumerate(self.controllers):
             if candidate is controller:
@@ -676,7 +728,7 @@ class ControlSystem:
         controller for each line, each controller's limits on what it plays,
         its capabilities and the reach of the links. *clocks*, *off* and
         *run_time* are as ``controller._violations`` takes them."""
-        from .controller import _violations
+        from .controller import _computes_at_run_time, _violations
 
         owners, found = self._owners(lines)
         if len(self.controllers) == 1:
@@ -694,16 +746,18 @@ class ControlSystem:
                     natives,
                 )
             )
+            found.extend(self._needs(lowered, events, owners, unresolved))
         else:
-            program = lowered.target.clock_ghz
+            needs = self._needs(lowered, events, owners, unresolved)
+            if clocks is not None and clocks.owners is not None:
+                # Each event in its controller's cycles, once for them all.
+                found.extend(
+                    _clocks.off_grid(
+                        clocks, lines, events, True, waveforms, _computes_at_run_time(lowered)
+                    )
+                )
             for index, controller in enumerate(self.controllers):
                 label = _label(index, controller)
-                if _clocks.plan(controller, program) is not None:
-                    found.append(
-                        f"{label}: runs on its own clock, which a control system of "
-                        "several controllers does not support"
-                    )
-                    continue
                 # Every controller sees the others' pulses as untimed.
                 mine = [
                     e
@@ -718,7 +772,7 @@ class ControlSystem:
                         mine,
                         controller,
                         lines,
-                        clocks,
+                        None,
                         off,
                         run_time,
                         waveforms,
@@ -726,7 +780,7 @@ class ControlSystem:
                         natives,
                     )
                 )
-        found.extend(self._needs(lowered, events, owners, unresolved))
+            found.extend(needs)
         if self._placement:
             if unresolved is None:
                 from .controller import usage

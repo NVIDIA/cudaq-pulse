@@ -74,7 +74,13 @@ behavior may change in any 0.x release.
   controller clock when every other one divides it; clocks that do not
   divide evenly are a `DeviceDefinitionError` that lists the program clocks
   that work, and every controller clock must be a whole multiple of the
-  reference clock.
+  reference clock. Each controller of a system may run its own clock: every
+  line is scheduled on its own controller's grid, a `sync` and a wait from
+  an answer on the grid all lines share, and a runtime qudit's lines on that
+  shared grid too, so one schedule fits any qudits a call binds. Each
+  controller's limits, line delays and `rcp` readout latency count its own
+  cycles, and `custom()` samples an envelope at the rate of the line that
+  plays it, while samples given at another rate fail to compile.
 - **Processors.** `pulse.Processor` is a classical processor on a
   controller (`Controller(processors=[...])`), which runs the classical
   functions called on its `links`; a link belongs to at most one processor

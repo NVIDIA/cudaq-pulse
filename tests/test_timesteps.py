@@ -186,9 +186,9 @@ def waits_for(q, tau: float):
 
 def test_only_a_timestep_grid_checks_variable_waits_against_it():
     one = pulse.compile(waits_for).lower(Q[0], 64.0)
-    assert type(one.waits) is compiler._WaitLengths and one.waits.grid == 1
+    assert type(one.waits) is compiler._WaitLengths and one.waits.grids == ()
     grid = pulse.compile(waits_for, machine=_steps(4)).lower(Q[0], 64.0)
-    assert type(grid.waits) is compiler._GridWaitLengths and grid.waits.grid == 4
+    assert type(grid.waits) is compiler._GridWaitLengths and grid.waits.grids == (4,)
     with pytest.raises(ValueError, match="moves in timesteps of 4 cycles"):
         pulse.compile(waits_for, machine=_steps(4)).lower(Q[0], 66.0)
 

@@ -244,10 +244,18 @@ class PackedIRBuilder:
     line_tones: (
         Callable[[int, bool], tuple[tuple[int, int], dict[tuple[int, int], float]]] | None
     ) = None
+    # The sample rate of a (role, qudit) line, when the lines play different
+    # ones (a runtime qudit's line: none is known); compile() sets it for a
+    # control system of several controllers. Waveforms are then sampled for
+    # the line that plays them.
+    sample_rate_of: Callable[[str, int], tuple[int, int] | None] | None = None
     # Where every line can meet, in program cycles: a wait whose length
     # comes from an answer moves every later op by it, so its bounds must be
     # multiples of this.
     wait_grid = 1
+    # When lines move on different grids, the grid each variable wait's
+    # length must be a whole number of steps of (compile() sets it).
+    wait_grids: list[int] | None = None
     # Of the float arguments that reach an integer, those named here record
     # the instructions being traced then, innermost first, in structural_at.
     locate_structural: frozenset[str] = frozenset()
@@ -536,10 +544,16 @@ class PackedIRBuilder:
                 if symbolic and self.classical and contains_answer(dur_raw):
                     if self.wait_grid > 1:
                         self._check_answer_bounds(operands[0], lowest, highest)
-                    self._variable_wait(lv, rlv, dur_raw, lowest, highest, answer=True)
+                    self._variable_wait(
+                        lv, rlv, dur_raw, lowest, highest, answer=True, grid=self.wait_grid
+                    )
                     return results
                 if symbolic and is_arithmetic(dur_raw):
-                    self._variable_wait(lv, rlv, dur_raw, lowest, highest)
+                    grid = None
+                    if self.wait_grids is not None:
+                        assert self.line_grid is not None
+                        grid = self.line_grid(*self._role_and_qudit(operands[0]))
+                    self._variable_wait(lv, rlv, dur_raw, lowest, highest, grid=grid)
                     return results
                 if not symbolic:
                     dur = _as_i64(dur_raw, "wait duration")
@@ -983,6 +997,8 @@ class PackedIRBuilder:
         ) = checkpoint
         self._regions = regions
         del self.variable_waits[waits:]
+        if self.wait_grids is not None:
+            del self.wait_grids[waits:]
         del self._block_marks[blocks:]
         self._scope = scope
         self._flow = flow
@@ -1176,12 +1192,7 @@ class PackedIRBuilder:
         off = [b for b in (lowest, highest) if b >= 0 and b % grid]
         if not off:
             return
-        role = line.vtype.removesuffix("_line")
-        qudit = self._line_qubit.get(line.vid)
-        if qudit is None:
-            # A later version of the line: its channel names the qudit.
-            held = getattr(line.chan, "held", None)
-            qudit = -1 if held is None else self._qref_to_qubit.get(held.key[0], -1)
+        role, qudit = self._role_and_qudit(line)
         top = "None" if highest < 0 else str(highest)
 
         def nearest(b: int) -> str:
@@ -1194,8 +1205,24 @@ class PackedIRBuilder:
             "whole numbers of timesteps: " + "; ".join(f"for {b}, use {nearest(b)}" for b in off)
         )
 
+    def _role_and_qudit(self, line: IRValue) -> tuple[str, int]:
+        """The role of *line* and its qudit (-1 for a runtime qudit's)."""
+        qudit = self._line_qubit.get(line.vid)
+        if qudit is None:
+            # A later version of the line: its channel names the qudit.
+            held = getattr(line.chan, "held", None)
+            qudit = -1 if held is None else self._qref_to_qubit.get(held.key[0], -1)
+        return line.vtype.removesuffix("_line"), qudit
+
     def _variable_wait(
-        self, line: int, result: int, duration: Any, lowest: int, highest: int, answer: bool = False
+        self,
+        line: int,
+        result: int,
+        duration: Any,
+        lowest: int,
+        highest: int,
+        answer: bool = False,
+        grid: int | None = None,
     ) -> None:
         """A wait whose length is computed at run time, rounded to the nearest
         cycle (ties up). From float arguments it does not specialize on them,
@@ -1218,9 +1245,13 @@ class PackedIRBuilder:
             if at_call:
                 text = f"{arithmetic_text(duration)} (its answers at 0)"
                 self.variable_waits.append((floats, None, highest, text))
+                if self.wait_grids is not None:
+                    self.wait_grids.append(grid or 1)
         else:
             cycles = self._get_numeric_vid(rounded, "i64", specializes=False)
             self.variable_waits.append((duration, lowest, highest))
+            if self.wait_grids is not None:
+                self.wait_grids.append(grid or 1)
         self._ensure(7)
         self._w(_header(_VARIABLE_WAIT, 6))
         self._w(line)

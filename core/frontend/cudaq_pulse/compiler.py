@@ -716,10 +716,13 @@ class _WaitLengths:
 
     __slots__ = ("ok", "waits")
 
-    # Lengths a controller with a coarser clock than the program's can time.
-    grid = 1
+    # By wait, the steps of the lengths a controller with a coarser clock
+    # than the program's can time (none: every length).
+    grids: tuple[int, ...] = ()
 
-    def __init__(self, waits: Sequence[tuple[Any, ...]], kernel: str, grid: int = 1) -> None:
+    def __init__(
+        self, waits: Sequence[tuple[Any, ...]], kernel: str, grids: Sequence[int] = ()
+    ) -> None:
         self.waits = tuple(
             _WaitLength(wait[0], wait[1], wait[2], kernel, wait[3] if len(wait) > 3 else None)
             for wait in waits
@@ -732,11 +735,11 @@ class _WaitLengths:
             f"{(_MAX_WAIT_CYCLES if w.highest is None else w.highest) + 1}"
             for w in self.waits
         )
-        if grid > 1:
+        if grids:
             tests += "".join(
                 f" and ({w.source} + 0.5) // 1 % {grid} == 0"
-                for w in self.waits
-                if w.lowest is not None
+                for w, grid in zip(self.waits, grids, strict=True)
+                if w.lowest is not None and grid > 1
             )
         self.ok = eval(f"lambda a: {tests}", {"__builtins__": {}})
 
@@ -744,7 +747,7 @@ class _WaitLengths:
         # The check as compiled: the stamp of the pickle names the Python
         # whose marshal format wrote it.
         check = marshal.dumps(self.ok.__code__)
-        return (_rebuilt_wait_lengths, (type(self), self.waits, self.grid, check))
+        return (_rebuilt_wait_lengths, (type(self), self.waits, self.grids, check))
 
     def check(self, values: Sequence[float]) -> None:
         try:
@@ -754,31 +757,39 @@ class _WaitLengths:
             pass
         for wait in self.waits:
             wait.check(values)
-        for wait in self.waits if self.grid > 1 else ():
+        for wait, grid in zip(self.waits, self.grids):
             cycles = math.floor(wait.length(values) + 0.5)
-            if wait.lowest is not None and cycles % self.grid:
-                lower = cycles // self.grid * self.grid
+            if wait.lowest is not None and cycles % grid:
+                lower = cycles // grid * grid
                 raise InvalidValueError(
                     f"{wait.kernel}(): the wait length {wait.text} rounds to {cycles} clock "
-                    f"cycles; its line moves in timesteps of {self.grid} cycles, and "
+                    f"cycles; its line moves in timesteps of {grid} cycles, and "
                     f"{cycles} cycles isn't a whole number of timesteps: the nearest "
-                    f"lengths are {lower} and {lower + self.grid}"
+                    f"lengths are {lower} and {lower + grid}"
                 )
 
 
 class _GridWaitLengths(_WaitLengths):
-    """Variable waits on lines that move in timesteps of *grid* cycles. Its
-    own class keeps the grid off the waits of every module on one clock."""
+    """Variable waits on lines that move in timesteps of more than one
+    cycle (*grids*, by wait). Its own class keeps the grids off the waits of
+    every module on one clock."""
 
-    __slots__ = ("grid",)
+    __slots__ = ("grids",)
 
-    def __init__(self, waits: Sequence[tuple[Any, ...]], kernel: str, grid: int) -> None:
-        self.grid = grid
-        super().__init__(waits, kernel, grid)
+    def __init__(self, waits: Sequence[tuple[Any, ...]], kernel: str, grids: Sequence[int]) -> None:
+        self.grids = tuple(grids)
+        super().__init__(waits, kernel, self.grids)
 
 
-def _wait_lengths(waits: Sequence[tuple[Any, ...]], kernel: str, grid: int) -> _WaitLengths:
-    return _WaitLengths(waits, kernel) if grid == 1 else _GridWaitLengths(waits, kernel, grid)
+def _wait_lengths(
+    waits: Sequence[tuple[Any, ...]], kernel: str, grid: int, grids: Sequence[int] | None = None
+) -> _WaitLengths:
+    """The checks of *waits*, each on *grid*, or on its own of *grids*."""
+    if grids is not None:
+        return _GridWaitLengths(waits, kernel, grids)
+    if grid == 1:
+        return _WaitLengths(waits, kernel)
+    return _GridWaitLengths(waits, kernel, [grid] * len(waits))
 
 
 def _rebuilt_wait(
@@ -795,12 +806,12 @@ def _rebuilt_wait(
 
 
 def _rebuilt_wait_lengths(
-    cls: type[_WaitLengths], waits: tuple[_WaitLength, ...], grid: int, check: bytes
+    cls: type[_WaitLengths], waits: tuple[_WaitLength, ...], grids: tuple[int, ...], check: bytes
 ) -> _WaitLengths:
     lengths = cls.__new__(cls)
     lengths.waits = waits
     if isinstance(lengths, _GridWaitLengths):
-        lengths.grid = grid
+        lengths.grids = grids
     lengths.ok = FunctionType(marshal.loads(check), {"__builtins__": {}})
     return lengths
 
@@ -1053,20 +1064,24 @@ class Lowered:
                 if v.__class__ is not float and v.__class__ is not int or v - v != 0.0:
                     arguments = self._checked_arguments()
                     break
+            clocks = self.clocks
+            args = (
+                self.options.schedule_args()
+                if clocks is None or clocks.readout_latency_cycles is None
+                else _schedule_args(self.options, clocks)
+            )
             with self._lock:
                 if self.carriers:
                     module = self._module.specialize_placed(
                         list(arguments),
                         [],
-                        *self.options.schedule_args(),
+                        *args,
                         list(self.carriers),
                         self.target._frequency_table(),
                         self.target.fingerprint,
                     )
                 else:
-                    module = self._module.specialize(
-                        list(arguments), [], *self.options.schedule_args()
-                    )
+                    module = self._module.specialize(list(arguments), [], *args)
             self._concrete_module = module
         return self._concrete_module
 
@@ -1697,7 +1712,13 @@ def build(
     t0 = time.perf_counter()
     scheduled = True
     try:
-        module.schedule(*options.schedule_args())
+        module.schedule(
+            *(
+                options.schedule_args()
+                if clocks is None or clocks.readout_latency_cycles is None
+                else _schedule_args(options, clocks)
+            )
+        )
     except Exception:
         if not parameters:
             raise
@@ -1729,7 +1750,12 @@ def build(
             options=options,
             scheduled=scheduled,
             waits=(
-                _wait_lengths(builder.variable_waits, name, 1 if clocks is None else clocks.lcm)
+                _wait_lengths(
+                    builder.variable_waits,
+                    name,
+                    1 if clocks is None else clocks.lcm,
+                    builder.wait_grids,
+                )
                 if builder.variable_waits
                 else None
             ),
@@ -1753,16 +1779,29 @@ def _clocked_builder(
     """Set *builder* up for *machine*'s controllers; their clock plan."""
     from . import _clocks
 
-    clocks = (
-        None
-        if machine.controller is None and machine.reference_clock_ghz is None
-        else _clocks.plan(machine.controller, target.clock_ghz, machine.reference_clock_ghz)
-    )
+    system = machine._system
+    if system is not None and machine.controller is None:
+        clocks = system._clock_plan(target.clock_ghz)
+    elif machine.controller is None and machine.reference_clock_ghz is None:
+        clocks = None
+    else:
+        clocks = _clocks.plan(machine.controller, target.clock_ghz, machine.reference_clock_ghz)
     if clocks is not None:
         builder.line_grid = clocks.grid_of
         builder.wait_grid = clocks.lcm
+        if clocks.owners is not None:
+            builder.wait_grids = []
     if machine.controller is not None:
         builder.sample_rate = _clocks.sample_rate(machine.controller, target.clock_ghz)
+    elif system is not None:
+        rates = [_clocks.sample_rate(c, target.clock_ghz) for c in system.controllers]
+        if len(set(rates)) == 1:
+            builder.sample_rate = rates[0]
+        else:
+            owners = system._line_owners
+            builder.sample_rate_of = lambda role, qudit: (
+                None if (owner := owners.get((role, qudit))) is None else rates[owner]
+            )
     return clocks
 
 
@@ -1786,14 +1825,33 @@ def _clocked_module(
     return fine_delays
 
 
+def _schedule_args(
+    options: CompileOptions, clocks: _clocks.ClockPlan | None
+) -> tuple[str, int, int, int, int]:
+    """The scheduler's arguments, with *clocks*' readout latency when its
+    controllers count it in their own cycles."""
+    args = options.schedule_args()
+    if clocks is None or clocks.readout_latency_cycles is None:
+        return args
+    return (*args[:3], clocks.readout_latency_cycles, args[4])
+
+
 def _line_delays(
     machine: MachineModel, target: Device, clocks: _clocks.ClockPlan | None, n_qudits: int
 ) -> tuple[str | None, dict[tuple[str, int], float]]:
     from . import _clocks
 
+    system = machine._system
+    several = system is not None and machine.controller is None
     try:
         return _clocks.line_delays(
-            machine.line_delays_ns, machine.controller, clocks, target.clock_ghz, n_qudits
+            machine.line_delays_ns,
+            machine.controller,
+            clocks,
+            target.clock_ghz,
+            n_qudits,
+            system.controllers if several else None,  # type: ignore[union-attr]
+            system._line_owners if several else None,  # type: ignore[union-attr]
         )
     except ValueError as e:
         raise CompilationError(str(e)) from None
@@ -1840,7 +1898,14 @@ def with_line_delays(lowered: Lowered, options: CompileOptions, n_qudits: int) -
     t0 = time.perf_counter()
     try:
         with lowered._lock:
-            module = lowered._module.with_line_delays(shifts or "", *options.schedule_args())
+            module = lowered._module.with_line_delays(
+                shifts or "",
+                *(
+                    options.schedule_args()
+                    if clocks is None or clocks.readout_latency_cycles is None
+                    else _schedule_args(options, clocks)
+                ),
+            )
     except Exception:
         return None
     old = lowered.metrics

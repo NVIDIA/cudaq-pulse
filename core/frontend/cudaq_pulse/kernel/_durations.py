@@ -23,12 +23,14 @@ from __future__ import annotations
 import math
 import numbers
 import operator
+from collections.abc import Mapping
 from typing import Any
 
 from .._units import Time, UnitError, in_cycles
 from .ir_builder import (
     MAX_CYCLES,
     CompilationError,
+    IRValue,
     ParameterExpression,
     arithmetic_text,
     is_symbolic,
@@ -444,6 +446,10 @@ def samples_made_for(
     return made
 
 
+def _rate_ghz(rate: tuple[int, int] | None, program_ghz: float) -> float:
+    return program_ghz if rate is None else program_ghz * rate[0] / rate[1]
+
+
 def _rate_text(rate: tuple[int, int]) -> str:
     n, d = rate
     if d == 1:
@@ -456,6 +462,15 @@ def custom_samples_duration(builder: Any, attrs: dict[str, Any]) -> int | None:
     (its ``rate`` set) on lines that play *builder*'s sample rate."""
     line_rate = getattr(builder, "sample_rate", None)
     made_for = attrs.pop("sample_rate_ghz", None)
+    if made_for is not None and getattr(builder, "sample_rate_of", None) is not None:
+        # The line that plays them is checked when it does.
+        from .. import _clocks
+
+        try:
+            n, d = _clocks.made_for(made_for, getattr(builder, "clock_ghz", 2.0))
+        except ValueError as e:
+            raise CompilationError(f"custom_samples(): {e}") from None
+        line_rate = None if n == d else (n, d)
     rate = None
     if line_rate is not None or made_for is not None:
         rate = samples_made_for(
@@ -495,3 +510,113 @@ def custom_samples(
         return attrs, len(attrs["samples"])
     attrs["rate"] = rate
     return attrs, len(attrs["samples"]) * rate[1] // rate[0]
+
+
+def track_samples(
+    em: Any,
+    fname: str,
+    op_name: str | None,
+    operands: tuple[Any, ...],
+    out_types: tuple[str, ...],
+    attrs: Mapping[str, Any],
+    vid: int,
+    envelope: tuple[Any, Any] | None = None,
+) -> None:
+    """Record the rates the samples of the waveform *vid*, which the op
+    *op_name* (of *fname*) made of *operands*, were made for, and how to
+    make it again: of a custom() *envelope* (duration, function), or of
+    its operands made again."""
+    sampled = em._sampled
+    assert sampled is not None
+    if fname in ("custom", "custom_samples"):
+        recipe = None if envelope is None else ("custom", *envelope, out_types)
+        sampled[vid] = (frozenset({attrs.get("rate")}), recipe)
+        return
+    made: frozenset[Any] = frozenset().union(
+        *(sampled[o.vid][0] for o in operands if o.__class__ is IRValue and o.vid in sampled)
+    )
+    if not made:
+        sampled.pop(vid, None)
+    elif op_name is None:
+        sampled[vid] = (made, None)
+    else:
+        sampled[vid] = (made, ("op", op_name, operands, out_types, dict(attrs)))
+
+
+def for_line(em: Any, fname: str, operands: tuple[Any, ...]) -> tuple[Any, ...]:
+    """The *operands* of the drive or readout *fname* that the emitter *em*
+    traces, with the samples of
+    its waveform made for the rate of its line: what custom() made is
+    sampled again for it, and samples given for another rate fail."""
+    sampled = em._sampled
+    assert sampled is not None
+    wave = operands[1]
+    record = sampled.get(wave.vid) if wave.__class__ is IRValue else None
+    if record is None:
+        return operands
+    b = em.b
+    qudit = b._line_qubit.get(operands[0].vid, -1)
+    if qudit < 0:
+        raise CompilationError(
+            f"{fname}(): plays samples on a runtime qudit's line, and the control "
+            "system's controllers play different sample rates, so the rate they "
+            "need depends on the qudit a call binds; play them on a static qudit's "
+            "line, or give the controllers one sample rate"
+        )
+    rate = b.sample_rate_of(fname, qudit)
+    again = _resampled(em, wave, rate)
+    if again is None:
+        program = getattr(b, "clock_ghz", 2.0)
+        shown = " and ".join(sorted(f"{_rate_ghz(m, program):g} GHz" for m in record[0]))
+        plays = _rate_ghz(rate, program)
+        raise CompilationError(
+            f"{fname}(): the waveform on the {fname} line of qudit {qudit} holds "
+            f"samples made for {shown}, and the line's controller plays {plays:g} GHz "
+            f"({_rate_text(rate or (1, 1))}), which would change how long they last; "
+            f"make them for it with sample_rate_ghz={plays:g}, or build the waveform "
+            "with custom(duration, f), which samples it at the rate of the line that "
+            "plays it"
+        )
+    return operands if again is wave else (operands[0], again, *operands[2:])
+
+
+def _resampled(em: Any, wave: IRValue, rate: tuple[int, int] | None) -> IRValue | None:
+    """*wave* with its samples made for *rate*: itself, or made again
+    here; ``None`` when samples it holds were given for another."""
+    sampled = em._sampled
+    assert sampled is not None
+    record = sampled.get(wave.vid)
+    if record is None:
+        return wave
+    made, recipe = record
+    if made == {rate}:
+        return wave
+    if recipe is None:
+        return None
+    from ._emitter import _OP_NAMES, _sample_envelope
+
+    b = em.b
+    if recipe[0] == "custom":
+        _, duration, name, out_types = recipe
+        attrs: dict[str, Any] = {"samples": _sample_envelope(duration, name, rate)}
+        count = len(attrs["samples"])
+        if rate is not None:
+            attrs["rate"] = rate
+            count = count * rate[1] // rate[0]
+        again: IRValue = b.emit(_OP_NAMES["custom_samples"], (), out_types, attrs)[0]
+        em._durations[again.vid] = count
+    else:
+        _, op_name, operands, out_types, attrs = recipe
+        made_again = []
+        for operand in operands:
+            if operand.__class__ is IRValue:
+                operand = _resampled(em, operand, rate)
+                if operand is None:
+                    return None
+            made_again.append(operand)
+        again = b.emit(op_name, tuple(made_again), out_types, dict(attrs))[0]
+        duration = em._durations.get(wave.vid)
+        if duration is not None:
+            em._durations[again.vid] = duration
+    sampled[again.vid] = (frozenset({rate}), recipe)
+    return again

@@ -174,6 +174,24 @@ whole multiple of it, and the export gives it as ``reference_clock_ghz``.
 Without one, each controller's start is known only to within one of its own
 cycles, which budgets between controllers count.
 
+Each ``pulse.Controller`` of a control system may run its own clock.
+Without a declared ``"clock_ghz"`` the device's program clock is the
+fastest controller clock when it is a whole multiple of every other; clocks
+that are not are a ``DeviceDefinitionError`` listing the program clocks
+that would work, never one picked for you. Every line is then scheduled on
+the timesteps of the controller that plays it, and checked against that
+controller's limits in its own cycles. A sync, and a wait whose length
+comes from a classical answer, meet where every line's timesteps do. So do
+the lines of a runtime qudit, so that the kernel's one schedule fits
+whichever qudits a call binds. A line's delay is split by its own
+controller's fine delay, and ``rcp`` keeps a branch on a readout for the
+reading controller's ``feedback_latency_cycles`` converted to program
+cycles. ``custom(duration, f)`` samples ``f`` at the rate of the line that
+plays it, the waveforms made from it too; samples given to
+``custom_samples`` play only on lines of the rate they were made for, and
+on a runtime qudit's line, whose rate depends on the call, ``custom()`` is
+a compile error when the controllers' rates differ.
+
 What the program computes at run time is converted by the same rule. A
 variable wait's ``length`` is clamped to its bounds, as the run clamps it,
 and then wrapped in ``{"op": "pulse.own_cycles", "of": [x], "num": a,

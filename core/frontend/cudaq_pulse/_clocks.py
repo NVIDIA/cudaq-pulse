@@ -24,12 +24,14 @@ within one of their own cycles, which budgets across controllers add.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import itertools
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from ._errors import InvalidValueError
@@ -150,6 +152,9 @@ class ClockPlan:
     reference_clock_ghz: float | None = None
     # (role, qudit) -> index into controllers; absent: the first.
     owners: Mapping[tuple[str, int], int] | None = None
+    # The scheduler's readout latency in program cycles, when the
+    # controllers count theirs in their own (None: the machine model's).
+    readout_latency_cycles: int | None = None
 
     def controller_of(self, role: str, qudit: int) -> ControllerClock:
         if self.owners is None:
@@ -157,7 +162,12 @@ class ClockPlan:
         return self.controllers[self.owners.get((role, qudit), 0)]
 
     def grid_of(self, role: str, qudit: int) -> int:
-        return self.controller_of(role, qudit).grid
+        """The grid of a line; with owners, one they do not name (a runtime
+        qudit's, which any controller may play) is on every grid."""
+        if self.owners is None:
+            return self.controllers[0].grid
+        owner = self.owners.get((role, qudit))
+        return self.lcm if owner is None else self.controllers[owner].grid
 
     @property
     def lcm(self) -> int:
@@ -170,11 +180,15 @@ class ClockPlan:
             return None
         if self.owners is None:
             return f"{{pulse.line_grid = {self.controllers[0].grid} : i64}}"
+        # Every carrier a controller plays, for the qudits a call binds.
+        n_qudits = max(n_qudits, 1 + max((q for _, q in self.owners), default=-1))
+        if not n_qudits:
+            return f"{{pulse.line_grid = {self.lcm} : i64}}"
         arrays = []
         for role in ("drive", "readout"):
             grids = ", ".join(str(self.grid_of(role, q)) for q in range(n_qudits))
             arrays.append(f"pulse.{role}_line_grid = array<i64: {grids}>")
-        return "{pulse.line_grid = 1 : i64, " + ", ".join(arrays) + "}"
+        return f"{{pulse.line_grid = {self.lcm} : i64, " + ", ".join(arrays) + "}"
 
     def start_uncertainty_ns(
         self, skew_cycles: Mapping[str, int] | None = None
@@ -268,6 +282,29 @@ def _plan(
     return ClockPlan(program_ghz, (controller,), reference)
 
 
+def controllers_plan(
+    controllers: Sequence[ControllerLimits],
+    names: Sequence[str],
+    owners: Mapping[tuple[str, int], int],
+    program_ghz: float,
+    reference_clock_ghz: float | None = None,
+) -> ClockPlan | None:
+    """The clocks of a program on several controllers, each named by
+    *names*, and the controller that plays each line (*owners*, (role,
+    qudit) -> index); ``None`` when every one runs at the program clock in
+    steps of one cycle and no reference clock is given."""
+    plans = [plan(c, program_ghz, reference_clock_ghz) for c in controllers]
+    if all(p is None for p in plans):
+        return None
+    clocks = tuple(
+        ControllerClock(name, program_ghz, Fraction(1))
+        if p is None
+        else dataclasses.replace(p.controllers[0], name=name)
+        for name, p in zip(names, plans, strict=True)
+    )
+    return ClockPlan(program_ghz, clocks, reference_clock_ghz, MappingProxyType(dict(owners)))
+
+
 def sample_rate(limits: ControllerLimits, program_ghz: float) -> tuple[int, int] | None:
     """The samples a line of *limits*' controller plays per program cycle, as
     ``(n, d)``: ``n`` every ``d`` cycles; ``None`` when it is one."""
@@ -308,16 +345,24 @@ def line_delays(
     plan: ClockPlan | None,
     program_ghz: float,
     n_qudits: int,
+    controllers: Sequence[ControllerLimits] | None = None,
+    owners: Mapping[tuple[str, int], int] | None = None,
 ) -> tuple[str | None, dict[tuple[str, int], float]]:
     """The ``pulse.line_delays`` attribute that moves each delayed line by
     whole steps of its grid (``None`` when none moves), and each line's fine
     delay in ns, the rest. Raises ``ValueError`` for a rest its controller
-    can neither add nor tolerate."""
+    can neither add nor tolerate. With several *controllers*, each line's
+    limits are those of the one *owners* ((role, qudit) -> index) names."""
     fine_max = 0.0 if limits is None else limits.max_fine_delay_ns
     tolerance = 0.0 if limits is None else limits.alignment_tolerance_cycles
     shifts: dict[tuple[str, int], int] = {}
     fine: dict[tuple[str, int], float] = {}
     for (role, qudit), ns in delays.items():
+        if controllers is not None and owners is not None:
+            owner = owners.get((role, qudit))
+            own = None if owner is None else controllers[owner]
+            fine_max = 0.0 if own is None else own.max_fine_delay_ns
+            tolerance = 0.0 if own is None else own.alignment_tolerance_cycles
         controller = None if plan is None else plan.controller_of(role, qudit)
         grid = 1 if controller is None else controller.grid
         own_ghz = program_ghz if controller is None else controller.clock_ghz
@@ -491,9 +536,14 @@ def _own_operands(
 
 def _where(controller: ControllerClock, line: Mapping[str, Any], event: Mapping[str, Any]) -> str:
     return (
-        f"line {line_name(line['role'], line['qudit'])}, on the {controller.name} at "
+        f"line {line_name(line['role'], line['qudit'])}, on {_the(controller.name)} at "
         f"{_ghz(controller.clock_ghz)}: the {event['kind']} that is event {event['index']}"
     )
+
+
+def _the(name: str) -> str:
+    """*name* to follow "on": a control system's ``controllers[i]`` as it is."""
+    return name if name.startswith("controllers[") else f"the {name}"
 
 
 def _decided(

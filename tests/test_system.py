@@ -282,12 +282,11 @@ def test_a_control_systems_line_delays_and_reference_clock_are_checked():
         pulse.device({"quantum_system": KRINNER, "control_system": system})
 
 
-def test_several_controllers_on_their_own_clocks_do_not_compile():
+def test_several_controllers_on_their_own_clocks_schedule_on_their_grids():
     qpu = _qpu(*_two_boxes(clock_ghz=1.0), clock_ghz=2.0)
-    with pytest.raises(
-        ControllerLimitError, match=r"controllers\[1\] \(box.b\): runs on its own clock"
-    ):
-        pulse.compile(drive_and_branch, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
+    lowered = pulse.compile(drive_and_branch, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
+    starts = [e.start for e in lowered.schedule]
+    assert starts and all(start % 2 == 0 for start in starts)
 
 
 def test_a_program_needing_a_capability_a_controller_lacks_does_not_compile():
