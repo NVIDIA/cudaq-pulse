@@ -144,7 +144,7 @@ def derivative_pulse(qubit, beta: float):
 
 
 if __name__ == "__main__":
-    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    dev = pulse.device("transmon_krinner_17q")
     print("=== Waveform Showcase ===")
     compiled_kernel = pulse.compile(waveform_showcase, device=dev).lower(dev.qudit_handles[0])
     print(compiled_kernel.mlir())

@@ -312,7 +312,7 @@ _SIMULATE_PAIRS = """
 import json, resource, sys
 import cudaq_pulse as pulse
 
-q = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).qudit_handles
+q = pulse.device("transmon_krinner_17q").qudit_handles
 
 
 @pulse.kernel

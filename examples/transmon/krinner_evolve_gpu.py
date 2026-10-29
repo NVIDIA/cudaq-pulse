@@ -31,7 +31,7 @@ from cudaq_pulse.runtime import require_gpu_runtime
 
 require_gpu_runtime()
 
-dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+dev = pulse.device("transmon_krinner_17q")
 target = dev.target
 index = {q.label: q.index for q in target.qubits.values()}
 auxiliary, data = index["X1"], index["D2"]

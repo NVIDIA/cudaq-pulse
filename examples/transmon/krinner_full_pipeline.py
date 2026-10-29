@@ -28,7 +28,7 @@ import cudaq_pulse as pulse
 from cudaq_pulse.targets import transmon_krinner_17q
 
 target = transmon_krinner_17q()
-dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+dev = pulse.device("transmon_krinner_17q")
 index = {q.label: q.index for q in target.qubits.values()}
 auxiliary, data = index["X1"], index["D2"]
 coupling = next(c for c in target.couplings if {c.qubit_a, c.qubit_b} == {auxiliary, data})

@@ -24,7 +24,7 @@ import cudaq_pulse as pulse
 from cudaq_pulse.targets import transmon_krinner_17q
 
 target = transmon_krinner_17q()
-dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+dev = pulse.device("transmon_krinner_17q")
 qubit_idx = 4  # D5 -- central data qubit
 
 qubit_d5 = target.qubits[qubit_idx]

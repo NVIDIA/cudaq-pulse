@@ -10,12 +10,6 @@ Device API
 
 .. autofunction:: cudaq_pulse.device
 
-.. autofunction:: cudaq_pulse.get_device
-
-.. autoclass:: cudaq_pulse.Target
-   :members:
-   :undoc-members:
-
 .. autoclass:: cudaq_pulse.Device
    :members:
 

@@ -18,7 +18,7 @@ read-only.
 
    import cudaq_pulse as pulse
 
-   dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)   # shipped target
+   dev = pulse.device("transmon_krinner_17q")                  # shipped target
    chip = pulse.device({"target": "transmon_krinner_17q", "layout": [4, 5, 6]})
    chip = pulse.device("chip.json")                            # the same, from a file
 
@@ -78,7 +78,7 @@ target*:
    python -m cudaq_pulse --target transmon_generic:4 script.py --script-args
 
 The launcher sets ``CUDAQ_PULSE_TARGET`` for the script and passes the
-script's own arguments through unparsed. ``pulse.get_device()`` with no
+script's own arguments through unparsed. ``pulse.device()`` with no
 argument returns the process target's device, whose handles the script then
 passes to its kernels; a kernel call with no qudit handles always raises
 ``NoDeviceError``.

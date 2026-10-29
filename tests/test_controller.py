@@ -211,7 +211,7 @@ def test_a_line_is_listed_with_its_role_even_when_it_only_waits():
 
 
 def test_export_samples_envelopes_at_a_multiple_of_the_clock():
-    program = _program(sample_rate_ghz=4 * pulse.get_device().clock_ghz)
+    program = _program(sample_rate_ghz=4 * pulse.device().clock_ghz)
     first = program["events"][0]
     samples = np.asarray(first["samples"]["re"]) + 1j * np.asarray(first["samples"]["im"])
     assert len(samples) == 16 * 4
@@ -221,7 +221,7 @@ def test_export_samples_envelopes_at_a_multiple_of_the_clock():
     np.testing.assert_allclose(samples.real, 0.5 * np.exp(-0.5 * t**2 / 16.0))
     assert "samples" not in program["events"][2]
     with pytest.raises(ValueError, match="whole multiple"):
-        _program(sample_rate_ghz=1.5 * pulse.get_device().clock_ghz)
+        _program(sample_rate_ghz=1.5 * pulse.device().clock_ghz)
 
 
 def test_drag_samples_carry_the_derivative_in_quadrature():
@@ -258,7 +258,7 @@ def sampled_envelopes(q, r):
 
 
 def test_custom_envelopes_are_exported_as_their_samples():
-    program = _program(sampled_envelopes, sample_rate_ghz=pulse.get_device().clock_ghz)
+    program = _program(sampled_envelopes, sample_rate_ghz=pulse.device().clock_ghz)
     traced, given = program["events"]
     expected = [(k + 0.5) / 8 for k in range(8)]
     assert traced["waveform"]["shape"] == "custom_samples"

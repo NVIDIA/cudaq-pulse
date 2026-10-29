@@ -187,7 +187,7 @@ def test_no_shots_is_the_documented_simulate_default(idle):
     ],
 )
 def test_a_qudit_index_past_the_device_says_how_many_qudits_it_has(index, message):
-    handles = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).qudit_handles
+    handles = pulse.device("transmon_krinner_17q").qudit_handles
     with pytest.raises(IndexError, match=message) as info:
         handles[index]
     assert isinstance(info.value, pulse.PulseError)
@@ -195,7 +195,7 @@ def test_a_qudit_index_past_the_device_says_how_many_qudits_it_has(index, messag
 
 
 def test_a_qudit_index_past_a_register_says_how_many_qudits_it_has():
-    register = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).qudit_handles[0:3]
+    register = pulse.device("transmon_krinner_17q").qudit_handles[0:3]
     with pytest.raises(IndexError) as info:
         register[5]
     assert str(info.value) == (

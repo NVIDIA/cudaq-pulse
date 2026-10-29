@@ -24,11 +24,9 @@ TOP_LEVEL = {
     "simulate",
     "SimulationResult",
     "device",
-    "get_device",
     "Device",
     "Qudit",
     "Register",
-    "Target",
     "PulseError",
     "Problem",
     "DeviceDefinitionError",
@@ -184,20 +182,17 @@ def test_compiler_types_are_in_the_compiler_module():
         assert hasattr(compiler, name)
 
 
-def test_the_target_description_is_not_the_target_enum():
-    from cudaq_pulse.targets import TargetDescription
-
-    assert pulse.Target.TRANSMON_KRINNER_17Q.value == "transmon_krinner_17q"
-    assert not issubclass(TargetDescription, type(pulse.Target.TRANSMON_KRINNER_17Q))
+def test_device_is_the_one_device_getter():
     import cudaq_pulse.targets as targets
 
-    assert not hasattr(targets, "Target")
+    for removed in ("get_device", "Target"):
+        assert not hasattr(pulse, removed)
+        assert not hasattr(targets, removed)
 
 
 def test_the_release_ships_no_neutral_atom_target():
     import cudaq_pulse.targets as targets
 
-    assert not [m for m in pulse.Target if m.name.startswith("RYDBERG")]
     assert not [n for n in targets.available_targets() if n.startswith("rydberg")]
     assert not [n for n in targets.__all__ if n.lower().startswith("rydberg")]
 

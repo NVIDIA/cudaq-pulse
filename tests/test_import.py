@@ -42,7 +42,7 @@ def test_import_and_compile_do_not_load_numpy_or_the_gpu_runtime(tmp_path):
         "def k(q):\n"
         "    d, t = get_drive_line(q)\n"
         "    drive(d, square(40, 0.1), t)\n"
-        "dev = p.get_device(p.Target.TRANSMON_KRINNER_17Q)\n"
+        "dev = p.device('transmon_krinner_17q')\n"
         "p.compile(k).lower(dev.qudit_handles[0])\n"
         "print(sorted(m for m in ('numpy', 'cudaq_pulse.runtime.gpu',"
         " 'cudaq_pulse.runtime._jit', 'importlib.metadata') if m in sys.modules))",

@@ -108,7 +108,7 @@ def ramsey_with_readout(qubit, tau):
 
 
 if __name__ == "__main__":
-    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    dev = pulse.device("transmon_krinner_17q")
     print("=== Measure single qubit ===")
     compiled_kernel = pulse.compile(measure_single_qubit, device=dev).lower(dev.qudit_handles[0])
     print(compiled_kernel.mlir())

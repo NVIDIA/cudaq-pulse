@@ -98,7 +98,7 @@ def sideband_modulation(qubit):
 
 
 if __name__ == "__main__":
-    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    dev = pulse.device("transmon_krinner_17q")
     print("=== Phase Rotation (4 x pi/2 = full circle) ===")
     compiled_kernel = pulse.compile(phase_rotation_demo, device=dev).lower(dev.qudit_handles[0])
     print(compiled_kernel.mlir())

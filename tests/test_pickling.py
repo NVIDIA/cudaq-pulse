@@ -104,7 +104,7 @@ def idle(tau: float):
     pass
 
 
-_SHIPPED_DEVICE = pulse.get_device(pulse.Target(_SHIPPED_TARGET))
+_SHIPPED_DEVICE = pulse.device(_SHIPPED_TARGET)
 _SLOW_CONTROLLER = MachineModel(controller=ControllerLimits(clock_ghz=1.0))
 _DELAYED = MachineModel(line_delays_ns={("drive", 0): 1.5})
 
@@ -150,7 +150,7 @@ def test_targets_and_their_parts_unpickle_equal_with_equal_hashes():
     qubit = Qubit(3, 5.1e9, -300e6, 50.0, 30.0, label="D3", drive_params={"x_amp": 0.2})
     coupling = Coupling(3, 4, 5e6, gate_type="cz", gate_params={"theta": 0.1})
     shipped = _SHIPPED_DEVICE.target
-    for value in (qubit, coupling, LADDER.target, shipped, pulse.Target(_SHIPPED_TARGET)):
+    for value in (qubit, coupling, LADDER.target, shipped):
         back = _round_trip(value)
         assert back == value and hash(back) == hash(value)
     back = _round_trip(shipped)
@@ -170,7 +170,7 @@ def test_targets_compare_by_content():
     "make",
     [
         lambda: LADDER,
-        lambda: pulse.get_device(pulse.Target(_SHIPPED_TARGET)),
+        lambda: pulse.device(_SHIPPED_TARGET),
         lambda: pulse.device({"target": _SHIPPED_TARGET, "layout": [4, 5, 6], "clock_ghz": 1.0}),
     ],
     ids=["ladder", "shipped", "config"],
@@ -192,7 +192,7 @@ def test_a_device_unpickles_equal_and_is_built_once_per_process(make, monkeypatc
 
 
 def _shipped_and_uncalibrated():
-    shipped = pulse.get_device(pulse.Target(_SHIPPED_TARGET))
+    shipped = pulse.device(_SHIPPED_TARGET)
     uncalibrated = pulse.device({"target": make_target(_SHIPPED_TARGET)})
     assert shipped.calibration is not None and uncalibrated.calibration is None
     return shipped, uncalibrated
@@ -234,7 +234,7 @@ def test_a_device_unpickles_with_its_own_name_and_source(monkeypatch):
 
 
 def test_a_shipped_calibration_pickles_as_its_name(monkeypatch):
-    shipped = pulse.get_device(pulse.Target(_SHIPPED_TARGET))
+    shipped = pulse.device(_SHIPPED_TARGET)
     program = rabi.lower(shipped.qudit_handles[0], 0.3)
     data = pickle.dumps(program)
     assert len(data) < 20_000 and len(pickle.dumps(shipped.calibration)) < 200
@@ -246,7 +246,7 @@ def test_a_shipped_calibration_pickles_as_its_name(monkeypatch):
 
 
 def test_an_unpickled_shipped_calibration_reads_its_file_when_used(monkeypatch):
-    shipped = pulse.get_device(pulse.Target(_SHIPPED_TARGET)).calibration
+    shipped = pulse.device(_SHIPPED_TARGET).calibration
     data = pickle.dumps(shipped)
     monkeypatch.setattr(calibration, "_LOADED", {})
     back = pickle.loads(data)
@@ -258,7 +258,7 @@ def test_an_unpickled_shipped_calibration_reads_its_file_when_used(monkeypatch):
 
 
 def test_a_shipped_calibration_of_another_file_is_refused(monkeypatch):
-    data = pickle.dumps(pulse.get_device(pulse.Target(_SHIPPED_TARGET)).calibration)
+    data = pickle.dumps(pulse.device(_SHIPPED_TARGET).calibration)
     monkeypatch.setattr(_source_stamp, "CALIBRATIONS", {_SHIPPED_CALIBRATION: "0123456789abcdef"})
     with pytest.raises(pulse.UnsupportedError, match="ships another .file 0123456789abcdef"):
         pickle.loads(data)
@@ -268,7 +268,7 @@ def test_a_shipped_calibration_of_another_file_is_refused(monkeypatch):
 
 
 def test_a_calibration_of_its_own_values_pickles_by_value_once_per_pickle():
-    shipped = pulse.get_device(pulse.Target(_SHIPPED_TARGET)).calibration
+    shipped = pulse.device(_SHIPPED_TARGET).calibration
     mine = Calibration(shipped._data, name="mine")
     device = pulse.device({"target": make_target(_SHIPPED_TARGET), "calibration": mine})
     back = _round_trip(mine)
@@ -280,7 +280,7 @@ def test_a_calibration_of_its_own_values_pickles_by_value_once_per_pickle():
 
 
 def test_a_calibration_of_other_values_makes_another_device():
-    shipped = pulse.get_device(pulse.Target(_SHIPPED_TARGET)).calibration
+    shipped = pulse.device(_SHIPPED_TARGET).calibration
     data = copy.deepcopy(shipped._data)
     same = Calibration(data, name="mine")
     data["cooldowns"]["K22-main"] = "edited"
@@ -466,7 +466,7 @@ def test_a_compiled_kernel_unpickles_without_its_specializations():
     assert back.cache_info().size == 0
     assert back.lower(Q[0], 0.1).mlir() == compiled.lower(Q[0], 0.1).mlir()
     with pytest.raises(pulse.DeviceMismatchError):
-        back.lower(pulse.get_device(pulse.Target(_SHIPPED_TARGET)).qudit_handles[0], 0.1)
+        back.lower(pulse.device(_SHIPPED_TARGET).qudit_handles[0], 0.1)
 
 
 def test_a_pinned_compiled_kernel_unpickles_with_its_program(monkeypatch):
@@ -602,7 +602,7 @@ def _limit_error():
         lambda: ControllerLimitError([f"violation {k}" for k in range(13)]),
         _limit_error,
         lambda: _raised(lambda: pulse.device({"target": _SHIPPED_TARGET, "layout": [99]})),
-        lambda: _raised(lambda: pulse.get_device(_SHIPPED_TARGET)),
+        lambda: _raised(lambda: pulse.device(42)),
         lambda: SymbolicValueError("tau must be known", ("tau",), "a duration"),
         lambda: _raised(lambda: rabi.lower(0, 0.1)),
         lambda: _raised(lambda: Q[999]),

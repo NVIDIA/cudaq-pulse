@@ -228,12 +228,14 @@ behavior may change in any 0.x release.
   `pulse-hoist-loop-invariants`), as well as `pulse-unroll-classical-loops`
   and `pulse-schedule-rcp` with its machine model as options (`max-drives`,
   `max-readouts`, `readout-latency`, `switch-penalty`, `alap`).
-- **Devices and targets.** `pulse.get_device` and `pulse.device` describe a
-  machine as a target plus a qudit layout; devices compare by content and
-  share compiled kernels. Target descriptions are
-  `cudaq_pulse.targets.TargetDescription`; `pulse.Target` names the shipped
-  target: a 17-qubit transmon device built from Krinner et al., Nature 605,
-  669 (2022).
+- **Devices and targets.** `pulse.device` is the one device getter: it
+  describes a machine as a target plus a qudit layout, from a registered
+  target name (`pulse.device("transmon_krinner_17q")`), a config mapping
+  or file, or, with no argument, the process target. Devices compare by
+  content and share compiled kernels. Target descriptions are
+  `cudaq_pulse.targets.TargetDescription`; the shipped target,
+  `"transmon_krinner_17q"`, is a 17-qubit transmon device built from
+  Krinner et al., Nature 605, 669 (2022).
   A target's `model` (`cudaq_pulse.targets.TransmonModel` by default, a
   `SimulationModel` class or instance, or `None`) says how the simulator
   treats its qudits; each model class declares its levels (3 for
@@ -335,7 +337,7 @@ behavior may change in any 0.x release.
   the "Writing a Controller Backend" guide walks through one.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
   `CompiledKernel`, `Lowered`, `Pass`, `simulate`, `SimulationResult`,
-  `device`, `get_device`, `Device`, `Qudit`, `Register`, `Target`,
+  `device`, `Device`, `Qudit`, `Register`,
   `PulseError`, `Problem`, `DeviceDefinitionError`, `InvalidValueError`,
   `InvalidTypeError`, `NotFoundError`, `UnsupportedError`,
   `CompilationError`, `TimingError`, `ExecutionError`, `InternalError`,

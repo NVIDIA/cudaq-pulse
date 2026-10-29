@@ -52,7 +52,7 @@ def with_cosine(q):
 
 @pytest.fixture
 def qubit():
-    return pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).qudit_handles[0]
+    return pulse.device("transmon_krinner_17q").qudit_handles[0]
 
 
 def _ops(mlir):

@@ -23,7 +23,6 @@ in them.
 from __future__ import annotations
 
 import dataclasses
-import enum
 import hashlib
 import json
 import os
@@ -51,9 +50,7 @@ __all__ = [
     "NoDeviceError",
     "Qudit",
     "Register",
-    "Target",
     "device",
-    "get_device",
 ]
 
 
@@ -65,12 +62,6 @@ class NoDeviceError(NoTargetError):
 
 class DeviceMismatchError(PulseError, RuntimeError):
     """A kernel call mixes handles of different devices, or of an unpinned one."""
-
-
-class Target(enum.Enum):
-    """Targets shipped with cudaq-pulse, for ``get_device``."""
-
-    TRANSMON_KRINNER_17Q = "transmon_krinner_17q"
 
 
 _CARRIER = "qudit"
@@ -657,11 +648,19 @@ def _located(problems: list[Problem], file: str, text: str) -> list[Problem]:
     return located
 
 
-def device(config: Mapping[str, Any] | str | os.PathLike[str]) -> Device:
-    """A device from a config: a mapping, or the path of a JSON file.
+def device(config: Mapping[str, Any] | str | os.PathLike[str] | None = None) -> Device:
+    """The device of a target name, a config, or the path of a JSON config file.
 
-    The config gives the target, by registered name or as a ``TargetDescription``
-    description, and may give a layout, a calibration and a program clock::
+    ``device("transmon_krinner_17q")`` is the device of a registered target,
+    with every carrier in order (a name takes its argument after a colon, as
+    in ``"transmon_generic:4"``); ``cudaq_pulse.targets.available_targets()``
+    lists the names. ``device()`` is the process target, named by
+    ``CUDAQ_PULSE_TARGET`` (``python -m cudaq_pulse --target NAME`` sets it);
+    without one it raises ``NoTargetError``. A string that names no
+    registered target is the path of a config file.
+
+    A config gives the target, by registered name or as a ``TargetDescription``,
+    and may give a layout, a calibration and a program clock::
 
         {"target": "transmon_krinner_17q", "layout": [4, 5, 6],
          "calibration": "krinner17", "cooldown": "K22-main", "clock_ghz": 2.0}
@@ -680,6 +679,17 @@ def device(config: Mapping[str, Any] | str | os.PathLike[str]) -> Device:
     column; ``python -m cudaq_pulse.doctor --system FILE`` runs the same
     checks.
     """
+    if config is None:
+        from .targets._registry import current_target
+
+        return current_target()
+    if isinstance(config, str):
+        from .targets._registry import _registry, make_target
+
+        if config.partition(":")[0] in _registry():
+            return _from_spec(config, f"target {config}")
+        if not os.path.exists(config) and os.sep not in config and "." not in config:
+            make_target(config)
     if not isinstance(config, (str, os.PathLike)):
         if not isinstance(config, Mapping):
             raise InvalidTypeError(f"device config must be a mapping, got {type(config).__name__}")
@@ -716,16 +726,3 @@ def device(config: Mapping[str, Any] | str | os.PathLike[str]) -> Device:
             problems=_located(problems, file, text),
         )
     return found
-
-
-def get_device(target: Target | None = None) -> Device:
-    """A device of a shipped target, or the process target with no argument."""
-    if target is None:
-        from .targets._registry import current_target
-
-        return current_target()
-    if not isinstance(target, Target):
-        raise InvalidTypeError(
-            f"get_device() expects a cudaq_pulse.Target, got {type(target).__name__}"
-        )
-    return _from_spec(target.value, f"shipped {target.name}")

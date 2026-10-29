@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 from cudaq_pulse.targets import TargetDescription
 
-_KRINNER = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+_KRINNER = pulse.device("transmon_krinner_17q")
 
 
 def _slice(indices):

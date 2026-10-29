@@ -29,7 +29,7 @@ import cudaq_pulse as pulse
 from cudaq_pulse.targets import transmon_krinner_17q
 
 target = transmon_krinner_17q()
-dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+dev = pulse.device("transmon_krinner_17q")
 clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
 labels = {q.index: q.label for q in target.qubits.values()}
 n_qubits = target.n_qubits

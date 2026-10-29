@@ -34,7 +34,7 @@ Infrastructure stays behind the ``pulse.`` prefix:
        drive_line, tone = get_drive_line(qubit)
        drive(drive_line, gaussian(duration, 0.5, sigma), tone)
 
-   dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+   dev = pulse.device("transmon_krinner_17q")
    rabi_oscillation(dev.qudit_handles[0], 32 * pulse.ns, 8 * pulse.ns)
 
 Defining a Kernel

@@ -23,7 +23,7 @@ only run it.
        drive_line, tone = get_drive_line(qubit)
        drive(drive_line, gaussian(cal["x_duration"], amplitude, cal["x_sigma"]), tone)
 
-   dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+   dev = pulse.device("transmon_krinner_17q")
    q = dev.qudit_handles[0]
 
    rabi(q, 0.3)                    # compiles, then runs; returns None

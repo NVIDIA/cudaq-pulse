@@ -111,5 +111,5 @@ def main():
 
 
 if __name__ == "__main__":
-    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    dev = pulse.device("transmon_krinner_17q")
     main()

@@ -319,7 +319,7 @@ def test_a_device_from_a_config_file(tmp_path: Path):
     dev = pulse.device(path)
     assert [q.index for q in dev.qudit_handles] == [4, 5]
     assert dev == pulse.device({"target": "transmon_krinner_17q", "layout": [4, 5]})
-    assert dev != pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    assert dev != pulse.device("transmon_krinner_17q")
     with pytest.raises(pulse.DeviceDefinitionError, match="lattice: unknown device config key"):
         pulse.device({"target": "transmon_krinner_17q", "lattice": []})
     with pytest.raises(pulse.DeviceDefinitionError, match="zones: is reserved"):
@@ -407,7 +407,7 @@ def test_the_launcher_sets_the_process_target(tmp_path: Path):
             """
             import sys
             import cudaq_pulse as pulse
-            print(pulse.get_device().name, sys.argv[1:])
+            print(pulse.device().name, sys.argv[1:])
             """
         )
     )

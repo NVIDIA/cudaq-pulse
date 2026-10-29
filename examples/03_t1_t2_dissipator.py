@@ -85,7 +85,7 @@ def t2_echo(qubit, tau):
 
 
 if __name__ == "__main__":
-    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    dev = pulse.device("transmon_krinner_17q")
     qubit = dev.qudit_handles[0]
     spec = dev.target.qubits[0]
     t1_ns = spec.t1_us * 1e3

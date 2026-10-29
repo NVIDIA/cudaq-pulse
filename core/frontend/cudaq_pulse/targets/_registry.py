@@ -7,11 +7,11 @@
 # ============================================================================ #
 """The process target, chosen outside user code.
 
-``get_device()`` with no argument returns the device of the target named by
+``device()`` with no argument returns the device of the target named by
 the ``CUDAQ_PULSE_TARGET`` environment variable, which
 ``python -m cudaq_pulse --target NAME script.py`` sets for the script it
 runs. A name is a registered target, optionally with an argument after a
-colon (``transmon_generic:4``). There is no default: ``get_device()`` without
+colon (``transmon_generic:4``). There is no default: ``device()`` without
 one raises ``NoTargetError``. Kernel calls never read the process target;
 they run on the device of their qudit handles.
 """
@@ -35,12 +35,12 @@ TargetFactory = Callable[[str | None], Any]
 
 
 class NoTargetError(PulseError, RuntimeError):
-    """``get_device()`` was called with no argument and ``CUDAQ_PULSE_TARGET``
+    """``device()`` was called with no argument and ``CUDAQ_PULSE_TARGET``
     names no process target."""
 
 
 class UnknownTargetError(NotFoundError):
-    """A target name, in a device config or in ``CUDAQ_PULSE_TARGET``, is not
+    """A target name, given to ``device()``, in a device config or in ``CUDAQ_PULSE_TARGET``, is not
     registered; the message lists the registered ones."""
 
 
@@ -85,7 +85,8 @@ def _registry() -> dict[str, TargetFactory]:
 
 
 def register_target(name: str, factory: TargetFactory) -> None:
-    """Make *factory* available as ``CUDAQ_PULSE_TARGET=name[:arg]``.
+    """Make *factory* available as ``device("name[:arg]")`` and
+    ``CUDAQ_PULSE_TARGET=name[:arg]``.
 
     *factory* receives the text after the colon, or ``None``, and returns a
     ``TargetDescription`` (or an object with ``to_target()``). Registering only adds a
@@ -101,7 +102,7 @@ def register_target(name: str, factory: TargetFactory) -> None:
 
 
 def available_targets() -> list[str]:
-    """Names that ``CUDAQ_PULSE_TARGET`` accepts."""
+    """Names that ``device()`` and ``CUDAQ_PULSE_TARGET`` accept."""
     registry = _registry()
     with _lock:
         return sorted(registry)
@@ -148,8 +149,8 @@ def current_target() -> Device:
 
 def _no_target_message() -> str:
     return (
-        "get_device() with no argument returns the process target, and none is "
-        "configured: name a target, as get_device(cudaq_pulse.Target.TRANSMON_KRINNER_17Q), "
+        "device() with no argument returns the process target, and none is "
+        'configured: name a target, as device("transmon_krinner_17q"), '
         "or set one of:\n"
         f"    {ENV_VAR}=transmon_krinner_17q python script.py\n"
         "    python -m cudaq_pulse --target transmon_krinner_17q script.py\n"

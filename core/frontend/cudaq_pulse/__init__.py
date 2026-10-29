@@ -16,7 +16,7 @@ Usage::
         drive_line, tone = get_drive_line(qubit)
         drive(drive_line, gaussian(64, amplitude, 16.0), tone)
 
-    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    dev = pulse.device("transmon_krinner_17q")
     rabi(dev.qudit_handles[0], 0.5)            # compile on first call, then run
     lowered = rabi.lower(dev.qudit_handles[0], 0.5)
     print(lowered.mlir())
@@ -49,9 +49,7 @@ from ._device import DeviceMismatchError as DeviceMismatchError
 from ._device import NoDeviceError as NoDeviceError
 from ._device import Qudit as Qudit
 from ._device import Register as Register
-from ._device import Target as Target
 from ._device import device as device
-from ._device import get_device as get_device
 from ._errors import CompilationError as CompilationError
 from ._errors import DeviceDefinitionError as DeviceDefinitionError
 from ._errors import ExecutionError as ExecutionError
@@ -125,11 +123,9 @@ __all__ = [
     "simulate",
     "SimulationResult",
     "device",
-    "get_device",
     "Device",
     "Qudit",
     "Register",
-    "Target",
     "PulseError",
     "Problem",
     "DeviceDefinitionError",

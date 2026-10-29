@@ -138,7 +138,7 @@ To inspect the lowered LLVM IR:
        drive_line, tone = get_drive_line(qubit)
        drive(drive_line, gaussian(20 * pulse.ns, 0.3, 5 * pulse.ns), tone)
 
-   dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+   dev = pulse.device("transmon_krinner_17q")
    llvm_ir = my_kernel.lower(dev.qudit_handles[0]).mlir("llvm")
    print(llvm_ir)
 

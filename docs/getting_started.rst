@@ -92,7 +92,7 @@ generated MLIR:
        drive_line, tone = get_drive_line(qubit)
        drive(drive_line, gaussian(cal["duration"], amplitude, cal["sigma"]), tone)
 
-   dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+   dev = pulse.device("transmon_krinner_17q")
    qubit = dev.qudit_handles[0]
    result = pulse.simulate(rabi_oscillation, qubit, 0.5)    # NumPy reference, no GPU needed
    print(f"P(1) = {result.density_matrix[1, 1].real:.3f}")   # P(1) = 0.973

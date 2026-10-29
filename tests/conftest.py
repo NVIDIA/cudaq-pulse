@@ -15,7 +15,7 @@ from cudaq_pulse.targets._registry import ENV_VAR, register_target
 import tests.property_settings  # noqa: F401  (loads the hypothesis profile)
 from tests._handles import ladder_target
 
-# ``get_device()`` without an argument returns the process target.
+# ``device()`` without an argument returns the process target.
 register_target("ladder", lambda arg: ladder_target(int(arg) if arg else 64))
 os.environ[ENV_VAR] = "ladder:8192"
 

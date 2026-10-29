@@ -140,6 +140,27 @@ def test_a_missing_file_is_an_os_error(tmp_path: Path):
         pulse.device(tmp_path / "absent.json")
 
 
+def test_a_target_name_is_a_device(tmp_path: Path, monkeypatch):
+    dev = pulse.device(KRINNER)
+    assert dev == pulse.device({"target": KRINNER}) and dev.name == KRINNER
+    assert len(pulse.device("transmon_generic:4").qudit_handles) == 4
+    with pytest.raises(pulse.NotFoundError, match=r"did you mean 'transmon_krinner_17q'\?"):
+        pulse.device("transmon_krinner17q")
+    with pytest.raises(FileNotFoundError):
+        pulse.device("absent.json")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "lab").write_text(json.dumps({"target": KRINNER, "layout": [4]}))
+    assert pulse.device("lab").layout == (4,)
+
+
+def test_no_argument_is_the_process_target(monkeypatch):
+    monkeypatch.setenv("CUDAQ_PULSE_TARGET", "transmon_generic:3")
+    assert len(pulse.device().qudit_handles) == 3
+    monkeypatch.delenv("CUDAQ_PULSE_TARGET")
+    with pytest.raises(pulse.NoTargetError, match=r'name a target, as device\("transmon_krinner'):
+        pulse.device()
+
+
 def test_a_config_that_is_not_a_mapping_is_a_type_error():
     with pytest.raises(TypeError, match="device config must be a mapping, got list"):
         pulse.device([1])  # type: ignore[arg-type]

@@ -71,7 +71,7 @@ def test_cooldowns_and_provenance(cal):
 def test_a_loaded_calibration_keeps_the_values_it_parsed():
     # Calibration.load keeps the dict it parsed without copying it, and the
     # shipped one is shared by every device: no use of it may change it.
-    shipped = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).calibration
+    shipped = pulse.device("transmon_krinner_17q").calibration
     parsed = json.loads((_SHIPPED / "krinner17.json").read_text())
     for cal in (shipped, Calibration.load("krinner17", cooldown="HEL25")):
         pair = cal.pairs[0]
