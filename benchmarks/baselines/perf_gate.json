@@ -62,9 +62,21 @@
       "op_count": 15,
       "packed_bytes": 744
     },
-    "simulate_setup": {},
-    "specialize_amplitude": {},
-    "specialize_wait": {},
-    "submit": {}
+    "simulate_setup": {
+      "density_matrix_entries": 4,
+      "time_points": 2
+    },
+    "specialize_amplitude": {
+      "mlir_bytes": 1177
+    },
+    "specialize_wait": {
+      "schedule_cycles": 145,
+      "schedule_events": 3
+    },
+    "submit": {
+      "call_args": 6,
+      "call_results": 1,
+      "result_milli": 2500
+    }
   }
 }

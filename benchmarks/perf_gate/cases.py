@@ -106,6 +106,30 @@ def _json_bytes(program: object) -> dict[str, int]:
     return {"export_bytes": len(text.encode())}
 
 
+def _schedule_size(events: Any) -> dict[str, int]:
+    end = max(e.start_cycles + e.duration_cycles for e in events)
+    return {"schedule_events": len(events), "schedule_cycles": end}
+
+
+def _mlir_bytes(text: object) -> dict[str, int]:
+    return {"mlir_bytes": len(str(text).encode())}
+
+
+def _call_size(result: object) -> dict[str, int]:
+    return {
+        "call_args": len(_SUBMIT.args),
+        "call_results": len(_SUBMIT.results),
+        "result_milli": round(1000 * float(result)),  # type: ignore[arg-type]
+    }
+
+
+def _simulation_size(result: Any) -> dict[str, int]:
+    return {
+        "time_points": len(result.times_ns),
+        "density_matrix_entries": int(result.density_matrix.size),
+    }
+
+
 # ── Kernels the existing benchmarks and guards do not provide ──────────────
 
 
@@ -356,18 +380,21 @@ CASES: tuple[Case, ...] = (
         "a new wait length's schedule (specializes the module)",
         _specialize_wait,
         20,
+        sizes=_schedule_size,
     ),
     Case(
         "specialize_amplitude",
         "a new amplitude's MLIR text (specializes the module)",
         _specialize_amplitude,
         20,
+        sizes=_mlir_bytes,
     ),
     Case(
         "submit",
         "a classical function's submit().result() outside a kernel (1 bit + 5 floats)",
         _submit,
         500,
+        sizes=_call_size,
     ),
     Case(
         "export_controller",
@@ -390,7 +417,13 @@ CASES: tuple[Case, ...] = (
         3,
         sizes=_json_bytes,
     ),
-    Case("simulate_setup", "simulate() of an 8-cycle drive (mostly setup)", _simulate_setup, 3),
+    Case(
+        "simulate_setup",
+        "simulate() of an 8-cycle drive (mostly setup)",
+        _simulate_setup,
+        3,
+        sizes=_simulation_size,
+    ),
 )
 
 

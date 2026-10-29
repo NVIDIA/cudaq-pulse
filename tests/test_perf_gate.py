@@ -308,6 +308,14 @@ def test_the_checked_in_baseline_is_bootstrapping_or_has_every_count():
         assert not missing, f"no instruction count for {missing}"
 
 
+def test_every_case_gates_at_least_one_program_size():
+    sized = {
+        name: [k for k in case if k not in ("instructions", "estimated_cycles", "tolerance")]
+        for name, case in BASELINE["cases"].items()
+    }
+    assert not [name for name, keys in sized.items() if not keys]
+
+
 def test_the_program_sizes_match_the_baseline(tmp_path):
     env = gate._run_env(str(Path(cudaq_pulse.__file__).parents[1]), str(tmp_path))
     # Under the sanitizers the extension needs their runtime preloaded.
