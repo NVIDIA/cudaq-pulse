@@ -201,16 +201,24 @@ def _execute(lowered: Lowered, returns: Any) -> Any:
     return _materialize(returns, outcome)
 
 
+class _QuditTwiceError(Exception):
+    """A qudit ``_devices`` met twice; the caller names the parameters."""
+
+    def __init__(self, qudit: Qudit) -> None:
+        self.qudit = qudit
+
+
 def _devices(value: Any, found: Device | None, name: str, seen: set[int]) -> Device | None:
     """The device of the handles in *value*, checked against *found*.
 
     *seen* collects the carriers passed so far: one qudit passed twice is
-    an error, as it would be one degree of freedom bound to two names.
+    an error, as it would be one degree of freedom bound to two names, and
+    raises ``_QuditTwiceError``.
     """
     t = type(value)
     if t is Qudit:
         if value.index in seen:
-            raise TypeError(f"{name}() got qudit {value.logical} more than once")
+            raise _QuditTwiceError(value)
         seen.add(value.index)
         device: Device = value.device
         if found is None or found is device:
@@ -233,6 +241,34 @@ def _devices(value: Any, found: Device | None, name: str, seen: set[int]) -> Dev
         for item in value:
             found = _devices(item, found, name, seen)
     return found
+
+
+def _count(value: Any, index: int) -> int:
+    """How many handles in *value* are of the qudit at *index*."""
+    t = type(value)
+    if t is Qudit:
+        return int(value.index == index)
+    if t is Register or t is tuple or t is list:
+        return sum(_count(item, index) for item in value)
+    return 0
+
+
+def _passed_twice(name: str, qudit: Qudit, arguments: list[tuple[str, Any]]) -> InvalidTypeError:
+    """The error for *qudit* passed twice among *arguments*, the (parameter,
+    value) pairs in the order ``_devices`` met them."""
+    holders = [
+        parameter for parameter, value in arguments for _ in range(_count(value, qudit.index))
+    ]
+    first, second = holders[0], holders[1]
+    if first == second:
+        return InvalidTypeError(
+            f"{name}() got qudit {qudit.logical} twice in {first!r}; each qudit of an "
+            "argument needs to be distinct"
+        )
+    return InvalidTypeError(
+        f"{name}() got qudit {qudit.logical} for both {first!r} and {second!r}; each "
+        "argument needs a distinct qudit"
+    )
 
 
 # ── Specializations ──────────────────────────────────────────────────────
@@ -294,8 +330,13 @@ class _Dispatcher:
         name = self.kernel.__name__
         found = None
         seen: set[int] = set()
-        for i in self.kernel._split[0]:
-            found = _devices(values[i], found, name, seen)
+        try:
+            for i in self.kernel._split[0]:
+                found = _devices(values[i], found, name, seen)
+        except _QuditTwiceError as twice:
+            names = self.kernel._names
+            arguments = [(names[i], values[i]) for i in self.kernel._split[0]]
+            raise _passed_twice(name, twice.qudit, arguments) from None
         pin = self.pin
         if pin is not None:
             if found is not None and found != pin:

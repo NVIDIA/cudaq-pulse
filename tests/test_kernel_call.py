@@ -488,9 +488,28 @@ def test_a_qudit_passed_twice_is_an_error():
     def pair(q0, q1):
         pass
 
-    q = _device().qudit_handles[0]
-    with pytest.raises(TypeError, match="got qudit 0 more than once"):
+    @pulse.kernel
+    def cz(control, target):
+        pass
+
+    @pulse.kernel
+    def layer(qubits):
+        pass
+
+    handles = _device().qudit_handles
+    q = handles[0]
+    with pytest.raises(
+        pulse.InvalidTypeError, match=r"^pair\(\) got qudit 0 for both 'q0' and 'q1'; each"
+    ):
         pair.lower(q, q)
+    message = (
+        r"^cz\(\) got qudit 0 for both 'control' and 'target'; each argument needs a "
+        r"distinct qudit$"
+    )
+    with pytest.raises(TypeError, match=message):
+        cz(q, q)
+    with pytest.raises(TypeError, match=r"^layer\(\) got qudit 1 twice in 'qubits'; each qudit"):
+        layer.lower(handles[[0, 1, 1]])
 
 
 def test_each_call_returns_its_own_container():
