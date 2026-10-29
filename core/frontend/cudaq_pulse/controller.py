@@ -1217,7 +1217,17 @@ def _function_resources(
             function.name, {}, 0, 0, 0, (), (f"{function.name}: external, with no body to read",)
         )
     elif function.uniform is not None:
-        cost = FunctionCost(function.name, {"load": 1}, 1, 0, 0, (), ())
+        cost = FunctionCost(
+            function.name,
+            {"load": 1},
+            1,
+            0,
+            0,
+            (),
+            (),
+            unrolled_size=1,
+            uses={"load": function.name},
+        )
     else:
         cost = _controller_cost.analyze_callable(function.implementation, _value_lengths(function))
     args_bytes = _payload_bytes(function.args)
