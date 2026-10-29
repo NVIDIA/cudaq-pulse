@@ -78,7 +78,7 @@ def test_declaration_keeps_the_schema_and_timing():
     def fit(
         points: pulse.Length[list[complex], 4],
         xs: pulse.Length[list[float], 3],
-        levels: pulse.Length[list[int], 2],
+        counts: pulse.Length[list[int], 2],
         n: int,
     ) -> pulse.Length[list[float], 2]:
         return xs[:2]
@@ -95,7 +95,7 @@ def test_declaration_keeps_the_schema_and_timing():
         link=3,
         id=7,
     )
-    assert [a.descriptor for a in fn.args] == ["iq:4", "f64[3]", "levels:2", "i64"]
+    assert [a.descriptor for a in fn.args] == ["iq:4", "f64[3]", "i32[2]", "i64"]
     assert [r.descriptor for r in fn.results] == ["f64[2]"]
     assert (fn.min_latency_ns, fn.nominal_latency_ns, fn.max_latency_ns) == (10, 20, 30)
     assert (fn.latency_mode, fn.timeout_ns, fn.submit_policy, fn.deadline_ns) == (
@@ -203,27 +203,41 @@ def _zero(index: pulse.Length[pulse.Bits, 0]) -> float:
     return 0.0
 
 
-def _typo(outcomes: pulse.Bits) -> pulse.Length[pulse.Bits, "outcome"]:  # noqa: F821, UP037
+# Lengths that aren't whole numbers, set after the def: in a signature a
+# checker would read the strings as names.
+def _named_result(outcomes: pulse.Bits) -> pulse.Bits:
     return outcomes
 
 
-def _bad_rule(x: pulse.Bits, n: float) -> pulse.Length[pulse.Bits, "n"]:  # noqa: F821, UP037
-    return x
+_named_result.__annotations__["return"] = pulse.Length[pulse.Bits, "outcomes"]
 
 
-def _float_numbers(x: pulse.Length[list[float], 4, "numbers"]) -> float:  # noqa: F821, UP037
+def _named_parameter(x: pulse.Bits) -> float:
     return 0.0
 
 
-def _named_parameter(x: pulse.Length[pulse.Bits, "x"]) -> float:  # noqa: F821, UP037
+_named_parameter.__annotations__["x"] = pulse.Length[pulse.Bits, "x"]
+
+
+def _numbers_flag(x: list[int]) -> float:
+    return 0.0
+
+
+_numbers_flag.__annotations__["x"] = pulse.Length[list[int], 4, "numbers"]
+
+
+def _no_length(x: list[int]) -> float:
+    return 0.0
+
+
+_no_length.__annotations__["x"] = pulse.Length[list[int], "numbers"]
+
+
+def _true_length(x: pulse.Length[pulse.Bits, True]) -> float:
     return 0.0
 
 
 def _two_lengths(x: pulse.Length[pulse.Bits, 2, 3]) -> float:
-    return 0.0
-
-
-def _no_length(x: pulse.Length[list[int], "numbers"]) -> float:  # noqa: F821, UP037
     return 0.0
 
 
@@ -253,20 +267,29 @@ def _scalar_result(x: pulse.Bits) -> pulse.Length[float, 2]:
             re.escape("pulse.Length[pulse.Bits, 0]: a length is a positive whole number, got 0"),
         ),
         (
-            _typo,
+            _named_result,
             re.escape(
-                'pulse.Length[pulse.Bits, "outcome"] names outcome, which isn\'t a list'
-                " parameter (did you mean 'outcomes'?)"
+                'pulse.Length[pulse.Bits, "outcomes"]: a length is a positive whole number,'
+                " got 'outcomes'; a list result without one takes its length from the body:"
+                " -> pulse.Bits"
             ),
         ),
-        (_bad_rule, "names n, which isn't a list parameter(\n|$)"),
         (
-            _float_numbers,
-            re.escape('pulse.Length[list[float], 4, "numbers"]: "numbers" applies to list[int]'),
+            _named_parameter,
+            re.escape(
+                "got 'x'; a list parameter without one takes its length from the call: pulse.Bits"
+            ),
         ),
-        (_named_parameter, "a parameter's length is a number"),
+        (
+            _numbers_flag,
+            re.escape(
+                'pulse.Length[list[int], 4, "numbers"]: state one length, such as'
+                " pulse.Length[list[int], 8]"
+            ),
+        ),
+        (_no_length, "a length is a positive whole number, got 'numbers'"),
+        (_true_length, "a length is a positive whole number, got True"),
         (_two_lengths, "state one length"),
-        (_no_length, "gives no length"),
         (_scalar_result, "its result is float; pulse.Length applies"),
     ],
 )
@@ -286,27 +309,27 @@ def test_hint_errors_are_raised_where_the_function_is_used(fn, message):
 def test_sequence_hints_are_lists():
     @pulse.classical(max_latency_ns=1)
     def total(
-        xs: pulse.Length[Sequence[float], 2], levels: pulse.Length[Sequence[int], 3]
+        xs: pulse.Length[Sequence[float], 2], counts: pulse.Length[Sequence[int], 3]
     ) -> float:
-        return sum(xs) + sum(levels)
+        return sum(xs) + sum(counts)
 
-    assert [a.descriptor for a in total.args] == ["f64[2]", "levels:3"]
+    assert [a.descriptor for a in total.args] == ["f64[2]", "i32[3]"]
 
 
 def test_stated_lengths():
     @pulse.classical(max_latency_ns=1)
     def scale(
-        counts: pulse.Length[list[int], 3, "numbers"],  # noqa: F821, UP037
-        levels: pulse.Length[list[int], 2],
-    ) -> tuple[pulse.Length[list[int], "counts"], pulse.Length[pulse.Bits, 4], float]:  # noqa: F821, UP037
+        counts: pulse.Length[list[int], 3],
+        outcomes: pulse.Length[pulse.Bits, 2],
+    ) -> tuple[pulse.Length[list[int], 3], pulse.Length[pulse.Bits, 4], float]:
         return counts, [0] * 4, 0.0
 
-    assert [a.descriptor for a in scale.args] == ["i32[3]", "levels:2"]
+    assert [a.descriptor for a in scale.args] == ["i32[3]", "bits:2"]
     assert [r.descriptor for r in scale.results] == ["i32[3]", "bits:4", "f64"]
     assert scale._shape is None and scale.name == "scale"
 
     @pulse.classical(max_latency_ns=1)
-    def flip(outcomes: pulse.Bits) -> pulse.Length[pulse.Bits, "outcomes"]:  # noqa: F821, UP037
+    def flip(outcomes: pulse.Bits) -> pulse.Bits:
         return [1 - b for b in outcomes]
 
     assert [r.descriptor for r in flip.specialize(outcomes=5).results] == ["bits:5"]
@@ -327,8 +350,7 @@ def test_a_length_the_body_cant_give_is_rejected():
         len(fired.results)
     assert "depends on the values" in str(error.value)
     assert str(error.value).endswith(
-        "Return a list whose length the inputs decide instead, such as a fixed maximum"
-        " ([0] * len(syndrome)) and a count of the items used."
+        "Write it in plain Python, or give it a fixed size: -> pulse.Length[list[int], 8]."
     )
 
 
@@ -414,7 +436,7 @@ def test_an_external_placeholder_gives_its_result_shape():
 def test_an_external_list_result_needs_a_length():
     advice = (
         "An external's body is a placeholder: return index, or a slice such as index[:2], for"
-        " a length the input gives, or state it in the signature: -> pulse.Length[pulse.Bits, n]."
+        " a length the input gives, or give it a fixed size: -> pulse.Length[pulse.Bits, 8]."
     )
     with pytest.raises(TypeError, match="the placeholder says only its type") as error:
 

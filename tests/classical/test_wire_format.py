@@ -136,13 +136,13 @@ def test_round_trips():
     @pulse.classical(max_latency_ns=0)
     def mixed(
         bits: pulse.Length[pulse.Bits, 10],
-        levels: pulse.Length[list[int], 3],
+        counts: pulse.Length[list[int], 3],
         points: pulse.Length[list[complex], 2],
         x: float,
     ) -> tuple[float, pulse.Bits]:
         return x, bits[:3]
 
-    assert [a.descriptor for a in mixed.args] == ["bits:10", "levels:3", "iq:2", "f64"]
+    assert [a.descriptor for a in mixed.args] == ["bits:10", "i32[3]", "iq:2", "f64"]
     args = ([1, 0] * 5, [0, 2, 1], [0.5 - 0.5j, 1.0 + 2.0j], 3.25)
     request = wire.encode_request(mixed, args, request_id=9)
     rid, _, decoded = wire.decode_request(mixed, request)

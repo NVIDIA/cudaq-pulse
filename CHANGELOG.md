@@ -417,8 +417,8 @@ behavior may change in any 0.x release.
   the call, each length makes a version of the function (`flip__3`), and
   list results take theirs from the body. `pulse.Length` (`typing.Annotated`)
   states a fixed length where one schema is wanted, as with `id=`:
-  `pulse.Length[pulse.Bits, 8]`, `pulse.Length[list[int], 8, "numbers"]`, and
-  a result `-> pulse.Length[pulse.Bits, "outcomes"]`. A call record or
+  `pulse.Length[pulse.Bits, 8]` (eight measurements read as bits) and
+  `pulse.Length[list[int], 8]` (eight numbers). A call record or
   report row names the function (`call.function`, `"flip"`) and its version
   (`call.compiled_name`, `"flip__3"`). An external function's stub is a
   declaration whose body is a placeholder for its result (`return float()`,

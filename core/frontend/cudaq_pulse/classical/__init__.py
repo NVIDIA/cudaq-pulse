@@ -254,13 +254,12 @@ def _result_items(t: Any) -> tuple[Any, ...]:
 
 
 class _Rule:
-    """A list result's length: an input's (*source* names it) or inferred
-    from the body (*source* None), per version."""
+    """A list result whose length each version infers from the body."""
 
-    __slots__ = ("kind", "source")
+    __slots__ = ("kind",)
 
-    def __init__(self, kind: int, source: str | None) -> None:
-        self.kind, self.source = kind, source
+    def __init__(self, kind: int) -> None:
+        self.kind = kind
 
 
 class _Shape:
@@ -293,7 +292,6 @@ def _read_hints(fn: Any) -> _Shape:
     names = code.co_varnames[: code.co_argcount]
     ann = fn.__annotations__
     plan: list[Any] = []
-    lists = 0
     unsized = 0
     for name in names:
         if name not in ann:
@@ -309,7 +307,6 @@ def _read_hints(fn: Any) -> _Shape:
             else:
                 spec = kind
                 unsized += 1
-            lists += 1
         plan.append(spec)
     if "return" not in ann:
         raise InvalidTypeError(f"{where}: annotate what it returns (-> None if it answers nothing)")
@@ -322,22 +319,17 @@ def _read_hints(fn: Any) -> _Shape:
         if scalar is not None:
             return _Shape(tuple(names), tuple(plan), (scalar,), unsized, False)
     items = _result_items(returned)
-    list_params: dict[str, Any] = (
-        {n: p for n, p in zip(names, plan, strict=True) if p.__class__ is int or not p.is_scalar}
-        if lists
-        else {}
-    )
     results: list[Any] = []
     for t in items:
         spec = _SCALAR_RESULT.get(t)
         if spec is None:
             kind = _LIST_KIND.get(t)
             if kind is None:
-                spec = _stated_result(where, t, list_params)
+                spec = _stated_result(where, t)
             elif kind == _KIND_IQ:
                 _bad_result(where, t)
             else:
-                spec = _Rule(kind, None)
+                spec = _Rule(kind)
         results.append(spec)
     if len(plan) > _MAX_ARGS:
         raise InvalidTypeError(f"{where}: at most {_MAX_ARGS} arguments, got {len(plan)}")
@@ -347,12 +339,9 @@ def _read_hints(fn: Any) -> _Shape:
     return _Shape(tuple(names), tuple(plan), tuple(results), unsized, rules)
 
 
-_NUMBERS = "numbers"
-
-
 def _stated_parameter(where: str, name: str, t: Any) -> ValueType:
-    """A parameter of fixed length, ``pulse.Length[kind, n]``, and for a
-    ``list[int]`` of numbers rather than measured levels ``"numbers"``."""
+    """A parameter of fixed length, ``pulse.Length[kind, n]``: *n*
+    measurements read as bits for ``pulse.Bits``, else *n* numbers."""
     if typing.get_origin(t) is not typing.Annotated:
         _bad_parameter(where, name, t)
     base, meta = t.__origin__, t.__metadata__
@@ -364,19 +353,11 @@ def _stated_parameter(where: str, name: str, t: Any) -> ValueType:
                 " pulse.Bits and lists"
             )
         _bad_parameter(where, name, base)
-    spelled = _spell_length(kind, meta)
-    n, numbers = _length_items(where, spelled, kind, meta, None)
-    if n is None:
-        raise InvalidTypeError(
-            f"{where}: {spelled} gives no length; state one, such as"
-            f" pulse.Length[{_LIST_NAME[kind]}, 8]"
-        )
-    return _sized(kind, n, measured=not numbers)
+    return _sized(kind, _length(where, kind, meta, "parameter"), measured=False)
 
 
-def _stated_result(where: str, t: Any, list_params: Mapping[str, Any]) -> Any:
-    """A list result of stated length: ``pulse.Length[kind, n]``, or
-    ``pulse.Length[kind, "x"]`` for list parameter ``x``'s length."""
+def _stated_result(where: str, t: Any) -> ValueType:
+    """A list result of fixed length, ``pulse.Length[kind, n]``."""
     if typing.get_origin(t) is not typing.Annotated:
         _bad_result(where, t)
     base, meta = t.__origin__, t.__metadata__
@@ -388,56 +369,27 @@ def _stated_result(where: str, t: Any, list_params: Mapping[str, Any]) -> Any:
                 " and lists"
             )
         _bad_result(where, base)
+    return _sized(kind, _length(where, kind, meta, "result"), measured=False)
+
+
+def _length(where: str, kind: int, meta: tuple[Any, ...], what: str) -> int:
+    """The one positive whole number a ``pulse.Length`` states."""
     spelled = _spell_length(kind, meta)
-    n, _ = _length_items(where, spelled, kind, meta, list_params)
-    if n is None:
+    if len(meta) != 1:
         raise InvalidTypeError(
-            f"{where}: {spelled} gives no length; state one, such as"
-            f' pulse.Length[{_LIST_NAME[kind]}, 8] or pulse.Length[{_LIST_NAME[kind]}, "x"]'
-            " for list parameter x's length"
+            f"{where}: {spelled}: state one length, such as pulse.Length[{_LIST_NAME[kind]}, 8]"
         )
-    if n.__class__ is str:
-        source = list_params[n]
-        if source.__class__ is int:
-            return _Rule(kind, n)
-        return _sized(kind, source.count, measured=False)
-    return _sized(kind, n, measured=False)
-
-
-def _length_items(
-    where: str, spelled: str, kind: int, meta: tuple[Any, ...], list_params: Any
-) -> tuple[Any, bool]:
-    """What a ``pulse.Length`` states: its length (a parameter's name for
-    a result, *list_params* not None) and whether ``"numbers"`` is given."""
-    n: Any = None
-    numbers = False
-    for item in meta:
-        if item.__class__ is str and (list_params is None or item not in list_params):
-            if item != _NUMBERS:
-                if list_params is None:
-                    raise InvalidTypeError(
-                        f"{where}: {spelled}: a parameter's length is a number; a name states"
-                        " a result's length"
-                    )
-                import difflib
-
-                close = difflib.get_close_matches(item, list(list_params), n=1)
-                hint = f" (did you mean {close[0]!r}?)" if close else ""
-                raise InvalidTypeError(
-                    f"{where}: {spelled} names {item}, which isn't a list parameter{hint}"
-                )
-            if kind != _KIND_INTS:
-                raise InvalidTypeError(f'{where}: {spelled}: "numbers" applies to list[int] only')
-            numbers = True
-            continue
-        if item.__class__ is not str and (item.__class__ is not int or item <= 0):
-            raise InvalidTypeError(
-                f"{where}: {spelled}: a length is a positive whole number, got {item!r}"
-            )
-        if n is not None:
-            raise InvalidTypeError(f"{where}: {spelled}: state one length")
-        n = item
-    return n, numbers
+    n = meta[0]
+    if n.__class__ is int and n > 0:
+        return int(n)
+    tail = ""
+    if n.__class__ is str and what == "result":
+        tail = f"; a list result without one takes its length from the body: -> {_LIST_NAME[kind]}"
+    elif n.__class__ is str and what == "parameter":
+        tail = f"; a list parameter without one takes its length from the call: {_LIST_NAME[kind]}"
+    raise InvalidTypeError(
+        f"{where}: {spelled}: a length is a positive whole number, got {n!r}{tail}"
+    )
 
 
 _SPELLED = {
@@ -445,7 +397,7 @@ _SPELLED = {
     "levels": ("list[int]", "", "measurement"),
     "iq": ("list[complex]", "", "IQ point"),
     "f64": ("list[float]", "", "number"),
-    "i32": ("list[int]", ', "numbers"', "number"),
+    "i32": ("list[int]", "", "number"),
 }
 
 
@@ -862,7 +814,7 @@ def _result_specs(
     if not rules:
         return shape.results
     out = list(shape.results)
-    inferred = [(i, _LIST_NAME[r.kind]) for i, r in rules if r.source is None]
+    inferred = [(i, _LIST_NAME[r.kind]) for i, r in rules]
     found: dict[int, int] = {}
     if inferred:
         known = function._length_rules
@@ -881,7 +833,7 @@ def _result_specs(
         except TypeError as error:
             raise InvalidTypeError(f"{error} {_length_advice(function, shape, inferred)}") from None
     for i, r in rules:
-        n = lengths[r.source] if r.source is not None else found[i]
+        n = found[i]
         if n <= 0:
             where = f"{function.name} at {text}" if text else function.name
             if function.implementation is None:
@@ -899,22 +851,17 @@ def _length_advice(
 ) -> str:
     """How to give a list result a length the compiler can see."""
     kind = _LIST_NAME[shape.results[inferred[0][0]].kind]
-    plan = zip(shape.names, shape.plan, strict=True)
-    inputs = [n for n, p in plan if p.__class__ is int or not p.is_scalar]
+    fixed = f"give it a fixed size: -> pulse.Length[{kind}, 8]"
     if function.implementation is None:
-        stated = f"state it in the signature: -> pulse.Length[{kind}, n]"
+        plan = zip(shape.names, shape.plan, strict=True)
+        inputs = [n for n, p in plan if p.__class__ is int or not p.is_scalar]
         if not inputs:
-            return f"An external's body is a placeholder; {stated}."
+            return f"An external's body is a placeholder; {fixed}."
         return (
             f"An external's body is a placeholder: return {inputs[0]}, or a slice such as"
-            f" {inputs[0]}[:2], for a length the input gives, or {stated}."
+            f" {inputs[0]}[:2], for a length the input gives, or {fixed}."
         )
-    if function.custom_id or not inputs:
-        return f"State it in the signature: -> pulse.Length[{kind}, n]."
-    return (
-        "Return a list whose length the inputs decide instead, such as a fixed maximum"
-        f" ([0] * len({inputs[0]})) and a count of the items used."
-    )
+    return f"Write it in plain Python, or {fixed}."
 
 
 # ── Versions ─────────────────────────────────────────────────────────────────
@@ -1139,10 +1086,9 @@ def function(implementation: Callable[..., Any] | None = None, /, **options: Any
     of them or ``None``; a list result's length is inferred from the body.
 
     ``pulse.Length`` states a fixed length where one wire schema is wanted,
-    as with ``id=``: ``pulse.Length[pulse.Bits, 8]`` takes eight bits,
-    ``pulse.Length[list[int], 8, "numbers"]`` eight numbers rather than
-    measured levels, and a result ``-> pulse.Length[pulse.Bits, "outcomes"]``
-    has the length of list parameter ``outcomes``.
+    as with ``id=``: ``pulse.Length[pulse.Bits, 8]`` takes eight measurements
+    read as bits and ``pulse.Length[list[int], 8]`` eight numbers; a result
+    ``-> pulse.Length[pulse.Bits, 2]`` answers two bits.
 
     Keyword options: ``max_latency_ns`` (required), ``min_latency_ns``,
     ``nominal_latency_ns``, ``latency_mode`` (``"bounded"``, ``"timeout"``

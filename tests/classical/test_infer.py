@@ -424,8 +424,7 @@ def test_a_number_parameter_is_known_only_at_run_time():
     message = _rejected(_head, "`k` is a number parameter, known only when the function runs", x=5)
     assert f"(line {_line(_head, 'return')})" in message
     assert message.endswith(
-        "Return a list whose length the inputs decide instead, such as a fixed maximum"
-        " ([0] * len(x)) and a count of the items used."
+        "Write it in plain Python, or give it a fixed size: -> pulse.Length[pulse.Bits, 8]."
     )
 
 

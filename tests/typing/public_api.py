@@ -91,7 +91,7 @@ def decode(syndrome: Bits) -> bool:
 
 
 @pulse.classical(max_latency_ns=10)
-def _scale(x: list[float], k: float) -> tuple[pulse.Length[list[float], "x"], float]:  # noqa: F821, UP037
+def _scale(x: list[float], k: float) -> tuple[list[float], float]:
     return [k * v for v in x], k
 
 
@@ -103,7 +103,7 @@ def table(index: pulse.Length[Bits, 2]) -> float:
 @pulse.classical.external(max_latency_ns=10, id=0x51)
 def decode_surface(
     syndrome: pulse.Length[pulse.Bits, 8],
-    counts: pulse.Length[list[int], 2, "numbers"],  # noqa: F821, UP037
+    counts: pulse.Length[list[int], 2],
 ) -> tuple[float, pulse.Length[pulse.Bits, 2]]:
     return (float(), pulse.Bits())
 

@@ -99,18 +99,17 @@ size is wanted, the signature states it with ``pulse.Length``
    @pulse.classical(max_latency_ns=900, link="gpu", id=0x51)
    def frozen(
        syndromes: pulse.Length[pulse.Bits, 24],
-       counts: pulse.Length[list[int], 4, "numbers"],
+       counts: pulse.Length[list[int], 4],
    ) -> pulse.Length[pulse.Bits, 4]:
        return [syndromes[i] ^ syndromes[i + 1] for i in range(4)]
 
 ``pulse.Length[pulse.Bits, 24]`` takes 24 bits, and a call with another
 length is a compile error that names the size: ``frozen.submit():
-'syndromes' takes 24 bits (pulse.Length[pulse.Bits, 24]), got 23``. A
-``list[int]`` takes measured levels; ``"numbers"`` after its length makes it
-numbers. A result's length is a number, or a list parameter's name, as in
-``-> pulse.Length[pulse.Bits, "outcomes"]`` for the length of input
-``outcomes``. Functions whose lengths come from their calls need none of
-this.
+'syndromes' takes 24 bits (pulse.Length[pulse.Bits, 24]), got 23``. In a
+fixed-size signature ``pulse.Bits`` takes measurement outcomes and
+``list[int]`` plain numbers. A length is a positive whole number; a list
+result without one takes its length from the body, per version. Functions
+whose lengths come from their calls need none of this.
 
 The hints are read when a program that calls the function is first
 compiled, and a mistake in them is raised there, naming the function. The
@@ -623,9 +622,3 @@ A list is invariant, so a variable typed as a list of another item type
 (``list[bool]``, say) is flagged where ``pulse.Bits`` is expected, while a
 list written in the call, ``decode.submit([m0, m1])``, is not.
 
-**Why does ruff flag** ``pulse.Length[pulse.Bits, "outcomes"]``**?** Ruff
-reads one file at a time, so it doesn't see that ``pulse.Length`` is
-``typing.Annotated`` and takes a quoted name or ``"numbers"`` for a type
-(F821, undefined name). mypy and pyright follow the import and accept it.
-Add ``# noqa: F821`` to the line. Don't let ruff's UP037 fix remove the
-quotes: the name must stay a string.
