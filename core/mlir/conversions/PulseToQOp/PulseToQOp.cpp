@@ -911,14 +911,19 @@ struct PulseToQOpPass
     };
     // Residual ZZ of rate zeta, E11 - E10 - E01 + E00 = zeta, as the
     // cross-Kerr term zeta n_a n_b, which leaves the frequencies with the
-    // other qudit in |0> unchanged.
+    // other qudit in |0> unchanged. A density-density coupling V n_a n_b is
+    // the same operator, and does not turn in the qudits' frames.
     auto crossKerr = [&](int64_t a, int64_t b, double zeta) {
       allProducts.push_back(ops.product({{a, "number"}, {b, "number"}}, zeta));
     };
+    // Each kind of coupling has its own pair of attributes.
     if (failed(appendInteractions("pulse.coupling_pairs",
                                   "pulse.coupling_strength_hz", exchange)) ||
         failed(appendInteractions("pulse.crosstalk_pairs",
-                                  "pulse.crosstalk_strength_hz", crossKerr)))
+                                  "pulse.crosstalk_strength_hz", crossKerr)) ||
+        failed(appendInteractions("pulse.density_density_pairs",
+                                  "pulse.density_density_strength_hz",
+                                  crossKerr)))
       return signalPassFailure();
 
     // A multilevel transmon's anharmonicity, (alpha / 2) n (n - 1).

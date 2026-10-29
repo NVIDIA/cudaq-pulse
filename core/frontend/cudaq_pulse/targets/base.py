@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
-from .._errors import InvalidValueError, NotFoundError
+from .._errors import InvalidValueError, NotFoundError, UnsupportedError
 
 _SECONDS_PER_NANOSECOND = 1.0e-9
 _NANOSECONDS_PER_MICROSECOND = 1.0e3
@@ -90,6 +90,18 @@ class Coupling:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "gate_params", MappingProxyType(dict(self.gate_params)))
+
+
+# The interactions a coupling can stand for: exchange g (a^dagger b + a b^dagger)
+# and density-density V n_a n_b. A Coupling without a kind is an exchange
+# coupling.
+_EXCHANGE = "exchange"
+_DENSITY_DENSITY = "density_density"
+
+
+def _coupling_kind(coupling: Any) -> str:
+    """The kind of interaction *coupling* stands for."""
+    return str(getattr(coupling, "kind", _EXCHANGE))
 
 
 @dataclass(frozen=True)
@@ -248,6 +260,12 @@ class TargetDescription:
             )
         for c in self.couplings:
             g = c.coupling_strength_hz * 2.0 * math.pi * _SECONDS_PER_NANOSECOND
+            kind = _coupling_kind(c)
+            if kind != _EXCHANGE:
+                raise UnsupportedError(
+                    f"the coupling of qubits {c.qubit_a} and {c.qubit_b} is a {kind} "
+                    "coupling; the two-level terms model exchange couplings only"
+                )
             terms.append(
                 {
                     "kind": "coupling_xx",

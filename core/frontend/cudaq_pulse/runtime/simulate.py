@@ -38,6 +38,7 @@ import numpy.typing as npt
 from .._errors import ExecutionError, InvalidTypeError, InvalidValueError, UnsupportedError
 from .._native._cudaq_pulse_native import evaluate_callback
 from ..compiler import ScheduledEvent
+from ..targets.base import _EXCHANGE, _coupling_kind
 from . import _propagate
 from ._attributes import _VALID_INTEGRATORS, _f64, _level_attributes, _target_attributes
 
@@ -266,13 +267,8 @@ def _simulate_lowered(
             f"({', '.join(lowered.parameters)}); lower it with their values first"
         )
     target = lowered.target.target if plant is None else _check_plant(lowered, plant)
-    architecture = getattr(target, "architecture", None)
-    if architecture != "transmon":
-        raise UnsupportedError(
-            f"the simulator has a transmon model; this system ({architecture}) has no "
-            "simulation model. Export and hardware runs work."
-        )
-    return _simulate_compiled(
+    model = _simulation_model(target)
+    return model(
         lowered,
         target,
         levels=levels,
@@ -294,6 +290,19 @@ def _simulate_lowered(
     )
 
 
+def _simulation_model(target: Any) -> Callable[..., SimulationResult]:
+    """The simulation model of *target*'s architecture, the one place a
+    system is matched to a model."""
+    architecture = getattr(target, "architecture", None)
+    model = _SIMULATION_MODELS.get(architecture) if isinstance(architecture, str) else None
+    if model is None:
+        raise UnsupportedError(
+            f"the simulator has a transmon model; this system ({architecture}) has no "
+            "simulation model. Export and hardware runs work."
+        )
+    return model
+
+
 def _check_plant(lowered: Lowered, plant: Any) -> Any:
     """*plant*, a target description that defines every qudit of *lowered*."""
     from ..targets import TargetDescription
@@ -312,15 +321,15 @@ _STEPS_PER_COUPLING_PERIOD = 20
 
 def _default_step(lowered: Lowered) -> float:
     """The integration step: 0.05 ns, or 20 steps per period of the fastest
-    coupling between the program's qudits, which turns at their detuning,
-    rounded down to a whole fraction of a clock cycle."""
+    exchange coupling between the program's qudits, which turns at their
+    detuning, rounded down to a whole fraction of a clock cycle."""
     target = lowered.target.target
     active = set(lowered.qudits)
     detuning = max(
         (
             abs(target.qubits[c.qubit_a].frequency_hz - target.qubits[c.qubit_b].frequency_hz)
             for c in target.couplings
-            if c.qubit_a in active and c.qubit_b in active
+            if c.qubit_a in active and c.qubit_b in active and _coupling_kind(c) == _EXCHANGE
         ),
         default=0.0,
     )
@@ -519,6 +528,13 @@ def _simulate_compiled(
         times_ns=(t_start, t_end),
         _states=[leaf for leaf, _, _ in leaves],
     )
+
+
+# Each architecture's simulation model, by the system's ``architecture``.
+# Only these lower a system's Hamiltonian; every other system is refused.
+_SIMULATION_MODELS: dict[str, Callable[..., SimulationResult]] = {
+    "transmon": _simulate_compiled,
+}
 
 
 def _simulate_tree(

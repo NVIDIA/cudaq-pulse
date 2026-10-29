@@ -38,7 +38,7 @@ from ._errors import (
     _ranges,
 )
 from .targets._registry import NoTargetError, UnknownTargetError
-from .targets.base import TargetDescription
+from .targets.base import _EXCHANGE, TargetDescription, _coupling_kind
 
 __all__ = [
     "Device",
@@ -95,8 +95,11 @@ def _fingerprint(target: TargetDescription, layout: tuple[int, ...]) -> str:
         )
         for q in sorted(target.qubits.values(), key=lambda q: q.index)
     ]
+    # An exchange coupling adds no kind, so exchange-only devices keep their
+    # fingerprints.
     couplings = [
         (c.qubit_a, c.qubit_b, c.coupling_strength_hz, c.gate_type, sorted(c.gate_params.items()))
+        + (() if _coupling_kind(c) == _EXCHANGE else (_coupling_kind(c),))
         for c in target.couplings
     ]
     crosstalk = [(x.qubit_a, x.qubit_b, x.static_zz_hz) for x in target.crosstalk]

@@ -13,7 +13,11 @@ import math
 import struct
 from typing import Any
 
-from .._errors import InvalidValueError
+from .._errors import InvalidValueError, UnsupportedError
+from ..targets.base import _DENSITY_DENSITY, _EXCHANGE, _coupling_kind
+
+# The kinds of coupling the lowering models, each with its own attributes.
+_MODELED_COUPLINGS = (_EXCHANGE, _DENSITY_DENSITY)
 
 _VALID_INTEGRATORS = frozenset(
     {
@@ -111,15 +115,28 @@ def _target_attributes(
     if any(thermal):
         attrs.append(f"pulse.thermal_populations = {_f64_array(thermal)}")
     active = set(qubits)
-    for kind, entries, strength in (
-        ("coupling", target.couplings, "coupling_strength_hz"),
-        ("crosstalk", target.crosstalk, "static_zz_hz"),
+    couplings: dict[str, list[Any]] = {kind: [] for kind in _MODELED_COUPLINGS}
+    for c in target.couplings:
+        if c.qubit_a in active and c.qubit_b in active:
+            kind = _coupling_kind(c)
+            if kind not in couplings:
+                raise UnsupportedError(
+                    f"the coupling of qudits {c.qubit_a} and {c.qubit_b} is a {kind} "
+                    "coupling, which the simulator does not model; it models "
+                    + " and ".join(_MODELED_COUPLINGS)
+                    + " couplings"
+                )
+            couplings[kind].append(c)
+    crosstalk = [e for e in target.crosstalk if e.qubit_a in active and e.qubit_b in active]
+    for name, entries, strength in (
+        ("coupling", couplings[_EXCHANGE], "coupling_strength_hz"),
+        ("crosstalk", crosstalk, "static_zz_hz"),
+        ("density_density", couplings[_DENSITY_DENSITY], "coupling_strength_hz"),
     ):
-        entries = [e for e in entries if e.qubit_a in active and e.qubit_b in active]
         if entries:
             pairs = ", ".join(f"{e.qubit_a}, {e.qubit_b}" for e in entries)
-            attrs.append(f"pulse.{kind}_pairs = array<i64: {pairs}>")
+            attrs.append(f"pulse.{name}_pairs = array<i64: {pairs}>")
             attrs.append(
-                f"pulse.{kind}_strength_hz = " + _f64_array([getattr(e, strength) for e in entries])
+                f"pulse.{name}_strength_hz = " + _f64_array([getattr(e, strength) for e in entries])
             )
     return "{" + ", ".join(attrs) + "}"
