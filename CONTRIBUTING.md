@@ -147,7 +147,10 @@ cudaq-pulse's own C++; the prebuilt MLIR toolchain stays uninstrumented. The
 `sanitizers` workflow builds both variants on Linux. The address and
 undefined-behavior build runs `check-pulse-mlir`, `check-pulse-runtime` and
 the Python suite; the thread build runs `check-pulse-runtime`, whose GPU
-runtime host test evolves runs concurrently. For the Python suite, preload the
+runtime host test evolves runs concurrently. Under address and undefined
+behavior, `check-pulse-mlir` and `check-pulse-runtime` block a merge. The
+Python suite there and the thread build are informational until the MLIR
+toolchain is built with the sanitizers too. For the Python suite, preload the
 runtimes into the uninstrumented interpreter:
 
 ```bash

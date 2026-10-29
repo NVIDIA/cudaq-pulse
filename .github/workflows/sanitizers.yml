@@ -10,11 +10,14 @@
 # the last against its host fake) built with sanitizers. The prebuilt MLIR
 # toolchain is not instrumented. address+undefined runs the lit suite, the
 # runtime host test and the Python suite; thread runs the runtime host test,
-# whose runs evolve concurrently. The job is informational: it does not
-# block a merge.
+# whose runs evolve concurrently. Under address+undefined, lit and the
+# runtime host test block a merge; the Python suite, which runs the
+# uninstrumented MLIR through the extension, is informational, and so is the
+# thread row.
 #
-# TODO: build the MLIR toolchain with ASan too, and drop the options below
-# that only make room for the uninstrumented one.
+# TODO: build the MLIR toolchain with ASan too, make the Python suite
+# blocking, and drop the options below that only make room for the
+# uninstrumented one.
 
 name: sanitizers
 
@@ -36,7 +39,7 @@ jobs:
     name: sanitizers (${{ matrix.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-    continue-on-error: true
+    continue-on-error: ${{ matrix.sanitizers == 'thread' }}
     strategy:
       fail-fast: false
       matrix:
@@ -90,6 +93,7 @@ jobs:
       # reaches the log.
       - name: Python suite
         if: matrix.sanitizers != 'thread'
+        continue-on-error: true
         run: |
           uv run --no-sync cmake --build build/san --target pulse
           LD_PRELOAD="$(gcc -print-file-name=libasan.so):$(gcc -print-file-name=libubsan.so)" \
