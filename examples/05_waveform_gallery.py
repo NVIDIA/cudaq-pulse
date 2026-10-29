@@ -103,8 +103,8 @@ def waveform_algebra(qubit):
 # ── 3. Composing complex envelopes ───────────────────────────────────────────
 
 
-DERIVATIVE_DURATION = 20 * pulse.ns
-DERIVATIVE_SIGMA = 5 * pulse.ns
+derivative_duration = 20 * pulse.ns
+derivative_sigma = 5 * pulse.ns
 DERIVATIVE_AMPLITUDE = 0.3
 CLOCK_GHZ = 2.0  # the transmon device's program clock; one sample per cycle
 
@@ -121,7 +121,7 @@ def gaussian_derivative_samples(duration, amplitude, sigma):
 
 
 DERIVATIVE = gaussian_derivative_samples(
-    DERIVATIVE_DURATION, DERIVATIVE_AMPLITUDE, DERIVATIVE_SIGMA
+    derivative_duration, DERIVATIVE_AMPLITUDE, derivative_sigma
 )
 
 
@@ -136,7 +136,7 @@ def derivative_pulse(qubit, beta: float):
     """
     drive_line = get_drive_line(qubit)
 
-    base = gaussian(DERIVATIVE_DURATION, DERIVATIVE_AMPLITUDE, DERIVATIVE_SIGMA)
+    base = gaussian(derivative_duration, DERIVATIVE_AMPLITUDE, derivative_sigma)
     correction = wf_scale(custom_samples(DERIVATIVE), beta)
     final_envelope = wf_add(base, correction)
 

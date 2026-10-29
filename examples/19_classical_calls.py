@@ -102,8 +102,8 @@ def decoded_feed_forward(qubit):
 
 # The next wait is C_WAIT times the current T1 estimate, within the bounds.
 C_WAIT = 1.0
-WAIT_BOUNDS = (100 * pulse.ns, 20 * pulse.us)
-WAIT_BOUNDS_NS = tuple(bound / pulse.ns for bound in WAIT_BOUNDS)
+wait_bounds = (100 * pulse.ns, 20 * pulse.us)
+wait_bounds_ns = tuple(bound / pulse.ns for bound in wait_bounds)
 
 
 @pulse.classical(
@@ -127,7 +127,7 @@ def update_t1(survived, alpha, beta, last_wait_ns):
     else:
         alpha = alpha + 1.0
     t1_estimate_ns = beta / alpha
-    lo, hi = WAIT_BOUNDS_NS
+    lo, hi = wait_bounds_ns
     next_wait_ns = min(max(C_WAIT * t1_estimate_ns, lo), hi)
     return alpha, beta, next_wait_ns
 
@@ -151,7 +151,7 @@ def track_t1(qubit, rounds: int, alpha: float, beta: float, first_wait):
         if m:  # active reset
             drive(drive_line, pi_pulse)
         drive(drive_line, pi_pulse)
-        wait(drive_line, tau_ns * pulse.ns, bounds=WAIT_BOUNDS)
+        wait(drive_line, tau_ns * pulse.ns, bounds=wait_bounds)
     sync(drive_line, readout_line)
     readout(readout_line, readout_pulse)
 

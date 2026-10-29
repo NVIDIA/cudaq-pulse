@@ -43,15 +43,15 @@ pulse_cal = {
     "pi_amp": math.pi / 20,
     "readout_duration": 200 * pulse.ns,
 }
-PULSE_NS = pulse_cal["pi_duration"] / pulse.ns
+pi_duration_ns = pulse_cal["pi_duration"] / pulse.ns
 MACHINE = MachineModel(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
 
 # ── 1. Frequency binary search in one shot ──────────────────────────────────
 
 SIGMA0_HZ = 2e6
 WAIT0_NS, PHASE0 = cal.ramsey_setting(0.0, SIGMA0_HZ)
-BOUNDS = (10 * pulse.ns, 20 * pulse.us)
-BOUNDS_NS = tuple(bound / pulse.ns for bound in BOUNDS)
+wait_bounds = (10 * pulse.ns, 20 * pulse.us)
+wait_bounds_ns = tuple(bound / pulse.ns for bound in wait_bounds)
 
 
 @pulse.classical(
@@ -65,10 +65,10 @@ def frequency_estimator(bit, mean_hz, sigma_hz, gap_ns, phase):
     # The Ramsey wait counts from the first pi/2 pulse's centre to the
     # second's; the gap between the pulses is a pulse shorter.
     mean_hz, sigma_hz = cal.frequency_update(
-        mean_hz, sigma_hz, int(bit[0]), gap_ns + PULSE_NS, phase
+        mean_hz, sigma_hz, int(bit[0]), gap_ns + pi_duration_ns, phase
     )
     wait_ns, phase = cal.ramsey_setting(mean_hz, sigma_hz)
-    gap_ns = min(max(wait_ns - PULSE_NS, BOUNDS_NS[0]), BOUNDS_NS[1])
+    gap_ns = min(max(wait_ns - pi_duration_ns, wait_bounds_ns[0]), wait_bounds_ns[1])
     return mean_hz, sigma_hz, gap_ns, phase
 
 
@@ -80,7 +80,7 @@ def binary_search(q, rounds: int):
     half_pi_pulse = square(pulse_cal["pi_duration"], pulse_cal["pi_amp"] / 2)
     readout_pulse = square(pulse_cal["readout_duration"], 0.05)
     mean, sigma = 0.0, SIGMA0_HZ
-    gap_ns = WAIT0_NS - PULSE_NS
+    gap_ns = WAIT0_NS - pi_duration_ns
     phase = PHASE0
     # A Ramsey shot: pi/2, wait, pi/2 with its tone shifted by pi - phase.
     drive(d, half_pi_pulse)
@@ -97,7 +97,7 @@ def binary_search(q, rounds: int):
         if m:  # active reset
             drive(d, pi_pulse)
         drive(d, half_pi_pulse)
-        wait(d, gap_ns * pulse.ns, bounds=BOUNDS)
+        wait(d, gap_ns * pulse.ns, bounds=wait_bounds)
         shift_phase(d.tone, math.pi - phase)
         drive(d, half_pi_pulse)
     sync(d, r)

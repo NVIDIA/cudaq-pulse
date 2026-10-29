@@ -112,7 +112,7 @@ def att_paper(q):
 
 @pulse.kernel
 def step_assignment(q):
-    assignment(q, PI_AMP, P["SETTLE"])
+    assignment(q, PI_AMP, P["settle_time"])
 
 
 @pulse.kernel
@@ -137,7 +137,7 @@ def step_decay(q):
 
 @pulse.kernel
 def step_tracked(q):
-    tracked_t1(q, PI_AMP, 3.0, 3.0 * 20_000.0 * CLOCK, 0.03, 0.02, P["SETTLE"])
+    tracked_t1(q, PI_AMP, 3.0, 3.0 * 20_000.0 * CLOCK, 0.03, 0.02, P["settle_time"])
 
 
 def _shares(result, shots):
