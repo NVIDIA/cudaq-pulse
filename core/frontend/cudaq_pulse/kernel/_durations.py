@@ -20,6 +20,8 @@ cycles: one multiply by a constant the compile fixes.
 
 from __future__ import annotations
 
+import numbers
+import operator
 from typing import Any
 
 from .._units import Time, UnitError, in_cycles
@@ -51,6 +53,16 @@ TIMES: dict[str, tuple[tuple[str, bool, str], ...]] = {
         ("duration", True, "wait(line, {})"),
         ("bounds", True, "wait(line, duration, bounds=(0, {}))"),
     ),
+}
+
+
+# The fewest cycles of each whole-cycle time: a waveform plays for at least
+# one cycle; a wait, a flat top and a bound may be 0.
+LEAST: dict[tuple[str, str], int] = {
+    (fname, name): int(name == "duration" and fname != "wait")
+    for fname, spec in TIMES.items()
+    for name, whole, _ in spec
+    if whole
 }
 
 
@@ -138,19 +150,37 @@ def in_program_cycles(fname: str, attrs: dict[str, Any], clock_ghz: float) -> No
         n = value
         if n.__class__ is not int:
             n = attrs[name] = cycles(fname, name, value, whole, call, clock_ghz)
-            if n.__class__ is not int:
+            if not whole:
                 continue
-        if whole and not 0 <= n <= MAX_CYCLES:
+            if n.__class__ is Cycles:
+                # A float argument the kernel is compiled for, as a duration.
+                if not LEAST[fname, name] <= n <= MAX_CYCLES:
+                    raise _out_of_range(fname, name, value, n)
+                continue
+            if n.__class__ is bool or not isinstance(n, numbers.Integral):
+                continue
+            # An integer of another type, such as numpy's: its int value.
+            n = attrs[name] = operator.index(n)
+        if whole and not LEAST[fname, name] <= n <= MAX_CYCLES:
             raise _out_of_range(fname, name, value, n)
 
 
-def _out_of_range(fname: str, what: str, value: Any, n: int) -> CompilationError:
-    """The error for *value*, a duration of *n* whole cycles outside 0 to MAX_CYCLES."""
-    given = f"{what} {value} is {n} cycles" if value.__class__ is Time else f"{what} is {n} cycles"
-    if n < 0:
-        rule = "a wait cannot be negative" if fname == "wait" else "a duration cannot be negative"
-    else:
+def _out_of_range(fname: str, what: str, value: Any, n: float) -> CompilationError:
+    """The error for *value*, a duration of *n* cycles outside LEAST to MAX_CYCLES."""
+    shown = f"{n:g}" if n.__class__ is Cycles else f"{n}"
+    given = (
+        f"{what} {value} is {shown} cycles"
+        if value.__class__ is Time
+        else f"{what} is {shown} cycles"
+    )
+    if n > MAX_CYCLES:
         rule = "a duration is at most 2**53 cycles"
+    elif LEAST[fname, what]:
+        rule = "a waveform lasts at least 1 cycle"
+    elif fname == "wait":
+        rule = "a wait cannot be negative"
+    else:
+        rule = "a duration cannot be negative"
     return CompilationError(f"{fname}(): {given}; {rule}")
 
 

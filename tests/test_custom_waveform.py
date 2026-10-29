@@ -169,7 +169,11 @@ def test_an_unusable_envelope_is_rejected_while_tracing(qubit, envelope, message
 
 
 @pytest.mark.parametrize(
-    "duration, message", [(0, "must be positive"), (2.5, r"duration is a float \(2.5\)")]
+    "duration, message",
+    [
+        (0, "duration is 0 cycles; a waveform lasts at least 1 cycle"),
+        (2.5, r"duration is a float \(2.5\)"),
+    ],
 )
 def test_an_unusable_duration_is_rejected(qubit, duration, message):
     @pulse.kernel

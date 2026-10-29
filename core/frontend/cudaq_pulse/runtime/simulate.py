@@ -35,7 +35,13 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import numpy.typing as npt
 
-from .._errors import ExecutionError, InvalidTypeError, InvalidValueError, UnsupportedError
+from .._errors import (
+    ExecutionError,
+    InvalidTypeError,
+    InvalidValueError,
+    UnsupportedError,
+    _positive_int,
+)
 from .._native._cudaq_pulse_native import evaluate_callback
 from ..compiler import ScheduledEvent
 from . import _propagate
@@ -132,7 +138,8 @@ def simulate(
         0). T1 then relaxes it back there, with downward and upward rates
         (1 - p) / T1 and p / T1, whatever the initial state.
     shots:
-        Sample this many per-shot measurement records.
+        Sample this many per-shot measurement records: a positive int.
+        ``None`` (the default) samples none.
     seed:
         Seed for sampling the records.
     backend:
@@ -237,6 +244,8 @@ def _simulate_lowered(
     plant: Any = None,
     paths: str = "all",
 ) -> SimulationResult:
+    if shots is not None and (shots.__class__ is not int or shots < 1):
+        shots = _positive_int("shots", shots)
     if paths not in ("all", "sampled"):
         raise InvalidValueError(f"unknown paths {paths!r}; choose 'all' or 'sampled'")
     if paths == "sampled" and not shots:
@@ -253,8 +262,6 @@ def _simulate_lowered(
         dt_ns = _default_step(lowered)
     elif dt_ns <= 0:
         raise InvalidValueError("dt_ns must be positive")
-    if shots is not None and shots < 0:
-        raise InvalidValueError("shots must not be negative")
     if integrator not in _VALID_INTEGRATORS:
         raise InvalidValueError(
             f"Unknown integrator {integrator!r}. "

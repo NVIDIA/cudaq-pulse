@@ -37,7 +37,7 @@ from typing import Any
 import numpy as np
 
 from .. import _clocks
-from .._errors import NotFoundError, UnsupportedError, _CallTimeoutError
+from .._errors import NotFoundError, UnsupportedError, _CallTimeoutError, _positive_int
 from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
 from . import ClassicalFunction, Link, wire
 
@@ -375,8 +375,10 @@ def emulate(
     at those levels from the target's dispersive readout model
     (``IQModel``). The answer's latency is the request's
     transport delay, plus the service's time (``"measured"`` wall-clock, or
-    ``"none"``), plus the answer's transport delay.
+    ``"none"``), plus the answer's transport delay. *shots* is a positive int.
     """
+    if shots.__class__ is not int or shots < 1:
+        shots = _positive_int("shots", shots)
     functions = tuple(lowered.classical)
     by_name = {fn.name: fn for fn in functions}
     chosen = {fn.name: fn.implementation for fn in functions if fn.implementation is not None}

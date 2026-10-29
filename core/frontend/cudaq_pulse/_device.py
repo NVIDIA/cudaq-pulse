@@ -35,6 +35,7 @@ from ._errors import (
     PulseError,
     _closest,
     _count,
+    _QuditIndexError,
     _ranges,
 )
 from .targets._registry import NoTargetError, UnknownTargetError
@@ -162,11 +163,14 @@ class Register(Sequence[Qudit]):
     def __getitem__(self, index: slice | Sequence[int]) -> Register: ...
 
     def __getitem__(self, index: Any) -> Qudit | Register:
-        if isinstance(index, slice):
-            return Register(self._qudits[index])
-        if isinstance(index, Sequence) and not isinstance(index, str):
-            return Register([self._qudits[i] for i in index])
-        qudit: Qudit = self._qudits[index]
+        try:
+            if isinstance(index, slice):
+                return Register(self._qudits[index])
+            if isinstance(index, Sequence) and not isinstance(index, str):
+                return Register([self._qudits[i] for i in index])
+            qudit: Qudit = self._qudits[index]
+        except IndexError:
+            raise _out_of_range(index, len(self._qudits), "the register") from None
         return qudit
 
     def __iter__(self) -> Iterator[Qudit]:
@@ -202,8 +206,26 @@ class _Handles:
     def __getitem__(self, index: slice | Sequence[int]) -> Register: ...
 
     def __getitem__(self, index: Any) -> Qudit | Register:
-        handles: Qudit | Register = self._all[index]
+        try:
+            handles: Qudit | Register = self._all[index]
+        except IndexError:
+            qudits = self._all._qudits
+            owner = f"device {qudits[0].device.name!r}" if qudits else "the device"
+            raise _out_of_range(index, len(qudits), owner) from None
         return handles
+
+
+def _out_of_range(index: Any, n: int, owner: str) -> _QuditIndexError:
+    """The error for *index*, which names a qudit past the *n* of *owner*."""
+    wrong = index
+    if isinstance(index, Sequence) and not isinstance(index, str):
+        wrong = next((i for i in index if isinstance(i, int) and not -n <= i < n), index)
+    if n == 0:
+        return _QuditIndexError(f"qudit index {wrong!r} is out of range: {owner} has no qudits")
+    return _QuditIndexError(
+        f"qudit index {wrong!r} is out of range: {owner} has {_count(n, 'qudit')}, "
+        f"indexed 0 to {n - 1} (or -{n} to -1)"
+    )
 
 
 class Device:

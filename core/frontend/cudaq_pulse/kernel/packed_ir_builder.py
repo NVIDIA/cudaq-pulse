@@ -111,8 +111,27 @@ _WF_MAP = {
     "gaussian_square": _WF_GAUSS_SQUARE,
 }
 
+# The name of each waveform and of its slots, as the kernel writes them.
+_WF_FIELDS = {
+    _WF_GAUSSIAN: ("gaussian", ("duration", "amplitude", "sigma")),
+    _WF_DRAG: ("drag", ("duration", "amplitude", "sigma", "beta")),
+    _WF_COSINE: ("cosine", ("duration", "amplitude")),
+    _WF_TANH_RAMP: ("tanh_ramp", ("duration", "amplitude", "sigma")),
+    _WF_GAUSS_SQUARE: ("gaussian_square", ("duration", "amplitude", "sigma", "width")),
+}
+
 _UNSCHEDULED = -1
 _ZERO = (0,)
+
+
+def _real(value: Any, description: str) -> float:
+    """*value* as a float, or the error naming *description* and what it got."""
+    try:
+        if isinstance(value, (str, bytes)):
+            raise TypeError
+        return float(value)
+    except (TypeError, ValueError):
+        raise CompilationError(f"{description} must be a real number, got {value!r}") from None
 
 
 def _link_without_machine(link: Any) -> int:
@@ -365,7 +384,12 @@ class PackedIRBuilder:
                 if is_symbolic(amp_raw):
                     vals = [dur, amp_raw, 0.0]
                 else:
-                    re, im = _complex_parts(amp_raw)
+                    try:
+                        re, im = _complex_parts(amp_raw)
+                    except (TypeError, ValueError):
+                        raise CompilationError(
+                            f"square amplitude must be a number or [re, im], got {amp_raw!r}"
+                        ) from None
                     vals = [dur, re, im]
                 self._emit_wf(_WF_SQUARE, rv, vals, ["i64", "f64", "f64"])
             elif wf_code == _WF_DRAG:
@@ -523,7 +547,10 @@ class PackedIRBuilder:
                 self._w(rtv)
                 self._w(pvid)
             else:
-                delta = float(val_raw)
+                try:
+                    delta = float(val_raw)
+                except (TypeError, ValueError):
+                    delta = _real(val_raw, "shift_phase phase")
                 self._ensure(4)
                 self._w(_header(_SHIFT_PHASE, 3))
                 self._w(tv)
@@ -544,7 +571,10 @@ class PackedIRBuilder:
                 self._w(rtv)
                 self._w(pvid)
             else:
-                phase = float(val_raw)
+                try:
+                    phase = float(val_raw)
+                except (TypeError, ValueError):
+                    phase = _real(val_raw, "set_phase phase")
                 self._ensure(4)
                 self._w(_header(_SET_PHASE, 3))
                 self._w(tv)
@@ -570,7 +600,10 @@ class PackedIRBuilder:
                 self._w(rtv)
                 self._w(pvid)
             else:
-                freq = float(val_raw)
+                try:
+                    freq = float(val_raw)
+                except (TypeError, ValueError):
+                    freq = _real(val_raw, "shift_frequency frequency")
                 self._ensure(4)
                 self._w(_header(_SHIFT_FREQ, 3))
                 self._w(tv)
@@ -596,7 +629,10 @@ class PackedIRBuilder:
                 self._w(rtv)
                 self._w(pvid)
             else:
-                freq = float(val_raw)
+                try:
+                    freq = float(val_raw)
+                except (TypeError, ValueError):
+                    freq = _real(val_raw, "set_frequency frequency")
                 self._ensure(4)
                 self._w(_header(_SET_FREQ, 3))
                 self._w(tv)
@@ -1175,15 +1211,22 @@ class PackedIRBuilder:
         """
         encoded: list[int] = []
         param_mask = 0
-        for i, (v, dtype) in enumerate(zip(vals, dtypes)):
-            if is_symbolic(v):
-                pvid = self._get_numeric_vid(v, dtype)
-                encoded.append(pvid)
-                param_mask |= 1 << (i + 1)  # +1 because slot 0 is the rv
-            elif dtype == "i64":
-                encoded.append(_as_i64(v, "integer operand"))
-            else:
-                encoded.append(_f2i(float(v)))
+        try:
+            for i, (v, dtype) in enumerate(zip(vals, dtypes)):
+                if is_symbolic(v):
+                    pvid = self._get_numeric_vid(v, dtype)
+                    encoded.append(pvid)
+                    param_mask |= 1 << (i + 1)  # +1 because slot 0 is the rv
+                elif dtype == "i64":
+                    encoded.append(_as_i64(v, "integer operand"))
+                else:
+                    encoded.append(_f2i(float(v)))
+        except (TypeError, ValueError):
+            op, fields = _WF_FIELDS[wf_code]
+            for v, dtype, field in zip(vals, dtypes, fields):
+                if dtype == "f64" and not is_symbolic(v):
+                    _real(v, f"{op} {field}")
+            raise
         payload_len = 1 + len(encoded)  # rv + values
         self._ensure(1 + payload_len)
         self._w(_header(wf_code, payload_len, param_mask))
@@ -1258,3 +1301,35 @@ class PackedIRBuilder:
     @property
     def op_count(self) -> int:
         return self._op_count
+
+    def finder(self, word: int) -> _RecordFinder:
+        """A builder configured like this one that, given the same trace,
+        records the instructions that write the record at *word*."""
+        found = _RecordFinder(
+            name=self.name,
+            clock_ghz=self.clock_ghz,
+            qubit_freq_hz=self._freq_hz,
+            flatten_schedules=not self.schedule_blocks,
+        )
+        found.word = word
+        found.unroll_threshold = self.unroll_threshold
+        found.link_id = self.link_id
+        found.locate_structural = self.locate_structural
+        return found
+
+
+class _RecordFinder(PackedIRBuilder):
+    """Traces a kernel again, after the extension rejected the record at
+    ``word``, to find where it was written: ``frames`` as ``tracing_frames()``
+    gives them. Every record is written right after an ``_ensure`` at its
+    first word, so the last one there is the one that wrote it."""
+
+    word = -1
+    frames: list[Any] | None = None
+
+    def _ensure(self, n: int) -> None:
+        if self._cur == self.word:
+            from ._emitter import tracing_frames
+
+            self.frames = tracing_frames()
+        super()._ensure(n)

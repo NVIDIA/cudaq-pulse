@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import difflib
+import numbers
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, ClassVar, Final
@@ -189,6 +190,10 @@ class _CallTimeoutError(ExecutionError, TimeoutError):
     """A classical call got no answer in time."""
 
 
+class _QuditIndexError(PulseError, IndexError):
+    """A qudit index past the qudits of a device or register."""
+
+
 class PulseWarning(UserWarning):
     """Base class of the warnings cudaq-pulse issues, so that
     ``warnings.filterwarnings("error", category=pulse.PulseWarning)`` turns
@@ -202,6 +207,16 @@ class UpgradeNotice(PulseWarning):
 
 class _SpecializationWarning(PulseWarning, RuntimeWarning):
     """A kernel call compiled a new specialization of the kernel."""
+
+
+def _positive_int(name: str, value: Any) -> int:
+    """*value*, a count such as ``shots``, as an int of at least 1; otherwise
+    the error saying what it got."""
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+        raise InvalidTypeError(f"{name} must be a positive int, got {value!r}")
+    if value < 1:
+        raise InvalidValueError(f"{name} must be a positive int, got {value!r}")
+    return int(value)
 
 
 def _count(n: int, noun: str) -> str:

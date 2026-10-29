@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import _clocks
 from ._errors import InvalidValueError
-from ._native import PulseModuleBuilder
+from ._native import PackedValueError, PulseModuleBuilder
 from .classical import Link
 from .kernel import _durations
 from .kernel._bytecode_normalize import UnsupportedInterpreterError
@@ -991,6 +991,30 @@ class _Exposure:
         return max(0, use_cycles - max(free, submit_cycles))
 
 
+def _rejected_literal(
+    fn: Any, trace_args: Sequence[Any], traced: Any, error: PackedValueError
+) -> CompilationError:
+    """The error for a literal the extension rejected, with the kernel line
+    that wrote it. The kernel is traced again to find that line; when the
+    trace differs (the kernel read state that changed), the line is left out
+    rather than guessed."""
+    from .kernel._emitter import add_source_note
+    from .kernel.bytecode_bridge import _trace_kernel_with_builder
+
+    message, word = error.args
+    located = CompilationError(message)
+    finder = traced.finder(word)
+    try:
+        _trace_kernel_with_builder(fn, finder, trace_args)
+    except Exception:
+        return located
+    if finder.frames and finder.get_buffer() == traced.get_buffer():
+        located.pulse_source = finder.frames[0]  # type: ignore[attr-defined]
+        located.pulse_callers = finder.frames[1:]  # type: ignore[attr-defined]
+        add_source_note(located)
+    return located
+
+
 def build(
     fn: Any,
     trace_args: Sequence[Any],
@@ -1063,20 +1087,23 @@ def build(
     metrics.op_count = builder.op_count
 
     t0 = time.perf_counter()
-    if parameters:
-        module = PulseModuleBuilder().build_from_packed(
-            buf,
-            target.clock_ghz,
-            builder.n_qubits,
-            freq,
-            list(parameters),
-            ["f64"] * len(parameters),
-            name=name,
-        )
-    else:
-        module = PulseModuleBuilder().build_from_packed(
-            buf, target.clock_ghz, builder.n_qubits, freq, name=name
-        )
+    try:
+        if parameters:
+            module = PulseModuleBuilder().build_from_packed(
+                buf,
+                target.clock_ghz,
+                builder.n_qubits,
+                freq,
+                list(parameters),
+                ["f64"] * len(parameters),
+                name=name,
+            )
+        else:
+            module = PulseModuleBuilder().build_from_packed(
+                buf, target.clock_ghz, builder.n_qubits, freq, name=name
+            )
+    except PackedValueError as error:
+        raise _rejected_literal(fn, trace_args, builder, error) from None
     if links:
         module.set_attributes(options.machine.links_attribute(links))
     if clocks is not None:

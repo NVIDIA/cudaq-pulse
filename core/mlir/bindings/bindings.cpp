@@ -17,6 +17,8 @@
 
 #include <bit>
 #include <charconv>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -24,6 +26,7 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <string>
 #include <thread>
 
 #include "mlir/Analysis/SliceAnalysis.h"
@@ -147,6 +150,51 @@ constexpr int kOpVariableWait = 40;
 constexpr int kOpSelect = 41;
 // A payload length of 0xFF means the length is in the next word.
 constexpr int kExtendedPayload = 0xFF;
+
+/// A literal in a packed program that its op cannot take. `word` is the
+/// offset of the record that holds it, which the frontend maps back to the
+/// kernel line that wrote it.
+struct PackedValueError : std::invalid_argument {
+  PackedValueError(const std::string &what, size_t word)
+      : std::invalid_argument(what), word(word) {}
+  size_t word;
+};
+
+/// `value` as Python's repr() writes a float.
+[[gnu::cold]] std::string pythonFloat(double value) {
+  if (std::isnan(value))
+    return "nan";
+  if (std::isinf(value))
+    return value > 0 ? "inf" : "-inf";
+  char text[32];
+  for (int digits = 1; digits <= 17; ++digits) {
+    std::snprintf(text, sizeof text, "%.*g", digits, value);
+    if (std::strtod(text, nullptr) == value)
+      break;
+  }
+  std::string result(text);
+  if (result.find_first_of(".en") == std::string::npos)
+    result += ".0";
+  return result;
+}
+
+// Out of line, so that the decode loop builds no strings until one fails.
+[[noreturn, gnu::cold, gnu::noinline]] void
+rejectPacked(const std::string &what, const char *rule, const std::string &got,
+             size_t word) {
+  throw PackedValueError(what + " " + rule + ", got " + got, word);
+}
+
+[[noreturn, gnu::cold, gnu::noinline]] void
+rejectFloat(const char *what, const char *rule, double got, size_t word) {
+  rejectPacked(what, rule, pythonFloat(got), word);
+}
+
+[[noreturn, gnu::cold, gnu::noinline]] void
+rejectSample(int64_t index, double got, size_t word) {
+  rejectPacked("custom_samples() sample " + std::to_string(index),
+               "must be finite", pythonFloat(got), word);
+}
 
 /// Collects the error diagnostics emitted while it is alive, so that a
 /// failure can report them in the Python exception instead of on stderr.
@@ -2947,6 +2995,8 @@ public:
           "packed: parameter names and types have different lengths");
 
     auto module = mlir::ModuleOp::create(loc, mlir::StringRef(name));
+    // Owned from the start, so a record that fails frees what was built.
+    mlir::OwningOpRef<mlir::ModuleOp> owningModule(module);
     module->setAttr("pulse.n_qubits", builder_->getI64IntegerAttr(n_qubits));
     module->setAttr("pulse.clock_ghz", builder_->getF64FloatAttr(clock_ghz));
 
@@ -3137,6 +3187,18 @@ public:
         return mlir::arith::ConstantFloatOp::create(*builder_, loc, f64Ty,
                                                     llvm::APFloat(i2f(p[slot])))
             .getResult();
+      };
+      // The literals an op cannot take, named as the kernel wrote them.
+      auto literal = [&](int slot) { return !(pmask & (1 << slot)); };
+      auto finite = [&](int slot, const char *what) {
+        if (literal(slot) && !std::isfinite(i2f(p[slot]))) [[unlikely]]
+          rejectFloat(what, "must be finite", i2f(p[slot]), cur);
+        return getF64Arg(slot);
+      };
+      auto positive = [&](int slot, const char *what) {
+        if (literal(slot) && !(i2f(p[slot]) > 0.0)) [[unlikely]]
+          rejectFloat(what, "must be positive", i2f(p[slot]), cur);
+        return finite(slot, what);
       };
 
       switch (opcode) {
@@ -3399,7 +3461,8 @@ public:
       case kOpWfGaussian: {
         requirePayload(4);
         auto op = pulse::GaussianPulseOp::create(
-            *builder_, loc, wfTy, getI64Arg(1), getF64Arg(2), getF64Arg(3));
+            *builder_, loc, wfTy, getI64Arg(1), finite(2, "gaussian amplitude"),
+            positive(3, "gaussian sigma"));
         bind(p[0], op.getResult());
         break;
       }
@@ -3407,24 +3470,25 @@ public:
       case kOpWfSquare: {
         requirePayload(4);
         auto op = pulse::SquarePulseOp::create(
-            *builder_, loc, wfTy, getI64Arg(1), getF64Arg(2), getF64Arg(3));
+            *builder_, loc, wfTy, getI64Arg(1), finite(2, "square amplitude"),
+            finite(3, "square amplitude's imaginary part"));
         bind(p[0], op.getResult());
         break;
       }
 
       case kOpWfDrag: {
         requirePayload(5);
-        auto op = pulse::DRAGPulseOp::create(*builder_, loc, wfTy, getI64Arg(1),
-                                             getF64Arg(2), getF64Arg(3),
-                                             getF64Arg(4));
+        auto op = pulse::DRAGPulseOp::create(
+            *builder_, loc, wfTy, getI64Arg(1), finite(2, "drag amplitude"),
+            positive(3, "drag sigma"), finite(4, "drag beta"));
         bind(p[0], op.getResult());
         break;
       }
 
       case kOpWfCosine: {
         requirePayload(3);
-        auto op = pulse::CosinePulseOp::create(*builder_, loc, wfTy,
-                                               getI64Arg(1), getF64Arg(2));
+        auto op = pulse::CosinePulseOp::create(
+            *builder_, loc, wfTy, getI64Arg(1), finite(2, "cosine amplitude"));
         bind(p[0], op.getResult());
         break;
       }
@@ -3432,7 +3496,8 @@ public:
       case kOpWfTanhRamp: {
         requirePayload(4);
         auto op = pulse::TanhRampOp::create(*builder_, loc, wfTy, getI64Arg(1),
-                                            getF64Arg(2), getF64Arg(3));
+                                            finite(2, "tanh_ramp amplitude"),
+                                            positive(3, "tanh_ramp sigma"));
         bind(p[0], op.getResult());
         break;
       }
@@ -3440,8 +3505,9 @@ public:
       case kOpWfGaussSquare: {
         requirePayload(5);
         auto op = pulse::GaussianSquarePulseOp::create(
-            *builder_, loc, wfTy, getI64Arg(1), getF64Arg(2), getF64Arg(3),
-            getI64Arg(4));
+            *builder_, loc, wfTy, getI64Arg(1),
+            finite(2, "gaussian_square amplitude"),
+            positive(3, "gaussian_square sigma"), getI64Arg(4));
         bind(p[0], op.getResult());
         break;
       }
@@ -3474,8 +3540,11 @@ public:
               "packed: custom sample payload is malformed");
         llvm::SmallVector<double> samples;
         samples.reserve(static_cast<size_t>(p[1]));
-        for (int64_t i = 0; i < p[1]; ++i)
+        for (int64_t i = 0; i < p[1]; ++i) {
           samples.push_back(i2f(p[2 + i]));
+          if (!std::isfinite(samples.back())) [[unlikely]]
+            rejectSample(i, samples.back(), cur);
+        }
         mlir::DenseI64ArrayAttr rate;
         if (p[1] + 4 == plen)
           rate = builder_->getDenseI64ArrayAttr({p[2 + p[1]], p[3 + p[1]]});
@@ -3733,12 +3802,7 @@ public:
 
       case kOpShiftPhase: {
         requirePayload(3);
-        mlir::Value phaseVal =
-            (pmask & (1 << 2))
-                ? look(p[2])
-                : mlir::arith::ConstantFloatOp::create(*builder_, loc, f64Ty,
-                                                       llvm::APFloat(i2f(p[2])))
-                      .getResult();
+        mlir::Value phaseVal = finite(2, "shift_phase phase");
         auto spOp = pulse::ShiftPhaseOp::create(*builder_, loc, toneTy,
                                                 look(p[0]), phaseVal);
         bind(p[1], spOp.getResult());
@@ -3748,12 +3812,7 @@ public:
 
       case kOpSetPhase: {
         requirePayload(3);
-        mlir::Value phaseVal =
-            (pmask & (1 << 2))
-                ? look(p[2])
-                : mlir::arith::ConstantFloatOp::create(*builder_, loc, f64Ty,
-                                                       llvm::APFloat(i2f(p[2])))
-                      .getResult();
+        mlir::Value phaseVal = finite(2, "set_phase phase");
         auto spOp = pulse::SetPhaseOp::create(*builder_, loc, toneTy,
                                               look(p[0]), phaseVal);
         bind(p[1], spOp.getResult());
@@ -3763,12 +3822,7 @@ public:
 
       case kOpShiftFreq: {
         requirePayload(3);
-        mlir::Value fVal =
-            (pmask & (1 << 2))
-                ? look(p[2])
-                : mlir::arith::ConstantFloatOp::create(*builder_, loc, f64Ty,
-                                                       llvm::APFloat(i2f(p[2])))
-                      .getResult();
+        mlir::Value fVal = finite(2, "shift_frequency frequency");
         auto sfOp = pulse::ShiftFrequencyOp::create(*builder_, loc, toneTy,
                                                     look(p[0]), fVal);
         bind(p[1], sfOp.getResult());
@@ -3778,12 +3832,7 @@ public:
 
       case kOpSetFreq: {
         requirePayload(3);
-        mlir::Value fVal =
-            (pmask & (1 << 2))
-                ? look(p[2])
-                : mlir::arith::ConstantFloatOp::create(*builder_, loc, f64Ty,
-                                                       llvm::APFloat(i2f(p[2])))
-                      .getResult();
+        mlir::Value fVal = finite(2, "set_frequency frequency");
         auto sfOp = pulse::SetFrequencyOp::create(*builder_, loc, toneTy,
                                                   look(p[0]), fVal);
         bind(p[1], sfOp.getResult());
@@ -3911,7 +3960,6 @@ public:
       throw std::invalid_argument("packed: region left open");
 
     mlir::func::ReturnOp::create(*builder_, loc);
-    auto owningModule = mlir::OwningOpRef<mlir::ModuleOp>(module);
     PulseModule result(ctx_, std::move(owningModule));
     result.runTime_ = runTime;
     return result;
@@ -4137,6 +4185,25 @@ private:
 NB_MODULE(_cudaq_pulse_native, m) {
   m.doc() = "cudaq-pulse native MLIR pipeline bindings";
   SharedContextPool::handleForks();
+
+  // Kept for the life of the process, like the module that holds it.
+  static const std::string packedValueErrorName =
+      nb::cast<std::string>(m.attr("__name__")) + ".PackedValueError";
+  static PyObject *packedValueError = PyErr_NewExceptionWithDoc(
+      packedValueErrorName.c_str(),
+      "A literal of a packed program that its op cannot take; args are the "
+      "message and the word offset of the record that holds it.",
+      PyExc_ValueError, nullptr);
+  m.attr("PackedValueError") = nb::handle(packedValueError);
+  nb::register_exception_translator(
+      [](const std::exception_ptr &error, void *) {
+        try {
+          std::rethrow_exception(error);
+        } catch (const PackedValueError &e) {
+          nb::object args = nb::make_tuple(e.what(), e.word);
+          PyErr_SetObject(packedValueError, args.ptr());
+        }
+      });
 
   nb::class_<PulseModule>(m, "PulseModule")
       .def("print", &PulseModule::print,

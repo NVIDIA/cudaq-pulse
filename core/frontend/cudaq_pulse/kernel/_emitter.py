@@ -96,7 +96,8 @@ _IN_CYCLES = {
     fname: eval(
         "lambda a: "
         + " and ".join(
-            f"(v := a[{name!r}]).__class__ is int and 0 <= v <= {_durations.MAX_CYCLES}"
+            f"(v := a[{name!r}]).__class__ is int and "
+            f"{_durations.LEAST[fname, name]} <= v <= {_durations.MAX_CYCLES}"
             if whole
             else f"((c := a[{name!r}].__class__) is int or c is float)"
             for name, whole, _ in spec
@@ -915,8 +916,6 @@ def _sample_envelope(
         raise CompilationError(
             f"custom(): the duration must be an int number of clock cycles, got {duration!r}"
         ) from None
-    if count <= 0:
-        raise CompilationError(f"custom(): the duration must be positive, got {count}")
     step = 1.0
     if rate is not None:
         count = _samples_at(count, rate)

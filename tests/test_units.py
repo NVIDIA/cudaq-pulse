@@ -15,6 +15,7 @@ import re
 from fractions import Fraction
 
 import cudaq_pulse as pulse
+import numpy as np
 import pytest
 from cudaq_pulse.classical import Bits, Float, Link
 from cudaq_pulse.compiler import MachineModel
@@ -98,6 +99,7 @@ def test_a_time_that_is_not_a_finite_float_is_an_error(expression, message):
 
 
 _LONGEST = "a duration is at most 2**53 cycles"
+_SHORTEST = "a waveform lasts at least 1 cycle"
 
 
 @pytest.mark.parametrize(
@@ -105,14 +107,27 @@ _LONGEST = "a duration is at most 2**53 cycles"
     [
         ("wait(d, -5)", "wait(): duration is -5 cycles; a wait cannot be negative"),
         ("wait(d, -4 * pulse.ns)", "wait(): duration -4 ns is -8 cycles; a wait cannot be"),
-        ("drive(d, square(-8, 0.1), t)", "square(): duration is -8 cycles; a duration cannot be"),
+        ("drive(d, square(-8, 0.1), t)", f"square(): duration is -8 cycles; {_SHORTEST}"),
+        ("drive(d, square(0, 0.1), t)", f"square(): duration is 0 cycles; {_SHORTEST}"),
+        (
+            "drive(d, square(0 * pulse.ns, 0.1), t)",
+            f"square(): duration 0 ns is 0 cycles; {_SHORTEST}",
+        ),
+        ("drive(d, gaussian(0, 0.1, 10.0), t)", f"gaussian(): duration is 0 cycles; {_SHORTEST}"),
+        ("drive(d, drag(-1, 0.1, 10.0, 0.5), t)", f"drag(): duration is -1 cycles; {_SHORTEST}"),
+        ("drive(d, cosine(0, 0.1), t)", f"cosine(): duration is 0 cycles; {_SHORTEST}"),
+        ("drive(d, tanh_ramp(0, 0.1, 4.0), t)", f"tanh_ramp(): duration is 0 cycles; {_SHORTEST}"),
+        (
+            "drive(d, gaussian_square(64, 0.1, 4.0, -1), t)",
+            "gaussian_square(): width is -1 cycles; a duration cannot be negative",
+        ),
         ("wait(d, 2**53 + 1)", f"wait(): duration is {2**53 + 1} cycles; {_LONGEST}"),
         ("drive(d, square(2**62, 0.1), t)", f"square(): duration is {2**62} cycles; {_LONGEST}"),
         ("drive(d, square(2**63, 0.1), t)", f"square(): duration is {2**63} cycles; {_LONGEST}"),
         ("wait(d, 1e30 * pulse.ns)", f"wait(): duration 1e+21 s is {2 * 10**30} cycles"),
     ],
 )
-def test_a_duration_outside_0_to_2_53_cycles_is_an_error_naming_the_line(call, message):
+def test_a_duration_outside_its_cycles_is_an_error_naming_the_line(call, message):
     source = f"def k(q):\n    d, t = get_drive_line(q)\n    {call}\n"
     namespace = {"pulse": pulse}
     exec(compile(source, "<kernel>", "exec"), namespace)
@@ -130,6 +145,35 @@ def test_a_negative_wait_parameter_is_an_error():
 
     with pytest.raises(pulse.CompilationError, match="duration is -1 cycles; a wait cannot be"):
         k.lower(Q[0], -1)
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        ("wait(d, np.int64(-5))", "wait(): duration is -5 cycles; a wait cannot be negative"),
+        ("drive(d, square(np.int32(0), 0.1), t)", f"square(): duration is 0 cycles; {_SHORTEST}"),
+        ("drive(d, square(np.int64(2**60), 0.1), t)", f"is {2**60} cycles; {_LONGEST}"),
+        ("drive(d, square(True, 0.1), t)", "square duration must be an integer, got bool"),
+    ],
+)
+def test_an_integer_of_another_type_follows_the_same_rule(call, message):
+    source = f"def k(q):\n    d, t = get_drive_line(q)\n    {call}\n"
+    namespace = {"pulse": pulse, "np": np}
+    exec(compile(source, "<kernel>", "exec"), namespace)
+    with pytest.raises(pulse.CompilationError, match=re.escape(message)):
+        pulse.kernel(namespace["k"]).lower(Q[0])
+
+
+@pytest.mark.filterwarnings("ignore::cudaq_pulse.PulseWarning")
+def test_a_float_argument_compiled_into_a_duration_follows_the_same_rule():
+    @pulse.kernel
+    def k(q, tau: float):
+        d, t = get_drive_line(q)
+        drive(d, square(tau, 0.1), t)
+
+    assert k.lower(Q[0], 8.0) is not None
+    with pytest.raises(pulse.CompilationError, match="duration is 0 cycles; a waveform lasts"):
+        k.lower(Q[0], 0.0)
 
 
 def test_the_longest_duration_is_2_53_cycles():

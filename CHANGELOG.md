@@ -363,5 +363,18 @@ behavior may change in any 0.x release.
   value an arm of an `if` yields is now ready only once its condition is,
   under every schedule, also in kernels with classical calls. Programs
   without such an arm schedule as before.
+- Values no op can take are a `CompilationError` that names the op, the
+  value and the kernel line that wrote it, rather than compiling silently
+  or failing in an MLIR pass: a NaN or infinite amplitude, sigma, beta,
+  phase, frequency or `custom_samples` sample; a sigma that is not
+  positive; an amplitude or other float that is not a number, such as
+  `None`; and a duration outside its cycles. A waveform lasts 1 to 2**53
+  cycles, and a wait, a flat top (`gaussian_square` width) or a bound 0 to
+  2**53, whether given as an `int`, a time, or an `int` or `float` argument
+  the kernel is compiled for. `simulate(shots=...)` and `emulate(shots=...)`
+  take a positive `int` (`InvalidTypeError` or `InvalidValueError`
+  otherwise; `simulate`'s default `None` still samples nothing), and a
+  qudit index past a device or register is an `IndexError` that says how
+  many qudits it has.
 
 [0.1.0]: https://github.com/NVIDIA/cudaq-pulse/releases/tag/v0.1.0

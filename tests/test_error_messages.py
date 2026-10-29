@@ -144,3 +144,60 @@ def test_a_udp_call_without_an_answer_is_a_timeout_and_an_execution_error():
 def test_an_unsupported_cast_is_an_internal_error():
     with pytest.raises(pulse.InternalError, match="unsupported symbolic cast to i1; this is a bug"):
         Parameter("x", 0, "f64").cast("i1")
+
+
+@pytest.fixture(scope="module")
+def idle():
+    @pulse.kernel
+    def k(q):
+        d, t = get_drive_line(q)
+        wait(d, 8)
+
+    return k.lower(Q[0])
+
+
+@pytest.mark.parametrize(
+    ("shots", "error"),
+    [
+        (0, pulse.InvalidValueError),
+        (-1, pulse.InvalidValueError),
+        (2.5, pulse.InvalidTypeError),
+        ("ten", pulse.InvalidTypeError),
+        (True, pulse.InvalidTypeError),
+    ],
+)
+@pytest.mark.parametrize("run", ["simulate", "emulate"])
+def test_shots_is_a_positive_int(idle, run, shots, error):
+    call = pulse.simulate if run == "simulate" else emulation.emulate
+    with pytest.raises(error) as info:
+        call(idle, shots=shots)
+    assert str(info.value) == f"shots must be a positive int, got {shots!r}"
+
+
+def test_no_shots_is_the_documented_simulate_default(idle):
+    assert pulse.simulate(idle, shots=None).records is None
+
+
+@pytest.mark.parametrize(
+    ("index", "message"),
+    [
+        (999, "qudit index 999 is out of range: device 'transmon_krinner_17q' has 17 qudits"),
+        (-18, "qudit index -18 is out of range: device 'transmon_krinner_17q' has 17 qudits"),
+        ([0, 999], "qudit index 999 is out of range"),
+    ],
+)
+def test_a_qudit_index_past_the_device_says_how_many_qudits_it_has(index, message):
+    handles = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).qudit_handles
+    with pytest.raises(IndexError, match=message) as info:
+        handles[index]
+    assert isinstance(info.value, pulse.PulseError)
+    assert str(info.value).endswith("indexed 0 to 16 (or -17 to -1)")
+
+
+def test_a_qudit_index_past_a_register_says_how_many_qudits_it_has():
+    register = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).qudit_handles[0:3]
+    with pytest.raises(IndexError) as info:
+        register[5]
+    assert str(info.value) == (
+        "qudit index 5 is out of range: the register has 3 qudits, indexed 0 to 2 (or -3 to -1)"
+    )
