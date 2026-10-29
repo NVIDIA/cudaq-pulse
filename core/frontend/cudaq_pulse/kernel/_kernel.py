@@ -370,8 +370,13 @@ class Kernel[**P]:
     ``cudaq_pulse.compile(k)`` compiles ahead of the call. ``P`` is the
     decorated function's signature, so calls are checked against it.
 
-    A kernel pickles as a function does, by its module and qualified name:
-    one defined inside a function cannot be pickled.
+    A kernel pickles as a function does. One that its module and qualified
+    name find, outside ``__main__``, pickles as that name. Any other (in
+    ``__main__``, at the prompt, inside a function) pickles as its function
+    and options, the function by reference with pickle and by value with
+    cloudpickle (Ray, Dask): pickle cannot send one defined inside a
+    function. A process keeps the kernels it unpickles this way, so sending
+    one again does not compile it again.
     """
 
     __name__: str
@@ -458,9 +463,19 @@ class Kernel[**P]:
         self._dispatch.clear()
         self._traced.clear()
 
-    def __reduce__(self) -> str:
-        # By reference, as a function pickles: the kernel of this name.
-        return self.__qualname__
+    def __reduce__(self) -> str | tuple[Any, ...]:
+        from .._pickling import kernel_reduce
+
+        return kernel_reduce(self)
+
+    @property
+    def __pulse_pickled_fn__(self) -> types.FunctionType:
+        """The function a kernel that its name does not find pickles with:
+        named after this attribute, so that pickle finds it by reference and
+        cloudpickle sends it by value, as each does a function."""
+        from .._pickling import function_copy
+
+        return function_copy(self)
 
     def __repr__(self) -> str:
         return f"<pulse kernel {self.__qualname__}{self.__signature__}>"

@@ -272,6 +272,14 @@ wheels = [
 ]
 
 [[package]]
+name = "cloudpickle"
+version = "3.1.2"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/39/799be3f2f0f38cc727ee3b4f1445fe6d5e4133064ec2e4115069418a5bb6/cloudpickle-3.1.2-py3-none-any.whl", hash = "sha256:9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a", size = 22228 },
+]
+
+[[package]]
 name = "cmake"
 version = "4.4.4"
 source = { registry = "https://pypi.org/simple" }
@@ -465,6 +473,7 @@ build = [
     { name = "setuptools-scm" },
 ]
 dev = [
+    { name = "cloudpickle" },
     { name = "cmake" },
     { name = "hypothesis" },
     { name = "lit" },
@@ -495,6 +504,7 @@ lint = [
     { name = "ruff" },
 ]
 test = [
+    { name = "cloudpickle" },
     { name = "hypothesis" },
     { name = "lit" },
     { name = "pytest" },
@@ -530,6 +540,7 @@ build = [
     { name = "setuptools-scm", specifier = ">=9" },
 ]
 dev = [
+    { name = "cloudpickle", specifier = ">=3" },
     { name = "cmake", specifier = ">=3.30" },
     { name = "hypothesis", specifier = ">=6" },
     { name = "lit", specifier = ">=18" },
@@ -560,6 +571,7 @@ lint = [
     { name = "ruff", specifier = ">=0.6" },
 ]
 test = [
+    { name = "cloudpickle", specifier = ">=3" },
     { name = "hypothesis", specifier = ">=6" },
     { name = "lit", specifier = ">=18" },
     { name = "pytest", specifier = ">=8" },

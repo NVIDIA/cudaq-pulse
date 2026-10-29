@@ -98,6 +98,8 @@ test = [
     "pytest>=8",
     "hypothesis>=6",
     "lit>=18",
+    # Pickles kernels as Ray and Dask do; its tests skip without it.
+    "cloudpickle>=3",
 ]
 lint = [
     "ruff>=0.6",

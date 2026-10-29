@@ -7,9 +7,14 @@
 # ============================================================================ #
 """How cudaq-pulse objects pickle, for process pools and caches on disk.
 
-- A kernel pickles by reference, as a function does: by its module and
-  qualified name. In the process that defined it, it unpickles as the same
-  kernel, with its specializations; elsewhere, as the kernel of that name.
+- A kernel pickles as a function does. One its module and qualified name
+  find, outside ``__main__``, pickles as that name. Any other pickles as a
+  copy of its function named ``<kernel>.__pulse_pickled_fn__``, its options
+  and a token: pickle sends that function by reference, through the kernel,
+  and cloudpickle by value, as each sends a function of ``__main__`` or one
+  defined inside a function. A process keeps the last ``_KEPT_KERNELS``
+  kernels pickled or unpickled this way by token, so a kernel sent again
+  (a task's argument, say) is the same kernel, with its specializations.
   A compiled kernel pickles as its kernel, options and device: its
   specializations are compiled again where it is called.
 - A target pickles as the inputs it was built from, and a device as its
@@ -32,24 +37,30 @@ Nothing here is imported until something is pickled or unpickled.
 from __future__ import annotations
 
 import dataclasses
+import os
 import pickle
 import threading
+import types
 from types import MappingProxyType
 from typing import Any
 
 # Changed whenever what a program pickles changes.
-_FORMAT = 1
-_stamp: tuple[int, str, str] | None = None
+_FORMAT = 2
+_stamp: tuple[int, str, str, str] | None = None
 
 
-def build_stamp() -> tuple[int, str, str]:
-    """What a pickled program records of the build that compiled it."""
+def build_stamp() -> tuple[int, str, str, str]:
+    """What a pickled program records of the build that compiled it, and of
+    the Python, whose marshal format its wait-length check is pickled in."""
     global _stamp
     if _stamp is None:
+        import sys
+
         from ._build_config import PACKAGE_VERSION
         from ._native import _cudaq_pulse_native as native
 
-        _stamp = (_FORMAT, PACKAGE_VERSION, native.build_stamp())
+        python = str(sys.implementation.cache_tag)
+        _stamp = (_FORMAT, PACKAGE_VERSION, native.build_stamp(), python)
     return _stamp
 
 
@@ -124,6 +135,82 @@ def named(module: str, qualname: str) -> Any:
     found: Any = importlib.import_module(module)
     for part in qualname.split("."):
         found = getattr(found, part)
+    return found
+
+
+_KEPT_KERNELS = 64
+_kernels: dict[str, Any] = {}
+_kernels_lock = threading.Lock()
+
+
+def kernel_reduce(kernel: Any) -> str | tuple[Any, ...]:
+    """*kernel* by its name where that finds it outside ``__main__``, else
+    as its function (see ``Kernel.__pulse_pickled_fn__``), options and a
+    token that the processes unpickling it keep it by."""
+    module, qualname = kernel.__module__, kernel.__qualname__
+    if module != "__main__" and "<locals>" not in qualname:
+        try:
+            found = named(module, qualname)
+        except (ImportError, AttributeError):
+            found = None
+        if found is kernel:
+            return str(qualname)
+    token = kernel.__dict__.get("_pickle_token")
+    if token is None:
+        token = kernel._pickle_token = os.urandom(16).hex()
+    _keep_kernel(token, kernel)
+    options = {
+        "cache_size": kernel._dispatch._capacity,
+        "schedule": kernel.schedule,
+        "unroll_threshold": kernel.unroll_threshold,
+    }
+    return (rebuilt_kernel, (kernel.__pulse_pickled_fn__, qualname, token, options))
+
+
+def function_copy(kernel: Any) -> types.FunctionType:
+    """*kernel*'s function, named ``<kernel>.__pulse_pickled_fn__``: made once."""
+    copied: types.FunctionType | None = kernel.__dict__.get("_pickled_fn")
+    if copied is None:
+        fn = kernel.__wrapped__
+        copied = types.FunctionType(
+            fn.__code__, fn.__globals__, fn.__name__, fn.__defaults__, fn.__closure__
+        )
+        copied.__kwdefaults__ = fn.__kwdefaults__
+        copied.__annotations__ = fn.__annotations__
+        copied.__dict__.update(fn.__dict__)
+        copied.__doc__ = fn.__doc__
+        copied.__module__ = fn.__module__
+        copied.__qualname__ = f"{kernel.__qualname__}.__pulse_pickled_fn__"
+        kernel._pickled_fn = copied
+    return copied
+
+
+def _keep_kernel(token: str, kernel: Any) -> None:
+    with _kernels_lock:
+        _kernels.pop(token, None)
+        _kernels[token] = kernel
+        while len(_kernels) > _KEPT_KERNELS:
+            del _kernels[next(iter(_kernels))]
+
+
+def rebuilt_kernel(function: Any, qualname: str, token: str, options: dict[str, Any]) -> Any:
+    """The kernel kept under *token*; else the kernel *qualname* names, when
+    *function* came by reference from it; else a kernel of *function*, which
+    came by value."""
+    found: Any = _kernels.get(token)
+    if found is not None:
+        return found
+    from .kernel._kernel import Kernel
+
+    try:
+        found = named(function.__module__, qualname)
+    except (ImportError, AttributeError):
+        found = None
+    if not (isinstance(found, Kernel) and found.__pulse_pickled_fn__ is function):
+        function.__qualname__ = qualname
+        found = Kernel(function, **options)
+    found._pickle_token = token
+    _keep_kernel(token, found)
     return found
 
 
@@ -229,8 +316,8 @@ def rebuilt_program(
 
 
 def _build_name(stamp: tuple[Any, ...]) -> str:
-    if len(stamp) == 3:
-        return f"{stamp[1]} (build {stamp[2]}, format {stamp[0]})"
+    if len(stamp) == 4:
+        return f"{stamp[1]} (build {stamp[2]}, {stamp[3]}, format {stamp[0]})"
     return repr(stamp)
 
 

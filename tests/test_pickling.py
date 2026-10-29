@@ -13,7 +13,11 @@ from __future__ import annotations
 import concurrent.futures
 import copy
 import multiprocessing
+import os
+import pathlib
 import pickle
+import subprocess
+import sys
 
 import cudaq_pulse as pulse
 import pytest
@@ -244,6 +248,84 @@ def test_a_kernel_pickles_by_reference_as_a_function_does():
             pickle.dumps(value)
 
 
+@pytest.fixture
+def cloudpickle():
+    return pytest.importorskip("cloudpickle")
+
+
+def _local_kernel():
+    @pulse.kernel(schedule="asap", cache_size=3, unroll_threshold=8)
+    def local(q, amp: float):
+        d, t = get_drive_line(q)
+        drive(d, square(20, amp), t)
+
+    return local
+
+
+def test_cloudpickle_sends_a_kernel_its_name_does_not_find_by_value(cloudpickle, monkeypatch):
+    local = _local_kernel()
+    expected = local.lower(Q[0], 0.2).mlir()
+    data = cloudpickle.dumps(local)
+    assert cloudpickle.loads(data) is local
+    monkeypatch.setattr(_pickling, "_kernels", {})
+    back = cloudpickle.loads(data)
+    assert back is not local and isinstance(back, type(local))
+    assert back.__qualname__ == local.__qualname__ and back.__wrapped__.__name__ == "local"
+    assert (back.schedule, back.unroll_threshold) == ("asap", 8)
+    assert back.cache_info().capacity == 3
+    assert back.lower(Q[0], 0.2).mlir() == expected
+    assert cloudpickle.loads(data) is back
+
+
+def test_cloudpickle_sends_a_kernel_its_name_finds_by_reference(cloudpickle):
+    assert cloudpickle.loads(cloudpickle.dumps(rabi)) is rabi
+    assert cloudpickle.loads(cloudpickle.dumps(pulse.compile(rabi))).kernel is rabi
+
+
+_MAIN = """
+import sys
+import {pickler}
+import cudaq_pulse as pulse
+from tests._handles import Q
+
+@pulse.kernel(schedule="asap", cache_size=3)
+def sweep(q, amp: float):
+    d, t = get_drive_line(q)
+    drive(d, square(20, amp), t)
+
+sys.stdout.buffer.write({pickler}.dumps((sweep, Q[0], sweep.lower(Q[0], 0.2).mlir())))
+"""
+
+
+def _sent_from_main(pickler, tmp_path, as_script):
+    source = _MAIN.format(pickler=pickler)
+    if as_script:
+        script = tmp_path / "main.py"
+        script.write_text(source)
+        command = [sys.executable, str(script)]
+    else:
+        command = [sys.executable, "-c", source]
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(sys.path))
+    root = pathlib.Path(__file__).resolve().parents[1]
+    return subprocess.run(command, cwd=root, env=env, capture_output=True, check=True).stdout
+
+
+@pytest.mark.parametrize("as_script", [True, False], ids=["script", "prompt"])
+def test_cloudpickle_sends_a_kernel_of_main_to_another_process(cloudpickle, tmp_path, as_script):
+    data = _sent_from_main("cloudpickle", tmp_path, as_script)
+    kernel, qudit, expected = cloudpickle.loads(data)
+    assert kernel.__qualname__ == "sweep" and kernel.schedule == "asap"
+    assert kernel.cache_info().capacity == 3
+    assert kernel.lower(qudit, 0.2).mlir() == expected
+    assert cloudpickle.loads(data)[0] is kernel
+
+
+def test_pickle_sends_a_kernel_of_main_by_reference(tmp_path):
+    data = _sent_from_main("pickle", tmp_path, as_script=True)
+    with pytest.raises(AttributeError, match="sweep"):
+        pickle.loads(data)
+
+
 def test_a_compiled_kernel_unpickles_without_its_specializations():
     compiled = pulse.compile(rabi, device=LADDER, schedule="asap")
     compiled.lower(Q[0], 0.1)
@@ -295,6 +377,14 @@ def test_an_unpickled_module_binds_new_values_as_the_original_does(monkeypatch):
         back.bind([-10.0])
 
 
+def test_an_unpickled_module_checks_its_wait_lengths_as_compiled():
+    generic = ramsey.lower(Q[0], 40.0).generic
+    back = _round_trip(generic)
+    assert back.waits.ok.__code__.co_code == generic.waits.ok.__code__.co_code
+    for tau in (0.0, 60.0, -10.0, 1e30):
+        assert back.waits.ok([tau]) == generic.waits.ok([tau])
+
+
 def test_calls_pickled_together_share_their_module():
     first, second = _round_trip((rabi.lower(Q[0], 0.1), rabi.lower(Q[0], 0.2)))
     assert first.generic is second.generic
@@ -304,7 +394,8 @@ def test_calls_pickled_together_share_their_module():
 
 def test_a_program_of_another_build_is_refused(monkeypatch):
     program = rabi.lower(Q[0], 0.3)
-    monkeypatch.setattr(_pickling, "_stamp", (_pickling._FORMAT, "0.0.1", "0123456789abcdef"))
+    stale = (_pickling._FORMAT, "0.0.1", "0123456789abcdef", sys.implementation.cache_tag)
+    monkeypatch.setattr(_pickling, "_stamp", stale)
     data = pickle.dumps(program)
     monkeypatch.setattr(_pickling, "_stamp", None)
     with pytest.raises(pulse.UnsupportedError, match="compile the kernel again") as caught:
@@ -313,10 +404,21 @@ def test_a_program_of_another_build_is_refused(monkeypatch):
     assert pulse.__version__ in str(caught.value)
 
 
+def test_a_program_of_another_python_is_refused(monkeypatch):
+    program = rabi.lower(Q[0], 0.3)
+    format_, version, build, _ = _pickling.build_stamp()
+    monkeypatch.setattr(_pickling, "_stamp", (format_, version, build, "cpython-0"))
+    data = pickle.dumps(program)
+    monkeypatch.setattr(_pickling, "_stamp", None)
+    with pytest.raises(pulse.UnsupportedError, match="cpython-0, format"):
+        pickle.loads(data)
+
+
 def test_the_build_stamp_names_this_build():
-    format_, version, build = _pickling.build_stamp()
+    format_, version, build, python = _pickling.build_stamp()
     assert format_ == _pickling._FORMAT and version == pulse.__version__
     assert len(build) == 16 and int(build, 16) >= 0
+    assert python == sys.implementation.cache_tag
 
 
 # ── Errors ───────────────────────────────────────────────────────────────────

@@ -16,13 +16,14 @@ that pick passes and a schedule, the native build of one specialization, and
 from __future__ import annotations
 
 import difflib
+import marshal
 import math
 import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from types import MappingProxyType
+from types import FunctionType, MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from ._errors import InvalidValueError
@@ -676,7 +677,10 @@ class _WaitLengths:
         self.ok = eval(f"lambda a: {tests}", {"__builtins__": {}})
 
     def __reduce__(self) -> tuple[Any, ...]:
-        return (_rebuilt_wait_lengths, (type(self), self.waits, self.grid))
+        # The check as compiled: the stamp of the pickle names the Python
+        # whose marshal format wrote it.
+        check = marshal.dumps(self.ok.__code__)
+        return (_rebuilt_wait_lengths, (type(self), self.waits, self.grid, check))
 
     def check(self, values: Sequence[float]) -> None:
         try:
@@ -713,10 +717,6 @@ def _wait_lengths(waits: Sequence[tuple[Any, ...]], kernel: str, grid: int) -> _
     return _WaitLengths(waits, kernel) if grid == 1 else _GridWaitLengths(waits, kernel, grid)
 
 
-def _checks_each_wait(values: Sequence[float]) -> bool:
-    return False
-
-
 def _rebuilt_wait(
     source: str, lowest: int | None, highest: int | None, text: str, kernel: str
 ) -> _WaitLength:
@@ -731,15 +731,13 @@ def _rebuilt_wait(
 
 
 def _rebuilt_wait_lengths(
-    cls: type[_WaitLengths], waits: tuple[_WaitLength, ...], grid: int
+    cls: type[_WaitLengths], waits: tuple[_WaitLength, ...], grid: int, check: bytes
 ) -> _WaitLengths:
     lengths = cls.__new__(cls)
     lengths.waits = waits
     if isinstance(lengths, _GridWaitLengths):
         lengths.grid = grid
-    # Unpickled, check() checks each wait: the single expression that passes
-    # the lengths in bounds at once is made only where the module compiles.
-    lengths.ok = _checks_each_wait
+    lengths.ok = FunctionType(marshal.loads(check), {"__builtins__": {}})
     return lengths
 
 
