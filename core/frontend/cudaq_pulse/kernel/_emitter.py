@@ -800,8 +800,15 @@ def _sync_lines(fname: str, call_args: list[Any]) -> list[IRValue]:
 
     for i, value in enumerate(call_args):
         add(value, f"argument {i + 1}")
-    if len(lines) < 2:
-        raise CompilationError(f"{fname}() needs at least 2 lines, got {len(lines)}")
+    if not lines:
+        raise CompilationError(
+            f"{fname}() got no lines; it aligns two or more lines, as in {fname}(d, r)"
+        )
+    if len(lines) == 1:
+        raise CompilationError(
+            f"{fname}() got one line, which has no other line to align with; pass two "
+            f"or more lines, as in {fname}(d, r), or remove the call"
+        )
     if len({id(v) for v in lines}) != len(lines):
         raise CompilationError(f"{fname}(): a line is passed more than once")
     return lines

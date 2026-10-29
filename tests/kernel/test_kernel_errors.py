@@ -97,8 +97,10 @@ def test_sync_flattens_lists_and_tuples_from_the_friction_log():
         ("sync(d0, t0)", r"sync\(\): argument 2 must be a line, got a tone"),
         ("sync([d0, 3])", r"sync\(\): argument 1\[1\] must be a line, got int 3"),
         ("sync(get_drive_line(q0), d1)", r"argument 1\[1\] must be a line, got a tone; pass the"),
-        ("sync(d0)", r"sync\(\) needs at least 2 lines, got 1"),
-        ("sync([])", r"sync\(\) needs at least 2 lines, got 0"),
+        ("sync(d0)", r"sync\(\) got one line, which has no other line to align with; pass two"),
+        ("sync([d0])", r"sync\(\) got one line, .* as in sync\(d, r\), or remove the call"),
+        ("sync()", r"sync\(\) got no lines; it aligns two or more lines, as in sync\(d, r\)"),
+        ("sync([])", r"sync\(\) got no lines"),
         ("sync([d0], d0)", r"sync\(\): a line is passed more than once"),
     ],
 )
