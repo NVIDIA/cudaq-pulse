@@ -708,9 +708,6 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
                 else "the keys are " + ", ".join(_CONFIG_KEYS),
             )
         )
-    from ._system import ControlSystem, _check_format, _Reader, _wiring_problems
-
-    problems.extend(_check_format(config))
     key = "quantum_system" if "quantum_system" in config else "target"
     if "quantum_system" in config and "target" in config:
         problems.append(
@@ -720,27 +717,42 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
                 fix="remove 'target'",
             )
         )
-    reader = _Reader(None if source == "config" else source)
     spec = config.get(key)
+    control = config.get("control_system")
+    # A target by name or as a TargetDescription, without a format or a
+    # control system, needs none of the system file machinery.
+    reader = None
+    if "format" in config or isinstance(spec, Mapping) or control is not None:
+        from ._system import _check_format, _Reader
+
+        problems.extend(_check_format(config))
+        reader = _Reader(None if source == "config" else source)
     if isinstance(spec, Mapping):
+        assert reader is not None
         spec = reader.quantum_system(spec, key)
         target = spec
     else:
         target = _target(spec, problems, key)
-    control = config.get("control_system")
     if isinstance(control, Mapping):
+        assert reader is not None
         control = reader.control_system(control, "control_system")
-    elif control is not None and not isinstance(control, ControlSystem):
-        problems.append(
-            Problem(
-                f"must be a ControlSystem or its data, got {type(control).__name__}",
-                path="control_system",
-                value=control,
+    elif control is not None:
+        from ._system import ControlSystem
+
+        if not isinstance(control, ControlSystem):
+            problems.append(
+                Problem(
+                    f"must be a ControlSystem or its data, got {type(control).__name__}",
+                    path="control_system",
+                    value=control,
+                )
             )
-        )
-        control = None
-    problems.extend(reader.problems)
+            control = None
+    if reader is not None:
+        problems.extend(reader.problems)
     if control is not None and target is not None:
+        from ._system import _wiring_problems
+
         problems.extend(_wiring_problems(control, target))
     name = spec if isinstance(spec, str) else getattr(target, "name", "")
     layout = config.get("layout")
