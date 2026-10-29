@@ -137,7 +137,7 @@ _CASES = {
 
 def _lower(name):
     kernel, args, options, export = _CASES[name]
-    return pulse.compile(kernel, **options).lower(*args), export
+    return pulse.compile(kernel, **{"unroll_threshold": 0, **options}).lower(*args), export
 
 
 def _canonical(program):
@@ -259,7 +259,7 @@ def test_unrolling_refuses_an_event_kind_the_format_does_not_have():
 
 def test_a_program_states_its_sample_rate_beside_its_clock():
     kernel = _rounds(2)
-    lowered = pulse.compile(kernel).lower(Q[0], Q[1])
+    lowered = pulse.compile(kernel, unroll_threshold=0).lower(Q[0], Q[1])
     plain = lowered.export_controller(version=2)
     assert list(plain)[2:4] == ["clock_ghz", "sample_rate_ghz"]
     assert plain["sample_rate_ghz"] == _TARGET.clock_ghz
@@ -283,7 +283,7 @@ def test_a_program_states_its_sample_rate_beside_its_clock():
         lowered.export_controller(version=2, sample_rate_ghz=2.2)
 
     machine = MachineModel(controller=_sampled(4))
-    lowered = pulse.compile(kernel, machine=machine).lower(Q[0], Q[1])
+    lowered = pulse.compile(kernel, machine=machine, unroll_threshold=0).lower(Q[0], Q[1])
     program = lowered.export_controller(version=2)
     assert program["sample_rate_ghz"] == program["controller"]["sample_rate_ghz"] == 8.0
     assert unroll(program) == lowered.export_controller()
@@ -300,7 +300,11 @@ def test_unrolling_a_flat_export_returns_it():
 def test_a_repeating_loop_stays_one_loop_whatever_its_trip_count():
     sizes = {}
     for n in (8, 4000):
-        program = pulse.compile(_rounds(n)).lower(Q[0], Q[1]).export_controller(version=2)
+        program = (
+            pulse.compile(_rounds(n), unroll_threshold=0)
+            .lower(Q[0], Q[1])
+            .export_controller(version=2)
+        )
         (loop,) = [e for e in program["events"] if e["kind"] == "loop"]
         assert loop["trips"] + loop.get("first_iteration", 0) <= n
         assert all(event["iteration"] == [None] for event in loop["body"])
@@ -566,7 +570,7 @@ def _amplitude_of(structured, event):
 @pytest.mark.parametrize("name", sorted(_RUN_TIME))
 def test_run_time_values_in_format_2_unroll_to_those_of_format_1(name):
     kernel, args = _RUN_TIME[name]
-    lowered = pulse.compile(kernel).lower(*args)
+    lowered = pulse.compile(kernel, unroll_threshold=0).lower(*args)
     flat = lowered.export_controller()
     structured = lowered.export_controller(version=2)
     assert _run_time_keys(flat) == _run_time_keys(structured) != set()
@@ -577,7 +581,7 @@ def test_run_time_values_in_format_2_unroll_to_those_of_format_1(name):
 
 def test_a_value_a_readout_selects_unrolls_to_its_select(monkeypatch):
     monkeypatch.setattr(pulse.compiler, "_can_select_at_runtime", lambda target, kind: True)
-    lowered = pulse.compile(chosen_by_readout).lower(Q[0])
+    lowered = pulse.compile(chosen_by_readout, unroll_threshold=0).lower(Q[0])
     flat = lowered.export_controller()
     structured = lowered.export_controller(version=2)
     [play] = (e for e in structured["events"] if e["kind"] == "play")
@@ -586,7 +590,7 @@ def test_a_value_a_readout_selects_unrolls_to_its_select(monkeypatch):
 
 
 def test_an_amplitude_and_a_phase_from_an_answer_are_exported_with_their_source():
-    lowered = pulse.compile(_answer_amplitude).lower(Q[0])
+    lowered = pulse.compile(_answer_amplitude, unroll_threshold=0).lower(Q[0])
     structured = lowered.export_controller(version=2)
     answer = next(i for i, e in enumerate(structured["events"]) if e["kind"] == "answer")
     [play] = (e for e in structured["events"] if e["kind"] == "play")
@@ -599,11 +603,15 @@ def test_an_amplitude_and_a_phase_from_an_answer_are_exported_with_their_source(
     assert update == {"tone": 0, "id": 0, "op": "shift_phase", "value": phase}
     [flat_update] = lowered.export_controller()["frame_updates"]
     assert flat_update == {**update, "conditions": []}
-    assert "frame_updates" not in pulse.compile(_answer_amplitude_unshifted).lower(
-        Q[0]
-    ).export_controller(version=2)
+    assert "frame_updates" not in pulse.compile(
+        _answer_amplitude_unshifted, unroll_threshold=0
+    ).lower(Q[0]).export_controller(version=2)
 
-    structured = pulse.compile(_answer_phase_then_drive).lower(Q[0]).export_controller(version=2)
+    structured = (
+        pulse.compile(_answer_phase_then_drive, unroll_threshold=0)
+        .lower(Q[0])
+        .export_controller(version=2)
+    )
     assert "frame_updates" not in structured
     first, second = (e for e in structured["events"] if e["kind"] == "play")
     assert first["frame_updates"] == []
@@ -613,7 +621,9 @@ def test_an_amplitude_and_a_phase_from_an_answer_are_exported_with_their_source(
 
 
 def test_a_loop_whose_calls_and_amplitudes_come_from_answers_stays_rolled():
-    structured = pulse.compile(_fed_back).lower(Q[0]).export_controller(version=2)
+    structured = (
+        pulse.compile(_fed_back, unroll_threshold=0).lower(Q[0]).export_controller(version=2)
+    )
     [loop] = (e for e in structured["events"] if e["kind"] == "loop")
     assert loop["trips"] == 50
     body = loop["body"]
@@ -628,7 +638,9 @@ def test_a_loop_whose_calls_and_amplitudes_come_from_answers_stays_rolled():
 
 
 def test_a_loop_that_changes_a_tracked_frame_is_listed_per_iteration():
-    structured = pulse.compile(_tracked_in_loop).lower(Q[0]).export_controller(version=2)
+    structured = (
+        pulse.compile(_tracked_in_loop, unroll_threshold=0).lower(Q[0]).export_controller(version=2)
+    )
     assert not any(e["kind"] == "loop" for e in structured["events"])
     ids = [u["id"] for e in structured["events"] for u in e.get("frame_updates", ())]
     assert len(ids) == len(set(ids)) == 6
