@@ -44,12 +44,12 @@ pulse_cal = {
     "readout_duration": 200 * pulse.ns,
 }
 pi_duration_ns = pulse_cal["pi_duration"] / pulse.ns
-MACHINE = MachineModel(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
+machine = MachineModel(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
 
 # ── 1. Frequency binary search in one shot ──────────────────────────────────
 
-SIGMA0_HZ = 2e6
-WAIT0_NS, PHASE0 = cal.ramsey_setting(0.0, SIGMA0_HZ)
+initial_sigma_hz = 2e6
+initial_wait_ns, initial_phase = cal.ramsey_setting(0.0, initial_sigma_hz)
 wait_bounds = (10 * pulse.ns, 20 * pulse.us)
 wait_bounds_ns = tuple(bound / pulse.ns for bound in wait_bounds)
 
@@ -79,9 +79,9 @@ def binary_search(q, rounds: int):
     pi_pulse = square(pulse_cal["pi_duration"], pulse_cal["pi_amp"])
     half_pi_pulse = square(pulse_cal["pi_duration"], pulse_cal["pi_amp"] / 2)
     readout_pulse = square(pulse_cal["readout_duration"], 0.05)
-    mean, sigma = 0.0, SIGMA0_HZ
-    gap_ns = WAIT0_NS - pi_duration_ns
-    phase = PHASE0
+    mean, sigma = 0.0, initial_sigma_hz
+    gap_ns = initial_wait_ns - pi_duration_ns
+    phase = initial_phase
     # A Ramsey shot: pi/2, wait, pi/2 with its tone shifted by pi - phase.
     drive(d, half_pi_pulse)
     wait(d, pulse.round_duration(d, gap_ns * pulse.ns, "down"))
@@ -129,9 +129,9 @@ if __name__ == "__main__":
             0: dataclasses.replace(qubit, frequency_hz=qubit.frequency_hz + offset_hz),
         },
     )
-    lowered = pulse.compile(binary_search, device=dev, machine=MACHINE).lower(q, 2)
+    lowered = pulse.compile(binary_search, device=dev, machine=machine).lower(q, 2)
     result = pulse.simulate(lowered, plant=detuned, dt_ns=1.0)
-    print(f"  true detuning {offset_hz / 1e3:.0f} kHz; prior 0 +- {SIGMA0_HZ / 1e6:.0f} MHz")
+    print(f"  true detuning {offset_hz / 1e3:.0f} kHz; prior 0 +- {initial_sigma_hz / 1e6:.0f} MHz")
     for calls, (outcomes, p) in sorted(zip(result.calls, result.branches), key=lambda c: -c[1][1]):
         mean, sigma, _, _ = calls[-1].answer
         print(

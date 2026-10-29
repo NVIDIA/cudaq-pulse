@@ -55,7 +55,7 @@ cal = {
 
 # Two links, by name: one to a GPU decoder, and the controller's own FPGA
 # logic. Functions name the link their requests travel on.
-MACHINE = MachineModel(
+machine = MachineModel(
     links={
         "gpu": Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50),
         "controller": Link(fixed_ns=4, feedback_ns=8, max_in_flight=4),
@@ -100,8 +100,8 @@ def decoded_feed_forward(qubit):
 
 # ── 2. Adaptive Bayesian T1 tracking ────────────────────────────────────────
 
-# The next wait is C_WAIT times the current T1 estimate, within the bounds.
-C_WAIT = 1.0
+# The next wait is wait_per_t1 times the current T1 estimate, within the bounds.
+wait_per_t1 = 1.0
 wait_bounds = (100 * pulse.ns, 20 * pulse.us)
 wait_bounds_ns = tuple(bound / pulse.ns for bound in wait_bounds)
 
@@ -119,7 +119,7 @@ def update_t1(survived, alpha, beta, last_wait_ns):
     alpha / beta. Simplified illustration of the paper's update: a qubit
     still excited after the wait multiplies the posterior by exp(-Gamma t),
     which adds t to beta exactly; a decay is treated as an observed event,
-    adding one to alpha. The next wait, in nanoseconds, is C_WAIT times the
+    adding one to alpha. The next wait, in nanoseconds, is wait_per_t1 times the
     estimated T1.
     """
     if survived[0]:
@@ -128,7 +128,7 @@ def update_t1(survived, alpha, beta, last_wait_ns):
         alpha = alpha + 1.0
     t1_estimate_ns = beta / alpha
     lo, hi = wait_bounds_ns
-    next_wait_ns = min(max(C_WAIT * t1_estimate_ns, lo), hi)
+    next_wait_ns = min(max(wait_per_t1 * t1_estimate_ns, lo), hi)
     return alpha, beta, next_wait_ns
 
 
@@ -202,7 +202,7 @@ if __name__ == "__main__":
     dt_ns = 2.0
 
     print("=== 1. Decoding with feed-forward ===")
-    decoded = pulse.compile(decoded_feed_forward, device=dev, machine=MACHINE).lower(q)
+    decoded = pulse.compile(decoded_feed_forward, device=dev, machine=machine).lower(q)
     print_report(decoded)
     # Branch on whether the answer is in time, with the decoder's latency
     # model (triangular over 200-400 ns, mode 300 ns): P(L <= 350) = 0.875.
@@ -217,7 +217,7 @@ if __name__ == "__main__":
 
     print("\n=== 2. Adaptive T1 tracking (3 rounds, true T1 = 10 us) ===")
     rounds, alpha0, beta0, first_wait = 3, 1.0, 5000.0, 5 * pulse.us  # prior T1 = 5 us
-    tracker = pulse.compile(track_t1, device=dev, machine=MACHINE).lower(
+    tracker = pulse.compile(track_t1, device=dev, machine=machine).lower(
         q, rounds, alpha0, beta0, first_wait
     )
     # The static schedule places each variable wait at its lower bound; every

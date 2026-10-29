@@ -27,8 +27,8 @@ _EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "21_calibration_pr
 if not _EXAMPLE.exists():
     pytest.skip("needs the source tree's examples/", allow_module_level=True)
 P = runpy.run_path(str(_EXAMPLE), run_name="calibration_protocol")
-PI_AMP, CLOCK = P["PI_AMP"], P["CLOCK_GHZ"]
-amplitude, tracked_t1, TRAIN = P["amplitude"], P["tracked_t1"], P["TRAIN"]
+PI_AMP, CLOCK = P["nominal_pi_amplitude"], P["clock_ghz"]
+amplitude, tracked_t1, TRAIN = P["amplitude"], P["tracked_t1"], P["pulses_per_train"]
 
 
 @pulse.kernel
@@ -58,7 +58,7 @@ def _device(target):
 def test_the_pi_train_corrects_a_drive_amplitude_error():
     target = transmon_krinner_17q()
     dev, q = _device(target)
-    lowered = pulse.compile(_pi_step, device=dev, machine=P["MACHINE"]).lower(q)
+    lowered = pulse.compile(_pi_step, device=dev, machine=P["machine"]).lower(q)
     plant = P["chain_plant"](target, amplitude_scale=1.02)
     result = pulse.simulate(lowered, plant=plant, shots=2, seed=3, paths="sampled", readout="model")
     for calls in result.calls:
@@ -82,12 +82,12 @@ def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
     )
     target = dataclasses.replace(base, qubits={**base.qubits, 0: device_qubit})
     dev, q = _device(target)
-    lowered = pulse.compile(_adaptive_t1, device=dev, machine=P["MACHINE"]).lower(q)
+    lowered = pulse.compile(_adaptive_t1, device=dev, machine=P["machine"]).lower(q)
     shots = 32
     result = pulse.simulate(lowered, shots=shots, seed=4, paths="sampled", readout="model")
     estimates = []
     for calls, (_, share) in zip(result.calls, result.branches):
-        assert sum(c.function == "adaptive_t1" for c in calls) == P["ATT_SHOTS"]
+        assert sum(c.function == "adaptive_t1" for c in calls) == P["tracker_shots"]
         shape, rate, _ = calls[-1].answer
         estimates += [rate / shape / CLOCK / 1e3] * round(share * shots)
     # The paper: 159 us, 68% interval [131, 202] us; the benchmark's 400
@@ -98,7 +98,7 @@ def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
 def test_the_binary_search_narrows_on_the_controller():
     target = transmon_krinner_17q()
     dev, q = _device(target)
-    lowered = pulse.compile(P["binary_search"], device=dev, machine=P["MACHINE"]).lower(q, 15)
+    lowered = pulse.compile(P["binary_search"], device=dev, machine=P["machine"]).lower(q, 15)
     for seed, offset in enumerate((-200e3, 120e3)):
         result = pulse.simulate(
             lowered,
@@ -116,7 +116,7 @@ def test_the_binary_search_narrows_on_the_controller():
 def _chain():
     target = transmon_krinner_17q()
     dev, q = _device(target)
-    return pulse.compile(P["calibration_chain"], device=dev, machine=P["MACHINE"]), dev, q
+    return pulse.compile(P["calibration_chain"], device=dev, machine=P["machine"]), dev, q
 
 
 def test_the_chain_fits_the_declared_controller():
@@ -126,15 +126,17 @@ def test_the_chain_fits_the_declared_controller():
     assert report.violations == ()
     assert all(row.on_controller and row.cost.in_controller_form for row in report.functions)
     by_name = {row.function: row for row in report.functions}
-    assert by_name["adaptive_t1"].calls_per_shot == P["ATT_SHOTS"]
-    assert report.calls_per_shot == 7 + P["ATT_SHOTS"]
+    assert by_name["adaptive_t1"].calls_per_shot == P["tracker_shots"]
+    assert report.calls_per_shot == 7 + P["tracker_shots"]
     assert all(row.compute_ns < row.max_latency_ns for row in report.functions)
 
 
 def test_a_slower_controller_rejects_the_chain_at_compile_time():
     _, dev, q = _chain()
-    limits = dataclasses.replace(P["LIMITS"], op_cycles={**P["LIMITS"].op_cycles, "exp": 400})
-    machine = MachineModel(links={"controller": P["MACHINE"].link("controller")}, controller=limits)
+    limits = dataclasses.replace(
+        P["controller_limits"], op_cycles={**P["controller_limits"].op_cycles, "exp": 400}
+    )
+    machine = MachineModel(links={"controller": P["machine"].link("controller")}, controller=limits)
     slow = pulse.compile(P["calibration_chain"], device=dev, machine=machine)
     with pytest.raises(controller.ControllerLimitError, match="adaptive_t1 computes for about"):
         slow.lower(q, 20_000.0 * CLOCK)
@@ -145,7 +147,7 @@ def test_two_qubits_calibrate_side_by_side():
     dev = pulse.device({"target": target})
     q, p = dev.qudit_handles[:2]
     one = _chain()[0].lower(q, 20_000.0 * CLOCK)
-    two = pulse.compile(_two_chains, device=dev, machine=P["MACHINE"]).lower(q, p, 20_000.0 * CLOCK)
+    two = pulse.compile(_two_chains, device=dev, machine=P["machine"]).lower(q, p, 20_000.0 * CLOCK)
     # Each chain waits only on its own answers, so two take about as long as
     # one: only their requests on the shared link go out one after the other.
     alone, side_by_side = (max(e.end for e in low.schedule) for low in (one, two))

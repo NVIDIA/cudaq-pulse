@@ -30,8 +30,8 @@ up to the cross-resonance pulse that needs its tone.
 
 import cudaq_pulse as pulse
 
-ROUNDS = 2
-DATA_QUBITS = 4
+rounds = 2
+data_qubits = 4
 cal = {
     "x_duration": 20 * pulse.ns,
     "x_sigma": 5 * pulse.ns,
@@ -89,13 +89,13 @@ def stabilizer_cycle(qubits):
         lines.append(line)
         tones.append(line.tone)
 
-    for _ in range(ROUNDS):
+    for _ in range(rounds):
         single_qubit_layer(lines, tones)
-        for i in range(DATA_QUBITS):
+        for i in range(data_qubits):
             cross_resonance(ancilla, tones[i])
         single_qubit_layer(lines, tones)
         measure_and_reset(ancilla, readout_line)
-        for i in range(DATA_QUBITS):
+        for i in range(data_qubits):
             xy4(lines[i], tones[i], cal["dd_tau"])
 
 
@@ -106,7 +106,7 @@ def first_round(compiled: pulse.Lowered) -> dict[int, list[tuple[str, int, int]]
         per_line.setdefault(event.line, []).append(
             (event.kind, event.start, event.end - event.start)
         )
-    events_per_round = {line: len(events) // ROUNDS for line, events in per_line.items()}
+    events_per_round = {line: len(events) // rounds for line, events in per_line.items()}
     return {line: events[: events_per_round[line]] for line, events in per_line.items()}
 
 
@@ -126,7 +126,7 @@ def report(label: str, compiled: pulse.Lowered) -> None:
 
 def main():
     dev = pulse.device("transmon_krinner_17q")
-    qubits = [dev.qudit_handles[: 1 + DATA_QUBITS]]
+    qubits = [dev.qudit_handles[: 1 + data_qubits]]
     report(
         "per-kernel schedules",
         stabilizer_cycle.lower(*qubits),

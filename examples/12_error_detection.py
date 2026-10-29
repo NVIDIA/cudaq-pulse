@@ -39,7 +39,7 @@ _DRIVE = (
     "!pulse.tone -> !pulse.drive_line, !pulse.tone"
 )
 
-PROGRAMS = {
+programs = {
     "linearity: one drive line consumed twice": f"""
   %c40 = arith.constant 40 : i64
   %wf = {_SQUARE.format(dur="%c40")}
@@ -100,7 +100,7 @@ def zero_length(q0):
 
 
 def main():
-    for title, body in PROGRAMS.items():
+    for title, body in programs.items():
         print(f"=== {title} ===")
         print(check(body))
         print()

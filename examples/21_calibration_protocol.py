@@ -77,24 +77,25 @@ from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.targets import transmon_krinner_17q
 
-CLOCK_GHZ = 2.0  # the program clock: the estimators count waits and T1 in its cycles
+clock_ghz = 2.0  # the program clock: the estimators count waits and T1 in its cycles
 pulse_time = 20 * pulse.ns  # square pulses
-PI_AMP = math.pi / 20  # square(pulse_time, PI_AMP) is a pi pulse on the twin
+# square(pulse_time, nominal_pi_amplitude) is a pi pulse on the twin.
+nominal_pi_amplitude = math.pi / 20
 readout_time = 300 * pulse.ns
-READOUT_AMP = 0.05
-SHOTS = 50  # per setting
-TRAIN = 21  # pi pulses per amplitude train
+readout_amplitude = 0.05
+shots_per_setting = 50
+pulses_per_train = 21  # pi pulses per amplitude train
 ramsey_delay = 2 * pulse.us  # between the centres of the Ramsey pi/2 pulses
 ramsey_delay_ns = ramsey_delay / pulse.ns
 first_delay = 16 * pulse.ns  # the decay estimator's first delay
-ATT_SHOTS = 50
-ATT_SCALE = 0.51
+tracker_shots = 50
+tracker_wait_scale = 0.51
 settle_time = 100 * pulse.us  # a passive reset, more than 5 T1
 
 
 def in_cycles(time):
     """*time* in whole cycles of the program clock, the estimators' unit."""
-    return round(time / pulse.ns * CLOCK_GHZ)
+    return round(time / pulse.ns * clock_ghz)
 
 
 pulse_cycles = in_cycles(pulse_time)
@@ -105,28 +106,28 @@ wait_range_cycles = (
 )  # every variable wait, in cycles: 16 ns to 1 ms
 
 # A generic controller: 4 ns per cycle, with these cycles per operation.
-LIMITS = controller.ControllerLimits(
+controller_limits = controller.ControllerLimits(
     op_cycles={"div": 8, "sqrt": 8, "exp": 12, "log": 12, "trig": 12, "popcount": 1},
     compute_clock_ghz=0.25,
     controller_form=True,
     max_ops=256,
     state_bytes=512,
 )
-MACHINE = MachineModel(
+machine = MachineModel(
     links={"controller": Link(fixed_ns=4, feedback_ns=8, max_in_flight=4)},
-    controller=LIMITS,
+    controller=controller_limits,
 )
 
 
 def _fraction(bits):
-    return cal.count_ones(bits) / SHOTS
+    return cal.count_ones(bits) / shots_per_setting
 
 
 # ── Estimators on the controller ────────────────────────────────────────────
 
 
 @pulse.classical(
-    args=(Bits(SHOTS), Bits(SHOTS)),
+    args=(Bits(shots_per_setting), Bits(shots_per_setting)),
     results=(Float(), Float()),
     max_latency_ns=500,
     link="controller",
@@ -137,7 +138,7 @@ def assignment_errors(ground, excited):
 
 
 @pulse.classical(
-    args=(Bits(SHOTS), Bits(SHOTS), Bits(SHOTS), Float()),
+    args=(Bits(shots_per_setting), Bits(shots_per_setting), Bits(shots_per_setting), Float()),
     results=(Float(), Float()),
     max_latency_ns=1000,
     link="controller",
@@ -145,23 +146,29 @@ def assignment_errors(ground, excited):
 def ramsey_estimator(minus, zero, plus, mean_hz):
     """The detuning from Ramsey shots at phases -pi/2, 0 and +pi/2 about the
     estimate *mean_hz*, and its standard deviation."""
-    theta, sigma = cal.sparse_phase(_fraction(minus), _fraction(zero), _fraction(plus), SHOTS)
+    theta, sigma = cal.sparse_phase(
+        _fraction(minus), _fraction(zero), _fraction(plus), shots_per_setting
+    )
     detuning = cal.ramsey_detuning(mean_hz, theta, ramsey_delay_ns)
     return detuning, sigma / (2.0 * math.pi * ramsey_delay_ns * 1e-9)
 
 
 @pulse.classical(
-    args=(Bits(SHOTS), Bits(SHOTS), Bits(SHOTS), Float()),
+    args=(Bits(shots_per_setting), Bits(shots_per_setting), Bits(shots_per_setting), Float()),
     results=(Float(), Float()),
     max_latency_ns=1000,
     link="controller",
 )
 def amplitude_estimator(minus, zero, plus, amplitude):
-    """The corrected amplitude from a train that turns TRAIN times pi, at
-    amplitude scales 1 - 1/(2 TRAIN), 1 and 1 + 1/(2 TRAIN), and the
+    """The corrected amplitude from a train of n = pulses_per_train pi
+    pulses, at amplitude scales 1 - 1/(2 n), 1 and 1 + 1/(2 n), and the
     standard deviation of its relative correction."""
-    theta, sigma = cal.sparse_phase(_fraction(minus), _fraction(zero), _fraction(plus), SHOTS)
-    return cal.pi_train_amplitude(amplitude, theta, TRAIN), sigma / (TRAIN * math.pi)
+    theta, sigma = cal.sparse_phase(
+        _fraction(minus), _fraction(zero), _fraction(plus), shots_per_setting
+    )
+    return cal.pi_train_amplitude(amplitude, theta, pulses_per_train), sigma / (
+        pulses_per_train * math.pi
+    )
 
 
 @pulse.classical(args=(Float(),), results=(Float(), Float()), max_latency_ns=200, link="controller")
@@ -173,7 +180,13 @@ def decay_delays(t1_cycles):
 
 
 @pulse.classical(
-    args=(Bits(SHOTS), Bits(SHOTS), Bits(SHOTS), Float(), Float()),
+    args=(
+        Bits(shots_per_setting),
+        Bits(shots_per_setting),
+        Bits(shots_per_setting),
+        Float(),
+        Float(),
+    ),
     results=(Float(), Float()),
     max_latency_ns=1000,
     link="controller",
@@ -182,7 +195,7 @@ def decay_estimator(first, second, third, spacing_cycles, t1_cycles):
     """T1 and its standard deviation (in clock cycles) from the three
     delays; the last estimate *t1_cycles* when none can be formed."""
     t1, sigma, ok = cal.decay_time(
-        _fraction(first), _fraction(second), _fraction(third), spacing_cycles, SHOTS
+        _fraction(first), _fraction(second), _fraction(third), spacing_cycles, shots_per_setting
     )
     if ok:
         return t1, sigma
@@ -192,7 +205,7 @@ def decay_estimator(first, second, third, spacing_cycles, t1_cycles):
 @pulse.classical(args=(Float(), Float()), results=(Float(),), max_latency_ns=200, link="controller")
 def first_wait(shape, rate):
     return min(
-        max(cal.adaptive_t1_wait(shape, rate, ATT_SCALE), wait_range_cycles[0]),
+        max(cal.adaptive_t1_wait(shape, rate, tracker_wait_scale), wait_range_cycles[0]),
         wait_range_cycles[1],
     )
 
@@ -208,7 +221,7 @@ def adaptive_t1(bit, shape, rate, wait_cycles, error_1to0, error_0to1):
     shot; pick the next wait."""
     shape, rate = cal.adaptive_t1_update(shape, rate, bit[0], wait_cycles, error_1to0, error_0to1)
     wait_cycles = min(
-        max(cal.adaptive_t1_wait(shape, rate, ATT_SCALE), wait_range_cycles[0]),
+        max(cal.adaptive_t1_wait(shape, rate, tracker_wait_scale), wait_range_cycles[0]),
         wait_range_cycles[1],
     )
     return shape, rate, wait_cycles
@@ -223,7 +236,7 @@ def shot_end(q, pi_amp: float):
     d = get_drive_line(q)
     r = get_readout_line(q)
     sync(d, r)
-    m = readout(r, square(readout_time, READOUT_AMP))
+    m = readout(r, square(readout_time, readout_amplitude))
     sync(d, r)
     if m:
         drive(d, square(pulse_time, pi_amp))
@@ -236,7 +249,7 @@ def settle_and_read(q, settle):
     d = get_drive_line(q)
     r = get_readout_line(q)
     sync(d, r)
-    m = readout(r, square(readout_time, READOUT_AMP))
+    m = readout(r, square(readout_time, readout_amplitude))
     sync(d, r)
     wait(d, settle)
     return m
@@ -253,7 +266,7 @@ def assignment(q, pi_amp: float, settle=0 * pulse.ns):
         wait(d, settle)
     else:
         shot_end(q, pi_amp)
-    for _ in range(SHOTS):
+    for _ in range(shots_per_setting):
         if settle:
             ground.append(settle_and_read(q, settle))
             drive(d, square(pulse_time, pi_amp))
@@ -272,7 +285,7 @@ def ramsey(q, pi_amp: float, mean_hz: float):
     zero = []
     plus = []
     phase0 = -2.0 * math.pi * mean_hz * ramsey_delay_ns * 1e-9
-    for _ in range(SHOTS):
+    for _ in range(shots_per_setting):
         for k in range(3):
             # Second pi/2 with its tone shifted by pi - phase: P(1) is
             # (1 - cos(2 pi D t + phase)) / 2.
@@ -302,14 +315,14 @@ def train_shot(q, amplitude: float, pulses: int, pi_amp: float):
 
 @pulse.kernel
 def amplitude(q, amplitude: float, pulses: int, pi_amp: float):
-    """Correct the amplitude of a pulse; *pulses* of them turn TRAIN pi."""
+    """Correct the amplitude of a pulse from trains of *pulses* of them."""
     minus = []
     zero = []
     plus = []
-    for _ in range(SHOTS):
-        minus.append(train_shot(q, amplitude * (1.0 - 0.5 / TRAIN), pulses, pi_amp))
+    for _ in range(shots_per_setting):
+        minus.append(train_shot(q, amplitude * (1.0 - 0.5 / pulses_per_train), pulses, pi_amp))
         zero.append(train_shot(q, amplitude, pulses, pi_amp))
-        plus.append(train_shot(q, amplitude * (1.0 + 0.5 / TRAIN), pulses, pi_amp))
+        plus.append(train_shot(q, amplitude * (1.0 + 0.5 / pulses_per_train), pulses, pi_amp))
     return amplitude_estimator.submit(minus, zero, plus, amplitude).result()
 
 
@@ -320,7 +333,7 @@ def decay(q, pi_amp: float, t1_cycles: float):
     first_bits = []
     second_bits = []
     third_bits = []
-    for _ in range(SHOTS):
+    for _ in range(shots_per_setting):
         drive(d, square(pulse_time, pi_amp))
         wait(d, first_delay)
         first_bits.append(shot_end(q, pi_amp))
@@ -349,7 +362,7 @@ def tracked_t1(
     each readout instead of the active one."""
     d = get_drive_line(q)
     w = first_wait.submit(shape, rate).result()
-    for _ in range(ATT_SHOTS):
+    for _ in range(tracker_shots):
         drive(d, square(pulse_time, pi_amp))
         wait(d, w, bounds=wait_range_cycles)
         if settle:
@@ -366,34 +379,34 @@ def calibration_chain(q, t1_guess_cycles: float):
     # The adaptive tracker's likelihood holds only assignment errors: an
     # active reset would add a preparation error that depends on the last
     # outcome, so its shots and the errors it uses reset passively.
-    error_1to0, error_0to1 = assignment(q, PI_AMP, settle_time)
-    detuning, _ = ramsey(q, PI_AMP, 0.0)
+    error_1to0, error_0to1 = assignment(q, nominal_pi_amplitude, settle_time)
+    detuning, _ = ramsey(q, nominal_pi_amplitude, 0.0)
     shift_frequency(d.tone, detuning)
-    pi_amp, _ = amplitude(q, PI_AMP, TRAIN, PI_AMP)
-    half_amp, _ = amplitude(q, pi_amp * 0.5, 2 * TRAIN, pi_amp)
+    pi_amp, _ = amplitude(q, nominal_pi_amplitude, pulses_per_train, nominal_pi_amplitude)
+    half_amp, _ = amplitude(q, pi_amp * 0.5, 2 * pulses_per_train, pi_amp)
     t1, _ = decay(q, pi_amp, t1_guess_cycles)
     tracked_t1(q, pi_amp, 3.0, 3.0 * t1, error_1to0, error_0to1, settle_time)
 
 
 # ── Frequency binary search ─────────────────────────────────────────────────
 
-SIGMA0_HZ = 1e6
-COHERENCE_NS = 10_000.0
+initial_sigma_hz = 1e6
+coherence_ns = 10_000.0
 search_wait_range_cycles = (pulse_cycles, in_cycles(20 * pulse.us))
 
 
 def _search_setting(mean_hz, sigma_hz):
     """The next binary-search wait (between the pi/2 pulses, in clock
     cycles) and phase."""
-    wait_ns = cal.binary_search_wait(sigma_hz, COHERENCE_NS)
+    wait_ns = cal.binary_search_wait(sigma_hz, coherence_ns)
     wait_cycles = min(
-        max(wait_ns * CLOCK_GHZ - pulse_cycles, search_wait_range_cycles[0]),
+        max(wait_ns * clock_ghz - pulse_cycles, search_wait_range_cycles[0]),
         search_wait_range_cycles[1],
     )
-    return wait_cycles, cal.binary_search_phase(mean_hz, (wait_cycles + pulse_cycles) / CLOCK_GHZ)
+    return wait_cycles, cal.binary_search_phase(mean_hz, (wait_cycles + pulse_cycles) / clock_ghz)
 
 
-WAIT0, PHASE0 = _search_setting(0.0, SIGMA0_HZ)
+initial_wait_cycles, initial_phase = _search_setting(0.0, initial_sigma_hz)
 
 
 @pulse.classical(
@@ -409,10 +422,10 @@ def search_step(bits, mean_hz, sigma_hz, wait_cycles):
         mean_hz,
         sigma_hz,
         outcome,
-        (wait_cycles + pulse_cycles) / CLOCK_GHZ,
+        (wait_cycles + pulse_cycles) / clock_ghz,
         -0.02,
         0.6,
-        COHERENCE_NS,
+        coherence_ns,
     )
     wait_cycles, phase = _search_setting(mean_hz, sigma_hz)
     return mean_hz, sigma_hz, wait_cycles, phase
@@ -422,24 +435,24 @@ def search_step(bits, mean_hz, sigma_hz, wait_cycles):
 def binary_search(q, rounds: int):
     d = get_drive_line(q)
     r = get_readout_line(q)
-    previous = readout(r, square(readout_time, READOUT_AMP))
+    previous = readout(r, square(readout_time, readout_amplitude))
     sync(d, r)
-    mean, sigma, w, phase = 0.0, SIGMA0_HZ, WAIT0, PHASE0
-    drive(d, square(pulse_time, PI_AMP * 0.5))
-    wait(d, int(WAIT0))
-    shift_phase(d.tone, math.pi - PHASE0)
-    drive(d, square(pulse_time, PI_AMP * 0.5))
+    mean, sigma, w, phase = 0.0, initial_sigma_hz, initial_wait_cycles, initial_phase
+    drive(d, square(pulse_time, nominal_pi_amplitude * 0.5))
+    wait(d, int(initial_wait_cycles))
+    shift_phase(d.tone, math.pi - initial_phase)
+    drive(d, square(pulse_time, nominal_pi_amplitude * 0.5))
     for i in range(rounds):
         sync(d, r)
-        m = readout(r, square(readout_time, READOUT_AMP))
+        m = readout(r, square(readout_time, readout_amplitude))
         mean, sigma, w, phase = search_step.submit([m, previous], mean, sigma, w).result()
         previous = m
         if i < rounds - 1:
             sync(d, r)
-            drive(d, square(pulse_time, PI_AMP * 0.5))
+            drive(d, square(pulse_time, nominal_pi_amplitude * 0.5))
             wait(d, w, bounds=search_wait_range_cycles)
             shift_phase(d.tone, math.pi - phase)
-            drive(d, square(pulse_time, PI_AMP * 0.5))
+            drive(d, square(pulse_time, nominal_pi_amplitude * 0.5))
 
 
 # ── Devices ─────────────────────────────────────────────────────────────────
@@ -489,8 +502,8 @@ def chain_results(calls):
         "detuning (kHz)": answers["ramsey_estimator"][0] / 1e3,
         "pi amplitude": [c.answer[0] for c in calls if c.function == "amplitude_estimator"][0],
         "pi/2 amplitude": [c.answer[0] for c in calls if c.function == "amplitude_estimator"][1],
-        "T1, decay estimator (us)": answers["decay_estimator"][0] / CLOCK_GHZ / 1e3,
-        "T1, adaptive (us)": rate / shape / CLOCK_GHZ / 1e3,
+        "T1, decay estimator (us)": answers["decay_estimator"][0] / clock_ghz / 1e3,
+        "T1, adaptive (us)": rate / shape / clock_ghz / 1e3,
     }
 
 
@@ -506,8 +519,8 @@ if __name__ == "__main__":
 
     print("=== 1. The calibration chain, on the controller ===")
     start = time.perf_counter()
-    compiled = pulse.compile(calibration_chain, device=dev, machine=MACHINE)
-    lowered = compiled.lower(q, 20_000.0 * CLOCK_GHZ)
+    compiled = pulse.compile(calibration_chain, device=dev, machine=machine)
+    lowered = compiled.lower(q, 20_000.0 * clock_ghz)
     compile_s = time.perf_counter() - start
     end_cycles = max(
         e.start_cycles + e.duration_cycles
@@ -527,13 +540,13 @@ if __name__ == "__main__":
         shown = ", ".join(f"{v:.3f}" for v in value) if isinstance(value, tuple) else f"{value:.4f}"
         print(f"  {name:<26} {shown}")
     print(
-        f"  truth: detuning 60 kHz, pi amplitude {PI_AMP / 1.015:.4f}, "
-        f"pi/2 {PI_AMP / 2 / 1.015:.4f}, T1 18.3 us"
+        f"  truth: detuning 60 kHz, pi amplitude {nominal_pi_amplitude / 1.015:.4f}, "
+        f"pi/2 {nominal_pi_amplitude / 2 / 1.015:.4f}, T1 18.3 us"
     )
 
     print("\n=== 2. Frequency binary search, 15 shots, no reset ===")
     rounds = 15
-    lowered = pulse.compile(binary_search, device=dev, machine=MACHINE).lower(q, rounds)
+    lowered = pulse.compile(binary_search, device=dev, machine=machine).lower(q, rounds)
     errors, sigmas = [], []
     for seed in range(4):
         offset = (seed - 1.5) * 300e3
@@ -552,14 +565,16 @@ if __name__ == "__main__":
             f"  detuning {offset / 1e3:+6.0f} kHz: estimate {mean / 1e3:+6.0f} +- {sigma / 1e3:.0f} kHz"
         )
     print(
-        f"  posterior width from {SIGMA0_HZ / 1e3:.0f} kHz to {sum(sigmas) / len(sigmas) / 1e3:.0f} kHz"
+        f"  posterior width from {initial_sigma_hz / 1e3:.0f} kHz to {sum(sigmas) / len(sigmas) / 1e3:.0f} kHz"
     )
 
     print("\n=== 3. What the estimators cost the controller ===")
-    lowered = compiled.lower(q, 20_000.0 * CLOCK_GHZ)
+    lowered = compiled.lower(q, 20_000.0 * clock_ghz)
     report = controller.resources(lowered)
     print(report)
-    over = dataclasses.replace(LIMITS, op_cycles={**LIMITS.op_cycles, "exp": 400})
+    over = dataclasses.replace(
+        controller_limits, op_cycles={**controller_limits.op_cycles, "exp": 400}
+    )
     print("  with exp at 400 cycles:")
     for violation in controller.resources(lowered, over).violations:
         print(f"    {violation}")

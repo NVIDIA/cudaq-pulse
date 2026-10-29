@@ -65,8 +65,8 @@ def _clifford_decompositions():
     return words
 
 
-CLIFFORD_DECOMPOSITIONS = _clifford_decompositions()
-assert len(CLIFFORD_DECOMPOSITIONS) == 24
+clifford_decompositions = _clifford_decompositions()
+assert len(clifford_decompositions) == 24
 
 
 def rb_sequence(depth, seed):
@@ -74,8 +74,8 @@ def rb_sequence(depth, seed):
     rng = random.Random(seed)
     gates: tuple[str, ...] = ()
     for _ in range(depth):
-        gates += rng.choice(list(CLIFFORD_DECOMPOSITIONS.values()))
-    return gates + CLIFFORD_DECOMPOSITIONS[_up_to_phase(_unitary(gates).conj().T)]
+        gates += rng.choice(list(clifford_decompositions.values()))
+    return gates + clifford_decompositions[_up_to_phase(_unitary(gates).conj().T)]
 
 
 @pulse.kernel

@@ -105,14 +105,14 @@ def waveform_algebra(qubit):
 
 derivative_duration = 20 * pulse.ns
 derivative_sigma = 5 * pulse.ns
-DERIVATIVE_AMPLITUDE = 0.3
-CLOCK_GHZ = 2.0  # the transmon device's program clock; one sample per cycle
+derivative_amplitude = 0.3
+clock_ghz = 2.0  # the transmon device's program clock; one sample per cycle
 
 
 def gaussian_derivative_samples(duration, amplitude, sigma):
     """d/dt of a Gaussian centered in *duration*, one sample per clock cycle."""
-    n_samples = round(duration / pulse.ns * CLOCK_GHZ)
-    sigma = sigma / pulse.ns * CLOCK_GHZ
+    n_samples = round(duration / pulse.ns * clock_ghz)
+    sigma = sigma / pulse.ns * clock_ghz
     center = (n_samples - 1) / 2
     return [
         -amplitude * (t - center) / sigma**2 * math.exp(-((t - center) ** 2) / (2 * sigma**2))
@@ -120,8 +120,8 @@ def gaussian_derivative_samples(duration, amplitude, sigma):
     ]
 
 
-DERIVATIVE = gaussian_derivative_samples(
-    derivative_duration, DERIVATIVE_AMPLITUDE, derivative_sigma
+derivative_samples = gaussian_derivative_samples(
+    derivative_duration, derivative_amplitude, derivative_sigma
 )
 
 
@@ -136,8 +136,8 @@ def derivative_pulse(qubit, beta: float):
     """
     drive_line = get_drive_line(qubit)
 
-    base = gaussian(derivative_duration, DERIVATIVE_AMPLITUDE, derivative_sigma)
-    correction = wf_scale(custom_samples(DERIVATIVE), beta)
+    base = gaussian(derivative_duration, derivative_amplitude, derivative_sigma)
+    correction = wf_scale(custom_samples(derivative_samples), beta)
     final_envelope = wf_add(base, correction)
 
     drive(drive_line, final_envelope)

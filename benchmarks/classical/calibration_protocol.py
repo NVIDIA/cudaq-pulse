@@ -71,8 +71,8 @@ from cudaq_pulse.targets import transmon_krinner_17q
 
 _EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "21_calibration_protocol.py"
 P = runpy.run_path(str(_EXAMPLE), run_name="calibration_protocol")
-CLOCK = P["CLOCK_GHZ"]
-PI_AMP = P["PI_AMP"]
+CLOCK = P["clock_ghz"]
+PI_AMP = P["nominal_pi_amplitude"]
 
 
 def _bootstrap(values, stat, rng, n=2000):
@@ -101,7 +101,7 @@ ramsey = P["ramsey"]
 amplitude = P["amplitude"]
 decay = P["decay"]
 assignment = P["assignment"]
-TRAIN = P["TRAIN"]
+TRAIN = P["pulses_per_train"]
 
 
 @pulse.kernel
@@ -149,7 +149,7 @@ def _shares(result, shots):
 def adaptive_t1(n, seed):
     target = _att_target()
     dev = pulse.device({"target": target})
-    lowered = pulse.compile(att_paper, device=dev, machine=P["MACHINE"]).lower(dev.qudit_handles[0])
+    lowered = pulse.compile(att_paper, device=dev, machine=P["machine"]).lower(dev.qudit_handles[0])
     start = time.perf_counter()
     result = pulse.simulate(lowered, shots=n, seed=seed, paths="sampled", readout="model", levels=2)
     seconds = time.perf_counter() - start
@@ -178,7 +178,7 @@ def adaptive_t1(n, seed):
 def binary_search(n, seed):
     target = transmon_krinner_17q()
     dev = pulse.device({"target": target})
-    lowered = pulse.compile(P["binary_search"], device=dev, machine=P["MACHINE"]).lower(
+    lowered = pulse.compile(P["binary_search"], device=dev, machine=P["machine"]).lower(
         dev.qudit_handles[0], 15
     )
     rng = np.random.default_rng(seed)
@@ -213,7 +213,7 @@ def binary_search(n, seed):
 def chain(n, seed):
     target = transmon_krinner_17q()
     dev = pulse.device({"target": target})
-    lowered = pulse.compile(P["calibration_chain"], device=dev, machine=P["MACHINE"]).lower(
+    lowered = pulse.compile(P["calibration_chain"], device=dev, machine=P["machine"]).lower(
         dev.qudit_handles[0], 20_000.0 * CLOCK
     )
     plant = P["chain_plant"](target)
@@ -264,17 +264,17 @@ def steps(seed):
     q = dev.qudit_handles[0]
     plant = P["chain_plant"](target)
     shots_per_step = {
-        "readout errors": (step_assignment, 2 * P["SHOTS"] + 1),
-        "Ramsey frequency": (step_ramsey, 3 * P["SHOTS"]),
-        "pi amplitude": (step_pi, 3 * P["SHOTS"]),
-        "pi/2 amplitude": (step_half_pi, 3 * P["SHOTS"]),
-        "decay T1": (step_decay, 3 * P["SHOTS"]),
-        "adaptive T1": (step_tracked, P["ATT_SHOTS"]),
+        "readout errors": (step_assignment, 2 * P["shots_per_setting"] + 1),
+        "Ramsey frequency": (step_ramsey, 3 * P["shots_per_setting"]),
+        "pi amplitude": (step_pi, 3 * P["shots_per_setting"]),
+        "pi/2 amplitude": (step_half_pi, 3 * P["shots_per_setting"]),
+        "decay T1": (step_decay, 3 * P["shots_per_setting"]),
+        "adaptive T1": (step_tracked, P["tracker_shots"]),
     }
     out = {}
     for name, (kernel, shots) in shots_per_step.items():
         start = time.perf_counter()
-        lowered = pulse.compile(kernel, device=dev, machine=P["MACHINE"]).lower(q)
+        lowered = pulse.compile(kernel, device=dev, machine=P["machine"]).lower(q)
         compile_s = time.perf_counter() - start
         start = time.perf_counter()
         result = pulse.simulate(

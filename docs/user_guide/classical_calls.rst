@@ -114,15 +114,16 @@ In a kernel, ``fn.submit(...)`` sends the request and returns a future, and
        readout_time = 500 * pulse.ns
        decode_deadline = 350 * pulse.ns
        pi_time = 20 * pulse.ns
+       pi_amplitude = 0.16  # square(pi_time, pi_amplitude) is a pi pulse
        m = readout(r, square(readout_time, 0.05))
        in_time, correction = decode.submit([m]).result(timeout=decode_deadline)
        sync(d, r)
        if in_time:
            if correction[0]:
-               drive(d, square(pi_time, PI_AMP))
+               drive(d, square(pi_time, pi_amplitude))
        else:
            if m:
-               drive(d, square(pi_time, PI_AMP))
+               drive(d, square(pi_time, pi_amplitude))
 
 With ``timeout`` the result starts with a flag that is true when the
 answer came in time; the other values are zero when it did not, and the
