@@ -1389,10 +1389,13 @@ class PackedIRBuilder:
 
     def get_freq_array(self) -> array[float]:
         """Return qubit frequencies as float64 values indexed by qubit."""
-        arr = array("d", bytes(8 * self._next_qubit))
-        for q, f in self._freq_hz.items():
-            if q < self._next_qubit:
-                arr[q] = f
+        n = self._next_qubit
+        freq = self._freq_hz
+        arr = array("d", bytes(8 * n))
+        # The program's qudits, not all of the target's.
+        for q in range(n):
+            if q in freq:
+                arr[q] = freq[q]
         return arr
 
     @property
