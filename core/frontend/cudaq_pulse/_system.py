@@ -669,6 +669,14 @@ class ControlSystem:
                     )
                 )
         found.extend(self._needs(lowered, events, owners, unresolved))
+        if self._placement:
+            if unresolved is None:
+                from .controller import usage
+
+                found.extend(usage(lowered).violations)
+            else:
+                # When calls are due can depend on a call's values.
+                unresolved.append("processors")
         return found
 
     def _needs(

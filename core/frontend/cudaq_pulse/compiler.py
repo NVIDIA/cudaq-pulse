@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from . import _clocks
     from ._device import Device
     from ._system import ControlSystem
-    from .controller import ControllerLimits
+    from .controller import ControllerLimits, UsageReport
     from .kernel._kernel import CompiledKernel, Kernel
 
 __all__ = [
@@ -1164,6 +1164,15 @@ class Lowered:
         module = self._concrete() if syncs or self._retimed else self._module
         with self._lock:
             return list(module.event_epochs(syncs))
+
+    @property
+    def controller_usage(self) -> UsageReport:
+        """What the classical functions use of the processors of the
+        device's control system (``cudaq_pulse.controller.UsageReport``),
+        built when read; ``print`` it for a table."""
+        from .controller import usage
+
+        return usage(self)
 
     def classical_report(self) -> list[ClassicalCall]:
         """Every call to a classical function, with its timing and slack.

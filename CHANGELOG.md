@@ -67,6 +67,23 @@ behavior may change in any 0.x release.
   that does not plays it unrolled, and its limit error names the loop; unrolling adds pulses,
   not waveform memory, which holds each shape once. `rcp` keeps a branch
   on a readout the `feedback_latency_cycles` of the controllers that read out.
+- **Processors.** `pulse.Processor` is a classical processor on a
+  controller (`Controller(processors=[...])`), which runs the classical
+  functions called on its `links`; a link belongs to at most one processor
+  of a system. Compiling checks each function there: an operation in its
+  `unsupported` list (named with its line), `max_ops_per_function`,
+  `max_state_bytes_per_function`, `fixed_cost_only`, and its compute time at
+  the processor's `cycles_per_op` and `clock_ghz` against its
+  `max_latency_ns`. It checks each processor's `max_ops_total`,
+  `max_state_bytes_total`, `max_calls_per_shot`, `max_bytes_per_shot` and
+  `max_concurrent_calls` (default 1) across its functions. `"loop"` is a
+  processor operation too: its cost is a rolled loop's counter and jump per
+  iteration, and a processor without it runs loops unrolled, so their size
+  counts unrolled. `dispatch_keys={"name": key}` gives the functions a
+  processor runs fixed dispatch keys. `lowered.controller_usage` reports
+  each processor's functions and totals against its limits
+  (`.within_limits`; `print` it for a table). Descriptions and system files
+  state processors as `[[processors]]` tables.
 - **Controller descriptions.** `pulse.controller("vendor.model",
   drive_lines=..., readout_lines=...)` loads a controller from a TOML
   description installed with cudaq-pulse (or one given by path), parsed

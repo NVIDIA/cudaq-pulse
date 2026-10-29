@@ -204,3 +204,198 @@ def test_a_processor_prices_a_loop_by_its_loop_op_or_runs_it_unrolled():
     assert cost.processor_cycles({"loop": 3}, loops=True) == 20
     assert cost.processor_cycles({"loop": 3}, loops=False) == 8
     assert cost.processor_cycles({"add": 2}, loops=True) == 16
+
+
+# ── Checks ───────────────────────────────────────────────────────────────────
+
+
+def test_a_function_that_fits_its_processor_compiles_and_is_reported():
+    cores = pulse.Processor(links=["cores"], clock_ghz=1.0, max_ops_per_function=8)
+    usage = _lower(corrected, cores).controller_usage
+    assert usage.within_limits and usage.off_board == ()
+    (row,) = usage.controllers
+    (processor,) = row.processors
+    assert (row.controller, row.model, processor.index, processor.clock_ghz) == (0, "box.a", 0, 1.0)
+    (function,) = processor.functions
+    assert (function.function, function.ops, function.unrolled) == ("_parity", 4, False)
+    assert function.compute_cycles == 12 and function.compute_ns == 12.0
+    assert function.slack_ns == 48.0 and function.calls_per_shot == 1
+    assert processor.ops == 4 and processor.calls_per_shot == 1
+    assert processor.bytes_per_shot == function.request_bytes + function.answer_bytes
+    text = str(usage)
+    assert text.startswith("Controller usage: within limits\n")
+    assert "controller 0 (box.a), processor 0 at 1 GHz (links: cores)" in text
+    assert "_parity" in text and "4 / 8" in text and "12 / 60 ns" in text
+
+
+def test_a_processor_without_loop_holds_the_unrolled_body_and_says_so():
+    cores = pulse.Processor(links=["cores"], unsupported=["loop"], max_ops_per_function=6)
+    text = _fails(corrected, cores)
+    assert (
+        "_parity holds 8 operations with its loops unrolled (processors[0] of controllers[0] "
+        "(box.a) does not support 'loop'); processors[0] of controllers[0] (box.a) holds 6 per "
+        "function (max_ops_per_function)"
+    ) in text
+    fits = pulse.Processor(links=["cores"], unsupported=["loop"])
+    (function,) = _lower(corrected, fits).controller_usage.controllers[0].processors[0].functions
+    assert (function.ops, function.unrolled, function.compute_cycles) == (8, True, 8)
+
+
+def test_an_operation_a_processor_does_not_support_is_named_with_its_line():
+    cores = pulse.Processor(links=["cores"], unsupported=["load", "div"], max_concurrent_calls=2)
+    text = _fails(both, cores)
+    line = _parity.__code__.co_firstlineno + 3
+    assert f"_parity uses load (_parity line {line}), which processors[0]" in text
+    assert "_scaled uses div (_scaled line" in text
+    # Branches are if and else only: an inlined call needs none.
+    _lower(corrected, pulse.Processor(links=["cores"], unsupported=["branch"]))
+
+
+def test_totals_and_per_shot_limits_count_every_function_of_a_processor():
+    cores = pulse.Processor(
+        links=["cores"],
+        max_concurrent_calls=2,
+        max_ops_total=6,
+        max_state_bytes_total=20,
+        max_calls_per_shot=1,
+        max_bytes_per_shot=100,
+    )
+    text = _fails(both, cores)
+    label = "processors[0] of controllers[0] (box.a)"
+    assert f"{label}: its classical functions hold 7 operations; it holds 6 in all" in text
+    assert "(max_ops_total)" in text and "(max_state_bytes_total)" in text
+    assert f"{label}: one shot makes 2 calls to it; it takes 1 (max_calls_per_shot)" in text
+    assert "(max_bytes_per_shot)" in text
+    # Each limit left out is no limit: the program fits.
+    fits = _lower(both, pulse.Processor(links=["cores"], max_concurrent_calls=2))
+    assert fits.controller_usage.controllers[0].processors[0].ops == 7
+
+
+def test_calls_computing_at_once_are_held_to_max_concurrent_calls():
+    text = _fails(both, pulse.Processor(links=["cores"]))
+    assert "2 calls compute on it at once; it computes 1 (max_concurrent_calls)" in text
+    assert "at once 2 / 2" in str(
+        _lower(both, pulse.Processor(links=["cores"], max_concurrent_calls=2)).controller_usage
+    )
+
+
+def test_a_slow_processor_misses_a_function_deadline():
+    slow = pulse.Processor(links=["cores"], clock_ghz=0.1, cycles_per_op={"load": 4})
+    text = _fails(corrected, slow)
+    assert "_parity computes for about 240 ns on processors[0]" in text
+    assert "(24 cycles on its longest path), beyond its max_latency_ns=60" in text
+
+
+def test_a_fixed_cost_processor_rejects_a_body_whose_cost_is_not_fixed():
+    def unbounded(x):
+        while x > 1.0:
+            x = x / 2.0
+        return x
+
+    loose = pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=400, link="cores")(
+        unbounded
+    )
+
+    @pulse.kernel
+    def calls(q):
+        d, t = get_drive_line(q)
+        loose.submit(3.0).result()
+        drive(d, square(20, 0.1), t)
+
+    cores = pulse.Processor(links=["cores"], fixed_cost_only=True)
+    assert "unbounded is not fixed-cost, which processors[0]" in _fails(calls, cores)
+    assert "a while loop" in _fails(calls, cores)
+    _lower(calls, pulse.Processor(links=["cores"]))
+
+
+def test_functions_on_no_processor_and_externals_run_off_board():
+    table = pulse.classical.external(
+        "table", args=(Float(),), results=(Float(),), max_latency_ns=400, link="cores"
+    )
+
+    @pulse.kernel
+    def calls(q):
+        d, t = get_drive_line(q)
+        sign.submit(1.0).result()
+        table.submit(1.0).result()
+        drive(d, square(20, 0.1), t)
+
+    usage = _lower(calls, pulse.Processor(links=["cores"])).controller_usage
+    assert usage.off_board == ("_sign", "table")
+    assert usage.controllers[0].processors[0].functions == ()
+    assert "Off the processors: _sign, table" in str(usage)
+
+
+def test_a_float_parameter_defers_the_processor_check_to_the_call():
+    @pulse.kernel
+    def waits(q, tau: float):
+        d, t = get_drive_line(q)
+        r, rt = get_readout_line(q)
+        m = readout(r, square(100, 0.05), rt)
+        fix = parity.submit([m, m, m, m]).result()
+        wait(d, tau)
+        sync(r, d)
+        if fix[0]:
+            drive(d, square(20, 0.1), t)
+
+    qpu = _qpu(pulse.Processor(links=["cores"], max_ops_per_function=2))
+    compiled = pulse.compile(waits, device=qpu)
+    with pytest.raises(ControllerLimitError, match="_parity holds 4 operations"):
+        compiled.lower(qpu.qudits[0], 8.0)
+
+
+def test_a_system_without_processors_reports_every_function_off_board():
+    qpu = pulse.device(
+        {
+            "quantum_system": KRINNER,
+            "layout": [0, 1],
+            "control_system": pulse.ControlSystem(
+                controllers=[pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1])],
+                links={"cores": pulse.Link()},
+            ),
+        }
+    )
+    usage = pulse.compile(corrected, device=qpu).lower(qpu.qudits[0]).controller_usage
+    assert usage.controllers == () and usage.off_board == ("_parity",) and usage.within_limits
+
+
+# ── Descriptions and system files ────────────────────────────────────────────
+
+
+def test_a_description_states_its_processors_and_their_dispatch_keys(tmp_path):
+    path = tmp_path / "cores.toml"
+    path.write_text(
+        'model = "acme.cores"\nversion = "1"\n\n'
+        '[[processors]]\nlinks = ["cores"]\nclock_ghz = 0.5\nunsupported = ["loop", "trig"]\n'
+        "max_concurrent_calls = 2\n"
+        "[processors.cycles_per_op]\ndiv = 20\n[processors.dispatch_keys]\n_parity = 7\n\n"
+        '[[processors]]\nlinks = ["gpu"]\n'
+    )
+    box = pulse.controller(str(path), drive_lines=[0, 1], readout_lines=[0, 1])
+    cores, gpu = box.processors
+    assert cores.dispatch_keys == {"_parity": 7} and cores.cycles_per_op == {"div": 20}
+    assert cores.unsupported == ("loop", "trig") and gpu.links == ("gpu",)
+    system = pulse.ControlSystem(
+        controllers=[box], links={"cores": pulse.Link(), "gpu": pulse.Link()}
+    )
+    qpu = pulse.device({"quantum_system": KRINNER, "layout": [0, 1], "control_system": system})
+    data = json.loads(json.dumps(qpu.as_dict()))
+    assert data["control_system"]["controllers"][0]["processors"][0]["dispatch_keys"] == {
+        "_parity": 7
+    }
+    again = pulse.device(data)
+    assert again.control_system.controllers[0].processors == box.processors
+    usage = pulse.compile(both, device=again).lower(again.qudits[0]).controller_usage
+    assert usage.controllers[0].processors[0].clock_ghz == 0.5
+
+
+def test_a_bad_processor_in_a_system_file_is_a_problem_with_its_path():
+    system = pulse.ControlSystem(
+        controllers=[pulse.Controller(processors=[pulse.Processor(links=["cores"])])],
+        links={"cores": pulse.Link()},
+    )
+    qpu = pulse.device({"quantum_system": KRINNER, "layout": [0, 1], "control_system": system})
+    data = qpu.as_dict()
+    data["control_system"]["controllers"][0]["processors"][0]["unsupported"] = ["dvi"]
+    with pytest.raises(DeviceDefinitionError, match="did you mean 'div'"):
+        pulse.device(data)

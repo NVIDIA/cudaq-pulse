@@ -74,8 +74,14 @@ once. ``Device.as_dict()`` writes the whole QPU as one system file, format
 ``python -m cudaq_pulse.doctor --system FILE`` checks a system file.
 
 A controller's ``processors`` run the classical functions called on their
-links. In a description or a system file, a processor is a
-``[[processors]]`` table, with ``[processors.dispatch_keys]`` beneath it.
+links. Compiling checks each function there (the operations it uses, its
+size, its state and its compute time at the processor's ``cycles_per_op``
+against its ``max_latency_ns``) and each processor's totals; a processor
+without ``"loop"`` runs loops unrolled, and their size is counted so.
+``lowered.controller_usage`` is the report: ``print`` it for a table, or
+read ``.within_limits`` and ``.controllers[i].processors[j]``. In a
+description or a system file, a processor is a ``[[processors]]`` table,
+with ``[processors.dispatch_keys]`` beneath it.
 
 .. autoclass:: cudaq_pulse.Controller
    :members: as_dict, supports_capability
