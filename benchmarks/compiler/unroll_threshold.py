@@ -42,28 +42,28 @@ def make(calls, trips):
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             for _ in range(trips):
-                drive(d, square(4, 0.01), t)
+                drive(d, square(4, 0.01))
 
     elif calls == 3:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             for _ in range(trips):
-                drive(d, square(4, 0.01), t)
+                drive(d, square(4, 0.01))
                 wait(d, 2)
 
     else:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             for _ in range(trips):
-                drive(d, square(4, 0.01), t)
-                t = shift_phase(t, 0.1)
-                drive(d, square(4, 0.01), t)
+                drive(d, square(4, 0.01))
+                shift_phase(d.tone, 0.1)
+                drive(d, square(4, 0.01))
                 wait(d, 2)
 
     return k

@@ -79,45 +79,45 @@ def _target(n, t1_us=0.0):
 def _active_reset(prepare):
     @pulse.kernel
     def reset(q0):
-        d0, t0 = get_drive_line(q0)
-        r0, rt = get_readout_line(q0)
-        drive(d0, square(40, prepare), t0)
+        d0 = get_drive_line(q0)
+        r0 = get_readout_line(q0)
+        drive(d0, square(40, prepare))
         sync(d0, r0)
-        bit = readout(r0, square(200, 0.05), rt)
+        bit = readout(r0, square(200, 0.05))
         if bit:
-            drive(d0, square(40, _PI), t0)
+            drive(d0, square(40, _PI))
 
     return reset
 
 
 @pulse.kernel
 def conditional_flip(q0, q1):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
-    r0, rt = get_readout_line(q0)
-    drive(d0, square(40, _HALF_PI), t0)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
+    r0 = get_readout_line(q0)
+    drive(d0, square(40, _HALF_PI))
     sync(d0, r0)
-    bit = readout(r0, square(200, 0.05), rt)
+    bit = readout(r0, square(200, 0.05))
     if bit:
-        drive(d1, square(40, _PI), t1)
+        drive(d1, square(40, _PI))
 
 
 @pulse.kernel
 def measure(q0):
-    r0, rt = get_readout_line(q0)
-    readout(r0, square(200, 0.05), rt)
+    r0 = get_readout_line(q0)
+    readout(r0, square(200, 0.05))
 
 
 @pulse.kernel
 def repeated_reset(q0):
-    d0, t0 = get_drive_line(q0)
-    r0, rt = get_readout_line(q0)
-    drive(d0, square(40, _HALF_PI), t0)
+    d0 = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    drive(d0, square(40, _HALF_PI))
     for _ in range(3):
         sync(d0, r0)
-        bit = readout(r0, square(200, 0.05), rt)
+        bit = readout(r0, square(200, 0.05))
         if bit:
-            drive(d0, square(40, _PI), t0)
+            drive(d0, square(40, _PI))
 
 
 _P1 = math.exp(-100.0 / 500.0)
@@ -233,11 +233,11 @@ def test_evolve_of_a_program_that_measures_runs_the_gpu_backend(gpu_on_cpu):
 
 @pulse.kernel
 def measure_then_flip(q0):
-    d0, t0 = get_drive_line(q0)
-    r0, rt = get_readout_line(q0)
-    readout(r0, square(200, 0.05), rt)
+    d0 = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    readout(r0, square(200, 0.05))
     sync(d0, r0)
-    drive(d0, square(40, _PI), t0)
+    drive(d0, square(40, _PI))
 
 
 @pytest.mark.parametrize("backend", ["cpu", "gpu"])

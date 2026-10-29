@@ -95,8 +95,8 @@ cal = {"duration": 32 * pulse.ns, "sigma": 8 * pulse.ns}
 
 @pulse.kernel
 def rabi_oscillation(qubit, amplitude: float):
-    drive_line, tone = get_drive_line(qubit)
-    drive(drive_line, gaussian(cal["duration"], amplitude, cal["sigma"]), tone)
+    drive_line = get_drive_line(qubit)
+    drive(drive_line, gaussian(cal["duration"], amplitude, cal["sigma"]))
 
 
 dev = pulse.device("transmon_krinner_17q")

@@ -22,33 +22,33 @@ from tests._handles import Q
 
 @pulse.kernel
 def two_lines(q, r):
-    d, t = get_drive_line(q)
-    e, u = get_drive_line(r)
-    drive(d, square(8, 0.1), t)
-    drive(e, square(8, 0.1), u)
+    d = get_drive_line(q)
+    e = get_drive_line(r)
+    drive(d, square(8, 0.1))
+    drive(e, square(8, 0.1))
     sync(d, e)
-    drive(d, square(8, 0.1), t)
+    drive(d, square(8, 0.1))
 
 
 @pulse.kernel
 def feedback(q, r):
-    ro, rt = get_readout_line(q)
-    d, t = get_drive_line(r)
-    m = readout(ro, square(100, 0.05), rt)
+    ro = get_readout_line(q)
+    d = get_drive_line(r)
+    m = readout(ro, square(100, 0.05))
     sync(ro, d)
     if m:
-        drive(d, square(20, 0.3), t)
+        drive(d, square(20, 0.3))
 
 
 @pulse.kernel
 def rabi(q, amplitude: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     for _ in range(3):
-        drive(d, gaussian(16, amplitude, 4.0), t)
+        drive(d, gaussian(16, amplitude, 4.0))
         wait(d, 4)
     sync(d, r)
-    readout(r, square(40, 0.05), rt)
+    readout(r, square(40, 0.05))
 
 
 def _starts(lowered, kind="drive"):

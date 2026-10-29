@@ -296,7 +296,7 @@ def _calls(case: Case) -> tuple[Any, Any, Any]:
 
     def feedback(d, t, m):
         if answer(decode.submit([m])):
-            drive(d, square(ARM, 0.3), t)
+            drive(d, square(ARM, 0.3), tone=t)
 
     return answer, length, feedback
 
@@ -308,42 +308,42 @@ def called(case: Case, *, as_helper: bool = False) -> Any:
     answer, length, feedback = _calls(case)
 
     def measured(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(RO, 0.05), rt)
-        feedback(d, t, m)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(RO, 0.05))
+        feedback(d, d.tone, m)
 
     def measured_with_feedback(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(RO, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(RO, 0.05))
         if m:
-            drive(d, square(ARM, 0.2), t)
-        feedback(d, t, m)
+            drive(d, square(ARM, 0.2))
+        feedback(d, d.tone, m)
 
     def measured_after_wait(q, tau: float):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         wait(d, tau, bounds=(0, 400))
         sync(d, r)
-        m = readout(r, square(RO, 0.05), rt)
-        feedback(d, t, m)
+        m = readout(r, square(RO, 0.05))
+        feedback(d, d.tone, m)
 
     def measured_after_variable(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         wait(d, length(), bounds=TAU_BOUNDS)
-        m = readout(r, square(RO, 0.05), rt)
-        feedback(d, t, m)
+        m = readout(r, square(RO, 0.05))
+        feedback(d, d.tone, m)
 
     def submitted(q):
-        r, rt = get_readout_line(q)
-        return decode.submit([readout(r, square(RO, 0.05), rt)])
+        r = get_readout_line(q)
+        return decode.submit([readout(r, square(RO, 0.05))])
 
     def taken(future, q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         if answer(future):
-            drive(d, square(ARM, 0.3), t)
+            drive(d, square(ARM, 0.3))
 
     body = {
         "callee": measured,
@@ -373,76 +373,76 @@ def program(case: Case, *, callee_as_helper: bool = False) -> Any:
     placement = case.placement
 
     def k(q, p, n: int, tau: float):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        e, u = get_drive_line(p)
-        drive(e, square(SPECTATOR, 0.05), u)
-        drive(d, square(X90, 0.1), t)
-        m = readout(r, square(RO, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        e = get_drive_line(p)
+        drive(e, square(SPECTATOR, 0.05))
+        drive(d, square(X90, 0.1))
+        m = readout(r, square(RO, 0.05))
         if placement == "top":
-            feedback(d, t, m)
+            feedback(d, d.tone, m)
         elif placement in ("static_loop", "rolled_loop"):
             for _ in range(n):
-                feedback(d, t, readout(r, square(RO, 0.05), rt))
+                feedback(d, d.tone, readout(r, square(RO, 0.05)))
         elif placement == "branch":
             if m:
-                feedback(d, t, readout(r, square(RO, 0.05), rt))
+                feedback(d, d.tone, readout(r, square(RO, 0.05)))
         elif placement == "before_measure":
             bit = answer(decode.submit([m]))
-            m2 = readout(r, square(RO, 0.05), rt)
+            m2 = readout(r, square(RO, 0.05))
             if bit:
-                drive(d, square(ARM, 0.3), t)
+                drive(d, square(ARM, 0.3))
             if m2:
-                drive(d, square(ARM, 0.2), t)
+                drive(d, square(ARM, 0.2))
         elif placement == "straddle_measure":
             future = decode.submit([m])
-            m2 = readout(r, square(RO, 0.05), rt)
+            m2 = readout(r, square(RO, 0.05))
             if answer(future):
-                drive(d, square(ARM, 0.3), t)
+                drive(d, square(ARM, 0.3))
             if m2:
-                drive(d, square(ARM, 0.2), t)
+                drive(d, square(ARM, 0.2))
         elif placement == "float_wait":
             wait(d, tau, bounds=(0, 400))
-            feedback(d, t, m)
+            feedback(d, d.tone, m)
         elif placement == "variable_region":
             wait(d, length(), bounds=TAU_BOUNDS)
-            feedback(d, t, m)
+            feedback(d, d.tone, m)
         elif placement == "mixed_wait":
             wait(d, length() + tau, bounds=TAU_BOUNDS)
-            feedback(d, t, m)
+            feedback(d, d.tone, m)
         elif placement == "both_waits":
             wait(d, tau, bounds=(0, 400))
             wait(d, length(), bounds=TAU_BOUNDS)
-            feedback(d, t, m)
+            feedback(d, d.tone, m)
             wait(d, length() + tau, bounds=TAU_BOUNDS)
         elif placement == "across_variable":
             future = decode.submit([m])
             wait(d, length(), bounds=TAU_BOUNDS)
             if answer(future):
-                drive(d, square(ARM, 0.3), t)
+                drive(d, square(ARM, 0.3))
         elif placement == "loop_variable":
             for _ in range(n):
                 wait(d, length(), bounds=TAU_BOUNDS)
-                feedback(d, t, readout(r, square(RO, 0.05), rt))
+                feedback(d, d.tone, readout(r, square(RO, 0.05)))
         elif placement == "spectator_variable":
             wait(d, length(), bounds=TAU_BOUNDS)
-            feedback(d, t, m)
+            feedback(d, d.tone, m)
             wait(e, length(), bounds=TAU_BOUNDS)
         elif placement in ("spectator_loop", "spectator_unrolled"):
             for _ in range(n):
                 wait(d, length(), bounds=TAU_BOUNDS)
-                feedback(d, t, readout(r, square(RO, 0.05), rt))
+                feedback(d, d.tone, readout(r, square(RO, 0.05)))
                 wait(e, length(), bounds=TAU_BOUNDS)
-                drive(e, square(TAIL, 0.05), u)
+                drive(e, square(TAIL, 0.05))
         elif placement == "synced_variable":
             wait(d, length(), bounds=TAU_BOUNDS)
             sync(d, e)
-            feedback(d, t, m)
+            feedback(d, d.tone, m)
         elif placement == "shared_answer":
             x = length()
             wait(d, x, bounds=TAU_BOUNDS)
             wait(e, x, bounds=TAU_BOUNDS)
-            feedback(d, t, m)
+            feedback(d, d.tone, m)
         elif placement in ("callee", "callee_feedback", "callee_variable"):
             callee(q)
         elif placement == "callee_loop":
@@ -450,16 +450,16 @@ def program(case: Case, *, callee_as_helper: bool = False) -> Any:
                 callee(q)
         elif placement == "callee_twice":
             callee(q)
-            drive(e, square(TAIL, 0.05), u)
+            drive(e, square(TAIL, 0.05))
             callee(q)
         elif placement == "callee_float":
             callee(q, tau)
         elif placement == "future_out":
             if answer(callee(q)):
-                drive(d, square(ARM, 0.3), t)
+                drive(d, square(ARM, 0.3))
         elif placement == "future_in":
             callee(decode.submit([m]), q)
-        drive(e, square(TAIL, 0.05), u)
+        drive(e, square(TAIL, 0.05))
 
     k.__name__ = f"k_{case.placement}"
     return pulse.kernel(schedule=case.root if case.root in ("asap", "alap") else None)(k)
@@ -803,16 +803,16 @@ def explicit_reference(low: Any, shifts: Sequence[int]) -> Any:
                     play(node[2], lines, dict(measured))
                 continue
             if node[0] == "wait":
-                wait(lines[node[1]][0], node[2])
+                wait(lines[node[1]], node[2])
                 continue
             _, index, kind, which, gap, duration, amplitude = node
-            line, tone = lines[(kind, which)]
+            line = lines[(kind, which)]
             if gap > 0:
                 wait(line, gap)
             if kind == "readout":
-                measured[index] = readout(line, square(duration, amplitude), tone)
+                measured[index] = readout(line, square(duration, amplitude))
             else:
-                drive(line, square(duration, amplitude), tone)
+                drive(line, square(duration, amplitude))
 
     def reference(q0, q1):
         lines = {}

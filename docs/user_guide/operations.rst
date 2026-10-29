@@ -15,35 +15,49 @@ to MLIR operations in the Pulse dialect.
 Channel Access
 --------------
 
-.. function:: get_drive_line(qubit) -> (line, tone)
+.. function:: get_drive_line(qudit) -> Line
 
-   Obtain the drive channel for a qubit. Returns a ``(line, tone)`` pair:
-   the *line* is passed to ``drive()``, ``wait()``, and ``sync()``; the
-   *tone* is passed to phase and frequency ops.
+   Obtain the drive line of a qudit. The line is passed to ``drive()``,
+   ``wait()`` and ``sync()``; its tone, ``line.tone``, is passed to the phase
+   and frequency ops, as in ``shift_phase(line.tone, math.pi)``. A line is
+   one value: it is not unpacked or iterated.
 
-   A qubit has one drive channel for the whole program. The first call
+   ``line.tone`` drives the qudit's default transition, which its device's
+   model declares (levels 0 and 1 unless the model says otherwise).
+   ``line.tones`` maps each transition the model lists, as a
+   ``(lower, upper)`` pair of levels, to its tone, so
+   ``line.tones[(1, 2)]`` is the tone of the 1-2 transition; the default
+   transition's entry is ``line.tone`` itself. A transition the model does
+   not list raises a ``KeyError`` that names the ones it does. The mapping is
+   read-only.
+
+   A qudit has one drive line for the whole program. The first call
    acquires it; every later call, in the kernel or in a kernel it calls,
-   returns the channel's current line and tone. Pulses on it play one after
+   returns the line in its current state. Pulses on it play one after
    another, and phase and frequency changes carry over: ``x90(q); x90(q)``,
    where ``x90`` calls ``get_drive_line(q)`` itself, plays two pulses in
-   sequence. A loop whose body acquires the channel of a qubit that exists
+   sequence. A loop whose body acquires the line of a qudit that exists
    before the loop acquires it once, before the loop, and stays rolled.
 
-.. function:: get_readout_line(qubit) -> (line, tone)
+.. function:: get_readout_line(qudit) -> Line
 
-   Obtain the readout channel for a qubit. Same return convention, and the
-   same one channel per qubit.
+   Obtain the readout line of a qudit: the same one value per qudit for the
+   whole program, with its tone in ``line.tone``. A readout line has only
+   its own tone, so its ``line.tones`` holds that one entry.
 
 Scheduling Operations
 ---------------------
 
-.. function:: drive(line, waveform, tone)
+.. function:: drive(line, waveform, *, tone=None)
 
-   Play a waveform envelope on a drive line at the given tone frequency.
+   Play a waveform envelope on a drive line, at the line's own tone or, given
+   ``tone=``, at another one, such as ``drive(control, cr, tone=target.tone)``
+   for a cross-resonance pulse.
 
-.. function:: readout(line, waveform, tone)
+.. function:: readout(line, waveform, *, tone=None)
 
-   Acquire a measurement through a readout line.
+   Acquire a measurement through a readout line, at its own tone unless
+   ``tone=`` gives another.
 
 .. function:: wait(line, duration, bounds=None)
 
@@ -165,10 +179,10 @@ or use ``custom``:
 
    @pulse.kernel
    def raw(q):
-       d, t = get_drive_line(q)
+       d = get_drive_line(q)
        # 1 GHz samples, for a controller at half of a 2 GHz program clock:
        # 8 samples last 16 clock cycles.
-       drive(d, custom_samples(samples_1ghz, sample_rate_ghz=1.0), t)
+       drive(d, custom_samples(samples_1ghz, sample_rate_ghz=1.0))
 
 Waveform Arithmetic
 -------------------
@@ -181,7 +195,7 @@ Waveforms can be combined algebraically inside kernels:
 
    @pulse.kernel
    def combined_waveform(qubit, duration):
-       drive_line, tone = get_drive_line(qubit)
+       drive_line = get_drive_line(qubit)
        envelope_a = gaussian(duration, 0.5, 8 * pulse.ns)
        envelope_b = gaussian(duration, 0.3, 5 * pulse.ns)
        combined = wf_add(envelope_a, envelope_b)

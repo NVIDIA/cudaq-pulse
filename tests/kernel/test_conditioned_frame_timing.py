@@ -29,203 +29,203 @@ from tests.runtime.test_simulate import _HALF_PI, _target
 
 @pulse.kernel
 def shifted_phase(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, _HALF_PI), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, _HALF_PI))
     sync(d, r)
-    m = readout(r, square(200, 0.05), rt)
+    m = readout(r, square(200, 0.05))
     if m:
-        shift_phase(t, math.pi)
-    drive(d, square(40, _HALF_PI), t)
+        shift_phase(d.tone, math.pi)
+    drive(d, square(40, _HALF_PI))
 
 
 @pulse.kernel
 def shifted_phase_synced(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, _HALF_PI), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, _HALF_PI))
     sync(d, r)
-    m = readout(r, square(200, 0.05), rt)
+    m = readout(r, square(200, 0.05))
     sync(d, r)
     if m:
-        shift_phase(t, math.pi)
-    drive(d, square(40, _HALF_PI), t)
+        shift_phase(d.tone, math.pi)
+    drive(d, square(40, _HALF_PI))
 
 
 @pulse.kernel
 def set_phases(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, _HALF_PI), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, _HALF_PI))
     sync(d, r)
-    m = readout(r, square(200, 0.05), rt)
+    m = readout(r, square(200, 0.05))
     if m:
-        set_phase(t, math.pi)
+        set_phase(d.tone, math.pi)
     else:
-        set_phase(t, 0.0)
-    drive(d, square(40, _HALF_PI), t)
+        set_phase(d.tone, 0.0)
+    drive(d, square(40, _HALF_PI))
 
 
 @pulse.kernel
 def set_phases_synced(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, _HALF_PI), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, _HALF_PI))
     sync(d, r)
-    m = readout(r, square(200, 0.05), rt)
+    m = readout(r, square(200, 0.05))
     sync(d, r)
     if m:
-        set_phase(t, math.pi)
+        set_phase(d.tone, math.pi)
     else:
-        set_phase(t, 0.0)
-    drive(d, square(40, _HALF_PI), t)
+        set_phase(d.tone, 0.0)
+    drive(d, square(40, _HALF_PI))
 
 
 @pulse.kernel
 def shifted_frequency(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, _HALF_PI), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, _HALF_PI))
     sync(d, r)
-    m = readout(r, square(200, 0.05), rt)
+    m = readout(r, square(200, 0.05))
     if m:
-        shift_frequency(t, 2.0e6)
-    drive(d, square(400, _HALF_PI), t)
+        shift_frequency(d.tone, 2.0e6)
+    drive(d, square(400, _HALF_PI))
 
 
 @pulse.kernel
 def shifted_frequency_synced(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, _HALF_PI), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, _HALF_PI))
     sync(d, r)
-    m = readout(r, square(200, 0.05), rt)
+    m = readout(r, square(200, 0.05))
     sync(d, r)
     if m:
-        shift_frequency(t, 2.0e6)
-    drive(d, square(400, _HALF_PI), t)
+        shift_frequency(d.tone, 2.0e6)
+    drive(d, square(400, _HALF_PI))
 
 
 @pulse.kernel
 def set_frequencies(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, _HALF_PI), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, _HALF_PI))
     sync(d, r)
-    m = readout(r, square(200, 0.05), rt)
+    m = readout(r, square(200, 0.05))
     if m:
-        set_frequency(t, 5.002e9)
+        set_frequency(d.tone, 5.002e9)
     else:
-        set_frequency(t, 4.999e9)
-    drive(d, square(400, _HALF_PI), t)
+        set_frequency(d.tone, 4.999e9)
+    drive(d, square(400, _HALF_PI))
 
 
 @pulse.kernel
 def set_frequencies_synced(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, _HALF_PI), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, _HALF_PI))
     sync(d, r)
-    m = readout(r, square(200, 0.05), rt)
+    m = readout(r, square(200, 0.05))
     sync(d, r)
     if m:
-        set_frequency(t, 5.002e9)
+        set_frequency(d.tone, 5.002e9)
     else:
-        set_frequency(t, 4.999e9)
-    drive(d, square(400, _HALF_PI), t)
+        set_frequency(d.tone, 4.999e9)
+    drive(d, square(400, _HALF_PI))
 
 
 @pulse.kernel
 def other_qudits_tone(q0, q1):
     # The drive in the arm waits for the measurement, but only on its own
     # tone: the other qudit's tone is ready when the measurement is.
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
-    r0, rt = get_readout_line(q0)
-    drive(d1, square(40, _HALF_PI), t1)
-    m = readout(r0, square(200, 0.05), rt)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
+    r0 = get_readout_line(q0)
+    drive(d1, square(40, _HALF_PI))
+    m = readout(r0, square(200, 0.05))
     if m:
-        shift_phase(t1, math.pi)
-        drive(d0, square(40, _HALF_PI), t0)
-    drive(d1, square(40, _HALF_PI), t1)
+        shift_phase(d1.tone, math.pi)
+        drive(d0, square(40, _HALF_PI))
+    drive(d1, square(40, _HALF_PI))
 
 
 @pulse.kernel
 def other_qudits_tone_synced(q0, q1):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
-    r0, rt = get_readout_line(q0)
-    drive(d1, square(40, _HALF_PI), t1)
-    m = readout(r0, square(200, 0.05), rt)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
+    r0 = get_readout_line(q0)
+    drive(d1, square(40, _HALF_PI))
+    m = readout(r0, square(200, 0.05))
     sync(d0, d1, r0)
     if m:
-        shift_phase(t1, math.pi)
-        drive(d0, square(40, _HALF_PI), t0)
-    drive(d1, square(40, _HALF_PI), t1)
+        shift_phase(d1.tone, math.pi)
+        drive(d0, square(40, _HALF_PI))
+    drive(d1, square(40, _HALF_PI))
 
 
 @pulse.kernel
 def elif_phases(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, _HALF_PI), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, _HALF_PI))
     sync(d, r)
-    first = readout(r, square(200, 0.05), rt)
-    second = readout(r, square(200, 0.05), rt)
+    first = readout(r, square(200, 0.05))
+    second = readout(r, square(200, 0.05))
     if first:
-        shift_phase(t, math.pi)
+        shift_phase(d.tone, math.pi)
     elif second:
-        shift_phase(t, _HALF_PI)
-    drive(d, square(40, _HALF_PI), t)
+        shift_phase(d.tone, _HALF_PI)
+    drive(d, square(40, _HALF_PI))
 
 
 @pulse.kernel
 def elif_phases_synced(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, _HALF_PI), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, _HALF_PI))
     sync(d, r)
-    first = readout(r, square(200, 0.05), rt)
-    second = readout(r, square(200, 0.05), rt)
+    first = readout(r, square(200, 0.05))
+    second = readout(r, square(200, 0.05))
     sync(d, r)
     if first:
-        shift_phase(t, math.pi)
+        shift_phase(d.tone, math.pi)
     elif second:
-        shift_phase(t, _HALF_PI)
-    drive(d, square(40, _HALF_PI), t)
+        shift_phase(d.tone, _HALF_PI)
+    drive(d, square(40, _HALF_PI))
 
 
 @pulse.kernel
 def nested_frequencies(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, _HALF_PI), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, _HALF_PI))
     sync(d, r)
-    first = readout(r, square(200, 0.05), rt)
-    second = readout(r, square(200, 0.05), rt)
+    first = readout(r, square(200, 0.05))
+    second = readout(r, square(200, 0.05))
     if first:
         if second:
-            shift_frequency(t, 2.0e6)
+            shift_frequency(d.tone, 2.0e6)
         else:
-            set_phase(t, math.pi)
-    drive(d, square(400, _HALF_PI), t)
+            set_phase(d.tone, math.pi)
+    drive(d, square(400, _HALF_PI))
 
 
 @pulse.kernel
 def nested_frequencies_synced(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, _HALF_PI), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, _HALF_PI))
     sync(d, r)
-    first = readout(r, square(200, 0.05), rt)
-    second = readout(r, square(200, 0.05), rt)
+    first = readout(r, square(200, 0.05))
+    second = readout(r, square(200, 0.05))
     sync(d, r)
     if first:
         if second:
-            shift_frequency(t, 2.0e6)
+            shift_frequency(d.tone, 2.0e6)
         else:
-            set_phase(t, math.pi)
-    drive(d, square(400, _HALF_PI), t)
+            set_phase(d.tone, math.pi)
+    drive(d, square(400, _HALF_PI))
 
 
 _PAIRS = [

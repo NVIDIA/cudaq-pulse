@@ -59,13 +59,13 @@ cal = {
 
 @pulse.kernel
 def krinner_pair(qubit_aux, qubit_data):
-    drive_line_aux, tone_aux = get_drive_line(qubit_aux)
-    drive_line_data, tone_data = get_drive_line(qubit_data)
+    drive_line_aux = get_drive_line(qubit_aux)
+    drive_line_data = get_drive_line(qubit_data)
     duration, sigma = cal["x_duration"], cal["x_sigma"]
 
     # pi/2 on the auxiliary qubit, pi on the data qubit
-    drive(drive_line_aux, drag(duration, pi_amplitude / 2, sigma, 0.0), tone_aux)
-    drive(drive_line_data, drag(duration, pi_amplitude, sigma, 0.0), tone_data)
+    drive(drive_line_aux, drag(duration, pi_amplitude / 2, sigma, 0.0))
+    drive(drive_line_data, drag(duration, pi_amplitude, sigma, 0.0))
     sync(drive_line_aux, drive_line_data)
 
     # The CZ slot
@@ -73,7 +73,7 @@ def krinner_pair(qubit_aux, qubit_data):
     wait(drive_line_data, cal["cz_slot"])
     sync(drive_line_aux, drive_line_data)
 
-    drive(drive_line_aux, drag(duration, pi_amplitude / 2, sigma, 0.0), tone_aux)
+    drive(drive_line_aux, drag(duration, pi_amplitude / 2, sigma, 0.0))
 
 
 print("=== Stage 1: compile (default passes, ALAP schedule) ===")

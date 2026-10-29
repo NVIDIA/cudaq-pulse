@@ -58,11 +58,11 @@ def calibrate(x):
 
 @pulse.kernel
 def feedback(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(READOUT, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(READOUT, 0.05))
     if decode.submit([m]).result()[0]:
-        drive(d, square(ARM, 0.1), t)
+        drive(d, square(ARM, 0.1))
 
 
 def _events(low, kind):
@@ -99,13 +99,13 @@ def test_feedback_latency_of_the_link_adds_to_the_budget(feedback_ns):
 def _late_consumer(fn):
     @pulse.kernel
     def k(q, p):
-        d, t = get_drive_line(q)
-        e, u = get_drive_line(p)
-        r, rt = get_readout_line(q)
-        drive(e, square(8000, 0.01), u)
-        m = readout(r, square(READOUT, 0.05), rt)
+        d = get_drive_line(q)
+        e = get_drive_line(p)
+        r = get_readout_line(q)
+        drive(e, square(8000, 0.01))
+        m = readout(r, square(READOUT, 0.05))
         if fn.submit([m]).result()[0]:
-            drive(d, square(ARM, 0.1), t)
+            drive(d, square(ARM, 0.1))
 
     return k
 
@@ -133,12 +133,12 @@ def test_lazy_submission_floats_to_just_in_time_under_alap():
 def _rounds(n, fn=decode):
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         for _ in range(n):
-            m = readout(r, square(READOUT, 0.05), rt)
+            m = readout(r, square(READOUT, 0.05))
             if fn.submit([m]).result()[0]:
-                drive(d, square(ARM, 0.1), t)
+                drive(d, square(ARM, 0.1))
 
     return k
 
@@ -178,8 +178,8 @@ def test_link_slots_bound_requests_in_flight(policy, slots):
 def test_submissions_on_one_link_go_out_in_order():
     @pulse.kernel
     def k(q):
-        r, rt = get_readout_line(q)
-        m = readout(r, square(READOUT, 0.05), rt)
+        r = get_readout_line(q)
+        m = readout(r, square(READOUT, 0.05))
         futures = []
         for _ in range(5):
             futures.append(decode.submit([m]))
@@ -197,10 +197,10 @@ def test_submissions_on_one_link_go_out_in_order():
 def test_links_are_independent():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         a = tune.submit(0.1)
         b = calibrate.submit(0.2)
-        drive(d, square(ARM, a.result() + b.result()), t)
+        drive(d, square(ARM, a.result() + b.result()))
 
     low = pulse.compile(k, schedule="asap").lower(Q[0])
     calls = low.classical_report()
@@ -212,13 +212,13 @@ def test_links_are_independent():
 def test_nested_branches_on_answers(policy):
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(READOUT, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(READOUT, 0.05))
         if decode.submit([m]).result()[0]:
-            m2 = readout(r, square(READOUT, 0.05), rt)
+            m2 = readout(r, square(READOUT, 0.05))
             if decode.submit([m2]).result()[0]:
-                drive(d, square(ARM, 0.1), t)
+                drive(d, square(ARM, 0.1))
 
     low = pulse.compile(k, schedule=policy).lower(Q[0])
     first, second = low.classical_report()
@@ -230,18 +230,18 @@ def test_nested_branches_on_answers(policy):
 @pytest.mark.parametrize("flatten", [False, True])
 def test_a_block_returns_its_future(policy, flatten):
     @pulse.kernel(schedule="alap")
-    def measure_and_submit(r, rt):
-        m = readout(r, square(READOUT, 0.05), rt)
+    def measure_and_submit(r):
+        m = readout(r, square(READOUT, 0.05))
         return decode.submit([m])
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        answer = measure_and_submit(r, rt)
-        drive(d, square(ARM, 0.2), t)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        answer = measure_and_submit(r)
+        drive(d, square(ARM, 0.2))
         if answer.result()[0]:
-            drive(d, square(ARM, 0.1), t)
+            drive(d, square(ARM, 0.1))
 
     low = pulse.compile(k, schedule=policy, flatten_schedules=flatten).lower(Q[0])
     (call,) = low.classical_report()
@@ -252,12 +252,12 @@ def test_a_block_returns_its_future(policy, flatten):
 def test_timeout_budgets_the_timeout():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(READOUT, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(READOUT, 0.05))
         ok, fix = decode.submit([m]).result(timeout=400 * pulse.ns)
         if ok:
-            drive(d, square(ARM, 0.1), t)
+            drive(d, square(ARM, 0.1))
 
     (call,) = pulse.compile(k).lower(Q[0]).classical_report()
     assert call.due_cycles == READOUT + 1 + math.ceil(400 * CLOCK)
@@ -266,13 +266,13 @@ def test_timeout_budgets_the_timeout():
 def test_blocking_waits_start_epochs():
     @pulse.kernel
     def k(q, p):
-        d, t = get_drive_line(q)
-        e, u = get_drive_line(p)
-        drive(e, square(ARM, 0.1), u)
+        d = get_drive_line(q)
+        e = get_drive_line(p)
+        drive(e, square(ARM, 0.1))
         x = calibrate.submit(0.5).result()
-        drive(d, square(ARM, x), t)
+        drive(d, square(ARM, x))
         y = calibrate.submit(x).result()
-        drive(d, square(ARM, y), t)
+        drive(d, square(ARM, y))
 
     for policy in ("asap", "alap"):
         low = pulse.compile(k, schedule=policy).lower(Q[0], Q[1])
@@ -295,8 +295,8 @@ def test_a_missed_deadline_is_rejected():
 
     @pulse.kernel
     def k(q):
-        r, rt = get_readout_line(q)
-        tight.submit([readout(r, square(READOUT, 0.05), rt)]).result()
+        r = get_readout_line(q)
+        tight.submit([readout(r, square(READOUT, 0.05))]).result()
 
     with pytest.raises(
         RuntimeError, match=r"cannot meet its deadline.*slack -401\); raise deadline_ns"
@@ -316,8 +316,8 @@ def test_deadline_slack_is_reported():
 
     @pulse.kernel
     def k(q):
-        r, rt = get_readout_line(q)
-        loose.submit([readout(r, square(READOUT, 0.05), rt)]).result()
+        r = get_readout_line(q)
+        loose.submit([readout(r, square(READOUT, 0.05))]).result()
 
     (call,) = pulse.compile(k).lower(Q[0]).classical_report()
     assert call.deadline_slack_cycles == math.ceil(1500 * CLOCK) - (1 + BUDGET)
@@ -329,8 +329,8 @@ def test_a_request_too_big_for_its_slot_is_rejected():
 
     @pulse.kernel
     def k(q):
-        r, rt = get_readout_line(q)
-        m = readout(r, square(READOUT, 0.05), rt)
+        r = get_readout_line(q)
+        m = readout(r, square(READOUT, 0.05))
         big.submit([m] * 16)
 
     with pytest.raises(RuntimeError, match="a request of 'big' takes 26 bytes"):
@@ -352,10 +352,10 @@ def _many(n, links):
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(n):
             a = functions[i % links].submit(0.1).result()
-            drive(d, square(8, a), t)
+            drive(d, square(8, a))
 
     return k
 
@@ -393,20 +393,20 @@ def _program(steps):
         futures = []
         answers = []
         for kind, q, link in steps:
-            d, t = get_drive_line(qs[q])
-            r, rt = get_readout_line(qs[q])
+            d = get_drive_line(qs[q])
+            r = get_readout_line(qs[q])
             if kind == "readout":
-                ms.append(readout(r, square(60, 0.05), rt))
+                ms.append(readout(r, square(60, 0.05)))
             elif kind == "submit" and ms:
                 fn = decode if link == 0 else decode_lazy
                 futures.append(fn.submit([ms[-1]]))
             elif kind == "wait" and futures:
                 answers.append(futures.pop(0).result())
             elif kind == "drive":
-                drive(d, square(20, 0.1), t)
+                drive(d, square(20, 0.1))
             elif kind == "drive_from_answer" and answers:
                 if answers[-1][0]:
-                    drive(d, square(20, 0.1), t)
+                    drive(d, square(20, 0.1))
         for f in futures:
             f.result()
 
@@ -449,10 +449,10 @@ def test_a_helper_passed_a_future_takes_its_answer():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        if answer(decode.submit([readout(r, square(READOUT, 0.05), rt)])):
-            drive(d, square(ARM, 0.1), t)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        if answer(decode.submit([readout(r, square(READOUT, 0.05))])):
+            drive(d, square(ARM, 0.1))
 
     (call,) = pulse.compile(k).lower(Q[0]).classical_report()
     assert call.first_use_cycles == call.due_cycles
@@ -463,13 +463,13 @@ def test_a_helper_passed_a_future_takes_its_answer():
 def test_a_blocking_wait_waits_for_the_lines_it_feeds(policy, tied):
     @pulse.kernel
     def k(q, p):
-        d, t = get_drive_line(q)
-        e, u = get_drive_line(p)
-        drive(e, square(8000, 0.01), u)
+        d = get_drive_line(q)
+        e = get_drive_line(p)
+        drive(e, square(8000, 0.01))
         if tied:
             sync(d, e)
         x = calibrate.submit(0.5).result()
-        drive(d, square(ARM, x), t)
+        drive(d, square(ARM, x))
 
     low = pulse.compile(k, schedule=policy).lower(Q[0], Q[1])
     (call,) = low.classical_report()
@@ -487,8 +487,8 @@ def test_a_blocking_wait_waits_for_the_lines_it_feeds(policy, tied):
 @pytest.mark.parametrize("policy", ["asap", "alap"])
 def test_a_block_waits_for_a_slot_the_caller_holds(callee, policy):
     @pulse.kernel(schedule=callee)
-    def twice(r, rt):
-        m = readout(r, square(10, 0.05), rt)
+    def twice(r):
+        m = readout(r, square(10, 0.05))
         a = decode.submit([m])
         b = decode.submit([m])
         a.result()
@@ -496,9 +496,9 @@ def test_a_block_waits_for_a_slot_the_caller_holds(callee, policy):
 
     @pulse.kernel
     def k(q):
-        r, rt = get_readout_line(q)
-        f = decode.submit([readout(r, square(10, 0.05), rt)])
-        twice(r, rt)
+        r = get_readout_line(q)
+        f = decode.submit([readout(r, square(10, 0.05))])
+        twice(r)
         f.result()
 
     machine = MachineModel(links={0: Link(max_in_flight=2)})
@@ -512,13 +512,13 @@ def test_a_block_waits_for_a_slot_the_caller_holds(callee, policy):
 @pytest.mark.parametrize("passes", [None, ()])
 def test_a_blocking_wait_in_a_block_is_rejected_without_the_verifier(passes):
     @pulse.kernel(schedule="asap")
-    def inner(d, t):
-        drive(d, square(ARM, calibrate.submit(0.5).result()), t)
+    def inner(d):
+        drive(d, square(ARM, calibrate.submit(0.5).result()))
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        inner(d, t)
+        d = get_drive_line(q)
+        inner(d)
 
     with pytest.raises(RuntimeError, match="return the future from the kernel and take the answer"):
         pulse.compile(k, passes=passes).lower(Q[0])
@@ -531,13 +531,13 @@ def test_a_future_taken_with_a_timeout_in_a_block_budgets_the_timeout(callee, po
     def take(future, d, t):
         ok, fix = future.result(timeout=400 * pulse.ns)
         if fix[0]:
-            drive(d, square(ARM, 0.1), t)
+            drive(d, square(ARM, 0.1), tone=t)
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        take(decode.submit([readout(r, square(READOUT, 0.05), rt)]), d, t)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        take(decode.submit([readout(r, square(READOUT, 0.05))]), d, d.tone)
 
     (call,) = pulse.compile(k, schedule=policy).lower(Q[0]).classical_report()
     assert call.due_cycles == READOUT + 1 + math.ceil(400 * CLOCK)

@@ -41,9 +41,9 @@ def _drives(count: int) -> pulse.Kernel:
 
     @pulse.kernel
     def drives(q, amp: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(count):
-            drive(d, gaussian(40 + 4 * (i % 3), amp, 10.0), t)
+            drive(d, gaussian(40 + 4 * (i % 3), amp, 10.0))
 
     return drives
 

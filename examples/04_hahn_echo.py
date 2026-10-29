@@ -19,7 +19,7 @@ import numpy as np
 @pulse.kernel
 def hahn_echo(qubit, sigma, amp_half_pi, amp_pi, tau):
     """Hahn echo: pi/2_X - tau - pi_X - tau - pi/2_X."""
-    drive_line, tone = get_drive_line(qubit)
+    drive_line = get_drive_line(qubit)
 
     dur_half_pi = 4 * sigma
     dur_pi = 4 * sigma
@@ -28,25 +28,25 @@ def hahn_echo(qubit, sigma, amp_half_pi, amp_pi, tau):
     pi_envelope = gaussian(dur_pi, amp_pi, sigma)
 
     # pi/2 pulse about X
-    drive(drive_line, half_pi_envelope, tone)
+    drive(drive_line, half_pi_envelope)
 
     # Free evolution
     wait(drive_line, tau)
 
     # pi refocusing pulse about X
-    drive(drive_line, pi_envelope, tone)
+    drive(drive_line, pi_envelope)
 
     # Free evolution
     wait(drive_line, tau)
 
     # Final pi/2 pulse about X
-    drive(drive_line, half_pi_envelope, tone)
+    drive(drive_line, half_pi_envelope)
 
 
 @pulse.kernel
 def cpmg_echo(qubit, sigma, amp_half_pi, amp_pi, tau, n_refocus):
     """CPMG dynamical decoupling: pi/2_X - [tau - pi_Y - tau]^n - pi/2_X."""
-    drive_line, tone = get_drive_line(qubit)
+    drive_line = get_drive_line(qubit)
 
     dur_half_pi = 4 * sigma
     dur_pi = 4 * sigma
@@ -55,18 +55,18 @@ def cpmg_echo(qubit, sigma, amp_half_pi, amp_pi, tau, n_refocus):
     pi_envelope = gaussian(dur_pi, amp_pi, sigma)
 
     # Initial pi/2 about X
-    drive(drive_line, half_pi_envelope, tone)
+    drive(drive_line, half_pi_envelope)
 
     for _i in range(n_refocus):
         wait(drive_line, tau)
         # pi about Y = phase shift of pi/2 then pi_X
-        shift_phase(tone, np.pi / 2)
-        drive(drive_line, pi_envelope, tone)
-        shift_phase(tone, -np.pi / 2)
+        shift_phase(drive_line.tone, np.pi / 2)
+        drive(drive_line, pi_envelope)
+        shift_phase(drive_line.tone, -np.pi / 2)
         wait(drive_line, tau)
 
     # Final pi/2 about X
-    drive(drive_line, half_pi_envelope, tone)
+    drive(drive_line, half_pi_envelope)
 
 
 def cycles(time):

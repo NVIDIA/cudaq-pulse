@@ -24,8 +24,8 @@ NOT_CALLABLE = object()
 def test_qudit_handles_in_a_list_say_how_to_pass_them():
     @pulse.kernel
     def k(qs):
-        d, t = get_drive_line(qs[0])
-        drive(d, square(8, 0.1), t)
+        d = get_drive_line(qs[0])
+        drive(d, square(8, 0.1))
 
     with pytest.raises(pulse.CompilationError) as info:
         pulse.compile(k).lower([Q[0], Q[1]])
@@ -41,8 +41,8 @@ def test_a_name_used_before_it_is_assigned_is_a_plain_compilation_error():
     def k(q, flag: int):
         if flag:
             w = square(8, 0.1)
-        d, t = get_drive_line(q)
-        drive(d, w, t)
+        d = get_drive_line(q)
+        drive(d, w)
 
     pulse.compile(k).lower(Q[0], 1)
     with pytest.raises(pulse.CompilationError) as info:
@@ -52,13 +52,13 @@ def test_a_name_used_before_it_is_assigned_is_a_plain_compilation_error():
         "'w' is used before it is assigned; assign it on every path that reaches this "
         "line (an if on a value known while tracing takes only one arm)"
     )
-    assert "drive(d, w, t)" in "".join(info.value.__notes__)
+    assert "drive(d, w)" in "".join(info.value.__notes__)
 
 
 def test_unpacking_what_an_op_returns_says_it_returns_nothing():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         _, _ = wait(d, 8)
 
     with pytest.raises(pulse.CompilationError, match=r"cannot unpack None into 2 names: a call"):
@@ -101,8 +101,8 @@ def test_qudits_of_two_devices_of_one_target_name_their_layouts():
 
     @pulse.kernel
     def k(q0, q1):
-        d, t = get_drive_line(q0)
-        drive(d, square(8, 0.1), t)
+        d = get_drive_line(q0)
+        drive(d, square(8, 0.1))
 
     with pytest.raises(pulse.DeviceMismatchError) as info:
         k.lower(a.qudit_handles[0], b.qudit_handles[1])
@@ -150,7 +150,7 @@ def test_an_unsupported_cast_is_an_internal_error():
 def idle():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, 8)
 
     return k.lower(Q[0])

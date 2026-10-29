@@ -29,16 +29,16 @@ cal = {
 def two_qubit_simultaneous(qubit_0, qubit_1):
     """Drive two qubits simultaneously, then sync them."""
 
-    drive_line_0, tone_0 = get_drive_line(qubit_0)
-    drive_line_1, tone_1 = get_drive_line(qubit_1)
+    drive_line_0 = get_drive_line(qubit_0)
+    drive_line_1 = get_drive_line(qubit_1)
 
-    drive(drive_line_0, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]), tone_0)
-    drive(drive_line_1, gaussian(cal["x_duration"], 0.30, cal["x_sigma"]), tone_1)
+    drive(drive_line_0, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]))
+    drive(drive_line_1, gaussian(cal["x_duration"], 0.30, cal["x_sigma"]))
 
     sync(drive_line_0, drive_line_1)
 
-    drive(drive_line_0, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]), tone_0)
-    drive(drive_line_1, gaussian(cal["x_duration"], 0.30, cal["x_sigma"]), tone_1)
+    drive(drive_line_0, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]))
+    drive(drive_line_1, gaussian(cal["x_duration"], 0.30, cal["x_sigma"]))
 
 
 # ── 2. Qudits and amplitudes as parameters ───────────────────────────────────
@@ -47,12 +47,12 @@ def two_qubit_simultaneous(qubit_0, qubit_1):
 @pulse.kernel
 def parametric_pi_half(qubit_0, qubit_1, amplitude_0, amplitude_1):
     """Calibration-friendly: pass the qudits and their amplitudes in."""
-    drive_line_0, tone_0 = get_drive_line(qubit_0)
-    drive_line_1, tone_1 = get_drive_line(qubit_1)
+    drive_line_0 = get_drive_line(qubit_0)
+    drive_line_1 = get_drive_line(qubit_1)
 
     x_duration, x_sigma, beta = cal["x_duration"], cal["x_sigma"], cal["drag_beta"]
-    drive(drive_line_0, drag(x_duration, amplitude_0, x_sigma, beta), tone_0)
-    drive(drive_line_1, drag(x_duration, amplitude_1, x_sigma, beta), tone_1)
+    drive(drive_line_0, drag(x_duration, amplitude_0, x_sigma, beta))
+    drive(drive_line_1, drag(x_duration, amplitude_1, x_sigma, beta))
 
 
 # ── 3. A register of qudits ──────────────────────────────────────────────────
@@ -65,11 +65,11 @@ def qvec_simultaneous_drive(qubit_vector, amplitude):
     dev.qudit_handles[0:4] is a register of four qudits; individual qudits
     are accessed by indexing.
     """
-    drive_line_0, tone_0 = get_drive_line(qubit_vector[0])
-    drive_line_1, tone_1 = get_drive_line(qubit_vector[1])
+    drive_line_0 = get_drive_line(qubit_vector[0])
+    drive_line_1 = get_drive_line(qubit_vector[1])
 
-    drive(drive_line_0, gaussian(cal["x_duration"], amplitude, cal["x_sigma"]), tone_0)
-    drive(drive_line_1, gaussian(cal["x_duration"], amplitude, cal["x_sigma"]), tone_1)
+    drive(drive_line_0, gaussian(cal["x_duration"], amplitude, cal["x_sigma"]))
+    drive(drive_line_1, gaussian(cal["x_duration"], amplitude, cal["x_sigma"]))
     sync(drive_line_0, drive_line_1)
 
 
@@ -83,16 +83,16 @@ def sync_after_asymmetric_ops(qubit_0, qubit_1):
     Without sync, the two lines would diverge in time.
     """
 
-    drive_line_0, tone_0 = get_drive_line(qubit_0)
-    drive_line_1, tone_1 = get_drive_line(qubit_1)
+    drive_line_0 = get_drive_line(qubit_0)
+    drive_line_1 = get_drive_line(qubit_1)
 
-    drive(drive_line_0, square(cal["long_duration"], 0.1), tone_0)
-    drive(drive_line_1, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]), tone_1)
+    drive(drive_line_0, square(cal["long_duration"], 0.1))
+    drive(drive_line_1, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]))
 
     sync(drive_line_0, drive_line_1)
 
-    drive(drive_line_0, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]), tone_0)
-    drive(drive_line_1, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]), tone_1)
+    drive(drive_line_0, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]))
+    drive(drive_line_1, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]))
 
 
 @pulse.kernel
@@ -102,18 +102,18 @@ def staggered_readout(qubit_0, qubit_1):
     Drive qubit_0, wait, then sync with qubit_1 before a joint operation.
     """
 
-    drive_line_0, tone_0 = get_drive_line(qubit_0)
-    drive_line_1, tone_1 = get_drive_line(qubit_1)
+    drive_line_0 = get_drive_line(qubit_0)
+    drive_line_1 = get_drive_line(qubit_1)
 
-    drive(drive_line_0, gaussian(cal["x_duration"], 0.5, cal["x_sigma"]), tone_0)
+    drive(drive_line_0, gaussian(cal["x_duration"], 0.5, cal["x_sigma"]))
     wait(drive_line_0, cal["stagger_wait"])
 
-    drive(drive_line_1, gaussian(cal["x_duration"], 0.5, cal["x_sigma"]), tone_1)
+    drive(drive_line_1, gaussian(cal["x_duration"], 0.5, cal["x_sigma"]))
 
     sync(drive_line_0, drive_line_1)
 
-    drive(drive_line_0, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]), tone_0)
-    drive(drive_line_1, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]), tone_1)
+    drive(drive_line_0, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]))
+    drive(drive_line_1, gaussian(cal["x_duration"], 0.25, cal["x_sigma"]))
 
 
 if __name__ == "__main__":

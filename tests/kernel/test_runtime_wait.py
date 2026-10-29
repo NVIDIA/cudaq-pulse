@@ -57,77 +57,77 @@ TAUS = [(0.0,), (1.0,), (7.0,), (40.0,), (333.0,), (2000.0,)]
 
 
 def t1(q, tau: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, 0.5), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, 0.5))
     wait(d, tau)
     sync(d, r)
-    readout(r, square(200, 0.05), rt)
+    readout(r, square(200, 0.05))
 
 
 def ramsey(q, tau: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, gaussian(40, 0.25, 10.0), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, gaussian(40, 0.25, 10.0))
     wait(d, tau)
-    drive(d, gaussian(40, 0.25, 10.0), t)
+    drive(d, gaussian(40, 0.25, 10.0))
     sync(d, r)
-    readout(r, square(200, 0.05), rt)
+    readout(r, square(200, 0.05))
 
 
 def echo(q, tau: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     half = tau / 2
-    drive(d, gaussian(40, 0.25, 10.0), t)
+    drive(d, gaussian(40, 0.25, 10.0))
     wait(d, half)
-    drive(d, gaussian(40, 0.5, 10.0), t)
+    drive(d, gaussian(40, 0.5, 10.0))
     wait(d, half)
-    drive(d, gaussian(40, 0.25, 10.0), t)
+    drive(d, gaussian(40, 0.25, 10.0))
     sync(d, r)
-    readout(r, square(200, 0.05), rt)
+    readout(r, square(200, 0.05))
 
 
 def parallel(a, b, tau_a: float, tau_b: float):
-    da, ta = get_drive_line(a)
-    db, tb = get_drive_line(b)
-    ra, rta = get_readout_line(a)
-    drive(da, square(40, 0.5), ta)
-    drive(db, square(24, 0.5), tb)
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    ra = get_readout_line(a)
+    drive(da, square(40, 0.5))
+    drive(db, square(24, 0.5))
     wait(da, tau_a)
     wait(db, tau_b)
-    drive(db, square(16, 0.5), tb)
+    drive(db, square(16, 0.5))
     sync(da, db, ra)
-    readout(ra, square(100, 0.05), rta)
+    readout(ra, square(100, 0.05))
 
 
 def dd(q, tau: float):
-    d, t = get_drive_line(q)
-    drive(d, gaussian(40, 0.25, 10.0), t)
+    d = get_drive_line(q)
+    drive(d, gaussian(40, 0.25, 10.0))
     for _ in range(4):
         wait(d, tau)
-        drive(d, gaussian(40, 0.5, 10.0), t)
+        drive(d, gaussian(40, 0.5, 10.0))
         wait(d, tau)
-    drive(d, gaussian(40, 0.25, 10.0), t)
+    drive(d, gaussian(40, 0.25, 10.0))
 
 
 def cpmg(q, tau: float):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     half = tau / 2
-    drive(d, gaussian(40, 0.25, 10.0), t)
+    drive(d, gaussian(40, 0.25, 10.0))
     wait(d, half)
     for _ in range(6):
-        drive(d, gaussian(40, 0.5, 10.0), t)
+        drive(d, gaussian(40, 0.5, 10.0))
         wait(d, tau)
-    drive(d, gaussian(40, 0.5, 10.0), t)
+    drive(d, gaussian(40, 0.5, 10.0))
     wait(d, half)
-    drive(d, gaussian(40, 0.25, 10.0), t)
+    drive(d, gaussian(40, 0.25, 10.0))
 
 
 def stepped(q, tau: float):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     for i in range(3):
-        drive(d, square(8, 0.5), t)
+        drive(d, square(8, 0.5))
         wait(d, tau + 10 * i)
 
 
@@ -136,41 +136,41 @@ def _idle(line, length):
 
 
 @pulse.kernel(schedule="asap")
-def _block(line, tone, length: float):
-    drive(line, square(16, 0.5), tone)
+def _block(line, length: float):
+    drive(line, square(16, 0.5))
     wait(line, length)
-    drive(line, square(16, 0.5), tone)
+    drive(line, square(16, 0.5))
 
 
 def helpers(a, b, tau: float):
-    da, ta = get_drive_line(a)
-    db, tb = get_drive_line(b)
-    drive(da, square(40, 0.5), ta)
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    drive(da, square(40, 0.5))
     _idle(da, tau)
-    _block(db, tb, 2 * tau)
+    _block(db, 2 * tau)
     sync(da, db)
-    drive(da, square(40, 0.5), ta)
+    drive(da, square(40, 0.5))
 
 
 def branch(q, tau: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(100, 0.05))
     sync(d, r)
     if m:
         wait(d, tau)
-        drive(d, square(40, 0.5), t)
-    drive(d, square(40, 0.5), t)
+        drive(d, square(40, 0.5))
+    drive(d, square(40, 0.5))
 
 
 def mixed(q, amp: float, phase: float, tau: float, total: float):
-    d, t = get_drive_line(q)
-    shift_phase(t, phase)
-    drive(d, square(40, amp), t)
+    d = get_drive_line(q)
+    shift_phase(d.tone, phase)
+    drive(d, square(40, amp))
     wait(d, 2 * tau + 40)
-    drive(d, square(40, -amp), t)
+    drive(d, square(40, -amp))
     wait(d, total - tau)
-    drive(d, square(40, amp / 2), t)
+    drive(d, square(40, amp / 2))
 
 
 @pytest.mark.parametrize("fn", [t1, ramsey, dd, stepped], ids=lambda f: f.__name__)
@@ -254,9 +254,9 @@ def test_the_module_rounds_and_the_call_binds():
 def test_without_values_a_wait_stands_at_its_lowest_length():
     @pulse.kernel
     def k(q, tau: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, tau, bounds=(100, None))
-        drive(d, square(40, 0.5), t)
+        drive(d, square(40, 0.5))
 
     compiled = pulse.compile(k, device=Q[0].device)
     generic = compiled.lower(Q[0], 250.0).generic
@@ -267,10 +267,10 @@ def test_without_values_a_wait_stands_at_its_lowest_length():
 def test_a_bound_call_lowers_to_llvm_and_the_generic_module_does_not():
     @pulse.kernel
     def k(q, tau: float):
-        d, t = get_drive_line(q)
-        drive(d, square(40, 0.5), t)
+        d = get_drive_line(q)
+        drive(d, square(40, 0.5))
         wait(d, tau)
-        drive(d, square(40, 0.5), t)
+        drive(d, square(40, 0.5))
 
     lowered = pulse.compile(k).lower(Q[0], 120.0)
     assert "llvm.func" in lowered.mlir("llvm")
@@ -284,8 +284,8 @@ def test_a_bound_call_lowers_to_llvm_and_the_generic_module_does_not():
 def _bounded(bounds):
     @pulse.kernel
     def k(q, tau: float):
-        d, t = get_drive_line(q)
-        drive(d, square(40, 0.5), t)
+        d = get_drive_line(q)
+        drive(d, square(40, 0.5))
         wait(d, tau, bounds=bounds)
 
     return pulse.compile(k)
@@ -319,7 +319,7 @@ def test_a_length_outside_the_bounds_fails_the_call(tau, message):
 def test_bounds_may_be_positional_and_open_above():
     @pulse.kernel
     def k(q, tau: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, tau, (10, None))
 
     compiled = pulse.compile(k)
@@ -346,7 +346,7 @@ def test_malformed_bounds_fail_while_compiling(bounds, message):
 def test_bounds_must_be_known_while_compiling():
     @pulse.kernel
     def k(q, tau: float, top: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, tau, bounds=(0, top))
 
     with pytest.raises(CompilationError, match="bounds of a wait must be known"):
@@ -356,7 +356,7 @@ def test_bounds_must_be_known_while_compiling():
 def test_bounds_check_a_length_known_while_compiling():
     @pulse.kernel
     def k(q, tau):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, tau, bounds=(0, 40))
 
     assert k.lower(Q[0], 30).schedule[0].duration_cycles == 30
@@ -390,7 +390,7 @@ def test_a_negative_or_infinite_length_fails_the_call(tau, message):
 def test_an_error_names_the_expression():
     @pulse.kernel
     def k(q, tau: float, n: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, 2 * tau - n / 4)
 
     with pytest.raises(ValueError, match=r"the wait length 2 \* tau - n / 4 = -1\.0 rounds"):
@@ -402,7 +402,7 @@ def test_an_error_names_the_expression():
 def test_an_error_names_a_negated_expression():
     @pulse.kernel
     def k(q, tau: float, t0: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, -(tau - t0))
 
     assert k.lower(Q[0], 10.0, 50.0).schedule[0].duration_cycles == 40
@@ -413,7 +413,7 @@ def test_an_error_names_a_negated_expression():
 def test_a_division_by_a_zero_argument_fails_the_call():
     @pulse.kernel
     def k(q, total: float, n: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, total / n)
 
     assert k.lower(Q[0], 100.0, 4.0).schedule[0].duration_cycles == 25
@@ -424,7 +424,7 @@ def test_a_division_by_a_zero_argument_fails_the_call():
 def test_a_length_that_needs_more_than_arithmetic_stays_static():
     @pulse.kernel
     def k(q, tau: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, tau % 7)
 
     with pytest.warns(RuntimeWarning, match="float argument 'tau'"):

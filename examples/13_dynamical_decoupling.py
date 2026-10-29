@@ -24,29 +24,29 @@ def xy4(qubit, sigma, amplitude_pi, tau, n_cycles):
     Suppresses both dephasing and amplitude noise by alternating X and Y
     refocusing axes.
     """
-    drive_line, tone = get_drive_line(qubit)
+    drive_line = get_drive_line(qubit)
 
     pi_x = gaussian(4 * sigma, amplitude_pi, sigma)
 
     for _cycle in range(n_cycles):
         # X refocus
-        drive(drive_line, pi_x, tone)
+        drive(drive_line, pi_x)
         wait(drive_line, tau)
 
         # Y refocus = phase shift pi/2, then pi_X, then undo phase
-        shift_phase(tone, math.pi / 2)
-        drive(drive_line, pi_x, tone)
-        shift_phase(tone, -math.pi / 2)
+        shift_phase(drive_line.tone, math.pi / 2)
+        drive(drive_line, pi_x)
+        shift_phase(drive_line.tone, -math.pi / 2)
         wait(drive_line, tau)
 
         # X refocus
-        drive(drive_line, pi_x, tone)
+        drive(drive_line, pi_x)
         wait(drive_line, tau)
 
         # Y refocus
-        shift_phase(tone, math.pi / 2)
-        drive(drive_line, pi_x, tone)
-        shift_phase(tone, -math.pi / 2)
+        shift_phase(drive_line.tone, math.pi / 2)
+        drive(drive_line, pi_x)
+        shift_phase(drive_line.tone, -math.pi / 2)
         wait(drive_line, tau)
 
 
@@ -61,7 +61,7 @@ def uhrig_dd(qubit, sigma, amplitude_pi, total_cycles, n_pulses):
     The intervals are computed at compile time from n_pulses, in whole
     clock cycles of a sequence *total_cycles* long.
     """
-    drive_line, tone = get_drive_line(qubit)
+    drive_line = get_drive_line(qubit)
 
     pi_pulse = gaussian(4 * sigma, amplitude_pi, sigma)
     dur_pi = pulse.round_duration(drive_line, 4 * sigma)
@@ -73,7 +73,7 @@ def uhrig_dd(qubit, sigma, amplitude_pi, total_cycles, n_pulses):
         gap = tj - prev_time - dur_pi
         if gap > 0:
             wait(drive_line, gap)
-        drive(drive_line, pi_pulse, tone)
+        drive(drive_line, pi_pulse)
         prev_time = tj
 
     remaining = total_cycles - prev_time
@@ -87,21 +87,21 @@ def cpmg(qubit, sigma, amplitude_half_pi, amplitude_pi, tau, n_refocus):
 
     The standard multi-pulse echo for dephasing suppression.
     """
-    drive_line, tone = get_drive_line(qubit)
+    drive_line = get_drive_line(qubit)
 
     half_pi_pulse = gaussian(4 * sigma, amplitude_half_pi, sigma)
     pi_pulse = gaussian(4 * sigma, amplitude_pi, sigma)
 
-    drive(drive_line, half_pi_pulse, tone)
+    drive(drive_line, half_pi_pulse)
 
     for _i in range(n_refocus):
         wait(drive_line, tau)
-        shift_phase(tone, math.pi / 2)
-        drive(drive_line, pi_pulse, tone)
-        shift_phase(tone, -math.pi / 2)
+        shift_phase(drive_line.tone, math.pi / 2)
+        drive(drive_line, pi_pulse)
+        shift_phase(drive_line.tone, -math.pi / 2)
         wait(drive_line, tau)
 
-    drive(drive_line, half_pi_pulse, tone)
+    drive(drive_line, half_pi_pulse)
 
 
 @pulse.kernel
@@ -112,7 +112,7 @@ def knill_dd(qubit, sigma, amplitude_pi, tau):
     systematic over/under-rotation and dephasing.
     Phases: [pi/6, 0, pi/2, 0, pi/6]
     """
-    drive_line, tone = get_drive_line(qubit)
+    drive_line = get_drive_line(qubit)
 
     pi_pulse = gaussian(4 * sigma, amplitude_pi, sigma)
 
@@ -120,9 +120,9 @@ def knill_dd(qubit, sigma, amplitude_pi, tau):
 
     for idx in range(5):
         wait(drive_line, tau)
-        shift_phase(tone, phases[idx])
-        drive(drive_line, pi_pulse, tone)
-        shift_phase(tone, -phases[idx])
+        shift_phase(drive_line.tone, phases[idx])
+        drive(drive_line, pi_pulse)
+        shift_phase(drive_line.tone, -phases[idx])
 
 
 if __name__ == "__main__":

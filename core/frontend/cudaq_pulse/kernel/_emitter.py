@@ -155,6 +155,8 @@ def _extract_closures(fn: Any) -> dict[str, Any]:
 
 
 _PULSE_FUNCTIONS: dict[Any, str] = {}
+_PLAY_FUNCTIONS: dict[Any, str] = {}
+_TONE_KEYWORD = ("tone",)
 _SUBMIT = ClassicalFunction.submit
 _RESULT = _classical.Future.result
 
@@ -170,6 +172,7 @@ def _load_pulse_functions() -> None:
             loaded[op] = name
     # Not an op: _emit_pulse_call computes it while tracing.
     loaded[ops.round_duration] = "round_duration"
+    _PLAY_FUNCTIONS.update({op: name for op, name in loaded.items() if name in _PLAYS})
     # One update, so another thread never sees part of the map.
     _PULSE_FUNCTIONS.update(loaded)
 
@@ -664,6 +667,7 @@ _UNBOUND = object()
 _LINE_OPS = frozenset({"get_drive_line", "get_readout_line"})
 # Ops that play a waveform on a line, at its tone or at the keyword tone.
 _PLAYS = frozenset({"drive", "readout"})
+_first = operator.itemgetter(0)
 
 _LINE_TYPES = ("drive_line", "readout_line")
 _QUDIT = ("qref",)
@@ -1631,11 +1635,27 @@ class PulseIREmitter:
 
                 elif op is bc.CALL_KW:
                     names = pop()
-                    values = stack[-arg:]
-                    del stack[-arg:]
-                    n_pos = arg - len(names)
-                    kwargs = dict(zip(names, values[n_pos:]))
-                    self._dispatch_call(pop(), values[:n_pos], kwargs)
+                    play = None
+                    if names == _TONE_KEYWORD and arg == 3:
+                        # drive(line, waveform, tone=tone): the tone is the op's last operand.
+                        fn = stack[-4]
+                        if fn.__class__ is types.FunctionType:
+                            if fn in _PLAY_FUNCTIONS:
+                                play = _PLAY_FUNCTIONS[fn]
+                        elif (
+                            fn.__class__ is tuple and fn[0] == "__unresolved__" and fn[1] in _PLAYS
+                        ):
+                            play = fn[1]
+                    if play is not None:
+                        values = stack[-3:]
+                        del stack[-4:]
+                        self._push_pulse_results(play, values)
+                    else:
+                        values = stack[-arg:]
+                        del stack[-arg:]
+                        n_pos = arg - len(names)
+                        kwargs = dict(zip(names, values[n_pos:]))
+                        self._dispatch_call(pop(), values[:n_pos], kwargs)
 
                 elif op is bc.COPY:
                     push(stack[-arg])
@@ -1934,10 +1954,32 @@ class PulseIREmitter:
                 slot_results.append((cell.held, cell.index, a, b))
             else:
                 aliases.append((cell, alias))
-        labels = [name for name, _, _ in results]
-        labels += [self._slot_label(obj, i) for obj, i, _, _ in slot_results]
-        then_vals = tuple(a for _, a, _ in results) + tuple(a for _, _, a, _ in slot_results)
-        else_vals = tuple(b for _, _, b in results) + tuple(b for _, _, _, b in slot_results)
+        if slot_results:
+            pairs = {name: (a, b) for name, a, b in results}
+            order = self._carry_order(
+                [name for name, _, _ in results],
+                {n: ab[1] for n, ab in pairs.items()},
+                slot_results,
+            )
+            labels = []
+            then_list = []
+            else_list = []
+            for entry in order:
+                if type(entry) is str:
+                    a, b = pairs[entry]
+                    labels.append(entry)
+                else:
+                    _, _, a, b = slot_results[entry[0]]
+                    labels.append(entry[1])
+                then_list.append(a)
+                else_list.append(b)
+            then_vals = tuple(then_list)
+            else_vals = tuple(else_list)
+        else:
+            order = [name for name, _, _ in results]
+            labels = order
+            then_vals = tuple(a for _, a, _ in results)
+            else_vals = tuple(b for _, _, b in results)
         builder.insert(else_index, "scf.yield", then_vals)
         builder.emit("scf.yield", else_vals, ())
         outs = builder.emit(
@@ -1946,14 +1988,28 @@ class PulseIREmitter:
             tuple(v.vtype for v in then_vals),
             {"result_names": labels},
         )
-        for (name, _, _), out in zip(results, outs):
-            merged[name] = out
-        for (obj, i, a, b), out in zip(slot_results, outs[len(results) :]):
-            obj[i] = out
+        listed = []
+        carried: dict[tuple[int, int], IRValue] = {}
+        for entry, out in zip(order, outs):
+            if type(entry) is str:
+                merged[entry] = out
+                continue
+            obj, i, a, b = slot_results[entry[0]]
             self._slots.pop(id(a), None)
             self._slots.pop(id(b), None)
-            if not isinstance(obj, _Held):
-                self._slots[id(out)] = (obj, i, out)
+            if isinstance(obj, _Held):
+                carried[(id(a), id(b))] = out
+                obj[i] = out
+            else:
+                listed.append((obj, i, a, b, out))
+        if listed:
+            for name, a, b in results:
+                carried.setdefault((id(a), id(b)), merged[name])
+        # A list slot that holds its channel's values takes the channel's result.
+        for obj, i, a, b, out in listed:
+            out = carried.get((id(a), id(b)), out)
+            obj[i] = out
+            self._slots[id(out)] = (obj, i, out)
         if chosen:
             line = prog.location(index)[1]
             scope = getattr(builder, "scope", ())
@@ -2189,6 +2245,7 @@ class PulseIREmitter:
             return False
 
         assert slot_changes is not None
+        lists_carried = True if slot_changes else False
         for n, _ in stale:
             del delta[n]
         qudits = [(n, delta.pop(n)) for n in fixed]
@@ -2212,35 +2269,83 @@ class PulseIREmitter:
                 aliases.append((cell, alias))
         if delta or slot_changes:
             names = sorted(delta)
-            vals = tuple(delta[n] for n in names) + tuple(new for _, _, new in slot_changes)
+            order: list[Any] = (
+                self._carry_order(names, delta, slot_changes) if slot_changes else names
+            )
             # A name first bound in the body has no value entering the loop;
             # the body binds it before reading it, unless it binds it to a
             # channel's value read from a container: then it enters with
             # the channel's value.
             before_of: dict[int, IRValue] | None = None
+            vals_list = []
             entering_vals = []
-            for n in names:
-                if n in saved_locals:
-                    entering_vals.append(saved_locals[n])
-                    continue
-                if before_of is None:
-                    before_of = {id(cell): before for cell, before in entering}
-                entering_vals.append(self._entering(delta[n], before_of))
-            entering_vals.extend(originals[id(obj)][i] for obj, i, _ in slot_changes)
+            labels = []
+            kept: list[Any] = []
+            # A slot that enters and leaves with the values an earlier entry
+            # carries takes that entry's result, not a loop value of its own;
+            # only a list slot can repeat another entry.
+            owner: dict[tuple[int, int], int] | None = {} if lists_carried else None
+            shared: list[tuple[Any, int]] = []
+            for n in order:
+                if type(n) is not str:
+                    obj, i, new = slot_changes[n[0]]
+                    before = originals[id(obj)][i]
+                    if owner is not None:
+                        at = owner.setdefault((id(new), id(before)), len(kept))
+                        if at != len(kept):
+                            shared.append((n, at))
+                            continue
+                    label = n[1]
+                else:
+                    new = delta[n]
+                    if n in saved_locals:
+                        before = saved_locals[n]
+                    else:
+                        if before_of is None:
+                            before_of = {id(cell): before for cell, before in entering}
+                        before = self._entering(new, before_of)
+                    if owner is not None:
+                        owner.setdefault((id(new), id(before)), len(kept))
+                    label = n
+                kept.append(n)
+                vals_list.append(new)
+                entering_vals.append(before)
+                labels.append(label)
+            vals = tuple(vals_list)
             inits = tuple(entering_vals)
-            labels = names + [self._slot_label(obj, i) for obj, i, _ in slot_changes]
             self.b.emit("scf.yield", vals, ())
             # The body was traced with the values carried into the loop; its
             # end lists them so that each iteration can rebind them.
             results = self.b.emit(
                 "scf.for_end", inits, tuple(v.vtype for v in vals), {"iter_args": labels}
             )
-            for n, r in zip(names, results):
-                self.locals[n] = r
-            for (obj, i, _), r in zip(slot_changes, results[len(names) :]):
+            listed = []
+            carried: dict[int, tuple[IRValue, IRValue]] = {}
+            for n, r in (
+                zip(kept, results)
+                if not shared
+                else [*zip(kept, results), *((n, results[at]) for n, at in shared)]
+            ):
+                if type(n) is str:
+                    self.locals[n] = r
+                    continue
+                obj, i, new = slot_changes[n[0]]
+                if isinstance(obj, _Held):
+                    carried[id(obj.cells[i])] = (new, r)
+                    obj[i] = r
+                else:
+                    listed.append((obj, i, new, r))
+            if listed:
+                for cell, alias in aliases:
+                    carried[id(cell)] = (cell.value, self.locals[alias])
+            # A list slot that yields its channel's value takes the channel's
+            # result, so the line read from it after the loop has its tone.
+            for obj, i, new, r in listed:
+                entry = carried.get(id(new.chan))
+                if entry is not None and entry[0] is new:
+                    r = entry[1]
                 obj[i] = r
-                if not isinstance(obj, _Held):
-                    self._slots[id(r)] = (obj, i, r)
+                self._slots[id(r)] = (obj, i, r)
         else:
             self.b.emit("scf.for_end", (), ())
         for cell, alias in aliases:
@@ -2295,6 +2400,36 @@ class PulseIREmitter:
         """Mark a container built by the body or arm being traced as free to change."""
         if self._mutated is not None:
             self._mutated.setdefault(id(obj), (obj, None))
+
+    def _carry_order(
+        self, names: list[str], values: dict[str, Any], slots: list[tuple[Any, ...]]
+    ) -> list[Any]:
+        """The carried *names* and (slot index, label) entries, in their order.
+
+        A line's own tone follows the name the line is carried by, as
+        ``name.tone``; the other slots come last.
+        """
+        by_value = {id(v): n for n, v in values.items()}
+        keyed: list[tuple[str, Any]] = [(n, n) for n in names]
+        rest: list[Any] = []
+        unsorted = False
+        for k, slot in enumerate(slots):
+            obj, i = slot[0], slot[1]
+            if i == 1 and type(obj) is _Held:
+                line = obj.cells[0].value
+                n = by_value.get(id(line))
+                if n is None:
+                    n = next((m for m, v in self.locals.items() if v is line), None)
+                if n is not None:
+                    label = n + ".tone"
+                    if keyed and label < keyed[-1][0]:
+                        unsorted = True
+                    keyed.append((label, (k, label)))
+                    continue
+            rest.append((k, self._slot_label(obj, i)))
+        if unsorted:
+            keyed.sort(key=_first)
+        return [entry for _, entry in keyed] + rest
 
     def _slot_label(self, obj: Any, index: int) -> str:
         if isinstance(obj, _Held):
@@ -2354,13 +2489,27 @@ class PulseIREmitter:
         if isinstance(callable_val, tuple) and len(callable_val) == 2:
             tag, name = callable_val
             if tag == "__unresolved__":
-                if kwargs:
+                if (
+                    kwargs
+                    and name in _PLAYS
+                    and "tone" in kwargs
+                    and call_args[1:]
+                    and not call_args[2:]
+                    # Equal by identity: the tone's own __eq__ is not called.
+                    and kwargs == {"tone": kwargs["tone"]}
+                ):
+                    call_args = [*call_args, kwargs["tone"]]
+                elif kwargs:
                     from .. import ops
 
                     op_fn = getattr(ops, name, None) if name in _PULSE_OP_NAMES else None
                     if op_fn is None:
                         raise CompilationError(self._unknown_name(name))
                     call_args = _bind_positional(op_fn, call_args, kwargs)
+                elif name in _PLAYS and call_args[2:]:
+                    from ._emit_errors import play_arity_error
+
+                    raise play_arity_error(name, len(call_args))
                 if name in OP_TABLE:
                     self._push_pulse_results(name, call_args)
                 elif name == "range":
@@ -2377,8 +2526,22 @@ class PulseIREmitter:
         except TypeError:  # unhashable callable
             op_name = None
         if op_name is not None:
-            if kwargs:
+            if (
+                kwargs
+                and op_name in _PLAYS
+                and "tone" in kwargs
+                and call_args[1:]
+                and not call_args[2:]
+                # Equal by identity: the tone's own __eq__ is not called.
+                and kwargs == {"tone": kwargs["tone"]}
+            ):
+                call_args = [*call_args, kwargs["tone"]]
+            elif kwargs:
                 call_args = _bind_positional(callable_val, call_args, kwargs)
+            elif op_name in _PLAYS and call_args[2:]:
+                from ._emit_errors import play_arity_error
+
+                raise play_arity_error(op_name, len(call_args))
             self._push_pulse_results(op_name, call_args)
             return
 
@@ -2790,6 +2953,8 @@ class PulseIREmitter:
             self.stack.append(results[-1])
         elif fname in {"drive", "wait", "sync"}:
             self.stack.append(None)
+        elif fname in _LINE_OPS:
+            self.stack.append(results[0])
         elif len(results) == 1:
             self.stack.append(results[0])
         elif len(results) > 1:

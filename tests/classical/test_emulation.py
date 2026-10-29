@@ -32,25 +32,25 @@ def next_wait(bits):
 
 @pulse.kernel
 def feedback(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(300, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(300, 0.05))
     ok, fix = decode.submit([m]).result(timeout=500 * pulse.ns)
     if ok:
         if fix[0]:
-            drive(d, square(40, 0.1), t)
+            drive(d, square(40, 0.1))
 
 
 @pulse.kernel
 def adaptive(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(300, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(300, 0.05))
     w = next_wait.submit([m]).result()
-    drive(d, square(40, 0.1), t)
+    drive(d, square(40, 0.1))
     wait(d, w, bounds=(0, 1000))
     sync(d, r)
-    readout(r, square(300, 0.05), rt)
+    readout(r, square(300, 0.05))
 
 
 def test_export_and_manifest_are_json():
@@ -135,11 +135,11 @@ def test_exports_with_calls_in_loops_are_json_data():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         for _ in range(2):
-            if json_decode.submit([readout(r, square(100, 0.05), rt)]).result()[0]:
-                drive(d, square(40, 0.1), t)
+            if json_decode.submit([readout(r, square(100, 0.05))]).result()[0]:
+                drive(d, square(40, 0.1))
 
     low = pulse.compile(k, unroll_threshold=0).lower(Q[0])
     for program in (low.export_emulation(), low.export_controller()):

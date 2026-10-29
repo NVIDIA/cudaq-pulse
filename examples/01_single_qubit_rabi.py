@@ -22,20 +22,20 @@ cal = {"rabi_duration": 50 * pulse.ns, "readout_duration": 500 * pulse.ns}
 @pulse.kernel
 def rabi(qubit, duration, amplitude: float):
     """Drive *qubit* with a square pulse."""
-    drive_line, tone = get_drive_line(qubit)
-    drive(drive_line, square(duration, amplitude), tone)
+    drive_line = get_drive_line(qubit)
+    drive(drive_line, square(duration, amplitude))
 
 
 @pulse.kernel
 def rabi_with_readout(qubit, duration, amplitude):
     """Rabi experiment with measurement — the full circuit."""
-    drive_line, drive_tone = get_drive_line(qubit)
-    readout_line, readout_tone = get_readout_line(qubit)
+    drive_line = get_drive_line(qubit)
+    readout_line = get_readout_line(qubit)
 
-    drive(drive_line, square(duration, amplitude), drive_tone)
+    drive(drive_line, square(duration, amplitude))
 
     sync(drive_line, readout_line)
-    readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
+    readout(readout_line, square(cal["readout_duration"], 0.05))
 
 
 if __name__ == "__main__":

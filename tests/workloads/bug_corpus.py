@@ -79,10 +79,10 @@ def _c_dd(n):
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         x = _x()
         for _ in range(n):
-            drive(d, x, t)
+            drive(d, x)
             wait(d, 200)
 
     return k
@@ -93,40 +93,40 @@ def _c_1q(body_tag):
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         if body_tag == "drive":
-            drive(d, _g(), t)
+            drive(d, _g())
         elif body_tag == "seq4":
             for _ in range(4):
-                drive(d, _g(), t)
+                drive(d, _g())
         elif body_tag == "wait_d":
-            drive(d, _g(), t)
+            drive(d, _g())
             wait(d, 100)
-            drive(d, _g(), t)
+            drive(d, _g())
         elif body_tag == "phase":
-            shift_phase(t, 0.5)
-            drive(d, _g(), t)
+            shift_phase(d.tone, 0.5)
+            drive(d, _g())
         elif body_tag == "vz":
-            drive(d, _g(), t)
-            shift_phase(t, math.pi)
-            drive(d, _g(), t)
+            drive(d, _g())
+            shift_phase(d.tone, math.pi)
+            drive(d, _g())
         elif body_tag == "zph":
-            shift_phase(t, 0.0)
-            drive(d, _g(), t)
+            shift_phase(d.tone, 0.0)
+            drive(d, _g())
         elif body_tag == "fdet":
-            shift_frequency(t, 1e6)
-            drive(d, _g(), t)
-            shift_frequency(t, -1e6)
+            shift_frequency(d.tone, 1e6)
+            drive(d, _g())
+            shift_frequency(d.tone, -1e6)
         elif body_tag == "wait":
             wait(d, 500)
         elif body_tag == "lwait":
             wait(d, 10000)
-            drive(d, _g(), t)
+            drive(d, _g())
         elif body_tag == "sx4":
             sx = drag(40, 0.25, 10.0, 0.5)
             for _ in range(4):
-                shift_phase(t, math.pi / 2)
-                drive(d, sx, t)
+                shift_phase(d.tone, math.pi / 2)
+                drive(d, sx)
 
     return k
 
@@ -142,44 +142,44 @@ CORRECT += [
 
 @pulse.kernel
 def _c2q(q0, q1):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     wf = _g()
-    drive(d0, wf, t0)
-    drive(d1, wf, t1)
+    drive(d0, wf)
+    drive(d1, wf)
 
 
 @pulse.kernel
 def _cscr(q0, q1):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d0, _cr(), t1)
+    drive(d0, _cr(), tone=d1.tone)
 
 
 @pulse.kernel
 def _cro2(q0, q1):
-    r0, rt0 = get_readout_line(q0)
-    r1, rt1 = get_readout_line(q1)
+    r0 = get_readout_line(q0)
+    r1 = get_readout_line(q1)
     ro = _ro()
-    readout(r0, ro, rt0)
-    readout(r1, ro, rt1)
+    readout(r0, ro)
+    readout(r1, ro)
 
 
 @pulse.kernel
 def _cmux(q):
-    d, t = get_drive_line(q)
-    drive(d, wf_add(gaussian(80, 0.05, 20.0), gaussian(80, 0.04, 15.0)), t)
+    d = get_drive_line(q)
+    drive(d, wf_add(gaussian(80, 0.05, 20.0), gaussian(80, 0.04, 15.0)))
 
 
 @pulse.kernel
 def _c3s(q0, q1, q2):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
-    d2, t2 = get_drive_line(q2)
-    drive(d0, _g(), t0)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
+    d2 = get_drive_line(q2)
+    drive(d0, _g())
     sync(d0, d1, d2)
-    drive(d1, _g(), t1)
+    drive(d1, _g())
 
 
 CORRECT += [
@@ -196,29 +196,29 @@ def _b_ovk(k):
 
     @pulse.kernel
     def kern(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wf = _g()
         for _ in range(k):
-            drive(d, wf, t)  # BUG: line not rebound
+            drive(d, wf)  # BUG: line not rebound
 
     return kern
 
 
 @pulse.kernel
 def _b_ovcr(q0, q1):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d0, _cr(), t1)
-    drive(d0, _x(), t0)  # BUG
+    drive(d0, _cr(), tone=d1.tone)
+    drive(d0, _x())  # BUG
 
 
 @pulse.kernel
 def _b_ovro(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, gaussian(200, 0.1, 50.0), t)
-    readout(r, _ro(), rt)  # BUG: no sync
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, gaussian(200, 0.1, 50.0))
+    readout(r, _ro())  # BUG: no sync
 
 
 OVERLAP = [
@@ -257,8 +257,8 @@ def _b_neg(dur):
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        drive(d, _g(), t)
+        d = get_drive_line(q)
+        drive(d, _g())
         wait(d, dur)
 
     return k
@@ -268,9 +268,9 @@ def _b_negpre(dur):
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, dur)
-        drive(d, _g(), t)
+        drive(d, _g())
 
     return k
 
@@ -279,9 +279,9 @@ def _b_negro(dur):
 
     @pulse.kernel
     def k(q):
-        r, rt = get_readout_line(q)
+        r = get_readout_line(q)
         wait(r, dur)
-        readout(r, _ro(), rt)
+        readout(r, _ro())
 
     return k
 
@@ -290,10 +290,10 @@ def _b_negbtw(dur):
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        drive(d, _g(), t)
+        d = get_drive_line(q)
+        drive(d, _g())
         wait(d, dur)
-        drive(d, _g(), t)
+        drive(d, _g())
 
     return k
 
@@ -309,42 +309,42 @@ BTT += [_T(f"b_negb{v}", lambda v=v: _b_negbtw(-v), f"btw {-v}") for v in [10, 4
 # ═══ Phase bookkeeping (15) ═══════════════════════════════════════════════
 @pulse.kernel
 def _b_phst(q):
-    d, t = get_drive_line(q)
-    drive(d, _g(), t)
-    shift_phase(t, 1.0)
+    d = get_drive_line(q)
+    drive(d, _g())
+    shift_phase(d.tone, 1.0)
 
 
 @pulse.kernel
 def _b_phdbl(q):
-    d, t = get_drive_line(q)
-    shift_phase(t, 0.5)
-    shift_phase(t, 0.3)
+    d = get_drive_line(q)
+    shift_phase(d.tone, 0.5)
+    shift_phase(d.tone, 0.3)
 
 
 @pulse.kernel
 def _b_phcr(q0, q1):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d0, _cr(), t1)
-    shift_phase(t1, math.pi / 2)
+    drive(d0, _cr(), tone=d1.tone)
+    shift_phase(d1.tone, math.pi / 2)
 
 
 @pulse.kernel
 def _b_phfr(q):
-    d, t = get_drive_line(q)
-    drive(d, _g(), t)
-    shift_frequency(t, 1e6)
+    d = get_drive_line(q)
+    drive(d, _g())
+    shift_frequency(d.tone, 1e6)
 
 
 def _b_phk(n):
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        shift_phase(t, 0.1)
+        d = get_drive_line(q)
+        shift_phase(d.tone, 0.1)
         for _ in range(n):
-            shift_phase(t, 0.1)
+            shift_phase(d.tone, 0.1)
 
     return k
 
@@ -364,159 +364,159 @@ PHASE += [
 # ═══ CR miscalibration (15) ═══════════════════════════════════════════════
 @pulse.kernel
 def _b_crt(q0, q1):  # wrong tone
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d0, _cr(), t0)
+    drive(d0, _cr())
 
 
 @pulse.kernel
 def _b_crne(q0, q1):  # no echo
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d1, _sx(), t1)
-    drive(d0, _cr(), t1)
-    drive(d0, _crn(), t1)
-    drive(d1, _sx(), t1)
+    drive(d1, _sx())
+    drive(d0, _cr(), tone=d1.tone)
+    drive(d0, _crn(), tone=d1.tone)
+    drive(d1, _sx())
 
 
 @pulse.kernel
 def _b_crsw(q0, q1):  # swapped line
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d1, _cr(), t1)
+    drive(d1, _cr())
 
 
 @pulse.kernel
 def _b_crns(q0, q1):  # no sync
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
-    drive(d1, _sx(), t1)
-    drive(d0, _cr(), t1)
-    drive(d0, _x(), t0)
-    drive(d0, _crn(), t1)
-    drive(d1, _sx(), t1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
+    drive(d1, _sx())
+    drive(d0, _cr(), tone=d1.tone)
+    drive(d0, _x())
+    drive(d0, _crn(), tone=d1.tone)
+    drive(d1, _sx())
 
 
 @pulse.kernel
 def _b_crde(q0, q1):  # double echo
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d1, _sx(), t1)
-    drive(d0, _cr(), t1)
-    drive(d0, _x(), t0)
-    drive(d0, _x(), t0)
-    drive(d0, _crn(), t1)
-    drive(d1, _sx(), t1)
+    drive(d1, _sx())
+    drive(d0, _cr(), tone=d1.tone)
+    drive(d0, _x())
+    drive(d0, _x())
+    drive(d0, _crn(), tone=d1.tone)
+    drive(d1, _sx())
 
 
 @pulse.kernel
 def _b_cram(q0, q1):  # asymmetric amp
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d1, _sx(), t1)
-    drive(d0, _cr(), t1)
-    drive(d0, _x(), t0)
-    drive(d0, gaussian(200, -0.08, 50.0), t1)
-    drive(d1, _sx(), t1)
+    drive(d1, _sx())
+    drive(d0, _cr(), tone=d1.tone)
+    drive(d0, _x())
+    drive(d0, gaussian(200, -0.08, 50.0), tone=d1.tone)
+    drive(d1, _sx())
 
 
 @pulse.kernel
 def _b_crboth(q0, q1):  # both wrong tone
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d1, _sx(), t1)
-    drive(d0, _cr(), t0)
-    drive(d0, _x(), t0)
-    drive(d0, _crn(), t0)
-    drive(d1, _sx(), t1)
+    drive(d1, _sx())
+    drive(d0, _cr())
+    drive(d0, _x())
+    drive(d0, _crn())
+    drive(d1, _sx())
 
 
 @pulse.kernel
 def _b_crrev(q0, q1):  # reversed order
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d1, _sx(), t1)
-    drive(d0, _crn(), t1)
-    drive(d0, _x(), t0)
-    drive(d0, _cr(), t1)
-    drive(d1, _sx(), t1)
+    drive(d1, _sx())
+    drive(d0, _crn(), tone=d1.tone)
+    drive(d0, _x())
+    drive(d0, _cr(), tone=d1.tone)
+    drive(d1, _sx())
 
 
 @pulse.kernel
 def _b_crnsx(q0, q1):  # no SX on target
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d0, _cr(), t1)
-    drive(d0, _x(), t0)
-    drive(d0, _crn(), t1)
+    drive(d0, _cr(), tone=d1.tone)
+    drive(d0, _x())
+    drive(d0, _crn(), tone=d1.tone)
 
 
 @pulse.kernel
 def _b_crself(q0, q1):  # self-drive
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d0, _cr(), t0)
-    drive(d1, _cr(), t1)
+    drive(d0, _cr())
+    drive(d1, _cr())
 
 
 @pulse.kernel
 def _b_cr3q(q0, q1, q2):  # 3-qubit mixup
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
-    d2, t2 = get_drive_line(q2)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
+    d2 = get_drive_line(q2)
     sync(d0, d1, d2)
-    drive(d0, _cr(), t2)
-    drive(d1, _cr(), t0)
+    drive(d0, _cr(), tone=d2.tone)
+    drive(d1, _cr(), tone=d0.tone)
 
 
 @pulse.kernel
 def _b_crex(q0, q1):  # extra spurious
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d1, _sx(), t1)
-    drive(d0, _cr(), t1)
-    drive(d1, gaussian(40, 0.01, 10.0), t1)
-    drive(d0, _x(), t0)
-    drive(d0, _crn(), t1)
-    drive(d1, _sx(), t1)
+    drive(d1, _sx())
+    drive(d0, _cr(), tone=d1.tone)
+    drive(d1, gaussian(40, 0.01, 10.0))
+    drive(d0, _x())
+    drive(d0, _crn(), tone=d1.tone)
+    drive(d1, _sx())
 
 
 @pulse.kernel
 def _b_crsig(q0, q1):  # sigma too small
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d0, gaussian(200, 0.10, 5.0), t1)
+    drive(d0, gaussian(200, 0.10, 5.0), tone=d1.tone)
 
 
 @pulse.kernel
 def _b_crlong(q0, q1):  # too long
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d0, gaussian(2000, 0.10, 500.0), t1)
+    drive(d0, gaussian(2000, 0.10, 500.0), tone=d1.tone)
 
 
 @pulse.kernel
 def _b_crdur(q0, q1):  # CR+/CR- duration mismatch
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     sync(d0, d1)
-    drive(d1, _sx(), t1)
-    drive(d0, _cr(), t1)
-    drive(d0, _x(), t0)
-    drive(d0, gaussian(160, -0.10, 40.0), t1)
-    drive(d1, _sx(), t1)
+    drive(d1, _sx())
+    drive(d0, _cr(), tone=d1.tone)
+    drive(d0, _x())
+    drive(d0, gaussian(160, -0.10, 40.0), tone=d1.tone)
+    drive(d1, _sx())
 
 
 CR = [

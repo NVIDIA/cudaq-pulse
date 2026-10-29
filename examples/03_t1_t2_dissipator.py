@@ -36,52 +36,52 @@ def t1_experiment(qubit, wait_time):
 
     The wait duration is parameterized to sweep T1 decay.
     """
-    drive_line, drive_tone = get_drive_line(qubit)
-    readout_line, readout_tone = get_readout_line(qubit)
+    drive_line = get_drive_line(qubit)
+    readout_line = get_readout_line(qubit)
 
     x_pulse = drag(cal["x_duration"], cal["pi_amp"], cal["x_sigma"], cal["drag_beta"])
-    drive(drive_line, x_pulse, drive_tone)
+    drive(drive_line, x_pulse)
 
     wait(drive_line, wait_time)
 
     sync(drive_line, readout_line)
-    readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
+    readout(readout_line, square(cal["readout_duration"], 0.05))
 
 
 @pulse.kernel
 def t2_ramsey(qubit, tau):
     """T2* (Ramsey) measurement: pi/2 -> tau -> pi/2 -> readout."""
-    drive_line, drive_tone = get_drive_line(qubit)
-    readout_line, readout_tone = get_readout_line(qubit)
+    drive_line = get_drive_line(qubit)
+    readout_line = get_readout_line(qubit)
 
     half_pi = drag(cal["x_duration"], cal["half_pi_amp"], cal["x_sigma"], cal["drag_beta"])
 
-    drive(drive_line, half_pi, drive_tone)
+    drive(drive_line, half_pi)
     wait(drive_line, tau)
-    drive(drive_line, half_pi, drive_tone)
+    drive(drive_line, half_pi)
 
     sync(drive_line, readout_line)
-    readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
+    readout(readout_line, square(cal["readout_duration"], 0.05))
 
 
 @pulse.kernel
 def t2_echo(qubit, tau):
     """T2 (Hahn echo) measurement: pi/2 -> tau/2 -> pi -> tau/2 -> pi/2 -> readout."""
-    drive_line, drive_tone = get_drive_line(qubit)
-    readout_line, readout_tone = get_readout_line(qubit)
+    drive_line = get_drive_line(qubit)
+    readout_line = get_readout_line(qubit)
 
     half_pi = drag(cal["x_duration"], cal["half_pi_amp"], cal["x_sigma"], cal["drag_beta"])
     pi_pulse = drag(cal["x_duration"], cal["pi_amp"], cal["x_sigma"], cal["drag_beta"])
     half_tau = tau / 2
 
-    drive(drive_line, half_pi, drive_tone)
+    drive(drive_line, half_pi)
     wait(drive_line, half_tau)
-    drive(drive_line, pi_pulse, drive_tone)
+    drive(drive_line, pi_pulse)
     wait(drive_line, half_tau)
-    drive(drive_line, half_pi, drive_tone)
+    drive(drive_line, half_pi)
 
     sync(drive_line, readout_line)
-    readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
+    readout(readout_line, square(cal["readout_duration"], 0.05))
 
 
 if __name__ == "__main__":

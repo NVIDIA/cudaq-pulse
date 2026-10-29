@@ -65,23 +65,23 @@ def surface_code_cycle(d: int):
         lines = []
         tones = []
         for q in range(n_total):
-            dl, t = get_drive_line(qubits[q])
+            dl = get_drive_line(qubits[q])
             lines.append(dl)
-            tones.append(t)
+            tones.append(dl.tone)
         for anc_idx in range(n_ancilla):
             anc = n_data + anc_idx
             if is_z[anc_idx]:
                 shift_phase(tones[anc], 1.5708)
-                drive(lines[anc], drag(20, 0.44, 5.0, 0.5), tones[anc])
+                drive(lines[anc], drag(20, 0.44, 5.0, 0.5), tone=tones[anc])
                 shift_phase(tones[anc], 1.5708)
             row = neighbors[anc_idx]
             for j in range(len(row)):
                 data_q = row[j]
-                drive(lines[data_q], gaussian(98, 0.32, 24.5), tones[data_q])
-                drive(lines[anc], drag(20, 0.44, 5.0, 0.5), tones[anc])
+                drive(lines[data_q], gaussian(98, 0.32, 24.5), tone=tones[data_q])
+                drive(lines[anc], drag(20, 0.44, 5.0, 0.5), tone=tones[anc])
             if is_z[anc_idx]:
                 shift_phase(tones[anc], 1.5708)
-                drive(lines[anc], drag(20, 0.44, 5.0, 0.5), tones[anc])
+                drive(lines[anc], drag(20, 0.44, 5.0, 0.5), tone=tones[anc])
                 shift_phase(tones[anc], 1.5708)
 
     return surface, n_total

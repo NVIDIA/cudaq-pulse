@@ -33,19 +33,19 @@ def _steps(cycles_per_timestep: int, **kwargs) -> MachineModel:
 
 @pulse.kernel
 def short(q):
-    d, t = get_drive_line(q)
-    drive(d, square(22, 0.1), t)
+    d = get_drive_line(q)
+    drive(d, square(22, 0.1))
 
 
 @pulse.kernel
 def stepped(q, r):
-    d, t = get_drive_line(q)
-    e, u = get_drive_line(r)
-    drive(d, square(pulse.round_duration(d, 22), 0.1), t)
-    drive(e, square(pulse.round_duration(e, 22, "down"), 0.1), u)
+    d = get_drive_line(q)
+    e = get_drive_line(r)
+    drive(d, square(pulse.round_duration(d, 22), 0.1))
+    drive(e, square(pulse.round_duration(e, 22, "down"), 0.1))
     wait(d, pulse.round_duration(d, 3 * pulse.ns))
     sync(d, e)
-    drive(e, square(8, 0.1), u)
+    drive(e, square(8, 0.1))
 
 
 def test_a_length_off_the_timestep_is_an_error_naming_the_line():
@@ -146,8 +146,8 @@ def ramp(t):
 
 @pulse.kernel
 def shaped(q):
-    d, t = get_drive_line(q)
-    drive(d, custom(pulse.round_duration(d, 18), ramp), t)
+    d = get_drive_line(q)
+    drive(d, custom(pulse.round_duration(d, 18), ramp))
 
 
 def test_a_fractional_sample_rate_puts_lines_on_whole_samples():
@@ -179,8 +179,8 @@ def test_waveform_memory_counts_samples_at_the_rate():
 
 @pulse.kernel
 def waits_for(q, tau: float):
-    d, t = get_drive_line(q)
-    drive(d, square(8, 0.1), t)
+    d = get_drive_line(q)
+    drive(d, square(8, 0.1))
     wait(d, tau, bounds=(0, 400))
 
 

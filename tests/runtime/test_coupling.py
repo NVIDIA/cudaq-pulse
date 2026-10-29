@@ -46,9 +46,9 @@ def _pair(f0, f1, *, g_hz=0.0, zz_hz=0.0, alphas=(-200.0e6, -180.0e6)):
 
 @pulse.kernel
 def _idle(q0, q1):
-    d0, t0 = get_drive_line(q0)
+    d0 = get_drive_line(q0)
     get_drive_line(q1)  # simulate the idle partner
-    drive(d0, square(2, 0.0), t0)
+    drive(d0, square(2, 0.0))
 
 
 def _lowered(target):
@@ -355,9 +355,9 @@ def test_gpu_lowering_builds_the_cpu_operator(levels):
 
     @pulse.kernel
     def driven(q0, q1):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         get_drive_line(q1)
-        drive(d0, gaussian(40, 0.05, 10.0), t0)
+        drive(d0, gaussian(40, 0.05, 10.0))
 
     lowered = on(target, driven, Q[0], Q[1])
     # A CPU run leaves the module with the attributes of its segment, which

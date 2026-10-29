@@ -80,12 +80,12 @@ def test_a_clock_without_a_whole_cycle_ratio_is_an_error():
 
 @pulse.kernel
 def rounded(q):
-    d, t = get_drive_line(q)
-    drive(d, square(pulse.round_duration(d, 37), 0.1), t)
-    drive(d, square(pulse.round_duration(d, 37, "down"), 0.1), t)
-    drive(d, square(pulse.round_duration(d, 37, direction=pulse.RoundDirection.NEAREST), 0.1), t)
-    drive(d, square(pulse.round_duration(d, 1.25 * pulse.ns), 0.1), t)
-    drive(d, square(pulse.round_duration(d, 21 * pulse.ns, pulse.RoundDirection.DOWN), 0.1), t)
+    d = get_drive_line(q)
+    drive(d, square(pulse.round_duration(d, 37), 0.1))
+    drive(d, square(pulse.round_duration(d, 37, "down"), 0.1))
+    drive(d, square(pulse.round_duration(d, 37, direction=pulse.RoundDirection.NEAREST), 0.1))
+    drive(d, square(pulse.round_duration(d, 1.25 * pulse.ns), 0.1))
+    drive(d, square(pulse.round_duration(d, 21 * pulse.ns, pulse.RoundDirection.DOWN), 0.1))
 
 
 def _durations(lowered):
@@ -123,9 +123,9 @@ def test_each_round_direction_is_its_string(member, text, cycles):
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        drive(d, square(pulse.round_duration(d, 37, member), 0.1), t)
-        drive(d, square(pulse.round_duration(d, 37, text), 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(pulse.round_duration(d, 37, member), 0.1))
+        drive(d, square(pulse.round_duration(d, 37, text), 0.1))
 
     assert _durations(pulse.compile(k, passes=[], machine=_machine(0.5)).lower(Q[0])) == [
         cycles,
@@ -136,23 +136,23 @@ def test_each_round_direction_is_its_string(member, text, cycles):
 def test_round_duration_needs_a_line_and_a_known_length():
     @pulse.kernel
     def specialized(q, n: float):
-        d, t = get_drive_line(q)
-        drive(d, square(pulse.round_duration(d, n), 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(pulse.round_duration(d, n), 0.1))
 
     @pulse.kernel
     def not_a_line(q):
-        d, t = get_drive_line(q)
-        drive(d, square(pulse.round_duration(t, 4), 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(pulse.round_duration(d.tone, 4), 0.1))
 
     @pulse.kernel
     def a_number(q):
-        d, t = get_drive_line(q)
-        drive(d, square(pulse.round_duration(3, 4), 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(pulse.round_duration(3, 4), 0.1))
 
     @pulse.kernel
     def bad_mode(q):
-        d, t = get_drive_line(q)
-        drive(d, square(pulse.round_duration(d, 4, "sideways"), 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(pulse.round_duration(d, 4, "sideways"), 0.1))
 
     # Like a duration, a float that reaches it is specialized on.
     with pytest.warns(RuntimeWarning, match="round_duration"):
@@ -173,17 +173,17 @@ def test_round_duration_needs_a_line_and_a_known_length():
 
 @pulse.kernel(unroll_threshold=0)
 def mixed(a, b):
-    da, ta = get_drive_line(a)
-    db, tb = get_drive_line(b)
-    ra, rta = get_readout_line(a)
-    drive(da, gaussian(40, 0.1, 10.0), ta)
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    ra = get_readout_line(a)
+    drive(da, gaussian(40, 0.1, 10.0))
     wait(db, 8)
-    drive(db, square(pulse.round_duration(db, 15), 0.1), tb)
+    drive(db, square(pulse.round_duration(db, 15), 0.1))
     sync(da, db, ra)
-    drive(da, gaussian(40, 0.1, 10.0), ta)
-    readout(ra, square(pulse.round_duration(ra, 99), 0.05), rta)
+    drive(da, gaussian(40, 0.1, 10.0))
+    readout(ra, square(pulse.round_duration(ra, 99), 0.05))
     for _ in range(4):
-        drive(db, square(12, 0.1), tb)
+        drive(db, square(12, 0.1))
 
 
 @pytest.mark.parametrize("schedule", SCHEDULES)
@@ -206,9 +206,9 @@ def test_a_sync_meets_on_the_grid():
 
 @pulse.kernel
 def callee_body(q):
-    d, t = get_drive_line(q)
-    drive(d, square(8, 0.1), t)
-    drive(d, square(4, 0.1), t)
+    d = get_drive_line(q)
+    drive(d, square(8, 0.1))
+    drive(d, square(4, 0.1))
 
 
 callee = pulse.kernel(schedule="asap")(callee_body.__pulse_kernel_fn__)
@@ -216,8 +216,8 @@ callee = pulse.kernel(schedule="asap")(callee_body.__pulse_kernel_fn__)
 
 @pulse.kernel
 def calls_a_block(a, b):
-    da, ta = get_drive_line(a)
-    drive(da, square(4, 0.1), ta)
+    da = get_drive_line(a)
+    drive(da, square(4, 0.1))
     callee(a)
     callee(b)
 
@@ -237,11 +237,11 @@ def correction(bits):
 
 @pulse.kernel
 def with_a_call(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(100, 0.05))
     amplitude = correction.submit([m]).result()
-    drive(d, square(8, amplitude), t)
+    drive(d, square(8, amplitude))
 
 
 @pytest.mark.parametrize("schedule", SCHEDULES)
@@ -262,8 +262,8 @@ def test_classical_calls_keep_lines_on_the_grid(schedule):
 
 @pulse.kernel
 def off_grid(q):
-    d, t = get_drive_line(q)
-    drive(d, gaussian(41, 0.1, 10.0), t)
+    d = get_drive_line(q)
+    drive(d, gaussian(41, 0.1, 10.0))
     wait(d, 5)
 
 
@@ -296,10 +296,10 @@ def test_check_against_a_slower_controller_reports_what_is_off_its_grid():
 
 @pulse.kernel
 def variable_wait(q, tau: float):
-    d, t = get_drive_line(q)
-    drive(d, square(8, 0.1), t)
+    d = get_drive_line(q)
+    drive(d, square(8, 0.1))
     wait(d, tau * 2.0, bounds=(0, 1000))
-    drive(d, square(8, 0.1), t)
+    drive(d, square(8, 0.1))
 
 
 @pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=60, link="controller")
@@ -309,18 +309,18 @@ def wait_length(x):
 
 @pulse.kernel
 def answer_wait_on_grid(q):
-    d, t = get_drive_line(q)
-    drive(d, square(8, 0.1), t)
+    d = get_drive_line(q)
+    drive(d, square(8, 0.1))
     wait(d, wait_length.submit(1.0).result(), bounds=(8, 400))
-    drive(d, square(8, 0.1), t)
+    drive(d, square(8, 0.1))
 
 
 @pulse.kernel
 def answer_wait_off_grid(q):
-    d, t = get_drive_line(q)
-    drive(d, square(8, 0.1), t)
+    d = get_drive_line(q)
+    drive(d, square(8, 0.1))
     wait(d, wait_length.submit(1.0).result(), bounds=(6, 402))
-    drive(d, square(8, 0.1), t)
+    drive(d, square(8, 0.1))
 
 
 def test_a_wait_from_an_answer_has_its_bounds_on_every_lines_grid():
@@ -469,13 +469,13 @@ def settings_of(bits):
 
 @pulse.kernel
 def timed_at_run_time(q):
-    d, t = get_drive_line(q)
-    ro, rt = get_readout_line(q)
-    m = readout(ro, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    m = readout(ro, square(100, 0.05))
     amp, delay = settings_of.submit([m]).result()
     wait(d, delay, bounds=(8, 400))
-    drive(d, gaussian(40, 0.1, delay * 0.25), t)
-    drive(d, drag(40, amp, 8.0, delay), t)
+    drive(d, gaussian(40, 0.1, delay * 0.25))
+    drive(d, drag(40, amp, 8.0, delay))
 
 
 def _answer_of(program):
@@ -679,14 +679,14 @@ def ramp(t):
 
 @pulse.kernel
 def shaped(q):
-    d, t = get_drive_line(q)
-    drive(d, custom(8, ramp), t)
+    d = get_drive_line(q)
+    drive(d, custom(8, ramp))
 
 
 @pulse.kernel
 def shaped_off_grid(q):
-    d, t = get_drive_line(q)
-    drive(d, custom(9, ramp), t)
+    d = get_drive_line(q)
+    drive(d, custom(9, ramp))
 
 
 def _played(lowered):
@@ -719,8 +719,8 @@ HELD = [ramp(t) for t in (1, 1, 3, 3, 5, 5, 7, 7)]
 
 @pulse.kernel
 def held_for_two_cycles(q):
-    d, t = get_drive_line(q)
-    drive(d, custom_samples(HELD), t)
+    d = get_drive_line(q)
+    drive(d, custom_samples(HELD))
 
 
 def test_a_custom_envelope_is_simulated_at_its_controllers_rate():
@@ -737,20 +737,20 @@ HALF_RATE = [ramp(t) for t in (1, 3, 5, 7)]
 
 @pulse.kernel
 def at_half_rate(q):
-    d, t = get_drive_line(q)
-    drive(d, custom_samples(HALF_RATE, 1.0), t)
+    d = get_drive_line(q)
+    drive(d, custom_samples(HALF_RATE, 1.0))
 
 
 @pulse.kernel
 def at_program_rate(q):
-    d, t = get_drive_line(q)
-    drive(d, custom_samples([0.1, 0.2, 0.3, 0.4]), t)
+    d = get_drive_line(q)
+    drive(d, custom_samples([0.1, 0.2, 0.3, 0.4]))
 
 
 @pulse.kernel
 def at_double_rate(q):
-    d, t = get_drive_line(q)
-    drive(d, custom_samples([0.1, 0.2, 0.3], sample_rate_ghz=4.0), t)
+    d = get_drive_line(q)
+    drive(d, custom_samples([0.1, 0.2, 0.3], sample_rate_ghz=4.0))
 
 
 def test_sample_arrays_play_only_at_the_rate_they_were_made_for():
@@ -792,8 +792,8 @@ def test_check_against_another_rate_reports_the_sample_arrays():
 
 @pulse.kernel
 def product(q):
-    d, t = get_drive_line(q)
-    drive(d, wf_mul(gaussian(40, 0.2, 10.0), square(40, 0.5)), t)
+    d = get_drive_line(q)
+    drive(d, wf_mul(gaussian(40, 0.2, 10.0), square(40, 0.5)))
 
 
 def test_a_product_is_simulated_at_its_controllers_clock():

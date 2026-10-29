@@ -24,7 +24,7 @@ class Gates:
         return square(n, self.amp)
 
     def x90(self, line, tone):
-        drive(line, self.wf(), tone)
+        drive(line, self.wf(), tone=tone)
 
     def x90_wf(self):
         # No pulse op by name: it reaches one through self.

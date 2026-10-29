@@ -20,43 +20,43 @@ NAME = "vqe_hea"
 NUM_QUBITS = 4
 
 
-def _cr_cnot(d_ctrl, d_tgt, t_ctrl, t_tgt):
+def _cr_cnot(d_ctrl, d_tgt):
     sx = drag(40, 0.025, 10.0, 0.5)
     cr = gaussian(200, 0.10, 50.0)
     cr_neg = gaussian(200, -0.10, 50.0)
     x_c = square(40, [0.047, 0.0])
 
-    drive(d_tgt, sx, t_tgt)
-    drive(d_ctrl, cr, t_tgt)
-    drive(d_ctrl, x_c, t_ctrl)
-    drive(d_ctrl, cr_neg, t_tgt)
-    drive(d_tgt, sx, t_tgt)
+    drive(d_tgt, sx)
+    drive(d_ctrl, cr, tone=d_tgt.tone)
+    drive(d_ctrl, x_c)
+    drive(d_ctrl, cr_neg, tone=d_tgt.tone)
+    drive(d_tgt, sx)
 
 
 @pulse.kernel
 def build(q0, q1, q2, q3):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
-    d2, t2 = get_drive_line(q2)
-    d3, t3 = get_drive_line(q3)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
+    d2 = get_drive_line(q2)
+    d3 = get_drive_line(q3)
 
     lines = [d0, d1, d2, d3]
-    tones = [t0, t1, t2, t3]
+    tones = [d0.tone, d1.tone, d2.tone, d3.tone]
     thetas = [0.3, 0.5, 0.7, 0.9]
 
     # Ry(theta_q) = Rz(-pi/2) · SX · Rz(theta) · SX · Rz(pi/2)
     sx = drag(40, 0.25, 10.0, 0.5)
     for q in range(4):
         shift_phase(tones[q], -math.pi / 2)
-        drive(lines[q], sx, tones[q])
+        drive(lines[q], sx, tone=tones[q])
         shift_phase(tones[q], thetas[q])
-        drive(lines[q], sx, tones[q])
+        drive(lines[q], sx, tone=tones[q])
         shift_phase(tones[q], math.pi / 2)
 
     # Linear-chain CNOTs: 0->1, 1->2, 2->3, spelled out one pair at a time.
     sync(d0, d1)
-    _cr_cnot(d0, d1, t0, t1)
+    _cr_cnot(d0, d1)
     sync(d1, d2)
-    _cr_cnot(d1, d2, t1, t2)
+    _cr_cnot(d1, d2)
     sync(d2, d3)
-    _cr_cnot(d2, d3, t2, t3)
+    _cr_cnot(d2, d3)

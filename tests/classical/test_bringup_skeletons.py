@@ -85,22 +85,22 @@ def t1_estimator(survived, alpha, beta, wait_cycles):
 
 @pulse.kernel
 def adaptive_t1(q, rounds: int):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     alpha, beta, tau = 1.0, 5000.0, 10000.0
-    drive(d, square(40, PI_AMP), t)
+    drive(d, square(40, PI_AMP))
     wait(d, 10000)
     for _ in range(rounds):
         sync(d, r)
-        m = readout(r, square(400, 0.05), rt)
+        m = readout(r, square(400, 0.05))
         alpha, beta, tau = t1_estimator.submit([m], alpha, beta, tau).result()
         sync(d, r)
         if m:
-            drive(d, square(40, PI_AMP), t)
-        drive(d, square(40, PI_AMP), t)
+            drive(d, square(40, PI_AMP))
+        drive(d, square(40, PI_AMP))
         wait(d, tau, bounds=T1_BOUNDS)
     sync(d, r)
-    readout(r, square(400, 0.05), rt)
+    readout(r, square(400, 0.05))
 
 
 def test_k11_adaptive_t1_tracks_its_posterior_per_path(target):
@@ -147,28 +147,28 @@ def frequency_estimator(bit, mean, sigma, wait_cycles, phase):
 
 @pulse.kernel
 def binary_search(q, rounds: int):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     mean, sigma = 0.0, SIGMA0
     tau = (W0 - 20.0) * CLOCK
     phase = PHASE0
-    drive(d, square(40, PI_AMP / 2), t)
+    drive(d, square(40, PI_AMP / 2))
     wait(d, int(tau))
-    shift_phase(t, math.pi - phase)
-    drive(d, square(40, PI_AMP / 2), t)
+    shift_phase(d.tone, math.pi - phase)
+    drive(d, square(40, PI_AMP / 2))
     for _ in range(rounds):
         sync(d, r)
-        m = readout(r, square(400, 0.05), rt)
+        m = readout(r, square(400, 0.05))
         mean, sigma, tau, phase = frequency_estimator.submit([m], mean, sigma, tau, phase).result()
         sync(d, r)
         if m:
-            drive(d, square(40, PI_AMP), t)
-        drive(d, square(40, PI_AMP / 2), t)
+            drive(d, square(40, PI_AMP))
+        drive(d, square(40, PI_AMP / 2))
         wait(d, tau, bounds=RAMSEY_BOUNDS)
-        shift_phase(t, math.pi - phase)
-        drive(d, square(40, PI_AMP / 2), t)
+        shift_phase(d.tone, math.pi - phase)
+        drive(d, square(40, PI_AMP / 2))
     sync(d, r)
-    readout(r, square(400, 0.05), rt)
+    readout(r, square(400, 0.05))
 
 
 def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
@@ -208,18 +208,18 @@ def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
 
 @pulse.kernel
 def t1_shot(q, wait_cycles: int):
-    d, t = get_drive_line(q)
-    drive(d, square(40, PI_AMP), t)
+    d = get_drive_line(q)
+    drive(d, square(40, PI_AMP))
     wait(d, wait_cycles)
 
 
 @pulse.kernel
 def ramsey_shot(q, wait_cycles: int, phase: float):
-    d, t = get_drive_line(q)
-    drive(d, square(40, PI_AMP / 2), t)
+    d = get_drive_line(q)
+    drive(d, square(40, PI_AMP / 2))
     wait(d, wait_cycles)
-    shift_phase(t, phase)
-    drive(d, square(40, PI_AMP / 2), t)
+    shift_phase(d.tone, phase)
+    drive(d, square(40, PI_AMP / 2))
 
 
 def test_k13_three_point_decay_and_phase_recover_the_device(target):
@@ -265,9 +265,9 @@ def test_k13_three_point_decay_and_phase_recover_the_device(target):
 
 @pulse.kernel
 def spectroscopy(q, detuning_hz: float):
-    d, t = get_drive_line(q)
-    shift_frequency(t, detuning_hz)
-    drive(d, square(800, math.pi / 400), t)  # a 400 ns pi pulse
+    d = get_drive_line(q)
+    shift_frequency(d.tone, detuning_hz)
+    drive(d, square(800, math.pi / 400))  # a 400 ns pi pulse
 
 
 def test_k14_golden_section_finds_the_qubit_frequency(target):
@@ -339,22 +339,22 @@ def golden_step(bit, state):
 
 @pulse.kernel
 def golden_in_shot(q, iterations: int):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     state = GOLDEN.as_floats()
     x = GOLDEN.next_point()
     done = 0.0
     for _ in range(iterations):
         if done < 0.5:
-            shift_frequency(t, x)
-            drive(d, square(800, math.pi / 400), t)
-            shift_frequency(t, -x)
+            shift_frequency(d.tone, x)
+            drive(d, square(800, math.pi / 400))
+            shift_frequency(d.tone, -x)
         sync(d, r)
-        m = readout(r, square(400, 0.05), rt)
+        m = readout(r, square(400, 0.05))
         state, x, done = golden_step.submit([m], state).result()
         sync(d, r)
         if m:
-            drive(d, square(40, PI_AMP), t)
+            drive(d, square(40, PI_AMP))
 
 
 def test_k14_golden_section_in_a_shot_uses_the_converged_pattern(target):
@@ -382,12 +382,12 @@ READ_WAIT = STORE.reader("wait_cycles", link="controller", bounds=(0.0, 40000.0)
 
 @pulse.kernel
 def cadence_shot(q, amplitude: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, amplitude), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, amplitude))
     wait(d, READ_WAIT.submit().result(), bounds=(0, 40000))
     sync(d, r)
-    readout(r, square(400, 0.05), rt)
+    readout(r, square(400, 0.05))
 
 
 def test_k15_the_closed_loop_runs_ten_thousand_iterations_on_one_compile(target):
@@ -469,11 +469,11 @@ def test_k17_latency_within_depletion_is_hidden(target):
 
         @pulse.kernel
         def feedback(q):
-            d, t = get_drive_line(q)
-            r, rt = get_readout_line(q)
-            m = readout(r, square(400, 0.05), rt)
+            d = get_drive_line(q)
+            r = get_readout_line(q)
+            m = readout(r, square(400, 0.05))
             if decide.submit([m]).result()[0]:
-                drive(d, square(40, PI_AMP), t)
+                drive(d, square(40, PI_AMP))
 
         (call,) = pulse.compile(feedback, device=dev).lower(dev.qudit_handles[0]).classical_report()
         assert call.exposed_cycles / CLOCK == pytest.approx(exposed_ns, abs=1.0)
@@ -495,11 +495,11 @@ def test_k18_readout_models_on_the_target(target):
 
     @pulse.kernel
     def excite_and_measure(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        drive(d, square(40, PI_AMP), t)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        drive(d, square(40, PI_AMP))
         sync(d, r)
-        readout(r, square(800, 0.05), rt)
+        readout(r, square(800, 0.05))
 
     lowered = pulse.compile(excite_and_measure, device=dev).lower(dev.qudit_handles[0])
     ideal = dict(pulse.simulate(lowered, dt_ns=1.0).branches)
@@ -537,29 +537,29 @@ def recovery(a, b, c):
     return a ^ b ^ c
 
 
-def _apply(d, t, index):
+def _apply(d, index):
     if index < 2:
         if index == 1:
-            drive(d, square(40, PI_AMP), t)
+            drive(d, square(40, PI_AMP))
     else:
         if index == 2:
-            shift_phase(t, math.pi)
+            shift_phase(d.tone, math.pi)
         else:
-            shift_phase(t, math.pi / 2)
-            drive(d, square(40, PI_AMP), t)
-            shift_phase(t, -math.pi / 2)
+            shift_phase(d.tone, math.pi / 2)
+            drive(d, square(40, PI_AMP))
+            shift_phase(d.tone, -math.pi / 2)
 
 
 @pulse.kernel
 def pauli_rb(q):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     a = PAULI.submit().result()
-    _apply(d, t, a)
+    _apply(d, a)
     b = PAULI.submit().result()
-    _apply(d, t, b)
+    _apply(d, b)
     c = PAULI.submit().result()
-    _apply(d, t, c)
-    _apply(d, t, recovery.submit(a, b, c).result())
+    _apply(d, c)
+    _apply(d, recovery.submit(a, b, c).result())
 
 
 def test_k19_pauli_benchmarking_returns_to_zero_unless_miscalibrated(target):

@@ -47,8 +47,8 @@ def _pi_pulse_then_wait(wait_cycles):
 
     @pulse.kernel
     def kernel(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, math.pi / 20.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, math.pi / 20.0))
         wait(d0, wait_cycles)
 
     return kernel
@@ -104,7 +104,7 @@ def test_ground_state_stable_under_decoherence():
 
     @pulse.kernel
     def idle(q0):
-        d0, _t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         wait(d0, 2000)  # 1000 ns of free evolution, no drive
 
     ir = (idle, Q[0])
@@ -151,10 +151,10 @@ def test_multiqubit_independent_decay():
 
     @pulse.kernel
     def excite_both(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
-        drive(d0, square(40, math.pi / 20.0), t0)
-        drive(d1, square(40, math.pi / 20.0), t1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
+        drive(d0, square(40, math.pi / 20.0))
+        drive(d1, square(40, math.pi / 20.0))
         sync(d0, d1)
         wait(d0, 1000)
         wait(d1, 1000)

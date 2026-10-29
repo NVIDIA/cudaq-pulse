@@ -31,8 +31,8 @@ Infrastructure stays behind the ``pulse.`` prefix:
 
    @pulse.kernel
    def rabi_oscillation(qubit, duration, sigma):
-       drive_line, tone = get_drive_line(qubit)
-       drive(drive_line, gaussian(duration, 0.5, sigma), tone)
+       drive_line = get_drive_line(qubit)
+       drive(drive_line, gaussian(duration, 0.5, sigma))
 
    dev = pulse.device("transmon_krinner_17q")
    rabi_oscillation(dev.qudit_handles[0], 32 * pulse.ns, 8 * pulse.ns)
@@ -53,9 +53,9 @@ Defining a Kernel
 
    @pulse.kernel
    def my_kernel(qubit):
-       drive_line, tone = get_drive_line(qubit)
+       drive_line = get_drive_line(qubit)
        waveform = gaussian(cal["x_duration"], 0.3, cal["x_sigma"])
-       drive(drive_line, waveform, tone)
+       drive(drive_line, waveform)
 
 The kernels on this page read their pulse durations from this ``cal``; see
 :ref:`durations`.
@@ -108,11 +108,11 @@ them from a calibration the kernel closes over.
 
    @pulse.kernel
    def x_then_wait(qubit, gap):
-       d, t = get_drive_line(qubit)
+       d = get_drive_line(qubit)
        x = gaussian(cal["x_duration"], cal["x_amp"], cal["x_sigma"])
-       drive(d, x, t)
+       drive(d, x)
        wait(d, gap)
-       drive(d, x, t)
+       drive(d, x)
 
    fast = pulse.device({"target": "transmon_krinner_17q", "clock_ghz": 2.0})
    slow = pulse.device({"target": "transmon_krinner_17q", "clock_ghz": 1.0})
@@ -161,9 +161,9 @@ at trace time:
 
    @pulse.kernel
    def echo_sequence(qubit, gap):
-       drive_line, tone = get_drive_line(qubit)
+       drive_line = get_drive_line(qubit)
        for i in range(5):
-           drive(drive_line, gaussian(cal["x_duration"], 0.3, cal["x_sigma"]), tone)
+           drive(drive_line, gaussian(cal["x_duration"], 0.3, cal["x_sigma"]))
            wait(drive_line, gap)
 
 A loop whose induction variable is never read, like the one above, is
@@ -200,21 +200,17 @@ crossover; ``benchmarks/compiler/unroll_threshold.py`` repeats the measurement.
 tuples, dictionaries, ``enumerate()``, ``zip()``, ``reversed()``, a qubit
 vector, or any other finite iterable. These loops are always unrolled, one
 traced iteration per element, with ``break``, ``continue`` and ``else``
-behaving as in Python. Lines and tones held in lists stay threaded through
-the loop:
+behaving as in Python. Lines held in lists stay threaded through the
+loop:
 
 .. code-block:: python
 
    @pulse.kernel
    def sweep(qubits):
-       lines, tones = [], []
-       for q in qubits:
-           line, tone = get_drive_line(q)
-           lines.append(line)
-           tones.append(tone)
+       lines = [get_drive_line(q) for q in qubits]
        for amplitude in [0.1, 0.2, 0.3]:
-           for line, tone in zip(lines, tones):
-               drive(line, square(cal["x_duration"], amplitude), tone)
+           for line in lines:
+               drive(line, square(cal["x_duration"], amplitude))
 
 **If/else** with compile-time conditions:
 
@@ -222,12 +218,12 @@ the loop:
 
    @pulse.kernel
    def conditional_pulse(qubit, use_drag):
-       drive_line, tone = get_drive_line(qubit)
+       drive_line = get_drive_line(qubit)
        if use_drag:
            waveform = drag(cal["x_duration"], 0.3, cal["x_sigma"], cal["x_beta"])
        else:
            waveform = gaussian(cal["x_duration"], 0.3, cal["x_sigma"])
-       drive(drive_line, waveform, tone)
+       drive(drive_line, waveform)
 
 **Measurement feedback**: an ``if`` on a measurement result (``if result:`` or
 ``if not result:``) is kept as a conditional region:
@@ -236,13 +232,13 @@ the loop:
 
    @pulse.kernel
    def active_reset(qubit):
-       drive_line, drive_tone = get_drive_line(qubit)
-       readout_line, readout_tone = get_readout_line(qubit)
-       result = readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
+       drive_line = get_drive_line(qubit)
+       readout_line = get_readout_line(qubit)
+       result = readout(readout_line, square(cal["readout_duration"], 0.05))
        sync(drive_line, readout_line)
        if result:
            x = drag(cal["x_duration"], 0.5, cal["x_sigma"], cal["x_beta"])
-           drive(drive_line, x, drive_tone)
+           drive(drive_line, x)
 
 Both branches are traced, and lines and tones they rebind become the
 results of the region. Both branches must continue after the ``if``. A
@@ -253,15 +249,15 @@ the branch that ran:
 
    @pulse.kernel
    def flip_on_one(qubit):
-       drive_line, drive_tone = get_drive_line(qubit)
-       readout_line, readout_tone = get_readout_line(qubit)
-       result = readout(readout_line, square(1000, 0.05), readout_tone)
+       drive_line = get_drive_line(qubit)
+       readout_line = get_readout_line(qubit)
+       result = readout(readout_line, square(1000, 0.05))
        sync(drive_line, readout_line)
        if result:
            amp = 0.5
        else:
            amp = 0.0
-       drive(drive_line, square(40, amp), drive_tone)
+       drive(drive_line, square(40, amp))
 
 The number is one value the measurement selects. On a target that takes it
 at run time (an amplitude, a phase or a frequency), every op given it, or a
@@ -287,10 +283,10 @@ Besides the control flow above, a kernel body may use:
 - list, dictionary and set comprehensions, nested and filtered ones too, and
   set displays such as ``{8, 16}``. A comprehension is unrolled while
   tracing like the ``for`` loop it stands for, so
-  ``[get_drive_line(q) for q in qubits]`` builds a list of ``(line, tone)``
-  pairs and ``[readout(r, wf, t) for _ in range(12)]`` a list of results.
+  ``[get_drive_line(q) for q in qubits]`` builds a list of lines and
+  ``[readout(r, wf) for _ in range(12)]`` a list of results.
 - generator expressions, such as ``sum(a for a in amps)`` or
-  ``sync(*(line for line, _ in pairs))``. A generator expression runs to
+  ``sync(*(lines[i] for i in active))``. A generator expression runs to
   the end where it is written, as a list comprehension would, so pulses
   it emits are emitted there, in order, even if what consumes it stops
   early, as ``any()`` does.
@@ -304,11 +300,11 @@ Besides the control flow above, a kernel body may use:
   hold.
 - calls with ``*args`` and ``**kwargs``, unpacked while tracing, so
   ``sync(*lines)`` synchronizes a list of lines built in a loop and
-  ``helper(d, t, **opts)`` passes a dictionary of options.
-- lines and tones kept in any container: a list of ``(line, tone)`` pairs, a
-  dictionary or nested lists. A qudit has one drive and one readout channel,
-  so an operation always uses the channel's current line and tone, whichever
-  copy of it the kernel passes. ``append``, ``insert``, ``extend``, ``pop``,
+  ``helper(d, **opts)`` passes a dictionary of options.
+- lines and tones kept in any container: a list of lines, a dictionary or
+  nested lists. A qudit has one drive and one readout line, so an operation
+  always uses the line, and its tone, as they are now, whichever copy of
+  them the kernel passes. ``append``, ``insert``, ``extend``, ``pop``,
   ``remove`` and ``del xs[i]`` work on lists of lines.
 
 A ``float`` argument stays a runtime parameter, compiled once for every
@@ -338,17 +334,17 @@ runtime parameters, so a sweep over a delay compiles once:
 
    @pulse.kernel
    def echo(qubit, tau: float):
-       d, t = get_drive_line(qubit)
-       r, rt = get_readout_line(qubit)
+       d = get_drive_line(qubit)
+       r = get_readout_line(qubit)
        x90 = drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["x_beta"])
        x180 = drag(cal["x_duration"], 0.5, cal["x_sigma"], cal["x_beta"])
-       drive(d, x90, t)
+       drive(d, x90)
        wait(d, tau / 2 * pulse.ns)
-       drive(d, x180, t)
+       drive(d, x180)
        wait(d, tau / 2 * pulse.ns)
-       drive(d, x90, t)
+       drive(d, x90)
        sync(d, r)
-       readout(r, square(cal["readout_duration"], 0.05), rt)
+       readout(r, square(cal["readout_duration"], 0.05))
 
    q = dev.qudit_handles[0]
    compiled_echo = pulse.compile(echo)

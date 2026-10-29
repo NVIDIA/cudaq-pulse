@@ -42,22 +42,22 @@ def decoder(bits):
 
 @pulse.kernel
 def active_reset(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    result = readout(r, square(1000, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    result = readout(r, square(1000, 0.05))
     sync(d, r)
     if result:
-        drive(d, square(40, PI_AMP), t)
+        drive(d, square(40, PI_AMP))
 
 
 @pulse.kernel
 def decoded_reset(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    result = readout(r, square(1000, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    result = readout(r, square(1000, 0.05))
     sync(d, r)
     if decoder.submit([result]).result()[0]:
-        drive(d, square(40, PI_AMP), t)
+        drive(d, square(40, PI_AMP))
 
 
 PLUS = [2**-0.5, 2**-0.5]
@@ -100,12 +100,12 @@ def test_an_answer_amplitude_is_bound_per_path():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(1000, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(1000, 0.05))
         a = amplitude.submit([m]).result()
         sync(d, r)
-        drive(d, square(40, a), t)
+        drive(d, square(40, a))
 
     dev = _device()
     q = dev.qudit_handles[0]
@@ -121,24 +121,24 @@ def constant(x):
 
 @pulse.kernel
 def variable_t1(q, tau: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     w = constant.submit(tau).result()
-    drive(d, square(40, PI_AMP), t)
+    drive(d, square(40, PI_AMP))
     wait(d, w)
     sync(d, r)
-    readout(r, square(200, 0.05), rt)
+    readout(r, square(200, 0.05))
 
 
 @pulse.kernel
 def fixed_t1(q, tau: int):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, PI_AMP), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, PI_AMP))
     sync(d, r)
     wait(d, tau)
     sync(d, r)
-    readout(r, square(200, 0.05), rt)
+    readout(r, square(200, 0.05))
 
 
 @pytest.mark.parametrize("tau", [0, 400, 4000, 20000])
@@ -169,16 +169,16 @@ def test_variable_waits_differ_per_path():
 
     @pulse.kernel
     def k(q, p):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        e, u = get_drive_line(p)
-        f, ft = get_readout_line(p)
-        m = readout(r, square(200, 0.05), rt)
+        _d = get_drive_line(q)
+        r = get_readout_line(q)
+        e = get_drive_line(p)
+        f = get_readout_line(p)
+        m = readout(r, square(200, 0.05))
         w = adaptive.submit([m]).result()
-        drive(e, square(40, PI_AMP), u)
+        drive(e, square(40, PI_AMP))
         wait(e, w)
         sync(e, f)
-        readout(f, square(200, 0.05), ft)
+        readout(f, square(200, 0.05))
 
     dev = _device(t1_us=5.0, n=2)
     qs = dev.qudit_handles
@@ -206,14 +206,14 @@ def test_a_d2_repetition_round_flags_double_flips_with_probability_p_squared():
 
     @pulse.kernel
     def k(a, b, flag):
-        ra, rta = get_readout_line(a)
-        rb, rtb = get_readout_line(b)
-        f, ft = get_drive_line(flag)
-        ma = readout(ra, square(200, 0.05), rta)
-        mb = readout(rb, square(200, 0.05), rtb)
+        ra = get_readout_line(a)
+        rb = get_readout_line(b)
+        f = get_drive_line(flag)
+        ma = readout(ra, square(200, 0.05))
+        mb = readout(rb, square(200, 0.05))
         sync(f, ra, rb)
         if both.submit([ma, mb]).result()[0]:
-            drive(f, square(40, PI_AMP), ft)
+            drive(f, square(40, PI_AMP))
 
     dev = _device(n=3)
     noisy = np.diag([1 - p, p])
@@ -241,12 +241,12 @@ def test_timeouts_take_the_fallback_at_the_modelled_rate():
 
     @pulse.kernel
     def k(q, p):
-        r, rt = get_readout_line(q)
-        e, u = get_drive_line(p)
-        m = readout(r, square(100, 0.05), rt)
+        r = get_readout_line(q)
+        e = get_drive_line(p)
+        m = readout(r, square(100, 0.05))
         ok, fix = slow.submit([m]).result(timeout=500 * pulse.ns)
         if ok:
-            drive(e, square(40, PI_AMP), u)
+            drive(e, square(40, PI_AMP))
 
     dev = _device(n=2)
     qs = dev.qudit_handles[:2]
@@ -294,8 +294,8 @@ def test_decay_during_readout_adds_to_the_one_to_zero_error():
 
     @pulse.kernel
     def measure(q):
-        r, rt = get_readout_line(q)
-        readout(r, square(2, 0.05), rt)
+        r = get_readout_line(q)
+        readout(r, square(2, 0.05))
 
     low = pulse.compile(measure, device=dev).lower(q)
     plain = _by_outcome(pulse.simulate(low, initial_state=[0, 1], readout="model"))
@@ -312,11 +312,11 @@ def test_handlers_override_and_are_required_for_external_functions():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        n = remote.submit([readout(r, square(100, 0.05), rt)]).result()
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        n = remote.submit([readout(r, square(100, 0.05))]).result()
         if n == 3:
-            drive(d, square(40, PI_AMP), t)
+            drive(d, square(40, PI_AMP))
 
     dev = _device()
     low = pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
@@ -335,11 +335,11 @@ def test_calls_in_a_rolled_loop_are_bound_per_iteration():
 
     @pulse.kernel(unroll_threshold=0)
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         x = 0.0
         for _ in range(4):
             x = counter.submit(x).result()
-        drive(d, square(40, PI_AMP * x / 4), t)
+        drive(d, square(40, PI_AMP * x / 4))
 
     dev = _device()
     result = pulse.simulate(pulse.compile(k, device=dev).lower(dev.qudit_handles[0]))
@@ -349,9 +349,9 @@ def test_calls_in_a_rolled_loop_are_bound_per_iteration():
 
 @pulse.kernel
 def answered_wait(q, tau: float):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     w = constant.submit(tau).result()
-    drive(d, square(40, PI_AMP), t)
+    drive(d, square(40, PI_AMP))
     wait(d, w)
 
 
@@ -414,27 +414,27 @@ def test_calls_on_a_high_index_qudit_use_its_mode():
 @pytest.mark.parametrize("where", ["future_in", "future_out"])
 def test_an_answer_crossing_a_block_is_bound_in_simulation(schedule, where):
     @pulse.kernel(schedule=schedule)
-    def correct(future, d, t):
+    def correct(future, d):
         if future.result()[0]:
-            drive(d, square(40, PI_AMP), t)
+            drive(d, square(40, PI_AMP))
 
     @pulse.kernel(schedule=schedule)
     def measure(d, r, rt):
-        result = readout(r, square(1000, 0.05), rt)
+        result = readout(r, square(1000, 0.05), tone=rt)
         sync(d, r)
         return decoder.submit([result])
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         if where == "future_in":
-            result = readout(r, square(1000, 0.05), rt)
+            result = readout(r, square(1000, 0.05))
             sync(d, r)
-            correct(decoder.submit([result]), d, t)
+            correct(decoder.submit([result]), d)
         else:
-            if measure(d, r, rt).result()[0]:
-                drive(d, square(40, PI_AMP), t)
+            if measure(d, r, r.tone).result()[0]:
+                drive(d, square(40, PI_AMP))
 
     dev = _device()
     q = dev.qudit_handles[0]
@@ -446,16 +446,16 @@ def test_an_answer_crossing_a_block_is_bound_in_simulation(schedule, where):
 
 def test_simulation_keeps_a_blocks_own_schedule():
     @pulse.kernel(schedule="asap")
-    def early(d, t, e, u):
-        drive(d, square(40, PI_AMP), t)
-        drive(e, square(100, 0.0), u)
+    def early(d, e):
+        drive(d, square(40, PI_AMP))
+        drive(e, square(100, 0.0))
 
     @pulse.kernel
     def k(q, p):
-        d, t = get_drive_line(q)
-        e, u = get_drive_line(p)
-        drive(e, square(4000, constant.submit(0.0).result()), u)
-        early(d, t, e, u)
+        d = get_drive_line(q)
+        e = get_drive_line(p)
+        drive(e, square(4000, constant.submit(0.0).result()))
+        early(d, e)
 
     dev = _device(t1_us=1.0, n=2)
     low = pulse.compile(k, device=dev).lower(*dev.qudit_handles)
@@ -468,8 +468,8 @@ def test_simulation_keeps_a_blocks_own_schedule():
 
     @pulse.kernel
     def pi_alone(q):
-        d, t = get_drive_line(q)
-        drive(d, square(40, PI_AMP), t)
+        d = get_drive_line(q)
+        drive(d, square(40, PI_AMP))
 
     alone = pulse.simulate(pulse.compile(pi_alone, device=dev).lower(dev.qudit_handles[0]))
     at_end = 1.0 - alone.density_matrix[0, 0].real

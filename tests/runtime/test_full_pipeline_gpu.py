@@ -24,12 +24,12 @@ def test_full_pipeline_mlir():
 
     @pulse.kernel
     def my_kernel(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
         wf = gaussian(40, 0.3, 10.0)
-        drive(d0, wf, t0)
+        drive(d0, wf)
         sync(d0, d1)
-        drive(d1, wf, t1)
+        drive(d1, wf)
 
     ir = (my_kernel, Q[0], Q[1])
     mlir = pulse_mlir(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9, 1: 5.1e9})
@@ -47,9 +47,9 @@ def test_full_pipeline_gpu():
 
     @pulse.kernel
     def my_kernel(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         wf = square(40, math.pi / 20.0)
-        drive(d0, wf, t0)
+        drive(d0, wf)
 
     compiled = my_kernel.lower(Q[0])
     results = compiled.run()

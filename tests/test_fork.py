@@ -56,8 +56,8 @@ def test_a_child_forked_before_gpu_use_gets_a_usable_lock(monkeypatch, fresh_gua
 
 @pulse.kernel
 def _rabi(q0):
-    d0, t0 = get_drive_line(q0)
-    drive(d0, square(40, 0.1), t0)
+    d0 = get_drive_line(q0)
+    drive(d0, square(40, 0.1))
 
 
 def _child(parent_contexts: int) -> int:

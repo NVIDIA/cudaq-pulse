@@ -25,8 +25,8 @@ cal = {
 @pulse.kernel
 def echoed_cr(qubit_ctrl, qubit_tgt):
     """Echoed cross-resonance CNOT from *qubit_ctrl* to *qubit_tgt*."""
-    drive_line_ctrl, tone_ctrl = get_drive_line(qubit_ctrl)
-    drive_line_tgt, tone_tgt = get_drive_line(qubit_tgt)
+    drive_line_ctrl = get_drive_line(qubit_ctrl)
+    drive_line_tgt = get_drive_line(qubit_tgt)
 
     sync(drive_line_ctrl, drive_line_tgt)
 
@@ -36,11 +36,11 @@ def echoed_cr(qubit_ctrl, qubit_tgt):
     cr = gaussian_square(cal["cr_duration"], 0.10, x_sigma, cal["cr_width"])
     cr_neg = gaussian_square(cal["cr_duration"], -0.10, x_sigma, cal["cr_width"])
 
-    drive(drive_line_tgt, sx_pulse, tone_tgt)
-    drive(drive_line_ctrl, cr, tone_tgt)
-    drive(drive_line_ctrl, x_ctrl, tone_ctrl)
-    drive(drive_line_ctrl, cr_neg, tone_tgt)
-    drive(drive_line_tgt, sx_pulse, tone_tgt)
+    drive(drive_line_tgt, sx_pulse)
+    drive(drive_line_ctrl, cr, tone=drive_line_tgt.tone)
+    drive(drive_line_ctrl, x_ctrl)
+    drive(drive_line_ctrl, cr_neg, tone=drive_line_tgt.tone)
+    drive(drive_line_tgt, sx_pulse)
 
 
 if __name__ == "__main__":

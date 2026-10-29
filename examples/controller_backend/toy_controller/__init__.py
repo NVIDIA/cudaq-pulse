@@ -105,11 +105,11 @@ if __name__ == "__main__":
 
     @pulse.kernel
     def drive_and_measure(q):
-        drive_line, drive_tone = get_drive_line(q)
-        readout_line, readout_tone = get_readout_line(q)
-        drive(drive_line, gaussian(cal["x_duration"], 0.5, cal["x_sigma"]), drive_tone)
+        drive_line = get_drive_line(q)
+        readout_line = get_readout_line(q)
+        drive(drive_line, gaussian(cal["x_duration"], 0.5, cal["x_sigma"]))
         sync(drive_line, readout_line)
-        readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
+        readout(readout_line, square(cal["readout_duration"], 0.05))
 
     compiled = pulse.compile(drive_and_measure, device=dev, machine=backend.machine_model())
     program = backend.emit(compiled.lower(dev.qudit_handles[0]).export_controller())

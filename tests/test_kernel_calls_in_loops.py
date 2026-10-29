@@ -183,8 +183,8 @@ def _distinct(a, b, n=1, qvec=False):
 
 
 @pulse.kernel
-def pulse16(d, t):
-    drive(d, square(16, AMP), t)
+def pulse16(d):
+    drive(d, square(16, AMP))
 
 
 @pulse.kernel
@@ -195,25 +195,25 @@ def idle(d, n):
 @pulse.kernel
 def rotate(d, t, phase):
     t = shift_phase(t, phase)
-    drive(d, square(16, AMP), t)
+    drive(d, square(16, AMP), tone=t)
 
 
 @pulse.kernel
-def chirp(d, t):
-    t = shift_frequency(t, 20.0e6)
-    drive(d, square(16, AMP), t)
+def chirp(d):
+    shift_frequency(d.tone, 20.0e6)
+    drive(d, square(16, AMP))
 
 
 @pulse.kernel
-def retune(d, t, freq):
-    t = set_frequency(t, freq)
-    drive(d, square(16, AMP), t)
+def retune(d, freq):
+    set_frequency(d.tone, freq)
+    drive(d, square(16, AMP))
 
 
 @pulse.kernel
 def on_qubit(q):
-    d, t = get_drive_line(q)
-    drive(d, square(16, AMP), t)
+    d = get_drive_line(q)
+    drive(d, square(16, AMP))
 
 
 # ── A callee in a rolled loop ────────────────────────────────────────
@@ -222,17 +222,17 @@ def on_qubit(q):
 def test_callee_in_a_range_loop_stays_rolled():
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(4):
-            pulse16(d, t)
+            pulse16(d)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
-        drive(d, square(16, AMP), t)
-        drive(d, square(16, AMP), t)
-        drive(d, square(16, AMP), t)
-        drive(d, square(16, AMP), t)
+        d = get_drive_line(q)
+        drive(d, square(16, AMP))
+        drive(d, square(16, AMP))
+        drive(d, square(16, AMP))
+        drive(d, square(16, AMP))
 
     ops, compiled = check(looped, unrolled, loops=1)
     assert _loop_bodies(ops) == [["pulse.square", "pulse.drive", "scf.yield"]]
@@ -243,19 +243,19 @@ def test_callee_in_a_range_loop_stays_rolled():
 
 def test_plain_helper_and_kernel_callees_trace_alike():
     def helper(d, t):
-        drive(d, square(16, AMP), t)
+        drive(d, square(16, AMP), tone=t)
 
     @pulse.kernel
     def with_kernel(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(3):
-            pulse16(d, t)
+            pulse16(d)
 
     @pulse.kernel
     def with_helper(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(3):
-            helper(d, t)
+            helper(d, d.tone)
 
     assert _compile(with_kernel).mlir().replace("with_kernel", "k") == _compile(
         with_helper
@@ -268,17 +268,17 @@ def test_plain_helper_and_kernel_callees_trace_alike():
 def test_loop_variable_as_a_wait_duration_unrolls():
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(4):
             idle(d, 8 * (i + 1))
-            pulse16(d, t)
+            pulse16(d)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for n in (8, 16, 24, 32):
             wait(d, n)
-            drive(d, square(16, AMP), t)
+            drive(d, square(16, AMP))
 
     ops, compiled = check(looped, unrolled, loops=0)
     assert [op.attrs["duration"] for op in ops if op.kind == "pulse.wait"] == [8, 16, 24, 32]
@@ -289,21 +289,21 @@ def test_loop_variable_as_a_wait_duration_unrolls():
 
 def test_loop_variable_as_a_waveform_duration():
     @pulse.kernel
-    def stretched(d, t, n):
-        drive(d, square(n, AMP), t)
+    def stretched(d, n):
+        drive(d, square(n, AMP))
 
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(1, 4):
-            stretched(d, t, 8 * i)
+            stretched(d, 8 * i)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
-        drive(d, square(8, AMP), t)
-        drive(d, square(16, AMP), t)
-        drive(d, square(24, AMP), t)
+        d = get_drive_line(q)
+        drive(d, square(8, AMP))
+        drive(d, square(16, AMP))
+        drive(d, square(24, AMP))
 
     _, compiled = check(looped, unrolled, loops=0)
     assert [(e[2], e[3]) for e in _schedule(compiled)] == [(0, 8), (8, 16), (24, 24)]
@@ -312,22 +312,22 @@ def test_loop_variable_as_a_waveform_duration():
 def test_loop_variable_in_float_arithmetic():
     @pulse.kernel
     def scaled(d, t, k):
-        drive(d, square(16, AMP * (1.0 + 0.5 * k)), t)
+        drive(d, square(16, AMP * (1.0 + 0.5 * k)), tone=t)
 
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(4):
-            rotate(d, t, 0.3 * i + 0.1)
-            scaled(d, t, float(i))
+            rotate(d, d.tone, 0.3 * i + 0.1)
+            scaled(d, d.tone, float(i))
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(4):
-            t = shift_phase(t, 0.3 * i + 0.1)
-            drive(d, square(16, AMP), t)
-            drive(d, square(16, AMP * (1.0 + 0.5 * i)), t)
+            shift_phase(d.tone, 0.3 * i + 0.1)
+            drive(d, square(16, AMP))
+            drive(d, square(16, AMP * (1.0 + 0.5 * i)))
 
     ops, compiled = check(looped, unrolled, loops=0)
     phases = [op.attrs["phase_rad"] for op in ops if op.kind == "pulse.shift_phase"]
@@ -346,12 +346,12 @@ def test_qudit_indexed_by_the_loop_variable_unrolls():
 
     @pulse.kernel
     def unrolled(qs):
-        d0, t0 = get_drive_line(qs[0])
-        drive(d0, square(16, AMP), t0)
-        d1, t1 = get_drive_line(qs[1])
-        drive(d1, square(16, AMP), t1)
-        d2, t2 = get_drive_line(qs[2])
-        drive(d2, square(16, AMP), t2)
+        d0 = get_drive_line(qs[0])
+        drive(d0, square(16, AMP))
+        d1 = get_drive_line(qs[1])
+        drive(d1, square(16, AMP))
+        d2 = get_drive_line(qs[2])
+        drive(d2, square(16, AMP))
 
     ops, compiled = check(looped, unrolled, loops=0, n=3, qvec=True)
     assert _kinds(ops)["pulse.get_drive_line"] == 3
@@ -381,33 +381,34 @@ def test_lines_held_in_lists_stay_threaded_through_a_rolled_loop():
     def looped(q0, q1):
         lines, tones = [], []
         for q in (q0, q1):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             lines.append(d)
-            tones.append(t)
+            tones.append(d.tone)
         for _ in range(3):
             for i in range(len(lines)):
                 rotate(lines[i], tones[i], 0.5 * (i + 1))
 
     @pulse.kernel
     def unrolled(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
         for _k in (0, 1, 2):
-            t0 = shift_phase(t0, 0.5)
-            drive(d0, square(16, AMP), t0)
-            t1 = shift_phase(t1, 1.0)
-            drive(d1, square(16, AMP), t1)
+            shift_phase(d0.tone, 0.5)
+            drive(d0, square(16, AMP))
+            shift_phase(d1.tone, 1.0)
+            drive(d1, square(16, AMP))
 
     ops, _ = check(looped, unrolled, loops=1, n=2)
     for_end = next(op for op in ops if op.kind == "scf.for_end")
-    assert {"lines[0]", "lines[1]", "tones[0]", "tones[1]"} <= set(for_end.attrs["iter_args"])
+    # lines[1] and tones[1] hold d and d.tone, which carry them.
+    assert for_end.attrs["iter_args"] == ["d", "d.tone", "tones[0]", "lines[0]"]
 
 
 # ── Tones kept in a container across a rolled loop ───────────────────
 #
-# ``get_drive_line`` returns a (line, tone) tuple, and a tuple in a list is
-# not rebound when its tone is retuned: names unpacked from it later hold an
-# old value of the channel. The loop carries the channel, not those names.
+# A line or tone kept in a list is not rebound when its tone is retuned:
+# names read from the list later hold an old value of the channel. The loop
+# carries the channel, not those names.
 
 DETUNE_HZ = 20.0e6
 
@@ -427,28 +428,28 @@ def test_tones_retuned_in_a_list_stay_rolled():
     @pulse.kernel
     def looped(qs):
         lines = [get_drive_line(q) for q in qs]
-        for (d, t), f in zip(lines, (_retuned(0), _retuned(1))):
-            set_frequency(t, f)
+        for d, f in zip(lines, (_retuned(0), _retuned(1))):
+            set_frequency(d.tone, f)
         for _ in range(3):
-            for d, t in lines:
-                drive(d, square(16, AMP), t)
+            for d in lines:
+                drive(d, square(16, AMP))
 
     @pulse.kernel
     def unrolled(qs):
-        d0, t0 = get_drive_line(qs[0])
-        d1, t1 = get_drive_line(qs[1])
-        t0 = set_frequency(t0, _retuned(0))
-        t1 = set_frequency(t1, _retuned(1))
+        d0 = get_drive_line(qs[0])
+        d1 = get_drive_line(qs[1])
+        set_frequency(d0.tone, _retuned(0))
+        set_frequency(d1.tone, _retuned(1))
         for _k in (0, 1, 2):
-            drive(d0, square(16, AMP), t0)
-            drive(d1, square(16, AMP), t1)
+            drive(d0, square(16, AMP))
+            drive(d1, square(16, AMP))
 
     @pulse.kernel
     def native(qs):
         lines = [get_drive_line(q) for q in qs]
         for _ in range(3):
-            for d, t in lines:
-                drive(d, square(16, AMP), t)
+            for d in lines:
+                drive(d, square(16, AMP))
 
     _, compiled = check(looped, unrolled, loops=1, n=2, qvec=True)
     _rolled(_compile(looped, 2, True))
@@ -460,24 +461,24 @@ def test_several_tones_retuned_in_a_list():
     @pulse.kernel
     def looped(qs):
         lines = [get_drive_line(q) for q in qs]
-        for (d, t), f in zip(lines, (_retuned(0), _retuned(1), _retuned(2))):
-            set_frequency(t, f)
+        for d, f in zip(lines, (_retuned(0), _retuned(1), _retuned(2))):
+            set_frequency(d.tone, f)
         for _ in range(2):
-            for d, t in lines:
-                drive(d, square(16, AMP), t)
+            for d in lines:
+                drive(d, square(16, AMP))
 
     @pulse.kernel
     def unrolled(qs):
-        d0, t0 = get_drive_line(qs[0])
-        d1, t1 = get_drive_line(qs[1])
-        d2, t2 = get_drive_line(qs[2])
-        t0 = set_frequency(t0, _retuned(0))
-        t1 = set_frequency(t1, _retuned(1))
-        t2 = set_frequency(t2, _retuned(2))
+        d0 = get_drive_line(qs[0])
+        d1 = get_drive_line(qs[1])
+        d2 = get_drive_line(qs[2])
+        set_frequency(d0.tone, _retuned(0))
+        set_frequency(d1.tone, _retuned(1))
+        set_frequency(d2.tone, _retuned(2))
         for _k in (0, 1):
-            drive(d0, square(16, AMP), t0)
-            drive(d1, square(16, AMP), t1)
-            drive(d2, square(16, AMP), t2)
+            drive(d0, square(16, AMP))
+            drive(d1, square(16, AMP))
+            drive(d2, square(16, AMP))
 
     check(looped, unrolled, loops=1, n=3, qvec=True)
     _rolled(_compile(looped, 3, True))
@@ -487,21 +488,21 @@ def test_tones_retuned_in_a_tuple():
     @pulse.kernel
     def looped(q0, q1):
         lines = (get_drive_line(q0), get_drive_line(q1))
-        for (d, t), f in zip(lines, (_retuned(0), _retuned(1))):
-            set_frequency(t, f)
+        for d, f in zip(lines, (_retuned(0), _retuned(1))):
+            set_frequency(d.tone, f)
         for _ in range(3):
-            for d, t in lines:
-                drive(d, square(16, AMP), t)
+            for d in lines:
+                drive(d, square(16, AMP))
 
     @pulse.kernel
     def unrolled(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
-        t0 = set_frequency(t0, _retuned(0))
-        t1 = set_frequency(t1, _retuned(1))
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
+        set_frequency(d0.tone, _retuned(0))
+        set_frequency(d1.tone, _retuned(1))
         for _k in (0, 1, 2):
-            drive(d0, square(16, AMP), t0)
-            drive(d1, square(16, AMP), t1)
+            drive(d0, square(16, AMP))
+            drive(d1, square(16, AMP))
 
     check(looped, unrolled, loops=1, n=2)
     _rolled(_compile(looped, 2))
@@ -511,21 +512,21 @@ def test_tones_retuned_in_a_dict():
     @pulse.kernel
     def looped(q0, q1):
         lines = {"a": get_drive_line(q0), "b": get_drive_line(q1)}
-        set_frequency(lines["a"][1], _retuned(0))
-        set_frequency(lines["b"][1], _retuned(1))
+        set_frequency(lines["a"].tone, _retuned(0))
+        set_frequency(lines["b"].tone, _retuned(1))
         for _ in range(3):
-            for d, t in lines.values():
-                drive(d, square(16, AMP), t)
+            for d in lines.values():
+                drive(d, square(16, AMP))
 
     @pulse.kernel
     def unrolled(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
-        t0 = set_frequency(t0, _retuned(0))
-        t1 = set_frequency(t1, _retuned(1))
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
+        set_frequency(d0.tone, _retuned(0))
+        set_frequency(d1.tone, _retuned(1))
         for _k in (0, 1, 2):
-            drive(d0, square(16, AMP), t0)
-            drive(d1, square(16, AMP), t1)
+            drive(d0, square(16, AMP))
+            drive(d1, square(16, AMP))
 
     check(looped, unrolled, loops=1, n=2)
     _rolled(_compile(looped, 2))
@@ -535,21 +536,21 @@ def test_tones_in_a_list_retuned_to_runtime_floats():
     @pulse.kernel
     def looped(qs, f0: float, f1: float):
         lines = [get_drive_line(q) for q in qs]
-        for (d, t), f in zip(lines, (f0, f1)):
-            set_frequency(t, f)
+        for d, f in zip(lines, (f0, f1)):
+            set_frequency(d.tone, f)
         for _ in range(3):
-            for d, t in lines:
-                drive(d, square(16, AMP), t)
+            for d in lines:
+                drive(d, square(16, AMP))
 
     @pulse.kernel
     def unrolled(qs, f0: float, f1: float):
-        d0, t0 = get_drive_line(qs[0])
-        d1, t1 = get_drive_line(qs[1])
-        t0 = set_frequency(t0, f0)
-        t1 = set_frequency(t1, f1)
+        d0 = get_drive_line(qs[0])
+        d1 = get_drive_line(qs[1])
+        set_frequency(d0.tone, f0)
+        set_frequency(d1.tone, f1)
         for _k in (0, 1, 2):
-            drive(d0, square(16, AMP), t0)
-            drive(d1, square(16, AMP), t1)
+            drive(d0, square(16, AMP))
+            drive(d1, square(16, AMP))
 
     args = (_retuned(0), _retuned(1))
     check(looped, unrolled, loops=1, n=2, qvec=True, args=args)
@@ -562,25 +563,25 @@ def test_tones_retuned_in_a_list_through_nested_loops():
     @pulse.kernel
     def looped(qs):
         lines = [get_drive_line(q) for q in qs]
-        for (d, t), f in zip(lines, (_retuned(0), _retuned(1))):
-            set_frequency(t, f)
+        for d, f in zip(lines, (_retuned(0), _retuned(1))):
+            set_frequency(d.tone, f)
         for _ in range(2):
             for _ in range(3):
-                for d, t in lines:
-                    drive(d, square(16, AMP), t)
-            for d, t in lines:
+                for d in lines:
+                    drive(d, square(16, AMP))
+            for d in lines:
                 wait(d, 8)
 
     @pulse.kernel
     def unrolled(qs):
-        d0, t0 = get_drive_line(qs[0])
-        d1, t1 = get_drive_line(qs[1])
-        t0 = set_frequency(t0, _retuned(0))
-        t1 = set_frequency(t1, _retuned(1))
+        d0 = get_drive_line(qs[0])
+        d1 = get_drive_line(qs[1])
+        set_frequency(d0.tone, _retuned(0))
+        set_frequency(d1.tone, _retuned(1))
         for _j in (0, 1):
             for _k in (0, 1, 2):
-                drive(d0, square(16, AMP), t0)
-                drive(d1, square(16, AMP), t1)
+                drive(d0, square(16, AMP))
+                drive(d1, square(16, AMP))
             wait(d0, 8)
             wait(d1, 8)
 
@@ -594,27 +595,27 @@ def test_tones_retuned_in_a_list_reach_a_self_scheduled_callee():
     @pulse.kernel(schedule="asap")
     def burst(lines):
         for _ in range(3):
-            for d, t in lines:
-                drive(d, square(16, AMP), t)
+            for d in lines:
+                drive(d, square(16, AMP))
 
     @pulse.kernel
     def looped(qs):
         lines = [get_drive_line(q) for q in qs]
-        for (d, t), f in zip(lines, (_retuned(0), _retuned(1))):
-            set_frequency(t, f)
+        for d, f in zip(lines, (_retuned(0), _retuned(1))):
+            set_frequency(d.tone, f)
         burst(lines)
         for _ in range(2):
             burst(lines)
 
     @pulse.kernel
     def unrolled(qs):
-        d0, t0 = get_drive_line(qs[0])
-        d1, t1 = get_drive_line(qs[1])
-        t0 = set_frequency(t0, _retuned(0))
-        t1 = set_frequency(t1, _retuned(1))
+        d0 = get_drive_line(qs[0])
+        d1 = get_drive_line(qs[1])
+        set_frequency(d0.tone, _retuned(0))
+        set_frequency(d1.tone, _retuned(1))
         for _k in (0, 1, 2, 3, 4, 5, 6, 7, 8):
-            drive(d0, square(16, AMP), t0)
-            drive(d1, square(16, AMP), t1)
+            drive(d0, square(16, AMP))
+            drive(d1, square(16, AMP))
 
     check(looped, unrolled, loops=3, n=2, qvec=True)
     _rolled(_compile(looped, 2, True))
@@ -626,23 +627,23 @@ def test_tones_retuned_in_a_list_iterated_in_another_order():
     @pulse.kernel
     def looped(qs):
         lines = [get_drive_line(q) for q in qs]
-        for (d, t), f in zip(lines, (_retuned(0), _retuned(1))):
-            set_frequency(t, f)
+        for d, f in zip(lines, (_retuned(0), _retuned(1))):
+            set_frequency(d.tone, f)
         for _ in range(3):
-            for d, t in lines[::-1]:
-                drive(d, square(16, AMP), t)
-        drive(d, square(16, 2 * AMP), t)
+            for d in lines[::-1]:
+                drive(d, square(16, AMP))
+        drive(d, square(16, 2 * AMP))
 
     @pulse.kernel
     def unrolled(qs):
-        d0, t0 = get_drive_line(qs[0])
-        d1, t1 = get_drive_line(qs[1])
-        t0 = set_frequency(t0, _retuned(0))
-        t1 = set_frequency(t1, _retuned(1))
+        d0 = get_drive_line(qs[0])
+        d1 = get_drive_line(qs[1])
+        set_frequency(d0.tone, _retuned(0))
+        set_frequency(d1.tone, _retuned(1))
         for _k in (0, 1, 2):
-            drive(d1, square(16, AMP), t1)
-            drive(d0, square(16, AMP), t0)
-        drive(d0, square(16, 2 * AMP), t0)
+            drive(d1, square(16, AMP))
+            drive(d0, square(16, AMP))
+        drive(d0, square(16, 2 * AMP))
 
     check(looped, unrolled, loops=1, n=2, qvec=True)
     _rolled(_compile(looped, 2, True))
@@ -654,25 +655,25 @@ def test_a_name_read_before_it_moves_to_another_channel_unrolls():
     @pulse.kernel
     def looped(qs):
         lines = [get_drive_line(q) for q in qs]
-        for (d, t), f in zip(lines, (_retuned(0), _retuned(1))):
-            set_frequency(t, f)
+        for d, f in zip(lines, (_retuned(0), _retuned(1))):
+            set_frequency(d.tone, f)
         for _ in range(3):
-            drive(d, square(16, 2 * AMP), t)
-            for d, t in lines[::-1]:
-                drive(d, square(16, AMP), t)
+            drive(d, square(16, 2 * AMP))
+            for d in lines[::-1]:
+                drive(d, square(16, AMP))
 
     @pulse.kernel
     def unrolled(qs):
-        d0, t0 = get_drive_line(qs[0])
-        d1, t1 = get_drive_line(qs[1])
-        t0 = set_frequency(t0, _retuned(0))
-        t1 = set_frequency(t1, _retuned(1))
-        drive(d1, square(16, 2 * AMP), t1)
+        d0 = get_drive_line(qs[0])
+        d1 = get_drive_line(qs[1])
+        set_frequency(d0.tone, _retuned(0))
+        set_frequency(d1.tone, _retuned(1))
+        drive(d1, square(16, 2 * AMP))
         for k in (0, 1, 2):
             if k:
-                drive(d0, square(16, 2 * AMP), t0)
-            drive(d1, square(16, AMP), t1)
-            drive(d0, square(16, AMP), t0)
+                drive(d0, square(16, 2 * AMP))
+            drive(d1, square(16, AMP))
+            drive(d0, square(16, AMP))
 
     check(looped, unrolled, loops=0, n=2, qvec=True)
 
@@ -681,23 +682,23 @@ def test_a_name_read_before_it_is_rebound_on_its_channel_stays_rolled():
     @pulse.kernel
     def looped(qs):
         lines = [get_drive_line(q) for q in qs]
-        for (d, t), f in zip(lines, (_retuned(0), _retuned(1))):
-            set_frequency(t, f)
+        for d, f in zip(lines, (_retuned(0), _retuned(1))):
+            set_frequency(d.tone, f)
         for _ in range(3):
-            drive(d, square(16, 2 * AMP), t)
-            for d, t in lines:
-                drive(d, square(16, AMP), t)
+            drive(d, square(16, 2 * AMP))
+            for d in lines:
+                drive(d, square(16, AMP))
 
     @pulse.kernel
     def unrolled(qs):
-        d0, t0 = get_drive_line(qs[0])
-        d1, t1 = get_drive_line(qs[1])
-        t0 = set_frequency(t0, _retuned(0))
-        t1 = set_frequency(t1, _retuned(1))
+        d0 = get_drive_line(qs[0])
+        d1 = get_drive_line(qs[1])
+        set_frequency(d0.tone, _retuned(0))
+        set_frequency(d1.tone, _retuned(1))
         for _k in (0, 1, 2):
-            drive(d1, square(16, 2 * AMP), t1)
-            drive(d0, square(16, AMP), t0)
-            drive(d1, square(16, AMP), t1)
+            drive(d1, square(16, 2 * AMP))
+            drive(d0, square(16, AMP))
+            drive(d1, square(16, AMP))
 
     check(looped, unrolled, loops=1, n=2, qvec=True)
     _rolled(_compile(looped, 2, True))
@@ -714,8 +715,8 @@ def _gathered(qs):
     """Drive each qudit and return its line, in a list built as it goes."""
     drives = []
     for q in qs:
-        d, t = get_drive_line(q)
-        drive(d, square(16, AMP), t)
+        d = get_drive_line(q)
+        drive(d, square(16, AMP))
         drives.append(d)
     return drives
 
@@ -726,20 +727,20 @@ def test_lines_gathered_in_a_list_in_a_rolled_body():
         for _ in range(3):
             drives = []
             for q in qs:
-                d, t = get_drive_line(q)
-                drive(d, square(16, AMP), t)
+                d = get_drive_line(q)
+                drive(d, square(16, AMP))
                 drives.append(d)
             sync(*drives)
 
     @pulse.kernel
     def unrolled(qs):
-        d0, t0 = get_drive_line(qs[0])
-        d1, t1 = get_drive_line(qs[1])
-        d2, t2 = get_drive_line(qs[2])
+        d0 = get_drive_line(qs[0])
+        d1 = get_drive_line(qs[1])
+        d2 = get_drive_line(qs[2])
         for _k in (0, 1, 2):
-            drive(d0, square(16, AMP), t0)
-            drive(d1, square(16, AMP), t1)
-            drive(d2, square(16, AMP), t2)
+            drive(d0, square(16, AMP))
+            drive(d1, square(16, AMP))
+            drive(d2, square(16, AMP))
             sync(d0, d1, d2)
 
     ops, _ = check(looped, unrolled, loops=1, n=3, qvec=True)
@@ -756,22 +757,22 @@ def test_lines_gathered_in_a_list_through_nested_loops():
             for _ in range(3):
                 drives = []
                 for q in qs:
-                    d, t = get_drive_line(q)
-                    drive(d, square(16, AMP), t)
+                    d = get_drive_line(q)
+                    drive(d, square(16, AMP))
                     drives.append(d)
                 sync(*drives)
             for q in qs[::-1]:
-                d, t = get_drive_line(q)
+                d = get_drive_line(q)
                 wait(d, 8)
 
     @pulse.kernel
     def unrolled(qs):
-        d0, t0 = get_drive_line(qs[0])
-        d1, t1 = get_drive_line(qs[1])
+        d0 = get_drive_line(qs[0])
+        d1 = get_drive_line(qs[1])
         for _j in (0, 1):
             for _k in (0, 1, 2):
-                drive(d0, square(16, AMP), t0)
-                drive(d1, square(16, AMP), t1)
+                drive(d0, square(16, AMP))
+                drive(d1, square(16, AMP))
                 sync(d0, d1)
             wait(d1, 8)
             wait(d0, 8)
@@ -789,11 +790,11 @@ def test_lines_gathered_by_a_helper_in_a_rolled_body():
 
     @pulse.kernel
     def unrolled(qs):
-        d0, t0 = get_drive_line(qs[0])
-        d1, t1 = get_drive_line(qs[1])
+        d0 = get_drive_line(qs[0])
+        d1 = get_drive_line(qs[1])
         for _k in (0, 1, 2):
-            drive(d0, square(16, AMP), t0)
-            drive(d1, square(16, AMP), t1)
+            drive(d0, square(16, AMP))
+            drive(d1, square(16, AMP))
             sync(d0, d1)
 
     check(looped, unrolled, loops=1, n=2, qvec=True)
@@ -807,26 +808,26 @@ def test_a_line_list_and_qudit_from_a_rolled_body_are_used_after_it():
         for _ in range(3):
             drives = []
             for q in qs:
-                d, t = get_drive_line(q)
-                drive(d, square(16, AMP), t)
+                d = get_drive_line(q)
+                drive(d, square(16, AMP))
                 drives.append(d)
             sync(*drives)
-        drive(drives[0], square(16, 2 * AMP), get_drive_line(qs[0])[1])
+        drive(drives[0], square(16, 2 * AMP), tone=get_drive_line(qs[0]).tone)
         sync(*drives)
-        d, t = get_drive_line(q)
-        drive(d, square(32, AMP), t)
+        d = get_drive_line(q)
+        drive(d, square(32, AMP))
 
     @pulse.kernel
     def unrolled(qs):
-        d0, t0 = get_drive_line(qs[0])
-        d1, t1 = get_drive_line(qs[1])
+        d0 = get_drive_line(qs[0])
+        d1 = get_drive_line(qs[1])
         for _k in (0, 1, 2):
-            drive(d0, square(16, AMP), t0)
-            drive(d1, square(16, AMP), t1)
+            drive(d0, square(16, AMP))
+            drive(d1, square(16, AMP))
             sync(d0, d1)
-        drive(d0, square(16, 2 * AMP), t0)
+        drive(d0, square(16, 2 * AMP))
         sync(d0, d1)
-        drive(d1, square(32, AMP), t1)
+        drive(d1, square(32, AMP))
 
     _, compiled = check(looped, unrolled, loops=1, n=2, qvec=True)
     assert _length(compiled) == 3 * 16 + 16 + 32
@@ -838,17 +839,17 @@ def test_a_qudit_name_rebound_before_it_is_read_stays_rolled():
         q = qs[0]
         for _ in range(3):
             q = qs[1]
-            d, t = get_drive_line(q)
-            drive(d, square(16, AMP), t)
-        d, t = get_drive_line(q)
-        drive(d, square(16, 2 * AMP), t)
+            d = get_drive_line(q)
+            drive(d, square(16, AMP))
+        d = get_drive_line(q)
+        drive(d, square(16, 2 * AMP))
 
     @pulse.kernel
     def unrolled(qs):
-        d1, t1 = get_drive_line(qs[1])
+        d1 = get_drive_line(qs[1])
         for _k in (0, 1, 2):
-            drive(d1, square(16, AMP), t1)
-        drive(d1, square(16, 2 * AMP), t1)
+            drive(d1, square(16, AMP))
+        drive(d1, square(16, 2 * AMP))
 
     check(looped, unrolled, loops=1, n=2, qvec=True)
 
@@ -859,17 +860,17 @@ def test_a_qudit_name_read_before_it_is_rebound_unrolls():
     def looped(qs):
         q = qs[0]
         for _ in range(3):
-            d, t = get_drive_line(q)
-            drive(d, square(16, AMP), t)
+            d = get_drive_line(q)
+            drive(d, square(16, AMP))
             q = qs[1]
 
     @pulse.kernel
     def unrolled(qs):
-        d0, t0 = get_drive_line(qs[0])
-        d1, t1 = get_drive_line(qs[1])
-        drive(d0, square(16, AMP), t0)
-        drive(d1, square(16, AMP), t1)
-        drive(d1, square(16, AMP), t1)
+        d0 = get_drive_line(qs[0])
+        d1 = get_drive_line(qs[1])
+        drive(d0, square(16, AMP))
+        drive(d1, square(16, AMP))
+        drive(d1, square(16, AMP))
 
     check(looped, unrolled, loops=0, n=2, qvec=True)
 
@@ -880,15 +881,15 @@ def test_a_qudit_name_keeps_its_value_after_a_loop_that_does_not_run():
         q = qs[0]
         for _ in range(0):
             for q in qs:
-                d, t = get_drive_line(q)
-                drive(d, square(16, AMP), t)
-        d, t = get_drive_line(q)
-        drive(d, square(16, AMP), t)
+                d = get_drive_line(q)
+                drive(d, square(16, AMP))
+        d = get_drive_line(q)
+        drive(d, square(16, AMP))
 
     @pulse.kernel
     def unrolled(qs):
-        d, t = get_drive_line(qs[0])
-        drive(d, square(16, AMP), t)
+        d = get_drive_line(qs[0])
+        drive(d, square(16, AMP))
 
     # The lines the body acquires are acquired before the loop, so the
     # simulation holds qudit 1 as well.
@@ -899,14 +900,14 @@ def test_a_qudit_name_keeps_its_value_after_a_loop_that_does_not_run():
 def test_a_measured_branch_choosing_a_qudit_is_rejected():
     @pulse.kernel
     def looped(qs):
-        r, rt = get_readout_line(qs[0])
+        r = get_readout_line(qs[0])
         for _ in range(3):
-            m = readout(r, square(16, AMP), rt)
+            m = readout(r, square(16, AMP))
             q = qs[0]
             if m:
                 q = qs[1]
-            d, t = get_drive_line(q)
-            drive(d, square(16, AMP), t)
+            d = get_drive_line(q)
+            drive(d, square(16, AMP))
 
     with pytest.raises(CompilationError, match="'q' would depend on a measurement result"):
         _compile(looped, 2, True)
@@ -917,25 +918,25 @@ def test_a_measured_branch_choosing_a_qudit_is_rejected():
 
 def test_callee_with_its_own_loop_nests_the_loops():
     @pulse.kernel
-    def train(d, t):
+    def train(d):
         for _ in range(3):
-            t = shift_phase(t, 0.4)
-            drive(d, square(16, AMP), t)
+            shift_phase(d.tone, 0.4)
+            drive(d, square(16, AMP))
 
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(2):
-            train(d, t)
+            train(d)
             wait(d, 8)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in (0, 1):
             for _ in (0, 1, 2):
-                t = shift_phase(t, 0.4)
-                drive(d, square(16, AMP), t)
+                shift_phase(d.tone, 0.4)
+                drive(d, square(16, AMP))
             wait(d, 8)
 
     ops, compiled = check(looped, unrolled, loops=2)
@@ -953,19 +954,19 @@ def test_callee_with_its_own_loop_nests_the_loops():
 def test_same_callee_twice_per_iteration():
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(3):
-            rotate(d, t, 0.6)
-            rotate(d, t, -0.2)
+            rotate(d, d.tone, 0.6)
+            rotate(d, d.tone, -0.2)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in (0, 1, 2):
-            t = shift_phase(t, 0.6)
-            drive(d, square(16, AMP), t)
-            t = shift_phase(t, -0.2)
-            drive(d, square(16, AMP), t)
+            shift_phase(d.tone, 0.6)
+            drive(d, square(16, AMP))
+            shift_phase(d.tone, -0.2)
+            drive(d, square(16, AMP))
 
     ops, compiled = check(looped, unrolled, loops=1)
     assert _kinds(ops)["pulse.drive"] == 2
@@ -975,20 +976,20 @@ def test_same_callee_twice_per_iteration():
 def test_different_callees_in_one_body():
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(3):
-            pulse16(d, t)
+            pulse16(d)
             idle(d, 8)
-            rotate(d, t, 0.9)
+            rotate(d, d.tone, 0.9)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in (0, 1, 2):
-            drive(d, square(16, AMP), t)
+            drive(d, square(16, AMP))
             wait(d, 8)
-            t = shift_phase(t, 0.9)
-            drive(d, square(16, AMP), t)
+            shift_phase(d.tone, 0.9)
+            drive(d, square(16, AMP))
 
     ops, compiled = check(looped, unrolled, loops=1)
     assert _loop_bodies(ops)[0].count("pulse.drive") == 2
@@ -1004,37 +1005,37 @@ ENABLED = True
 def test_callee_under_a_compile_time_if():
     @pulse.kernel
     def flag(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(3):
             if ENABLED:
-                pulse16(d, t)
+                pulse16(d)
             else:
                 idle(d, 16)
 
     @pulse.kernel
     def by_parity(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(4):
             if i % 2 == 0:
-                rotate(d, t, 0.7)
+                rotate(d, d.tone, 0.7)
             else:
                 idle(d, 8)
 
     @pulse.kernel
     def flag_unrolled(q):
-        d, t = get_drive_line(q)
-        drive(d, square(16, AMP), t)
-        drive(d, square(16, AMP), t)
-        drive(d, square(16, AMP), t)
+        d = get_drive_line(q)
+        drive(d, square(16, AMP))
+        drive(d, square(16, AMP))
+        drive(d, square(16, AMP))
 
     @pulse.kernel
     def parity_unrolled(q):
-        d, t = get_drive_line(q)
-        t = shift_phase(t, 0.7)
-        drive(d, square(16, AMP), t)
+        d = get_drive_line(q)
+        shift_phase(d.tone, 0.7)
+        drive(d, square(16, AMP))
         wait(d, 8)
-        t = shift_phase(t, 0.7)
-        drive(d, square(16, AMP), t)
+        shift_phase(d.tone, 0.7)
+        drive(d, square(16, AMP))
         wait(d, 8)
 
     check(flag, flag_unrolled, loops=1)
@@ -1046,36 +1047,36 @@ _PI = math.pi / 8.0  # 16 cycles (8 ns) at this amplitude is a pi rotation
 
 
 @pulse.kernel
-def measure_and_reset(d, t, r, rt):
+def measure_and_reset(d, r):
     sync(d, r)
-    bit = readout(r, square(64, 0.05), rt)
+    bit = readout(r, square(64, 0.05))
     if bit:
-        drive(d, square(16, _PI), t)
+        drive(d, square(16, _PI))
 
 
 def test_measurement_feedback_inside_a_called_kernel():
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         for _ in range(2):
-            drive(d, square(16, _PI / 2), t)
-            measure_and_reset(d, t, r, rt)
+            drive(d, square(16, _PI / 2))
+            measure_and_reset(d, r)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        drive(d, square(16, _PI / 2), t)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        drive(d, square(16, _PI / 2))
         sync(d, r)
-        bit = readout(r, square(64, 0.05), rt)
+        bit = readout(r, square(64, 0.05))
         if bit:
-            drive(d, square(16, _PI), t)
-        drive(d, square(16, _PI / 2), t)
+            drive(d, square(16, _PI))
+        drive(d, square(16, _PI / 2))
         sync(d, r)
-        bit = readout(r, square(64, 0.05), rt)
+        bit = readout(r, square(64, 0.05))
         if bit:
-            drive(d, square(16, _PI), t)
+            drive(d, square(16, _PI))
 
     ops, compiled = check(looped, unrolled, loops=1)
     body = _loop_bodies(ops)[0]
@@ -1091,29 +1092,29 @@ def test_measurement_feedback_inside_a_called_kernel():
 
 @pulse.kernel
 def measure(r, rt):
-    return readout(r, square(64, 0.05), rt)
+    return readout(r, square(64, 0.05), tone=rt)
 
 
 def test_measurement_returned_by_a_callee_controls_the_loop_body():
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         for _ in range(2):
-            drive(d, square(16, _PI / 2), t)
+            drive(d, square(16, _PI / 2))
             sync(d, r)
-            if measure(r, rt):
-                pulse16(d, t)
+            if measure(r, r.tone):
+                pulse16(d)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         for _ in (0, 1):
-            drive(d, square(16, _PI / 2), t)
+            drive(d, square(16, _PI / 2))
             sync(d, r)
-            if readout(r, square(64, 0.05), rt):
-                drive(d, square(16, AMP), t)
+            if readout(r, square(64, 0.05)):
+                drive(d, square(16, AMP))
 
     check(looped, unrolled, loops=1)
 
@@ -1124,53 +1125,53 @@ def test_measurement_returned_by_a_callee_controls_the_loop_body():
 def test_shift_phase_in_a_callee_accumulates_across_iterations():
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(4):
-            rotate(d, t, 0.8)
-        drive(d, square(16, AMP), t)
+            rotate(d, d.tone, 0.8)
+        drive(d, square(16, AMP))
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in (0, 1, 2, 3):
-            t = shift_phase(t, 0.8)
-            drive(d, square(16, AMP), t)
-        drive(d, square(16, AMP), t)
+            shift_phase(d.tone, 0.8)
+            drive(d, square(16, AMP))
+        drive(d, square(16, AMP))
 
     @pulse.kernel
     def without_phase(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in (0, 1, 2, 3, 4):
-            drive(d, square(16, AMP), t)
+            drive(d, square(16, AMP))
 
     ops, _ = check(looped, unrolled, loops=1)
     for_end = next(op for op in ops if op.kind == "scf.for_end")
-    assert "t" in for_end.attrs["iter_args"]
+    assert "d.tone" in for_end.attrs["iter_args"]
     _distinct(looped, without_phase)
 
 
 def test_shift_frequency_in_a_callee_accumulates_across_iterations():
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(3):
-            chirp(d, t)
-        drive(d, square(16, AMP), t)
+            chirp(d)
+        drive(d, square(16, AMP))
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in (0, 1, 2):
-            t = shift_frequency(t, 20.0e6)
-            drive(d, square(16, AMP), t)
-        drive(d, square(16, AMP), t)
+            shift_frequency(d.tone, 20.0e6)
+            drive(d, square(16, AMP))
+        drive(d, square(16, AMP))
 
     @pulse.kernel
     def one_shift(q):
-        d, t = get_drive_line(q)
-        t = shift_frequency(t, 20.0e6)
+        d = get_drive_line(q)
+        shift_frequency(d.tone, 20.0e6)
         for _ in (0, 1, 2, 3):
-            drive(d, square(16, AMP), t)
+            drive(d, square(16, AMP))
 
     check(looped, unrolled, loops=1)
     _distinct(looped, one_shift)
@@ -1179,21 +1180,21 @@ def test_shift_frequency_in_a_callee_accumulates_across_iterations():
 def test_set_frequency_in_a_callee_holds_after_the_loop():
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(3):
-            retune(d, t, FREQ_HZ + 40.0e6)
-            chirp(d, t)
-        drive(d, square(16, AMP), t)
+            retune(d, FREQ_HZ + 40.0e6)
+            chirp(d)
+        drive(d, square(16, AMP))
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in (0, 1, 2):
-            t = set_frequency(t, FREQ_HZ + 40.0e6)
-            drive(d, square(16, AMP), t)
-            t = shift_frequency(t, 20.0e6)
-            drive(d, square(16, AMP), t)
-        drive(d, square(16, AMP), t)
+            set_frequency(d.tone, FREQ_HZ + 40.0e6)
+            drive(d, square(16, AMP))
+            shift_frequency(d.tone, 20.0e6)
+            drive(d, square(16, AMP))
+        drive(d, square(16, AMP))
 
     check(looped, unrolled, loops=1)
 
@@ -1201,9 +1202,9 @@ def test_set_frequency_in_a_callee_holds_after_the_loop():
 def test_a_callee_that_acquires_its_own_line_each_iteration():
     @pulse.kernel
     def fresh(q):
-        d, t = get_drive_line(q)
-        t = shift_phase(t, 0.5)
-        drive(d, square(16, AMP), t)
+        d = get_drive_line(q)
+        shift_phase(d.tone, 0.5)
+        drive(d, square(16, AMP))
 
     @pulse.kernel
     def looped(q):
@@ -1212,12 +1213,12 @@ def test_a_callee_that_acquires_its_own_line_each_iteration():
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
-        t = shift_phase(t, 0.5)
-        drive(d, square(16, AMP), t)
-        d, t = get_drive_line(q)
-        t = shift_phase(t, 0.5)
-        drive(d, square(16, AMP), t)
+        d = get_drive_line(q)
+        shift_phase(d.tone, 0.5)
+        drive(d, square(16, AMP))
+        d = get_drive_line(q)
+        shift_phase(d.tone, 0.5)
+        drive(d, square(16, AMP))
 
     # get_drive_line returns the qudit's one drive channel: it is acquired
     # once, before the loop, and the pulses play one after the other.
@@ -1230,28 +1231,28 @@ def test_a_callee_that_acquires_its_own_line_each_iteration():
 
 
 @pulse.kernel
-def staggered(d0, t0, d1, t1):
-    drive(d0, square(32, AMP), t0)
+def staggered(d0, d1):
+    drive(d0, square(32, AMP))
     sync(d0, d1)
-    drive(d1, square(16, AMP), t1)
+    drive(d1, square(16, AMP))
 
 
 def test_callee_that_syncs_two_lines():
     @pulse.kernel
     def looped(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
         for _ in range(3):
-            staggered(d0, t0, d1, t1)
+            staggered(d0, d1)
 
     @pulse.kernel
     def unrolled(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
         for _ in (0, 1, 2):
-            drive(d0, square(32, AMP), t0)
+            drive(d0, square(32, AMP))
             sync(d0, d1)
-            drive(d1, square(16, AMP), t1)
+            drive(d1, square(16, AMP))
 
     ops, compiled = check(looped, unrolled, loops=1, n=2)
     assert _loop_bodies(ops)[0].count("pulse.sync") == 1
@@ -1273,34 +1274,34 @@ def test_callee_that_syncs_two_lines():
 
 
 @pulse.kernel
-def inner_b(d, t):
-    t = shift_phase(t, 0.3)
-    drive(d, square(16, AMP), t)
+def inner_b(d):
+    shift_phase(d.tone, 0.3)
+    drive(d, square(16, AMP))
 
 
 @pulse.kernel
-def middle_a(d, t):
-    inner_b(d, t)
+def middle_a(d):
+    inner_b(d)
     wait(d, 8)
-    inner_b(d, t)
+    inner_b(d)
 
 
 def test_kernels_nested_three_deep():
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(3):
-            middle_a(d, t)
+            middle_a(d)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in (0, 1, 2):
-            t = shift_phase(t, 0.3)
-            drive(d, square(16, AMP), t)
+            shift_phase(d.tone, 0.3)
+            drive(d, square(16, AMP))
             wait(d, 8)
-            t = shift_phase(t, 0.3)
-            drive(d, square(16, AMP), t)
+            shift_phase(d.tone, 0.3)
+            drive(d, square(16, AMP))
 
     ops, compiled = check(looped, unrolled, loops=1)
     assert _kinds(ops)["pulse.drive"] == 2
@@ -1314,23 +1315,24 @@ def test_callee_returning_a_tone():
     @pulse.kernel
     def advance(d, t):
         t = shift_phase(t, 0.45)
-        drive(d, square(16, AMP), t)
+        drive(d, square(16, AMP), tone=t)
         return t
 
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
+        t = d.tone
         for _ in range(3):
             t = advance(d, t)
-        drive(d, square(16, AMP), t)
+        drive(d, square(16, AMP), tone=t)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in (0, 1, 2):
-            t = shift_phase(t, 0.45)
-            drive(d, square(16, AMP), t)
-        drive(d, square(16, AMP), t)
+            shift_phase(d.tone, 0.45)
+            drive(d, square(16, AMP))
+        drive(d, square(16, AMP))
 
     check(looped, unrolled, loops=1)
 
@@ -1342,17 +1344,17 @@ def test_callee_returning_a_python_value():
 
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(3):
             wait(d, cycles(2))
-            pulse16(d, t)
+            pulse16(d)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in (0, 1, 2):
             wait(d, 16)
-            drive(d, square(16, AMP), t)
+            drive(d, square(16, AMP))
 
     _, compiled = check(looped, unrolled, loops=1)
     assert _length(compiled) == 96
@@ -1364,15 +1366,15 @@ def test_callee_returning_a_python_value():
 def test_zero_iterations():
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(0):
-            rotate(d, t, 0.5)
-        drive(d, square(16, AMP), t)
+            rotate(d, d.tone, 0.5)
+        drive(d, square(16, AMP))
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
-        drive(d, square(16, AMP), t)
+        d = get_drive_line(q)
+        drive(d, square(16, AMP))
 
     ops, compiled = check(looped, unrolled, loops=1)
     loop = next(op for op in ops if op.kind == "scf.for")
@@ -1383,15 +1385,15 @@ def test_zero_iterations():
 def test_zero_iterations_with_the_loop_variable_read():
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(0):
             idle(d, i + 8)
-        drive(d, square(16, AMP), t)
+        drive(d, square(16, AMP))
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
-        drive(d, square(16, AMP), t)
+        d = get_drive_line(q)
+        drive(d, square(16, AMP))
 
     check(looped, unrolled, loops=0)
 
@@ -1399,17 +1401,17 @@ def test_zero_iterations_with_the_loop_variable_read():
 def test_one_iteration():
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(1):
-            rotate(d, t, 0.5)
-        drive(d, square(16, AMP), t)
+            rotate(d, d.tone, 0.5)
+        drive(d, square(16, AMP))
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
-        t = shift_phase(t, 0.5)
-        drive(d, square(16, AMP), t)
-        drive(d, square(16, AMP), t)
+        d = get_drive_line(q)
+        shift_phase(d.tone, 0.5)
+        drive(d, square(16, AMP))
+        drive(d, square(16, AMP))
 
     _, compiled = check(looped, unrolled, loops=1)
     assert _schedule(compiled) == [("drive", 0, 0, 16), ("drive", 0, 16, 16)]
@@ -1421,30 +1423,30 @@ SCALE = 2.0
 
 
 @pulse.kernel
-def scaled_pulse(d, t):
-    drive(d, square(16, AMP * SCALE), t)
+def scaled_pulse(d):
+    drive(d, square(16, AMP * SCALE))
 
 
 def test_callee_reading_globals_and_closures():
     phase = 0.35
 
     @pulse.kernel
-    def captured(d, t):
-        t = shift_phase(t, phase)
-        scaled_pulse(d, t)
+    def captured(d):
+        shift_phase(d.tone, phase)
+        scaled_pulse(d)
 
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(3):
-            captured(d, t)
+            captured(d)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in (0, 1, 2):
-            t = shift_phase(t, 0.35)
-            drive(d, square(16, AMP * 2.0), t)
+            shift_phase(d.tone, 0.35)
+            drive(d, square(16, AMP * 2.0))
 
     check(looped, unrolled, loops=1)
 
@@ -1458,17 +1460,17 @@ def test_callee_consuming_a_global_list_follows_python():
 
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(3):
             next_wait(d)
-            pulse16(d, t)
+            pulse16(d)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for n in (24, 16, 8):
             wait(d, n)
-            drive(d, square(16, AMP), t)
+            drive(d, square(16, AMP))
 
     ops = _trace(looped)
     # Each iteration reads a different value: the loop must unroll, and
@@ -1484,25 +1486,25 @@ def test_callee_consuming_a_global_list_follows_python():
 
 def test_callee_building_a_temporary_list_stays_rolled():
     @pulse.kernel
-    def twice(d, t):
+    def twice(d):
         amps = []
         amps.append(AMP)
         amps.append(-AMP)
         for a in amps:
-            drive(d, square(16, a), t)
+            drive(d, square(16, a))
 
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(3):
-            twice(d, t)
+            twice(d)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in (0, 1, 2):
-            drive(d, square(16, AMP), t)
-            drive(d, square(16, -AMP), t)
+            drive(d, square(16, AMP))
+            drive(d, square(16, -AMP))
 
     check(looped, unrolled, loops=1)
 
@@ -1511,18 +1513,18 @@ def test_callee_mutating_a_global_inside_a_measured_branch_is_rejected():
     log = []
 
     @pulse.kernel
-    def noted(d, t, r, rt):
+    def noted(d, r):
         sync(d, r)
-        if readout(r, square(64, 0.05), rt):
+        if readout(r, square(64, 0.05)):
             log.append(1)
-            drive(d, square(16, AMP), t)
+            drive(d, square(16, AMP))
 
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         for _ in range(2):
-            noted(d, t, r, rt)
+            noted(d, r)
 
     with pytest.raises(CompilationError, match="measurement-conditioned branch may only change"):
         _trace(looped)
@@ -1534,14 +1536,14 @@ def test_callee_mutating_a_global_inside_a_measured_branch_is_rejected():
 def test_unbounded_recursion_is_an_error():
     @pulse.kernel
     def forever(d, t):
-        drive(d, square(16, AMP), t)
+        drive(d, square(16, AMP), tone=t)
         forever(d, t)
 
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(2):
-            forever(d, t)
+            forever(d, d.tone)
 
     with pytest.raises(CompilationError, match="nest more than 64 deep"):
         _trace(looped)
@@ -1551,20 +1553,20 @@ def test_bounded_recursion_unrolls():
     @pulse.kernel
     def repeat(d, t, n):
         if n:
-            drive(d, square(16, AMP), t)
+            drive(d, square(16, AMP), tone=t)
             repeat(d, t, n - 1)
 
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(2):
-            repeat(d, t, 3)
+            repeat(d, d.tone, 3)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in (0, 1, 2, 3, 4, 5):
-            drive(d, square(16, AMP), t)
+            drive(d, square(16, AMP))
 
     ops, _ = check(looped, unrolled, loops=1)
     assert _loop_bodies(ops)[0].count("pulse.drive") == 3
@@ -1579,19 +1581,19 @@ def test_variadic_kernel_is_an_error_and_variadic_helper_is_inlined():
 
     def spread(d, t, *amps):
         for amp in amps:
-            drive(d, square(16, amp), t)
+            drive(d, square(16, amp), tone=t)
 
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(2):
-            spread(d, t, AMP, AMP)
+            spread(d, d.tone, AMP, AMP)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in (0, 1, 2, 3):
-            drive(d, square(16, AMP), t)
+            drive(d, square(16, AMP))
 
     check(looped, unrolled, loops=1)
 
@@ -1599,19 +1601,19 @@ def test_variadic_kernel_is_an_error_and_variadic_helper_is_inlined():
 def test_keyword_and_default_arguments_bind():
     @pulse.kernel
     def shaped(d, t, amp=AMP, n=16):
-        drive(d, square(n, amp), t)
+        drive(d, square(n, amp), tone=t)
 
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(2):
-            shaped(d, t, n=32)
+            shaped(d, d.tone, n=32)
 
     @pulse.kernel
     def unrolled(q):
-        d, t = get_drive_line(q)
-        drive(d, square(32, AMP), t)
-        drive(d, square(32, AMP), t)
+        d = get_drive_line(q)
+        drive(d, square(32, AMP))
+        drive(d, square(32, AMP))
 
     check(looped, unrolled, loops=1)
 
@@ -1621,13 +1623,13 @@ def test_lines_packed_in_a_tuple_reach_the_callee():
     def from_pair(pair):
         d, t = pair
         t = shift_phase(t, 0.5)
-        drive(d, square(16, AMP), t)
+        drive(d, square(16, AMP), tone=t)
 
     @pulse.kernel
     def looped(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(2):
-            from_pair((d, t))
+            from_pair((d, d.tone))
 
     # The callee advances the qudit's drive channel, which the loop carries,
     # so the second iteration plays after the first.
@@ -1637,13 +1639,13 @@ def test_lines_packed_in_a_tuple_reach_the_callee():
 def test_symbolic_kernel_parameters_reach_the_callee():
     @pulse.kernel
     def looped(q, amp: float, n: int):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(3):
-            shaped(d, t, amp, n)
+            shaped(d, d.tone, amp, n)
 
     @pulse.kernel
     def shaped(d, t, amp, n):
-        drive(d, square(n, amp), t)
+        drive(d, square(n, amp), tone=t)
 
     compiled = _compile_symbolic(looped)
     assert compiled.parameters == ("amp",)

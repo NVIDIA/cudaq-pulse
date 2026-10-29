@@ -29,20 +29,22 @@ cal = {
 
 @pulse.kernel
 def vis_demo(q0, q1, q2):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
-    d2, t2 = get_drive_line(q2)
-    r0, rt0 = get_readout_line(q0)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
+    d2 = get_drive_line(q2)
+    r0 = get_readout_line(q0)
     short = drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["drag_beta"])
-    drive(d0, short, t0)
-    drive(d1, short, t1)
-    drive(d2, short, t2)
+    drive(d0, short)
+    drive(d1, short)
+    drive(d2, short)
     sync(d0, d1, d2)
-    drive(d0, gaussian_square(cal["cr_duration"], 0.05, cal["x_sigma"], cal["cr_width"]), t1)
+    drive(
+        d0, gaussian_square(cal["cr_duration"], 0.05, cal["x_sigma"], cal["cr_width"]), tone=d1.tone
+    )
     wait(d2, cal["idle"])
-    drive(d1, short, t1)
+    drive(d1, short)
     sync(d0, d1, d2, r0)
-    readout(r0, square(cal["readout_duration"], 0.05), rt0)
+    readout(r0, square(cal["readout_duration"], 0.05))
 
 
 def print_ascii_timeline(events: list[pulse.compiler.ScheduledEvent], width: int = 70) -> None:

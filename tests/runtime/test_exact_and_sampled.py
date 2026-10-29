@@ -52,15 +52,15 @@ def _target(t1_us=30.0, t2_us=20.0, thermal=0.02, offset_hz=0.0):
 
 @pulse.kernel
 def _mixed_pulses(q0):
-    d, t = get_drive_line(q0)
-    drive(d, gaussian(120, _PI, 30), t)
+    d = get_drive_line(q0)
+    drive(d, gaussian(120, _PI, 30))
     # Short enough that stepping does not damp a qutrit's 0-2 coherence.
     wait(d, 40)
-    shift_phase(t, 0.3)
-    drive(d, square(40, _PI / 2), t)
-    drive(d, drag(60, _PI, 15, 0.4), t)
-    shift_frequency(t, 3e6)
-    drive(d, square(80, _PI / 3), t)
+    shift_phase(d.tone, 0.3)
+    drive(d, square(40, _PI / 2))
+    drive(d, drag(60, _PI, 15, 0.4))
+    shift_frequency(d.tone, 3e6)
+    drive(d, square(80, _PI / 3))
 
 
 def _simulated(lowered, monkeypatch, *, maps=True, exact=True, **kwargs):
@@ -101,8 +101,8 @@ def test_exact_stretches_agree_with_stepping_within_its_error(levels, monkeypatc
 
 @pulse.kernel
 def _excite_and_wait(q0, wait_cycles: int):
-    d, t = get_drive_line(q0)
-    drive(d, square(40, _PI), t)
+    d = get_drive_line(q0)
+    drive(d, square(40, _PI))
     wait(d, wait_cycles)
 
 
@@ -137,12 +137,12 @@ def test_expm_matches_a_diagonalizable_exponential():
 
 @pulse.kernel
 def _three_measurements(q0):
-    d, t = get_drive_line(q0)
-    r, rt = get_readout_line(q0)
+    d = get_drive_line(q0)
+    r = get_readout_line(q0)
     for _ in range(3):
-        drive(d, square(40, _PI / 2), t)
+        drive(d, square(40, _PI / 2))
         sync(d, r)
-        readout(r, square(200, 0.05), rt)
+        readout(r, square(200, 0.05))
         sync(d, r)
 
 
@@ -177,19 +177,19 @@ def _halve_or_double(bit, wait_cycles):
 
 @pulse.kernel
 def _adaptive_loop(q0, rounds: int):
-    d, t = get_drive_line(q0)
-    r, rt = get_readout_line(q0)
+    d = get_drive_line(q0)
+    r = get_readout_line(q0)
     w = 2000.0
-    drive(d, square(40, _PI), t)
+    drive(d, square(40, _PI))
     wait(d, 2000)
     for _ in range(rounds):
         sync(d, r)
-        m = readout(r, square(200, 0.05), rt)
+        m = readout(r, square(200, 0.05))
         w = _halve_or_double.submit([m], w).result()
         sync(d, r)
         if m:
-            drive(d, square(40, _PI), t)
-        drive(d, square(40, _PI), t)
+            drive(d, square(40, _PI))
+        drive(d, square(40, _PI))
         wait(d, w, bounds=(20, 20000))
 
 
@@ -208,9 +208,9 @@ def test_a_long_adaptive_loop_follows_one_path_per_shot():
 def test_kept_propagators_are_keyed_compactly():
     @pulse.kernel(unroll_threshold=0)
     def train(q0):
-        d, t = get_drive_line(q0)
+        d = get_drive_line(q0)
         for _ in range(4):
-            drive(d, gaussian(400, _PI, 100), t)
+            drive(d, gaussian(400, _PI, 100))
 
     _propagate.clear_cache()
     pulse.simulate(on(_target(), train, Q[0]))

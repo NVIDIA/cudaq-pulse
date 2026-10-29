@@ -31,19 +31,19 @@ from tests._handles import Q
 
 @pulse.kernel
 def drive_and_branch(q, r):
-    d, t = get_drive_line(q)
-    ro, rt = get_readout_line(q)
-    d1, t1 = get_drive_line(r)
-    drive(d, gaussian(16, 0.5, 4.0), t)
-    shift_phase(t, 0.5)
-    drive(d, drag(16, 0.25, 4.0, 0.3), t)
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    d1 = get_drive_line(r)
+    drive(d, gaussian(16, 0.5, 4.0))
+    shift_phase(d.tone, 0.5)
+    drive(d, drag(16, 0.25, 4.0, 0.3))
     sync(d, ro)
-    m = readout(ro, square(100, 0.05), rt)
+    m = readout(ro, square(100, 0.05))
     sync(ro, d1)
     if m:
-        drive(d1, wf_scale(square(20, 0.3), -0.5), t1)
+        drive(d1, wf_scale(square(20, 0.3), -0.5))
     else:
-        drive(d1, gaussian(20, 0.1, 5.0), t1)
+        drive(d1, gaussian(20, 0.1, 5.0))
 
 
 def _program(kernel=drive_and_branch, schedule="asap", machine=None, **kwargs):
@@ -109,15 +109,15 @@ def test_export_names_the_lines_a_sync_joins():
 
 @pulse.kernel
 def staggered(q, r):
-    d, t = get_drive_line(q)
-    d1, t1 = get_drive_line(r)
-    ro, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    d1 = get_drive_line(r)
+    ro = get_readout_line(q)
     for _ in range(3):
-        drive(d, gaussian(24, 0.5, 6.0), t)
-        drive(d1, square(8, 0.1), t1)
+        drive(d, gaussian(24, 0.5, 6.0))
+        drive(d1, square(8, 0.1))
         sync(d, d1, ro)
-        readout(ro, square(40, 0.05), rt)
-        drive(d1, square(12, 0.1), t1)
+        readout(ro, square(40, 0.05))
+        drive(d1, square(12, 0.1))
         sync(d, d1, ro)
 
 
@@ -141,13 +141,13 @@ def test_a_sync_is_a_barrier_between_the_events_of_its_lines(schedule):
 
 @pulse.kernel
 def detuned(q, r):
-    d, t = get_drive_line(q)
-    t = shift_frequency(t, 2.0e6)
-    drive(d, square(16, 0.1), t)
+    d = get_drive_line(q)
+    shift_frequency(d.tone, 2.0e6)
+    drive(d, square(16, 0.1))
     wait(d, 100)
-    drive(d, square(16, 0.1), t)
-    t = shift_phase(t, 0.25)
-    drive(d, square(16, 0.1), t)
+    drive(d, square(16, 0.1))
+    shift_phase(d.tone, 0.25)
+    drive(d, square(16, 0.1))
 
 
 def test_a_detuned_tone_gains_phase_between_its_drives():
@@ -166,26 +166,26 @@ def test_a_detuned_tone_gains_phase_between_its_drives():
 
 @pulse.kernel
 def tone_in_one_arm(q, r):
-    d, t = get_drive_line(q)
-    ro, rt = get_readout_line(q)
-    m = readout(ro, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    m = readout(ro, square(100, 0.05))
     sync(d, ro)
     if m:
-        drive(d, square(20, 0.3), t)
-    drive(d, gaussian(20, 0.2, 5.0), t)
+        drive(d, square(20, 0.3))
+    drive(d, gaussian(20, 0.2, 5.0))
 
 
 @pulse.kernel
 def phase_in_one_arm(q, r):
-    d, t = get_drive_line(q)
-    ro, rt = get_readout_line(q)
-    drive(d, gaussian(20, 0.2, 5.0), t)
-    m = readout(ro, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    drive(d, gaussian(20, 0.2, 5.0))
+    m = readout(ro, square(100, 0.05))
     sync(d, ro)
     if m:
-        shift_phase(t, 0.5)
-        drive(d, square(20, 0.3), t)
-    drive(d, gaussian(20, 0.2, 5.0), t)
+        shift_phase(d.tone, 0.5)
+        drive(d, square(20, 0.3))
+    drive(d, gaussian(20, 0.2, 5.0))
 
 
 def test_a_frame_only_one_arm_touches_is_unchanged_in_the_other():
@@ -198,7 +198,7 @@ def test_a_frame_only_one_arm_touches_is_unchanged_in_the_other():
 
 @pulse.kernel
 def idle_readout_line(q, r):
-    ro, rt = get_readout_line(q)
+    ro = get_readout_line(q)
     wait(ro, 10)
 
 
@@ -252,9 +252,9 @@ def ramp(t):
 
 @pulse.kernel
 def sampled_envelopes(q, r):
-    d, t = get_drive_line(q)
-    drive(d, custom(8, ramp), t)
-    drive(d, custom_samples([0.0, 0.5, 1.0, 0.5]), t)
+    d = get_drive_line(q)
+    drive(d, custom(8, ramp))
+    drive(d, custom_samples([0.0, 0.5, 1.0, 0.5]))
 
 
 def test_custom_envelopes_are_exported_as_their_samples():
@@ -288,17 +288,17 @@ def test_shape_key_ignores_overall_amplitude_only():
 
 @pulse.kernel
 def two_readouts(q, r):
-    ra, ta = get_readout_line(q)
-    rb, tb = get_readout_line(r)
-    readout(ra, square(40, 0.05), ta)
-    readout(rb, square(40, 0.05), tb)
+    ra = get_readout_line(q)
+    rb = get_readout_line(r)
+    readout(ra, square(40, 0.05))
+    readout(rb, square(40, 0.05))
 
 
 @pulse.kernel
 def close_drives(q, r):
-    d, t = get_drive_line(q)
-    drive(d, square(5, 0.1), t)
-    drive(d, gaussian(8, 0.1, 2.0), t)
+    d = get_drive_line(q)
+    drive(d, square(5, 0.1))
+    drive(d, gaussian(8, 0.1, 2.0))
 
 
 def test_limits_report_issue_spacing_acquirers_and_feedback():
@@ -351,12 +351,12 @@ def test_limits_on_the_machine_model_fail_the_compilation():
 
 @pulse.kernel
 def strong_drives(q, amplitude: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(16, 1.5), t)
-    drive(d, gaussian(16, amplitude, 4.0), t)
-    drive(d, wf_scale(drag(16, 0.5, 4.0, 16.0), 1.5), t)
-    readout(r, square(32, 0.1), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(16, 1.5))
+    drive(d, gaussian(16, amplitude, 4.0))
+    drive(d, wf_scale(drag(16, 0.5, 4.0, 16.0), 1.5))
+    readout(r, square(32, 0.1))
 
 
 def test_only_the_controller_limits_the_amplitude():
@@ -415,10 +415,10 @@ def test_the_limits_travel_with_the_program():
 
 @pulse.kernel
 def ramsey(q, phase: float):
-    d, t = get_drive_line(q)
-    drive(d, gaussian(16, 0.25, 4.0), t)
-    shift_phase(t, phase)
-    drive(d, gaussian(16, 0.25, 4.0), t)
+    d = get_drive_line(q)
+    drive(d, gaussian(16, 0.25, 4.0))
+    shift_phase(d.tone, phase)
+    drive(d, gaussian(16, 0.25, 4.0))
 
 
 def test_float_arguments_are_exported_at_their_values():
@@ -449,25 +449,25 @@ def check_bit(bits):
 
 @pulse.kernel
 def decoded(q):
-    d, t = get_drive_line(q)
-    ro, rt = get_readout_line(q)
-    m = readout(ro, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    m = readout(ro, square(100, 0.05))
     qec.enqueue_syndromes(decoder, [m], 0)
     fix = qec.get_corrections(decoder).result()
     sync(d, ro)
     if fix[0]:
-        drive(d, square(20, 0.3), t)
+        drive(d, square(20, 0.3))
 
 
 @pulse.kernel
 def timed_out(q):
-    d, t = get_drive_line(q)
-    ro, rt = get_readout_line(q)
-    m = readout(ro, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    m = readout(ro, square(100, 0.05))
     ok, fix = check_bit.submit([m]).result(timeout=300 * pulse.ns)
     sync(d, ro)
     if ok:
-        drive(d, square(20, 0.3), t)
+        drive(d, square(20, 0.3))
 
 
 def test_export_carries_calls_with_their_measurements_and_waits():
@@ -499,10 +499,10 @@ def test_events_after_a_variable_wait_are_in_its_epoch():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        drive(d, square(20, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(20, 0.1))
         wait(d, tau.submit().result(), bounds=(4, 40))
-        drive(d, square(20, 0.1), t)
+        drive(d, square(20, 0.1))
 
     program = pulse.compile(k).lower(Q[0]).export_controller()
     drives = [e for e in program["events"] if e["kind"] == "drive"]
@@ -530,15 +530,15 @@ def settings(bits):
 
 @pulse.kernel
 def answered(q):
-    d, t = get_drive_line(q)
-    ro, rt = get_readout_line(q)
-    m = readout(ro, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    m = readout(ro, square(100, 0.05))
     amp, detuning, delay = settings.submit([m]).result()
-    shift_frequency(t, detuning)
-    drive(d, square(20, amp * 0.5), t)
+    shift_frequency(d.tone, detuning)
+    drive(d, square(20, amp * 0.5))
     wait(d, delay, bounds=(8, 400))
-    shift_phase(t, amp)
-    drive(d, square(20, 0.2), t)
+    shift_phase(d.tone, amp)
+    drive(d, square(20, 0.2))
 
 
 def test_values_from_answers_are_exported_as_expressions():
@@ -593,13 +593,13 @@ def scaled(bits, value):
 
 @pulse.kernel
 def chained(q):
-    d, t = get_drive_line(q)
-    ro, rt = get_readout_line(q)
-    a = readout(ro, square(100, 0.05), rt)
-    b = readout(ro, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    a = readout(ro, square(100, 0.05))
+    b = readout(ro, square(100, 0.05))
     first = scaled.submit([a, b], 0.5).result()
     second = scaled.submit([b, a], first * 2.0).result()
-    drive(d, square(20, second), t)
+    drive(d, square(20, second))
 
 
 def test_a_submission_carries_its_arguments_in_order():
@@ -617,15 +617,15 @@ def test_a_submission_carries_its_arguments_in_order():
 
 @pulse.kernel
 def chosen_by_readout(q):
-    d, t = get_drive_line(q)
-    ro, rt = get_readout_line(q)
-    m = readout(ro, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    m = readout(ro, square(100, 0.05))
     if m:
         value = 0.3
     else:
         value = 0.1
-    shift_phase(t, value)
-    drive(d, square(20, value), t)
+    shift_phase(d.tone, value)
+    drive(d, square(20, value))
 
 
 def test_a_value_a_readout_selects_at_run_time_is_exported_as_its_select(monkeypatch):
@@ -650,17 +650,17 @@ def test_a_value_a_readout_selects_at_run_time_is_exported_as_its_select(monkeyp
 
 @pulse.kernel
 def frame_in_arms(q, r):
-    d, t = get_drive_line(q)
-    ro, rt = get_readout_line(q)
-    shift_phase(t, 0.25)
-    m = readout(ro, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    shift_phase(d.tone, 0.25)
+    m = readout(ro, square(100, 0.05))
     sync(d, ro)
     if m:
-        drive(d, square(20, 0.1), t)
-        shift_phase(t, 0.5)
+        drive(d, square(20, 0.1))
+        shift_phase(d.tone, 0.5)
     else:
-        shift_frequency(t, 1.0e6)
-    drive(d, square(20, 0.1), t)
+        shift_frequency(d.tone, 1.0e6)
+    drive(d, square(20, 0.1))
 
 
 def test_frame_updates_carry_the_arm_they_happen_in():
@@ -687,17 +687,17 @@ def test_frame_updates_carry_the_arm_they_happen_in():
 
 @pulse.kernel
 def decided_at_compile_time(q):
-    d, t = get_drive_line(q)
-    ro, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
     for k in range(3):
-        shift_phase(t, 0.1 * k)
-        drive(d, square(20, 0.1 * (k + 1)), t)
-    m = readout(ro, square(100, 0.05), rt)
+        shift_phase(d.tone, 0.1 * k)
+        drive(d, square(20, 0.1 * (k + 1)))
+    m = readout(ro, square(100, 0.05))
     sync(d, ro)
     if m:
-        drive(d, square(20, 0.1), t)
+        drive(d, square(20, 0.1))
     wait(d, 16)
-    drive(d, square(20, 0.1), t)
+    drive(d, square(20, 0.1))
 
 
 def test_a_program_computing_nothing_at_run_time_exports_no_run_time_keys():

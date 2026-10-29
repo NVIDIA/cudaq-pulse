@@ -53,11 +53,11 @@ def test_each_path_keeps_its_own_decoder_state():
     def k(a, b, flag):
         qec.reset_decoder(decoder)
         for q in (a, b):
-            r, rt = get_readout_line(q)
-            qec.enqueue_syndromes(decoder, [readout(r, square(100, 0.05), rt)])
-        f, ft = get_drive_line(flag)
+            r = get_readout_line(q)
+            qec.enqueue_syndromes(decoder, [readout(r, square(100, 0.05))])
+        f = get_drive_line(flag)
         if qec.get_corrections(decoder).result()[0]:
-            drive(f, square(40, PI_AMP), ft)
+            drive(f, square(40, PI_AMP))
 
     dev = _device(n=3)
     low = pulse.compile(k, device=dev).lower(*dev.qudit_handles[:3])
@@ -93,10 +93,10 @@ def test_a_mapped_enqueue_sends_its_mapping_row():
 
     @pulse.kernel
     def rounds(q):
-        r, rt = get_readout_line(q)
+        r = get_readout_line(q)
         ms = []
         for _ in range(12):
-            ms.append(readout(r, square(100, 0.05), rt))
+            ms.append(readout(r, square(100, 0.05)))
         qec.enqueue_syndromes_mapped(decoder, ms, 4, 2)
 
     def enqueue(decoder_id, round, mapping, count, bits):

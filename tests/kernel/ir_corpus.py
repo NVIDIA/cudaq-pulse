@@ -79,10 +79,10 @@ def dump_packed(b: PackedIRBuilder) -> list[str]:
 def dd_loop(n_iter: int) -> Callable[..., Any]:
     @pulse.kernel
     def dd(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         x = square(40, 0.047 + 0j)
         for _ in range(n_iter):
-            drive(d0, x, t0)
+            drive(d0, x)
 
     return dd
 
@@ -93,24 +93,24 @@ def tone_list_loop(n_iter: int) -> Callable[..., Any]:
     @pulse.kernel
     def listed(qs):
         lines = [get_drive_line(q) for q in qs]
-        for (d, t), f in zip(lines, (5.0e9, 5.1e9)):
-            set_frequency(t, f)
+        for d, f in zip(lines, (5.0e9, 5.1e9)):
+            set_frequency(d.tone, f)
         x = square(40, 0.047)
         for _ in range(n_iter):
-            for d, t in lines:
-                drive(d, x, t)
+            for d in lines:
+                drive(d, x)
 
     return listed
 
 
 @pulse.kernel
 def cpmg_with_waits(q0):
-    d0, t0 = get_drive_line(q0)
+    d0 = get_drive_line(q0)
     y = drag(40, 0.2, 10.0, 0.5)
     wait(d0, 50)
     for _ in range(6):
         wait(d0, 100)
-        drive(d0, y, t0)
+        drive(d0, y)
         wait(d0, 100)
 
 
@@ -125,9 +125,9 @@ def surface_syndrome(d: int) -> Callable[..., Any]:
         lines = []
         tones = []
         for i in range(n_total):
-            line, tone = get_drive_line(qubits[i])
+            line = get_drive_line(qubits[i])
             lines.append(line)
-            tones.append(tone)
+            tones.append(line.tone)
 
         h = drag(40, 0.25, 10.0, 0.5)
         cr_p = gaussian(160, 0.12, 40.0)
@@ -136,7 +136,7 @@ def surface_syndrome(d: int) -> Callable[..., Any]:
             anc = n_data + a
             row = a // (d - 1) if a < (d - 1) * (d - 1) else -1
             col = a % (d - 1) if a < (d - 1) * (d - 1) else a - (d - 1) * (d - 1)
-            drive(lines[anc], h, tones[anc])
+            drive(lines[anc], h, tone=tones[anc])
             for dr in range(2):
                 for dc in range(2):
                     r = row + dr
@@ -144,8 +144,8 @@ def surface_syndrome(d: int) -> Callable[..., Any]:
                     if 0 <= r and r < d and 0 <= c and c < d:
                         q = r * d + c
                         sync(lines[anc], lines[q])
-                        drive(lines[anc], cr_p, tones[q])
-                        drive(lines[anc], cr_m, tones[q])
+                        drive(lines[anc], cr_p, tone=tones[q])
+                        drive(lines[anc], cr_m, tone=tones[q])
 
     return round_, n_total
 
@@ -161,9 +161,9 @@ def bicycle_syndrome(l: int, m: int) -> Callable[..., Any]:  # noqa: E741
         lines = []
         tones = []
         for i in range(n_total):
-            line, tone = get_drive_line(qubits[i])
+            line = get_drive_line(qubits[i])
             lines.append(line)
-            tones.append(tone)
+            tones.append(line.tone)
 
         sx = drag(40, 0.025, 10.0, 0.5)
         cr = gaussian(200, 0.1, 50.0)
@@ -177,8 +177,8 @@ def bicycle_syndrome(l: int, m: int) -> Callable[..., Any]:  # noqa: E741
                     q = ((r0 + shifts_r[s]) % l) * m + (c0 + shifts_c[s]) % m
                     q = q + l * m if kind == 1 and q + l * m < n_data else q
                     sync(lines[anc], lines[q])
-                    drive(lines[q], sx, tones[q])
-                    drive(lines[anc], cr, tones[q])
+                    drive(lines[q], sx, tone=tones[q])
+                    drive(lines[anc], cr, tone=tones[q])
 
     return checks, n_total
 
@@ -186,8 +186,8 @@ def bicycle_syndrome(l: int, m: int) -> Callable[..., Any]:  # noqa: E741
 _SCALE = 0.5
 
 
-def _pi_pulse(line, tone, amplitude=0.3, sigma=10.0):
-    drive(line, gaussian(int(4 * sigma), amplitude * _SCALE, sigma), tone)
+def _pi_pulse(line, amplitude=0.3, sigma=10.0):
+    drive(line, gaussian(int(4 * sigma), amplitude * _SCALE, sigma))
 
 
 def closures_and_helpers(gain: float) -> Callable[..., Any]:
@@ -195,13 +195,13 @@ def closures_and_helpers(gain: float) -> Callable[..., Any]:
 
     @pulse.kernel
     def k(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
         for i in range(2):
-            t0 = shift_phase(t0, offsets[i] * gain)
-            _pi_pulse(d0, t0)
-        _pi_pulse(d1, t1, sigma=8.0)
-        _pi_pulse(line=d1, tone=t1, amplitude=gain)
+            shift_phase(d0.tone, offsets[i] * gain)
+            _pi_pulse(d0)
+        _pi_pulse(d1, sigma=8.0)
+        _pi_pulse(line=d1, amplitude=gain)
         sync(d0, d1)
 
     return k
@@ -214,7 +214,7 @@ def _ramp(t):
 
 @pulse.kernel
 def python_expressions(q0):
-    d0, t0 = get_drive_line(q0)
+    d0 = get_drive_line(q0)
     amps = [0.1, 0.2, 0.3, 0.4]
     total = 0
     for i in range(len(amps)):
@@ -223,7 +223,7 @@ def python_expressions(q0):
         if 0 < i < 3 or i == len(amps) - 1:
             total += i
         amp = amps[i] if i % 2 == 0 else -amps[i]
-        drive(d0, square(20 + 4 * i, amp), t0)
+        drive(d0, square(20 + 4 * i, amp))
         if total > 4:
             break
     flag = not (total >= 4 and len(amps) == 4)
@@ -231,114 +231,114 @@ def python_expressions(q0):
     shape = f"shape_{total}_{amps[-1]:.2f}"
     assert shape.startswith("shape_"), shape
     w = custom(16, _ramp)
-    drive(d0, w, t0)
-    shift_frequency(t0, frequency=1e6)
+    drive(d0, w)
+    shift_frequency(d0.tone, frequency=1e6)
     if total:
         return
-    drive(d0, w, t0)
+    drive(d0, w)
 
 
 @pulse.kernel
 def readout_and_algebra(q):
-    d0, t0 = get_drive_line(q)
-    r0, rt = get_readout_line(q)
+    d0 = get_drive_line(q)
+    r0 = get_readout_line(q)
     a = cosine(16, 0.2)
     b = wf_scale(wf_add(a, custom_samples([0.0, 0.1, 0.2, 0.1] * 4)), 1.5)
-    drive(d0, wf_neg(b), t0)
+    drive(d0, wf_neg(b))
     sync(d0, r0)
-    readout(r0, square(200, 0.05), rt)
+    readout(r0, square(200, 0.05))
 
 
 @pulse.kernel
 def parametric(q0, amp: float, n: int):
-    d0, t0 = get_drive_line(q0)
+    d0 = get_drive_line(q0)
     for _ in range(3):
-        drive(d0, gaussian(40, amp * 0.5, 10.0), t0)
+        drive(d0, gaussian(40, amp * 0.5, 10.0))
         wait(d0, int(n) * 2)
-    shift_phase(t0, -amp)
+    shift_phase(d0.tone, -amp)
 
 
 @pulse.kernel
 def measurement_branch(q0):
-    r0, t0 = get_readout_line(q0)
-    bit = readout(r0, square(10, 0.2), t0)
+    r0 = get_readout_line(q0)
+    bit = readout(r0, square(10, 0.2))
     if bit:
         wait(r0, 10)
 
 
 @pulse.kernel
 def active_reset(q0):
-    d0, t0 = get_drive_line(q0)
-    r0, rt = get_readout_line(q0)
+    d0 = get_drive_line(q0)
+    r0 = get_readout_line(q0)
     x = square(40, 0.1)
     sync(d0, r0)
-    bit = readout(r0, square(300, 0.05), rt)
+    bit = readout(r0, square(300, 0.05))
     if bit:
-        drive(d0, x, t0)
+        drive(d0, x)
     wait(d0, 10)
 
 
 @pulse.kernel
 def negated_feedback(q0, q1):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
-    r0, rt = get_readout_line(q0)
-    bit = readout(r0, square(300, 0.05), rt)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
+    r0 = get_readout_line(q0)
+    bit = readout(r0, square(300, 0.05))
     sync(d0, d1, r0)
     if not bit:
-        t1 = shift_phase(t1, math.pi)
-        drive(d1, square(40, 0.1), t1)
+        shift_phase(d1.tone, math.pi)
+        drive(d1, square(40, 0.1))
     else:
         wait(d0, 40)
-    drive(d0, square(20, 0.2), t0)
+    drive(d0, square(20, 0.2))
 
 
 @pulse.kernel
 def feedback_in_loop(q0):
-    d0, t0 = get_drive_line(q0)
-    r0, rt = get_readout_line(q0)
+    d0 = get_drive_line(q0)
+    r0 = get_readout_line(q0)
     for _ in range(5):
-        bit = readout(r0, square(300, 0.05), rt)
+        bit = readout(r0, square(300, 0.05))
         sync(d0, r0)
         if bit:
-            drive(d0, square(40, 0.1), t0)
+            drive(d0, square(40, 0.1))
 
 
 @pulse.kernel
 def feedback_both_return(q0):
-    d0, t0 = get_drive_line(q0)
-    r0, rt = get_readout_line(q0)
-    bit = readout(r0, square(300, 0.05), rt)
+    d0 = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    bit = readout(r0, square(300, 0.05))
     if bit:
-        drive(d0, square(40, 0.1), t0)
+        drive(d0, square(40, 0.1))
         return
     wait(d0, 40)
 
 
 @pulse.kernel
 def compare_symbolic(q0, amp: float):
-    d0, t0 = get_drive_line(q0)
+    d0 = get_drive_line(q0)
     if amp > 0.5:
         wait(d0, 10)
 
 
 @pulse.kernel
 def compare_measurement(q0):
-    r0, t0 = get_readout_line(q0)
-    bit = readout(r0, square(10, 0.2), t0)
+    r0 = get_readout_line(q0)
+    bit = readout(r0, square(10, 0.2))
     if bit == 1:
         wait(r0, 10)
 
 
 @pulse.kernel
 def bad_attribute(q0):
-    d0, t0 = get_drive_line(q0)
-    drive(d0, math.not_a_function(3), t0)
+    d0 = get_drive_line(q0)
+    drive(d0, math.not_a_function(3))
 
 
 @pulse.kernel
 def while_loop(q0):
-    d0, t0 = get_drive_line(q0)
+    _d0 = get_drive_line(q0)
     n = 3
     while n:
         n -= 1

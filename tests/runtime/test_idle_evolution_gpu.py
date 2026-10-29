@@ -55,15 +55,15 @@ def _p1_after_wait(wait_ns):
 
         @pulse.kernel
         def kernel(q0):
-            d0, t0 = get_drive_line(q0)
-            drive(d0, square(40, math.pi / 20.0), t0)
+            d0 = get_drive_line(q0)
+            drive(d0, square(40, math.pi / 20.0))
             wait(d0, wait_cycles)
     else:
 
         @pulse.kernel
         def kernel(q0):
-            d0, t0 = get_drive_line(q0)
-            drive(d0, square(40, math.pi / 20.0), t0)
+            d0 = get_drive_line(q0)
+            drive(d0, square(40, math.pi / 20.0))
 
     t_end = 20.0 + wait_ns
     result = evolve(
@@ -81,8 +81,8 @@ def test_idle_evolution_mlir_structure():
 
     @pulse.kernel
     def kernel(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, math.pi / 20.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, math.pi / 20.0))
         wait(d0, 1000)
 
     mlir = pulse_mlir((kernel, Q[0]), clock_ghz=_CLOCK_GHZ, qubit_freq_hz={0: 5.0e9})
@@ -118,14 +118,14 @@ def test_split_idle_matches_single_idle():
 
     @pulse.kernel
     def single(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, math.pi / 20.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, math.pi / 20.0))
         wait(d0, 2000)  # 1000 ns in one wait
 
     @pulse.kernel
     def split(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, math.pi / 20.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, math.pi / 20.0))
         wait(d0, 400)
         wait(d0, 400)
         wait(d0, 400)

@@ -39,8 +39,8 @@ def _amplitude_kernel():
 
     @pulse.kernel
     def k(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(10, amplitude), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, square(10, amplitude))
 
     def rebind(value):
         nonlocal amplitude
@@ -74,8 +74,8 @@ def test_empty_closure_cell_raises():
     def make():
         @pulse.kernel
         def k(q0):
-            d0, t0 = get_drive_line(q0)
-            drive(d0, square(10, late), t0)  # pyright: ignore[reportUndefinedVariable]
+            d0 = get_drive_line(q0)
+            drive(d0, square(10, late))  # pyright: ignore[reportUndefinedVariable]
 
         return k
 
@@ -95,8 +95,8 @@ def test_user_function_named_like_an_op_is_evaluated_as_python():
 
     @pulse.kernel
     def k(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, gaussian(10, 0.2, 3.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, gaussian(10, 0.2, 3.0))
 
     kinds = [op.kind for op in python_ir(k, Q[0]).ops]
     assert "pulse.square" in kinds
@@ -107,13 +107,13 @@ def test_qualified_and_bare_op_names_trace_identically():
 
     @pulse.kernel
     def bare(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, gaussian(40, 0.3, 10.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, gaussian(40, 0.3, 10.0))
 
     @pulse.kernel
     def qualified(q0):
-        d0, t0 = pulse.ops.get_drive_line(q0)
-        pulse.ops.drive(d0, pulse.ops.gaussian(40, 0.3, 10.0), t0)
+        d0 = pulse.ops.get_drive_line(q0)
+        pulse.ops.drive(d0, pulse.ops.gaussian(40, 0.3, 10.0))
 
     def kinds(k):
         return [(op.kind, op.attrs) for op in python_ir(k, Q[0]).ops]
@@ -148,7 +148,7 @@ def test_stack_copies_are_executed():
 
     @pulse.kernel
     def k(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         for i in range(5):
             if 1 <= i < 3:
                 wait(d0, 10 * i)
@@ -187,8 +187,8 @@ def test_packed_param_names_are_recorded():
 
     @pulse.kernel
     def k(q0, amp: float, width: int):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, gaussian(40, amp, 10.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, gaussian(40, amp, 10.0))
         wait(d0, width)
 
     builder = PackedIRBuilder(name="k")
@@ -238,7 +238,7 @@ def test_evaluated_call_errors_are_chained():
 
     @pulse.kernel
     def k(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         wait(d0, int(math.sqrt(-1.0)))
 
     with pytest.raises(CompilationError, match="failed to evaluate sqrt") as info:
@@ -258,7 +258,7 @@ def test_unexpected_exceptions_propagate_unwrapped():
 
     @pulse.kernel
     def k(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         wait(d0, _explode())
 
     with pytest.raises(_BoomError) as info:

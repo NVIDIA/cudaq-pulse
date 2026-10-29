@@ -50,9 +50,9 @@ def _target():
 def _pulse_train(amplitude):
     @pulse.kernel
     def train(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         for i in range(_PULSES):
-            drive(d0, square(4, amplitude + 1e-6 * (i % 3)), t0)
+            drive(d0, square(4, amplitude + 1e-6 * (i % 3)))
 
     return train
 

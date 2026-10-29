@@ -32,9 +32,9 @@ Q = DEV.qudit_handles
 def _train(n):
     @pulse.kernel
     def train(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(n):
-            drive(d, square(4, 0.02), t)
+            drive(d, square(4, 0.02))
             wait(d, 2)
 
     return train
@@ -60,9 +60,9 @@ def test_the_estimate_is_the_trip_count_times_the_calls_in_the_body(threshold, r
 def test_the_kernel_option_and_compile_override():
     @pulse.kernel(unroll_threshold=1000)
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(10):
-            drive(d, square(4, 0.02), t)
+            drive(d, square(4, 0.02))
 
     assert not _rolled(k.lower(Q[0]))
     assert not _rolled(pulse.compile(k).lower(Q[0]))
@@ -80,9 +80,9 @@ def test_the_kernel_option_and_compile_override():
 def test_a_loop_whose_variable_is_read_is_unrolled_at_any_threshold():
     @pulse.kernel
     def ramp(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(20):
-            drive(d, square(4, 0.001 * i), t)
+            drive(d, square(4, 0.001 * i))
 
     assert not _rolled(pulse.compile(ramp, unroll_threshold=0).lower(Q[0]))
 
@@ -100,28 +100,28 @@ def test_a_compiled_kernel_keeps_its_threshold():
 
 @pulse.kernel
 def pulse_pair(q0, q1):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
-    drive(d0, square(6, 0.03), t0)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
+    drive(d0, square(6, 0.03))
     sync(d0, d1)
-    drive(d1, square(6, 0.03), t1)
+    drive(d1, square(6, 0.03))
 
 
 def _kernels():
     @pulse.kernel
     def train(q0, q1):
-        d, t = get_drive_line(q0)
+        d = get_drive_line(q0)
         for _ in range(6):
-            drive(d, square(4, 0.02), t)
-            t = shift_phase(t, 0.3)
+            drive(d, square(4, 0.02))
+            shift_phase(d.tone, 0.3)
             wait(d, 2)
 
     @pulse.kernel
     def nested(q0, q1):
-        d, t = get_drive_line(q0)
+        d = get_drive_line(q0)
         for _ in range(3):
             for _ in range(2):
-                drive(d, gaussian(8, 0.05, 2.0), t)
+                drive(d, gaussian(8, 0.05, 2.0))
             wait(d, 3)
 
     @pulse.kernel
@@ -131,10 +131,10 @@ def _kernels():
 
     @pulse.kernel
     def detuned(q0, q1):
-        d, t = get_drive_line(q0)
-        t = set_frequency(t, 5.01e9)
+        d = get_drive_line(q0)
+        set_frequency(d.tone, 5.01e9)
         for _ in range(5):
-            drive(d, square(4, 0.02), t)
+            drive(d, square(4, 0.02))
             wait(d, 5)
 
     return {"train": train, "nested": nested, "calls": calls, "detuned": detuned}

@@ -47,8 +47,8 @@ def test_evolve_on_compiler_only_build_raises_not_built():
 
     @pulse.kernel
     def kernel(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, gaussian(40, 0.3, 10.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, gaussian(40, 0.3, 10.0))
 
     target = TargetDescription(
         name="guard",

@@ -57,9 +57,9 @@ def test_iq_modulation_mlir_structure():
 
     @pulse.kernel
     def q_drive(q0):
-        d0, t0 = get_drive_line(q0)
-        shift_phase(t0, math.pi / 2)
-        drive(d0, square(40, math.pi / 20.0), t0)
+        d0 = get_drive_line(q0)
+        shift_phase(d0.tone, math.pi / 2)
+        drive(d0, square(40, math.pi / 20.0))
 
     mlir = pulse_mlir((q_drive, Q[0]), clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
     assert "pulse.square" in mlir
@@ -71,8 +71,8 @@ def test_pure_i_drives_x_rotation():
 
     @pulse.kernel
     def x_pi(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, math.pi / 20.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, math.pi / 20.0))
 
     assert abs(_evolve(x_pi)[1]) ** 2 > 0.99
 
@@ -83,9 +83,9 @@ def test_pure_q_drives_y_rotation():
 
     @pulse.kernel
     def y_pi(q0):
-        d0, t0 = get_drive_line(q0)
-        shift_phase(t0, math.pi / 2)
-        drive(d0, square(40, math.pi / 20.0), t0)
+        d0 = get_drive_line(q0)
+        shift_phase(d0.tone, math.pi / 2)
+        drive(d0, square(40, math.pi / 20.0))
 
     assert abs(_evolve(y_pi)[1]) ** 2 > 0.99
 
@@ -96,14 +96,14 @@ def test_iq_symmetry_equal_populations():
 
     @pulse.kernel
     def x90(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, math.pi / 40.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, math.pi / 40.0))
 
     @pulse.kernel
     def y90(q0):
-        d0, t0 = get_drive_line(q0)
-        shift_phase(t0, math.pi / 2)
-        drive(d0, square(40, math.pi / 40.0), t0)
+        d0 = get_drive_line(q0)
+        shift_phase(d0.tone, math.pi / 2)
+        drive(d0, square(40, math.pi / 40.0))
 
     p1_x = abs(_evolve(x90)[1]) ** 2
     p1_y = abs(_evolve(y90)[1]) ** 2
@@ -117,14 +117,14 @@ def test_xy_orthogonality_distinct_states():
 
     @pulse.kernel
     def x90(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, math.pi / 40.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, math.pi / 40.0))
 
     @pulse.kernel
     def y90(q0):
-        d0, t0 = get_drive_line(q0)
-        shift_phase(t0, math.pi / 2)
-        drive(d0, square(40, math.pi / 40.0), t0)
+        d0 = get_drive_line(q0)
+        shift_phase(d0.tone, math.pi / 2)
+        drive(d0, square(40, math.pi / 40.0))
 
     x_state = _evolve(x90)
     y_state = _evolve(y90)

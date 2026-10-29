@@ -28,19 +28,19 @@ cal = {
 def measure_single_qubit(qubit):
     """Prepare |1> and measure.
 
-    Demonstrates the readout channel: get_readout_line returns a
-    (readout_line, tone) pair, and readout() acquires IQ data.
+    Demonstrates the readout channel: get_readout_line returns the readout
+    line, and readout() acquires IQ data at the line's own tone.
     """
-    drive_line, drive_tone = get_drive_line(qubit)
-    readout_line, readout_tone = get_readout_line(qubit)
+    drive_line = get_drive_line(qubit)
+    readout_line = get_readout_line(qubit)
 
     x_pulse = drag(cal["x_duration"], 0.5, cal["x_sigma"], cal["drag_beta"])
-    drive(drive_line, x_pulse, drive_tone)
+    drive(drive_line, x_pulse)
 
     sync(drive_line, readout_line)
 
     readout_envelope = square(cal["readout_duration"], 0.05)
-    readout(readout_line, readout_envelope, readout_tone)
+    readout(readout_line, readout_envelope)
 
 
 @pulse.kernel
@@ -50,11 +50,11 @@ def active_reset(qubit):
     The ``if`` becomes an scf.if region: compiling keeps it as a branch on
     pulse.is_set and schedules it for the longer arm.
     """
-    drive_line, drive_tone = get_drive_line(qubit)
-    readout_line, readout_tone = get_readout_line(qubit)
+    drive_line = get_drive_line(qubit)
+    readout_line = get_readout_line(qubit)
 
     readout_envelope = square(cal["readout_duration"], 0.05)
-    result = readout(readout_line, readout_envelope, readout_tone)
+    result = readout(readout_line, readout_envelope)
 
     sync(drive_line, readout_line)
 
@@ -62,7 +62,7 @@ def active_reset(qubit):
         # A pi pulse: with H = amplitude * X / 2, this amplitude (rad/ns)
         # rotates by pi in 20 ns.
         x_pulse = square(cal["x_duration"], math.pi / 20)
-        drive(drive_line, x_pulse, drive_tone)
+        drive(drive_line, x_pulse)
 
 
 @pulse.kernel
@@ -71,16 +71,16 @@ def repeated_measurement(qubit, n_shots):
 
     A for loop wrapping prepare-measure cycles.
     """
-    drive_line, drive_tone = get_drive_line(qubit)
-    readout_line, readout_tone = get_readout_line(qubit)
+    drive_line = get_drive_line(qubit)
+    readout_line = get_readout_line(qubit)
 
     x_half = drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["drag_beta"])
 
     for _shot in range(n_shots):
-        drive(drive_line, x_half, drive_tone)
+        drive(drive_line, x_half)
         sync(drive_line, readout_line)
 
-        readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
+        readout(readout_line, square(cal["readout_duration"], 0.05))
 
         sync(drive_line, readout_line)
         wait(drive_line, cal["shot_gap"])
@@ -92,19 +92,19 @@ def ramsey_with_readout(qubit, tau):
 
     Demonstrates the full single-qubit characterization loop with readout.
     """
-    drive_line, drive_tone = get_drive_line(qubit)
-    readout_line, readout_tone = get_readout_line(qubit)
+    drive_line = get_drive_line(qubit)
+    readout_line = get_readout_line(qubit)
 
     half_pi = drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["drag_beta"])
 
-    drive(drive_line, half_pi, drive_tone)
+    drive(drive_line, half_pi)
 
     wait(drive_line, tau)
 
-    drive(drive_line, half_pi, drive_tone)
+    drive(drive_line, half_pi)
 
     sync(drive_line, readout_line)
-    readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
+    readout(readout_line, square(cal["readout_duration"], 0.05))
 
 
 if __name__ == "__main__":

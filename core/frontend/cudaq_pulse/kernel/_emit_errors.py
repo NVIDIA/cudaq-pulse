@@ -73,7 +73,9 @@ def operand_error(fname: str, call_args: list[Any]) -> CompilationError:
             f"or {fname}(line, waveform, tone=tone)"
         )
     elif play and index == 2 and vtype in _LINE_TYPES:
-        message += f"; pass a tone, such as line.tone, not a line: {fname}(line, waveform, tone=t)"
+        message += (
+            f"; pass a tone, such as line.tone, not a line: {fname}(line, waveform, tone=tone)"
+        )
     elif play and vtype in _LINE_TYPES:
         message += "; drive() takes a drive line and readout() a readout line"
     elif fname == "wf_scale":

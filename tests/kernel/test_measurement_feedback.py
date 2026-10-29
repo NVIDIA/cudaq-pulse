@@ -44,7 +44,7 @@ def test_active_reset_retains_the_conditional():
     cond = ir.ops[start].operands[0]
     assert cond.vtype == "measurement"
     end = ir.ops[kinds.index("scf.if_end")]
-    assert end.attrs == {"result_names": ["d0", "t0"]}
+    assert end.attrs == {"result_names": ["d0", "d0.tone"]}
     # The wait after the if continues the line the if produced.
     assert ir.ops[-1].operands[0] is end.results[0]
 
@@ -96,9 +96,9 @@ def test_python_state_cannot_depend_on_a_measurement():
 
     @pulse.kernel
     def k(q0):
-        d0, t0 = get_drive_line(q0)
-        r0, rt = get_readout_line(q0)
-        bit = readout(r0, square(300, 0.05), rt)
+        d0 = get_drive_line(q0)
+        r0 = get_readout_line(q0)
+        bit = readout(r0, square(300, 0.05))
         n = [1]
         if bit:
             n = [2]
@@ -113,9 +113,9 @@ def test_one_armed_return_is_rejected():
 
     @pulse.kernel(unroll_threshold=0)
     def k(q0):
-        d0, t0 = get_drive_line(q0)
-        r0, rt = get_readout_line(q0)
-        bit = readout(r0, square(300, 0.05), rt)
+        d0 = get_drive_line(q0)
+        r0 = get_readout_line(q0)
+        bit = readout(r0, square(300, 0.05))
         for _ in range(2):
             if bit:
                 return
@@ -129,10 +129,10 @@ def test_break_out_of_an_arm_is_rejected():
 
     @pulse.kernel
     def k(q0):
-        d0, t0 = get_drive_line(q0)
-        r0, rt = get_readout_line(q0)
+        d0 = get_drive_line(q0)
+        r0 = get_readout_line(q0)
         for i in range(3):
-            bit = readout(r0, square(300, 0.05), rt)
+            bit = readout(r0, square(300, 0.05))
             if bit:
                 break
             wait(d0, 10 + i)
@@ -144,10 +144,7 @@ def test_break_out_of_an_arm_is_rejected():
 @pytest.mark.parametrize("condition", ["amp == 0.5", "amp != 0.5", "amp < 1", "0 <= amp"])
 def test_symbolic_comparison_raises(condition):
     source = (
-        "def k(q0, amp):\n"
-        "    d0, t0 = get_drive_line(q0)\n"
-        f"    if {condition}:\n"
-        "        wait(d0, 10)\n"
+        f"def k(q0, amp):\n    d0 = get_drive_line(q0)\n    if {condition}:\n        wait(d0, 10)\n"
     )
     namespace: dict = {}
     exec(compile(source, "<symbolic>", "exec"), namespace)
@@ -160,8 +157,8 @@ def test_comparing_a_measurement_raises():
 
     @pulse.kernel
     def k(q0):
-        r0, t0 = get_readout_line(q0)
-        bit = readout(r0, square(10, 0.2), t0)
+        r0 = get_readout_line(q0)
+        bit = readout(r0, square(10, 0.2))
         if bit == 0:
             wait(r0, 10)
 
@@ -173,7 +170,7 @@ def test_only_measurements_can_be_conditions():
 
     @pulse.kernel
     def k(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         if d0:
             wait(d0, 10)
 
@@ -187,13 +184,13 @@ _ROUNDS = (0, 1)
 def test_nested_feedback_ending_an_unrolled_loop_body():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(10, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(10, 0.05))
         for _ in _ROUNDS:
             if m:
                 if m:
-                    drive(d, square(10, 0.1), t)
+                    drive(d, square(10, 0.1))
 
     events = k.lower(Q[0]).schedule
     assert [e.kind for e in events] == ["readout", "drive", "drive"]

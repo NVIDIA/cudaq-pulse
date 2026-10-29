@@ -35,11 +35,11 @@ def _function(link):
 def _kernel(fn):
     @pulse.kernel
     def feedback(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         if fn.submit([m]).result()[0]:
-            drive(d, square(40, 0.1), t)
+            drive(d, square(40, 0.1))
 
     return feedback
 

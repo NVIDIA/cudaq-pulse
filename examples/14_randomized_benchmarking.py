@@ -84,21 +84,21 @@ def clifford_sequence(qubit, gates):
 
     *gates* is a tuple of names, so the loop unrolls while tracing.
     """
-    drive_line, drive_tone = get_drive_line(qubit)
-    readout_line, readout_tone = get_readout_line(qubit)
+    drive_line = get_drive_line(qubit)
+    readout_line = get_readout_line(qubit)
 
     x90 = drag(cal["x_duration"], cal["half_pi_amp"], cal["x_sigma"], cal["drag_beta"])
 
     for gate in gates:
         if gate == "Y90":
-            shift_phase(drive_tone, math.pi / 2)
-            drive(drive_line, x90, drive_tone)
-            shift_phase(drive_tone, -math.pi / 2)
+            shift_phase(drive_line.tone, math.pi / 2)
+            drive(drive_line, x90)
+            shift_phase(drive_line.tone, -math.pi / 2)
         else:
-            drive(drive_line, x90, drive_tone)
+            drive(drive_line, x90)
 
     sync(drive_line, readout_line)
-    readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
+    readout(readout_line, square(cal["readout_duration"], 0.05))
 
 
 if __name__ == "__main__":

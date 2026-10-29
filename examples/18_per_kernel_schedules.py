@@ -47,23 +47,25 @@ cal = {
 def single_qubit_layer(lines, tones):
     """A sqrt(X) on every data qubit, all starting together."""
     for i in range(len(lines)):
-        drive(lines[i], drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["drag_beta"]), tones[i])
+        drive(
+            lines[i], drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["drag_beta"]), tone=tones[i]
+        )
 
 
 @pulse.kernel
 def cross_resonance(control, target_tone):
     """Drive the control qubit at the target's frequency."""
     cr = gaussian_square(cal["cr_duration"], 0.05, cal["x_sigma"], cal["cr_width"])
-    drive(control, cr, target_tone)
+    drive(control, cr, tone=target_tone)
 
 
 @pulse.kernel(schedule="alap")
-def measure_and_reset(drive_line, tone, readout_line, readout_tone):
+def measure_and_reset(drive_line, readout_line):
     """Read the ancilla out, then flip it back to 0 if it was 1."""
     sync(drive_line, readout_line)
-    result = readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
+    result = readout(readout_line, square(cal["readout_duration"], 0.05))
     if result:
-        drive(drive_line, drag(cal["x_duration"], 0.5, cal["x_sigma"], cal["drag_beta"]), tone)
+        drive(drive_line, drag(cal["x_duration"], 0.5, cal["x_sigma"], cal["drag_beta"]))
     return result
 
 
@@ -72,27 +74,27 @@ def xy4(line, tone, tau):
     """X, Y, X, Y pi pulses, each followed by an idle of tau."""
     for phase in (0.0, 1.5708, 0.0, 1.5708):
         shift_phase(tone, phase)
-        drive(line, drag(cal["x_duration"], 0.5, cal["x_sigma"], cal["drag_beta"]), tone)
+        drive(line, drag(cal["x_duration"], 0.5, cal["x_sigma"], cal["drag_beta"]), tone=tone)
         shift_phase(tone, -phase)
         wait(line, tau)
 
 
 @pulse.kernel
 def stabilizer_cycle(qubits):
-    ancilla, ancilla_tone = get_drive_line(qubits[0])
-    readout_line, readout_tone = get_readout_line(qubits[0])
+    ancilla = get_drive_line(qubits[0])
+    readout_line = get_readout_line(qubits[0])
     lines, tones = [], []
     for q in qubits[1:]:
-        line, tone = get_drive_line(q)
+        line = get_drive_line(q)
         lines.append(line)
-        tones.append(tone)
+        tones.append(line.tone)
 
     for _ in range(ROUNDS):
         single_qubit_layer(lines, tones)
         for i in range(DATA_QUBITS):
             cross_resonance(ancilla, tones[i])
         single_qubit_layer(lines, tones)
-        measure_and_reset(ancilla, ancilla_tone, readout_line, readout_tone)
+        measure_and_reset(ancilla, readout_line)
         for i in range(DATA_QUBITS):
             xy4(lines[i], tones[i], cal["dd_tau"])
 

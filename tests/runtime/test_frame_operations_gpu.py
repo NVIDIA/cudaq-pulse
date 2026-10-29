@@ -54,9 +54,9 @@ def test_frame_operations_mlir_structure():
 
     @pulse.kernel
     def phased(q0):
-        d0, t0 = get_drive_line(q0)
-        shift_phase(t0, math.pi / 2)
-        drive(d0, square(40, math.pi / 20.0), t0)
+        d0 = get_drive_line(q0)
+        shift_phase(d0.tone, math.pi / 2)
+        drive(d0, square(40, math.pi / 20.0))
 
     mlir = pulse_mlir((phased, Q[0]), clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
     assert "pulse.shift_phase" in mlir or "phase" in mlir
@@ -68,8 +68,8 @@ def test_phase_shift_on_ground_state_no_population_change():
 
     @pulse.kernel
     def phase_only(q0):
-        d0, t0 = get_drive_line(q0)
-        shift_phase(t0, math.pi / 2)
+        d0 = get_drive_line(q0)
+        shift_phase(d0.tone, math.pi / 2)
         wait(d0, 20)
 
     state = _evolve(phase_only)
@@ -82,10 +82,10 @@ def test_opposite_phase_pulses_cancel():
 
     @pulse.kernel
     def cancel(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, math.pi / 40.0), t0)  # +X pi/2
-        shift_phase(t0, math.pi)
-        drive(d0, square(40, math.pi / 40.0), t0)  # -X pi/2
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, math.pi / 40.0))  # +X pi/2
+        shift_phase(d0.tone, math.pi)
+        drive(d0, square(40, math.pi / 40.0))  # -X pi/2
 
     state = _evolve(cancel)
     assert abs(state[0]) ** 2 > 0.95
@@ -97,9 +97,9 @@ def test_same_phase_pulses_add():
 
     @pulse.kernel
     def add(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, math.pi / 40.0), t0)
-        drive(d0, square(40, math.pi / 40.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, math.pi / 40.0))
+        drive(d0, square(40, math.pi / 40.0))
 
     state = _evolve(add)
     assert abs(state[1]) ** 2 > 0.95

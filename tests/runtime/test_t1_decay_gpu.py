@@ -25,10 +25,10 @@ def test_t1_mlir_structure():
 
     @pulse.kernel
     def t1_decay(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         # pi pulse to |1>
         pi_pulse = gaussian(40, 0.5, 10.0)
-        drive(d0, pi_pulse, t0)
+        drive(d0, pi_pulse)
         # wait for T1 decay
         wait(d0, 1000)
 
@@ -60,11 +60,11 @@ def test_t1_decay_gpu():
 
     @pulse.kernel
     def t1_decay(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         # 40 virtual units at 2 GHz is 20 ns. With H = amplitude * X / 2,
         # amplitude pi/20 applies a pi rotation.
         pi_pulse = square(40, math.pi / 20.0)
-        drive(d0, pi_pulse, t0)
+        drive(d0, pi_pulse)
         wait(d0, 1000)
 
     ir = (t1_decay, Q[0])

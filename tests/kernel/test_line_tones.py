@@ -43,8 +43,8 @@ def _tones_of(lowered):
 
 @pulse.kernel
 def default_tones(q):
-    d, _ = get_drive_line(q)
-    r, _ = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     drive(d, gaussian(40, 0.1, 10.0))
     shift_phase(d.tone, 0.5)
     set_frequency(d.tone, 5.01e9)
@@ -55,9 +55,9 @@ def default_tones(q):
 
 @pulse.kernel
 def explicit_tones(q):
-    d, _ = get_drive_line(q)
-    r, _ = get_readout_line(q)
-    drive(d, gaussian(40, 0.1, 10.0), tone=d.tone)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, gaussian(40, 0.1, 10.0))
     shift_phase(d.tones[(0, 1)], 0.5)
     set_frequency(d.tone, 5.01e9)
     drive(d, gaussian(40, 0.1, 10.0), tone=d.tones[(0, 1)])
@@ -72,8 +72,8 @@ def test_the_default_tone_and_the_explicit_tone_make_the_same_program():
 def test_a_name_for_the_tone_follows_the_ops_that_change_it():
     @pulse.kernel
     def named(q):
-        d, _ = get_drive_line(q)
-        r, _ = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         t = d.tone
         drive(d, gaussian(40, 0.1, 10.0))
         shift_phase(t, 0.5)
@@ -88,8 +88,8 @@ def test_a_name_for_the_tone_follows_the_ops_that_change_it():
 def test_another_line_s_tone_retunes_a_drive():
     @pulse.kernel
     def by_keyword(q0, q1):
-        d0, _ = get_drive_line(q0)
-        d1, _ = get_drive_line(q1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
         drive(d0, square(40, 0.1), tone=d1.tone)
         drive(d1, square(40, 0.1))
 
@@ -102,7 +102,7 @@ def test_another_line_s_tone_retunes_a_drive():
 def test_another_transition_s_tone_starts_at_its_frequency():
     @pulse.kernel
     def second(q):
-        d, _ = get_drive_line(q)
+        d = get_drive_line(q)
         drive(d, square(40, 0.1))
         drive(d, square(40, 0.1), tone=d.tones[(1, 2)])
         shift_phase(d.tones[(1, 2)], 0.25)
@@ -121,8 +121,8 @@ def test_tones_lists_the_transitions_of_the_qudit_s_levels():
 
     @pulse.kernel
     def listed(q):
-        d, _ = get_drive_line(q)
-        r, _ = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         seen["drive"] = list(d.tones)
         seen["readout"] = list(r.tones)
         seen["has"] = ((1, 2) in d.tones, (0, 3) in d.tones)
@@ -149,7 +149,7 @@ def _target(model):
 def test_a_missing_transition_is_a_key_error_listing_the_qudit_s():
     @pulse.kernel
     def missing(q):
-        d, _ = get_drive_line(q)
+        d = get_drive_line(q)
         drive(d, square(40, 0.1), tone=d.tones[(0, 3)])
 
     with pytest.raises(KeyError, match=r"no transition \(0, 3\).*\(0, 1\), \(0, 2\), \(1, 2\)"):
@@ -160,7 +160,7 @@ def test_a_missing_transition_is_a_key_error_listing_the_qudit_s():
 
     @pulse.kernel
     def readout_transition(q):
-        r, _ = get_readout_line(q)
+        r = get_readout_line(q)
         readout(r, square(40, 0.1), tone=r.tones[(1, 2)])
 
     with pytest.raises(KeyError, match=r"a readout line has only its own tone"):
@@ -170,7 +170,7 @@ def test_a_missing_transition_is_a_key_error_listing_the_qudit_s():
 def test_the_tones_of_a_line_are_read_only():
     @pulse.kernel
     def assign(q):
-        d, _ = get_drive_line(q)
+        d = get_drive_line(q)
         d.tones[(1, 2)] = d.tone
 
     with pytest.raises(pulse.CompilationError):
@@ -178,7 +178,7 @@ def test_the_tones_of_a_line_are_read_only():
 
     @pulse.kernel
     def attribute(q):
-        d, _ = get_drive_line(q)
+        d = get_drive_line(q)
         drive(d, square(40, 0.1), tone=d.tone.tone)
 
     with pytest.raises(pulse.CompilationError, match="a tone has no attribute 'tone'"):
@@ -195,7 +195,7 @@ class _UpperQubit(SimulationModel):
 def test_the_default_transition_comes_from_the_model():
     @pulse.kernel
     def both(q):
-        d, _ = get_drive_line(q)
+        d = get_drive_line(q)
         drive(d, square(40, 0.1), tone=d.tones[(1, 2)])
         drive(d, square(40, 0.1), tone=d.tones[(0, 1)])
 
@@ -211,7 +211,7 @@ def test_the_default_transition_comes_from_the_model():
 def test_a_rolled_loop_that_reads_a_transition_s_tone_still_drives_it_each_time():
     @pulse.kernel
     def repeated(q):
-        d, _ = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(4):
             drive(d, square(40, 0.1), tone=d.tones[(1, 2)])
 
@@ -240,10 +240,44 @@ def test_driving_the_second_transition_moves_the_qudit_to_level_two():
 
     @pulse.kernel
     def ladder(q):
-        d, _ = get_drive_line(q)
+        d = get_drive_line(q)
         drive(d, square(400, one))
         drive(d, square(400, one / math.sqrt(2.0)), tone=d.tones[(1, 2)])
 
     dev = pulse.device({"target": target})
     rho = pulse.simulate(ladder, dev.qudit_handles[0], levels=3).density_matrix
     assert rho[2, 2].real > 0.97
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        (
+            "drive(d, square(40, 0.1), d.tone)",
+            r"drive\(\) takes a line and a waveform, and a tone only by keyword: .*"
+            r"drive\(line, waveform, tone=tone\) on another; got 3 positional arguments",
+        ),
+        (
+            "readout(r, square(40, 0.1), r.tone)",
+            r"readout\(\) takes .* a tone only by keyword: .* got 3 positional arguments",
+        ),
+        (
+            "line, tone = d",
+            r"cannot unpack a drive line into 2 names: a line is one value, not a pair; "
+            r"write `line = get_drive_line\(q\)` and use line.tone for its tone",
+        ),
+        (
+            "for line in r:\n        wait(line, 8)",
+            r"a line is one value, and its tone is line.tone",
+        ),
+    ],
+)
+def test_a_line_is_one_value_and_its_tone_is_passed_by_keyword(body, message):
+    namespace: dict = {}
+    exec(
+        "from cudaq_pulse.ops import *\n"
+        f"def k(q):\n    d = get_drive_line(q)\n    r = get_readout_line(q)\n    {body}\n",
+        namespace,
+    )
+    with pytest.raises(pulse.CompilationError, match=message):
+        pulse.compile(pulse.kernel(namespace["k"])).lower(Q[0])

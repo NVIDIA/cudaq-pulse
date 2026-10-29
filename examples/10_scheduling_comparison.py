@@ -21,15 +21,15 @@ cal = {"base_duration": 20 * pulse.ns, "duration_step": 10 * pulse.ns, "sigma": 
 def four_qubit(qs):
     lines, tones = [], []
     for i in range(4):
-        line, tone = get_drive_line(qs[i])
+        line = get_drive_line(qs[i])
         lines.append(line)
-        tones.append(tone)
+        tones.append(line.tone)
     durations = [cal["base_duration"] + i * cal["duration_step"] for i in range(4)]
     for i in range(4):
-        drive(lines[i], gaussian(durations[i], 0.25, cal["sigma"]), tones[i])
+        drive(lines[i], gaussian(durations[i], 0.25, cal["sigma"]), tone=tones[i])
     sync(lines[0], lines[1], lines[2], lines[3])
     for i in range(4):
-        drive(lines[i], gaussian(durations[i], 0.25, cal["sigma"]), tones[i])
+        drive(lines[i], gaussian(durations[i], 0.25, cal["sigma"]), tone=tones[i])
 
 
 def print_timeline(compiled: pulse.Lowered, label: str) -> int:

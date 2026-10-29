@@ -82,19 +82,19 @@ def decode(syndrome):
 @pulse.kernel
 def decoded_feed_forward(qubit):
     """Measure, decode, and correct; the raw measurement if the decoder is late."""
-    drive_line, drive_tone = get_drive_line(qubit)
-    readout_line, readout_tone = get_readout_line(qubit)
+    drive_line = get_drive_line(qubit)
+    readout_line = get_readout_line(qubit)
 
-    m = readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
+    m = readout(readout_line, square(cal["readout_duration"], 0.05))
     in_time, correction = decode.submit([m]).result(timeout=350 * pulse.ns)
     sync(drive_line, readout_line)
     pi_pulse = square(cal["pi_duration"], cal["pi_amp"])
     if in_time:
         if correction[0]:
-            drive(drive_line, pi_pulse, drive_tone)
+            drive(drive_line, pi_pulse)
     else:
         if m:
-            drive(drive_line, pi_pulse, drive_tone)
+            drive(drive_line, pi_pulse)
 
 
 # ── 2. Adaptive Bayesian T1 tracking ────────────────────────────────────────
@@ -134,25 +134,25 @@ def update_t1(survived, alpha, beta, last_wait_ns):
 @pulse.kernel
 def track_t1(qubit, rounds: int, alpha: float, beta: float, first_wait):
     """Excite, wait, measure, update the estimate, reset; repeat."""
-    drive_line, drive_tone = get_drive_line(qubit)
-    readout_line, readout_tone = get_readout_line(qubit)
+    drive_line = get_drive_line(qubit)
+    readout_line = get_readout_line(qubit)
     pi_pulse = square(cal["pi_duration"], cal["pi_amp"])
     readout_pulse = square(cal["short_readout_duration"], 0.05)
 
-    drive(drive_line, pi_pulse, drive_tone)
+    drive(drive_line, pi_pulse)
     wait(drive_line, first_wait)
     tau_ns = first_wait / pulse.ns
     for _ in range(rounds):
         sync(drive_line, readout_line)
-        m = readout(readout_line, readout_pulse, readout_tone)
+        m = readout(readout_line, readout_pulse)
         alpha, beta, tau_ns = update_t1.submit([m], alpha, beta, tau_ns).result()
         sync(drive_line, readout_line)
         if m:  # active reset
-            drive(drive_line, pi_pulse, drive_tone)
-        drive(drive_line, pi_pulse, drive_tone)
+            drive(drive_line, pi_pulse)
+        drive(drive_line, pi_pulse)
         wait(drive_line, tau_ns * pulse.ns, bounds=WAIT_BOUNDS)
     sync(drive_line, readout_line)
-    readout(readout_line, readout_pulse, readout_tone)
+    readout(readout_line, readout_pulse)
 
 
 # ── 3. Report, simulation and emulation export ──────────────────────────────

@@ -47,8 +47,8 @@ def test_a_coupling_by_its_qudits():
 
 @pulse.kernel
 def _rabi_then_wait(q, tau: float):
-    d, t = get_drive_line(q)
-    drive(d, gaussian(64, 0.1, 16.0), t)
+    d = get_drive_line(q)
+    drive(d, gaussian(64, 0.1, 16.0))
     wait(d, tau)
 
 

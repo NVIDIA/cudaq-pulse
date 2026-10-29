@@ -242,17 +242,17 @@ def _remote(bit, x):
 
 @pulse.kernel
 def _rounds(q, n: int):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     x = 0.1
     for _ in range(n):
-        drive(d, square(40, x), t)
+        drive(d, square(40, x))
         sync(d, r)
-        m = readout(r, square(200, 0.05), rt)
+        m = readout(r, square(200, 0.05))
         x = _update.submit([m], x).result()
         y = _remote.submit([m], x).result()
         sync(d, r)
-        drive(d, square(40, y * 0.0), t)
+        drive(d, square(40, y * 0.0))
 
 
 def _machine(**limits):

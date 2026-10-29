@@ -41,36 +41,36 @@ pick = pulse.classical(
 
 @pulse.kernel
 def chain_switch(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(100, 0.05))
     i = pick.submit([m]).result()
     if i == 0:
-        drive(d, square(40, PI_AMP * 0.25), t)
+        drive(d, square(40, PI_AMP * 0.25))
     elif i == 1:
-        drive(d, square(80, PI_AMP * 0.25), t)
+        drive(d, square(80, PI_AMP * 0.25))
     elif i == 2:
-        drive(d, square(120, PI_AMP * 0.25), t)
+        drive(d, square(120, PI_AMP * 0.25))
     else:
-        drive(d, square(160, PI_AMP * 0.25), t)
+        drive(d, square(160, PI_AMP * 0.25))
 
 
 @pulse.kernel
 def balanced_switch(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(100, 0.05))
     i = pick.submit([m]).result()
     if i < 2:
         if i == 0:
-            drive(d, square(40, PI_AMP * 0.25), t)
+            drive(d, square(40, PI_AMP * 0.25))
         else:
-            drive(d, square(80, PI_AMP * 0.25), t)
+            drive(d, square(80, PI_AMP * 0.25))
     else:
         if i == 2:
-            drive(d, square(120, PI_AMP * 0.25), t)
+            drive(d, square(120, PI_AMP * 0.25))
         else:
-            drive(d, square(160, PI_AMP * 0.25), t)
+            drive(d, square(160, PI_AMP * 0.25))
 
 
 @pytest.mark.parametrize("kernel", [chain_switch, balanced_switch], ids=["chain", "balanced"])
@@ -92,18 +92,18 @@ gate = random_index(4, name="gate", max_latency_ns=20, link=0)
 
 @pulse.kernel
 def random_rotation(q):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     i = gate.submit().result()
     if i < 2:
         if i == 0:
-            drive(d, square(40, PI_AMP * 0.25), t)
+            drive(d, square(40, PI_AMP * 0.25))
         else:
-            drive(d, square(40, PI_AMP * 0.5), t)
+            drive(d, square(40, PI_AMP * 0.5))
     else:
         if i == 2:
-            drive(d, square(40, PI_AMP * 0.75), t)
+            drive(d, square(40, PI_AMP * 0.75))
         else:
-            drive(d, square(40, PI_AMP), t)
+            drive(d, square(40, PI_AMP))
 
 
 def _expected_p1():
@@ -157,11 +157,11 @@ def test_latency_within_the_depletion_time_is_hidden(depletion_ns):
 
     @pulse.kernel
     def feedback(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(200, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(200, 0.05))
         if decide.submit([m]).result()[0]:
-            drive(d, square(40, 0.1), t)
+            drive(d, square(40, 0.1))
 
     lowered = pulse.compile(feedback, device=dev).lower(dev.qudit_handles[0])
     (call,) = lowered.classical_report()
@@ -206,15 +206,15 @@ def count_up(bits, x, done):
 
 @pulse.kernel
 def converging(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     x = 0.0
     done = 0.0
     for _ in range(5):
         if done < 0.5:
-            drive(d, square(40, PI_AMP * 0.5), t)
+            drive(d, square(40, PI_AMP * 0.5))
         sync(d, r)
-        m = readout(r, square(100, 0.05), rt)
+        m = readout(r, square(100, 0.05))
         x, done = count_up.submit([m], x, done).result()
 
 

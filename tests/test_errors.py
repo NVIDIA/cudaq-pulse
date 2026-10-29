@@ -193,8 +193,8 @@ def test_the_specialization_warning_is_a_pulse_warning_and_a_runtime_warning():
 
     @pulse.kernel
     def k(q, x: float):
-        d, t = get_drive_line(q)
-        drive(d, square(int(x), 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(int(x), 0.1))
 
     with pytest.warns(pulse.PulseWarning, match="float argument 'x'") as record:
         pulse.compile(k).lower(Q[0], 8.0)

@@ -54,28 +54,28 @@ Q = pulse.device({"target": _TARGET}).qudit_handles
 
 
 def t1(q, tau: float):
-    d, t = get_drive_line(q)
-    drive(d, square(40, _PI), t)
+    d = get_drive_line(q)
+    drive(d, square(40, _PI))
     wait(d, tau)
 
 
 def ramsey(q, tau: float):
     # Virtual detuning: the second pulse's phase turns once per 200 cycles.
-    d, t = get_drive_line(q)
-    drive(d, square(40, _HALF_PI), t)
+    d = get_drive_line(q)
+    drive(d, square(40, _HALF_PI))
     wait(d, tau)
-    shift_phase(t, math.pi * tau / 100)
-    drive(d, square(40, _HALF_PI), t)
+    shift_phase(d.tone, math.pi * tau / 100)
+    drive(d, square(40, _HALF_PI))
 
 
 def echo(q, tau: float):
-    d, t = get_drive_line(q)
-    set_frequency(t, 5.0e9 + _DETUNING_HZ)
-    drive(d, square(40, _HALF_PI), t)
+    d = get_drive_line(q)
+    set_frequency(d.tone, 5.0e9 + _DETUNING_HZ)
+    drive(d, square(40, _HALF_PI))
     wait(d, tau / 2)
-    drive(d, square(40, _PI), t)
+    drive(d, square(40, _PI))
     wait(d, tau / 2)
-    drive(d, square(40, _HALF_PI), t)
+    drive(d, square(40, _HALF_PI))
 
 
 def _static(fn):
@@ -140,13 +140,13 @@ def test_the_gpu_path_simulates_the_bound_module(monkeypatch):
 def test_a_call_with_an_odd_echo_rounds_each_half_up():
     @pulse.kernel
     def rounded(q):
-        d, t = get_drive_line(q)
-        set_frequency(t, 5.0e9 + _DETUNING_HZ)
-        drive(d, square(40, _HALF_PI), t)
+        d = get_drive_line(q)
+        set_frequency(d.tone, 5.0e9 + _DETUNING_HZ)
+        drive(d, square(40, _HALF_PI))
         wait(d, 51)
-        drive(d, square(40, _PI), t)
+        drive(d, square(40, _PI))
         wait(d, 51)
-        drive(d, square(40, _HALF_PI), t)
+        drive(d, square(40, _HALF_PI))
 
     got = _rho(pulse.compile(pulse.kernel(echo)).lower(Q[0], 101.0), "cpu")
     want = _rho(rounded.lower(Q[0]), "cpu")

@@ -183,11 +183,11 @@ def test_a_native_handler_drives_a_simulation(handler_library):
     def k(a, b, c, d, flag):
         ms = []
         for q in (a, b, c, d):
-            r, rt = get_readout_line(q)
-            ms.append(readout(r, square(100, 0.05), rt))
-        f, ft = get_drive_line(flag)
+            r = get_readout_line(q)
+            ms.append(readout(r, square(100, 0.05)))
+        f = get_drive_line(flag)
         if parity.submit(ms).result()[0]:
-            drive(f, square(40, PI_AMP), ft)
+            drive(f, square(40, PI_AMP))
 
     dev = _device(n=5)
     low = pulse.compile(k, device=dev).lower(*dev.qudit_handles[:5])

@@ -66,9 +66,9 @@ def surface_code_cycle(qubits):
     lines = []
     tones = []
     for i in range(n_qubits):
-        line, tone = get_drive_line(qubits[i])
+        line = get_drive_line(qubits[i])
         lines.append(line)
-        tones.append(tone)
+        tones.append(line.tone)
     duration, sigma, cz_slot = cal["x_duration"], cal["x_sigma"], cal["cz_slot"]
 
     for auxiliaries, basis_change, halves in (
@@ -76,9 +76,9 @@ def surface_code_cycle(qubits):
         (x_auxiliaries, data_qubits, x_steps),
     ):
         for i in auxiliaries:
-            drive(lines[i], drag(duration, half_pi_amplitude, sigma, 0.0), tones[i])
+            drive(lines[i], drag(duration, half_pi_amplitude, sigma, 0.0), tone=tones[i])
         for i in basis_change:
-            drive(lines[i], drag(duration, half_pi_amplitude, sigma, 0.0), tones[i])
+            drive(lines[i], drag(duration, half_pi_amplitude, sigma, 0.0), tone=tones[i])
         for h in range(2):
             for gates in halves[h]:
                 # A barrier over every line, then the step's CZ slots.
@@ -96,11 +96,11 @@ def surface_code_cycle(qubits):
             if h == 0:
                 # The echo between the second and third step of each half.
                 for i in data_qubits:
-                    drive(lines[i], drag(duration, pi_amplitude, sigma, 0.0), tones[i])
+                    drive(lines[i], drag(duration, pi_amplitude, sigma, 0.0), tone=tones[i])
         for i in auxiliaries:
-            drive(lines[i], drag(duration, half_pi_amplitude, sigma, 0.0), tones[i])
+            drive(lines[i], drag(duration, half_pi_amplitude, sigma, 0.0), tone=tones[i])
         for i in basis_change:
-            drive(lines[i], drag(duration, half_pi_amplitude, sigma, 0.0), tones[i])
+            drive(lines[i], drag(duration, half_pi_amplitude, sigma, 0.0), tone=tones[i])
         for i in range(n_qubits - 1):
             sync(lines[i], lines[i + 1])
         for i in range(n_qubits - 1):

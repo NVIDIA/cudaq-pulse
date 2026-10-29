@@ -59,8 +59,8 @@ def kernel[**P](
 
         @cudaq_pulse.kernel
         def rabi(q, amp: float):
-            d, t = get_drive_line(q)
-            drive(d, gaussian(40, amp, 10.0), t)
+            d = get_drive_line(q)
+            drive(d, gaussian(40, amp, 10.0))
 
         dev = cudaq_pulse.device("transmon_krinner_17q")
         rabi(dev.qudit_handles[0], 0.3)

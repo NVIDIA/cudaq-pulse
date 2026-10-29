@@ -40,20 +40,20 @@ def _qubits(n):
 
 @pulse.kernel(schedule="asap")
 def asap_pair(db, tb, dc, tc):
-    drive(db, square(100, 0.1), tb)
-    drive(dc, square(40, 0.1), tc)
+    drive(db, square(100, 0.1), tone=tb)
+    drive(dc, square(40, 0.1), tone=tc)
 
 
 @pulse.kernel(schedule="alap")
 def alap_pair(db, tb, dc, tc):
-    drive(db, square(100, 0.1), tb)
-    drive(dc, square(40, 0.1), tc)
+    drive(db, square(100, 0.1), tone=tb)
+    drive(dc, square(40, 0.1), tone=tc)
 
 
 @pulse.kernel
 def plain_pair(db, tb, dc, tc):
-    drive(db, square(100, 0.1), tb)
-    drive(dc, square(40, 0.1), tc)
+    drive(db, square(100, 0.1), tone=tb)
+    drive(dc, square(40, 0.1), tone=tc)
 
 
 def _after_long_drive(pair):
@@ -61,11 +61,11 @@ def _after_long_drive(pair):
 
     @pulse.kernel
     def top(qa, qb, qc):
-        da, ta = get_drive_line(qa)
-        db, tb = get_drive_line(qb)
-        dc, tc = get_drive_line(qc)
-        drive(da, square(200, 0.1), ta)
-        pair(db, tb, dc, tc)
+        da = get_drive_line(qa)
+        db = get_drive_line(qb)
+        dc = get_drive_line(qc)
+        drive(da, square(200, 0.1))
+        pair(db, db.tone, dc, dc.tone)
 
     return top
 
@@ -76,13 +76,13 @@ def _after_long_drive(pair):
 def test_bare_and_called_decorator_forms_agree():
     @pulse.kernel()
     def called(q):
-        d, t = get_drive_line(q)
-        drive(d, square(40, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(40, 0.1))
 
     @pulse.kernel
     def bare(q):
-        d, t = get_drive_line(q)
-        drive(d, square(40, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(40, 0.1))
 
     q = Q[0]
     assert _timeline(called.lower(q)) == _timeline(bare.lower(q))
@@ -130,10 +130,10 @@ def test_compile_schedule_sets_only_the_compiled_kernels_policy():
 def test_compiled_kernel_defaults_to_its_own_schedule():
     @pulse.kernel(schedule="asap")
     def top(qa, qb):
-        da, ta = get_drive_line(qa)
-        db, tb = get_drive_line(qb)
-        drive(da, square(200, 0.1), ta)
-        drive(db, square(40, 0.1), tb)
+        da = get_drive_line(qa)
+        db = get_drive_line(qb)
+        drive(da, square(200, 0.1))
+        drive(db, square(40, 0.1))
 
     qubits = _qubits(2)
     assert _starts(top.lower(*qubits)) == [0, 0]
@@ -142,8 +142,8 @@ def test_compiled_kernel_defaults_to_its_own_schedule():
 
 def test_kernel_without_schedule_is_scheduled_with_its_caller():
     def helper(db, tb, dc, tc):
-        drive(db, square(100, 0.1), tb)
-        drive(dc, square(40, 0.1), tc)
+        drive(db, square(100, 0.1), tone=tb)
+        drive(dc, square(40, 0.1), tone=tc)
 
     qubits = _qubits(3)
     as_kernel = _after_long_drive(plain_pair).lower(*qubits)
@@ -166,26 +166,26 @@ def test_flatten_schedules_ignores_called_kernels_policies(policy):
 def test_three_levels_of_blocks_compose():
     @pulse.kernel(schedule="asap")
     def inner(x, tx, y, ty):
-        drive(x, square(40, 0.1), tx)
-        drive(y, square(20, 0.1), ty)
+        drive(x, square(40, 0.1), tone=tx)
+        drive(y, square(20, 0.1), tone=ty)
 
     @pulse.kernel(schedule="alap")
     def middle(x, tx, y, ty):
-        drive(x, square(100, 0.1), tx)
+        drive(x, square(100, 0.1), tone=tx)
         inner(x, tx, y, ty)
 
     @pulse.kernel(schedule="asap")
     def outer(x, tx, y, ty):
-        drive(y, square(60, 0.1), ty)
+        drive(y, square(60, 0.1), tone=ty)
         middle(x, tx, y, ty)
 
     @pulse.kernel
     def top(qx, qy, qz):
-        x, tx = get_drive_line(qx)
-        y, ty = get_drive_line(qy)
-        z, tz = get_drive_line(qz)
-        drive(z, square(300, 0.1), tz)
-        outer(x, tx, y, ty)
+        x = get_drive_line(qx)
+        y = get_drive_line(qy)
+        z = get_drive_line(qz)
+        drive(z, square(300, 0.1))
+        outer(x, x.tone, y, y.tone)
 
     compiled = top.lower(*_qubits(3))
     # Same placement as the three_levels lit test.
@@ -200,15 +200,15 @@ def test_three_levels_of_blocks_compose():
 
 def test_block_in_a_rolled_loop_keeps_the_loop():
     @pulse.kernel(schedule="asap")
-    def echo(d, t):
-        drive(d, square(40, 0.1), t)
+    def echo(d):
+        drive(d, square(40, 0.1))
         wait(d, 60)
 
     @pulse.kernel
     def top(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(8):
-            echo(d, t)
+            echo(d)
 
     compiled = pulse.compile(top, schedule="asap", unroll_threshold=0).lower(Q[0])
     assert "scf.for" in compiled.mlir()
@@ -224,20 +224,20 @@ def test_measurement_from_a_block_controls_the_caller():
     @pulse.kernel(schedule="alap")
     def measure(d, t, r, rt):
         sync(d, r)
-        m = readout(r, square(400, 0.05), rt)
+        m = readout(r, square(400, 0.05), tone=rt)
         if m:
-            drive(d, square(40, 0.1), t)
+            drive(d, square(40, 0.1), tone=t)
         return m
 
     @pulse.kernel
     def top(qa, qb):
-        da, ta = get_drive_line(qa)
-        r, rt = get_readout_line(qa)
-        db, tb = get_drive_line(qb)
-        drive(da, square(100, 0.1), ta)
-        m = measure(da, ta, r, rt)
+        da = get_drive_line(qa)
+        r = get_readout_line(qa)
+        db = get_drive_line(qb)
+        drive(da, square(100, 0.1))
+        m = measure(da, da.tone, r, r.tone)
         if m:
-            drive(db, square(40, 0.1), tb)
+            drive(db, square(40, 0.1))
 
     events = top.lower(*_qubits(2)).schedule
     readout_event = next(e for e in events if e.kind == "readout")
@@ -248,15 +248,15 @@ def test_measurement_from_a_block_controls_the_caller():
 
 def test_tone_threaded_into_a_block_waits_for_its_pulse():
     @pulse.kernel(schedule="asap")
-    def on_target(db, tb):
-        drive(db, square(40, 0.1), tb)
+    def on_target(db):
+        drive(db, square(40, 0.1))
 
     @pulse.kernel
     def top(qa, qb):
-        da, ta = get_drive_line(qa)
-        db, tb = get_drive_line(qb)
-        drive(da, square(300, 0.1), tb)  # cross-resonance at qubit b's tone
-        on_target(db, tb)
+        da = get_drive_line(qa)
+        db = get_drive_line(qb)
+        drive(da, square(300, 0.1), tone=db.tone)  # cross-resonance at qubit b's tone
+        on_target(db)
 
     assert _starts(top.lower(*_qubits(2))) == [0, 300]
 
@@ -266,17 +266,17 @@ def test_tone_threaded_into_a_block_waits_for_its_pulse():
 
 def test_a_float_parameter_does_not_change_a_blocks_schedule():
     @pulse.kernel(schedule="asap")
-    def pulse_pair(db, tb, dc, tc, amp: float):
-        drive(db, square(100, amp), tb)
-        drive(dc, square(40, amp), tc)
+    def pulse_pair(db, dc, amp: float):
+        drive(db, square(100, amp))
+        drive(dc, square(40, amp))
 
     @pulse.kernel
     def top(qa, qb, qc, amp: float):
-        da, ta = get_drive_line(qa)
-        db, tb = get_drive_line(qb)
-        dc, tc = get_drive_line(qc)
-        drive(da, square(200, 0.1), ta)
-        pulse_pair(db, tb, dc, tc, amp)
+        da = get_drive_line(qa)
+        db = get_drive_line(qb)
+        dc = get_drive_line(qc)
+        drive(da, square(200, 0.1))
+        pulse_pair(db, dc, amp)
 
     qubits = _qubits(3)
     compiled = pulse.compile(top)
@@ -340,24 +340,24 @@ def test_programs_without_blocks_schedule_as_before(policy):
 
 
 @pulse.kernel(schedule="asap")
-def asap_layer(d0, t0, d1, t1):
-    drive(d0, square(40, 0.1), t0)
-    drive(d1, square(16, 0.1), t1)
+def asap_layer(d0, d1):
+    drive(d0, square(40, 0.1))
+    drive(d1, square(16, 0.1))
 
 
 def test_a_block_in_a_rolled_loop_keeps_its_timing_each_iteration():
     @pulse.kernel(unroll_threshold=0)
     def repeated(q0, q1, n: int):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
         for _ in range(n):
-            asap_layer(d0, t0, d1, t1)
+            asap_layer(d0, d1)
 
     @pulse.kernel
     def once(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
-        asap_layer(d0, t0, d1, t1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
+        asap_layer(d0, d1)
 
     qubits = _qubits(2)
     single = _timeline(once.lower(*qubits))
@@ -377,10 +377,10 @@ def test_a_block_in_a_rolled_loop_keeps_its_timing_each_iteration():
 def test_a_callee_that_acquires_its_lines_in_a_rolled_loop_stays_rolled():
     @pulse.kernel(schedule="asap")
     def layer(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
-        drive(d0, square(40, 0.1), t0)
-        drive(d1, square(16, 0.1), t1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
+        drive(d0, square(40, 0.1))
+        drive(d1, square(16, 0.1))
 
     @pulse.kernel(unroll_threshold=0)
     def repeated(q0, q1, n: int):
@@ -401,18 +401,18 @@ def test_kernel_schedules_are_checked_where_kernels_are_declared():
 
 def test_a_block_with_a_float_length_wait_keeps_its_shape_when_called():
     @pulse.kernel(schedule="asap")
-    def delayed(da, ta, db, tb, tau: float):
+    def delayed(da, db, tau: float):
         wait(da, tau, bounds=(0, 400))
-        drive(da, square(40, 0.1), ta)
-        drive(db, square(10, 0.1), tb)
+        drive(da, square(40, 0.1))
+        drive(db, square(10, 0.1))
 
     @pulse.kernel
     def top(qa, qb, qc, tau: float):
-        da, ta = get_drive_line(qa)
-        db, tb = get_drive_line(qb)
-        dc, tc = get_drive_line(qc)
-        drive(dc, square(1000, 0.1), tc)
-        delayed(da, ta, db, tb, tau)
+        da = get_drive_line(qa)
+        db = get_drive_line(qb)
+        dc = get_drive_line(qc)
+        drive(dc, square(1000, 0.1))
+        delayed(da, db, tau)
 
     events = top.lower(*_qubits(3), 37.0).schedule
     # Placed whole at the end of the ALAP program, the ASAP block still

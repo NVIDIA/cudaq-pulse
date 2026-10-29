@@ -24,12 +24,12 @@ from tests._handles import Q
 
 @pulse.kernel
 def _bell(q0, q1):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     wf = gaussian(40, 0.3, 10.0)
-    drive(d0, wf, t0)
+    drive(d0, wf)
     sync(d0, d1)
-    drive(d1, wf, t1)
+    drive(d1, wf)
 
 
 _FREQ_2Q = {0: 5.0e9, 1: 5.1e9}
@@ -86,9 +86,9 @@ def test_compile_single_qubit():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wf = gaussian(40, 0.3, 10.0)
-        drive(d, wf, t)
+        drive(d, wf)
 
     ck = k.lower(Q[0])
     assert "pulse.drive" in ck.mlir()
@@ -98,10 +98,10 @@ def test_compile_folds_phases():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        shift_phase(t, math.pi / 4)
+        d = get_drive_line(q)
+        shift_phase(d.tone, math.pi / 4)
         wf = gaussian(40, 0.3, 10.0)
-        drive(d, wf, t)
+        drive(d, wf)
 
     ck = k.lower(Q[0])
     assert ck.mlir() is not None
@@ -112,11 +112,11 @@ def test_compile_with_fusion():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         sq1 = square(50, 0.2)
-        drive(d, sq1, t)
+        drive(d, sq1)
         sq2 = square(50, 0.2)
-        drive(d, sq2, t)
+        drive(d, sq2)
 
     ck = k.lower(Q[0])
     assert ck.mlir() is not None
@@ -124,10 +124,10 @@ def test_compile_with_fusion():
 
 @pulse.kernel
 def _ramsey(q, phase: float):
-    d, t = get_drive_line(q)
-    drive(d, gaussian(40, 0.3, 10.0), t)
-    shift_phase(t, phase)
-    drive(d, gaussian(40, 0.3, 10.0), t)
+    d = get_drive_line(q)
+    drive(d, gaussian(40, 0.3, 10.0))
+    shift_phase(d.tone, phase)
+    drive(d, gaussian(40, 0.3, 10.0))
 
 
 def test_a_phase_from_a_float_folds_into_the_drive_once_bound():
@@ -141,9 +141,9 @@ def test_a_phase_from_a_float_folds_into_the_drive_once_bound():
 
 @pulse.kernel
 def _two_squares(q, a: float, b: float):
-    d, t = get_drive_line(q)
-    drive(d, square(50, a), t)
-    drive(d, square(50, b), t)
+    d = get_drive_line(q)
+    drive(d, square(50, a))
+    drive(d, square(50, b))
 
 
 def test_squares_of_amplitudes_bound_equal_fuse():

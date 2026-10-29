@@ -44,8 +44,8 @@ def _exec_kernel(source: str, **names):
 def test_a_wait_length_from_the_friction_log_compiles_once_without_a_warning():
     @pulse.kernel
     def t1_shot(q, wait_ns: float):
-        d, t = get_drive_line(q)
-        drive(d, square(40, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(40, 0.1))
         wait(d, wait_ns)
 
     caught, compiled = _lower_three(t1_shot, 2000.0, step=40.0)
@@ -57,8 +57,8 @@ def test_a_wait_length_from_the_friction_log_compiles_once_without_a_warning():
 def test_a_waveform_duration_warns_once():
     @pulse.kernel
     def k(q, width: float):
-        d, t = get_drive_line(q)
-        drive(d, square(width, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(width, 0.1))
 
     caught, compiled = _lower_three(k, 40.0, step=8.0)
     assert compiled == 3
@@ -75,8 +75,8 @@ def test_a_waveform_duration_warns_once():
 def test_a_wait_length_through_floor_division_still_warns():
     @pulse.kernel
     def k(q, tau: float):
-        d, t = get_drive_line(q)
-        drive(d, square(40, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(40, 0.1))
         wait(d, tau // 2)
 
     caught, compiled = _lower_three(k, 400.0, step=4.0)
@@ -97,8 +97,8 @@ def test_a_wait_length_through_floor_division_still_warns():
 def test_nonlinear_uses_name_the_operation_and_line(expression, operation):
     k = _exec_kernel(
         "def k(q, amp: float):\n"
-        "    d, t = get_drive_line(q)\n"
-        f"    drive(d, square(10, {expression}), t)\n"
+        "    d = get_drive_line(q)\n"
+        f"    drive(d, square(10, {expression}))\n"
     )
     caught, compiled = _lower_three(k, 0.1)
     assert compiled == 3
@@ -109,9 +109,9 @@ def test_nonlinear_uses_name_the_operation_and_line(expression, operation):
 def test_a_structural_use_names_the_line_and_suggests_int_or_a_fixed_value():
     k = _exec_kernel(
         "def k(q, n: float):\n"
-        "    d, t = get_drive_line(q)\n"
+        "    d = get_drive_line(q)\n"
         "    for _ in range(int(n)):\n"
-        "        drive(d, square(40, 0.1), t)\n"
+        "        drive(d, square(40, 0.1))\n"
     )
     caught, compiled = _lower_three(k, 2.0, step=1.0)
     assert compiled == 3
@@ -124,9 +124,7 @@ def test_a_structural_use_names_the_line_and_suggests_int_or_a_fixed_value():
 
 
 def test_the_warning_follows_filters_on_pulse_warnings_and_runtime_warnings():
-    source = (
-        "def k(q, n: float):\n    d, t = get_drive_line(q)\n    drive(d, square(int(n), 0.1), t)\n"
-    )
+    source = "def k(q, n: float):\n    d = get_drive_line(q)\n    drive(d, square(int(n), 0.1))\n"
     with warnings.catch_warnings():
         warnings.filterwarnings("error", category=pulse.PulseWarning)
         with pytest.raises(pulse.PulseWarning, match="float argument 'n'"):
@@ -143,8 +141,8 @@ def test_a_use_in_a_helper_names_the_kernel_line_and_the_helper_line():
         "def pulse_of(width):\n"
         "    return square(width, 0.1)\n"
         "def k(q, width: float):\n"
-        "    d, t = get_drive_line(q)\n"
-        "    drive(d, pulse_of(width), t)\n",
+        "    d = get_drive_line(q)\n"
+        "    drive(d, pulse_of(width))\n",
         square=square,
     )
     caught, _ = _lower_three(k, 40.0, step=8.0)
@@ -156,9 +154,9 @@ def test_a_use_in_a_helper_names_the_kernel_line_and_the_helper_line():
 def test_the_warning_is_once_per_kernel_and_parameter_not_per_call():
     k = _exec_kernel(
         "def k(q, width: float, amp: float):\n"
-        "    d, t = get_drive_line(q)\n"
-        "    drive(d, square(width, 0.1), t)\n"
-        "    drive(d, square(40, abs(amp)), t)\n"
+        "    d = get_drive_line(q)\n"
+        "    drive(d, square(width, 0.1))\n"
+        "    drive(d, square(40, abs(amp)))\n"
     )
     first, second = pulse.compile(k), pulse.compile(k)
     with warnings.catch_warnings(record=True) as caught:
@@ -185,9 +183,9 @@ def test_compiles_tracing_at_once_warn_once():
 
     @pulse.kernel
     def k(q, width: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         meet()
-        drive(d, square(width, 0.1), t)
+        drive(d, square(width, 0.1))
 
     compiled = [pulse.compile(k), pulse.compile(k)]
     errors: list[BaseException] = []
@@ -212,9 +210,9 @@ def test_compiles_tracing_at_once_warn_once():
 def test_linear_uses_stay_runtime_parameters_and_do_not_warn():
     @pulse.kernel
     def k(q, amp: float, phase: float):
-        d, t = get_drive_line(q)
-        shift_phase(t, -phase / 2)
-        drive(d, square(10, 2 * amp - 0.1), t)
+        d = get_drive_line(q)
+        shift_phase(d.tone, -phase / 2)
+        drive(d, square(10, 2 * amp - 0.1))
 
     caught, compiled = _lower_three(k, 0.1, 0.2)
     assert caught == []

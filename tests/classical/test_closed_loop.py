@@ -55,12 +55,12 @@ READ_WAIT = STORE.reader("wait_cycles", bounds=(0.0, 80000.0))
 
 @pulse.kernel
 def t1_shot(q, amplitude: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, amplitude), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, amplitude))
     wait(d, READ_WAIT.submit().result(), bounds=(0, 80000))
     sync(d, r)
-    readout(r, square(400, 0.05), rt)
+    readout(r, square(400, 0.05))
 
 
 def test_ten_thousand_iterations_run_without_compiling_again():

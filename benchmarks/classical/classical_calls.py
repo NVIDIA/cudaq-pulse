@@ -59,10 +59,10 @@ def many_calls(n: int, links: int):
 
     @pulse.kernel
     def kernel(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(n):
             a = functions[i % links].submit(0.1).result()
-            drive(d, square(8, a), t)
+            drive(d, square(8, a))
 
     return kernel
 
@@ -74,46 +74,46 @@ decode = pulse.classical(
 
 @pulse.kernel
 def active_reset(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(1000, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(1000, 0.05))
     sync(d, r)
     if m:
-        drive(d, square(40, PI_AMP), t)
+        drive(d, square(40, PI_AMP))
 
 
 @pulse.kernel
 def waiting_reset(q):
     # Active reset that idles as long as the decoder's budget, for a
     # comparison on the same timeline.
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(1000, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(1000, 0.05))
     sync(d, r)
     wait(d, 401)
     if m:
-        drive(d, square(40, PI_AMP), t)
+        drive(d, square(40, PI_AMP))
 
 
 @pulse.kernel
 def decoded_reset(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(1000, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(1000, 0.05))
     sync(d, r)
     if decode.submit([m]).result()[0]:
-        drive(d, square(40, PI_AMP), t)
+        drive(d, square(40, PI_AMP))
 
 
 @pulse.kernel
 def feedback(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(300, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(300, 0.05))
     ok, fix = decode.submit([m]).result(timeout=500 * pulse.ns)
     if ok:
         if fix[0]:
-            drive(d, square(40, 0.1), t)
+            drive(d, square(40, 0.1))
 
 
 def _median(fn, repeats: int) -> float:

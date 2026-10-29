@@ -201,12 +201,12 @@ def test_external_function_has_no_body():
 
 @pulse.kernel
 def _reset(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(200, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(200, 0.05))
     fix = echo.submit([m]).result()
     if fix[0]:
-        drive(d, square(40, math.pi / 20), t)
+        drive(d, square(40, math.pi / 20))
 
 
 def test_submit_and_result_become_classical_ops():
@@ -222,11 +222,11 @@ def test_submit_and_result_become_classical_ops():
 def test_answers_set_pulse_parameters():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         a = double.submit(0.25).result()
-        shift_phase(t, a)
-        shift_frequency(t, 1e6 * a)
-        drive(d, gaussian(40, a * 0.5 + 0.1, 10.0), t)
+        shift_phase(d.tone, a)
+        shift_frequency(d.tone, 1e6 * a)
+        drive(d, gaussian(40, a * 0.5 + 0.1, 10.0))
 
     text = _mlir(k, Q[0])
     assert "pulse.shift_phase" in text and "pulse.shift_frequency" in text
@@ -238,12 +238,12 @@ def test_branch_on_a_comparison_of_an_integer_answer(compare):
     namespace = {}
     exec(  # noqa: S102 - builds one kernel per comparison operator
         "def body(q):\n"
-        "    d, t = get_drive_line(q)\n"
-        "    r, rt = get_readout_line(q)\n"
-        "    m = readout(r, square(100, 0.05), rt)\n"
+        "    d = get_drive_line(q)\n"
+        "    r = get_readout_line(q)\n"
+        "    m = readout(r, square(100, 0.05))\n"
         "    setting = choose.submit([m]).result()\n"
         f"    if setting {compare}:\n"
-        "        drive(d, square(40, 0.1), t)\n",
+        "        drive(d, square(40, 0.1))\n",
         {"choose": choose},
         namespace,
     )
@@ -254,12 +254,12 @@ def test_branch_on_a_comparison_of_an_integer_answer(compare):
 def test_branch_on_a_float_answer_and_its_negation():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         x = double.submit(0.3).result()
         if x > 0.5:
-            drive(d, square(40, 0.1), t)
+            drive(d, square(40, 0.1))
         if not x:
-            drive(d, square(40, 0.2), t)
+            drive(d, square(40, 0.2))
 
     text = _mlir(k, Q[0])
     assert text.count("arith.cmpf") == 2
@@ -268,12 +268,12 @@ def test_branch_on_a_float_answer_and_its_negation():
 def test_not_on_an_answer_bit():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         fix = echo.submit([m]).result()
         if not fix[0]:
-            drive(d, square(40, 0.1), t)
+            drive(d, square(40, 0.1))
 
     assert "scf.if" in _mlir(k, Q[0])
 
@@ -281,12 +281,12 @@ def test_not_on_an_answer_bit():
 def test_link_is_threaded_through_a_rolled_loop():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         for _ in range(50):
-            m = readout(r, square(100, 0.05), rt)
+            m = readout(r, square(100, 0.05))
             if echo.submit([m]).result()[0]:
-                drive(d, square(40, 0.1), t)
+                drive(d, square(40, 0.1))
 
     text = _mlir(k, Q[0], unroll_threshold=0)
     assert re.search(r"scf.for .*iter_args\(.*\) -> \(.*!classical.link", text)
@@ -296,15 +296,15 @@ def test_link_is_threaded_through_a_rolled_loop():
 def test_link_is_threaded_through_branch_arms():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         if m:
             double.submit(1.0)
         else:
-            drive(d, square(40, 0.1), t)
+            drive(d, square(40, 0.1))
         a = double.submit(2.0).result()
-        drive(d, square(40, a), t)
+        drive(d, square(40, a))
 
     text = _mlir(k, Q[0])
     assert re.search(r"scf.if .* -> \(.*!classical.link", text)
@@ -313,17 +313,17 @@ def test_link_is_threaded_through_branch_arms():
 
 def test_a_kernel_with_its_own_schedule_returns_a_future():
     @pulse.kernel(schedule="alap")
-    def measure_and_submit(r, rt):
-        m = readout(r, square(300, 0.05), rt)
+    def measure_and_submit(r):
+        m = readout(r, square(300, 0.05))
         return echo.submit([m])
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        answer = measure_and_submit(r, rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        answer = measure_and_submit(r)
         if answer.result()[0]:
-            drive(d, square(40, 0.1), t)
+            drive(d, square(40, 0.1))
 
     low = pulse.compile(k).lower(Q[0])
     report = low.classical_report()
@@ -335,13 +335,13 @@ def test_a_kernel_with_its_own_schedule_returns_a_future():
 def test_two_links_get_two_link_values():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         a = echo.submit([m])
         b = double.submit(0.5)
         if a.result()[0]:
-            drive(d, square(40, b.result()), t)
+            drive(d, square(40, b.result()))
 
     text = _mlir(k, Q[0])
     assert "classical.get_link {device = 0 : i64}" in text
@@ -351,10 +351,10 @@ def test_two_links_get_two_link_values():
 def test_result_twice_is_one_wait():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         a = double.submit(0.5)
-        drive(d, square(40, a.result()), t)
-        drive(d, square(40, a.result()), t)
+        drive(d, square(40, a.result()))
+        drive(d, square(40, a.result()))
 
     assert _mlir(k, Q[0]).count("classical.wait") == 1
 
@@ -362,10 +362,10 @@ def test_result_twice_is_one_wait():
 def test_timeout_at_the_call_gives_an_ok_bit():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         ok, value = double.submit(0.5).result(timeout=100)
         if ok:
-            drive(d, square(40, value), t)
+            drive(d, square(40, value))
 
     text = _mlir(k, Q[0])
     assert re.search(r"classical.wait .*timeout_ns = 5.0+e\+01.*: i1, f64", text)
@@ -382,12 +382,12 @@ def test_several_results_come_back_as_a_tuple():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        a = readout(r, square(100, 0.05), rt)
-        b = readout(r, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        a = readout(r, square(100, 0.05))
+        b = readout(r, square(100, 0.05))
         shift, (x, y) = fit.submit([a, b]).result()
-        drive(d, square(40, shift + x + y), t)
+        drive(d, square(40, shift + x + y))
 
     assert re.search(r"classical.wait .*: f64, f64, f64", _mlir(k, Q[0]))
 
@@ -402,15 +402,15 @@ def _compile_error(body, match):
 
 def test_a_duration_cannot_come_from_an_answer():
     def square_duration(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        n = choose.submit([readout(r, square(10, 0.1), rt)]).result()
-        drive(d, square(n, 0.1), t)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        n = choose.submit([readout(r, square(10, 0.1))]).result()
+        drive(d, square(n, 0.1))
 
     def gaussian_duration(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         x = double.submit(0.5).result()
-        drive(d, gaussian(x * 10, 0.1, 4.0), t)
+        drive(d, gaussian(x * 10, 0.1, 4.0))
 
     # A wait may take its length from an answer (a variable wait); a
     # waveform's length is structural.
@@ -426,12 +426,12 @@ def test_argument_errors():
         echo.submit([1])
 
     def measurement_for_float(q):
-        r, rt = get_readout_line(q)
-        double.submit(readout(r, square(10, 0.1), rt))
+        r = get_readout_line(q)
+        double.submit(readout(r, square(10, 0.1)))
 
     def too_many_measurements(q):
-        r, rt = get_readout_line(q)
-        m = readout(r, square(10, 0.1), rt)
+        r = get_readout_line(q)
+        m = readout(r, square(10, 0.1))
         echo.submit([m, m])
 
     def keyword(q):
@@ -463,18 +463,18 @@ def test_misuse_errors():
         double.submit(1.0).result(timeout=t)
 
     def taken_in_a_loop(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         a = double.submit(1.0)
         for _ in range(3):
-            drive(d, square(40, a.result()), t)
+            drive(d, square(40, a.result()))
 
     def taken_outside_its_arm(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         a = double.submit(1.0)
-        if readout(r, square(10, 0.1), rt):
+        if readout(r, square(10, 0.1)):
             b = double.submit(2.0)
-            drive(d, square(40, a.result()), t)
+            drive(d, square(40, a.result()))
         else:
             b = double.submit(3.0)
         b.result()
@@ -496,9 +496,9 @@ def test_an_answer_cannot_leave_its_kernel_with_its_own_schedule():
         return double.submit(1.0).result()
 
     def outer(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         a = inner(q)
-        drive(d, square(40, a), t)
+        drive(d, square(40, a))
 
     _compile_error(outer, "used outside the loop, branch or kernel")
 
@@ -556,8 +556,8 @@ def test_report_and_schedule_events():
 def test_programs_without_calls_are_unchanged():
     @pulse.kernel
     def plain(q):
-        d, t = get_drive_line(q)
-        drive(d, gaussian(40, 0.1, 10.0), t)
+        d = get_drive_line(q)
+        drive(d, gaussian(40, 0.1, 10.0))
 
     text = _mlir(plain, Q[0])
     assert "classical" not in text

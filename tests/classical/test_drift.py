@@ -74,27 +74,27 @@ def test_the_truth_trace_is_json_and_seeded():
 
 @pulse.kernel
 def t1_shot(q, wait_ns: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, PI_AMP), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, PI_AMP))
     wait(d, wait_ns)
     sync(d, r)
-    readout(r, square(40, 0.05), rt)
+    readout(r, square(40, 0.05))
 
 
 @pulse.kernel
 def rabi(q, scale: float):
-    d, t = get_drive_line(q)
-    drive(d, square(40, PI_AMP * scale), t)
+    d = get_drive_line(q)
+    drive(d, square(40, PI_AMP * scale))
 
 
 @pulse.kernel
 def ramsey(q, phase: float):
-    d, t = get_drive_line(q)
-    drive(d, square(40, PI_AMP / 2), t)
+    d = get_drive_line(q)
+    drive(d, square(40, PI_AMP / 2))
     wait(d, 400)
-    shift_phase(t, phase)
-    drive(d, square(40, PI_AMP / 2), t)
+    shift_phase(d.tone, phase)
+    drive(d, square(40, PI_AMP / 2))
 
 
 def _plant():

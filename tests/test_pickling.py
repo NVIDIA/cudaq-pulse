@@ -52,35 +52,35 @@ def _refuse_compile(*args, **kwargs):
 
 @pulse.kernel
 def rabi(q, amp: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, gaussian(40, amp, 10.0), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, gaussian(40, amp, 10.0))
     sync(d, r)
-    return readout(r, square(100, 0.05), rt)
+    return readout(r, square(100, 0.05))
 
 
 @pulse.kernel
 def ramsey(q, tau: float):
-    d, t = get_drive_line(q)
-    drive(d, square(20, 0.1), t)
+    d = get_drive_line(q)
+    drive(d, square(20, 0.1))
     wait(d, tau)
-    drive(d, square(20, 0.1), t)
+    drive(d, square(20, 0.1))
 
 
 @pulse.kernel
 def branch(q, r):
-    d, t = get_drive_line(q)
-    ro, rt = get_readout_line(q)
-    d1, t1 = get_drive_line(r)
-    drive(d, drag(16, 0.25, 4.0, 0.3), t)
-    shift_phase(t, 0.5)
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    d1 = get_drive_line(r)
+    drive(d, drag(16, 0.25, 4.0, 0.3))
+    shift_phase(d.tone, 0.5)
     sync(d, ro)
-    m = readout(ro, square(100, 0.05), rt)
+    m = readout(ro, square(100, 0.05))
     sync(ro, d1)
     if m:
-        drive(d1, square(20, 0.3), t1)
+        drive(d1, square(20, 0.3))
     else:
-        drive(d1, gaussian(20, 0.1, 5.0), t1)
+        drive(d1, gaussian(20, 0.1, 5.0))
 
 
 @pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=400)
@@ -90,13 +90,13 @@ def flip(bits):
 
 @pulse.kernel
 def reset(q):
-    d, t = get_drive_line(q)
-    ro, rt = get_readout_line(q)
-    m = readout(ro, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    m = readout(ro, square(100, 0.05))
     fix = flip.submit([m]).result()
     sync(d, ro)
     if fix[0]:
-        drive(d, square(20, 0.3), t)
+        drive(d, square(20, 0.3))
 
 
 @pulse.kernel
@@ -316,13 +316,13 @@ _CHECKS = [flip]
 
 @pulse.kernel
 def reset_from_a_list(q):
-    d, t = get_drive_line(q)
-    ro, rt = get_readout_line(q)
-    m = readout(ro, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    m = readout(ro, square(100, 0.05))
     fix = _CHECKS[0].submit([m]).result()
     sync(d, ro)
     if fix[0]:
-        drive(d, square(20, 0.3), t)
+        drive(d, square(20, 0.3))
 
 
 def test_a_kernel_reading_a_list_of_classical_functions_compiles_once():
@@ -343,7 +343,7 @@ def test_a_kernel_pickles_by_reference_as_a_function_does():
 
     @pulse.kernel
     def local(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, 4)
 
     def plain(q):
@@ -362,8 +362,8 @@ def cloudpickle():
 def _local_kernel():
     @pulse.kernel(schedule="asap", cache_size=3, unroll_threshold=8)
     def local(q, amp: float):
-        d, t = get_drive_line(q)
-        drive(d, square(20, amp), t)
+        d = get_drive_line(q)
+        drive(d, square(20, amp))
 
     return local
 
@@ -396,8 +396,8 @@ from tests._handles import Q
 
 @pulse.kernel(schedule="asap", cache_size=3)
 def sweep(q, amp: float):
-    d, t = get_drive_line(q)
-    drive(d, square(20, amp), t)
+    d = get_drive_line(q)
+    drive(d, square(20, amp))
 
 sys.stdout.buffer.write({pickler}.dumps((sweep, Q[0], sweep.lower(Q[0], 0.2).mlir())))
 """
@@ -435,9 +435,9 @@ def test_pickle_sends_a_kernel_of_main_by_reference(tmp_path):
 def _repeated(unroll_threshold):
     @pulse.kernel(unroll_threshold=unroll_threshold)
     def repeated(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(4):
-            drive(d, square(20, 0.1), t)
+            drive(d, square(20, 0.1))
 
     return repeated
 
@@ -621,8 +621,8 @@ def test_errors_unpickle_with_their_attributes(make):
 def test_a_tracing_error_unpickles_without_where_tracing_stopped():
     @pulse.kernel
     def broken(q):
-        d, t = get_drive_line(q)
-        drive(d, square(8, 0.1), d)
+        d = get_drive_line(q)
+        drive(d, square(8, 0.1), tone=d)
 
     error = _raised(lambda: broken.lower(Q[0]))
     assert hasattr(error, "pulse_source")

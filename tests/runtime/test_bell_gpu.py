@@ -25,18 +25,18 @@ def test_bell_mlir_structure():
 
     @pulse.kernel
     def bell_cr(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
         # pi/2 X on q0
         x90 = gaussian(40, 0.25, 10.0)
-        drive(d0, x90, t0)
+        drive(d0, x90)
         sync(d0, d1)
         # CR drive on q0 at q1's frequency (simplified)
         cr = square(160, 0.05)
-        drive(d0, cr, t0)
+        drive(d0, cr)
         sync(d0, d1)
         # pi/2 X on q1
-        drive(d1, x90, t1)
+        drive(d1, x90)
 
     ir = (bell_cr, Q[0], Q[1])
     mlir = pulse_mlir(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9, 1: 5.1e9})
@@ -70,8 +70,8 @@ def test_bell_gpu_execution():
 
     @pulse.kernel
     def bell_xx(q0, q1):
-        d0, _t0 = get_drive_line(q0)
-        d1, _t1 = get_drive_line(q1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
         wait(d0, 50)
         wait(d1, 50)
         sync(d0, d1)

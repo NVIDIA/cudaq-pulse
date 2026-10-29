@@ -123,29 +123,29 @@ def _nested(outer, middle, inner, link, take):
 
     @pulse.kernel(schedule=inner)
     def measure(q):
-        r, rt = get_readout_line(q)
-        return decode.submit([readout(r, square(matrix.RO, 0.05), rt)])
+        r = get_readout_line(q)
+        return decode.submit([readout(r, square(matrix.RO, 0.05))])
 
     @pulse.kernel(schedule=middle)
     def beside(q, p):
-        e, u = get_drive_line(p)
+        e = get_drive_line(p)
         future = measure(q)
-        drive(e, square(400, 0.05), u)
+        drive(e, square(400, 0.05))
         return future
 
     @pulse.kernel(schedule=outer)
     def round_(q, p):
-        d, t = get_drive_line(q)
-        drive(d, square(matrix.X90, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(matrix.X90, 0.1))
         return beside(q, p)
 
     @pulse.kernel
     def program(q, p):
-        d, t = get_drive_line(q)
-        e, u = get_drive_line(p)
-        drive(e, square(matrix.SPECTATOR, 0.05), u)
+        d = get_drive_line(q)
+        e = get_drive_line(p)
+        drive(e, square(matrix.SPECTATOR, 0.05))
         if answer(round_(q, p)):
-            drive(d, square(matrix.ARM, 0.3), t)
+            drive(d, square(matrix.ARM, 0.3))
 
     return program, measure
 
@@ -203,7 +203,7 @@ def _in_flight(n, slots, schedule, callee):
     decode, _ = matrix.FUNCTIONS[("controller", "result")]
 
     def burst(r, rt):
-        m = readout(r, square(10, 0.05), rt)
+        m = readout(r, square(10, 0.05), tone=rt)
         futures = [decode.submit([m]) for _ in range(n)]
         for future in futures:
             future.result()
@@ -212,8 +212,8 @@ def _in_flight(n, slots, schedule, callee):
 
     @pulse.kernel
     def k(q):
-        r, rt = get_readout_line(q)
-        inner(r, rt)
+        r = get_readout_line(q)
+        inner(r, r.tone)
 
     return pulse.compile(k, schedule=schedule, machine=machine).lower(Q[0])
 
@@ -253,12 +253,12 @@ def test_a_latency_meets_its_deadline_or_names_the_fix(link, deadline, meets):
 
     @pulse.kernel(schedule="asap")
     def inner(r, rt):
-        return tight.submit([readout(r, square(matrix.RO, 0.05), rt)])
+        return tight.submit([readout(r, square(matrix.RO, 0.05), tone=rt)])
 
     @pulse.kernel
     def k(q):
-        r, rt = get_readout_line(q)
-        inner(r, rt).result()
+        r = get_readout_line(q)
+        inner(r, r.tone).result()
 
     compiled = pulse.compile(k, machine=matrix.MACHINE)
     budget = math.ceil(matrix.LATENCY_NS * matrix.CLOCK) + math.ceil(
@@ -293,8 +293,8 @@ def test_a_future_is_taken_in_the_loop_iteration_that_submitted_it():
 
     @pulse.kernel
     def k(q):
-        r, rt = get_readout_line(q)
-        future = decode.submit([readout(r, square(matrix.RO, 0.05), rt)])
+        r = get_readout_line(q)
+        future = decode.submit([readout(r, square(matrix.RO, 0.05))])
         for _ in range(2):
             take(future)
 

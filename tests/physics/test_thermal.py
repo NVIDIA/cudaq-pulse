@@ -26,7 +26,7 @@ P, T1_US, T2_US, T2_ECHO_US = 0.08, 10.0, 12.0, 18.0
 def _idle(duration):
     @pulse.kernel
     def idle(q):
-        d, _ = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, duration)
 
     return idle

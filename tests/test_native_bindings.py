@@ -16,8 +16,8 @@ from tests._handles import Q
 
 @pulse.kernel
 def _x(q, amplitude: float):
-    d, t = get_drive_line(q)
-    drive(d, square(40, amplitude), t)
+    d = get_drive_line(q)
+    drive(d, square(40, amplitude))
 
 
 def _public(cls):

@@ -51,11 +51,11 @@ n_rabi_points = 21
 
 @pulse.kernel
 def rabi_d5(qubit):
-    drive_line, tone = get_drive_line(qubit)
+    drive_line = get_drive_line(qubit)
     for i in range(n_rabi_points):
         scale = 2 * i / (n_rabi_points - 1)
         rabi_pulse = drag(cal["x_duration"], pi_amplitude * scale, cal["x_sigma"], 0.0)
-        drive(drive_line, rabi_pulse, tone)
+        drive(drive_line, rabi_pulse)
         wait(drive_line, cal["gap"])
 
 

@@ -100,14 +100,16 @@ behavior may change in any 0.x release.
   Kernels take their qudits as parameters; a call without qudit
   handles raises `NoDeviceError` unless the kernel was compiled for a device
   (`pulse.compile(k, device=dev)`).
-- **Lines and their tones.** `line.tone` is a line's own tone, and
-  `line.tones[(lower, upper)]`, a read-only mapping keyed by levels, the
-  tone of each transition of its qudit: the line's own tone is that of the
-  model's `default_transition` (`(0, 1)` in the shipped models), and
-  another transition's starts at its frequency from the model, with phase
-  0. `drive(line, waveform)` and `readout(line, waveform)` play on the
-  line's own tone and `tone=` on another, such as another line's; the
-  frame operations take the tone, as in `shift_phase(line.tone, phase)`.
+- **Lines and their tones.** `get_drive_line(q)` and `get_readout_line(q)`
+  return the line alone, one value that is not unpacked or iterated;
+  `line.tone` is its own tone, and `line.tones[(lower, upper)]`, a
+  read-only mapping keyed by levels, the tone of each transition of its
+  qudit: the line's own tone is that of the model's `default_transition`
+  (`(0, 1)` in the shipped models), and another transition's starts at its
+  frequency from the model, with phase 0. `drive(line, waveform)` and
+  `readout(line, waveform)` play on the line's own tone and, by keyword
+  only, `tone=` on another, such as another line's; the frame operations
+  take the tone, as in `shift_phase(line.tone, phase)`.
   A transition the qudit does not have raises a `KeyError`
   (`pulse.NotFoundError`) that lists those it has.
 - **Loop unrolling.** A `range` loop whose variable is never read is kept
@@ -149,8 +151,8 @@ behavior may change in any 0.x release.
   holds (`self.wf()`, `self.gates.x90(...)`), when it is inherited, a
   `staticmethod` or `classmethod`, stored as a bound method, or an
   object's `__call__`. Lines
-  and tones may be kept in any container, such as a list of `(line, tone)`
-  pairs or a dict, and lists of them support `pop`, `insert`, `extend`,
+  and tones may be kept in any container, such as a list of lines or a
+  dict, and lists of them support `pop`, `insert`, `extend`,
   `remove` and `del xs[i]`. `sync()` takes lists and tuples of lines, as
   in `sync(lines)`. A pulse op given the wrong kind of argument, such as a
   tone where its line belongs, raises a `CompilationError` that names the

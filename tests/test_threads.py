@@ -24,9 +24,9 @@ _FREQ = {i: 5e9 + 1e8 * i for i in range(4)}
 def _many_drives(n):
     @pulse.kernel
     def many(q0):
-        d, t = get_drive_line(q0)
+        d = get_drive_line(q0)
         for i in range(n):
-            drive(d, square(4 + (i % 7), 0.01 * (i % 5)), t)
+            drive(d, square(4 + (i % 7), 0.01 * (i % 5)))
 
     return many
 
@@ -161,8 +161,8 @@ def test_concurrent_first_traces_see_every_pulse_operation(monkeypatch):
     def work(i):
         @pulse.kernel
         def k(q):
-            line, tone = get_drive_line(q)
-            play(line, square(8 + i, 0.1), tone)
+            line = get_drive_line(q)
+            play(line, square(8 + i, 0.1))
 
         return k.lower(Q[0]).mlir().count("pulse.drive %")
 

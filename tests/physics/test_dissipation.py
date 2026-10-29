@@ -20,7 +20,7 @@ from tests.physics.conftest import ref
 def _idle(duration):
     @pulse.kernel
     def idle(q):
-        d, _ = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, duration)
 
     return idle

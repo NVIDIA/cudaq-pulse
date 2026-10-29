@@ -34,7 +34,7 @@ def test_sync_star_lines_from_the_friction_log():
     def k(qubits):
         lines = []
         for q in qubits:
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             lines.append(d)
         sync(*lines)
         for d in lines:
@@ -51,16 +51,16 @@ def test_sync_star_lines_from_the_friction_log():
 
 def test_star_arguments_mix_with_positional_and_keyword_arguments():
     def helper(d, t, n, amp=0.1):
-        drive(d, square(n, amp), t)
+        drive(d, square(n, amp), tone=t)
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        args = (d, t)
+        d = get_drive_line(q)
+        args = (d, d.tone)
         opts = {"amp": 0.3}
         helper(*args, 16, **opts)
-        helper(d, t, *[8], **{"amp": 0.2})
-        drive(d, gaussian(*(40, 0.1), **{"sigma": 10.0}), t)
+        helper(d, d.tone, *[8], **{"amp": 0.2})
+        drive(d, gaussian(*(40, 0.1), **{"sigma": 10.0}))
 
     ops = python_ir(k, Q[0]).ops
     squares = [
@@ -74,9 +74,9 @@ def test_star_arguments_mix_with_positional_and_keyword_arguments():
 def test_star_calls_to_python_functions_run_at_trace_time():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         widths = [8, 24, 16]
-        drive(d, square(max(*widths), 0.1), t)
+        drive(d, square(max(*widths), 0.1))
 
     (sq,) = [op for op in python_ir(k, Q[0]).ops if op.kind == "pulse.square"]
     assert sq.attrs["duration"] == 24
@@ -85,9 +85,9 @@ def test_star_calls_to_python_functions_run_at_trace_time():
 def test_tuple_displays_with_a_star_and_unary_plus():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         widths = (*[8, 16], 24)
-        drive(d, square(widths[-1], +0.25), t)
+        drive(d, square(widths[-1], +0.25))
 
     (sq,) = [op for op in python_ir(k, Q[0]).ops if op.kind == "pulse.square"]
     assert (sq.attrs["duration"], sq.attrs["amplitude"]) == (24, 0.25)
@@ -96,7 +96,7 @@ def test_tuple_displays_with_a_star_and_unary_plus():
 def test_star_unpacking_a_line_is_rejected():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         sync(*d)
 
     with pytest.raises(CompilationError, match="cannot unpack a pulse drive_line value with"):
@@ -106,13 +106,13 @@ def test_star_unpacking_a_line_is_rejected():
 def test_double_star_needs_a_mapping_and_distinct_keys():
     @pulse.kernel
     def not_a_mapping(q):
-        d, t = get_drive_line(q)
-        drive(d, square(**[1, 2]), t)
+        d = get_drive_line(q)
+        drive(d, square(**[1, 2]))
 
     @pulse.kernel
     def repeated(q):
-        d, t = get_drive_line(q)
-        drive(d, square(duration=8, **{"duration": 8, "amplitude": 0.1}), t)
+        d = get_drive_line(q)
+        drive(d, square(duration=8, **{"duration": 8, "amplitude": 0.1}))
 
     with pytest.raises(CompilationError, match="argument after \\*\\* must be a mapping, not list"):
         python_ir(not_a_mapping, Q[0])
@@ -128,22 +128,22 @@ def _pulse_star(*lines, width=16):
 
 
 def _pulse_kwonly(d, t, *, n=20):
-    drive(d, square(n, 0.1), t)
+    drive(d, square(n, 0.1), tone=t)
 
 
 def _pulse_kwargs(d, t, **opts):
-    drive(d, square(opts["n"], opts.get("amp", 0.1)), t)
+    drive(d, square(opts["n"], opts.get("amp", 0.1)), tone=t)
 
 
 def test_helpers_take_star_args_keyword_only_and_double_star_parameters():
     @pulse.kernel
     def k(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
-        _pulse_kwonly(d0, t0, n=14)
-        _pulse_kwonly(d1, t1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
+        _pulse_kwonly(d0, d0.tone, n=14)
+        _pulse_kwonly(d1, d1.tone)
         _pulse_star(d0, d1, width=8)
-        _pulse_kwargs(d0, t0, n=12, amp=0.3)
+        _pulse_kwargs(d0, d0.tone, n=12, amp=0.3)
         # The lines the helpers advanced are the caller's current lines.
         wait(d0, 4)
         wait(d1, 4)
@@ -162,8 +162,8 @@ def test_helpers_take_star_args_keyword_only_and_double_star_parameters():
 def test_helper_binding_errors_name_the_helper():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        _pulse_kwonly(d, t, 14)
+        d = get_drive_line(q)
+        _pulse_kwonly(d, d.tone, 14)
 
     with pytest.raises(CompilationError, match="_pulse_kwonly: too many positional arguments"):
         python_ir(k, Q[0])
@@ -180,8 +180,8 @@ def _passthrough(f):
 
 
 @_passthrough
-def _decorated_x(d, t, n):
-    drive(d, square(n, 0.1), t)
+def _decorated_x(d, n):
+    drive(d, square(n, 0.1))
 
 
 @_passthrough
@@ -192,9 +192,9 @@ def _decorated_wave(n):
 def test_decorated_helpers_from_the_friction_log_are_inlined():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        _decorated_x(d, t, 14)
-        drive(d, _decorated_wave(10), t)
+        d = get_drive_line(q)
+        _decorated_x(d, 14)
+        drive(d, _decorated_wave(10))
 
     ops = python_ir(k, Q[0]).ops
     assert [op.attrs["duration"] for op in ops if op.kind == "pulse.square"] == [14, 10]
@@ -208,7 +208,7 @@ class _Pulses:
         return square(duration, self.amplitude)
 
     def play(self, d, t):
-        drive(d, self.make(8), t)
+        drive(d, self.make(8), tone=t)
 
     def scaled(self, x):
         return self.amplitude * x
@@ -220,10 +220,10 @@ PULSES = _Pulses()
 def test_methods_that_use_pulse_ops_are_inlined():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        drive(d, PULSES.make(40), t)
-        PULSES.play(d, t)
-        drive(d, square(4, PULSES.scaled(2.0)), t)
+        d = get_drive_line(q)
+        drive(d, PULSES.make(40))
+        PULSES.play(d, d.tone)
+        drive(d, square(4, PULSES.scaled(2.0)))
 
     ops = python_ir(k, Q[0]).ops
     squares = [
@@ -244,8 +244,8 @@ def test_partials_of_pulse_helpers_are_inlined():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        drive(d, wave(8), t)
+        d = get_drive_line(q)
+        drive(d, wave(8))
 
     (sq,) = [op for op in python_ir(k, Q[0]).ops if op.kind == "pulse.square"]
     assert (sq.attrs["duration"], sq.attrs["amplitude"]) == (8, 0.1)
@@ -254,9 +254,9 @@ def test_partials_of_pulse_helpers_are_inlined():
 def test_a_pulse_op_in_code_run_as_python_is_a_compilation_error():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         waves = list(map(_make, [8], [0.1]))
-        drive(d, waves[0], t)
+        drive(d, waves[0])
 
     with pytest.raises(CompilationError, match=r"list\(\) calls the pulse op square\(\) but ran"):
         python_ir(k, Q[0])
@@ -265,18 +265,18 @@ def test_a_pulse_op_in_code_run_as_python_is_a_compilation_error():
 # ── Lines and tones held in containers ───────────────────────────────
 
 
-def test_line_tone_pairs_in_a_list_from_the_friction_log():
+def test_lines_in_a_list_from_the_friction_log():
     @pulse.kernel
     def k(q0, q1):
         lines = []
         for q in (q0, q1):
-            lines.append(get_drive_line(q))  # list of (line, tone) tuples
-        drive(lines[0][0], gaussian(40, 0.1, 10.0), lines[0][1])
-        drive(lines[0][0], gaussian(40, 0.1, 10.0), lines[0][1])
-        d, t = lines[0]
-        drive(d, gaussian(40, 0.1, 10.0), t)
-        d, t = lines[0]
-        drive(d, gaussian(40, 0.1, 10.0), t)
+            lines.append(get_drive_line(q))
+        drive(lines[0], gaussian(40, 0.1, 10.0))
+        drive(lines[0], gaussian(40, 0.1, 10.0))
+        d = lines[0]
+        drive(d, gaussian(40, 0.1, 10.0))
+        d = lines[0]
+        drive(d, gaussian(40, 0.1, 10.0))
 
     drives = [op for op in python_ir(k, Q[0], Q[1]).ops if op.kind == "pulse.drive"]
     # Each drive consumes the line and tone the one before it produced.
@@ -295,22 +295,22 @@ def test_lines_in_dicts_and_nested_lists_stay_current():
             by_name[f"q{i}"] = get_drive_line(q)
             nested.append([get_drive_line(q)])
         for _ in range(3):
-            d, t = by_name["q0"]
-            drive(d, square(8, 0.1), t)
-            drive(nested[1][0][0], square(8, 0.1), nested[1][0][1])
+            d = by_name["q0"]
+            drive(d, square(8, 0.1))
+            drive(nested[1][0], square(8, 0.1))
 
-    # Rolled: d and t enter the loop with the line and tone of the dict entry.
+    # Rolled: d enters the loop with the line of the dict entry.
     assert _kinds(k, Q[0:2]).count("scf.for") == 1
     _compiles(k, Q[0:2])
 
 
-def test_a_rolled_loop_carries_a_line_read_from_a_tuple():
+def test_a_rolled_loop_carries_a_line_read_from_a_list():
     @pulse.kernel
     def k(q):
-        pairs = [get_drive_line(q)]
+        lines = [get_drive_line(q)]
         for _ in range(20):
-            drive(pairs[0][0], square(8, 0.1), pairs[0][1])
-        drive(pairs[0][0], square(8, 0.2), pairs[0][1])
+            drive(lines[0], square(8, 0.1))
+        drive(lines[0], square(8, 0.2))
 
     kinds = _kinds(k, Q[0])
     assert kinds.count("scf.for") == 1
@@ -322,32 +322,34 @@ def test_pop_insert_extend_and_del_on_lists_of_lines_from_the_friction_log():
     def popped(q0, q1):
         ds, ts = [], []
         for q in (q0, q1):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
+            t = d.tone
             ds.append(d)
             ts.append(t)
         d = ds.pop()
         t = ts.pop()
-        drive(d, square(10, 0.1), t)
-        drive(ds[0], square(10, 0.1), ts[0])
+        drive(d, square(10, 0.1), tone=t)
+        drive(ds[0], square(10, 0.1), tone=ts[0])
 
     @pulse.kernel
     def reshaped(q0, q1, q2):
         ds, ts = [], []
         for q in (q0, q1):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
+            t = d.tone
             ds.append(d)
             ts.append(t)
-        d2, t2 = get_drive_line(q2)
+        d2 = get_drive_line(q2)
         ds.insert(0, d2)
-        ts.insert(0, t2)
+        ts.insert(0, d2.tone)
         for d, t in zip(ds, ts):
-            drive(d, square(10, 0.1), t)
+            drive(d, square(10, 0.1), tone=t)
         ds.extend([ds.pop(0)])
         ts.extend([ts.pop(0)])
         del ds[0]
         del ts[0]
         for d, t in zip(ds, ts):
-            drive(d, square(10, 0.1), t)
+            drive(d, square(10, 0.1), tone=t)
 
     _compiles(popped, Q[0], Q[1])
     _compiles(reshaped, Q[0], Q[1], Q[2])
@@ -374,12 +376,12 @@ def test_comprehensions_from_the_friction_log():
     @pulse.kernel
     def probe(qubits):
         lines = [get_drive_line(qubits[i]) for i in ALL]
-        sync(*[line for line, _ in lines])
+        sync(*[line for line in lines])
         amps = [0.1 * i for i in range(3)]
         total = sum([a for a in AMPS])
         widths = {i: 8 * (i + 1) for i in ALL}
-        for i, (line, tone) in enumerate(lines):
-            drive(line, square(widths[i], amps[i] + total), tone)
+        for i, line in enumerate(lines):
+            drive(line, square(widths[i], amps[i] + total))
 
     ops = python_ir(probe, Q[0:3]).ops
     (sync_op,) = [op for op in ops if op.kind == "pulse.sync"]
@@ -395,8 +397,8 @@ def test_comprehensions_from_the_friction_log():
 def test_a_comprehension_collects_measurements():
     @pulse.kernel
     def rounds(q):
-        r, rt = get_readout_line(q)
-        ms = [readout(r, square(100, 0.05), rt) for _ in range(12)]
+        r = get_readout_line(q)
+        ms = [readout(r, square(100, 0.05)) for _ in range(12)]
         assert len(ms) == 12
 
     kinds = _kinds(rounds, Q[0])
@@ -408,14 +410,14 @@ def test_a_comprehension_collects_measurements():
 def test_nested_filtered_set_and_dict_comprehensions():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         grid = [[i * j for j in range(3)] for i in range(3)]
         flat = [x for row in grid for x in row if x % 2 == 0]
         unique = {x % 3 for x in flat}
         pairs = {k: v for k, v in zip("ab", (8, 16))}
         literal = {8, 16}
         for n in sorted(unique | literal):
-            drive(d, square(n + pairs["a"], 0.1), t)
+            drive(d, square(n + pairs["a"], 0.1))
 
     ops = python_ir(k, Q[0]).ops
     assert [op.attrs["duration"] for op in ops if op.kind == "pulse.square"] == [8, 9, 10, 16, 24]
@@ -424,10 +426,10 @@ def test_nested_filtered_set_and_dict_comprehensions():
 def test_a_comprehension_restores_its_variable():
     @pulse.kernel
     def keeps(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         x = 8
         ys = [x for x in (16, 24)]
-        drive(d, square(x + len(ys), 0.1), t)
+        drive(d, square(x + len(ys), 0.1))
 
     (sq,) = [op for op in python_ir(keeps, Q[0]).ops if op.kind == "pulse.square"]
     assert sq.attrs["duration"] == 10
@@ -436,10 +438,10 @@ def test_a_comprehension_restores_its_variable():
 def test_comprehension_inside_a_rolled_loop_and_over_range():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(20):
             ws = [8 for j in range(2)]
-            drive(d, square(ws[0], 0.1), t)
+            drive(d, square(ws[0], 0.1))
 
     assert _kinds(k, Q[0]).count("scf.for") == 1
     _compiles(k, Q[0])
@@ -449,12 +451,12 @@ def test_generator_expressions_from_the_friction_log():
     @pulse.kernel
     def probe(qubits):
         scale = 2
-        pairs = list(get_drive_line(q) for q in qubits)
-        sync(*(line for line, _ in pairs))
+        lines = list(get_drive_line(q) for q in qubits)
+        sync(*(line for line in lines))
         total = sum(a * scale for a in AMPS if a > 0.1)
         longest = max(8 * (i + 1) for i in range(3))
-        for line, tone in pairs:
-            drive(line, square(longest, total), tone)
+        for line in lines:
+            drive(line, square(longest, total))
 
     ops = python_ir(probe, Q[0:3]).ops
     (sync_op,) = [op for op in ops if op.kind == "pulse.sync"]
@@ -468,14 +470,14 @@ def test_generator_expressions_from_the_friction_log():
 def test_generator_expressions_in_any_all_tuple_and_nested():
     @pulse.kernel
     def k(q, flip):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         widths = tuple(8 * n for n in (1, 2))
         nested = sum(sum(x for x in range(n)) for n in (2, 3))
         if all(w > 4 for w in widths) and not any(w > 100 for w in widths):
-            drive(d, square(widths[1] + nested, 0.1), t)
+            drive(d, square(widths[1] + nested, 0.1))
         stored = (w + 1 for w in (flip and widths or (40,)))
         for w in stored:
-            drive(d, square(w, 0.1), t)
+            drive(d, square(w, 0.1))
 
     def durations(*args):
         return [op.attrs["duration"] for op in python_ir(k, *args).ops if op.kind == "pulse.square"]
@@ -487,12 +489,12 @@ def test_generator_expressions_in_any_all_tuple_and_nested():
 def test_generator_expressions_emit_pulses_in_order_and_collect_readouts():
     @pulse.kernel
     def rounds(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        ms = tuple(readout(r, square(100, 0.05), rt) for _ in range(3))
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        ms = tuple(readout(r, square(100, 0.05)) for _ in range(3))
         assert len(ms) == 3
         for _ in range(20):
-            drive(d, square(sum(8 for _ in range(2)), 0.1), t)
+            drive(d, square(sum(8 for _ in range(2)), 0.1))
 
     kinds = _kinds(rounds, Q[0])
     assert kinds.count("pulse.readout") == 3
@@ -503,16 +505,16 @@ def test_generator_expressions_emit_pulses_in_order_and_collect_readouts():
 def test_lambdas_and_nested_functions_say_what_to_write_instead():
     @pulse.kernel
     def lam(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         scale = lambda a: a * 2  # noqa: E731
-        drive(d, square(8, scale(0.1)), t)
+        drive(d, square(8, scale(0.1)))
 
     @pulse.kernel
     def nested(q):
         def inner():
             return 8
 
-        d, t = get_drive_line(q)
+        _d = get_drive_line(q)
 
     with pytest.raises(CompilationError, match="lambdas are not supported.*module level"):
         python_ir(lam, Q[0])
@@ -539,11 +541,11 @@ def test_try_is_still_rejected_next_to_a_comprehension():
 def test_starred_assignment_from_the_friction_log():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         first, *rest = AMPS
         a, *middle, z = (8, 16, 24, 32)
         *init, last = [8]
-        drive(d, square(a + len(middle) + last, first + sum(rest)), t)
+        drive(d, square(a + len(middle) + last, first + sum(rest)))
         assert middle == [16, 24] and init == [] and z == 32
 
     (sq,) = [op for op in python_ir(k, Q[0]).ops if op.kind == "pulse.square"]
@@ -554,13 +556,12 @@ def test_starred_assignment_from_the_friction_log():
 def test_starred_assignment_of_lines_keeps_them_current():
     @pulse.kernel
     def k(qubits):
-        first, *others = [get_drive_line(q) for q in qubits]
-        d, t = first
-        drive(d, square(8, 0.1), t)
-        for line, tone in others:
-            drive(line, square(8, 0.1), tone)
-            drive(line, square(8, 0.1), tone)
-        drive(d, square(8, 0.1), t)
+        d, *others = [get_drive_line(q) for q in qubits]
+        drive(d, square(8, 0.1))
+        for line in others:
+            drive(line, square(8, 0.1))
+            drive(line, square(8, 0.1))
+        drive(d, square(8, 0.1))
 
     _compiles(k, Q[0:3])
 
@@ -572,7 +573,7 @@ def test_starred_assignment_errors():
 
     @pulse.kernel
     def line(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         _a, *_rest = d
 
     with pytest.raises(CompilationError, match="expected at least 2, got 1"):
@@ -584,13 +585,13 @@ def test_starred_assignment_errors():
 def test_slice_assignment():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         xs = [8, 8, 8, 8]
         start = 1
         xs[start:3] = [16]
         xs[:1] = [24, 32]
         for n in xs:
-            drive(d, square(n, 0.1), t)
+            drive(d, square(n, 0.1))
 
     ops = python_ir(k, Q[0]).ops
     assert [op.attrs["duration"] for op in ops if op.kind == "pulse.square"] == [24, 32, 16, 8]

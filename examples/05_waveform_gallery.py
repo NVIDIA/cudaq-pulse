@@ -39,33 +39,33 @@ def sine_envelope(t):
 @pulse.kernel
 def waveform_showcase(qubit):
     """Drive a qubit with each built-in waveform type sequentially."""
-    drive_line, tone = get_drive_line(qubit)
+    drive_line = get_drive_line(qubit)
     duration, sigma = cal["duration"], cal["sigma"]
 
     # Gaussian — the workhorse of single-qubit gates
-    drive(drive_line, gaussian(duration, 0.3, sigma), tone)
+    drive(drive_line, gaussian(duration, 0.3, sigma))
 
     # Square — constant amplitude, simplest envelope
-    drive(drive_line, square(cal["square_duration"], 0.5), tone)
+    drive(drive_line, square(cal["square_duration"], 0.5))
 
     # DRAG — derivative removal by adiabatic gate, reduces leakage
-    drive(drive_line, drag(duration, 0.25, sigma, cal["drag_beta"]), tone)
+    drive(drive_line, drag(duration, 0.25, sigma, cal["drag_beta"]))
 
     # Cosine — smooth rise/fall for flux pulses
-    drive(drive_line, cosine(cal["cosine_duration"], 0.4), tone)
+    drive(drive_line, cosine(cal["cosine_duration"], 0.4))
 
     # Tanh ramp — sigmoidal edges for adiabatic state transfer
-    drive(drive_line, tanh_ramp(cal["tanh_duration"], 0.35, cal["tanh_sigma"]), tone)
+    drive(drive_line, tanh_ramp(cal["tanh_duration"], 0.35, cal["tanh_sigma"]))
 
     # Gaussian square — flat top with Gaussian rise/fall, used in echoed-CR
     flat_top = gaussian_square(cal["flat_top_duration"], 0.1, sigma, cal["flat_top_width"])
-    drive(drive_line, flat_top, tone)
+    drive(drive_line, flat_top)
 
     # Custom — a Python function of time, sampled once per clock cycle
-    drive(drive_line, custom(duration, sine_envelope), tone)
+    drive(drive_line, custom(duration, sine_envelope))
 
     # Custom samples — an arbitrary real envelope from pre-computed data
-    drive(drive_line, custom_samples([0.1, 0.3, 0.5, 0.3, 0.1]), tone)
+    drive(drive_line, custom_samples([0.1, 0.3, 0.5, 0.3, 0.1]))
 
 
 # ── 2. Waveform algebra ──────────────────────────────────────────────────────
@@ -74,30 +74,30 @@ def waveform_showcase(qubit):
 @pulse.kernel
 def waveform_algebra(qubit):
     """Combine waveforms using the built-in algebraic operations."""
-    drive_line, tone = get_drive_line(qubit)
+    drive_line = get_drive_line(qubit)
 
     gaussian_envelope = gaussian(cal["duration"], 0.3, cal["sigma"])
     square_envelope = square(cal["duration"], 0.1)
 
     # Addition — superpose two envelopes (e.g. DRAG = Gaussian + derivative)
     combined = wf_add(gaussian_envelope, square_envelope)
-    drive(drive_line, combined, tone)
+    drive(drive_line, combined)
 
     # Subtraction — difference of envelopes
     diff = wf_sub(gaussian_envelope, square_envelope)
-    drive(drive_line, diff, tone)
+    drive(drive_line, diff)
 
     # Multiplication — element-wise product (amplitude modulation)
     modulated = wf_mul(gaussian_envelope, square_envelope)
-    drive(drive_line, modulated, tone)
+    drive(drive_line, modulated)
 
     # Scale — multiply envelope by a scalar
     boosted = wf_scale(gaussian_envelope, 2.0)
-    drive(drive_line, boosted, tone)
+    drive(drive_line, boosted)
 
     # Negation — flip sign (180° phase flip in IQ)
     flipped = wf_neg(gaussian_envelope)
-    drive(drive_line, flipped, tone)
+    drive(drive_line, flipped)
 
 
 # ── 3. Composing complex envelopes ───────────────────────────────────────────
@@ -134,13 +134,13 @@ def derivative_pulse(qubit, beta: float):
     The sampled correction is in phase with the Gaussian; ``drag()`` puts
     the same correction on the quadrature, as the DRAG scheme needs.
     """
-    drive_line, tone = get_drive_line(qubit)
+    drive_line = get_drive_line(qubit)
 
     base = gaussian(DERIVATIVE_DURATION, DERIVATIVE_AMPLITUDE, DERIVATIVE_SIGMA)
     correction = wf_scale(custom_samples(DERIVATIVE), beta)
     final_envelope = wf_add(base, correction)
 
-    drive(drive_line, final_envelope, tone)
+    drive(drive_line, final_envelope)
 
 
 if __name__ == "__main__":

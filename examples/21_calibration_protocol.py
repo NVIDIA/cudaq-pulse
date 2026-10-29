@@ -211,23 +211,23 @@ def adaptive_t1(bit, shape, rate, wait_cycles, error_1to0, error_0to1):
 @pulse.kernel
 def shot_end(q, pi_amp: float):
     """Read out, then reset from the result (active reset)."""
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     sync(d, r)
-    m = readout(r, square(READOUT, READOUT_AMP), rt)
+    m = readout(r, square(READOUT, READOUT_AMP))
     sync(d, r)
     if m:
-        drive(d, square(PULSE, pi_amp), t)
+        drive(d, square(PULSE, pi_amp))
     return m
 
 
 @pulse.kernel
 def settle_and_read(q, settle):
     """Read out, then wait *settle* for the qubit to relax (passive reset)."""
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     sync(d, r)
-    m = readout(r, square(READOUT, READOUT_AMP), rt)
+    m = readout(r, square(READOUT, READOUT_AMP))
     sync(d, r)
     wait(d, settle)
     return m
@@ -237,7 +237,7 @@ def settle_and_read(q, settle):
 def assignment(q, pi_amp: float, settle=0 * pulse.ns):
     """Assignment errors; with a *settle* time, a passive reset of that length
     after each readout instead of the active one."""
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     ground = []
     excited = []
     if settle:
@@ -247,18 +247,18 @@ def assignment(q, pi_amp: float, settle=0 * pulse.ns):
     for _ in range(SHOTS):
         if settle:
             ground.append(settle_and_read(q, settle))
-            drive(d, square(PULSE, pi_amp), t)
+            drive(d, square(PULSE, pi_amp))
             excited.append(settle_and_read(q, settle))
         else:
             ground.append(shot_end(q, pi_amp))
-            drive(d, square(PULSE, pi_amp), t)
+            drive(d, square(PULSE, pi_amp))
             excited.append(shot_end(q, pi_amp))
     return assignment_errors.submit(ground, excited).result()
 
 
 @pulse.kernel
 def ramsey(q, pi_amp: float, mean_hz: float):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     minus = []
     zero = []
     plus = []
@@ -268,11 +268,11 @@ def ramsey(q, pi_amp: float, mean_hz: float):
             # Second pi/2 with its tone shifted by pi - phase: P(1) is
             # (1 - cos(2 pi D t + phase)) / 2.
             shift = math.pi - (phase0 + (k - 1) * math.pi / 2)
-            drive(d, square(PULSE, pi_amp * 0.5), t)
+            drive(d, square(PULSE, pi_amp * 0.5))
             wait(d, RAMSEY - PULSE)
-            shift_phase(t, shift)
-            drive(d, square(PULSE, pi_amp * 0.5), t)
-            shift_phase(t, -shift)
+            shift_phase(d.tone, shift)
+            drive(d, square(PULSE, pi_amp * 0.5))
+            shift_phase(d.tone, -shift)
             m = shot_end(q, pi_amp)
             if k == 0:
                 minus.append(m)
@@ -285,9 +285,9 @@ def ramsey(q, pi_amp: float, mean_hz: float):
 
 @pulse.kernel
 def train_shot(q, amplitude: float, pulses: int, pi_amp: float):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     for _ in range(pulses):
-        drive(d, square(PULSE, amplitude), t)
+        drive(d, square(PULSE, amplitude))
     return shot_end(q, pi_amp)
 
 
@@ -306,19 +306,19 @@ def amplitude(q, amplitude: float, pulses: int, pi_amp: float):
 
 @pulse.kernel
 def decay(q, pi_amp: float, t1_cycles: float):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     second, third = decay_delays.submit(t1_cycles).result()
     first_bits = []
     second_bits = []
     third_bits = []
     for _ in range(SHOTS):
-        drive(d, square(PULSE, pi_amp), t)
+        drive(d, square(PULSE, pi_amp))
         wait(d, T0)
         first_bits.append(shot_end(q, pi_amp))
-        drive(d, square(PULSE, pi_amp), t)
+        drive(d, square(PULSE, pi_amp))
         wait(d, second, bounds=WAITS)
         second_bits.append(shot_end(q, pi_amp))
-        drive(d, square(PULSE, pi_amp), t)
+        drive(d, square(PULSE, pi_amp))
         wait(d, third, bounds=WAITS)
         third_bits.append(shot_end(q, pi_amp))
     return decay_estimator.submit(
@@ -338,10 +338,10 @@ def tracked_t1(
 ):
     """Adaptive T1; with a *settle* time, a passive reset of that length after
     each readout instead of the active one."""
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     w = first_wait.submit(shape, rate).result()
     for _ in range(ATT_SHOTS):
-        drive(d, square(PULSE, pi_amp), t)
+        drive(d, square(PULSE, pi_amp))
         wait(d, w, bounds=WAITS)
         if settle:
             m = settle_and_read(q, settle)
@@ -353,13 +353,13 @@ def tracked_t1(
 
 @pulse.kernel
 def calibration_chain(q, t1_guess_cycles: float):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     # The adaptive tracker's likelihood holds only assignment errors: an
     # active reset would add a preparation error that depends on the last
     # outcome, so its shots and the errors it uses reset passively.
     error_1to0, error_0to1 = assignment(q, PI_AMP, SETTLE)
     detuning, _ = ramsey(q, PI_AMP, 0.0)
-    shift_frequency(t, detuning)
+    shift_frequency(d.tone, detuning)
     pi_amp, _ = amplitude(q, PI_AMP, TRAIN, PI_AMP)
     half_amp, _ = amplitude(q, pi_amp * 0.5, 2 * TRAIN, pi_amp)
     t1, _ = decay(q, pi_amp, t1_guess_cycles)
@@ -408,26 +408,26 @@ def search_step(bits, mean_hz, sigma_hz, wait_cycles):
 
 @pulse.kernel
 def binary_search(q, rounds: int):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    previous = readout(r, square(READOUT, READOUT_AMP), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    previous = readout(r, square(READOUT, READOUT_AMP))
     sync(d, r)
     mean, sigma, w, phase = 0.0, SIGMA0_HZ, WAIT0, PHASE0
-    drive(d, square(PULSE, PI_AMP * 0.5), t)
+    drive(d, square(PULSE, PI_AMP * 0.5))
     wait(d, int(WAIT0))
-    shift_phase(t, math.pi - PHASE0)
-    drive(d, square(PULSE, PI_AMP * 0.5), t)
+    shift_phase(d.tone, math.pi - PHASE0)
+    drive(d, square(PULSE, PI_AMP * 0.5))
     for i in range(rounds):
         sync(d, r)
-        m = readout(r, square(READOUT, READOUT_AMP), rt)
+        m = readout(r, square(READOUT, READOUT_AMP))
         mean, sigma, w, phase = search_step.submit([m, previous], mean, sigma, w).result()
         previous = m
         if i < rounds - 1:
             sync(d, r)
-            drive(d, square(PULSE, PI_AMP * 0.5), t)
+            drive(d, square(PULSE, PI_AMP * 0.5))
             wait(d, w, bounds=SEARCH_WAITS)
-            shift_phase(t, math.pi - phase)
-            drive(d, square(PULSE, PI_AMP * 0.5), t)
+            shift_phase(d.tone, math.pi - phase)
+            drive(d, square(PULSE, PI_AMP * 0.5))
 
 
 # ── Devices ─────────────────────────────────────────────────────────────────

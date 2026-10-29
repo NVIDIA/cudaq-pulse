@@ -156,9 +156,9 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
 
     @pulse.kernel
     def idle(q0, q1):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         get_drive_line(q1)  # simulate the idle partner
-        drive(d0, square(2, 0.0), t0)
+        drive(d0, square(2, 0.0))
 
     lowered = on(pair_target, idle, Q[0], Q[1])
     t_ns, levels = 1500.0, 3
@@ -214,9 +214,9 @@ def test_the_time_step_resolves_the_fastest_coupled_detuning():
 
     @pulse.kernel
     def flip_and_idle(qa, qb):
-        da, ta = get_drive_line(qa)
-        db, tb = get_drive_line(qb)
-        drive(da, square(40, math.pi / 20), ta)
+        da = get_drive_line(qa)
+        db = get_drive_line(qb)
+        drive(da, square(40, math.pi / 20))
         sync(da, db)
         wait(da, 400)
 
@@ -233,8 +233,8 @@ def test_the_time_step_resolves_the_fastest_coupled_detuning():
 
 @pulse.kernel
 def x90_alone(q):
-    d, t = get_drive_line(q)
-    drive(d, square(40, 0.02), t)
+    d = get_drive_line(q)
+    drive(d, square(40, 0.02))
 
 
 def test_a_generic_coupling_makes_no_gate_claims():

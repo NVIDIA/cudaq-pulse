@@ -60,26 +60,26 @@ def _kinds(kernel, *args):
 
 @pulse.kernel
 def chosen(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(100, 0.05))
     if m:
         amp = 0.3
     else:
         amp = 0.1
-    drive(d, square(40, amp), t)
+    drive(d, square(40, amp))
     wait(d, 10)
 
 
 @pulse.kernel
 def in_arms(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(100, 0.05))
     if m:
-        drive(d, square(40, 0.3), t)
+        drive(d, square(40, 0.3))
     else:
-        drive(d, square(40, 0.1), t)
+        drive(d, square(40, 0.1))
     wait(d, 10)
 
 
@@ -125,13 +125,13 @@ def test_the_op_given_a_choice_is_emitted_in_each_arm():
 def test_a_prior_value_and_one_arm_choose_too():
     @pulse.kernel
     def prior(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         amp = 0.1
         if m:
             amp = 0.3
-        drive(d, square(40, amp), t)
+        drive(d, square(40, amp))
         wait(d, 10)
 
     assert _events(prior) == _events(in_arms)
@@ -140,14 +140,14 @@ def test_a_prior_value_and_one_arm_choose_too():
 def test_a_wait_chosen_by_a_count():
     @pulse.kernel
     def k(q0):
-        d0, t0 = get_drive_line(q0)
-        r0, rt = get_readout_line(q0)
-        bit = readout(r0, square(300, 0.05), rt)
+        d0 = get_drive_line(q0)
+        r0 = get_readout_line(q0)
+        bit = readout(r0, square(300, 0.05))
         n = 1
         if bit:
             n = 2
         wait(d0, 10 * n)
-        drive(d0, square(40, 0.1), t0)
+        drive(d0, square(40, 0.1))
 
     ir = python_ir(k, Q[0])
     waits = [op.attrs["duration"] for op in ir.ops if op.kind == "pulse.wait"]
@@ -161,42 +161,42 @@ def test_a_wait_chosen_by_a_count():
 
 @pulse.kernel
 def elif_chain(q0, q1):
-    d, t = get_drive_line(q0)
-    r0, rt0 = get_readout_line(q0)
-    r1, rt1 = get_readout_line(q1)
-    a = readout(r0, square(100, 0.05), rt0)
-    b = readout(r1, square(60, 0.05), rt1)
+    d = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    r1 = get_readout_line(q1)
+    a = readout(r0, square(100, 0.05))
+    b = readout(r1, square(60, 0.05))
     if a:
         amp = 0.3
     elif b:
         amp = 0.2
     else:
         amp = 0.1
-    drive(d, square(40, amp), t)
+    drive(d, square(40, amp))
 
 
 @pulse.kernel
 def elif_in_arms(q0, q1):
-    d, t = get_drive_line(q0)
-    r0, rt0 = get_readout_line(q0)
-    r1, rt1 = get_readout_line(q1)
-    a = readout(r0, square(100, 0.05), rt0)
-    b = readout(r1, square(60, 0.05), rt1)
+    d = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    r1 = get_readout_line(q1)
+    a = readout(r0, square(100, 0.05))
+    b = readout(r1, square(60, 0.05))
     if a:
-        drive(d, square(40, 0.3), t)
+        drive(d, square(40, 0.3))
     elif b:
-        drive(d, square(40, 0.2), t)
+        drive(d, square(40, 0.2))
     else:
-        drive(d, square(40, 0.1), t)
+        drive(d, square(40, 0.1))
 
 
 @pulse.kernel
 def nested(q0, q1):
-    d, t = get_drive_line(q0)
-    r0, rt0 = get_readout_line(q0)
-    r1, rt1 = get_readout_line(q1)
-    a = readout(r0, square(100, 0.05), rt0)
-    b = readout(r1, square(60, 0.05), rt1)
+    d = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    r1 = get_readout_line(q1)
+    a = readout(r0, square(100, 0.05))
+    b = readout(r1, square(60, 0.05))
     if a:
         if b:
             amp = 0.4
@@ -204,23 +204,23 @@ def nested(q0, q1):
             amp = 0.3
     else:
         amp = 0.1
-    drive(d, square(40, amp), t)
+    drive(d, square(40, amp))
 
 
 @pulse.kernel
 def nested_in_arms(q0, q1):
-    d, t = get_drive_line(q0)
-    r0, rt0 = get_readout_line(q0)
-    r1, rt1 = get_readout_line(q1)
-    a = readout(r0, square(100, 0.05), rt0)
-    b = readout(r1, square(60, 0.05), rt1)
+    d = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    r1 = get_readout_line(q1)
+    a = readout(r0, square(100, 0.05))
+    b = readout(r1, square(60, 0.05))
     if a:
         if b:
-            drive(d, square(40, 0.4), t)
+            drive(d, square(40, 0.4))
         else:
-            drive(d, square(40, 0.3), t)
+            drive(d, square(40, 0.3))
     else:
-        drive(d, square(40, 0.1), t)
+        drive(d, square(40, 0.1))
 
 
 @pytest.mark.parametrize(
@@ -244,18 +244,18 @@ def _amplitudes(kernel, n=1):
 def test_choices_on_two_measurements_combine():
     @pulse.kernel
     def k(q0, q1):
-        d, t = get_drive_line(q0)
-        r0, rt0 = get_readout_line(q0)
-        r1, rt1 = get_readout_line(q1)
-        a = readout(r0, square(100, 0.05), rt0)
-        b = readout(r1, square(60, 0.05), rt1)
+        d = get_drive_line(q0)
+        r0 = get_readout_line(q0)
+        r1 = get_readout_line(q1)
+        a = readout(r0, square(100, 0.05))
+        b = readout(r1, square(60, 0.05))
         scale = 1.0
         if a:
             scale = 2.0
         amp = 0.1
         if b:
             amp = 0.2
-        drive(d, square(40, amp * scale), t)
+        drive(d, square(40, amp * scale))
 
     # b decides the outer if of the drive, a the inner ones.
     assert _amplitudes(k, 2) == pytest.approx([0.4, 0.2, 0.2, 0.1])
@@ -271,16 +271,16 @@ def test_arithmetic_casts_and_pure_calls_apply_to_each_value():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         if m:
             x = 0.6
         else:
             x = 0.2
-        drive(d, square(40, -halve(x)), t)
-        drive(d, square(40, min(x, 0.5)), t)
-        drive(d, square(40, math.sin(x)), t)
+        drive(d, square(40, -halve(x)))
+        drive(d, square(40, min(x, 0.5)))
+        drive(d, square(40, math.sin(x)))
         wait(d, int(x * 100))
 
     assert _amplitudes(k) == pytest.approx([-0.3, -0.1, 0.5, 0.2, math.sin(0.6), math.sin(0.2)])
@@ -291,15 +291,15 @@ def test_arithmetic_casts_and_pure_calls_apply_to_each_value():
 def test_a_choice_as_a_condition_branches_on_its_measurement():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         if m:
             amp = 0.3
         else:
             amp = 0.0
         if amp > 0.2:
-            drive(d, square(40, 0.1), t)
+            drive(d, square(40, 0.1))
         if not amp:
             wait(d, 30)
         if amp < 1.0:  # true in both arms: an if known while tracing
@@ -322,26 +322,26 @@ def test_a_choice_as_a_condition_branches_on_its_measurement():
 def test_waveforms_made_from_a_choice_are_chosen_too():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         if m:
             n = 40
         else:
             n = 60
         wf = wf_add(square(n, 0.1), square(n, 0.2))
-        drive(d, wf_scale(wf, 0.5), t)
+        drive(d, wf_scale(wf, 0.5))
         wait(d, 10)
 
     @pulse.kernel
     def reference(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         if m:
-            drive(d, wf_scale(wf_add(square(40, 0.1), square(40, 0.2)), 0.5), t)
+            drive(d, wf_scale(wf_add(square(40, 0.1), square(40, 0.2)), 0.5))
         else:
-            drive(d, wf_scale(wf_add(square(60, 0.1), square(60, 0.2)), 0.5), t)
+            drive(d, wf_scale(wf_add(square(60, 0.1), square(60, 0.2)), 0.5))
         wait(d, 10)
 
     assert _events(k) == _events(reference)
@@ -349,19 +349,19 @@ def test_waveforms_made_from_a_choice_are_chosen_too():
 
 
 def test_a_choice_in_a_helper():
-    def pulse_with(d, t, amp):
-        drive(d, square(40, amp), t)
+    def pulse_with(d, amp):
+        drive(d, square(40, amp))
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         if m:
             amp = 0.3
         else:
             amp = 0.1
-        pulse_with(d, t, amp)
+        pulse_with(d, amp)
         wait(d, 10)
 
     assert _events(k) == _events(in_arms)
@@ -372,27 +372,27 @@ def test_a_choice_in_a_helper():
 
 @pulse.kernel
 def chosen_in_loop(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     for _ in range(4):
-        m = readout(r, square(100, 0.05), rt)
+        m = readout(r, square(100, 0.05))
         if m:
             amp = 0.3
         else:
             amp = 0.1
-        drive(d, square(40, amp), t)
+        drive(d, square(40, amp))
 
 
 @pulse.kernel
 def in_arms_in_loop(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     for _ in range(4):
-        m = readout(r, square(100, 0.05), rt)
+        m = readout(r, square(100, 0.05))
         if m:
-            drive(d, square(40, 0.3), t)
+            drive(d, square(40, 0.3))
         else:
-            drive(d, square(40, 0.1), t)
+            drive(d, square(40, 0.1))
 
 
 def test_a_choice_made_in_a_rolled_body_stays_rolled():
@@ -407,14 +407,14 @@ def test_a_choice_made_in_a_rolled_body_stays_rolled():
 def test_a_choice_carried_by_a_loop_unrolls_it():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         amp = 0.0
         for _ in range(3):
-            m = readout(r, square(100, 0.05), rt)
+            m = readout(r, square(100, 0.05))
             if m:
                 amp = 0.3
-            drive(d, square(40, amp), t)
+            drive(d, square(40, amp))
 
     compiled = _lower(k, unroll_threshold=0)
     assert "scf.for" not in compiled.mlir()
@@ -426,13 +426,13 @@ def test_a_choice_carried_by_a_loop_unrolls_it():
 def test_a_choice_with_too_many_values_is_rejected():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         amp = 0.0
         for i in range(70):
-            if readout(r, square(10, 0.05), rt):
+            if readout(r, square(10, 0.05)):
                 amp = 0.001 * i
-            drive(d, square(10, amp), t)
+            drive(d, square(10, amp))
 
     with pytest.raises(CompilationError, match="would have more than 64 values"):
         _lower(k, unroll_threshold=1000)
@@ -441,16 +441,16 @@ def test_a_choice_with_too_many_values_is_rejected():
 def test_a_choice_made_in_a_rolled_body_is_rejected_after_it():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         for _ in range(4):
-            m = readout(r, square(100, 0.05), rt)
+            m = readout(r, square(100, 0.05))
             if m:
                 amp = 0.3
             else:
                 amp = 0.1
-            drive(d, square(40, amp), t)
-        drive(d, square(40, amp), t)
+            drive(d, square(40, amp))
+        drive(d, square(40, amp))
 
     with pytest.raises(CompilationError, match="outside the loop or branch"):
         _lower(k, unroll_threshold=0)
@@ -464,16 +464,16 @@ def test_a_choice_made_in_a_rolled_body_is_rejected_after_it():
 def test_a_chosen_reset_simulates_like_the_op_in_the_arms():
     @pulse.kernel
     def chosen_flip(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
-        r0, rt = get_readout_line(q0)
-        drive(d0, square(40, _HALF_PI), t0)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
+        r0 = get_readout_line(q0)
+        drive(d0, square(40, _HALF_PI))
         sync(d0, r0)
-        bit = readout(r0, square(200, 0.05), rt)
+        bit = readout(r0, square(200, 0.05))
         amp = 0.0
         if bit:
             amp = _PI
-        drive(d1, square(40, amp), t1)
+        drive(d1, square(40, amp))
 
     expected = _run(conditional_flip, 2, shots=200, seed=3).density_matrix
     actual = _run(chosen_flip, 2, shots=200, seed=3).density_matrix
@@ -481,15 +481,15 @@ def test_a_chosen_reset_simulates_like_the_op_in_the_arms():
 
     @pulse.kernel
     def reset(q0):
-        d0, t0 = get_drive_line(q0)
-        r0, rt = get_readout_line(q0)
-        drive(d0, square(40, _HALF_PI), t0)
+        d0 = get_drive_line(q0)
+        r0 = get_readout_line(q0)
+        drive(d0, square(40, _HALF_PI))
         sync(d0, r0)
-        if readout(r0, square(200, 0.05), rt):
+        if readout(r0, square(200, 0.05)):
             amp = _PI
         else:
             amp = 0.0
-        drive(d0, square(40, amp), t0)
+        drive(d0, square(40, amp))
 
     rho = _run(reset, shots=200, seed=2).density_matrix
     np.testing.assert_allclose(rho, [[1, 0], [0, 0]], atol=1e-6)
@@ -501,12 +501,12 @@ def test_a_chosen_reset_simulates_like_the_op_in_the_arms():
 def test_a_name_assigned_in_one_arm_only_is_rejected_with_its_line():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         if m:
             amp = 0.3
-        drive(d, square(40, amp), t)
+        drive(d, square(40, amp))
 
     line = _line_of(k, "if m:")
     with pytest.raises(
@@ -520,16 +520,16 @@ def test_a_name_assigned_in_one_arm_only_is_rejected_with_its_line():
 def test_a_name_assigned_in_one_arm_of_an_elif_is_rejected():
     @pulse.kernel
     def k(q0, q1):
-        d, t = get_drive_line(q0)
-        r0, rt0 = get_readout_line(q0)
-        r1, rt1 = get_readout_line(q1)
-        a = readout(r0, square(100, 0.05), rt0)
-        b = readout(r1, square(60, 0.05), rt1)
+        d = get_drive_line(q0)
+        r0 = get_readout_line(q0)
+        r1 = get_readout_line(q1)
+        a = readout(r0, square(100, 0.05))
+        b = readout(r1, square(60, 0.05))
         if a:
             amp = 0.3
         elif b:
             amp = 0.2
-        drive(d, square(40, amp), t)
+        drive(d, square(40, amp))
 
     with pytest.raises(CompilationError, match="'amp' is assigned in only one arm"):
         _lower(k, 2)
@@ -546,9 +546,9 @@ def test_a_name_assigned_in_one_arm_of_an_elif_is_rejected():
 def test_values_an_if_cannot_choose_are_rejected(then, other, what):
     source = (
         "def k(q):\n"
-        "    d, t = get_drive_line(q)\n"
-        "    r, rt = get_readout_line(q)\n"
-        "    m = readout(r, square(100, 0.05), rt)\n"
+        "    d = get_drive_line(q)\n"
+        "    r = get_readout_line(q)\n"
+        "    m = readout(r, square(100, 0.05))\n"
         "    if m:\n"
         f"        x = {then}\n"
         "    else:\n"
@@ -572,9 +572,9 @@ def test_values_an_if_cannot_choose_are_rejected(then, other, what):
 def test_python_cannot_use_a_choice_while_tracing(use, message):
     source = (
         "def k(q):\n"
-        "    d, t = get_drive_line(q)\n"
-        "    r, rt = get_readout_line(q)\n"
-        "    m = readout(r, square(100, 0.05), rt)\n"
+        "    d = get_drive_line(q)\n"
+        "    r = get_readout_line(q)\n"
+        "    m = readout(r, square(100, 0.05))\n"
         "    if m:\n"
         "        n = 2\n"
         "    else:\n"
@@ -623,67 +623,67 @@ def _both(kernel, at_runtime, n=1, **kwargs):
 
 @pulse.kernel
 def chosen_phase(q0):
-    d0, t0 = get_drive_line(q0)
-    r0, rt = get_readout_line(q0)
-    drive(d0, square(40, _HALF_PI), t0)
+    d0 = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    drive(d0, square(40, _HALF_PI))
     sync(d0, r0)
-    bit = readout(r0, square(200, 0.05), rt)
+    bit = readout(r0, square(200, 0.05))
     if bit:
         ph = math.pi
     else:
         ph = 0.0
-    shift_phase(t0, ph)
-    drive(d0, square(40, _HALF_PI), t0)
+    shift_phase(d0.tone, ph)
+    drive(d0, square(40, _HALF_PI))
 
 
 @pulse.kernel
 def chosen_frequency(q0):
-    d0, t0 = get_drive_line(q0)
-    r0, rt = get_readout_line(q0)
-    drive(d0, square(40, _HALF_PI), t0)
+    d0 = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    drive(d0, square(40, _HALF_PI))
     sync(d0, r0)
-    bit = readout(r0, square(200, 0.05), rt)
+    bit = readout(r0, square(200, 0.05))
     if bit:
         df = 2.0e6
     else:
         df = -1.0e6
-    shift_frequency(t0, df)
-    drive(d0, square(400, _HALF_PI), t0)
+    shift_frequency(d0.tone, df)
+    drive(d0, square(400, _HALF_PI))
 
 
 @pulse.kernel
 def chosen_amplitudes(q0):
-    d0, t0 = get_drive_line(q0)
-    r0, rt = get_readout_line(q0)
-    drive(d0, square(40, _HALF_PI), t0)
+    d0 = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    drive(d0, square(40, _HALF_PI))
     sync(d0, r0)
-    bit = readout(r0, square(200, 0.05), rt)
+    bit = readout(r0, square(200, 0.05))
     if bit:
         amp = _HALF_PI
     else:
         amp = 0.5 * _HALF_PI
-    drive(d0, square(40, amp), t0)
+    drive(d0, square(40, amp))
     wait(d0, 8)
-    drive(d0, square(24, amp), t0)
-    drive(d0, square(16, amp), t0)
+    drive(d0, square(24, amp))
+    drive(d0, square(16, amp))
 
 
 @pulse.kernel
 def chosen_on_two(q0, q1):
-    d1, t1 = get_drive_line(q1)
-    r0, rt0 = get_readout_line(q0)
-    r1, rt1 = get_readout_line(q1)
-    drive(d1, square(40, _HALF_PI), t1)
+    d1 = get_drive_line(q1)
+    r0 = get_readout_line(q0)
+    r1 = get_readout_line(q1)
+    drive(d1, square(40, _HALF_PI))
     sync(d1, r1)
-    a = readout(r0, square(100, 0.05), rt0)
-    b = readout(r1, square(60, 0.05), rt1)
+    a = readout(r0, square(100, 0.05))
+    b = readout(r1, square(60, 0.05))
     if a:
         amp = _PI
     elif b:
         amp = _HALF_PI
     else:
         amp = 0.0
-    drive(d1, square(40, amp), t1)
+    drive(d1, square(40, amp))
 
 
 def test_without_a_target_that_takes_values_at_run_time_each_op_runs_in_the_arms():
@@ -709,12 +709,12 @@ def test_a_value_taken_at_run_time_is_selected_once_and_read_by_every_use(at_run
 @pytest.mark.parametrize("uses", [1, 5, 20])
 def test_run_time_values_do_not_grow_with_the_uses(at_runtime, uses):
     namespace = {}
-    body = "\n".join(f"    drive(d, square({40 + 8 * i}, amp), t)" for i in range(uses))
+    body = "\n".join(f"    drive(d, square({40 + 8 * i}, amp))" for i in range(uses))
     exec(
         "def k(q):\n"
-        "    d, t = get_drive_line(q)\n"
-        "    r, rt = get_readout_line(q)\n"
-        "    if readout(r, square(100, 0.05), rt):\n"
+        "    d = get_drive_line(q)\n"
+        "    r = get_readout_line(q)\n"
+        "    if readout(r, square(100, 0.05)):\n"
         "        amp = 0.3\n"
         "    else:\n"
         "        amp = 0.1\n" + body + "\n",
@@ -758,12 +758,12 @@ def _timing(lowered):
 def test_values_that_move_ops_in_time_always_run_in_the_arms(at_runtime):
     @pulse.kernel
     def chosen_duration(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         n = 40
-        if readout(r, square(100, 0.05), rt):
+        if readout(r, square(100, 0.05)):
             n = 80
-        drive(d, square(n, 0.1), t)
+        drive(d, square(n, 0.1))
         wait(d, n)
 
     arms, kept = _both(chosen_duration, at_runtime)
@@ -775,14 +775,14 @@ def test_values_that_move_ops_in_time_always_run_in_the_arms(at_runtime):
 def test_each_kind_is_lowered_as_the_target_takes_it(at_runtime):
     @pulse.kernel
     def both_kinds(q0):
-        d0, t0 = get_drive_line(q0)
-        r0, rt = get_readout_line(q0)
-        if readout(r0, square(200, 0.05), rt):
+        d0 = get_drive_line(q0)
+        r0 = get_readout_line(q0)
+        if readout(r0, square(200, 0.05)):
             amp, ph = _PI, math.pi
         else:
             amp, ph = 0.0, 0.0
-        shift_phase(t0, ph)
-        drive(d0, square(40, amp), t0)
+        shift_phase(d0.tone, ph)
+        drive(d0, square(40, amp))
 
     at_runtime("amplitude")
     text = _fresh(both_kinds).mlir()

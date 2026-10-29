@@ -135,19 +135,19 @@ def _simulation_size(result: Any) -> dict[str, int]:
 
 @pulse.kernel
 def _wait_sweep(q, tau: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, 0.1), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, 0.1))
     wait(d, tau)
     sync(d, r)
-    readout(r, square(100, 0.05), rt)
+    readout(r, square(100, 0.05))
 
 
 @pulse.kernel
 def _amplitude(q, amp: float):
-    d, t = get_drive_line(q)
-    drive(d, gaussian(40, amp, 10.0), t)
-    drive(d, gaussian(44, amp, 10.0), t)
+    d = get_drive_line(q)
+    drive(d, gaussian(40, amp, 10.0))
+    drive(d, gaussian(44, amp, 10.0))
 
 
 def _tone_list(n_iter: int) -> Any:
@@ -155,12 +155,12 @@ def _tone_list(n_iter: int) -> Any:
     @pulse.kernel
     def listed(qs):
         lines = [get_drive_line(q) for q in qs]
-        for (d, t), f in zip(lines, (5.0e9, 5.1e9)):
-            set_frequency(t, f)
+        for d, f in zip(lines, (5.0e9, 5.1e9)):
+            set_frequency(d.tone, f)
         x = square(40, 0.047)
         for _ in range(n_iter):
-            for d, t in lines:
-                drive(d, x, t)
+            for d in lines:
+                drive(d, x)
 
     return listed
 
@@ -176,9 +176,9 @@ def _surface(d: int) -> tuple[Any, int]:
         lines = []
         tones = []
         for i in range(n_total):
-            line, tone = get_drive_line(qubits[i])
+            line = get_drive_line(qubits[i])
             lines.append(line)
-            tones.append(tone)
+            tones.append(line.tone)
         h = drag(40, 0.25, 10.0, 0.5)
         cr_p = gaussian(160, 0.12, 40.0)
         cr_m = gaussian(160, -0.12, 40.0)
@@ -186,7 +186,7 @@ def _surface(d: int) -> tuple[Any, int]:
             anc = n_data + a
             row = a // (d - 1) if a < (d - 1) * (d - 1) else -1
             col = a % (d - 1) if a < (d - 1) * (d - 1) else a - (d - 1) * (d - 1)
-            drive(lines[anc], h, tones[anc])
+            drive(lines[anc], h, tone=tones[anc])
             for dr in range(2):
                 for dc in range(2):
                     r = row + dr
@@ -194,8 +194,8 @@ def _surface(d: int) -> tuple[Any, int]:
                     if 0 <= r and r < d and 0 <= c and c < d:
                         q = r * d + c
                         sync(lines[anc], lines[q])
-                        drive(lines[anc], cr_p, tones[q])
-                        drive(lines[anc], cr_m, tones[q])
+                        drive(lines[anc], cr_p, tone=tones[q])
+                        drive(lines[anc], cr_m, tone=tones[q])
 
     return round_, n_total
 
@@ -213,15 +213,15 @@ def _feedback_program(n: int) -> Any:
 
     @pulse.kernel
     def program(q):
-        line, tone = get_drive_line(q)
-        probe, probe_tone = get_readout_line(q)
+        line = get_drive_line(q)
+        probe = get_readout_line(q)
         for i in range(n):
-            drive(line, gaussian(16 + 0 * i, 0.1, 4.0), tone)
+            drive(line, gaussian(16 + 0 * i, 0.1, 4.0))
             sync(line, probe)
-            m = readout(probe, square(40, 0.05), probe_tone)
+            m = readout(probe, square(40, 0.05))
             sync(probe, line)
             if m:
-                drive(line, square(8, 0.1), tone)
+                drive(line, square(8, 0.1))
 
     compiled = pulse.compile(
         program, device=_DEVICE, schedule="rcp", machine=machine, unroll_threshold=100_000
@@ -298,8 +298,8 @@ def _export_emulation() -> Op:
 def _simulate_setup() -> Op:
     @pulse.kernel
     def pi_pulse(q):
-        d, t = get_drive_line(q)
-        drive(d, square(8, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(8, 0.1))
 
     lowered = pulse.compile(pi_pulse, device=_DEVICE).lower(Q[0])
     # Eight cycles at one step per cycle: the run is mostly its setup.

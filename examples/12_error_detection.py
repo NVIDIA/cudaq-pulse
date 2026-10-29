@@ -93,8 +93,8 @@ def check(body: str) -> str:
 
 @pulse.kernel
 def zero_length(q0):
-    d0, t0 = get_drive_line(q0)
-    drive(d0, gaussian(0 * pulse.ns, 0.1, 5 * pulse.ns), t0)
+    d0 = get_drive_line(q0)
+    drive(d0, gaussian(0 * pulse.ns, 0.1, 5 * pulse.ns))
 
 
 def main():

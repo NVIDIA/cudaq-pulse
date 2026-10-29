@@ -113,8 +113,8 @@ def test_list_amplitude_packs_like_complex():
     def words(amplitude):
         @pulse.kernel
         def k(q0):
-            d0, t0 = get_drive_line(q0)
-            drive(d0, square(40, amplitude), t0)
+            d0 = get_drive_line(q0)
+            drive(d0, square(40, amplitude))
 
         builder = PackedIRBuilder(name="k", qubit_freq_hz={0: 5e9})
         _trace_kernel_with_builder(k.__wrapped__, builder, [Q[0]])

@@ -46,33 +46,33 @@ def _slice(indices):
 
 @pulse.kernel
 def pair(a, b):
-    da, ta = get_drive_line(a)
-    db, tb = get_drive_line(b)
-    drive(da, gaussian(40, 0.08, 10.0), ta)
-    drive(db, gaussian(40, 0.03, 10.0), tb)
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    drive(da, gaussian(40, 0.08, 10.0))
+    drive(db, gaussian(40, 0.03, 10.0))
     sync(da, db)
     wait(da, 20)
 
 
 @pulse.kernel
 def drive_and_measure(a, b):
-    da, ta = get_drive_line(a)
-    db, tb = get_drive_line(b)
-    ra, rt = get_readout_line(a)
-    drive(da, gaussian(40, 0.08, 10.0), ta)
-    drive(db, gaussian(40, 0.03, 10.0), tb)
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    ra = get_readout_line(a)
+    drive(da, gaussian(40, 0.08, 10.0))
+    drive(db, gaussian(40, 0.03, 10.0))
     sync(da, db, ra)
-    readout(ra, square(40, 0.05), rt)
+    readout(ra, square(40, 0.05))
 
 
 @pulse.kernel
 def triple(a, b, c):
-    da, ta = get_drive_line(a)
-    db, tb = get_drive_line(b)
-    dc, tc = get_drive_line(c)
-    drive(da, gaussian(40, 0.08, 10.0), ta)
-    drive(db, gaussian(40, 0.05, 10.0), tb)
-    drive(dc, gaussian(40, 0.03, 10.0), tc)
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    dc = get_drive_line(c)
+    drive(da, gaussian(40, 0.08, 10.0))
+    drive(db, gaussian(40, 0.05, 10.0))
+    drive(dc, gaussian(40, 0.03, 10.0))
 
 
 def _same(a, b):
@@ -95,8 +95,8 @@ def test_bound_but_unused_qudits_are_not_simulated():
 
     @pulse.kernel
     def one_of_two(a, b):
-        da, ta = get_drive_line(a)
-        drive(da, gaussian(40, 0.08, 10.0), ta)
+        da = get_drive_line(a)
+        drive(da, gaussian(40, 0.08, 10.0))
 
     result = pulse.simulate(one_of_two.lower(q[13], q[3]), t_end=2.0)
     assert result.qudits == (13,) and result.dims == (2,)

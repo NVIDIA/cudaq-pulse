@@ -120,14 +120,14 @@ def square(x: int) -> int:
 
 @pulse.kernel
 def good(qubit: pulse.Qudit, amplitude: float) -> None:
-    line, tone = get_drive_line(qubit)
-    drive(line, gaussian(40, amplitude, 10.0), tone)
+    line = get_drive_line(qubit)
+    drive(line, gaussian(40, amplitude, 10.0))
 
 
 @pulse.kernel
 def bad(qubit: pulse.Qudit) -> None:
-    line, tone = get_drive_line(qubit)
-    drive(tone, gaussian(40, 0.1, 10.0), line)
+    line = get_drive_line(qubit)
+    drive(line.tone, gaussian(40, 0.1, 10.0), tone=line)
     drve(line)
 """
 

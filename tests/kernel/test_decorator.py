@@ -52,7 +52,7 @@ def test_qudit_ref_is_not_a_kernel_op():
     @pulse.kernel
     def internal():
         q = qudit_ref()  # pyright: ignore[reportUndefinedVariable]  # noqa: F821
-        d0, t0 = get_drive_line(q)
+        _d0 = get_drive_line(q)
 
     with pytest.raises(CompilationError, match="unknown pulse op: qudit_ref"):
         python_ir(internal)

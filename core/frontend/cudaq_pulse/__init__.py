@@ -13,8 +13,8 @@ Usage::
 
     @pulse.kernel
     def rabi(qubit, amplitude: float):
-        drive_line, tone = get_drive_line(qubit)
-        drive(drive_line, gaussian(64, amplitude, 16.0), tone)
+        drive_line = get_drive_line(qubit)
+        drive(drive_line, gaussian(64, amplitude, 16.0))
 
     dev = pulse.device("transmon_krinner_17q")
     rabi(dev.qudit_handles[0], 0.5)            # compile on first call, then run

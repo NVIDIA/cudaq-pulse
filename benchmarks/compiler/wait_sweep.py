@@ -50,12 +50,12 @@ _QUBIT = pulse.device({"target": _TARGET}).qudit_handles[0]
 
 @pulse.kernel
 def t1(q, tau: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, 0.157), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, 0.157))
     wait(d, tau)
     sync(d, r)
-    readout(r, square(40, 0.0), rt)
+    readout(r, square(40, 0.0))
 
 
 def _median_us(calls) -> float:

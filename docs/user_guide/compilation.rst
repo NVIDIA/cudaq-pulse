@@ -20,8 +20,8 @@ only run it.
 
    @pulse.kernel
    def rabi(qubit, amplitude: float):
-       drive_line, tone = get_drive_line(qubit)
-       drive(drive_line, gaussian(cal["x_duration"], amplitude, cal["x_sigma"]), tone)
+       drive_line = get_drive_line(qubit)
+       drive(drive_line, gaussian(cal["x_duration"], amplitude, cal["x_sigma"]))
 
    dev = pulse.device("transmon_krinner_17q")
    q = dev.qudit_handles[0]

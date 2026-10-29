@@ -109,17 +109,17 @@ In a kernel, ``fn.submit(...)`` sends the request and returns a future, and
 
    @pulse.kernel
    def feed_forward(q):
-       d, t = get_drive_line(q)
-       r, rt = get_readout_line(q)
-       m = readout(r, square(500 * pulse.ns, 0.05), rt)
+       d = get_drive_line(q)
+       r = get_readout_line(q)
+       m = readout(r, square(500 * pulse.ns, 0.05))
        in_time, correction = decode.submit([m]).result(timeout=350 * pulse.ns)
        sync(d, r)
        if in_time:
            if correction[0]:
-               drive(d, square(20 * pulse.ns, PI_AMP), t)
+               drive(d, square(20 * pulse.ns, PI_AMP))
        else:
            if m:
-               drive(d, square(20 * pulse.ns, PI_AMP), t)
+               drive(d, square(20 * pulse.ns, PI_AMP))
 
 With ``timeout`` the result starts with a flag that is true when the
 answer came in time; the other values are zero when it did not, and the
@@ -338,10 +338,10 @@ call stays outside it:
 
    for _ in range(iterations):
        if done < 0.5:
-           shift_frequency(t, x)
-           drive(d, probe, t)
-           shift_frequency(t, -x)
-       m = readout(r, ro, rt)
+           shift_frequency(d.tone, x)
+           drive(d, probe)
+           shift_frequency(d.tone, -x)
+       m = readout(r, ro)
        state, x, done = golden_step.submit([m], state).result()
 
 **Choosing among settings.** An integer answer selects among arms with

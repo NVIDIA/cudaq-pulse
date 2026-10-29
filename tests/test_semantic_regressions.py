@@ -36,10 +36,10 @@ def test_constant_loop_is_retained_and_scheduled_per_iteration():
 
     @pulse.kernel
     def kernel(q):
-        line, tone = get_drive_line(q)
+        line = get_drive_line(q)
         waveform = square(10, 0.2)
         for _ in range(5):
-            drive(line, waveform, tone)
+            drive(line, waveform)
 
     compiled = pulse.compile(kernel, schedule="asap", passes=(), unroll_threshold=0).lower(Q[0])
     assert compiled.mlir().count("= pulse.drive ") == 1
@@ -57,9 +57,9 @@ def test_range_start_stop_step_values_are_preserved():
 
     @pulse.kernel
     def kernel(q):
-        _, tone = get_drive_line(q)
+        d = get_drive_line(q)
         for index in range(2, 9, 3):
-            shift_phase(tone, float(index))
+            shift_phase(d.tone, float(index))
 
     compiled = pulse.compile(kernel, passes=()).lower(Q[0])
     assert compiled.mlir().count("pulse.shift_phase") == 3
@@ -73,20 +73,20 @@ def test_tones_kept_in_a_list_and_retuned_stay_in_a_rolled_loop(symbolic):
     @pulse.kernel
     def constant(qs):
         lines = [get_drive_line(q) for q in qs]
-        for (d, t), f in zip(lines, (5.0e9, 5.1e9)):
-            set_frequency(t, f)
+        for d, f in zip(lines, (5.0e9, 5.1e9)):
+            set_frequency(d.tone, f)
         for _ in range(20):
-            for d, t in lines:
-                drive(d, square(20, 0.3), t)
+            for d in lines:
+                drive(d, square(20, 0.3))
 
     @pulse.kernel
     def runtime(qs, f0: float, f1: float):
         lines = [get_drive_line(q) for q in qs]
-        for (d, t), f in zip(lines, (f0, f1)):
-            set_frequency(t, f)
+        for d, f in zip(lines, (f0, f1)):
+            set_frequency(d.tone, f)
         for _ in range(20):
-            for d, t in lines:
-                drive(d, square(20, 0.3), t)
+            for d in lines:
+                drive(d, square(20, 0.3))
 
     args = (5.0e9, 5.1e9) if symbolic else ()
     compiled = pulse.compile(runtime if symbolic else constant).lower(Q[0:2], *args)
@@ -103,8 +103,8 @@ def test_compile_keeps_a_measurement_dependent_branch():
 
     @pulse.kernel
     def kernel(q):
-        line, tone = get_readout_line(q)
-        result = readout(line, square(10, 0.2), tone)
+        line = get_readout_line(q)
+        result = readout(line, square(10, 0.2))
         if result:
             wait(line, 10)
 
@@ -117,13 +117,13 @@ def test_documented_waveforms_and_algebra_lower_to_typed_ops():
 
     @pulse.kernel
     def kernel(q):
-        line, tone = get_drive_line(q)
+        line = get_drive_line(q)
         left = cosine(4, 0.2)
         right = custom_samples([0.1, 0.2, 0.3, 0.4])
         combined = wf_add(left, right)
         scaled = wf_scale(combined, 2.0)
         negated = wf_neg(scaled)
-        drive(line, negated, tone)
+        drive(line, negated)
 
     compiled = pulse.compile(kernel, passes=(), schedule="asap").lower(Q[0])
     assert "pulse.cosine" in compiled.mlir()
@@ -138,8 +138,8 @@ def test_custom_waveform_is_sampled_not_named():
 
     @pulse.kernel
     def kernel(q):
-        line, tone = get_drive_line(q)
-        drive(line, custom(8, abs), tone)
+        line = get_drive_line(q)
+        drive(line, custom(8, abs))
 
     mlir = pulse.compile(kernel, passes=()).lower(Q[0]).mlir()
     assert "pulse.custom_samples" in mlir and "@abs" not in mlir
@@ -149,8 +149,8 @@ def test_concrete_numeric_arguments_are_not_made_symbolic():
 
     @pulse.kernel
     def kernel(q, duration, amplitude):
-        line, tone = get_drive_line(q)
-        drive(line, gaussian(duration, amplitude, 5.0), tone)
+        line = get_drive_line(q)
+        drive(line, gaussian(duration, amplitude, 5.0))
 
     compiled = kernel.lower(Q[0], 20, 0.4)
     assert compiled.parameters == ()
@@ -161,7 +161,7 @@ def test_an_unannotated_parameter_specializes_the_kernel():
 
     @pulse.kernel
     def kernel(q, tau):
-        line, _ = get_drive_line(q)
+        line = get_drive_line(q)
         wait(line, tau)
 
     compiled = pulse.compile(kernel)
@@ -176,9 +176,9 @@ def test_a_float_that_sets_a_duration_is_specialized_on():
 
     @pulse.kernel
     def kernel(q, sigma: float, delay: int):
-        line, tone = get_drive_line(q)
+        line = get_drive_line(q)
         waveform = gaussian(int(4 * sigma), 0.2, sigma)
-        drive(line, waveform, tone)
+        drive(line, waveform)
         wait(line, delay * 2 + 1)
 
     # sigma sets a duration, so the kernel is specialized on its value.
@@ -202,10 +202,10 @@ def test_asap_and_alap_have_distinct_correct_placement():
 
     @pulse.kernel
     def kernel(q0, q1):
-        line0, tone0 = get_drive_line(q0)
-        line1, tone1 = get_drive_line(q1)
-        drive(line0, square(40, 0.2), tone0)
-        drive(line1, square(100, 0.2), tone1)
+        line0 = get_drive_line(q0)
+        line1 = get_drive_line(q1)
+        drive(line0, square(40, 0.2))
+        drive(line1, square(100, 0.2))
 
     args = [Q[0], Q[1]]
     asap = pulse.compile(kernel, schedule="asap", passes=()).lower(*args)
@@ -218,10 +218,10 @@ def test_compile_uses_resource_machine_for_overlapping_intervals():
 
     @pulse.kernel
     def kernel(q0, q1):
-        line0, tone0 = get_drive_line(q0)
-        line1, tone1 = get_drive_line(q1)
-        drive(line0, square(100, 0.2), tone0)
-        drive(line1, square(40, 0.2), tone1)
+        line0 = get_drive_line(q0)
+        line1 = get_drive_line(q1)
+        drive(line0, square(100, 0.2))
+        drive(line1, square(40, 0.2))
 
     compiled = pulse.compile(
         kernel, schedule="rcp", passes=(), machine=MachineModel(max_concurrent_drives=1)
@@ -232,9 +232,9 @@ def test_compile_uses_resource_machine_for_overlapping_intervals():
 def test_scheduler_tracks_line_lineage_and_resource_intervals():
     @pulse.kernel
     def lineage(q0):
-        line, tone = get_drive_line(q0)
+        line = get_drive_line(q0)
         for duration in range(10, 40, 10):
-            drive(line, square(duration, 0.2), tone)
+            drive(line, square(duration, 0.2))
 
     compiled = pulse.compile(lineage, passes=(), schedule="asap").lower(Q[0])
     assert [e.start_cycles for e in compiled.schedule] == [0, 10, 30]
@@ -242,8 +242,8 @@ def test_scheduler_tracks_line_lineage_and_resource_intervals():
     @pulse.kernel
     def resources(qs):
         for i in range(3):
-            line, tone = get_drive_line(qs[i])
-            drive(line, square(100, 0.2), tone)
+            line = get_drive_line(qs[i])
+            drive(line, square(100, 0.2))
 
     compiled = pulse.compile(
         resources, passes=(), schedule="rcp", machine=MachineModel(max_concurrent_drives=2)
@@ -254,10 +254,10 @@ def test_scheduler_tracks_line_lineage_and_resource_intervals():
 def test_alap_delays_independent_shorter_operation():
     @pulse.kernel
     def k(q0, q1):
-        line0, tone0 = get_drive_line(q0)
-        line1, tone1 = get_drive_line(q1)
-        drive(line0, square(40, 0.2), tone0)
-        drive(line1, square(100, 0.2), tone1)
+        line0 = get_drive_line(q0)
+        line1 = get_drive_line(q1)
+        drive(line0, square(40, 0.2))
+        drive(line1, square(100, 0.2))
 
     compiled = pulse.compile(k, passes=()).lower(Q[0], Q[1])
     assert [(e.line, e.start_cycles) for e in compiled.schedule] == [(0, 60), (1, 0)]
@@ -276,7 +276,7 @@ def test_a_handle_binds_its_physical_target_index():
 
     @pulse.kernel
     def kernel(qubit):
-        line, _tone = get_drive_line(qubit)
+        line = get_drive_line(qubit)
         wait(line, 10)
 
     compiled = pulse.compile(kernel, passes=()).lower(Q[4])
@@ -289,8 +289,8 @@ def test_virtual_time_arguments_are_not_silently_truncated():
 
     @pulse.kernel
     def kernel(qubit):
-        line, tone = get_drive_line(qubit)
-        drive(line, square(10.5, 0.2), tone)
+        line = get_drive_line(qubit)
+        drive(line, square(10.5, 0.2))
 
     with pytest.raises(CompilationError, match=r"duration is a float \(10.5\)"):
         kernel.lower(Q[0])

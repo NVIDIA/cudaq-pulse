@@ -122,8 +122,8 @@ assert package.is_relative_to(Path(sys.prefix).resolve()), f"not installed: {pac
 
 @pulse.kernel
 def rabi(qubit, duration: int, amplitude: float):
-    drive_line, tone = get_drive_line(qubit)
-    drive(drive_line, square(duration, amplitude), tone)
+    drive_line = get_drive_line(qubit)
+    drive(drive_line, square(duration, amplitude))
 
 
 device = pulse.device("transmon_krinner_17q")

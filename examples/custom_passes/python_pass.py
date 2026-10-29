@@ -42,8 +42,8 @@ def concurrent_drive_violations(compiled: pulse.Lowered, max_drives: int) -> lis
 @pulse.kernel
 def parallel_x(qs):
     for i in range(4):
-        line, tone = get_drive_line(qs[i])
-        drive(line, drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["drag_beta"]), tone)
+        line = get_drive_line(qs[i])
+        drive(line, drag(cal["x_duration"], 0.25, cal["x_sigma"], cal["drag_beta"]))
 
 
 def main() -> None:

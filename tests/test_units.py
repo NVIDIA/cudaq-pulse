@@ -143,28 +143,28 @@ _SHORTEST = "a waveform lasts at least 1 cycle"
     [
         ("wait(d, -5)", "wait(): duration is -5 cycles; a wait cannot be negative"),
         ("wait(d, -4 * pulse.ns)", "wait(): duration -4 ns is -8 cycles; a wait cannot be"),
-        ("drive(d, square(-8, 0.1), t)", f"square(): duration is -8 cycles; {_SHORTEST}"),
-        ("drive(d, square(0, 0.1), t)", f"square(): duration is 0 cycles; {_SHORTEST}"),
+        ("drive(d, square(-8, 0.1))", f"square(): duration is -8 cycles; {_SHORTEST}"),
+        ("drive(d, square(0, 0.1))", f"square(): duration is 0 cycles; {_SHORTEST}"),
         (
-            "drive(d, square(0 * pulse.ns, 0.1), t)",
+            "drive(d, square(0 * pulse.ns, 0.1))",
             f"square(): duration 0 ns is 0 cycles; {_SHORTEST}",
         ),
-        ("drive(d, gaussian(0, 0.1, 10.0), t)", f"gaussian(): duration is 0 cycles; {_SHORTEST}"),
-        ("drive(d, drag(-1, 0.1, 10.0, 0.5), t)", f"drag(): duration is -1 cycles; {_SHORTEST}"),
-        ("drive(d, cosine(0, 0.1), t)", f"cosine(): duration is 0 cycles; {_SHORTEST}"),
-        ("drive(d, tanh_ramp(0, 0.1, 4.0), t)", f"tanh_ramp(): duration is 0 cycles; {_SHORTEST}"),
+        ("drive(d, gaussian(0, 0.1, 10.0))", f"gaussian(): duration is 0 cycles; {_SHORTEST}"),
+        ("drive(d, drag(-1, 0.1, 10.0, 0.5))", f"drag(): duration is -1 cycles; {_SHORTEST}"),
+        ("drive(d, cosine(0, 0.1))", f"cosine(): duration is 0 cycles; {_SHORTEST}"),
+        ("drive(d, tanh_ramp(0, 0.1, 4.0))", f"tanh_ramp(): duration is 0 cycles; {_SHORTEST}"),
         (
-            "drive(d, gaussian_square(64, 0.1, 4.0, -1), t)",
+            "drive(d, gaussian_square(64, 0.1, 4.0, -1))",
             "gaussian_square(): width is -1 cycles; a duration cannot be negative",
         ),
         ("wait(d, 2**53 + 1)", f"wait(): duration is {2**53 + 1} cycles; {_LONGEST}"),
-        ("drive(d, square(2**62, 0.1), t)", f"square(): duration is {2**62} cycles; {_LONGEST}"),
-        ("drive(d, square(2**63, 0.1), t)", f"square(): duration is {2**63} cycles; {_LONGEST}"),
+        ("drive(d, square(2**62, 0.1))", f"square(): duration is {2**62} cycles; {_LONGEST}"),
+        ("drive(d, square(2**63, 0.1))", f"square(): duration is {2**63} cycles; {_LONGEST}"),
         ("wait(d, 1e30 * pulse.ns)", f"wait(): duration 1e+21 s is {2 * 10**30} cycles"),
     ],
 )
 def test_a_duration_outside_its_cycles_is_an_error_naming_the_line(call, message):
-    source = f"def k(q):\n    d, t = get_drive_line(q)\n    {call}\n"
+    source = f"def k(q):\n    d = get_drive_line(q)\n    {call}\n"
     namespace = {"pulse": pulse}
     exec(compile(source, "<kernel>", "exec"), namespace)
     with pytest.raises(pulse.CompilationError) as caught:
@@ -176,7 +176,7 @@ def test_a_duration_outside_its_cycles_is_an_error_naming_the_line(call, message
 def test_a_negative_wait_parameter_is_an_error():
     @pulse.kernel
     def k(q, n: int):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, n)
 
     with pytest.raises(pulse.CompilationError, match="duration is -1 cycles; a wait cannot be"):
@@ -187,13 +187,13 @@ def test_a_negative_wait_parameter_is_an_error():
     ("call", "message"),
     [
         ("wait(d, np.int64(-5))", "wait(): duration is -5 cycles; a wait cannot be negative"),
-        ("drive(d, square(np.int32(0), 0.1), t)", f"square(): duration is 0 cycles; {_SHORTEST}"),
-        ("drive(d, square(np.int64(2**60), 0.1), t)", f"is {2**60} cycles; {_LONGEST}"),
-        ("drive(d, square(True, 0.1), t)", "square duration must be an integer, got bool"),
+        ("drive(d, square(np.int32(0), 0.1))", f"square(): duration is 0 cycles; {_SHORTEST}"),
+        ("drive(d, square(np.int64(2**60), 0.1))", f"is {2**60} cycles; {_LONGEST}"),
+        ("drive(d, square(True, 0.1))", "square duration must be an integer, got bool"),
     ],
 )
 def test_an_integer_of_another_type_follows_the_same_rule(call, message):
-    source = f"def k(q):\n    d, t = get_drive_line(q)\n    {call}\n"
+    source = f"def k(q):\n    d = get_drive_line(q)\n    {call}\n"
     namespace = {"pulse": pulse, "np": np}
     exec(compile(source, "<kernel>", "exec"), namespace)
     with pytest.raises(pulse.CompilationError, match=re.escape(message)):
@@ -204,8 +204,8 @@ def test_an_integer_of_another_type_follows_the_same_rule(call, message):
 def test_a_float_argument_compiled_into_a_duration_follows_the_same_rule():
     @pulse.kernel
     def k(q, tau: float):
-        d, t = get_drive_line(q)
-        drive(d, square(tau, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(tau, 0.1))
 
     assert k.lower(Q[0], 8.0) is not None
     with pytest.raises(pulse.CompilationError, match="duration is 0 cycles; a waveform lasts"):
@@ -215,7 +215,7 @@ def test_a_float_argument_compiled_into_a_duration_follows_the_same_rule():
 def test_the_longest_duration_is_2_53_cycles():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, 2**53)
         wait(d, 2**52 * ns)
         wait(d, 0)
@@ -230,8 +230,8 @@ def test_the_longest_duration_is_2_53_cycles():
 def test_a_float_duration_is_an_error_that_shows_both_spellings():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        drive(d, gaussian(20.0, 0.1, 4.0), t)
+        d = get_drive_line(q)
+        drive(d, gaussian(20.0, 0.1, 4.0))
 
     with pytest.raises(pulse.CompilationError) as caught:
         k.lower(Q[0])
@@ -246,15 +246,15 @@ def test_a_float_duration_is_an_error_that_shows_both_spellings():
 @pytest.mark.parametrize(
     ("call", "what"),
     [
-        ("drive(d, square(8.0, 0.1), t)", "square(): duration"),
-        ("drive(d, gaussian_square(40, 0.1, 4.0, 20.0), t)", "gaussian_square(): width"),
+        ("drive(d, square(8.0, 0.1))", "square(): duration"),
+        ("drive(d, gaussian_square(40, 0.1, 4.0, 20.0))", "gaussian_square(): width"),
         ("wait(d, 8.0)", "wait(): duration"),
         ("wait(d, 8, bounds=(0, 40.0))", "wait(): bounds"),
         ("wait(d, pulse.round_duration(d, 2.5))", "round_duration(): duration"),
     ],
 )
 def test_every_duration_rejects_a_float(call, what):
-    source = f"def k(q):\n    d, t = get_drive_line(q)\n    {call}\n"
+    source = f"def k(q):\n    d = get_drive_line(q)\n    {call}\n"
     namespace = {"pulse": pulse}
     exec(compile(source, "<kernel>", "exec"), namespace)
     with pytest.raises(pulse.CompilationError, match="^" + re.escape(f"{what} is a float")):
@@ -264,8 +264,8 @@ def test_every_duration_rejects_a_float(call, what):
 def test_shape_times_take_fractional_cycles():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        drive(d, drag(40, 0.1, 4.5, 0.5), t)
+        d = get_drive_line(q)
+        drive(d, drag(40, 0.1, 4.5, 0.5))
 
     assert k.lower(Q[0]).schedule
 
@@ -279,32 +279,32 @@ def _same_module(with_units, in_cycles, *args):
 
 @pulse.kernel
 def waveforms_with_units(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, gaussian(20 * ns, 0.1, 2.5 * ns), t)
-    drive(d, square(4 * ns, 0.1), t)
-    drive(d, drag(40 * ns, 0.1, 5 * ns, 0.25 * ns), t)
-    drive(d, cosine(10 * ns, 0.1), t)
-    drive(d, tanh_ramp(10 * ns, 0.1, 1 * ns), t)
-    drive(d, gaussian_square(40 * ns, 0.1, 2 * ns, 20 * ns), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, gaussian(20 * ns, 0.1, 2.5 * ns))
+    drive(d, square(4 * ns, 0.1))
+    drive(d, drag(40 * ns, 0.1, 5 * ns, 0.25 * ns))
+    drive(d, cosine(10 * ns, 0.1))
+    drive(d, tanh_ramp(10 * ns, 0.1, 1 * ns))
+    drive(d, gaussian_square(40 * ns, 0.1, 2 * ns, 20 * ns))
     wait(d, 0.1 * us)
     sync(d, r)
-    readout(r, square(1 * us, 0.05), rt)
+    readout(r, square(1 * us, 0.05))
 
 
 @pulse.kernel
 def waveforms_in_cycles(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, gaussian(40, 0.1, 5.0), t)
-    drive(d, square(8, 0.1), t)
-    drive(d, drag(80, 0.1, 10.0, 0.5), t)
-    drive(d, cosine(20, 0.1), t)
-    drive(d, tanh_ramp(20, 0.1, 2.0), t)
-    drive(d, gaussian_square(80, 0.1, 4.0, 40), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, gaussian(40, 0.1, 5.0))
+    drive(d, square(8, 0.1))
+    drive(d, drag(80, 0.1, 10.0, 0.5))
+    drive(d, cosine(20, 0.1))
+    drive(d, tanh_ramp(20, 0.1, 2.0))
+    drive(d, gaussian_square(80, 0.1, 4.0, 40))
     wait(d, 200)
     sync(d, r)
-    readout(r, square(2000, 0.05), rt)
+    readout(r, square(2000, 0.05))
 
 
 def test_times_compile_to_the_module_of_their_cycles():
@@ -317,14 +317,14 @@ def _envelope(t):
 
 @pulse.kernel
 def custom_with_units(q):
-    d, t = get_drive_line(q)
-    drive(d, custom(4 * ns, _envelope), t)
+    d = get_drive_line(q)
+    drive(d, custom(4 * ns, _envelope))
 
 
 @pulse.kernel
 def custom_in_cycles(q):
-    d, t = get_drive_line(q)
-    drive(d, custom(8, _envelope), t)
+    d = get_drive_line(q)
+    drive(d, custom(8, _envelope))
 
 
 def test_a_custom_envelope_takes_a_time():
@@ -334,7 +334,7 @@ def test_a_custom_envelope_takes_a_time():
 def test_a_time_that_is_not_whole_cycles_is_an_error():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, 0.3 * ns)
 
     with pytest.raises(pulse.CompilationError) as caught:
@@ -348,8 +348,8 @@ def test_a_time_that_is_not_whole_cycles_is_an_error():
 def test_round_duration_rounds_a_time_onto_the_grid():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        drive(d, square(pulse.round_duration(d, 10.3 * ns), 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(pulse.round_duration(d, 10.3 * ns), 0.1))
 
     machine = MachineModel(controller=ControllerLimits(clock_ghz=0.5))
     assert [e[2] for e in _events(k.lower(Q[0]))] == [21]
@@ -359,9 +359,9 @@ def test_round_duration_rounds_a_time_onto_the_grid():
 def test_loops_and_parameters_take_times():
     @pulse.kernel
     def k(q, step, n: int):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(n):
-            drive(d, square(8, 0.1), t)
+            drive(d, square(8, 0.1))
             wait(d, step * (i + 1))
 
     events = _events(k.lower(Q[0], 10 * ns, 3))
@@ -376,9 +376,9 @@ def test_loops_and_parameters_take_times():
 
     @pulse.kernel(unroll_threshold=0)
     def rolled(q, step):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(40):
-            drive(d, square(8, 0.1), t)
+            drive(d, square(8, 0.1))
             wait(d, step)
 
     lowered = rolled.lower(Q[0], 10 * ns)
@@ -389,10 +389,10 @@ def test_loops_and_parameters_take_times():
 def test_a_float_parameter_in_nanoseconds_is_one_run_time_multiply():
     @pulse.kernel
     def k(q, tau: float):
-        d, t = get_drive_line(q)
-        drive(d, square(8, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(8, 0.1))
         wait(d, tau * ns, bounds=(0, 1 * us))
-        drive(d, square(8, 0.1), t)
+        drive(d, square(8, 0.1))
 
     compiled = pulse.compile(k)
     assert [e[1] for e in _events(compiled.lower(Q[0], 30.0)) if e[0] == "drive"] == [0, 68]
@@ -405,7 +405,7 @@ def test_a_float_parameter_in_nanoseconds_is_one_run_time_multiply():
 def test_mixing_units_in_a_run_time_length_is_an_error():
     @pulse.kernel
     def k(q, tau: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, tau * ns + 4)
 
     with pytest.raises(pulse.CompilationError, match="mixes a time with a number of cycles"):
@@ -419,11 +419,11 @@ def wait_length(x):
 
 @pulse.kernel
 def answer_in_nanoseconds(q):
-    d, t = get_drive_line(q)
-    drive(d, square(8, 0.1), t)
+    d = get_drive_line(q)
+    drive(d, square(8, 0.1))
     f = wait_length.submit(1.0)
     wait(d, f.result() * pulse.ns, bounds=(0, 4 * pulse.us))
-    drive(d, square(8, 0.1), t)
+    drive(d, square(8, 0.1))
 
 
 def test_an_answer_in_nanoseconds_converts_with_one_multiply():
@@ -444,13 +444,13 @@ def check_bit(bits):
 def test_a_timeout_takes_a_time():
     @pulse.kernel
     def timed(q, timeout):
-        d, t = get_drive_line(q)
-        ro, rt = get_readout_line(q)
-        m = readout(ro, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        m = readout(ro, square(100, 0.05))
         ok, fix = check_bit.submit([m]).result(timeout=timeout)
         sync(d, ro)
         if ok:
-            drive(d, square(20, 0.3), t)
+            drive(d, square(20, 0.3))
 
     with_units = timed.lower(Q[0], 0.3 * us)
     in_cycles = timed.lower(Q[0], 600)
@@ -463,8 +463,8 @@ def test_a_timeout_takes_a_time():
 def _timeout_error(timeout):
     source = (
         "def k(q):\n"
-        "    ro, rt = get_readout_line(q)\n"
-        "    m = readout(ro, square(100, 0.05), rt)\n"
+        "    ro = get_readout_line(q)\n"
+        "    m = readout(ro, square(100, 0.05))\n"
         f"    check_bit.submit([m]).result({timeout})\n"
     )
     namespace = {"pulse": pulse, "check_bit": check_bit}
@@ -510,10 +510,10 @@ cal = {"x_duration": 20 * ns, "x_sigma": 5 * ns, "x_amplitude": 0.2, "gap": 0.1 
 
 @pulse.kernel
 def x_then_wait(q):
-    d, t = get_drive_line(q)
-    drive(d, gaussian(cal["x_duration"], cal["x_amplitude"], cal["x_sigma"]), t)
+    d = get_drive_line(q)
+    drive(d, gaussian(cal["x_duration"], cal["x_amplitude"], cal["x_sigma"]))
     wait(d, cal["gap"])
-    drive(d, gaussian(cal["x_duration"], cal["x_amplitude"], cal["x_sigma"]), t)
+    drive(d, gaussian(cal["x_duration"], cal["x_amplitude"], cal["x_sigma"]))
 
 
 def test_one_kernel_compiles_for_devices_with_different_clocks():

@@ -58,12 +58,12 @@ def _threshold(dev):
 def _iq_reset(discriminate):
     @pulse.kernel
     def iq_reset(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        result = readout(r, square(1000, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        result = readout(r, square(1000, 0.05))
         sync(d, r)
         if discriminate.submit([result]).result()[0]:
-            drive(d, square(40, PI_AMP), t)
+            drive(d, square(40, PI_AMP))
 
     return iq_reset
 
@@ -109,8 +109,8 @@ def test_iq_points_scale_with_the_readout_amplitude():
 
         @pulse.kernel
         def probe(q, a: float):
-            r, rt = get_readout_line(q)
-            result = readout(r, square(1000, a), rt)
+            r = get_readout_line(q)
+            result = readout(r, square(1000, a))
             record.submit([result]).result()
 
         pulse.simulate(pulse.compile(probe, device=dev).lower(q, amplitude), shots=600, seed=5)
@@ -204,8 +204,8 @@ def test_the_krinner_twin_separates_its_readout_states():
 
     @pulse.kernel
     def probe(q):
-        r, rt = get_readout_line(q)
-        result = readout(r, square(400, 0.1), rt)
+        r = get_readout_line(q)
+        result = readout(r, square(400, 0.1))
         record.submit([result]).result()
 
     lowered = pulse.compile(probe, device=dev).lower(q)

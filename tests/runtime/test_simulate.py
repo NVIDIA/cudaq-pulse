@@ -49,33 +49,33 @@ def _target(n=1, t1_us=0.0):
 def _active_reset(prepare):
     @pulse.kernel
     def reset(q0):
-        d0, t0 = get_drive_line(q0)
-        r0, rt = get_readout_line(q0)
-        drive(d0, square(40, prepare), t0)
+        d0 = get_drive_line(q0)
+        r0 = get_readout_line(q0)
+        drive(d0, square(40, prepare))
         sync(d0, r0)
-        bit = readout(r0, square(200, 0.05), rt)
+        bit = readout(r0, square(200, 0.05))
         if bit:
-            drive(d0, square(40, _PI), t0)
+            drive(d0, square(40, _PI))
 
     return reset
 
 
 @pulse.kernel
 def conditional_flip(q0, q1):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
-    r0, rt = get_readout_line(q0)
-    drive(d0, square(40, _HALF_PI), t0)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
+    r0 = get_readout_line(q0)
+    drive(d0, square(40, _HALF_PI))
     sync(d0, r0)
-    bit = readout(r0, square(200, 0.05), rt)
+    bit = readout(r0, square(200, 0.05))
     if bit:
-        drive(d1, square(40, _PI), t1)
+        drive(d1, square(40, _PI))
 
 
 @pulse.kernel
 def measure(q0):
-    r0, rt = get_readout_line(q0)
-    readout(r0, square(200, 0.05), rt)
+    r0 = get_readout_line(q0)
+    readout(r0, square(200, 0.05))
 
 
 def _run(kernel, n=1, target=None, **kwargs):
@@ -86,8 +86,8 @@ def _run(kernel, n=1, target=None, **kwargs):
 def _rabi(amplitude):
     @pulse.kernel
     def rabi(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, amplitude), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, amplitude))
 
     return rabi
 
@@ -101,8 +101,8 @@ def test_rabi_matches_the_analytic_rotation():
 def test_simulate_takes_the_kernel_and_its_arguments():
     @pulse.kernel
     def rabi(q0, amplitude: float):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, amplitude), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, amplitude))
 
     dev = pulse.device({"target": _target()})
     q = dev.qudit_handles[0]
@@ -165,14 +165,14 @@ def test_measuring_a_qutrit_dephases_all_three_levels():
 
 @pulse.kernel
 def repeated_reset(q0):
-    d0, t0 = get_drive_line(q0)
-    r0, rt = get_readout_line(q0)
-    drive(d0, square(40, _HALF_PI), t0)
+    d0 = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    drive(d0, square(40, _HALF_PI))
     for _ in range(3):
         sync(d0, r0)
-        bit = readout(r0, square(200, 0.05), rt)
+        bit = readout(r0, square(200, 0.05))
         if bit:
-            drive(d0, square(40, _PI), t0)
+            drive(d0, square(40, _PI))
 
 
 def test_resets_in_a_retained_loop():
@@ -190,17 +190,17 @@ def test_resets_in_a_retained_loop():
 def test_a_retained_loop_simulates_like_its_unrolling():
     @pulse.kernel
     def rolled(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         for _ in range(4):
-            drive(d0, square(40, 0.02), t0)
-            t0 = shift_phase(t0, 0.7)
+            drive(d0, square(40, 0.02))
+            shift_phase(d0.tone, 0.7)
 
     @pulse.kernel
     def unrolled(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         for i in range(4):
-            drive(d0, square(40, 0.02 + 0 * i), t0)
-            t0 = shift_phase(t0, 0.7)
+            drive(d0, square(40, 0.02 + 0 * i))
+            shift_phase(d0.tone, 0.7)
 
     a = _run(rolled).density_matrix
     b = _run(unrolled).density_matrix

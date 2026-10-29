@@ -46,19 +46,19 @@ def installed(tmp_path, monkeypatch):
 
 @pulse.kernel
 def drive_and_measure(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, gaussian(40, 0.5, 10.0), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, gaussian(40, 0.5, 10.0))
     sync(d, r)
-    readout(r, square(200, 0.05), rt)
+    readout(r, square(200, 0.05))
 
 
 @pulse.kernel
 def two_readouts(q, r):
-    ra, ta = get_readout_line(q)
-    rb, tb = get_readout_line(r)
-    readout(ra, square(40, 0.05), ta)
-    readout(rb, square(40, 0.05), tb)
+    ra = get_readout_line(q)
+    rb = get_readout_line(r)
+    readout(ra, square(40, 0.05))
+    readout(rb, square(40, 0.05))
 
 
 def _device():

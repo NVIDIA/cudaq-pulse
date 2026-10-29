@@ -74,8 +74,8 @@ def frequency_estimator(bit, mean_hz, sigma_hz, gap_ns, phase):
 
 @pulse.kernel
 def binary_search(q, rounds: int):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     pi_pulse = square(pulse_cal["pi_duration"], pulse_cal["pi_amp"])
     half_pi_pulse = square(pulse_cal["pi_duration"], pulse_cal["pi_amp"] / 2)
     readout_pulse = square(pulse_cal["readout_duration"], 0.05)
@@ -83,25 +83,25 @@ def binary_search(q, rounds: int):
     gap_ns = WAIT0_NS - PULSE_NS
     phase = PHASE0
     # A Ramsey shot: pi/2, wait, pi/2 with its tone shifted by pi - phase.
-    drive(d, half_pi_pulse, t)
+    drive(d, half_pi_pulse)
     wait(d, pulse.round_duration(d, gap_ns * pulse.ns, "down"))
-    shift_phase(t, math.pi - phase)
-    drive(d, half_pi_pulse, t)
+    shift_phase(d.tone, math.pi - phase)
+    drive(d, half_pi_pulse)
     for _ in range(rounds):
         sync(d, r)
-        m = readout(r, readout_pulse, rt)
+        m = readout(r, readout_pulse)
         mean, sigma, gap_ns, phase = frequency_estimator.submit(
             [m], mean, sigma, gap_ns, phase
         ).result()
         sync(d, r)
         if m:  # active reset
-            drive(d, pi_pulse, t)
-        drive(d, half_pi_pulse, t)
+            drive(d, pi_pulse)
+        drive(d, half_pi_pulse)
         wait(d, gap_ns * pulse.ns, bounds=BOUNDS)
-        shift_phase(t, math.pi - phase)
-        drive(d, half_pi_pulse, t)
+        shift_phase(d.tone, math.pi - phase)
+        drive(d, half_pi_pulse)
     sync(d, r)
-    readout(r, readout_pulse, rt)
+    readout(r, readout_pulse)
 
 
 # ── 2. Tracking a drifting device between shots ─────────────────────────────
@@ -109,8 +109,8 @@ def binary_search(q, rounds: int):
 
 @pulse.kernel
 def t1_shot(q, wait_ns: int):
-    d, t = get_drive_line(q)
-    drive(d, square(pulse_cal["pi_duration"], pulse_cal["pi_amp"]), t)
+    d = get_drive_line(q)
+    drive(d, square(pulse_cal["pi_duration"], pulse_cal["pi_amp"]))
     wait(d, wait_ns * pulse.ns)
 
 

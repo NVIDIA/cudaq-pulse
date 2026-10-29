@@ -159,7 +159,7 @@ length to whole timesteps (``direction="up"`` by default, ``"down"`` or
 ``"nearest"``, or a ``pulse.RoundDirection``), so a kernel can be written
 for any controller::
 
-    drive(line, gaussian(pulse.round_duration(line, 41), 0.1, 10.0), tone)
+    drive(line, gaussian(pulse.round_duration(line, 41), 0.1, 10.0))
 
 The export counts the controller's own cycles: ``clock_ghz`` is the
 controller's clock, and when that is not the program clock the export also
@@ -317,11 +317,11 @@ same name:
 
    @pulse.kernel
    def drive_and_measure(q):
-       drive_line, drive_tone = get_drive_line(q)
-       readout_line, readout_tone = get_readout_line(q)
-       drive(drive_line, gaussian(cal["x_duration"], 0.5, cal["x_sigma"]), drive_tone)
+       drive_line = get_drive_line(q)
+       readout_line = get_readout_line(q)
+       drive(drive_line, gaussian(cal["x_duration"], 0.5, cal["x_sigma"]))
        sync(drive_line, readout_line)
-       readout(readout_line, square(cal["readout_duration"], 0.05), readout_tone)
+       readout(readout_line, square(cal["readout_duration"], 0.05))
 
 
    compiled = pulse.compile(drive_and_measure, device=dev, machine=backend.machine_model())
