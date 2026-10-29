@@ -30,6 +30,7 @@ import re as _re
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -54,11 +55,21 @@ if TYPE_CHECKING:
     from ..kernel._kernel import CompiledKernel, Kernel
     from ._calls import CallRecord
 
-__all__ = ["Branch", "Measurement", "SimulationResult", "simulate"]
+__all__ = ["Branch", "BranchCoverage", "Measurement", "SimulationResult", "simulate"]
 
 # Branches whose weight falls below this fraction of the initial state's are
 # not followed.
 _NEGLIGIBLE = 1e-14
+
+
+class BranchCoverage(StrEnum):
+    """Which measurement branches ``simulate`` follows; the strings
+    ``"all"`` and ``"sampled"`` mean the same."""
+
+    #: Every outcome of every measurement: the exact ensemble.
+    ALL = "all"
+    #: Only the outcomes the shots draw, at most ``shots`` branches.
+    SAMPLED = "sampled"
 
 
 @dataclass(frozen=True)
@@ -115,7 +126,7 @@ class SimulationResult:
     measured levels (one per entry of ``measurements``, -1 where that path
     did not measure), its probability and its classical calls.
     ``records`` holds one row of levels per shot. With
-    ``branches="sampled"``, ``branches`` holds the paths the shots took,
+    ``branches="sampled"``, ``branches`` holds the branches the shots took,
     each with the fraction of shots that took it, and the state is their
     average.
     """
@@ -188,7 +199,7 @@ def simulate(
     readout: str = "ideal",
     latency_branching: bool = False,
     plant: Any = None,
-    paths: str = "all",
+    branches: BranchCoverage | str = BranchCoverage.ALL,
 ) -> SimulationResult:
     """Simulate one kernel call on the target it is compiled for.
 
@@ -277,15 +288,15 @@ def simulate(
         probability of the function's latency model; by default, without
         shots, the answer is in time when the nominal latency is within the
         timeout. With shots the in-time outcome is always sampled.
-    paths:
+    branches:
         ``"all"`` (the default) follows every outcome of every measurement,
         so the state is the exact ensemble. ``"sampled"`` follows only the
-        outcomes the shots draw: at most ``shots`` paths, so a program that
-        measures many times inside one shot (an adaptive loop of readouts
-        and calls) costs time linear in its measurements, not exponential.
-        The state is then the average over the shots' paths, and
-        ``branches`` gives each path's share of the shots. It needs
-        ``shots``.
+        outcomes the shots draw: at most ``shots`` branches, so a program
+        that measures many times inside one shot (an adaptive loop of
+        readouts and calls) costs time linear in its measurements, not
+        exponential. The state is then the average over the shots'
+        branches, and ``result.branches`` gives each one's share of the
+        shots. It needs ``shots``. A ``BranchCoverage`` or its string.
     """
     from ..compiler import Lowered
     from ..kernel._kernel import CompiledKernel, Kernel
@@ -325,7 +336,7 @@ def simulate(
         readout=readout,
         latency_branching=latency_branching,
         plant=plant,
-        paths=paths,
+        branches=branches,
     )
 
 
@@ -346,14 +357,16 @@ def _simulate_lowered(
     readout: str = "ideal",
     latency_branching: bool = False,
     plant: Any = None,
-    paths: str = "all",
+    branches: BranchCoverage | str = BranchCoverage.ALL,
 ) -> SimulationResult:
     if shots is not None and (shots.__class__ is not int or shots < 1):
         shots = _positive_int("shots", shots)
-    if paths not in ("all", "sampled"):
-        raise InvalidValueError(f"unknown paths {paths!r}; choose 'all' or 'sampled'")
-    if paths == "sampled" and not shots:
-        raise InvalidValueError("paths='sampled' follows the paths of the shots; pass shots >= 1")
+    if branches not in ("all", "sampled"):
+        raise InvalidValueError(f"unknown branches {branches!r}; choose 'all' or 'sampled'")
+    if branches == "sampled" and not shots:
+        raise InvalidValueError(
+            "branches='sampled' follows the branches of the shots; pass shots >= 1"
+        )
     if backend not in ("cpu", "gpu"):
         raise InvalidValueError(f"unknown backend {backend!r}; choose 'cpu' or 'gpu'")
     if dephasing not in ("t2_star", "t2_echo"):
@@ -397,7 +410,7 @@ def _simulate_lowered(
         readout=readout,
         latency_branching=latency_branching,
         plant=plant is not None,
-        sampled=paths == "sampled",
+        sampled=branches == "sampled",
     )
 
 

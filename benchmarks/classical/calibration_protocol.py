@@ -151,7 +151,9 @@ def adaptive_t1(n, seed):
     dev = pulse.device({"target": target})
     lowered = pulse.compile(att_paper, device=dev, machine=P["machine"]).lower(dev.qudit_handles[0])
     start = time.perf_counter()
-    result = pulse.simulate(lowered, shots=n, seed=seed, paths="sampled", readout="model", levels=2)
+    result = pulse.simulate(
+        lowered, shots=n, seed=seed, branches="sampled", readout="model", levels=2
+    )
     seconds = time.perf_counter() - start
     estimates, posteriors = [], []
     for calls, count in _shares(result, n):
@@ -191,7 +193,7 @@ def binary_search(n, seed):
             plant=P["search_plant"](target, offset),
             shots=1,
             seed=seed * 100_003 + k,
-            paths="sampled",
+            branches="sampled",
             readout="model",
             levels=2,
         )
@@ -225,7 +227,7 @@ def chain(n, seed):
             plant=plant,
             shots=1,
             seed=seed * 7919 + k,
-            paths="sampled",
+            branches="sampled",
             readout="model",
             levels=2,
         )
@@ -278,7 +280,7 @@ def steps(seed):
         compile_s = time.perf_counter() - start
         start = time.perf_counter()
         result = pulse.simulate(
-            lowered, plant=plant, shots=1, seed=seed, paths="sampled", readout="model", levels=2
+            lowered, plant=plant, shots=1, seed=seed, branches="sampled", readout="model", levels=2
         )
         simulate_s = time.perf_counter() - start
         # Tracing allocations slows NumPy several times over: measure apart,
@@ -286,7 +288,7 @@ def steps(seed):
         _propagate.clear_cache()
         tracemalloc.start()
         pulse.simulate(
-            lowered, plant=plant, shots=1, seed=seed, paths="sampled", readout="model", levels=2
+            lowered, plant=plant, shots=1, seed=seed, branches="sampled", readout="model", levels=2
         )
         peak = tracemalloc.get_traced_memory()[1]
         tracemalloc.stop()

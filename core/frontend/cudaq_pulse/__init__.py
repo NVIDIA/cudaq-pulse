@@ -96,11 +96,13 @@ if TYPE_CHECKING:
     from ._units import s as s
     from ._units import us as us
     from .runtime.gpu import GpuRuntimeError as GpuRuntimeError
+    from .runtime.simulate import BranchCoverage as BranchCoverage
     from .runtime.simulate import SimulationResult as SimulationResult
     from .runtime.simulate import simulate as simulate
 
 _LAZY_EXPORTS = {
     "SimulationResult": ".runtime.simulate",
+    "BranchCoverage": ".runtime.simulate",
     "simulate": ".runtime.simulate",
     "GpuRuntimeError": ".runtime.gpu",
     # Times with units load exact arithmetic (fractions), which a program in
@@ -122,6 +124,7 @@ __all__ = [
     "Pass",
     "simulate",
     "SimulationResult",
+    "BranchCoverage",
     "device",
     "Device",
     "Qudit",

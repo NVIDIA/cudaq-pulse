@@ -532,7 +532,9 @@ if __name__ == "__main__":
     )
     print(f"  the static schedule (every variable wait at its least) is {end_cycles / 2e3:.0f} us")
     start = time.perf_counter()
-    result = pulse.simulate(lowered, plant=plant, shots=1, seed=7, paths="sampled", readout="model")
+    result = pulse.simulate(
+        lowered, plant=plant, shots=1, seed=7, branches="sampled", readout="model"
+    )
     print(f"  one shot of the chain simulated in {time.perf_counter() - start:.1f} s")
     for name, value in chain_results(result.branches[0]).items():
         shown = ", ".join(f"{v:.3f}" for v in value) if isinstance(value, tuple) else f"{value:.4f}"
@@ -553,7 +555,7 @@ if __name__ == "__main__":
             plant=search_plant(target, offset),
             shots=1,
             seed=seed,
-            paths="sampled",
+            branches="sampled",
             readout="model",
         )
         mean, sigma, _, _ = found.branches[0].answers("search_step")[-1]

@@ -10,7 +10,7 @@
 Stretches with a constant Lindbladian (idle waits, square pulses in their
 frame) are propagated exactly; driven stretches on small registers by their
 RK4 map, built at once. Both must agree with stepping RK4 on the state, and
-``paths="sampled"`` must follow only the paths shots take.
+``branches="sampled"`` must follow only the branches shots take.
 """
 
 from __future__ import annotations
@@ -146,11 +146,11 @@ def _three_measurements(q0):
         sync(d, r)
 
 
-def test_sampled_paths_have_the_frequencies_of_the_exact_paths():
+def test_sampled_branches_have_the_frequencies_of_the_exact_branches():
     lowered = on(_target(t1_us=0.0, t2_us=0.0, thermal=0.0), _three_measurements, Q[0])
     exact = {b.levels: b.probability for b in pulse.simulate(lowered, levels=2).branches}
     shots = 4000
-    sampled = pulse.simulate(lowered, shots=shots, seed=5, paths="sampled", levels=2)
+    sampled = pulse.simulate(lowered, shots=shots, seed=5, branches="sampled", levels=2)
     assert len(sampled.branches) <= shots
     assert sum(b.probability for b in sampled.branches) == pytest.approx(1.0)
     assert np.trace(sampled.density_matrix).real == pytest.approx(1.0)
@@ -160,12 +160,22 @@ def test_sampled_paths_have_the_frequencies_of_the_exact_paths():
     assert sampled.records is not None and sampled.records.shape == (shots, 3)
 
 
-def test_sampled_paths_need_shots():
+def test_sampled_branches_need_shots():
     lowered = on(_target(), _three_measurements, Q[0])
     with pytest.raises(ValueError, match="shots"):
-        pulse.simulate(lowered, paths="sampled", levels=2)
-    with pytest.raises(ValueError, match="paths"):
-        pulse.simulate(lowered, shots=1, paths="some", levels=2)
+        pulse.simulate(lowered, branches="sampled", levels=2)
+    with pytest.raises(ValueError, match="unknown branches 'some'; choose 'all' or 'sampled'"):
+        pulse.simulate(lowered, shots=1, branches="some", levels=2)
+
+
+def test_branch_coverage_takes_its_members_or_their_strings():
+    lowered = on(_target(), _three_measurements, Q[0])
+    by_string = pulse.simulate(lowered, shots=50, seed=2, branches="sampled", levels=2)
+    by_member = pulse.simulate(
+        lowered, shots=50, seed=2, branches=pulse.BranchCoverage.SAMPLED, levels=2
+    )
+    assert by_member.branches == by_string.branches
+    assert pulse.BranchCoverage("all") is pulse.BranchCoverage.ALL
 
 
 _MACHINE = MachineModel(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
@@ -200,7 +210,7 @@ def test_a_long_adaptive_loop_follows_one_path_per_shot():
     lowered = pulse.compile(_adaptive_loop, device=dev, machine=_MACHINE).lower(
         dev.qudit_handles[0], 60
     )
-    result = pulse.simulate(lowered, shots=3, seed=1, paths="sampled", levels=2)
+    result = pulse.simulate(lowered, shots=3, seed=1, branches="sampled", levels=2)
     assert 1 <= len(result.branches) <= 3
     assert all(len(branch.calls) == 60 for branch in result.branches)
     assert result.records is not None and result.records.shape == (3, 60)

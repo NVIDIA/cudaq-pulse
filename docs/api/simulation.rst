@@ -20,6 +20,10 @@ Simulation API
    :members:
    :undoc-members:
 
+.. autoclass:: cudaq_pulse.BranchCoverage
+   :members:
+   :undoc-members:
+
 .. autoclass:: cudaq_pulse.runtime.simulate.Measurement
    :members:
    :undoc-members:

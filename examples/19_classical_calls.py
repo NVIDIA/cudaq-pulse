@@ -226,7 +226,7 @@ if __name__ == "__main__":
     epochs = tracker.epochs()
     print(f"  {len(epochs)} epochs, opened by: {[e.opened_by for e in epochs]}")
     result = pulse.simulate(tracker, dt_ns=dt_ns)
-    print(f"  {len(result.branches)} measurement paths")
+    print(f"  {len(result.branches)} measurement branches")
     likeliest = max(result.branches, key=lambda branch: branch.probability)
     print(f"  most likely path {likeliest.levels} (p = {likeliest.probability:.3f}):")
     for alpha, beta, tau_ns in likeliest.answers("update_t1"):
@@ -235,7 +235,7 @@ if __name__ == "__main__":
     for branch in result.branches:
         alpha, beta, _ = branch.answers("update_t1")[-1]
         mean_t1 += branch.probability * (beta / alpha)
-    print(f"  T1 estimate after {rounds} rounds, averaged over paths: {mean_t1 / 1e3:.2f} us")
+    print(f"  T1 estimate after {rounds} rounds, averaged over branches: {mean_t1 / 1e3:.2f} us")
 
     print("\n=== 3. Emulation artifact and call manifest ===")
     with tempfile.TemporaryDirectory() as directory:

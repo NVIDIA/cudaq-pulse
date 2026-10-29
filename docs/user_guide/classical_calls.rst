@@ -444,7 +444,7 @@ answer's length; under ASAP the excitation plays as early as it can, and
 the qubit also decays through the call's latency.
 
 A program that measures hundreds of times in one shot is simulated one
-path per shot: ``pulse.simulate(lowered, shots=n, paths="sampled")``. Idle
+path per shot: ``pulse.simulate(lowered, shots=n, branches="sampled")``. Idle
 waits and square pulses are propagated exactly, so a shot's cost does not
 grow with its waits.
 

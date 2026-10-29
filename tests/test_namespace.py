@@ -23,6 +23,7 @@ TOP_LEVEL = {
     "Pass",
     "simulate",
     "SimulationResult",
+    "BranchCoverage",
     "device",
     "Device",
     "Qudit",

@@ -60,7 +60,9 @@ def test_the_pi_train_corrects_a_drive_amplitude_error():
     dev, q = _device(target)
     lowered = pulse.compile(_pi_step, device=dev, machine=P["machine"]).lower(q)
     plant = P["chain_plant"](target, amplitude_scale=1.02)
-    result = pulse.simulate(lowered, plant=plant, shots=2, seed=3, paths="sampled", readout="model")
+    result = pulse.simulate(
+        lowered, plant=plant, shots=2, seed=3, branches="sampled", readout="model"
+    )
     for branch in result.branches:
         corrected, relative_sigma = branch.calls[-1].answer
         # 21 pulses amplify a 2% error to 0.84 rad; 50 shots per point.
@@ -84,7 +86,7 @@ def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
     dev, q = _device(target)
     lowered = pulse.compile(_adaptive_t1, device=dev, machine=P["machine"]).lower(q)
     shots = 32
-    result = pulse.simulate(lowered, shots=shots, seed=4, paths="sampled", readout="model")
+    result = pulse.simulate(lowered, shots=shots, seed=4, branches="sampled", readout="model")
     estimates = []
     for branch in result.branches:
         assert len(branch.answers("adaptive_t1")) == P["tracker_shots"]
@@ -105,7 +107,7 @@ def test_the_binary_search_narrows_on_the_controller():
             plant=P["search_plant"](target, offset),
             shots=1,
             seed=seed,
-            paths="sampled",
+            branches="sampled",
             readout="model",
         )
         mean, sigma, _, _ = result.branches[0].calls[-1].answer

@@ -75,9 +75,9 @@ behavior may change in any 0.x release.
   their frame are propagated exactly, at a cost independent of their
   length, and driven stretches on registers of up to four levels by RK4
   maps built at once (a 100 us T1 shot: 104 s to under 1 ms).
-  `simulate(paths="sampled")` follows only the paths the shots take, so a
-  program that measures many times in one shot costs time linear in its
-  measurements. Finding a program's next measurement and next call is now
+  `simulate(branches="sampled")` (or `pulse.BranchCoverage.SAMPLED`) follows
+  only the branches the shots take, so a program that measures many times in
+  one shot costs time linear in its measurements. Finding a program's next measurement and next call is now
   linear in its length.
 
 - **Kernels.** `@pulse.kernel` traces a Python function into Pulse-dialect
@@ -364,7 +364,7 @@ behavior may change in any 0.x release.
   the "Writing a Controller Backend" guide walks through one.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
   `CompiledKernel`, `Lowered`, `Pass`, `simulate`, `SimulationResult`,
-  `device`, `Device`, `Qudit`, `Register`,
+  `BranchCoverage`, `device`, `Device`, `Qudit`, `Register`,
   `PulseError`, `Problem`, `DeviceDefinitionError`, `InvalidValueError`,
   `InvalidTypeError`, `NotFoundError`, `UnsupportedError`,
   `CompilationError`, `TimingError`, `ExecutionError`, `InternalError`,

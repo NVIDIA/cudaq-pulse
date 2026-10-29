@@ -142,7 +142,7 @@ if __name__ == "__main__":
         branch.probability * branch.answers("frequency_estimator")[-1][0]
         for branch in result.branches
     )
-    print(f"  mean estimate over paths: {expected / 1e3:+.0f} kHz")
+    print(f"  mean estimate over branches: {expected / 1e3:+.0f} kHz")
 
     print("\n=== 2. Tracking a drifting device between shots ===")
     telegraph = TelegraphT1(qubit.t1_us / 4, qubit.t1_us, rate_hz=0.5)
