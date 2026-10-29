@@ -256,7 +256,7 @@ def test_the_structured_format_names_the_controller_and_its_links_anew():
     controller = program["controller"]
     assert controller["instruction_cycles"] == 1
     assert controller["waveform_memory_samples"] == 4096
-    assert {"min_idle_cycles", "detectors", "detector_recovery_cycles", "samples_per_cycle"} < set(
+    assert {"min_idle_cycles", "detectors", "detector_recovery_cycles", "sample_rate_ghz"} < set(
         controller
     )
     assert {"max_tones_per_line", "max_pulses", "supports_timeouts"} < set(controller)

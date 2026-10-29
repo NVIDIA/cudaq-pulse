@@ -62,6 +62,7 @@ import types
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
+from fractions import Fraction
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -658,21 +659,43 @@ def shape_key(node: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
     return (shape, node.get("name"), kept)
 
 
+def _exact(value: float) -> Fraction:
+    """*value* as the decimal it is written as, so that rates such as 2.4
+    samples per cycle divide exactly."""
+    return Fraction(repr(float(value)))
+
+
 def sample_waveform(
-    node: Mapping[str, Any], duration_cycles: int, samples_per_cycle: int = 1
+    node: Mapping[str, Any], duration_cycles: int, samples_per_cycle: float = 1
 ) -> np.ndarray:
     """The complex envelope of a waveform, ``samples_per_cycle`` per cycle.
 
     Sample ``k`` is the envelope at ``k / samples_per_cycle`` cycles from the
     start, with the definitions of the waveform ops (times in cycles), the
-    same the simulator plays. Raises ``ValueError`` for a waveform the
-    export cannot evaluate: a ``pulse.custom`` op of hand-written IR, whose
-    samples the runtime computes, or one whose parameters are not numbers.
+    same the simulator plays. ``samples_per_cycle`` may be fractional, but
+    the waveform must then last a whole number of samples. Raises
+    ``ValueError`` when it does not, or for a waveform the export cannot
+    evaluate: a ``pulse.custom`` op of hand-written IR, whose samples the
+    runtime computes, or one whose parameters are not numbers.
     """
+    return _sample(node, duration_cycles, _exact(samples_per_cycle))
+
+
+def _sample(node: Mapping[str, Any], duration_cycles: int, ratio: Fraction) -> np.ndarray:
     import numpy as np
 
-    count = int(duration_cycles) * int(samples_per_cycle)
-    t = np.arange(count, dtype=float) / samples_per_cycle
+    per, over = ratio.numerator, ratio.denominator
+    if over == 1:
+        count = int(duration_cycles) * per
+        t = np.arange(count, dtype=float) / per
+    else:
+        if int(duration_cycles) * per % over:
+            raise ValueError(
+                f"{duration_cycles} cycles at {per / over:g} samples per cycle is "
+                f"{int(duration_cycles) * per / over:g} samples, not a whole number"
+            )
+        count = int(duration_cycles) * per // over
+        t = np.arange(count, dtype=float) / (per / over)
 
     def evaluate(node: Mapping[str, Any]) -> Any:
         shape = node["shape"]
@@ -979,8 +1002,24 @@ def export(
         own = clocks.controllers[0]
     clock = lowered.target.clock_ghz if own is None else own.clock_ghz
     samples_of: list[dict[str, list[float]] | None] = []
+    # The controller's converter rate, else sample_rate_ghz, else one sample
+    # per cycle.
+    own_rate = None if limits is None else limits.sample_rate_ghz
+    rate = clock if own_rate is None else own_rate
     if sample_rate_ghz is not None:
-        samples_of = _add_samples(events, sample_rate_ghz, clock, waveforms)
+        ratio: Fraction | None = None
+        if version == 2:
+            if not sample_rate_ghz > 0:
+                raise ValueError(f"sample_rate_ghz must be positive, got {sample_rate_ghz}")
+            if own_rate is not None and sample_rate_ghz != own_rate:
+                raise ValueError(
+                    f"sample_rate_ghz={sample_rate_ghz}; the controller samples at {own_rate} GHz"
+                )
+            from . import _clocks
+
+            ratio = Fraction(*_clocks.made_for(sample_rate_ghz, clock))
+            rate = sample_rate_ghz
+        samples_of = _add_samples(events, sample_rate_ghz, clock, waveforms, ratio)
     base = emulation(lowered, False)
     if waveforms is None:
         lines: list[dict[str, Any]] = raw_lines
@@ -994,12 +1033,17 @@ def export(
         "format": FORMAT if version == 1 else _STRUCTURED,
         "target": lowered.target.name,
         "clock_ghz": clock,
-        **({} if clocks is None else _clocks.clock_keys(clocks, clocks.controllers[0])),
-        "schedule": lowered.options.schedule,
-        "sample_rate_ghz": sample_rate_ghz,
-        "qudits": list(lowered.qudits),
-        "lines": lines,
     }
+    if clocks is not None:
+        program.update(_clocks.clock_keys(clocks, clocks.controllers[0]))
+    if waveforms is None:
+        program["schedule"] = lowered.options.schedule
+        program["sample_rate_ghz"] = sample_rate_ghz
+    else:
+        program["sample_rate_ghz"] = rate
+        program["schedule"] = lowered.options.schedule
+    program["qudits"] = list(lowered.qudits)
+    program["lines"] = lines
     if waveforms is not None:
         program["waveforms"] = waveforms.identified()
         if sample_rate_ghz is not None:
@@ -1204,11 +1248,22 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
 
     expand(program["events"], [])
     flat_keys = {"controller": "limits", **{v: k for k, v in _SYSTEM_KEYS.items()}}
-    flat = {
-        flat_keys.get(k, k): v
-        for k, v in program.items()
-        if k not in ("programs", "bindings", "waveforms", "samples", "parameters")
-    }
+    from . import _clocks
+
+    # Format /1 states the rate after the schedule, and only when sampled.
+    rate = program["sample_rate_ghz"] if "samples" in program else None
+    if rate is not None and _clocks.made_for(rate, program["clock_ghz"])[1] != 1:
+        raise ValueError(
+            f"format /1 samples at a whole multiple of the clock; this program samples "
+            f"at {rate} GHz on a {program['clock_ghz']} GHz clock"
+        )
+    flat: dict[str, Any] = {}
+    for k, v in program.items():
+        if k in ("programs", "bindings", "waveforms", "samples", "parameters", "sample_rate_ghz"):
+            continue
+        flat[flat_keys.get(k, k)] = v
+        if k == "schedule":
+            flat["sample_rate_ghz"] = rate
     flat["format"] = FORMAT
     if flat["limits"] is not None:
         flat["limits"] = _flat_controller(flat["limits"])
@@ -1229,16 +1284,20 @@ def _add_samples(
     sample_rate_ghz: float,
     clock: float,
     waveforms: _Waveforms | None = None,
+    ratio: Fraction | None = None,
 ) -> list[dict[str, list[float]] | None]:
     """Give each drive and readout of *events* its envelope's samples at
     *sample_rate_ghz*, a whole multiple of the *clock* its times count; with
-    *waveforms* (format /2), the samples of each of its waveforms instead."""
-    ratio = sample_rate_ghz / clock
-    per_cycles = round(ratio)
-    if per_cycles < 1 or abs(ratio - per_cycles) > 1e-9:
-        raise ValueError(
-            f"sample_rate_ghz={sample_rate_ghz} is not a whole multiple of the {clock} GHz clock"
-        )
+    *waveforms* (format /2), the samples of each of its waveforms instead,
+    at *ratio* samples per cycle."""
+    if ratio is None:
+        per_cycles = round(sample_rate_ghz / clock)
+        if per_cycles < 1 or abs(sample_rate_ghz / clock - per_cycles) > 1e-9:
+            raise ValueError(
+                f"sample_rate_ghz={sample_rate_ghz} is not a whole multiple of the "
+                f"{clock} GHz clock"
+            )
+        ratio = Fraction(per_cycles)
     # The events of one op share its waveform, so each is sampled once.
     sampled: dict[tuple[int, int], dict[str, list[float]]] = {}
     samples_of: list[dict[str, list[float]] | None] = []
@@ -1253,7 +1312,7 @@ def _add_samples(
         key = (id(tree), duration)
         if key not in sampled:
             try:
-                samples = sample_waveform(tree, duration, per_cycles)
+                samples = _sample(tree, duration, ratio)
             except ValueError as e:
                 where = event.get("index", "of waveform")
                 raise ValueError(f"event {where} ({event['kind']}): {e}") from None

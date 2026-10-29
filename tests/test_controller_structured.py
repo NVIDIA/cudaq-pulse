@@ -237,6 +237,40 @@ def test_unrolling_refuses_an_event_kind_the_format_does_not_have():
         unroll(program)
 
 
+def test_a_program_states_its_sample_rate_beside_its_clock():
+    kernel = _rounds(2)
+    lowered = pulse.compile(kernel).lower(Q[0], Q[1])
+    plain = lowered.export_controller(version=2)
+    assert list(plain)[2:4] == ["clock_ghz", "sample_rate_ghz"]
+    assert plain["sample_rate_ghz"] == _TARGET.clock_ghz
+    assert "samples_per_cycle" not in plain
+    assert unroll(plain) == lowered.export_controller()
+    whole = lowered.export_controller(version=2, sample_rate_ghz=2 * _TARGET.clock_ghz)
+    assert unroll(whole) == lowered.export_controller(sample_rate_ghz=2 * _TARGET.clock_ghz)
+
+    # 1.5 samples per cycle: every waveform here is a whole number of them.
+    sampled = lowered.export_controller(version=2, sample_rate_ghz=3.0)
+    rate, clock = sampled["sample_rate_ghz"], sampled["clock_ghz"]
+    assert rate == 3.0
+    played = list(_played(sampled["events"]))
+    assert played
+    for event in played:
+        samples = sampled["samples"][event["waveform"]]
+        assert len(samples["re"]) == event["duration_cycles"] * rate / clock
+    with pytest.raises(ValueError, match="whole multiple of the clock"):
+        unroll(sampled)
+    with pytest.raises(ValueError, match="16 cycles at 1.1 samples per cycle is 17.6 samples"):
+        lowered.export_controller(version=2, sample_rate_ghz=2.2)
+
+    machine = MachineModel(controller=ControllerLimits(sample_rate_ghz=8.0))
+    lowered = pulse.compile(kernel, machine=machine).lower(Q[0], Q[1])
+    program = lowered.export_controller(version=2)
+    assert program["sample_rate_ghz"] == program["controller"]["sample_rate_ghz"] == 8.0
+    assert unroll(program) == lowered.export_controller()
+    with pytest.raises(ValueError, match="the controller samples at 8.0 GHz"):
+        lowered.export_controller(version=2, sample_rate_ghz=6.0)
+
+
 def test_unrolling_a_flat_export_returns_it():
     lowered, _ = _lower("branches")
     flat = lowered.export_controller()

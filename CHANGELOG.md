@@ -558,7 +558,11 @@ behavior may change in any 0.x release.
   loop whose iterations repeat is one `loop` event holding its body, with
   its trip count, period and each tone's phase step per iteration; each
   distinct waveform is listed once; and what follows from the rest is left
-  out. A line lists its qudits and an event its tones, and `programs` and
+  out. The program writes the controller's `sample_rate_ghz` beside
+  `clock_ghz`, so it states its own timing (a waveform of n samples lasts
+  n × clock_ghz / sample_rate_ghz cycles); the two may be in any ratio, and
+  the export raises rather than round a waveform that is not a whole number
+  of samples. A line lists its qudits and an event its tones, and `programs` and
   `bindings` are reserved for programs shared by several controllers.
   `controller.unroll()` turns it into format /1. The export and the
   controller limit checks are native, and the checks reason about a

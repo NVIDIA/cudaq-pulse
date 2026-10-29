@@ -194,6 +194,18 @@ rather than with its executions, as a sequencer runs it. It has the keys of
 ``quantum_system``
     In place of ``target``: the name of the quantum system the program is
     for.
+``sample_rate_ghz``
+    Beside ``clock_ghz``, always a number: the rate at which the
+    controller's converters play waveform samples, so that the program
+    states its own timing. A waveform of ``n`` samples lasts
+    ``n * clock_ghz / sample_rate_ghz`` cycles. The ratio may be
+    fractional (2.4 GHz on a 1 GHz clock), but every waveform lasts a whole
+    number of samples, and the export raises ``ValueError`` for one that
+    does not rather than round. The rate is the controller's, else the
+    export's ``sample_rate_ghz``, which must then be the same, else
+    ``clock_ghz`` (one sample per cycle). Unlike in ``/1``, it need not
+    be a whole multiple of the clock, and ``samples`` are present only when
+    the export is given ``sample_rate_ghz``.
 ``links``
     Each link with ``send_ns``, ``bandwidth_bytes_per_ns``,
     ``answer_delay_ns`` and ``slots`` for ``Link.fixed_ns``,
