@@ -349,6 +349,42 @@ def test_limits_on_the_machine_model_fail_the_compilation():
         MachineModel(controller={"issue_cycles": 4})  # type: ignore[arg-type]
 
 
+@pulse.kernel
+def strong_drives(q, amplitude: float):
+    d, t = get_drive_line(q)
+    r, rt = get_readout_line(q)
+    drive(d, square(16, 1.5), t)
+    drive(d, gaussian(16, amplitude, 4.0), t)
+    drive(d, wf_scale(drag(16, 0.5, 4.0, 16.0), 1.5), t)
+    readout(r, square(32, 0.1), rt)
+
+
+def test_only_the_controller_limits_the_amplitude():
+    lowered = pulse.compile(strong_drives).lower(Q[0], 3.0)
+    assert lowered.export_controller()["events"][0]["amplitude"]["re"] == 1.5
+    found = check(lowered, ControllerLimits(max_amplitude=1.0))
+    assert found[0] == (
+        "line 0 (drive of qudit 0): the drive at 0 peaks at amplitude 1.5; the controller "
+        "plays at most 1 (ControllerLimits.max_amplitude)"
+    )
+    # The quadrature of the DRAG pulse takes its peak above 0.75.
+    assert [f.split(": the ")[1].split(" peaks")[0] for f in found] == [
+        "drive at 0",
+        "drive at 16",
+        "drive at 32",
+    ]
+    assert check(lowered, ControllerLimits(max_amplitude=3.0)) == []
+    assert "max_amplitude" not in ControllerLimits(clock_ghz=1.0).as_dict()
+    machine = MachineModel(controller=ControllerLimits(max_amplitude=2.0))
+    compiled = pulse.compile(strong_drives, machine=machine)
+    assert compiled.lower(Q[0], 0.5).export_controller()["limits"]["max_amplitude"] == 2.0
+    with pytest.raises(ControllerLimitError, match=r"peaks at amplitude 3; .* at most 2 \("):
+        compiled.lower(Q[0], 3.0).export_controller()
+    for wrong in (0, -1.0, math.inf, math.nan, True, "1"):
+        with pytest.raises(pulse.InvalidValueError, match="max_amplitude must be a positive"):
+            ControllerLimits(max_amplitude=wrong)  # type: ignore[arg-type]
+
+
 def test_a_limit_error_lists_ten_violations_and_counts_the_rest():
     error = ControllerLimitError([f"violation {k}" for k in range(13)])
     assert "violation 9" in str(error) and "violation 10" not in str(error)

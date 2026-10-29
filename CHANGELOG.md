@@ -318,8 +318,9 @@ behavior may change in any 0.x release.
   computes nothing at run time exports exactly as before. Within a version,
   keys and event kinds are only added. `MachineModel(controller=
   ControllerLimits(...))` states what a controller can play (clock, issue
-  spacing, waveform memory, tones, readout acquirers, feedback latency,
-  answer timeouts, program size) and makes compilation fail with
+  spacing, waveform memory, tones, the largest amplitude, readout
+  acquirers, feedback latency, answer timeouts, program size; the compiler
+  itself limits no amplitude) and makes compilation fail with
   `ControllerLimitError` when a program exceeds it, parametric kernels
   included. `cudaq_pulse.backends` finds backends installed under the
   `cudaq_pulse.backends` entry-point group; a backend that fails to load, is
@@ -390,6 +391,8 @@ behavior may change in any 0.x release.
   take a positive `int` (`InvalidTypeError` or `InvalidValueError`
   otherwise; `simulate`'s default `None` still samples nothing), and a
   qudit index past a device or register is an `IndexError` that says how
-  many qudits it has.
+  many qudits it has. A NaN or infinite float argument is an
+  `InvalidValueError` naming the parameter wherever the program is used:
+  run, simulated, exported or printed.
 
 [0.1.0]: https://github.com/NVIDIA/cudaq-pulse/releases/tag/v0.1.0

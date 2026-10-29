@@ -14,6 +14,7 @@ import inspect
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import CompilationError
+from cudaq_pulse.controller import export
 
 from tests._handles import Q
 
@@ -55,6 +56,8 @@ REJECTED = [
     ("drive(d, tanh_ramp(40, inf, 4.0), t)", "tanh_ramp amplitude must be finite, got inf"),
     ("drive(d, gaussian_square(64, nan, 4.0, 32), t)", "gaussian_square amplitude must be"),
     ("drive(d, custom_samples([0.1, nan]), t)", r"custom_samples\(\) sample 1 must be finite"),
+    ("drive(d, wf_scale(square(8, 0.1), inf), t)", "wf_scale scale must be finite, got inf"),
+    ("drive(d, wf_scale(square(8, 0.1), nan), t)", "wf_scale scale must be finite, got nan"),
     ("shift_phase(t, nan)", "shift_phase phase must be finite, got nan"),
     ("set_phase(t, inf)", "set_phase phase must be finite, got inf"),
     ("shift_frequency(t, nan)", "shift_frequency frequency must be finite, got nan"),
@@ -103,6 +106,32 @@ def test_the_line_is_named_with_or_without_passes(passes):
 )
 def test_values_at_the_edge_of_each_rule_still_compile(body):
     assert _kernel(body).lower(Q[0]) is not None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "drive(d, square(8, x), t)",
+        "drive(d, gaussian(40, 0.1, x), t)",
+        "drive(d, wf_scale(square(8, 0.1), x), t)",
+        "shift_phase(t, x)",
+        "set_frequency(t, x)",
+    ],
+)
+@pytest.mark.parametrize("value", [NAN, INF, -INF])
+def test_a_float_argument_that_is_not_finite_fails_where_the_program_is_used(body, value):
+    compiled = pulse.compile(_kernel(body, "q, x: float"))
+    lowered = compiled.lower(Q[0], value)
+    message = rf"argument 'x' is {value!r}; a float argument must be a finite number"
+    for use in (
+        lowered.mlir,
+        lambda: export(lowered),
+        lambda: pulse.simulate(lowered),
+        lambda: pulse.simulate(compiled, Q[0], value),
+        lambda: compiled(Q[0], value),
+    ):
+        with pytest.raises(pulse.InvalidValueError, match=message):
+            use()
 
 
 def _bad_helper(d, t):

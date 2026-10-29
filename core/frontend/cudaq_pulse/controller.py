@@ -151,6 +151,10 @@ class ControllerLimits:
     samples, at ``sample_rate_ghz``; waveforms of one shape at different
     amplitudes share it (``shape_key``).
     ``tones_per_line``: distinct tone frequencies one line plays.
+    ``max_amplitude``: the largest magnitude of a sample its lines play
+    (``None``: no limit). The compiler sets no amplitude limit of its own;
+    a drive or readout whose envelope peaks above this one is a violation
+    naming its line. Exports list it among the limits only when it is set.
     ``acquirers`` and ``acquirer_hold_cycles``: the acquirer reading each
     qudit; readouts on one acquirer are serialized, each holding it for its
     duration plus ``acquirer_hold_cycles``.
@@ -191,6 +195,7 @@ class ControllerLimits:
     sample_rate_ghz: float | None = None
     waveform_samples: int | None = None
     tones_per_line: int | None = None
+    max_amplitude: float | None = None
     acquirers: Mapping[int, int] = field(default_factory=dict)
     acquirer_hold_cycles: int = 0
     feedback_latency_cycles: int = 0
@@ -223,6 +228,16 @@ class ControllerLimits:
         for name in ("max_fine_delay_ns", "alignment_tolerance_cycles"):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) < 0:
                 raise InvalidValueError(f"ControllerLimits.{name} must be a finite number >= 0")
+        peak = self.max_amplitude
+        if peak is not None and (
+            isinstance(peak, bool)
+            or not isinstance(peak, (int, float))
+            or not math.isfinite(peak)
+            or not peak > 0
+        ):
+            raise InvalidValueError(
+                f"ControllerLimits.max_amplitude must be a positive number or None, got {peak!r}"
+            )
         rate = self.sample_rate_ghz
         if rate is not None and (
             isinstance(rate, bool)
@@ -294,6 +309,8 @@ class ControllerLimits:
         data["acquirers"] = {str(k): v for k, v in sorted(self.acquirers.items())}
         data["op_cycles"] = dict(sorted(self.op_cycles.items()))
         data["compute_links"] = list(self.compute_links)
+        if self.max_amplitude is None:
+            del data["max_amplitude"]
         return data
 
 
@@ -616,6 +633,8 @@ def _violations(
                     f"line {line}: {len(tones)} tone frequencies; the controller holds "
                     f"{limits.tones_per_line} per line"
                 )
+        if limits.max_amplitude is not None:
+            found.extend(_over_amplitude(lines[line], items, limits.max_amplitude))
         if limits.waveform_samples is not None:
             shapes: dict[Any, int] = {}
             for e in items:
@@ -674,6 +693,55 @@ def _violations(
     if limits.computes:
         found.extend(resources(lowered, limits).violations)
     return found
+
+
+def _over_amplitude(
+    line: Mapping[str, Any], events: Sequence[Mapping[str, Any]], most: float
+) -> list[str]:
+    """The events of *line* whose envelope peaks above *most*."""
+    found = []
+    for event in events:
+        peak = _peak_amplitude(event.get("waveform"))
+        if peak is not None and peak > most:
+            found.append(
+                f"line {line['line']} ({line['role']} of qudit {line['qudit']}): the "
+                f"{event['kind']} at {event['start_cycles']} peaks at amplitude {peak:.6g}; "
+                f"the controller plays at most {most:g} (ControllerLimits.max_amplitude)"
+            )
+    return found
+
+
+# Samples per cycle the peak of an envelope is found at.
+_PEAK_SAMPLES_PER_CYCLE = 8
+
+
+def _peak_amplitude(node: Mapping[str, Any] | None) -> float | None:
+    """The largest magnitude of the envelope of *node*, over its own
+    duration; ``None`` when it is not built from numbers alone."""
+    if node is None:
+        return None
+    duration = _span(node)
+    if duration is None:
+        return None
+    try:
+        samples = sample_waveform(node, math.ceil(duration), _PEAK_SAMPLES_PER_CYCLE)
+    except (ValueError, TypeError, KeyError):
+        return None
+    return float(abs(samples).max()) if len(samples) else 0.0
+
+
+def _span(node: Mapping[str, Any]) -> float | None:
+    """The duration, in cycles, a waveform tree states for itself."""
+    duration = node.get("params", {}).get("duration")
+    if duration is not None:
+        return float(duration)
+    if node["shape"] == "custom_samples":
+        return float(len(node.get("samples", ())) or 1)
+    for child in node.get("of", ()):
+        found = _span(child)
+        if found is not None:
+            return found
+    return None
 
 
 def _samples_per_own_cycle(limits: ControllerLimits, program_ghz: float) -> tuple[int, int]:

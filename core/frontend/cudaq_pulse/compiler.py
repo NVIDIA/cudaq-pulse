@@ -857,12 +857,26 @@ class Lowered:
         if not self.arguments:
             return self._module
         if self._concrete_module is None:
+            for v in self.arguments:
+                if v - v != 0.0:
+                    raise self._not_finite()
             with self._lock:
                 module = self._module.specialize(
                     list(self.arguments), [], *self.options.schedule_args()
                 )
             self._concrete_module = module
         return self._concrete_module
+
+    def _not_finite(self) -> InvalidValueError:
+        """The error for the first of the call's values that is NaN or infinite."""
+        names = self.generic.parameters if self.generic is not None else ()
+        for i, v in enumerate(self.arguments):
+            if v - v != 0.0:
+                name = names[i] if i < len(names) else f"#{i}"
+                return InvalidValueError(
+                    f"argument {name!r} is {v!r}; a float argument must be a finite number"
+                )
+        raise AssertionError("every value is finite")
 
     def mlir(self, stage: str = "pulse") -> str:
         """The module as MLIR text: ``"pulse"`` (scheduled pulse dialect) or

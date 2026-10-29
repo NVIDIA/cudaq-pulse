@@ -375,6 +375,9 @@ def _simulate_compiled(
     # a private copy of the module.
     lock = compiled._lock
     arguments = list(compiled.arguments)
+    for v in arguments:
+        if v - v != 0.0:
+            raise compiled._not_finite()
     functions = tuple(getattr(compiled, "classical", ()))
     tree = bool(functions) or readout != "ideal"
     if functions:

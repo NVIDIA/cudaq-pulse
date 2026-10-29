@@ -678,7 +678,10 @@ class PackedIRBuilder:
 
         if kind == "pulse.wf_scale":
             rv = results[0].vid
-            scale_vid = self._get_numeric_vid(a["scale"], "f64")
+            scale = a["scale"]
+            if scale.__class__ is float and scale - scale != 0.0:
+                raise CompilationError(f"wf_scale scale must be finite, got {scale!r}")
+            scale_vid = self._get_numeric_vid(scale, "f64")
             self._ensure(4)
             self._w(_header(_WF_SCALE, 3))
             self._w(rv)
