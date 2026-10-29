@@ -394,9 +394,9 @@ behavior may change in any 0.x release.
   computes nothing at run time exports exactly as before. Within a version,
   keys and event kinds are only added. `MachineModel(controller=
   ControllerLimits(...))` states what a controller can play (clock, issue
-  spacing, waveform memory, tones, the largest amplitude, readout
-  acquirers, feedback latency, answer timeouts, program size; the compiler
-  itself limits no amplitude) and makes compilation fail with
+  spacing, waveform memory at its `sample_rate_ghz`, tones, the largest
+  amplitude, readout acquirers, feedback latency, answer timeouts, program
+  size; the compiler itself limits no amplitude) and makes compilation fail with
   `ControllerLimitError` when a program exceeds it, parametric kernels
   included: a limit that only some values of a float parameter exceed, such
   as a tone shift, a waveform width or a wait length, is checked at the call

@@ -377,6 +377,29 @@ def test_limits_report_clock_tones_memory_and_size():
     assert check(lowered, ControllerLimits(issue_cycles=4)) == []
 
 
+def test_a_sample_rate_sets_the_samples_a_waveform_takes():
+    lowered = pulse.compile(drive_and_branch, schedule="asap").lower(Q[0], Q[1])
+    clock = lowered.target.clock_ghz
+    # At one and a half samples per cycle, the readout's 100 cycles take 150
+    # samples and line 2's two shapes of 20 cycles 30 each.
+    found = check(lowered, ControllerLimits(sample_rate_ghz=1.5 * clock, waveform_samples=60))
+    assert [f.split(":")[0] for f in found] == ["line 1"]
+    assert "150 samples" in found[0]
+    with pytest.raises(ValueError, match="no whole-cycle ratio"):
+        check(lowered, ControllerLimits(sample_rate_ghz=clock / 10_007, waveform_samples=60))
+
+
+@pytest.mark.parametrize("rate", [0, -1.0, float("inf"), float("nan"), True, "2"])
+def test_a_sample_rate_is_a_positive_number(rate):
+    with pytest.raises(pulse.InvalidValueError, match="sample_rate_ghz must be a positive number"):
+        ControllerLimits(sample_rate_ghz=rate)
+
+
+def test_samples_per_cycles_is_no_longer_a_limit():
+    with pytest.raises(TypeError, match="samples_per_cycles"):
+        ControllerLimits(samples_per_cycles=2)  # type: ignore[call-arg]
+
+
 def test_limits_on_the_machine_model_fail_the_compilation():
     machine = MachineModel(controller=ControllerLimits(issue_cycles=4, min_wait_cycles=4))
     with pytest.raises(ControllerLimitError, match="starts 5 cycles after") as caught:
