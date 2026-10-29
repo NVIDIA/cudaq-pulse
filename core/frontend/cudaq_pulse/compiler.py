@@ -1440,19 +1440,7 @@ class _CheckedPerCall(Lowered):
 
     def bind(self, values: Sequence[float]) -> Lowered:
         view = super().bind(values)
-        key = _bits(view.arguments)
-        if key not in self._accepted:
-            from .controller import ControllerLimitError, _call_violations
-
-            violations = _call_violations(view)
-            if violations:
-                raise ControllerLimitError(
-                    violations, system=view.options.machine._system is not None
-                )
-            if len(self._accepted) >= _ACCEPTED_CALLS:
-                self._accepted.clear()
-            self._accepted.add(key)
-        return view
+        return self._accept(view, _bits(view.arguments))
 
     def _accept(self, view: Lowered, key: bytes) -> Lowered:
         """*view*, once its values are within the limits (checked once per

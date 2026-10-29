@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import json
 import math
-import struct
 
 import cudaq_pulse as pulse
+import cudaq_pulse.controller as controller_module
 import numpy as np
 import pytest
 from cudaq_pulse.classical import Bits, Float, qec
@@ -539,12 +539,21 @@ def test_waveforms_of_float_widths_take_memory_by_their_values():
         compiled.lower(Q[0], 10.0, 12.0)
 
 
-def test_a_call_is_checked_once_per_distinct_values():
+def test_a_call_is_checked_once_per_distinct_values(monkeypatch):
+    checked = []
+    check_call = controller_module._call_violations
+
+    def counted(view):
+        checked.append(tuple(view.arguments))
+        return check_call(view)
+
+    monkeypatch.setattr(controller_module, "_call_violations", counted)
     machine = MachineModel(controller=ControllerLimits(tones_per_line=1))
     compiled = pulse.compile(retuned, machine=machine)
-    first = compiled.lower(Q[0], 0.0)
-    compiled.lower(Q[0], 0.0)
-    assert first.generic._accepted == {struct.pack("d", 0.0)}
+    for shift in (0.0, 0.0, 0.0, -0.0):
+        compiled.lower(Q[0], shift)
+    # -0.0 is a different value to the controller: its own check.
+    assert checked == [(0.0,), (-0.0,)]
     # A module no float value can push past a limit is not checked per call.
     lowered = pulse.compile(ramsey, machine=machine).lower(Q[0], 0.75)
     assert type(lowered.generic) is pulse.Lowered
@@ -584,13 +593,17 @@ def test_a_call_that_lowers_exports(shift, widths, tones, samples):
         drive(d, gaussian(40, 0.5, 10.0), t)
 
     limits = ControllerLimits(tones_per_line=tones, waveform_samples=samples)
-    try:
-        lowered = pulse.compile(program, machine=MachineModel(controller=limits)).lower(
-            Q[0], shift, *widths
-        )
-    except ControllerLimitError:
-        return
-    lowered.export_controller()
+    # The call fails exactly when its program, compiled free, exceeds them.
+    expected = check(pulse.compile(program).lower(Q[0], shift, *widths), limits)
+    compiled = pulse.compile(program, machine=MachineModel(controller=limits))
+    if expected:
+        with pytest.raises(ControllerLimitError) as raised:
+            compiled.lower(Q[0], shift, *widths)
+        assert list(raised.value.violations) == expected
+    else:
+        lowered = compiled.lower(Q[0], shift, *widths)
+        assert len(lowered.export_controller()["events"]) == 3
+        assert check(lowered) == []
 
 
 # ── Classical calls ──────────────────────────────────────────────────────────
