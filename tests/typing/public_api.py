@@ -13,7 +13,7 @@ mypy must report, and --warn-unused-ignores fails if it stops reporting it.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, assert_type
 
 import cudaq_pulse as pulse
@@ -121,6 +121,10 @@ assert_type(pulse.controller.FORMAT, str)
 control = pulse.ControlSystem(controllers=[box], links={"feedback": pulse.Link(controllers=[box])})
 assert_type(control.controllers, Sequence[pulse.Controller])
 assert_type(box.supports_capability(pulse.Capability.BRANCH), bool)
+cores = pulse.Processor(links=("feedback",), cycles_per_op={"div": 20}, unsupported=["trig"])
+assert_type(cores.max_ops_total, int | None)
+assert_type(cores.dispatch_keys, Mapping[str, int])
+assert_type(pulse.Controller(processors=[cores]).processors, Sequence[pulse.Processor])
 qpu = pulse.device({"quantum_system": "transmon_krinner_17q", "control_system": control})
 assert_type(qpu.control_system, pulse.ControlSystem | None)
 assert_type(qpu.as_dict(), dict[str, Any])

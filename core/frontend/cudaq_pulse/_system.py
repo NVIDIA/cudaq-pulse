@@ -31,6 +31,7 @@ from __future__ import annotations
 import dataclasses
 import enum
 import json
+import math
 import os
 import re
 import tomllib
@@ -54,14 +55,14 @@ from ._errors import (
     _ranges,
 )
 from .classical import Link
-from .controller import ControllerLimits
+from .controller import OP_CLASSES, ControllerLimits
 
 if TYPE_CHECKING:
     from ._device import Device
     from .compiler import Lowered, MachineModel
     from .targets.base import TargetDescription
 
-__all__ = ["SYSTEM_FORMAT", "Capability", "ControlSystem", "Controller"]
+__all__ = ["SYSTEM_FORMAT", "Capability", "ControlSystem", "Controller", "Processor"]
 
 SYSTEM_FORMAT = "cudaq-pulse.system/1"
 
@@ -125,6 +126,191 @@ def _cycles(value: Any, name: str) -> int:
     return value
 
 
+# What a processor's cycles_per_op and unsupported name: the classes of
+# operations, and "loop", a rolled loop's counter and jump per iteration.
+PROCESSOR_OPS = (*OP_CLASSES, "loop")
+_PROCESSOR_LIMITS = (
+    "max_ops_per_function",
+    "max_ops_total",
+    "max_state_bytes_per_function",
+    "max_state_bytes_total",
+    "max_calls_per_shot",
+    "max_bytes_per_shot",
+)
+
+
+def _op_name(given: Any, field_name: str) -> str:
+    if given in PROCESSOR_OPS:
+        return str(given)
+    hint = _closest(str(given), PROCESSOR_OPS)
+    raise InvalidValueError(
+        f"Processor.{field_name} names an unknown operation {given!r}"
+        + (f" (did you mean {hint!r}?)" if hint else "")
+        + f"; the operations are {', '.join(PROCESSOR_OPS)}"
+    )
+
+
+@dataclass(frozen=True)
+class Processor:
+    """A classical processor on a controller, which runs the classical
+    functions called on its ``links`` (link names of the control system, or
+    link ids). A link belongs to at most one processor of a system; a
+    function on no processor runs off the controllers, and only its link is
+    checked.
+
+    ``clock_ghz``: its clock (``None``: the controller's, else the
+    program's). ``cycles_per_op``: the cycles of one operation of each class
+    of ``OP_CLASSES``, and of ``"loop"``, a rolled loop's counter and jump
+    per iteration; one cycle when not given. ``branch`` is an ``if`` or
+    ``else``. ``unsupported``: the operations it cannot run; a function that
+    uses one does not compile, except ``"loop"``: a processor without it
+    runs each loop unrolled, so its code is counted unrolled.
+    ``max_concurrent_calls``: the calls it computes at once, from submission
+    to the time the answer is due.
+    ``max_ops_per_function`` and ``max_ops_total``: the operations one
+    function, and all its functions, may hold. ``max_state_bytes_per_function``
+    and ``max_state_bytes_total``: the bytes of arguments, results and
+    locals of one function, and of all of them. ``max_calls_per_shot`` and
+    ``max_bytes_per_shot``: the calls, and the bytes of requests and
+    answers, of one shot. ``None`` is no limit. ``fixed_cost_only``: every
+    function's cost must be fixed when the program compiles (no ``while``,
+    recursion or allocation). ``dispatch_keys``: the dispatch key of each
+    function it runs, by function name, when the processor fixes them; it
+    then lists every function it runs.
+    """
+
+    links: Sequence[int | str] = ("controller",)
+    clock_ghz: float | None = None
+    cycles_per_op: Mapping[str, int] = field(default_factory=dict)
+    unsupported: Sequence[str] = ()
+    max_concurrent_calls: int = 1
+    max_ops_per_function: int | None = None
+    max_ops_total: int | None = None
+    max_state_bytes_per_function: int | None = None
+    max_state_bytes_total: int | None = None
+    max_calls_per_shot: int | None = None
+    max_bytes_per_shot: int | None = None
+    fixed_cost_only: bool = False
+    dispatch_keys: Mapping[str, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.links, (str, bytes)) or not isinstance(self.links, Iterable):
+            raise InvalidTypeError(
+                f"Processor.links is a list of link names or ids, got {self.links!r}"
+            )
+        links = tuple(self.links)
+        for link in links:
+            if isinstance(link, str):
+                if not link.isidentifier():
+                    raise InvalidValueError(f"Processor.links names a link, got {link!r}")
+            elif isinstance(link, bool) or not isinstance(link, int) or link < 0:
+                raise InvalidTypeError(
+                    f"Processor.links holds link names or ids >= 0, got {link!r}"
+                )
+        if len(set(links)) != len(links):
+            raise InvalidValueError(f"Processor.links lists a link twice: {list(links)}")
+        object.__setattr__(self, "links", links)
+        clock = self.clock_ghz
+        if clock is not None and (
+            isinstance(clock, bool)
+            or not isinstance(clock, (int, float))
+            or not math.isfinite(clock)
+            or not clock > 0
+        ):
+            raise InvalidValueError(
+                f"Processor.clock_ghz must be a positive number or None, got {clock!r}"
+            )
+        if not isinstance(self.cycles_per_op, Mapping):
+            raise InvalidTypeError(
+                f"Processor.cycles_per_op maps operations to cycles, got {self.cycles_per_op!r}"
+            )
+        costs = {}
+        for op, cycles in self.cycles_per_op.items():
+            name = _op_name(op, "cycles_per_op")
+            if isinstance(cycles, bool) or not isinstance(cycles, int) or cycles < 0:
+                raise InvalidValueError(
+                    f"Processor.cycles_per_op[{name!r}] is a whole number of cycles >= 0, "
+                    f"got {cycles!r}"
+                )
+            costs[name] = cycles
+        object.__setattr__(self, "cycles_per_op", MappingProxyType(costs))
+        if isinstance(self.unsupported, (str, bytes)) or not isinstance(self.unsupported, Iterable):
+            raise InvalidTypeError(
+                f"Processor.unsupported is a list of operations, got {self.unsupported!r}"
+            )
+        unsupported = tuple(dict.fromkeys(_op_name(op, "unsupported") for op in self.unsupported))
+        both = [op for op in unsupported if op in costs]
+        if both:
+            raise InvalidValueError(
+                f"Processor.unsupported lists {both[0]!r}, which cycles_per_op gives a cost; "
+                "an operation is supported or not"
+            )
+        object.__setattr__(self, "unsupported", unsupported)
+        calls = self.max_concurrent_calls
+        if isinstance(calls, bool) or not isinstance(calls, int) or calls < 1:
+            raise InvalidValueError(
+                f"Processor.max_concurrent_calls is a whole number >= 1, got {calls!r}"
+            )
+        for name in _PROCESSOR_LIMITS:
+            value = getattr(self, name)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 1
+            ):
+                raise InvalidValueError(
+                    f"Processor.{name} is a whole number >= 1 or None, got {value!r}"
+                )
+        if not isinstance(self.fixed_cost_only, bool):
+            raise InvalidTypeError(
+                f"Processor.fixed_cost_only is True or False, got {self.fixed_cost_only!r}"
+            )
+        if not isinstance(self.dispatch_keys, Mapping):
+            raise InvalidTypeError(
+                f"Processor.dispatch_keys maps function names to keys, got {self.dispatch_keys!r}"
+            )
+        owners: dict[int, str] = {}
+        for name, key in self.dispatch_keys.items():
+            if not isinstance(name, str) or not name.isidentifier():
+                raise InvalidValueError(
+                    f"Processor.dispatch_keys is keyed by function name, got {name!r}"
+                )
+            if isinstance(key, bool) or not isinstance(key, int) or not 0 <= key <= 0xFFFFFFFF:
+                raise InvalidValueError(
+                    f"Processor.dispatch_keys[{name!r}] is {key!r}; a dispatch key is a whole "
+                    "number from 0 to 0xFFFFFFFF"
+                )
+            if key in owners:
+                raise InvalidValueError(
+                    f"Processor.dispatch_keys gives {key} to both {owners[key]!r} and {name!r}; "
+                    "give each function its own key"
+                )
+            owners[key] = name
+        object.__setattr__(self, "dispatch_keys", MappingProxyType(dict(self.dispatch_keys)))
+
+    def __hash__(self) -> int:
+        return hash(
+            tuple(
+                tuple(sorted(value.items())) if isinstance(value, Mapping) else value
+                for value in (getattr(self, f.name) for f in fields(self))
+            )
+        )
+
+    @property
+    def loops(self) -> bool:
+        """Whether it runs a rolled loop as a loop (``"loop"`` is not
+        ``unsupported``); without, its loops are unrolled."""
+        return "loop" not in self.unsupported
+
+    def as_dict(self) -> dict[str, Any]:
+        """The processor as JSON-serializable data, which ``Processor(**data)``
+        reads back."""
+        data = {f.name: getattr(self, f.name) for f in fields(self)}
+        data["links"] = list(self.links)
+        data["cycles_per_op"] = dict(self.cycles_per_op)
+        data["unsupported"] = list(self.unsupported)
+        data["dispatch_keys"] = dict(self.dispatch_keys)
+        return data
+
+
 @dataclass(frozen=True)
 class Controller(ControllerLimits):
     """One controller of a ``ControlSystem``: its limits and its wiring.
@@ -141,7 +327,10 @@ class Controller(ControllerLimits):
     ``supports`` lists its capabilities (``None``: everything); a program
     that needs one it lacks fails to compile. ``backend`` is the controller
     backend that lowers its programs, by entry-point name. ``model`` and
-    ``version`` identify the description it was made from.
+    ``version`` identify the description it was made from. ``processors``
+    are its classical processors (``Processor``); a controller with
+    processors states what it computes on them, not with the compute fields
+    of ``ControllerLimits``.
     """
 
     drive_lines: Sequence[int] = ()
@@ -153,6 +342,7 @@ class Controller(ControllerLimits):
     backend: str | None = None
     model: str | None = None
     version: str | None = None
+    processors: Sequence[Processor] = ()
 
     __hash__ = ControllerLimits.__hash__
 
@@ -197,6 +387,32 @@ class Controller(ControllerLimits):
             value = getattr(self, name)
             if value is not None and not isinstance(value, str):
                 raise InvalidTypeError(f"Controller.{name} is a string, got {value!r}")
+        if isinstance(self.processors, (str, bytes, Processor, Mapping)) or not isinstance(
+            self.processors, Iterable
+        ):
+            raise InvalidTypeError(
+                f"Controller.processors is a list of pulse.Processor, got {self.processors!r}"
+            )
+        processors = []
+        for index, item in enumerate(self.processors):
+            if isinstance(item, Mapping):
+                # As a description or a system file states it.
+                try:
+                    item = Processor(**item)
+                except TypeError as error:
+                    raise InvalidValueError(f"Controller.processors[{index}]: {error}") from None
+            elif not isinstance(item, Processor):
+                raise InvalidTypeError(
+                    f"Controller.processors[{index}] is not a pulse.Processor: {item!r}"
+                )
+            processors.append(item)
+        if processors and (self.computes or self.compute_links != ("controller",)):
+            raise InvalidValueError(
+                "a Controller with processors states what it computes on them; move its "
+                "compute_links, op_cycles, compute_clock_ghz, max_ops, state_bytes, "
+                "max_calls_per_shot, buffer_bytes and controller_form to a pulse.Processor"
+            )
+        object.__setattr__(self, "processors", tuple(processors))
 
     def as_dict(self) -> dict[str, Any]:
         """The controller as JSON-serializable data, which ``Controller(**data)``
@@ -209,6 +425,10 @@ class Controller(ControllerLimits):
             data["peer_latency_cycles"] = {str(k): v for k, v in sorted(peers.items())}
         if self.supports is not None:
             data["supports"] = [str(c) for c in self.supports]
+        if self.processors:
+            data["processors"] = [p.as_dict() for p in self.processors]
+        else:
+            del data["processors"]
         return data
 
     def supports_capability(self, capability: Capability) -> bool:
@@ -250,6 +470,8 @@ class ControlSystem:
     line_switch_penalty_cycles: int = 0
     _machine: MachineModel = field(init=False, repr=False, compare=False)
     _plays_everything: bool = field(init=False, repr=False, compare=False)
+    # By link id, the controller and processor that run its calls.
+    _placement: Mapping[int, tuple[int, int]] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         from .compiler import MachineModel
@@ -297,6 +519,7 @@ class ControlSystem:
             len(controllers) == 1
             and not (controllers[0].drive_lines or controllers[0].readout_lines),
         )
+        object.__setattr__(self, "_placement", MappingProxyType(_placement(self)))
         # rcp holds one readout latency: the feedback latency of the slowest
         # controller that plays readouts.
         readers = [c for c in controllers if c.readout_lines] or list(controllers)
@@ -615,7 +838,50 @@ def _structure_problems(system: ControlSystem, prefix: str) -> list[Problem]:
                         fix="list the system's own Controller objects",
                     )
                 )
+    names = list(system.links)
+    claimed: dict[int, str] = {}
+    for index, controller in enumerate(controllers):
+        for number, processor in enumerate(controller.processors):
+            here = f"controllers[{index}].processors[{number}]"
+            for position, named in enumerate(processor.links):
+                path = f"{prefix}{here}.links[{position}]"
+                if isinstance(named, str) and named not in system.links:
+                    hint = _closest(named, names)
+                    problems.append(
+                        Problem(
+                            "is not a link of the control system",
+                            path=path,
+                            value=named,
+                            fix=f"did you mean {hint!r}?"
+                            if hint
+                            else "add it to ControlSystem(links={...})",
+                        )
+                    )
+                    continue
+                link_id = names.index(named) if isinstance(named, str) else named
+                if link_id in claimed:
+                    problems.append(
+                        Problem(
+                            f"is also a link of {claimed[link_id]}",
+                            path=path,
+                            value=named,
+                            fix="a link belongs to one processor",
+                        )
+                    )
+                else:
+                    claimed[link_id] = here
     return problems
+
+
+def _placement(system: ControlSystem) -> dict[int, tuple[int, int]]:
+    """The controller and processor each processor's link ids lead to."""
+    names = list(system.links)
+    found = {}
+    for index, controller in enumerate(system.controllers):
+        for number, processor in enumerate(controller.processors):
+            for link in processor.links:
+                found[names.index(link) if isinstance(link, str) else link] = (index, number)
+    return found
 
 
 def _wiring_problems(system: ControlSystem, target: TargetDescription) -> list[Problem]:

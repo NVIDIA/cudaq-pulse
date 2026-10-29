@@ -95,6 +95,7 @@ if TYPE_CHECKING:
     from ._system import Capability as Capability
     from ._system import Controller as Controller
     from ._system import ControlSystem as ControlSystem
+    from ._system import Processor as Processor
     from ._units import Time as Time
     from ._units import ms as ms
     from ._units import ns as ns
@@ -120,6 +121,7 @@ _LAZY_EXPORTS = {
     "Capability": "._system",
     "Controller": "._system",
     "ControlSystem": "._system",
+    "Processor": "._system",
 }
 _LAZY_MODULES = {"viz": ".viz", "backends": ".backends", "controller": ".controller"}
 
@@ -139,6 +141,7 @@ __all__ = [
     "Register",
     "Controller",
     "ControlSystem",
+    "Processor",
     "Capability",
     "Link",
     "PulseError",

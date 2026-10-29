@@ -73,11 +73,18 @@ once. ``Device.as_dict()`` writes the whole QPU as one system file, format
 ``DeviceDefinitionError`` that lists every problem with its line.
 ``python -m cudaq_pulse.doctor --system FILE`` checks a system file.
 
+A controller's ``processors`` run the classical functions called on their
+links. In a description or a system file, a processor is a
+``[[processors]]`` table, with ``[processors.dispatch_keys]`` beneath it.
+
 .. autoclass:: cudaq_pulse.Controller
    :members: as_dict, supports_capability
 
 .. autoclass:: cudaq_pulse.ControlSystem
    :members: as_dict
+
+.. autoclass:: cudaq_pulse.Processor
+   :members:
 
 .. autoclass:: cudaq_pulse.Capability
    :members:

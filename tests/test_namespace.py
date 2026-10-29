@@ -30,6 +30,7 @@ TOP_LEVEL = {
     "Register",
     "Controller",
     "ControlSystem",
+    "Processor",
     "Capability",
     "Link",
     "PulseError",
