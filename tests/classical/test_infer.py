@@ -10,6 +10,7 @@ family of instructions per test, the lengths a version gets, and the
 reason a version is rejected (with the line it points at)."""
 
 import contextlib
+import importlib
 import inspect
 import sys
 
@@ -538,12 +539,20 @@ def _widened(x: pulse.Bits) -> pulse.Bits:
     return x + [0] * WIDTH + [0] * len(SHARED)
 
 
+@pytest.fixture
+def python_inference(monkeypatch):
+    """Lengths from classical._infer alone, for tests of the rules it keeps."""
+    classical = importlib.import_module("cudaq_pulse.classical")
+    monkeypatch.setattr(classical, "infer_list_lengths", lambda *arguments: None)
+
+
 def _versions(fn, name, counts):
     declared = pulse.classical(fn, max_latency_ns=1)
     found = [tuple(r.count for r in declared.specialize(**{name: n}).results) for n in counts]
     return found, declared._length_rules.runs
 
 
+@pytest.mark.usefixtures("python_inference")
 def test_a_body_runs_once_and_its_lengths_serve_every_version():
     assert _versions(_corrections, "syndrome", range(1, 9)) == ([(n + 1,) for n in range(1, 9)], 1)
     assert _versions(_arith, "x", range(1, 9)) == (
@@ -553,10 +562,12 @@ def test_a_body_runs_once_and_its_lengths_serve_every_version():
     assert _versions(_padded, "syndrome", [4, 2, 7]) == ([(1, 4), (1, 2), (1, 7)], 1)
 
 
+@pytest.mark.usefixtures("python_inference")
 def test_a_loop_the_lengths_end_runs_for_each_version():
     assert _versions(_counted_while, "x", range(1, 5)) == ([(n,) for n in range(1, 5)], 4)
 
 
+@pytest.mark.usefixtures("python_inference")
 def test_a_changed_global_runs_the_body_again():
     global WIDTH
     declared = pulse.classical(_widened, max_latency_ns=1)
@@ -573,6 +584,7 @@ def test_a_changed_global_runs_the_body_again():
     assert declared._length_rules.runs == 2
 
 
+@pytest.mark.usefixtures("python_inference")
 def test_a_rejected_version_keeps_no_rule():
     declared = pulse.classical(_until_zero, max_latency_ns=1)
     for n in (4, 5):

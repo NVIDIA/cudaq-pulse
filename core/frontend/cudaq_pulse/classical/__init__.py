@@ -69,6 +69,7 @@ from .._units import Time, as_nanoseconds
 
 if TYPE_CHECKING:
     from ._link import Link as Link
+from .._native import infer_list_lengths
 from ._values import (
     _IQ,
     ValueType,
@@ -830,7 +831,11 @@ def _result_specs(
     out = list(shape.results)
     inferred = [(i, _LIST_NAME[r.kind]) for i, r in rules]
     found: dict[int, int] = {}
-    if inferred:
+    positions = tuple(i for i, _ in inferred)
+    native = infer_list_lengths(function.__wrapped__, shape.names, lengths, positions, len(out))
+    if native is not None:
+        found = dict(zip(positions, native, strict=True))
+    elif inferred:
         known = function._length_rules
         if known is None:
             from ._infer import LengthRules

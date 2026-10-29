@@ -83,6 +83,7 @@
 #define GET_OP_CLASSES
 #include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
 
+#include "LengthInference.h"
 #include "cudaq-pulse/Analysis/ClassicalTiming.h"
 #include "cudaq-pulse/Analysis/Execution.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
@@ -4955,6 +4956,28 @@ NB_MODULE(_cudaq_pulse_native, m) {
   m.def("shared_context_stats", &SharedContextPool::stats,
         "(contexts created, builders on the current context, its packed "
         "words)");
+
+  cudaq_pulse::loadLengthInference();
+  m.def(
+      "infer_list_lengths",
+      [](nb::handle function, nb::handle names, nb::handle lengths,
+         nb::handle positions, Py_ssize_t result_count) {
+        PyObject *found = cudaq_pulse::inferListLengths(
+            function.ptr(), names.ptr(), lengths.ptr(), positions.ptr(),
+            result_count);
+        if (!found)
+          throw nb::python_error();
+        return nb::steal(found);
+      },
+      nb::arg("function"), nb::arg("names"), nb::arg("lengths"),
+      nb::arg("positions"), nb::arg("result_count"),
+      nb::sig(
+          "def infer_list_lengths(function: object, names: tuple[str, ...], "
+          "lengths: dict[str, int], positions: tuple[int, ...], "
+          "result_count: int) -> tuple[int, ...] | None"),
+      "The lengths of the list results at positions, for list inputs of the "
+      "given lengths, read from the body's bytecode; None for a body outside "
+      "what this follows (classical._infer then decides)");
 
   m.def(
       "evaluate_callback",
