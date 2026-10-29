@@ -527,6 +527,8 @@ class ClassicalCall:
     answer, and ``deadline_cycles`` the latest due time the function's
     ``deadline_ns`` allows. ``epoch`` is the epoch it is submitted in.
     ``link_name`` is the link's name in the machine model, if it has one.
+    ``controller`` is the controller whose instance of a per-controller link
+    runs the call (``Link(per_controller=True)``), else ``None``.
 
     ``exposed_cycles`` is how long the first use waits for the answer beyond
     when it could start without the call: after its line is free and after
@@ -548,6 +550,7 @@ class ClassicalCall:
     epoch: int
     link_name: str | None = None
     exposed_cycles: int | None = None
+    controller: int | None = None
 
     @property
     def hidden_cycles(self) -> int | None:
@@ -1239,8 +1242,21 @@ class Lowered:
                 epoch,
                 names(link),
                 None if exposed is None or use is None else exposed(start, use),
+                controller,
             )
-            for name, link, iteration, start, length, due, taken, use, limit, epoch in calls
+            for (
+                name,
+                link,
+                iteration,
+                start,
+                length,
+                due,
+                taken,
+                use,
+                limit,
+                epoch,
+                controller,
+            ) in calls
         ]
 
     def export_emulation(self, *, controller: int | None = None) -> dict[str, Any]:

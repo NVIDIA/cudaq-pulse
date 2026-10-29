@@ -193,9 +193,9 @@ def _export(lowered: Any, with_events: bool, part: _Part | None = None) -> dict[
         ],
         "events": events,
         "calls": [
-            {**asdict(c), "iteration": list(c.iteration)}
+            _call_data(c)
             for c in lowered.classical_report()
-            if part is None or c.function in part[2]
+            if part is None or (c.function in part[2] and c.controller in (None, part[0]))
         ],
         "manifest": manifest(lowered),
     }
@@ -211,6 +211,16 @@ def _export(lowered: Any, with_events: bool, part: _Part | None = None) -> dict[
         return data
     own = clocks.controllers[0] if part is None or part[1] is None else part[1]
     return _in_own_clock(data, events, clocks, own)
+
+
+def _call_data(call: Any) -> dict[str, Any]:
+    """A ``ClassicalCall`` as export data; ``controller`` only for a call
+    over a per-controller link."""
+    data = asdict(call)
+    data["iteration"] = list(call.iteration)
+    if call.controller is None:
+        del data["controller"]
+    return data
 
 
 def _in_own_clock(data: dict[str, Any], events: list[Any], clocks: Any, own: Any) -> dict[str, Any]:

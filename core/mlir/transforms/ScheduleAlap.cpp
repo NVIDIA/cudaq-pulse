@@ -521,18 +521,21 @@ private:
     // Merge the timelines of a link round-robin until it has a slot for each.
     while (true) {
       number();
-      std::map<int64_t, llvm::SmallVector<unsigned>> perLink;
+      std::map<std::pair<int64_t, int64_t>, llvm::SmallVector<unsigned>>
+          perLink;
       for (auto [op, c] : nodes) {
         if (!mlir::isa<classical::SubmitOp>(op))
           continue;
-        auto &list = perLink[classical::intAttr(op, "classical.device")];
+        auto &list =
+            perLink[{classical::intAttr(op, "classical.device"),
+                     classical::intAttr(op, classical::kInstanceAttr, -1)}];
         if (!llvm::is_contained(list, find(c)))
           list.push_back(find(c));
       }
       bool merged = false;
-      for (auto &[device, list] : perLink) {
+      for (auto &[key, list] : perLink) {
         auto slots = static_cast<size_t>(std::max<int64_t>(
-            1, classical::linkModel(module, device).maxInFlight));
+            1, classical::linkModel(module, key.first).maxInFlight));
         for (size_t k = slots; k < list.size(); ++k) {
           join(list[k], list[k % slots]);
           merged = true;
@@ -795,11 +798,21 @@ private:
   /// Where a timeline's lines end if nothing later uses them.
   int64_t endOf(int64_t t) const { return isolated() ? ends[t] : makespan; }
 
-  /// A link as one timeline sees it: its share of the slots, and its own
-  /// order of submissions.
-  using LinkKey = std::pair<int64_t, int64_t>;
+  /// A link as one timeline sees it, on one controller for a link with an
+  /// instance per controller: its share of the slots, and its own order of
+  /// submissions.
+  using LinkKey = std::tuple<int64_t, int64_t, int64_t>;
   LinkKey linkOf(mlir::Operation *submit) {
-    return {classical::intAttr(submit, "classical.device"), timelineOf(submit)};
+    return {classical::intAttr(submit, "classical.device"),
+            classical::intAttr(submit, classical::kInstanceAttr, -1),
+            timelineOf(submit)};
+  }
+
+  /// Whether a submission keeps an order of its own on its link
+  /// (`linkReady`, `linkLate`) rather than the link value threaded through
+  /// the program: with timelines, or on its controller's instance.
+  bool ownOrder(mlir::Operation *submit) const {
+    return isolated() || submit->hasAttr(classical::kInstanceAttr);
   }
 
   void record(mlir::Operation *op, int64_t start) {
@@ -866,12 +879,13 @@ private:
   int64_t ready(mlir::Value value) const { return readyAt.lookup(value); }
 
   /// When every operand of `op` is available: data from answers included.
-  /// Timelines keep their own order on a link, so the link a submission
-  /// is threaded through says nothing about when it may start.
+  /// A submission with its own order on a link (`ownOrder`) does not wait
+  /// for the link it is threaded through.
   int64_t operandsReady(mlir::Operation *op) const {
     int64_t time = 0;
+    bool own = ownOrder(op);
     for (mlir::Value operand : op->getOperands())
-      if (!isolated() || !mlir::isa<classical::LinkType>(operand.getType()))
+      if (!own || !mlir::isa<classical::LinkType>(operand.getType()))
         time = std::max(time, ready(operand));
     return time;
   }
@@ -1045,14 +1059,15 @@ private:
   void forwardSubmit(classical::SubmitOp submit) {
     mlir::Operation *op = submit;
     int64_t t = timelineOf(op);
-    int64_t link = isolated() ? linkReady[linkOf(op)] : ready(submit.getLink());
+    bool own = ownOrder(op);
+    int64_t link = own ? linkReady[linkOf(op)] : ready(submit.getLink());
     int64_t start =
         std::max({link, floorOf(t), operandsReady(op), armFloorOf(kAnyOwner)});
     int64_t duration = durationOf(op), budget = budgetOf(op);
     start = takeSlot(op, start, duration + budget);
     record(op, start);
     readyAt[submit.getUpdatedLink()] = start + duration;
-    if (isolated())
+    if (own)
       linkReady[linkOf(op)] = start + duration;
     readyAt[submit.getFuture()] = start + duration + budget;
     noteEnd(start + duration, t);
@@ -1319,11 +1334,11 @@ private:
           for (auto [t, end] : llvm::enumerate(theseEnds))
             if (end >= 0)
               noteEnd(end + distance, static_cast<int64_t>(t));
-          for (auto &[key, time] : linkReady) {
-            auto before = linksBefore.find(key);
-            if (before == linksBefore.end() || before->second != time)
-              time += distance;
-          }
+        }
+        for (auto &[key, time] : linkReady) {
+          auto before = linksBefore.find(key);
+          if (before == linksBefore.end() || before->second != time)
+            time += distance;
         }
         for (auto [now, before] : llvm::zip(floors, floorsBefore))
           if (now != before)
@@ -1490,9 +1505,9 @@ private:
       start = forwardStartOf(op);
     } else {
       int64_t link = late(submit.getUpdatedLink());
-      if (isolated()) {
+      if (ownOrder(op)) {
         auto it = linkLate.find(linkOf(op));
-        link = it == linkLate.end() ? ends[t] : it->second;
+        link = it == linkLate.end() ? endOf(t) : it->second;
       }
       int64_t end = std::min(link, ceilings[t]);
       int64_t needed = late(submit.getFuture());
@@ -1506,7 +1521,7 @@ private:
     armStart = std::min(armStart, start);
     for (mlir::Value operand : op->getOperands())
       bound(operand, start);
-    if (isolated()) {
+    if (ownOrder(op)) {
       auto [it, inserted] = linkLate.try_emplace(linkOf(op), start);
       if (!inserted)
         it->second = std::min(it->second, start);
@@ -1882,8 +1897,8 @@ private:
   /// where its ops end (in the current loop iteration: -1 for none), and
   /// under ALAP nothing before a run-time wait ends after it.
   llvm::SmallVector<int64_t, 1> floors, ends, iterationEnds, ceilings;
-  /// With timelines, when each one's link is free (forward) or must be
-  /// free from (backward), in its own order.
+  /// For submissions with their own order (`ownOrder`), when their link is
+  /// free (forward) or must be free from (backward), in that order.
   std::map<LinkKey, int64_t> linkReady, linkLate;
   /// Request slots per link and timeline, each the time it is free
   /// (forward) or must be free from (backward).
@@ -2529,7 +2544,10 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
           "kernels with their own schedule yet; drop schedule= from the "
           "called kernels, or flatten them with flatten_schedules=True");
   }
-  bool classical = classical::annotateClassicalCalls(function);
+  mlir::FailureOr<bool> annotated = classical::annotateClassicalCalls(function);
+  if (mlir::failed(annotated))
+    return mlir::failure();
+  bool classical = *annotated;
   if (classical)
     for (pulse::ScheduleBlockOp block : outermostBlocks(function.getBody())) {
       mlir::WalkResult found = block.walk([](mlir::Operation *op) {
@@ -2548,8 +2566,9 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
         return mlir::failure();
     }
   Timelines timelines;
-  if (classical && TimelineAnalysis(function, resources).run(timelines))
-    classical::annotateClassicalCalls(function);
+  if (classical && TimelineAnalysis(function, resources).run(timelines) &&
+      mlir::failed(classical::annotateClassicalCalls(function)))
+    return mlir::failure();
   // Ops that read a value a measurement selects wait for it, as ops that
   // read an answer do.
   bool data = classical || function->hasAttr("pulse.selected_values");

@@ -1015,9 +1015,12 @@ struct ControllerWalk {
       dependencies.emplace_back();
       natives.push_back(-1);
     }
+    // A call has no qudit: its slot holds the controller whose instance of
+    // a per-controller link runs it (-1: none).
     result.emplace_back(
         submit ? "submit" : "answer",
-        classical::intAttr(op, "classical.device"), -1,
+        classical::intAttr(op, "classical.device"),
+        classical::intAttr(op, classical::kInstanceAttr, -1),
         pulse::scheduledStart(op, iteration), pulse::scheduledDuration(op),
         std::vector<int64_t>(iteration.begin(), iteration.end()),
         std::vector<WaveformNode>{}, kUnknown, kUnknown, branches,
@@ -1240,9 +1243,9 @@ private:
     nb::object amplitude = key("amplitude"), answer = key("answer"),
                answers = key("answers"), arm = key("arm"),
                branch = key("branch"), conditions = key("conditions"),
-               constant = key("const"), duration = key("duration_cycles"),
-               end = key("end_cycles"), epoch = key("epoch"),
-               frameUpdates = key("frame_updates"),
+               constant = key("const"), controller = key("controller"),
+               duration = key("duration_cycles"), end = key("end_cycles"),
+               epoch = key("epoch"), frameUpdates = key("frame_updates"),
                frequency = key("frequency_hz"), function = key("function"),
                id = key("id"), im = key("im"), index = key("index"),
                iteration = key("iteration"), kind = key("kind"),
@@ -1512,11 +1515,12 @@ private:
                  frequency, phase, branches, joined, refs, callee, mode,
                  timeout] = item;
     bool sync = kind == "sync";
+    bool call = kind == "submit" || kind == "answer";
     nb::object event = dict();
     put(event, keys.index, integer(static_cast<int64_t>(index)));
     put(event, keys.kind, string(kind));
     put(event, keys.line, sync ? nb::none() : integer(line));
-    put(event, keys.qudit, sync ? nb::none() : integer(qudit));
+    put(event, keys.qudit, sync ? nb::none() : integer(call ? -1 : qudit));
     put(event, keys.start, optional(start));
     put(event, keys.duration, optional(duration));
     put(event, keys.end,
@@ -1559,8 +1563,10 @@ private:
       put(event, keys.phase, number(phase));
     } else if (sync) {
       put(event, keys.lines, integers(joined));
-    } else if (kind == "submit" || kind == "answer") {
+    } else if (call) {
       put(event, keys.link, integer(line));
+      if (qudit >= 0)
+        put(event, keys.controller, integer(qudit));
       put(event, keys.function, string(callee));
       if (kind == "submit") {
         put(event, keys.measurements, integers(refs));
@@ -2105,7 +2111,7 @@ public:
   using ClassicalCall =
       std::tuple<std::string, int64_t, std::vector<int64_t>, int64_t, int64_t,
                  int64_t, std::optional<int64_t>, std::optional<int64_t>,
-                 std::optional<int64_t>, int64_t>;
+                 std::optional<int64_t>, int64_t, std::optional<int64_t>>;
 
   std::vector<ClassicalCall> classical_calls() {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
@@ -2180,7 +2186,11 @@ public:
               submit.getCallee().str(),
               classical::intAttr(&op, "classical.device"),
               std::vector<int64_t>(iteration.begin(), iteration.end()), *start,
-              duration, due, taken, firstUse, deadline, epoch);
+              duration, due, taken, firstUse, deadline, epoch,
+              op.hasAttr(classical::kInstanceAttr)
+                  ? std::optional<int64_t>(
+                        classical::intAttr(&op, classical::kInstanceAttr))
+                  : std::nullopt);
         } else if (mlir::isa<classical::WaitOp, pulse::WaitOp>(op)) {
           epochs.visit(&op, iteration);
         } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {

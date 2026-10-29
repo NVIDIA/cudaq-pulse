@@ -56,8 +56,9 @@ struct Occurrence {
   mlir::Operation *op;
 };
 
-/// A link, or one timeline's share of it (-1: the whole link).
-using LinkKey = std::pair<int64_t, int64_t>;
+/// A link, its instance on one controller (-1: the link shared), and one
+/// timeline's share of that (-1: all of it).
+using LinkKey = std::tuple<int64_t, int64_t, int64_t>;
 
 /// Every execution of every submission, per link, in program order. Both
 /// arms of a branch are listed, so capacity is checked for the worst case.
@@ -71,6 +72,7 @@ static void collectSubmissions(
       if (!start)
         continue;
       LinkKey device{classical::intAttr(&op, "classical.device"),
+                     classical::intAttr(&op, classical::kInstanceAttr, -1),
                      classical::intAttr(&op, classical::kTimelineAttr, -1)};
       int64_t duration = pulse::scheduledDuration(&op).value_or(1);
       int64_t budget = classical::intAttr(&op, "classical.budget_cycles");
@@ -169,7 +171,10 @@ struct PulseClassicalCheckPass
     module.walk([&](mlir::func::FuncOp function) {
       if (function.isExternal())
         return;
-      classical::annotateClassicalCalls(function);
+      if (mlir::failed(classical::annotateClassicalCalls(function))) {
+        failed = true;
+        return;
+      }
       // S7: each answer is taken no earlier than it is due. Start times are
       // affine in the iteration, so checking the corners of the iteration
       // box covers every iteration.
@@ -230,7 +235,7 @@ struct PulseClassicalCheckPass
                          ordered);
       // S8: requests in flight at once, by a sweep over interval ends.
       for (auto &[key, occurrences] : perLink) {
-        auto [device, timeline] = key;
+        auto [device, instance, timeline] = key;
         if (occurrences.empty())
           continue;
         int64_t capacity = classical::intAttr(occurrences.front().op,
@@ -253,7 +258,10 @@ struct PulseClassicalCheckPass
         }
         if (worst > capacity) {
           auto diag = occurrences.front().op->emitError("link ");
-          diag << device << " holds " << worst << " requests";
+          diag << device;
+          if (instance >= 0)
+            diag << " on controllers[" << instance << "]";
+          diag << " holds " << worst << " requests";
           if (timeline >= 0)
             diag << " for lines that wait on their own";
           diag << " at once at " << when << ", more than ";
@@ -269,7 +277,7 @@ struct PulseClassicalCheckPass
         for (size_t i = 1; i < occurrences.size(); ++i)
           if (occurrences[i].start < occurrences[i - 1].end) {
             occurrences[i].op->emitError("submission on link ")
-                << key.first << " starts at " << occurrences[i].start
+                << std::get<0>(key) << " starts at " << occurrences[i].start
                 << ", before the one before it in program order ends at "
                 << occurrences[i - 1].end;
             failed = true;
