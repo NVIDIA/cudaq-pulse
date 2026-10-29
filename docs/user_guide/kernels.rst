@@ -133,6 +133,12 @@ them from a calibration the kernel closes over.
   a time are times. A time plus a number of cycles, and a time times a
   time, are errors. ``0.1 * pulse.us`` is exactly 100 ns: a time holds its
   value as a fraction, from the digits it is written with.
+- Times compare with times: ``pulse_length <= 40 * pulse.ns``. Comparing a
+  time with a bare number, ``==`` or an ordering, is a ``TypeError``, since
+  the number could be cycles or nanoseconds; ``float(t)`` is the time in
+  nanoseconds, to compare as a number. A time never hashes like a number,
+  so ``20 * pulse.ns`` and ``20.0`` are different keys of a ``dict`` or
+  ``set``.
 - A ``float`` parameter is a plain number, a number of cycles where it sets
   a length. Write ``wait(d, tau * pulse.ns)`` for a ``tau`` in nanoseconds:
   the length stays a runtime parameter, converted with one multiply. A time

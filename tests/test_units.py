@@ -63,7 +63,8 @@ def test_arithmetic_keeps_the_unit_where_it_means_a_time():
         assert value.__class__ is pulse.Time and value.exact_ns == want
     assert t / (4 * ns) == 5.0 and (t / (4 * ns)).__class__ is float
     assert t // (3 * ns) == 6 and (t % (3 * ns)).exact_ns == 2
-    assert 4 * ns < t <= 20 * ns and t > 0 and t == 20 * ns and t != 20.0
+    assert 4 * ns < t <= 20 * ns and t > 0 * ns and t == 20 * ns and t != 4 * ns
+    assert float(t) == 20.0 and float(2 * us) == 2000.0
 
 
 @pytest.mark.parametrize(
@@ -73,13 +74,48 @@ def test_arithmetic_keeps_the_unit_where_it_means_a_time():
         (lambda t: 4 - t, "mixes a time with 4 cycles"),
         (lambda t: t * t, "a time times a time"),
         (lambda t: 3 / t, "a number over a time"),
-        (lambda t: t < 5, "give the number with units"),
+        (lambda t: t < 5, "compares a time with a bare number"),
         (lambda t: t**2, "is not a time"),
     ],
 )
 def test_arithmetic_that_is_not_a_time_is_an_error(expression, message):
     with pytest.raises(TypeError, match=message):
         expression(20 * ns)
+
+
+@pytest.mark.parametrize(
+    "compare",
+    [
+        lambda t, n: t == n,
+        lambda t, n: n == t,
+        lambda t, n: t != n,
+        lambda t, n: t < n,
+        lambda t, n: n <= t,
+        lambda t, n: t > n,
+        lambda t, n: t >= n,
+    ],
+)
+@pytest.mark.parametrize("number", [20, 20.0, 0])
+def test_a_time_compared_with_a_bare_number_is_an_error(compare, number):
+    message = r"compares a time with a bare number; compare it with a time \(.* \* pulse\.ns\)"
+    with pytest.raises(TypeError, match=message + r", or compare float\(t\)"):
+        compare(20 * ns, number)
+    with pytest.raises(TypeError, match="compares a time with a bare number"):
+        _ = 20 * ns == Fraction(20)
+
+
+def test_a_time_never_hashes_like_a_number():
+    times = [20 * ns, 0 * ns, -3 * us, 0.1 * us, 1 / 3 * ns]
+    for t in times:
+        assert hash(t) != hash(float(t)) and hash(t) != hash(t.exact_ns)
+        assert hash(t) == hash(pulse.Time(t.exact_ns))
+    keys = {20 * ns: "time", 20.0: "float"}
+    assert len(keys) == 2 and keys[20 * ns] == "time" and keys[20] == "float"
+    assert 20.0 not in {20 * ns} and 20 * ns in {20 * ns, 20.0}
+    assert {20 * ns, 20 * ns, 0.02 * us} == {20 * ns}
+    with pytest.raises(TypeError, match="compares a time with a bare number"):
+        _ = 20.0 in [20 * ns]
+    assert 20 * ns in [20 * ns, 4 * ns] and "a" != 20 * ns
 
 
 @pytest.mark.parametrize(

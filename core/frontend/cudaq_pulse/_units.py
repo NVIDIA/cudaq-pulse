@@ -69,6 +69,16 @@ class Time(float):
     Made by multiplying a unit, ``20 * pulse.ns``; durations, waits and
     ``pulse.round_duration`` take it, and convert it to cycles of the clock the
     kernel compiles for.
+
+    ``float(t)`` is the time in nanoseconds, whatever unit made it. A bare
+    int duration in a kernel is a number of clock cycles instead, so it
+    depends on the device's clock.
+    Times compare with times; comparing one with a bare number, with ``==``
+    or an ordering, raises ``TypeError``: write ``t == 20 * pulse.ns`` or
+    ``float(t) == 20.0``. A time never hashes like a number, so a set or dict
+    can hold ``20 * pulse.ns`` and ``20.0`` as different keys, and finding a
+    number in it never compares it with a time; ``in`` on a list or tuple
+    compares with ``==``, and raises when it meets a time and a number.
     """
 
     __slots__ = ("exact_ns",)
@@ -184,45 +194,56 @@ class Time(float):
     def __rpow__(self, other: Any, modulo: Any = None) -> Any:
         raise UnitError(f"{other!r} ** {self} raises to a time")
 
-    # ── Comparisons: with times, or with zero ───────────────────────────
+    # ── Comparisons: only with times ────────────────────────────────────
 
-    def _other(self, other: Any) -> Fraction | None:
+    def _other(self, op: str, other: Any) -> Fraction | None:
         if other.__class__ is Time:
             return other.exact_ns
         if _is_number(other):
-            if other == 0:
-                return Fraction(0)
-            raise UnitError(
-                f"comparing {self} with {other!r}: give the number with units "
-                f"({other!r} * pulse.ns) to compare it with a time"
-            )
+            raise _compared(self, op, other)
         return None
 
     def __eq__(self, other: object) -> bool:
-        if other.__class__ is Time:
-            return self.exact_ns == other.exact_ns
-        return other == 0 and self.exact_ns == 0 if _is_number(other) else False
+        exact = self._other("==", other)
+        return NotImplemented if exact is None else self.exact_ns == exact
 
     def __ne__(self, other: object) -> bool:
-        return not self.__eq__(other)
+        exact = self._other("!=", other)
+        return NotImplemented if exact is None else self.exact_ns != exact
 
-    __hash__ = float.__hash__
+    def __hash__(self) -> int:
+        # Every number hashes below sys.hash_info.modulus in magnitude, so a
+        # time never shares a hash with one, and sets and dicts never
+        # compare the two.
+        h = float.__hash__(self)
+        return h + _HASH_OFFSET if h >= 0 else h - _HASH_OFFSET
 
     def __lt__(self, other: Any) -> bool:
-        exact = self._other(other)
+        exact = self._other("<", other)
         return NotImplemented if exact is None else self.exact_ns < exact
 
     def __le__(self, other: Any) -> bool:
-        exact = self._other(other)
+        exact = self._other("<=", other)
         return NotImplemented if exact is None else self.exact_ns <= exact
 
     def __gt__(self, other: Any) -> bool:
-        exact = self._other(other)
+        exact = self._other(">", other)
         return NotImplemented if exact is None else self.exact_ns > exact
 
     def __ge__(self, other: Any) -> bool:
-        exact = self._other(other)
+        exact = self._other(">=", other)
         return NotImplemented if exact is None else self.exact_ns >= exact
+
+
+_HASH_OFFSET = 1 << (sys.hash_info.width - 2)
+
+
+def _compared(time: Time, op: str, number: Any) -> UnitError:
+    return UnitError(
+        f"{time} {op} {number!r} compares a time with a bare number; compare it with a "
+        f"time ({number!r} * pulse.ns), or compare float(t), which is the time in "
+        "nanoseconds"
+    )
 
 
 def _time(numerator: int, denominator: int) -> Time:
