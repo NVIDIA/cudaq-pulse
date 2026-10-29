@@ -163,15 +163,22 @@ class Register(Sequence[Qudit]):
     def __getitem__(self, index: slice | Sequence[int]) -> Register: ...
 
     def __getitem__(self, index: Any) -> Qudit | Register:
+        qudit: Qudit
         try:
+            if index.__class__ is int:
+                qudit = self._qudits[index]
+                return qudit
             if isinstance(index, slice):
                 return Register(self._qudits[index])
             if isinstance(index, Sequence) and not isinstance(index, str):
                 return Register([self._qudits[i] for i in index])
-            qudit: Qudit = self._qudits[index]
+            qudit = self._qudits[index]
         except IndexError:
-            raise _out_of_range(index, len(self._qudits), "the register") from None
+            raise _out_of_range(index, len(self._qudits), self._owner()) from None
         return qudit
+
+    def _owner(self) -> str:
+        return "the register"
 
     def __iter__(self) -> Iterator[Qudit]:
         return iter(self._qudits)
@@ -192,7 +199,7 @@ class _Handles:
     __slots__ = ("_all",)
 
     def __init__(self, qudits: tuple[Qudit, ...]) -> None:
-        self._all = Register(qudits)
+        self._all = _DeviceRegister(qudits)
 
     def __len__(self) -> int:
         return len(self._all)
@@ -206,13 +213,17 @@ class _Handles:
     def __getitem__(self, index: slice | Sequence[int]) -> Register: ...
 
     def __getitem__(self, index: Any) -> Qudit | Register:
-        try:
-            handles: Qudit | Register = self._all[index]
-        except IndexError:
-            qudits = self._all._qudits
-            owner = f"device {qudits[0].device.name!r}" if qudits else "the device"
-            raise _out_of_range(index, len(qudits), owner) from None
+        handles: Qudit | Register = self._all[index]
         return handles
+
+
+class _DeviceRegister(Register):
+    """All the qudits of a device, which its errors name."""
+
+    __slots__ = ()
+
+    def _owner(self) -> str:
+        return f"device {self._qudits[0].device.name!r}" if self._qudits else "the device"
 
 
 def _out_of_range(index: Any, n: int, owner: str) -> _QuditIndexError:
