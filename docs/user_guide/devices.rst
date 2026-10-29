@@ -83,8 +83,7 @@ argument returns the process target's device, whose handles the script then
 passes to its kernels; a kernel call with no qudit handles always raises
 ``NoDeviceError``.
 
-Registered names are ``transmon_krinner_17q``, ``transmon_generic:N``,
-``rydberg_chain:N`` and ``rydberg_square:RxC``;
+Registered names are ``transmon_krinner_17q`` and ``transmon_generic:N``;
 ``cudaq_pulse.targets.register_target`` adds more.
 
 ``transmon_krinner_17q`` is the distance-three surface-code device of

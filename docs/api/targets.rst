@@ -34,17 +34,6 @@ Shipped targets
 
 .. autofunction:: cudaq_pulse.targets.transmon_generic
 
-.. autoclass:: cudaq_pulse.targets.RydbergAtom
-   :members:
-   :undoc-members:
-
-.. autoclass:: cudaq_pulse.targets.RydbergTarget
-   :members:
-
-.. autofunction:: cudaq_pulse.targets.rydberg_chain
-
-.. autofunction:: cudaq_pulse.targets.rydberg_square
-
 Registering targets
 -------------------
 

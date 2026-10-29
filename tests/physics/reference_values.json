@@ -878,40 +878,6 @@
    ]
   },
   {
-   "id": "levine2019_time_optimal_cz",
-   "kind": "paper",
-   "citation": "Levine et al., PRL 123, 170503 (2019), doi:10.1103/PhysRevLett.123.170503, arXiv:1908.06101 (Supplement Eqs. 6-8)",
-   "params": {
-    "Delta_over_Omega": 0.377371,
-    "xi_rad": 3.90242,
-    "Omega_tau_per_pulse": 4.29268,
-    "total_time": "2 tau ~ 2.732 pi / Omega",
-    "Omega_over_2pi_MHz_experiment": 3.5,
-    "bell_fidelity_min": 0.95,
-    "cz_fidelity_min": 0.974
-   },
-   "formula": "two global pulses of length tau, second with phase jump xi; perfect blockade",
-   "expected": {
-    "return_prob_01": 1.0,
-    "return_prob_11": 1.0,
-    "phi11_minus_2phi01_minus_pi_rad": 0.0,
-    "first_principles_check": {
-     "return_prob_01": 0.9999999999965359,
-     "return_prob_11": 0.9999999999991811,
-     "phi11_minus_2phi01_minus_pi_rad": 1.8829908414730312e-06
-    }
-   },
-   "tolerance": {
-    "abs": 1e-05
-   },
-   "features": [
-    "Rydberg target simulation (currently disabled)",
-    "global drive",
-    "phase jump"
-   ],
-   "note": "relative sign of Delta and xi matters: one convention closes both trajectories, the other leaves P01 = 0.525"
-  },
-  {
    "id": "molmer_sorensen",
    "kind": "analytic",
    "citation": "Sorensen & Molmer, PRL 82, 1971 (1999), doi:10.1103/PhysRevLett.82.1971, arXiv:quant-ph/9810039",
@@ -1164,30 +1130,6 @@
     "n_qubits": 5,
     "readout_pulse_ns": 80,
     "mean_assignment": 0.97
-   },
-   "tolerance": "reproduce within the published error bar where one is given"
-  },
-  {
-   "id": "paper_bernien2017_51atoms",
-   "kind": "paper",
-   "citation": "Bernien et al., Nature 551, 579 (2017), arXiv:1707.04344",
-   "params": {},
-   "expected": {
-    "max_atoms": 51
-   },
-   "tolerance": "reproduce within the published error bar where one is given"
-  },
-  {
-   "id": "paper_levine2019",
-   "kind": "paper",
-   "citation": "Levine et al., PRL 123, 170503 (2019), arXiv:1908.06101",
-   "params": {
-    "Omega_over_2pi_MHz": 3.5,
-    "rydberg_state": "70S1/2"
-   },
-   "expected": {
-    "bell_fidelity_min": 0.95,
-    "cz_fidelity_min": 0.974
    },
    "tolerance": "reproduce within the published error bar where one is given"
   }

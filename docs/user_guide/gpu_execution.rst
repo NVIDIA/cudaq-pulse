@@ -252,8 +252,8 @@ metadata only.
 Unsupported Execution Features
 ------------------------------
 
-The execution lowering fails explicitly for observables, neutral-atom
-targets, products of two float arguments, arbitrary Python waveform
+The execution lowering fails explicitly for observables, systems whose
+architecture has no simulation model, products of two float arguments, arbitrary Python waveform
 callbacks, and waveform-algebra nodes. Built-in waveforms and
 ``custom_samples`` are supported. The callback runtime holds 1024
 time-dependent coefficients per evolution: two per drive op (a drive

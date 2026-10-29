@@ -40,10 +40,7 @@ schedules or metrics. `cudaq-pulse-opt` is installed with the package.
 | [`transmon/krinner_full_pipeline.py`](transmon/krinner_full_pipeline.py) | Each stage of the lowering: Pulse, QOp and LLVM IR | CPU |
 | [`transmon/krinner_surface_code_cycle.py`](transmon/krinner_surface_code_cycle.py) | The timeline of one surface-code cycle | CPU |
 | [`transmon/krinner_evolve_gpu.py`](transmon/krinner_evolve_gpu.py) | `pulse.simulate(..., backend="gpu")` | GPU: Linux, an NVIDIA GPU and the `[cu12]` or `[cu13]` extra |
-| [`neutral_atom/rydberg_blockade_demo.py`](neutral_atom/rydberg_blockade_demo.py) | Rydberg blockade between two atoms | CPU |
-| [`neutral_atom/rydberg_chain_adiabatic.py`](neutral_atom/rydberg_chain_adiabatic.py) | A detuning sweep on a 1D Rydberg chain | CPU |
 
-The neutral-atom targets compile only; simulating them is not supported yet.
 Numbers 11 and 15 were removed and are not reused. The
 [examples page](https://nvidia.github.io/cudaq-pulse/examples.html) of the
 documentation has the same index.

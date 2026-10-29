@@ -66,8 +66,6 @@ class Target(enum.Enum):
     """Targets shipped with cudaq-pulse, for ``get_device``."""
 
     TRANSMON_KRINNER_17Q = "transmon_krinner_17q"
-    RYDBERG_CHAIN_8 = "rydberg_chain:8"
-    RYDBERG_SQUARE_3X3 = "rydberg_square:3x3"
 
 
 _CARRIER = "qudit"

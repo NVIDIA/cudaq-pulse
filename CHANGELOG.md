@@ -217,8 +217,8 @@ behavior may change in any 0.x release.
   machine as a target plus a qudit layout; devices compare by content and
   share compiled kernels. Target descriptions are
   `cudaq_pulse.targets.TargetDescription`; `pulse.Target` names the shipped
-  targets: a 17-qubit transmon device built from Krinner et al., Nature 605,
-  669 (2022), and Rydberg chain and square arrays (compile only).
+  target: a 17-qubit transmon device built from Krinner et al., Nature 605,
+  669 (2022).
   A `Coupling`'s gate fields (`gate_type`, `gate_duration_ns`,
   `gate_buffer_ns`, `gate_fidelity`) default to `None`, unspecified; the
   Krinner target gives its published CZ values. A config or file with

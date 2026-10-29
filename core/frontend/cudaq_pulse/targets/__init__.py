@@ -10,7 +10,6 @@
 from ._registry import UnknownTargetError, available_targets, register_target
 from .base import Coupling, CrosstalkEntry, Qubit, TargetDescription
 from .calibration import Calibration
-from .rydberg import RydbergAtom, RydbergTarget, rydberg_chain, rydberg_square
 from .transmon import transmon_generic, transmon_krinner_17q
 
 __all__ = [
@@ -21,10 +20,6 @@ __all__ = [
     "Calibration",
     "transmon_krinner_17q",
     "transmon_generic",
-    "RydbergAtom",
-    "RydbergTarget",
-    "rydberg_chain",
-    "rydberg_square",
     "register_target",
     "available_targets",
     "UnknownTargetError",

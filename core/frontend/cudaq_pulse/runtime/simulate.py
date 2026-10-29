@@ -266,10 +266,11 @@ def _simulate_lowered(
             f"({', '.join(lowered.parameters)}); lower it with their values first"
         )
     target = lowered.target.target if plant is None else _check_plant(lowered, plant)
-    if getattr(target, "architecture", None) != "transmon":
+    architecture = getattr(target, "architecture", None)
+    if architecture != "transmon":
         raise UnsupportedError(
-            "simulation supports transmon targets; the neutral-atom Hamiltonian "
-            "(Rabi drive, detuning and C6 / r^6 n n interactions) is not lowered"
+            f"the simulator has a transmon model; this system ({architecture}) has no "
+            "simulation model. Export and hardware runs work."
         )
     return _simulate_compiled(
         lowered,

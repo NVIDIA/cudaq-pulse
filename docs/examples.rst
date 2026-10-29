@@ -159,20 +159,6 @@ Hardware Target Examples
    * - ``krinner_surface_code_cycle.py``
      - Timeline of one error correction cycle from the Krinner lattice and CZ schedule
 
-**Neutral Atom** (``examples/neutral_atom/``). The neutral-atom targets
-compile only; simulating them is not supported yet.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - File
-     - Description
-   * - ``rydberg_blockade_demo.py``
-     - Two-atom Rydberg blockade interaction
-   * - ``rydberg_chain_adiabatic.py``
-     - Adiabatic detuning sweep on a 1D Rydberg atom chain
-
 Running Examples
 ----------------
 

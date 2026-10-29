@@ -62,25 +62,12 @@ def _count(name: str, factory: Callable[[int], Any]) -> TargetFactory:
     return make
 
 
-def _grid(name: str, factory: Callable[[int, int], Any]) -> TargetFactory:
-    def make(arg: str | None) -> Any:
-        rows, _, cols = (arg or "").partition("x")
-        if not (rows.isdigit() and cols.isdigit()):
-            raise InvalidValueError(f"target {name!r} needs a grid size, e.g. {name}:3x3")
-        return factory(int(rows), int(cols))
-
-    return make
-
-
 def _builtin_factories() -> dict[str, TargetFactory]:
-    from .rydberg import rydberg_chain, rydberg_square
     from .transmon import transmon_generic, transmon_krinner_17q
 
     return {
         "transmon_krinner_17q": _no_argument("transmon_krinner_17q", transmon_krinner_17q),
         "transmon_generic": _count("transmon_generic", transmon_generic),
-        "rydberg_chain": _count("rydberg_chain", rydberg_chain),
-        "rydberg_square": _grid("rydberg_square", rydberg_square),
     }
 
 

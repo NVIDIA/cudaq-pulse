@@ -16,6 +16,7 @@ second-order perturbation theory. A crosstalk entry adds exactly its ZZ rate.
 from __future__ import annotations
 
 import cmath
+import dataclasses
 import math
 import re
 
@@ -23,7 +24,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline, evaluate_callback
-from cudaq_pulse.targets import Coupling, CrosstalkEntry, Qubit, TargetDescription, rydberg_chain
+from cudaq_pulse.targets import Coupling, CrosstalkEntry, Qubit, TargetDescription
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -182,10 +183,9 @@ def test_crosstalk_zz_is_the_conditional_frequency_shift(levels):
 
 
 @pytest.mark.parametrize("backend", ["cpu", "gpu"])
-def test_neutral_atom_targets_are_not_simulated_as_transmons(backend):
-    # A Rydberg interaction is C6 / r^6 n n, not an exchange coupling.
-    target = rydberg_chain(2, spacing_um=4.0).to_target()
-    with pytest.raises(NotImplementedError, match="neutral-atom"):
+def test_systems_without_a_simulation_model_are_refused(backend):
+    target = dataclasses.replace(_pair(5.0e9, 5.5e9, g_hz=10.0e6), architecture="other")
+    with pytest.raises(NotImplementedError, match=r"\(other\) has no simulation model"):
         pulse.simulate(_lowered(target), backend=backend)
 
 

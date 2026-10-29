@@ -176,8 +176,9 @@ release carries the wheels and the source distribution.
   `crank_nicolson` integrators. Waveform sums, differences, scaling, and
   negation are lowered exactly; products are sampled once per clock cycle.
   Envelopes from Python functions (`custom`) are sampled once per clock
-  cycle while tracing. Observable evaluation, neutral-atom models and
-  unspecialized parameters are rejected explicitly by the execution lowering.
+  cycle while tracing. Observable evaluation, architectures without a
+  simulation model and unspecialized parameters are rejected explicitly by
+  the execution lowering.
 - GPU numerical results are research regression coverage, with no production
   compatibility or accuracy commitment.
 
