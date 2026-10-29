@@ -9,11 +9,11 @@
 // The calibrated delay of each line, in whole program cycles: every drive,
 // readout and wait on the line starts that much later than scheduled.
 //
-// A module without delays has no `pulse.line_delays` attribute, and reading
-// it is one attribute lookup. Otherwise it is a dictionary whose `drive` and
-// `readout` entries (i64 arrays indexed by qudit) give each line's delay.
-// A wait whose length comes from a classical answer is a barrier of every
-// line and keeps its time.
+// A module without delays has no `pulse.line_delays` attribute (read with its
+// other clock attributes, see ClockAttributes in LineGrid.h). Otherwise it is a
+// dictionary whose `drive` and `readout` entries (i64 arrays indexed by qudit)
+// give each line's delay. A wait whose length comes from a classical answer is
+// a barrier of every line and keeps its time.
 //
 // Include after the Pulse dialect op and type headers and LineTrace.h.
 
@@ -25,12 +25,10 @@
 
 namespace pulse {
 
-/// Shift the scheduled ops of every delayed line in `function` by its delay.
-inline void applyLineDelays(mlir::Operation *function) {
-  auto module = function->getParentOfType<mlir::ModuleOp>();
-  auto delays =
-      module ? module->getAttrOfType<mlir::DictionaryAttr>("pulse.line_delays")
-             : mlir::DictionaryAttr();
+/// Shift the scheduled ops of every delayed line in `function` by its delay
+/// in `delays`, its module's `pulse.line_delays` (none when null).
+inline void applyLineDelays(mlir::Operation *function,
+                            mlir::DictionaryAttr delays) {
   if (!delays)
     return;
   auto drive = delays.getAs<mlir::DenseI64ArrayAttr>("drive");

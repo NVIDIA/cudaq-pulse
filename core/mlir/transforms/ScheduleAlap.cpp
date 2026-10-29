@@ -576,8 +576,14 @@ struct Extrapolation {
   int64_t period;
 };
 
+/// Where a Scheduler without grids would trace lines: nowhere.
+struct NoLineTrace {};
+
 /// Schedules one region: a function body, or a schedule block's body with
-/// every block argument available at time 0.
+/// every block argument available at time 0. `Gridded` when some line is on
+/// a grid coarser than one program cycle (see LineGrid): without, a schedule
+/// does no grid work at all.
+template <bool Gridded>
 class Scheduler {
 public:
   Scheduler(mlir::Region &region, Resources resources, bool classical,
@@ -923,7 +929,7 @@ private:
         return start;
       }
       start += backward ? -shift : shift;
-      if (grid.enabled())
+      if constexpr (Gridded)
         start = backward ? pulse::LineGrid::roundDown(start, grid.lcm())
                          : pulse::LineGrid::roundUp(start, grid.lcm());
       lanesBound = true;
@@ -1013,7 +1019,9 @@ private:
         if (op->hasAttr("classical.variable"))
           start = std::max(start, endOf(t));
       }
-      int64_t step = grid.enabled() ? grid.of(op->getOperand(0), lines) : 1;
+      int64_t step = 1;
+      if constexpr (Gridded)
+        step = grid.of(op->getOperand(0), lines);
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op)) {
         auto &lanes =
             mlir::isa<pulse::DriveOp>(op) ? driveLanes[t] : readoutLanes[t];
@@ -1039,7 +1047,7 @@ private:
       int64_t time = floorOf(t);
       for (mlir::Value line : sync.getLines())
         time = std::max(time, ready(line));
-      if (grid.enabled())
+      if constexpr (Gridded)
         time = pulse::LineGrid::roundUp(time, syncGrid(sync));
       for (mlir::Value result : sync.getResults())
         readyAt[result] = time;
@@ -1077,7 +1085,7 @@ private:
     for (auto [input, offset] : llvm::zip(inputs, shape.in))
       if (offset >= 0)
         start = std::max(start, ready(input) - offset);
-    if (grid.enabled())
+    if constexpr (Gridded)
       start = pulse::LineGrid::roundUp(start, grid.lcm());
     if (classical)
       start = takeBlockSlots(block, start, /*backward=*/false);
@@ -1145,7 +1153,7 @@ private:
       bool shifted = uniformShift(carried, next, kinds, shift);
       bool steady = !resources.enabled && !lanesBound && shifted &&
                     lastShift == shift && shift >= 0 &&
-                    shift % grid.lcm() == 0 &&
+                    (!Gridded || shift % grid.lcm() == 0) &&
                     slotsHoldSteadyState(loop, shift);
       for (auto [before, after, kind, bound] :
            llvm::zip(carried, next, kinds, outsideOf))
@@ -1402,7 +1410,9 @@ private:
       }
       if (mlir::Value tone = toneResult(op))
         end = std::min(end, late(tone));
-      int64_t step = grid.enabled() ? grid.of(op->getOperand(0), lines) : 1;
+      int64_t step = 1;
+      if constexpr (Gridded)
+        step = grid.of(op->getOperand(0), lines);
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op)) {
         auto &lanes = isReadout ? readoutLanes[t] : driveLanes[t];
         auto lane = std::max_element(lanes.begin(), lanes.end());
@@ -1432,7 +1442,7 @@ private:
       int64_t time = endOf(timelineOf(op));
       for (mlir::Value result : sync.getResults())
         time = std::min(time, late(result));
-      if (grid.enabled())
+      if constexpr (Gridded)
         time = pulse::LineGrid::roundDown(time, syncGrid(sync));
       for (mlir::Value line : sync.getLines())
         bound(line, time);
@@ -1473,7 +1483,7 @@ private:
       else
         bound(inputs[source], needed);
     }
-    if (grid.enabled())
+    if constexpr (Gridded)
       start = pulse::LineGrid::roundDown(start, grid.lcm());
     if (classical)
       start = takeBlockSlots(block, start, /*backward=*/true);
@@ -1530,7 +1540,7 @@ private:
       bool shifted = uniformShift(carried, next, kinds, shift);
       bool steady = !resources.enabled && !lanesBound && shifted &&
                     lastShift == shift && shift <= 0 &&
-                    shift % grid.lcm() == 0 &&
+                    (!Gridded || shift % grid.lcm() == 0) &&
                     slotsHoldSteadyState(loop, -shift);
       lastShift = shifted ? std::optional<int64_t>(shift) : std::nullopt;
       llvm::SmallVector<int64_t> previous = std::move(carried);
@@ -1646,7 +1656,8 @@ private:
   llvm::SmallVector<Extrapolation> forwardExtrapolations;
   // Lines whose controllers start operations only every few program cycles.
   pulse::LineGrid grid;
-  pulse::AllocationTracer lines;
+  [[no_unique_address]] std::conditional_t<Gridded, pulse::AllocationTracer,
+                                           NoLineTrace> lines;
 };
 
 // ── Writing the schedule ─────────────────────────────────────────────────
@@ -2165,22 +2176,18 @@ static void inlineScheduleBlock(pulse::ScheduleBlockOp block) {
 
 // ── Driver ───────────────────────────────────────────────────────────────
 
+/// Schedule `region`, its schedule blocks done, in rounds until its schedule
+/// is affine.
+template <bool Gridded>
 static mlir::LogicalResult
-scheduleRegion(mlir::Region &region, mlir::Operation *root, Resources resources,
+scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
                bool isAlap, bool classical, const Timelines &timelines,
                const pulse::LineGrid &grid) {
-  for (pulse::ScheduleBlockOp block : outermostBlocks(region)) {
-    if (mlir::failed(scheduleRegion(block.getBody(), block, Resources{},
-                                    block.getPolicy() == "alap", classical,
-                                    timelines, grid)))
-      return mlir::failure();
-    writeShape(block);
-  }
-
   // Each round either writes an affine schedule or removes an iteration from
   // a loop, so this terminates.
   while (true) {
-    Scheduler scheduler(region, resources, classical, grid, &timelines);
+    Scheduler<Gridded> scheduler(region, resources, classical, grid,
+                                 &timelines);
     if (mlir::failed(scheduler.forward()))
       return mlir::failure();
     if (isAlap) {
@@ -2193,7 +2200,8 @@ scheduleRegion(mlir::Region &region, mlir::Operation *root, Resources resources,
                             [](const Sample &s) { return s.start >= 0; });
       });
       if (!feasible) {
-        scheduler = Scheduler(region, resources, classical, grid, &timelines);
+        scheduler =
+            Scheduler<Gridded>(region, resources, classical, grid, &timelines);
         if (mlir::failed(scheduler.forward()))
           return mlir::failure();
       }
@@ -2220,6 +2228,27 @@ scheduleRegion(mlir::Region &region, mlir::Operation *root, Resources resources,
     else
       unrollFully(problem->loop);
   }
+
+  return mlir::success();
+}
+
+static mlir::LogicalResult
+scheduleRegion(mlir::Region &region, mlir::Operation *root, Resources resources,
+               bool isAlap, bool classical, const Timelines &timelines,
+               const pulse::LineGrid &grid) {
+  for (pulse::ScheduleBlockOp block : outermostBlocks(region)) {
+    if (mlir::failed(scheduleRegion(block.getBody(), block, Resources{},
+                                    block.getPolicy() == "alap", classical,
+                                    timelines, grid)))
+      return mlir::failure();
+    writeShape(block);
+  }
+  if (mlir::failed(grid.enabled()
+                       ? scheduleRounds<true>(region, root, resources, isAlap,
+                                              classical, timelines, grid)
+                       : scheduleRounds<false>(region, root, resources, isAlap,
+                                               classical, timelines, grid)))
+    return mlir::failure();
 
   // Peeling may have copied blocks, so collect them again.
   for (pulse::ScheduleBlockOp block : outermostBlocks(region))
@@ -2264,11 +2293,13 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
   // Ops that read a value a measurement selects wait for it, as ops that
   // read an answer do.
   bool data = classical || function->hasAttr("pulse.selected_values");
-  pulse::LineGrid grid(function->getParentOfType<mlir::ModuleOp>());
+  const pulse::ClockAttributes clocks(
+      function->getParentOfType<mlir::ModuleOp>());
   if (mlir::failed(scheduleRegion(function.getBody(), function, resources,
-                                  isAlap, data, timelines, grid)))
+                                  isAlap, data, timelines,
+                                  pulse::LineGrid(clocks))))
     return mlir::failure();
-  pulse::applyLineDelays(function);
+  pulse::applyLineDelays(function, clocks.delays);
   return mlir::success();
 }
 

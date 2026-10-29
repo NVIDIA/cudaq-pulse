@@ -10,7 +10,7 @@
 // controller's own clock can start an operation at.
 //
 // A module whose lines all start on every program cycle has no grid
-// attributes, and reading its grid is one attribute lookup. Otherwise
+// attributes, and reading its grid is one pass over its attributes. Otherwise
 // `pulse.line_grid` (i64) is the grid of every line, and
 // `pulse.drive_line_grid` / `pulse.readout_line_grid` (i64 arrays indexed by
 // qudit, 0 for the default) override it per line; they are read only beside
@@ -27,21 +27,49 @@
 
 namespace pulse {
 
+/// The attributes of a module that put its lines on other clocks, read in
+/// one pass over its attributes: a module without them pays only that.
+struct ClockAttributes {
+  mlir::IntegerAttr grid;
+  mlir::DenseI64ArrayAttr driveGrid, readoutGrid;
+  mlir::DictionaryAttr delays;
+
+  ClockAttributes() = default;
+
+  explicit ClockAttributes(mlir::ModuleOp module) {
+    if (!module)
+      return;
+    for (mlir::NamedAttribute attr :
+         module->getDiscardableAttrDictionary().getValue()) {
+      llvm::StringRef name = attr.getName().getValue();
+      if (!name.consume_front("pulse."))
+        continue;
+      mlir::Attribute value = attr.getValue();
+      if (name == "line_grid")
+        grid = mlir::dyn_cast<mlir::IntegerAttr>(value);
+      else if (name == "drive_line_grid")
+        driveGrid = mlir::dyn_cast<mlir::DenseI64ArrayAttr>(value);
+      else if (name == "readout_line_grid")
+        readoutGrid = mlir::dyn_cast<mlir::DenseI64ArrayAttr>(value);
+      else if (name == "line_delays")
+        delays = mlir::dyn_cast<mlir::DictionaryAttr>(value);
+    }
+  }
+};
+
 class LineGrid {
 public:
   LineGrid() = default;
 
-  explicit LineGrid(mlir::ModuleOp module) {
-    auto attr =
-        module ? module->getAttrOfType<mlir::IntegerAttr>("pulse.line_grid")
-               : mlir::IntegerAttr();
-    if (!attr)
+  explicit LineGrid(mlir::ModuleOp module)
+      : LineGrid(ClockAttributes(module)) {}
+
+  explicit LineGrid(const ClockAttributes &attrs) {
+    if (!attrs.grid)
       return;
-    fallback = std::max<int64_t>(1, attr.getInt());
-    drive =
-        module->getAttrOfType<mlir::DenseI64ArrayAttr>("pulse.drive_line_grid");
-    readout = module->getAttrOfType<mlir::DenseI64ArrayAttr>(
-        "pulse.readout_line_grid");
+    fallback = std::max<int64_t>(1, attrs.grid.getInt());
+    drive = attrs.driveGrid;
+    readout = attrs.readoutGrid;
     common = fallback;
     for (mlir::DenseI64ArrayAttr grids : {drive, readout})
       if (grids)
