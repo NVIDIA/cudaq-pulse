@@ -653,12 +653,20 @@ private:
       readoutLanes[t].assign(
           static_cast<size_t>(std::max<int64_t>(1, readouts)), value);
     }
+    if (several()) {
+      driveOwners = driveLanes;
+      readoutOwners = readoutLanes;
+      for (Lanes *owners : {&driveOwners, &readoutOwners})
+        for (auto &list : *owners)
+          std::fill(list.begin(), list.end(), kNoOwner);
+    }
   }
 
   // ── Controllers ───────────────────────────────────────────────────────
 
-  /// An op on a line of no known controller, or on any.
-  static constexpr int64_t kAnyOwner = -1;
+  /// A lane's owner before any op takes it, and one that may be any
+  /// controller.
+  static constexpr int64_t kNoOwner = -2, kAnyOwner = -1;
 
   /// Whether the lines are on several controllers: never without line
   /// tracing.
@@ -695,6 +703,14 @@ private:
       return 0;
     return controller < 0 ? *llvm::max_element(armFloors)
                           : armFloors[controller];
+  }
+
+  /// How long after a lane's op of `owner` an op of `controller` may start
+  /// on it: their starts may be that far apart.
+  int64_t laneGap(int64_t owner, int64_t controller) const {
+    if (owner == kNoOwner || (owner >= 0 && owner == controller))
+      return 0;
+    return controllers.spread(owner, controller);
   }
 
   /// The measurements a value is computed from, not through other timed
@@ -1127,13 +1143,33 @@ private:
       if constexpr (Gridded)
         step = grid.of(op->getOperand(0), lines);
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op)) {
-        auto &lanes =
-            mlir::isa<pulse::DriveOp>(op) ? driveLanes[t] : readoutLanes[t];
-        auto lane = std::min_element(lanes.begin(), lanes.end());
-        start = std::max(start, *lane);
-        if (step > 1)
-          start = pulse::LineGrid::roundUp(start, step);
-        *lane = start + durationOf(op) + resources.switchPenalty;
+        bool isDrive = mlir::isa<pulse::DriveOp>(op);
+        auto &lanes = isDrive ? driveLanes[t] : readoutLanes[t];
+        if (several()) {
+          // Another controller's op ends a lane only as surely as the two
+          // starts are known.
+          auto &owners = isDrive ? driveOwners[t] : readoutOwners[t];
+          size_t best = 0;
+          int64_t free = kNever;
+          for (size_t i = 0; i < lanes.size(); ++i) {
+            int64_t at = lanes[i] + laneGap(owners[i], owner);
+            if (at < free) {
+              free = at;
+              best = i;
+            }
+          }
+          start = std::max(start, free);
+          if (step > 1)
+            start = pulse::LineGrid::roundUp(start, step);
+          lanes[best] = start + durationOf(op) + resources.switchPenalty;
+          owners[best] = owner;
+        } else {
+          auto lane = std::min_element(lanes.begin(), lanes.end());
+          start = std::max(start, *lane);
+          if (step > 1)
+            start = pulse::LineGrid::roundUp(start, step);
+          *lane = start + durationOf(op) + resources.switchPenalty;
+        }
       }
       if (step > 1)
         start = pulse::LineGrid::roundUp(start, step);
@@ -1311,6 +1347,14 @@ private:
         a = later ? std::max(a, b) : std::min(a, b);
   }
 
+  /// After a branch, a lane's last op may be either arm's.
+  static void mergeOwners(Lanes &owners, const Lanes &other) {
+    for (auto [mine, theirs] : llvm::zip(owners, other))
+      for (auto [a, b] : llvm::zip(mine, theirs))
+        if (a != b)
+          a = a == kNoOwner ? b : b == kNoOwner ? a : kAnyOwner;
+  }
+
   /// Whether what `branch` yields is there only once its condition is: when
   /// the condition reads a measurement, or comes from a classical call, an
   /// arm may set a tone or a parameter without a timed op, and the op that
@@ -1342,6 +1386,7 @@ private:
       floor = std::max(floor, ready(branch.getCondition()));
 
     auto savedDrive = driveLanes, savedReadout = readoutLanes;
+    auto savedDriveOwners = driveOwners, savedReadoutOwners = readoutOwners;
     auto savedLinks = linkReady;
     if (mlir::failed(forwardBlock(*branch.thenBlock())))
       return mlir::failure();
@@ -1350,9 +1395,13 @@ private:
       results.push_back(ready(value));
     if (!branch.getElseRegion().empty()) {
       auto thenDrive = driveLanes, thenReadout = readoutLanes;
+      auto thenDriveOwners = std::move(driveOwners);
+      auto thenReadoutOwners = std::move(readoutOwners);
       auto thenLinks = std::move(linkReady);
       driveLanes = savedDrive;
       readoutLanes = savedReadout;
+      driveOwners = std::move(savedDriveOwners);
+      readoutOwners = std::move(savedReadoutOwners);
       linkReady = std::move(savedLinks);
       if (mlir::failed(forwardBlock(*branch.elseBlock())))
         return mlir::failure();
@@ -1361,6 +1410,8 @@ private:
         time = std::max(time, ready(value));
       mergeLanes(driveLanes, thenDrive, /*later=*/true);
       mergeLanes(readoutLanes, thenReadout, /*later=*/true);
+      mergeOwners(driveOwners, thenDriveOwners);
+      mergeOwners(readoutOwners, thenReadoutOwners);
       for (auto &[key, time] : thenLinks) {
         auto [it, inserted] = linkReady.try_emplace(key, time);
         if (!inserted)
@@ -1539,11 +1590,29 @@ private:
         step = grid.of(op->getOperand(0), lines);
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op)) {
         auto &lanes = isReadout ? readoutLanes[t] : driveLanes[t];
-        auto lane = std::max_element(lanes.begin(), lanes.end());
-        end = std::min(end, *lane);
-        if (step > 1)
-          end = pulse::LineGrid::roundDown(end - duration, step) + duration;
-        *lane = end - duration - resources.switchPenalty;
+        if (several()) {
+          auto &owners = isReadout ? readoutOwners[t] : driveOwners[t];
+          size_t best = 0;
+          int64_t free = -kNever;
+          for (size_t i = 0; i < lanes.size(); ++i) {
+            int64_t at = lanes[i] - laneGap(owners[i], owner);
+            if (at > free) {
+              free = at;
+              best = i;
+            }
+          }
+          end = std::min(end, free);
+          if (step > 1)
+            end = pulse::LineGrid::roundDown(end - duration, step) + duration;
+          lanes[best] = end - duration - resources.switchPenalty;
+          owners[best] = owner;
+        } else {
+          auto lane = std::max_element(lanes.begin(), lanes.end());
+          end = std::min(end, *lane);
+          if (step > 1)
+            end = pulse::LineGrid::roundDown(end - duration, step) + duration;
+          *lane = end - duration - resources.switchPenalty;
+        }
       }
       int64_t start = end - duration;
       if (step > 1)
@@ -1712,6 +1781,7 @@ private:
     auto savedArmStarts = armStarts;
     std::fill(armStarts.begin(), armStarts.end(), kNever);
     auto savedDrive = driveLanes, savedReadout = readoutLanes;
+    auto savedDriveOwners = driveOwners, savedReadoutOwners = readoutOwners;
     auto savedLinks = linkLate;
     for (auto [value, result] :
          llvm::zip(branch.thenYield().getOperands(), branch.getResults()))
@@ -1720,9 +1790,13 @@ private:
       return mlir::failure();
     if (!branch.getElseRegion().empty()) {
       auto thenDrive = driveLanes, thenReadout = readoutLanes;
+      auto thenDriveOwners = std::move(driveOwners);
+      auto thenReadoutOwners = std::move(readoutOwners);
       auto thenLinks = std::move(linkLate);
       driveLanes = savedDrive;
       readoutLanes = savedReadout;
+      driveOwners = std::move(savedDriveOwners);
+      readoutOwners = std::move(savedReadoutOwners);
       linkLate = std::move(savedLinks);
       for (auto [value, result] :
            llvm::zip(branch.elseYield().getOperands(), branch.getResults()))
@@ -1731,6 +1805,8 @@ private:
         return mlir::failure();
       mergeLanes(driveLanes, thenDrive, /*later=*/false);
       mergeLanes(readoutLanes, thenReadout, /*later=*/false);
+      mergeOwners(driveOwners, thenDriveOwners);
+      mergeOwners(readoutOwners, thenReadoutOwners);
       for (auto &[key, time] : thenLinks) {
         auto [it, inserted] = linkLate.try_emplace(key, time);
         if (!inserted)
@@ -1836,6 +1912,8 @@ private:
   /// Per controller, the earliest start of an op of it in the arm being
   /// scheduled; `armStart` has those of no one controller (backward).
   llvm::SmallVector<int64_t, 4> armStarts;
+  /// The controller of each lane's last op.
+  Lanes driveOwners, readoutOwners;
 };
 
 // ── Writing the schedule ─────────────────────────────────────────────────

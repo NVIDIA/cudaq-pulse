@@ -22,13 +22,16 @@ from cudaq_pulse.controller import ControllerLimitError
 from tests._handles import ladder_target
 
 
-def _system(*clocks, **kwargs):
+def _system(*clocks, tolerance=0, **kwargs):
     """A control system of one controller per clock, each playing the drive
     and readout lines of two qudits of four."""
     return pulse.ControlSystem(
         controllers=[
             pulse.Controller(
-                drive_lines=[2 * k, 2 * k + 1], readout_lines=[2 * k, 2 * k + 1], clock_ghz=c
+                drive_lines=[2 * k, 2 * k + 1],
+                readout_lines=[2 * k, 2 * k + 1],
+                clock_ghz=c,
+                alignment_tolerance_cycles=tolerance,
             )
             for k, c in enumerate(clocks)
         ],
@@ -115,6 +118,8 @@ LINKS = {"controller": Link(fixed_ns=10)}
 
 
 def _mixed(**kwargs):
+    # Pulses a sync lines up across the two land within one of their cycles.
+    kwargs.setdefault("tolerance", 1)
     return _device(system=_system(1.0, 0.5, **kwargs), clock_ghz=2.0)
 
 
@@ -643,7 +648,7 @@ def branch_across(a, b):
         drive(db, square(8, 0.1), tb)
 
 
-def _forwarding(reference=None, skew=0):
+def _forwarding(reference=None, skew=0, tolerance=0):
     controllers = [
         pulse.Controller(
             drive_lines=[0, 1],
@@ -651,9 +656,14 @@ def _forwarding(reference=None, skew=0):
             clock_ghz=1.0,
             feedback_latency_cycles=3,
             peer_latency_cycles={1: 2},
+            alignment_tolerance_cycles=tolerance,
         ),
         pulse.Controller(
-            drive_lines=[2, 3], readout_lines=[2, 3], clock_ghz=0.5, clock_skew_cycles=skew
+            drive_lines=[2, 3],
+            readout_lines=[2, 3],
+            clock_ghz=0.5,
+            clock_skew_cycles=skew,
+            alignment_tolerance_cycles=tolerance,
         ),
     ]
     system = pulse.ControlSystem(controllers=controllers, reference_clock_ghz=reference)
@@ -744,7 +754,7 @@ def branch_on_both(a, b):
 
 @pytest.mark.parametrize("schedule", ["rcp", "alap_rcp"])
 def test_rcp_waits_for_an_outcome_only_as_long_as_it_takes_to_reach_each_controller(schedule):
-    qpu = _forwarding()
+    qpu = _forwarding(tolerance=1)
     lowered = pulse.compile(branch_on_both, schedule=schedule, device=qpu).lower(
         qpu.qudits[0], qpu.qudits[2]
     )
@@ -790,3 +800,85 @@ def test_rcp_waits_for_an_outcome_a_pulse_computes_with_to_reach_its_controller(
     early = pulse.compile(chosen_across, schedule="asap", device=qpu)
     with pytest.raises(ControllerLimitError, match="computes with the readout of controllers"):
         early.lower(qpu.qudits[0], qpu.qudits[2])
+
+
+@pulse.kernel
+def two_drives(a, b):
+    da, ta = get_drive_line(a)
+    db, tb = get_drive_line(b)
+    drive(da, square(8, 0.1), ta)
+    drive(db, square(8, 0.1), tb)
+
+
+def test_rcp_keeps_pulses_of_two_controllers_on_one_lane_apart_by_their_start_uncertainty():
+    def second_start(b, reference=None):
+        system = _system(1.0, 0.5, max_concurrent_drives=1, reference_clock_ghz=reference)
+        qpu = _device(system=system, clock_ghz=2.0)
+        lowered = pulse.compile(two_drives, schedule="rcp", device=qpu).lower(
+            qpu.qudits[0], qpu.qudits[b]
+        )
+        first, second = (e for e in lowered.schedule if e.kind == "drive")
+        assert first.start == 0
+        return second.start
+
+    # One drive at a time: the second, on controllers[1], also waits the 2 + 4
+    # program cycles the two starts may be apart, then its grid of 4.
+    assert second_start(2) == 16
+    assert second_start(2, reference=0.5) == 8
+    # On the same controller, right after.
+    assert second_start(1) == 8
+
+
+@pulse.kernel
+def paired(a, b):
+    da, ta = get_drive_line(a)
+    db, tb = get_drive_line(b)
+    sync(da, db)
+    drive(da, square(8, 0.1), ta)
+    wait(db, 4)
+    drive(db, square(8, 0.1), tb)
+
+
+def test_pulses_a_sync_lines_up_across_controllers_land_within_their_alignment_tolerance():
+    def compiled(tolerance=0, reference=None, skew=0, delays=None):
+        controllers = [
+            pulse.Controller(
+                drive_lines=[0, 1],
+                readout_lines=[0, 1],
+                clock_ghz=1.0,
+                alignment_tolerance_cycles=tolerance,
+            ),
+            pulse.Controller(
+                drive_lines=[2, 3],
+                readout_lines=[2, 3],
+                clock_ghz=0.5,
+                alignment_tolerance_cycles=tolerance,
+                clock_skew_cycles=skew,
+            ),
+        ]
+        system = pulse.ControlSystem(
+            controllers=controllers, reference_clock_ghz=reference, line_delays_ns=delays or {}
+        )
+        qpu = _device(system=system, clock_ghz=2.0)
+        return pulse.compile(paired, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
+
+    with pytest.raises(ControllerLimitError) as caught:
+        compiled()
+    first, second = caught.value.violations
+    assert first == (
+        "controllers[0]: the sync at 0 lines up the drive on line 0 with the pulses of "
+        "controllers[1], but they land within 1 of its cycles of where they are meant to "
+        "(1 without a shared reference_clock_ghz), more than its alignment_tolerance_cycles "
+        "of 0; share a reference_clock_ghz between them, or raise its "
+        "alignment_tolerance_cycles to 1"
+    )
+    # A wait before a pulse leaves it lined up.
+    assert second.startswith("controllers[1]: the sync at 0 lines up the drive on line 1 ")
+    compiled(tolerance=1)
+    compiled(reference=0.5)
+    with pytest.raises(ControllerLimitError, match="2 of clock_skew_cycles"):
+        compiled(reference=0.5, skew=2, tolerance=1)
+    # A line delay rounded to its grid (0.4 ns of a 2 ns step: 0.2 of a 0.5
+    # GHz cycle) adds to it.
+    with pytest.raises(ControllerLimitError, match="raise its alignment_tolerance_cycles to 2"):
+        compiled(tolerance=1, delays={("drive", 2): 2.4})

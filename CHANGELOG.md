@@ -95,7 +95,13 @@ behavior may change in any 0.x release.
   latency alone; starting sooner is a `ControllerLimitError` naming the
   cycle), and an answer taken on another controller than the one that sent
   the request is due that much later (the two controllers' uncertainty; the
-  link's worst pair when the scheduler cannot tell which they are).
+  link's worst pair when the scheduler cannot tell which they are). The
+  first pulse after a sync of several controllers' lines, on each of them,
+  must land within its controller's `alignment_tolerance_cycles`: its start
+  uncertainty and its rounded line delay, else a `ControllerLimitError`.
+  Under `rcp`, a pulse that follows another controller's on one of the
+  `max_concurrent_drives` or `max_concurrent_readouts` lanes starts their
+  start uncertainty after it.
 - **Processors.** `pulse.Processor` is a classical processor on a
   controller (`Controller(processors=[...])`), which runs the classical
   functions called on its `links`; a link belongs to at most one processor

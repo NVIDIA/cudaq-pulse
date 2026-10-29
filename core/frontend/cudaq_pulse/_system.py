@@ -28,6 +28,7 @@ all of them::
 
 from __future__ import annotations
 
+import bisect
 import dataclasses
 import enum
 import json
@@ -508,7 +509,9 @@ class ControlSystem:
     ``max_concurrent_drives``, ``max_concurrent_readouts`` and
     ``line_switch_penalty_cycles`` apply to the ``rcp`` and ``alap_rcp``
     schedules, which keep a branch on a readout at least the
-    ``feedback_latency_cycles`` of the controllers that play readouts after it.
+    ``feedback_latency_cycles`` of the controllers that play readouts after it,
+    and pulses of two controllers that follow each other on one lane their
+    start uncertainty apart.
     ``reference_clock_ghz`` is a clock every controller locks to, if they
     share one: each controller's clock must be a whole multiple of it, and
     without it each controller's start is known only to within one of its
@@ -881,6 +884,97 @@ class ControlSystem:
                 )
         return found
 
+    def _alignment(
+        self,
+        lines: Sequence[Mapping[str, Any]],
+        events: Sequence[Mapping[str, Any]],
+        owners: Sequence[int | None],
+        clocks: _clocks.ClockPlan | None,
+        program_ghz: float,
+    ) -> list[str]:
+        """The pulses a sync lines up across controllers that may land
+        further from where they are meant to than their
+        ``alignment_tolerance_cycles``: the first pulse after the sync on each
+        of its lines lands within its controller's start uncertainty and what
+        its line delay is rounded by (each in the controller's cycles)."""
+        if (
+            self.reference_clock_ghz is not None
+            and not self.line_delays_ns
+            and not any(c.clock_skew_cycles for c in self.controllers)
+        ):
+            return []
+        by_line: dict[int, list[Mapping[str, Any]]] = {}
+        for event in events:
+            if event["kind"] in _PLAYED and event["start_cycles"] is not None:
+                by_line.setdefault(event["line"], []).append(event)
+        for items in by_line.values():
+            items.sort(key=lambda e: (e["start_cycles"], e["index"]))
+        starts = {line: [e["start_cycles"] for e in items] for line, items in by_line.items()}
+        found: list[str] = []
+        for sync in events:
+            if sync["kind"] != "sync" or sync["start_cycles"] is None:
+                continue
+            if len(_known(owners[line] for line in sync["lines"])) < 2:
+                continue
+            paired: list[tuple[int, Mapping[str, Any]]] = []
+            for line in sync["lines"]:
+                owner = owners[line]
+                if owner is None or line not in by_line:
+                    continue
+                after = bisect.bisect_left(starts[line], sync["start_cycles"])
+                if after < len(starts[line]):
+                    paired.append((owner, by_line[line][after]))
+            parts = _known(owner for owner, _ in paired)
+            if len(parts) < 2:
+                continue
+            trigger = 0 if self.reference_clock_ghz is not None else 1
+            for owner in parts:
+                controller = self.controllers[owner]
+                mine = [e for o, e in paired if o == owner]
+                skew = controller.clock_skew_cycles
+                rounded = max(
+                    self._delay_rounding(lines[e["line"]], owner, clocks, program_ghz) for e in mine
+                )
+                spread = skew + trigger + rounded
+                if spread <= controller.alignment_tolerance_cycles + 1e-9:
+                    continue
+                terms = [f"{skew} of clock_skew_cycles"] if skew else []
+                if trigger:
+                    terms.append("1 without a shared reference_clock_ghz")
+                if rounded:
+                    terms.append(f"{rounded:g} of a rounded line delay")
+                fixes = ["share a reference_clock_ghz between them"] if trigger else []
+                fixes.append(f"raise its alignment_tolerance_cycles to {math.ceil(spread - 1e-9)}")
+                pulses = ", ".join(f"the {e['kind']} on line {e['line']}" for e in mine)
+                found.append(
+                    f"{_label(owner, controller)}: the sync at {sync['start_cycles']} lines "
+                    f"up {pulses} with the pulses of "
+                    + ", ".join(_label(o, self.controllers[o]) for o in parts if o != owner)
+                    + f", but they land within {spread:g} of its cycles of where they are "
+                    f"meant to ({', '.join(terms)}), more than its "
+                    f"alignment_tolerance_cycles of {controller.alignment_tolerance_cycles}; "
+                    + ", or ".join(fixes)
+                )
+        return found
+
+    def _delay_rounding(
+        self,
+        line: Mapping[str, Any],
+        owner: int,
+        clocks: _clocks.ClockPlan | None,
+        program_ghz: float,
+    ) -> float:
+        """How far a line's delay is rounded to its grid, in its controller's
+        cycles: 0 when the controller adds the rest as fine delay."""
+        ns = self.line_delays_ns.get((line["role"], line["qudit"]))
+        controller = self.controllers[owner]
+        if not ns or controller.max_fine_delay_ns > 0:
+            return 0.0
+        own = None if clocks is None else clocks.controllers[owner]
+        step_ns = (1 if own is None else own.grid) / program_ghz
+        rest = abs(ns - round(ns / step_ns) * step_ns)
+        return 0.0 if rest < 1e-9 else rest * (program_ghz if own is None else own.clock_ghz)
+
     def _index(self, controller: Controller) -> int:
         for index, candidate in enumerate(self.controllers):
             if candidate is controller:
@@ -951,6 +1045,7 @@ class ControlSystem:
         else:
             needs = self._needs(lowered, events, owners, unresolved)
             needs.extend(self._forwarding(events, owners, clocks))
+            needs.extend(self._alignment(lines, events, owners, clocks, lowered.target.clock_ghz))
             if clocks is not None and clocks.owners is not None:
                 # Each event in its controller's cycles, once for them all.
                 found.extend(

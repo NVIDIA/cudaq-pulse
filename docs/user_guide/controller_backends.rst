@@ -220,6 +220,18 @@ are (the request carries no measurement, or the answer leaves the kernel),
 the budget adds the start uncertainty of the two controllers the link
 reaches that are known least well.
 
+A sync of lines on several controllers lines up the first pulse after it
+on each of its lines. Each of those lands within its controller's start
+uncertainty of where it is meant to, plus how far its line delay is
+rounded to its grid when the controller has no fine delay, all in the
+controller's cycles, and that must fit the controller's
+``alignment_tolerance_cycles``; otherwise the program fails to compile,
+suggesting a shared ``reference_clock_ghz`` or the tolerance it needs.
+Under ``rcp`` and ``alap_rcp``, ``max_concurrent_drives`` and
+``max_concurrent_readouts`` count pulses on every controller: a pulse that
+follows another controller's on the same lane starts their start
+uncertainty after it, so the two never overlap.
+
 What the program computes at run time is converted by the same rule. A
 variable wait's ``length`` is clamped to its bounds, as the run clamps it,
 and then wrapped in ``{"op": "pulse.own_cycles", "of": [x], "num": a,
