@@ -44,6 +44,11 @@ def _decide(bits: pulse.Bits) -> pulse.Bits:
 _MACHINE = MachineModel(links={"ctl": Link(fixed_ns=4, feedback_ns=8)})
 
 
+def _sampled(per_cycle, **limits):
+    """Limits of a controller whose lines play *per_cycle* samples per cycle."""
+    return ControllerLimits(sample_rate_ghz=per_cycle * _TARGET.clock_ghz, **limits)
+
+
 def _rounds(n):
     @pulse.kernel
     def rounds(a, b):
@@ -229,6 +234,47 @@ def test_every_structured_event_kind_is_an_event_and_exported_as_a_plain_string(
     assert pulse.Event.PLAY == "play" and pulse.Event("acquire") is pulse.Event.ACQUIRE
 
 
+# Each kind of /2 event, its string, and the /1 kind it unrolls to.
+_EVENT_TABLE = [
+    (pulse.Event.PLAY, "play", "drive"),
+    (pulse.Event.ACQUIRE, "acquire", "readout"),
+    (pulse.Event.WAIT, "wait", "wait"),
+    (pulse.Event.SYNC, "sync", "sync"),
+    (pulse.Event.LOOP, "loop", None),
+    (pulse.Event.CALL, "call", "submit"),
+    (pulse.Event.ANSWER, "answer", "answer"),
+]
+
+
+def _executions(events, times, counts):
+    for event in events:
+        if event["kind"] == "loop":
+            _executions(event["body"], times * event["trips"], counts)
+        else:
+            counts[event["kind"]] = counts.get(event["kind"], 0) + times
+    return counts
+
+
+@pytest.mark.parametrize(
+    ("member", "text", "flat"), _EVENT_TABLE, ids=[t for _, t, _ in _EVENT_TABLE]
+)
+def test_each_event_kind_is_its_string_and_unrolls_to_its_flat_kind(member, text, flat):
+    assert [m for m, _, _ in _EVENT_TABLE] == list(pulse.Event)
+    assert member == text and str(member) == text and pulse.Event(text) is member
+    exported = 0
+    for name in _CASES:
+        lowered, export = _lower(name)
+        structured = lowered.export_controller(**export, version=2)
+        if member is pulse.Event.LOOP:
+            exported += len(list(_loops(structured["events"])))
+            continue
+        times = _executions(structured["events"], 1, {}).get(text, 0)
+        flat_events = lowered.export_controller(**export)["events"]
+        assert times == sum(e["kind"] == flat for e in flat_events), name
+        exported += times
+    assert exported, f"no case exports a {text!r} event"
+
+
 def test_unrolling_refuses_an_event_kind_the_format_does_not_have():
     lowered, _ = _lower("branches")
     program = lowered.export_controller(version=2)
@@ -262,7 +308,7 @@ def test_a_program_states_its_sample_rate_beside_its_clock():
     with pytest.raises(ValueError, match="16 cycles at 1.1 samples per cycle is 17.6 samples"):
         lowered.export_controller(version=2, sample_rate_ghz=2.2)
 
-    machine = MachineModel(controller=ControllerLimits(sample_rate_ghz=8.0))
+    machine = MachineModel(controller=_sampled(4))
     lowered = pulse.compile(kernel, machine=machine).lower(Q[0], Q[1])
     program = lowered.export_controller(version=2)
     assert program["sample_rate_ghz"] == program["controller"]["sample_rate_ghz"] == 8.0
@@ -347,24 +393,25 @@ def test_the_structured_format_is_refused_by_an_unknown_version():
 # ── Limit checks on rolled loops ────────────────────────────────────────
 
 
-_LIMITS = [
-    ControllerLimits(issue_cycles=3, min_wait_cycles=5),
-    ControllerLimits(tones_per_line=1),
-    ControllerLimits(sample_rate_ghz=4.0, waveform_samples=60),
-    ControllerLimits(
+# Built per test, so that a limit the controller no longer takes fails its
+# own cases only.
+_LIMITS = {
+    "issue": lambda: ControllerLimits(issue_cycles=3, min_wait_cycles=5),
+    "tones": lambda: ControllerLimits(tones_per_line=1),
+    "waveform_samples": lambda: _sampled(2, waveform_samples=60),
+    "shared_memory": lambda: ControllerLimits(
         waveform_memory=WaveformMemory(samples=60, granule=32, scaling=False, shared=True)
     ),
-    ControllerLimits(acquirers={0: 0, 1: 0}, acquirer_hold_cycles=500),
-    ControllerLimits(feedback_latency_cycles=50),
-    ControllerLimits(max_events=7),
-]
+    "acquirers": lambda: ControllerLimits(acquirers={0: 0, 1: 0}, acquirer_hold_cycles=500),
+    "feedback": lambda: ControllerLimits(feedback_latency_cycles=50),
+    "max_events": lambda: ControllerLimits(max_events=7),
+}
 
 
-@pytest.mark.parametrize(
-    "limits", _LIMITS, ids=lambda limits: str(sorted(limits.as_dict().items()))
-)
+@pytest.mark.parametrize("name", list(_LIMITS))
 @pytest.mark.parametrize("n", [3, 40])
-def test_a_rolled_loop_is_checked_like_the_same_loop_unrolled(limits, n):
+def test_a_rolled_loop_is_checked_like_the_same_loop_unrolled(name, n):
+    limits = _LIMITS[name]()
     rolled = pulse.compile(_rounds(n), unroll_threshold=0).lower(Q[0], Q[1])
     unrolled = pulse.compile(_rounds(n), unroll_threshold=10**6).lower(Q[0], Q[1])
     assert rolled.schedule == unrolled.schedule
