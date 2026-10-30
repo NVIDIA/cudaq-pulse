@@ -168,7 +168,12 @@ def test_library_errors_are_pulse_errors_of_their_kind():
 
 # The modules that still raise built-in errors, and how many; every other
 # module raises library errors only.
-BUILTIN_RAISES = {"compiler.py": 19, "controller.py": 11, "kernel/_kernel.py": 7}
+BUILTIN_RAISES = {
+    "_waits.py": 4,
+    "compiler.py": 15,
+    "controller.py": 11,
+    "kernel/_kernel.py": 7,
+}
 
 
 def test_only_known_modules_raise_builtin_errors():
