@@ -406,11 +406,11 @@ def _length(where: str, kind: int, meta: tuple[Any, ...], what: str) -> int:
 
 
 _SPELLED = {
-    "bits": ("pulse.Bits", "", "bit"),
-    "levels": ("list[int]", "", "measurement"),
-    "iq": ("list[complex]", "", "IQ point"),
-    "f64": ("list[float]", "", "number"),
-    "i32": ("list[int]", "", "number"),
+    "bits": ("pulse.Bits", "bit"),
+    "levels": ("list[int]", "measurement"),
+    "iq": ("list[complex]", "IQ point"),
+    "f64": ("list[float]", "number"),
+    "i32": ("list[int]", "number"),
 }
 
 
@@ -418,8 +418,8 @@ def _spelled(spec: ValueType) -> tuple[str, str]:
     """A list type's ``pulse.Length[...]`` spelling and what it counts
     (``"bit"``, ``"number"``...), for errors."""
     head = spec.descriptor.split(":")[0].split("[")[0]
-    name, flag, unit = _SPELLED.get(head, (spec.descriptor, "", "value"))
-    return f"pulse.Length[{name}, {spec.count}{flag}]", unit
+    name, unit = _SPELLED.get(head, (spec.descriptor, "value"))
+    return f"pulse.Length[{name}, {spec.count}]", unit
 
 
 def _wrong_length(function: ClassicalFunction[..., Any], position: int, got: int) -> str:
