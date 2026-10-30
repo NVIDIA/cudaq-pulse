@@ -146,8 +146,20 @@ class _Role:
 
         digest = hashlib.blake2b(digest_size=16)
         digest.update(memoryview(buffer).cast("B"))
-        digest.update(repr((name, tuple(parameters), target._structure, options)).encode())
+        structure = target._structure or _structure(target)
+        digest.update(repr((name, tuple(parameters), structure, options)).encode())
         return digest.hexdigest()
+
+
+def _structure(device: Device) -> str:
+    """``device._structure``: what a kernel whose qudits are runtime
+    parameters depends on, not the carriers or their calibration, which are
+    bound per call."""
+    import hashlib
+
+    content = repr((device.target.model, device.clock_ghz)).encode()
+    made = device._structure = hashlib.blake2b(content, digest_size=16).hexdigest()
+    return made
 
 
 def _rebuilt_role(

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from .._device import Qudit, Register
 from .._errors import InvalidTypeError
-from .._programs import _PLACEMENTS, _Role
+from .._programs import _PLACEMENTS, _Role, _structure
 from ..compiler import CompileOptions, Lowered, build
 from ._kernel import (
     _FLOAT,
@@ -98,7 +98,9 @@ class _Placing(_Dispatcher):
     def _key(self, target: Device, values: tuple[Any, ...]) -> Any:
         kernel = self.kernel
         static = kernel._split[0]
-        fingerprint = target._structure if kernel._slotted else target.fingerprint
+        fingerprint = (
+            (target._structure or _structure(target)) if kernel._slotted else target.fingerprint
+        )
         lengths = [len(values[i]) for i in kernel._shaped]
         return (fingerprint, static, *[_static_key(values[i]) for i in static], *lengths)
 

@@ -90,18 +90,6 @@ def _read_only(array: Any) -> Any:
     return array
 
 
-def _timebase_ghz(device: Device) -> float:
-    """The clock a program for *device* is timed in, in GHz."""
-    return device.clock_ghz
-
-
-def _structure(device: Device) -> str:
-    """What a kernel whose qudits are runtime parameters depends on: not the
-    carriers or their calibration, which are bound per call."""
-    content = repr((device.target.model, _timebase_ghz(device))).encode()
-    return hashlib.blake2b(content, digest_size=16).hexdigest()
-
-
 def _fingerprint(target: TargetDescription, layout: tuple[int, ...], calibration: Any) -> str:
     """Content hash of everything a compiled kernel depends on, and of the
     calibration the device holds: devices of one fingerprint are one device."""
@@ -307,6 +295,9 @@ class Device:
 
     # The registered target the device was made from, as ``as_dict`` writes it.
     _spec: str | None = None
+    # What a kernel whose qudits are runtime parameters depends on, made by
+    # the first such kernel (_programs._structure).
+    _structure: str | None = None
 
     def __init__(
         self,
@@ -363,7 +354,6 @@ class Device:
         self._identity: Any = (
             self.fingerprint if control_system is None else (self.fingerprint, control_system)
         )
-        self._structure = _structure(self)
         self.qudit_handles = _Handles(tuple(Qudit(self, p, i) for i, p in enumerate(layout)))
         self._arrays: tuple[Any, Any] | None = None
         self._table: array[float] | None = None
