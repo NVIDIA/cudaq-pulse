@@ -500,6 +500,89 @@ def test_a_program_unpickles_identical_and_runs_without_compiling(name, monkeypa
     assert _views(back) == expected
 
 
+@pulse.kernel
+def carried_phase(q):
+    d = get_drive_line(q)
+    for _ in range(4):
+        drive(d, square(20, 0.1))
+        shift_phase(d.tone, 0.25)
+    shift_frequency(d.tone, 1.0e6)
+
+
+@pulse.kernel(max_duration_cycles=4000)
+def swept(q, amp: float):
+    d = get_drive_line(q)
+    for _ in range(50):
+        drive(d, gaussian(16, amp, 4.0))
+        drive(d, gaussian(16, 0.5, 4.0))
+
+
+_PERSISTENT = MachineModel(
+    controller=ControllerLimits(
+        persistent_frames=True,
+        waveform_samples=4096,
+        waveform_memory="shared",
+    )
+)
+_AMPLITUDE_LIMIT = MachineModel(controller=ControllerLimits(max_amplitude=0.6))
+
+
+def _exported():
+    return {
+        "persistent_frames": pulse.compile(
+            carried_phase, machine=_PERSISTENT, unroll_threshold=0
+        ).lower(Q[0]),
+        "rolled_call": pulse.compile(swept, unroll_threshold=0).lower(Q[0], 0.2),
+        "checked_call": pulse.compile(swept, machine=_AMPLITUDE_LIMIT, unroll_threshold=0).lower(
+            Q[0], 0.2
+        ),
+    }
+
+
+@pytest.mark.parametrize("name", ["persistent_frames", "rolled_call", "checked_call"])
+def test_a_program_unpickles_with_its_controller_exports_in_both_formats(name, monkeypatch):
+    program = _exported()[name]
+    expected = (
+        program.export_controller(),
+        program.export_controller(version=2),
+        program._concrete().drive_frames([]),
+    )
+    data = pickle.dumps(program)
+    monkeypatch.setattr(_pickling, "_devices", {})
+    monkeypatch.setattr(_kernel, "build", _refuse_compile)
+    back = pickle.loads(data)
+    assert type(back) is type(program) and type(back.generic) is type(program.generic)
+    assert (
+        back.export_controller(),
+        back.export_controller(version=2),
+        back._concrete().drive_frames([]),
+    ) == expected
+
+
+def test_frames_that_persist_unpickle_declared_and_exported():
+    program = _round_trip(_exported()["persistent_frames"])
+    assert program.options.machine == _PERSISTENT
+    assert program.options.machine.controller.persistent_frames is True
+    flat, structured = program.export_controller(), program.export_controller(version=2)
+    [frame] = flat["frame_state"]
+    assert frame["frequency_hz"] == LADDER.target.qubits[0].frequency_hz + 1.0e6
+    assert structured["frame_state"] == flat["frame_state"]
+    assert structured["controller"]["persistent_frames"] is True
+    assert structured["controller"]["waveform_memory"] == "shared"
+
+
+def test_an_unpickled_module_checks_each_calls_values_against_the_controller(monkeypatch):
+    generic = _exported()["checked_call"].generic
+    back = _round_trip(generic)
+    monkeypatch.setattr(_kernel, "build", _refuse_compile)
+    assert type(back) is type(generic)
+    assert back.bind([0.3]).export_controller() == generic.bind([0.3]).export_controller()
+    with pytest.raises(ControllerLimitError, match=r"peaks at amplitude 0\.9; .* at most 0\.6"):
+        back.bind([0.9])
+    with pytest.raises(ControllerLimitError, match="ControllerLimits.max_amplitude"):
+        back._with_values([0.9])
+
+
 def test_an_unpickled_module_binds_new_values_as_the_original_does(monkeypatch):
     generic = ramsey.lower(Q[0], 40.0).generic
     back = _round_trip(generic)
