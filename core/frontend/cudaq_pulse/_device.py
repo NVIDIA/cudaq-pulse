@@ -319,7 +319,7 @@ class Device:
                 )
         problems: list[Problem] = []
         if clock_ghz is not None or (control_system is not None and control_system._needs_clock):
-            from ._system import _program_clock
+            from ._clocks import _program_clock
 
             clock, problems = _program_clock(control_system, clock_ghz, target.clock_ghz)
             if clock is None:
@@ -711,7 +711,7 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
     calibration = _calibration(config, problems)
     clock_ghz = config.get("clock_ghz")
     if clock_ghz is not None or (control is not None and control._needs_clock):
-        from ._system import _program_clock
+        from ._clocks import _program_clock
 
         problems.extend(
             _program_clock(control, clock_ghz, 0.0 if target is None else target.clock_ghz)[1]

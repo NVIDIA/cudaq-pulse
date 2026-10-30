@@ -1469,42 +1469,6 @@ def _wiring_problems(system: ControlSystem, target: TargetDescription) -> list[P
     return problems
 
 
-def _program_clock(
-    system: ControlSystem | None, declared: Any, default: float
-) -> tuple[float | None, list[Problem]]:
-    """The program clock of a device of *system*: *declared* (its config's
-    ``clock_ghz``), else the fastest of the controllers' own clocks when the
-    others divide it, else *default*; with the problems that keep it from
-    one, and the controllers' clocks that are not whole multiples of the
-    system's reference clock."""
-    clocks = {} if system is None else system._own_clocks
-    try:
-        program = _clocks.program_clock_ghz(declared, clocks, default)
-    except ValueError as error:
-        return None, [Problem(str(error), path="clock_ghz", value=declared)]
-    reference = None if system is None else system.reference_clock_ghz
-    if system is None or reference is None:
-        return program, []
-    problems = []
-    for index, controller in enumerate(system.controllers):
-        clock = program if controller.clock_ghz is None else controller.clock_ghz
-        try:
-            _clocks._check_reference(reference, {"controller": clock})
-        except ValueError:
-            problems.append(
-                Problem(
-                    f"its {clock:g} GHz clock"
-                    + (" (the program clock)" if controller.clock_ghz is None else "")
-                    + f" is not a whole multiple of the {reference:g} GHz reference clock",
-                    path=f"control_system.controllers[{index}].clock_ghz",
-                    value=controller.clock_ghz,
-                    fix="give it a clock the reference clock divides, or change "
-                    "the control system's reference_clock_ghz",
-                )
-            )
-    return program, problems
-
-
 # ── Controller descriptions ──────────────────────────────────────────────────
 
 _DESCRIPTIONS = Path(__file__).resolve().parent / "controllers"
