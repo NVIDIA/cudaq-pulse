@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import difflib
 import numbers
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -230,6 +229,8 @@ def _count(n: int, noun: str) -> str:
 
 def _closest(name: str, candidates: Iterable[str]) -> str | None:
     """The candidate closest to *name*, if one is close."""
+    import difflib
+
     close = difflib.get_close_matches(name, list(candidates), n=1)
     return close[0] if close else None
 
