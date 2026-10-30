@@ -143,7 +143,10 @@ cmake.build-type = "Release"
 install.components = ["CudaqPulse"]
 install.strip = true
 wheel.packages = []
-# One abi3 wheel per platform covers CPython 3.12 and newer.
+# One abi3 wheel per platform covers the GIL builds of CPython 3.12 and newer.
+# A free-threaded CPython has no stable ABI before 3.15's abi3t, so
+# scikit-build-core ignores this there and tags the wheel for its one version
+# (cp314t).
 wheel.py-api = "cp312"
 sdist.exclude = [".cache", "build", "dist", "wheelhouse", ".github"]
 metadata.version.provider = "scikit_build_core.metadata.setuptools_scm"
@@ -154,6 +157,13 @@ CUDAQ_PULSE_ENABLE_GPU = { env = "CUDAQ_PULSE_ENABLE_GPU", default = "OFF" }
 CUDAQ_PULSE_CUDA12_ROOT = { env = "CUDAQ_PULSE_CUDA12_ROOT", default = "" }
 CUDAQ_PULSE_CUDA13_ROOT = { env = "CUDAQ_PULSE_CUDA13_ROOT", default = "" }
 
+# A wheel for a free-threaded CPython declares that its extension runs
+# without the GIL; otherwise importing it would turn the GIL back on.
+[[tool.scikit-build.overrides]]
+if.abi-flags = "t"
+inherit.cmake.define = "append"
+cmake.define.CUDAQ_PULSE_FREE_THREADED = "ON"
+
 # Only v* tags carry package versions; mlir-toolchain-* tags name toolchain
 # releases.
 [tool.setuptools_scm]
@@ -163,9 +173,10 @@ tag_regex = '^v(?P<version>\d+(?:\.\d+)*(?:(?:a|b|rc)\d+|\.post\d+)?)$'
 describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "v*"]
 
 [tool.cibuildwheel]
-# cp312 builds the abi3 wheel that also covers 3.13 and later.
-build = ["cp312-*"]
-skip = ["*-musllinux_*", "*t-*"]
+# cp312 builds the abi3 wheel that also covers 3.13 and later; cp314t builds
+# the free-threaded wheel, which covers 3.14t only.
+build = ["cp312-*", "cp314t-*"]
+skip = ["*-musllinux_*"]
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
 build-verbosity = 1
@@ -182,6 +193,7 @@ test-sources = [
 ]
 test-command = [
     "python -c \"import cudaq_pulse._build_config as c; assert sorted(c.GPU_RUNTIME_LIBRARIES) == [12, 13], 'release wheels must include the CUDA 12 and CUDA 13 GPU runtimes'\"",
+    "python -c \"import sys, sysconfig, cudaq_pulse; assert not sysconfig.get_config_var('Py_GIL_DISABLED') or not sys._is_gil_enabled(), 'importing cudaq_pulse enabled the GIL'\"",
     "cudaq-pulse-opt --help > /dev/null",
     "python -m pytest -m \"not gpu\"",
 ]
@@ -202,6 +214,7 @@ environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
 test-extras = ["viz"]
 test-command = [
     "python -c \"import cudaq_pulse._build_config as c; assert not c.GPU_RUNTIME_ENABLED, 'macOS wheels must be compiler-only'\"",
+    "python -c \"import sys, sysconfig, cudaq_pulse; assert not sysconfig.get_config_var('Py_GIL_DISABLED') or not sys._is_gil_enabled(), 'importing cudaq_pulse enabled the GIL'\"",
     "cudaq-pulse-opt --help > /dev/null",
     "python -m pytest -m \"not gpu\"",
 ]

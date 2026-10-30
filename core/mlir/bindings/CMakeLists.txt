@@ -15,13 +15,20 @@ if(SKBUILD_SABI_VERSION AND NOT TARGET Python::SABIModule)
     "would not be built against the stable ABI.")
 endif()
 # Off by default: on a free-threaded interpreter the module then re-enables
-# the GIL when imported. CI turns it on to test without the GIL; release
-# wheels stay GIL-only until their free-threaded layout is chosen.
+# the GIL when imported. The free-threaded CI job and pyproject.toml's
+# override for free-threaded wheels (cp314t) turn it on. A free-threaded
+# build gets no stable ABI either way: nanobind drops STABLE_ABI there.
 option(CUDAQ_PULSE_FREE_THREADED
   "Declare the extension safe to run without the GIL (free-threaded CPython only)" OFF)
 set(_cudaq_pulse_free_threaded "")
 if(CUDAQ_PULSE_FREE_THREADED)
   set(_cudaq_pulse_free_threaded FREE_THREADED)
+elseif(SKBUILD AND Python_SOABI MATCHES "^cpython-[0-9]+t")
+  message(FATAL_ERROR
+    "This wheel is for the free-threaded CPython ${Python_VERSION} "
+    "(${Python_SOABI}), and CUDAQ_PULSE_FREE_THREADED is OFF, so importing it "
+    "would turn the GIL back on. pyproject.toml's override for free-threaded "
+    "builds (if.abi-flags = \"t\") should have set it.")
 endif()
 
 # The stamp a pickled program records of the build that compiled it, from the

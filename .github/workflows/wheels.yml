@@ -124,7 +124,8 @@ jobs:
 
   # Installs the wheels into images that have no CUDA toolkit, the way users
   # will: rockylinux:8 is the manylinux_2_28 glibc floor, ubuntu:24.04 uses its
-  # system Python, and the [cu12]/[cu13] extras must load without a GPU.
+  # system Python, and the [cu12]/[cu13] extras must load without a GPU. The
+  # 3.14t rows install the free-threaded wheel on the runner itself.
   install-test:
     name: install-test (${{ matrix.platform }}, ${{ matrix.image || matrix.runner }})
     needs: wheels
@@ -140,13 +141,16 @@ jobs:
           - { platform: linux-x86_64, runner: ubuntu-24.04, image: "python:3.15-slim", python: python3 }
           - { platform: linux-x86_64, runner: ubuntu-24.04, image: "ubuntu:24.04", python: python3 }
           - { platform: linux-x86_64, runner: ubuntu-24.04, image: "rockylinux:8", python: python3.12 }
+          - { platform: linux-x86_64, runner: ubuntu-24.04, image: "", python: python3.14t, python-version: "3.14t" }
           - { platform: linux-aarch64, runner: ubuntu-24.04-arm, image: "python:3.12-slim", python: python3 }
           - { platform: linux-aarch64, runner: ubuntu-24.04-arm, image: "python:3.14-slim", python: python3 }
           - { platform: linux-aarch64, runner: ubuntu-24.04-arm, image: "python:3.15-slim", python: python3 }
           - { platform: linux-aarch64, runner: ubuntu-24.04-arm, image: "ubuntu:24.04", python: python3 }
           - { platform: linux-aarch64, runner: ubuntu-24.04-arm, image: "rockylinux:8", python: python3.12 }
+          - { platform: linux-aarch64, runner: ubuntu-24.04-arm, image: "", python: python3.14t, python-version: "3.14t" }
           - { platform: macos-aarch64, runner: macos-15, image: "", python: python3, python-version: "3.12" }
           - { platform: macos-aarch64, runner: macos-15, image: "", python: python3, python-version: "3.14" }
+          - { platform: macos-aarch64, runner: macos-15, image: "", python: python3.14t, python-version: "3.14t" }
     steps:
       - name: Install Python (ubuntu:24.04)
         if: matrix.image == 'ubuntu:24.04'
@@ -158,7 +162,7 @@ jobs:
         if: matrix.image == 'rockylinux:8'
         run: dnf install -y python3.12 python3.12-pip
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        if: runner.os == 'macOS'
+        if: matrix.python-version
         with:
           python-version: ${{ matrix.python-version }}
 

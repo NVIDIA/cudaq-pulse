@@ -672,7 +672,8 @@ behavior may change in any 0.x release.
   Linux x86_64 and aarch64 (manylinux_2_28) with the CUDA 12 and CUDA 13
   GPU runtimes, selected by the `[cu12]` or `[cu13]` extra, and macOS arm64
   (compiler only). The wheels link their own MLIR, so they need neither
-  CUDA-Q nor an LLVM installation.
+  CUDA-Q nor an LLVM installation. Free-threaded CPython 3.14 (3.14t) has
+  its own wheel per platform, whose extension runs without the GIL.
 
 ### Fixed
 

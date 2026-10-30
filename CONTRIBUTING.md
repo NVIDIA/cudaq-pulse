@@ -360,12 +360,14 @@ after its release. [zizmor](https://docs.zizmor.sh/) audits the workflows
   3.15), and macOS (3.12 to 3.14), and the lit and pytest suites on
   free-threaded CPython 3.14t with the GIL off (configured with
   `-DCUDAQ_PULSE_FREE_THREADED=ON`, which declares the extension safe
-  without the GIL; release wheels are not free-threaded yet). The `gpu` job
+  without the GIL, as the free-threaded wheels do). The `gpu` job
   builds with GPU support and runs the GPU tests (see [GPU CI](#gpu-ci)).
-- `wheels.yml`: cibuildwheel for `cp312-abi3` (3.12 and newer) on
+- `wheels.yml`: cibuildwheel for `cp312-abi3` (3.12 and newer) and
+  `cp314-cp314t` (free-threaded 3.14, which has no stable ABI) on
   manylinux_2_28 (x86_64, aarch64, with the CUDA 12 and CUDA 13 runtimes) and
   macOS arm64 (compiler-only), plus an sdist. It then installs
-  the wheels in clean containers without a CUDA toolkit. `gpu-install-test`
+  the wheels in clean containers without a CUDA toolkit, and the 3.14t
+  wheels on the runners with the GIL required to stay off. `gpu-install-test`
   runs the GPU tests from the wheels (see [GPU CI](#gpu-ci)) and gates the
   release (see [Releases](#releases)).
 - `gpu-tests.yml`: the GPU tests, called by `ci.yml` and `wheels.yml`.
@@ -395,7 +397,7 @@ following what the GPU code varies on:
   the oldest driver, an extra whose minimum driver (CUDA 12.0 for `[cu12]`,
   CUDA 13.0 for `[cu13]`) is newer than the installed one must be refused
   by the doctor with that reason; on any other row an old driver fails the
-  test. Free-threaded Python has no release wheels and no row.
+  test. The free-threaded wheels have no row yet.
 - `ci.yml` (`gpu`) builds from source with `CUDAQ_PULSE_ENABLE_GPU=ON` in
   the CUDA 12.9 development image with the `[cu12]` libraries, and runs
   `check-pulse-gpu`, on every push to `main` and `staging`, on vetted pull

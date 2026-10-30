@@ -314,8 +314,8 @@ jobs:
 
   # Free-threaded CPython: the extension is built to run without the GIL and
   # the whole CPU suite, tests/test_threads.py included, runs with the GIL
-  # off; any extension that turns it back on fails the job. Release wheels
-  # stay GIL-only until their free-threaded layout is chosen.
+  # off; any extension that turns it back on fails the job. wheels.yml builds
+  # and tests the cp314t release wheels the same way.
   test-free-threaded:
     name: test (linux-x86_64, py3.14t)
     if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') && !inputs.perf_baseline }}

@@ -10,8 +10,9 @@
 
 Usage: python tools/check-wheel-contents.py DIST_FILE [DIST_FILE ...]
 
-For a wheel: the cp312-abi3 tag with a manylinux_2_28 (x86_64, aarch64) or
-macosx_11_0_arm64 platform; the package, py.typed, the native extension and
+For a wheel: the cp312-abi3 tag, or cp314-cp314t for free-threaded CPython,
+with a manylinux_2_28 (x86_64, aarch64) or macosx_11_0_arm64 platform; the
+package, py.typed, the native extension built for that tag and
 its stub, and __builtins__.pyi at the root re-exporting exactly
 cudaq_pulse.ops.__all__; LICENSE, NOTICE and every file of LICENSES/ under
 .dist-info/licenses and named in METADATA; on Linux both CUDA runtime
@@ -37,6 +38,13 @@ _LICENSES = [
     *sorted(f"LICENSES/{p.name}" for p in (_ROOT / "LICENSES").iterdir()),
 ]
 _PLATFORMS = re.compile(r"(manylinux_2_28_(x86_64|aarch64)|macosx_11_0_arm64)")
+# The extension each wheel tag carries: the abi3 one for GIL builds of 3.12
+# and newer, and a per-version one for free-threaded CPython, which has no
+# stable ABI before abi3t.
+_EXTENSIONS = {
+    ("cp312", "abi3"): re.compile(r"_cudaq_pulse_native\.abi3\.so"),
+    ("cp314", "cp314t"): re.compile(r"_cudaq_pulse_native\.cpython-314t-[\w-]+\.so"),
+}
 _BUNDLED_CUDA = re.compile(
     r"(^|/)(libcuda|libcudart|libcudensitymat|libcutensor|libcublas|libnvJitLink|libnvrtc)[^/]*$"
 )
@@ -60,8 +68,10 @@ def check_wheel(path: Path) -> list[str]:
     if len(parts) != 5:
         return [f"{path.name}: not a wheel file name"]
     name, version, python_tag, abi_tag, platform_tag = parts
-    if (python_tag, abi_tag) != ("cp312", "abi3"):
-        problems.append(f"tags {python_tag}-{abi_tag}, expected cp312-abi3")
+    extension = _EXTENSIONS.get((python_tag, abi_tag))
+    if extension is None:
+        expected = " or ".join("-".join(tags) for tags in _EXTENSIONS)
+        problems.append(f"tags {python_tag}-{abi_tag}, expected {expected}")
     if not _PLATFORMS.search(platform_tag):
         problems.append(f"platform {platform_tag} is not manylinux_2_28 or macosx_11_0_arm64")
     linux = "manylinux" in platform_tag
@@ -80,7 +90,6 @@ def check_wheel(path: Path) -> list[str]:
         "__builtins__.pyi",
         "cudaq_pulse/__init__.py",
         "cudaq_pulse/py.typed",
-        "cudaq_pulse/_native/_cudaq_pulse_native.abi3.so",
         "cudaq_pulse/_native/_cudaq_pulse_native.pyi",
         "cudaq_pulse/targets/calibrations/transmon_17q.json",
         *(f"{dist_info}/licenses/{license}" for license in _LICENSES),
@@ -88,6 +97,16 @@ def check_wheel(path: Path) -> list[str]:
     if linux:
         required += [f"cudaq_pulse/lib/libcudm-runtime-cu{major}.so" for major in (12, 13)]
     problems += [f"missing {item}" for item in required if item not in names]
+    native = sorted(
+        item.removeprefix("cudaq_pulse/_native/")
+        for item in names
+        if item.startswith("cudaq_pulse/_native/_cudaq_pulse_native.") and item.endswith(".so")
+    )
+    if extension is not None and (len(native) != 1 or not extension.fullmatch(native[0])):
+        problems.append(
+            f"native extensions {native}, expected one matching "
+            f"cudaq_pulse/_native/{extension.pattern}"
+        )
 
     declared = set(metadata.get_all("License-File") or [])
     problems += [f"METADATA does not name License-File {f}" for f in _LICENSES if f not in declared]

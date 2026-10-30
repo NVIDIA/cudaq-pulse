@@ -15,7 +15,8 @@
 #                                 [--driver-only] [--allow-old-driver] MODE...
 #
 # Modes:
-#   base      install cudaq-pulse; compile a kernel, run the installed
+#   base      install cudaq-pulse; compile a kernel (on a free-threaded
+#             Python, without the GIL turning on), run the installed
 #             cudaq-pulse-opt on it, the doctor (no GPU required), and
 #             pytest -m "not gpu"
 #   extras    install [cu12] and [cu13], each in its own environment; the
@@ -115,12 +116,15 @@ run_pytest() {
 
 cat >"${work}/smoke_compile.py" <<'EOF'
 import sys
+import sysconfig
 from pathlib import Path
 
 import cudaq_pulse as pulse
 
 package = Path(pulse.__file__).resolve()
 assert package.is_relative_to(Path(sys.prefix).resolve()), f"not installed: {package}"
+if sysconfig.get_config_var("Py_GIL_DISABLED"):
+    assert not sys._is_gil_enabled(), "importing cudaq_pulse enabled the GIL"
 
 
 @pulse.kernel
