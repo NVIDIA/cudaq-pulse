@@ -18,7 +18,8 @@
 cmake_minimum_required(VERSION 3.30)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-  project(pulse-example-plugin LANGUAGES CXX)
+  # C is enabled because LLVM's AddLLVM probes the C compiler's linker flags.
+  project(pulse-example-plugin LANGUAGES C CXX)
   set(CMAKE_CXX_STANDARD 20)
   find_package(MLIR REQUIRED CONFIG)
   list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}" "${LLVM_CMAKE_DIR}")
