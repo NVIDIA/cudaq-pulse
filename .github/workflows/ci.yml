@@ -362,9 +362,7 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: "3.12"
-      - run: uv sync --locked
-      # Only this job measures coverage, so the tool stays out of uv.lock.
-      - run: uv pip install --python .venv/bin/python coverage==7.10.7
+      - run: uv sync --locked --group coverage
       - uses: ./.github/actions/mlir-toolchain
 
       - name: Build
