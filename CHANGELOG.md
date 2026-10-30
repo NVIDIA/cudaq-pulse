@@ -495,7 +495,10 @@ behavior may change in any 0.x release.
   golden-section and Nelder-Mead steps), `classical.random_index` (an
   on-device random source), `classical.loop` (a parameter store whose values
   programs read at run time, and an estimate log) and `runtime.drift` (a
-  drifting device with its truth trace and surrogates). Examples
+  drifting device with its truth trace and surrogates). Every time an
+  estimator takes is a `pulse.Time` or a number of ns
+  (`ramsey_detuning(mean_hz, theta, 2 * pulse.us)`); converting it costs a
+  controller nothing. Examples
   `19_classical_calls.py` and `20_adaptive_calibration.py`, and the
   "Classical Calls at QPU Runtime" guide.
 - **Controller backends.** `Lowered.export_controller()` exports a

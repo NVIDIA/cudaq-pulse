@@ -432,6 +432,13 @@ kernel calls between measurements and runs between shots:
   the next point and whether the search has converged. Their states pack
   into a ``list[float]`` for calls.
 
+Every time an estimator takes (a wait, a spacing, a coherence time) is a
+``pulse.Time`` or a number of ns: ``cal.ramsey_detuning(mean_hz, theta,
+2 * pulse.us)`` is ``cal.ramsey_detuning(mean_hz, theta, 2000.0)``. Where a
+spacing or wait may be in any unit (``three_point_decay``, ``decay_time``,
+``adaptive_t1_update``), a time is in ns and so is the result. A classical
+function's arguments are numbers, so in its body they are taken as they are.
+
 .. code-block:: python
    :class: fragment
 

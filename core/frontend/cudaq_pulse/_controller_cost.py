@@ -18,7 +18,8 @@ known when the program compiles (``range`` of a constant, or a fixed-size
 argument), no ``while``, recursion, allocation, exceptions, closures over
 mutable state or calls it cannot follow. A helper with a
 ``controller_cost`` attribute (a function of its arguments' lengths giving
-operations by class) is an intrinsic, counted by it instead of its body. See
+operations by class) is an intrinsic, counted by it instead of its body.
+Converting a time argument to ns (``as_nanoseconds``) costs nothing. See
 ``cudaq_pulse.controller``.
 """
 
@@ -35,6 +36,8 @@ from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
+
+from ._units import as_nanoseconds
 
 # The classes operations are counted in.
 OP_CLASSES = (
@@ -571,6 +574,10 @@ class _Walker:
             self.flag(node, f"a call of {ast.unparse(node.func)}")
             return cost
         name = getattr(target, "__name__", "")
+        if target is as_nanoseconds:
+            # A time converts to its ns where Python calls the function; on a
+            # controller the argument is a number already.
+            return cost
         intrinsic = getattr(target, "controller_cost", None)
         if callable(intrinsic):
             lengths = [self.length(arg) for arg in node.args]

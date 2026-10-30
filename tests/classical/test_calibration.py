@@ -11,9 +11,65 @@ from __future__ import annotations
 
 import math
 
+import cudaq_pulse as pulse
 import numpy as np
 import pytest
+from cudaq_pulse import _controller_cost
+from cudaq_pulse._units import as_nanoseconds
 from cudaq_pulse.classical import calibration as cal
+
+us, ns = pulse.us, pulse.ns
+
+# Each estimator with its times as pulse.Time and as numbers of ns.
+TIMED = [
+    (cal.t1_update, (2.0, 4000.0, False, 3 * us), (2.0, 4000.0, False, 3000.0)),
+    (cal.frequency_update, (1e5, 2e5, 1, 250 * ns, 0.3), (1e5, 2e5, 1, 250.0, 0.3)),
+    (cal.ramsey_setting, (1e5, 2e5, 0.1, 0.2 * us), (1e5, 2e5, 0.1, 200.0)),
+    (cal.three_point_decay, (0.9, 0.6, 0.45, 10 * us), (0.9, 0.6, 0.45, 10_000.0)),
+    (
+        cal.adaptive_t1_update,
+        (3.0, 450_000.0, 1, 200 * us, 0.11, 0.14),
+        (3.0, 450_000.0, 1, 200_000.0, 0.11, 0.14),
+    ),
+    (
+        cal.binary_search_update,
+        (0.0, 1e6, 1, 100 * ns, -0.02, 0.6, 10 * us),
+        (0.0, 1e6, 1, 100.0, -0.02, 0.6, 10_000.0),
+    ),
+    (cal.binary_search_wait, (1e6, 10 * us), (1e6, 10_000.0)),
+    (cal.binary_search_phase, (1e5, 120 * ns), (1e5, 120.0)),
+    (cal.decay_time, (0.9, 0.6, 0.35, 5 * us, 50), (0.9, 0.6, 0.35, 5000.0, 50)),
+    (cal.ramsey_detuning, (1e5, 3.0, 400 * ns), (1e5, 3.0, 400.0)),
+]
+
+
+@pytest.mark.parametrize(
+    ("estimator", "timed", "in_ns"), TIMED, ids=[e.__name__ for e, *_ in TIMED]
+)
+def test_every_time_an_estimator_takes_may_be_a_time(estimator, timed, in_ns):
+    assert estimator(*timed) == estimator(*in_ns)
+
+
+def test_keyword_and_default_times_may_be_times():
+    assert cal.ramsey_setting(1e5, 2e5, max_wait_ns=0.2 * us) == cal.ramsey_setting(
+        1e5, 2e5, max_wait_ns=200.0
+    )
+    assert cal.ramsey_setting(1e5, 2e5, max_wait_ns=None) == cal.ramsey_setting(1e5, 2e5)
+    assert cal.binary_search_update(0.0, 1e6, -1, 80 * ns, coherence_ns=4 * us) == (
+        cal.binary_search_update(0.0, 1e6, -1, 80.0, coherence_ns=4000.0)
+    )
+
+
+def test_converting_a_time_costs_a_controller_nothing():
+    def converts(t):
+        return as_nanoseconds(t) * 2.0
+
+    def takes(t):
+        return t * 2.0
+
+    cost = _controller_cost.analyze_callable(converts, {})
+    assert cost.in_controller_form, cost.violations
+    assert cost.ops == _controller_cost.analyze_callable(takes, {}).ops
 
 
 def _moments(grid, density):
