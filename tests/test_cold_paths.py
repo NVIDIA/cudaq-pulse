@@ -20,7 +20,6 @@ import sys
 from pathlib import Path
 
 import cudaq_pulse as pulse
-import pytest
 
 _ROOT = str(Path(pulse.__file__).parent.parent)
 
@@ -87,12 +86,6 @@ def test_devices_and_a_classical_program_load_no_heavy_module(tmp_path):
     assert _loaded(code, tmp_path) == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="classical.emulation imports numpy and socket at module level and every export "
-    "imports it; the fix waits for the multi-controller-links branch, which rewrites "
-    "the export (tech-debt inventory, section 4)",
-)
 def test_exports_load_no_heavy_module(tmp_path):
     code = _PROGRAM + "low.export_controller(); low.export_emulation()\n"
     assert _loaded(code, tmp_path) == []

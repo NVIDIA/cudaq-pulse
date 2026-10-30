@@ -26,7 +26,6 @@ shift accordingly.
 from __future__ import annotations
 
 import math
-import socket
 import struct
 import threading
 import time
@@ -34,14 +33,15 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
 from .._classical_report import report
 from .._errors import NotFoundError, UnsupportedError, _CallTimeoutError, _positive_int
 from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
 from . import ClassicalFunction, Link, wire
 
 if TYPE_CHECKING:
+    # Exports import this module, and must not import numpy or socket.
+    import numpy as np
+
     from .. import _clocks
 
 __all__ = [
@@ -315,6 +315,8 @@ def serve_udp(
     """Serve *handlers* over UDP: one datagram per request and per answer, in
     the wire format. Returns the server thread, its address and a stop
     function. The service's own time is appended to each answer as 8 bytes."""
+    import socket
+
     by_id = {fn.id: fn for fn in functions}
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((host, port))
@@ -380,6 +382,8 @@ class UdpChannel:
 
     def __init__(self, address: tuple[str, int], slot_bytes: int = 65536, timeout_s: float = 2.0):
         self._address = address
+        import socket
+
         self._slot_bytes = slot_bytes
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.settimeout(timeout_s)
@@ -474,6 +478,8 @@ def emulate(
     chosen = {fn.name: fn.implementation for fn in functions if fn.implementation is not None}
     chosen.update(handlers or {})
     channel = channel or InProcess(functions, chosen)
+    import numpy as np
+
     rng = np.random.default_rng(seed)
     machine = lowered.options.machine
     schedule_args = lowered.options.schedule_args()
