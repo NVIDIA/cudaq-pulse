@@ -9,8 +9,8 @@
 
 from __future__ import annotations
 
+import sys
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 
 import cudaq_pulse as pulse
@@ -80,28 +80,36 @@ def test_one_module_used_from_several_threads():
 
 def test_lowering_runs_while_python_keeps_running():
     module = _compile(_many_drives(400))._module
+    inside = threading.Event()  # the worker is in (or just around) the native call
+    seen = threading.Event()  # this thread ran while the worker was inside
     done = threading.Event()
-    elapsed = []
+    rounds = []
 
     def lower():
-        start = time.perf_counter()
-        module.run_full_lowering()
-        elapsed.append(time.perf_counter() - start)
+        while not seen.is_set() and len(rounds) < 200:
+            inside.set()
+            module.run_full_lowering()
+            inside.clear()
+            rounds.append(None)
         done.set()
 
-    worker = threading.Thread(target=lower)
-    # With the GIL held for the whole lowering, this thread would stall for
-    # all of it (already in start(), which waits for the worker to run);
-    # released, it keeps ticking.
-    gaps, last = [], time.perf_counter()
-    worker.start()
-    while not done.is_set():
-        time.sleep(0.001)
-        now = time.perf_counter()
-        gaps.append(now - last)
-        last = now
-    worker.join()
-    assert max(gaps) < 0.5 * elapsed[0]
+    # With a switch interval this long, a thread that holds the GIL keeps it
+    # until it blocks or releases it. The worker never blocks, so this thread
+    # can run while the worker is inside only if the native call releases
+    # the GIL; then it sees `inside` set and the worker stops.
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(100.0)
+    try:
+        worker = threading.Thread(target=lower)
+        worker.start()
+        while not done.is_set():
+            if inside.is_set():
+                seen.set()
+            done.wait(0.001)
+        worker.join()
+    finally:
+        sys.setswitchinterval(interval)
+    assert seen.is_set(), f"no Python ran during {len(rounds)} native lowerings"
 
 
 def _together(n, work):
