@@ -214,6 +214,17 @@ def _header(opcode: int, payload_len: int, param_mask: int = 0) -> int:
     return opcode | (payload_len << 8) | (param_mask << 16)
 
 
+_DRIVE_HEADER = _header(_DRIVE, 7)
+_WAIT_HEADER = _header(_WAIT, 3)
+_LINE_TYPE_CODES = {"drive_line": 0, "readout_line": 1}
+_ALGEBRA_OPCODES = {
+    "pulse.wf_add": _WF_ADD,
+    "pulse.wf_sub": _WF_SUB,
+    "pulse.wf_mul": _WF_MUL,
+    "pulse.wf_neg": _WF_NEG,
+}
+
+
 def _complex_parts(val: Any) -> tuple[float, float]:
     """``(re, im)`` of an amplitude: a number, or ``[re]`` / ``[re, im]``."""
     if val.__class__ is float or val.__class__ is int:
@@ -424,11 +435,6 @@ class PackedIRBuilder:
         self._next_scope = 0
         self._answer_integers = False
 
-    def _mk(self, vtype: str, name: str = "") -> IRValue:
-        v = IRValue(self._next_id, vtype, name)
-        self._next_id += 1
-        return v
-
     def _ensure(self, n: int) -> None:
         if self._cur + n >= self._cap:
             while self._cur + n >= len(self._buf):
@@ -465,6 +471,14 @@ class PackedIRBuilder:
         self._buf[self._cur] = val
         self._cur += 1
 
+    def _put(self, words: tuple[int, ...] | list[int]) -> None:
+        """Write the record *words* at the cursor."""
+        n = len(words)
+        self._ensure(n)
+        cur = self._cur
+        self._buf[cur : cur + n] = array("q", words)
+        self._cur = cur + n
+
     def emit(
         self,
         kind: str,
@@ -473,7 +487,33 @@ class PackedIRBuilder:
         attrs: dict[str, Any] | None = None,
     ) -> tuple[IRValue, ...]:
         a = attrs or {}
-        results = tuple(self._mk(rt) for rt in result_types)
+        vid = self._next_id
+        count = len(result_types)
+        results: tuple[IRValue, ...]
+        if count == 2:
+            results = (IRValue(vid, result_types[0]), IRValue(vid + 1, result_types[1]))
+        elif count == 1:
+            results = (IRValue(vid, result_types[0]),)
+        else:
+            results = tuple(IRValue(vid + i, vtype) for i, vtype in enumerate(result_types))
+        self._next_id = vid + count
+
+        # --- drive, the most common op ---
+        if kind == "pulse.drive":
+            self._op_count += 1
+            lv = operands[0].vid
+            wv = operands[1].vid
+            tv = operands[2].vid
+            rlv = results[0].vid
+            rtv = results[1].vid
+            self._ensure(8)
+            cur = self._cur
+            # start_cycles and duration_cycles are set by the C++ scheduler.
+            self._buf[cur : cur + 8] = array(
+                "q", (_DRIVE_HEADER, lv, wv, tv, rlv, rtv, _UNSCHEDULED, _UNSCHEDULED)
+            )
+            self._cur = cur + 8
+            return results
 
         # --- Qubit alloc (not encoded, just tracked) ---
         if kind in ("pulse.qudit_arg", "pulse.qudit_alloc"):
@@ -491,11 +531,7 @@ class PackedIRBuilder:
             qref_vid = operands[0].vid if operands else None
             qubit = self._qref_to_qubit.get(qref_vid, 0) if qref_vid is not None else 0
             self._line_qubit[results[0].vid] = qubit
-            self._ensure(4)
-            self._w(_header(_ALLOC_DRIVE, 3))
-            self._w(qubit)
-            self._w(results[0].vid)  # line_vid
-            self._w(results[1].vid)  # tone_vid
+            self._put((_header(_ALLOC_DRIVE, 3), qubit, results[0].vid, results[1].vid))
             return results
 
         # --- get_readout_line → ALLOC_READOUT ---
@@ -503,11 +539,7 @@ class PackedIRBuilder:
             qref_vid = operands[0].vid if operands else None
             qubit = self._qref_to_qubit.get(qref_vid, 0) if qref_vid is not None else 0
             self._line_qubit[results[0].vid] = qubit
-            self._ensure(4)
-            self._w(_header(_ALLOC_READOUT, 3))
-            self._w(qubit)
-            self._w(results[0].vid)
-            self._w(results[1].vid)
+            self._put((_header(_ALLOC_READOUT, 3), qubit, results[0].vid, results[1].vid))
             return results
 
         # --- Waveform constructors ---
@@ -581,24 +613,6 @@ class PackedIRBuilder:
                 self._emit_custom_samples(rv, a.get("samples", ()), a.get("rate"))
             return results
 
-        # --- drive ---
-        if kind == "pulse.drive":
-            lv = operands[0].vid
-            wv = operands[1].vid
-            tv = operands[2].vid
-            rlv = results[0].vid
-            rtv = results[1].vid
-            self._ensure(8)
-            self._w(_header(_DRIVE, 7))
-            self._w(lv)
-            self._w(wv)
-            self._w(tv)
-            self._w(rlv)
-            self._w(rtv)
-            self._w(_UNSCHEDULED)  # start_cycles (set by C++ scheduler)
-            self._w(_UNSCHEDULED)  # duration_cycles (set by C++ scheduler)
-            return results
-
         # --- readout ---
         if kind == "pulse.readout":
             lv = operands[0].vid
@@ -607,14 +621,7 @@ class PackedIRBuilder:
             rlv = results[0].vid
             rtv = results[1].vid
             mv = results[2].vid
-            self._ensure(7)
-            self._w(_header(_READOUT, 6))
-            self._w(lv)
-            self._w(wv)
-            self._w(tv)
-            self._w(rlv)
-            self._w(rtv)
-            self._w(mv)
+            self._put((_header(_READOUT, 6), lv, wv, tv, rlv, rtv, mv))
             if not self._regions:
                 self.readouts[mv] = self._n_readouts
             self._n_readouts += 1
@@ -629,17 +636,15 @@ class PackedIRBuilder:
                     f"sync() over {n} lines exceeds the packed limit of "
                     f"{(_MAX_PAYLOAD - 1) // 3} lines per sync"
                 )
-            self._ensure(1 + payload_len)
-            self._w(_header(_SYNC, payload_len))
-            self._w(n)
-            line_types = {"drive_line": 0, "readout_line": 1}
+            words = [_header(_SYNC, payload_len), n]
             for j in range(n):
                 in_vid = operands[j].vid
                 out_vid = results[j].vid if j < len(results) else in_vid
-                vtype = line_types.get(results[j].vtype if j < len(results) else "drive_line", 0)
-                self._w(in_vid)
-                self._w(out_vid)
-                self._w(vtype)
+                vtype = _LINE_TYPE_CODES.get(
+                    results[j].vtype if j < len(results) else "drive_line", 0
+                )
+                words += (in_vid, out_vid, vtype)
+            self._put(words)
             return results
 
         # --- wait ---
@@ -649,11 +654,7 @@ class PackedIRBuilder:
             dur_raw = a.get("duration", 0)
             bounds = a.get("bounds")
             if bounds is None and dur_raw.__class__ is int and 0 <= dur_raw <= MAX_CYCLES:
-                self._ensure(4)
-                self._w(_header(_WAIT, 3))
-                self._w(lv)
-                self._w(rlv)
-                self._w(dur_raw)
+                self._put((_WAIT_HEADER, lv, rlv, dur_raw))
                 return results
             if "duration" in a:
                 self._times("wait", a)
@@ -706,21 +707,13 @@ class PackedIRBuilder:
             val_raw = a.get("phase_rad", 0.0)
             if is_symbolic(val_raw):
                 pvid = self._get_numeric_vid(val_raw, "f64")
-                self._ensure(4)
-                self._w(_header(_SHIFT_PHASE, 3, 1 << 2))
-                self._w(tv)
-                self._w(rtv)
-                self._w(pvid)
+                self._put((_header(_SHIFT_PHASE, 3, 1 << 2), tv, rtv, pvid))
             else:
                 try:
                     bits = _f2i(val_raw)
                 except struct.error:
                     bits = _f2i(_real(val_raw, "shift_phase phase"))
-                self._ensure(4)
-                self._w(_header(_SHIFT_PHASE, 3))
-                self._w(tv)
-                self._w(rtv)
-                self._w(bits)
+                self._put((_header(_SHIFT_PHASE, 3), tv, rtv, bits))
             return results
 
         # --- set_phase ---
@@ -730,21 +723,13 @@ class PackedIRBuilder:
             val_raw = a.get("phase_rad", 0.0)
             if is_symbolic(val_raw):
                 pvid = self._get_numeric_vid(val_raw, "f64")
-                self._ensure(4)
-                self._w(_header(_SET_PHASE, 3, 1 << 2))
-                self._w(tv)
-                self._w(rtv)
-                self._w(pvid)
+                self._put((_header(_SET_PHASE, 3, 1 << 2), tv, rtv, pvid))
             else:
                 try:
                     bits = _f2i(val_raw)
                 except struct.error:
                     bits = _f2i(_real(val_raw, "set_phase phase"))
-                self._ensure(4)
-                self._w(_header(_SET_PHASE, 3))
-                self._w(tv)
-                self._w(rtv)
-                self._w(bits)
+                self._put((_header(_SET_PHASE, 3), tv, rtv, bits))
             return results
 
         # --- shift_frequency ---
@@ -759,21 +744,13 @@ class PackedIRBuilder:
                 )
             if is_symbolic(val_raw):
                 pvid = self._get_numeric_vid(val_raw, "f64")
-                self._ensure(4)
-                self._w(_header(_SHIFT_FREQ, 3, 1 << 2))
-                self._w(tv)
-                self._w(rtv)
-                self._w(pvid)
+                self._put((_header(_SHIFT_FREQ, 3, 1 << 2), tv, rtv, pvid))
             else:
                 try:
                     bits = _f2i(val_raw)
                 except struct.error:
                     bits = _f2i(_real(val_raw, "shift_frequency frequency"))
-                self._ensure(4)
-                self._w(_header(_SHIFT_FREQ, 3))
-                self._w(tv)
-                self._w(rtv)
-                self._w(bits)
+                self._put((_header(_SHIFT_FREQ, 3), tv, rtv, bits))
             return results
 
         # --- set_frequency ---
@@ -788,39 +765,24 @@ class PackedIRBuilder:
                 )
             if is_symbolic(val_raw):
                 pvid = self._get_numeric_vid(val_raw, "f64")
-                self._ensure(4)
-                self._w(_header(_SET_FREQ, 3, 1 << 2))
-                self._w(tv)
-                self._w(rtv)
-                self._w(pvid)
+                self._put((_header(_SET_FREQ, 3, 1 << 2), tv, rtv, pvid))
             else:
                 try:
                     bits = _f2i(val_raw)
                 except struct.error:
                     bits = _f2i(_real(val_raw, "set_frequency frequency"))
-                self._ensure(4)
-                self._w(_header(_SET_FREQ, 3))
-                self._w(tv)
-                self._w(rtv)
-                self._w(bits)
+                self._put((_header(_SET_FREQ, 3), tv, rtv, bits))
             return results
 
         if kind.startswith("scf."):
             return self._region(kind, operands, results, a)
 
-        algebra_opcodes = {
-            "pulse.wf_add": _WF_ADD,
-            "pulse.wf_sub": _WF_SUB,
-            "pulse.wf_mul": _WF_MUL,
-            "pulse.wf_neg": _WF_NEG,
-        }
-        if kind in algebra_opcodes:
+        algebra = _ALGEBRA_OPCODES.get(kind)
+        if algebra is not None:
             rv = results[0].vid
-            self._ensure(2 + len(operands))
-            self._w(_header(algebra_opcodes[kind], 1 + len(operands)))
-            self._w(rv)
-            for operand in operands:
-                self._w(operand.vid)
+            self._put(
+                [_header(algebra, 1 + len(operands)), rv, *(operand.vid for operand in operands)]
+            )
             return results
 
         if kind == "pulse.wf_scale":
@@ -829,31 +791,28 @@ class PackedIRBuilder:
             if scale.__class__ is float and scale - scale != 0.0:
                 raise CompilationError(f"wf_scale scale must be finite, got {scale!r}")
             scale_vid = self._get_numeric_vid(scale, "f64")
-            self._ensure(4)
-            self._w(_header(_WF_SCALE, 3))
-            self._w(rv)
-            self._w(operands[0].vid)
-            self._w(scale_vid)
+            self._put((_header(_WF_SCALE, 3), rv, operands[0].vid, scale_vid))
             return results
 
         if kind == "pulse.tone":
-            self._ensure(4)
-            self._w(_header(_ALLOC_TONE, 3))
-            self._w(results[0].vid)
-            self._w(_f2i(a["frequency_hz"]))
-            self._w(_f2i(a["phase_rad"]))
+            self._put(
+                (
+                    _header(_ALLOC_TONE, 3),
+                    results[0].vid,
+                    _f2i(a["frequency_hz"]),
+                    _f2i(a["phase_rad"]),
+                )
+            )
             return results
 
         raise CompilationError(f"unsupported packed pulse op: {kind}")
 
     def _record(self, opcode: int, payload: list[int]) -> None:
-        extended = len(payload) >= _MAX_PAYLOAD
-        self._ensure(len(payload) + 2)
-        self._w(_header(opcode, _MAX_PAYLOAD if extended else len(payload)))
-        if extended:
-            self._w(len(payload))
-        for word in payload:
-            self._w(word)
+        n = len(payload)
+        if n >= _MAX_PAYLOAD:
+            self._put([_header(opcode, _MAX_PAYLOAD), n, *payload])
+        else:
+            self._put([_header(opcode, n), *payload])
 
     def _region(
         self,
@@ -1218,10 +1177,7 @@ class PackedIRBuilder:
         self._next_id += 1
         self._param_vids[param.index] = vid
         self._param_names[param.index] = param.name
-        self._ensure(3)
-        self._w(_header(_PARAM, 2))
-        self._w(vid)
-        self._w(param.index)
+        self._put((_header(_PARAM, 2), vid, param.index))
         return vid
 
     def _get_numeric_vid(self, value: Any, expected_dtype: str, specializes: bool = True) -> int:
@@ -1304,11 +1260,7 @@ class PackedIRBuilder:
                 operand = self._get_numeric_vid(value.lhs, dtype)
                 result = self._next_id
                 self._next_id += 1
-                self._ensure(4)
-                self._w(_header(_NUM_NEG, 3))
-                self._w(result)
-                self._w(_NUMERIC_TYPE[dtype])
-                self._w(operand)
+                self._put((_header(_NUM_NEG, 3), result, _NUMERIC_TYPE[dtype], operand))
             else:
                 opcode = _BINARY_OP.get(value.op)
                 if opcode is None:
@@ -1317,13 +1269,7 @@ class PackedIRBuilder:
                 rhs = self._get_numeric_vid(value.rhs, dtype)
                 result = self._next_id
                 self._next_id += 1
-                self._ensure(6)
-                self._w(_header(_NUM_BINARY, 5))
-                self._w(result)
-                self._w(_NUMERIC_TYPE[dtype])
-                self._w(opcode)
-                self._w(lhs)
-                self._w(rhs)
+                self._put((_header(_NUM_BINARY, 5), result, _NUMERIC_TYPE[dtype], opcode, lhs, rhs))
             if dtype != expected_dtype:
                 result = self._emit_numeric_cast(result, dtype, expected_dtype)
             self._numeric_vids[cache_key] = result
@@ -1335,16 +1281,11 @@ class PackedIRBuilder:
 
         result = self._next_id
         self._next_id += 1
-        self._ensure(4)
-        self._w(_header(_NUM_CONST, 3))
-        self._w(result)
-        self._w(_NUMERIC_TYPE[expected_dtype])
         try:
-            self._w(
-                _as_i64(value, "integer expression") if expected_dtype == "i64" else _f2i(value)
-            )
+            word = _as_i64(value, "integer expression") if expected_dtype == "i64" else _f2i(value)
         except struct.error:
-            self._w(_f2i(_real(value, "a pulse op operand")))
+            word = _f2i(_real(value, "a pulse op operand"))
+        self._put((_header(_NUM_CONST, 3), result, _NUMERIC_TYPE[expected_dtype], word))
         return result
 
     def select(self, value: Selection, dtype: str, specializes: bool = True) -> int:
@@ -1360,12 +1301,7 @@ class PackedIRBuilder:
         other = self._selected(value.other, dtype, specializes)
         vid = self._next_id
         self._next_id += 1
-        self._ensure(5)
-        self._w(_header(_SELECT, 4))
-        self._w(vid)
-        self._w(value.cond.vid)
-        self._w(then)
-        self._w(other)
+        self._put((_header(_SELECT, 4), vid, value.cond.vid, then, other))
         self._numeric_vids[key] = vid
         self.selects = True
         return vid
@@ -1459,12 +1395,15 @@ class PackedIRBuilder:
             return operand
         result = self._next_id
         self._next_id += 1
-        self._ensure(5)
-        self._w(_header(_NUM_CAST, 4))
-        self._w(result)
-        self._w(_NUMERIC_TYPE[source_dtype])
-        self._w(_NUMERIC_TYPE[target_dtype])
-        self._w(operand)
+        self._put(
+            (
+                _header(_NUM_CAST, 4),
+                result,
+                _NUMERIC_TYPE[source_dtype],
+                _NUMERIC_TYPE[target_dtype],
+                operand,
+            )
+        )
         return result
 
     def _times(self, fname: str, attrs: dict[str, Any]) -> None:
@@ -1538,11 +1477,7 @@ class PackedIRBuilder:
                     _real(v, f"{op} {field}")
             raise
         payload_len = 1 + len(encoded)  # rv + values
-        self._ensure(1 + payload_len)
-        self._w(_header(wf_code, payload_len, param_mask))
-        self._w(rv)
-        for e in encoded:
-            self._w(e)
+        self._put([_header(wf_code, payload_len, param_mask), rv, *encoded])
 
     def _emit_custom_samples(
         self, rv: int, samples: Any, rate: tuple[int, int] | None = None
@@ -1570,15 +1505,10 @@ class PackedIRBuilder:
                 )
             encoded.append(_f2i(value.real))
         extra = 0 if rate is None else 2
-        self._ensure(3 + len(encoded) + extra)
-        self._w(_header(_WF_CUSTOM_SAMPLES, 2 + len(encoded) + extra))
-        self._w(rv)
-        self._w(len(encoded))
-        for word in encoded:
-            self._w(word)
+        words = [_header(_WF_CUSTOM_SAMPLES, 2 + len(encoded) + extra), rv, len(encoded), *encoded]
         if rate is not None:
-            self._w(rate[0])
-            self._w(rate[1])
+            words += (rate[0], rate[1])
+        self._put(words)
 
     @property
     def param_names(self) -> list[str]:
