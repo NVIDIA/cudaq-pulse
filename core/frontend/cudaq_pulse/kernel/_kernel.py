@@ -534,7 +534,7 @@ class _Placing(_Dispatcher):
         if entry.lowered._role is not None:
             return kernel._relocate(entry.lowered, values, entry.runtime)
         if entry.runtime:
-            return entry.lowered.bind(kernel._runtime_values(values, entry.runtime))
+            return entry.lowered._with_values(kernel._runtime_values(values, entry.runtime))
         return entry.lowered
 
 

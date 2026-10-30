@@ -1465,7 +1465,8 @@ class _Placed(Lowered):
         target: Device | None = None,
     ) -> Lowered:
         """This module with values for its float parameters and, with
-        *carriers*, its runtime qudits bound on *target*, sharing it."""
+        *carriers*, its runtime qudits bound on *target*, sharing it. The
+        values are checked as ``Lowered.bind`` checks them."""
         return _place(self, values, carriers, target)
 
 
@@ -1491,9 +1492,19 @@ def _place(
     lowered: Lowered, values: Sequence[float], carriers: tuple[int, ...], target: Device | None
 ) -> _Placed:
     """``Lowered.bind`` of a module with list or qudit parameters."""
+    try:
+        fits = len(values) == len(lowered.parameters)
+    except TypeError:
+        fits = False
+    if not fits and lowered._generic is None:
+        values = _bind_checked(lowered.parameters, values)
     waits = lowered.waits
     if waits is not None:
-        waits.check(values)
+        try:
+            waits.check(values)
+        except TypeError:
+            _bind_checked(lowered.parameters, values)
+            raise
     role = lowered._role
     assert role is not None
     view = _Placed.__new__(_Placed)
@@ -1555,12 +1566,21 @@ class _CheckedPerCall(Lowered):
         self._accepted: set[bytes] = set()
 
     def bind(self, values: Sequence[float]) -> Lowered:
-        view = super().bind(values)
-        return self._accept(view, _bits(view.arguments))
+        return self._accept(super().bind(values))
 
-    def _accept(self, view: Lowered, key: bytes) -> Lowered:
+    def _with_values(self, values: Sequence[float]) -> Lowered:
+        return self._accept(super()._with_values(values))
+
+    def _accept(self, view: Lowered, placement: bytes = b"") -> Lowered:
         """*view*, once its values are within the limits (checked once per
-        distinct *key*)."""
+        distinct values and *placement*). Its values are checked here, not
+        where it is used: the limits need them."""
+        arguments = view.arguments
+        for v in arguments:
+            if v.__class__ is not float and v.__class__ is not int or v - v != 0.0:
+                arguments = tuple(view._checked_arguments())
+                break
+        key = _bits(arguments) + placement
         if key not in self._accepted:
             from .controller import _call_violations, _limit_error
 
@@ -1590,10 +1610,11 @@ class _CheckedPlaced(_CheckedPerCall):
         target: Device | None = None,
     ) -> Lowered:
         view = _place(self, values, carriers, target)
-        key = _bits(view.arguments)
-        if carriers:
-            key += _bits(tuple(map(float, carriers))) + view.target.fingerprint.encode()
-        return self._accept(view, key)
+        if not carriers:
+            return self._accept(view)
+        return self._accept(
+            view, _bits(tuple(map(float, carriers))) + view.target.fingerprint.encode()
+        )
 
 
 class _Exposure:

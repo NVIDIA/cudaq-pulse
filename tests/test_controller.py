@@ -555,6 +555,20 @@ def test_a_call_is_checked_once_per_distinct_values(monkeypatch):
     assert type(lowered.generic) is pulse.Lowered
 
 
+def test_a_checked_call_names_a_value_that_is_not_a_finite_number():
+    machine = MachineModel(controller=ControllerLimits(tones_per_line=1))
+    compiled = pulse.compile(retuned, machine=machine)
+    with pytest.raises(pulse.InvalidValueError, match="argument 'shift' is nan"):
+        compiled.lower(Q[0], float("nan"))
+    generic = compiled.lower(Q[0], 0.0).generic
+    with pytest.raises(pulse.InvalidValueError, match="argument 'shift' is inf"):
+        generic.bind([float("inf")])
+    with pytest.raises(pulse.InvalidTypeError, match="'shift'"):
+        generic.bind(["fast"])
+    with pytest.raises(pulse.InvalidTypeError, match="missing the value of 'shift'"):
+        generic.bind([])
+
+
 @pulse.kernel
 def waited(q, tau: float):
     d = get_drive_line(q)

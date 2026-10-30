@@ -145,6 +145,15 @@ def test_duplicate_qudits_are_rejected():
         runtime_k.lower(H[3], H[[3, 5]], [0.2, 0.4], _f12(H[3]))
 
 
+def test_binding_a_placed_module_checks_its_values():
+    generic = runtime_k.lower(H[3], H[[5]], [0.2, 0.4], _f12(H[3])).generic
+    with pytest.raises(pulse.InvalidTypeError, match="bind\\(\\) got 1 value for 3"):
+        generic.bind([0.1])
+    view = generic.bind([0.1, 0.2, float("nan")])
+    with pytest.raises(pulse.InvalidValueError, match="is nan"):
+        view.mlir()
+
+
 def test_qudits_of_two_devices_are_rejected():
     other = _recalibrated(DEV, DEV.layout[3], 1e6)
     with pytest.raises(pulse.DeviceMismatchError):
