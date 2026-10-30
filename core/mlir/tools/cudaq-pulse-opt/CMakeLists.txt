@@ -10,6 +10,14 @@ add_llvm_executable(cudaq-pulse-opt
   cudaq-pulse-opt.cpp
 )
 
+# --version prints the package's version (cmake/CudaqPulseVersion.cmake) and
+# the LLVM it was built with.
+file(CONFIGURE
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/include/CudaqPulseOptVersion.h"
+  CONTENT "#define CUDAQ_PULSE_VERSION \"@CUDAQ_PULSE_PACKAGE_VERSION@\"\n#define CUDAQ_PULSE_LLVM_VERSION \"@LLVM_PACKAGE_VERSION@\"\n"
+  @ONLY)
+target_include_directories(cudaq-pulse-opt PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/include")
+
 target_link_libraries(cudaq-pulse-opt PRIVATE
   CudaqPulsePulse
   CudaqPulseClassical

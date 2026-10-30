@@ -719,7 +719,8 @@ behavior may change in any 0.x release.
   CPython: each target and calibration is built once.
 - **Dialects and tools.** The Pulse, Classical, QOp and CuDensityMat MLIR
   dialects with their lowerings to LLVM; `cudaq-pulse-opt`, the MLIR driver, which
-  also loads out-of-tree pass plugins; `python -m cudaq_pulse.doctor`, which
+  also loads out-of-tree pass plugins and whose `--version` prints the
+  cudaq-pulse version and the LLVM it was built with; `python -m cudaq_pulse.doctor`, which
   reports what an installation contains and whether GPU execution works.
 - **Packaging.** One abi3 wheel per platform for CPython 3.12 and newer:
   Linux x86_64 and aarch64 (manylinux_2_28) with the CUDA 12 and CUDA 13

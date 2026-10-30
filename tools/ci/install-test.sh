@@ -193,11 +193,20 @@ opt_checks() {
   expect_in invalid.err "'pulse.square' op duration must be positive, got 0"
 }
 
-# The cudaq-pulse-opt on PATH is the cudaq-pulse-tools wheel's, of this version,
-# and the doctor finds it there.
+# The cudaq-pulse-opt on PATH is the cudaq-pulse-tools wheel's, of this
+# version, its --version prints that version, and the doctor finds it there.
 driver_checks() {
   in_venv cudaq-pulse-opt --version >"${work}/version.out"
-  expect_in version.out "LLVM version"
+  in_venv python - "${work}/version.out" <<'EOF'
+import importlib.metadata as m
+import re
+import sys
+
+printed = open(sys.argv[1]).read()
+version = m.version("cudaq-pulse-tools")
+if not re.fullmatch(rf"cudaq-pulse-opt {re.escape(version)} \(LLVM [0-9][^ ]*\)\n", printed):
+    sys.exit(f"error: cudaq-pulse-opt --version printed {printed!r}; expected version {version}")
+EOF
   local found
   found="$(in_venv command -v cudaq-pulse-opt)"
   if [[ "$found" != "${venv}/bin/cudaq-pulse-opt" ]]; then
@@ -208,7 +217,7 @@ driver_checks() {
 assert v == '${version}', f'cudaq-pulse-tools {v} is installed, expected ${version}'"
   in_venv python -m cudaq_pulse.doctor --allow-no-gpu >"${work}/doctor.out"
   cat "${work}/doctor.out"
-  expect_in doctor.out "MLIR driver (cudaq-pulse-opt): ${version} at "
+  expect_in doctor.out "MLIR driver (cudaq-pulse-opt): ${version} (LLVM "
 }
 
 # Installed with --no-deps, cudaq-pulse lacks cudaq-pulse-tools: the doctor

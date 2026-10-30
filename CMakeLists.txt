@@ -175,6 +175,8 @@ include_directories(
 # Generate the three research-preview dialects.
 add_subdirectory(core/mlir/include/cudaq-pulse)
 
+include(CudaqPulseVersion)
+
 # Build the dialects, transforms, conversions, and optimizer driver.
 add_subdirectory(core/mlir)
 if(CUDAQ_PULSE_BUILD_OPT)

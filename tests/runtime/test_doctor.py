@@ -116,7 +116,7 @@ def _installed(monkeypatch, tmp_path, driver_version, script):
         executable.chmod(0o755)
         files.append(importlib.metadata.PackagePath("bin/cudaq-pulse-opt"))
     distributions = {
-        "cudaq-pulse": SimpleNamespace(version="1.2.3"),
+        "cudaq-pulse": SimpleNamespace(version="1.2.3", read_text=lambda name: None),
         "cudaq-pulse-tools": None
         if driver_version is None
         else SimpleNamespace(
@@ -134,6 +134,18 @@ def _installed(monkeypatch, tmp_path, driver_version, script):
         ("1.2.2", "true", "cudaq-pulse-tools 1.2.2 is installed, and cudaq-pulse 1.2.3 requires"),
         ("1.2.3", None, "pip install --force-reinstall cudaq-pulse-tools==1.2.3"),
         ("1.2.3", "echo broken >&2; exit 3", "--version exited with 3: broken"),
+        (
+            "1.2.3",
+            "echo 'LLVM version 22.1.8'",
+            "--version printed 'LLVM version 22.1.8', not "
+            "'cudaq-pulse-opt <version> (LLVM <version>)'",
+        ),
+        (
+            "1.2.3",
+            "echo 'cudaq-pulse-opt 1.2.2 (LLVM 22.1.8)'",
+            "reports version 1.2.2, but its distribution is 1.2.3: "
+            "pip install --force-reinstall cudaq-pulse-tools==1.2.3",
+        ),
     ],
 )
 def test_a_missing_or_broken_driver_fails(monkeypatch, tmp_path, driver_version, script, message):
@@ -149,12 +161,12 @@ def test_a_missing_or_broken_driver_fails(monkeypatch, tmp_path, driver_version,
 
 
 def test_the_installed_driver_is_reported(monkeypatch, tmp_path):
-    _installed(monkeypatch, tmp_path, "1.2.3", "echo 'LLVM version 22.1.8'")
+    _installed(monkeypatch, tmp_path, "1.2.3", "echo 'cudaq-pulse-opt 1.2.3 (LLVM 22.1.8)'")
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     code, output = _run("--allow-no-gpu")
     assert code == 0, output
     executable = (tmp_path / "bin" / "cudaq-pulse-opt").resolve()
-    assert f"MLIR driver (cudaq-pulse-opt): 1.2.3 at {executable}\n" in output
+    assert f"MLIR driver (cudaq-pulse-opt): 1.2.3 (LLVM 22.1.8) at {executable}\n" in output
     monkeypatch.setenv("PATH", "")
     code, output = _run("--allow-no-gpu")
     assert code == 0, output

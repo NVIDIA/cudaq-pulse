@@ -51,7 +51,16 @@
 
 #include "cudaq-pulse/Transforms/Passes.h"
 
+#include "CudaqPulseOptVersion.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/raw_ostream.h"
+
 int main(int argc, char **argv) {
+  llvm::cl::SetVersionPrinter([](llvm::raw_ostream &os) {
+    os << "cudaq-pulse-opt " CUDAQ_PULSE_VERSION
+          " (LLVM " CUDAQ_PULSE_LLVM_VERSION ")\n";
+  });
+
   mlir::registerAllPasses();
   mlir::DialectRegistry registry;
   registry.insert<pulse::PulseDialect>();

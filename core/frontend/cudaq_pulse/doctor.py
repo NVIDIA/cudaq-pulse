@@ -13,7 +13,8 @@
 
 The compiler check always runs; any failure there exits non-zero. So does
 one of the cudaq-pulse-opt MLIR driver, from the cudaq-pulse-tools
-distribution, which an installed cudaq-pulse requires at its own version.
+distribution, which an installed cudaq-pulse requires at its own version,
+and whose ``--version`` must print it.
 ``--system FILE`` instead runs the checks of ``pulse.Device.load(FILE)`` and
 prints each problem as ``FILE:LINE:COLUMN: error: PATH: MESSAGE``, or with
 ``--json`` as one JSON object; it exits 1 if the file has a problem.
@@ -34,8 +35,6 @@ import dataclasses
 import importlib.metadata
 import os
 import platform
-import shutil
-import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -48,30 +47,6 @@ from .runtime import gpu
 __all__ = ["main"]
 
 _DISTRIBUTION = "cudaq-pulse"
-# The MLIR driver, from a distribution of its own that cudaq-pulse requires at
-# its version.
-_DRIVER = "cudaq-pulse-opt"
-_TOOLS = "cudaq-pulse-tools"
-
-
-def _version() -> str:
-    try:
-        return importlib.metadata.version(_DISTRIBUTION)
-    except importlib.metadata.PackageNotFoundError:
-        from . import __version__
-
-        return f"{__version__} (not installed as a distribution; source or build tree)"
-
-
-def _wheel_tags() -> str:
-    try:
-        wheel = importlib.metadata.distribution(_DISTRIBUTION).read_text("WHEEL")
-    except importlib.metadata.PackageNotFoundError:
-        wheel = None
-    if not wheel:
-        return "none (not installed from a wheel)"
-    tags = [line.split(":", 1)[1].strip() for line in wheel.splitlines() if line.startswith("Tag:")]
-    return ", ".join(tags) or "unknown"
 
 
 def _distribution(name: str) -> importlib.metadata.Distribution | None:
@@ -81,48 +56,53 @@ def _distribution(name: str) -> importlib.metadata.Distribution | None:
         return None
 
 
-def _check_driver(write: Callable[[str], None]) -> str | None:
+def _check_driver(write: Callable[[str], None], version: str | None) -> str | None:
     """Locate and run cudaq-pulse-opt; return an error message on failure.
 
     An installed cudaq-pulse needs the cudaq-pulse-tools distribution of its
     version (pip installs it unless told ``--no-deps``); a source or build
     tree is only reported.
     """
-    heading = f"MLIR driver ({_DRIVER})"
-    on_path = shutil.which(_DRIVER)
-    package = _distribution(_DISTRIBUTION)
-    if package is None:
+    import shutil
+
+    command, tools = "cudaq-pulse-opt", "cudaq-pulse-tools"
+    heading = f"MLIR driver ({command})"
+    on_path = shutil.which(command)
+    if version is None:
         write(f"{heading}: {on_path or 'not on PATH'} (source or build tree; not checked)")
         return None
-    version = package.version
-    install = f"pip install {_TOOLS}=={version}"
-    driver = _distribution(_TOOLS)
+    install = f"pip install {tools}=={version}"
+    driver = _distribution(tools)
     error = None
     executable = None
     if driver is None:
         error = (
-            f"{_TOOLS} is not installed, and cudaq-pulse {version} requires it "
+            f"{tools} is not installed, and cudaq-pulse {version} requires it "
             f"(installed with --no-deps?): {install}"
         )
     elif driver.version != version:
         error = (
-            f"{_TOOLS} {driver.version} is installed, and cudaq-pulse {version} "
+            f"{tools} {driver.version} is installed, and cudaq-pulse {version} "
             f"requires {version}: {install}"
         )
     else:
-        files = [f for f in driver.files or () if f.name == _DRIVER]
+        files = [f for f in driver.files or () if f.name == command]
         executable = Path(str(driver.locate_file(files[0]))).resolve() if files else None
         if executable is None or not executable.is_file():
             error = (
-                f"the {_TOOLS} {version} distribution has no {_DRIVER} executable: "
-                f"pip install --force-reinstall {_TOOLS}=={version}"
+                f"the {tools} {version} distribution has no {command} executable: "
+                f"pip install --force-reinstall {tools}=={version}"
             )
     if error is not None or executable is None:
-        error = error or f"{_DRIVER} has no executable"
+        error = error or f"{command} has no executable"
         write(f"{heading}: FAILED")
         write(f"  {error}")
         return error
+    import re
+    import subprocess
+
     failure: str | None = None
+    llvm = ""
     try:
         result = subprocess.run(
             [str(executable), "--version"], capture_output=True, text=True, timeout=60, check=False
@@ -130,18 +110,32 @@ def _check_driver(write: Callable[[str], None]) -> str | None:
     except (OSError, subprocess.TimeoutExpired) as exc:
         failure = f"{executable} --version failed: {exc}"
     else:
+        output = result.stdout.strip()
+        printed = re.fullmatch(rf"{command} (\S+) \(LLVM (\S+)\)", output)
         if result.returncode != 0:
-            output = result.stderr.strip() or result.stdout.strip()
+            output = result.stderr.strip() or output
             failure = f"{executable} --version exited with {result.returncode}: {output}"
+        elif printed is None:
+            failure = (
+                f"{executable} --version printed {output!r}, not "
+                f"'{command} <version> (LLVM <version>)'"
+            )
+        elif printed.group(1) != version:
+            failure = (
+                f"{executable} reports version {printed.group(1)}, but its distribution is "
+                f"{version}: pip install --force-reinstall {tools}=={version}"
+            )
+        else:
+            llvm = printed.group(2)
     if failure is not None:
         write(f"{heading}: FAILED")
         write(f"  {failure}")
         return failure
-    write(f"{heading}: {version} at {executable}")
+    write(f"{heading}: {version} (LLVM {llvm}) at {executable}")
     if on_path is None:
         write(f"  not on PATH; add {executable.parent} to PATH to run it by name")
     elif Path(on_path).resolve() != executable:
-        write(f"  PATH runs another {_DRIVER} first: {on_path}")
+        write(f"  PATH runs another {command} first: {on_path}")
     return None
 
 
@@ -519,12 +513,26 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     def write(line: str) -> None:
         print(line, file=stream)
 
-    write(f"cudaq-pulse {_version()}")
+    package = _distribution(_DISTRIBUTION)
+    if package is not None:
+        version = package.version
+    else:
+        from . import __version__
+
+        version = f"{__version__} (not installed as a distribution; source or build tree)"
+    write(f"cudaq-pulse {version}")
     write(
         f"Python {platform.python_version()} ({sys.implementation.name}) on "
         f"{platform.system()} {platform.machine()}"
     )
-    write(f"Wheel tags: {_wheel_tags()}")
+    wheel = package.read_text("WHEEL") if package is not None else None
+    if wheel:
+        tags = [
+            line.split(":", 1)[1].strip() for line in wheel.splitlines() if line.startswith("Tag:")
+        ]
+        write(f"Wheel tags: {', '.join(tags) or 'unknown'}")
+    else:
+        write("Wheel tags: none (not installed from a wheel)")
 
     compiler_error = _check_compiler()
     write(f"Compiler (MLIR JIT): {'ok' if compiler_error is None else 'FAILED'}")
@@ -534,7 +542,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         compiler_error = "invalid MLIR context limits"
     if not _kernel_settings(write) and compiler_error is None:
         compiler_error = "invalid kernel settings"
-    driver_error = _check_driver(write)
+    driver_error = _check_driver(write, None if package is None else package.version)
 
     outcome = _diagnose_gpu(write)
     if compiler_error is not None:
@@ -542,7 +550,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         write(f"Result: FAILED, {compiler_error if settings else 'the compiler does not work'}.")
         return 1
     if driver_error is not None:
-        write(f"Result: FAILED, {_DRIVER} does not work.")
+        write("Result: FAILED, cudaq-pulse-opt does not work.")
         return 1
     return _exit_code(
         outcome,
