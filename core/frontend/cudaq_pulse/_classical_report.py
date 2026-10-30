@@ -76,9 +76,11 @@ def report(lowered: Lowered) -> list[ClassicalCall]:
     module = lowered._module if lowered.scheduled and not lowered.carriers else lowered._concrete()
     with lowered._lock:
         calls = module.classical_calls()
-        events = module.events() if calls else []
+        if not calls:
+            return []
+        events = module.events()
     names = lowered.options.machine.link_name
-    exposed = _Exposure(lowered, events) if calls else None
+    exposed = _Exposure(lowered, events)
     new = object.__new__
     entries: list[ClassicalCall] = []
     for name, link, iteration, start, length, due, taken, use, limit, epoch, owner in calls:
@@ -98,7 +100,7 @@ def report(lowered: Lowered) -> list[ClassicalCall]:
                     limit,
                     epoch,
                     names(link),
-                    None if exposed is None or use is None else exposed(start, use),
+                    None if use is None else exposed(start, use),
                     owner,
                 ),
                 strict=True,

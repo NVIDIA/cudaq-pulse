@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from .._classical_report import report
 from .._errors import NotFoundError, UnsupportedError, _CallTimeoutError, _positive_int
 from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
 from . import ClassicalFunction, Link, wire
@@ -151,8 +152,10 @@ def _export(lowered: Any, with_events: bool, part: _Part | None = None) -> dict[
     epochs, after = lowered._epochs()
     starts = [e.start_cycles for e in epochs]
     epoch_of = lowered._event_epochs(syncs=False) if with_events else None
-    takes = None if part is None else part[3]
-    assert takes is None or not with_events or len(takes) == len(lowered.schedule)
+    takes = None
+    if part is not None:
+        takes = part[3]
+        assert not with_events or len(takes) == len(lowered.schedule)
     events = (
         [
             {
@@ -194,7 +197,7 @@ def _export(lowered: Any, with_events: bool, part: _Part | None = None) -> dict[
         "events": events,
         "calls": [
             _call_data(c)
-            for c in lowered.classical_report()
+            for c in (report(lowered) if lowered.classical else ())
             if part is None or (c.function in part[2] and c.controller in (None, part[0]))
         ],
         "manifest": manifest(lowered),

@@ -480,13 +480,14 @@ def _walk(
     returned as (index, start, duration) in program cycles, with the
     violations of what they compute at run time. *slots* gets the
     runtime-qudit slot of each line (-1 for none)."""
-    if values and lowered.parameters:
-        raise ValueError(
-            "the module has float parameters "
-            f"({', '.join(lowered.parameters)}); lower it with their values first"
-        )
-    if values and lowered._role is not None and lowered._unbound():
-        raise InvalidValueError("the module has runtime qudits; lower it with handles first")
+    if values:
+        if lowered.parameters:
+            raise ValueError(
+                "the module has float parameters "
+                f"({', '.join(lowered.parameters)}); lower it with their values first"
+            )
+        if lowered._role is not None and lowered._unbound():
+            raise InvalidValueError("the module has runtime qudits; lower it with handles first")
     # Waveforms and frames depend on the call's values, which only the
     # concrete module holds.
     module = lowered._concrete()
