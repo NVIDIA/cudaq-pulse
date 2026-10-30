@@ -23,7 +23,6 @@ in them.
 from __future__ import annotations
 
 import dataclasses
-import hashlib
 import os
 from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, overload
@@ -42,6 +41,12 @@ from ._errors import (
 from .targets._registry import NoTargetError, UnknownTargetError
 from .targets.base import _EXCHANGE, TargetDescription, _coupling_kind
 from .targets.models import SimulationModel
+
+try:
+    # hashlib's own blake2b, without hashlib's import of OpenSSL (a millisecond).
+    from _blake2 import blake2b as _blake2b
+except ImportError:  # pragma: no cover - CPython builds without the _blake2 module
+    from hashlib import blake2b as _blake2b
 
 if TYPE_CHECKING:
     from array import array
@@ -129,7 +134,7 @@ def _fingerprint(target: TargetDescription, layout: tuple[int, ...], calibration
     # Uncalibrated devices keep their fingerprints.
     if calibration is not None:
         content += (calibration._identity,)
-    return hashlib.blake2b(repr(content).encode(), digest_size=16).hexdigest()
+    return _blake2b(repr(content).encode(), digest_size=16).hexdigest()
 
 
 class Qudit:
