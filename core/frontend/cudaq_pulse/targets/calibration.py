@@ -22,7 +22,6 @@ J(w_a, w_d) and the idle ZZ follow at any operating point.
 from __future__ import annotations
 
 import copy
-import json
 import os
 import threading
 from collections.abc import Mapping
@@ -45,6 +44,8 @@ def _shipped_file(name: str) -> str:
 
 
 def _read(path: str) -> Any:
+    import json
+
     with open(path, encoding="utf-8") as file:
         return json.load(file)
 
@@ -170,6 +171,7 @@ class Calibration:
     @cached_property
     def fingerprint(self) -> str:
         import hashlib
+        import json
 
         content = json.dumps(self._data, sort_keys=True).encode() + self.cooldown.encode()
         return hashlib.blake2b(content, digest_size=16).hexdigest()
