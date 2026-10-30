@@ -114,6 +114,9 @@ jobs:
             fi
           done
 
+      - name: Every pass has a lit test
+        run: uv run --no-sync python tools/check-pass-lit-tests.py build/dev/bin/cudaq-pulse-opt
+
       - name: Native exports, sizes and import time
         run: uv run --no-sync python tools/check-native-exports.py build/dev/python --max-exports 8
 
