@@ -453,24 +453,7 @@ class Device:
     def __reduce__(self) -> tuple[Any, ...]:
         from ._pickling import device_reduce
 
-        # The constructor's inputs; its target already has the program clock,
-        # which a control system is given again to check it against.
-        inputs = {
-            "name": self.name,
-            "layout": self.layout,
-            "source": self.source,
-            "calibration": self.calibration,
-        }
-        if self.control_system is not None:
-            inputs["clock_ghz"] = self.clock_ghz
-        # What as_dict writes that the inputs do not give: the registered
-        # target and the target before its calibration and program clock.
-        state = (
-            None
-            if self._spec is None and self._base_target is self.target
-            else {"_spec": self._spec, "_base_target": self._base_target}
-        )
-        return device_reduce(self, inputs, state)
+        return device_reduce(self)
 
     def __repr__(self) -> str:
         return f"<Device {self.name} ({len(self.layout)} qudits)>"

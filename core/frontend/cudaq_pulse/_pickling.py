@@ -125,21 +125,31 @@ def _keep(key: tuple[Any, ...], device: Any) -> None:
             del _devices[next(iter(_devices))]
 
 
-def device_reduce(
-    device: Any, inputs: dict[str, Any], state: dict[str, Any] | None = None
-) -> tuple[Any, ...]:
+def device_reduce(device: Any) -> tuple[Any, ...]:
     """*device* as its fingerprint, labels and control system and, pickled
-    apart, its class, target, the other *inputs* of its constructor and the
-    attributes they do not set (*state*): a process that has the device of
-    that key does not unpickle the rest. The description is made once per
-    device: a device is read-only."""
+    apart, its class, target, the other inputs of its constructor and the
+    attributes they do not set: a process that has the device of that key
+    does not unpickle the rest. The description is made once per device: a
+    device is read-only."""
     key = _device_key(device)
     _keep(key, device)
     description: bytes | None = device.__dict__.get("_pickled")
     if description is None:
+        # The target already has the program clock, which a control system
+        # is given again to check it against.
+        inputs = {
+            "name": device.name,
+            "layout": device.layout,
+            "source": device.source,
+            "calibration": device.calibration,
+        }
+        if device.control_system is not None:
+            inputs["clock_ghz"] = device.clock_ghz
         parts: tuple[Any, ...] = (type(device), device.target, inputs)
-        if state is not None:
-            parts += (state,)
+        # What as_dict writes that the inputs do not give: the registered
+        # target and the target before its calibration and program clock.
+        if device._spec is not None or device._base_target is not device.target:
+            parts += ({"_spec": device._spec, "_base_target": device._base_target},)
         description = pickle.dumps(parts, pickle.HIGHEST_PROTOCOL)
         device._pickled = description
     return (rebuilt_device, (key, description))
