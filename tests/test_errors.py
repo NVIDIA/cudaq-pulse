@@ -173,7 +173,7 @@ def test_library_errors_are_pulse_errors_of_their_kind():
 # module raises library errors only.
 BUILTIN_RAISES = {
     "_waits.py": 4,
-    "compiler.py": 15,
+    "compiler.py": 14,
     "controller.py": 11,
     "kernel/_kernel.py": 7,
 }

@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 import cudaq_pulse.classical as classical
 
-from ._errors import InvalidTypeError, InvalidValueError
+from ._errors import InvalidTypeError, InvalidValueError, _closest
 from ._native import PackedValueError, PulseModuleBuilder
 from ._units import Time
 from .kernel._bytecode_normalize import UnsupportedInterpreterError
@@ -533,8 +533,10 @@ class CompileOptions:
         unroll_threshold: int | None = None,
     ) -> CompileOptions:
         if schedule not in _VALID_SCHEDULES:
-            raise ValueError(
-                f"Unknown schedule policy {schedule!r}. "
+            close = _closest(str(schedule).lower(), _VALID_SCHEDULES)
+            hint = f" Did you mean {close!r}?" if close else ""
+            raise InvalidValueError(
+                f"Unknown schedule policy {schedule!r}.{hint} "
                 f"Choose from: {', '.join(sorted(_VALID_SCHEDULES))}"
             )
         passes = DEFAULT_PASSES if passes is None else _passes(passes)

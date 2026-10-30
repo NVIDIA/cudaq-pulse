@@ -93,6 +93,21 @@ def test_unknown_schedule_is_rejected_where_the_kernel_is_declared():
         pulse.kernel(schedule="fastest")
 
 
+@pytest.mark.parametrize(
+    ("given", "hint"),
+    [
+        ("ASAP", r"Did you mean 'asap'\? Choose from: alap, asap,"),
+        ("Alap", r"Did you mean 'alap'\? Choose from"),
+        ("RCP", r"Did you mean 'rcp'\? It applies to a whole program; pass it to cudaq_pulse"),
+    ],
+)
+def test_a_kernel_schedule_in_the_wrong_case_says_what_was_meant(given, hint):
+    with pytest.raises(pulse.InvalidValueError, match=rf"^Unknown kernel schedule '{given}'\. "):
+        pulse.kernel(schedule=given)
+    with pytest.raises(pulse.InvalidValueError, match=hint):
+        pulse.kernel(schedule=given)
+
+
 @pytest.mark.parametrize("policy", ["rcp", "alap_rcp"])
 def test_resource_constrained_schedules_are_for_whole_programs(policy):
     with pytest.raises(ValueError, match=r"pass it to cudaq_pulse.compile"):

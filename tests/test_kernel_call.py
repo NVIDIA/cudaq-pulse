@@ -647,6 +647,32 @@ def test_the_schedule_option_is_part_of_the_compiled_kernel():
         pulse.compile(two, schedule="soon")
 
 
+@pytest.mark.parametrize(
+    ("given", "meant"), [("ASAP", "asap"), ("ALAP_RCP", "alap_rcp"), ("Rcp", "rcp")]
+)
+def test_a_schedule_in_the_wrong_case_says_what_was_meant(given, meant):
+    @pulse.kernel
+    def one(q):
+        wait(get_drive_line(q), 4)
+
+    message = (
+        rf"^Unknown schedule policy '{given}'\. Did you mean '{meant}'\? "
+        r"Choose from: alap, alap_rcp, asap, rcp$"
+    )
+    with pytest.raises(pulse.InvalidValueError, match=message):
+        pulse.compile(one, schedule=given)
+
+
+def test_an_unknown_schedule_with_nothing_close_lists_the_choices():
+    @pulse.kernel
+    def one(q):
+        wait(get_drive_line(q), 4)
+
+    message = r"^Unknown schedule policy 'soon'\. Choose from: alap, alap_rcp, asap, rcp$"
+    with pytest.raises(pulse.InvalidValueError, match=message):
+        pulse.compile(one, schedule="soon")
+
+
 # ── Kernels calling kernels ──────────────────────────────────────────────
 
 
