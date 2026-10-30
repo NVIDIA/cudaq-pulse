@@ -31,16 +31,13 @@ from __future__ import annotations
 import bisect
 import dataclasses
 import enum
-import json
 import math
 import os
 import re
-import tomllib
 import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from fractions import Fraction
-from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -61,6 +58,8 @@ from .classical import Link
 from .controller import OP_CLASSES, ControllerLimits
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from ._device import Device
     from .compiler import Lowered, MachineModel
     from .targets.base import TargetDescription
@@ -1471,7 +1470,8 @@ def _wiring_problems(system: ControlSystem, target: TargetDescription) -> list[P
 
 # ── Controller descriptions ──────────────────────────────────────────────────
 
-_DESCRIPTIONS = Path(__file__).resolve().parent / "controllers"
+# Paths are strings here: building a control system does not need pathlib.
+_DESCRIPTIONS = os.path.join(os.path.dirname(os.path.realpath(__file__)), "controllers")
 # What the installation gives, not the description.
 _WIRING = (
     "drive_lines",
@@ -1487,7 +1487,21 @@ _NOTICED: set[tuple[str, str, str]] = set()
 def installed_descriptions() -> dict[str, Path]:
     """The controller descriptions installed with cudaq-pulse, by name
     (``"vendor.model"``)."""
-    return {f"{p.parent.name}.{p.stem}": p for p in sorted(_DESCRIPTIONS.glob("*/*.toml"))}
+    from pathlib import Path
+
+    return {name: Path(path) for name, path in _installed().items()}
+
+
+def _installed() -> dict[str, str]:
+    """``installed_descriptions()``, by path string."""
+    found = {}
+    for vendor in sorted(os.listdir(_DESCRIPTIONS)):
+        folder = os.path.join(_DESCRIPTIONS, vendor)
+        if os.path.isdir(folder):
+            for file in sorted(os.listdir(folder)):
+                if file.endswith(".toml"):
+                    found[f"{vendor}.{file[:-5]}"] = os.path.join(folder, file)
+    return found
 
 
 def _toml_line(text: str, key: str) -> int | None:
@@ -1509,7 +1523,10 @@ def _description(path: str, mtime_ns: int) -> Controller:
 
 
 def _parse_description(path: str) -> Controller:
-    text = Path(path).read_text(encoding="utf-8")
+    import tomllib
+
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as error:
@@ -1575,7 +1592,7 @@ def load_controller(description: str | os.PathLike[str], /, **wiring: Any) -> Co
     description's values.
     """
     if isinstance(description, str) and not description.endswith(".toml"):
-        installed = installed_descriptions()
+        installed = _installed()
         path = installed.get(description)
         if path is None:
             hint = _closest(description, installed)
@@ -1585,11 +1602,11 @@ def load_controller(description: str | os.PathLike[str], /, **wiring: Any) -> Co
                 + f"; installed: {', '.join(installed) or 'none'}, or give the path of a .toml file"
             )
     else:
-        path = Path(description)
-        if not path.is_file():
-            raise NotFoundError(f"no controller description file {os.fspath(description)!r}")
-    path = path.resolve()
-    base = _description(str(path), path.stat().st_mtime_ns)
+        path = os.fspath(description)
+        if not os.path.isfile(path):
+            raise NotFoundError(f"no controller description file {path!r}")
+    path = os.path.realpath(path)
+    base = _description(path, os.stat(path).st_mtime_ns)
     if not wiring:
         return base
     names = [f.name for f in fields(Controller)]
@@ -1743,6 +1760,8 @@ def _quantum_data(target: TargetDescription) -> dict[str, Any]:
 
 
 def _device_data(device: Device) -> dict[str, Any]:
+    import json
+
     from . import __version__
     from .targets.calibration import Calibration
 

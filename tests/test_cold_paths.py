@@ -91,6 +91,16 @@ def test_exports_load_no_heavy_module(tmp_path):
     assert _loaded(code, tmp_path) == []
 
 
+def test_a_device_with_a_control_system_loads_no_heavy_module(tmp_path):
+    code = (
+        "import sys\nimport cudaq_pulse as p\n"
+        "c = p.controller('reference.controller', drive_lines=[0, 1], readout_lines=[0, 1])\n"
+        "p.device({'quantum_system': 'transmon_17q', 'layout': [0, 1],\n"
+        "          'control_system': p.ControlSystem(controllers=[c])})\n"
+    )
+    assert _loaded(code, tmp_path) == []
+
+
 def test_the_classical_call_helpers_load_neither_numpy_nor_ctypes(tmp_path):
     code = "import sys\nimport cudaq_pulse.runtime._calls\nimport cudaq_pulse.classical.wire\n"
     assert _loaded(code, tmp_path, ("numpy", "ctypes")) == []
