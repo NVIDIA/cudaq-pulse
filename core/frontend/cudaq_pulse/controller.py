@@ -1751,7 +1751,9 @@ def usage(lowered: Lowered) -> UsageReport:
     spans: dict[tuple[str, int | None], list[tuple[int, int]]] = {}
     for call in calls:
         end = max(call.due_cycles, call.submit_cycles + 1)
-        spans.setdefault((call.compiled_name, call.controller), []).append((call.submit_cycles, end))
+        spans.setdefault((call.compiled_name, call.controller), []).append(
+            (call.submit_cycles, end)
+        )
     # Calls over a per-controller link whose instance is not known count on each.
     placed: dict[tuple[int, int], list[tuple[Any, list[tuple[int, int]]]]] = {}
     off_board = []

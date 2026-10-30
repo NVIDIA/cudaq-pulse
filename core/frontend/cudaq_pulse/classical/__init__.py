@@ -979,6 +979,14 @@ def _version(template: ClassicalFunction[..., Any], key: Any) -> ClassicalFuncti
     return version
 
 
+def _unpickled_version(
+    template: ClassicalFunction[..., Any], key: Any
+) -> ClassicalFunction[..., Any]:
+    """The version of *template* for *key*, as an unpickled program names it."""
+    _resolve(template)
+    return _version(template, key)
+
+
 def _enter_slow(builder: Any, template: ClassicalFunction[..., Any], key: Any) -> Any:
     """A submit whose version isn't made yet: ``builder._versions[template]``
     maps each key to its version, in first use order."""

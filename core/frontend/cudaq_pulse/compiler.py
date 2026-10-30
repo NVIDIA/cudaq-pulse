@@ -800,6 +800,7 @@ class Lowered:
         view._generic = self
         view.waits = waits
         view.classical = self.classical
+        view._dispatch_keys = self._dispatch_keys
         view.runtime_selects = self.runtime_selects
         return view
 

@@ -77,7 +77,9 @@ def test_export_and_manifest_are_json():
 def test_a_call_exports_its_fields_in_order():
     (call,) = pulse.compile(adaptive).lower(Q[0]).classical_report()
     fields = {**dataclasses.asdict(call), "iteration": list(call.iteration)}
-    del fields["controller"]
+    # An emulator serves the compiled name, and the manifest gives the key.
+    fields["function"] = fields.pop("compiled_name")
+    del fields["dispatch_key"], fields["controller"]
     assert list(emulation._call_data(call).items()) == list(fields.items())
     placed = dataclasses.replace(call, controller=1)
     assert list(emulation._call_data(placed).items()) == list({**fields, "controller": 1}.items())

@@ -280,7 +280,13 @@ def rebuilt_kernel(function: Any, qualname: str, token: str, options: dict[str, 
 
 def classical_reduce(function: Any, protocol: int) -> Any:
     """A classical function by the name of its implementation when that
-    name finds it (it was declared with ``@pulse.classical``), else by value."""
+    name finds it (it was declared with ``@pulse.classical``), else by value.
+    A version by list lengths is its template and its lengths."""
+    template = function._template
+    if template is not None:
+        from .classical import _unpickled_version
+
+        return (_unpickled_version, (template, function._key))
     implementation = function.implementation
     if implementation is not None:
         module = getattr(implementation, "__module__", None)
