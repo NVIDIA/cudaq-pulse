@@ -94,7 +94,9 @@ passes `unroll_threshold=` to `pulse.compile` or `@pulse.kernel`.
 
 Tests that need pyright, mypy, matplotlib or a C compiler skip without
 them, except when `CI` is set: there they fail, unless the job names the
-tool in `CUDAQ_PULSE_OPTIONAL_TOOLS` (`tests/_tools.py`).
+tool in `CUDAQ_PULSE_OPTIONAL_TOOLS` (`tests/_tools.py`). Rewrite the IR
+goldens with `CUDAQ_PULSE_UPDATE_GOLDENS=1`; a run that changes them fails
+and names the changed cases, and the next run, without the variable, passes.
 
 The property tests use hypothesis profiles (`tests/property_settings.py`),
 chosen with `HYPOTHESIS_PROFILE`: `ci`, the default, is derandomized so every
