@@ -60,7 +60,29 @@ else()
   set(_cudaq_pulse_opt_destination "${CMAKE_INSTALL_BINDIR}")
 endif()
 install(
-  TARGETS cudaq-pulse-opt
-  RUNTIME DESTINATION "${_cudaq_pulse_opt_destination}"
+  PROGRAMS "$<TARGET_FILE:cudaq-pulse-opt>"
+  DESTINATION "${_cudaq_pulse_opt_destination}"
+  COMPONENT CudaqPulse
+)
+# install(TARGETS) would strip with `strip -u -r` on macOS, which keeps only
+# the symbols the driver itself references, and pass plugins could no longer
+# resolve MLIR against it. `strip -x` keeps the global symbols.
+if(IS_ABSOLUTE "${_cudaq_pulse_opt_destination}")
+  set(_cudaq_pulse_opt_installed "\$ENV{DESTDIR}${_cudaq_pulse_opt_destination}/cudaq-pulse-opt")
+else()
+  set(_cudaq_pulse_opt_installed
+    "\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${_cudaq_pulse_opt_destination}/cudaq-pulse-opt")
+endif()
+if(APPLE)
+  set(_cudaq_pulse_opt_strip_flags "-x")
+else()
+  set(_cudaq_pulse_opt_strip_flags "")
+endif()
+install(CODE "
+  if(CMAKE_INSTALL_DO_STRIP)
+    execute_process(
+      COMMAND \"${CMAKE_STRIP}\" ${_cudaq_pulse_opt_strip_flags} \"${_cudaq_pulse_opt_installed}\"
+      COMMAND_ERROR_IS_FATAL ANY)
+  endif()"
   COMPONENT CudaqPulse
 )

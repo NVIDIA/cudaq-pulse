@@ -12,9 +12,14 @@
 # tests/ outside the checkout, so the source tree is never importable.
 #
 # Usage: tools/ci/install-test.sh [--python PY] [--wheelhouse DIR]
-#                                 [--driver-only] [--allow-old-driver] MODE...
+#                                 [--driver-only] [--allow-old-driver]
+#                                 [--toolchain PREFIX] MODE...
 #
 # Modes:
+#   plugin    install cudaq-pulse, build the example pass plugin against the
+#             MLIR toolchain (--toolchain, or tools/fetch-mlir-toolchain.py's)
+#             and run the lit suite against the installed cudaq-pulse-opt
+#             (tools/ci/opt-plugin-test.sh)
 #   base      install cudaq-pulse; compile a kernel (on a free-threaded
 #             Python, without the GIL turning on), run the installed
 #             cudaq-pulse-opt on it, the doctor (no GPU required), and
@@ -40,6 +45,7 @@ python="python3"
 wheelhouse="${repo_root}/wheelhouse"
 driver_only=false
 allow_old_driver=false
+toolchain_args=()
 modes=()
 
 while [[ $# -gt 0 ]]; do
@@ -48,13 +54,14 @@ while [[ $# -gt 0 ]]; do
     --wheelhouse) wheelhouse="$(cd "$2" && pwd)"; shift 2 ;;
     --driver-only) driver_only=true; shift ;;
     --allow-old-driver) allow_old_driver=true; shift ;;
-    base | extras | gpu) modes+=("$1"); shift ;;
+    --toolchain) toolchain_args=(--toolchain "$(cd "$2" && pwd)"); shift 2 ;;
+    base | plugin | extras | gpu) modes+=("$1"); shift ;;
     gpu-cu12 | gpu-cu13) modes+=("$1"); shift ;;
     *) echo "error: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 if [[ ${#modes[@]} -eq 0 ]]; then
-  echo "error: no mode given (base, extras, gpu-cu12, gpu-cu13, gpu)" >&2
+  echo "error: no mode given (base, plugin, extras, gpu-cu12, gpu-cu13, gpu)" >&2
   exit 2
 fi
 
@@ -261,6 +268,12 @@ for mode in "${modes[@]}"; do
       opt_checks
       in_venv python -m cudaq_pulse.doctor --allow-no-gpu
       run_pytest "not gpu"
+      drop_venv
+      ;;
+    plugin)
+      new_venv plugin "cudaq-pulse==${version}" "cmake>=3.30" "ninja>=1.11" "lit>=18"
+      in_venv bash "${repo_root}/tools/ci/opt-plugin-test.sh" --python "${venv}/bin/python" \
+        ${toolchain_args[@]+"${toolchain_args[@]}"}
       drop_venv
       ;;
     extras)

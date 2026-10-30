@@ -177,6 +177,16 @@ jobs:
       - name: Install and test cudaq-pulse
         run: bash tools/ci/install-test.sh --python "${{ matrix.python }}" base
 
+      # The pass plugin builds against the MLIR toolchain and a host compiler,
+      # so only on the runners themselves.
+      - uses: ./.github/actions/mlir-toolchain
+        if: matrix.image == ''
+        with:
+          unpack: true
+      - name: Load the example pass plugin into the installed cudaq-pulse-opt
+        if: matrix.image == ''
+        run: bash tools/ci/install-test.sh --python "${{ matrix.python }}" plugin
+
       - name: Install the [cu12] and [cu13] extras without a GPU
         if: runner.os == 'Linux'
         run: bash tools/ci/install-test.sh --python "${{ matrix.python }}" extras
