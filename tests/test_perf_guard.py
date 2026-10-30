@@ -401,8 +401,8 @@ def test_a_call_adds_little_to_simulation_on_the_same_timeline():
     plain = pulse.compile(bench.waiting_reset, device=dev).lower(q)
     called = pulse.compile(bench.decoded_reset, device=dev).lower(q)
     plus = [2**-0.5, 2**-0.5]
-    a = _best(lambda: pulse.simulate(plain, initial_state=plus, dt_ns=0.5), 3, 0)
-    b = _best(lambda: pulse.simulate(called, initial_state=plus, dt_ns=0.5), 3, 0)
+    a = _best(lambda: pulse.simulate(plain, initial_state=plus, levels=2, dt_ns=0.5), 3, 0)
+    b = _best(lambda: pulse.simulate(called, initial_state=plus, levels=2, dt_ns=0.5), 3, 0)
     # Both take well under a millisecond, so allow the call's own binding and
     # rescheduling (about 0.3 ms) on top.
     assert b < 1.25 * a + 2e-3, (a, b)
