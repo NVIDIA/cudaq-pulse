@@ -1634,18 +1634,144 @@ class PackedIRBuilder:
         return found
 
 
+class _Stop(BaseException):
+    """Ends a ``_RecordFinder`` trace; a BaseException, so that no handler
+    for errors of the traced code catches it."""
+
+
+# Code from these directories is the compiler's own or the standard
+# library's, which the trace may run again; any other is the kernel's host
+# code, which it must not.
+_TRUSTED_DIRS: tuple[str, ...] | None = None
+# Builtins whose call from a kernel acts on the world outside the trace, by
+# id: next() advances an iterator the kernel may not own.
+_ACTING_BUILTINS = frozenset(
+    map(id, (print, input, open, breakpoint, exec, eval, setattr, delattr, __import__, next))
+)
+
+
+def _trusted_dirs() -> tuple[str, ...]:
+    global _TRUSTED_DIRS
+    if _TRUSTED_DIRS is None:
+        import os
+        import sysconfig
+
+        paths = sysconfig.get_paths()
+        found = [os.path.dirname(os.path.dirname(__file__)), paths["stdlib"], paths["platstdlib"]]
+        numpy = sys.modules.get("numpy")
+        if numpy is not None and numpy.__file__:
+            found.append(os.path.dirname(numpy.__file__))
+        dirs = {f(d) for d in found for f in (os.path.abspath, os.path.realpath)}
+        _TRUSTED_DIRS = tuple(os.path.join(d, "") for d in dirs)
+    return _TRUSTED_DIRS
+
+
+def _trusted(code: Any, seen: dict[Any, bool]) -> bool:
+    trusted = seen.get(code)
+    if trusted is None:
+        import os
+
+        name = code.co_filename
+        trusted = name.startswith(("<frozen ", "<string>")) or os.path.abspath(name).startswith(
+            _trusted_dirs()
+        )
+        seen[code] = trusted
+    return trusted
+
+
 class _RecordFinder(PackedIRBuilder):
     """Traces a kernel again, after the extension rejected the record at
     ``word``, to find where it was written: ``frames`` as ``tracing_frames()``
     gives them. Every record is written right after an ``_ensure`` at its
-    first word, so the last one there is the one that wrote it."""
+    first word; a loop traced rolled and rolled back may write there first,
+    so the trace stops at the first visit outside such a loop.
+
+    The trace never runs the kernel's host code again: it stops before the
+    first call into it, with ``host_frames`` where that call is."""
 
     word = -1
     frames: list[Any] | None = None
+    host_frames: list[Any] | None = None
+
+    @property
+    def impure(self) -> bool:
+        return False
+
+    @impure.setter
+    def impure(self, value: bool) -> None:
+        # Set just before a host call that is not pure is evaluated.
+        if value:
+            self._stop_at_host()
+
+    def _stop_at_host(self) -> None:
+        from ._emitter import tracing_frames
+
+        self.host_frames = tracing_frames()
+        raise _Stop
 
     def _ensure(self, n: int) -> None:
         if self._cur == self.word:
-            from ._emitter import tracing_frames
+            from ._emitter import PulseIREmitter, tracing_frames
 
             self.frames = tracing_frames()
+            rolling = PulseIREmitter._roll.__code__
+            frame: Any = sys._getframe(1)
+            while frame is not None and frame.f_code is not rolling:
+                frame = frame.f_back
+            if frame is None:
+                raise _Stop
         super()._ensure(n)
+
+    def locate(self, fn: Any, args: Any) -> bool:
+        """Trace *fn* again on *args* until the record at ``word``; False if
+        the trace could not be watched for host code, and did not run."""
+        from types import GeneratorType
+
+        from . import _emitter
+        from .bytecode_bridge import _trace_kernel_with_builder
+
+        mon = sys.monitoring
+        for tool in (3, 4):
+            try:
+                mon.use_tool_id(tool, "cudaq_pulse retrace")
+                break
+            except ValueError:
+                continue
+        else:
+            return False
+        seen: dict[Any, bool] = {}
+        # Where the emitter calls what the kernel calls.
+        on_choice = _emitter.PulseIREmitter._call_on_choice.__code__
+        host_sites = {_emitter.PulseIREmitter._dispatch_call.__code__} | {
+            c for c in on_choice.co_consts if type(c) is type(on_choice)
+        }
+        coroutines = 0x20 | 0x80 | 0x100 | 0x200  # generator, coroutine, async
+
+        # The callbacks never return DISABLE: that would outlast this trace
+        # for whoever takes the tool id next.
+        def on_start(code: Any, offset: int) -> None:
+            # A generator is stopped at the call that resumes it: raising in
+            # its frame would close it.
+            if not code.co_flags & coroutines and not _trusted(code, seen):
+                self._stop_at_host()
+
+        def on_call(code: Any, offset: int, fn: Any, arg0: Any) -> None:
+            if type(arg0) is GeneratorType and not _trusted(arg0.gi_code, seen):
+                self._stop_at_host()
+            if id(fn) in _ACTING_BUILTINS and code in host_sites:
+                self._stop_at_host()
+
+        events = mon.events
+        mon.register_callback(tool, events.PY_START, on_start)
+        mon.register_callback(tool, events.CALL, on_call)
+        mon.set_events(tool, events.PY_START | events.CALL)
+        try:
+            _trace_kernel_with_builder(fn, self, args)
+        except _Stop:
+            pass
+        finally:
+            mon.set_events(tool, 0)
+            mon.register_callback(tool, events.PY_START, None)
+            mon.register_callback(tool, events.CALL, None)
+            mon.free_tool_id(tool)
+        return True

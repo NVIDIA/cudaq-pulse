@@ -610,6 +610,10 @@ behavior may change in any 0.x release.
   qudit index past a device or register is an `IndexOutOfRangeError`, an
   `IndexError`, that says how many qudits it has. A NaN or infinite float argument is an
   `InvalidValueError` naming the parameter wherever the program is used:
-  run, simulated, exported or printed.
+  run, simulated, exported or printed. Finding the line of a value the
+  native builder rejects traces the kernel again only up to it, and never
+  runs its host code again (Python functions it calls, `custom()`
+  envelopes, `print`, `next`, impure functions): when host code comes
+  first, the error names that call as the line the value is at or after.
 
 [0.1.0]: https://github.com/NVIDIA/cudaq-pulse/releases/tag/v0.1.0

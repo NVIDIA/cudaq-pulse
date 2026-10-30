@@ -1039,23 +1039,37 @@ def _rejected_literal(
     fn: Any, trace_args: Sequence[Any], traced: Any, error: PackedValueError
 ) -> CompilationError:
     """The error for a literal the extension rejected, with the kernel line
-    that wrote it. The kernel is traced again to find that line; when the
-    trace differs (the kernel read state that changed), the line is left out
-    rather than guessed."""
+    that wrote it. The kernel is traced again up to that line, never running
+    its host code again: a trace that reaches host code first stops there and
+    names that line as the one at or before it. When the trace differs (the
+    kernel read state that changed), the line is left out rather than
+    guessed."""
     from .kernel._emitter import add_source_note
-    from .kernel.bytecode_bridge import _trace_kernel_with_builder
 
     message, word = error.args
     located = CompilationError(message)
     finder = traced.finder(word)
     try:
-        _trace_kernel_with_builder(fn, finder, trace_args)
+        if not finder.locate(fn, trace_args):
+            return located
     except Exception:
         return located
-    if finder.frames and finder.get_buffer() == traced.get_buffer():
-        located.pulse_source = finder.frames[0]  # type: ignore[attr-defined]
-        located.pulse_callers = finder.frames[1:]  # type: ignore[attr-defined]
-        add_source_note(located)
+    written = finder.get_buffer()
+    if traced.get_buffer()[: len(written)] != written:
+        return located
+    if finder.frames:
+        frames, heading = finder.frames, None
+    elif finder.host_frames:
+        frames = finder.host_frames
+        heading = (
+            "while tracing the kernel (written at or after the last line, which calls "
+            "host code; finding the line stops there, so host code does not run twice):"
+        )
+    else:
+        return located
+    located.pulse_source = frames[0]  # type: ignore[attr-defined]
+    located.pulse_callers = frames[1:]  # type: ignore[attr-defined]
+    add_source_note(located, heading)
     return located
 
 

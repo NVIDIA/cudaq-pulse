@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import inspect
+import itertools
+import math
 from decimal import Decimal
 from fractions import Fraction
 
@@ -201,20 +203,182 @@ def test_a_value_rejected_inside_a_helper_names_both_lines():
     assert note.index("calls_the_helper") < note.index("_bad_helper")
 
 
+AT_HOST_CODE = "while tracing the kernel (written at or after the last line, which calls host code"
+
+
 def test_a_kernel_that_traces_differently_the_second_time_still_says_what_is_wrong():
     sigmas = iter([0.0, 4.0])
-
-    def next_sigma():
-        return next(sigmas)
+    calls = []
 
     @pulse.kernel
     def changes_between_traces(q):
         d = get_drive_line(q)
-        drive(d, gaussian(40, 0.1, next_sigma()))
+        drive(d, gaussian(40, 0.1, next(sigmas)))
+
+    def envelope(t):
+        calls.append(t)
+        return 0.1
+
+    @pulse.kernel
+    def samples_an_envelope(q):
+        d = get_drive_line(q)
+        drive(d, custom(8, envelope))
+        drive(d, gaussian(40, 0.1, 0.0))
 
     with pytest.raises(CompilationError, match="gaussian sigma must be positive") as info:
         changes_between_traces.lower(Q[0])
-    assert "line" not in _note(info.value)
+    assert next(sigmas) == 4.0
+    assert _note(info.value).startswith(AT_HOST_CODE)
+    with pytest.raises(CompilationError, match="gaussian sigma must be positive") as info:
+        samples_an_envelope.lower(Q[0])
+    assert calls == sorted(set(calls))
+    assert _note(info.value).startswith(AT_HOST_CODE)
+
+
+def _host_counter(calls):
+    calls.append(1)
+    return 0.1
+
+
+def test_finding_the_line_runs_no_host_code_again_and_names_the_last_line_before_it():
+    calls = []
+    counter = itertools.count()
+    printed = []
+
+    @pulse.kernel
+    def before_the_value(q):
+        d = get_drive_line(q)
+        amp = _host_counter(calls)
+        drive(d, gaussian(40, amp, 0.0))
+
+    @pulse.kernel
+    def impure_before_the_value(q):
+        d = get_drive_line(q)
+        amp = 0.1 + next(counter) * 0
+        drive(d, gaussian(40, amp, 0.0))
+
+    @pulse.kernel
+    def prints_before_the_value(q):
+        d = get_drive_line(q)
+        print_to(printed, "tracing")
+        drive(d, gaussian(40, 0.1, 0.0))
+
+    def print_to(out, text):
+        out.append(text)
+
+    for kernel, host_call in [
+        (before_the_value, "amp = _host_counter(calls)"),
+        (impure_before_the_value, "amp = 0.1 + next(counter) * 0"),
+        (prints_before_the_value, 'print_to(printed, "tracing")'),
+    ]:
+        with pytest.raises(CompilationError, match="gaussian sigma must be positive") as info:
+            kernel.lower(Q[0])
+        note = _note(info.value)
+        assert note.startswith(AT_HOST_CODE)
+        assert f"line {_line_of(kernel.__wrapped__, host_call)}," in note
+    assert calls == [1]
+    assert next(counter) == 1
+    assert printed == ["tracing"]
+
+
+def test_the_builtin_print_and_a_generator_are_host_code(capsys):
+    def gen():
+        yield 0.1
+        yield 0.2
+
+    values = gen()
+
+    @pulse.kernel
+    def prints(q):
+        d = get_drive_line(q)
+        print("tracing")
+        drive(d, gaussian(40, 0.1, 0.0))
+
+    @pulse.kernel
+    def resumes(q):
+        d = get_drive_line(q)
+        drive(d, gaussian(40, next(values), 0.0))
+
+    for kernel in (prints, resumes):
+        with pytest.raises(CompilationError, match="gaussian sigma must be positive") as info:
+            kernel.lower(Q[0])
+        assert _note(info.value).startswith(AT_HOST_CODE)
+    assert capsys.readouterr().out == "tracing\n"
+    assert next(values) == 0.2
+
+
+def test_host_code_after_the_rejected_value_is_not_run_again_and_the_line_is_exact():
+    calls = []
+
+    @pulse.kernel
+    def after_the_value(q):
+        d = get_drive_line(q)
+        drive(d, gaussian(40, 0.1, 0.0))
+        drive(d, square(8, _host_counter(calls)))
+
+    with pytest.raises(CompilationError, match="gaussian sigma must be positive") as info:
+        after_the_value.lower(Q[0])
+    note = _note(info.value)
+    assert note.startswith("while tracing the kernel:\n")
+    assert f"line {_line_of(after_the_value.__wrapped__, 'gaussian(40, 0.1, 0.0)')}," in note
+    assert calls == [1]
+
+
+def test_finding_the_line_traces_no_further_than_the_rejected_value(monkeypatch):
+    from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
+
+    finders = []
+    finder = PackedIRBuilder.finder
+
+    def keep(self, word):
+        finders.append(finder(self, word))
+        return finders[-1]
+
+    monkeypatch.setattr(PackedIRBuilder, "finder", keep)
+
+    @pulse.kernel
+    def then_more(q):
+        d = get_drive_line(q)
+        drive(d, gaussian(40, 0.1, 0.0))
+        for n in range(200):
+            wait(d, 4 + n)
+
+    with pytest.raises(CompilationError, match="gaussian sigma must be positive"):
+        then_more.lower(Q[0])
+    (found,) = finders
+    assert found.frames and found.host_frames is None
+    assert len(found.get_buffer()) == found.word
+    assert found.op_count < 5
+
+
+def test_pure_host_calls_run_again_and_the_line_is_exact():
+    @pulse.kernel
+    def pure(q):
+        d = get_drive_line(q)
+        sigma = math.sqrt(0.0) + abs(-0.0)
+        drive(d, gaussian(40, 0.1, sigma))
+
+    with pytest.raises(CompilationError, match="gaussian sigma must be positive") as info:
+        pure.lower(Q[0])
+    note = _note(info.value)
+    assert note.startswith("while tracing the kernel:\n")
+    assert f"line {_line_of(pure.__wrapped__, 'gaussian(40, 0.1, sigma)')}," in note
+
+
+def test_a_value_in_a_loop_that_was_traced_rolled_and_unrolled_names_its_line():
+    @pulse.kernel
+    def counted(q):
+        d = get_drive_line(q)
+        count = 0
+        for _ in range(3):
+            count += 1
+            drive(d, gaussian(40, 0.1, 0.0))
+
+    with pytest.raises(CompilationError, match="gaussian sigma must be positive") as info:
+        pulse.compile(counted, unroll_threshold=0).lower(Q[0])
+    note = _note(info.value)
+    assert note.startswith("while tracing the kernel:\n")
+    assert f"line {_line_of(counted.__wrapped__, 'gaussian(40, 0.1, 0.0)')}," in note
 
 
 def test_the_native_rejection_is_a_value_error():

@@ -892,14 +892,14 @@ def instruction_limit_error(
     return error
 
 
-def add_source_note(e: BaseException) -> None:
+def add_source_note(e: BaseException, heading: str | None = None) -> None:
     """Add a note to *e* with the kernel source lines that raised it, as a
     traceback shows them: the kernel's own line first."""
     source = getattr(e, "pulse_source", None)
     if source is None or getattr(e, "pulse_noted", False):
         return
     frames = [source, *getattr(e, "pulse_callers", ())]
-    lines = ["while tracing the kernel:"]
+    lines = [heading or "while tracing the kernel:"]
     for prog, index in reversed(frames):
         filename, lineno, *_ = prog.location(index)
         lines.append(f'  File "{filename}", line {lineno}, in {prog.code.co_name}')
