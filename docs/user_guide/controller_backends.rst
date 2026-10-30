@@ -285,8 +285,8 @@ Line delays
 Cables and electronics delay each line differently. The calibrated delays
 belong to the system, not to kernels: ``ControlSystem(line_delays_ns=...)``
 (or ``MachineModel(line_delays_ns=...)`` without a control system) gives
-them by line, ``("drive", qudit)`` or ``("readout", qudit)``, and
-every operation on a delayed line starts that much later than scheduled.
+them by line, ``("drive", qudit)`` or ``("readout", qudit)``, as times
+(``2.3 * pulse.ns``) or numbers of ns, and every operation on a delayed line starts that much later than scheduled.
 Whole :ref:`timesteps <timestep>` of the line move its operations, which
 are then checked against the controller's limits like any others; the rest,
 less than one timestep, is the line's ``fine_delay_ns`` in the export, for

@@ -23,7 +23,7 @@ from cudaq_pulse._errors import (
     UpgradeNotice,
 )
 from cudaq_pulse._system import installed_descriptions
-from cudaq_pulse.classical import Bits, Float
+from cudaq_pulse.classical import Bits, Float, Link
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, ControllerLimits
 from cudaq_pulse.targets.base import Coupling, Qubit, TargetDescription
@@ -291,6 +291,43 @@ def test_a_control_systems_line_delays_and_reference_clock_are_checked():
     )
     with pytest.raises(DeviceDefinitionError, match="the qudit is not in the quantum system"):
         pulse.device({"quantum_system": TRANSMON_17Q, "control_system": system})
+
+
+def test_a_control_system_takes_its_times_as_times():
+    ns, us = pulse.ns, pulse.us
+    lines = {"drive_lines": range(4), "readout_lines": range(4)}
+    box = pulse.Controller(max_fine_delay_ns=1 * ns, **lines)
+    assert box == pulse.Controller(max_fine_delay_ns=1.0, **lines)
+    by_time = pulse.ControlSystem(
+        controllers=[box],
+        links={"decoder": Link(fixed_ns=0.1 * us, feedback_ns=20 * ns, per_controller=True)},
+        line_delays_ns={("drive", 0): 2.5 * ns, ("readout", 0): 0.001 * us},
+    )
+    by_number = pulse.ControlSystem(
+        controllers=[box],
+        links={"decoder": Link(fixed_ns=100, feedback_ns=20, per_controller=True)},
+        line_delays_ns={("drive", 0): 2.5, ("readout", 0): 1.0},
+    )
+    assert by_time == by_number
+    assert [ns.__class__ for ns in by_time.line_delays_ns.values()] == [float, float]
+    qpus = [
+        pulse.device({"quantum_system": TRANSMON_17Q, "layout": [0, 1], "control_system": system})
+        for system in (by_time, by_number)
+    ]
+    assert qpus[0].as_dict() == qpus[1].as_dict()
+    with pytest.raises(ValueError, match=r"ControlSystem.line_delays_ns\[\('drive', 0\)\] is -1"):
+        pulse.ControlSystem(line_delays_ns={("drive", 0): -1 * ns})
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("clock_skew_cycles", 4 * pulse.ns), ("peer_latency_cycles", {1: 4 * pulse.ns})],
+)
+def test_a_controllers_cycles_are_its_own_not_a_time(name, value):
+    with pytest.raises(
+        pulse.InvalidTypeError, match=f"Controller.{name} is a whole number of the controller's own"
+    ):
+        pulse.Controller(**{name: value})
 
 
 def test_several_controllers_on_their_own_clocks_schedule_on_their_grids():

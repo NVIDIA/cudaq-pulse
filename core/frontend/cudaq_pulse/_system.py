@@ -56,6 +56,7 @@ from ._errors import (
     _count,
     _ranges,
 )
+from ._units import Time
 from .classical import Link
 from .controller import OP_CLASSES, ControllerLimits
 
@@ -121,6 +122,11 @@ def _lines(value: Iterable[Any], name: str) -> tuple[int, ...]:
 
 
 def _cycles(value: Any, name: str) -> int:
+    if value.__class__ is Time:
+        raise InvalidTypeError(
+            f"Controller.{name} is a whole number of the controller's own cycles, "
+            f"got the time {value}; divide it by the controller's cycle time"
+        )
     if isinstance(value, bool) or not isinstance(value, int):
         raise InvalidTypeError(f"Controller.{name} is a whole number of cycles, got {value!r}")
     if value < 0:
@@ -522,7 +528,8 @@ class ControlSystem:
     without it each controller's start is known only to within one of its
     own cycles. ``line_delays_ns`` are the calibrated delays of the lines
     the controllers play, keyed by ``("drive", qudit)`` or
-    ``("readout", qudit)``, as ``MachineModel.line_delays_ns`` takes them.
+    ``("readout", qudit)``, as times (``2 * pulse.ns``) or numbers of ns, as
+    ``MachineModel.line_delays_ns`` takes them.
     """
 
     controllers: Sequence[Controller] = ()
@@ -531,7 +538,7 @@ class ControlSystem:
     max_concurrent_readouts: int = 2
     line_switch_penalty_cycles: int = 0
     reference_clock_ghz: float | None = None
-    line_delays_ns: Mapping[tuple[str, int], float] = field(default_factory=dict)
+    line_delays_ns: Mapping[tuple[str, int], float | Time] = field(default_factory=dict)
     _machine: MachineModel = field(init=False, repr=False, compare=False)
     _plays_everything: bool = field(init=False, repr=False, compare=False)
     # By link id and controller, the processor that runs its calls there.
