@@ -184,7 +184,7 @@ class SimulationResult:
 
 
 def simulate(
-    program: Kernel[Any] | CompiledKernel[Any] | Lowered,
+    program: Kernel[...] | CompiledKernel[...] | Lowered,
     /,
     *args: Any,
     levels: int | dict[int, int] | None = None,

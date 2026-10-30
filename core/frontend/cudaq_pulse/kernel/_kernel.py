@@ -313,7 +313,7 @@ class _Entry:
 class _Dispatcher:
     """Binds a call, finds or builds its specialization, and runs it."""
 
-    def __init__(self, kernel: Kernel[Any], options: CompileOptions, capacity: int | None) -> None:
+    def __init__(self, kernel: Kernel[...], options: CompileOptions, capacity: int | None) -> None:
         self.kernel = kernel
         self.options = options
         self._capacity = capacity
