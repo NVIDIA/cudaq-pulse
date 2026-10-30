@@ -1012,7 +1012,7 @@ class _Tones(Mapping[tuple[int, int], IRValue]):
     transition's frequency, with phase 0, which later reads return as it
     then is."""
 
-    __slots__ = ("_emitter", "_held", "_default", "_frequencies")
+    __slots__ = ("_emitter", "_held", "_default", "_frequencies", "_slot")
 
     def __init__(self, emitter: PulseIREmitter, held: _Held) -> None:
         builder = emitter.b
@@ -1025,6 +1025,7 @@ class _Tones(Mapping[tuple[int, int], IRValue]):
             )
         self._emitter = emitter
         self._held = held
+        self._slot = qudit < 0
         self._default, self._frequencies = line_tones(qudit, held.key[1] == "get_readout_line")
 
     def __getitem__(self, transition: tuple[int, int]) -> IRValue:
@@ -1051,6 +1052,15 @@ class _Tones(Mapping[tuple[int, int], IRValue]):
         return value
 
     def _missing(self, transition: Any) -> str:
+        if self._slot:
+            return (
+                f"the qudit is a runtime parameter, so its transitions' frequencies depend on "
+                f"the carrier each call binds; line.tones has only the default "
+                f"{self._default!r}, line.tone. Pass the frequency of {transition!r} in as a "
+                "float parameter, e.g. f12_hz: float, called with "
+                "dev.transition_freq[q.logical, 1, 2], and play at it with "
+                "set_frequency(line.tone, f12_hz)"
+            )
         if self._held.key[1] == "get_readout_line":
             return (
                 f"a readout line has only its own tone, that of the default transition "
@@ -1470,10 +1480,6 @@ class PulseIREmitter:
                         try:
                             push(getattr(obj, arg))
                         except (AttributeError, TypeError) as e:
-                            if obj.__class__ is IRValue and obj.vtype == "qref":
-                                from ._emit_errors import qudit_attribute_error
-
-                                raise qudit_attribute_error(self.locals, obj, arg) from e
                             raise CompilationError(_attribute_error(obj, arg)) from e
 
                 elif op is _subscr:
@@ -2996,6 +3002,10 @@ class PulseIREmitter:
                 return _Tones(self, chan.held)
             if name == "tone":
                 return chan.held.cells[1].value
+        if value.vtype == "qref":
+            from ._emit_errors import qudit_attribute_error
+
+            raise qudit_attribute_error(self.locals, value, name)
         word = _TYPE_WORDS.get(value.vtype, value.vtype)
         article = "an" if word[0] in "aeiou" else "a"
         hint = "its attributes are" if value.vtype in _LINE_TYPES else "only a line has attributes,"

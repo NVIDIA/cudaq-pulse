@@ -154,6 +154,22 @@ def test_binding_a_placed_module_checks_its_values():
         view.mlir()
 
 
+def test_a_runtime_qudits_line_has_only_its_own_tone():
+    @pulse.kernel
+    def own(q: Qudit):
+        d = get_drive_line(q)
+        drive(d, square(20, 0.1), tone=d.tones[(0, 1)])
+
+    @pulse.kernel
+    def other(q: Qudit):
+        d = get_drive_line(q)
+        drive(d, square(20, 0.1), tone=d.tones[(1, 2)])
+
+    assert [(e.kind, e.qubit) for e in own.lower(H[2]).schedule] == [("drive", 2)]
+    with pytest.raises(pulse.NotFoundError, match="runtime parameter.*f12_hz: float"):
+        other.lower(H[2])
+
+
 def test_qudits_of_two_devices_are_rejected():
     other = _recalibrated(DEV, DEV.layout[3], 1e6)
     with pytest.raises(pulse.DeviceMismatchError):

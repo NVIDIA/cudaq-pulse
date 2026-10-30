@@ -405,6 +405,9 @@ class Device:
         target = self.target
         model = target.model if isinstance(target.model, SimulationModel) else SimulationModel()
         default = model.default_transition
+        if index < 0:
+            # A runtime qudit: its own tone is bound per call, and no other.
+            return default, {}
         qubit = target.qubits[index]
         if readout:
             return default, {default: qubit.frequency_hz}
