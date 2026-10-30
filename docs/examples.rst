@@ -111,6 +111,26 @@ Core Examples
        with the installation's wiring, a "feedback" link that takes a readout
        of one and answers the other, the compile-time checks against the
        control system, and the QPU saved and loaded as one system file
+   * - 24
+     - ``24_pipelined_calibration.py``
+     - Closed-loop calibration with a compile pipeline: the kernel is
+       compiled once, worker processes bind and export the pickled program,
+       and the next batch is ready when the QPU finishes the last
+       *(simulates)*
+   * - 25
+     - ``25_precompiled_branches.py``
+     - Every next program of an adaptive experiment compiled ahead in worker
+       processes and looked up by the check's outcome, against compiling on
+       demand *(simulates)*
+   * - 26
+     - ``26_drift_following.py``
+     - Following a drifting qudit: a background process recompiles when the
+       device fingerprint changes, and the host swaps programs in between
+       batches *(simulates)*
+
+Examples 24 to 26 send compiled programs between processes, which works
+because programs pickle; their worker processes use the ``spawn`` start
+method.
 
 Custom Passes
 -------------
