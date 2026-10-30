@@ -722,6 +722,8 @@ class _Unrolled:
 _MISSING = object()
 # What a comprehension saves for an iteration variable that was unbound.
 _UNBOUND = object()
+# The tag of ("__unresolved__", name), a name nothing in scope defines.
+_UNRESOLVED = "__unresolved__"
 
 _LINE_OPS = frozenset({"get_drive_line", "get_readout_line"})
 # Ops that play a waveform on a line, at its tone or at the keyword tone.
@@ -1623,7 +1625,18 @@ class PulseIREmitter:
                         del stack[-arg:]
                     else:
                         call_args = []
-                    self._dispatch_call(pop(), call_args, None)
+                    fn = pop()
+                    # A pulse op named in no scope, as _dispatch_call routes it.
+                    if (
+                        fn.__class__ is tuple
+                        and len(fn) == 2
+                        and fn[0] is _UNRESOLVED
+                        and not (fn[1] in _PLAYS and arg > 2)
+                        and fn[1] in OP_TABLE
+                    ):
+                        self._push_pulse_results(fn[1], call_args)
+                    else:
+                        self._dispatch_call(fn, call_args, None)
 
                 elif op is _load_const:
                     push(arg)
@@ -1677,7 +1690,7 @@ class PulseIREmitter:
                         else:
                             push(self._value_attribute(obj, arg))
                     elif isinstance(obj, tuple) and len(obj) == 2 and obj[0] == "__unresolved__":
-                        push(("__unresolved__", arg))
+                        push((_UNRESOLVED, arg))
                     else:
                         try:
                             push(getattr(obj, arg))
@@ -2679,7 +2692,7 @@ class PulseIREmitter:
             return value
         if name in self._builtins:
             return self._builtins[name]
-        return ("__unresolved__", name)
+        return (_UNRESOLVED, name)
 
     def _unknown_name(self, name: str) -> str:
         """The error for calling *name*, which nothing in scope defines."""
