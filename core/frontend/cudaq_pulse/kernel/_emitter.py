@@ -3408,16 +3408,22 @@ class PulseIREmitter:
         slots = self._slots
         if fname == "drive" and len(results) == 2:
             # drive(line, waveform, tone) -> (line, tone): the common case.
-            self._rebind_one(call_args[0], results[0])
-            self._rebind_one(call_args[2], results[1])
+            self._rebind_pair(call_args[0], results[0], call_args[2], results[1])
             return
+        names: dict[int, str | None] | None = None
+        if fname == "sync" and len(call_args) == 2 and call_args[0] is not call_args[1]:
+            # Two distinct lines: their names are found in one pass.
+            first, second = call_args
+            found = self._local_names(first, second)
+            names = {id(first): found[0], id(second): found[1]}
         arg_info: list[tuple[str | None, IRValue | None, Any, Any]] = []
         for a in call_args:
             if a.__class__ is IRValue and a.vtype in LINEAR_TYPES:
                 slot = slots.get(id(a))
                 if slot is not None and not _slot_holds(slot, a):
                     slot = None
-                arg_info.append((self._find_local_name(a), a, slot, a.chan))
+                name = self._find_local_name(a) if names is None else names[id(a)]
+                arg_info.append((name, a, slot, a.chan))
             else:
                 arg_info.append((None, None, None, None))
 
@@ -3489,6 +3495,52 @@ class PulseIREmitter:
         name = self._find_local_name(old)
         if name is not None:
             self.locals[name] = new
+        self._rebind_slot(old, new)
+
+    def _rebind_pair(self, old: IRValue, new: IRValue, old2: IRValue, new2: IRValue) -> None:
+        """``_rebind_one(old, new)``, then ``_rebind_one(old2, new2)``: a
+        drive's line and tone. Unless a channel is shared, the names holding
+        them are found in one pass over the locals."""
+        chan = old.chan
+        chan2 = old2.chan
+        if (chan is not None and chan.shared) or (chan2 is not None and chan2.shared):
+            self._rebind_one(old, new)
+            self._rebind_one(old2, new2)
+            return
+        name, name2 = self._local_names(old, old2)
+        if chan is not None:
+            chan.value = new
+            new.chan = chan
+        if name is not None:
+            self.locals[name] = new
+        self._rebind_slot(old, new)
+        if chan2 is not None:
+            chan2.value = new2
+            new2.chan = chan2
+        if name2 is not None:
+            self.locals[name2] = new2
+        self._rebind_slot(old2, new2)
+
+    def _local_names(self, val: IRValue, val2: IRValue) -> tuple[str | None, str | None]:
+        """``_find_local_name`` of two distinct values, in one pass."""
+        name = name2 = None
+        items = iter(self.locals.items())
+        for n, v in items:
+            if v is val:
+                name = n
+                break
+            if v is val2 and name2 is None:
+                name2 = n
+        if name2 is None:
+            # The names after val's first.
+            for n, v in items:
+                if v is val2:
+                    name2 = n
+                    break
+        return name, name2
+
+    def _rebind_slot(self, old: IRValue, new: IRValue) -> None:
+        """Put *new* in the list slot *old* was read from, if it still holds it."""
         slots = self._slots
         slot = slots.get(id(old))
         if slot is not None and slot[2] is old:
