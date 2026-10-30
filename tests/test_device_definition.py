@@ -65,6 +65,8 @@ def test_a_device_definition_error_is_a_value_error_and_a_pulse_error():
         ({"target": "transmon_generic"}, "target", "needs a qudit count"),
         ({"target": TRANSMON_17Q, "layout": "0,1"}, "layout", "must be a list of carrier indices"),
         ({"target": TRANSMON_17Q, "layout": [0, True]}, "layout[1]", "must be a carrier index"),
+        ({"target": TRANSMON_17Q, "layout": []}, "layout", "must name at least one carrier"),
+        ({"target": TRANSMON_17Q, "layout": ()}, "layout", "must name at least one carrier"),
         ({"target": TRANSMON_17Q, "calibration": "nope"}, "calibration", "no calibration 'nope'"),
         (
             {"target": TRANSMON_17Q, "calibration": 3},
@@ -105,6 +107,13 @@ def test_the_device_constructor_checks_its_layout():
     target = _pair()
     with pytest.raises(pulse.DeviceDefinitionError, match=r"layout\[1\]: carrier 0 is already"):
         pulse.Device(target, name="pair", layout=[0, 0])
+    with pytest.raises(pulse.DeviceDefinitionError) as info:
+        pulse.Device(target, name="pair", layout=[])
+    (problem,) = info.value.problems
+    assert str(problem) == (
+        "layout: must name at least one carrier, got an empty list; "
+        "leave layout out for every carrier of the target"
+    )
 
 
 def test_a_file_problem_gives_its_file_line_and_column(tmp_path: Path):

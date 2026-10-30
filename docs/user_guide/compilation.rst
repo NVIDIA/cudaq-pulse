@@ -146,7 +146,8 @@ Options, all keyword-only:
 
 ``device`` *(Device, optional)*
    Pin the compiled kernel to one device. A call with handles of another
-   device raises ``DeviceMismatchError``; a call without handles runs on it.
+   device, even an equal one, raises ``DeviceMismatchError``; a call without
+   handles runs on it.
    A pinned kernel whose parameters are all ``float`` is built when it is
    compiled, so ``.mlir()``, ``.schedule`` and ``.metrics`` work on the
    compiled kernel itself.

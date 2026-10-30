@@ -74,7 +74,7 @@ def _compile_symbolic(kernel):
 
 def _evaluate(compiled, *values):
     """The compiled kernel, lowered at concrete values of its other arguments."""
-    return compiled.lower(_device(1).qudit_handles[0], *values)
+    return compiled.lower(compiled.device.qudit_handles[0], *values)
 
 
 def _simulate(kernel, n=1, qvec=False, args=(), levels=2, **kwargs):

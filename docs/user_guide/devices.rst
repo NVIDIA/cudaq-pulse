@@ -55,12 +55,15 @@ Qudit handles
 
 A ``Qudit`` names a carrier of one device; it is identity, not location. A
 kernel called with handles runs on their device. Passing handles of two
-different devices to one call raises ``DeviceMismatchError``, and passing
-the same qudit twice raises ``TypeError``.
+devices to one call, or handles of another device to a kernel compiled for
+one, raises ``DeviceMismatchError``, and passing the same qudit twice raises
+``TypeError``.
 
 Devices compare by content: two devices built from the same config are
-equal, share compiled kernels, and their handles can be mixed. A layout is
-part of the content.
+equal and share compiled kernels, but each is its own device, so their
+handles do not mix in one call. A layout is part of the content, and an
+empty one is a ``DeviceDefinitionError``: leave ``layout`` out for every
+carrier of the target.
 
 To change a frequency, edit the config, or pass the frequency to the kernel
 as a ``float`` argument and set it on the tone with ``set_frequency``; the

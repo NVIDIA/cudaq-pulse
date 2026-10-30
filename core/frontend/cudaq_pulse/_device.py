@@ -588,7 +588,23 @@ def _layout(
         else:
             first[carrier] = k
         carriers.append(carrier)
-    return tuple(carriers) if len(problems) == found else None
+    return (
+        tuple(carriers) if len(problems) == found and carriers else _empty(layout, problems, found)
+    )
+
+
+def _empty(layout: Sequence[Any], problems: list[Problem], found: int) -> tuple[int, ...] | None:
+    """No layout: the problem of an empty one, unless its entries had others."""
+    if len(problems) == found:
+        problems.append(
+            Problem(
+                "must name at least one carrier, got an empty list",
+                path="layout",
+                value=layout,
+                fix="leave layout out for every carrier of the target",
+            )
+        )
+    return None
 
 
 def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:

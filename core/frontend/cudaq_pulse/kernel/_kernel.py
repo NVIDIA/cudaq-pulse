@@ -263,24 +263,32 @@ def _devices(value: Any, found: Device | None, name: str, seen: set[int]) -> Dev
         device: Device = value.device
         if found is None or found is device:
             return device
-        if found != device:
-            from .._errors import _ranges
-
-            both = (
-                f"both of target {device.name!r}"
-                if found.name == device.name
-                else f"of targets {found.name!r} and {device.name!r}"
-            )
-            raise DeviceMismatchError(
-                f"{name}() got qudits of two different devices, {both}: one with layout "
-                f"{_ranges(found.layout)}, the other with layout {_ranges(device.layout)}; "
-                "pass handles of one device"
-            )
-        return found
+        raise DeviceMismatchError(_two_devices(name, found, device))
     if t is Register or t is tuple or t is list:
         for item in value:
             found = _devices(item, found, name, seen)
     return found
+
+
+def _two_devices(name: str, found: Device, device: Device) -> str:
+    """Why *name*() cannot take qudits of both *found* and *device*."""
+    if found == device:
+        return (
+            f"{name}() got qudits of two separate devices of target {device.name!r} with "
+            "the same definition, as two pulse.device() calls make; pass handles of one device"
+        )
+    from .._errors import _ranges
+
+    both = (
+        f"both of target {device.name!r}"
+        if found.name == device.name
+        else f"of targets {found.name!r} and {device.name!r}"
+    )
+    return (
+        f"{name}() got qudits of two different devices, {both}: one with layout "
+        f"{_ranges(found.layout)}, the other with layout {_ranges(device.layout)}; "
+        "pass handles of one device"
+    )
 
 
 def _count(value: Any, index: int) -> int:
@@ -387,7 +395,7 @@ class _Dispatcher:
             raise _passed_twice(name, twice.qudit, arguments) from None
         pin = self.pin
         if pin is not None:
-            if found is not None and found != pin:
+            if found is not None and found is not pin:
                 raise _pin_mismatch(name, pin, found)
             return pin
         if found is not None:
@@ -447,6 +455,12 @@ class _Dispatcher:
 
 
 def _pin_mismatch(name: str, pin: Device, found: Device) -> DeviceMismatchError:
+    if found == pin:
+        return DeviceMismatchError(
+            f"{name}() is compiled for a device of {pin.name!r} and got qudits of "
+            "another, separate device of it with the same definition; pass "
+            "handles of the device it is compiled for"
+        )
     return DeviceMismatchError(
         f"{name}() is compiled for device {pin.name!r} and got qudits of {found.name!r}"
     )

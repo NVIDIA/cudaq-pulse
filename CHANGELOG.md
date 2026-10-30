@@ -390,7 +390,10 @@ behavior may change in any 0.x release.
   describes a machine as a target plus a qudit layout, from a registered
   target name (`pulse.device("transmon_17q")`), a config mapping
   or file, or, with no argument, the process target. Devices compare by
-  content and share compiled kernels. Target descriptions are
+  content and share compiled kernels, but handles of two devices, even
+  equal ones, do not mix in one call or in a kernel compiled for one
+  (`DeviceMismatchError`), and an empty `layout` is a
+  `DeviceDefinitionError`. Target descriptions are
   `cudaq_pulse.targets.TargetDescription`; the shipped target,
   `"transmon_17q"`, is a 17-qubit transmon device built from
   Krinner et al., Nature 605, 669 (2022).

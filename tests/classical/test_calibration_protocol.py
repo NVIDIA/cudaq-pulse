@@ -148,10 +148,9 @@ def test_a_slower_controller_rejects_the_chain_at_compile_time():
 
 
 def test_two_qubits_calibrate_side_by_side():
-    target = transmon_17q()
-    dev = pulse.device({"target": target})
+    chain, dev, _ = _chain()
     q, p = dev.qudit_handles[:2]
-    one = _chain()[0].lower(q, 20_000.0 * CLOCK)
+    one = chain.lower(q, 20_000.0 * CLOCK)
     two = pulse.compile(_two_chains, device=dev, machine=P["machine"]).lower(q, p, 20_000.0 * CLOCK)
     # Each chain waits only on its own answers, so two take about as long as
     # one: only their requests on the shared link go out one after the other.

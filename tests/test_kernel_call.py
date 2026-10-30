@@ -271,13 +271,38 @@ def test_mixing_devices_in_one_call_is_an_error():
     a, other = _device(), _device(n=5)
     with pytest.raises(pulse.DeviceMismatchError, match="two different devices"):
         pair.lower(a.qudit_handles[0], other.qudit_handles[1])
-    pair.lower(a.qudit_handles[0], _device().qudit_handles[1])
+    pair.lower(a.qudit_handles[0], a.qudit_handles[1])
+
+
+def test_two_separate_devices_with_one_definition_do_not_mix_in_a_call():
+    @pulse.kernel
+    def pair(q0, q1):
+        sync(get_drive_line(q0), get_drive_line(q1))
+
+    a, twin = _device(), _device()
+    assert a == twin
+    message = (
+        r"^pair\(\) got qudits of two separate devices of target 'call-test' with the same "
+        r"definition, as two pulse.device\(\) calls make; pass handles of one device$"
+    )
+    with pytest.raises(pulse.DeviceMismatchError, match=message):
+        pair.lower(a.qudit_handles[0], twin.qudit_handles[1])
+    with pytest.raises(pulse.DeviceMismatchError, match=message):
+        pair.lower(a.qudit_handles[0:1], (twin.qudit_handles[1],))
 
 
 def test_a_pinned_compile_rejects_another_device():
     ck = pulse.compile(rabi, device=_device())
     with pytest.raises(pulse.DeviceMismatchError, match="compiled for device"):
         ck.lower(_device(n=5).qudit_handles[0], 0.1)
+
+
+def test_a_pinned_compile_rejects_a_separate_device_with_its_definition():
+    dev = _device()
+    ck = pulse.compile(rabi, device=dev)
+    with pytest.raises(pulse.DeviceMismatchError, match="another, separate device of it"):
+        ck.lower(_device().qudit_handles[0], 0.1)
+    assert ck.lower(dev.qudit_handles[0], 0.1) is not None
 
 
 def test_a_call_without_a_device_raises(monkeypatch):
