@@ -1180,6 +1180,10 @@ def _structured_controller(limits: ControllerLimits) -> dict[str, Any]:
     return out
 
 
+# The fields a controller exports only when they are set.
+_OPTIONAL_KEYS = frozenset({"max_amplitude", "waveform_memory", "persistent_frames"})
+
+
 def _flat_controller(data: Mapping[str, Any]) -> dict[str, Any]:
     """A format /2 controller under its /1 names, in /1 order."""
     processors = data["processors"]
@@ -1832,11 +1836,7 @@ def _memory(limits: ControllerLimits) -> tuple[int, int, bool, bool, list[str], 
 
 def _checks_natively(limits: ControllerLimits, clocks: _clocks.ClockPlan | None) -> bool:
     """Whether the native check counts every limit of *limits* on *clocks*."""
-    return (
-        _one_clock(clocks)
-        and limits.max_amplitude is None
-        and not (limits.max_events is not None and limits._runs_loops)
-    )
+    return _one_clock(clocks) and not (limits.max_events is not None and limits._runs_loops)
 
 
 def _native_check(
@@ -1869,6 +1869,8 @@ def _native_check(
         )
     if maybe and unresolved is not None:
         unresolved.append("tone frequencies or waveform memory")
+    if limits.max_amplitude is not None:
+        found.extend(_amplitude_violations(lowered, module, limits.max_amplitude, unresolved))
     return found
 
 
@@ -2129,6 +2131,45 @@ def _over_amplitude(
                 f"the controller plays at most {most:g} (ControllerLimits.max_amplitude)"
             )
     return found
+
+
+def _amplitude_violations(
+    lowered: Lowered, module: Any, most: float, unresolved: list[str] | None
+) -> list[str]:
+    """``_over_amplitude`` on one clock, on the format /2 walk of *module*:
+    each distinct waveform is sampled once, and a loop whose iterations
+    repeat is checked once. With *unresolved*, a waveform a float parameter
+    sets is noted there instead, to be checked with each call's values."""
+    table = _Waveforms()
+    with lowered._lock:
+        lines, events, _ = module.controller_program(
+            _PARAMETERS, _AMPLITUDES, lowered.classical != (), True, table
+        )
+    peaks: dict[int, float | None] = {}
+    by_line: dict[int, list[str]] = {}
+    for event in _played(events):
+        index = event["waveform"]
+        if index not in peaks:
+            peaks[index] = _peak_amplitude(table.table[index])
+            if peaks[index] is None and unresolved is not None and _unset(table.table[index]):
+                unresolved.append(f"line {event['line']}: amplitude")
+        peak = peaks[index]
+        if peak is not None and peak > most:
+            role, qudit = lines[event["line"]]
+            by_line.setdefault(event["line"], []).append(
+                f"line {event['line']} ({role} of qudit {qudit}): the "
+                f"{_FLAT_KINDS.get(event['kind'], event['kind'])} at {event['start_cycles']} "
+                f"peaks at amplitude {peak:.6g}; the controller plays at most {most:g} "
+                "(ControllerLimits.max_amplitude)"
+            )
+    return [message for _, messages in sorted(by_line.items()) for message in messages]
+
+
+def _unset(node: Mapping[str, Any]) -> bool:
+    """Whether a value of waveform *node* waits for a float argument."""
+    return None in node.get("params", {}).values() or any(
+        _unset(child) for child in node.get("of", ())
+    )
 
 
 # Samples per cycle the peak of an envelope is found at.

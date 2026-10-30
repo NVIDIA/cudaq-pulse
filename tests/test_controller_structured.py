@@ -692,3 +692,25 @@ def test_a_loop_that_changes_a_tracked_frame_is_listed_per_iteration():
     assert not any(e["kind"] == "loop" for e in structured["events"])
     ids = [u["id"] for e in structured["events"] for u in e.get("frame_updates", ())]
     assert len(ids) == len(set(ids)) == 6
+
+
+def test_an_amplitude_over_the_limit_in_a_rolled_loop_is_reported_for_each_iteration():
+    @pulse.kernel
+    def strong(q):
+        d = get_drive_line(q)
+        for _ in range(1000):
+            drive(d, square(16, 0.9))
+            drive(d, square(16, 0.2))
+
+    lowered = pulse.compile(strong, unroll_threshold=0).lower(Q[0])
+    unrolled = pulse.compile(strong, unroll_threshold=10**6).lower(Q[0])
+    limits = ControllerLimits(max_amplitude=0.5)
+    found = check(lowered, limits)
+    assert list(found) == list(check(unrolled, limits))
+    assert len(found) == 1000
+    assert found[0] == (
+        "line 0 (drive of qudit 0): the drive at 0 peaks at amplitude 0.9; the controller "
+        "plays at most 0.5 (ControllerLimits.max_amplitude)"
+    )
+    assert found[-1] == found[0].replace("at 0 peaks", "at 31968 peaks")
+    assert check(lowered, ControllerLimits(max_amplitude=1.0)) == []
