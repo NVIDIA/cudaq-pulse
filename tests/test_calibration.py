@@ -7,6 +7,7 @@
 # ============================================================================ #
 """The shipped transmon_17q calibration and loading calibrations onto devices."""
 
+import hashlib
 import json
 import math
 import re
@@ -152,6 +153,62 @@ def test_the_17_qubit_device_carries_the_shipped_calibration(cal):
     dev = pulse.device({"target": "transmon_17q"})
     assert dev.calibration == cal
     assert dev.target is transmon_17q()
+
+
+def _index_entry(name):
+    """The ``_shipped_calibrations`` entry of the shipped file *name*."""
+    raw = Path(_SHIPPED, f"{name}.json").read_bytes()
+    data = json.loads(raw)
+    exchange = data["coupling"]["charge_coupling_g_c"]["idle_exchange"]
+    return (
+        hashlib.sha256(raw).hexdigest()[:16],
+        data["_schema"]["default_cooldown"],
+        tuple(data["cooldowns"]),
+        {p: (e["value"], tuple(e["idle_frequencies_hz"])) for p, e in exchange.items()},
+    )
+
+
+def test_the_shipped_calibration_index_is_of_the_shipped_files():
+    from cudaq_pulse._source_stamp import CALIBRATIONS
+    from cudaq_pulse.targets._shipped_calibrations import SHIPPED
+
+    assert set(SHIPPED) == set(CALIBRATIONS)
+    for name, entry in SHIPPED.items():
+        expected = _index_entry(name)
+        assert entry == expected, (
+            f"targets/_shipped_calibrations.py is stale for {name}; its entry is\n{expected!r}"
+        )
+        assert entry[0] == CALIBRATIONS[name]
+
+
+def test_a_device_of_the_shipped_calibration_does_not_read_its_file(monkeypatch):
+    from cudaq_pulse._source_stamp import CALIBRATIONS
+    from cudaq_pulse.targets import calibration, transmon
+
+    read = transmon_17q()
+    read_device = pulse.device("transmon_17q")
+    monkeypatch.setattr(transmon, "_BUILT", {})
+    monkeypatch.setattr(calibration, "_LOADED", {})
+    monkeypatch.setattr(calibration, "_read", lambda path: pytest.fail(f"read {path}"))
+    assert transmon_17q() == read
+    assert pulse.device("transmon_17q").fingerprint == read_device.fingerprint
+    shipped = calibration.shipped_calibration("transmon_17q")
+    digest = CALIBRATIONS["transmon_17q"]
+    assert shipped._identity == ("shipped", "transmon_17q", "2022-main", digest)
+    assert "_data" not in vars(shipped)
+
+
+def test_an_indexed_shipped_calibration_reads_its_file_for_other_values(monkeypatch, cal):
+    from cudaq_pulse.targets import calibration
+
+    monkeypatch.setattr(calibration, "_LOADED", {})
+    shipped = calibration.shipped_calibration("transmon_17q", "2022-a")
+    assert "_data" not in vars(shipped)
+    assert shipped.cooldown == "2022-a" and shipped.cooldowns == cal.cooldowns
+    assert shipped.value("qubits", "D4", "ec") == cal.value("qubits", "D4", "ec")
+    assert shipped.fingerprint == Calibration.load("transmon_17q", cooldown="2022-a").fingerprint
+    with pytest.raises(pulse.InvalidValueError, match="no cooldown 'nope'"):
+        calibration.shipped_calibration("transmon_17q", "nope")
 
 
 def test_a_device_loads_a_calibration_from_its_config(tmp_path, cal):

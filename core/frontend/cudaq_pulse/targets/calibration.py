@@ -275,20 +275,31 @@ class Calibration:
         takes the exchange stored with it, computed when the file was built.
         """
         labels = {q.index: q.label for q in target.qubits.values()}
+        idle_exchange = self._idle_exchange
         couplings = []
         for c in target.couplings:
             name = f"{labels.get(c.qubit_a)}-{labels.get(c.qubit_b)}"
-            if name in self.pairs:
+            found = idle_exchange.get(name)
+            if found is not None:
                 at = (target.qubits[c.qubit_a].frequency_hz, target.qubits[c.qubit_b].frequency_hz)
-                entry = self._couplings()["idle_exchange"][name]
-                stored = entry.get("idle_frequencies_hz")
+                value, stored = found
                 if stored is not None and all(abs(f - g) < 1e3 for f, g in zip(at, stored)):
-                    strength = entry["value"]
+                    strength = value
                 else:
                     strength = self.exchange_hz(name, *at)
                 c = replace(c, coupling_strength_hz=strength)
             couplings.append(c)
         return replace(target, couplings=couplings)
+
+    @cached_property
+    def _idle_exchange(self) -> Mapping[str, tuple[float, Any]]:
+        """Each pair's stored idle exchange and the idle frequencies it was
+        computed at (None if not recorded); preset for an indexed shipped
+        calibration (see ``shipped_calibration``)."""
+        return {
+            pair: (entry["value"], entry.get("idle_frequencies_hz"))
+            for pair, entry in self._couplings()["idle_exchange"].items()
+        }
 
     def _couplings(self) -> Mapping[str, Any]:
         couplings: Mapping[str, Any] = self._data["coupling"]["charge_coupling_g_c"]
@@ -301,17 +312,38 @@ _LOADED_LOCK = threading.Lock()
 
 def shipped_calibration(name: str, cooldown: str | None = None) -> Calibration:
     """A shipped calibration, loaded once: its default cooldown asked for by
-    name or as ``None`` is one calibration."""
+    name or as ``None`` is one calibration. One in ``_shipped_calibrations``
+    is not read until a value beyond what a device takes is used."""
     key = (name, cooldown)
     loaded = _LOADED.get(key)
     if loaded is None:
         with _LOADED_LOCK:
             loaded = _LOADED.get(key)
             if loaded is None:
-                loaded = Calibration.load(name, cooldown=cooldown)
+                loaded = _indexed(name, cooldown) or Calibration.load(name, cooldown=cooldown)
                 loaded = _LOADED.setdefault((name, loaded.cooldown), loaded)
                 _LOADED[key] = loaded
     return loaded
+
+
+def _indexed(name: str, cooldown: str | None) -> Calibration | None:
+    """The shipped calibration *name* (*cooldown*), unread, from
+    ``_shipped_calibrations`` if its entry is of the file this package ships;
+    None otherwise, and for a cooldown the file does not have."""
+    from .._source_stamp import CALIBRATIONS
+    from ._shipped_calibrations import SHIPPED
+
+    entry = SHIPPED.get(name)
+    if entry is None or CALIBRATIONS.get(name) != entry[0]:
+        return None
+    digest, default, cooldowns, idle_exchange = entry
+    cooldown = default if cooldown is None else cooldown
+    if cooldown not in cooldowns:
+        return None
+    unread = Calibration.__new__(Calibration)
+    unread.name, unread.cooldown, unread._shipped = name, cooldown, digest
+    unread._idle_exchange = idle_exchange
+    return unread
 
 
 def _shipped_unread(name: str, cooldown: str, digest: str) -> Calibration | None:
