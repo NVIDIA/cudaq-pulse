@@ -546,7 +546,8 @@ class ControlSystem:
     _plans: dict[float, _clocks.ClockPlan | None] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        from .compiler import MachineModel, _check_reference_clock, _checked_line_delays
+        from ._clocks import checked_line_delays
+        from .compiler import _NO_DELAYS, MachineModel, _check_reference_clock
 
         if isinstance(self.controllers, Controller) or not isinstance(self.controllers, Iterable):
             raise InvalidTypeError(
@@ -580,8 +581,11 @@ class ControlSystem:
                 )
         object.__setattr__(self, "links", MappingProxyType(dict(self.links)))
         _check_reference_clock(self.reference_clock_ghz, "ControlSystem")
+        delays = self.line_delays_ns
         object.__setattr__(
-            self, "line_delays_ns", _checked_line_delays(self.line_delays_ns, "ControlSystem")
+            self,
+            "line_delays_ns",
+            checked_line_delays(delays, "ControlSystem") if delays else _NO_DELAYS,
         )
         problems = _structure_problems(self, "")
         if problems:
@@ -1784,6 +1788,38 @@ def _device_data(device: Device) -> dict[str, Any]:
     if device.control_system is not None:
         data["control_system"] = device.control_system.as_dict()
     return data
+
+
+def _config_systems(
+    config: Mapping[str, Any], key: str, source: str, problems: list[Problem]
+) -> tuple[TargetDescription | None, ControlSystem | None]:
+    """The quantum and control systems of a device config that is a system
+    file or gives a control system, each ``None`` with *problems* noted."""
+    from ._device import _target
+
+    problems.extend(_check_format(config))
+    reader = _Reader(None if source == "config" else source)
+    spec = config.get(key)
+    if isinstance(spec, Mapping):
+        target = reader.quantum_system(spec, key)
+    else:
+        target = _target(spec, problems, key)
+    control = config.get("control_system")
+    if isinstance(control, Mapping):
+        control = reader.control_system(control, "control_system")
+    elif control is not None and not isinstance(control, ControlSystem):
+        problems.append(
+            Problem(
+                f"must be a ControlSystem or its data, got {type(control).__name__}",
+                path="control_system",
+                value=control,
+            )
+        )
+        control = None
+    problems.extend(reader.problems)
+    if control is not None and target is not None:
+        problems.extend(_wiring_problems(control, target))
+    return target, control
 
 
 class _Reader:

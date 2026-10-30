@@ -46,7 +46,7 @@ from .._errors import (
 )
 from .._native._cudaq_pulse_native import evaluate_callback
 from .._units import Time, as_nanoseconds
-from ..compiler import ScheduledEvent, _placement
+from ..compiler import ScheduledEvent
 from . import _propagate
 from ._attributes import _VALID_INTEGRATORS, _f64, _level_attributes, _target_attributes
 
@@ -512,6 +512,8 @@ def _simulate_compiled(
     elif backend == "gpu" or compiled.waits is not None:
         module = compiled._concrete()
     elif compiled.carriers:
+        from .._programs import _placement
+
         # With float values, the placement's module evaluated at them: no
         # copy of the module per value.
         module = _placement(compiled) if compiled.arguments else compiled._concrete()

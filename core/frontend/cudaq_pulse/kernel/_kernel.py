@@ -43,7 +43,7 @@ from typing import Any, NamedTuple
 
 from .._device import Device, DeviceMismatchError, NoDeviceError, Qudit, Register
 from .._errors import InvalidTypeError
-from ..compiler import _PLACEMENTS, CompileOptions, Lowered, _Role, build, with_line_delays
+from ..compiler import CompileOptions, Lowered, build, with_line_delays
 from ._guard import Guard, build_guard
 from ._schedule_blocks import root_schedule, validate_kernel_schedule
 from ._unroll import resolve_unroll_threshold
@@ -446,103 +446,6 @@ class _Dispatcher:
             self._entries.clear()
 
 
-class _Placing(_Dispatcher):
-    """The dispatcher of a kernel with list, qudit or register parameters:
-    the module depends on lists only through their lengths and, with runtime
-    qudits, on the device only through its structure; each call binds them."""
-
-    def _device(self, values: tuple[Any, ...]) -> Device:
-        kernel = self.kernel
-        slotted = kernel._slotted
-        if len(slotted) == 1 and not kernel._split[0]:
-            value = values[slotted[0]]
-            if type(value) is Qudit:
-                device: Device = value.device
-                pin = self.pin
-                if pin is None or pin is device:
-                    return device
-                if device != pin:
-                    raise _pin_mismatch(kernel.__name__, pin, device)
-                return pin
-        name = kernel.__name__
-        found: Device | None = None
-        seen: set[int] = set()
-        wrong = None
-        try:
-            for i in kernel._split[0]:
-                found = _devices(values[i], found, name, seen)
-            for i in kernel._slotted:
-                value = values[i]
-                if type(value) is not Qudit and not (
-                    type(value) is Register or type(value) is list or type(value) is tuple
-                ):
-                    wrong = i
-                    continue
-                found = _devices(value, found, name, seen)
-        except _QuditTwiceError as twice:
-            names = kernel._names
-            met = [*kernel._split[0], *kernel._slotted]
-            raise _passed_twice(name, twice.qudit, [(names[i], values[i]) for i in met]) from None
-        pin = self.pin
-        if wrong is not None:
-            if found is None and pin is None:
-                raise _no_device(name)
-            raise InvalidTypeError(
-                f"{name}(): argument {kernel._names[wrong]!r} must be a qudit handle "
-                f"or a register of them, not {type(values[wrong]).__name__}"
-            )
-        if pin is not None:
-            if found is not None and found != pin:
-                raise _pin_mismatch(name, pin, found)
-            return pin
-        if found is not None:
-            return found
-        raise _no_device(name)
-
-    def _key(self, target: Device, values: tuple[Any, ...]) -> Any:
-        kernel = self.kernel
-        static = kernel._split[0]
-        fingerprint = target._structure if kernel._slotted else target.fingerprint
-        lengths = [len(values[i]) for i in kernel._shaped]
-        return (fingerprint, static, *[_static_key(values[i]) for i in static], *lengths)
-
-    def lookup(self, values: tuple[Any, ...]) -> _Entry:
-        kernel = self.kernel
-        target = self._device(values)
-        key = self._key(target, values)
-        entry = self._entries.get(key)
-        if entry is not None and entry.guard.check():
-            entry.tick = next(_ticks)
-            return entry
-        with self._lock:
-            entry = self._entries.get(key)
-            if entry is not None and entry.guard.check():
-                return entry
-            entry = kernel._specialize(values, target, self.options)
-            self.misses += 1
-            # Tracing may have made float parameters static.
-            key = self._key(target, values)
-            self._insert(key, entry)
-        return entry
-
-    def call(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
-        values = self.kernel._bind(*args, **kwargs)
-        entry = self.lookup(values)
-        return _execute(self._bound(entry, values), entry.returns)
-
-    def lower(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Lowered:
-        values = self.kernel._bind(*args, **kwargs)
-        return self._bound(self.lookup(values), values)
-
-    def _bound(self, entry: _Entry, values: tuple[Any, ...]) -> Lowered:
-        kernel = self.kernel
-        if entry.lowered._role is not None:
-            return kernel._relocate(entry.lowered, values, entry.runtime)
-        if entry.runtime:
-            return entry.lowered._with_values(kernel._runtime_values(values, entry.runtime))
-        return entry.lowered
-
-
 def _pin_mismatch(name: str, pin: Device, found: Device) -> DeviceMismatchError:
     return DeviceMismatchError(
         f"{name}() is compiled for device {pin.name!r} and got qudits of {found.name!r}"
@@ -702,56 +605,6 @@ class Kernel[**P]:
             out.append(v)
         return out
 
-    def _relocate(
-        self, lowered: Lowered, values: tuple[Any, ...], runtime: tuple[int, ...]
-    ) -> Lowered:
-        """The call's view of a module with list or qudit parameters: its
-        float values flattened, and the carrier of each slot."""
-        kinds = self._kinds
-        numbers: list[float] = []
-        carriers: list[int] = []
-        device = None
-        for i in runtime:
-            kind = kinds[i]
-            v = values[i]
-            if kind == _FLOAT:
-                if type(v) is float:
-                    numbers.append(v)
-                else:
-                    numbers.extend(self._runtime_values(values, (i,)))
-            elif kind == _VECTOR:
-                numbers.extend(self._vector_values(v, i))
-            elif kind == _QUDIT:
-                carriers.append(v.index)
-                device = v.device
-            else:
-                for q in v:
-                    carriers.append(q.index)
-                    device = q.device
-        role = lowered._role
-        placement = tuple(carriers)
-        views = None
-        if not numbers and role is not None and device is not None:
-            views = role.views
-            view = views.get((placement, device))
-            if view is not None:
-                return view
-        # A module with list or qudit parameters is a _Placed or _CheckedPlaced.
-        place: Callable[..., Lowered] = lowered.bind
-        view = place(numbers, placement, device)
-        if views is not None and device is not None and len(views) < _PLACEMENTS:
-            views[(placement, device)] = view
-        return view
-
-    def _vector_values(self, value: Any, i: int) -> list[float]:
-        try:
-            return [x if type(x) is float else _real(x) for x in value]
-        except TypeError:
-            raise InvalidTypeError(
-                f"{self.__name__}(): argument {self._names[i]!r} must be a list of real "
-                f"numbers, not {type(value).__name__}"
-            ) from None
-
     def _specialize(self, values: tuple[Any, ...], target: Any, options: CompileOptions) -> _Entry:
         if options.machine.line_delays_ns or self._traced:
             found = self._retimed(values, target, options)
@@ -764,7 +617,9 @@ class Kernel[**P]:
             trace_args = list(values)
             try:
                 if self._relocatable:
-                    lowered, builder = self._build_placed(fn, trace_args, runtime, target, options)
+                    from ._placing import _build_placed
+
+                    lowered, builder = _build_placed(self, fn, trace_args, runtime, target, options)
                 else:
                     for i in self._declared_float:
                         if i not in runtime and values[i].__class__ is float:
@@ -801,66 +656,6 @@ class Kernel[**P]:
             entry.n_qudits = builder.n_qubits
             self._keep_traced(self._traced_key(values, target, options), entry)
         return entry
-
-    def _build_placed(
-        self,
-        fn: Any,
-        trace_args: list[Any],
-        runtime: tuple[int, ...],
-        target: Any,
-        options: CompileOptions,
-    ) -> tuple[Lowered, Any]:
-        """``build`` for a kernel with list, qudit or register parameters:
-        *trace_args*, the call's values, gets their tracing stand-ins."""
-        names = self._names
-        kinds = self._kinds
-        for i in self._declared_float:
-            if i in runtime:
-                continue
-            value = trace_args[i]
-            if value.__class__ is float:
-                from ._durations import Cycles
-
-                trace_args[i] = Cycles(value)
-            elif kinds.get(i) == _VECTOR:
-                from ._durations import Cycles
-
-                # Each element is a float parameter's value, so a duration too.
-                trace_args[i] = [Cycles(v) if v.__class__ is float else v for v in value]
-        parameters: list[str] = []
-        symbols: list[tuple[str, str, str, int | None]] = []
-        slotted: list[tuple[str, str, str, int | None]] = []
-        for i in runtime:
-            kind = kinds[i]
-            value = trace_args[i]
-            if kind == _FLOAT:
-                trace_args[i] = Parameter(names[i], len(parameters), "f64")
-                parameters.append(names[i])
-                symbols.append((names[i], "float", names[i], None))
-            elif kind == _VECTOR:
-                elements = []
-                for k in range(len(value)):
-                    element = f"{names[i]}[{k}]"
-                    elements.append(Parameter(element, len(parameters), "f64"))
-                    parameters.append(element)
-                    symbols.append((element, "vector", names[i], k))
-                trace_args[i] = elements
-            elif kind == _QUDIT:
-                # Slot k of the module traces as the qudit of index -1 - k.
-                trace_args[i] = Qudit(target, -1 - len(slotted), value.logical)
-                slotted.append((f"s{len(slotted)}", "slot", names[i], None))
-            else:
-                first = len(slotted)
-                trace_args[i] = Register(
-                    [Qudit(target, -1 - first - k, q.logical) for k, q in enumerate(value)]
-                )
-                for k in range(len(value)):
-                    slotted.append((f"s{first + k}", "slot", names[i], k))
-        # Promoting list parameters may leave only floats: a module of float
-        # parameters, bound as any other.
-        relocated = any(kinds[i] != _FLOAT for i in runtime)
-        role = _Role((*symbols, *slotted)) if relocated else None
-        return build(fn, trace_args, tuple(parameters), target, options, len(slotted), role)
 
     def _keep_traced(self, key: Any, entry: _Entry) -> None:
         traced = self._traced
@@ -910,7 +705,12 @@ class Kernel[**P]:
         self._slotted = tuple(i for i in runtime if kinds[i] in (_QUDIT, _REGISTER))
         self._shaped = tuple(i for i in runtime if kinds[i] in (_VECTOR, _REGISTER))
         self._relocatable = bool(self._slotted or self._shaped)
-        self._dispatcher_type = _Placing if self._relocatable else _Dispatcher
+        dispatcher: type[_Dispatcher] = _Dispatcher
+        if self._relocatable:
+            from ._placing import _Placing
+
+            dispatcher = _Placing
+        self._dispatcher_type = dispatcher
         # (static, runtime) parameter indices, replaced as one value when a
         # float parameter turns out to shape the program.
         self._split = (static, runtime)
@@ -948,16 +748,6 @@ def _traced_line(e: BaseException) -> str:
         prog, index = frames[0]
         where += f" (in {prog.code.co_name}(), line {prog.location(index)[1]})"
     return where
-
-
-def _real(value: Any) -> float:
-    """*value* as a float, if it is a real number."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        try:
-            return float(value.__float__())
-        except AttributeError:
-            raise InvalidTypeError(f"{type(value).__name__} is not a real number") from None
-    return float(value)
 
 
 def _warn_static(kernel: str, params: list[str], operation: str, where: str = "") -> None:

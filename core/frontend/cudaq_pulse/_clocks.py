@@ -35,9 +35,11 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from ._errors import InvalidValueError
+from ._units import as_nanoseconds
 from .ops import RoundDirection, round_duration
 
 if TYPE_CHECKING:
+    from ._units import Time
     from .controller import ControllerLimits
 
 __all__ = ["RoundDirection", "round_duration"]
@@ -812,3 +814,37 @@ def round_on_grid(n: Any, grid: int, direction: RoundDirection | str) -> int:
             f"round_duration() takes a finite, non-negative number of cycles, got {n!r}"
         )
     return _round(float(n), grid, mode)
+
+
+def checked_line_delays(
+    given: Mapping[tuple[str, int], float | Time], owner: str
+) -> Mapping[tuple[str, int], float]:
+    """*given*, line delays of *owner* (``MachineModel`` or
+    ``ControlSystem``) as times or numbers of ns, checked, as floats of ns in
+    line order."""
+    delays: dict[tuple[str, int], float] = {}
+    for line, ns in dict(given).items():
+        if (
+            not isinstance(line, tuple)
+            or len(line) != 2
+            or line[0] not in ("drive", "readout")
+            or isinstance(line[1], bool)
+            or not isinstance(line[1], int)
+            or line[1] < 0
+        ):
+            raise InvalidValueError(
+                f"{owner}.line_delays_ns keys are ('drive', qudit) or "
+                f"('readout', qudit), got {line!r}"
+            )
+        ns = as_nanoseconds(ns)
+        if isinstance(ns, bool) or not isinstance(ns, (int, float)) or not math.isfinite(ns):
+            raise InvalidValueError(
+                f"{owner}.line_delays_ns[{line!r}] must be a number, got {ns!r}"
+            )
+        if ns < 0:
+            raise InvalidValueError(
+                f"{owner}.line_delays_ns[{line!r}] is {ns} ns; delays cannot be "
+                "negative: to play a line earlier, delay every other line instead"
+            )
+        delays[line] = float(ns)
+    return MappingProxyType(dict(sorted(delays.items())))
