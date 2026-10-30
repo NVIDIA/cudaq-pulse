@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-import json
 import os
 from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, overload
@@ -640,12 +639,15 @@ def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:
         return Calibration.load(given, cooldown=cooldown)
     except NotFoundError as error:
         problems.append(Problem(str(error), path="calibration", value=given))
-    except json.JSONDecodeError as error:
-        problems.append(
-            Problem(f"the calibration file is not valid JSON: {error}", path="calibration")
-        )
     except ValueError as error:
-        problems.append(Problem(str(error), path="cooldown", value=cooldown))
+        import json
+
+        if isinstance(error, json.JSONDecodeError):
+            problems.append(
+                Problem(f"the calibration file is not valid JSON: {error}", path="calibration")
+            )
+        else:
+            problems.append(Problem(str(error), path="cooldown", value=cooldown))
     return None
 
 
@@ -737,6 +739,8 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
 
 def _json_positions(text: str) -> dict[str, tuple[int, int]]:
     """The line and column of each value of the JSON *text*, by its path."""
+    import json
+
     decoder = json.JSONDecoder()
     found: dict[str, int] = {}
 
@@ -850,6 +854,8 @@ def device(config: Mapping[str, Any] | str | os.PathLike[str] | None = None) -> 
                 f"{_count(len(problems), 'problem')} in the device config", problems=problems
             )
         return found
+    import json
+
     file = os.fspath(config)
     with open(config, encoding="utf-8") as f:
         text = f.read()

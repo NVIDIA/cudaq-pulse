@@ -138,6 +138,14 @@ def test_a_file_that_is_not_json_or_not_an_object(tmp_path: Path):
     assert (problem.line, problem.column) == (1, 1)
 
 
+def test_a_calibration_file_that_is_not_json(tmp_path: Path):
+    path = tmp_path / "cal.json"
+    path.write_text('{"cooldowns": ')
+    (problem,) = _problems({"target": TRANSMON_17Q, "calibration": str(path)}).problems
+    assert problem.path == "calibration"
+    assert problem.message.startswith("the calibration file is not valid JSON: ")
+
+
 def test_a_missing_file_is_an_os_error(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         pulse.device(tmp_path / "absent.json")
