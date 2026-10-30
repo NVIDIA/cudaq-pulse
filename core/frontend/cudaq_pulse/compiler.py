@@ -1275,6 +1275,8 @@ def _clocked_builder(
             builder.wait_grids = []
     if machine.controller is not None:
         builder.sample_rate = _clocks.sample_rate(machine.controller, target.clock_ghz)
+        if machine.controller.max_instructions is not None:
+            builder.limit_instructions(machine.controller.max_instructions)
     elif system is not None:
         rates = [_clocks.sample_rate(c, target.clock_ghz) for c in system.controllers]
         if len(set(rates)) == 1:

@@ -12,6 +12,8 @@ import re
 
 import cudaq_pulse as pulse
 import pytest
+from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse.controller import ControllerLimits
 from cudaq_pulse.kernel import _emitter
 from cudaq_pulse.kernel.ir_builder import CompilationError
 
@@ -253,6 +255,131 @@ def test_the_longest_range_a_loop_can_run_still_compiles():
             wait(d, 4)
 
     assert longest.lower(Q[0]) is not None
+
+
+def _holding(n):
+    return MachineModel(controller=ControllerLimits(max_instructions=n))
+
+
+def _growing_waits(d, k):
+    for n in range(k):
+        wait(d, 4 * (n + 1))
+
+
+def test_an_unrolled_range_past_the_instruction_memory_names_the_loop_and_its_size():
+    @pulse.kernel
+    def reads_index(q):
+        d = get_drive_line(q)
+        for n in range(10**15):
+            wait(d, 4 + 4 * (n % 2))
+
+    with pytest.raises(CompilationError) as info:
+        pulse.compile(reads_index, machine=_holding(4096)).lower(Q[0])
+    assert str(info.value).startswith(
+        "for loop over range(0, 1000000000000000) unrolls to about "
+        "1,000,000,000,000,000 operations (1,000,000,000,000,000 iterations of about 1), "
+        "more than the 4,096 the controller holds (ControllerLimits.max_instructions)"
+    )
+    assert "for n in range(10**15):" in "\n".join(info.value.__notes__)
+
+
+def test_a_loop_over_an_iterable_past_the_instruction_memory_names_the_loop():
+    @pulse.kernel
+    def over_list(q):
+        d = get_drive_line(q)
+        for n in [4, 8] * 10**4:
+            wait(d, n)
+            wait(d, n)
+
+    with pytest.raises(CompilationError) as info:
+        pulse.compile(over_list, machine=_holding(4096)).lower(Q[0])
+    assert str(info.value).startswith("for loop over a Python iterable unrolls to about 40,0")
+    assert "(20,000 iterations of about 2), more than the 4,096" in str(info.value)
+    assert "for n in [4, 8] * 10**4:" in "\n".join(info.value.__notes__)
+
+
+def test_the_instruction_limit_error_names_the_unrolled_loop_in_a_helper_and_its_caller():
+    @pulse.kernel
+    def calls(q):
+        d = get_drive_line(q)
+        for _ in range(3):
+            _growing_waits(d, 10**9)
+
+    with pytest.raises(CompilationError, match=r"range\(0, 1000000000\) unrolls") as info:
+        pulse.compile(calls, machine=_holding(100)).lower(Q[0])
+    note = "\n".join(info.value.__notes__)
+    assert note.index("_growing_waits(d, 10**9)") < note.index("for n in range(k):")
+
+
+@pytest.mark.parametrize("carries_state", [False, True])
+def test_a_program_of_exactly_max_instructions_compiles_and_one_more_does_not(carries_state):
+    @pulse.kernel
+    def eleven(q):
+        d = get_drive_line(q)
+        for n in range(10):
+            wait(d, 4 * (n + 1))
+
+    @pulse.kernel
+    def eleven_counted(q):
+        # The loop is traced rolled first and rolled back: it changes count.
+        d = get_drive_line(q)
+        count = 0
+        for _ in range(10):
+            count += 1
+            wait(d, 4)
+
+    kernel = eleven_counted if carries_state else eleven
+    lowered = pulse.compile(kernel, machine=_holding(11), unroll_threshold=0).lower(Q[0])
+    assert lowered.metrics.op_count == 11
+    with pytest.raises(CompilationError, match=r"iterations of about 1\), more than the 10 "):
+        pulse.compile(kernel, machine=_holding(10), unroll_threshold=0).lower(Q[0])
+
+
+def test_a_rolled_loop_holds_its_body_once_against_the_instruction_memory():
+    @pulse.kernel
+    def rolled(q):
+        d = get_drive_line(q)
+        for _ in range(1000):
+            wait(d, 4)
+
+    ops = rolled.lower(Q[0]).metrics.op_count
+    assert ops < 10
+    assert pulse.compile(rolled, machine=_holding(ops)).lower(Q[0]).metrics.op_count == ops
+
+
+def test_a_program_past_the_instruction_memory_outside_any_loop_says_so():
+    @pulse.kernel
+    def straight(q):
+        d = get_drive_line(q)
+        wait(d, 4)
+        wait(d, 8)
+        wait(d, 12)
+
+    with pytest.raises(CompilationError, match=r"^the program holds 3 operations, more than the 2"):
+        pulse.compile(straight, machine=_holding(2)).lower(Q[0])
+
+
+def test_without_an_instruction_memory_unrolling_has_no_size_limit():
+    @pulse.kernel
+    def long(q):
+        d = get_drive_line(q)
+        for n in range(20_000):
+            wait(d, 4 + 4 * (n % 2))
+
+    assert long.lower(Q[0]).metrics.op_count == 20_001
+    machine = MachineModel(controller=ControllerLimits())
+    assert pulse.compile(long, machine=machine).lower(Q[0]).metrics.op_count == 20_001
+
+
+@pytest.mark.parametrize("wrong", [0, -1, True, 1.5, "8"])
+def test_max_instructions_is_a_positive_int_or_none(wrong):
+    with pytest.raises(pulse.InvalidValueError, match="max_instructions must be a positive int"):
+        ControllerLimits(max_instructions=wrong)
+
+
+def test_exports_list_max_instructions_only_when_it_is_set():
+    assert "max_instructions" not in ControllerLimits().as_dict()
+    assert ControllerLimits(max_instructions=64).as_dict()["max_instructions"] == 64
 
 
 def test_iterating_a_pulse_value_is_an_error():

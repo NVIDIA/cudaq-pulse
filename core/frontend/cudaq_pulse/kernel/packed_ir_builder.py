@@ -373,6 +373,9 @@ class PackedIRBuilder:
         self._freq_hz = qubit_freq_hz or {}
         # Repeating one zero is twice as fast as converting a zeroed bytes.
         self._buf = array("q", _ZERO) * 8192
+        # Where _ensure next grows the buffer: its end, or sooner when
+        # max_instructions bounds the ops still allowed, to check them.
+        self._cap = len(self._buf)
         self._cur = 0
         self._next_id = 0
         self._next_qubit = 0
@@ -396,6 +399,11 @@ class PackedIRBuilder:
         self.impure = False
         # The compilation's loop-unroll threshold; None for the default.
         self.unroll_threshold: int | None = None
+        # The controller's ControllerLimits.max_instructions; set it with
+        # limit_instructions().
+        self.max_instructions: int | None = None
+        # Unrolled loop id -> (iterations done, op count) at the last check.
+        self._limit_checks: dict[int, tuple[int, int]] = {}
         # What the traced kernel returned.
         self.returned: Any = None
         # Float arguments that reached an integer (a duration, a cast to
@@ -421,8 +429,31 @@ class PackedIRBuilder:
         return v
 
     def _ensure(self, n: int) -> None:
-        while self._cur + n >= len(self._buf):
-            self._buf.frombytes(bytes(8 * len(self._buf)))
+        if self._cur + n >= self._cap:
+            while self._cur + n >= len(self._buf):
+                self._buf.frombytes(bytes(8 * len(self._buf)))
+            self._cap = len(self._buf)
+            if self.max_instructions is not None:
+                self._check_instructions(n, self.max_instructions)
+
+    def _check_instructions(self, n: int, limit: int) -> None:
+        # Every op writes at least one word after counting itself, so the
+        # op past the limit reaches the cap set here, or an earlier one.
+        if self._op_count > limit:
+            from ._emitter import instruction_limit_error
+
+            raise instruction_limit_error(self._op_count, limit, self._limit_checks)
+        from ._emitter import note_unrolled_progress
+
+        note_unrolled_progress(self._op_count, self._limit_checks)
+        self._cap = min(self._cap, self._cur + n + limit - self._op_count + 1)
+
+    def limit_instructions(self, limit: int | None) -> None:
+        """Stop tracing with a ``CompilationError`` once the program holds
+        more than *limit* ops (``None``: no limit)."""
+        self.max_instructions = limit
+        self._cap = 0
+        self._ensure(0)
 
     def _w(self, val: int) -> None:
         self._buf[self._cur] = val
@@ -1148,6 +1179,8 @@ class PackedIRBuilder:
             self._next_scope,
         ) = checkpoint
         self._regions = regions
+        if self.max_instructions is not None:
+            self._cap = 0
         del self.variable_waits[waits:]
         if self.wait_grids is not None:
             del self.wait_grids[waits:]

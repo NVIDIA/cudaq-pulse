@@ -600,7 +600,11 @@ behavior may change in any 0.x release.
   2**53, whether given as an `int`, a time, or an `int` or `float` argument
   the kernel is compiled for. A `range()` loop runs at most 2**63 - 1
   times; a longer one is a `CompilationError` at its line, not an
-  `OverflowError`. `simulate(shots=...)` and `emulate(shots=...)`
+  `OverflowError`. A controller holds at most
+  `ControllerLimits.max_instructions` operations (unset: no limit); a loop
+  that unrolls past them stops tracing as soon as the program does, with a
+  `CompilationError` at the loop's line naming the loop, about how many
+  operations it unrolls to and the limit. `simulate(shots=...)` and `emulate(shots=...)`
   take a positive `int` (`InvalidTypeError` or `InvalidValueError`
   otherwise; `simulate`'s default `None` still samples nothing), and a
   qudit index past a device or register is an `IndexOutOfRangeError`, an

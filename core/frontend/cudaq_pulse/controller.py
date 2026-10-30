@@ -208,6 +208,11 @@ class ControllerLimits:
     "timeout"``); without, only waits that block or are budgeted are
     allowed.
     ``max_events``: the drives and readouts of one program.
+    ``max_instructions``: the operations one program may hold, as the
+    kernel traces them (``None``: no limit). An unrolled loop holds its
+    body once per iteration, a rolled one once; tracing stops when the
+    program grows past the limit, and the error names the loop that
+    unrolled it. Exports list it among the limits only when it is set.
     ``max_fine_delay_ns``: the longest delay, below one grid step, each line
     can add to its output (0: none), a time or a number of ns; it plays the
     part of a calibrated line delay (``MachineModel.line_delays_ns``) that
@@ -255,6 +260,7 @@ class ControllerLimits:
     max_calls_per_shot: int | None = None
     buffer_bytes: int | None = None
     controller_form: bool = False
+    max_instructions: int | None = None
 
     def __post_init__(self) -> None:
         if self.clock_ghz is not None and not self.clock_ghz > 0:
@@ -305,6 +311,11 @@ class ControllerLimits:
             value = getattr(self, name)
             if value is not None and value < 1:
                 raise ValueError(f"ControllerLimits.{name} must be positive or None")
+        size = self.max_instructions
+        if size is not None and (isinstance(size, bool) or not isinstance(size, int) or size < 1):
+            raise InvalidValueError(
+                f"ControllerLimits.max_instructions must be a positive int or None, got {size!r}"
+            )
         if self.compute_clock_ghz is not None and not self.compute_clock_ghz > 0:
             raise ValueError(
                 f"ControllerLimits.compute_clock_ghz must be positive, got {self.compute_clock_ghz}"
@@ -359,8 +370,9 @@ class ControllerLimits:
         data["acquirers"] = {str(k): v for k, v in sorted(self.acquirers.items())}
         data["op_cycles"] = dict(sorted(self.op_cycles.items()))
         data["compute_links"] = list(self.compute_links)
-        if self.max_amplitude is None:
-            del data["max_amplitude"]
+        for name in ("max_amplitude", "max_instructions"):
+            if data[name] is None:
+                del data[name]
         return data
 
 

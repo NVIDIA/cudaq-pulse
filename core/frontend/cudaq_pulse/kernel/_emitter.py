@@ -799,6 +799,99 @@ def tracing_frames() -> list[tuple[bc.DecodedCode, int]]:
     return frames
 
 
+def _unrolled_loops() -> list[tuple[Any, int | None, int, list[tuple[bc.DecodedCode, int]]]]:
+    """The loops being unrolled now, outermost first, as (loop, trip count
+    or None, iterations started, the frames ``pulse_source`` and
+    ``pulse_callers`` name for its ``for`` line)."""
+    code = PulseIREmitter._loop.__code__
+    frames: list[tuple[bc.DecodedCode, int, Any]] = []
+    frame: types.FrameType | None = sys._getframe(1)
+    while frame is not None:
+        if frame.f_code is code:
+            prog = frame.f_locals["prog"]
+            if not frames or frames[-1][0] is not prog:
+                frames.append((prog, frame.f_locals["pc"] - 1, frame.f_locals["self"].stack))
+        frame = frame.f_back
+    found: list[tuple[Any, int | None, int, list[tuple[bc.DecodedCode, int]]]] = []
+    for depth in range(len(frames) - 1, -1, -1):
+        prog, index, stack = frames[depth]
+        headers = [
+            i
+            for i, (op, arg) in enumerate(prog.instrs[:index])
+            if op is FOR_ITER and i < index < arg[0]
+        ]
+        loops = [v for v in stack if type(v) is _Loop or type(v) is _Unrolled]
+        if len(loops) != len(headers):
+            continue
+        callers = [(p, i) for p, i, _ in frames[depth + 1 :]]
+        for loop, header in zip(loops, headers):
+            if isinstance(loop, _Unrolled):
+                left = operator.length_hint(loop.it, -1)
+                trips = None if left < 0 else loop.count + left
+                found.append((loop, trips, loop.count, [(prog, header), *callers]))
+            elif loop.rolled is False:
+                rng = loop.rng
+                past = rng.step - (1 if rng.step > 0 else -1)
+                count = max(0, (rng.stop - rng.start + past) // rng.step)
+                started = count - operator.length_hint(loop.it)
+                found.append((loop, count, started, [(prog, header), *callers]))
+    return found
+
+
+def _widest(loops: list[Any]) -> Any:
+    """Of ``_unrolled_loops()``, the loop with the most iterations."""
+    return max(loops, key=lambda entry: entry[2] if entry[1] is None else entry[1])
+
+
+def note_unrolled_progress(op_count: int, checks: dict[int, tuple[int, int]]) -> None:
+    """Remember how far the widest unrolled loop is, at *op_count* ops; the
+    instruction-limit error estimates the ops per iteration from it."""
+    loops = _unrolled_loops()
+    if loops:
+        loop, _, started, _ = _widest(loops)
+        checks[id(loop)] = (started, op_count)
+
+
+def instruction_limit_error(
+    op_count: int, limit: int, checks: dict[int, tuple[int, int]]
+) -> CompilationError:
+    """The error for a program grown to *op_count* ops, past the
+    controller's *limit*, noted at the ``for`` line of the widest loop
+    being unrolled."""
+    holds = f"more than the {limit:,} the controller holds (ControllerLimits.max_instructions)"
+    loops = _unrolled_loops()
+    if not loops:
+        return CompilationError(f"the program holds {op_count:,} operations, {holds}")
+    loop, trips, started, frames = _widest(loops)
+    seen = checks.get(id(loop))
+    if seen is not None and started > seen[0]:
+        per = (op_count - seen[1]) / (started - seen[0])
+    else:
+        per = op_count / max(started, 1)
+    each = f"{per:,.0f}" if per >= 10 or abs(per - round(per)) < 0.05 else f"{per:.1f}"
+    if type(loop) is _Loop:
+        what = f"for loop over {loop.rng!r}"
+        why = (
+            "a range() loop stays rolled, held once, only when its body does not "
+            "read the loop variable or change Python state"
+        )
+    else:
+        what = "for loop over a Python iterable"
+        why = "loops over Python iterables are always unrolled"
+    if trips is None:
+        size = f"has unrolled {started:,} iterations of about {each} operations"
+    else:
+        size = (
+            f"unrolls to about {round(trips * per):,} operations "
+            f"({trips:,} iterations of about {each})"
+        )
+    error = CompilationError(f"{what} {size}, {holds}; {why}")
+    error.pulse_source = frames[0]  # type: ignore[attr-defined]
+    error.pulse_callers = frames[1:]  # type: ignore[attr-defined]
+    add_source_note(error)
+    return error
+
+
 def add_source_note(e: BaseException) -> None:
     """Add a note to *e* with the kernel source lines that raised it, as a
     traceback shows them: the kernel's own line first."""

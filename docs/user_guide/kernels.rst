@@ -199,12 +199,23 @@ size of 6, even at 8-12, and slower beyond: 1.2-1.4x at 24, 2-3x at 96 and
 more than 20x at 1500, where simulation dominates. The default, 8, is the
 crossover; ``benchmarks/compiler/unroll_threshold.py`` repeats the measurement.
 
+**Unrolled size.** An unrolled loop holds its body once per iteration, so
+its size has no limit of its own. A controller given
+``ControllerLimits(max_instructions=n)`` holds at most ``n`` operations as
+the kernel traces them: tracing stops as soon as the program grows past
+them, with a ``CompilationError`` at the line of the loop that unrolled it,
+naming the loop, about how many operations it unrolls to and the limit. A
+rolled loop holds its body once.
+
 **For loops over Python values** known when the kernel is traced: lists,
 tuples, dictionaries, ``enumerate()``, ``zip()``, ``reversed()``, a qubit
 vector, or any other finite iterable. These loops are always unrolled, one
 traced iteration per element, with ``break``, ``continue`` and ``else``
-behaving as in Python. Lines held in lists stay threaded through the
-loop:
+behaving as in Python. An iterator may be endless, and a body that plays
+nothing never fills the controller, so tracing such a loop stops with a
+``CompilationError`` after 1,000,000 iterations; a controller's
+``max_instructions`` bounds these loops as it does ``range()`` ones. Lines
+held in lists stay threaded through the loop:
 
 .. code-block:: python
 
