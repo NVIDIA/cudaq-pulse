@@ -591,7 +591,8 @@ behavior may change in any 0.x release.
   or failing in an MLIR pass: a NaN or infinite amplitude, sigma, beta,
   phase, frequency or `custom_samples` sample; a sigma that is not
   positive; an amplitude or other float that is not a number, such as
-  `None`; and a duration outside its cycles. A waveform lasts 1 to 2**53
+  `None` or a string, even one `float()` would parse (`"0.5"`); and a
+  duration outside its cycles. A waveform lasts 1 to 2**53
   cycles, and a wait, a flat top (`gaussian_square` width) or a bound 0 to
   2**53, whether given as an `int`, a time, or an `int` or `float` argument
   the kernel is compiled for. `simulate(shots=...)` and `emulate(shots=...)`

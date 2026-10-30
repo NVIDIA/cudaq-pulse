@@ -931,11 +931,9 @@ def _sample_envelope(
                 "wf_scale(custom(duration, f), amplitude)"
             )
         try:
-            number = complex(value)
-        except (TypeError, ValueError):
-            raise CompilationError(
-                f"custom(): the envelope returned {_describe(value)} at t={t * scale}, not a number"
-            ) from None
+            number: complex = value.__float__()
+        except (AttributeError, TypeError, ValueError):
+            number = _envelope_number(value, t * scale)
         if number.imag != 0.0:
             raise CompilationError(
                 f"custom(): the envelope returned {number} at t={t * scale}; complex envelopes "
@@ -947,6 +945,20 @@ def _sample_envelope(
             )
         samples.append(number.real)
     return samples
+
+
+def _envelope_number(value: Any, t: float) -> complex:
+    """*value*, what a ``custom()`` envelope returned at *t* without
+    ``__float__``, as complex() reads it; a string, which complex() would
+    parse, is an error."""
+    if not isinstance(value, (str, bytes, bytearray)):
+        try:
+            return complex(value)
+        except (TypeError, ValueError):
+            pass
+    raise CompilationError(
+        f"custom(): the envelope returned {_describe(value)} at t={t}, not a number"
+    )
 
 
 def _unpack_error(value: Any, count: int) -> str:

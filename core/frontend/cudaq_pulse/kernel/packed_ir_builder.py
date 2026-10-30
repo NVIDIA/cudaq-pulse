@@ -131,7 +131,7 @@ _ZERO = (0,)
 def _real(value: Any, description: str) -> float:
     """*value* as a float, or the error naming *description* and what it got."""
     try:
-        if isinstance(value, (str, bytes)):
+        if isinstance(value, (str, bytes, bytearray)):
             raise TypeError
         return float(value)
     except (TypeError, ValueError):
@@ -195,7 +195,9 @@ def _collision(first: Any, second: Any, key: int) -> str:
 
 
 def _f2i(x: float) -> int:
-    return int(_unpack_q.unpack(_pack_d.pack(float(x)))[0])
+    """The bits of *x* as a double. Any real number converts as float()
+    converts it; a string, which float() would parse, raises struct.error."""
+    return int(_unpack_q.unpack(_pack_d.pack(x))[0])
 
 
 # The record header stores the payload length in 8 bits. Region records,
@@ -225,8 +227,34 @@ def _complex_parts(val: Any) -> tuple[float, float]:
             raise CompilationError(
                 f"an amplitude sequence must be [re] or [re, im], got {len(parts)} values"
             )
-        return (float(parts[0]), float(parts[1]) if len(parts) == 2 else 0.0)
-    return (float(val), 0.0)
+        try:
+            return (parts[0].__float__(), parts[1].__float__() if len(parts) == 2 else 0.0)
+        except AttributeError:
+            return (_number(parts[0]), _number(parts[1]) if len(parts) == 2 else 0.0)
+    try:
+        return (val.__float__(), 0.0)
+    except AttributeError:
+        return (_number(val), 0.0)
+
+
+def _number(value: Any) -> float:
+    """*value*, a number without ``__float__`` (one with ``__index__``), as a
+    float; a TypeError for a string, which float() would parse, as for any
+    other value that is not a number. The caller's error says what it got."""
+    if isinstance(value, (str, bytes, bytearray)):
+        raise TypeError
+    return float(value)
+
+
+def _sample_number(sample: Any) -> complex:
+    """*sample*, a ``custom_samples()`` value without ``__float__``, as
+    complex() reads it; a string, which complex() would parse, is an error."""
+    if not isinstance(sample, (str, bytes, bytearray)):
+        try:
+            return complex(sample)
+        except (TypeError, ValueError):
+            pass
+    raise CompilationError(f"custom_samples() samples must be real numbers, got {sample!r}")
 
 
 def _flatten(items: Any) -> Any:
@@ -648,14 +676,14 @@ class PackedIRBuilder:
                 self._w(pvid)
             else:
                 try:
-                    delta = float(val_raw)
-                except (TypeError, ValueError):
-                    delta = _real(val_raw, "shift_phase phase")
+                    bits = _f2i(val_raw)
+                except struct.error:
+                    bits = _f2i(_real(val_raw, "shift_phase phase"))
                 self._ensure(4)
                 self._w(_header(_SHIFT_PHASE, 3))
                 self._w(tv)
                 self._w(rtv)
-                self._w(_f2i(delta))
+                self._w(bits)
             return results
 
         # --- set_phase ---
@@ -672,14 +700,14 @@ class PackedIRBuilder:
                 self._w(pvid)
             else:
                 try:
-                    phase = float(val_raw)
-                except (TypeError, ValueError):
-                    phase = _real(val_raw, "set_phase phase")
+                    bits = _f2i(val_raw)
+                except struct.error:
+                    bits = _f2i(_real(val_raw, "set_phase phase"))
                 self._ensure(4)
                 self._w(_header(_SET_PHASE, 3))
                 self._w(tv)
                 self._w(rtv)
-                self._w(_f2i(phase))
+                self._w(bits)
             return results
 
         # --- shift_frequency ---
@@ -701,14 +729,14 @@ class PackedIRBuilder:
                 self._w(pvid)
             else:
                 try:
-                    freq = float(val_raw)
-                except (TypeError, ValueError):
-                    freq = _real(val_raw, "shift_frequency frequency")
+                    bits = _f2i(val_raw)
+                except struct.error:
+                    bits = _f2i(_real(val_raw, "shift_frequency frequency"))
                 self._ensure(4)
                 self._w(_header(_SHIFT_FREQ, 3))
                 self._w(tv)
                 self._w(rtv)
-                self._w(_f2i(freq))
+                self._w(bits)
             return results
 
         # --- set_frequency ---
@@ -730,14 +758,14 @@ class PackedIRBuilder:
                 self._w(pvid)
             else:
                 try:
-                    freq = float(val_raw)
-                except (TypeError, ValueError):
-                    freq = _real(val_raw, "set_frequency frequency")
+                    bits = _f2i(val_raw)
+                except struct.error:
+                    bits = _f2i(_real(val_raw, "set_frequency frequency"))
                 self._ensure(4)
                 self._w(_header(_SET_FREQ, 3))
                 self._w(tv)
                 self._w(rtv)
-                self._w(_f2i(freq))
+                self._w(bits)
             return results
 
         if kind.startswith("scf."):
@@ -1272,9 +1300,12 @@ class PackedIRBuilder:
         self._w(_header(_NUM_CONST, 3))
         self._w(result)
         self._w(_NUMERIC_TYPE[expected_dtype])
-        self._w(
-            _as_i64(value, "integer expression") if expected_dtype == "i64" else _f2i(float(value))
-        )
+        try:
+            self._w(
+                _as_i64(value, "integer expression") if expected_dtype == "i64" else _f2i(value)
+            )
+        except struct.error:
+            self._w(_f2i(_real(value, "a pulse op operand")))
         return result
 
     def select(self, value: Selection, dtype: str, specializes: bool = True) -> int:
@@ -1460,8 +1491,8 @@ class PackedIRBuilder:
                 elif dtype == "i64":
                     encoded.append(_as_i64(v, "integer operand"))
                 else:
-                    encoded.append(_f2i(float(v)))
-        except (TypeError, ValueError):
+                    encoded.append(_f2i(v))
+        except (TypeError, ValueError, struct.error):
             op, fields = _WF_FIELDS[wf_code]
             for v, dtype, field in zip(vals, dtypes, fields):
                 if dtype != "i64" and not is_symbolic(v):
@@ -1489,7 +1520,10 @@ class PackedIRBuilder:
             raise CompilationError("custom_samples() requires at least one sample")
         encoded: list[int] = []
         for sample in sample_values:
-            value = complex(sample)
+            try:
+                value: complex = sample.__float__()
+            except (AttributeError, TypeError, ValueError):
+                value = _sample_number(sample)
             if value.imag != 0.0:
                 raise CompilationError(
                     "complex custom samples are not supported yet; provide "

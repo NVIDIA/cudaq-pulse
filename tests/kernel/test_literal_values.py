@@ -10,8 +10,11 @@
 from __future__ import annotations
 
 import inspect
+from decimal import Decimal
+from fractions import Fraction
 
 import cudaq_pulse as pulse
+import numpy as np
 import pytest
 from cudaq_pulse import CompilationError
 from cudaq_pulse.controller import export
@@ -43,6 +46,15 @@ def _line_of(fn, text: str) -> int:
 
 NAN, INF = float("nan"), float("inf")
 
+
+def string_envelope(t):
+    return "0.5"
+
+
+def numpy_envelope(t):
+    return np.float64(0.1)
+
+
 REJECTED = [
     # Waveform floats must be finite.
     ("drive(d, square(8, nan))", "square amplitude must be finite, got nan"),
@@ -73,13 +85,29 @@ REJECTED = [
     ("drive(d, square(8, None))", r"square amplitude must be a number or \[re, im\], got None"),
     ("shift_phase(d.tone, None)", "shift_phase phase must be a real number, got None"),
     ("set_frequency(d.tone, [5.0])", r"set_frequency frequency must be a real number, got \[5.0\]"),
+    # A string is not a number, even one that float() would parse.
+    ("drive(d, square(8, '0.5'))", r"square amplitude must be a number or \[re, im\], got '0.5'"),
+    ("drive(d, square(8, b'0.5'))", r"square amplitude must be a number or \[re, im\], got b'0.5'"),
+    ("drive(d, square(8, ['0.5', 0]))", r"square amplitude must be a number or \[re, im\]"),
+    ("drive(d, gaussian(40, '0.1', 10.0))", "gaussian amplitude must be a real number, got '0.1'"),
+    ("drive(d, gaussian(40, 0.1, '10'))", "gaussian sigma must be a real number, got '10'"),
+    ("drive(d, drag(40, 0.1, 10.0, '0.2'))", "drag beta must be a real number, got '0.2'"),
+    ("drive(d, cosine(40, '0.1'))", "cosine amplitude must be a real number, got '0.1'"),
+    ("drive(d, custom_samples(['0.5', 0.1]))", r"custom_samples\(\) samples must be real numbers"),
+    ("drive(d, custom_samples([None, 0.1]))", r"custom_samples\(\) samples must be real numbers"),
+    ("drive(d, custom(8, string_envelope))", r"custom\(\): the envelope returned str '0.5'"),
+    ("drive(d, wf_scale(square(8, 0.1), '2'))", "must be a real number, got '2'"),
+    ("shift_phase(d.tone, '0.5')", "shift_phase phase must be a real number, got '0.5'"),
+    ("set_phase(d.tone, '0.5')", "set_phase phase must be a real number, got '0.5'"),
+    ("shift_frequency(d.tone, '1e6')", "shift_frequency frequency must be a real number"),
+    ("set_frequency(d.tone, '5e9')", "set_frequency frequency must be a real number, got '5e9'"),
 ]
 
 
 @pytest.mark.parametrize(("body", "message"), REJECTED, ids=[body for body, _ in REJECTED])
 def test_a_rejected_value_names_the_line(body, message):
     kernel = _kernel(body)
-    kernel.__wrapped__.__globals__.update(nan=NAN, inf=INF)
+    kernel.__wrapped__.__globals__.update(nan=NAN, inf=INF, string_envelope=string_envelope)
     with pytest.raises(CompilationError, match=message) as info:
         kernel.lower(Q[0])
     assert 'File "<kernel>", line 4, in k' in _note(info.value)
@@ -106,6 +134,27 @@ def test_the_line_is_named_with_or_without_passes(passes):
 )
 def test_values_at_the_edge_of_each_rule_still_compile(body):
     assert _kernel(body).lower(Q[0]) is not None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "drive(d, square(8, np.float32(0.25)))",
+        "drive(d, square(8, [np.float64(0.1), 1]))",
+        "drive(d, square(8, Fraction(1, 4)))",
+        "drive(d, gaussian(40, Decimal('0.1'), np.int64(10)))",
+        "drive(d, custom_samples([0.5 + 0j, np.float64(0.1), True]))",
+        "drive(d, custom(8, numpy_envelope))",
+        "shift_phase(d.tone, Fraction(1, 2))",
+        "set_frequency(d.tone, np.float64(5e9))",
+    ],
+)
+def test_a_real_number_of_any_type_still_compiles(body):
+    kernel = _kernel(body)
+    kernel.__wrapped__.__globals__.update(
+        np=np, Decimal=Decimal, Fraction=Fraction, numpy_envelope=numpy_envelope
+    )
+    assert kernel.lower(Q[0]) is not None
 
 
 @pytest.mark.parametrize(
