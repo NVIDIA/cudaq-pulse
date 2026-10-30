@@ -41,6 +41,14 @@ target_link_libraries(cudaq-pulse-opt PRIVATE
   MLIRTransformUtils
 )
 
+# MLIR is linked in statically, so the driver loads no library of its own.
+# add_llvm_executable's run paths (../lib, and on macOS the toolchain's
+# absolute lib directory) would only point an installed driver at the
+# build machine's directories.
+set_target_properties(cudaq-pulse-opt PROPERTIES
+  BUILD_RPATH ""
+  INSTALL_RPATH ""
+  SKIP_BUILD_RPATH ON)
 llvm_update_compile_flags(cudaq-pulse-opt)
 # Pass plugins (--load-pass-plugin) resolve MLIR symbols from this executable.
 export_executable_symbols_for_plugins(cudaq-pulse-opt)
