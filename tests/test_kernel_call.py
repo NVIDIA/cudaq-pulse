@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import random
@@ -21,7 +22,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import Qubit, TargetDescription, TransmonModel
 from cudaq_pulse.targets._registry import ENV_VAR
 
 from tests._handles import Q
@@ -372,7 +373,11 @@ def test_calling_a_kernel_runs_it_and_returns_none_without_a_return():
 
 
 def test_a_returned_measurement_is_its_outcome():
-    q = _device().qudit_handles[0]
+    # A call samples its outcome unseeded. On three levels this pi pulse
+    # leaves 0.5% outside level 1; on two, outcome 1 is certain.
+    target = dataclasses.replace(_device().target, model=TransmonModel(levels={0: 2}))
+    q = pulse.device({"target": target}).qudit_handles[0]
+    assert [b.levels for b in pulse.simulate(flip_and_measure.lower(q)).branches] == [(1,)]
     assert flip_and_measure(q) == 1
     assert pulse.compile(flip_and_measure)(q) == 1
 
