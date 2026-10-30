@@ -2643,7 +2643,7 @@ public:
     std::vector<nb::object> dropped;
     bool keep = false;
     {
-      std::lock_guard<std::mutex> guard(specialized_.mutex);
+      nb::ft_lock_guard guard(specialized_.mutex);
       auto &entries = specialized_.entries;
       for (auto it = entries.begin(); it != entries.end(); ++it) {
         if (llvm::StringRef(it->key) != key.str())
@@ -2694,7 +2694,7 @@ public:
     nb::object result = nb::cast(std::move(built), nb::rv_policy::move);
     if (!keep || specialized_.maxEntries == 0 || specialized_.maxOps == 0)
       return result;
-    std::lock_guard<std::mutex> guard(specialized_.mutex);
+    nb::ft_lock_guard guard(specialized_.mutex);
     auto &entries = specialized_.entries;
     for (auto &entry : entries)
       if (llvm::StringRef(entry.key) == key.str())
@@ -2710,7 +2710,7 @@ public:
   std::tuple<size_t, size_t, int64_t> specialized_cache(int64_t entries,
                                                         int64_t ops) {
     std::vector<nb::object> dropped;
-    std::lock_guard<std::mutex> guard(specialized_.mutex);
+    nb::ft_lock_guard guard(specialized_.mutex);
     if (entries >= 0)
       specialized_.maxEntries = static_cast<size_t>(entries);
     if (ops >= 0)
@@ -3195,8 +3195,10 @@ private:
     uint64_t moduleVersion; // of the module built
     nb::object module;
   };
+  /// Used with the GIL held (attached, when free-threaded), so its mutex
+  /// locks only when free-threaded.
   struct SpecializedCache {
-    std::mutex mutex;
+    nb::ft_mutex mutex;
     std::vector<Specialized> entries; // least recently used first
     size_t maxEntries = 16;
     int64_t maxOps = int64_t(1) << 16;
