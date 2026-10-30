@@ -23,7 +23,7 @@ import cudaq_pulse as pulse
 
 _ROOT = str(Path(pulse.__file__).parent.parent)
 
-# Modules of a millisecond or more that compiling and exporting do not use.
+# Modules of half a millisecond or more that compiling and exporting do not use.
 _HEAVY = (
     "numpy",
     "pathlib",
@@ -33,6 +33,10 @@ _HEAVY = (
     "socket",
     "importlib.metadata",
     "cudaq_pulse.runtime.gpu",
+    "hashlib",
+    "json",
+    "difflib",
+    "textwrap",
 )
 
 _PROGRAM = """
