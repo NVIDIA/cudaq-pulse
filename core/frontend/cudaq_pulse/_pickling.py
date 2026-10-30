@@ -317,7 +317,7 @@ def program_reduce(lowered: Any) -> tuple[Any, ...]:
     proxies = tuple(name for name, value in fields.items() if type(value) is MappingProxyType)
     for name in proxies:
         fields[name] = dict(fields[name])
-    module = None if lowered.generic is not None else lowered._module.serialize()
+    module = None if lowered._generic is not None else lowered._module.serialize()
     return (rebuilt_program, (build_stamp(), type(lowered), module, fields, proxies))
 
 
@@ -342,7 +342,7 @@ def rebuilt_program(
     lowered: Any = cls.__new__(cls)
     for name, value in fields.items():
         setattr(lowered, name, MappingProxyType(value) if name in proxies else value)
-    generic: Any = fields.get("generic")
+    generic: Any = fields.get("_generic")
     if module is None:
         lowered._module = generic._module
         lowered._lock = generic._lock

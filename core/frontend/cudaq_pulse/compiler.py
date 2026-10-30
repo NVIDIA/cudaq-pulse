@@ -845,7 +845,7 @@ class Lowered:
         "qudits",
         "options",
         "scheduled",
-        "generic",
+        "_generic",
         "waits",
         "classical",
         "runtime_selects",
@@ -884,7 +884,8 @@ class Lowered:
         self.qudits = qudits
         self.options = options
         self.scheduled = scheduled
-        self.generic: Lowered | None = None
+        # The module a call's view shares; None for that module itself.
+        self._generic: Lowered | None = None
         self.waits = waits
         # The classical functions the program calls, in declaration order.
         self.classical: tuple[Any, ...] = ()
@@ -908,7 +909,7 @@ class Lowered:
         except (TypeError, AttributeError):
             # How many values a generic module takes is kept by its first
             # bind; a call's view keeps none and takes none.
-            if self.generic is None:
+            if self._generic is None:
                 self._arity = len(self.parameters)
             return self._with_values(_bind_checked(self.parameters, values))
         if len(arguments) != arity:
@@ -934,7 +935,7 @@ class Lowered:
         view.qudits = self.qudits
         view.options = self.options
         view.scheduled = self.scheduled
-        view.generic = self
+        view._generic = self
         view.waits = waits
         view.classical = self.classical
         view.runtime_selects = self.runtime_selects
@@ -959,11 +960,19 @@ class Lowered:
         view.qudits = self.qudits
         view.options = self.options
         view.scheduled = self.scheduled
-        view.generic = self
+        view._generic = self
         view.waits = waits
         view.classical = self.classical
         view.runtime_selects = self.runtime_selects
         return view
+
+    @property
+    def generic(self) -> Lowered:
+        """The module without values: the one a call's view shares, or this
+        module when it holds no values. ``generic.bind(values)`` makes a call
+        of it with new values."""
+        generic = self._generic
+        return self if generic is None else generic
 
     @property
     def _retimed(self) -> bool:
@@ -990,7 +999,8 @@ class Lowered:
     def _checked_arguments(self) -> list[float]:
         """The call's values as floats, or the error naming the first that is
         not a real number or not finite."""
-        names = self.generic.parameters if self.generic is not None else ()
+        generic = self._generic
+        names = generic.parameters if generic is not None else ()
         values = _bind_checked(names, self.arguments)
         for name, v in zip(names, values):
             if v - v != 0.0:

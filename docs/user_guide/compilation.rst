@@ -201,7 +201,14 @@ target gives the coupling of two qudits, ``dev.target.coupling(a, b)``.
 
 ``.arguments`` and ``.generic``
    The call's float values, and the module without them, in which the float
-   parameters are function arguments.
+   parameters are function arguments: ``generic.bind(values)`` makes a call
+   with new values. A module that holds no values is its own ``generic``.
+
+.. code-block:: python
+
+   program = rabi.lower(q, 0.3).generic
+   for amplitude in (0.1, 0.2, 0.3):
+       result = pulse.simulate(program, amplitude, t_end=20 * pulse.ns)
 
 Threads
 -------

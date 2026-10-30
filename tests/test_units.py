@@ -382,7 +382,7 @@ def test_loops_and_parameters_take_times():
             wait(d, step)
 
     lowered = rolled.lower(Q[0], 10 * ns)
-    assert "scf.for" in (lowered.generic or lowered).mlir()
+    assert "scf.for" in lowered.generic.mlir()
     assert lowered.schedule[-1].start_cycles == 39 * 28 + 8
 
 

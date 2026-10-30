@@ -261,6 +261,24 @@ def test_a_bound_value_that_does_not_fit_fails_where_the_module_is_used(values, 
             use()
 
 
+def test_generic_is_the_module_every_call_rebinds_from():
+    call = _two_amplitudes.lower(Q[0], 0.1, 1e6)
+    generic = call.generic
+    assert generic is not call
+    assert generic.parameters == ("amplitude", "detuning")
+    assert generic.generic is generic
+    assert generic.bind([0.2, 2e6]).generic is generic
+
+    @pulse.kernel
+    def no_floats(q):
+        drive(get_drive_line(q), square(40, 0.1))
+
+    # A module that holds no values is its own: binding it takes none.
+    plain = no_floats.lower(Q[0])
+    assert plain.generic is plain
+    assert plain.generic.bind([]).mlir() == plain.mlir()
+
+
 def test_bind_of_a_module_with_its_values_takes_none():
     bound = _two_amplitudes.lower(Q[0], 0.1, 1e6)
     assert bound.parameters == ()

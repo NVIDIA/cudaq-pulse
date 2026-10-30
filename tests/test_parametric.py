@@ -237,7 +237,7 @@ class TestParametricCompilation:
 
         ck = k.lower(Q[0])
         assert ck.parameters == ()
-        assert ck.generic is None
+        assert ck.generic is ck
         assert "func.func @main()" in ck.mlir()
         assert "start_cycles" in ck.mlir()  # scheduled
 

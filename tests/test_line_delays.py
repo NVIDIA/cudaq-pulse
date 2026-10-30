@@ -186,7 +186,7 @@ def _outputs(lowered):
 
 
 def _retimed(lowered):
-    return (lowered.generic or lowered).metrics.trace_ms == 0.0
+    return lowered.generic.metrics.trace_ms == 0.0
 
 
 MIXED = ControllerLimits(clock_ghz=1.0, max_fine_delay_ns=1.0)

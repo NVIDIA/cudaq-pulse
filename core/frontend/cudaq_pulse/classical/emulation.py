@@ -153,7 +153,7 @@ def export(lowered: Any, with_events: bool = True) -> dict[str, Any]:
     }
     if machine._plain:
         return data
-    clocks = (lowered.generic or lowered).clocks
+    clocks = (lowered._generic or lowered).clocks
     if clocks is None:
         return data
     return _in_own_clock(data, events, clocks)

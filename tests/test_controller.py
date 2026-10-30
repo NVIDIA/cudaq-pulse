@@ -423,7 +423,7 @@ def ramsey(q, phase: float):
 
 def test_float_arguments_are_exported_at_their_values():
     lowered = pulse.compile(ramsey).lower(Q[0], 0.75)
-    assert lowered.generic is not None
+    assert lowered.generic is not lowered
     with pytest.raises(ValueError, match="float parameters"):
         lowered.generic.export_controller()
     program = lowered.export_controller()

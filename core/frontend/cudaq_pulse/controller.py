@@ -465,7 +465,7 @@ def _walk(
                     problems.extend(
                         _clocks.own_run_time(own, lines[event["line"]], event, waveforms)
                     )
-    fine = (lowered.generic or lowered).fine_delays
+    fine = (lowered._generic or lowered).fine_delays
     if fine is not None:
         for line in lines:
             line["fine_delay_ns"] = fine.get((line["role"], line["qudit"]), 0.0)
@@ -500,7 +500,7 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
     from .classical.emulation import export as emulation
 
     limits = lowered.options.machine.controller
-    clocks = (lowered.generic or lowered).clocks
+    clocks = (lowered._generic or lowered).clocks
     native = None if clocks is None else _native_clock(clocks)
     # In the controller's own cycles from here on.
     lines, events, off, problems = _walk(lowered, own=native)
@@ -763,7 +763,7 @@ def check(lowered: Lowered, limits: ControllerLimits | None = None) -> list[str]
         return []
     machine = lowered.options.machine
     if limits is machine.controller:
-        clocks = (lowered.generic or lowered).clocks
+        clocks = (lowered._generic or lowered).clocks
     else:
         from . import _clocks
 
