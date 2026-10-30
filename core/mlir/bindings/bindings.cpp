@@ -1189,8 +1189,7 @@ public:
     }
   }
 
-  nb::list
-  lines(const std::vector<std::tuple<std::string, int64_t, int64_t>> &lines) {
+  nb::list lines(const std::vector<std::tuple<std::string, int64_t>> &lines) {
     nb::list out = list(lines.size());
     for (size_t i = 0; i < lines.size(); ++i) {
       nb::object line = dict();
@@ -1910,8 +1909,8 @@ public:
     return result;
   }
 
-  /// (role, qudit, slot): a runtime qudit's line has its slot and qudit -1.
-  using ControllerLine = std::tuple<std::string, int64_t, int64_t>;
+  /// (role, qudit): a runtime qudit's line has qudit -1.
+  using ControllerLine = std::tuple<std::string, int64_t>;
 
   /// For each event of controller_events(), in the same order, the
   /// arguments of `main` its tone frequency, frame phase and waveform are
@@ -1980,42 +1979,58 @@ public:
     ControllerObjects objects(parameters, amplitudes);
     std::unique_ptr<ControllerWalk> walk;
     std::vector<ControllerLine> lines;
+    std::vector<int64_t> found;
     {
       nb::gil_scoped_release release;
-      walk = controllerWalk(lines);
+      walk = controllerWalk(lines, slots.is_none() ? nullptr : &found);
     }
-    lineSlots(lines, slots);
+    lineSlots(found, slots);
     return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs));
   }
 
-  /// Each line's runtime-qudit slot (-1 for none) into the list `slots`,
-  /// unless it is None.
-  static void lineSlots(const std::vector<ControllerLine> &lines,
-                        nb::handle slots) {
+  /// `found`, each line's runtime-qudit slot, into the list `slots`, unless
+  /// it is None.
+  static void lineSlots(const std::vector<int64_t> &found, nb::handle slots) {
     if (slots.is_none())
       return;
     auto out = nb::borrow<nb::list>(slots);
-    for (const ControllerLine &line : lines)
-      out.append(std::get<2>(line));
+    for (int64_t slot : found)
+      out.append(slot);
   }
 
-  /// A ControllerWalk of the module, its lines in `lines`; without the GIL.
+  /// A ControllerWalk of the module, its lines in `lines` and, unless
+  /// `slots` is null, each one's runtime-qudit slot (-1 for none) in
+  /// `slots`; without the GIL.
   std::unique_ptr<ControllerWalk>
-  controllerWalk(std::vector<ControllerLine> &lines) {
+  controllerWalk(std::vector<ControllerLine> &lines,
+                 std::vector<int64_t> *slots) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     auto walk = std::make_unique<ControllerWalk>(clock());
     if (runTime_)
-      controllerEvents<true>(*walk, lines);
+      controllerEvents<true>(*walk, lines, slots);
     else
-      controllerEvents<false>(*walk, lines);
+      controllerEvents<false>(*walk, lines, slots);
     return walk;
+  }
+
+  /// The slot of a line `op` allocates: its own, or that of the argument of
+  /// `main` it is on; -1 for none.
+  static int64_t lineSlot(mlir::Operation *op) {
+    if (auto attr = op->getAttrOfType<mlir::IntegerAttr>("pulse.slot"))
+      return attr.getInt();
+    if (auto arg = mlir::dyn_cast<mlir::BlockArgument>(op->getOperand(0)))
+      if (auto func =
+              mlir::dyn_cast<mlir::func::FuncOp>(arg.getOwner()->getParentOp()))
+        if (auto attr = func.getArgAttrOfType<mlir::IntegerAttr>(
+                arg.getArgNumber(), "pulse.slot"))
+          return attr.getInt();
+    return -1;
   }
 
   template <bool RunTime>
   void controllerEvents(ControllerWalk &walk,
-                        std::vector<ControllerLine> &lines) {
-    auto qubitName = mlir::StringAttr::get(ctx_.get(), "qubit");
-    auto slotName = mlir::StringAttr::get(ctx_.get(), "pulse.slot");
+                        std::vector<ControllerLine> &lines,
+                        std::vector<int64_t> *slots) {
     module_->walk([&](mlir::Operation *op) {
       if constexpr (RunTime)
         walk.scan(op);
@@ -2025,21 +2040,13 @@ public:
                .try_emplace(op, static_cast<int64_t>(walk.lineIndex.size()))
                .second)
         return;
-      int64_t qubit = -1, slot = -1;
-      if (auto attr = op->getAttrOfType<mlir::IntegerAttr>(qubitName))
+      int64_t qubit = -1;
+      if (auto attr = op->getAttrOfType<mlir::IntegerAttr>("qubit"))
         qubit = attr.getInt();
-      if (auto attr = op->getAttrOfType<mlir::IntegerAttr>(slotName))
-        slot = attr.getInt();
-      else if (auto arg =
-                   mlir::dyn_cast<mlir::BlockArgument>(op->getOperand(0)))
-        if (auto func = mlir::dyn_cast<mlir::func::FuncOp>(
-                arg.getOwner()->getParentOp()))
-          if (auto attr = func.getArgAttrOfType<mlir::IntegerAttr>(
-                  arg.getArgNumber(), slotName))
-            slot = attr.getInt();
-      lines.emplace_back(mlir::isa<pulse::GetDriveLineOp>(op) ? "drive"
-                                                              : "readout",
-                         qubit, slot);
+      lines.emplace_back(
+          mlir::isa<pulse::GetDriveLineOp>(op) ? "drive" : "readout", qubit);
+      if (slots)
+        slots->push_back(lineSlot(op));
     });
     walk.block<RunTime>(*module_->getBody());
   }
@@ -2064,14 +2071,15 @@ public:
     ControllerObjects objects(parameters, amplitudes);
     std::unique_ptr<ControllerWalk> walk;
     std::vector<ControllerLine> lines;
+    std::vector<int64_t> found;
     std::vector<OffGridEvent> offGrid;
     std::vector<std::tuple<int64_t, int64_t>> ends;
     {
       nb::gil_scoped_release release;
-      walk = controllerWalk(lines);
+      walk = controllerWalk(lines, slots.is_none() ? nullptr : &found);
       ownCycles(*walk, num, den, grid, offGrid, ends);
     }
-    lineSlots(lines, slots);
+    lineSlots(found, slots);
     return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs),
                           nb::cast(offGrid), nb::cast(ends));
   }
