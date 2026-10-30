@@ -491,11 +491,6 @@ class PythonIRBuilder:
         # What the traced kernel returned.
         self.result: Any = None
 
-    def _mk(self, vtype: str, name: str = "") -> IRValue:
-        v = IRValue(self._next_id, vtype, name)
-        self._next_id += 1
-        return v
-
     def emit(
         self,
         kind: str,
@@ -503,7 +498,16 @@ class PythonIRBuilder:
         result_types: tuple[str, ...] = (),
         attrs: dict[str, Any] | None = None,
     ) -> tuple[IRValue, ...]:
-        results = tuple(self._mk(rt) for rt in result_types)
+        vid = self._next_id
+        count = len(result_types)
+        results: tuple[IRValue, ...]
+        if count == 1:
+            results = (IRValue(vid, result_types[0]),)
+        elif count == 2:
+            results = (IRValue(vid, result_types[0]), IRValue(vid + 1, result_types[1]))
+        else:
+            results = tuple([IRValue(vid + i, rt) for i, rt in enumerate(result_types)])
+        self._next_id = vid + count
         if attrs and kind.removeprefix("pulse.") in _TIMED_OPS:
             from ._durations import in_program_cycles
 
