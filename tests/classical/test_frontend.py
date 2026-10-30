@@ -553,6 +553,18 @@ def test_report_and_schedule_events():
     assert all(e.link is None for e in low.schedule if e.kind == "drive")
 
 
+def test_report_entries_are_what_their_constructor_builds():
+    from cudaq_pulse.compiler import ClassicalCall
+
+    assert "__post_init__" not in vars(ClassicalCall)
+    (call,) = pulse.compile(_reset, schedule="asap").lower(Q[0]).classical_report()
+    fields = ClassicalCall.__dataclass_fields__
+    built = ClassicalCall(**{name: getattr(call, name) for name in fields})
+    assert built == call and hash(built) == hash(call) and repr(built) == repr(call)
+    with pytest.raises(AttributeError):
+        call.link = 1  # type: ignore[misc]
+
+
 def test_programs_without_calls_are_unchanged():
     @pulse.kernel
     def plain(q):

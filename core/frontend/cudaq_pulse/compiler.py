@@ -542,6 +542,11 @@ class ClassicalCall:
         return None if self.deadline_cycles is None else self.deadline_cycles - self.due_cycles
 
 
+# classical_report sets these directly, without __init__: ClassicalCall must
+# not gain a __post_init__.
+_CALL_FIELDS = tuple(ClassicalCall.__dataclass_fields__)
+
+
 @dataclass()
 class CompileMetrics:
     """Per-stage timing of one compilation (milliseconds) and its size."""
@@ -1165,36 +1170,33 @@ class Lowered:
             events = module.events() if calls else []
         names = self.options.machine.link_name
         exposed = _Exposure(self, events) if calls else None
-        return [
-            ClassicalCall(
-                name,
-                link,
-                tuple(iteration),
-                start,
-                length,
-                due,
-                taken,
-                use,
-                limit,
-                epoch,
-                names(link),
-                None if exposed is None or use is None else exposed(start, use),
-                controller,
+        new = object.__new__
+        report: list[ClassicalCall] = []
+        for name, link, iteration, start, length, due, taken, use, limit, epoch, owner in calls:
+            call = new(ClassicalCall)
+            call.__dict__.update(
+                zip(
+                    _CALL_FIELDS,
+                    (
+                        name,
+                        link,
+                        tuple(iteration),
+                        start,
+                        length,
+                        due,
+                        taken,
+                        use,
+                        limit,
+                        epoch,
+                        names(link),
+                        None if exposed is None or use is None else exposed(start, use),
+                        owner,
+                    ),
+                    strict=True,
+                )
             )
-            for (
-                name,
-                link,
-                iteration,
-                start,
-                length,
-                due,
-                taken,
-                use,
-                limit,
-                epoch,
-                controller,
-            ) in calls
-        ]
+            report.append(call)
+        return report
 
     def export_emulation(self, *, controller: int | None = None) -> dict[str, Any]:
         """The program for a controller emulator: its schedule by epoch, its
