@@ -58,6 +58,7 @@ def test_module_entry_point(tmp_path):
         capture_output=True,
         text=True,
         check=False,
+        timeout=300,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.startswith("cudaq-pulse ")

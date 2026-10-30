@@ -91,7 +91,10 @@ jobs:
       - name: Configure
         run: uv run --no-sync cmake --preset dev
 
+      # The log ends with the 30 slowest tests, to see where the time goes.
       - name: check-pulse (lit + pytest)
+        env:
+          PYTEST_ADDOPTS: --durations=30
         run: uv run --no-sync cmake --build build/dev --target check-pulse
 
       - name: Native exports, sizes and import time
@@ -316,6 +319,8 @@ jobs:
           assert not sys._is_gil_enabled(), 'importing cudaq_pulse enabled the GIL'"
 
       - name: check-pulse (lit + pytest)
+        env:
+          PYTEST_ADDOPTS: --durations=30
         run: uv run --no-sync cmake --build build/dev --target check-pulse
 
   # Line and branch coverage of the Python package by the CPU suite. It is a
