@@ -120,6 +120,16 @@ configure_file(
 
 add_custom_target(pulse DEPENDS ${_cudaq_pulse_build_targets})
 
+include(CudaqPulseNotices)
+set(_cudaq_pulse_shipped_binaries cudaq-pulse-opt _cudaq_pulse_native)
+foreach(_major IN LISTS CUDAQ_PULSE_CUDA_MAJORS)
+  list(APPEND _cudaq_pulse_shipped_binaries cudm_runtime_cu${_major})
+endforeach()
+cudaq_pulse_third_party_notices(
+  NOTICES "${CUDAQ_PULSE_SOURCE_DIR}/THIRD_PARTY_NOTICES"
+  COMPONENT CudaqPulse
+  TARGETS ${_cudaq_pulse_shipped_binaries})
+
 install(DIRECTORY "${CUDAQ_PULSE_FRONTEND_DIR}"
   DESTINATION .
   COMPONENT CudaqPulse

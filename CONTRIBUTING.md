@@ -323,6 +323,24 @@ This uses the same fetched toolchain. Wheels are compiler-only unless
 `CUDAQ_PULSE_ENABLE_GPU=ON` is set in the environment (as the release build
 does on Linux; see `[tool.cibuildwheel]` in `pyproject.toml`).
 
+Every binary the wheel ships writes a linker map to
+`<build dir>/link-maps/`, and installing fails if `THIRD_PARTY_NOTICES` no
+longer lists the third-party code those maps show linked. After a change
+that links something new (an MLIR library, a toolchain bump), regenerate it
+and commit the result, with a license text in `LICENSES/` for any new
+component:
+
+```bash
+python tools/third-party-notices.py write --notices THIRD_PARTY_NOTICES \
+    --map build/dev/link-maps/_cudaq_pulse_native.map \
+    --map build/dev/link-maps/cudaq-pulse-opt.map
+```
+
+The tool rejects archives it does not know; teach it new ones in its
+component tables. `tools/check-wheel-contents.py` checks the built wheels
+for the license files, the notices (and any library a wheel repair grafted),
+and for CUDA or GPL/LGPL libraries.
+
 ## The MLIR toolchain
 
 Configuring needs the pinned MLIR 22.1.8 toolchain:

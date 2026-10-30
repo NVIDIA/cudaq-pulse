@@ -17,53 +17,10 @@ limitations under the License.
 
 This product includes software developed by NVIDIA Corporation and its
 affiliates, and material from third parties. The binary distributions
-(wheels) statically link the following third-party software into the
-cudaq_pulse native extension; its license texts are in the LICENSES
-directory of the source tree and of each wheel's .dist-info/licenses.
-
-----------------------------------------------------------------
-
-LLVM and MLIR - Apache License 2.0 with LLVM Exceptions
-<https://github.com/llvm/llvm-project>, release llvmorg-22.1.8
-
-Copyright (c) 2003-2019 University of Illinois at Urbana-Champaign and
-the LLVM project contributors.
-License: LICENSES/LLVM-LICENSE.txt, LICENSES/MLIR-LICENSE.txt
-
-LLVM's Support library includes code under these additional terms:
-
-  xxHash - BSD 2-Clause License
-  Copyright (C) 2012-2016, Yann Collet.
-  License: LICENSES/LLVM-xxhash-LICENSE.txt
-
-  Regular expression engine (regcomp/regexec) - Henry Spencer license
-  Copyright 1992, 1993, 1994 Henry Spencer.
-  License: LICENSES/LLVM-regex-COPYRIGHT.txt
-
-  BLAKE3 - CC0 1.0 Universal or Apache License 2.0
-  License: LICENSES/LLVM-BLAKE3-LICENSE.txt
-
-  ConvertUTF - Unicode, Inc. license
-  Copyright (c) 1991-2015 Unicode, Inc.
-  License: LICENSES/LLVM-ConvertUTF-Unicode-LICENSE.txt
-
-----------------------------------------------------------------
-
-nanobind - BSD 3-Clause License
-<https://github.com/wjakob/nanobind>, release v3.1.0
-
-Copyright (c) 2022 Wenzel Jakob.
-License: LICENSES/nanobind-LICENSE.txt
-
-----------------------------------------------------------------
-
-robin-map (bundled with nanobind) - MIT License
-<https://github.com/Tessil/robin-map>
-
-Copyright (c) 2017 Thibaut Goetghebuer-Planchon.
-License: LICENSES/robin-map-LICENSE.txt
-
-----------------------------------------------------------------
+(wheels) statically link third-party software, LLVM and MLIR among it.
+THIRD_PARTY_NOTICES, in the source tree and in each wheel's
+.dist-info/licenses, lists what the wheels' binaries link, with each
+license's text; LICENSES holds the same texts as separate files.
 
 The Linux wheels' GPU runtime libraries load the NVIDIA CUDA runtime and
 cuDensityMat at run time from the separately installed nvidia-* and

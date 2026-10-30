@@ -673,7 +673,9 @@ behavior may change in any 0.x release.
   GPU runtimes, selected by the `[cu12]` or `[cu13]` extra, and macOS arm64
   (compiler only). The wheels link their own MLIR, so they need neither
   CUDA-Q nor an LLVM installation. Free-threaded CPython 3.14 (3.14t) has
-  its own wheel per platform, whose extension runs without the GIL.
+  its own wheel per platform, whose extension runs without the GIL. Each
+  wheel carries its license files and `THIRD_PARTY_NOTICES`, generated from
+  what its binaries link, with each third-party license's text.
 
 ### Fixed
 

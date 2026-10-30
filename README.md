@@ -208,8 +208,9 @@ part follows the [Code of Conduct](https://github.com/NVIDIA/cudaq-pulse/blob/ma
 
 cudaq-pulse is licensed under the [Apache License 2.0](https://github.com/NVIDIA/cudaq-pulse/blob/main/LICENSE). The
 wheels also contain third-party software (LLVM and MLIR, nanobind,
-robin-map) under the licenses listed in [NOTICE](https://github.com/NVIDIA/cudaq-pulse/blob/main/NOTICE), with their texts
-in [LICENSES/](https://github.com/NVIDIA/cudaq-pulse/tree/main/LICENSES).
+robin-map) under the licenses listed, with their texts, in
+[THIRD_PARTY_NOTICES](https://github.com/NVIDIA/cudaq-pulse/blob/main/THIRD_PARTY_NOTICES); the texts are also in
+[LICENSES/](https://github.com/NVIDIA/cudaq-pulse/tree/main/LICENSES).
 
 ## Security
 

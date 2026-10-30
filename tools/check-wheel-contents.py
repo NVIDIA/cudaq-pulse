@@ -14,16 +14,21 @@ For a wheel: the cp312-abi3 tag, or cp314-cp314t for free-threaded CPython,
 with a manylinux_2_28 (x86_64, aarch64) or macosx_11_0_arm64 platform; the
 package, py.typed, the native extension built for that tag and
 its stub, and __builtins__.pyi at the root re-exporting exactly
-cudaq_pulse.ops.__all__; LICENSE, NOTICE and every file of LICENSES/ under
-.dist-info/licenses and named in METADATA; on Linux both CUDA runtime
-libraries; and no bundled CUDA or cuQuantum libraries, byte code, tests or
-hand-written top-level stub. For an sdist: LICENSE, NOTICE and LICENSES/.
-Exits 1 listing every problem.
+cudaq_pulse.ops.__all__; LICENSE, NOTICE, THIRD_PARTY_NOTICES and every file
+of LICENSES/ (LLVM's LICENSE.TXT among them) under .dist-info/licenses and
+named in METADATA; THIRD_PARTY_NOTICES as tools/third-party-notices.py
+generates it, listing LLVM and every library grafted into the wheel, with
+each listed license in License-Expression; on Linux both CUDA runtime
+libraries; and no CUDA runtime library (those come from the CUDA wheels), no
+GPL or LGPL library or license, and no byte code, tests or hand-written
+top-level stub. For an sdist: LICENSE, NOTICE, THIRD_PARTY_NOTICES and
+LICENSES/. Exits 1 listing every problem.
 """
 
 from __future__ import annotations
 
 import ast
+import importlib.util
 import re
 import sys
 import tarfile
@@ -35,8 +40,15 @@ _ROOT = Path(__file__).resolve().parents[1]
 _LICENSES = [
     "LICENSE",
     "NOTICE",
+    "THIRD_PARTY_NOTICES",
     *sorted(f"LICENSES/{p.name}" for p in (_ROOT / "LICENSES").iterdir()),
 ]
+_spec = importlib.util.spec_from_file_location(
+    "third_party_notices", _ROOT / "tools" / "third-party-notices.py"
+)
+assert _spec is not None and _spec.loader is not None
+notices = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(notices)
 _PLATFORMS = re.compile(r"(manylinux_2_28_(x86_64|aarch64)|macosx_11_0_arm64)")
 # The extension each wheel tag carries: the abi3 one for GIL builds of 3.12
 # and newer, and a per-version one for free-threaded CPython, which has no
@@ -45,9 +57,50 @@ _EXTENSIONS = {
     ("cp312", "abi3"): re.compile(r"_cudaq_pulse_native\.abi3\.so"),
     ("cp314", "cp314t"): re.compile(r"_cudaq_pulse_native\.cpython-314t-[\w-]+\.so"),
 }
+# The CUDA runtime, math and cuQuantum libraries, any case of a name. This
+# package's own libcudm-runtime-cuNN is not one.
 _BUNDLED_CUDA = re.compile(
-    r"(^|/)(libcuda|libcudart|libcudensitymat|libcutensor|libcublas|libnvJitLink|libnvrtc)[^/]*$"
+    r"(^|/)(libcuda|libcudart|libcudensitymat|libcutensor|libcutensornet|libcustatevec"
+    r"|libcublas|libcublasLt|libcusolver|libcusparse|libcurand|libcufft|libcupti|libnvjitlink"
+    r"|libnvrtc|libnvToolsExt|libnvtx|libnccl|libcudnn|libnvblas|libnvperf)([._-][^/]*)?$",
+    re.IGNORECASE,
 )
+_GPL_EXPRESSION = re.compile(r"\b(L?GPL|AGPL)-")
+
+
+def _check_notices(names: set[str], text: str, expression: str) -> list[str]:
+    """THIRD_PARTY_NOTICES is generated, lists LLVM and every grafted library,
+    and License-Expression names each license it lists and no GPL or LGPL."""
+    problems = []
+    listed = notices.listed_components(text)
+    unknown = sorted(listed - notices._BY_NAME.keys())
+    problems += [
+        f"THIRD_PARTY_NOTICES lists {name}, which is not a known component" for name in unknown
+    ]
+    known = listed & notices._BY_NAME.keys()
+    if "LLVM" not in listed:
+        problems.append("THIRD_PARTY_NOTICES does not list LLVM")
+    elif not unknown and not notices.missing_license_files(known) and text != notices.render(known):
+        problems.append("THIRD_PARTY_NOTICES is not what tools/third-party-notices.py generates")
+    grafted, graft_problems = notices.grafted_components(sorted(names))
+    # A grafted GPL or LGPL library is reported with every other bundled one.
+    problems += [p for p in graft_problems if not p.endswith(notices.GPL_PROBLEM)]
+    problems += [
+        f"THIRD_PARTY_NOTICES does not list {name}, which the wheel grafts"
+        for name in sorted(grafted - listed)
+    ]
+    normalized = " ".join(expression.split())
+    problems += [
+        f"License-Expression does not name {notices._BY_NAME[name].spdx} ({name})"
+        for name in sorted(known)
+        if notices._BY_NAME[name].spdx not in normalized
+    ]
+    if _GPL_EXPRESSION.search(normalized):
+        problems.append(f"License-Expression {normalized!r} names a GPL or LGPL license")
+    for component in sorted(known):
+        if _GPL_EXPRESSION.search(notices._BY_NAME[component].spdx):
+            problems.append(f"THIRD_PARTY_NOTICES lists {component}, under a GPL or LGPL license")
+    return problems
 
 
 def _check_builtins_stub(stub: str, ops_source: str) -> list[str]:
@@ -80,6 +133,13 @@ def check_wheel(path: Path) -> list[str]:
         names = set(wheel.namelist())
         dist_info = f"{name}-{version}.dist-info"
         metadata = Parser().parsestr(wheel.read(f"{dist_info}/METADATA").decode())
+        notices_file = f"{dist_info}/licenses/THIRD_PARTY_NOTICES"
+        if notices_file in names:
+            problems += _check_notices(
+                names,
+                wheel.read(notices_file).decode(),
+                metadata.get("License-Expression") or "",
+            )
         if "__builtins__.pyi" in names and "cudaq_pulse/ops/__init__.py" in names:
             problems += _check_builtins_stub(
                 wheel.read("__builtins__.pyi").decode(),
@@ -116,6 +176,8 @@ def check_wheel(path: Path) -> list[str]:
     for item in sorted(names):
         if _BUNDLED_CUDA.search(item):
             problems.append(f"bundles {item}; CUDA libraries come from the extras")
+        if notices.GPL_LIBRARIES.search(item):
+            problems.append(f"bundles {item}, {notices.GPL_PROBLEM}")
         if item.endswith(".pyc") or "/__pycache__/" in item or item.startswith("tests/"):
             problems.append(f"contains {item}")
     if "cudaq_pulse/__init__.pyi" in names:
