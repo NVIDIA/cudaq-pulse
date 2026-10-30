@@ -10,8 +10,8 @@
 These functions form the "language extension" vocabulary used as bare
 names inside ``@pulse.kernel`` decorated functions.  During bytecode
 tracing the decorator intercepts calls to these names and lowers them
-to MLIR ops.  If called outside a kernel context they raise
-``RuntimeError``.
+to MLIR ops.  Called outside a kernel, each raises ``CompilationError``
+naming it.
 """
 
 from __future__ import annotations

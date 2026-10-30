@@ -9,16 +9,31 @@
 
 from __future__ import annotations
 
+import inspect
 import socket
 
 import cudaq_pulse as pulse
 import pytest
+from cudaq_pulse import ops
 from cudaq_pulse.classical import emulation, wire
 from cudaq_pulse.kernel.ir_builder import Parameter, SymbolicValueError
 
 from tests._handles import Q
 
 NOT_CALLABLE = object()
+
+
+@pytest.mark.parametrize("name", ops.__all__)
+def test_an_op_called_outside_a_kernel_is_a_compilation_error_naming_it(name):
+    op = getattr(ops, name)
+    required = [
+        p
+        for p in inspect.signature(op).parameters.values()
+        if p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+    ]
+    message = rf"^{name}\(\) must be called inside a @cudaq_pulse\.kernel function$"
+    with pytest.raises(pulse.CompilationError, match=message):
+        op(*[None] * len(required))
 
 
 def test_qudit_handles_in_a_list_say_how_to_pass_them():
