@@ -15,13 +15,17 @@ baseline in ``benchmarks/baselines/frontend_perf.json``. Refresh that file
 with ``--update-perf-baseline`` after an intentional change.
 
 Tests marked ``scaling`` compare two sizes of one program in one process
-(time or peak memory), so they hold on any machine; CI fails on them.
+(the work counted, time or peak memory), so they hold on any machine; CI
+fails on them.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import re
+import shutil
 import subprocess
 import sys
 import time
@@ -32,12 +36,15 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimits
+from cudaq_pulse.kernel._emitter import PulseIREmitter
+from cudaq_pulse.kernel._unroll import DEFAULT_UNROLL_THRESHOLD
 from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder
 from cudaq_pulse.kernel.ir_builder import Parameter
 from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
 from tests._handles import Q, ladder_target
 from tests._ir import python_ir
+from tests._tools import missing
 from tests.kernel.ir_corpus import (
     bicycle_syndrome,
     dd_loop,
@@ -51,8 +58,9 @@ pytestmark = pytest.mark.benchmark
 _ROOT = Path(__file__).resolve().parents[1]
 BASELINE = _ROOT / "benchmarks" / "baselines" / "frontend_perf.json"
 TOLERANCE = 3.0
-# A retained loop's compile time must not grow with its trip count.
-FLAT_LOOP_LIMIT = 2.0
+# A build tree stages the package in build/<dir>/python and cudaq-pulse-opt
+# in build/<dir>/bin.
+_BUILD_BIN = Path(pulse.__file__).parent.parent.parent / "bin"
 
 
 def _best(fn: Callable[[], object], min_reps: int = 5, budget_s: float = 0.25) -> float:
@@ -168,14 +176,46 @@ def test_building_the_module_costs_less_than_tracing_the_kernel():
     assert best["ffi_ms"] < best["trace_ms"], best
 
 
+def _compile_work(kernel, n: int, args, **options) -> dict[str, object]:
+    """What compiling *kernel* does, counted: the calls the tracer
+    dispatched, the ops and packed bytes it traced, and the scheduled
+    module, with the trip count *n* written as ``N``."""
+    work = {"calls": 0, "packed_bytes": 0}
+    dispatch, get_buffer = PulseIREmitter._dispatch_call, PackedIRBuilder.get_buffer
+
+    def counted_dispatch(self, *a, **k):
+        work["calls"] += 1
+        return dispatch(self, *a, **k)
+
+    def counted_buffer(self):
+        buffer = get_buffer(self)
+        work["packed_bytes"] += len(buffer) * buffer.itemsize
+        return buffer
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(PulseIREmitter, "_dispatch_call", counted_dispatch)
+        patch.setattr(PackedIRBuilder, "get_buffer", counted_buffer)
+        lowered = pulse.compile(kernel, **options).lower(*args)
+    work["traced_ops"] = lowered.metrics.op_count
+    work["module"] = re.sub(rf"(?<!\d){n}(?!\d)", "N", lowered.mlir())
+    return work
+
+
 @pytest.mark.scaling
-def test_retained_loop_compile_time_is_flat(ratios):
-    assert ratios["dd_loop_n512"] < ratios["dd_loop_n8"] * FLAT_LOOP_LIMIT
-    assert ratios["dd_loop_n512_compile"] < ratios["dd_loop_n8_compile"] * FLAT_LOOP_LIMIT
-    assert (
-        ratios["tone_list_loop_n512_compile"]
-        < ratios["tone_list_loop_n8_compile"] * FLAT_LOOP_LIMIT
-    )
+def test_retained_loop_compile_work_is_flat():
+    # A loop over the unroll threshold is kept: compiling it does the same
+    # work at any trip count, and no more than the unrolled loop at the
+    # threshold does.
+    for make, args, options in (
+        (dd_loop, (Q[0],), {}),
+        (tone_list_loop, (Q[0:2],), {"passes": ()}),
+    ):
+        retained = [_compile_work(make(n), n, args, **options) for n in (512, 4096)]
+        assert retained[0] == retained[1], make.__name__
+        n = DEFAULT_UNROLL_THRESHOLD
+        unrolled = _compile_work(make(n), n, args, **options)
+        for count in ("calls", "packed_bytes", "traced_ops"):
+            assert retained[0][count] <= unrolled[count], (make.__name__, count)
 
 
 def _half_unused(n_qubits: int):
@@ -190,18 +230,31 @@ def _half_unused(n_qubits: int):
 
 
 @pytest.mark.scaling
-def test_verify_time_is_linear_in_unused_lines():
+def test_verify_does_constant_work_per_unused_line(tmp_path):
+    # Each unused line is one warning that names its qubit. A warning that
+    # attached its op would print it, and printing an op numbers every value
+    # of its function: the whole program per unused line. cudaq-pulse-opt
+    # shows the warnings that compiles from Python drop.
+    opt = shutil.which("cudaq-pulse-opt", path=str(_BUILD_BIN)) or shutil.which("cudaq-pulse-opt")
+    if opt is None:
+        missing("cudaq-pulse-opt", "cudaq-pulse-opt is not built or on PATH")
     wide = pulse.device({"target": ladder_target(2000)}).qudit_handles
-
-    def verify_ms(n_qubits: int) -> float:
-        kernel = _half_unused(n_qubits)
-        return min(
-            pulse.compile(kernel, passes=("verify",)).lower(wide[0:n_qubits]).metrics.passes_ms
-            for _ in range(5)
-        )
-
-    small, large = verify_ms(500), verify_ms(2000)
-    assert large < small * 4 * FLAT_LOOP_LIMIT, (small, large)
+    for n in (500, 2000):
+        module = tmp_path / f"half_unused_{n}.mlir"
+        module.write_text(pulse.compile(_half_unused(n), passes=()).lower(wide[0:n]).mlir())
+        stderr = subprocess.run(
+            [opt, "--pulse-verify", str(module), "-o", os.devnull],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=300,
+        ).stderr
+        warnings = re.findall(r"^\S+: warning: (.*)$", stderr, re.M)
+        assert warnings == [
+            f"drive line allocated but never used (qubit {q})" for q in range(1, n, 2)
+        ]
+        # The message, the source line and its caret: nothing attached.
+        assert stderr.count("\n") == 3 * len(warnings), stderr[:2000]
 
 
 @pytest.mark.scaling
