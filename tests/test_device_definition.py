@@ -114,6 +114,11 @@ def test_the_device_constructor_checks_its_layout():
         "layout: must name at least one carrier, got an empty list; "
         "leave layout out for every carrier of the target"
     )
+    with pytest.raises(pulse.DeviceDefinitionError) as info:
+        pulse.Device(target, name="pair", layout=["0"])
+    (problem,) = info.value.problems
+    assert problem.path == "layout[0]"
+    assert pulse.Device(target, name="pair", layout=[1]).layout == (1,)
 
 
 def test_a_file_problem_gives_its_file_line_and_column(tmp_path: Path):

@@ -555,7 +555,9 @@ def _layout(
             )
         )
         return None
-    found = len(problems)
+    # The last index after the loop; it stays 0 for an empty layout, which
+    # then fails the check that every entry named a new carrier.
+    k = 0
     carriers: list[int] = []
     first: dict[int, int] = {}
     known = target.qubits if target is not None else None
@@ -588,14 +590,12 @@ def _layout(
         else:
             first[carrier] = k
         carriers.append(carrier)
-    return (
-        tuple(carriers) if len(problems) == found and carriers else _empty(layout, problems, found)
-    )
+    return tuple(carriers) if len(first) > k else _empty(layout, problems)
 
 
-def _empty(layout: Sequence[Any], problems: list[Problem], found: int) -> tuple[int, ...] | None:
+def _empty(layout: Sequence[Any], problems: list[Problem]) -> tuple[int, ...] | None:
     """No layout: the problem of an empty one, unless its entries had others."""
-    if len(problems) == found:
+    if len(layout) == 0:
         problems.append(
             Problem(
                 "must name at least one carrier, got an empty list",
