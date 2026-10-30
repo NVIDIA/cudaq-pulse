@@ -106,10 +106,10 @@ run_pytest() {
   mkdir -p "$dir/benchmarks/compiler" "$dir/benchmarks/baselines"
   cp "${repo_root}/benchmarks/compiler/compile_time.py" "$dir/benchmarks/compiler/"
   cp "${repo_root}/benchmarks/baselines/compile_time.json" "$dir/benchmarks/baselines/"
-  # A user's environment: no type checkers, and the slim images have no C
-  # compiler. Without these, their tests skip here instead of failing.
+  # A user's environment: no type checkers or matplotlib, and the slim images
+  # have no C compiler. Without these, their tests skip here instead of failing.
   (cd "$dir" && PATH="${venv}/bin:${PATH}" VIRTUAL_ENV="$venv" \
-    CUDAQ_PULSE_OPTIONAL_TOOLS="pyright,mypy,cc" \
+    CUDAQ_PULSE_OPTIONAL_TOOLS="pyright,mypy,matplotlib,cc" \
     python -m pytest -p no:cacheprovider -m "$markers")
 }
 

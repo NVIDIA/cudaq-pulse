@@ -42,7 +42,7 @@ def missing(tool: str, reason: str) -> NoReturn:
             f"sets {OPTIONAL_TOOLS_VAR}={tool})",
             pytrace=False,
         )
-    pytest.skip(reason)
+    pytest.skip(reason, allow_module_level=True)
 
 
 def import_module(name: str, tool: str | None = None) -> ModuleType:
