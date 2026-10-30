@@ -561,17 +561,22 @@ def export(
     machine = lowered.options.machine
     limits = machine.controller
     system = machine._system
-    if system is not None and limits is None:
-        return _export_part(lowered, sample_rate_ghz, controller)
-    if controller is not None:
-        _controller_index(controller, 1)
     role = lowered._role
-    plan: _ExportPlan | None = None if role is None else role.export_plan
-    slots: list[int] | None = [] if role is not None and plan is None else None
+    plan: _ExportPlan | None = None
+    slots: list[int] | None = None
+    if system is not None or role is not None or controller is not None:
+        if system is not None and limits is None:
+            return _export_part(lowered, sample_rate_ghz, controller)
+        if controller is not None:
+            _controller_index(controller, 1)
+        if role is not None:
+            plan = role.export_plan
+            if plan is None:
+                slots = []
     clocks = (lowered._generic or lowered).clocks
     native = None if clocks is None else _native_clock(clocks)
     # In the controller's own cycles from here on.
-    lines, events, off, problems = _walk(lowered, own=native, slots=slots)
+    lines, events, off, problems = _walk(lowered, True, native, True, slots)
     if limits is not None or system is not None:
         violations = _all_violations(lowered, lines, events, limits, system, clocks, off, problems)
         if violations:

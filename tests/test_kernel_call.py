@@ -471,21 +471,26 @@ def test_simulating_new_float_values_shares_the_module():
     assert b > a > 0
 
 
-def test_lowering_the_same_values_again_specializes_once():
+def test_lowering_the_same_values_again_specializes_once_they_recur():
     q = _device().qudit_handles[0]
-    first = rabi.lower(q, 0.3)
+    first = rabi.lower(q, 0.3125)
     program = first.export_controller()
-    again = rabi.lower(q, 0.3)
-    assert again is not first
-    assert again._concrete() is first._concrete()
+    second = rabi.lower(q, 0.3125)
+    assert second is not first
+    assert second._concrete() is not first._concrete()
+    again = rabi.lower(q, 0.3125)
+    assert again._concrete() is second._concrete()
     assert again.export_controller() == program
-    assert rabi.lower(q, 0.4)._concrete() is not first._concrete()
+    assert rabi.lower(q, 0.4125)._concrete() is not again._concrete()
 
 
 def test_specialized_modules_are_told_apart_by_their_bits():
     q = _device().qudit_handles[0]
+    for value in (0.0, -0.0, 0.0, -0.0):
+        rabi.lower(q, value)._concrete()
+    assert rabi.lower(q, 0.0)._concrete() is rabi.lower(q, 0.0)._concrete()
+    assert rabi.lower(q, -0.0)._concrete() is rabi.lower(q, -0.0)._concrete()
     assert rabi.lower(q, 0.0)._concrete() is not rabi.lower(q, -0.0)._concrete()
-    assert rabi.lower(q, 0.5)._concrete() is rabi.lower(q, 0.5)._concrete()
 
 
 @pytest.fixture
@@ -497,20 +502,28 @@ def specialized_cache():
     module.specialized_cache(entries, ops)
 
 
+def test_values_seen_once_keep_no_specialized_module(specialized_cache):
+    q = _device().qudit_handles[0]
+    specialized_cache(entries=specialized_cache()[1])
+    for k in range(8):
+        rabi.lower(q, 3.0 + k)._concrete()
+    assert specialized_cache()[0] == 0
+
+
 def test_the_specialized_modules_kept_are_bounded(specialized_cache):
     q = _device().qudit_handles[0]
     kept = specialized_cache()[1]
-    first = rabi.lower(q, 1.0)
-    first._concrete()
     for k in range(2 * kept):
-        rabi.lower(q, 1.0 + k)._concrete()
+        for _ in range(2):
+            rabi.lower(q, 1.0 + k)._concrete()
         # The most recently used survives other values.
         rabi.lower(q, 1.0)._concrete()
     assert specialized_cache()[0] == kept
-    assert rabi.lower(q, 1.0)._concrete() is first._concrete()
+    assert rabi.lower(q, 1.0)._concrete() is rabi.lower(q, 1.0)._concrete()
     specialized_cache(entries=2)
     for k in range(8):
-        rabi.lower(q, 2.0 + k)._concrete()
+        for _ in range(2):
+            rabi.lower(q, 2.0 + k)._concrete()
     assert specialized_cache()[0] == 2
 
 
@@ -518,13 +531,16 @@ def test_a_large_module_keeps_fewer_specialized_modules(specialized_cache):
     q = _device().qudit_handles[0]
     specialized_cache(ops=1)
     for k in range(8):
-        rabi.lower(q, 2.0 + k)._concrete()
+        for _ in range(2):
+            rabi.lower(q, 2.0 + k)._concrete()
     assert specialized_cache()[0] == 1
 
 
 def test_a_module_changed_in_place_is_not_shared():
     q = _device().qudit_handles[0]
+    rabi.lower(q, 5.0)._concrete()
     first = rabi.lower(q, 5.0)._concrete()
+    assert rabi.lower(q, 5.0)._concrete() is first
     first.schedule("asap")
     assert rabi.lower(q, 5.0)._concrete() is not first
 

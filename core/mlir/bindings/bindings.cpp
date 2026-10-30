@@ -61,6 +61,8 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
 
+#include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/Support/TargetSelect.h"
 
@@ -2012,6 +2014,8 @@ public:
   template <bool RunTime>
   void controllerEvents(ControllerWalk &walk,
                         std::vector<ControllerLine> &lines) {
+    auto qubitName = mlir::StringAttr::get(ctx_.get(), "qubit");
+    auto slotName = mlir::StringAttr::get(ctx_.get(), "pulse.slot");
     module_->walk([&](mlir::Operation *op) {
       if constexpr (RunTime)
         walk.scan(op);
@@ -2022,16 +2026,16 @@ public:
                .second)
         return;
       int64_t qubit = -1, slot = -1;
-      if (auto attr = op->getAttrOfType<mlir::IntegerAttr>("qubit"))
+      if (auto attr = op->getAttrOfType<mlir::IntegerAttr>(qubitName))
         qubit = attr.getInt();
-      if (auto attr = op->getAttrOfType<mlir::IntegerAttr>("pulse.slot"))
+      if (auto attr = op->getAttrOfType<mlir::IntegerAttr>(slotName))
         slot = attr.getInt();
       else if (auto arg =
                    mlir::dyn_cast<mlir::BlockArgument>(op->getOperand(0)))
         if (auto func = mlir::dyn_cast<mlir::func::FuncOp>(
                 arg.getOwner()->getParentOp()))
           if (auto attr = func.getArgAttrOfType<mlir::IntegerAttr>(
-                  arg.getArgNumber(), "pulse.slot"))
+                  arg.getArgNumber(), slotName))
             slot = attr.getInt();
       lines.emplace_back(mlir::isa<pulse::GetDriveLineOp>(op) ? "drive"
                                                               : "readout",
@@ -2587,9 +2591,9 @@ public:
     return names;
   }
 
-  /// specialize(), built once per distinct arguments and shared: the latest
-  /// few are kept, while neither this module nor the one kept has changed
-  /// in place since. Called with the GIL held; it is released to build.
+  /// specialize(), shared once its arguments recur: the latest few are
+  /// kept, while neither this module nor the one kept has changed in place
+  /// since. Called with the GIL held; it is released to build.
   nb::object specialize_shared(
       const std::vector<double> &f64_args, const std::vector<int64_t> &i64_args,
       const std::string &schedule, int64_t maxDrives, int64_t maxReadouts,
@@ -2608,11 +2612,10 @@ public:
     }
     // By bits, so that -0.0 and 0.0, or two NaNs, are told apart. A device
     // stands for the frequencies its carriers are bound with.
-    std::string key;
-    key.reserve(8 * (f64_args.size() + i64_args.size() + carriers.size() + 7) +
-                schedule.size() + device.size());
+    llvm::SmallString<192> key;
     auto put = [&key](const void *data, size_t size) {
-      key.append(static_cast<const char *>(data), size);
+      key.append(static_cast<const char *>(data),
+                 static_cast<const char *>(data) + size);
     };
     size_t counts[3] = {f64_args.size(), i64_args.size(), carriers.size()};
     int64_t options[4] = {maxDrives, maxReadouts, readoutLatency,
@@ -2630,11 +2633,12 @@ public:
     // Released outside the lock, before building, so that their memory can
     // be reused.
     std::vector<nb::object> dropped;
+    bool keep = false;
     {
       std::lock_guard<std::mutex> guard(specialized_.mutex);
       auto &entries = specialized_.entries;
       for (auto it = entries.begin(); it != entries.end(); ++it) {
-        if (it->key != key)
+        if (llvm::StringRef(it->key) != key.str())
           continue;
         if (it->version == version &&
             nb::inst_ptr<PulseModule>(it->module)->version_.load() ==
@@ -2644,14 +2648,28 @@ public:
         }
         dropped.push_back(std::move(it->module));
         entries.erase(it);
+        keep = true;
         break;
+      }
+      if (!keep) {
+        size_t hash = llvm::hash_value(key.str()) | 1;
+        auto &missed = specialized_.missed;
+        auto seen = std::find(missed.begin(), missed.end(), hash);
+        if (seen != missed.end()) {
+          *seen = 0;
+          keep = true;
+        } else {
+          missed[specialized_.nextMissed] = hash;
+          specialized_.nextMissed =
+              (specialized_.nextMissed + 1) % missed.size();
+        }
       }
       size_t room = specialized_.maxEntries;
       int64_t ops = specialized_.ops.load();
       if (ops > 0)
         room = std::min<size_t>(
             room, std::max<int64_t>(specialized_.maxOps / ops, 1));
-      if (entries.size() >= room) {
+      if (keep && entries.size() >= room) {
         size_t drop = entries.size() + 1 - std::max<size_t>(room, 1);
         for (size_t i = 0; i < drop; ++i)
           dropped.push_back(std::move(entries[i].module));
@@ -2660,22 +2678,20 @@ public:
     }
     dropped.clear();
 
-    std::optional<PulseModule> built;
-    {
+    PulseModule built = [&] {
       nb::gil_scoped_release release;
-      built.emplace(specialize(f64_args, i64_args, schedule, maxDrives,
-                               maxReadouts, readoutLatency, switchPenalty,
-                               slots));
-    }
-    nb::object result = nb::cast(std::move(*built), nb::rv_policy::move);
-    if (specialized_.maxEntries == 0 || specialized_.maxOps == 0)
+      return specialize(f64_args, i64_args, schedule, maxDrives, maxReadouts,
+                        readoutLatency, switchPenalty, slots);
+    }();
+    nb::object result = nb::cast(std::move(built), nb::rv_policy::move);
+    if (!keep || specialized_.maxEntries == 0 || specialized_.maxOps == 0)
       return result;
     std::lock_guard<std::mutex> guard(specialized_.mutex);
     auto &entries = specialized_.entries;
     for (auto &entry : entries)
-      if (entry.key == key)
+      if (llvm::StringRef(entry.key) == key.str())
         return entry.module;
-    entries.push_back({std::move(key), version,
+    entries.push_back({key.str().str(), version,
                        nb::inst_ptr<PulseModule>(result)->version_.load(),
                        result});
     return result;
@@ -2695,6 +2711,7 @@ public:
       for (auto &entry : specialized_.entries)
         dropped.push_back(std::move(entry.module));
       specialized_.entries.clear();
+      specialized_.missed.fill(0);
     }
     return {specialized_.entries.size(), specialized_.maxEntries,
             specialized_.maxOps};
@@ -2750,12 +2767,16 @@ public:
 
   /// Make `main` take no arguments, once every use of them is replaced.
   static void dropArguments(mlir::ModuleOp module) {
-    auto funcOp = module.lookupSymbol<mlir::func::FuncOp>("main");
+    dropArguments(module.lookupSymbol<mlir::func::FuncOp>("main"));
+  }
+
+  static void dropArguments(mlir::func::FuncOp funcOp) {
     auto &entryBlock = funcOp.getBody().front();
     while (entryBlock.getNumArguments() > 0)
       entryBlock.eraseArgument(entryBlock.getNumArguments() - 1);
-    funcOp.setType(mlir::FunctionType::get(module.getContext(), {}, {}));
-    funcOp.removeArgAttrsAttr();
+    funcOp.setType(mlir::FunctionType::get(funcOp.getContext(), {}, {}));
+    if (funcOp.getArgAttrsAttr())
+      funcOp.removeArgAttrsAttr();
   }
 
   static void dropQrefArguments(mlir::ModuleOp module) {
@@ -2802,9 +2823,10 @@ public:
     }
     bool placed = !slots.carriers.empty();
     bool numeric = false;
-    if (auto main = module_->lookupSymbol<mlir::func::FuncOp>("main"))
-      for (mlir::Type type : main.getArgumentTypes())
-        numeric |= !mlir::isa<pulse::QrefType>(type);
+    if (placed)
+      if (auto main = module_->lookupSymbol<mlir::func::FuncOp>("main"))
+        for (mlir::Type type : main.getArgumentTypes())
+          numeric |= !mlir::isa<pulse::QrefType>(type);
     if (placed && !numeric) {
       // Carriers move no op: the schedule stands, and nothing folds.
       auto owning = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
@@ -2858,7 +2880,7 @@ public:
       arg.replaceAllUsesWith(replacement);
     }
 
-    dropArguments(clonedModule);
+    dropArguments(funcOp);
 
     // Fold parameter expressions before deriving concrete durations.
     foldBinding(clonedModule, bound);
@@ -3171,10 +3193,15 @@ private:
     size_t maxEntries = 16;
     int64_t maxOps = int64_t(1) << 16;
     std::atomic<int64_t> ops{-1}; // of this module, once counted
+    // Hashes of the keys last built and not kept: a module is kept only
+    // once its key recurs, so that values seen once hold no memory.
+    std::array<size_t, 32> missed{};
+    size_t nextMissed = 0;
     SpecializedCache() = default;
     SpecializedCache(SpecializedCache &&other) noexcept
         : entries(std::move(other.entries)), maxEntries(other.maxEntries),
-          maxOps(other.maxOps), ops(other.ops.load()) {}
+          maxOps(other.maxOps), ops(other.ops.load()), missed(other.missed),
+          nextMissed(other.nextMissed) {}
   };
   struct Version {
     std::atomic<uint64_t> value{0};
@@ -4841,8 +4868,8 @@ NB_MODULE(_cudaq_pulse_native, m) {
                                           switchPenalty, {}, std::nullopt, "");
           },
           "Clone module, substitute parameters with constants, fold, "
-          "schedule; built once per distinct arguments and shared while "
-          "neither module changes in place",
+          "schedule; shared once its arguments recur, while neither module "
+          "changes in place",
           nb::arg("f64_args"), nb::arg("i64_args"),
           nb::arg("schedule") = "alap", nb::arg("max_drives") = 4,
           nb::arg("max_readouts") = 2, nb::arg("readout_latency") = 0,

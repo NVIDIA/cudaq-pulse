@@ -860,10 +860,10 @@ class Lowered:
     binds each slot to its handle's carrier (``carriers``), on the call's
     device. Calls with other handles of the same shape share the module.
 
-    The module with a call's values substituted is built once per distinct
-    values and shared by every view with them, so exporting or lowering the
-    same call again does not build it again. The latest few are kept per
-    module, fewer for a large one.
+    The module with a call's values substituted is shared by every view
+    with them once they recur, so exporting or lowering the same call again
+    does not build it again; values seen once keep nothing. The latest few
+    are kept per module, fewer for a large one.
     """
 
     __slots__ = (
