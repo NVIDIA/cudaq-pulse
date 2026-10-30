@@ -1605,8 +1605,7 @@ def _line_delays(
 ) -> tuple[str | None, dict[tuple[str, int], float]]:
     from . import _clocks
 
-    system = machine._system
-    several = system is not None and machine.controller is None
+    system = machine._system if machine.controller is None else None
     try:
         return _clocks.line_delays(
             machine.line_delays_ns,
@@ -1614,8 +1613,8 @@ def _line_delays(
             clocks,
             target.clock_ghz,
             n_qudits,
-            system.controllers if several else None,  # type: ignore[union-attr]
-            system._line_owners if several else None,  # type: ignore[union-attr]
+            None if system is None else system.controllers,
+            None if system is None else system._line_owners,
         )
     except ValueError as e:
         raise CompilationError(str(e)) from None

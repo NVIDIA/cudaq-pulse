@@ -37,7 +37,7 @@ import os
 import re
 import tomllib
 import warnings
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from fractions import Fraction
 from pathlib import Path
@@ -1467,10 +1467,10 @@ def _program_clock(
     except ValueError as error:
         return None, [Problem(str(error), path="clock_ghz", value=declared)]
     reference = None if system is None else system.reference_clock_ghz
-    if reference is None:
+    if system is None or reference is None:
         return program, []
     problems = []
-    for index, controller in enumerate(system.controllers):  # type: ignore[union-attr]
+    for index, controller in enumerate(system.controllers):
         clock = program if controller.clock_ghz is None else controller.clock_ghz
         try:
             _clocks._check_reference(reference, {"controller": clock})
@@ -1848,7 +1848,7 @@ class _Reader:
                 )
         return data
 
-    def build(self, path: str, make: Any, **kwargs: Any) -> Any:
+    def build[T](self, path: str, make: Callable[..., T], **kwargs: Any) -> T | None:
         try:
             return make(**kwargs)
         except (TypeError, ValueError) as error:
@@ -1886,7 +1886,7 @@ class _Reader:
         rest = {k: system[k] for k in ("attribution", "clock_ghz") if k in system}
         if "model" in system:
             rest["model"] = self.model(system["model"], f"{path}.model")
-        return self.build(  # type: ignore[no-any-return]
+        return self.build(
             path,
             TargetDescription,
             name=system["name"],
@@ -1959,11 +1959,12 @@ class _Reader:
         system = self.mapping(data, path, _CONTROL_KEYS)
         if system is None:
             return None
-        controllers = [
+        read = [
             self.controller(item, f"{path}.controllers[{i}]")
             for i, item in enumerate(system.get("controllers", ()))
         ]
-        if any(c is None for c in controllers):
+        controllers = [c for c in read if c is not None]
+        if len(controllers) < len(read):
             return None
         links: dict[str, Link] = {}
         for name, item in dict(system.get("links", {})).items():
@@ -1994,7 +1995,7 @@ class _Reader:
                 return None
             rest["line_delays_ns"] = delays
         try:
-            return ControlSystem(controllers=controllers, links=links, **rest)  # type: ignore[arg-type]
+            return ControlSystem(controllers=controllers, links=links, **rest)
         except DeviceDefinitionError as error:
             self.problems.extend(
                 Problem(p.message, path=f"{path}.{p.path}", value=p.value, fix=p.fix)
