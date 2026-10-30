@@ -2471,7 +2471,13 @@ class PulseIREmitter:
         """Whether *loop* is small enough to unroll: its trip count times the
         calls in its body (at least one) is at most the unroll threshold."""
         threshold = self._unroll
-        count = len(loop.rng)
+        try:
+            count = len(loop.rng)
+        except OverflowError:
+            raise CompilationError(
+                f"for loop over {loop.rng!r} runs more than 2**63 - 1 times, "
+                "the most a loop can run"
+            ) from None
         if threshold == 0 or count > threshold:
             return False
         calls = 0

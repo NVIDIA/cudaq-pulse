@@ -230,6 +230,31 @@ def test_an_endless_iterator_stops_at_the_unroll_limit(monkeypatch):
         endless(Q[0])
 
 
+@pytest.mark.parametrize("bounds", [(2**64,), (-(2**64), 0), (0, 2**65, 2)])
+@pytest.mark.parametrize("unroll", [None, 0])
+def test_a_range_too_long_for_a_loop_names_the_limit_and_the_line(bounds, unroll):
+    @pulse.kernel
+    def too_long(q):
+        d = get_drive_line(q)
+        for _ in range(*bounds):
+            wait(d, 4)
+
+    compiled = pulse.compile(too_long, **({} if unroll is None else {"unroll_threshold": unroll}))
+    with pytest.raises(CompilationError, match=r"runs more than 2\*\*63 - 1 times") as info:
+        compiled.lower(Q[0])
+    assert "for _ in range(*bounds)" in "\n".join(info.value.__notes__)
+
+
+def test_the_longest_range_a_loop_can_run_still_compiles():
+    @pulse.kernel
+    def longest(q):
+        d = get_drive_line(q)
+        for _ in range(2**63 - 1):
+            wait(d, 4)
+
+    assert longest.lower(Q[0]) is not None
+
+
 def test_iterating_a_pulse_value_is_an_error():
     @pulse.kernel
     def over_line(q):
