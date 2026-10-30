@@ -24,7 +24,6 @@ handler for simulation.
 
 from __future__ import annotations
 
-import ctypes
 import struct
 from collections.abc import Sequence
 from typing import Any
@@ -200,11 +199,14 @@ class _Native:
     """A C host handler, called through its request and answer slots."""
 
     def __init__(self, handler: Any, function: ClassicalFunction, slot_bytes: int) -> None:
+        import ctypes
+
         self._handler = handler
         self._function = function
         self._slot_bytes = slot_bytes
         self._request = ctypes.create_string_buffer(slot_bytes)
         self._answer = ctypes.create_string_buffer(slot_bytes)
+        self._memmove = ctypes.memmove
         self._next_id = 0
 
     def __call__(self, *args: Any) -> Any:
@@ -213,7 +215,7 @@ class _Native:
             raise ExecutionError(
                 f"{self._function.name}: request of {len(request)} bytes exceeds the slot"
             )
-        ctypes.memmove(self._request, request, len(request))
+        self._memmove(self._request, request, len(request))
         self._handler(self._request, self._answer, self._slot_bytes)
         status, request_id, answer = decode_answer(self._function, self._answer.raw)
         if request_id != self._next_id:
@@ -229,6 +231,8 @@ class _Native:
 def native(library: str, symbol: str, function: ClassicalFunction, slot_bytes: int = 1024) -> Any:
     """A handler for *function* that calls the C function *symbol* in the
     shared library *library* with a request and an answer slot."""
+    import ctypes
+
     handler = getattr(ctypes.CDLL(library), symbol)
     handler.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
     handler.restype = None
