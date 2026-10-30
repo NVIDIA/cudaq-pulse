@@ -61,6 +61,7 @@ from typing import TYPE_CHECKING, Any
 from . import _controller_cost
 from ._controller_cost import OP_CLASSES, FunctionCost
 from ._errors import InvalidValueError
+from ._units import Time, as_nanoseconds
 from .kernel.ir_builder import CompilationError
 
 if TYPE_CHECKING:
@@ -166,8 +167,9 @@ class ControllerLimits:
     allowed.
     ``max_events``: the drives and readouts of one program.
     ``max_fine_delay_ns``: the longest delay, below one grid step, each line
-    can add to its output (0: none); it plays the part of a calibrated line
-    delay (``MachineModel.line_delays_ns``) that whole grid steps cannot.
+    can add to its output (0: none), a time or a number of ns; it plays the
+    part of a calibrated line delay (``MachineModel.line_delays_ns``) that
+    whole grid steps cannot.
     ``alignment_tolerance_cycles``: without fine delay, how far a line's
     delay may be from a whole number of grid steps; the compiler rounds it
     to the nearest one.
@@ -200,7 +202,7 @@ class ControllerLimits:
     acquirer_hold_cycles: int = 0
     feedback_latency_cycles: int = 0
     max_events: int | None = None
-    max_fine_delay_ns: float = 0.0
+    max_fine_delay_ns: float | Time = 0.0
     alignment_tolerance_cycles: float = 0.0
     answer_timeouts: bool = True
     compute_links: tuple[int | str, ...] = ("controller",)
@@ -225,6 +227,7 @@ class ControllerLimits:
         for name in ("min_wait_cycles", "acquirer_hold_cycles", "feedback_latency_cycles"):
             if getattr(self, name) < 0:
                 raise ValueError(f"ControllerLimits.{name} cannot be negative")
+        object.__setattr__(self, "max_fine_delay_ns", as_nanoseconds(self.max_fine_delay_ns))
         for name in ("max_fine_delay_ns", "alignment_tolerance_cycles"):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) < 0:
                 raise InvalidValueError(f"ControllerLimits.{name} must be a finite number >= 0")

@@ -258,6 +258,13 @@ def _mixed(left: Any, op: str, right: Any) -> UnitError:
     )
 
 
+def as_nanoseconds(value: Any) -> Any:
+    """A time a parameter takes in ns, given as a number or a ``Time``: a
+    ``Time`` as its float of nanoseconds, anything else as it is, for the
+    parameter's own checks."""
+    return float(value) if value.__class__ is Time else value
+
+
 ns = Time(Fraction(1))
 us = Time(Fraction(10**3))
 ms = Time(Fraction(10**6))

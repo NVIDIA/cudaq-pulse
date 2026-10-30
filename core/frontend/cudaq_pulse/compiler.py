@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from ._errors import InvalidTypeError, InvalidValueError
 from ._native import PackedValueError, PulseModuleBuilder
-from ._units import Time
+from ._units import Time, as_nanoseconds
 from .classical import Link
 from .kernel._bytecode_normalize import UnsupportedInterpreterError
 from .kernel._schedule_blocks import check_root_schedule, root_schedule
@@ -222,12 +222,13 @@ class MachineModel:
     controllers share, if they do: each controller's clock must be a whole
     multiple of it, and without it each controller's start is known only to
     within one of its own cycles. ``line_delays_ns`` gives calibrated
-    delays of lines, keyed by ``("drive", qudit)`` or ``("readout", qudit)``:
-    every operation on the line starts that much later than scheduled. Whole
-    steps of the line's grid move its operations, which are then checked
-    like any others; the rest is the line's ``fine_delay_ns`` in the
-    controller's program, which its controller must be able to add
-    (``ControllerLimits.max_fine_delay_ns``) or tolerate
+    delays of lines, as times or numbers of ns, keyed by ``("drive", qudit)``
+    or ``("readout", qudit)``: every operation on the line starts that much
+    later than scheduled. Whole steps of the line's grid move its
+    operations, which are then checked like any others; the rest is the
+    line's ``fine_delay_ns`` in the controller's program, which its
+    controller must be able to add (``ControllerLimits.max_fine_delay_ns``)
+    or tolerate
     (``ControllerLimits.alignment_tolerance_cycles``).
     """
 
@@ -238,7 +239,7 @@ class MachineModel:
     links: Mapping[int | str, Link] = field(default_factory=dict)
     controller: ControllerLimits | None = None
     reference_clock_ghz: float | None = None
-    line_delays_ns: Mapping[tuple[str, int], float] = field(default_factory=dict)
+    line_delays_ns: Mapping[tuple[str, int], float | Time] = field(default_factory=dict)
     link_names: Mapping[str, int] = field(init=False, repr=False, compare=False)
     _plain: bool = field(init=False, repr=False, compare=False)
 
@@ -268,6 +269,7 @@ class MachineModel:
                     "MachineModel.line_delays_ns keys are ('drive', qudit) or "
                     f"('readout', qudit), got {line!r}"
                 )
+            ns = as_nanoseconds(ns)
             if isinstance(ns, bool) or not isinstance(ns, (int, float)) or not math.isfinite(ns):
                 raise InvalidValueError(
                     f"MachineModel.line_delays_ns[{line!r}] must be a number, got {ns!r}"

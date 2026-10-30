@@ -72,6 +72,8 @@ pulse.compile(rabi, schedule=1)  # type: ignore[arg-type]
 
 # Loaded lazily at runtime, but fully typed for checkers.
 assert_type(pulse.simulate(lowered, shots=10), pulse.SimulationResult)
+# Times take units or numbers of ns.
+assert_type(pulse.simulate(lowered, t_end=40 * pulse.ns, dt_ns=0.5), pulse.SimulationResult)
 assert_type(pulse.simulate(rabi, dev.qudit_handles[0], 0.5), pulse.SimulationResult)
 assert_type(pulse.simulate(compiled, dev.qudit_handles[0], 0.5), pulse.SimulationResult)
 

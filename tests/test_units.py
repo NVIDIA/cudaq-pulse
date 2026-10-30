@@ -527,3 +527,67 @@ def test_one_kernel_compiles_for_devices_with_different_clocks():
     for lowered, device in ((on_fast, fast), (on_slow, slow)):
         end = lowered.schedule[-1].start_cycles + lowered.schedule[-1].duration_cycles
         assert end / device.clock_ghz == 140.0
+
+
+# ── Times outside kernels ────────────────────────────────────────────────────
+
+
+@pulse.kernel
+def _pulse_then_idle(q):
+    d = get_drive_line(q)
+    drive(d, gaussian(64, 0.3, 16))
+    wait(d, 80)
+
+
+def test_simulate_takes_its_end_and_step_as_times():
+    by_number = pulse.simulate(_pulse_then_idle, Q[0], t_end=40.0, dt_ns=0.5)
+    for t_end, dt_ns in ((40 * ns, 0.5 * ns), (0.04 * us, 0.5), (40.0, ns / 2)):
+        by_time = pulse.simulate(_pulse_then_idle, Q[0], t_end=t_end, dt_ns=dt_ns)
+        assert by_time.times_ns == by_number.times_ns == (0.0, 40.0)
+        assert by_time.level_populations() == by_number.level_populations()
+
+
+@pytest.mark.parametrize(
+    ("time", "message"),
+    [
+        ({"t_end": -1 * ns}, "must not precede"),
+        ({"dt_ns": 0 * ns}, "dt_ns must be positive"),
+    ],
+)
+def test_simulate_checks_a_time_as_its_number_of_ns(time, message):
+    with pytest.raises(pulse.InvalidValueError, match=message):
+        pulse.simulate(_pulse_then_idle, Q[0], **time)
+
+
+def test_a_classical_function_takes_its_latencies_as_times():
+    options = {"args": (Bits(1),), "results": (Bits(1),), "link": "controller"}
+
+    @pulse.classical(
+        max_latency_ns=0.4 * us, min_latency_ns=100 * ns, deadline_ns=2 * us, **options
+    )
+    def bounded(b):
+        return b
+
+    @pulse.classical(max_latency_ns=400 * ns, latency_mode="timeout", timeout_ns=1 * us, **options)
+    def timed(b):
+        return b
+
+    assert (bounded.max_latency_ns, bounded.min_latency_ns) == (400.0, 100.0)
+    assert (bounded.nominal_latency_ns, bounded.deadline_ns) == (400.0, 2000.0)
+    assert timed.timeout_ns == 1000.0
+    for value in (bounded.max_latency_ns, bounded.deadline_ns, timed.timeout_ns):
+        assert value.__class__ is float
+    with pytest.raises(pulse.InvalidValueError, match="min <= nominal <= max"):
+        pulse.classical.external("late", max_latency_ns=100 * ns, min_latency_ns=0.2 * us)
+
+
+def test_a_machine_takes_its_link_and_line_times_as_times():
+    link = Link(fixed_ns=0.1 * us, feedback_ns=20 * ns)
+    assert link == Link(fixed_ns=100, feedback_ns=20)
+    assert link.fixed_ns.__class__ is float and link.feedback_ns.__class__ is float
+    limits = ControllerLimits(max_fine_delay_ns=2 * ns)
+    assert limits == ControllerLimits(max_fine_delay_ns=2.0)
+    machine = MachineModel(line_delays_ns={("drive", 0): 3 * ns}, controller=limits)
+    assert machine.line_delays_ns == {("drive", 0): 3.0}
+    with pytest.raises(pulse.InvalidValueError, match="cannot be negative"):
+        MachineModel(line_delays_ns={("drive", 0): -1 * ns})

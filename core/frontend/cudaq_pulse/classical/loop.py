@@ -43,9 +43,13 @@ import json
 import math
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING
 
 from .._errors import InvalidValueError, NotFoundError
 from . import ClassicalFunction, Float
+
+if TYPE_CHECKING:
+    from .._units import Time
 
 __all__ = ["Estimate", "EstimateLog", "ParameterStore", "Update"]
 
@@ -109,7 +113,7 @@ class ParameterStore:
         name: str,
         *,
         link: int | str = 0,
-        max_latency_ns: float = 0.0,
+        max_latency_ns: float | Time = 0.0,
         bounds: tuple[float, float] | None = None,
     ) -> ClassicalFunction:
         """A classical function of no arguments that answers with the current

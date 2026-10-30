@@ -51,12 +51,10 @@ import sys
 import types
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, Required, TypedDict, Unpack, overload
+from typing import Any, Protocol, Required, TypedDict, Unpack, overload
 
 from .._errors import InvalidTypeError, InvalidValueError
-
-if TYPE_CHECKING:
-    from .._units import Time
+from .._units import Time, as_nanoseconds
 
 __all__ = [
     "Bits",
@@ -268,13 +266,13 @@ class _Options(TypedDict, total=False):
 
     args: Sequence[_TypeSpec]
     results: Sequence[_TypeSpec]
-    max_latency_ns: Required[float]
-    min_latency_ns: float
-    nominal_latency_ns: float | None
+    max_latency_ns: Required[float | Time]
+    min_latency_ns: float | Time
+    nominal_latency_ns: float | Time | None
     latency_mode: str
-    timeout_ns: float | None
+    timeout_ns: float | Time | None
     submit: str
-    deadline_ns: float | None
+    deadline_ns: float | Time | None
     link: int | str
     id: int | None
 
@@ -294,18 +292,25 @@ class Link:
     its bandwidth (0 for unlimited): a request holds the link for
     ``fixed_ns + bytes / bytes_per_ns``, at least one clock cycle.
     ``feedback_ns`` is added to every latency: the time from an answer
-    arriving to a pulse being able to use it. ``max_in_flight`` is how many
+    arriving to a pulse being able to use it. ``fixed_ns`` and
+    ``feedback_ns`` are times (``100 * pulse.ns``) or numbers of ns. ``max_in_flight`` is how many
     requests the link holds at once (its slots), and ``slot_bytes`` the
     largest request or answer, its 24-byte header included.
     """
 
-    fixed_ns: float = 0.0
+    fixed_ns: float | Time = 0.0
     bytes_per_ns: float = 0.0
-    feedback_ns: float = 0.0
+    feedback_ns: float | Time = 0.0
     max_in_flight: int = 64
     slot_bytes: int = 1024
 
     def __post_init__(self) -> None:
+        # A program that uses a link it does not list makes a Link() as it
+        # compiles: no call here for the common case of no times.
+        if self.fixed_ns.__class__ is Time:
+            object.__setattr__(self, "fixed_ns", float(self.fixed_ns))
+        if self.feedback_ns.__class__ is Time:
+            object.__setattr__(self, "feedback_ns", float(self.feedback_ns))
         for name in ("fixed_ns", "bytes_per_ns", "feedback_ns"):
             value = getattr(self, name)
             if not (isinstance(value, (int, float)) and math.isfinite(value) and value >= 0):
@@ -349,16 +354,21 @@ class ClassicalFunction:
         name: str | None = None,
         args: Sequence[_TypeSpec] = (),
         results: Sequence[_TypeSpec] = (),
-        max_latency_ns: float,
-        min_latency_ns: float = 0.0,
-        nominal_latency_ns: float | None = None,
+        max_latency_ns: float | Time,
+        min_latency_ns: float | Time = 0.0,
+        nominal_latency_ns: float | Time | None = None,
         latency_mode: str = "bounded",
-        timeout_ns: float | None = None,
+        timeout_ns: float | Time | None = None,
         submit: str = "eager",
-        deadline_ns: float | None = None,
+        deadline_ns: float | Time | None = None,
         link: int | str = 0,
         id: int | None = None,
     ) -> None:
+        max_latency_ns = as_nanoseconds(max_latency_ns)
+        min_latency_ns = as_nanoseconds(min_latency_ns)
+        nominal_latency_ns = as_nanoseconds(nominal_latency_ns)
+        timeout_ns = as_nanoseconds(timeout_ns)
+        deadline_ns = as_nanoseconds(deadline_ns)
         if name is None:
             if implementation is None:
                 raise InvalidTypeError("an external classical function needs a name")
@@ -525,7 +535,9 @@ def function(
     ``submit`` (``"eager"`` or ``"lazy"``), ``deadline_ns``, ``link`` (the
     link its requests travel on: a name from ``MachineModel.links``, such as
     ``"controller"``, or a link id; default 0; ``device`` is not used for
-    it, because a cudaq-pulse device is the QPU), ``name`` and ``id``.
+    it, because a cudaq-pulse device is the QPU), ``name`` and ``id``. A
+    latency, timeout or deadline is a time (``400 * pulse.ns``) or a number
+    of ns.
     """
     if implementation is not None:
         return ClassicalFunction(implementation, **options)
@@ -550,7 +562,7 @@ def random_index(
     /,
     *,
     name: str = "random_index",
-    max_latency_ns: float = 0.0,
+    max_latency_ns: float | Time = 0.0,
     link: int | str = 0,
     **options: Any,
 ) -> ClassicalFunction:

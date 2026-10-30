@@ -45,6 +45,7 @@ from .._errors import (
     _positive_int,
 )
 from .._native._cudaq_pulse_native import evaluate_callback
+from .._units import Time, as_nanoseconds
 from ..compiler import ScheduledEvent
 from . import _propagate
 from ._attributes import _VALID_INTEGRATORS, _f64, _level_attributes, _target_attributes
@@ -192,8 +193,8 @@ def simulate(
     shots: int | None = None,
     seed: int | None = None,
     backend: str = "cpu",
-    t_end: float | None = None,
-    dt_ns: float | None = None,
+    t_end: float | Time | None = None,
+    dt_ns: float | Time | None = None,
     integrator: str = "rk4",
     dephasing: str = "t2_star",
     handlers: Mapping[str, Callable[..., Any]] | None = None,
@@ -246,9 +247,10 @@ def simulate(
         ``"cpu"`` for the NumPy reference integrator (RK4), ``"gpu"`` for
         the cuDensityMat runtime.
     t_end:
-        End of the simulation in ns; the end of the schedule by default.
+        End of the simulation: a time (``40 * pulse.ns``) or a number of
+        ns; the end of the schedule by default.
     dt_ns:
-        Integration step in ns. By default 0.05 ns, or shorter when coupled
+        Integration step: a time or a number of ns. By default 0.05 ns, or shorter when coupled
         qudits are far detuned: a coupling turns at their detuning, and the
         step resolves it with 20 steps per period (0.024 ns at 2.1 GHz),
         a whole fraction of a clock cycle.
@@ -350,8 +352,8 @@ def _simulate_lowered(
     seed: int | None = None,
     backend: str = "cpu",
     t_start: float = 0.0,
-    t_end: float | None = None,
-    dt_ns: float | None = None,
+    t_end: float | Time | None = None,
+    dt_ns: float | Time | None = None,
     integrator: str = "rk4",
     dephasing: str = "t2_star",
     handlers: Mapping[str, Callable[..., Any]] | None = None,
@@ -376,6 +378,8 @@ def _simulate_lowered(
         raise InvalidValueError(
             f"unknown readout {readout!r}; choose 'ideal', 'model' or 'model_with_decay'"
         )
+    t_end = as_nanoseconds(t_end)
+    dt_ns = as_nanoseconds(dt_ns)
     if dt_ns is None:
         dt_ns = _default_step(lowered)
     elif dt_ns <= 0:
