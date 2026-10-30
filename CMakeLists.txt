@@ -68,7 +68,16 @@ if(_cudaq_pulse_user_mlir_dir)
       "for the MLIR ${CUDAQ_PULSE_LLVM_VERSION} toolchain.")
   endif()
 else()
-  find_package(MLIR CONFIG QUIET HINTS "${CUDAQ_PULSE_FETCHED_MLIR_PREFIX}")
+  # Only the places a user names (MLIR_ROOT, CMAKE_PREFIX_PATH) and the
+  # fetched toolchain: an MLIR found on PATH, in the system prefixes or in a
+  # package registry is not the pinned toolchain, and would be built against.
+  find_package(MLIR CONFIG QUIET
+    HINTS "${CUDAQ_PULSE_FETCHED_MLIR_PREFIX}"
+    NO_SYSTEM_ENVIRONMENT_PATH
+    NO_CMAKE_SYSTEM_PATH
+    NO_CMAKE_INSTALL_PREFIX
+    NO_CMAKE_PACKAGE_REGISTRY
+    NO_CMAKE_SYSTEM_PACKAGE_REGISTRY)
 endif()
 if(NOT MLIR_FOUND)
   execute_process(
@@ -108,13 +117,18 @@ endif()
 if(NOT LLVM_PACKAGE_VERSION VERSION_EQUAL CUDAQ_PULSE_LLVM_VERSION)
   message(FATAL_ERROR
     "cudaq-pulse requires LLVM/MLIR ${CUDAQ_PULSE_LLVM_VERSION}, but the "
-    "toolchain at ${MLIR_DIR} is LLVM ${LLVM_PACKAGE_VERSION}.")
+    "toolchain at ${MLIR_DIR} is LLVM ${LLVM_PACKAGE_VERSION}. To use the "
+    "pinned toolchain, which configuring fetches, configure a fresh build "
+    "directory with neither MLIR_DIR nor CMAKE_PREFIX_PATH naming this one; "
+    "or set MLIR_DIR to an MLIR ${CUDAQ_PULSE_LLVM_VERSION} build.")
 endif()
 if(LLVM_ENABLE_RTTI)
   message(FATAL_ERROR
     "The MLIR toolchain at ${MLIR_DIR} was built with RTTI enabled; "
     "cudaq-pulse requires an LLVM_ENABLE_RTTI=OFF toolchain built by "
-    "tools/build-mlir-toolchain.sh.")
+    "tools/build-mlir-toolchain.sh. To use the pinned toolchain, which "
+    "configuring fetches, configure a fresh build directory with neither "
+    "MLIR_DIR nor CMAKE_PREFIX_PATH naming this one.")
 endif()
 message(STATUS "Using MLIR from ${MLIR_DIR} (LLVM ${LLVM_PACKAGE_VERSION})")
 
