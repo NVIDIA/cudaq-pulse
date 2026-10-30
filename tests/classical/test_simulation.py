@@ -396,7 +396,11 @@ def answered_wait(q, tau: float):
 def test_whole_program_lowering_rejects_unanswered_calls():
     dev = _device()
     lowered = pulse.compile(answered_wait, device=dev).lower(dev.qudit_handles[0], 400.0)
-    with pytest.raises(RuntimeError, match="evolves in segments between their answers"):
+    message = (
+        "a program with classical calls evolves in segments between their answers; "
+        r"lower it with each answer bound, as pulse\.simulate\(\) does"
+    )
+    with pytest.raises(RuntimeError, match=message):
         lowered.mlir("llvm")
 
 

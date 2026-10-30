@@ -124,7 +124,7 @@ module @no_path attributes {pulse.clock_ghz = 1.000000e+00 : f64} {
   func.func @main(%x: !pulse.waveform) {
     %q = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
     %r0, %rt0 = pulse.get_readout_line %q {qubit = 0 : i64, frequency_hz = 7.000000e+09 : f64} : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
-    // expected-error @+1 {{a program that measures evolves in segments between measurements}}
+    // expected-error @+1 {{a program that measures evolves in segments between measurements; lower it along a measurement-outcome path (pulse.path), as pulse.simulate() does}}
     %r1, %rt1, %m = pulse.readout %r0, %x, %rt0, "iq" {start_cycles = 0 : i64, duration_cycles = 300 : i64} : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
     return
   }
