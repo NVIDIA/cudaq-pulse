@@ -5555,6 +5555,35 @@ NB_MODULE(_cudaq_pulse_native, m) {
       "Evaluate a drive-envelope callback at the given times (ns)",
       nb::arg("kind"), nb::arg("params"), nb::arg("times"));
 
+  m.def(
+      "identity_keys",
+      [](nb::dict mapping, nb::handle first, nb::handle second) {
+        PyObject *key = nullptr;
+        PyObject *value = nullptr;
+        PyObject *firstKey = nullptr;
+        PyObject *secondKey = nullptr;
+        Py_ssize_t pos = 0;
+        while (PyDict_Next(mapping.ptr(), &pos, &key, &value)) {
+          if (!firstKey && value == first.ptr()) {
+            firstKey = key;
+            if (secondKey)
+              break;
+          } else if (!secondKey && value == second.ptr()) {
+            secondKey = key;
+            if (firstKey)
+              break;
+          }
+        }
+        auto keyOrNone = [](PyObject *found) -> nb::object {
+          return found ? nb::borrow(found) : nb::none();
+        };
+        return nb::make_tuple(keyOrNone(firstKey), keyOrNone(secondKey));
+      },
+      "(the first key whose value is first, the first other key whose value "
+      "is second), by identity, None where there is none; the tracer's scan "
+      "of a kernel's locals",
+      nb::arg("mapping"), nb::arg("first"), nb::arg("second"));
+
   nb::class_<JITModule>(m, "JITModule")
       .def("lookup", &JITModule::lookup,
            nb::call_guard<nb::gil_scoped_release>(),

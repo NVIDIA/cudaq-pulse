@@ -1326,6 +1326,18 @@ def _current(value: IRValue) -> IRValue:
     return value if chan is None else chan.value
 
 
+_identity_keys: Callable[[dict[str, Any], Any, Any], tuple[str | None, str | None]] | None = None
+
+
+def _load_identity_keys() -> Callable[[dict[str, Any], Any, Any], tuple[str | None, str | None]]:
+    """The native identity scan, imported on first use."""
+    global _identity_keys
+    from .._native._cudaq_pulse_native import identity_keys
+
+    _identity_keys = identity_keys
+    return identity_keys
+
+
 def _slot_holds(slot: tuple[list[Any], int, IRValue], value: IRValue) -> bool:
     """Whether the list slot recorded for *value* still holds it."""
     obj, index, held = slot
@@ -3526,7 +3538,7 @@ class PulseIREmitter:
             self._rebind_one(old, new)
             self._rebind_one(old2, new2)
             return
-        name, name2 = self._local_names(old, old2)
+        name, name2 = (_identity_keys or _load_identity_keys())(self.locals, old, old2)
         if chan is not None:
             chan.value = new
             new.chan = chan
@@ -3542,21 +3554,7 @@ class PulseIREmitter:
 
     def _local_names(self, val: IRValue, val2: IRValue) -> tuple[str | None, str | None]:
         """``_find_local_name`` of two distinct values, in one pass."""
-        name = name2 = None
-        items = iter(self.locals.items())
-        for n, v in items:
-            if v is val:
-                name = n
-                break
-            if v is val2 and name2 is None:
-                name2 = n
-        if name2 is None:
-            # The names after val's first.
-            for n, v in items:
-                if v is val2:
-                    name2 = n
-                    break
-        return name, name2
+        return (_identity_keys or _load_identity_keys())(self.locals, val, val2)
 
     def _rebind_slot(self, old: IRValue, new: IRValue) -> None:
         """Put *new* in the list slot *old* was read from, if it still holds it."""

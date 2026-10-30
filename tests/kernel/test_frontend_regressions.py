@@ -267,3 +267,31 @@ def test_unexpected_exceptions_propagate_unwrapped():
         k(Q[0])
     decoded, index = info.value.pulse_source
     assert decoded.location(index)[1] == k.__wrapped__.__code__.co_firstlineno + 3
+
+
+def test_the_locals_scan_matches_values_by_identity():
+    from cudaq_pulse._native._cudaq_pulse_native import identity_keys
+
+    class Loud:
+        def __eq__(self, other):
+            raise AssertionError("compared with ==")
+
+        __hash__ = object.__hash__
+
+    a, b, c = Loud(), Loud(), Loud()
+    assert identity_keys({"x": c, "y": a, "z": b, "w": a}, a, b) == ("y", "z")
+    assert identity_keys({"x": b, "y": a}, a, b) == ("y", "x")
+    assert identity_keys({"x": a, "y": c, "z": a}, a, a) == ("x", "z")
+    assert identity_keys({"x": c}, a, b) == (None, None)
+
+
+def test_a_sync_of_one_line_with_itself_is_rejected_while_tracing():
+
+    @pulse.kernel
+    def k(q0):
+        d0 = get_drive_line(q0)
+        sync(d0, d0)
+        drive(d0, square(40, 0.1))
+
+    with pytest.raises(CompilationError):
+        k(Q[0])
