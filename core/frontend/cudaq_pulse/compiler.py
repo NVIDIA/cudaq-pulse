@@ -205,11 +205,6 @@ class _Links(dict[int, Link]):
 _NO_DELAYS: Mapping[tuple[str, int], float] = MappingProxyType({})
 
 
-def _check_reference_clock(ghz: float | None, owner: str) -> None:
-    if ghz is not None and not ghz > 0:
-        raise InvalidValueError(f"{owner}.reference_clock_ghz must be positive, got {ghz}")
-
-
 @dataclass(frozen=True)
 class MachineModel:
     """Hardware resource limits.
@@ -261,8 +256,10 @@ class MachineModel:
                 raise TypeError(
                     f"MachineModel.controller must be a ControllerLimits, got {self.controller!r}"
                 )
-        if self.reference_clock_ghz is not None:
-            _check_reference_clock(self.reference_clock_ghz, "MachineModel")
+        if self.reference_clock_ghz is not None and not self.reference_clock_ghz > 0:
+            raise InvalidValueError(
+                f"MachineModel.reference_clock_ghz must be positive, got {self.reference_clock_ghz}"
+            )
         if self.line_delays_ns:
             from ._clocks import checked_line_delays
 
@@ -392,29 +389,13 @@ class MachineModel:
         """The ``Link`` of *link* (a name or an id; ``Link()`` if unlisted)."""
         return self.links.get(self.link_id(link), Link())
 
-    def links_attribute(
-        self, used: Sequence[int], uncertainty_ns: Mapping[int, float] | None = None
-    ) -> str:
-        """The module attribute ``classical.links`` for the links in *used*;
-        *uncertainty_ns* is the start uncertainty of each link that joins
-        controllers (see ``ControlSystem``)."""
-        if uncertainty_ns is None:
-            entries = ", ".join(
-                f'"{link}" = {self.links.get(link, Link()).attribute()}'
-                for link in sorted(set(used))
-            )
-        else:
-            entries = ", ".join(
-                f'"{link}" = {self._link_entry(link, uncertainty_ns.get(link, 0.0))}'
-                for link in sorted(set(used))
-            )
+    def links_attribute(self, used: Sequence[int]) -> str:
+        """The module attribute ``classical.links`` for the links in *used*."""
+        entries = ", ".join(
+            f'"{link}" = {self.links.get(link, Link()).attribute()}'
+            for link in sorted(set(used))
+        )
         return f"{{classical.links = {{{entries}}}}}"
-
-    def _link_entry(self, link_id: int, uncertainty_ns: float) -> str:
-        link = self.links.get(link_id, Link())
-        if link.per_controller:
-            return link.attribute(uncertainty_ns, self.link_name(link_id))
-        return link.attribute(uncertainty_ns)
 
 
 _DEFAULT_MACHINE = MachineModel()
@@ -1456,11 +1437,11 @@ def build(
         raise _rejected_literal(fn, trace_args, builder, error) from None
     if links:
         system = machine._system
-        if system is None or machine.controller is not None:
-            module.set_attributes(machine.links_attribute(links))
-        else:
-            uncertainty = system._link_uncertainty_ns(machine, links, target.clock_ghz)
-            module.set_attributes(machine.links_attribute(links, uncertainty))
+        module.set_attributes(
+            machine.links_attribute(links)
+            if system is None or machine.controller is not None
+            else system._links_attribute(machine, links, target.clock_ghz)
+        )
     fine_delays = None if plain else _clocked_module(module, machine, target, clocks, builder)
     metrics.ffi_ms = (time.perf_counter() - t0) * 1000
 

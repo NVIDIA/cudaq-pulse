@@ -554,7 +554,7 @@ class ControlSystem:
 
     def __post_init__(self) -> None:
         from ._clocks import checked_line_delays
-        from .compiler import _NO_DELAYS, MachineModel, _check_reference_clock
+        from .compiler import _NO_DELAYS, MachineModel
 
         if isinstance(self.controllers, Controller) or not isinstance(self.controllers, Iterable):
             raise InvalidTypeError(
@@ -587,7 +587,11 @@ class ControlSystem:
                     f"ControlSystem.links[{name!r}] must be a Link, got {link!r}"
                 )
         object.__setattr__(self, "links", MappingProxyType(dict(self.links)))
-        _check_reference_clock(self.reference_clock_ghz, "ControlSystem")
+        ghz = self.reference_clock_ghz
+        if ghz is not None and not ghz > 0:
+            raise InvalidValueError(
+                f"ControlSystem.reference_clock_ghz must be positive, got {ghz}"
+            )
         delays = self.line_delays_ns
         object.__setattr__(
             self,
@@ -815,29 +819,34 @@ class ControlSystem:
         fields.append(f"uncertainty_ns = {array('f64', ns)}")
         return "{pulse.controllers = {" + ", ".join(fields) + "}}"
 
-    def _link_uncertainty_ns(
+    def _links_attribute(
         self, machine: MachineModel, used: Sequence[int], program_ghz: float
-    ) -> dict[int, float]:
-        """For each link of *used* that joins controllers, the start
-        uncertainty between the two of them known least well, in ns: the
-        budget of a call whose sender and taker the scheduler cannot tell
-        adds it. A per-controller link joins none: its calls stay on one."""
+    ) -> str:
+        """``machine.links_attribute(used)`` on this system: each link that
+        joins controllers carries the start uncertainty between the two of
+        them known least well, in ns, which the budget of a call whose sender
+        and taker the scheduler cannot tell adds. A per-controller link joins
+        none (its calls stay on one) and carries its name."""
         each = self._start_uncertainty(self._clock_plan(program_ghz))
-        found: dict[int, float] = {}
-        for link_id in set(used):
+        entries = []
+        for link_id in sorted(set(used)):
             link = machine.link(link_id)
             if link.per_controller:
-                continue
-            reached = link.controllers
-            indices = (
-                range(len(self.controllers))
-                if reached is None
-                else sorted({self._index(c) for c in reached})
-            )
-            worst = sorted((each[i] for i in indices), reverse=True)
-            if len(worst) > 1 and worst[0] + worst[1]:
-                found[link_id] = float((worst[0] + worst[1]) / Fraction(program_ghz))
-        return found
+                entry = link.attribute(0.0, machine.link_name(link_id))
+            else:
+                reached = link.controllers
+                indices = (
+                    range(len(self.controllers))
+                    if reached is None
+                    else sorted({self._index(c) for c in reached})
+                )
+                worst = sorted((each[i] for i in indices), reverse=True)
+                uncertainty = 0.0
+                if len(worst) > 1 and worst[0] + worst[1]:
+                    uncertainty = float((worst[0] + worst[1]) / Fraction(program_ghz))
+                entry = link.attribute(uncertainty)
+            entries.append(f'"{link_id}" = {entry}')
+        return f"{{classical.links = {{{', '.join(entries)}}}}}"
 
     def _forwarding(
         self,
