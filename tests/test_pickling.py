@@ -21,6 +21,7 @@ import subprocess
 import sys
 
 import cudaq_pulse as pulse
+import numpy as np
 import pytest
 from cudaq_pulse import _pickling, _source_stamp
 from cudaq_pulse.classical import Bits
@@ -631,6 +632,38 @@ def test_a_tracing_error_unpickles_without_where_tracing_stopped():
     assert getattr(back, "__notes__", None) == getattr(error, "__notes__", None)
 
 
+# ── Simulation results ───────────────────────────────────────────────────────
+
+_PLUS = [2**-0.5, 2**-0.5]
+
+
+def test_a_simulation_result_unpickles_with_its_branches_and_level_populations():
+    result = pulse.simulate(reset, Q[0], initial_state=_PLUS, levels=2)
+    back = _round_trip(result)
+    assert back.branches == result.branches and len(back.branches) == 2
+    assert [b.answers("flip") for b in back.branches] == [[[1]], [[0]]]
+    assert back.measurements == result.measurements and back.qudits == result.qudits
+    assert back.level_populations() == result.level_populations()
+    assert back.level_population(1, qudit=Q[0]) == result.level_population(1, qudit=Q[0])
+    np.testing.assert_array_equal(back.density_matrix, result.density_matrix)
+
+
+def test_branches_level_populations_and_branch_coverage_pickle_on_their_own():
+    result = pulse.simulate(reset, Q[0], initial_state=_PLUS, shots=20, seed=1, levels=2)
+    for value in (
+        result.branches,
+        result.branches[0],
+        result.branches[0].calls[0],
+        result.measurements[0],
+        result.level_populations(),
+        result.level_population(0),
+        pulse.BranchCoverage.SAMPLED,
+    ):
+        back = _round_trip(value)
+        assert back == value and type(back) is type(value)
+    np.testing.assert_array_equal(_round_trip(result).records, result.records)
+
+
 # ── A process pool sweep ─────────────────────────────────────────────────────
 
 
@@ -644,6 +677,10 @@ def _run_in_worker(program):
 
 def _compile_in_worker(kernel, qudit, amp):
     return kernel.lower(qudit, amp).mlir()
+
+
+def _simulate_in_worker(program):
+    return pulse.simulate(program, initial_state=_PLUS, levels=2)
 
 
 def _over_the_limit():
@@ -660,6 +697,12 @@ def test_a_process_pool_sweep_runs_programs_compiled_in_the_parent():
         assert pool.submit(_compile_in_worker, rabi, Q[3], 0.2).result() == (
             rabi.lower(Q[3], 0.2).mlir()
         )
+        # A result comes back from the worker as the parent computes it.
+        program = pulse.compile(reset, device=LADDER).lower(Q[0])
+        simulated = pool.submit(_simulate_in_worker, program).result()
         with pytest.raises(ControllerLimitError, match="starts 20 cycles after") as caught:
             pool.submit(_over_the_limit).result()
     assert caught.value.violations == _limit_error().violations
+    local = _simulate_in_worker(program)
+    assert simulated.branches == local.branches
+    assert simulated.level_populations() == local.level_populations()
