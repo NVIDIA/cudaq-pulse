@@ -15,7 +15,6 @@ that pick passes and a schedule, the native build of one specialization, and
 
 from __future__ import annotations
 
-import difflib
 import threading
 import time
 from collections.abc import Mapping, Sequence
@@ -131,6 +130,8 @@ def _passes(passes: Sequence[str]) -> tuple[Pass, ...]:
         try:
             members.append(Pass(name))
         except ValueError:
+            import difflib
+
             close = difflib.get_close_matches(str(name), names, n=1)
             hint = f" Did you mean {close[0]!r}?" if close else ""
             raise InvalidValueError(
