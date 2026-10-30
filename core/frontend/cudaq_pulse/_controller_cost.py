@@ -28,7 +28,6 @@ import ast
 import builtins
 import inspect
 import math
-import textwrap
 import threading
 import types
 import weakref
@@ -198,6 +197,8 @@ class _NotAnalyzableError(Exception):
 
 
 def _source_tree(fn: Callable[..., Any]) -> ast.FunctionDef:
+    import textwrap
+
     lines, start = inspect.getsourcelines(fn)
     module = ast.parse(textwrap.dedent("".join(lines)))
     ast.increment_lineno(module, max(start - 1, 0))
