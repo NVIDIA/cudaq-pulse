@@ -14,7 +14,7 @@ Every error cudaq-pulse raises on purpose derives from ``PulseError``, so
 built-in base of its kind of error, so ``except ValueError`` or ``except
 RuntimeError`` catches it as it would the built-in one: ``InvalidValueError``
 is a ``ValueError``, ``NotFoundError`` and ``UnknownTargetError`` are
-``KeyError``\ s, and ``CompilationError`` and ``NoTargetError`` are
+``KeyError``\ s, ``IndexOutOfRangeError`` is an ``IndexError``, and ``CompilationError`` and ``NoTargetError`` are
 ``RuntimeError``\ s.
 
 .. autoexception:: cudaq_pulse.PulseError
@@ -33,6 +33,8 @@ Arguments and names
 .. autoexception:: cudaq_pulse.InvalidTypeError
 
 .. autoexception:: cudaq_pulse.NotFoundError
+
+.. autoexception:: cudaq_pulse.IndexOutOfRangeError
 
 .. autoexception:: cudaq_pulse.UnsupportedError
 

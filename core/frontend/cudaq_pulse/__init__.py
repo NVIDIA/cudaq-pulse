@@ -56,6 +56,7 @@ from ._device import device as device
 from ._errors import CompilationError as CompilationError
 from ._errors import DeviceDefinitionError as DeviceDefinitionError
 from ._errors import ExecutionError as ExecutionError
+from ._errors import IndexOutOfRangeError as IndexOutOfRangeError
 from ._errors import InternalError as InternalError
 from ._errors import InvalidTypeError as InvalidTypeError
 from ._errors import InvalidValueError as InvalidValueError
@@ -155,6 +156,7 @@ __all__ = [
     "InvalidValueError",
     "InvalidTypeError",
     "NotFoundError",
+    "IndexOutOfRangeError",
     "UnsupportedError",
     "CompilationError",
     "TimingError",

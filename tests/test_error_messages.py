@@ -191,15 +191,15 @@ def test_no_shots_is_the_documented_simulate_default(idle):
 )
 def test_a_qudit_index_past_the_device_says_how_many_qudits_it_has(index, message):
     handles = pulse.device("transmon_17q").qudit_handles
-    with pytest.raises(IndexError, match=message) as info:
+    with pytest.raises(pulse.IndexOutOfRangeError, match=message) as info:
         handles[index]
-    assert isinstance(info.value, pulse.PulseError)
+    assert isinstance(info.value, IndexError)
     assert str(info.value).endswith("indexed 0 to 16 (or -17 to -1)")
 
 
 def test_a_qudit_index_past_a_register_says_how_many_qudits_it_has():
     register = pulse.device("transmon_17q").qudit_handles[0:3]
-    with pytest.raises(IndexError) as info:
+    with pytest.raises(pulse.IndexOutOfRangeError) as info:
         register[5]
     assert str(info.value) == (
         "qudit index 5 is out of range: the register has 3 qudits, indexed 0 to 2 (or -3 to -1)"

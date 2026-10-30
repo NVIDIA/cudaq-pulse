@@ -18,6 +18,7 @@ __all__ = [
     "CompilationError",
     "DeviceDefinitionError",
     "ExecutionError",
+    "IndexOutOfRangeError",
     "InternalError",
     "InvalidTypeError",
     "InvalidValueError",
@@ -194,8 +195,9 @@ class _CallTimeoutError(ExecutionError, TimeoutError):
     """A classical call got no answer in time."""
 
 
-class _QuditIndexError(PulseError, IndexError):
-    """A qudit index past the qudits of a device or register."""
+class IndexOutOfRangeError(PulseError, IndexError):
+    """An index past the end of what it indexes, such as a qudit index past
+    the qudits of a device or register. The message says how many there are."""
 
 
 class PulseWarning(UserWarning):

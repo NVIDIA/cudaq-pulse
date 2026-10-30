@@ -528,8 +528,8 @@ behavior may change in any 0.x release.
   `CompiledKernel`, `Lowered`, `Pass`, `simulate`, `SimulationResult`,
   `BranchCoverage`, `device`, `Device`, `Qudit`, `Register`,
   `PulseError`, `Problem`, `DeviceDefinitionError`, `InvalidValueError`,
-  `InvalidTypeError`, `NotFoundError`, `UnsupportedError`,
-  `CompilationError`, `TimingError`, `ExecutionError`, `InternalError`,
+  `InvalidTypeError`, `NotFoundError`, `IndexOutOfRangeError`,
+  `UnsupportedError`, `CompilationError`, `TimingError`, `ExecutionError`, `InternalError`,
   `PulseWarning`, `UpgradeNotice`, `NoTargetError`, `NoDeviceError`,
   `DeviceMismatchError`, `GpuRuntimeError`, `viz`, `classical`,
   `controller` and `backends`, plus `__version__`.
@@ -547,7 +547,7 @@ behavior may change in any 0.x release.
   Every error cudaq-pulse raises on purpose derives from `PulseError` and
   has the built-in base of its kind: `InvalidValueError` is a `ValueError`,
   `InvalidTypeError` a `TypeError`, `NotFoundError` a `KeyError`,
-  `UnsupportedError` a `NotImplementedError`, and `CompilationError`,
+  `IndexOutOfRangeError` an `IndexError`, `UnsupportedError` a `NotImplementedError`, and `CompilationError`,
   `ExecutionError` and `InternalError` are `RuntimeError`s. An
   `InternalError` is a bug in cudaq-pulse, and its message asks for a
   report. `Calibration.load` of a calibration that is neither shipped nor a
@@ -595,11 +595,13 @@ behavior may change in any 0.x release.
   duration outside its cycles. A waveform lasts 1 to 2**53
   cycles, and a wait, a flat top (`gaussian_square` width) or a bound 0 to
   2**53, whether given as an `int`, a time, or an `int` or `float` argument
-  the kernel is compiled for. `simulate(shots=...)` and `emulate(shots=...)`
+  the kernel is compiled for. A `range()` loop runs at most 2**63 - 1
+  times; a longer one is a `CompilationError` at its line, not an
+  `OverflowError`. `simulate(shots=...)` and `emulate(shots=...)`
   take a positive `int` (`InvalidTypeError` or `InvalidValueError`
   otherwise; `simulate`'s default `None` still samples nothing), and a
-  qudit index past a device or register is an `IndexError` that says how
-  many qudits it has. A NaN or infinite float argument is an
+  qudit index past a device or register is an `IndexOutOfRangeError`, an
+  `IndexError`, that says how many qudits it has. A NaN or infinite float argument is an
   `InvalidValueError` naming the parameter wherever the program is used:
   run, simulated, exported or printed.
 

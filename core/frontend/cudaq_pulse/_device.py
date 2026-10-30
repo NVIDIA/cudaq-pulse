@@ -29,13 +29,13 @@ from typing import TYPE_CHECKING, Any, overload
 
 from ._errors import (
     DeviceDefinitionError,
+    IndexOutOfRangeError,
     InvalidTypeError,
     NotFoundError,
     Problem,
     PulseError,
     _closest,
     _count,
-    _QuditIndexError,
     _ranges,
 )
 from .targets._registry import NoTargetError, UnknownTargetError
@@ -265,14 +265,14 @@ class _DeviceRegister(Register):
         return f"device {self._qudits[0].device.name!r}" if self._qudits else "the device"
 
 
-def _out_of_range(index: Any, n: int, owner: str) -> _QuditIndexError:
+def _out_of_range(index: Any, n: int, owner: str) -> IndexOutOfRangeError:
     """The error for *index*, which names a qudit past the *n* of *owner*."""
     wrong = index
     if isinstance(index, Sequence) and not isinstance(index, str):
         wrong = next((i for i in index if isinstance(i, int) and not -n <= i < n), index)
     if n == 0:
-        return _QuditIndexError(f"qudit index {wrong!r} is out of range: {owner} has no qudits")
-    return _QuditIndexError(
+        return IndexOutOfRangeError(f"qudit index {wrong!r} is out of range: {owner} has no qudits")
+    return IndexOutOfRangeError(
         f"qudit index {wrong!r} is out of range: {owner} has {_count(n, 'qudit')}, "
         f"indexed 0 to {n - 1} (or -{n} to -1)"
     )
