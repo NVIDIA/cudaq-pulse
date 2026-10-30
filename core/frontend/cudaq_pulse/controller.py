@@ -123,6 +123,10 @@ _AMPLITUDES: Mapping[str, tuple[int, ...]] = MappingProxyType(
         "tanh_ramp": (1,),
     }
 )
+# The names of those operands.
+_AMPLITUDE_NAMES: Mapping[str, frozenset[str]] = MappingProxyType(
+    {shape: frozenset(_PARAMETERS[shape][i] for i in at) for shape, at in _AMPLITUDES.items()}
+)
 _PLAYED = frozenset({"drive", "readout"})
 
 
@@ -386,7 +390,7 @@ def shape_key(node: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
         if any(child is None for child in children):
             return None
         return (shape, tuple(node.get("values", ())), children)
-    skip = {_PARAMETERS[shape][i] for i in _AMPLITUDES.get(shape, ())}
+    skip = _AMPLITUDE_NAMES.get(shape, frozenset())
     kept = tuple((k, v) for k, v in params.items() if k not in skip)
     if any(v is None for _, v in kept):
         return None
@@ -577,8 +581,14 @@ def export(
     native = None if clocks is None else _native_clock(clocks)
     # In the controller's own cycles from here on.
     lines, events, off, problems = _walk(lowered, True, native, True, slots)
-    if limits is not None or system is not None:
-        violations = _all_violations(lowered, lines, events, limits, system, clocks, off, problems)
+    if system is not None or limits is not None:
+        if system is not None:
+            violations = system._violations(
+                lowered, lines, events, clocks, off, problems, True, None, None
+            )
+        else:
+            assert limits is not None
+            violations = _violations(lowered, events, limits, lines, clocks, off, problems)
         if violations:
             raise _limit_error(lowered, violations)
     own = None
@@ -1183,19 +1193,15 @@ def _compile_check(
     if slots and limits is not None and limits.tones_per_line is not None:
         with lowered._lock:
             natives = lowered._module.controller_native_tones()
-    found = _all_violations(
-        lowered,
-        lines,
-        events,
-        limits,
-        system,
-        clocks,
-        off,
-        problems,
-        waveforms=False,
-        unresolved=unresolved,
-        natives=natives,
-    )
+    if system is None:
+        assert limits is not None
+        found = _violations(
+            lowered, events, limits, lines, clocks, off, problems, False, unresolved, natives
+        )
+    else:
+        found = system._violations(
+            lowered, lines, events, clocks, off, problems, False, unresolved, natives
+        )
     if slots and limits is not None and limits.acquirers:
         assert unresolved is not None
         # Acquirers are given per carrier, which each call binds.
@@ -1205,37 +1211,17 @@ def _compile_check(
     return found, not unresolved
 
 
-def _all_violations(
-    lowered: Lowered,
-    lines: Sequence[Mapping[str, Any]],
-    events: Sequence[dict[str, Any]],
-    limits: ControllerLimits | None,
-    system: ControlSystem | None,
-    clocks: _clocks.ClockPlan | None,
-    off: Sequence[tuple[int, int, int]] = (),
-    run_time: Sequence[str] = (),
-    waveforms: bool = True,
-    unresolved: list[str] | None = None,
-    natives: Sequence[int] | None = None,
-) -> list[str]:
-    if system is not None:
-        return system._violations(
-            lowered, lines, events, clocks, off, run_time, waveforms, unresolved, natives
-        )
-    assert limits is not None
-    return _violations(
-        lowered, events, limits, lines, clocks, off, run_time, waveforms, unresolved, natives
-    )
-
-
 def _call_violations(lowered: Lowered) -> list[str]:
     """The limits one call's values exceed, as its export checks them."""
     machine = lowered.options.machine
     clocks = (lowered._generic or lowered).clocks
     lines, events, off, problems = _walk(lowered, own=_native_clock(clocks))
-    return _all_violations(
-        lowered, lines, events, machine.controller, machine._system, clocks, off, problems
-    )
+    if machine._system is not None:
+        return machine._system._violations(
+            lowered, lines, events, clocks, off, problems, True, None, None
+        )
+    assert machine.controller is not None
+    return _violations(lowered, events, machine.controller, lines, clocks, off, problems)
 
 
 def _sample_rate_violations(
