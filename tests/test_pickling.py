@@ -13,6 +13,7 @@ from __future__ import annotations
 import concurrent.futures
 import copy
 import hashlib
+import json
 import multiprocessing
 import os
 import pathlib
@@ -24,7 +25,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse import _pickling, _source_stamp
-from cudaq_pulse.classical import Bits
+from cudaq_pulse.classical import Bits, Float, Link
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, ControllerLimits
 from cudaq_pulse.kernel import _kernel
@@ -33,7 +34,7 @@ from cudaq_pulse.targets import Coupling, Qubit, TargetDescription, calibration
 from cudaq_pulse.targets._registry import make_target
 from cudaq_pulse.targets.calibration import Calibration
 
-from tests._handles import LADDER, Q
+from tests._handles import LADDER, Q, ladder_target
 
 # The shipped target and the calibration it carries by default.
 _SHIPPED_TARGET = "transmon_17q"
@@ -581,6 +582,198 @@ def test_the_source_stamp_hashes_the_sources_as_they_are():
         )
 
 
+# ── Control systems ──────────────────────────────────────────────────────────
+
+
+@pulse.classical(args=[Bits(1)], results=[Float()], max_latency_ns=200, link="decoder")
+def correction(m):
+    if m[0]:
+        return 0.1
+    return 0.0
+
+
+@pulse.kernel
+def corrected_pair(a, b, amp: float):
+    ra, ta = get_readout_line(a)
+    da, sa = get_drive_line(a)
+    rb, tb = get_readout_line(b)
+    db, sb = get_drive_line(b)
+    ma = readout(ra, square(40, 0.1), ta)
+    mb = readout(rb, square(40, 0.1), tb)
+    drive(da, square(8, correction.submit([ma]).result()), sa)
+    drive(db, square(8, amp), sb)
+    drive(db, square(8, correction.submit([mb]).result()), sb)
+
+
+@pulse.kernel
+def anywhere(q: pulse.Qudit, amp: float):
+    d, t = get_drive_line(q)
+    drive(d, square(4, amp), t)
+    drive(d, square(4, 0.2), t)
+
+
+def _qpu(max_in_flight=1, **processor):
+    """Two controllers on their own clocks with a processor each, one
+    without lines, and a link with an instance per controller."""
+    cores = [pulse.Processor(links=["decoder"], **processor) for _ in range(2)]
+    controllers = [
+        pulse.Controller(
+            drive_lines=[2 * k, 2 * k + 1],
+            readout_lines=[2 * k, 2 * k + 1],
+            clock_ghz=clock,
+            processors=[core],
+        )
+        for k, (clock, core) in enumerate(zip((1.0, 0.5), cores, strict=True))
+    ]
+    link = Link(fixed_ns=10, max_in_flight=max_in_flight, per_controller=True)
+    system = pulse.ControlSystem(
+        controllers=[*controllers, pulse.Controller()], links={"decoder": link}
+    )
+    return pulse.device({"target": ladder_target(4), "control_system": system})
+
+
+_QPU = _qpu()
+
+
+def _declared_clock():
+    controllers = [
+        pulse.Controller(drive_lines=[k], readout_lines=[k], clock_ghz=clock)
+        for k, clock in enumerate((2.4, 1.0))
+    ]
+    system = pulse.ControlSystem(controllers=controllers)
+    return pulse.device({"target": ladder_target(2), "control_system": system, "clock_ghz": 12.0})
+
+
+def _multi_controller_programs():
+    q = _QPU.qudits
+    compiled = pulse.compile(corrected_pair, device=_QPU, schedule="asap")
+    placed = pulse.compile(anywhere, device=_QPU, schedule="asap", passes=[])
+    return {
+        "call": compiled.lower(q[0], q[2], 0.3),
+        "placed_on_0": placed.lower(q[0], 0.1),
+        "placed_on_2": placed.lower(q[2], 0.1),
+    }
+
+
+def _per_controller(program):
+    """Each controller's programs, as the bytes a backend reads."""
+    return [
+        (
+            json.dumps(program.export_controller(controller=k)),
+            json.dumps(program.export_emulation(controller=k)),
+        )
+        for k in range(len(program.target.control_system.controllers))
+    ]
+
+
+def test_a_control_system_and_its_parts_unpickle_equal_with_equal_hashes():
+    system = _QPU.control_system
+    shared = Link(controllers=[system.controllers[1]], per_controller=True)
+    for part in (system, *system.controllers, system.controllers[0].processors[0], shared):
+        back = _round_trip(part)
+        assert back is not part and back == part and hash(back) == hash(part)
+    back = _round_trip(system)
+    assert back.links["decoder"].per_controller
+    assert back.as_dict() == system.as_dict() and back._machine == system._machine
+
+
+@pytest.mark.parametrize("make", [lambda: _QPU, _declared_clock], ids=["derived", "declared"])
+def test_a_device_unpickles_with_its_control_system_and_program_clock(make, monkeypatch):
+    device = make()
+    data = pickle.dumps(device)
+    monkeypatch.setattr(_pickling, "_devices", {})
+    back = pickle.loads(data)
+    assert back is not device and back == device
+    assert back.control_system == device.control_system and back.clock_ghz == device.clock_ghz
+    assert back.as_dict() == device.as_dict()
+
+
+def test_devices_differing_only_in_their_control_systems_unpickle_as_each(monkeypatch):
+    one, two = _qpu(max_in_flight=1), _qpu(max_in_flight=2)
+    assert one.fingerprint == two.fingerprint and one != two
+    data = pickle.dumps(two)
+    monkeypatch.setattr(_pickling, "_devices", {})
+    pickle.dumps(one)
+    back = pickle.loads(data)
+    assert back is not one and back == two
+
+
+def test_usage_reports_unpickle_equal():
+    report = _multi_controller_programs()["call"].controller_usage
+    controller = report.controllers[0]
+    processor = controller.processors[0]
+    for part in (report, controller, processor, processor.functions[0]):
+        assert _round_trip(part) == part
+    assert str(_round_trip(report)) == str(report)
+
+
+def _usage_error():
+    qpu = _qpu(max_ops_per_function=1)
+    return _raised(lambda: pulse.compile(corrected_pair, device=qpu).lower(*qpu.qudits[:2], 0.3))
+
+
+def test_a_limit_error_unpickles_with_its_usage_report():
+    error = _usage_error()
+    assert error.usage is not None and error.usage.exceeded
+    back = _round_trip(error)
+    assert back.usage == error.usage and str(back) == str(error)
+
+
+def test_a_multi_controller_program_exports_byte_identically_per_controller(monkeypatch):
+    programs = _multi_controller_programs()
+    monkeypatch.setattr(_kernel, "build", _refuse_compile)
+    for name, program in programs.items():
+        data = pickle.dumps(program)
+        monkeypatch.setattr(_pickling, "_devices", {})
+        back = pickle.loads(data)
+        assert type(back) is type(program), name
+        assert back.schedule == program.schedule, name
+        assert back.classical_report() == program.classical_report(), name
+        assert _per_controller(back) == _per_controller(program), name
+    # Its generic module binds other values as the original does.
+    generic = _round_trip(programs["call"].generic)
+    assert _per_controller(generic.bind([0.2])) == _per_controller(
+        programs["call"].generic.bind([0.2])
+    )
+
+
+_EXPORT_IN_ANOTHER_PROCESS = """
+import json, pickle, sys
+from cudaq_pulse.kernel import _kernel
+from tests.test_pickling import _per_controller, _refuse_compile
+
+_kernel.build = _refuse_compile
+programs = pickle.loads(sys.stdin.buffer.read())
+print(json.dumps([_per_controller(program) for program in programs]))
+"""
+
+
+def test_another_process_exports_each_controllers_program_compiled_here():
+    programs = list(_multi_controller_programs().values())
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(sys.path))
+    root = pathlib.Path(__file__).resolve().parents[1]
+    done = subprocess.run(
+        [sys.executable, "-c", _EXPORT_IN_ANOTHER_PROCESS],
+        input=pickle.dumps(programs),
+        cwd=root,
+        env=env,
+        capture_output=True,
+        check=True,
+    )
+    expected = [[list(pair) for pair in _per_controller(program)] for program in programs]
+    assert json.loads(done.stdout) == expected
+
+
+def test_a_compiled_kernel_of_runtime_qudits_unpickles_compiling_once_for_any():
+    compiled = pulse.compile(anywhere, device=_QPU, schedule="asap", passes=[])
+    back = _round_trip(compiled)
+    assert type(back._dispatch) is type(compiled._dispatch)
+    for q in (0, 2):
+        expected = _per_controller(compiled.lower(_QPU.qudits[q], 0.1))
+        assert _per_controller(back.lower(_QPU.qudits[q], 0.1)) == expected
+    assert back.cache_info().compiled == 1
+
+
 # ── Errors ───────────────────────────────────────────────────────────────────
 
 
@@ -608,8 +801,19 @@ def _limit_error():
         lambda: _raised(lambda: rabi.lower(0, 0.1)),
         lambda: _raised(lambda: Q[999]),
         lambda: pulse.InternalError("a check failed"),
+        _usage_error,
     ],
-    ids=["limits", "raised", "definition", "type", "symbolic", "no_device", "index", "internal"],
+    ids=[
+        "limits",
+        "raised",
+        "definition",
+        "type",
+        "symbolic",
+        "no_device",
+        "index",
+        "internal",
+        "usage",
+    ],
 )
 def test_errors_unpickle_with_their_attributes(make):
     error = make()

@@ -20,13 +20,15 @@
 - A target pickles as the inputs it was built from, and a device as its
   target and the inputs it was built from; both are built again, equal to
   the originals. A process keeps the last ``_KEPT_DEVICES`` devices it
-  unpickled by fingerprint (which covers the calibration), name and source,
-  so that programs of one device unpickled one by one share it without
-  building it again. A device makes its description once. A calibration
-  the package ships pickles as its name, cooldown and the digest of its
-  file, and unpickles as the one shipped here if that has the same digest;
-  any other pickles as its values. Qudit handles and registers
-  pickle as their device and indices.
+  unpickled by fingerprint (which covers the calibration), name, source
+  and control system, so that programs of one device unpickled one by one
+  share it without building it again. A device makes its description
+  once. A control system, its controllers and their processors pickle as
+  their inputs and are checked again. A calibration the package ships
+  pickles as its name, cooldown and the digest of its file, and unpickles
+  as the one shipped here if that has the same digest; any other pickles
+  as its values. Qudit handles and registers pickle as their device and
+  indices.
 - A program (``Lowered``, and a call's view of one) pickles as MLIR
   bytecode and its metadata, stamped with the build that compiled it, and
   runs without compiling again. Only that build unpickles it: another
@@ -102,17 +104,20 @@ def rebuilt_links(cls: Any, links: dict[int, Any], names: dict[str, int]) -> Any
 # ── Devices ─────────────────────────────────────────────────────────────────
 
 _KEPT_DEVICES = 16
-_devices: dict[tuple[str, str, str], Any] = {}
+_devices: dict[tuple[Any, ...], Any] = {}
 _devices_lock = threading.Lock()
 
 
-def _device_key(device: Any) -> tuple[str, str, str]:
-    # The fingerprint, and the labels it leaves out, so that an unpickled
-    # device is the one pickled in every attribute.
-    return (device.fingerprint, device.name, device.source)
+def _device_key(device: Any) -> tuple[Any, ...]:
+    # The fingerprint, and the labels and control system it leaves out, so
+    # that an unpickled device is the one pickled in every attribute.
+    system = device.control_system
+    if system is None:
+        return (device.fingerprint, device.name, device.source)
+    return (device.fingerprint, device.name, device.source, system)
 
 
-def _keep(key: tuple[str, str, str], device: Any) -> None:
+def _keep(key: tuple[Any, ...], device: Any) -> None:
     with _devices_lock:
         _devices.pop(key, None)
         _devices[key] = device
@@ -120,16 +125,22 @@ def _keep(key: tuple[str, str, str], device: Any) -> None:
             del _devices[next(iter(_devices))]
 
 
-def device_reduce(device: Any, inputs: dict[str, Any]) -> tuple[Any, ...]:
-    """*device* as its fingerprint and labels and, pickled apart, its class,
-    target and the other *inputs* of its constructor: a process that has the
-    device of that key does not unpickle the rest. The description is made
-    once per device: a device is read-only."""
+def device_reduce(
+    device: Any, inputs: dict[str, Any], state: dict[str, Any] | None = None
+) -> tuple[Any, ...]:
+    """*device* as its fingerprint, labels and control system and, pickled
+    apart, its class, target, the other *inputs* of its constructor and the
+    attributes they do not set (*state*): a process that has the device of
+    that key does not unpickle the rest. The description is made once per
+    device: a device is read-only."""
     key = _device_key(device)
     _keep(key, device)
     description: bytes | None = device.__dict__.get("_pickled")
     if description is None:
-        description = pickle.dumps((type(device), device.target, inputs), pickle.HIGHEST_PROTOCOL)
+        parts: tuple[Any, ...] = (type(device), device.target, inputs)
+        if state is not None:
+            parts += (state,)
+        description = pickle.dumps(parts, pickle.HIGHEST_PROTOCOL)
         device._pickled = description
     return (rebuilt_device, (key, description))
 
@@ -155,12 +166,16 @@ def rebuilt_shipped_calibration(name: str, cooldown: str, digest: str, version: 
     return found
 
 
-def rebuilt_device(key: tuple[str, str, str], description: bytes) -> Any:
+def rebuilt_device(key: tuple[Any, ...], description: bytes) -> Any:
     found = _devices.get(key)
     if found is not None:
         return found
-    cls, target, inputs = pickle.loads(description)
+    cls, target, inputs, *state = pickle.loads(description)
+    if len(key) > 3:
+        inputs["control_system"] = key[3]
     device = cls(target, **inputs)
+    for attributes in state:
+        vars(device).update(attributes)
     _keep(key, device)
     return device
 
@@ -273,12 +288,12 @@ def classical_reduce(function: Any, protocol: int) -> Any:
 def rebuilt_compiled(kernel: Any, options: Any, device: Any, general: Any) -> Any:
     """A compiled kernel without its specializations, which compile on first
     use; its pinned module, if built, comes with it."""
-    from .kernel._kernel import CompiledKernel, _Dispatcher
+    from .kernel._kernel import CompiledKernel
 
     compiled = CompiledKernel.__new__(CompiledKernel)
     compiled.kernel = kernel
     compiled.device = device
-    compiled._dispatch = _Dispatcher(kernel, options, None)
+    compiled._dispatch = kernel._dispatcher_type(kernel, options, None)
     compiled._dispatch.pin = device
     compiled._dispatch.general = general
     return compiled

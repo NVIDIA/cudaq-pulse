@@ -156,6 +156,19 @@ class ClockPlan:
     # controllers count theirs in their own (None: the machine model's).
     readout_latency_cycles: int | None = None
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        owners = None if self.owners is None else dict(self.owners)
+        return (
+            _rebuilt_plan,
+            (
+                self.program_ghz,
+                self.controllers,
+                self.reference_clock_ghz,
+                owners,
+                self.readout_latency_cycles,
+            ),
+        )
+
     def controller_of(self, role: str, qudit: int) -> ControllerClock:
         if self.owners is None:
             return self.controllers[0]
@@ -207,6 +220,22 @@ class ClockPlan:
             return 0.0
         each = self.start_uncertainty_ns(skew_cycles)
         return each[a] + each[b]
+
+
+def _rebuilt_plan(
+    program_ghz: float,
+    controllers: tuple[ControllerClock, ...],
+    reference_clock_ghz: float | None,
+    owners: dict[tuple[str, int], int] | None,
+    readout_latency_cycles: int | None,
+) -> ClockPlan:
+    return ClockPlan(
+        program_ghz,
+        controllers,
+        reference_clock_ghz,
+        None if owners is None else MappingProxyType(owners),
+        readout_latency_cycles,
+    )
 
 
 def _check_reference(reference_ghz: float, clocks: Mapping[str, float]) -> None:

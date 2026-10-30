@@ -298,6 +298,11 @@ class Processor:
             )
         )
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        from ._pickling import frozen_reduce
+
+        return frozen_reduce(self)
+
     @property
     def loops(self) -> bool:
         """Whether it runs a rolled loop as a loop (``"loop"`` is not
@@ -649,6 +654,11 @@ class ControlSystem:
                 tuple(self.line_delays_ns.items()),
             )
         )
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        from ._pickling import frozen_reduce
+
+        return frozen_reduce(self)
 
     def as_dict(self) -> dict[str, Any]:
         """The control system as JSON-serializable data; links name the

@@ -1409,6 +1409,13 @@ class _Role:
         # What every export shares, built by the first (controller._export_plan).
         self.export_plan: Any = None
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Without what its calls made, which holds native modules.
+        return (
+            _rebuilt_role,
+            (self.symbols, self.slots, self.lines, self.used, self.every, self.program_id),
+        )
+
     @staticmethod
     def identify(
         buffer: Any, name: str, parameters: Sequence[str], target: Device, options: CompileOptions
@@ -1419,6 +1426,23 @@ class _Role:
         digest.update(memoryview(buffer).cast("B"))
         digest.update(repr((name, tuple(parameters), target._structure, options)).encode())
         return digest.hexdigest()
+
+
+def _rebuilt_role(
+    symbols: tuple[tuple[str, str, str, int | None], ...],
+    slots: int,
+    lines: tuple[int, ...],
+    used: tuple[int, ...],
+    every: tuple[int, ...],
+    program_id: str,
+) -> _Role:
+    role = _Role(symbols)
+    role.slots = slots
+    role.lines = lines
+    role.used = used
+    role.every = every
+    role.program_id = program_id
+    return role
 
 
 class _Placed(Lowered):
