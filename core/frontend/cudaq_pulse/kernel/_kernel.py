@@ -467,17 +467,22 @@ class _Placing(_Dispatcher):
         name = kernel.__name__
         found: Device | None = None
         seen: set[int] = set()
-        for i in kernel._split[0]:
-            found = _devices(values[i], found, name, seen)
         wrong = None
-        for i in kernel._slotted:
-            value = values[i]
-            if type(value) is not Qudit and not (
-                type(value) is Register or type(value) is list or type(value) is tuple
-            ):
-                wrong = i
-                continue
-            found = _devices(value, found, name, seen)
+        try:
+            for i in kernel._split[0]:
+                found = _devices(values[i], found, name, seen)
+            for i in kernel._slotted:
+                value = values[i]
+                if type(value) is not Qudit and not (
+                    type(value) is Register or type(value) is list or type(value) is tuple
+                ):
+                    wrong = i
+                    continue
+                found = _devices(value, found, name, seen)
+        except _QuditTwiceError as twice:
+            names = kernel._names
+            met = [*kernel._split[0], *kernel._slotted]
+            raise _passed_twice(name, twice.qudit, [(names[i], values[i]) for i in met]) from None
         pin = self.pin
         if wrong is not None:
             if found is None and pin is None:

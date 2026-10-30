@@ -141,7 +141,7 @@ def test_static_qudit_exports_have_no_symbols():
 
 
 def test_duplicate_qudits_are_rejected():
-    with pytest.raises(TypeError, match="more than once"):
+    with pytest.raises(pulse.InvalidTypeError, match="got qudit 3 for both 'q' and 'r'"):
         runtime_k.lower(H[3], H[[3, 5]], [0.2, 0.4], _f12(H[3]))
 
 
