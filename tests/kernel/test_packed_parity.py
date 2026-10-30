@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 
 import pytest
+from cudaq_pulse import CompilationError
 from cudaq_pulse._native._cudaq_pulse_native import PulseModuleBuilder
 from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder
 from cudaq_pulse.kernel.ir_builder import Parameter
@@ -56,14 +57,24 @@ def _mlir_sequence(text):
     return sequence
 
 
-def _traces(case):
+# The corpus's cases that the frontend rejects, so there is no program to
+# compare; tests/kernel/test_ir_golden.py checks their errors.
+_REJECTED = {"bad_attribute", "compare_measurement", "compare_symbolic", "while_loop"}
+
+
+def _rejected(case) -> bool:
     try:
-        return python_ir(case.kernel, *case.args(), unroll_threshold=UNROLL_THRESHOLD)
-    except Exception:  # noqa: BLE001
-        return None
+        python_ir(case.kernel, *case.args(), unroll_threshold=UNROLL_THRESHOLD)
+    except CompilationError:
+        return True
+    return False
 
 
-_PROGRAMS = [c for c in CASES if _traces(c) is not None]
+_PROGRAMS = [c for c in CASES if c.name not in _REJECTED]
+
+
+def test_only_the_rejected_cases_are_left_out():
+    assert {c.name for c in CASES if _rejected(c)} == _REJECTED
 
 
 @pytest.mark.parametrize("case", _PROGRAMS, ids=lambda c: c.name)

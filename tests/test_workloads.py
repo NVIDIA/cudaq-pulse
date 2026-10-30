@@ -80,15 +80,12 @@ def test_bug_corpus_loads():
 
 @pytest.mark.parametrize("case", CORRECT, ids=[c.name for c in CORRECT])
 def test_correct_corpus_compiles(case: BugCase):
-    """Correct cases should compile without crash (kernel may be a factory)."""
-    fn_or_kern = case.build_fn()
-    if not callable(fn_or_kern):
-        pytest.skip("build_fn returned non-callable")
-    if not hasattr(fn_or_kern, "__wrapped__"):
-        pytest.skip("not a kernel")
+    """Every correct case builds a kernel, which compiles."""
+    kernel = case.build_fn()
+    assert isinstance(kernel, pulse.Kernel), f"{case.name}: build_fn() returned {kernel!r}"
 
-    nargs = fn_or_kern.__wrapped__.__code__.co_argcount
-    compiled = pulse.compile(fn_or_kern, unroll_threshold=0).lower(*_make_qubits(nargs))
+    nargs = kernel.__wrapped__.__code__.co_argcount
+    compiled = pulse.compile(kernel, unroll_threshold=0).lower(*_make_qubits(nargs))
     assert compiled.metrics.op_count > 0
 
 
