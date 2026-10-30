@@ -316,6 +316,59 @@ jobs:
       - name: check-pulse (lit + pytest)
         run: uv run --no-sync cmake --build build/dev --target check-pulse
 
+  # Line and branch coverage of the Python package by the CPU suite. It is a
+  # report only: there is no threshold, and the job never blocks a merge.
+  # Code that runs only in a subprocess the tests start is not measured.
+  coverage:
+    name: coverage (report only, linux-x86_64, py3.12)
+    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      # Only this job measures coverage, so the tool stays out of uv.lock.
+      - run: uv pip install --python .venv/bin/python coverage==7.10.7
+      - uses: ./.github/actions/mlir-toolchain
+
+      - name: Build
+        run: |
+          uv run --no-sync cmake --preset dev
+          uv run --no-sync cmake --build --preset dev
+
+      - name: pytest under coverage
+        env:
+          PYTHONPATH: build/dev/python
+        run: >
+          uv run --no-sync coverage run --branch --source=cudaq_pulse
+          -m pytest tests -q -m "not gpu" -p no:cacheprovider
+
+      - name: Report
+        if: ${{ !cancelled() }}
+        run: |
+          uv run --no-sync coverage xml -o coverage/coverage.xml
+          uv run --no-sync coverage html -d coverage/html
+          {
+            echo "### Python coverage (report only, no threshold)"
+            echo
+            uv run --no-sync coverage report --format=markdown --sort=cover
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage
+          path: coverage
+          if-no-files-found: warn
+          retention-days: 14
+
   # A source build with GPU support and the GPU tests (gpu-tests.yml), in the
   # CUDA 12.9 development image on a GPU runner, once the GPU_RUNNERS
   # repository variable names the GPU runners: on pushes to main, staging and
