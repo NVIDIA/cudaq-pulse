@@ -2707,7 +2707,7 @@ class PulseIREmitter:
                     if op_fn is None:
                         raise CompilationError(self._unknown_name(name))
                     call_args = _bind_positional(op_fn, call_args, kwargs)
-                elif name in _PLAYS and call_args[2:]:
+                elif name in _PLAYS and len(call_args) > 2:
                     from ._emit_errors import play_arity_error
 
                     raise play_arity_error(name, len(call_args))
@@ -3317,8 +3317,12 @@ class PulseIREmitter:
 
                             raise operand_error(fname, call_args)
                     call_args[i] = _current(v)
-            operands = tuple(call_args[:n_val])
-            attrs = dict(zip(attr_names, call_args[n_val:]))
+            if attr_names:
+                operands = tuple(call_args[:n_val])
+                attrs = dict(zip(attr_names, call_args[n_val:]))
+            else:
+                operands = tuple(call_args)
+                attrs = {}
             if optional is not None:
                 attrs[optional[0]] = optional[1]
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
