@@ -24,6 +24,6 @@ def build(q0):
     d0 = get_drive_line(q0)
     x = square(40, [0.047, 0.0])
     wait(d0, 100)
-    for i in range(8):
+    for i in range(8):  # noqa: B007
         drive(d0, x)
         wait(d0, 200)

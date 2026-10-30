@@ -1261,7 +1261,10 @@ class _Run:
         if len(a.stack) != len(b.stack):
             raise _GiveUpError
         memo: dict[Any, Any] = {}
-        stack = [self.join(x, y, None, fork, dec, comp, memo) for x, y in zip(a.stack, b.stack)]
+        stack = [
+            self.join(x, y, None, fork, dec, comp, memo)
+            for x, y in zip(a.stack, b.stack, strict=False)
+        ]
         env = dict(b.env)
         for name, x in a.env.items():
             y = b.env.get(name)
@@ -1356,7 +1359,10 @@ class _Run:
             return Const(n, why) if n is not None else Opq(why)
         if cx is Tup and cy is Tup and len(x.items) == len(y.items):
             return Tup(
-                [self.join(p, q, name, fork, dec, comp, memo) for p, q in zip(x.items, y.items)]
+                [
+                    self.join(p, q, name, fork, dec, comp, memo)
+                    for p, q in zip(x.items, y.items, strict=False)
+                ]
             )
         if cx is Opq and cy is Opq:
             return x if x.why else y
@@ -1599,7 +1605,9 @@ class _Run:
             k for k in a.env.keys() | b.env.keys() if _sig(a.env.get(k)) != _sig(b.env.get(k))
         ]
         out.sort()
-        out += [j for j, (x, y) in enumerate(zip(a.stack, b.stack)) if _sig(x) != _sig(y)]
+        out += [
+            j for j, (x, y) in enumerate(zip(a.stack, b.stack, strict=False)) if _sig(x) != _sig(y)
+        ]
         return out
 
     def symbolize(
@@ -2524,7 +2532,7 @@ def _results(
         raise _NoLengthError(_why(0, "it always raises an exception"))
     rets = sorted(rets, key=lambda r: r[2])
     out = []
-    for position, type_name in list_results:
+    for position, _type_name in list_results:
         found: list[tuple[int, int]] = []
         for value, dec, i, _ in rets:
             line = _line(dec, i)

@@ -52,7 +52,7 @@ def _level_attributes(
         by_index = [model.levels_of(q) for q in range(extent)]
     else:
         by_index = [int(levels)] * extent
-    for q, d in zip(qudits, dims):
+    for q, d in zip(qudits, dims, strict=False):
         by_index[q] = d
     attrs = [f"pulse.levels = array<i64: {', '.join(map(str, by_index))}>"]
     if any(d > 2 for d in dims):

@@ -99,7 +99,7 @@ def test_iq_points_scale_with_the_readout_amplitude():
 
         @pulse.classical(max_latency_ns=0, name="record")
         def record(point: complex) -> bool:
-            seen[amplitude].append(point)
+            seen[amplitude].append(point)  # noqa: B023
             return False
 
         @pulse.kernel

@@ -91,10 +91,10 @@ def test_variable_waits_take_their_emulated_lengths():
         low, shots=20, seed=1, outcomes=lambda q, _, rng: int(rng.integers(0, 2))
     )
     clock = low.target.clock_ghz
-    for outcomes, end in zip(result.outcomes, result.ends_ns):
+    for outcomes, _end in zip(result.outcomes, result.ends_ns, strict=True):
         # A 1 waits 400 cycles longer before the second readout.
         assert outcomes[0] in (0, 1)
-    ends = {o[0]: e for o, e in zip(result.outcomes, result.ends_ns)}
+    ends = {o[0]: e for o, e in zip(result.outcomes, result.ends_ns, strict=True)}
     assert ends[1] - ends[0] == pytest.approx(400 / clock)
 
 

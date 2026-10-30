@@ -78,7 +78,7 @@ def _trace(
 
         emitter = MixedRates(builder, fn.__globals__, closures)
     local_vars = emitter.locals
-    for name, val in zip(params, args):
+    for name, val in zip(params, args, strict=False):
         if type(val) is Qudit:
             (ir_val,) = builder.emit(qudit_op, (), ("qref",), {"index": val.index})
             local_vars[name] = ir_val

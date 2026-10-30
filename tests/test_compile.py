@@ -62,9 +62,9 @@ def test_scheduled_event_start_and_end():
         assert e.end == e.start_cycles + e.duration_cycles
     unscheduled = pulse.compiler.ScheduledEvent("drive", 0, 0, None, None)
     with pytest.raises(ValueError, match="not scheduled"):
-        unscheduled.start
+        unscheduled.start  # noqa: B018
     with pytest.raises(ValueError, match="not scheduled"):
-        unscheduled.end
+        unscheduled.end  # noqa: B018
 
 
 def test_compile_metrics():

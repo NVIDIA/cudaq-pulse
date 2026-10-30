@@ -422,7 +422,7 @@ def test_a_runtime_qudit_export_adds_calls_that_do_not_grow_with_the_program():
 
         def drives(q):
             d = get_drive_line(q)
-            for k in range(n):
+            for k in range(n):  # noqa: B023
                 drive(d, square(20, 0.1 + 0.001 * k))
 
         def placed(q: Qudit):

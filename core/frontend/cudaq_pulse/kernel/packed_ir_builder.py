@@ -1082,7 +1082,7 @@ class PackedIRBuilder:
             [index, future, int(has_timeout), _f2i(timeout_ns or 0.0), len(vids), *vids],
         )
         scope = self.scope
-        return [AnswerValue(v, t, scope) for v, t in zip(vids, dtypes)]
+        return [AnswerValue(v, t, scope) for v, t in zip(vids, dtypes, strict=False)]
 
     def classical_compare(self, predicate: str, lhs: Any, rhs: Any) -> int:
         """Record a comparison of answers and numbers; returns the i1 id."""
@@ -1463,7 +1463,7 @@ class PackedIRBuilder:
         encoded: list[int] = []
         param_mask = 0
         try:
-            for i, (v, dtype) in enumerate(zip(vals, dtypes)):
+            for i, (v, dtype) in enumerate(zip(vals, dtypes, strict=False)):
                 # A float or a whole number in an integer slot as it is; "t64" is
                 # a shape time ("f64"), which may be a time to convert.
                 cls = v.__class__
@@ -1487,7 +1487,7 @@ class PackedIRBuilder:
                     encoded.append(_f2i(v))
         except (TypeError, ValueError, struct.error):
             op, fields = _WF_FIELDS[wf_code]
-            for v, dtype, field in zip(vals, dtypes, fields):
+            for v, dtype, field in zip(vals, dtypes, fields, strict=False):
                 if dtype != "i64" and not is_symbolic(v):
                     _real(v, f"{op} {field}")
             raise

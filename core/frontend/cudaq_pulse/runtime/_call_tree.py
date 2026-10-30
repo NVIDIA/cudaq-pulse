@@ -211,7 +211,7 @@ def simulate_tree(
         counts = (
             rng.multinomial(count, [p_ok, 1.0 - p_ok]) if count else np.zeros(2, dtype=np.int64)
         )
-        for (in_time, p), n in zip(outcomes_ok, counts):
+        for (in_time, p), n in zip(outcomes_ok, counts, strict=False):
             if p <= 0 or (sampled and n == 0):
                 continue
             bound = [1.0, *values] if in_time else [0.0] * (1 + len(values))
@@ -337,7 +337,7 @@ def simulate_tree(
         weights = np.array([engine.weight(s) for s in projected]) * weight
         branches: list[tuple[int, int, Any, float]] = []
         floor = _NEGLIGIBLE * (weights.sum() if sampled else norm)
-        for k, (branch, w) in enumerate(zip(projected, weights)):
+        for k, (branch, w) in enumerate(zip(projected, weights, strict=False)):
             if w <= floor:
                 continue
             if readout is None:
@@ -353,7 +353,7 @@ def simulate_tree(
             if count and total > 0
             else np.zeros(len(branches), dtype=np.int64)
         )
-        for (r, k, branch, p), n in zip(branches, counts):
+        for (r, k, branch, p), n in zip(branches, counts, strict=False):
             if sampled:
                 if n == 0:
                     continue

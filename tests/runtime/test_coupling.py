@@ -37,7 +37,7 @@ def _pair(f0, f1, *, g_hz=0.0, zz_hz=0.0, alphas=(-200.0e6, -180.0e6)):
         name="coupled-pair",
         qubits={
             q: Qubit(q, f, a, 0.0, 0.0, drive_params={"amplitude_scale_rad_per_ns": 1.0})
-            for q, (f, a) in enumerate(zip((f0, f1), alphas))
+            for q, (f, a) in enumerate(zip((f0, f1), alphas, strict=True))
         },
         couplings=[Coupling(0, 1, coupling_strength_hz=g_hz)] if g_hz else [],
         crosstalk=[CrosstalkEntry(0, 1, 0.0, zz_hz, 0.0)] if zz_hz else [],
@@ -317,7 +317,7 @@ def _cudm_hamiltonian(text, dims):
             ):
                 continue
             for coefficient, callback, modes, factors in products[found.group(1)]:
-                yield _full(dims, dict(zip(modes, factors))), coefficient, callback
+                yield _full(dims, dict(zip(modes, factors, strict=True))), coefficient, callback
 
 
 def _full(dims, on_mode):

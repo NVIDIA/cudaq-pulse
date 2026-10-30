@@ -230,7 +230,9 @@ class _Walker:
         self.globals = getattr(fn, "__globals__", {})
         closure = getattr(fn, "__closure__", None) or ()
         free = getattr(getattr(fn, "__code__", None), "co_freevars", ())
-        self.closure = {n: c.cell_contents for n, c in zip(free, closure) if _has_contents(c)}
+        self.closure = {
+            n: c.cell_contents for n, c in zip(free, closure, strict=False) if _has_contents(c)
+        }
 
     def where(self, node: ast.AST) -> str:
         return f"{self.fn.__name__} line {getattr(node, 'lineno', '?')}"
@@ -630,7 +632,7 @@ class _Walker:
             parameters = list(inspect.signature(target).parameters)
         except (TypeError, ValueError):
             parameters = []
-        for parameter, arg in zip(parameters, node.args):
+        for parameter, arg in zip(parameters, node.args, strict=False):
             length = self.length(arg)
             if length is not None:
                 sizes[parameter] = length

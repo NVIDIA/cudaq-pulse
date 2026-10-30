@@ -108,7 +108,7 @@ def test_k11_adaptive_t1_tracks_its_posterior_per_path(target):
     assert sum(branch.probability for branch in result.branches) == pytest.approx(1.0)
     for branch in result.branches:
         alpha, beta, tau = 1.0, 5000.0, 10000.0
-        for call, outcome in zip(branch.calls, branch.levels):
+        for call, outcome in zip(branch.calls, branch.levels, strict=False):
             alpha, beta, tau = t1_estimator(np.array([outcome]), alpha, beta, tau)
             assert call.answer == pytest.approx((alpha, beta, tau))
     # The first shot survives the 5 us wait (plus the 200 ns readout) at
@@ -361,7 +361,7 @@ def test_k14_golden_section_in_a_shot_uses_the_converged_pattern(target):
     result = pulse.simulate(lowered, dt_ns=1.0, levels=2)
     for branch in result.branches:
         state, done = GOLDEN, False
-        for call, outcome in zip(branch.calls, branch.levels):
+        for call, outcome in zip(branch.calls, branch.levels, strict=False):
             state, x, done = cal.golden_section_step(state, 1.0 - outcome)
             assert call.answer[1] == pytest.approx(x)
             assert call.answer[2] == float(done)
@@ -466,7 +466,7 @@ def test_k17_latency_within_depletion_is_hidden(target):
             d = get_drive_line(q)
             r = get_readout_line(q)
             m = readout(r, square(400, 0.05))
-            if decide.submit([m]).result()[0]:
+            if decide.submit([m]).result()[0]:  # noqa: B023
                 drive(d, square(40, PI_AMP))
 
         (call,) = pulse.compile(feedback, device=dev).lower(dev.qudit_handles[0]).classical_report()

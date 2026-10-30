@@ -205,7 +205,7 @@ def parse_dump(text: str) -> Dump | None:
         if names is None or len(fields) > len(names):
             raise GateError(f"dump for {name}: costs {fields} do not match its events: line")
         values = [int(v) for v in fields]
-        return dict(zip(names, values + [0] * (len(names) - len(values))))
+        return dict(zip(names, values + [0] * (len(names) - len(values)), strict=True))
 
     for line in text.splitlines():
         if line.startswith("positions:"):
@@ -565,11 +565,11 @@ def render(rows: list[Row], markdown: bool) -> str:
         lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
         lines += ["| " + " | ".join(cells) + " |" for cells in table]
         return "\n".join(lines)
-    widths = [max(len(str(c)) for c in col) for col in zip(header, *table)]
+    widths = [max(len(str(c)) for c in col) for col in zip(header, *table, strict=True)]
     return "\n".join(
         "  ".join(
             str(c).ljust(w) if i in (0, 6) else str(c).rjust(w)
-            for i, (c, w) in enumerate(zip(cells, widths))
+            for i, (c, w) in enumerate(zip(cells, widths, strict=True))
         ).rstrip()
         for cells in (header, *table)
     )

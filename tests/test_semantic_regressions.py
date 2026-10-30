@@ -74,7 +74,7 @@ def test_tones_kept_in_a_list_and_retuned_stay_in_a_rolled_loop(symbolic):
     @pulse.kernel
     def constant(qs):
         lines = [get_drive_line(q) for q in qs]
-        for d, f in zip(lines, (5.0e9, 5.1e9)):
+        for d, f in zip(lines, (5.0e9, 5.1e9), strict=True):
             set_frequency(d.tone, f)
         for _ in range(20):
             for d in lines:
@@ -83,7 +83,7 @@ def test_tones_kept_in_a_list_and_retuned_stay_in_a_rolled_loop(symbolic):
     @pulse.kernel
     def runtime(qs, f0: float, f1: float):
         lines = [get_drive_line(q) for q in qs]
-        for d, f in zip(lines, (f0, f1)):
+        for d, f in zip(lines, (f0, f1), strict=True):
             set_frequency(d.tone, f)
         for _ in range(20):
             for d in lines:

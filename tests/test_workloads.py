@@ -43,7 +43,7 @@ def test_workload_compiles_and_schedules(name):
     assert max(e.start_cycles + e.duration_cycles for e in events) > 0
     for line in {e.line for e in events}:
         timeline = [e for e in events if e.line == line]
-        for before, after in zip(timeline, timeline[1:]):
+        for before, after in zip(timeline, timeline[1:], strict=False):
             assert after.start_cycles >= before.start_cycles + before.duration_cycles
 
 

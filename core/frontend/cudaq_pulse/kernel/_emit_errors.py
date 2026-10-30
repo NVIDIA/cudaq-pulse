@@ -93,7 +93,7 @@ def qudit_attribute_error(
 def operand_error(fname: str, call_args: list[Any]) -> CompilationError:
     """The error for the first operand of *fname* that is not of its type."""
     index, want = 0, _OPERAND_TYPES[fname][0]
-    for index, (v, want) in enumerate(zip(call_args, _OPERAND_TYPES[fname])):
+    for index, (v, want) in enumerate(zip(call_args, _OPERAND_TYPES[fname], strict=False)):  # noqa: B007
         if v.__class__ is not IRValue or v.vtype not in want:
             break
     value = call_args[index]

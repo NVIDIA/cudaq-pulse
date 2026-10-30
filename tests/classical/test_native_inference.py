@@ -64,7 +64,7 @@ def _corrections(s: pulse.Bits) -> pulse.Bits:
 
 
 def _detectors(this: pulse.Bits, prev: pulse.Bits) -> pulse.Bits:
-    return [a ^ b for a, b in zip(this, prev)]
+    return [a ^ b for a, b in zip(this, prev)]  # noqa: B905
 
 
 def _halves(x: pulse.Bits) -> tuple[pulse.Bits, pulse.Bits, int]:

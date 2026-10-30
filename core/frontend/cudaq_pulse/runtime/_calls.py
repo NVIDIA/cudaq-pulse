@@ -115,7 +115,7 @@ def _answer_values(function: ClassicalFunction[..., Any], answer: Any) -> list[f
             f"{function.name} must return {len(results)} results, got {answer!r}"
         )
     flat: list[float] = []
-    for spec, part in zip(results, parts):
+    for spec, part in zip(results, parts, strict=False):
         if spec.is_scalar:
             items = [part]
         else:

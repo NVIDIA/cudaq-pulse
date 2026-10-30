@@ -61,7 +61,7 @@ def _globals_and_constants(x: pulse.Bits) -> pulse.Bits:
 
 
 def _unary(x: pulse.Bits) -> pulse.Bits:
-    return [0] * -(-len(x)) + [1] * abs(-2)
+    return [0] * -(-len(x)) + [1] * abs(-2)  # noqa: B002
 
 
 @pytest.mark.parametrize(
@@ -244,7 +244,7 @@ def _comprehension(data: pulse.Bits) -> pulse.Bits:
 
 
 def _zip(this_round: pulse.Bits, previous: pulse.Bits) -> pulse.Bits:
-    return [a ^ b for a, b in zip(this_round, previous)]
+    return [a ^ b for a, b in zip(this_round, previous)]  # noqa: B905
 
 
 def _generator(x: pulse.Bits) -> pulse.Bits:

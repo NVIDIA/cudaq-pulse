@@ -399,7 +399,7 @@ class _Pairs:
                         bad = k
                         break
             if bad is None:
-                for a, b in zip(order, order[1:]):
+                for a, b in zip(order, order[1:], strict=False):
                     hi = spans[a][1] + items[a][1]
                     lo = spans[b][0] + items[b][1]
                     if hi > lo or (hi == lo and a > b):
@@ -560,7 +560,7 @@ def violations(
         )
 
     for line in on_lines:
-        items = _keep(timed, lambda i: events[i]["line"] == line)
+        items = _keep(timed, lambda i: events[i]["line"] == line)  # noqa: B023
         found.extend(_Pairs(events, spacing, budget).walk([(n, 0, ()) for n in items], None)[0])
         templates = list(_events_of(items))
         if limits.tones_per_line is not None:
@@ -591,7 +591,7 @@ def violations(
                 if key is not None:
                     shapes[(key, e["duration_cycles"])] = samples
                 else:
-                    copies = _count(_keep(items, lambda k: k == i))
+                    copies = _count(_keep(items, lambda k: k == i))  # noqa: B023
                     if unresolved is not None:
                         unknown_samples += copies * samples
                     else:
@@ -640,7 +640,7 @@ def violations(
             timed, lambda i: events[i]["kind"] == "readout" and events[i]["qudit"] in acquirers
         )
         for acquirer in sorted({acquirers[events[i]["qudit"]] for i in _events_of(readouts)}):
-            items = _keep(readouts, lambda i: acquirers[events[i]["qudit"]] == acquirer)
+            items = _keep(readouts, lambda i: acquirers[events[i]["qudit"]] == acquirer)  # noqa: B023
             found.extend(
                 _Pairs(events, acquired, budget).walk([(n, 0, ()) for n in items], None)[0]
             )

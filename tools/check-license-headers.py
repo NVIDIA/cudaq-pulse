@@ -25,7 +25,7 @@ LICENSE = "the terms of the Apache License 2.0"
 
 def has_header(path: Path) -> bool:
     with path.open(encoding="utf-8", errors="replace") as handle:
-        head = "".join(line for _, line in zip(range(HEAD_LINES), handle))
+        head = "".join(line for _, line in zip(range(HEAD_LINES), handle, strict=False))
     return bool(COPYRIGHT.search(head)) and LICENSE in head
 
 

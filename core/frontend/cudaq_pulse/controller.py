@@ -1526,7 +1526,9 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
                 if phase is not None:
                     phase += sum(
                         j * step
-                        for (_, _, j, _, _), step in zip(loops, tone.get("phase_step_rad", ()))
+                        for (_, _, j, _, _), step in zip(
+                            loops, tone.get("phase_step_rad", ()), strict=False
+                        )
                         if j and step is not None
                     )
             if kind == "frame_update":
@@ -2609,7 +2611,7 @@ def _value_lengths(function: Any) -> dict[str, int]:
     except (TypeError, ValueError):
         return {}
     lengths = {}
-    for name, spec in zip(names, function.args):
+    for name, spec in zip(names, function.args, strict=False):
         if not spec.is_scalar:
             lengths[name] = int(spec.count)
     return lengths

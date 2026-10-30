@@ -182,7 +182,7 @@ def test_submissions_on_one_link_go_out_in_order():
     calls = pulse.compile(k, machine=machine).lower(Q[0]).classical_report()
     starts = [c.submit_cycles for c in calls]
     assert starts == sorted(starts)
-    for a, b in zip(calls, calls[1:]):
+    for a, b in zip(calls, calls[1:], strict=False):
         assert b.submit_cycles >= a.submit_cycles + a.submit_duration_cycles
 
 
@@ -418,7 +418,7 @@ def test_scheduling_invariants(steps, policy):
             by_line.setdefault(("line", e.line), []).append((e.start_cycles, e.duration_cycles))
     for spans in by_line.values():
         spans.sort()
-        for (s0, d0), (s1, _) in zip(spans, spans[1:]):
+        for (s0, d0), (s1, _) in zip(spans, spans[1:], strict=False):
             assert s0 + d0 <= s1
     if calls:
         assert _makespan(low) >= max(c.taken_cycles or 0 for c in calls)

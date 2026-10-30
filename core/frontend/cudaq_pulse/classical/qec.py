@@ -116,6 +116,7 @@ class Decoder:
             for fn, handler in zip(
                 (self.enqueue_function, self.corrections_function, self.reset_function),
                 self.handlers().values(),
+                strict=False,
             ):
                 fn.implementation = handler
 

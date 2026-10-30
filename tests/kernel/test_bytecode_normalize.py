@@ -142,7 +142,7 @@ def _same(a, b):
     if a == b:
         return True
     if isinstance(a, (tuple, list)) and isinstance(b, (tuple, list)) and len(a) == len(b):
-        return all(_same(x, y) for x, y in zip(a, b))
+        return all(_same(x, y) for x, y in zip(a, b, strict=True))
     return a is b  # a constant unequal to itself, such as nan
 
 
@@ -156,7 +156,7 @@ def test_the_instruction_reader_decodes_as_dis_does(monkeypatch):
     codes = list(_codes(ast, dis, inspect, bc, _emitter, _infer, _infer_rare))
     lean = [bc._decode(c) for c in codes]
     monkeypatch.setattr(bc, "_instructions", lambda c: list(dis.get_instructions(c)))
-    for code, a in zip(codes, lean):
+    for code, a in zip(codes, lean, strict=True):
         b = bc._decode(code)
         assert _same(a.instrs, b.instrs), code
         assert a.positions == b.positions, code

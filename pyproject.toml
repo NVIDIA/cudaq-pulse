@@ -234,12 +234,14 @@ builtins = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP"]
+select = ["E", "F", "W", "I", "N", "UP", "B"]
 # An external's placeholder result names its type: return float().
 ignore = ["UP018"]
 
 [tool.ruff.lint.per-file-ignores]
 "test/**/lit*.cfg.py" = ["F821"]
+# DSL intrinsic stubs: their parameters exist for the signatures and types.
+"core/frontend/cudaq_pulse/ops/__init__.py" = ["ARG"]
 # Short corpus constructors (_C, _O, ...).
 "tests/workloads/bug_corpus.py" = ["N802"]
 # Column-aligned report tables.

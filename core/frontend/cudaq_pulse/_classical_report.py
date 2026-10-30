@@ -183,7 +183,10 @@ class _LoopExposure:
                     continue
                 if any(s is None for s in shifts):
                     raise _UnshiftedError
-                moves = [(min(0, (t - 1) * s), max(0, (t - 1) * s)) for t, s in zip(trips, shifts)]
+                moves = [
+                    (min(0, (t - 1) * s), max(0, (t - 1) * s))
+                    for t, s in zip(trips, shifts, strict=False)
+                ]
                 extents = []
                 for level in range(len(trips)):
                     deeper = moves[level + 1 :]
@@ -243,7 +246,7 @@ class _Found:
                 self.run(item, at, 0, item[0])
                 continue
             readout, line, start, duration, shifts, hold, _ = item
-            start += sum(k * s for k, s in zip(at, shifts))
+            start += sum(k * s for k, s in zip(at, shifts, strict=False))
             end = start + duration
             if start == self.use:
                 self.starting.add(line)
@@ -258,7 +261,7 @@ class _Found:
         spans = []
         for op in loop[2]:
             readout, line, start, duration, shifts, hold, extents = op
-            base = start + sum(k * s for k, s in zip(at, shifts))
+            base = start + sum(k * s for k, s in zip(at, shifts, strict=False))
             p = shifts[level]
             lo = base + min(a * p, (b - 1) * p) + extents[level][0]
             hi = base + max(a * p, (b - 1) * p) + extents[level][1]

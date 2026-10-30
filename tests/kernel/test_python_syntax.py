@@ -280,7 +280,7 @@ def test_lines_in_a_list_from_the_friction_log():
 
     drives = [op for op in python_ir(k, Q[0], Q[1]).ops if op.kind == "pulse.drive"]
     # Each drive consumes the line and tone the one before it produced.
-    for before, after in zip(drives, drives[1:]):
+    for before, after in zip(drives, drives[1:], strict=False):
         assert after.operands[0] is before.results[0]
         assert after.operands[2] is before.results[1]
     _compiles(k, Q[0], Q[1])
@@ -342,13 +342,13 @@ def test_pop_insert_extend_and_del_on_lists_of_lines_from_the_friction_log():
         d2 = get_drive_line(q2)
         ds.insert(0, d2)
         ts.insert(0, d2.tone)
-        for d, t in zip(ds, ts):
+        for d, t in zip(ds, ts, strict=True):
             drive(d, square(10, 0.1), tone=t)
         ds.extend([ds.pop(0)])
         ts.extend([ts.pop(0)])
         del ds[0]
         del ts[0]
-        for d, t in zip(ds, ts):
+        for d, t in zip(ds, ts, strict=True):
             drive(d, square(10, 0.1), tone=t)
 
     _compiles(popped, Q[0], Q[1])
@@ -414,7 +414,7 @@ def test_nested_filtered_set_and_dict_comprehensions():
         grid = [[i * j for j in range(3)] for i in range(3)]
         flat = [x for row in grid for x in row if x % 2 == 0]
         unique = {x % 3 for x in flat}
-        pairs = {k: v for k, v in zip("ab", (8, 16))}
+        pairs = {k: v for k, v in zip("ab", (8, 16), strict=True)}
         literal = {8, 16}
         for n in sorted(unique | literal):
             drive(d, square(n + pairs["a"], 0.1))

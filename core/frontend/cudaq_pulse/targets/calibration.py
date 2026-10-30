@@ -285,7 +285,9 @@ class Calibration:
             if found is not None:
                 at = (target.qubits[c.qubit_a].frequency_hz, target.qubits[c.qubit_b].frequency_hz)
                 value, stored = found
-                if stored is not None and all(abs(f - g) < 1e3 for f, g in zip(at, stored)):
+                if stored is not None and all(
+                    abs(f - g) < 1e3 for f, g in zip(at, stored, strict=False)
+                ):
                     strength = value
                 else:
                     strength = self.exchange_hz(name, *at)

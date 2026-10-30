@@ -891,7 +891,7 @@ def _simulate_compiled(
         )
         # A measurement that ends before t_start projects the initial state;
         # evolution still starts at t_start.
-        for k, (branch, w) in enumerate(zip(projected, weights)):
+        for k, (branch, w) in enumerate(zip(projected, weights, strict=False)):
             if sampled:
                 # A path of many measurements is improbable as a whole;
                 # each followed outcome is kept at unit weight instead.
@@ -1290,7 +1290,9 @@ class _Stepper:
     def play(self, rho: Any, t0: float, lo: int, hi: int) -> Any:
         """Steps lo .. hi - 1 (``done`` is lo), where drive terms play."""
         values = np.zeros((len(self.operators), hi - lo, 3))
-        for (kind, params, _), row, support in zip(self.driven, self.row_of, self.supports):
+        for (kind, params, _), row, support in zip(
+            self.driven, self.row_of, self.supports, strict=False
+        ):
             a, b = _step_range(support, t0, self.h, hi)
             a = max(a, lo)
             if b <= a:
@@ -1354,7 +1356,7 @@ class _Stepper:
 
         def lindblad(r: Any, hm: Any) -> Any:
             out = -1j * (hm @ r - r @ hm)
-            for c, ca in zip(jumps, adjoints):
+            for c, ca in zip(jumps, adjoints, strict=False):
                 out += c @ r @ ca
             if jumps:
                 out -= 0.5 * (decay @ r + r @ decay)

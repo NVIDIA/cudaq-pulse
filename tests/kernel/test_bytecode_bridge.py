@@ -358,7 +358,7 @@ class TestForLoop:
         def loop_test(q0):
             d0 = get_drive_line(q0)
             wf = gaussian(40, 0.3, 10.0)
-            for i in range(5):
+            for i in range(5):  # noqa: B007
                 drive(d0, wf)
 
         ir = _rolled(loop_test)(Q[0])
@@ -373,7 +373,7 @@ class TestForLoop:
         def loop_yield(q0):
             d0 = get_drive_line(q0)
             wf = gaussian(40, 0.3, 10.0)
-            for i in range(3):
+            for i in range(3):  # noqa: B007
                 drive(d0, wf)
 
         ir = _rolled(loop_yield)(Q[0])
@@ -581,7 +581,7 @@ class TestErrors:
     def test_for_over_a_non_iterable_names_its_type(self):
         def bad_loop(q0):
             d0 = get_drive_line(q0)
-            for i in 3.5:
+            for i in 3.5:  # noqa: B007
                 wait(d0, 10)
 
         emitter = compile_kernel_bytecode(bad_loop)

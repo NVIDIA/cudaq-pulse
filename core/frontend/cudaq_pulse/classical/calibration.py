@@ -347,7 +347,11 @@ class NelderMead:
         if any(math.isnan(c) for c in self.costs):
             return False
         best = self.best()
-        return all(abs(a - b) <= self.tolerance for v in self.simplex for a, b in zip(v, best))
+        return all(
+            abs(a - b) <= self.tolerance
+            for v in self.simplex
+            for a, b in zip(v, best, strict=False)
+        )
 
     def best(self) -> tuple[float, ...]:
         i = min(range(len(self.costs)), key=lambda k: (math.isnan(self.costs[k]), self.costs[k]))
@@ -380,12 +384,12 @@ class NelderMead:
 
 
 def _centroid(points: Sequence[Sequence[float]]) -> tuple[float, ...]:
-    return tuple(sum(c) / len(points) for c in zip(*points))
+    return tuple(sum(c) / len(points) for c in zip(*points, strict=False))
 
 
 def _along(a: Sequence[float], b: Sequence[float], t: float) -> tuple[float, ...]:
     """a + t (b - a)."""
-    return tuple(x + t * (y - x) for x, y in zip(a, b))
+    return tuple(x + t * (y - x) for x, y in zip(a, b, strict=False))
 
 
 def _ordered(state: NelderMead) -> NelderMead:

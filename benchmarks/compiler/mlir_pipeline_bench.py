@@ -144,7 +144,7 @@ def main() -> None:
     print("\n--- Lowering to LLVM Dialect (median ms) ---")
     for name, kernel, n in BENCHMARKS:
         compiled = _compile(kernel, n)
-        ms = _median_ms(lambda: compiled.mlir("llvm"), args.repeats)
+        ms = _median_ms(lambda: compiled.mlir("llvm"), args.repeats)  # noqa: B023
         print(f"  {name:16s}  {ms:9.3f}")
 
     print("\n--- IR Size ---")

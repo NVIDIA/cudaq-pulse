@@ -229,7 +229,7 @@ def submit(
             )
         return _submit_template(builder, function, args, plan)
     operands: list[int] = []
-    for position, (spec, value) in enumerate(zip(function.args, args)):
+    for position, (spec, value) in enumerate(zip(function.args, args, strict=False)):
         if spec.source == "measurement":
             operands.extend(_measurements(value, spec, function, position))
         elif spec is _F64 and value.__class__ in _DIRECT_F64:
@@ -255,7 +255,7 @@ def _submit_template(
     name = template.name
     operands: list[int] = []
     key: Any = 0 if template._n == 1 else []
-    for position, (kind, value) in enumerate(zip(plan, args)):
+    for position, (kind, value) in enumerate(zip(plan, args, strict=False)):
         if kind.__class__ is not int:  # a wire type
             if kind.source == "measurement":
                 operands.extend(_measurements(value, kind, template, position))

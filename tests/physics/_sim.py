@@ -42,7 +42,7 @@ def device(freqs_hz, alphas_hz, couplings=(), t1_us=0.0, t2_us=0.0, **qubit):
                 drive_params={"amplitude_scale_rad_per_ns": 1.0},
                 **qubit,
             )
-            for i, (f, a) in enumerate(zip(freqs_hz, alphas_hz))
+            for i, (f, a) in enumerate(zip(freqs_hz, alphas_hz, strict=False))
         },
         couplings=[Coupling(i, j, g) for i, j, g in couplings],
     )
@@ -66,7 +66,7 @@ def basis(levels, *digits):
 
     dims = [levels] * len(digits) if isinstance(levels, int) else list(levels)
     index, stride = 0, 1
-    for d, digit in zip(dims, digits):
+    for d, digit in zip(dims, digits, strict=False):
         index += digit * stride
         stride *= d
     psi = np.zeros(stride, dtype=complex)
@@ -84,7 +84,7 @@ def population(rho, levels, **fixed):
     for digits in itertools.product(*[range(d) for d in levels]):
         if all(digits[int(k[1:])] == v for k, v in fixed.items()):
             index, stride = 0, 1
-            for d, digit in zip(levels, digits):
+            for d, digit in zip(levels, digits, strict=False):
                 index += digit * stride
                 stride *= d
             total += rho[index, index].real

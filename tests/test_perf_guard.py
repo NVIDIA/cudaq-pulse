@@ -315,7 +315,7 @@ def test_the_events_of_a_long_line_are_listed_in_linear_time():
         return pulse.compile(kernel, passes=("verify",), unroll_threshold=100_000).lower(Q[0])
 
     # Eight times the drives: about 10x the time when linear, 64x when not.
-    times = {n: _best(lambda m=program(n): m.schedule, 3, 0) for n in (2000, 16000)}
+    times = {n: _best(lambda m=program(n): m.schedule, 3, 0) for n in (2000, 16000)}  # noqa: B008
     assert times[16000] < 8 * times[2000] * TOLERANCE, times
 
 

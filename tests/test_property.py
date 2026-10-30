@@ -57,7 +57,7 @@ def test_schedules_are_back_to_back_on_one_line(amplitudes, durations, waits, ph
         compiled = _compile(kernel, schedule=policy, passes=())
         events = compiled.schedule
         assert _makespan(compiled) == expected
-        for before, after in zip(events, events[1:]):
+        for before, after in zip(events, events[1:], strict=False):
             assert after.start_cycles == before.start_cycles + before.duration_cycles
 
 
@@ -82,7 +82,7 @@ def test_folding_phases_is_idempotent(durations, phases):
 @given(amplitudes=_amplitudes, durations=_durations)
 @settings(max_examples=examples(30))
 def test_iterating_a_list_traces_like_indexing_it(amplitudes, durations):
-    pairs = list(zip(durations, amplitudes * len(durations)))
+    pairs = list(zip(durations, amplitudes * len(durations), strict=False))
 
     @pulse.kernel
     def iterated(q0):

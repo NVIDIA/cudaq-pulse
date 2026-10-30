@@ -37,7 +37,7 @@ def _coefficients(program, times):
     _, terms, _, *_ = program
     total = defaultdict(lambda: np.zeros(len(times)))
     trains = 0
-    for re, im, kind, params, factors in terms:
+    for re, _im, kind, params, factors in terms:
         key = tuple((mode, dim, tuple(data)) for mode, dim, data in factors)
         if kind:
             trains += bool(kind & _TRAIN)

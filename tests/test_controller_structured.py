@@ -180,7 +180,11 @@ def _differences(a, b, path=""):
     if isinstance(a, list) and isinstance(b, list):
         if len(a) != len(b):
             return [(path, len(a), len(b))]
-        return [d for i, (x, y) in enumerate(zip(a, b)) for d in _differences(x, y, f"{path}[{i}]")]
+        return [
+            d
+            for i, (x, y) in enumerate(zip(a, b, strict=True))
+            for d in _differences(x, y, f"{path}[{i}]")
+        ]
     return [] if a == b else [(path, a, b)]
 
 

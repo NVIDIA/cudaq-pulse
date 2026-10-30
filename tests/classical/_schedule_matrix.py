@@ -555,7 +555,7 @@ def check_lines(low: Any) -> None:
             by_line.setdefault(e.line, []).append((e.start, e.end))
     for spans in by_line.values():
         spans.sort()
-        for (_, end), (start, _) in zip(spans, spans[1:]):
+        for (_, end), (start, _) in zip(spans, spans[1:], strict=False):
             assert end <= start, spans
 
 
@@ -584,7 +584,9 @@ def check_barriers(case: Case, low: Any) -> None:
     for i, k in barriers:
         barrier = events[i]
         opened = [_follows(after, epoch, k) for epoch in epoch_of]
-        held = {timelines[e.line] for e, o in zip(events, opened) if o and e.link is None}
+        held = {
+            timelines[e.line] for e, o in zip(events, opened, strict=True) if o and e.link is None
+        }
         if barrier.link is None:
             held.add(timelines[barrier.line])
         for j, e in enumerate(events):
@@ -668,7 +670,7 @@ def check_policy_order(case: Case, qudits: Sequence[Any]) -> None:
     asap = lower_case(case, qudits, schedule="asap").schedule
     alap = lower_case(case, qudits, schedule="alap").schedule
     assert [(e.kind, e.line) for e in asap] == [(e.kind, e.line) for e in alap]
-    for early, late in zip(asap, alap):
+    for early, late in zip(asap, alap, strict=True):
         assert early.start <= late.start, (early, late)
     assert max(e.end for e in asap) == max(e.end for e in alap)
 
@@ -784,7 +786,7 @@ def explicit_reference(low: Any, shifts: Sequence[int]) -> Any:
     # perhaps: the reference waits as long. A variable wait ends where the
     # epoch it opens starts.
     end = max(
-        max(e.end + shifts[k] for e, k in zip(low.schedule, event_epochs(low))),
+        max(e.end + shifts[k] for e, k in zip(low.schedule, event_epochs(low), strict=True)),
         max(e.start_cycles + shifts[e.index] for e in low.epochs()),
     )
     last = max((cursor.get(key, 0), key) for key in cursor)
@@ -859,8 +861,8 @@ def _hoist(nodes: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
                     kept.append(("branch", child[1], strip(child[2])))
                     continue
                 key = (child[2], child[3])
-                if key not in seen:
-                    seen.add(key)
+                if key not in seen:  # noqa: B023
+                    seen.add(key)  # noqa: B023
                     if child[4] > 0:
                         out.append(("wait", key, child[4]))
                     child = (*child[:4], 0, *child[5:])

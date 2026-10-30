@@ -93,7 +93,7 @@ def tone_list_loop(n_iter: int) -> Callable[..., Any]:
     @pulse.kernel
     def listed(qs):
         lines = [get_drive_line(q) for q in qs]
-        for d, f in zip(lines, (5.0e9, 5.1e9)):
+        for d, f in zip(lines, (5.0e9, 5.1e9), strict=True):
             set_frequency(d.tone, f)
         x = square(40, 0.047)
         for _ in range(n_iter):

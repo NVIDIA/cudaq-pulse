@@ -665,7 +665,7 @@ def test_concurrent_simulations_of_one_specialization_agree():
     expected = [pulse.simulate(c, dt_ns=0.125).density_matrix for c in calls]
     with ThreadPoolExecutor(max_workers=8) as pool:
         got = list(pool.map(lambda c: pulse.simulate(c, dt_ns=0.125).density_matrix, calls))
-    for g, e in zip(got, expected):
+    for g, e in zip(got, expected, strict=True):
         np.testing.assert_allclose(g, e, atol=1e-12)
 
 

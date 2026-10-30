@@ -94,7 +94,7 @@ class _Writer:
             ins = ", ".join(self.lines[i] for i in members)
             types = ", ".join(_LINE for _ in members)
             self.emit(f"{', '.join(outs)} = pulse.sync {ins} : {types} -> {types}")
-            for i, out in zip(members, outs):
+            for i, out in zip(members, outs, strict=True):
                 self.lines[i] = out
 
     def loop(self, trips: int, body: list[tuple]) -> None:
@@ -106,7 +106,7 @@ class _Writer:
         self.emit(f"{lb} = arith.constant 0 : index")
         self.emit(f"{ub} = arith.constant {trips} : index")
         self.emit(f"{step} = arith.constant 1 : index")
-        iter_args = ", ".join(f"{a} = {v}" for a, v in zip(args, inits))
+        iter_args = ", ".join(f"{a} = {v}" for a, v in zip(args, inits, strict=True))
         self.emit(
             f"{', '.join(results)} = scf.for %i{self.counter} = {lb} to {ub} step {step} "
             f"iter_args({iter_args}) -> ({types}) {{"

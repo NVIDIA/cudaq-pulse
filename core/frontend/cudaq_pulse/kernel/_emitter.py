@@ -156,7 +156,7 @@ def _extract_closures(fn: Any) -> dict[str, Any]:
     closures: dict[str, Any] = {}
     cells = getattr(fn, "__closure__", None)
     if cells and fn.__code__.co_freevars:
-        for name, cell in zip(fn.__code__.co_freevars, cells):
+        for name, cell in zip(fn.__code__.co_freevars, cells, strict=False):
             try:
                 closures[name] = cell.cell_contents
             except ValueError:
@@ -599,7 +599,7 @@ def _in_arm(value: Any, cond: IRValue, taken: bool) -> Any:
         return _CHOICE_COMPARE[value.op](lhs, rhs)
     if cls is list or cls is tuple:
         items = [_in_arm(item, cond, taken) for item in value]
-        if all(a is b for a, b in zip(items, value)):
+        if all(a is b for a, b in zip(items, value, strict=False)):
             return value
         return cls(items)
     return value
@@ -827,7 +827,7 @@ def _unrolled_loops() -> list[tuple[Any, int | None, int, list[tuple[bc.DecodedC
         if len(loops) != len(headers):
             continue
         callers = [(p, i) for p, i, _ in frames[depth + 1 :]]
-        for loop, header in zip(loops, headers):
+        for loop, header in zip(loops, headers, strict=False):
             if isinstance(loop, _Unrolled):
                 left = operator.length_hint(loop.it, -1)
                 trips = None if left < 0 else loop.count + left
@@ -1728,7 +1728,7 @@ class PulseIREmitter:
                         values = stack[-arg:]
                         del stack[-arg:]
                         n_pos = arg - len(names)
-                        kwargs = dict(zip(names, values[n_pos:]))
+                        kwargs = dict(zip(names, values[n_pos:], strict=False))
                         self._dispatch_call(pop(), values[:n_pos], kwargs)
 
                 elif op is _jif or op is _jit:
@@ -1929,13 +1929,13 @@ class PulseIREmitter:
                     keys = pop()
                     vals = stack[-arg:] if arg else []
                     del stack[len(stack) - arg :]
-                    push(dict(zip(keys, vals)))
+                    push(dict(zip(keys, vals, strict=False)))
                     self._note_fresh(stack[-1])
 
                 elif op is bc.BUILD_MAP:
                     items = stack[len(stack) - 2 * arg :]
                     del stack[len(stack) - 2 * arg :]
-                    push(dict(zip(items[::2], items[1::2])))
+                    push(dict(zip(items[::2], items[1::2], strict=False)))
                     self._note_fresh(stack[-1])
 
                 elif op is bc.BUILD_STRING:
@@ -2170,7 +2170,7 @@ class PulseIREmitter:
         # carries the same pair of values.
         aliases: list[tuple[_Chan, str]] = []
         by_pair: dict[tuple[int, int], str] | None = None
-        for (cell, before), a in zip(entering, then_held):
+        for (cell, before), a in zip(entering, then_held, strict=False):
             b = cell.value
             if a is before and b is before:
                 continue
@@ -2217,7 +2217,7 @@ class PulseIREmitter:
         )
         listed = []
         carried: dict[tuple[int, int], IRValue] = {}
-        for entry, out in zip(order, outs):
+        for entry, out in zip(order, outs, strict=False):
             if type(entry) is str:
                 merged[entry] = out
                 continue
@@ -2556,9 +2556,9 @@ class PulseIREmitter:
             listed = []
             carried: dict[int, tuple[IRValue, IRValue]] = {}
             for n, r in (
-                zip(kept, results)
+                zip(kept, results, strict=False)
                 if not shared
-                else [*zip(kept, results), *((n, results[at]) for n, at in shared)]
+                else [*zip(kept, results, strict=False), *((n, results[at]) for n, at in shared)]
             ):
                 if type(n) is str:
                     self.locals[n] = r
@@ -2854,7 +2854,7 @@ class PulseIREmitter:
             return
         # An object whose class defines __call__ in Python is a method call.
         if callable_val.__class__ not in _NATIVE_CALLABLES:
-            call = getattr(callable_val.__class__, "__call__", None)
+            call = getattr(callable_val.__class__, "__call__", None)  # noqa: B004
             if (
                 call.__class__ is types.FunctionType
                 and not isinstance(callable_val, type)
@@ -2968,7 +2968,7 @@ class PulseIREmitter:
         n_pos = len(call_args)
 
         def call(*values: Any) -> Any:
-            return fn(*values[:n_pos], **dict(zip(keys, values[n_pos:])))
+            return fn(*values[:n_pos], **dict(zip(keys, values[n_pos:], strict=False)))
 
         try:
             result = _choice_map(call, *call_args, *(kwargs or {}).values())
@@ -3183,7 +3183,7 @@ class PulseIREmitter:
         if general:
             helper.locals.update(bound)
         else:
-            helper.locals.update(zip(params, call_args))
+            helper.locals.update(zip(params, call_args, strict=False))
         result = helper.run(code)
         if self._lines.shared:
             self._refresh_lines()
@@ -3203,7 +3203,7 @@ class PulseIREmitter:
                     if caller_value is original:
                         self.locals[caller_name] = updated
         else:
-            for name, original in zip(params, call_args):
+            for name, original in zip(params, call_args, strict=False):
                 updated = helper.locals.get(name)
                 if not isinstance(original, IRValue) or updated is original:
                     continue
@@ -3359,7 +3359,7 @@ class PulseIREmitter:
                     call_args[i] = _current(v)
             if attr_names:
                 operands = tuple(call_args[:n_val])
-                attrs = dict(zip(attr_names, call_args[n_val:]))
+                attrs = dict(zip(attr_names, call_args[n_val:], strict=False))
             else:
                 operands = tuple(call_args)
                 attrs = {}
@@ -3627,7 +3627,7 @@ def _slot_changes(
             if not _container_unchanged(obj, copy):
                 return None
             continue
-        for i, (new, old) in enumerate(zip(obj, copy)):
+        for i, (new, old) in enumerate(zip(obj, copy, strict=False)):
             if new is old:
                 continue
             if not (
@@ -3727,7 +3727,7 @@ def _container_unchanged(obj: list[Any] | dict[Any, Any], copy: Any) -> bool:
     if len(obj) != len(copy):
         return False
     if isinstance(obj, list):
-        return all(a is b for a, b in zip(obj, copy))
+        return all(a is b for a, b in zip(obj, copy, strict=False))
     return all(k in copy and obj[k] is copy[k] for k in obj)
 
 

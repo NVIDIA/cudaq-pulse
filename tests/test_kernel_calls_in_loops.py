@@ -429,7 +429,7 @@ def test_tones_retuned_in_a_list_stay_rolled():
     @pulse.kernel
     def looped(qs):
         lines = [get_drive_line(q) for q in qs]
-        for d, f in zip(lines, (_retuned(0), _retuned(1))):
+        for d, f in zip(lines, (_retuned(0), _retuned(1)), strict=True):
             set_frequency(d.tone, f)
         for _ in range(3):
             for d in lines:
@@ -462,7 +462,7 @@ def test_several_tones_retuned_in_a_list():
     @pulse.kernel
     def looped(qs):
         lines = [get_drive_line(q) for q in qs]
-        for d, f in zip(lines, (_retuned(0), _retuned(1), _retuned(2))):
+        for d, f in zip(lines, (_retuned(0), _retuned(1), _retuned(2)), strict=True):
             set_frequency(d.tone, f)
         for _ in range(2):
             for d in lines:
@@ -489,7 +489,7 @@ def test_tones_retuned_in_a_tuple():
     @pulse.kernel
     def looped(q0, q1):
         lines = (get_drive_line(q0), get_drive_line(q1))
-        for d, f in zip(lines, (_retuned(0), _retuned(1))):
+        for d, f in zip(lines, (_retuned(0), _retuned(1)), strict=True):
             set_frequency(d.tone, f)
         for _ in range(3):
             for d in lines:
@@ -537,7 +537,7 @@ def test_tones_in_a_list_retuned_to_runtime_floats():
     @pulse.kernel
     def looped(qs, f0: float, f1: float):
         lines = [get_drive_line(q) for q in qs]
-        for d, f in zip(lines, (f0, f1)):
+        for d, f in zip(lines, (f0, f1), strict=True):
             set_frequency(d.tone, f)
         for _ in range(3):
             for d in lines:
@@ -564,7 +564,7 @@ def test_tones_retuned_in_a_list_through_nested_loops():
     @pulse.kernel
     def looped(qs):
         lines = [get_drive_line(q) for q in qs]
-        for d, f in zip(lines, (_retuned(0), _retuned(1))):
+        for d, f in zip(lines, (_retuned(0), _retuned(1)), strict=True):
             set_frequency(d.tone, f)
         for _ in range(2):
             for _ in range(3):
@@ -602,7 +602,7 @@ def test_tones_retuned_in_a_list_reach_a_self_scheduled_callee():
     @pulse.kernel
     def looped(qs):
         lines = [get_drive_line(q) for q in qs]
-        for d, f in zip(lines, (_retuned(0), _retuned(1))):
+        for d, f in zip(lines, (_retuned(0), _retuned(1)), strict=True):
             set_frequency(d.tone, f)
         burst(lines)
         for _ in range(2):
@@ -628,7 +628,7 @@ def test_tones_retuned_in_a_list_iterated_in_another_order():
     @pulse.kernel
     def looped(qs):
         lines = [get_drive_line(q) for q in qs]
-        for d, f in zip(lines, (_retuned(0), _retuned(1))):
+        for d, f in zip(lines, (_retuned(0), _retuned(1)), strict=True):
             set_frequency(d.tone, f)
         for _ in range(3):
             for d in lines[::-1]:
@@ -656,7 +656,7 @@ def test_a_name_read_before_it_moves_to_another_channel_unrolls():
     @pulse.kernel
     def looped(qs):
         lines = [get_drive_line(q) for q in qs]
-        for d, f in zip(lines, (_retuned(0), _retuned(1))):
+        for d, f in zip(lines, (_retuned(0), _retuned(1)), strict=True):
             set_frequency(d.tone, f)
         for _ in range(3):
             drive(d, square(16, 2 * AMP))
@@ -683,7 +683,7 @@ def test_a_name_read_before_it_is_rebound_on_its_channel_stays_rolled():
     @pulse.kernel
     def looped(qs):
         lines = [get_drive_line(q) for q in qs]
-        for d, f in zip(lines, (_retuned(0), _retuned(1))):
+        for d, f in zip(lines, (_retuned(0), _retuned(1)), strict=True):
             set_frequency(d.tone, f)
         for _ in range(3):
             drive(d, square(16, 2 * AMP))

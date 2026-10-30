@@ -130,7 +130,7 @@ def _pack(
     if len(values) != len(specs):
         raise InvalidValueError(f"{len(specs)} {what} expected, got {len(values)}")
     out = bytearray()
-    for spec, value in zip(specs, values):
+    for spec, value in zip(specs, values, strict=False):
         _, size, _, fmt = _layout(spec)
         if spec.is_scalar:
             items = [value]

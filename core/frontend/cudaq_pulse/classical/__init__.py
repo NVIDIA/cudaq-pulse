@@ -1017,7 +1017,9 @@ def _result_specs(
         if known is None:
             from ._infer import LengthRules
 
-            bits = frozenset(n for n, p in zip(shape.names, shape.plan) if p is _KIND_BITS)
+            bits = frozenset(
+                n for n, p in zip(shape.names, shape.plan, strict=False) if p is _KIND_BITS
+            )
             # An external's stub is a declaration: its placeholder return,
             # such as `return outcomes`, gives the result's length.
             known = function._length_rules = LengthRules(

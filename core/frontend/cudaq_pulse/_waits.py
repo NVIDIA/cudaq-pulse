@@ -179,7 +179,7 @@ class _WaitLengths:
             pass
         for wait in self.waits:
             wait.check(values)
-        for wait, grid in zip(self.waits, self.grids):
+        for wait, grid in zip(self.waits, self.grids, strict=False):
             cycles = math.floor(wait.length(values) + 0.5)
             if wait.lowest is not None and cycles % grid:
                 lower = cycles // grid * grid
@@ -197,7 +197,7 @@ class _WaitLengths:
                 longer = _longer_in_ifs(timed, self.length[4])
                 cycles += eval(f"lambda a: {longer}", {"__builtins__": {}})(values)
             else:
-                for wait, runs in zip(timed, repeats):
+                for wait, runs in zip(timed, repeats, strict=False):
                     assert wait.lowest is not None
                     cycles += runs * (math.floor(wait.length(values) + 0.5) - wait.lowest)
             if cycles > most:

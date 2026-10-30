@@ -732,7 +732,7 @@ def _decode(code: CodeType) -> DecodedCode:
         elif name == "CONTAINS_OP":
             out.append([CONTAINS, bool(iarg)])
         elif name in _SUPERINSTRUCTIONS:
-            for half, var in zip(_SUPERINSTRUCTIONS[name], ins.argval):
+            for half, var in zip(_SUPERINSTRUCTIONS[name], ins.argval, strict=False):
                 if half == STORE_FAST and var in cleared:
                     half = STORE_FAST_MAYBE
                 out.append([half, var])

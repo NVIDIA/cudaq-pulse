@@ -120,7 +120,7 @@ def _fingerprint(target: TargetDescription, layout: tuple[int, ...], calibration
     if target._exchange_view is not target.couplings:
         couplings = [
             entry + (() if (kind := _coupling_kind(c)) == _EXCHANGE else (kind,))
-            for entry, c in zip(couplings, target.couplings)
+            for entry, c in zip(couplings, target.couplings, strict=False)
         ]
     crosstalk = [(x.qubit_a, x.qubit_b, x.static_zz_hz) for x in target.crosstalk]
     content: tuple[Any, ...] = (
@@ -372,7 +372,7 @@ class Device:
             levels = [model.levels_of(p) for p in self.layout]
             f01 = np.array([q.frequency_hz for q in qubits], dtype=float)
             energies = np.full((len(qubits), max(levels, default=model.levels)), np.nan)
-            for row, qubit, n in zip(energies, qubits, levels):
+            for row, qubit, n in zip(energies, qubits, levels, strict=False):
                 row[:n] = model.energies_hz(qubit, n)
             transitions = np.abs(energies[:, None, :] - energies[:, :, None])
             self._arrays = (_read_only(f01), _read_only(transitions))

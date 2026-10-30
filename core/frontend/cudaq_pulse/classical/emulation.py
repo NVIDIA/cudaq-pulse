@@ -202,7 +202,7 @@ def _export(lowered: Any, with_events: bool, part: _Part | None = None) -> dict[
         },
         "epochs": [
             {**asdict(e), "after": a} if k and a != k - 1 else asdict(e)
-            for k, (e, a) in enumerate(zip(epochs, after))
+            for k, (e, a) in enumerate(zip(epochs, after, strict=False))
         ],
         "events": events,
         "calls": [
@@ -595,9 +595,9 @@ def emulate(
                     }
 
                     def point(key: tuple[int, tuple[int, ...]]) -> tuple[float, float]:
-                        qudit, duration = seen[key]
-                        frequency, amplitude = drives.get(key, (math.nan, math.nan))
-                        return model.sample(rng, qudit, known[key], frequency, amplitude, duration)
+                        qudit, duration = seen[key]  # noqa: B023
+                        frequency, amplitude = drives.get(key, (math.nan, math.nan))  # noqa: B023
+                        return model.sample(rng, qudit, known[key], frequency, amplitude, duration)  # noqa: B023
 
                 inputs = _call_inputs(fn, arguments, known, point)
                 if fn.uniform is not None:

@@ -607,7 +607,7 @@ def _bind_checked(parameters: tuple[str, ...], values: Any) -> list[float]:
     if not fits:
         raise _bind_count_error(parameters, values)
     out = []
-    for name, v in zip(parameters, values):
+    for name, v in zip(parameters, values, strict=False):
         if isinstance(v, (bool, str, bytes)) or not hasattr(v, "__float__"):
             raise InvalidTypeError(
                 f"bind(): the value of {name!r} must be a real number, got {type(v).__name__} {v!r}"
@@ -830,7 +830,7 @@ class Lowered:
         generic = self._generic
         names = generic.parameters if generic is not None else ()
         values = _bind_checked(names, self.arguments)
-        for name, v in zip(names, values):
+        for name, v in zip(names, values, strict=False):
             if v - v != 0.0:
                 raise InvalidValueError(
                     f"argument {name!r} is {v!r}; a float argument must be a finite number"

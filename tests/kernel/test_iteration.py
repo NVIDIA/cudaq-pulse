@@ -65,7 +65,7 @@ def test_enumerate_zip_reversed_and_dict_items():
         d = get_drive_line(q)
         for i, a in enumerate(AMPS):
             drive(d, square(DURS[i], a))
-        for a, n in zip(AMPS, DURS):
+        for a, n in zip(AMPS, DURS, strict=True):
             drive(d, square(n, a))
         for a in reversed(AMPS):
             drive(d, square(16, a))
@@ -98,7 +98,7 @@ def test_lines_and_tones_from_lists_stay_threaded():
             lines.append(d)
             tones.append(t)
         for _ in range(2):
-            for d, t in zip(lines, tones):
+            for d, t in zip(lines, tones, strict=True):
                 drive(d, square(16, 0.1), tone=t)
         for d in lines:
             wait(d, 8)
@@ -387,7 +387,7 @@ def test_iterating_a_pulse_value_is_an_error():
     @pulse.kernel
     def over_line(q):
         d = get_drive_line(q)
-        for x in d:
+        for x in d:  # noqa: B007
             wait(d, 4)
 
     with pytest.raises(CompilationError, match="cannot iterate over a pulse drive_line value"):
