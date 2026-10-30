@@ -16,7 +16,6 @@ that pick passes and a schedule, the native build of one specialization, and
 from __future__ import annotations
 
 import difflib
-import math
 import threading
 import time
 from collections.abc import Mapping, Sequence
@@ -36,6 +35,8 @@ from .kernel._unroll import DEFAULT_UNROLL_THRESHOLD, resolve_unroll_threshold
 from .kernel.ir_builder import CompilationError, SymbolicValueError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from matplotlib.figure import Figure
 
     from . import _clocks
@@ -468,6 +469,8 @@ class Epoch:
     max_shift_cycles: int | None
 
 
+# classical_report() sets the fields without __init__, so there is no
+# __post_init__.
 @dataclass(frozen=True)
 class ClassicalCall:
     """One execution of a call to a classical function, from ``classical_report()``.
@@ -521,11 +524,6 @@ class ClassicalCall:
     def deadline_slack_cycles(self) -> int | None:
         """How far the due time is inside the deadline (negative: missed)."""
         return None if self.deadline_cycles is None else self.deadline_cycles - self.due_cycles
-
-
-# classical_report sets these directly, without __init__: ClassicalCall must
-# not gain a __post_init__.
-_CALL_FIELDS = tuple(ClassicalCall.__dataclass_fields__)
 
 
 @dataclass()
@@ -970,39 +968,7 @@ class Lowered:
 
         Calls in a loop are listed once per iteration, in program order.
         """
-        module = self._module if self.scheduled and not self.carriers else self._concrete()
-        with self._lock:
-            calls = module.classical_calls()
-            events = module.events() if calls else []
-        names = self.options.machine.link_name
-        exposed = _Exposure(self, events) if calls else None
-        new = object.__new__
-        report: list[ClassicalCall] = []
-        for name, link, iteration, start, length, due, taken, use, limit, epoch, owner in calls:
-            call = new(ClassicalCall)
-            call.__dict__.update(
-                zip(
-                    _CALL_FIELDS,
-                    (
-                        name,
-                        link,
-                        tuple(iteration),
-                        start,
-                        length,
-                        due,
-                        taken,
-                        use,
-                        limit,
-                        epoch,
-                        names(link),
-                        None if exposed is None or use is None else exposed(start, use),
-                        owner,
-                    ),
-                    strict=True,
-                )
-            )
-            report.append(call)
-        return report
+        return (_report or _load_report())(self)
 
     def export_emulation(self, *, controller: int | None = None) -> dict[str, Any]:
         """The program for a controller emulator: its schedule by epoch, its
@@ -1083,55 +1049,15 @@ def _lowered(
     return lowered
 
 
-class _Exposure:
-    """How long a call's first use waits beyond when it could start without
-    the call (see ``ClassicalCall.exposed_cycles``), in O(log n) per call."""
+_report: Callable[[Lowered], list[ClassicalCall]] | None = None
 
-    def __init__(self, lowered: Lowered, events: Sequence[Any]) -> None:
-        import bisect
 
-        self._bisect = bisect.bisect_right
-        clock = lowered.target.clock_ghz
-        qubits = lowered.target.target.qubits
-        ends: dict[int, list[int]] = {}
-        starting: dict[int, list[int]] = {}
-        readouts: list[tuple[int, int]] = []
-        holds: dict[int, int] = {}
-        for kind, line, qubit, start, duration in events:
-            if (kind != "drive" and kind != "readout") or start is None or duration is None:
-                continue
-            end = start + duration
-            ends.setdefault(line, []).append(end)
-            starting.setdefault(start, []).append(line)
-            if kind == "readout":
-                hold = holds.get(qubit)
-                if hold is None:
-                    q = qubits.get(qubit)
-                    hold = math.ceil(q.depletion_ns * clock) if q is not None else 0
-                    holds[qubit] = hold
-                readouts.append((end, end + hold))
-        for values in ends.values():
-            values.sort()
-        readouts.sort()
-        self._ends = ends
-        self._starting = starting
-        self._readout_ends = [end for end, _ in readouts]
-        self._holds = [hold for _, hold in readouts]
+def _load_report() -> Callable[[Lowered], list[ClassicalCall]]:
+    global _report
+    from ._classical_report import report
 
-    def __call__(self, submit_cycles: int, use_cycles: int) -> int | None:
-        lines = self._starting.get(use_cycles)
-        if not lines:
-            return None
-        free = 0
-        for line in lines:
-            ends = self._ends[line]
-            k = self._bisect(ends, use_cycles)
-            if k:
-                free = max(free, ends[k - 1])
-        k = self._bisect(self._readout_ends, submit_cycles)
-        if k:
-            free = max(free, self._holds[k - 1])
-        return max(0, use_cycles - max(free, submit_cycles))
+    _report = report
+    return report
 
 
 def _rejected_literal(
