@@ -856,6 +856,8 @@ class Lowered:
     # Each line's fine delay in ns, when the machine has line delays; a
     # call's view reads its generic module's.
     fine_delays: Mapping[tuple[str, int], float] | None = None
+    # How many values bind takes: set by a generic module's first bind.
+    _arity: int
 
     def __init__(
         self,
@@ -973,7 +975,7 @@ class Lowered:
         if not self.arguments:
             return self._module
         if self._concrete_module is None:
-            arguments = self.arguments
+            arguments: Sequence[float] = self.arguments
             for v in arguments:
                 if v.__class__ is not float and v.__class__ is not int or v - v != 0.0:
                     arguments = self._checked_arguments()
@@ -1162,7 +1164,12 @@ class _View(Lowered):
     ``__init__`` and is the cheapest way to make a ``Lowered``."""
 
     __slots__ = ()
-    __init__ = object.__init__
+    if TYPE_CHECKING:
+
+        def __init__(self) -> None: ...
+
+    else:
+        __init__ = object.__init__
 
 
 class _ClockedLowered(Lowered):

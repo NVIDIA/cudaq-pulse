@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from .._errors import InvalidTypeError, InvalidValueError, UnsupportedError
 
 if TYPE_CHECKING:
+    from ..runtime.simulate import SimulationResult
     from .base import Qubit
 
 __all__ = ["SimulationModel", "TransmonModel"]
@@ -87,14 +88,14 @@ class SimulationModel:
             for upper in range(lower + 1, levels)
         }
 
-    def _simulate(self, *args: Any, **options: Any) -> Any:
+    def _simulate(self, *args: Any, **options: Any) -> SimulationResult:
         raise UnsupportedError(
             f"{type(self).__name__} has no simulator; this system compiles and "
             "exports, and a model that simulates it is a SimulationModel subclass"
         )
 
     def __eq__(self, other: object) -> bool:
-        return other.__class__ is self.__class__ and other._levels == self._levels  # type: ignore[attr-defined]
+        return other.__class__ is self.__class__ and other._levels == self._levels
 
     def __hash__(self) -> int:
         return hash((self.__class__, tuple(self._levels.items())))
@@ -117,7 +118,7 @@ class TransmonModel(SimulationModel):
         f01, alpha = qubit.frequency_hz, qubit.anharmonicity_hz
         return [k * f01 + k * (k - 1) / 2 * alpha for k in range(levels)]
 
-    def _simulate(self, *args: Any, **options: Any) -> Any:
+    def _simulate(self, *args: Any, **options: Any) -> SimulationResult:
         from ..runtime.simulate import _simulate_compiled
 
         return _simulate_compiled(*args, **options)

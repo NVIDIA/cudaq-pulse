@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from .._device import Qudit
     from ..compiler import Lowered
     from ..kernel._kernel import CompiledKernel, Kernel
+    from ..targets.models import SimulationModel
     from ._calls import CallRecord
 
 __all__ = ["Branch", "BranchCoverage", "Measurement", "SimulationResult", "simulate"]
@@ -417,7 +418,7 @@ def _simulate_lowered(
 def _simulation_model(target: Any) -> Callable[..., SimulationResult]:
     """The simulator of *target*'s model, the one place a system is matched
     to a model."""
-    model = target.model
+    model: SimulationModel | None = target.model
     if model is None:
         raise UnsupportedError(
             f"the system {target.name!r} has no simulation model (its model is None). "

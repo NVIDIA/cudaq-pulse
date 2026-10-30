@@ -1040,6 +1040,7 @@ class _Tones(Mapping[tuple[int, int], IRValue]):
         if tone is not None:
             lines.share(tone)
             return tone.cells[0].value
+        value: IRValue
         (value,) = self._emitter.b.emit(
             "pulse.tone", (), ("tone",), {"frequency_hz": frequency, "phase_rad": 0.0}
         )
@@ -2341,17 +2342,17 @@ class PulseIREmitter:
             # A list slot that yields its channel's value takes the channel's
             # result, so the line read from it after the loop has its tone.
             for obj, i, new, r in listed:
-                entry = carried.get(id(new.chan))
-                if entry is not None and entry[0] is new:
-                    r = entry[1]
+                change = carried.get(id(new.chan))
+                if change is not None and change[0] is new:
+                    r = change[1]
                 obj[i] = r
                 self._slots[id(r)] = (obj, i, r)
         else:
             self.b.emit("scf.for_end", (), ())
         for cell, alias in aliases:
-            carried = self.locals[alias]
-            cell.value = carried
-            carried.chan = cell
+            result = self.locals[alias]
+            cell.value = result
+            result.chan = cell
         for n, chan in stale:
             self.locals[n] = chan.value
         for n, qudit in qudits:
@@ -3023,10 +3024,10 @@ class PulseIREmitter:
                         raise play_arity_error(fname, len(call_args))
                     line, waveform = call_args
                     try:
-                        tone = line.chan.held.cells[1].value
+                        line_tone = line.chan.held.cells[1].value
                     except (AttributeError, IndexError):
-                        tone = None
-                    call_args = [line, waveform, tone]
+                        line_tone = None
+                    call_args = [line, waveform, line_tone]
                 else:
                     last = _OPTIONAL_LAST.get(fname)
                     if last is None or len(call_args) != n_val + len(attr_names) + 1:

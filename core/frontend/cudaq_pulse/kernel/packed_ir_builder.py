@@ -238,6 +238,12 @@ class PackedIRBuilder:
     # cycles; compile() sets it when that is not one. custom() samples at
     # it, and a custom_samples array must be made for it.
     sample_rate: tuple[int, int] | None = None
+    # A carrier's default transition and the tone frequency of each
+    # transition its line drives, by (qudit, is_readout); compile() sets it
+    # from the target's model. None: line.tones is refused.
+    line_tones: (
+        Callable[[int, bool], tuple[tuple[int, int], dict[tuple[int, int], float]]] | None
+    ) = None
     # Where every line can meet, in program cycles: a wait whose length
     # comes from an answer moves every later op by it, so its bounds must be
     # multiples of this.

@@ -314,7 +314,7 @@ class Device:
             import numpy as np
 
             target = self.target
-            model = target.model if target.model is not None else SimulationModel()
+            model = target.model if isinstance(target.model, SimulationModel) else SimulationModel()
             qubits = [target.qubits[p] for p in self.layout]
             levels = [model.levels_of(p) for p in self.layout]
             f01 = np.array([q.frequency_hz for q in qubits], dtype=float)
@@ -332,7 +332,7 @@ class Device:
         each transition its line has a tone for: every transition of a
         drive line, only the default of a readout line."""
         target = self.target
-        model = target.model if target.model is not None else SimulationModel()
+        model = target.model if isinstance(target.model, SimulationModel) else SimulationModel()
         default = model.default_transition
         qubit = target.qubits[index]
         if readout:
