@@ -63,7 +63,6 @@ from ._errors import PulseWarning as PulseWarning
 from ._errors import TimingError as TimingError
 from ._errors import UnsupportedError as UnsupportedError
 from ._errors import UpgradeNotice as UpgradeNotice
-from .classical import Link as Link
 from .compiler import Lowered as Lowered
 from .compiler import Pass as Pass
 from .compiler import compile as compile
@@ -101,6 +100,7 @@ if TYPE_CHECKING:
     from ._units import ns as ns
     from ._units import s as s
     from ._units import us as us
+    from .classical import Link as Link
     from .runtime.gpu import GpuRuntimeError as GpuRuntimeError
     from .runtime.simulate import BranchCoverage as BranchCoverage
     from .runtime.simulate import SimulationResult as SimulationResult
@@ -122,6 +122,7 @@ _LAZY_EXPORTS = {
     "Controller": "._system",
     "ControlSystem": "._system",
     "Processor": "._system",
+    "Link": ".classical",
 }
 _LAZY_MODULES = {"viz": ".viz", "backends": ".backends", "controller": ".controller"}
 

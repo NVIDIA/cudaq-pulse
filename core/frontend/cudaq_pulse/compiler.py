@@ -25,10 +25,11 @@ from fractions import Fraction
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+import cudaq_pulse.classical as classical
+
 from ._errors import InvalidTypeError, InvalidValueError
 from ._native import PackedValueError, PulseModuleBuilder
 from ._units import Time
-from .classical import Link
 from .kernel._bytecode_normalize import UnsupportedInterpreterError
 from .kernel._schedule_blocks import check_root_schedule, root_schedule
 from .kernel._unroll import DEFAULT_UNROLL_THRESHOLD, resolve_unroll_threshold
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
     from ._programs import _Role
     from ._system import ControlSystem
     from ._waits import _WaitLengths
+    from .classical import Link
     from .controller import ControllerLimits, UsageReport
     from .kernel._kernel import CompiledKernel, Kernel
 
@@ -182,7 +184,7 @@ def _can_select_at_runtime(target: Device, parameter_kind: str) -> bool:
     return parameter_kind in _SELECTED_AT_RUNTIME
 
 
-class _Links(dict[int, Link]):
+class _Links(dict[int, "Link"]):
     """The links of a machine model: a read-only, hashable mapping by id,
     which keeps the names the model gave them (``names``), so that a model
     made from another's links (``dataclasses.replace``) keeps them too."""
@@ -298,7 +300,7 @@ class MachineModel:
                 names.append(key)
             elif isinstance(key, bool) or not isinstance(key, int) or key < 0:
                 raise ValueError(f"MachineModel.links keys are names or link ids >= 0, got {key!r}")
-            if not isinstance(value, Link):
+            if not isinstance(value, classical.Link):
                 raise TypeError(f"MachineModel.links[{key!r}] must be a Link, got {value!r}")
             if isinstance(key, int):
                 dict.__setitem__(links, key, value)
@@ -388,12 +390,12 @@ class MachineModel:
 
     def link(self, link: int | str) -> Link:
         """The ``Link`` of *link* (a name or an id; ``Link()`` if unlisted)."""
-        return self.links.get(self.link_id(link), Link())
+        return self.links.get(self.link_id(link), classical.Link())
 
     def links_attribute(self, used: Sequence[int]) -> str:
         """The module attribute ``classical.links`` for the links in *used*."""
         entries = ", ".join(
-            f'"{link}" = {self.links.get(link, Link()).attribute()}'
+            f'"{link}" = {self.links.get(link, classical.Link()).attribute()}'
             for link in sorted(set(used))
         )
         return f"{{classical.links = {{{entries}}}}}"

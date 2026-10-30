@@ -10,6 +10,7 @@
 import importlib
 import importlib.metadata
 import os
+import pickle
 import re
 import subprocess
 import sys
@@ -67,6 +68,51 @@ def test_a_device_config_without_a_control_system_loads_no_clock_modules(tmp_pat
         tmp_path,
     )
     assert loaded == "[]"
+
+
+def test_links_wait_checks_and_the_classical_report_load_on_first_use(tmp_path):
+    out = _run(
+        "import sys, cudaq_pulse as p\n"
+        "@p.kernel\n"
+        "def k(q):\n"
+        "    d = get_drive_line(q)\n"
+        "    drive(d, square(40, 0.1))\n"
+        "p.compile(k).lower(p.device('transmon_17q').qudit_handles[0])\n"
+        "lazy = ('cudaq_pulse.classical._link', 'cudaq_pulse._waits',"
+        " 'cudaq_pulse._classical_report', 'cudaq_pulse._system')\n"
+        "print(sorted(m for m in lazy if m in sys.modules))\n"
+        "print(p.Link is p.classical.Link, 'Link' in dir(p))",
+        tmp_path,
+    )
+    assert out == "[]\nTrue True"
+
+
+def test_modules_that_are_not_packages_have_no_module_getattr():
+    # Each `from module import name` run in a function looks up
+    # module.__path__, which calls a module __getattr__ and fails.
+    @pulse.kernel
+    def k(q):
+        d = get_drive_line(q)  # noqa: F821
+        drive(d, square(40, 0.1))  # noqa: F821
+
+    pulse.simulate(pulse.compile(k).lower(Q[0]), levels=2)
+    pulse.compile(k).lower(Q[0]).classical_report()
+    plain = [
+        name
+        for name, module in list(sys.modules.items())
+        if name.startswith("cudaq_pulse")
+        and not hasattr(module, "__path__")
+        and "__getattr__" in vars(module)
+    ]
+    assert plain == []
+
+
+def test_link_pickles_under_its_public_module():
+    assert pulse.Link.__module__ == "cudaq_pulse.classical"
+    link = pulse.Link(fixed_ns=3 * pulse.ns, per_controller=True)
+    data = pickle.dumps(link)
+    assert b"cudaq_pulse.classical\x94" in data and b"_link" not in data
+    assert pickle.loads(data) == link
 
 
 def test_simulation_exports_load_on_first_use(tmp_path):
