@@ -405,8 +405,8 @@ def test_a_float_parameter_in_nanoseconds_is_one_run_time_multiply():
 def test_a_list_float_element_can_be_a_duration_like_a_float_parameter():
     @pulse.kernel
     def k(q, widths: list[float]):
-        d, t = get_drive_line(q)
-        drive(d, square(widths[0], 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(widths[0], 0.1))
         wait(d, widths[1])
 
     with pytest.warns(pulse.PulseWarning, match="'widths'"):

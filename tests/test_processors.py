@@ -19,7 +19,7 @@ from cudaq_pulse._errors import DeviceDefinitionError
 from cudaq_pulse.classical import Bits, Float
 from cudaq_pulse.controller import ControllerLimitError
 
-KRINNER = "transmon_krinner_17q"
+TRANSMON_17Q = "transmon_17q"
 
 
 def _parity(bits):
@@ -55,26 +55,26 @@ sign = pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=400, 
 
 @pulse.kernel
 def corrected(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(100, 0.05))
     fix = parity.submit([m, m, m, m]).result()
     sync(r, d)
     if fix[0]:
-        drive(d, square(20, 0.1), t)
+        drive(d, square(20, 0.1))
 
 
 @pulse.kernel
 def both(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(100, 0.05))
     fix = parity.submit([m, m, m, m]).result()
     scaled.submit(1.0).result()
     sign.submit(1.0).result()
     sync(r, d)
     if fix[0]:
-        drive(d, square(20, 0.1), t)
+        drive(d, square(20, 0.1))
 
 
 def _qpu(*processors, model="box.a", links=("cores", "gpu")):
@@ -82,7 +82,9 @@ def _qpu(*processors, model="box.a", links=("cores", "gpu")):
         drive_lines=[0, 1], readout_lines=[0, 1], processors=list(processors), model=model
     )
     system = pulse.ControlSystem(controllers=[box], links={name: pulse.Link() for name in links})
-    return pulse.device({"quantum_system": KRINNER, "layout": [0, 1], "control_system": system})
+    return pulse.device(
+        {"quantum_system": TRANSMON_17Q, "layout": [0, 1], "control_system": system}
+    )
 
 
 def _lower(kernel, *processors):
@@ -325,14 +327,14 @@ def test_the_error_carries_the_usage_report_with_by_how_much_each_limit_is_excee
 def test_a_call_over_a_processor_limit_carries_the_report_of_its_values():
     @pulse.kernel
     def waits(q, tau: float):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         fix = parity.submit([m, m, m, m]).result()
         wait(d, tau)
         sync(r, d)
         if fix[0]:
-            drive(d, square(20, 0.1), t)
+            drive(d, square(20, 0.1))
 
     qpu = _qpu(pulse.Processor(links=["cores"], max_ops_per_function=2))
     with pytest.raises(ControllerLimitError) as raised:
@@ -343,7 +345,7 @@ def test_a_call_over_a_processor_limit_carries_the_report_of_its_values():
     box = pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], max_events=1)
     plain = pulse.device(
         {
-            "quantum_system": KRINNER,
+            "quantum_system": TRANSMON_17Q,
             "layout": [0, 1],
             "control_system": pulse.ControlSystem(controllers=[box], links={"cores": pulse.Link()}),
         }
@@ -380,9 +382,9 @@ def test_a_fixed_cost_processor_rejects_a_body_whose_cost_is_not_fixed():
 
     @pulse.kernel
     def calls(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         loose.submit(3.0).result()
-        drive(d, square(20, 0.1), t)
+        drive(d, square(20, 0.1))
 
     cores = pulse.Processor(links=["cores"], fixed_cost_only=True)
     assert "unbounded is not fixed-cost, which processors[0]" in _fails(calls, cores)
@@ -397,10 +399,10 @@ def test_functions_on_no_processor_and_externals_run_off_board():
 
     @pulse.kernel
     def calls(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         sign.submit(1.0).result()
         table.submit(1.0).result()
-        drive(d, square(20, 0.1), t)
+        drive(d, square(20, 0.1))
 
     usage = _lower(calls, pulse.Processor(links=["cores"])).controller_usage
     assert usage.off_board == ("_sign", "table")
@@ -411,14 +413,14 @@ def test_functions_on_no_processor_and_externals_run_off_board():
 def test_a_float_parameter_defers_the_processor_check_to_the_call():
     @pulse.kernel
     def waits(q, tau: float):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         fix = parity.submit([m, m, m, m]).result()
         wait(d, tau)
         sync(r, d)
         if fix[0]:
-            drive(d, square(20, 0.1), t)
+            drive(d, square(20, 0.1))
 
     qpu = _qpu(pulse.Processor(links=["cores"], max_ops_per_function=2))
     compiled = pulse.compile(waits, device=qpu)
@@ -429,7 +431,7 @@ def test_a_float_parameter_defers_the_processor_check_to_the_call():
 def test_a_system_without_processors_reports_every_function_off_board():
     qpu = pulse.device(
         {
-            "quantum_system": KRINNER,
+            "quantum_system": TRANSMON_17Q,
             "layout": [0, 1],
             "control_system": pulse.ControlSystem(
                 controllers=[pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1])],
@@ -460,7 +462,7 @@ def test_a_description_states_its_processors_and_their_dispatch_keys(tmp_path):
     system = pulse.ControlSystem(
         controllers=[box], links={"cores": pulse.Link(), "gpu": pulse.Link()}
     )
-    qpu = pulse.device({"quantum_system": KRINNER, "layout": [0, 1], "control_system": system})
+    qpu = pulse.device({"quantum_system": TRANSMON_17Q, "layout": [0, 1], "control_system": system})
     data = json.loads(json.dumps(qpu.as_dict()))
     assert data["control_system"]["controllers"][0]["processors"][0]["dispatch_keys"] == {
         "_parity": 7
@@ -476,7 +478,7 @@ def test_a_bad_processor_in_a_system_file_is_a_problem_with_its_path():
         controllers=[pulse.Controller(processors=[pulse.Processor(links=["cores"])])],
         links={"cores": pulse.Link()},
     )
-    qpu = pulse.device({"quantum_system": KRINNER, "layout": [0, 1], "control_system": system})
+    qpu = pulse.device({"quantum_system": TRANSMON_17Q, "layout": [0, 1], "control_system": system})
     data = qpu.as_dict()
     data["control_system"]["controllers"][0]["processors"][0]["unsupported"] = ["dvi"]
     with pytest.raises(DeviceDefinitionError, match="did you mean 'div'"):

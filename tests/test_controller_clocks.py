@@ -131,17 +131,17 @@ def _grid(qudit):
 # iteration.
 @pulse.kernel(unroll_threshold=0)
 def mixed(a, b):
-    da, ta = get_drive_line(a)
-    db, tb = get_drive_line(b)
-    ra, rta = get_readout_line(a)
-    drive(da, gaussian(40, 0.1, 10.0), ta)
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    ra = get_readout_line(a)
+    drive(da, gaussian(40, 0.1, 10.0))
     wait(db, 8)
-    drive(db, square(pulse.round_duration(db, 15), 0.1), tb)
+    drive(db, square(pulse.round_duration(db, 15), 0.1))
     sync(da, db, ra)
-    drive(da, gaussian(40, 0.1, 10.0), ta)
-    readout(ra, square(pulse.round_duration(ra, 99), 0.05), rta)
+    drive(da, gaussian(40, 0.1, 10.0))
+    readout(ra, square(pulse.round_duration(ra, 99), 0.05))
     for _ in range(4):
-        drive(db, square(12, 0.1), tb)
+        drive(db, square(12, 0.1))
 
 
 @pytest.mark.parametrize("schedule", SCHEDULES)
@@ -160,12 +160,12 @@ def test_every_operation_starts_and_ends_on_its_own_controllers_grid(schedule):
 
 @pulse.kernel
 def back_to_back(a, b):
-    da, ta = get_drive_line(a)
-    db, tb = get_drive_line(b)
-    drive(da, square(2, 0.1), ta)
-    drive(da, square(2, 0.1), ta)
-    drive(db, square(4, 0.1), tb)
-    drive(db, square(4, 0.1), tb)
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    drive(da, square(2, 0.1))
+    drive(da, square(2, 0.1))
+    drive(db, square(4, 0.1))
+    drive(db, square(4, 0.1))
 
 
 def test_each_line_keeps_its_own_controllers_finer_grid():
@@ -179,22 +179,22 @@ def test_each_line_keeps_its_own_controllers_finer_grid():
 
 @pulse.kernel
 def twice(q: pulse.Qudit):
-    d, t = get_drive_line(q)
-    drive(d, square(4, 0.1), t)
-    drive(d, square(4, 0.2), t)
+    d = get_drive_line(q)
+    drive(d, square(4, 0.1))
+    drive(d, square(4, 0.2))
 
 
 @pulse.kernel
 def short_twice(q: pulse.Qudit):
-    d, t = get_drive_line(q)
-    drive(d, square(2, 0.1), t)
-    drive(d, square(2, 0.2), t)
+    d = get_drive_line(q)
+    drive(d, square(2, 0.1))
+    drive(d, square(2, 0.2))
 
 
 @pulse.kernel
 def shaped_anywhere(q: pulse.Qudit):
-    d, t = get_drive_line(q)
-    drive(d, custom(8, ramp), t)
+    d = get_drive_line(q)
+    drive(d, custom(8, ramp))
 
 
 def test_a_runtime_qudits_one_schedule_is_on_every_controllers_grid():
@@ -225,9 +225,9 @@ def test_a_sync_meets_on_every_lines_grid():
 
 @pulse.kernel
 def callee_body(q):
-    d, t = get_drive_line(q)
-    drive(d, square(8, 0.1), t)
-    drive(d, square(4, 0.1), t)
+    d = get_drive_line(q)
+    drive(d, square(8, 0.1))
+    drive(d, square(4, 0.1))
 
 
 callee = pulse.kernel(schedule="asap")(callee_body.__pulse_kernel_fn__)
@@ -235,8 +235,8 @@ callee = pulse.kernel(schedule="asap")(callee_body.__pulse_kernel_fn__)
 
 @pulse.kernel
 def calls_a_block(a, b):
-    da, ta = get_drive_line(a)
-    drive(da, square(2, 0.1), ta)
+    da = get_drive_line(a)
+    drive(da, square(2, 0.1))
     callee(a)
     callee(b)
 
@@ -258,11 +258,11 @@ def correction(bits):
 
 @pulse.kernel
 def with_a_call(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(100, 0.05))
     amplitude = correction.submit([m]).result()
-    drive(d, square(8, amplitude), t)
+    drive(d, square(8, amplitude))
 
 
 @pytest.mark.parametrize("schedule", SCHEDULES)
@@ -280,8 +280,8 @@ def test_classical_calls_keep_each_controllers_lines_on_its_grid(schedule):
 
 @pulse.kernel
 def off_grid(q):
-    d, t = get_drive_line(q)
-    drive(d, gaussian(41, 0.1, 10.0), t)
+    d = get_drive_line(q)
+    drive(d, gaussian(41, 0.1, 10.0))
     wait(d, 5)
 
 
@@ -307,10 +307,10 @@ def wait_length(x):
 
 @pulse.kernel
 def answer_wait_off_grid(q):
-    d, t = get_drive_line(q)
-    drive(d, square(8, 0.1), t)
+    d = get_drive_line(q)
+    drive(d, square(8, 0.1))
     wait(d, wait_length.submit(1.0).result(), bounds=(6, 402))
-    drive(d, square(8, 0.1), t)
+    drive(d, square(8, 0.1))
 
 
 def test_a_wait_from_an_answer_has_its_bounds_on_every_controllers_grid():
@@ -323,10 +323,10 @@ def test_a_wait_from_an_answer_has_its_bounds_on_every_controllers_grid():
 
 @pulse.kernel
 def variable_wait(q, tau: float):
-    d, t = get_drive_line(q)
-    drive(d, square(8, 0.1), t)
+    d = get_drive_line(q)
+    drive(d, square(8, 0.1))
     wait(d, tau * 2.0, bounds=(0, 1000))
-    drive(d, square(8, 0.1), t)
+    drive(d, square(8, 0.1))
 
 
 def test_a_variable_wait_off_its_controllers_grid_fails_at_the_call():
@@ -347,11 +347,11 @@ def test_a_variable_wait_off_its_controllers_grid_fails_at_the_call():
 
 @pulse.kernel
 def feedback(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(100, 0.05))
     if m:
-        drive(d, square(8, 0.1), t)
+        drive(d, square(8, 0.1))
 
 
 def test_rcp_waits_each_readers_feedback_latency_in_program_cycles():
@@ -393,11 +393,11 @@ def ramp(t):
 
 @pulse.kernel
 def shaped_on_both(a, b):
-    da, ta = get_drive_line(a)
-    db, tb = get_drive_line(b)
+    da = get_drive_line(a)
+    db = get_drive_line(b)
     envelope = custom(8, ramp)
-    drive(da, envelope, ta)
-    drive(db, envelope, tb)
+    drive(da, envelope)
+    drive(db, envelope)
 
 
 def _samples(lowered):
@@ -419,14 +419,14 @@ def test_custom_samples_the_envelope_at_the_rate_of_the_line_that_plays_it():
 
 @pulse.kernel
 def shaped(q):
-    d, t = get_drive_line(q)
-    drive(d, custom(8, ramp), t)
+    d = get_drive_line(q)
+    drive(d, custom(8, ramp))
 
 
 @pulse.kernel
 def held_for_two_cycles(q):
-    d, t = get_drive_line(q)
-    drive(d, custom_samples([ramp(t) for t in (1, 1, 3, 3, 5, 5, 7, 7)]), t)
+    d = get_drive_line(q)
+    drive(d, custom_samples([ramp(t) for t in (1, 1, 3, 3, 5, 5, 7, 7)]))
 
 
 def test_a_custom_envelope_is_simulated_at_its_own_controllers_rate():
@@ -442,14 +442,14 @@ def test_a_custom_envelope_is_simulated_at_its_own_controllers_rate():
 
 @pulse.kernel
 def made_for_one_ghz(q):
-    d, t = get_drive_line(q)
-    drive(d, custom_samples([0.1, 0.2, 0.3, 0.4], 1.0), t)
+    d = get_drive_line(q)
+    drive(d, custom_samples([0.1, 0.2, 0.3, 0.4], 1.0))
 
 
 @pulse.kernel
 def scaled_custom(q):
-    d, t = get_drive_line(q)
-    drive(d, wf_scale(custom(8, ramp), 0.5), t)
+    d = get_drive_line(q)
+    drive(d, wf_scale(custom(8, ramp), 0.5))
 
 
 def test_sample_arrays_play_only_on_lines_of_the_rate_they_were_made_for():
@@ -538,11 +538,11 @@ def test_samples_at_a_rate_of_each_controllers_clock():
 
 @pulse.kernel
 def read_then_correct(a, b):
-    ra, rta = get_readout_line(a)
-    db, tb = get_drive_line(b)
-    m = readout(ra, square(100, 0.05), rta)
+    ra = get_readout_line(a)
+    db = get_drive_line(b)
+    m = readout(ra, square(100, 0.05))
     amplitude = correction.submit([m]).result()
-    drive(db, square(8, amplitude), tb)
+    drive(db, square(8, amplitude))
 
 
 def test_a_call_is_submitted_by_its_measuring_controller_and_answered_to_its_taker():
@@ -580,10 +580,10 @@ def test_each_controllers_emulation_export_is_its_part_in_its_cycles():
 
 @pulse.kernel
 def answer_wait(q):
-    d, t = get_drive_line(q)
-    drive(d, square(8, 0.1), t)
+    d = get_drive_line(q)
+    drive(d, square(8, 0.1))
     wait(d, wait_length.submit(1.0).result(), bounds=(8, 400))
-    drive(d, square(8, 0.1), t)
+    drive(d, square(8, 0.1))
 
 
 def test_a_run_time_wait_is_exported_in_its_controllers_cycles():
@@ -616,10 +616,10 @@ def test_a_controller_faster_than_the_program_clock_counts_more_cycles():
 
 @pulse.kernel
 def shaped_twice_plain(a, b):
-    da, ta = get_drive_line(a)
-    db, tb = get_drive_line(b)
-    drive(da, square(8, 0.1), ta)
-    drive(db, square(8, 0.1), tb)
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    drive(da, square(8, 0.1))
+    drive(db, square(8, 0.1))
 
 
 def test_a_one_controller_device_exports_as_before():
@@ -640,12 +640,12 @@ def test_a_one_controller_device_exports_as_before():
 
 @pulse.kernel
 def branch_across(a, b):
-    ra, rta = get_readout_line(a)
-    db, tb = get_drive_line(b)
-    m = readout(ra, square(100, 0.05), rta)
+    ra = get_readout_line(a)
+    db = get_drive_line(b)
+    m = readout(ra, square(100, 0.05))
     sync(ra, db)
     if m:
-        drive(db, square(8, 0.1), tb)
+        drive(db, square(8, 0.1))
 
 
 def _forwarding(reference=None, skew=0, tolerance=0):
@@ -742,14 +742,14 @@ def test_an_answer_sent_and_taken_on_one_controller_is_budgeted_without_uncertai
 
 @pulse.kernel
 def branch_on_both(a, b):
-    ra, rta = get_readout_line(a)
-    da, ta = get_drive_line(a)
-    db, tb = get_drive_line(b)
-    m = readout(ra, square(100, 0.05), rta)
+    ra = get_readout_line(a)
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    m = readout(ra, square(100, 0.05))
     sync(da, db)
     if m:
-        drive(da, square(8, 0.1), ta)
-        drive(db, square(8, 0.1), tb)
+        drive(da, square(8, 0.1))
+        drive(db, square(8, 0.1))
 
 
 @pytest.mark.parametrize("schedule", ["rcp", "alap_rcp"])
@@ -773,14 +773,14 @@ def test_rcp_waits_for_an_outcome_only_as_long_as_it_takes_to_reach_each_control
 
 @pulse.kernel
 def chosen_across(a, b):
-    ra, rta = get_readout_line(a)
-    db, tb = get_drive_line(b)
-    m = readout(ra, square(100, 0.05), rta)
+    ra = get_readout_line(a)
+    db = get_drive_line(b)
+    m = readout(ra, square(100, 0.05))
     if m:
         value = 0.3
     else:
         value = 0.1
-    drive(db, square(8, value), tb)
+    drive(db, square(8, value))
 
 
 def test_rcp_waits_for_an_outcome_a_pulse_computes_with_to_reach_its_controller(monkeypatch):
@@ -804,10 +804,10 @@ def test_rcp_waits_for_an_outcome_a_pulse_computes_with_to_reach_its_controller(
 
 @pulse.kernel
 def two_drives(a, b):
-    da, ta = get_drive_line(a)
-    db, tb = get_drive_line(b)
-    drive(da, square(8, 0.1), ta)
-    drive(db, square(8, 0.1), tb)
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    drive(da, square(8, 0.1))
+    drive(db, square(8, 0.1))
 
 
 def test_rcp_keeps_pulses_of_two_controllers_on_one_lane_apart_by_their_start_uncertainty():
@@ -831,12 +831,12 @@ def test_rcp_keeps_pulses_of_two_controllers_on_one_lane_apart_by_their_start_un
 
 @pulse.kernel
 def paired(a, b):
-    da, ta = get_drive_line(a)
-    db, tb = get_drive_line(b)
+    da = get_drive_line(a)
+    db = get_drive_line(b)
     sync(da, db)
-    drive(da, square(8, 0.1), ta)
+    drive(da, square(8, 0.1))
     wait(db, 4)
-    drive(db, square(8, 0.1), tb)
+    drive(db, square(8, 0.1))
 
 
 def test_pulses_a_sync_lines_up_across_controllers_land_within_their_alignment_tolerance():

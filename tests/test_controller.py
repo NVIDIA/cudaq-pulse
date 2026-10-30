@@ -308,16 +308,14 @@ def test_shape_key_ignores_an_amplitude_not_known_while_compiling():
 
 @pulse.kernel
 def two_amplitudes(q, a: float, b: float):
-    d, t = get_drive_line(q)
-    drive(d, gaussian(40, a, 10.0), t)
-    drive(d, gaussian(40, b, 10.0), t)
+    d = get_drive_line(q)
+    drive(d, gaussian(40, a, 10.0))
+    drive(d, gaussian(40, b, 10.0))
 
 
 def test_waveforms_of_one_shape_at_float_amplitudes_share_waveform_memory():
     machine = MachineModel(
-        controller=ControllerLimits(
-            waveform_samples=60, sample_rate_ghz=pulse.get_device().clock_ghz
-        )
+        controller=ControllerLimits(waveform_samples=60, sample_rate_ghz=pulse.device().clock_ghz)
     )
     lowered = pulse.compile(two_amplitudes, machine=machine).lower(Q[0], 0.5, 0.25)
     assert check(lowered.generic) == []
@@ -500,10 +498,10 @@ def test_a_kernel_with_float_parameters_is_checked_when_compiled():
 
 @pulse.kernel
 def retuned(q, shift: float):
-    d, t = get_drive_line(q)
-    drive(d, gaussian(40, 0.5, 10.0), t)
-    shift_frequency(t, shift)
-    drive(d, gaussian(40, 0.5, 10.0), t)
+    d = get_drive_line(q)
+    drive(d, gaussian(40, 0.5, 10.0))
+    shift_frequency(d.tone, shift)
+    drive(d, gaussian(40, 0.5, 10.0))
 
 
 def test_a_float_tone_shift_beyond_the_limit_fails_at_the_call_not_at_export():
@@ -521,16 +519,14 @@ def test_a_float_tone_shift_beyond_the_limit_fails_at_the_call_not_at_export():
 
 @pulse.kernel
 def two_widths(q, a: float, b: float):
-    d, t = get_drive_line(q)
-    drive(d, gaussian(40, 0.5, a), t)
-    drive(d, gaussian(40, 0.5, b), t)
+    d = get_drive_line(q)
+    drive(d, gaussian(40, 0.5, a))
+    drive(d, gaussian(40, 0.5, b))
 
 
 def test_waveforms_of_float_widths_take_memory_by_their_values():
     machine = MachineModel(
-        controller=ControllerLimits(
-            waveform_samples=60, sample_rate_ghz=pulse.get_device().clock_ghz
-        )
+        controller=ControllerLimits(waveform_samples=60, sample_rate_ghz=pulse.device().clock_ghz)
     )
     compiled = pulse.compile(two_widths, machine=machine)
     # One width is one shape, stored once: it fits.
@@ -561,10 +557,10 @@ def test_a_call_is_checked_once_per_distinct_values(monkeypatch):
 
 @pulse.kernel
 def waited(q, tau: float):
-    d, t = get_drive_line(q)
-    drive(d, square(16, 0.1), t)
+    d = get_drive_line(q)
+    drive(d, square(16, 0.1))
     wait(d, tau)
-    drive(d, square(16, 0.1), t)
+    drive(d, square(16, 0.1))
 
 
 def test_a_float_wait_length_is_checked_against_the_limits_at_the_call():
@@ -585,12 +581,12 @@ def test_a_float_wait_length_is_checked_against_the_limits_at_the_call():
 def test_a_call_that_lowers_exports(shift, widths, tones, samples):
     @pulse.kernel
     def program(q, shift: float, a: float, b: float):
-        d, t = get_drive_line(q)
-        drive(d, gaussian(40, 0.5, a), t)
-        shift_frequency(t, shift)
-        drive(d, gaussian(40, 0.25, b), t)
-        shift_frequency(t, 25e6)
-        drive(d, gaussian(40, 0.5, 10.0), t)
+        d = get_drive_line(q)
+        drive(d, gaussian(40, 0.5, a))
+        shift_frequency(d.tone, shift)
+        drive(d, gaussian(40, 0.25, b))
+        shift_frequency(d.tone, 25e6)
+        drive(d, gaussian(40, 0.5, 10.0))
 
     limits = ControllerLimits(tones_per_line=tones, waveform_samples=samples)
     # The call fails exactly when its program, compiled free, exceeds them.

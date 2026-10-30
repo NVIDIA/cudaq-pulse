@@ -30,7 +30,7 @@ control = pulse.ControlSystem(
     links={"feedback": pulse.Link(fixed_ns=40.0, feedback_ns=20.0, controllers=[left, right])},
 )
 qpu = pulse.device(
-    {"quantum_system": "transmon_krinner_17q", "layout": [0, 1, 2, 3], "control_system": control}
+    {"quantum_system": "transmon_17q", "layout": [0, 1, 2, 3], "control_system": control}
 )
 
 
@@ -42,13 +42,13 @@ def correction(outcome):
 
 @pulse.kernel
 def measure_and_correct(measured, partner):
-    readout_line, readout_tone = get_readout_line(measured)
-    drive_line, tone = get_drive_line(partner)
-    outcome = readout(readout_line, square(200, 0.05), readout_tone)
+    readout_line = get_readout_line(measured)
+    drive_line = get_drive_line(partner)
+    outcome = readout(readout_line, square(200, 0.05))
     flip = correction.submit([outcome]).result()
     sync(readout_line, drive_line)
     if flip[0]:
-        drive(drive_line, gaussian(40, 0.5, 10.0), tone)
+        drive(drive_line, gaussian(40, 0.5, 10.0))
 
 
 compiled = pulse.compile(measure_and_correct, schedule="rcp", device=qpu)

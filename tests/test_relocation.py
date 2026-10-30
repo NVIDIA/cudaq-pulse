@@ -16,7 +16,7 @@ import sys
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse import Device, Qudit, Register, Target, get_device
+from cudaq_pulse import Device, Qudit, Register
 from cudaq_pulse.controller import ControllerLimitError, ControllerLimits, check
 from cudaq_pulse.kernel.ir_builder import CompilationError
 from cudaq_pulse.ops import (
@@ -35,22 +35,22 @@ from hypothesis import strategies as st
 
 from tests.property_settings import examples
 
-DEV = get_device(Target.TRANSMON_KRINNER_17Q)
+DEV = pulse.device("transmon_17q")
 H = DEV.qudit_handles
 
 
 def _body(q, r, amps, f12):
-    d, t = get_drive_line(q)
-    drive(d, gaussian(40, amps[0], 10.0), t)
-    t = shift_phase(t, 0.3)
-    drive(d, gaussian(40, amps[1], 10.0), t)
+    d = get_drive_line(q)
+    drive(d, gaussian(40, amps[0], 10.0))
+    shift_phase(d.tone, 0.3)
+    drive(d, gaussian(40, amps[1], 10.0))
     for x in r:
-        dx, tx = get_drive_line(x)
-        drive(dx, square(20, 0.1), tx)
-    t = set_frequency(t, f12)
-    drive(d, square(20, amps[0]), t)
-    rl, rt = get_readout_line(q)
-    return readout(rl, square(100, 0.05), rt)
+        dx = get_drive_line(x)
+        drive(dx, square(20, 0.1))
+    set_frequency(d.tone, f12)
+    drive(d, square(20, amps[0]))
+    rl = get_readout_line(q)
+    return readout(rl, square(100, 0.05))
 
 
 @pulse.kernel
@@ -132,8 +132,8 @@ def test_program_id_is_stable_and_symbols_bind():
 
 def test_static_qudit_exports_have_no_symbols():
     def k(q, a: float):
-        d, t = get_drive_line(q)
-        drive(d, square(20, a), t)
+        d = get_drive_line(q)
+        drive(d, square(20, a))
 
     export = pulse.kernel(k).lower(H[3], 0.1).export_controller()
     assert "symbols" not in export and "program_id" not in export
@@ -162,8 +162,8 @@ def test_register_length_is_part_of_the_key():
 def test_unbound_view_cannot_lower_to_llvm():
     @pulse.kernel
     def k(q: Qudit):
-        d, t = get_drive_line(q)
-        drive(d, square(20, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(20, 0.1))
 
     lowered = k.lower(H[3])
     assert lowered.carriers == (DEV.layout[3],)
@@ -197,10 +197,10 @@ def test_any_placement_matches_static(indices, amp):
 
 @pulse.kernel
 def _two_readouts(a: Qudit, b: Qudit):
-    la, ta = get_readout_line(a)
-    lb, tb = get_readout_line(b)
-    readout(la, square(20, 0.05), ta)
-    readout(lb, square(20, 0.05), tb)
+    la = get_readout_line(a)
+    lb = get_readout_line(b)
+    readout(la, square(20, 0.05))
+    readout(lb, square(20, 0.05))
 
 
 def test_acquirer_limits_are_checked_per_call():
@@ -217,8 +217,8 @@ def test_acquirer_limits_are_checked_per_call():
 def test_bound_views_print_carriers():
     @pulse.kernel
     def k(q: Qudit):
-        line, _ = get_drive_line(q)
-        drive(line, square(20, 0.1), _)
+        line = get_drive_line(q)
+        drive(line, square(20, 0.1))
 
     carrier = DEV.layout[4]
     text = pulse.compile(k, passes=()).lower(H[4]).mlir()
@@ -237,8 +237,8 @@ def test_reading_a_qudit_attribute_names_the_rewrite(annotation, read, name, rew
     table = [0.1] * len(H)
     source = f"""
 def k(q):
-    d, t = get_drive_line(q)
-    drive(d, square(20, table[{read}]), t)
+    d = get_drive_line(q)
+    drive(d, square(20, table[{read}]))
 """
     scope = {"table": table, "get_drive_line": get_drive_line, "drive": drive, "square": square}
     exec(source, scope)
@@ -256,8 +256,8 @@ def test_reading_a_register_element_attribute_names_the_list_rewrite():
     @pulse.kernel
     def k(qs: Register):
         for q in qs:
-            d, t = get_drive_line(q)
-            drive(d, square(20, table[q.index]), t)
+            d = get_drive_line(q)
+            drive(d, square(20, table[q.index]))
 
     with pytest.raises(CompilationError, match=r"of qudit 'qs\[0\]'") as e:
         k.lower(H[[1, 2]])
@@ -269,15 +269,15 @@ def test_a_runtime_qudit_frequency_is_one_tone_until_its_line_is_retuned():
 
     @pulse.kernel
     def native(q: Qudit):
-        d, t = get_drive_line(q)
-        drive(d, square(20, 0.1), t)
-        drive(d, square(20, 0.2), shift_phase(t, 0.5))
+        d = get_drive_line(q)
+        drive(d, square(20, 0.1))
+        drive(d, square(20, 0.2), tone=shift_phase(d.tone, 0.5))
 
     @pulse.kernel
     def retuned(q: Qudit):
-        d, t = get_drive_line(q)
-        drive(d, square(20, 0.1), t)
-        drive(d, square(20, 0.2), shift_frequency(t, 1e6))
+        d = get_drive_line(q)
+        drive(d, square(20, 0.1))
+        drive(d, square(20, 0.2), tone=shift_frequency(d.tone, 1e6))
 
     assert pulse.compile(native, machine=machine).lower(H[3]).export_controller()
     with pytest.raises(ControllerLimitError, match="2 tone frequencies"):
@@ -287,8 +287,8 @@ def test_a_runtime_qudit_frequency_is_one_tone_until_its_line_is_retuned():
 def test_list_promoted_to_static_warns():
     @pulse.kernel
     def k(q: Qudit, lengths: list[float]):
-        d, t = get_drive_line(q)
-        drive(d, square(lengths[0], 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(lengths[0], 0.1))
 
     with pytest.warns(RuntimeWarning, match="lengths"):
         k.lower(H[0], [20.0])
@@ -296,11 +296,11 @@ def test_list_promoted_to_static_warns():
 
 def test_only_annotated_qudits_are_placed_at_call_time():
     def body(q, r):
-        d, t = get_drive_line(q)
-        drive(d, square(20, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(20, 0.1))
         for x in r:
-            dx, tx = get_drive_line(x)
-            drive(dx, square(20, 0.1), tx)
+            dx = get_drive_line(x)
+            drive(dx, square(20, 0.1))
 
     def annotated(q: Qudit, r: Register):
         body(q, r)
@@ -340,9 +340,9 @@ def test_a_runtime_qudit_export_adds_calls_that_do_not_grow_with_the_program():
     for n in (1, 64):
 
         def drives(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             for k in range(n):
-                drive(d, square(20, 0.1 + 0.001 * k), t)
+                drive(d, square(20, 0.1 + 0.001 * k))
 
         def placed(q: Qudit):
             drives(q)

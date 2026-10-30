@@ -282,10 +282,10 @@ def test_a_wait_length_sweep_compiles_once():
 def test_exporting_a_call_again_does_not_specialize_again():
     @pulse.kernel
     def pulses(q, amp: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(16):
-            drive(d, gaussian(40, amp, 10.0), t)
-            shift_phase(t, 0.1)
+            drive(d, gaussian(40, amp, 10.0))
+            shift_phase(d.tone, 0.1)
 
     compiled = pulse.compile(pulses, unroll_threshold=100_000)
     values = iter(1e-3 * k for k in range(1, 10**6))

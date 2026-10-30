@@ -16,27 +16,33 @@ import warnings
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse._errors import DeviceDefinitionError, UpgradeNotice
+from cudaq_pulse._errors import (
+    DeviceDefinitionError,
+    InvalidValueError,
+    UnsupportedError,
+    UpgradeNotice,
+)
 from cudaq_pulse._system import installed_descriptions
 from cudaq_pulse.classical import Bits, Float
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, ControllerLimits
 from cudaq_pulse.targets.base import Coupling, Qubit, TargetDescription
+from cudaq_pulse.targets.models import SimulationModel
 
-KRINNER = "transmon_krinner_17q"
+TRANSMON_17Q = "transmon_17q"
 
 
 @pulse.kernel
 def drive_and_branch(q, r):
-    d, t = get_drive_line(q)
-    ro, rt = get_readout_line(q)
-    d1, t1 = get_drive_line(r)
-    drive(d, gaussian(16, 0.5, 4.0), t)
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    d1 = get_drive_line(r)
+    drive(d, gaussian(16, 0.5, 4.0))
     sync(d, ro)
-    m = readout(ro, square(100, 0.05), rt)
+    m = readout(ro, square(100, 0.05))
     sync(ro, d1)
     if m:
-        drive(d1, square(20, 0.3), t1)
+        drive(d1, square(20, 0.3))
 
 
 @pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=400, link="feedback")
@@ -46,19 +52,19 @@ def flip(bits):
 
 @pulse.kernel
 def corrected(q, r):
-    ro, rt = get_readout_line(q)
-    d, t = get_drive_line(r)
-    m = readout(ro, square(100, 0.05), rt)
+    ro = get_readout_line(q)
+    d = get_drive_line(r)
+    m = readout(ro, square(100, 0.05))
     fix = flip.submit([m]).result()
     sync(ro, d)
     if fix[0]:
-        drive(d, square(20, 0.3), t)
+        drive(d, square(20, 0.3))
 
 
 def _qpu(*controllers, links=None, layout=(0, 1, 2, 3), **config):
     system = pulse.ControlSystem(controllers=list(controllers), links=links or {})
     return pulse.device(
-        {"quantum_system": KRINNER, "layout": list(layout), "control_system": system, **config}
+        {"quantum_system": TRANSMON_17Q, "layout": list(layout), "control_system": system, **config}
     )
 
 
@@ -133,10 +139,10 @@ def test_the_device_holds_its_control_system():
     assert qpu.qudits[1] == qpu.qudit_handles[1]
     other = _qpu(pulse.Controller(drive_lines=range(4), readout_lines=range(3)))
     assert qpu.fingerprint == other.fingerprint and qpu != other
-    legacy = pulse.device({"target": KRINNER, "layout": [0, 1, 2, 3]})
+    legacy = pulse.device({"target": TRANSMON_17Q, "layout": [0, 1, 2, 3]})
     assert legacy.control_system is None and legacy.fingerprint == qpu.fingerprint
     with pytest.raises(pulse.DeviceDefinitionError, match="target: is the former name"):
-        pulse.device({"target": KRINNER, "quantum_system": KRINNER})
+        pulse.device({"target": TRANSMON_17Q, "quantum_system": TRANSMON_17Q})
 
 
 # ── rcp and the controllers' feedback latency ────────────────────────────────
@@ -144,7 +150,7 @@ def test_the_device_holds_its_control_system():
 
 def _schedule(machine):
     lowered = pulse.compile(drive_and_branch, schedule="rcp", machine=machine).lower(
-        *pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).qudits[:2]
+        *pulse.device("transmon_17q").qudits[:2]
     )
     events = [(e.kind, e.line, e.start_cycles, e.duration_cycles) for e in lowered.schedule]
     return events, lowered.mlir()
@@ -218,8 +224,8 @@ def test_one_controller_on_its_own_clock_is_timed_as_on_a_machine_model():
 
     @pulse.kernel
     def odd(q):
-        d, t = get_drive_line(q)
-        drive(d, square(15, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(15, 0.1))
 
     with pytest.raises(ControllerLimitError, match="line d0 moves in timesteps of 2 cycles"):
         pulse.compile(odd, device=qpu).lower(qpu.qudits[0])
@@ -241,7 +247,7 @@ def test_line_delays_and_a_reference_clock_are_the_control_systems():
     system = pulse.ControlSystem(controllers=[box], reference_clock_ghz=0.5, line_delays_ns=delays)
     assert system._machine.line_delays_ns == delays and system._machine.reference_clock_ghz == 0.5
     timed = pulse.device(
-        {"quantum_system": KRINNER, "layout": [0, 1, 2, 3], "control_system": system}
+        {"quantum_system": TRANSMON_17Q, "layout": [0, 1, 2, 3], "control_system": system}
     )
     by_system = pulse.compile(drive_and_branch, device=timed).lower(
         timed.qudits[0], timed.qudits[1]
@@ -261,7 +267,9 @@ def test_new_line_delays_of_a_control_system_schedule_again_to_the_same_bytes():
     kernel = pulse.kernel(drive_and_branch.__pulse_kernel_fn__)
     for k, delays in enumerate(({("drive", 0): 1.0}, {("drive", 1): 4.0, ("readout", 0): 1.5})):
         system = pulse.ControlSystem(controllers=[box], line_delays_ns=delays)
-        qpu = pulse.device({"quantum_system": KRINNER, "layout": [0, 1], "control_system": system})
+        qpu = pulse.device(
+            {"quantum_system": TRANSMON_17Q, "layout": [0, 1], "control_system": system}
+        )
         again = pulse.compile(kernel, device=qpu).lower(qpu.qudits[0], qpu.qudits[1])
         assert (again.metrics.trace_ms == 0.0) == (k > 0)
         fresh = pulse.kernel(drive_and_branch.__pulse_kernel_fn__)
@@ -282,7 +290,7 @@ def test_a_control_systems_line_delays_and_reference_clock_are_checked():
         controllers=[pulse.Controller()], line_delays_ns={("readout", 40): 1.0}
     )
     with pytest.raises(DeviceDefinitionError, match="the qudit is not in the quantum system"):
-        pulse.device({"quantum_system": KRINNER, "control_system": system})
+        pulse.device({"quantum_system": TRANSMON_17Q, "control_system": system})
 
 
 def test_several_controllers_on_their_own_clocks_schedule_on_their_grids():
@@ -326,56 +334,56 @@ def settle(x):
 
 @pulse.kernel
 def plays(q):
-    d, t = get_drive_line(q)
-    drive(d, square(20, 0.1), t)
+    d = get_drive_line(q)
+    drive(d, square(20, 0.1))
 
 
 @pulse.kernel
 def acquires(q):
-    r, rt = get_readout_line(q)
-    readout(r, square(100, 0.05), rt)
+    r = get_readout_line(q)
+    readout(r, square(100, 0.05))
 
 
 @pulse.kernel
 def waits_for_an_answer(q):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     wait(d, settle.submit(8.0).result(), bounds=(0, 800))
-    drive(d, square(20, 0.1), t)
+    drive(d, square(20, 0.1))
 
 
 @pulse.kernel
 def syncs(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(20, 0.1), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(20, 0.1))
     sync(d, r)
-    readout(r, square(100, 0.05), rt)
+    readout(r, square(100, 0.05))
 
 
 @pulse.kernel
 def turns_by_an_outcome(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(100, 0.05))
     phase = 0.1
     if m:
         phase = 0.5
-    shift_phase(t, phase)
-    drive(d, square(20, 0.1), t)
+    shift_phase(d.tone, phase)
+    drive(d, square(20, 0.1))
 
 
 @pulse.kernel
 def turns_by_a_parameter(q, phase: float):
-    d, t = get_drive_line(q)
-    shift_phase(t, phase)
-    drive(d, square(20, 0.1), t)
+    d = get_drive_line(q)
+    shift_phase(d.tone, phase)
+    drive(d, square(20, 0.1))
 
 
 @pulse.kernel(unroll_threshold=0)
 def loops(q):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     for _ in range(4):
-        drive(d, square(20, 0.1), t)
+        drive(d, square(20, 0.1))
 
 
 # For each capability, a program that needs it and the qudits it runs on:
@@ -428,13 +436,13 @@ def test_a_tone_a_parameter_sets_needs_no_runtime_frame_update():
 
 @pulse.kernel(unroll_threshold=0)
 def two_loops(q: pulse.Qudit, r: pulse.Qudit):
-    d, t = get_drive_line(q)
-    e, u = get_drive_line(r)
+    d = get_drive_line(q)
+    e = get_drive_line(r)
     for _ in range(30):
-        drive(d, square(20, 0.1), t)
-        drive(d, square(20, 0.2), t)
+        drive(d, square(20, 0.1))
+        drive(d, square(20, 0.2))
     for _ in range(10):
-        drive(e, square(20, 0.1), u)
+        drive(e, square(20, 0.1))
 
 
 def test_a_controller_without_loop_gets_its_loops_unrolled_for_it_only():
@@ -485,8 +493,8 @@ def test_a_call_sends_and_answers_only_controllers_its_link_reaches():
 def test_runtime_qudits_are_checked_against_the_wiring_per_call():
     @pulse.kernel
     def pulse_one(q: pulse.Qudit):
-        d, t = get_drive_line(q)
-        drive(d, square(20, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(20, 0.1))
 
     qpu = _qpu(*_two_boxes(), layout=range(6))
     compiled = pulse.compile(pulse_one, device=qpu)
@@ -516,7 +524,7 @@ def test_a_qpu_round_trips_through_its_system_file():
         a, b, links={"feedback": pulse.Link(fixed_ns=40.0, controllers=[b])}, layout=range(6)
     )
     data = _round_trip(qpu)
-    assert data["quantum_system"] == KRINNER and data["calibration"] == "krinner17"
+    assert data["quantum_system"] == TRANSMON_17Q and data["calibration"] == "transmon_17q"
     system = data["control_system"]
     assert system["links"]["feedback"]["controllers"] == [1]
     assert system["controllers"][1]["peer_latency_cycles"] == {"0": 12}
@@ -530,7 +538,7 @@ def test_line_delays_and_a_reference_clock_round_trip_through_the_system_file():
         line_delays_ns={("drive", 0): 1.5, ("readout", 3): 2.0},
     )
     qpu = pulse.device(
-        {"quantum_system": KRINNER, "layout": [0, 1, 2, 3], "control_system": system}
+        {"quantum_system": TRANSMON_17Q, "layout": [0, 1, 2, 3], "control_system": system}
     )
     data = _round_trip(qpu)["control_system"]
     assert data["line_delays_ns"] == {"drive": {"0": 1.5}, "readout": {"3": 2.0}}
@@ -538,13 +546,20 @@ def test_line_delays_and_a_reference_clock_round_trip_through_the_system_file():
     assert "line_delays_ns" not in _qpu(*_two_boxes()).as_dict()["control_system"]
     data["line_delays_ns"] = {"drive": {"zero": 1.0}}
     with pytest.raises(DeviceDefinitionError, match="line_delays_ns.drive: is keyed by qudit"):
-        pulse.device({"quantum_system": KRINNER, "layout": [0, 1, 2, 3], "control_system": data})
+        pulse.device(
+            {"quantum_system": TRANSMON_17Q, "layout": [0, 1, 2, 3], "control_system": data}
+        )
 
 
 def test_a_program_clock_round_trips_through_the_system_file():
     system = pulse.ControlSystem(controllers=[pulse.Controller(clock_ghz=1.0)])
     qpu = pulse.device(
-        {"quantum_system": KRINNER, "layout": [0, 1], "control_system": system, "clock_ghz": 4.0}
+        {
+            "quantum_system": TRANSMON_17Q,
+            "layout": [0, 1],
+            "control_system": system,
+            "clock_ghz": 4.0,
+        }
     )
     assert qpu.clock_ghz == 4.0
     assert _round_trip(qpu)["clock_ghz"] == 4.0
@@ -597,9 +612,9 @@ def test_a_system_file_reports_every_problem_with_its_line(tmp_path):
 
 def test_a_newer_system_file_format_is_refused():
     with pytest.raises(DeviceDefinitionError, match="newer than this cudaq-pulse reads"):
-        pulse.device({"format": "cudaq-pulse.system/2", "quantum_system": KRINNER})
+        pulse.device({"format": "cudaq-pulse.system/2", "quantum_system": TRANSMON_17Q})
     with pytest.raises(DeviceDefinitionError, match="not a system file format"):
-        pulse.device({"format": "something/1", "quantum_system": KRINNER})
+        pulse.device({"format": "something/1", "quantum_system": TRANSMON_17Q})
 
 
 # ── Controller descriptions ──────────────────────────────────────────────────
@@ -677,7 +692,7 @@ def test_doctor_checks_a_system_file(tmp_path):
     path.write_text(json.dumps(qpu.as_dict(), indent=2))
     code, text = _doctor(path)
     assert code == 0, text
-    assert f"{path}: ok, device {KRINNER} with 4 qudits" in text
+    assert f"{path}: ok, device {TRANSMON_17Q} with 4 qudits" in text
     assert "controllers[1]: box.b, drive lines 2..3" in text
     assert "link 'feedback': reaches controllers [0]" in text
     data = qpu.as_dict()
@@ -695,18 +710,41 @@ def test_doctor_checks_a_system_file(tmp_path):
     assert code == 1 and f"{path}:" in text and "readout_lines[1]: qudit 99" in text
 
 
-def test_the_simulator_names_systems_it_has_no_model_for():
+def test_a_system_file_keeps_the_simulation_model():
     target = TargetDescription(
         name="other-pair",
         qubits={i: Qubit(i, 5e9 + i * 1e8, 0.0, 50.0, 40.0) for i in range(2)},
-        architecture="other",
+        model=SimulationModel(levels={1: 3}),
     )
     qpu = pulse.device({"target": target})
+    data = qpu.as_dict()
+    assert data["quantum_system"]["model"] == {"kind": "generic", "levels": {"1": 3}}
+    again = pulse.device(json.loads(json.dumps(data)))
+    assert again.target.model == target.model and again == qpu
 
     @pulse.kernel
     def nothing(q):
-        d, t = get_drive_line(q)
-        drive(d, square(20, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(20, 0.1))
 
-    with pytest.raises(NotImplementedError, match="this system \\(other\\) has no simulation"):
-        pulse.simulate(pulse.compile(nothing).lower(qpu.qudits[0]))
+    with pytest.raises(UnsupportedError, match="SimulationModel has no simulator"):
+        pulse.simulate(pulse.compile(nothing).lower(again.qudits[0]))
+
+    data["quantum_system"]["model"] = None
+    assert pulse.device(data).target.model is None
+    data["quantum_system"]["model"] = {"kind": "fluxonium"}
+    with pytest.raises(DeviceDefinitionError, match="model.kind: must be one of transmon, generic"):
+        pulse.device(data)
+
+
+def test_a_system_file_names_a_model_it_cannot_hold():
+    class Custom(SimulationModel):
+        pass
+
+    target = TargetDescription(
+        name="custom-pair",
+        qubits={i: Qubit(i, 5e9 + i * 1e8, 0.0, 50.0, 40.0) for i in range(2)},
+        model=Custom,
+    )
+    with pytest.raises(InvalidValueError, match="Custom is not one"):
+        pulse.device({"target": target}).as_dict()

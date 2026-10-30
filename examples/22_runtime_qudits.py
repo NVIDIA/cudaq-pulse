@@ -20,17 +20,17 @@ import cudaq_pulse as pulse
 @pulse.kernel
 def excite_to_two(qudit: pulse.Qudit, f12_hz: float):
     """Drive 0-1 on the qudit's own tone, then 1-2 at *f12_hz*, and read out."""
-    drive_line, tone = get_drive_line(qudit)
-    drive(drive_line, gaussian(40, 0.25, 10.0), tone)
-    set_frequency(tone, f12_hz)
-    drive(drive_line, gaussian(40, 0.18, 10.0), tone)
-    readout_line, readout_tone = get_readout_line(qudit)
+    drive_line = get_drive_line(qudit)
+    drive(drive_line, gaussian(40, 0.25, 10.0))
+    set_frequency(drive_line.tone, f12_hz)
+    drive(drive_line, gaussian(40, 0.18, 10.0))
+    readout_line = get_readout_line(qudit)
     sync(drive_line, readout_line)
-    return readout(readout_line, square(400, 0.05), readout_tone)
+    return readout(readout_line, square(400, 0.05))
 
 
 if __name__ == "__main__":
-    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    dev = pulse.device("transmon_17q")
 
     for i in range(4):
         f12_hz = float(dev.transition_freq[i, 1, 2])

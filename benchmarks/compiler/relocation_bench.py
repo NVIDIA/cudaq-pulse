@@ -31,7 +31,7 @@ from collections.abc import Callable
 import cudaq_pulse as pulse
 from cudaq_pulse import Qudit
 
-_HANDLES = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).qudit_handles
+_HANDLES = pulse.device("transmon_17q").qudit_handles
 _DRIVE_COUNTS = (1, 5, 20)
 
 
@@ -39,11 +39,11 @@ def _drives(count: int, relocatable: bool) -> pulse.Kernel:
     """``count`` Gaussian drives and a readout on one qudit."""
 
     def drives(q, amp: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(count):
-            drive(d, gaussian(40 + 4 * (i % 3), amp, 10.0), t)
-        rl, rt = get_readout_line(q)
-        return readout(rl, square(100, 0.05), rt)
+            drive(d, gaussian(40 + 4 * (i % 3), amp, 10.0))
+        rl = get_readout_line(q)
+        return readout(rl, square(100, 0.05))
 
     if relocatable:
         drives.__annotations__["q"] = Qudit

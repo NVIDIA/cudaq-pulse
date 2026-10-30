@@ -125,7 +125,7 @@ cores = pulse.Processor(links=("feedback",), cycles_per_op={"div": 20}, unsuppor
 assert_type(cores.max_ops_total, int | None)
 assert_type(cores.dispatch_keys, Mapping[str, int])
 assert_type(pulse.Controller(processors=[cores]).processors, Sequence[pulse.Processor])
-qpu = pulse.device({"quantum_system": "transmon_krinner_17q", "control_system": control})
+qpu = pulse.device({"quantum_system": "transmon_17q", "control_system": control})
 assert_type(qpu.control_system, pulse.ControlSystem | None)
 assert_type(qpu.as_dict(), dict[str, Any])
 pulse.compile(rabi, device=qpu, machine=control)

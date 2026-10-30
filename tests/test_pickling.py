@@ -594,22 +594,22 @@ def correction(m):
 
 @pulse.kernel
 def corrected_pair(a, b, amp: float):
-    ra, ta = get_readout_line(a)
-    da, sa = get_drive_line(a)
-    rb, tb = get_readout_line(b)
-    db, sb = get_drive_line(b)
-    ma = readout(ra, square(40, 0.1), ta)
-    mb = readout(rb, square(40, 0.1), tb)
-    drive(da, square(8, correction.submit([ma]).result()), sa)
-    drive(db, square(8, amp), sb)
-    drive(db, square(8, correction.submit([mb]).result()), sb)
+    ra = get_readout_line(a)
+    da = get_drive_line(a)
+    rb = get_readout_line(b)
+    db = get_drive_line(b)
+    ma = readout(ra, square(40, 0.1))
+    mb = readout(rb, square(40, 0.1))
+    drive(da, square(8, correction.submit([ma]).result()))
+    drive(db, square(8, amp))
+    drive(db, square(8, correction.submit([mb]).result()))
 
 
 @pulse.kernel
 def anywhere(q: pulse.Qudit, amp: float):
-    d, t = get_drive_line(q)
-    drive(d, square(4, amp), t)
-    drive(d, square(4, 0.2), t)
+    d = get_drive_line(q)
+    drive(d, square(4, amp))
+    drive(d, square(4, 0.2))
 
 
 def _qpu(max_in_flight=1, **processor):
