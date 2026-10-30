@@ -654,8 +654,8 @@ def _fixed_machine(**keys):
 def _program(*functions, machine=None):
     @pulse.kernel
     def k(q):
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         for f in functions:
             f.submit([m]).result()
 
@@ -817,8 +817,8 @@ def _one_count(n: pulse.Length[list[int], 1]) -> bool:
 )
 def test_one_readout_for_a_list_parameter_is_an_error(call, message):
     def k(q):
-        r, rt = get_readout_line(q)
-        m = readout(r, square(10, 0.1), rt)
+        r = get_readout_line(q)
+        m = readout(r, square(10, 0.1))
         call(m)
 
     _compile_error(k, re.escape(message))
@@ -841,8 +841,8 @@ def _decode_surface(syndrome: pulse.Bits) -> pulse.Length[pulse.Bits, 2]:
 
 def test_a_call_of_the_wrong_length_names_the_fixed_size():
     def k(q):
-        r, rt = get_readout_line(q)
-        m = readout(r, square(10, 0.1), rt)
+        r = get_readout_line(q)
+        m = readout(r, square(10, 0.1))
         _table.submit([m, m]).result()
 
     _compile_error(
@@ -853,15 +853,15 @@ def test_a_call_of_the_wrong_length_names_the_fixed_size():
 def test_an_external_of_unsized_inputs_has_a_version_per_length():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(10, 0.1), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(10, 0.1))
         _, a = _syndromes.submit([m, m]).result()
         _, b = _syndromes.submit([m, m, m]).result()
         c = _decode_surface.submit([m, m, m, m]).result()
         sync(d, r)
         if a[0] or b[0] or c[1]:
-            drive(d, square(40, 0.1), t)
+            drive(d, square(40, 0.1))
 
     low = pulse.compile(k, schedule="asap").lower(Q[0])
     names = [(c.function, c.compiled_name) for c in low.classical_report()]

@@ -16,7 +16,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse import DeviceDefinitionError
-from cudaq_pulse.classical import Bits, Float, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.controller import ControllerLimitError
 
 from tests._handles import ladder_target
@@ -251,8 +251,8 @@ def test_a_kernel_with_its_own_schedule_is_placed_on_its_lines_grid(schedule):
     assert all(e.start % _grid(e.qubit) == 0 for e in drives)
 
 
-@pulse.classical(args=(Bits(1),), results=(Float(),), max_latency_ns=60, link="controller")
-def correction(bits):
+@pulse.classical(max_latency_ns=60, link="controller")
+def correction(bits: pulse.Length[pulse.Bits, 1]) -> float:
     return 0.1 * bits[0]
 
 
@@ -300,8 +300,8 @@ def test_a_length_off_its_controllers_grid_fails_to_compile_naming_the_line_and_
         pulse.compile(off_grid, device=qpu).lower(qpu.qudits[2])
 
 
-@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=60, link="controller")
-def wait_length(x):
+@pulse.classical(max_latency_ns=60, link="controller")
+def wait_length(x: float) -> float:
     return x
 
 

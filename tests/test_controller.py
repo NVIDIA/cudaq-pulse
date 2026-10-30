@@ -702,8 +702,8 @@ def test_a_controller_without_answer_timeouts_rejects_a_timed_wait():
 # ── Values known at run time ────────────────────────────────────────────────
 
 
-@pulse.classical(args=(Bits(1),), results=(Float(), Float(), Float()), max_latency_ns=200)
-def settings(bits):
+@pulse.classical(max_latency_ns=200)
+def settings(bits: pulse.Bits) -> tuple[float, float, float]:
     return 0.1 * bits[0], 1.0e5 * bits[0], 40.0 + bits[0]
 
 
@@ -765,8 +765,8 @@ def test_values_from_answers_are_exported_as_expressions():
     assert json.loads(json.dumps(events)) == events
 
 
-@pulse.classical(args=(Bits(2), Float()), results=(Float(),), max_latency_ns=200)
-def scaled(bits, value):
+@pulse.classical(max_latency_ns=200)
+def scaled(bits: pulse.Bits, value: float) -> float:
     return value * (bits[0] + bits[1])
 
 

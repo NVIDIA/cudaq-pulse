@@ -19,7 +19,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse import _clocks
-from cudaq_pulse.classical import Bits, Float, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, ControllerLimits, check, sample_waveform
 
@@ -230,8 +230,8 @@ def test_a_kernel_with_its_own_schedule_is_placed_on_the_grid(schedule):
     assert all(e.start % 4 == 0 for e in lowered.schedule if e.kind == "drive")
 
 
-@pulse.classical(args=(Bits(1),), results=(Float(),), max_latency_ns=60, link="controller")
-def correction(bits):
+@pulse.classical(max_latency_ns=60, link="controller")
+def correction(bits: pulse.Bits) -> float:
     return 0.1 * bits[0]
 
 
@@ -302,8 +302,8 @@ def variable_wait(q, tau: float):
     drive(d, square(8, 0.1))
 
 
-@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=60, link="controller")
-def wait_length(x):
+@pulse.classical(max_latency_ns=60, link="controller")
+def wait_length(x: float) -> float:
     return x
 
 
@@ -462,8 +462,8 @@ def test_a_run_time_wait_has_its_bounds_in_the_controllers_cycles():
         assert (wait["min_cycles"], wait["max_cycles"]) == bounds
 
 
-@pulse.classical(args=(Bits(1),), results=(Float(), Float()), max_latency_ns=200)
-def settings_of(bits):
+@pulse.classical(max_latency_ns=200)
+def settings_of(bits: pulse.Bits) -> tuple[float, float]:
     return 0.1 * bits[0], 40.0 + bits[0]
 
 

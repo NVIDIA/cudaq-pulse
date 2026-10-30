@@ -343,18 +343,18 @@ def test_an_answer_of_the_wrong_length_is_an_error_every_run():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         fix = decode_surface.submit([m, m, m]).result()
         again = flip.submit([m]).result()
         if fix[0] or again[0]:
-            drive(d, square(40, PI_AMP), t)
+            drive(d, square(40, PI_AMP))
 
     dev = _device()
     low = pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
     result = pulse.simulate(low, handlers={"decode_surface": lambda s: [1, 0]})
-    assert [(c.function, c.compiled_name) for c in result.calls[0]] == [
+    assert [(c.function, c.compiled_name) for c in result.branches[0].calls] == [
         ("decode_surface", "decode_surface"),
         ("flip", "flip__1"),
     ]

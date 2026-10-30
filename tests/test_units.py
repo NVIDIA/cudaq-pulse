@@ -17,7 +17,7 @@ from fractions import Fraction
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import Bits, Float, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimits
 
@@ -425,8 +425,8 @@ def test_mixing_units_in_a_run_time_length_is_an_error():
         k.lower(Q[0], 1.0)
 
 
-@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=60, link="controller")
-def wait_length(x):
+@pulse.classical(max_latency_ns=60, link="controller")
+def wait_length(x: float) -> float:
     return x
 
 
@@ -449,8 +449,8 @@ def test_an_answer_in_nanoseconds_converts_with_one_multiply():
     assert "pulse.max_cycles = 8000" in converted
 
 
-@pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=400)
-def check_bit(bits):
+@pulse.classical(max_latency_ns=400)
+def check_bit(bits: pulse.Bits) -> pulse.Bits:
     return [bits[0]]
 
 
@@ -573,16 +573,16 @@ def test_simulate_checks_a_time_as_its_number_of_ns(time, message):
 
 
 def test_a_classical_function_takes_its_latencies_as_times():
-    options = {"args": (Bits(1),), "results": (Bits(1),), "link": "controller"}
-
     @pulse.classical(
-        max_latency_ns=0.4 * us, min_latency_ns=100 * ns, deadline_ns=2 * us, **options
+        max_latency_ns=0.4 * us, min_latency_ns=100 * ns, deadline_ns=2 * us, link="controller"
     )
-    def bounded(b):
+    def bounded(b: pulse.Bits) -> pulse.Bits:
         return b
 
-    @pulse.classical(max_latency_ns=400 * ns, latency_mode="timeout", timeout_ns=1 * us, **options)
-    def timed(b):
+    @pulse.classical(
+        max_latency_ns=400 * ns, latency_mode="timeout", timeout_ns=1 * us, link="controller"
+    )
+    def timed(b: pulse.Bits) -> pulse.Bits:
         return b
 
     assert (bounded.max_latency_ns, bounded.min_latency_ns) == (400.0, 100.0)
@@ -591,7 +591,10 @@ def test_a_classical_function_takes_its_latencies_as_times():
     for value in (bounded.max_latency_ns, bounded.deadline_ns, timed.timeout_ns):
         assert value.__class__ is float
     with pytest.raises(pulse.InvalidValueError, match="min <= nominal <= max"):
-        pulse.classical.external("late", max_latency_ns=100 * ns, min_latency_ns=0.2 * us)
+
+        @pulse.classical.external(max_latency_ns=100 * ns, min_latency_ns=0.2 * us)
+        def late() -> float:
+            return float()
 
 
 def test_a_machine_takes_its_link_and_line_times_as_times():

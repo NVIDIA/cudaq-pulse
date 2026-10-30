@@ -23,7 +23,7 @@ from cudaq_pulse._errors import (
     UpgradeNotice,
 )
 from cudaq_pulse._system import installed_descriptions
-from cudaq_pulse.classical import Bits, Float, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, ControllerLimits
 from cudaq_pulse.targets.base import Coupling, Qubit, TargetDescription
@@ -45,8 +45,8 @@ def drive_and_branch(q, r):
         drive(d1, square(20, 0.3))
 
 
-@pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=400, link="feedback")
-def flip(bits):
+@pulse.classical(max_latency_ns=400, link="feedback")
+def flip(bits: pulse.Bits) -> pulse.Bits:
     return [bits[0]]
 
 
@@ -364,8 +364,8 @@ def test_a_program_needing_a_capability_a_controller_lacks_does_not_compile():
     pulse.compile(drive_and_branch, device=qpu).lower(qpu.qudits[0], qpu.qudits[1])
 
 
-@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=400, link="feedback")
-def settle(x):
+@pulse.classical(max_latency_ns=400, link="feedback")
+def settle(x: float) -> float:
     return x
 
 

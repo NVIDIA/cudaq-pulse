@@ -16,13 +16,12 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse._controller_cost import analyze_callable
 from cudaq_pulse._errors import DeviceDefinitionError
-from cudaq_pulse.classical import Bits, Float
 from cudaq_pulse.controller import ControllerLimitError
 
 TRANSMON_17Q = "transmon_17q"
 
 
-def _parity(bits):
+def _parity(bits: pulse.Length[pulse.Bits, 4]) -> pulse.Bits:
     acc = 0
     for i in range(4):
         acc = acc ^ bits[i]
@@ -33,24 +32,20 @@ def _twice(x):
     return x + x
 
 
-def _scaled(x):
+def _scaled(x: float) -> float:
     # A divide: by a constant it would be a multiply.
     return _twice(x) / x
 
 
-def _sign(x):
+def _sign(x: float) -> float:
     if x > 0.0:
         return 1.0
     return -1.0
 
 
-parity = pulse.classical(args=(Bits(4),), results=(Bits(1),), max_latency_ns=60, link="cores")(
-    _parity
-)
-scaled = pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=400, link="cores")(
-    _scaled
-)
-sign = pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=400, link="gpu")(_sign)
+parity = pulse.classical(_parity, max_latency_ns=60, link="cores")
+scaled = pulse.classical(_scaled, max_latency_ns=400, link="cores")
+sign = pulse.classical(_sign, max_latency_ns=400, link="gpu")
 
 
 @pulse.kernel
@@ -371,14 +366,12 @@ def test_a_slow_processor_misses_a_function_deadline():
 
 
 def test_a_fixed_cost_processor_rejects_a_body_whose_cost_is_not_fixed():
-    def unbounded(x):
+    def unbounded(x: float) -> float:
         while x > 1.0:
             x = x / 2.0
         return x
 
-    loose = pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=400, link="cores")(
-        unbounded
-    )
+    loose = pulse.classical(unbounded, max_latency_ns=400, link="cores")
 
     @pulse.kernel
     def calls(q):
@@ -393,9 +386,9 @@ def test_a_fixed_cost_processor_rejects_a_body_whose_cost_is_not_fixed():
 
 
 def test_functions_on_no_processor_and_externals_run_off_board():
-    table = pulse.classical.external(
-        "table", args=(Float(),), results=(Float(),), max_latency_ns=400, link="cores"
-    )
+    @pulse.classical.external(max_latency_ns=400, link="cores")
+    def table(x: float) -> float:
+        return float()
 
     @pulse.kernel
     def calls(q):
@@ -452,12 +445,14 @@ def test_a_description_states_its_processors_and_their_dispatch_keys(tmp_path):
         'model = "acme.cores"\nversion = "1"\n\n'
         '[[processors]]\nlinks = ["cores"]\nclock_ghz = 0.5\nunsupported = ["loop", "trig"]\n'
         "max_concurrent_calls = 2\n"
-        "[processors.cycles_per_op]\ndiv = 20\n[processors.dispatch_keys]\n_parity = 7\n\n"
+        "[processors.cycles_per_op]\ndiv = 20\n"
+        "[processors.dispatch_keys]\n_parity = 7\n_scaled = 8\n\n"
         '[[processors]]\nlinks = ["gpu"]\n'
     )
     box = pulse.controller(str(path), drive_lines=[0, 1], readout_lines=[0, 1])
     cores, gpu = box.processors
-    assert cores.dispatch_keys == {"_parity": 7} and cores.cycles_per_op == {"div": 20}
+    assert cores.dispatch_keys == {"_parity": 7, "_scaled": 8}
+    assert cores.cycles_per_op == {"div": 20}
     assert cores.unsupported == ("loop", "trig") and gpu.links == ("gpu",)
     system = pulse.ControlSystem(
         controllers=[box], links={"cores": pulse.Link(), "gpu": pulse.Link()}
@@ -465,12 +460,15 @@ def test_a_description_states_its_processors_and_their_dispatch_keys(tmp_path):
     qpu = pulse.device({"quantum_system": TRANSMON_17Q, "layout": [0, 1], "control_system": system})
     data = json.loads(json.dumps(qpu.as_dict()))
     assert data["control_system"]["controllers"][0]["processors"][0]["dispatch_keys"] == {
-        "_parity": 7
+        "_parity": 7,
+        "_scaled": 8,
     }
     again = pulse.device(data)
     assert again.control_system.controllers[0].processors == box.processors
-    usage = pulse.compile(both, device=again).lower(again.qudits[0]).controller_usage
-    assert usage.controllers[0].processors[0].clock_ghz == 0.5
+    lowered = pulse.compile(both, device=again).lower(again.qudits[0])
+    assert lowered.controller_usage.controllers[0].processors[0].clock_ghz == 0.5
+    keys = {c.compiled_name: c.dispatch_key for c in lowered.classical_report()}
+    assert (keys["_parity"], keys["_scaled"]) == (7, 8)
 
 
 def test_a_bad_processor_in_a_system_file_is_a_problem_with_its_path():

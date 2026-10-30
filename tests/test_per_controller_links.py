@@ -16,25 +16,23 @@ import tomllib
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse._errors import DeviceDefinitionError
-from cudaq_pulse.classical import Bits, Float, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.controller import resources
 
 from tests._handles import ladder_target
 
 
-def _decode(m):
+def _decode(m: pulse.Length[pulse.Bits, 1]) -> float:
     if m[0]:
         return 0.1
     return 0.0
 
 
-decode = pulse.classical(args=[Bits(1)], results=[Float()], max_latency_ns=200, link="decoder")(
-    _decode
-)
+decode = pulse.classical(_decode, max_latency_ns=200, link="decoder")
 
 
-@pulse.classical(args=[Float()], results=[Float()], max_latency_ns=40, link="decoder")
-def unread(x):
+@pulse.classical(max_latency_ns=40, link="decoder")
+def unread(x: float) -> float:
     return x
 
 
@@ -217,8 +215,8 @@ def test_two_processors_of_one_controller_cannot_both_hold_its_instance():
 # ── Controllers a program does not use ────────────────────────────────────────
 
 
-@pulse.classical(args=[Float()], results=[Float()], max_latency_ns=40, link="controller")
-def gain(x):
+@pulse.classical(max_latency_ns=40, link="controller")
+def gain(x: float) -> float:
     return x
 
 

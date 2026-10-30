@@ -21,7 +21,6 @@ import tempfile
 from pathlib import Path
 
 import cudaq_pulse as pulse
-from cudaq_pulse.classical import Bits
 
 left = pulse.controller("reference.controller", drive_lines=[0, 1], readout_lines=[0, 1])
 right = pulse.controller("reference.controller", drive_lines=[2, 3], readout_lines=[2, 3])
@@ -34,8 +33,8 @@ qpu = pulse.device(
 )
 
 
-@pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=400, link="feedback")
-def correction(outcome):
+@pulse.classical(max_latency_ns=400, link="feedback")
+def correction(outcome: pulse.Bits) -> pulse.Bits:
     """Whether to flip the partner qudit: here, the outcome itself."""
     return [outcome[0]]
 

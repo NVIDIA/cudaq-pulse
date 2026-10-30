@@ -25,7 +25,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse import _pickling, _source_stamp
-from cudaq_pulse.classical import Bits, Float, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, ControllerLimits
 from cudaq_pulse.kernel import _kernel
@@ -85,8 +85,8 @@ def branch(q, r):
         drive(d1, gaussian(20, 0.1, 5.0))
 
 
-@pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=400)
-def flip(bits):
+@pulse.classical(max_latency_ns=400)
+def flip(bits: pulse.Bits) -> pulse.Bits:
     return [1 - bits[0]]
 
 
@@ -585,8 +585,8 @@ def test_the_source_stamp_hashes_the_sources_as_they_are():
 # ── Control systems ──────────────────────────────────────────────────────────
 
 
-@pulse.classical(args=[Bits(1)], results=[Float()], max_latency_ns=200, link="decoder")
-def correction(m):
+@pulse.classical(max_latency_ns=200, link="decoder")
+def correction(m: pulse.Bits) -> float:
     if m[0]:
         return 0.1
     return 0.0

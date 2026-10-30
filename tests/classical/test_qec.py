@@ -62,8 +62,8 @@ def test_decoders_share_the_cudaqx_keys_in_one_program():
 
     @pulse.kernel
     def k(q):
-        r, rt = get_readout_line(q)
-        m = readout(r, square(100, 0.05), rt)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
         for decoder in decoders:
             qec.enqueue_syndromes(decoder, [m] * decoder.syndromes)
             qec.get_corrections(decoder).result()

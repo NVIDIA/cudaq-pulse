@@ -42,12 +42,11 @@ _HEAVY = (
 _PROGRAM = """
 import sys
 import cudaq_pulse as p
-from cudaq_pulse.classical import Bits, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
 
-@p.classical(args=(Bits(1),), results=(Bits(1),), min_latency_ns=200,
-             nominal_latency_ns=300, max_latency_ns=400, link="gpu")
-def decode(s):
+@p.classical(min_latency_ns=200, nominal_latency_ns=300, max_latency_ns=400, link="gpu")
+def decode(s: p.Bits) -> p.Bits:
     return [s[0]]
 
 @p.kernel
