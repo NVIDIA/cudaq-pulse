@@ -64,7 +64,7 @@ def many_calls(n: int, links: int):
 
 
 @pulse.classical(max_latency_ns=200)
-def decode(bits: pulse.Bits) -> pulse.Bits:
+def decode(bits: pulse.Length[pulse.Bits, 1]) -> pulse.Length[pulse.Bits, 1]:
     return [bits[0]]
 
 

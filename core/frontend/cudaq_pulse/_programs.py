@@ -254,7 +254,6 @@ def _place(
     view._generic = lowered
     view.waits = waits
     view.classical = lowered.classical
-    view._dispatch_keys = lowered._dispatch_keys
     view.runtime_selects = lowered.runtime_selects
     view._role = role
     view.carriers = carriers
@@ -293,7 +292,6 @@ class _CheckedPerCall(Lowered):
             waits=lowered.waits,
         )
         self.classical = lowered.classical
-        self._dispatch_keys = lowered._dispatch_keys
         self.runtime_selects = lowered.runtime_selects
         self.clocks = lowered.clocks
         self.fine_delays = lowered.fine_delays

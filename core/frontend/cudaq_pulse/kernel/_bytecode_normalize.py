@@ -402,18 +402,9 @@ def _compare_fn(instr: _Instr) -> Any:
 
 # ── Reading instructions ─────────────────────────────────────────────
 
-# What ``dis.get_instructions`` gives an argument, by opcode: the tables are
-# dis's own, read once, so its rules hold on every version without the text
-# it formats for each instruction.
-_ALL_OPNAME: list[str] = list(getattr(dis, "_all_opname", opcode.opname))
-_ALL_OPNAME += [f"<{i}>" for i in range(len(_ALL_OPNAME), 256)]
-_DEOPT: list[int] = [dis._deoptop(op) for op in range(256)]  # type: ignore[attr-defined]
-_cache_table: Any = getattr(opcode, "_inline_cache_entries", {})
-_CACHES: list[int] = [
-    _cache_table[op] if isinstance(_cache_table, list) else _cache_table.get(_ALL_OPNAME[op], 0)
-    for op in _DEOPT
-]
-_HAS_ARG = frozenset(getattr(dis, "hasarg", range(dis.HAVE_ARGUMENT, 256)))
+# What ``dis.get_instructions`` gives an argument, by opcode: dis's own
+# tables, read for each opcode the first time one is decoded, so its rules
+# hold on every version without the text it formats for each instruction.
 (
     _A_PLAIN,
     _A_CONST,
@@ -426,28 +417,40 @@ _HAS_ARG = frozenset(getattr(dis, "hasarg", range(dis.HAVE_ARGUMENT, 256)))
     _A_LOCAL_PAIR,
     _A_COMPARE,
 ) = range(10)
-_KIND: list[int] = [_A_PLAIN] * 256
-for _code in range(256):
-    _name = _ALL_OPNAME[_code]
-    if _code in dis.hasconst:
-        _KIND[_code] = _A_CONST
-    elif _code in dis.hasname:
-        _KIND[_code] = _A_NAME_2 if _name in ("LOAD_GLOBAL", "LOAD_ATTR") else _A_NAME
-        # 3.15 keeps IMPORT_NAME's lazy/eager flags in its low two bits.
-        if _name == "LOAD_SUPER_ATTR" or (_name == "IMPORT_NAME" and sys.version_info >= (3, 15)):
-            _KIND[_code] = _A_NAME_4
-    elif _code in dis.hasjrel:
-        _KIND[_code] = _A_BACK if "JUMP_BACKWARD" in _name else _A_JUMP
-    elif _name in _SUPERINSTRUCTIONS:
-        _KIND[_code] = _A_LOCAL_PAIR
-    elif _code in dis.haslocal or _code in dis.hasfree:
-        _KIND[_code] = _A_LOCAL
-    elif _code in dis.hascompare:
-        _KIND[_code] = _A_COMPARE
-del _code, _name
 _EXTENDED_ARG = dis.EXTENDED_ARG
 _INTRINSIC_1 = opcode.opmap.get("CALL_INTRINSIC_1", -1)
 _INTRINSIC_1_NAMES: list[str] = list(getattr(dis, "_intrinsic_1_descs", ()))
+# By raw opcode: its name, deoptimized opcode, argument kind, inline cache
+# count and whether it takes an argument.
+_OpInfo = tuple[str, int, int, int, bool]
+_OP_INFO: list[_OpInfo | None] = [None] * 256
+
+
+def _op_info(raw: int) -> _OpInfo:
+    op: int = dis._deoptop(raw)  # type: ignore[attr-defined]
+    all_opname: list[str] = getattr(dis, "_all_opname", opcode.opname)
+    name = all_opname[op] if op < len(all_opname) else f"<{op}>"
+    cache_table: Any = getattr(opcode, "_inline_cache_entries", {})
+    caches = cache_table[op] if isinstance(cache_table, list) else cache_table.get(name, 0)
+    kind = _A_PLAIN
+    if op in dis.hasconst:
+        kind = _A_CONST
+    elif op in dis.hasname:
+        kind = _A_NAME_2 if name in ("LOAD_GLOBAL", "LOAD_ATTR") else _A_NAME
+        # 3.15 keeps IMPORT_NAME's lazy/eager flags in its low two bits.
+        if name == "LOAD_SUPER_ATTR" or (name == "IMPORT_NAME" and sys.version_info >= (3, 15)):
+            kind = _A_NAME_4
+    elif op in dis.hasjrel:
+        kind = _A_BACK if "JUMP_BACKWARD" in name else _A_JUMP
+    elif name in _SUPERINSTRUCTIONS:
+        kind = _A_LOCAL_PAIR
+    elif op in dis.haslocal or op in dis.hasfree:
+        kind = _A_LOCAL
+    elif op in dis.hascompare:
+        kind = _A_COMPARE
+    takes_arg = op in getattr(dis, "hasarg", range(dis.HAVE_ARGUMENT, 256))
+    info = _OP_INFO[raw] = (name, op, kind, caches, takes_arg)
+    return info
 
 
 class _Instr:
@@ -467,6 +470,7 @@ def _instructions(code: CodeType) -> list[_Instr]:
     """*code*'s instructions with the arguments ``dis.get_instructions``
     resolves (``tests/kernel/test_bytecode_normalize.py`` checks that they
     decode the same)."""
+    infos = _OP_INFO
     raw = code.co_code
     positions = [dis.Positions(*p) for p in code.co_positions()]
     consts, names, local = code.co_consts, code.co_names, code._varname_from_oparg  # type: ignore[attr-defined]
@@ -476,15 +480,15 @@ def _instructions(code: CodeType) -> list[_Instr]:
     extended = 0
     i, n = 0, len(raw)
     while i < n:
-        op = _DEOPT[raw[i]]
-        if op in _HAS_ARG:
+        info = infos[raw[i]] or _op_info(raw[i])
+        name, op, kind, caches, takes_arg = info
+        if takes_arg:
             arg: int | None = raw[i + 1] | extended
             extended = arg << 8 if op == _EXTENDED_ARG else 0  # type: ignore[operator]
         else:
             arg, extended = None, 0
         argval: Any = arg
         if arg is not None:
-            kind = _KIND[op]
             if kind == _A_PLAIN:
                 pass
             elif kind == _A_LOCAL:
@@ -496,20 +500,20 @@ def _instructions(code: CodeType) -> list[_Instr]:
             elif kind == _A_NAME:
                 argval = names[arg]
             elif kind == _A_JUMP:
-                argval = i + 2 + 2 * arg + 2 * _CACHES[op]
+                argval = i + 2 + 2 * arg + 2 * caches
             elif kind == _A_BACK:
-                argval = i + 2 - 2 * arg + 2 * _CACHES[op]
+                argval = i + 2 - 2 * arg + 2 * caches
             elif kind == _A_LOCAL_PAIR:
                 argval = (local(arg >> 4), local(arg & 15))
             elif kind == _A_COMPARE:
                 argval = dis.cmp_op[arg >> compare_shift]
             else:
                 argval = names[arg >> 2]
-        ins = _Instr(_ALL_OPNAME[op], op, arg, argval, i, positions[i >> 1])
+        ins = _Instr(name, op, arg, argval, i, positions[i >> 1])
         if op == _INTRINSIC_1 and arg is not None:
             ins.argrepr = _INTRINSIC_1_NAMES[arg]
         append(ins)
-        i += 2 + 2 * _CACHES[op]
+        i += 2 + 2 * caches
     return out
 
 

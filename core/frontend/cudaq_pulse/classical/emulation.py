@@ -41,6 +41,7 @@ from .._errors import (
     _CallTimeoutError,
     _positive_int,
 )
+from ..compiler import _dispatch_keys
 from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
 from . import ClassicalFunction, Link, _handlers_for, wire
 
@@ -78,7 +79,7 @@ def manifest(lowered: Any) -> dict[str, Any]:
     for fn in lowered.classical:
         link = machine.link(fn.link)
         link_id = machine.link_id(fn.link)
-        key, fixed_by = lowered._dispatch_keys[fn.name]
+        key, fixed_by = _dispatch_keys(lowered)[fn.name]
         entry = {"name": fn.name, "dispatch_key": key}
         if fixed_by is not None:
             entry["dispatch_key_fixed_by"] = fixed_by
@@ -536,7 +537,7 @@ def emulate(
     functions = tuple(lowered.classical)
     by_name = {fn.name: fn for fn in functions}
     chosen = _handlers_for(functions, handlers)
-    keys = {name: key for name, (key, _) in lowered._dispatch_keys.items()}
+    keys = {name: key for name, (key, _) in _dispatch_keys(lowered).items()}
     channel = channel or InProcess(functions, chosen, keys)
     import numpy as np
 

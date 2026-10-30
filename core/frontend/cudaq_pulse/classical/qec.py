@@ -42,8 +42,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from .._errors import InvalidTypeError, InvalidValueError
-from . import ClassicalFunction, function_id
-from ._values import _Bits, _Byte, _Integer
+from . import ClassicalFunction, _Bits, _Byte, _Integer, function_id
 
 __all__ = [
     "Decoder",

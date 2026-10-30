@@ -26,12 +26,11 @@ from ..classical import (
     _KIND_FLOATS,
     _KIND_IQ,
     _LIST_NAME,
-    _UNSIZED,
     ClassicalFunction,
+    ValueType,
     _enter_slow,
     _spelled,
 )
-from ..classical._values import ValueType
 from .ir_builder import (
     AnswerValue,
     CompilationError,
@@ -43,6 +42,10 @@ from .ir_builder import (
 
 if TYPE_CHECKING:
     from .._units import Time
+
+# The values an f64 argument takes as they are: _numbers would pass them
+# straight to _get_numeric_vid.
+_DIRECT_F64 = frozenset({float, int, AnswerValue})
 
 
 class Future:
@@ -139,18 +142,22 @@ def _one_readout(
 def _measurements(
     value: Any, spec: ValueType, function: ClassicalFunction[..., Any], position: int
 ) -> list[int]:
-    name = function.name
-    if _is_readout(value) and not spec.is_scalar:
-        holds = "a list of IQ points" if spec.descriptor.startswith("iq") else "a list of outcomes"
-        raise _one_readout(function, position, _spelled(spec)[0], holds, value)
-    items = list(value) if isinstance(value, (list, tuple)) else [value]
+    if isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
+        if not spec.is_scalar and _is_readout(value):
+            holds = (
+                "a list of IQ points" if spec.descriptor.startswith("iq") else "a list of outcomes"
+            )
+            raise _one_readout(function, position, _spelled(spec)[0], holds, value)
+        items = [value]
     if len(items) != spec.count:
         raise _wrong_count(function, spec, position, len(items))
     vids = []
     for item in items:
         if not (isinstance(item, IRValue) and item.vtype == "measurement"):
             raise CompilationError(
-                f"{name}: argument {position} ({spec.descriptor}) takes measurement "
+                f"{function.name}: argument {position} ({spec.descriptor}) takes measurement "
                 f"results from readout(), got {item!r}"
             )
         vids.append(item.vid)
@@ -221,11 +228,11 @@ def submit(
         return _submit_template(builder, function, args, plan)
     operands: list[int] = []
     for position, (spec, value) in enumerate(zip(function.args, args)):
-        if spec is _F64 and (value.__class__ is float or value.__class__ is int):
-            # What _numbers gives a plain number, without its checks.
-            operands.append(builder._get_numeric_vid(value, "f64"))
-        elif spec.source == "measurement":
+        if spec.source == "measurement":
             operands.extend(_measurements(value, spec, function, position))
+        elif spec is _F64 and value.__class__ in _DIRECT_F64:
+            # What _numbers gives a plain number or an answer, without its checks.
+            operands.append(builder._get_numeric_vid(value, "f64"))
         else:
             operands.extend(_numbers(builder, value, spec, function, position))
     index = builder.classical_function(function)
@@ -246,18 +253,16 @@ def _submit_template(
     name = template.name
     operands: list[int] = []
     key: Any = 0 if template._n == 1 else []
-    for position, (p, value) in enumerate(zip(plan, args)):
-        source = p.source
-        if source is not _UNSIZED:
-            if p is _F64 and (value.__class__ is float or value.__class__ is int):
-                # What _numbers gives a plain number, without its checks.
+    for position, (kind, value) in enumerate(zip(plan, args)):
+        if kind.__class__ is not int:  # a wire type
+            if kind.source == "measurement":
+                operands.extend(_measurements(value, kind, template, position))
+            elif kind is _F64 and value.__class__ in _DIRECT_F64:
+                # What _numbers gives a plain number or an answer, without its checks.
                 operands.append(builder._get_numeric_vid(value, "f64"))
-            elif source == "measurement":
-                operands.extend(_measurements(value, p, template, position))
             else:
-                operands.extend(_numbers(builder, value, p, template, position))
+                operands.extend(_numbers(builder, value, kind, template, position))
         else:
-            kind = p.kind
             if value.__class__ is not list and value.__class__ is not tuple:
                 _not_a_list(template, position, value)
             if not value:

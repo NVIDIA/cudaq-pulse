@@ -24,8 +24,7 @@ from pathlib import Path
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import classical
-from cudaq_pulse.classical import wire
-from cudaq_pulse.classical._values import (
+from cudaq_pulse.classical import (
     _IQ,
     _Bits,
     _Byte,
@@ -35,6 +34,7 @@ from cudaq_pulse.classical._values import (
     _Integer,
     _Integers,
     _Levels,
+    wire,
 )
 
 from tests._tools import c_compiler

@@ -29,8 +29,14 @@ from collections.abc import Sequence
 from typing import Any
 
 from .._errors import ExecutionError, InvalidTypeError, InvalidValueError
-from . import ClassicalFunction, _resolve, _unsized_names, _wrong_length
-from ._values import ValueType
+from . import (
+    ClassicalFunction,
+    ValueType,
+    _LazyTypes,
+    _resolve,
+    _unsized_names,
+    _wrong_length,
+)
 
 __all__ = [
     "HEADER_BYTES",
@@ -87,7 +93,8 @@ def schema(function: ClassicalFunction[..., Any]) -> dict[str, Any]:
     type id, size in bytes and element count, as a dispatcher function table
     entry declares them. A function whose list lengths come from its calls
     has a schema per version: pass ``fn.specialize(...)``."""
-    _one_schema(function, "wire.schema")
+    if function._shape is not None or function.args.__class__ is _LazyTypes:  # type: ignore[comparison-overlap]
+        _one_schema(function, "wire.schema")
 
     def describe(specs: Sequence[ValueType]) -> list[dict[str, int]]:
         out = []

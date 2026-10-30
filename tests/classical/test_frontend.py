@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import re
+import typing
 from collections.abc import Sequence
 
 import cudaq_pulse as pulse
@@ -312,6 +313,24 @@ def test_sequence_hints_are_lists():
         return sum(xs) + sum(counts)
 
     assert [a.descriptor for a in total.args] == ["f64[2]", "i32[3]"]
+
+
+def test_typing_sequence_hints_are_lists():
+    @pulse.classical(max_latency_ns=1)
+    def total(
+        xs: pulse.Length[typing.Sequence[float], 2],  # noqa: UP006
+        counts: pulse.Length[typing.Sequence[int], 3],  # noqa: UP006
+    ) -> pulse.Length[typing.Sequence[int], 2]:  # noqa: UP006
+        return [len(xs), len(counts)]
+
+    assert [a.descriptor for a in total.args] == ["f64[2]", "i32[3]"]
+    assert [r.descriptor for r in total.results] == ["i32[2]"]
+
+    @pulse.classical(max_latency_ns=1)
+    def scaled(xs: typing.Sequence[float]) -> typing.Sequence[float]:  # noqa: UP006
+        return [2 * x for x in xs]
+
+    assert scaled.name == "scaled"
 
 
 def test_stated_lengths():
@@ -722,6 +741,16 @@ def test_two_names_that_hash_alike_are_an_error():
 def test_a_name_that_hashes_to_a_reserved_key_is_an_error():
     with pytest.raises(pulse.CompilationError, match="which cudaq_pulse.classical.qec uses"):
         _program(_one("enqueue_syndromes", link=0))
+
+
+def test_the_reserved_keys_are_the_keys_of_the_decoder_protocol():
+    from cudaq_pulse.classical import _RESERVED_KEYS, qec
+
+    assert set(_RESERVED_KEYS) == {
+        qec.ENQUEUE_SYNDROMES_ID,
+        qec.GET_CORRECTIONS_ID,
+        qec.RESET_DECODER_ID,
+    }
 
 
 def test_a_template_on_a_controller_that_fixes_keys_needs_a_length():

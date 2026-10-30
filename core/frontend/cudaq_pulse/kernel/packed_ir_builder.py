@@ -138,6 +138,15 @@ def _real(value: Any, description: str) -> float:
         raise CompilationError(f"{description} must be a real number, got {value!r}") from None
 
 
+def _tables(machine: Any) -> dict[int, dict[str, tuple[int, str]]]:
+    """Per link id, the keys *machine*'s controllers fix."""
+    if machine is None or (machine.controller is None and machine._system is None):
+        return {}
+    from ..compiler import _dispatch_tables
+
+    return _dispatch_tables(machine)
+
+
 def _link_without_machine(link: Any) -> int:
     if isinstance(link, str):
         raise CompilationError(
@@ -289,6 +298,22 @@ class PackedIRBuilder:
     # control system of several controllers. Waveforms are then sampled for
     # the line that plays them.
     sample_rate_of: Callable[[str, int], tuple[int, int] | None] | None = None
+    # The machine model, which names links and whose controllers may fix
+    # dispatch keys; compile() sets it. None: links are ids.
+    machine: Any = None
+    # Per link id, the keys the machine's controllers fix, by function name,
+    # each with what fixes it; read from the machine at the first call.
+    dispatch_tables: dict[int, dict[str, tuple[int, str]]] | None = None
+    # Per entry of classical, its link id, dispatch key and the controller
+    # that fixes the key (None for a hashed or built-in key); made at the
+    # first call.
+    routes: list[tuple[int, int, str | None]] | None = None
+    # Per (link id, dispatch key), the entry of classical sent to it; made
+    # at the first call.
+    _dispatched: dict[tuple[int, int], int] | None = None
+    # Per template, its versions in this program by key (list lengths);
+    # made at the first call of a template.
+    _versions: dict[Any, dict[Any, Any]] | None = None
     # Where every line can meet, in program cycles: a wait whose length
     # comes from an answer moves every later op by it, so its bounds must be
     # multiples of this.
@@ -354,20 +379,7 @@ class PackedIRBuilder:
         # Classical functions declared so far, in record order, and the
         # regions open now (ids), which bound where an answer is defined.
         self.classical: list[Any] = []
-        # Per template, its versions in this program by key (list lengths).
-        self._versions: dict[Any, dict[Any, Any]] = {}
-        # Resolves a classical function's link (a name or an id) to its id;
-        # compile() sets it from the machine model.
-        self.link_id: Callable[[Any], int] = _link_without_machine
         self._classical_index: dict[int, int] = {}
-        # Per link id, the keys its controllers' firmware fixes, by function
-        # name, each with the controller that fixes it (compile() sets it).
-        self.dispatch_tables: dict[int, dict[str, tuple[int, str]]] = {}
-        # Per entry of classical, its dispatch key and the controller that
-        # fixes it (None for a hashed or built-in key).
-        self.dispatch_keys: list[tuple[int, str | None]] = []
-        # Per (link id, dispatch key), the entry of classical sent to it.
-        self._dispatched: dict[tuple[int, int], int] = {}
         self._scope: list[int] = []
         # Loops and branch arms open now, as (id, is_loop): where a future
         # submitted in one may be waited on.
@@ -924,12 +936,41 @@ class PackedIRBuilder:
                     f"two different classical functions are named {function.name!r}"
                 )
         index = len(self.classical)
-        link = self.link_id(function.link)
-        key, fixed_by = self._dispatch_key(function, link)
+        machine = self.machine
+        if machine is None:
+            link = _link_without_machine(function.link)
+        else:
+            link = machine.link_id(function.link)
+        # Its key: its controller's, else its own; one function per key on a
+        # link.
+        key = function._dispatch_key
+        fixed_by = None
+        own = function._key_route is None
+        tables = self.dispatch_tables
+        if tables is None:
+            tables = self.dispatch_tables = _tables(machine)
+        if tables and own:
+            table = tables.get(link)
+            if table is not None:
+                key, fixed_by = _fixed_key(function, table)
+        if own and key in _RESERVED_KEYS:
+            raise CompilationError(
+                f"{function.name} is dispatch key {key:#x}, which {_RESERVED_KEYS[key]} uses"
+                " for its decoder messages; rename it"
+            )
+        dispatched = self._dispatched
+        if dispatched is None:
+            dispatched = self._dispatched = {}
+        else:
+            other = dispatched.get((link, key))
+            if other is not None:
+                first = self.classical[other]
+                if own or first._key_route is None:
+                    raise CompilationError(_collision(first, function, key))
         mode = _LATENCY_MODE[function.latency_mode]
         flags = mode | (4 if function.submit_policy == "lazy" else 0)
         # Its own key is its name's hash, unless a built-in's.
-        flags |= 8 if key != function._dispatch_key or function._key_route is not None else 0
+        flags |= 8 if key != function._dispatch_key or not own else 0
         flags |= 16 if function.timeout_ns is not None else 0
         flags |= 32 if function.deadline_ns is not None else 0
         name = function.name.encode("utf-8")
@@ -957,30 +998,29 @@ class PackedIRBuilder:
             ],
         )
         self.classical.append(function)
-        self.dispatch_keys.append((key, fixed_by))
-        self._dispatched[(link, key)] = index
+        routes = self.routes
+        if routes is None:
+            routes = self.routes = []
+        routes.append((link, key, fixed_by))
+        dispatched[(link, key)] = index
         self._classical_index[id(function)] = index
         return index
 
-    def _dispatch_key(self, function: Any, link: int) -> tuple[int, str | None]:
-        """*function*'s key on *link* and the controller that fixes it: its
-        controller's, else its own; one function per key on a link."""
-        fixed_by = None
-        key = function._dispatch_key
-        table = self.dispatch_tables.get(link) if self.dispatch_tables else None
-        if table is not None and function._key_route is None:
-            key, fixed_by = _fixed_key(function, table)
-        if function._key_route is None and key in _RESERVED_KEYS:
-            raise CompilationError(
-                f"{function.name} is dispatch key {key:#x}, which {_RESERVED_KEYS[key]} uses"
-                " for its decoder messages; rename it"
-            )
-        other = self._dispatched.get((link, key))
-        if other is not None:
-            first = self.classical[other]
-            if function._key_route is None or first._key_route is None:
-                raise CompilationError(_collision(first, function, key))
-        return key, fixed_by
+    def _forget_classical(self, n_classical: int) -> None:
+        """Drop the classical functions declared after the first
+        *n_classical*, with their keys and versions."""
+        dispatched = self._dispatched
+        assert dispatched is not None and self.routes is not None
+        for sent, entry in list(dispatched.items()):
+            if entry >= n_classical:
+                del dispatched[sent]
+        del self.routes[n_classical:]
+        for function in self.classical[n_classical:]:
+            del self._classical_index[id(function)]
+            template = function._template
+            if template is not None and self._versions:
+                self._versions.get(template, {}).pop(function._key, None)
+        del self.classical[n_classical:]
 
     def classical_submit(self, index: int, operands: list[int]) -> int:
         """Record a submission; returns the future's id."""
@@ -1075,16 +1115,8 @@ class PackedIRBuilder:
         del self._block_marks[blocks:]
         self._scope = scope
         self._flow = flow
-        for sent, entry in list(self._dispatched.items()):
-            if entry >= n_classical:
-                del self._dispatched[sent]
-        del self.dispatch_keys[n_classical:]
-        for function in self.classical[n_classical:]:
-            del self._classical_index[id(function)]
-            template = function._template
-            if template is not None:
-                self._versions.get(template, {}).pop(function._key, None)
-        del self.classical[n_classical:]
+        if len(self.classical) > n_classical:
+            self._forget_classical(n_classical)
         live = self._next_id
         for vid in [vid for vid in self.readouts if vid >= live]:
             del self.readouts[vid]
@@ -1519,7 +1551,7 @@ class PackedIRBuilder:
         )
         found.word = word
         found.unroll_threshold = self.unroll_threshold
-        found.link_id = self.link_id
+        found.machine = self.machine
         found.locate_structural = self.locate_structural
         return found
 

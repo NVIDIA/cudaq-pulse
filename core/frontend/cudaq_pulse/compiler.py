@@ -15,13 +15,14 @@ that pick passes and a schedule, the native build of one specialization, and
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from fractions import Fraction
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import TYPE_CHECKING, Any
 
 import cudaq_pulse.classical as classical
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
     from . import _clocks
+    from ._classical_report import ClassicalCall as ClassicalCall
     from ._device import Device
     from ._programs import _Role
     from ._system import ControlSystem
@@ -59,6 +61,21 @@ __all__ = [
     "UnsupportedInterpreterError",
     "compile",
 ]
+
+
+class _Module(ModuleType):
+    # ClassicalCall is built with the first report: building a dataclass
+    # costs more than an import of this module should. A property rather
+    # than a module __getattr__, which every ``from .compiler import`` would
+    # call to look for ``__path__``.
+    @property
+    def ClassicalCall(self) -> type[ClassicalCall]:  # noqa: N802
+        from ._classical_report import ClassicalCall
+
+        return ClassicalCall
+
+
+sys.modules[__name__].__class__ = _Module
 
 
 _VALID_SCHEDULES = frozenset({"asap", "alap", "rcp", "alap_rcp"})
@@ -391,18 +408,28 @@ class MachineModel:
 
     def link(self, link: int | str) -> Link:
         """The ``Link`` of *link* (a name or an id; ``Link()`` if unlisted)."""
-        return self.links.get(self.link_id(link), classical.Link())
+        found = self.links.get(self.link_id(link))
+        return found if found is not None else _unlisted_link()
 
     def links_attribute(self, used: Sequence[int]) -> str:
         """The module attribute ``classical.links`` for the links in *used*."""
         entries = ", ".join(
-            f'"{link}" = {self.links.get(link, classical.Link()).attribute()}'
+            f'"{link}" = {(self.links.get(link) or _unlisted_link()).attribute()}'
             for link in sorted(set(used))
         )
         return f"{{classical.links = {{{entries}}}}}"
 
 
 _DEFAULT_MACHINE = MachineModel()
+_UNLISTED_LINK: list[classical.Link] = []
+
+
+def _unlisted_link() -> classical.Link:
+    """``Link()``, the link of a program's link its machine does not list
+    (one, made when first needed: links are immutable)."""
+    if not _UNLISTED_LINK:
+        _UNLISTED_LINK.append(classical.Link())
+    return _UNLISTED_LINK[0]
 
 
 @dataclass(frozen=True)
@@ -470,72 +497,6 @@ class Epoch:
     start_cycles: int
     min_shift_cycles: int
     max_shift_cycles: int | None
-
-
-# classical_report() sets the fields without __init__, so there is no
-# __post_init__.
-@dataclass(frozen=True)
-class ClassicalCall:
-    """One execution of a call to a classical function, from ``classical_report()``.
-
-    Times are in clock cycles. The request is sent from
-    ``submit_cycles`` for ``submit_duration_cycles``; its answer is due at
-    ``due_cycles`` (the budgeted latency after that) and taken at ``taken_cycles``
-    (``None`` if the kernel never takes it). ``first_use_cycles`` is the
-    earliest start of a pulse whose amplitude, tone or branch comes from the
-    answer, and ``deadline_cycles`` the latest due time the function's
-    ``deadline_ns`` allows. ``epoch`` is the epoch it is submitted in.
-    ``link_name`` is the link's name in the machine model, if it has one.
-    ``controller`` is the controller whose instance of a per-controller link
-    runs the call (``Link(per_controller=True)``), else ``None``.
-    ``function`` is the name the function is declared with and
-    ``compiled_name`` the name it is compiled and served under: a
-    version's, such as ``"adaptive_t1__1"``, for a function whose list
-    lengths come from its calls, else the same name. ``dispatch_key`` is the
-    key its requests carry: the hash of ``compiled_name``
-    (``classical.function_id``), or the key its controller's firmware fixes
-    (the controller's ``dispatch_keys``).
-
-    ``exposed_cycles`` is how long the first use waits for the answer beyond
-    when it could start without the call: after its line is free and after
-    the readout resonator of the last readout before the call has depleted
-    (``Qubit.depletion_ns``), when pulses must wait anyway. The rest of the
-    budget, ``hidden_cycles``, overlaps that work. A latency within the
-    depletion time is hidden entirely.
-    """
-
-    function: str
-    compiled_name: str
-    dispatch_key: int
-    link: int
-    iteration: tuple[int, ...]
-    submit_cycles: int
-    submit_duration_cycles: int
-    due_cycles: int
-    taken_cycles: int | None
-    first_use_cycles: int | None
-    deadline_cycles: int | None
-    epoch: int
-    link_name: str | None = None
-    exposed_cycles: int | None = None
-    controller: int | None = None
-
-    @property
-    def hidden_cycles(self) -> int | None:
-        """The part of the budget that overlaps other work."""
-        if self.exposed_cycles is None:
-            return None
-        return max(0, self.due_cycles - self.submit_cycles - self.exposed_cycles)
-
-    @property
-    def slack_cycles(self) -> int | None:
-        """How long the answer could arrive later without delaying a pulse."""
-        return None if self.first_use_cycles is None else self.first_use_cycles - self.due_cycles
-
-    @property
-    def deadline_slack_cycles(self) -> int | None:
-        """How far the due time is inside the deadline (negative: missed)."""
-        return None if self.deadline_cycles is None else self.deadline_cycles - self.due_cycles
 
 
 @dataclass()
@@ -702,7 +663,6 @@ class Lowered:
         "_generic",
         "waits",
         "classical",
-        "_dispatch_keys",
         "runtime_selects",
         "_arity",
     )
@@ -748,9 +708,6 @@ class Lowered:
         self.waits = waits
         # The classical functions the program calls, in declaration order.
         self.classical: tuple[Any, ...] = ()
-        # Per compiled name, its dispatch key and the controller that fixes
-        # it (None for a hashed or built-in key).
-        self._dispatch_keys: dict[str, tuple[int, str | None]] = {}
         # Whether ops read values measurements select while the program runs.
         self.runtime_selects = False
 
@@ -800,7 +757,6 @@ class Lowered:
         view._generic = self
         view.waits = waits
         view.classical = self.classical
-        view._dispatch_keys = self._dispatch_keys
         view.runtime_selects = self.runtime_selects
         return view
 
@@ -826,7 +782,6 @@ class Lowered:
         view._generic = self
         view.waits = waits
         view.classical = self.classical
-        view._dispatch_keys = self._dispatch_keys
         view.runtime_selects = self.runtime_selects
         return view
 
@@ -1127,8 +1082,6 @@ def build(
     from .kernel.bytecode_bridge import _trace_kernel_with_builder
     from .kernel.packed_ir_builder import PackedIRBuilder
 
-    if classical._PENDING:
-        classical.flush()
     metrics = CompileMetrics(target=target.name)
     name = getattr(fn, "__name__", "kernel")
     t0 = time.perf_counter()
@@ -1141,8 +1094,7 @@ def build(
     )
     builder.unroll_threshold = options.unroll_threshold
     builder.line_tones = target._line_tones
-    builder.link_id = machine.link_id
-    builder.dispatch_tables = _dispatch_tables(machine)
+    builder.machine = machine
     builder.locate_structural = frozenset(parameters)
     plain = machine._plain
     clocks = None if plain else _clocked_builder(builder, machine, target)
@@ -1174,7 +1126,8 @@ def build(
             )
     buf: Any = builder.get_buffer()
     freq: Any = builder.get_freq_array()
-    links = [machine.link_id(function.link) for function in builder.classical]
+    routes = builder.routes
+    links = [link for link, _, _ in routes] if routes else []
     metrics.trace_ms = (time.perf_counter() - t0) * 1000
     metrics.op_count = builder.op_count
 
@@ -1284,10 +1237,10 @@ def build(
             scheduled=scheduled,
             waits=waits,
         )
-    lowered.classical = tuple(builder.classical)
-    lowered._dispatch_keys = {
-        fn.name: key for fn, key in zip(builder.classical, builder.dispatch_keys, strict=True)
-    }
+    calls = builder.classical
+    if calls:
+        lowered.classical = called = _ClassicalFunctions(calls)
+        called.routes = builder.routes  # type: ignore[assignment]
     lowered.runtime_selects = runtime_selects
     if role is not None:
         role.slots = slots
@@ -1445,9 +1398,43 @@ def with_line_delays(lowered: Lowered, options: CompileOptions, n_qudits: int) -
         waits=lowered.waits,
     )
     result.classical = lowered.classical
-    result._dispatch_keys = lowered._dispatch_keys
     result.runtime_selects = lowered.runtime_selects
     return _check_controller(result)
+
+
+class _ClassicalFunctions(tuple[Any, ...]):
+    """The classical functions a program calls, in declaration order, with
+    ``routes``: per function, its link id, dispatch key and the controller
+    that fixes the key (None for a hashed or built-in key)."""
+
+    routes: list[tuple[int, int, str | None]]
+    # Per compiled name, its key and what fixes it, made when first read.
+    by_name: dict[str, tuple[int, str | None]]
+
+
+_NO_KEYS: dict[str, tuple[int, str | None]] = {}
+
+
+def _dispatch_keys(lowered: Lowered) -> dict[str, tuple[int, str | None]]:
+    """Per compiled name of a classical function *lowered* calls, its
+    dispatch key and the controller that fixes it."""
+    called = lowered.classical
+    if not called:
+        return _NO_KEYS
+    keys: dict[str, tuple[int, str | None]] | None = called.__dict__.get("by_name")
+    if keys is None:
+        keys = called.by_name = {  # type: ignore[attr-defined]
+            function.name: (key, fixed_by)
+            for function, (_, key, fixed_by) in zip(called, _routes(lowered), strict=True)
+        }
+    return keys
+
+
+def _routes(lowered: Lowered) -> Sequence[tuple[int, int, str | None]]:
+    """Per classical function *lowered* calls, its link id, dispatch key and
+    the controller that fixes the key."""
+    routes: Sequence[tuple[int, int, str | None]] = getattr(lowered.classical, "routes", ())
+    return routes
 
 
 def _dispatch_tables(machine: MachineModel) -> dict[int, dict[str, tuple[int, str]]]:

@@ -70,18 +70,6 @@ from .._units import Time, as_nanoseconds
 if TYPE_CHECKING:
     from ._link import Link as Link
 from .._native import infer_list_lengths
-from ._values import (
-    _IQ,
-    ValueType,
-    _Bits,
-    _Float,
-    _Floats,
-    _Integer,
-    _Integers,
-    _Levels,
-    _OneBit,
-    _OnePoint,
-)
 
 __all__ = [
     "Bits",
@@ -102,6 +90,183 @@ _MAX_ARGS = 8
 _MAX_RESULTS = 4
 
 
+# The wire types of arguments and results. A function's parameter and return
+# annotations become these when it is declared (``pulse.Bits`` of a known
+# length is ``bits:n``, ``float`` is ``f64``, ``list[int]`` of measurements is
+# ``levels:n``, and so on). They are what the IR, the wire schema and the
+# simulator read; users never name them.
+
+
+class ValueType:
+    """The type of one argument or result of a classical function.
+
+    ``descriptor`` is its spelling in the IR, ``count`` how many values it
+    holds, ``source`` what a kernel passes for it (``"measurement"``,
+    ``"float"`` or ``"integer"``), and ``answer`` the type of the values a
+    kernel gets back for it (``"i1"``, ``"i64"`` or ``"f64"``).
+    """
+
+    __slots__ = ("count", "descriptor", "source", "answer", "answer_count", "wire_bytes")
+
+    def __init__(
+        self,
+        descriptor: str,
+        count: int,
+        source: str,
+        answer: str,
+        answer_count: int,
+        wire_bytes: int,
+    ) -> None:
+        self.descriptor = descriptor
+        self.count = count
+        self.source = source
+        self.answer = answer
+        self.answer_count = answer_count
+        self.wire_bytes = wire_bytes
+
+    @property
+    def is_scalar(self) -> bool:
+        return ":" not in self.descriptor and "[" not in self.descriptor
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, ValueType) and other.descriptor == self.descriptor
+
+    def __hash__(self) -> int:
+        return hash(self.descriptor)
+
+    def __repr__(self) -> str:
+        return f"<{self.descriptor}>"
+
+
+def _count(n: int, what: str) -> int:
+    if isinstance(n, bool) or not isinstance(n, int) or n <= 0:
+        raise InvalidValueError(f"{what} needs a positive whole number of values, got {n!r}")
+    return n
+
+
+class _Bits(ValueType):
+    """``n`` measurement results, sent as ``outcome != 0``, bit-packed; as a
+    result, ``n`` booleans."""
+
+    __slots__ = ()
+
+    def __init__(self, n: int) -> None:
+        n = _count(n, "a pulse.Bits value")
+        super().__init__(f"bits:{n}", n, "measurement", "i1", n, (n + 7) // 8)
+
+
+class _OneBit(_Bits):
+    """``bits:1`` answered as one ``bool`` (a ``-> bool`` result)."""
+
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        super().__init__(1)
+
+    @property
+    def is_scalar(self) -> bool:
+        return True
+
+
+class _Levels(ValueType):
+    """``n`` measured levels, one byte each; as a result, ``n`` integers."""
+
+    __slots__ = ()
+
+    def __init__(self, n: int) -> None:
+        n = _count(n, "a list[int] of measurements")
+        super().__init__(f"levels:{n}", n, "measurement", "i64", n, n)
+
+
+class _IQ(ValueType):
+    """The IQ points of ``n`` readouts, as ``2n`` 32-bit floats (I, then Q)."""
+
+    __slots__ = ()
+
+    def __init__(self, n: int) -> None:
+        n = _count(n, "a list[complex]")
+        super().__init__(f"iq:{n}", n, "measurement", "f64", 2 * n, 8 * n)
+
+
+class _OnePoint(_IQ):
+    """``iq:1`` taken as one ``complex`` (a ``complex`` parameter)."""
+
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        super().__init__(1)
+
+    @property
+    def is_scalar(self) -> bool:
+        return True
+
+
+def _width(bits: int) -> int:
+    if bits not in (64, 32):
+        raise InvalidValueError(f"a number has 64 or 32 bits, got {bits!r}")
+    return bits
+
+
+class _Float(ValueType):
+    """One floating-point number, of 64 bits (what ``float`` is) or 32."""
+
+    __slots__ = ()
+
+    def __init__(self, bits: int = 64) -> None:
+        bits = _width(bits)
+        super().__init__(f"f{bits}", 1, "float", "f64", 1, bits // 8)
+
+
+class _Integer(ValueType):
+    """One signed integer, of 64 bits (the default) or 32."""
+
+    __slots__ = ()
+
+    def __init__(self, bits: int = 64) -> None:
+        bits = _width(bits)
+        super().__init__(f"i{bits}", 1, "integer", "i64", 1, bits // 8)
+
+
+class _Byte(ValueType):
+    """One unsigned byte."""
+
+    __slots__ = ()
+
+    def __init__(self) -> None:
+        super().__init__("u8", 1, "integer", "i64", 1, 1)
+
+
+class _Floats(ValueType):
+    """``n`` floating-point numbers, of 64 bits (``list[float]``) or 32 each."""
+
+    __slots__ = ()
+
+    def __init__(self, n: int, bits: int = 64) -> None:
+        n = _count(n, "a list[float]")
+        bits = _width(bits)
+        super().__init__(f"f{bits}[{n}]", n, "float", "f64", n, n * bits // 8)
+
+
+class _Integers(ValueType):
+    """``n`` signed 32-bit integers."""
+
+    __slots__ = ()
+
+    def __init__(self, n: int) -> None:
+        n = _count(n, "a list[int]")
+        super().__init__(f"i32[{n}]", n, "integer", "i64", n, 4 * n)
+
+
+class _Bytes(ValueType):
+    """``n`` unsigned bytes."""
+
+    __slots__ = ()
+
+    def __init__(self, n: int) -> None:
+        n = _count(n, "a byte array")
+        super().__init__(f"u8[{n}]", n, "integer", "i64", n, n)
+
+
 def function_id(name: str) -> int:
     """The dispatch key of a function compiled as *name*, unless its
     controller fixes one: 32-bit FNV-1a, the hash CUDA-Q Realtime registers
@@ -113,10 +278,12 @@ def function_id(name: str) -> int:
 
 
 # Keys built-in protocols send, by the protocol: a user function given one
-# (by its name's hash or a controller) is a compile error.
+# (by its name's hash or a controller) is a compile error. These are the
+# function_id of enqueue_syndromes, get_corrections and reset_decoder.
 _RESERVED_KEYS = {
-    function_id(name): "cudaq_pulse.classical.qec"
-    for name in ("enqueue_syndromes", "get_corrections", "reset_decoder")
+    0x7ED8BE82: "cudaq_pulse.classical.qec",
+    0x882D5BA1: "cudaq_pulse.classical.qec",
+    0x977A59CF: "cudaq_pulse.classical.qec",
 }
 
 
@@ -154,10 +321,17 @@ _LIST_KIND: dict[Any, int] = {
     collections.abc.Sequence[complex]: _KIND_IQ,
     collections.abc.Sequence[float]: _KIND_FLOATS,
     collections.abc.Sequence[int]: _KIND_INTS,
-    typing.Sequence[complex]: _KIND_IQ,  # noqa: UP006
-    typing.Sequence[float]: _KIND_FLOATS,  # noqa: UP006
-    typing.Sequence[int]: _KIND_INTS,  # noqa: UP006
 }
+
+
+def _sequence_kind(t: Any) -> int | None:
+    """The list kind of a ``typing.Sequence[...]`` hint, which is not equal
+    to the ``collections.abc`` one it stands for."""
+    if getattr(t, "_name", None) == "Sequence" and typing.get_origin(t) is collections.abc.Sequence:
+        return _LIST_KIND.get(collections.abc.Sequence[t.__args__])
+    return None
+
+
 _LIST_NAME = {
     _KIND_BITS: "pulse.Bits",
     _KIND_IQ: "list[complex]",
@@ -316,6 +490,8 @@ def _read_hints(fn: Any) -> _Shape:
         if spec is None:
             kind = _LIST_KIND.get(t)
             if kind is None:
+                kind = _sequence_kind(t)
+            if kind is None:
                 spec = _stated_parameter(where, name, t)
             else:
                 spec = kind
@@ -337,6 +513,8 @@ def _read_hints(fn: Any) -> _Shape:
         spec = _SCALAR_RESULT.get(t)
         if spec is None:
             kind = _LIST_KIND.get(t)
+            if kind is None:
+                kind = _sequence_kind(t)
             if kind is None:
                 spec = _stated_result(where, t)
             elif kind == _KIND_IQ:
@@ -360,6 +538,8 @@ def _stated_parameter(where: str, name: str, t: Any) -> ValueType:
     base, meta = t.__origin__, t.__metadata__
     kind = _LIST_KIND.get(base)
     if kind is None:
+        kind = _sequence_kind(base)
+    if kind is None:
         if base in _SCALAR_ARG or base is bool:
             raise InvalidTypeError(
                 f"{where}: parameter {name!r} is {_spell(base)}; pulse.Length applies to"
@@ -375,6 +555,8 @@ def _stated_result(where: str, t: Any) -> ValueType:
         _bad_result(where, t)
     base, meta = t.__origin__, t.__metadata__
     kind = _LIST_KIND.get(base)
+    if kind is None:
+        kind = _sequence_kind(base)
     if kind is None or kind == _KIND_IQ:
         if base in _SCALAR_RESULT or base is complex:
             raise InvalidTypeError(
@@ -482,9 +664,6 @@ def _spell(t: Any) -> str:
 
 # ── Classical functions ──────────────────────────────────────────────────────
 
-# Declarations whose hints are read at the next compile (``flush``).
-_PENDING: list[ClassicalFunction[..., Any]] = []
-
 
 class _LazyTypes:
     """Stands in for ``args`` or ``results`` until the hints are read.
@@ -520,18 +699,6 @@ class _LazyTypes:
         return repr(self._real())
 
 
-class _Unsized:
-    """An unsized parameter in the plan a template's submit reads. Its
-    ``source`` sets it apart from a wire type's."""
-
-    __slots__ = ("source", "kind")
-
-    def __init__(self, kind: int) -> None:
-        self.source = _UNSIZED
-        self.kind = kind
-
-
-_UNSIZED = "unsized"
 _NO_VERSIONS: Mapping[Any, Any] = types.MappingProxyType({})
 
 
@@ -645,8 +812,10 @@ class ClassicalFunction[**P, R]:
         # one attribute layout (attributes added later, or in other orders,
         # make every read slower).
         self._error: TypeError | None = None
-        # A template's declaration, the plan its submit reads and how many
-        # lengths its calls give; None, None, 0 for a function of one schema.
+        # A template's declaration, the plan its submit reads (per parameter
+        # a wire type, or the kind of a list of unstated length) and how
+        # many lengths its calls give; None, None, 0 for a function of one
+        # schema.
         self._shape: _Shape | None = None
         self._plan: tuple[Any, ...] | None = None
         self._n = 0
@@ -690,18 +859,20 @@ class ClassicalFunction[**P, R]:
                 " Give it a handler to simulate it:"
                 f' pulse.simulate(..., handlers={{"{self.base_name}": fn}})'
             )
-        expected = len(self.args)
-        if self._plan is not None:
-            expected = len(self._plan)
-        if kwargs or len(args) != expected:
-            raise InvalidTypeError(
-                f"{self.name}() takes {expected} positional arguments, got {len(args)}"
-            )
-        return self.implementation(*args, **kwargs)
+        if kwargs or len(args) != len(self.args):
+            # A template has args == (): its calls give the list lengths.
+            expected = len(self.args) if self._plan is None else len(self._plan)
+            if kwargs or len(args) != expected:
+                raise InvalidTypeError(
+                    f"{self.name}() takes {expected} positional arguments, got {len(args)}"
+                )
+        return self.implementation(*args)  # type: ignore[call-arg]
 
     def submit(self, *args: P.args, **kwargs: P.kwargs) -> Pending[R]:
         """Call the function; outside a kernel this runs it at once."""
-        return Answer(self(*args, **kwargs))
+        if kwargs:
+            self(*args, **kwargs)
+        return Answer(self(*args))  # type: ignore[call-arg]
 
     def specialize(self, **lengths: int) -> ClassicalFunction[P, R]:
         """The version of this function for list parameters of *lengths*
@@ -801,21 +972,10 @@ def _resolve(function: ClassicalFunction[..., Any]) -> None:
     # where the template path starts (see kernel._classical.submit).
     function.args = ()
     function._shape = shape
-    function._plan = tuple(_Unsized(p) if p.__class__ is int else p for p in shape.plan)
+    function._plan = shape.plan
     function._n = shape.unsized
     function._made = {}
     function._fast = function._made
-
-
-def flush() -> None:
-    """Read the hints of every declaration made since the last compile; an
-    error stays on its function and is raised where the function is used."""
-    while _PENDING:
-        function = _PENDING.pop()
-        try:
-            _resolve(function)
-        except TypeError:
-            pass
 
 
 def _result_specs(
@@ -990,9 +1150,12 @@ def _unpickled_version(
 def _enter_slow(builder: Any, template: ClassicalFunction[..., Any], key: Any) -> Any:
     """A submit whose version isn't made yet: ``builder._versions[template]``
     maps each key to its version, in first use order."""
-    inner = builder._versions.get(template)
+    versions = builder._versions
+    if versions is None:
+        versions = builder._versions = {}
+    inner = versions.get(template)
     if inner is None:
-        inner = builder._versions[template] = {}
+        inner = versions[template] = {}
     else:
         entered = inner.get(key)
         if entered is not None:
@@ -1041,23 +1204,18 @@ class Pending[R](Protocol):
     def result(self, timeout: float | Time | None = None) -> Any: ...
 
 
-class Answer[R]:
-    """The answer of a classical function called outside a kernel."""
+class Answer:
+    """The answer of a classical function called outside a kernel; its
+    ``submit`` types it as a ``Pending``."""
 
     __slots__ = ("_value",)
 
-    def __init__(self, value: R) -> None:
+    def __init__(self, value: Any) -> None:
         self._value = value
 
     def done(self) -> bool:
         return True
 
-    @overload
-    def result(self, timeout: None = None) -> R: ...
-    @overload
-    def result[*Ts](self: Answer[tuple[*Ts]], timeout: float | Time) -> tuple[bool, *Ts]: ...
-    @overload
-    def result(self, timeout: float | Time) -> tuple[bool, R]: ...
     def result(self, timeout: float | Time | None = None) -> Any:
         if timeout is not None:
             if isinstance(self._value, tuple):
@@ -1113,8 +1271,8 @@ def function(implementation: Callable[..., Any] | None = None, /, **options: Any
     device is the QPU) and ``name``. A latency, timeout or deadline is a time
     (``400 * pulse.ns``) or a number of ns.
 
-    The hints are read at the next compile, and a mistake in them is raised
-    where the function is used.
+    The hints are read when the function is first used (a program that
+    calls it is compiled), and a mistake in them is raised there.
     """
     if "args" in options or "results" in options or "id" in options:
         _removed(options)
@@ -1133,9 +1291,7 @@ def _declare(fn: Callable[..., Any], options: dict[str, Any]) -> ClassicalFuncti
             f"@pulse.classical takes a function defined with def, whose type hints say what it"
             f" takes and returns; got {fn!r}"
         )
-    declared: ClassicalFunction[..., Any] = ClassicalFunction(fn, **options)
-    _PENDING.append(declared)
-    return declared
+    return ClassicalFunction(fn, **options)
 
 
 def _removed(options: Mapping[str, Any]) -> typing.NoReturn:
@@ -1230,8 +1386,9 @@ def random_index(
     return function
 
 
-_AnyFunction = ClassicalFunction[..., Any]
-_IndexFunction = ClassicalFunction[[], int]
+if TYPE_CHECKING:
+    _AnyFunction = ClassicalFunction[..., Any]
+    _IndexFunction = ClassicalFunction[[], int]
 
 
 class _Declare(Protocol):
