@@ -28,7 +28,6 @@ import threading
 from collections.abc import Mapping
 from dataclasses import replace
 from functools import cached_property
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .._errors import InvalidValueError, NotFoundError
@@ -36,7 +35,20 @@ from .._errors import InvalidValueError, NotFoundError
 if TYPE_CHECKING:
     from .transmon_model import ChargeCoupledPair, TransmonCircuit
 
-_SHIPPED = Path(__file__).resolve().parent / "calibrations"
+# A path string, not a pathlib.Path: pathlib (with urllib.parse) would add a
+# tenth to the time ``import cudaq_pulse`` takes.
+_SHIPPED = os.path.join(os.path.dirname(os.path.realpath(__file__)), "calibrations")
+
+
+def _shipped_file(name: str) -> str:
+    return os.path.join(_SHIPPED, name + ".json")
+
+
+def _read(path: str) -> Any:
+    with open(path, encoding="utf-8") as file:
+        return json.load(file)
+
+
 # The flux at which a qubit idles, by the sweet spot it idles at.
 _SWEET_SPOT_FLUX = {"upper": 0.0, "lower": 0.5}
 
@@ -70,7 +82,7 @@ class Calibration:
     def _data(self) -> dict[str, Any]:
         # Set by __init__; a shipped calibration that was unpickled reads its
         # file when its values are first used.
-        data: dict[str, Any] = json.loads((_SHIPPED / f"{self.name}.json").read_text("utf-8"))
+        data: dict[str, Any] = _read(_shipped_file(self.name))
         return data
 
     @cached_property
@@ -84,22 +96,22 @@ class Calibration:
         cls, source: str | os.PathLike[str] = "transmon_17q", *, cooldown: str | None = None
     ) -> Calibration:
         """A shipped calibration by name, or a calibration file by path."""
-        path = Path(source)
-        name = os.fspath(source)
+        path = name = os.fspath(source)
+        stem, suffix = os.path.splitext(os.path.basename(path))
         digest = None
-        if not path.suffix and (_SHIPPED / f"{name}.json").is_file():
+        if not suffix and os.path.isfile(_shipped_file(name)):
             from .._source_stamp import CALIBRATIONS
 
-            path, digest = _SHIPPED / f"{name}.json", CALIBRATIONS.get(name)
-        elif not path.is_file():
-            shipped = sorted(p.stem for p in _SHIPPED.glob("*.json"))
+            path, digest = _shipped_file(name), CALIBRATIONS.get(name)
+        elif not os.path.isfile(path):
+            shipped = sorted(f[:-5] for f in os.listdir(_SHIPPED) if f.endswith(".json"))
             raise NotFoundError(
                 f"no calibration {name!r}: not a file, and the shipped ones are "
                 + ", ".join(shipped)
             )
         else:
-            name = path.stem
-        data = json.loads(path.read_text(encoding="utf-8"))
+            name = stem
+        data = _read(path)
         loaded = cls.__new__(cls)
         loaded._name(data, name, cooldown)
         # Not copied: parsed here, it is held by this calibration alone, which

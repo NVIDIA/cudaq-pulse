@@ -10,6 +10,7 @@
 import json
 import math
 import re
+from pathlib import Path
 
 import cudaq_pulse as pulse
 import pytest
@@ -19,6 +20,7 @@ from cudaq_pulse.targets.calibration import _SHIPPED, Calibration
 from cudaq_pulse.targets.transmon_model import anchored_charge_coupling_hz
 
 KINDS = {"published", "digitized", "fitted"}
+_SHIPPED_17Q = Path(_SHIPPED, "transmon_17q.json")
 
 
 @pytest.fixture(scope="module")
@@ -39,7 +41,7 @@ def _leaves(node, path=()):
 
 
 def test_every_value_carries_its_kind_source_and_cooldown():
-    data = json.loads((_SHIPPED / "transmon_17q.json").read_text())
+    data = json.loads(_SHIPPED_17Q.read_text())
     leaves = list(_leaves(data))
     assert len(leaves) > 200
     for path, leaf in leaves:
@@ -51,7 +53,7 @@ def test_every_value_carries_its_kind_source_and_cooldown():
 
 
 def test_the_shipped_file_holds_no_local_paths_or_working_notes():
-    text = (_SHIPPED / "transmon_17q.json").read_text()
+    text = _SHIPPED_17Q.read_text()
     assert not re.search(
         r"\.py\b|/(?:Users|home)/|\bTODO\b|\bdraft\b|unpublished", text, re.IGNORECASE
     )
@@ -72,7 +74,7 @@ def test_a_loaded_calibration_keeps_the_values_it_parsed():
     # Calibration.load keeps the dict it parsed without copying it, and the
     # shipped one is shared by every device: no use of it may change it.
     shipped = pulse.device("transmon_17q").calibration
-    parsed = json.loads((_SHIPPED / "transmon_17q.json").read_text())
+    parsed = json.loads(_SHIPPED_17Q.read_text())
     for cal in (shipped, Calibration.load("transmon_17q", cooldown="2025-flux-tuning")):
         pair = cal.pairs[0]
         qubit = cal.flux_qubits[0]
@@ -155,7 +157,7 @@ def test_the_17_qubit_device_carries_the_shipped_calibration(cal):
 def test_a_device_loads_a_calibration_from_its_config(tmp_path, cal):
     # A calibration whose charge coupling is 10 % higher strengthens every
     # pair; without the stored idle exchange, the device computes it.
-    data = json.loads((_SHIPPED / "transmon_17q.json").read_text())
+    data = json.loads(_SHIPPED_17Q.read_text())
     couplings = data["coupling"]["charge_coupling_g_c"]
     couplings["calibration_A"]["value"] *= 1.1
     for entry in couplings["idle_exchange"].values():
