@@ -356,9 +356,10 @@ after its release. [zizmor](https://docs.zizmor.sh/) audits the workflows
 - `gpu-tests.yml`: the GPU tests, called by `ci.yml` and `wheels.yml`.
 - `docs.yml`: Sphinx with warnings as errors; deploys `main` to GitHub Pages.
 - `property-nightly.yml`: the property tests (every test file that imports
-  hypothesis) with random examples, the slow physics checks (`nightly`) and
-  the perf guard, every night and on manual dispatch, with the seed in the
-  job summary and the example database kept in the Actions cache. GitHub runs scheduled workflows from the default
+  hypothesis) with random examples, the slow physics checks (`nightly`),
+  the perf guard and check-pulse on macOS with Python 3.15, every night and
+  on manual dispatch, with the seed in the job summary and the example
+  database kept in the Actions cache. GitHub runs scheduled workflows from the default
   branch, so the schedule tests `main`; a manual dispatch tests the branch it
   is dispatched on.
 
