@@ -23,13 +23,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
+import math
 import os
 import platform
 import shutil
 import sys
 import tarfile
 import tempfile
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -37,6 +40,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LOCK_FILE = REPO_ROOT / "tools" / "mlir-toolchain.lock.json"
 DEFAULT_CACHE = REPO_ROOT / ".cache" / "mlir"
 MARKER = ".cudaq-pulse-sha256"
+# Seconds a download may wait to connect, or for more data, before it fails.
+DEFAULT_TIMEOUT = 60.0
 # The platforms .github/workflows/mlir-toolchain.yml builds a toolchain for.
 PLATFORMS = ("linux-x86_64", "linux-aarch64", "macos-aarch64")
 
@@ -95,15 +100,52 @@ def expected_sha256(lock: dict, archive_name: str, explicit: str | None) -> str:
     )
 
 
-def download(url: str, destination: Path) -> None:
+def download_error(url: str, error: Exception, timeout: float) -> FetchError:
+    """The FetchError that explains why downloading `url` failed with `error`."""
+    by_hand = (
+        "download the archive another way (for example with `gh release download`) "
+        "and pass it with --from-file"
+    )
+    if isinstance(error, urllib.error.HTTPError):
+        if error.code == 404:
+            return FetchError(
+                f"download of {url} failed: HTTP 404, the archive is not published "
+                f"there or the release is not public; {by_hand}"
+            )
+        return FetchError(f"download of {url} failed: HTTP {error.code} {error.reason}")
+    reason = error.reason if isinstance(error, urllib.error.URLError) else error
+    if isinstance(reason, TimeoutError):
+        return FetchError(
+            f"download of {url} timed out: no data for {timeout:g} s. Check the "
+            f"network or proxy, raise --timeout, or {by_hand}"
+        )
+    if isinstance(error, urllib.error.URLError):
+        return FetchError(f"download of {url} failed: cannot connect ({reason}); {by_hand}")
+    return FetchError(f"download of {url} failed: {error}")
+
+
+def download(url: str, destination: Path, timeout: float) -> None:
     print(f"Downloading {url}", file=sys.stderr)
     partial = destination.with_name(destination.name + ".part")
     try:
-        with urllib.request.urlopen(url) as response, partial.open("wb") as handle:
+        with (
+            urllib.request.urlopen(url, timeout=timeout) as response,
+            partial.open("wb") as handle,
+        ):
             shutil.copyfileobj(response, handle)
-    except OSError as error:
+            received = handle.tell()
+            expected = response.headers.get("Content-Length")
+        if expected is not None and expected.isdigit() and received != int(expected):
+            raise FetchError(
+                f"download of {url} was cut off after {received} of {expected} bytes; "
+                f"run the fetch again"
+            )
+    except (OSError, http.client.HTTPException) as error:
         partial.unlink(missing_ok=True)
-        raise FetchError(f"download of {url} failed: {error}") from error
+        raise download_error(url, error, timeout) from error
+    except FetchError:
+        partial.unlink(missing_ok=True)
+        raise
     partial.replace(destination)
 
 
@@ -132,6 +174,16 @@ def unpack(archive: Path, sha256: str, name: str, cache_dir: Path) -> Path:
     return target
 
 
+def positive_seconds(text: str) -> float:
+    try:
+        seconds = float(text)
+    except ValueError:
+        seconds = math.nan
+    if not seconds > 0 or math.isinf(seconds):
+        raise argparse.ArgumentTypeError(f"expected a positive number of seconds, got {text!r}")
+    return seconds
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -142,6 +194,14 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("--platform", help="override the host platform, e.g. linux-x86_64")
     parser.add_argument("--base-url", help="override the release download URL")
+    parser.add_argument(
+        "--timeout",
+        type=positive_seconds,
+        # A string default goes through `type` too, so a bad variable is reported.
+        default=os.environ.get("CUDAQ_PULSE_MLIR_FETCH_TIMEOUT", str(DEFAULT_TIMEOUT)),
+        help="seconds the download may wait to connect or for more data "
+        f"(default {DEFAULT_TIMEOUT:g}, or CUDAQ_PULSE_MLIR_FETCH_TIMEOUT)",
+    )
     parser.add_argument(
         "--cache-dir",
         type=Path,
@@ -195,7 +255,7 @@ def main(argv: list[str]) -> int:
             if not archive.is_file() or sha256_of(archive) != sha256:
                 archive.parent.mkdir(parents=True, exist_ok=True)
                 base_url = (args.base_url or lock["base_url"]).rstrip("/")
-                download(f"{base_url}/{archive_name}", archive)
+                download(f"{base_url}/{archive_name}", archive, args.timeout)
 
         print(unpack(archive, sha256, name, args.cache_dir))
         return 0
