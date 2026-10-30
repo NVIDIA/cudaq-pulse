@@ -69,7 +69,7 @@ jobs:
         # the newest.
         include:
           - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.12" }
-          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.13" }
+          - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.13", hash-seeds: true }
           - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.14" }
           - { platform: linux-x86_64, runner: ubuntu-24.04, python: "3.15" }
           - { platform: linux-aarch64, runner: ubuntu-24.04-arm, python: "3.12" }
@@ -96,6 +96,23 @@ jobs:
         env:
           PYTEST_ADDOPTS: --durations=30
         run: uv run --no-sync cmake --build build/dev --target check-pulse
+
+      # Python randomizes str hashes in every run (PYTHONHASHSEED=random is
+      # the default), but a failure that depends on the seed can't be
+      # replayed without it. This leg runs the suite again under two seeds it
+      # draws and logs; replay one with PYTHONHASHSEED=<seed>.
+      - name: pytest under two logged hash seeds
+        if: matrix.hash-seeds
+        env:
+          PYTHONPATH: build/dev/python
+        run: |
+          for seed in $(shuf -i 1-4294967295 -n 2); do
+            echo "::notice title=PYTHONHASHSEED::pytest with PYTHONHASHSEED=$seed"
+            if ! PYTHONHASHSEED=$seed uv run --no-sync python -m pytest tests -q -m "not gpu" -p no:cacheprovider; then
+              echo "::error title=PYTHONHASHSEED::the suite failed with PYTHONHASHSEED=$seed"
+              exit 1
+            fi
+          done
 
       - name: Native exports, sizes and import time
         run: uv run --no-sync python tools/check-native-exports.py build/dev/python --max-exports 8
