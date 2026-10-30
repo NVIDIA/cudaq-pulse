@@ -1562,6 +1562,13 @@ class PulseIREmitter:
         _return: int = bc.RETURN,
         _build_tuple: int = bc.BUILD_TUPLE,
         _build_list: int = bc.BUILD_LIST,
+        _call_kw: int = bc.CALL_KW,
+        _list_append: int = bc.LIST_APPEND,
+        _list_extend: int = bc.LIST_EXTEND,
+        _unary: int = bc.UNARY,
+        _not: int = bc.NOT,
+        _is: int = bc.IS,
+        _contains: int = bc.CONTAINS,
         _iter_slots: int = ITER_SLOTS,
     ) -> Any:
         """Run from *pc*. Jumps must stay inside ``(lo, hi)``.
@@ -1595,6 +1602,9 @@ class PulseIREmitter:
                     value = fn_globals.get(arg, _MISSING)
                     push(self._resolve_global(arg) if value is _MISSING else value)
 
+                elif op is _pop_top:
+                    pop()
+
                 elif op is _call:
                     if arg:
                         call_args = stack[-arg:]
@@ -1603,8 +1613,11 @@ class PulseIREmitter:
                         call_args = []
                     self._dispatch_call(pop(), call_args, None)
 
-                elif op is _pop_top:
-                    pop()
+                elif op is _load_const:
+                    push(arg)
+
+                elif op is _store_fast:
+                    local_vars[arg] = pop()
 
                 elif op is _load_deref:
                     value = local_vars.get(arg, _MISSING)
@@ -1618,33 +1631,10 @@ class PulseIREmitter:
                             )
                     push(value)
 
-                elif op is _load_const:
-                    push(arg)
-
-                elif op is _store_fast:
-                    local_vars[arg] = pop()
-
-                elif op is _return:
-                    if header >= 0:
-                        raise _NotRollableError
-                    return pop()
-
-                elif op is _load_attr:
-                    obj = pop()
-                    if obj.__class__ is IRValue:
-                        # line.tone, read in place: frame ops take it as their tone.
-                        chan = obj.chan
-                        if arg == "tone" and chan is not None and obj.vtype in _LINE_TYPES:
-                            push(chan.held.cells[1].value)
-                        else:
-                            push(self._value_attribute(obj, arg))
-                    elif isinstance(obj, tuple) and len(obj) == 2 and obj[0] == "__unresolved__":
-                        push(("__unresolved__", arg))
-                    else:
-                        try:
-                            push(getattr(obj, arg))
-                        except (AttributeError, TypeError) as e:
-                            raise CompilationError(_attribute_error(obj, arg)) from e
+                elif op is _binary or op is _compare:
+                    right = pop()
+                    left = pop()
+                    push(arg(left, right))
 
                 elif op is _subscr:
                     index = pop()
@@ -1665,10 +1655,46 @@ class PulseIREmitter:
                     ):
                         self._slots[id(value)] = (obj, index, value)
 
-                elif op is _binary or op is _compare:
-                    right = pop()
-                    left = pop()
-                    push(arg(left, right))
+                elif op is _load_attr:
+                    obj = pop()
+                    if obj.__class__ is IRValue:
+                        # line.tone, read in place: frame ops take it as their tone.
+                        chan = obj.chan
+                        if arg == "tone" and chan is not None and obj.vtype in _LINE_TYPES:
+                            push(chan.held.cells[1].value)
+                        else:
+                            push(self._value_attribute(obj, arg))
+                    elif isinstance(obj, tuple) and len(obj) == 2 and obj[0] == "__unresolved__":
+                        push(("__unresolved__", arg))
+                    else:
+                        try:
+                            push(getattr(obj, arg))
+                        except (AttributeError, TypeError) as e:
+                            raise CompilationError(_attribute_error(obj, arg)) from e
+
+                elif op is _call_kw:
+                    names = pop()
+                    play = None
+                    if names == _TONE_KEYWORD and arg == 3:
+                        # drive(line, waveform, tone=tone): the tone is the op's last operand.
+                        fn = stack[-4]
+                        if fn.__class__ is types.FunctionType:
+                            if fn in _PLAY_FUNCTIONS:
+                                play = _PLAY_FUNCTIONS[fn]
+                        elif (
+                            fn.__class__ is tuple and fn[0] == "__unresolved__" and fn[1] in _PLAYS
+                        ):
+                            play = fn[1]
+                    if play is not None:
+                        values = stack[-3:]
+                        del stack[-4:]
+                        self._push_pulse_results(play, values)
+                    else:
+                        values = stack[-arg:]
+                        del stack[-arg:]
+                        n_pos = arg - len(names)
+                        kwargs = dict(zip(names, values[n_pos:]))
+                        self._dispatch_call(pop(), values[:n_pos], kwargs)
 
                 elif op is _jif or op is _jit:
                     cond = pop()
@@ -1686,14 +1712,11 @@ class PulseIREmitter:
                             continue
                         cond = _truth(cond)
                     if cond == (op is _jit):
-                        pc = self._jump(arg, lo, hi, header)
-                        if pc < 0:
+                        if arg == header:
                             return None
-
-                elif op is _jump:
-                    pc = self._jump(arg, lo, hi, header)
-                    if pc < 0:
-                        return None
+                        if not lo < arg < hi:
+                            raise _NotRollableError
+                        pc = arg
 
                 elif op is _for_iter:
                     loop = stack[-_iter_slots]
@@ -1730,6 +1753,14 @@ class PulseIREmitter:
                             return None
                     else:
                         push(value)
+
+                elif op is _jump:
+                    # self._jump(arg, lo, hi, header), inline.
+                    if arg == header:
+                        return None
+                    if not lo < arg < hi:
+                        raise _NotRollableError
+                    pc = arg
 
                 elif op is _get_iter:
                     value = pop()
@@ -1769,12 +1800,17 @@ class PulseIREmitter:
                         self._track_slots(items, 0)
                         self._note_fresh(items)
 
-                elif op is bc.LIST_APPEND or op is bc.LIST_EXTEND:
+                elif op is _return:
+                    if header >= 0:
+                        raise _NotRollableError
+                    return pop()
+
+                elif op is _list_append or op is _list_extend:
                     val = pop()
                     lst = stack[-arg]
                     if not isinstance(lst, list):
                         raise CompilationError(f"list update on non-list: {type(lst)}")
-                    if op is bc.LIST_APPEND:
+                    if op is _list_append:
                         lst.append(val)
                         if val.__class__ is IRValue and val.vtype in LINEAR_TYPES:
                             self._slots[id(val)] = (lst, len(lst) - 1, val)
@@ -1782,10 +1818,10 @@ class PulseIREmitter:
                         lst.extend(val)
                         self._track_slots(lst, 0)
 
-                elif op is bc.UNARY:
+                elif op is _unary:
                     push(arg(pop()))
 
-                elif op is bc.NOT:
+                elif op is _not:
                     value = pop()
                     if _classical.is_answer_condition(value):
                         value = _classical.condition(self.b, value)
@@ -1798,41 +1834,17 @@ class PulseIREmitter:
                     else:
                         push(not _truth(value))
 
-                elif op is bc.IS:
+                elif op is _is:
                     right = pop()
                     left = pop()
                     if left is not None and right is not None and _identity_unknown(left, right):
                         raise _identity_error(left, right)
                     push((left is right) != arg)
 
-                elif op is bc.CONTAINS:
+                elif op is _contains:
                     right = pop()
                     left = pop()
                     push((left in right) != arg)
-
-                elif op is bc.CALL_KW:
-                    names = pop()
-                    play = None
-                    if names == _TONE_KEYWORD and arg == 3:
-                        # drive(line, waveform, tone=tone): the tone is the op's last operand.
-                        fn = stack[-4]
-                        if fn.__class__ is types.FunctionType:
-                            if fn in _PLAY_FUNCTIONS:
-                                play = _PLAY_FUNCTIONS[fn]
-                        elif (
-                            fn.__class__ is tuple and fn[0] == "__unresolved__" and fn[1] in _PLAYS
-                        ):
-                            play = fn[1]
-                    if play is not None:
-                        values = stack[-3:]
-                        del stack[-4:]
-                        self._push_pulse_results(play, values)
-                    else:
-                        values = stack[-arg:]
-                        del stack[-arg:]
-                        n_pos = arg - len(names)
-                        kwargs = dict(zip(names, values[n_pos:]))
-                        self._dispatch_call(pop(), values[:n_pos], kwargs)
 
                 elif op is bc.COPY:
                     push(stack[-arg])
