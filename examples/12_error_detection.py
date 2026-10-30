@@ -72,7 +72,10 @@ def check(body: str) -> str:
     text = "func.func @main() {" + _PRELUDE + body + "  return\n}\n"
     tool = shutil.which("cudaq-pulse-opt")
     if tool is None:
-        raise SystemExit("cudaq-pulse-opt is not on PATH; it is installed with cudaq-pulse")
+        raise SystemExit(
+            "cudaq-pulse-opt is not on PATH; it comes with cudaq-pulse, from the "
+            f"cudaq-pulse-tools wheel: pip install cudaq-pulse-tools=={pulse.__version__}"
+        )
     # Op verifiers check each op on its own as the text is parsed;
     # pulse-verify checks what needs more than one op, such as the value a
     # waveform's duration has.

@@ -1,11 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import importlib.metadata
 import io
 import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import cudaq_pulse
 import pytest
@@ -101,6 +103,73 @@ def test_exit_codes(monkeypatch, outcome, installed, flags, expected):
     )
     assert code == expected
     assert lines[-1].startswith("Result: ")
+
+
+def _installed(monkeypatch, tmp_path, driver_version, script):
+    """Pretend cudaq-pulse 1.2.3 is installed, with cudaq-pulse-tools *driver_version*
+    (``None``: not installed) whose cudaq-pulse-opt runs *script* (``None``: absent)."""
+    files = []
+    if script is not None:
+        executable = tmp_path / "bin" / "cudaq-pulse-opt"
+        executable.parent.mkdir()
+        executable.write_text(f"#!/bin/sh\n{script}\n")
+        executable.chmod(0o755)
+        files.append(importlib.metadata.PackagePath("bin/cudaq-pulse-opt"))
+    distributions = {
+        "cudaq-pulse": SimpleNamespace(version="1.2.3"),
+        "cudaq-pulse-tools": None
+        if driver_version is None
+        else SimpleNamespace(
+            version=driver_version, files=files, locate_file=lambda path: tmp_path / path
+        ),
+    }
+    monkeypatch.setattr(doctor, "_distribution", distributions.get)
+    monkeypatch.setattr(doctor, "_diagnose_gpu", lambda write: gpu.GpuSupportNotBuiltError())
+
+
+@pytest.mark.parametrize(
+    ("driver_version", "script", "message"),
+    [
+        (None, "true", "cudaq-pulse-tools is not installed, and cudaq-pulse 1.2.3 requires it"),
+        ("1.2.2", "true", "cudaq-pulse-tools 1.2.2 is installed, and cudaq-pulse 1.2.3 requires"),
+        ("1.2.3", None, "pip install --force-reinstall cudaq-pulse-tools==1.2.3"),
+        ("1.2.3", "echo broken >&2; exit 3", "--version exited with 3: broken"),
+    ],
+)
+def test_a_missing_or_broken_driver_fails(monkeypatch, tmp_path, driver_version, script, message):
+    _installed(monkeypatch, tmp_path, driver_version, script)
+    for argv in ([], ["--allow-no-gpu"], ["--expect-no-device"]):
+        code, output = _run(*argv)
+        assert code == 1
+        assert "MLIR driver (cudaq-pulse-opt): FAILED" in output
+        assert message in output
+        assert output.rstrip().endswith("Result: FAILED, cudaq-pulse-opt does not work.")
+    if driver_version != "1.2.3":
+        assert "pip install cudaq-pulse-tools==1.2.3" in output
+
+
+def test_the_installed_driver_is_reported(monkeypatch, tmp_path):
+    _installed(monkeypatch, tmp_path, "1.2.3", "echo 'LLVM version 22.1.8'")
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    code, output = _run("--allow-no-gpu")
+    assert code == 0, output
+    executable = (tmp_path / "bin" / "cudaq-pulse-opt").resolve()
+    assert f"MLIR driver (cudaq-pulse-opt): 1.2.3 at {executable}\n" in output
+    monkeypatch.setenv("PATH", "")
+    code, output = _run("--allow-no-gpu")
+    assert code == 0, output
+    assert f"not on PATH; add {executable.parent} to PATH" in output
+
+
+def test_a_build_tree_driver_is_only_reported(monkeypatch):
+    monkeypatch.setattr(doctor, "_distribution", lambda name: None)
+    monkeypatch.setattr(doctor, "_diagnose_gpu", lambda write: gpu.GpuSupportNotBuiltError())
+    monkeypatch.setenv("PATH", "")
+    code, output = _run("--allow-no-gpu")
+    assert code == 0, output
+    assert (
+        "MLIR driver (cudaq-pulse-opt): not on PATH (source or build tree; not checked)" in output
+    )
 
 
 @compiler_only

@@ -16,10 +16,13 @@ limitations under the License.
 
 This product includes software developed by NVIDIA CORPORATION &
 AFFILIATES, and material from third parties. The binary distributions
-(wheels) statically link third-party software, LLVM and MLIR among it.
-THIRD_PARTY_NOTICES, in the source tree and in each wheel's
-.dist-info/licenses, lists what the wheels' binaries link, with each
-license's text; LICENSES holds the same texts as separate files.
+(wheels) statically link third-party software, LLVM and MLIR among it:
+the cudaq-pulse wheels into the cudaq_pulse native extension, and the
+cudaq-pulse-tools wheels into the cudaq-pulse-opt executable.
+THIRD_PARTY_NOTICES (packaging/cudaq-pulse-tools/THIRD_PARTY_NOTICES for
+cudaq-pulse-tools), in the source tree and in each wheel's .dist-info/licenses,
+lists what that wheel's binaries link, with each license's text; LICENSES
+holds the same texts as separate files.
 
 The Linux wheels' GPU runtime libraries load the NVIDIA CUDA runtime and
 cuDensityMat at run time from the separately installed nvidia-* and

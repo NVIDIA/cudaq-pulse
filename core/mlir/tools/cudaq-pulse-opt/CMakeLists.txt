@@ -49,6 +49,8 @@ llvm_update_compile_flags(cudaq-pulse-opt)
 export_executable_symbols_for_plugins(cudaq-pulse-opt)
 mlir_check_all_link_libraries(cudaq-pulse-opt)
 
+# The cudaq-pulse-tools wheel (packaging/cudaq-pulse-tools) installs this
+# component into its scripts, which pip puts on PATH.
 if(SKBUILD)
   set(_cudaq_pulse_opt_destination "${SKBUILD_SCRIPTS_DIR}")
 else()
@@ -57,7 +59,7 @@ endif()
 install(
   PROGRAMS "$<TARGET_FILE:cudaq-pulse-opt>"
   DESTINATION "${_cudaq_pulse_opt_destination}"
-  COMPONENT CudaqPulse
+  COMPONENT CudaqPulseOpt
 )
 # install(TARGETS) would strip with `strip -u -r` on macOS, which keeps only
 # the symbols the driver itself references, and pass plugins could no longer
@@ -86,5 +88,11 @@ endif()
 install(CODE "
   if(CMAKE_INSTALL_DO_STRIP)${_cudaq_pulse_opt_strip}
   endif()"
-  COMPONENT CudaqPulse
+  COMPONENT CudaqPulseOpt
 )
+
+include(CudaqPulseNotices)
+cudaq_pulse_third_party_notices(
+  NOTICES "${CUDAQ_PULSE_SOURCE_DIR}/packaging/cudaq-pulse-tools/THIRD_PARTY_NOTICES"
+  COMPONENT CudaqPulseOpt
+  TARGETS cudaq-pulse-opt)

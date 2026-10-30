@@ -3,9 +3,13 @@
 
 name: wheels
 
-# Linux wheels include the GPU runtime; macOS wheels are compiler-only. Both
-# are tested by cibuildwheel (see [tool.cibuildwheel] in pyproject.toml), then
-# installed and tested again on clean systems without a CUDA toolkit.
+# Two distributions: cudaq-pulse, and cudaq-pulse-tools (the cudaq-pulse-opt
+# MLIR driver), which it requires at its own version
+# (packaging/cudaq-pulse-tools), one py3-none wheel per platform. Linux
+# cudaq-pulse wheels include the GPU runtime; macOS wheels are compiler-only.
+# Both distributions are tested by cibuildwheel (see [tool.cibuildwheel] in
+# each pyproject.toml), then installed together from the built wheels and
+# tested again on clean systems without a CUDA toolkit.
 # A v* tag publishes a GitHub release with the wheels and the sdist, after
 # release-meta checks the tag and gpu-gate confirms GPU verification; PyPI
 # uploads are disabled for now (see the end of this file).
@@ -61,7 +65,19 @@ jobs:
         with:
           unpack: ${{ runner.os == 'macOS' }}
 
-      - uses: pypa/cibuildwheel@b3395e271a35f73dad77f21802abe9b986dfe299 # v4.3.1
+      # cudaq-pulse-tools first: the cudaq-pulse tests install it from
+      # tools-wheelhouse/ (before-test in pyproject.toml).
+      - name: Build the cudaq-pulse-tools wheel
+        uses: pypa/cibuildwheel@b3395e271a35f73dad77f21802abe9b986dfe299 # v4.3.1
+        with:
+          package-dir: packaging/cudaq-pulse-tools
+          output-dir: tools-wheelhouse
+
+      - name: Build the cudaq-pulse wheels
+        uses: pypa/cibuildwheel@b3395e271a35f73dad77f21802abe9b986dfe299 # v4.3.1
+
+      - name: Gather both distributions' wheels
+        run: cp tools-wheelhouse/*.whl wheelhouse/
 
       # PyPI rejects files over 100 MiB unless the project has a raised limit.
       - name: Check wheel sizes
@@ -310,9 +326,11 @@ jobs:
           (( ${#files[@]} )) || { echo "::error::no artifacts"; exit 1; }
           for file in "${files[@]}"; do
             name="$(basename "$file")"
-            [[ "$name" == "cudaq_pulse-$VERSION-"* || "$name" == "cudaq_pulse-$VERSION.tar.gz" ]] ||
+            [[ "$name" == "cudaq_pulse-$VERSION-"* || "$name" == "cudaq_pulse_tools-$VERSION-"* ||
+               "$name" == "cudaq_pulse-$VERSION.tar.gz" ]] ||
               { echo "::error::$name was not built as version $VERSION"; exit 1; }
           done
+          python3 tools/check-wheel-contents.py dist/*.whl
       - name: Attest the build provenance of the wheels and the sdist
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -332,7 +350,9 @@ jobs:
           flags=(--draft --verify-tag --title "cudaq-pulse ${TAG#v}" --notes-file "$RUNNER_TEMP/notes.md")
           [[ "$PRERELEASE" == true ]] && flags+=(--prerelease)
           gh release create "$TAG" "${flags[@]}"
-          gh release upload "$TAG" dist/*.tar.gz dist/*.whl
+          # cudaq-pulse-tools first, as cudaq-pulse requires it.
+          gh release upload "$TAG" dist/cudaq_pulse_tools-*.whl
+          gh release upload "$TAG" dist/*.tar.gz dist/cudaq_pulse-*.whl
           gh release edit "$TAG" --draft=false
 
   # PyPI and TestPyPI uploads are disabled while releases are GitHub-only.
@@ -345,4 +365,8 @@ jobs:
   # for PyPI), and runs pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
   # (with `repository-url: https://test.pypi.org/legacy/` for TestPyPI) after
   # the trusted publisher is registered on the index for this repository,
-  # workflow and environment.
+  # workflow and environment. Each job publishes both distributions, the
+  # cudaq_pulse_tools-* wheels in a first publish step and the cudaq_pulse-*
+  # files in a second, so that cudaq-pulse is never on the index without the
+  # cudaq-pulse-tools it pins; both project names need a trusted publisher, and
+  # cudaq-pulse-tools has no sdist.

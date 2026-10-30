@@ -14,7 +14,9 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "cudaq-pulse"
-dynamic = ["version"]
+# The dependencies are in [tool.scikit-build.metadata.dependencies], which
+# pins cudaq-pulse-tools to this version.
+dynamic = ["version", "dependencies"]
 description = "Pulse-level MLIR dialect and programming model for quantum control"
 readme = "README.md"
 authors = [{ name = "NVIDIA Corporation" }]
@@ -27,13 +29,6 @@ authors = [{ name = "NVIDIA Corporation" }]
 license = "Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND MIT AND Spencer-94 AND (CC0-1.0 OR Apache-2.0) AND Unicode-DFS-2015 AND LicenseRef-LLVM-MD5"
 license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES", "LICENSES/*"]
 requires-python = ">=3.12"
-dependencies = [
-    # NumPy 2, and on newer CPythons the first NumPy with wheels for them.
-    "numpy>=2.0",
-    "numpy>=2.1; python_version >= '3.13'",
-    "numpy>=2.3.2; python_version >= '3.14'",
-    "numpy>=2.5.2; python_version >= '3.15'",
-]
 keywords = ["quantum", "pulse", "quantum control", "MLIR", "compiler", "CUDA-Q", "cuDensityMat"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -146,10 +141,24 @@ wheel.packages = []
 # scikit-build-core ignores this there and tags the wheel for its one version
 # (cp314t).
 wheel.py-api = "cp312"
-sdist.exclude = [".cache", "build", "dist", "wheelhouse", ".github"]
+sdist.exclude = [".cache", "build", "dist", "wheelhouse", "tools-wheelhouse", ".github"]
 metadata.version.provider = "scikit_build_core.metadata.setuptools_scm"
 
+[tool.scikit-build.metadata.dependencies]
+provider = "scikit_build_core.metadata.template"
+result = [
+    # NumPy 2, and on newer CPythons the first NumPy with wheels for them.
+    "numpy>=2.0",
+    "numpy>=2.1; python_version >= '3.13'",
+    "numpy>=2.3.2; python_version >= '3.14'",
+    "numpy>=2.5.2; python_version >= '3.15'",
+    # cudaq-pulse-opt, the MLIR driver, one wheel per platform for every Python
+    # (packaging/cudaq-pulse-tools), built from the same commit.
+    "cudaq-pulse-tools=={project[version]}",
+]
+
 [tool.scikit-build.cmake.define]
+CUDAQ_PULSE_BUILD_OPT = "OFF"
 CUDAQ_PULSE_BUILD_TESTS = "OFF"
 CUDAQ_PULSE_ENABLE_GPU = { env = "CUDAQ_PULSE_ENABLE_GPU", default = "OFF" }
 CUDAQ_PULSE_CUDA12_ROOT = { env = "CUDAQ_PULSE_CUDA12_ROOT", default = "" }
@@ -178,6 +187,10 @@ skip = ["*-musllinux_*"]
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
 build-verbosity = 1
+# The cudaq-pulse-tools wheel this cudaq-pulse requires, which
+# .github/workflows/wheels.yml builds into tools-wheelhouse/ first; it is not on
+# an index yet.
+before-test = "python -m pip install --no-index --find-links {project}/tools-wheelhouse cudaq-pulse-tools"
 # The viz extra lets tests/test_viz.py run against the wheel. The type
 # checkers' tests run in ci.yml's test job, not here (tests/_tools.py).
 test-extras = ["cu12", "viz"]
@@ -192,7 +205,7 @@ test-sources = [
 test-command = [
     "python -c \"import cudaq_pulse._build_config as c; assert sorted(c.GPU_RUNTIME_LIBRARIES) == [12, 13], 'release wheels must include the CUDA 12 and CUDA 13 GPU runtimes'\"",
     "python -c \"import sys, sysconfig, cudaq_pulse; assert not sysconfig.get_config_var('Py_GIL_DISABLED') or not sys._is_gil_enabled(), 'importing cudaq_pulse enabled the GIL'\"",
-    "cudaq-pulse-opt --help > /dev/null",
+    "cudaq-pulse-opt --version",
     "python -m pytest -m \"not gpu\"",
 ]
 
@@ -213,7 +226,7 @@ test-extras = ["viz"]
 test-command = [
     "python -c \"import cudaq_pulse._build_config as c; assert not c.GPU_RUNTIME_ENABLED, 'macOS wheels must be compiler-only'\"",
     "python -c \"import sys, sysconfig, cudaq_pulse; assert not sysconfig.get_config_var('Py_GIL_DISABLED') or not sys._is_gil_enabled(), 'importing cudaq_pulse enabled the GIL'\"",
-    "cudaq-pulse-opt --help > /dev/null",
+    "cudaq-pulse-opt --version",
     "python -m pytest -m \"not gpu\"",
 ]
 

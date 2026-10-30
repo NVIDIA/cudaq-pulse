@@ -7,6 +7,12 @@ option(CUDAQ_PULSE_BUILD_TESTS "Build the cudaq-pulse test suites" ON)
 if(NOT CUDAQ_PULSE_BUILD_TESTS)
   return()
 endif()
+if(NOT CUDAQ_PULSE_BUILD_PYTHON OR NOT CUDAQ_PULSE_BUILD_OPT)
+  message(FATAL_ERROR
+    "The tests need both the Python package and cudaq-pulse-opt: configure "
+    "with CUDAQ_PULSE_BUILD_PYTHON and CUDAQ_PULSE_BUILD_OPT ON, or with "
+    "-DCUDAQ_PULSE_BUILD_TESTS=OFF.")
+endif()
 
 enable_testing()
 

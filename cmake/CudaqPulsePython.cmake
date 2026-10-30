@@ -78,11 +78,13 @@ endif()
 message(STATUS "cudaq-pulse version: ${CUDAQ_PULSE_PACKAGE_VERSION}")
 
 set(_cudaq_pulse_build_targets
-  cudaq-pulse-opt
   _cudaq_pulse_native
   _cudaq_pulse_native_stub
   CudaqPulsePythonStaging
   CudaqPulseSourceStamp)
+if(CUDAQ_PULSE_BUILD_OPT)
+  list(APPEND _cudaq_pulse_build_targets cudaq-pulse-opt)
+endif()
 
 set(_cudaq_pulse_runtime_libraries "")
 set(_cudaq_pulse_cudensitymat_versions "")
@@ -116,7 +118,7 @@ configure_file(
 add_custom_target(pulse DEPENDS ${_cudaq_pulse_build_targets})
 
 include(CudaqPulseNotices)
-set(_cudaq_pulse_shipped_binaries cudaq-pulse-opt _cudaq_pulse_native)
+set(_cudaq_pulse_shipped_binaries _cudaq_pulse_native)
 foreach(_major IN LISTS CUDAQ_PULSE_CUDA_MAJORS)
   list(APPEND _cudaq_pulse_shipped_binaries cudm_runtime_cu${_major})
 endforeach()

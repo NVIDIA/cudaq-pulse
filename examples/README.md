@@ -10,7 +10,8 @@ Every example except `transmon/transmon_17q_evolve_gpu.py` runs on a CPU-only
 machine, Linux or macOS, and the test suite runs each of them. **Simulates**
 means the example also evolves the program with the NumPy reference
 (`pulse.simulate`); the others compile kernels and print their MLIR,
-schedules or metrics. `cudaq-pulse-opt` is installed with the package.
+schedules or metrics. `cudaq-pulse-opt` is installed with the package (from
+the `cudaq-pulse-tools` wheel, which `cudaq-pulse` requires).
 
 | Example | What it shows | Runs on |
 | --- | --- | --- |

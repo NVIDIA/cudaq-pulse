@@ -5,19 +5,32 @@
 
 Usage: python tools/check-wheel-contents.py DIST_FILE [DIST_FILE ...]
 
-For a wheel: the cp312-abi3 tag, or cp314-cp314t for free-threaded CPython,
-with a manylinux_2_28 (x86_64, aarch64) or macosx_11_0_arm64 platform; the
-package, py.typed, the native extension built for that tag and
+Every wheel has a manylinux_2_28 (x86_64, aarch64) or macosx_11_0_arm64
+platform, and its licenses under .dist-info/licenses and named in METADATA.
+
+A cudaq-pulse wheel: the cp312-abi3 tag, or cp314-cp314t for free-threaded
+CPython; the package, py.typed, the native extension built for that tag and
 its stub, and __builtins__.pyi at the root re-exporting exactly
-cudaq_pulse.ops.__all__; LICENSE, NOTICE, THIRD_PARTY_NOTICES and every file
-of LICENSES/ (LLVM's LICENSE.TXT among them) under .dist-info/licenses and
-named in METADATA; THIRD_PARTY_NOTICES as tools/third-party-notices.py
-generates it, listing LLVM and every library grafted into the wheel, with
-each listed license in License-Expression; on Linux both CUDA runtime
-libraries; and no CUDA runtime library (those come from the CUDA wheels), no
-GPL or LGPL library or license, and no byte code, tests or hand-written
-top-level stub. For an sdist: LICENSE, NOTICE, THIRD_PARTY_NOTICES and
-LICENSES/. Exits 1 listing every problem.
+cudaq_pulse.ops.__all__; on Linux both CUDA runtime libraries; a
+requirement of exactly cudaq-pulse-tools==<its version>, whose wheel for its
+platform must be among DIST_FILEs; and no cudaq-pulse-opt, byte code, tests
+or hand-written top-level stub. Its licenses: LICENSE, NOTICE,
+THIRD_PARTY_NOTICES and every file of LICENSES/ (LLVM's LICENSE.TXT among
+them).
+
+A cudaq-pulse-tools wheel: the py3-none tag; the cudaq-pulse-opt executable
+in its scripts and nothing else but its metadata and any library a wheel
+repair grafted; the licenses of packaging/cudaq-pulse-tools (LICENSE, NOTICE,
+THIRD_PARTY_NOTICES, LLVM's and the other texts that file needs); and no
+requirements.
+
+Both: THIRD_PARTY_NOTICES as tools/third-party-notices.py generates it,
+listing LLVM and every library grafted into the wheel, with each listed
+license in License-Expression; and no CUDA runtime library (those come from
+the CUDA wheels) and no GPL or LGPL library or license.
+
+For an sdist: LICENSE, NOTICE, THIRD_PARTY_NOTICES and LICENSES/. Exits 1
+listing every problem.
 """
 
 from __future__ import annotations
@@ -28,16 +41,26 @@ import re
 import sys
 import tarfile
 import zipfile
+from email.message import Message
 from email.parser import Parser
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
-_LICENSES = [
-    "LICENSE",
-    "NOTICE",
-    "THIRD_PARTY_NOTICES",
-    *sorted(f"LICENSES/{p.name}" for p in (_ROOT / "LICENSES").iterdir()),
-]
+
+
+def _licenses(project: Path) -> list[str]:
+    return [
+        "LICENSE",
+        "NOTICE",
+        "THIRD_PARTY_NOTICES",
+        *sorted(f"LICENSES/{p.name}" for p in (project / "LICENSES").iterdir()),
+    ]
+
+
+_LICENSES = _licenses(_ROOT)
+_TOOLS = "cudaq-pulse-tools"
+_TOOLS_LICENSES = _licenses(_ROOT / "packaging" / _TOOLS)
+_DRIVER = "cudaq-pulse-opt"
 _spec = importlib.util.spec_from_file_location(
     "third_party_notices", _ROOT / "tools" / "third-party-notices.py"
 )
@@ -63,10 +86,23 @@ _BUNDLED_CUDA = re.compile(
 _GPL_EXPRESSION = re.compile(r"\b(L?GPL|AGPL)-")
 
 
-def _check_notices(names: set[str], text: str, expression: str) -> list[str]:
+def _check_notices(
+    wheel: zipfile.ZipFile, names: set[str], dist_info: str, metadata: Message
+) -> list[str]:
     """THIRD_PARTY_NOTICES is generated, lists LLVM and every grafted library,
-    and License-Expression names each license it lists and no GPL or LGPL."""
+    and License-Expression names each license it lists and no GPL or LGPL;
+    the wheel bundles no CUDA and no GPL or LGPL library."""
     problems = []
+    for item in sorted(names):
+        if _BUNDLED_CUDA.search(item):
+            problems.append(f"bundles {item}; CUDA libraries come from the extras")
+        if notices.GPL_LIBRARIES.search(item):
+            problems.append(f"bundles {item}, {notices.GPL_PROBLEM}")
+    notices_file = f"{dist_info}/licenses/THIRD_PARTY_NOTICES"
+    if notices_file not in names:
+        return problems
+    text = wheel.read(notices_file).decode()
+    expression = metadata.get("License-Expression") or ""
     listed = notices.listed_components(text)
     unknown = sorted(listed - notices._BY_NAME.keys())
     problems += [
@@ -110,12 +146,66 @@ def _check_builtins_stub(stub: str, ops_source: str) -> list[str]:
     return []
 
 
+def _wheel_name(path: Path) -> list[str] | None:
+    """The five fields of a wheel file name, or ``None``."""
+    parts = path.name[: -len(".whl")].split("-")
+    return parts if len(parts) == 5 else None
+
+
+def _check_licenses(
+    names: set[str], dist_info: str, metadata: Message, licenses: list[str]
+) -> list[str]:
+    problems = [
+        f"missing {dist_info}/licenses/{f}"
+        for f in licenses
+        if f"{dist_info}/licenses/{f}" not in names
+    ]
+    declared = set(metadata.get_all("License-File") or [])
+    problems += [f"METADATA does not name License-File {f}" for f in licenses if f not in declared]
+    problems += [
+        f"METADATA names License-File {f}, not one of its licenses"
+        for f in sorted(declared - set(licenses))
+    ]
+    if not metadata.get("License-Expression"):
+        problems.append("METADATA has no License-Expression")
+    return problems
+
+
+def check_tools_wheel(path: Path) -> list[str]:
+    name, version, python_tag, abi_tag, platform_tag = _wheel_name(path) or [""] * 5
+    problems = []
+    if (python_tag, abi_tag) != ("py3", "none"):
+        problems.append(f"tags {python_tag}-{abi_tag}, expected py3-none")
+    if not _PLATFORMS.search(platform_tag):
+        problems.append(f"platform {platform_tag} is not manylinux_2_28 or macosx_11_0_arm64")
+    with zipfile.ZipFile(path) as wheel:
+        names = set(wheel.namelist())
+        dist_info = f"{name}-{version}.dist-info"
+        metadata = Parser().parsestr(wheel.read(f"{dist_info}/METADATA").decode())
+        executable = f"{name}-{version}.data/scripts/{_DRIVER}"
+        if executable not in names:
+            problems.append(f"missing {executable}")
+        elif not (wheel.getinfo(executable).external_attr >> 16) & 0o111:
+            problems.append(f"{executable} is not executable")
+        problems += _check_notices(wheel, names, dist_info, metadata)
+    problems += _check_licenses(names, dist_info, metadata, _TOOLS_LICENSES)
+    expected = {executable, *(f"{dist_info}/{f}" for f in ("METADATA", "WHEEL", "RECORD"))}
+    expected |= {f"{dist_info}/licenses/{f}" for f in _TOOLS_LICENSES}
+    expected |= {item for item in names if notices.GRAFTED_DIR.search(item)}
+    problems += [f"contains {item}" for item in sorted(names - expected)]
+    if metadata.get_all("Requires-Dist"):
+        problems.append(f"requires {metadata.get_all('Requires-Dist')}; it requires nothing")
+    return [f"{path.name}: {problem}" for problem in problems]
+
+
 def check_wheel(path: Path) -> list[str]:
     problems = []
-    parts = path.name[: -len(".whl")].split("-")
-    if len(parts) != 5:
+    parts = _wheel_name(path)
+    if parts is None:
         return [f"{path.name}: not a wheel file name"]
     name, version, python_tag, abi_tag, platform_tag = parts
+    if name == _TOOLS.replace("-", "_"):
+        return check_tools_wheel(path)
     extension = _EXTENSIONS.get((python_tag, abi_tag))
     if extension is None:
         expected = " or ".join("-".join(tags) for tags in _EXTENSIONS)
@@ -128,13 +218,7 @@ def check_wheel(path: Path) -> list[str]:
         names = set(wheel.namelist())
         dist_info = f"{name}-{version}.dist-info"
         metadata = Parser().parsestr(wheel.read(f"{dist_info}/METADATA").decode())
-        notices_file = f"{dist_info}/licenses/THIRD_PARTY_NOTICES"
-        if notices_file in names:
-            problems += _check_notices(
-                names,
-                wheel.read(notices_file).decode(),
-                metadata.get("License-Expression") or "",
-            )
+        problems += _check_notices(wheel, names, dist_info, metadata)
         if "__builtins__.pyi" in names and "cudaq_pulse/ops/__init__.py" in names:
             problems += _check_builtins_stub(
                 wheel.read("__builtins__.pyi").decode(),
@@ -147,7 +231,6 @@ def check_wheel(path: Path) -> list[str]:
         "cudaq_pulse/py.typed",
         "cudaq_pulse/_native/_cudaq_pulse_native.pyi",
         "cudaq_pulse/targets/calibrations/transmon_17q.json",
-        *(f"{dist_info}/licenses/{license}" for license in _LICENSES),
     ]
     if linux:
         required += [f"cudaq_pulse/lib/libcudm-runtime-cu{major}.so" for major in (12, 13)]
@@ -163,21 +246,36 @@ def check_wheel(path: Path) -> list[str]:
             f"cudaq_pulse/_native/{extension.pattern}"
         )
 
-    declared = set(metadata.get_all("License-File") or [])
-    problems += [f"METADATA does not name License-File {f}" for f in _LICENSES if f not in declared]
-    if not metadata.get("License-Expression"):
-        problems.append("METADATA has no License-Expression")
+    problems += _check_licenses(names, dist_info, metadata, _LICENSES)
+    requirement = f"{_TOOLS}=={version}"
+    tools_requirements = [
+        r for r in metadata.get_all("Requires-Dist") or [] if re.match(rf"{_TOOLS}\b", r)
+    ]
+    if tools_requirements != [requirement]:
+        problems.append(f"requires {tools_requirements}, expected exactly ['{requirement}']")
 
     for item in sorted(names):
-        if _BUNDLED_CUDA.search(item):
-            problems.append(f"bundles {item}; CUDA libraries come from the extras")
-        if notices.GPL_LIBRARIES.search(item):
-            problems.append(f"bundles {item}, {notices.GPL_PROBLEM}")
         if item.endswith(".pyc") or "/__pycache__/" in item or item.startswith("tests/"):
             problems.append(f"contains {item}")
+        if item.rsplit("/", 1)[-1] == _DRIVER or f"{dist_info[: -len('.dist-info')]}.data/" in item:
+            problems.append(f"contains {item}; {_DRIVER} is in the {_TOOLS} wheel")
     if "cudaq_pulse/__init__.pyi" in names:
         problems.append("contains cudaq_pulse/__init__.pyi; the package is typed from its sources")
     return [f"{path.name}: {problem}" for problem in problems]
+
+
+def check_pairs(wheels: list[Path]) -> list[str]:
+    """Every cudaq-pulse wheel needs the cudaq-pulse-tools wheel it requires."""
+    tools = _TOOLS.replace("-", "_")
+    parsed = [(path, parts) for path in wheels if (parts := _wheel_name(path)) is not None]
+    drivers = {
+        (version, platform) for _, (name, version, _, _, platform) in parsed if name == tools
+    }
+    return [
+        f"{path.name}: no {tools}-{version}-py3-none-{platform}.whl among the files checked"
+        for path, (name, version, _, _, platform) in parsed
+        if name != tools and (version, platform) not in drivers
+    ]
 
 
 def check_sdist(path: Path) -> list[str]:
@@ -199,6 +297,7 @@ def main() -> int:
             problems += check_sdist(path)
         else:
             problems.append(f"{path}: not a wheel or sdist")
+    problems += check_pairs([path for path in files if path.suffix == ".whl"])
     for problem in problems:
         print(problem)
     if not problems:

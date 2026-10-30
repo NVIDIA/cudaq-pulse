@@ -347,23 +347,37 @@ the installed extra; `CUDAQ_PULSE_CUDA=12|13` forces one.
 ## Build a wheel
 
 ```bash
-pip install .            # or: uv build --wheel
+pip install ./packaging/cudaq-pulse-tools .
+# or: uv build --wheel packaging/cudaq-pulse-tools && uv build --wheel
 ```
 
-This uses the same fetched toolchain. Wheels are compiler-only unless
-`CUDAQ_PULSE_ENABLE_GPU=ON` is set in the environment (as the release build
-does on Linux; see `[tool.cibuildwheel]` in `pyproject.toml`).
+There are two distributions. `cudaq-pulse-tools`
+(`packaging/cudaq-pulse-tools`) holds the command-line tools, for now the
+`cudaq-pulse-opt` MLIR driver alone, a `py3-none` wheel per platform that
+serves every Python; `cudaq-pulse` is the Python package and its extension,
+and requires `cudaq-pulse-tools` at exactly its own version, so
+`pip install .` alone finds no driver to install. Both are built from this tree and take their version
+from the same git tags: `CUDAQ_PULSE_BUILD_OPT=OFF` and
+`CUDAQ_PULSE_BUILD_PYTHON=OFF` select the half each one builds. Both use the
+same fetched toolchain. `cudaq-pulse-tools` has no sdist. Wheels are
+compiler-only unless `CUDAQ_PULSE_ENABLE_GPU=ON` is set in the environment
+(as the release build does on Linux; see `[tool.cibuildwheel]` in
+`pyproject.toml`).
 
-Every binary the wheel ships writes a linker map to
-`<build dir>/link-maps/`, and installing fails if `THIRD_PARTY_NOTICES` no
-longer lists the third-party code those maps show linked. After a change
-that links something new (an MLIR library, a toolchain bump), regenerate it
-and commit the result, with a license text in `LICENSES/` for any new
-component:
+Every binary a wheel ships writes a linker map to `<build dir>/link-maps/`,
+and installing fails if the wheel's `THIRD_PARTY_NOTICES` (the root one for
+`cudaq-pulse`, `packaging/cudaq-pulse-tools/THIRD_PARTY_NOTICES` for the
+driver) no longer lists the third-party code those maps show linked. After a
+change that links something new (an MLIR library, a toolchain bump),
+regenerate them and commit the result, with a license text in `LICENSES/`
+(and a link to it in `packaging/cudaq-pulse-tools/LICENSES/` if the driver
+needs it) for any new component:
 
 ```bash
 python tools/third-party-notices.py write --notices THIRD_PARTY_NOTICES \
-    --map build/dev/link-maps/_cudaq_pulse_native.map \
+    --map build/dev/link-maps/_cudaq_pulse_native.map
+python tools/third-party-notices.py write \
+    --notices packaging/cudaq-pulse-tools/THIRD_PARTY_NOTICES \
     --map build/dev/link-maps/cudaq-pulse-opt.map
 ```
 
@@ -417,12 +431,17 @@ after its release. [zizmor](https://docs.zizmor.sh/) audits the workflows
   `-DCUDAQ_PULSE_FREE_THREADED=ON`, which declares the extension safe
   without the GIL, as the free-threaded wheels do). The `gpu` job
   builds with GPU support and runs the GPU tests (see [GPU CI](#gpu-ci)).
-- `wheels.yml`: cibuildwheel for `cp312-abi3` (3.12 and newer) and
-  `cp314-cp314t` (free-threaded 3.14, which has no stable ABI) on
+- `wheels.yml`: cibuildwheel for the `cudaq-pulse-tools` wheel (`py3-none`)
+  first, then the `cudaq-pulse` wheels for `cp312-abi3` (3.12 and newer) and
+  `cp314-cp314t` (free-threaded 3.14, which has no stable ABI), on
   manylinux_2_28 (x86_64, aarch64, with the CUDA 12 and CUDA 13 runtimes) and
-  macOS arm64 (compiler-only), plus an sdist. It then installs
-  the wheels in clean containers without a CUDA toolkit, and the 3.14t
-  wheels on the runners with the GIL required to stay off. `gpu-install-test`
+  macOS arm64 (compiler-only), plus an sdist. Each wheel is size-gated and
+  `tools/check-wheel-contents.py` checks both layouts. It then installs
+  both distributions from the built wheels alone (no index) in clean
+  containers without a CUDA toolkit, and the 3.14t wheels on the runners
+  with the GIL required to stay off; on the runners it also loads the
+  example pass plugin into the installed `cudaq-pulse-opt`
+  (`tools/ci/opt-plugin-test.sh`). `gpu-install-test`
   runs the GPU tests from the wheels (see [GPU CI](#gpu-ci)) and gates the
   release (see [Releases](#releases)).
 - `gpu-tests.yml`: the GPU tests, called by `ci.yml` and `wheels.yml`.
@@ -558,7 +577,10 @@ withdrawal follows the coordinated disclosure.
 
 Work lands on `staging`, where every workflow runs but nothing is published.
 Releases are GitHub releases only for now: nothing is uploaded to PyPI or
-TestPyPI.
+TestPyPI. A release has two distributions, each with a wheel per platform:
+`cudaq-pulse-tools`, with the MLIR driver, uploaded first, and `cudaq-pulse`,
+which requires it at the same version, with the sdist. An index needs both, in
+that order.
 
 1. Tag a release candidate, for example `v0.1.0rc1`. `wheels.yml` builds and
    tests the wheels and the sdist and publishes them as a GitHub pre-release.

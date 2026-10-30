@@ -62,7 +62,10 @@ print(
 # cudaq-pulse-opt, installed with the package, runs any pass on MLIR text.
 tool = shutil.which("cudaq-pulse-opt")
 if tool is None:
-    raise SystemExit("cudaq-pulse-opt is not on PATH; it is installed with cudaq-pulse")
+    raise SystemExit(
+        "cudaq-pulse-opt is not on PATH; it comes with cudaq-pulse, from the "
+        f"cudaq-pulse-tools wheel: pip install cudaq-pulse-tools=={pulse.__version__}"
+    )
 qop = subprocess.run(
     [tool, "--pulse-to-qop"], input=compiled.mlir(), capture_output=True, text=True, check=True
 ).stdout

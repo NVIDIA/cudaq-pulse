@@ -3,22 +3,26 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Install cudaq-pulse from a directory of built wheels into fresh virtual
-# environments and test the installed package. The tests run from a copy of
-# tests/ outside the checkout, so the source tree is never importable.
+# environments and test the installed package. cudaq-pulse and the
+# cudaq-pulse-tools it requires are both installed from that directory, never
+# from an index; their other dependencies come from the index. The tests run
+# from a copy of tests/ outside the checkout, so the source tree is never
+# importable.
 #
 # Usage: tools/ci/install-test.sh [--python PY] [--wheelhouse DIR]
 #                                 [--driver-only] [--allow-old-driver]
 #                                 [--toolchain PREFIX] MODE...
 #
 # Modes:
-#   plugin    install cudaq-pulse, build the example pass plugin against the
-#             MLIR toolchain (--toolchain, or tools/fetch-mlir-toolchain.py's)
-#             and run the lit suite against the installed cudaq-pulse-opt
-#             (tools/ci/opt-plugin-test.sh)
 #   base      install cudaq-pulse; compile a kernel (on a free-threaded
 #             Python, without the GIL turning on), run the installed
 #             cudaq-pulse-opt on it, the doctor (no GPU required), and
-#             pytest -m "not gpu"
+#             pytest -m "not gpu"; then, installed without its dependencies,
+#             the doctor must fail and name the missing cudaq-pulse-tools
+#   plugin    build the example pass plugin against the MLIR toolchain
+#             (--toolchain, or tools/fetch-mlir-toolchain.py's) and run the
+#             lit suite against the installed cudaq-pulse-opt
+#             (tools/ci/opt-plugin-test.sh)
 #   extras    install [cu12] and [cu13], each in its own environment; the
 #             doctor must load every library and report that no device is
 #             present
@@ -67,9 +71,15 @@ if [[ ${#wheels[@]} -eq 0 ]]; then
   echo "error: no cudaq_pulse-*.whl in $wheelhouse" >&2
   exit 1
 fi
-# Pinning the version keeps pip from preferring a release on the index over
-# the wheels under test.
 version="$(basename "${wheels[0]}" | cut -d- -f2)"
+shopt -s nullglob
+tools_wheels=("$wheelhouse"/cudaq_pulse_tools-"${version}"-*.whl)
+shopt -u nullglob
+if [[ ${#tools_wheels[@]} -eq 0 ]]; then
+  echo "error: no cudaq_pulse_tools-${version}-*.whl in $wheelhouse; cudaq-pulse" \
+    "${version} requires it" >&2
+  exit 1
+fi
 test_requirements=("pytest>=8" "hypothesis>=6")
 
 work="$(mktemp -d)"
@@ -78,14 +88,18 @@ trap 'rm -rf "$work"' EXIT
 venv=""
 
 # new_venv NAME REQUIREMENT...: create $work/NAME, install into it, set $venv.
+# cudaq-pulse and cudaq-pulse-tools come from the wheelhouse alone (--no-index),
+# so that a release of the same version on the index is never tested instead;
+# the second install adds their other dependencies and REQUIREMENTs.
 new_venv() {
   venv="${work}/$1"
   shift
   echo "::group::Install $* into a fresh environment"
   "$python" -m venv "$venv"
   "${venv}/bin/python" -m pip install --quiet --no-cache-dir --upgrade pip
-  "${venv}/bin/python" -m pip install --no-cache-dir \
-    --find-links "$wheelhouse" --only-binary cudaq-pulse "$@"
+  "${venv}/bin/python" -m pip install --no-cache-dir --no-index --no-deps \
+    --find-links "$wheelhouse" "cudaq-pulse==${version}" "cudaq-pulse-tools==${version}"
+  "${venv}/bin/python" -m pip install --no-cache-dir "$@"
   "${venv}/bin/python" -m pip list
   echo "::endgroup::"
 }
@@ -179,6 +193,45 @@ opt_checks() {
   expect_in invalid.err "'pulse.square' op duration must be positive, got 0"
 }
 
+# The cudaq-pulse-opt on PATH is the cudaq-pulse-tools wheel's, of this version,
+# and the doctor finds it there.
+driver_checks() {
+  in_venv cudaq-pulse-opt --version >"${work}/version.out"
+  expect_in version.out "LLVM version"
+  local found
+  found="$(in_venv command -v cudaq-pulse-opt)"
+  if [[ "$found" != "${venv}/bin/cudaq-pulse-opt" ]]; then
+    echo "error: cudaq-pulse-opt on PATH is ${found}, not the installed wheel's" >&2
+    exit 1
+  fi
+  in_venv python -c "import importlib.metadata as m; v = m.version('cudaq-pulse-tools'); \
+assert v == '${version}', f'cudaq-pulse-tools {v} is installed, expected ${version}'"
+  in_venv python -m cudaq_pulse.doctor --allow-no-gpu >"${work}/doctor.out"
+  cat "${work}/doctor.out"
+  expect_in doctor.out "MLIR driver (cudaq-pulse-opt): ${version} at "
+}
+
+# Installed with --no-deps, cudaq-pulse lacks cudaq-pulse-tools: the doctor
+# must fail and say how to install it.
+missing_driver_check() {
+  echo "::group::Install cudaq-pulse without its dependencies"
+  venv="${work}/no-deps"
+  "$python" -m venv "$venv"
+  "${venv}/bin/python" -m pip install --quiet --no-cache-dir --upgrade pip
+  "${venv}/bin/python" -m pip install --no-cache-dir --no-index --no-deps \
+    --find-links "$wheelhouse" "cudaq-pulse==${version}"
+  "${venv}/bin/python" -m pip install --no-cache-dir numpy
+  echo "::endgroup::"
+  if in_venv python -m cudaq_pulse.doctor --allow-no-gpu >"${work}/doctor.out" 2>&1; then
+    cat "${work}/doctor.out"
+    echo "error: the doctor passed without cudaq-pulse-tools installed" >&2
+    exit 1
+  fi
+  cat "${work}/doctor.out"
+  expect_in doctor.out "pip install cudaq-pulse-tools==${version}"
+  drop_venv
+}
+
 # Exits 0 if a CUDA toolkit is visible: nvcc, a toolkit directory, a CUDA
 # runtime on the loader path, or CUDA_HOME/CUDA_PATH.
 toolkit_present() {
@@ -260,14 +313,14 @@ for mode in "${modes[@]}"; do
     base)
       new_venv base "cudaq-pulse==${version}" "${test_requirements[@]}"
       in_venv python smoke_compile.py
-      in_venv cudaq-pulse-opt --help >/dev/null
+      driver_checks
       opt_checks
-      in_venv python -m cudaq_pulse.doctor --allow-no-gpu
       run_pytest "not gpu"
       drop_venv
+      missing_driver_check
       ;;
     plugin)
-      new_venv plugin "cudaq-pulse==${version}" "cmake>=3.30" "ninja>=1.11" "lit>=18"
+      new_venv plugin "cmake>=3.30" "ninja>=1.11" "lit>=18"
       in_venv bash "${repo_root}/tools/ci/opt-plugin-test.sh" --python "${venv}/bin/python" \
         ${toolchain_args[@]+"${toolchain_args[@]}"}
       drop_venv

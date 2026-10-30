@@ -38,10 +38,14 @@ picks the wheel for your platform from the release:
    python -m cudaq_pulse.doctor
 
 Keep the version pin: it stops ``pip`` from choosing a different package of
-the same name from PyPI. The dependencies, CUDA libraries included, come from
-PyPI. A wheel downloaded from the release installs the same way, as
-``pip install ./cudaq_pulse-0.1.0-<platform>.whl`` (or
-``"./cudaq_pulse-0.1.0-<platform>.whl[cu12]"``).
+the same name from PyPI. ``cudaq-pulse-opt``, the MLIR driver, comes along
+automatically: it is in ``cudaq-pulse-tools``, a wheel of its own on the
+release, one per platform for every Python, which ``cudaq-pulse`` requires at
+the same version. The other
+dependencies, CUDA libraries included, come from PyPI. Wheels downloaded from
+the release install the same way when both are given, as
+``pip install ./cudaq_pulse-0.1.0-<platform>.whl ./cudaq_pulse_tools-0.1.0-<platform>.whl``
+(or with ``"./cudaq_pulse-0.1.0-<platform>.whl[cu12]"``).
 
 ``[gpu]`` is an alias for ``[cu12]``. Each CUDA extra installs cuDensityMat
 and the CUDA runtime libraries it needs from PyPI; the two extras write the
@@ -67,8 +71,8 @@ or newer and a Linux driver of at least 525.60.13 for ``[cu12]`` or 580 for
 cuQuantum SDK installation is needed. See :doc:`user_guide/gpu_execution`.
 
 Every installation can trace, compile, transform, inspect and simulate
-kernels, the last with the NumPy reference, and ships the
-``cudaq-pulse-opt`` MLIR driver. Only GPU simulation needs the GPU, and it
+kernels, the last with the NumPy reference, and has the
+``cudaq-pulse-opt`` MLIR driver on ``PATH``. Only GPU simulation needs the GPU, and it
 never degrades silently; see :ref:`gpu-errors`. If something does not
 work, run ``python -m cudaq_pulse.doctor`` first.
 

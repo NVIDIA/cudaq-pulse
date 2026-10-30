@@ -24,7 +24,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if ! opt="$(command -v cudaq-pulse-opt)"; then
-  echo "error: cudaq-pulse-opt is not on PATH; install the cudaq-pulse-opt wheel" >&2
+  echo "error: cudaq-pulse-opt is not on PATH; install the cudaq-pulse-tools wheel" >&2
   exit 1
 fi
 if [[ -z "$toolchain" ]]; then

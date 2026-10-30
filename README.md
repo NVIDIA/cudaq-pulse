@@ -38,10 +38,14 @@ python -m cudaq_pulse.doctor
 ```
 
 Keep the version pin: it stops `pip` from choosing a different package of
-the same name from PyPI. The CUDA libraries and the other dependencies come
-from PyPI. You can also download the wheel for your platform from the release
-and install the file, `pip install ./cudaq_pulse-0.1.0-<platform>.whl`, or
-`pip install "./cudaq_pulse-0.1.0-<platform>.whl[cu12]"` for GPU simulation.
+the same name from PyPI. `cudaq-pulse-opt`, the MLIR driver, comes along
+automatically: it is in `cudaq-pulse-tools`, a wheel of its own on the
+release, one per platform for every Python, which `cudaq-pulse` requires at
+the same version. The CUDA
+libraries and the other dependencies come from PyPI. You can also download
+the two wheels for your platform from the release and install both files,
+`pip install ./cudaq_pulse-0.1.0-<platform>.whl ./cudaq_pulse_tools-0.1.0-<platform>.whl`,
+or with `"./cudaq_pulse-0.1.0-<platform>.whl[cu12]"` for GPU simulation.
 
 `[gpu]` is an alias for `[cu12]`. The `cu12` and `cu13` extras install into
 the same directories, so install only one of them per environment.
@@ -156,8 +160,9 @@ immediately with the reason, instead of skipping them.
 
 ## Build from source
 
-See [CONTRIBUTING.md](https://github.com/NVIDIA/cudaq-pulse/blob/main/CONTRIBUTING.md). In short, `pip install .` from a
-clone builds a wheel locally against the pinned, checksum-verified MLIR
+See [CONTRIBUTING.md](https://github.com/NVIDIA/cudaq-pulse/blob/main/CONTRIBUTING.md). In short,
+`pip install ./packaging/cudaq-pulse-tools .` from a clone builds the two
+wheels, `cudaq-pulse-tools` and `cudaq-pulse`, locally against the pinned, checksum-verified MLIR
 toolchain, which CMake downloads on supported platforms (or set `MLIR_DIR` to
 your own MLIR 22 build). Nothing else is built from source. Each GitHub
 release carries the wheels and the source distribution.
@@ -213,6 +218,8 @@ What installing and building retrieve:
   bindings, and `cudaq-pulse-opt`
 - `core/runtime/` — cuDensityMat runtime library loaded by JIT-compiled code
 - `cmake/` — dependency, Python staging, testing, and documentation modules
+- `packaging/cudaq-pulse-tools/` — the `cudaq-pulse-tools` wheel
+  (`cudaq-pulse-opt`), built from this tree
 - `tools/` — MLIR toolchain build/fetch scripts and CI helpers
 - `test/` — lit and `FileCheck` compiler regression tests
 - `tests/` — pytest unit, workload, and GPU tests

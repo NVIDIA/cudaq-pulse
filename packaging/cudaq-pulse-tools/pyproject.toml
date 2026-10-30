@@ -1,0 +1,93 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# cudaq-pulse-tools: the command-line compiler tools of cudaq-pulse (for now
+# the cudaq-pulse-opt MLIR driver), built from the repository root and
+# installed by `pip install cudaq-pulse`, which requires this distribution at
+# its own version. One wheel per platform serves every Python, so the driver
+# is not shipped again in each cudaq-pulse wheel. There is no sdist: the
+# sources are the repository's; build from a checkout with
+# `pip install ./packaging/cudaq-pulse-tools`.
+[build-system]
+requires = [
+    "scikit-build-core>=0.11",
+    "setuptools-scm>=9",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "cudaq-pulse-tools"
+dynamic = ["version"]
+description = "Command-line compiler tools for cudaq-pulse"
+readme = { text = "cudaq-pulse-tools provides cudaq-pulse-opt, which runs the cudaq-pulse dialects and passes on MLIR files and loads pass plugins (--load-pass-plugin). `pip install cudaq-pulse` installs it; see https://nvidia.github.io/cudaq-pulse/.", content-type = "text/markdown" }
+authors = [{ name = "NVIDIA Corporation" }]
+# cudaq-pulse-opt is Apache-2.0 and statically links LLVM/MLIR (with the parts
+# of LLVM's Support library under their own terms). THIRD_PARTY_NOTICES lists
+# them with their license texts; tools/third-party-notices.py generates it
+# from the driver's linker map, and the wheel build fails if it no longer
+# covers what the driver links.
+license = "Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND Spencer-94 AND (CC0-1.0 OR Apache-2.0) AND Unicode-DFS-2015 AND LicenseRef-LLVM-MD5"
+# LICENSE and LICENSES/ are symbolic links to the repository's texts.
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES", "LICENSES/*"]
+requires-python = ">=3.12"
+keywords = ["quantum", "pulse", "MLIR", "compiler", "CUDA-Q"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: C++",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Software Development :: Compilers",
+]
+
+[project.urls]
+Homepage = "https://github.com/NVIDIA/cudaq-pulse"
+Documentation = "https://nvidia.github.io/cudaq-pulse/"
+Repository = "https://github.com/NVIDIA/cudaq-pulse"
+Issues = "https://github.com/NVIDIA/cudaq-pulse/issues"
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+cmake.source-dir = "../.."
+build-dir = "../../build/tools-{wheel_tag}"
+cmake.build-type = "Release"
+install.components = ["CudaqPulseOpt"]
+install.strip = true
+wheel.packages = []
+# A Python-independent executable: py3-none-<platform>.
+wheel.py-api = "py3"
+metadata.version.provider = "scikit_build_core.metadata.setuptools_scm"
+
+[tool.scikit-build.cmake.define]
+CUDAQ_PULSE_BUILD_PYTHON = "OFF"
+CUDAQ_PULSE_BUILD_TESTS = "OFF"
+
+# The same versions as cudaq-pulse, from the repository's v* tags.
+[tool.setuptools_scm]
+root = "../.."
+tag_regex = '^v(?P<version>\d+(?:\.\d+)*(?:(?:a|b|rc)\d+|\.post\d+)?)$'
+
+[tool.setuptools_scm.scm.git]
+describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "v*"]
+
+# Built from the repository root with `--package-dir packaging/cudaq-pulse-tools`
+# (.github/workflows/wheels.yml), so {project} is the root.
+[tool.cibuildwheel]
+build = ["cp312-*"]
+skip = ["*-musllinux_*"]
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+build-verbosity = 1
+test-requires = ["cmake>=3.30", "ninja>=1.11", "lit>=18"]
+test-command = [
+    "cudaq-pulse-opt --version",
+    "bash {project}/tools/ci/opt-plugin-test.sh",
+]
+
+[tool.cibuildwheel.linux]
+before-all = "python3.12 tools/fetch-mlir-toolchain.py"
+
+[tool.cibuildwheel.macos]
+archs = ["arm64"]
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
