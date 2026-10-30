@@ -1,0 +1,61 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+"""Tools that some tests need: skipped without them locally, required in CI.
+
+When ``CI`` is set (GitHub Actions sets it), a missing tool fails the test
+instead of skipping it, so a job that lost a tool can't pass by skipping
+the tests that use it. A job that leaves a tool out on purpose names it in
+``CUDAQ_PULSE_OPTIONAL_TOOLS``, comma-separated.
+"""
+
+from __future__ import annotations
+
+import importlib
+import os
+import shutil
+from types import ModuleType
+from typing import NoReturn
+
+import pytest
+
+OPTIONAL_TOOLS_VAR = "CUDAQ_PULSE_OPTIONAL_TOOLS"
+
+
+def in_ci() -> bool:
+    return os.environ.get("CI", "").strip().lower() not in ("", "0", "false", "no")
+
+
+def _optional() -> set[str]:
+    return {name.strip() for name in os.environ.get(OPTIONAL_TOOLS_VAR, "").split(",")}
+
+
+def missing(tool: str, reason: str) -> NoReturn:
+    """Skip the test, or fail it in CI unless *tool* is optional there."""
+    if in_ci() and tool not in _optional():
+        pytest.fail(
+            f"{reason}, and CI requires it (a job that leaves it out on purpose "
+            f"sets {OPTIONAL_TOOLS_VAR}={tool})",
+            pytrace=False,
+        )
+    pytest.skip(reason)
+
+
+def import_module(name: str, tool: str | None = None) -> ModuleType:
+    """Import *name*, or report the tool that provides it as missing."""
+    try:
+        return importlib.import_module(name)
+    except ImportError:
+        missing(tool or name.partition(".")[0], f"{name} is not installed")
+
+
+def c_compiler() -> str:
+    """The first C compiler on PATH."""
+    compiler = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if compiler is None:
+        missing("cc", "no C compiler (cc, clang or gcc) on PATH")
+    return compiler

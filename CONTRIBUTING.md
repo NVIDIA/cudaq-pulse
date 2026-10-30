@@ -92,6 +92,10 @@ sets `CUDAQ_PULSE_TARGET=ladder:8192` for the whole session. Tests run with
 the default unroll threshold; a test of a rolled loop of a few iterations
 passes `unroll_threshold=` to `pulse.compile` or `@pulse.kernel`.
 
+Tests that need pyright, mypy, matplotlib or a C compiler skip without
+them, except when `CI` is set: there they fail, unless the job names the
+tool in `CUDAQ_PULSE_OPTIONAL_TOOLS` (`tests/_tools.py`).
+
 The property tests use hypothesis profiles (`tests/property_settings.py`),
 chosen with `HYPOTHESIS_PROFILE`: `ci`, the default, is derandomized so every
 run checks the same examples; `dev` draws new examples; `nightly` draws ten

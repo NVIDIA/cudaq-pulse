@@ -285,6 +285,8 @@ jobs:
     timeout-minutes: 90
     env:
       PYTHONWARNINGS: "error:The global interpreter lock (GIL) has been enabled:RuntimeWarning"
+      # The type checkers' tests run in the test job (tests/_tools.py).
+      CUDAQ_PULSE_OPTIONAL_TOOLS: pyright,mypy
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

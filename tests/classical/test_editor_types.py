@@ -28,6 +28,8 @@ import cudaq_pulse
 import pytest
 from cudaq_pulse import ops
 
+from tests._tools import missing
+
 _ROOT = Path(__file__).resolve().parents[2]
 _EXAMPLES = [
     _ROOT / "examples" / "19_classical_calls.py",
@@ -83,7 +85,7 @@ def pyright(
 ) -> list[tuple[Path, int, str, str]]:
     exe = shutil.which("pyright")
     if exe is None:
-        pytest.skip("pyright is not installed")
+        missing("pyright", "pyright is not installed")
     work = tmp_path_factory.mktemp("pyright")
     config = work / "pyrightconfig.json"
     config.write_text(
@@ -125,7 +127,7 @@ def mypy(
     elif (exe := shutil.which("mypy")) is not None:
         command = [exe, "--python-executable", sys.executable]
     else:
-        pytest.skip("mypy is not installed")
+        missing("mypy", "mypy is not installed")
     work = tmp_path_factory.mktemp("mypy")
     config = work / "mypy.ini"
     config.write_text("[mypy]\ncheck_untyped_defs = True\n")

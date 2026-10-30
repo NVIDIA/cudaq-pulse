@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import struct
 import subprocess
 from pathlib import Path
@@ -26,6 +25,8 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import classical
 from cudaq_pulse.classical import IQ, Bits, Byte, Float, Floats, Integer, Integers, Levels, wire
+
+from tests._tools import c_compiler
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "realtime_wire.json").read_text())
 
@@ -150,9 +151,7 @@ void parity(const void *request, void *out, size_t slot) {
 
 @pytest.fixture(scope="module")
 def handler_library(tmp_path_factory):
-    compiler = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
-    if compiler is None:
-        pytest.skip("no C compiler")
+    compiler = c_compiler()
     directory = tmp_path_factory.mktemp("handler")
     source = directory / "parity.c"
     source.write_text(_C_HANDLER)
