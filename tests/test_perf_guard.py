@@ -53,11 +53,6 @@ BASELINE = _ROOT / "benchmarks" / "baselines" / "frontend_perf.json"
 TOLERANCE = 3.0
 # A retained loop's compile time must not grow with its trip count.
 FLAT_LOOP_LIMIT = 2.0
-# A sweep of new values costs about what repeating one value does, and a
-# compile per value about 100x that: the limit sits between the two, far
-# enough from both that a loaded runner does not cross it. What a new value
-# costs exactly is gated by tools/perf-gate.py (bind_new_value).
-RECOMPILE_LIMIT = 10.0
 
 
 def _best(fn: Callable[[], object], min_reps: int = 5, budget_s: float = 0.25) -> float:
@@ -258,8 +253,41 @@ def test_a_long_program_is_exported_and_checked_in_linear_time():
     assert times[4000] < 8 * times[500] * TOLERANCE, times
 
 
+def _sweep(compiled, sweep: list[float], monkeypatch) -> None:
+    """Lower *compiled* at each length of *sweep*: after the first, none may
+    trace the kernel or build a native module, and each shares the first's.
+
+    These count what a compile does rather than time it, so a loaded runner
+    can't fail them. What binding a new value costs is measured by
+    tools/perf-gate.py (bind_new_value)."""
+    from cudaq_pulse import compiler
+    from cudaq_pulse.kernel import bytecode_bridge
+
+    first = compiled.lower(Q[0], sweep[0])
+    work = {"traces": 0, "modules": 0}
+    trace, builder = bytecode_bridge._trace_kernel_with_builder, compiler.PulseModuleBuilder
+
+    def counted_trace(*args, **kwargs):
+        work["traces"] += 1
+        return trace(*args, **kwargs)
+
+    def counted_builder():
+        work["modules"] += 1
+        return builder()
+
+    monkeypatch.setattr(bytecode_bridge, "_trace_kernel_with_builder", counted_trace)
+    monkeypatch.setattr(compiler, "PulseModuleBuilder", counted_builder)
+    lowered = [compiled.lower(Q[0], tau) for tau in sweep[1:]]
+    monkeypatch.undo()
+
+    assert work == {"traces": 0, "modules": 0}
+    assert compiled.cache_info().compiled == 1
+    assert all(low._module is first._module for low in lowered)
+    assert [low.arguments for low in lowered] == [(tau,) for tau in sweep[1:]]
+
+
 @pytest.mark.scaling
-def test_a_wait_length_sweep_compiles_once():
+def test_a_wait_length_sweep_compiles_once(monkeypatch):
     @pulse.kernel
     def t1(q, tau: float):
         d = get_drive_line(q)
@@ -269,13 +297,7 @@ def test_a_wait_length_sweep_compiles_once():
         sync(d, r)
         readout(r, square(100, 0.05))
 
-    compiled = pulse.compile(t1)
-    sweep = [float(4 * i + 1) for i in range(1000)]
-    # A new length binds like a cached one; a compile costs about 100x as much.
-    new = _best(lambda: [compiled.lower(Q[0], tau) for tau in sweep], 5, 0)
-    assert compiled.cache_info().compiled == 1
-    cached = _best(lambda: [compiled.lower(Q[0], sweep[0]) for _ in sweep], 5, 0)
-    assert new < cached * RECOMPILE_LIMIT, (new, cached)
+    _sweep(pulse.compile(t1), [float(4 * i + 1) for i in range(1000)], monkeypatch)
 
 
 @pytest.mark.scaling
@@ -296,7 +318,7 @@ def test_exporting_a_call_again_does_not_specialize_again():
 
 
 @pytest.mark.scaling
-def test_a_sweep_of_a_wait_from_an_answer_and_a_float_compiles_once():
+def test_a_sweep_of_a_wait_from_an_answer_and_a_float_compiles_once(monkeypatch):
     from cudaq_pulse.classical import Float
 
     @pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=50, name="perf_offset")
@@ -312,12 +334,7 @@ def test_a_sweep_of_a_wait_from_an_answer_and_a_float_compiles_once():
         sync(d, r)
         readout(r, square(100, 0.05))
 
-    compiled = pulse.compile(t1)
-    sweep = [float(4 * i + 1) for i in range(1000)]
-    new = _best(lambda: [compiled.lower(Q[0], tau) for tau in sweep], 5, 0)
-    assert compiled.cache_info().compiled == 1
-    cached = _best(lambda: [compiled.lower(Q[0], sweep[0]) for _ in sweep], 5, 0)
-    assert new < cached * RECOMPILE_LIMIT, (new, cached)
+    _sweep(pulse.compile(t1), [float(4 * i + 1) for i in range(1000)], monkeypatch)
 
 
 # Peak memory a simulation of two qutrits may add: their 9 x 9 density matrix

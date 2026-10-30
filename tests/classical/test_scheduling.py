@@ -362,18 +362,22 @@ def _many(n, links):
 
 @pytest.mark.parametrize("links", [1, 4])
 def test_very_many_calls_schedule_in_linear_time(links):
+    # The best of three, in CPU time: one wall-clock sample per size failed
+    # on a loaded machine, where other processes stretch it.
     timings = {}
     for n in (500, 2000):
         kernel = _many(n, links)
-        t0 = time.perf_counter()
-        low = pulse.compile(kernel, schedule="asap").lower(Q[0])
-        timings[n] = time.perf_counter() - t0
+        timings[n] = float("inf")
+        for _ in range(3):
+            t0 = time.process_time()
+            low = pulse.compile(kernel, schedule="asap").lower(Q[0])
+            timings[n] = min(timings[n], time.process_time() - t0)
         calls = low.classical_report()
         assert len(calls) == n
         # Each call waits for the previous drive; answers are due 41 later.
         assert calls[-1].due_cycles == calls[-1].submit_cycles + 1 + 40
     # 4x the calls in well under 16x the time (quadratic would be 16x).
-    assert timings[2000] < 8 * timings[500]
+    assert timings[2000] < 8 * timings[500], timings
 
 
 # ── Properties ───────────────────────────────────────────────────────────────
