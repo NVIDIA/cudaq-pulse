@@ -64,7 +64,7 @@ class Future:
         self.answers: Any = None
         self.timeout_ns: float | None = None
 
-    def result(self, timeout: int | Time | None = None) -> Any:
+    def result(self, timeout: float | Time | None = None) -> Any:
         """Take the answer; only meaningful while a kernel is traced."""
         raise CompilationError("a future's result() is taken inside the kernel that submitted it")
 

@@ -432,7 +432,8 @@ behavior may change in any 0.x release.
   `return syndrome[:2]`); its unsized list parameters make versions as for
   `@pulse.classical`. Simulation and emulation check every answer's list
   lengths. `fn.submit(...).result()` calls it in a kernel, with `timeout=`
-  (a time, `350 * pulse.ns`) for a fallback. Type checkers and editors see
+  (a time such as `350 * pulse.ns`, or a number of nanoseconds, as the
+  declaration's latencies take) for a fallback. Type checkers and editors see
   the function's own signature: a wrong argument is an error where it is
   passed, and
   `.submit()` returns a `Pending` of the result's type. Links are named in

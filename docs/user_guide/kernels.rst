@@ -148,9 +148,9 @@ them from a calibration the kernel closes over.
   passed to a ``float`` parameter is a ``TypeError``. The answer of a
   classical call converts the same way: ``wait(d, f.result() * pulse.ns,
   bounds=(0, 4 * pulse.us))``.
-- ``result(timeout=...)`` takes cycles or a time, as every duration does.
-  Declaration options such as ``max_latency_ns=350`` stay plain numbers in
-  nanoseconds.
+- ``result(timeout=...)`` takes a time or a number of nanoseconds, as the
+  declaration options such as ``max_latency_ns=350`` do, of whole cycles of
+  the program clock.
 
 Control Flow
 ------------

@@ -619,7 +619,7 @@ def test_timeout_at_the_call_gives_an_ok_bit():
     @pulse.kernel
     def k(q):
         d = get_drive_line(q)
-        ok, value = double.submit(0.5).result(timeout=100)
+        ok, value = double.submit(0.5).result(timeout=50)
         if ok:
             drive(d, square(40, value))
 
