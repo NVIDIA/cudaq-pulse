@@ -3355,6 +3355,9 @@ class PulseIREmitter:
 
         if line_op:
             self._lines.add((call_args[0].vid, fname), results)
+        elif fname == "drive" and len(results) == 2:
+            # drive(line, waveform, tone) -> (line, tone): the common case.
+            self._rebind_pair(call_args[0], results[0], call_args[2], results[1])
         else:
             self._rebind_linear(fname, call_args, results)
         return results
@@ -3418,14 +3421,14 @@ class PulseIREmitter:
         unclaimed operand of the same type, wherever the kernel holds it.
         """
         slots = self._slots
-        if fname == "drive" and len(results) == 2:
-            # drive(line, waveform, tone) -> (line, tone): the common case.
-            self._rebind_pair(call_args[0], results[0], call_args[2], results[1])
-            return
         names: dict[int, str | None] | None = None
         if fname == "sync" and len(call_args) == 2 and call_args[0] is not call_args[1]:
             # Two distinct lines: their names are found in one pass.
             first, second = call_args
+            if first.chan is not None and second.chan is not None and len(results) == 2:
+                # Both are claimable, so each claims its own result.
+                self._rebind_pair(first, results[0], second, results[1])
+                return
             found = self._local_names(first, second)
             names = {id(first): found[0], id(second): found[1]}
         arg_info: list[tuple[str | None, IRValue | None, Any, Any]] = []
