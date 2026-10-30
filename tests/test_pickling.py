@@ -284,7 +284,7 @@ def test_a_calibration_of_other_values_makes_another_device():
     shipped = pulse.device(_SHIPPED_TARGET).calibration
     data = copy.deepcopy(shipped._data)
     same = Calibration(data, name="mine")
-    data["cooldowns"]["K22-main"] = "edited"
+    data["cooldowns"]["2022-main"] = "edited"
     other = Calibration(data, name="mine")
     target = make_target(_SHIPPED_TARGET)
     devices = [pulse.device({"target": target, "calibration": c}) for c in (same, other)]

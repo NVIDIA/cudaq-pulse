@@ -124,7 +124,7 @@ defect bands and feedline groups. Every value records its
 .. code-block:: python
 
    dev = pulse.device({"target": "transmon_17q",
-                       "calibration": "transmon_17q", "cooldown": "K22-main"})
+                       "calibration": "transmon_17q", "cooldown": "2022-main"})
    cal = dev.calibration
    cal.entry("qubits", "D4", "ec")        # value with its provenance
    cal.exchange_hz("X2-D4")               # J_qq at the idle points

@@ -696,7 +696,7 @@ def device(config: Mapping[str, Any] | str | os.PathLike[str] | None = None) -> 
     and may give a layout, a calibration and a program clock::
 
         {"target": "transmon_17q", "layout": [4, 5, 6],
-         "calibration": "transmon_17q", "cooldown": "K22-main", "clock_ghz": 2.0}
+         "calibration": "transmon_17q", "cooldown": "2022-main", "clock_ghz": 2.0}
 
     ``layout[i]`` is the carrier that qudit ``i`` names; by default every
     carrier of the target, in order. ``calibration`` is a ``Calibration``,

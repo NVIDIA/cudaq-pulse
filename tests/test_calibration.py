@@ -58,7 +58,7 @@ def test_the_shipped_file_holds_no_local_paths_or_working_notes():
 
 
 def test_cooldowns_and_provenance(cal):
-    assert cal.cooldown == "K22-main" and "HEL25" in cal.cooldowns
+    assert cal.cooldown == "2022-main" and "2025-flux-tuning" in cal.cooldowns
     ec = cal.entry("qubits", "D4", "ec")
     assert ec["kind"] == "fitted" and ec["units"] == "Hz" and "Tab. I" in ec["source"]
     assert cal.value("coupling", "device_default", "g_11_20") == 7.0e6
@@ -73,10 +73,10 @@ def test_a_loaded_calibration_keeps_the_values_it_parsed():
     # shipped one is shared by every device: no use of it may change it.
     shipped = pulse.device("transmon_17q").calibration
     parsed = json.loads((_SHIPPED / "transmon_17q.json").read_text())
-    for cal in (shipped, Calibration.load("transmon_17q", cooldown="HEL25")):
+    for cal in (shipped, Calibration.load("transmon_17q", cooldown="2025-flux-tuning")):
         pair = cal.pairs[0]
         qubit = cal.flux_qubits[0]
-        cal.cooldowns["K22-main"] = "changed"
+        cal.cooldowns["2022-main"] = "changed"
         cal.entry("qubits", qubit, "ec")["value"] = 0.0
         cal.entry("coupling", "device_default", "g_11_20")["uncertainty"] = None
         cal.value("coupling", "device_default", "g_11_20")
@@ -177,11 +177,11 @@ def test_a_device_loads_a_calibration_from_its_config(tmp_path, cal):
 
     assert x2_d4(custom) == pytest.approx(1.1 * x2_d4(base), rel=1e-9)
     with pytest.raises(ValueError, match="cooldown"):
-        pulse.device({"target": "transmon_17q", "cooldown": "HEL25"})
+        pulse.device({"target": "transmon_17q", "cooldown": "2025-flux-tuning"})
     other = pulse.device(
-        {"target": "transmon_17q", "calibration": "transmon_17q", "cooldown": "HEL25"}
+        {"target": "transmon_17q", "calibration": "transmon_17q", "cooldown": "2025-flux-tuning"}
     )
-    assert other.calibration.cooldown == "HEL25"
+    assert other.calibration.cooldown == "2025-flux-tuning"
 
 
 def test_a_published_only_target_uses_the_published_value_over_sqrt2():

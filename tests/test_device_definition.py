@@ -86,12 +86,12 @@ def test_each_check_names_its_path(config, path, text):
 
 
 def test_a_calibration_loaded_for_another_cooldown():
-    calibration = Calibration.load("transmon_17q", cooldown="HEL25")
+    calibration = Calibration.load("transmon_17q", cooldown="2025-flux-tuning")
     (problem,) = _problems(
-        {"target": TRANSMON_17Q, "calibration": calibration, "cooldown": "K22-main"}
+        {"target": TRANSMON_17Q, "calibration": calibration, "cooldown": "2022-main"}
     ).problems
     assert problem.path == "cooldown"
-    assert problem.fix == "pass Calibration.load(..., cooldown='K22-main')"
+    assert problem.fix == "pass Calibration.load(..., cooldown='2022-main')"
 
 
 def test_a_target_description_is_checked_like_a_name():
