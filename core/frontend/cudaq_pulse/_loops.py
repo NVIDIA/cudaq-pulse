@@ -1,0 +1,706 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+"""The controller checks of a program whose long rolled loops the native
+walk summarized (``ControllerWalk::summarizeLoop``): the events of one
+iteration stand for those of every later one, so each check works on a
+loop's body once and counts its copies. A check finds what it finds with
+every iteration played, in the same order; past ``LAZY_AFTER`` violations
+they are built when read. Only a check that met such a loop loads this."""
+
+from __future__ import annotations
+
+import math
+import operator
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, overload
+
+from .controller import (
+    _PLAYED,
+    ControllerLimits,
+    _exclusive,
+    _peak_amplitude,
+    _samples_per_own_cycle,
+    resources,
+    shape_key,
+)
+
+if TYPE_CHECKING:
+    from .compiler import Lowered
+
+# Up to this many violations are a list, as without summarized loops.
+LAZY_AFTER = 10_000
+# The copies of loops a check plays one by one, at most: those whose events
+# interleave in time with others on one line, or whose feedback depends on a
+# readout before the loop.
+_MAX_PLAYED = 1 << 20
+
+
+class _Rep:
+    """Copies of the events of ``body``: copy j starts j * ``period``
+    cycles after the first, which the events of ``body`` are."""
+
+    __slots__ = ("begin", "end", "copies", "period", "depth", "body", "orig")
+
+    def __init__(self, begin: int, end: int, copies: int, period: int, depth: int) -> None:
+        self.begin, self.end, self.copies = begin, end, copies
+        self.period, self.depth = period, depth
+        self.body: list[Any] = []
+        self.orig = self
+
+    def keeping(self, body: list[Any]) -> _Rep:
+        kept = _Rep(self.begin, self.end, self.copies, self.period, self.depth)
+        kept.body, kept.orig = body, self.orig
+        return kept
+
+
+class _Text:
+    """A violation: its pieces joined, an int piece shifted by the cycles
+    its copy starts after the first."""
+
+    __slots__ = ("pieces",)
+
+    def __init__(self, *pieces: str | int) -> None:
+        self.pieces = pieces
+
+    def render(self, shift: int) -> str:
+        return "".join(p if isinstance(p, str) else str(p + shift) for p in self.pieces)
+
+
+class _Copies:
+    """The violations ``parts`` of copies ``first`` to ``count`` - 1 of a
+    loop, copy j shifted by ``offset`` + j * ``period`` cycles."""
+
+    __slots__ = ("parts", "first", "count", "period", "offset", "inner", "size")
+
+    def __init__(
+        self, parts: list[Any], first: int, count: int, period: int, offset: int = 0
+    ) -> None:
+        self.parts, self.first, self.count = parts, first, count
+        self.period, self.offset = period, offset
+        self.inner = _length(parts)
+        self.size = (count - first) * self.inner
+
+
+def _length(parts: Sequence[Any]) -> int:
+    return sum(p.size if type(p) is _Copies else 1 for p in parts)
+
+
+def _render(part: Any, shift: int) -> str:
+    return part if type(part) is str else part.render(shift)
+
+
+def _each(parts: Sequence[Any], shift: int) -> Iterator[str]:
+    for part in parts:
+        if type(part) is _Copies:
+            if not part.size:
+                continue
+            for j in range(part.first, part.count):
+                yield from _each(part.parts, shift + part.offset + j * part.period)
+        else:
+            yield _render(part, shift)
+
+
+class Violations(Sequence[str]):
+    """The limits a program exceeds, each built when read: the checks of a
+    rolled loop's body stand for every iteration it plays. ``len()`` is
+    exact; indexing, slicing and iterating give what a list of every
+    violation would."""
+
+    __slots__ = ("_parts", "_size")
+
+    def __init__(self, parts: list[Any]) -> None:
+        self._parts = parts
+        self._size = _length(parts)
+
+    def __len__(self) -> int:
+        return self._size
+
+    @overload
+    def __getitem__(self, index: int) -> str: ...
+    @overload
+    def __getitem__(self, index: slice) -> list[str]: ...
+    def __getitem__(self, index: int | slice) -> str | list[str]:
+        if isinstance(index, slice):
+            return [self[k] for k in range(*index.indices(self._size))]
+        k = operator.index(index)
+        if k < 0:
+            k += self._size
+        if not 0 <= k < self._size:
+            raise IndexError("violation index out of range")
+        parts, shift = self._parts, 0
+        while True:
+            for part in parts:
+                if type(part) is _Copies:
+                    if k < part.size:
+                        j, k = divmod(k, part.inner)
+                        shift += part.offset + (part.first + j) * part.period
+                        parts = part.parts
+                        break
+                    k -= part.size
+                elif k == 0:
+                    return _render(part, shift)
+                else:
+                    k -= 1
+
+    def __iter__(self) -> Iterator[str]:
+        return _each(self._parts, 0)
+
+    def __repr__(self) -> str:
+        return f"<{self._size} controller violations>"
+
+
+def _tree(count: int, repeats: Sequence[Sequence[int]]) -> tuple[list[Any], list[tuple[_Rep, ...]]]:
+    """The events 0 to *count* - 1 with their repeats as nested nodes, and
+    the repeats each event lies in, outermost first."""
+    reps = sorted((_Rep(*r[:5]) for r in repeats if r[1] > r[0]), key=lambda r: (r.begin, -r.end))
+    chains: list[tuple[_Rep, ...]] = [()] * count
+    at = 0
+
+    def build(lo: int, hi: int, chain: tuple[_Rep, ...]) -> list[Any]:
+        nonlocal at
+        nodes: list[Any] = []
+        i = lo
+        while i < hi:
+            if at < len(reps) and reps[at].begin == i and reps[at].end <= hi:
+                rep = reps[at]
+                at += 1
+                rep.body = build(rep.begin, rep.end, chain + (rep,))
+                nodes.append(rep)
+                i = rep.end
+            else:
+                chains[i] = chain
+                nodes.append(i)
+                i += 1
+        return nodes
+
+    return build(0, count, ()), chains
+
+
+def _keep(nodes: list[Any], keep: Callable[[int], bool]) -> list[Any]:
+    kept: list[Any] = []
+    for node in nodes:
+        if type(node) is int:
+            if keep(node):
+                kept.append(node)
+        else:
+            body = _keep(node.body, keep)
+            if body:
+                kept.append(node.keeping(body))
+    return kept
+
+
+def _count(nodes: list[Any]) -> int:
+    return sum(1 if type(n) is int else n.copies * _count(n.body) for n in nodes)
+
+
+def _events_of(nodes: list[Any]) -> Iterator[int]:
+    for node in nodes:
+        if type(node) is int:
+            yield node
+        else:
+            yield from _events_of(node.body)
+
+
+def _each_event(nodes: list[Any], make: Callable[[int], Any]) -> list[Any]:
+    """The violation *make* gives for each event of *nodes* (or ``None``),
+    in program order."""
+    parts: list[Any] = []
+    for node in nodes:
+        if type(node) is int:
+            part = make(node)
+            if part is not None:
+                parts.append(part)
+        else:
+            body = _each_event(node.body, make)
+            if body:
+                parts.append(_Copies(body, 0, node.copies, node.period))
+    return parts
+
+
+class _Budget:
+    def __init__(self) -> None:
+        self.left = _MAX_PLAYED
+
+    def spend(self, copies: int) -> None:
+        self.left -= copies
+        if self.left < 0:
+            raise ValueError(
+                f"the controller check plays more than {_MAX_PLAYED} copies of rolled loops "
+                "one by one, whose events interleave with others on one line or depend on a "
+                "readout before the loop; give the loops fewer iterations"
+            )
+
+
+# An event of a check: (index, shift in cycles, the copies it is in).
+_At = tuple[int, int, tuple[Any, ...]]
+
+
+class _Pairs:
+    """Each event of a line or acquirer with the latest earlier one it can
+    follow on one path (``controller._pairs``), a loop's copies alike."""
+
+    def __init__(
+        self,
+        events: Sequence[Mapping[str, Any]],
+        pair: Callable[[Mapping[str, Any], int, Mapping[str, Any], int], Any],
+        budget: _Budget,
+    ) -> None:
+        self.events, self.pair, self.budget = events, pair, budget
+        self.windows: dict[int, tuple[int, int]] = {}
+
+    def window(self, node: Any) -> tuple[int, int]:
+        """The first and last start of *node* (all its copies)."""
+        if type(node) is int:
+            start = self.events[node]["start_cycles"]
+            return start, start
+        found = self.windows.get(id(node))
+        if found is None:
+            lo, hi = self.body_window(node)
+            found = self.windows[id(node)] = (lo, hi + (node.copies - 1) * node.period)
+        return found
+
+    def body_window(self, rep: _Rep) -> tuple[int, int]:
+        spans = [self.window(child) for child in rep.body]
+        return min(s[0] for s in spans), max(s[1] for s in spans)
+
+    def ordered(self, items: list[tuple[Any, int, tuple[Any, ...]]]) -> list[Any]:
+        """*items* in start order, a repeat a block of copies that each come
+        whole; one that does not is played copy by copy."""
+        while True:
+            spans = [self.window(node) for node, _, _ in items]
+            order = sorted(range(len(items)), key=lambda k: (spans[k][0] + items[k][1], k))
+            bad = None
+            for k in order:
+                node = items[k][0]
+                if type(node) is not int:
+                    lo, hi = self.body_window(node)
+                    if hi - lo > node.period:
+                        bad = k
+                        break
+            if bad is None:
+                for a, b in zip(order, order[1:]):
+                    hi = spans[a][1] + items[a][1]
+                    lo = spans[b][0] + items[b][1]
+                    if hi > lo or (hi == lo and a > b):
+                        bad = a if type(items[a][0]) is not int else b
+                        break
+            if bad is None:
+                return [items[k] for k in order]
+            node, dt, path = items[bad]
+            self.budget.spend(node.copies)
+            items = (
+                items[:bad]
+                + [
+                    (child, dt + j * node.period, path + ((id(node.orig), j),))
+                    for j in range(node.copies)
+                    for child in node.body
+                ]
+                + items[bad + 1 :]
+            )
+
+    def walk(
+        self, items: list[tuple[Any, int, tuple[Any, ...]]], before: _At | None
+    ) -> tuple[list[Any], _At | None]:
+        """The pairs of *items* after *before*, and the last of them."""
+        events = self.events
+        parts: list[Any] = []
+        run: list[_At] = []
+        anchor = last = before
+        for node, dt, path in self.ordered(items):
+            if type(node) is int:
+                event = events[node]
+                mate = anchor
+                for other in reversed(run):
+                    if other[2] != path or not _exclusive(events[other[0]], event):
+                        mate = other
+                        break
+                if mate is not None:
+                    part = self.pair(events[mate[0]], mate[1], event, dt)
+                    if part is not None:
+                        parts.append(part)
+                last = (node, dt, path)
+                run.append(last)
+                continue
+            inner = path + (id(node.orig),)
+            first, last = self.walk([(child, dt, inner) for child in node.body], last)
+            parts.extend(first)
+            assert last is not None
+            if node.copies > 1:
+                period = node.period
+                again, end = self.walk(
+                    [(child, 0, inner) for child in node.body],
+                    (last[0], last[1] - dt - period, ("copy",)),
+                )
+                if again:
+                    parts.append(_Copies(again, 1, node.copies, period, dt))
+                assert end is not None
+                last = (end[0], dt + (node.copies - 1) * period + end[1], ("copy",))
+            anchor = last
+            run = []
+        return parts, last
+
+
+def _rolled_loops(
+    nodes: list[Any], events: Sequence[Mapping[str, Any]]
+) -> list[tuple[int, int, int]]:
+    """``controller._rolled_loops`` of the events of *nodes*, every copy."""
+    loops: list[list[int]] = []
+    previous = -1
+
+    def scan(nodes: list[Any]) -> None:
+        nonlocal previous
+        for node in nodes:
+            if type(node) is int:
+                e = events[node]
+                iteration = e["iteration"]
+                if not iteration:
+                    previous = -1
+                    continue
+                if previous < 0 or iteration[0] < previous:
+                    loops.append([0, e["start_cycles"], 0])
+                loop = loops[-1]
+                loop[0] = max(loop[0], iteration[0] + 1)
+                loop[2] += any(iteration)
+                previous = iteration[0]
+                continue
+            scan(node.body)
+            rest = node.copies - 1
+            if rest:
+                loop = loops[-1]
+                loop[2] += rest * _count(node.body)
+                if node.depth == 0:
+                    previous += rest
+                    loop[0] = max(loop[0], previous + 1)
+
+    scan(nodes)
+    return [(trips, start, extra) for trips, start, extra in loops if extra]
+
+
+def violations(
+    lowered: Lowered,
+    events: Sequence[Mapping[str, Any]],
+    repeats: Sequence[Sequence[int]],
+    limits: ControllerLimits,
+    lines: Sequence[Mapping[str, Any]],
+    unresolved: list[str] | None,
+    sample_rate: tuple[float, float] | None = None,
+) -> list[str] | Violations:
+    """``controller._violations`` of the events of a summarizing walk, with
+    *sample_rate* (made, plays) when a line plays samples made for another
+    rate (``controller._sample_rate_violations``)."""
+    tree, chains = _tree(len(events), repeats)
+    budget = _Budget()
+    found: list[Any] = []
+    timed = _keep(
+        tree, lambda i: events[i]["kind"] in _PLAYED and events[i]["end_cycles"] is not None
+    )
+    most = limits.max_events
+    if most is not None:
+        total = _count(timed)
+        if limits._runs_loops:
+            held = sum(1 for i in timed if type(i) is int and not any(events[i]["iteration"]))
+            if held > most:
+                found.append(
+                    f"{held} drives and readouts, a rolled loop's body counted once; the "
+                    f"controller holds at most {most}"
+                )
+        elif total > most:
+            text = f"{total} drives and readouts; the controller plays at most {most}"
+            loops = _rolled_loops(timed, events)
+            if loops:
+                grown = "; ".join(
+                    f"the loop of {trips} iterations from cycle {start} plays {extra} more"
+                    for trips, start, extra in loops
+                )
+                text += (
+                    ". It does not support 'loop', so rolled loops are unrolled for it: " + grown
+                )
+            found.append(text)
+    issue, gap = limits.issue_cycles, limits.issue_cycles + limits.min_wait_cycles
+    num, den = _samples_per_own_cycle(limits, lowered.target.clock_ghz)
+    on_lines = sorted({events[i]["line"] for i in _events_of(timed)})
+
+    def spacing(
+        previous: Mapping[str, Any], dp: int, event: Mapping[str, Any], de: int
+    ) -> _Text | None:
+        distance = event["start_cycles"] + de - previous["start_cycles"] - dp
+        if distance == issue or distance >= gap:
+            return None
+        return _Text(
+            f"line {event['line']}: {event['kind']} at ",
+            event["start_cycles"] + de,
+            f" starts {distance} cycles after the {previous['kind']} at ",
+            previous["start_cycles"] + dp,
+            f"; the controller needs exactly {issue} or at least {gap}",
+        )
+
+    for line in on_lines:
+        items = _keep(timed, lambda i: events[i]["line"] == line)
+        found.extend(_Pairs(events, spacing, budget).walk([(n, 0, ()) for n in items], None)[0])
+        templates = list(_events_of(items))
+        if limits.tones_per_line is not None:
+            tones = {
+                events[i]["frequency_hz"]
+                for i in templates
+                if events[i].get("frequency_hz") is not None
+            }
+            if len(tones) > limits.tones_per_line:
+                found.append(
+                    f"line {line}: {len(tones)} tone frequencies; the controller holds "
+                    f"{limits.tones_per_line} per line"
+                )
+            elif unresolved is not None:
+                count = _count(_keep(items, lambda i: events[i].get("frequency_hz") is None))
+                if len(tones) + count > limits.tones_per_line:
+                    unresolved.append(f"line {line}: tone frequencies")
+        if limits.max_amplitude is not None:
+            found.extend(_amplitudes(lines[line], items, events, limits.max_amplitude, unresolved))
+        if limits.waveform_samples is not None:
+            shapes: dict[Any, int] = {}
+            unknown_samples = 0
+            each = 0
+            for i in templates:
+                e = events[i]
+                key = shape_key(e.get("waveform"))
+                samples = -(-e["duration_cycles"] * num // den)
+                if key is not None:
+                    shapes[(key, e["duration_cycles"])] = samples
+                else:
+                    copies = _count(_keep(items, lambda k: k == i))
+                    if unresolved is not None:
+                        unknown_samples += copies * samples
+                    else:
+                        each += copies * samples
+            used = sum(shapes.values()) + each
+            if used > limits.waveform_samples:
+                found.append(
+                    f"line {line}: its waveforms take {used} samples; the controller's "
+                    f"waveform memory holds {limits.waveform_samples}"
+                )
+            elif unresolved is not None and used + unknown_samples > limits.waveform_samples:
+                unresolved.append(f"line {line}: waveform memory")
+    if limits.acquirers:
+        acquirers = limits.acquirers
+        hold = limits.acquirer_hold_cycles
+
+        def acquired(
+            previous: Mapping[str, Any], dp: int, event: Mapping[str, Any], de: int
+        ) -> _Text | None:
+            free = previous["end_cycles"] + dp + hold
+            if event["start_cycles"] + de >= free:
+                return None
+            return _Text(
+                f"acquirer {acquirers[event['qudit']]}: the readout of qudit {event['qudit']} at ",
+                event["start_cycles"] + de,
+                " starts before the acquirer is free at ",
+                free,
+                f" (the readout of qudit {previous['qudit']} at ",
+                previous["start_cycles"] + dp,
+                ")",
+            )
+
+        readouts = _keep(
+            timed, lambda i: events[i]["kind"] == "readout" and events[i]["qudit"] in acquirers
+        )
+        for acquirer in sorted({acquirers[events[i]["qudit"]] for i in _events_of(readouts)}):
+            items = _keep(readouts, lambda i: acquirers[events[i]["qudit"]] == acquirer)
+            found.extend(
+                _Pairs(events, acquired, budget).walk([(n, 0, ()) for n in items], None)[0]
+            )
+    if limits.feedback_latency_cycles:
+        found.extend(
+            _Feedback(events, chains, limits.feedback_latency_cycles, budget).walk(timed, {})
+        )
+    if not limits.answer_timeouts:
+        functions = {fn.name: fn for fn in lowered.classical}
+
+        def timeout(i: int) -> _Text | None:
+            event = events[i]
+            if event["kind"] != "answer":
+                return None
+            fn = functions.get(event["function"])
+            if event["wait"] != "timeout" and (fn is None or fn.latency_mode != "timeout"):
+                return None
+            return _Text(
+                f"the wait for {event['function']} at ",
+                event["start_cycles"],
+                " has a timeout; the controller cannot stop waiting for an answer, so take it "
+                "with result() (no timeout)",
+            )
+
+        found.extend(_each_event(tree, timeout))
+    if limits.computes:
+        found.extend(resources(lowered, limits).violations)
+    if sample_rate is not None:
+        from .controller import _has_samples
+
+        made_ghz, plays_ghz = sample_rate
+
+        def made_for(i: int) -> _Text | None:
+            e = events[i]
+            if e["kind"] not in _PLAYED or not _has_samples(e.get("waveform")):
+                return None
+            return _Text(
+                f"line {e['line']}: the {e['kind']} at ",
+                e["start_cycles"],
+                f" plays samples made for {made_ghz:g} GHz, and the controller's lines play "
+                f"{plays_ghz:g} GHz",
+            )
+
+        found.extend(_each_event(tree, made_for))
+    if _length(found) <= LAZY_AFTER:
+        return list(_each(found, 0))
+    return Violations(found)
+
+
+def _amplitudes(
+    line: Mapping[str, Any],
+    items: list[Any],
+    events: Sequence[Mapping[str, Any]],
+    most: float,
+    unresolved: list[str] | None,
+) -> list[Any]:
+    """``controller._over_amplitude`` of the events of *items*."""
+    noted = unresolved is None
+
+    def over(i: int) -> _Text | None:
+        nonlocal noted
+        event = events[i]
+        tree = event.get("waveform")
+        peak = _peak_amplitude(tree)
+        if peak is None and tree is not None and not noted:
+            assert unresolved is not None
+            unresolved.append(f"line {line['line']}: amplitude")
+            noted = True
+        if peak is None or peak <= most:
+            return None
+        return _Text(
+            f"line {line['line']} ({line['role']} of qudit {line['qudit']}): the "
+            f"{event['kind']} at ",
+            event["start_cycles"],
+            f" peaks at amplitude {peak:.6g}; the controller plays at most {most:g} "
+            "(ControllerLimits.max_amplitude)",
+        )
+
+    return _each_event(items, over)
+
+
+class _Feedback:
+    """The events that start before the readouts they depend on are ready
+    (``ControllerLimits.feedback_latency_cycles``). A copy of a loop depends
+    on the copies of the readouts in it, or in the copy before it, as the
+    first copy does; on a readout before the loop only a few first copies
+    can be too early, and those are checked one by one."""
+
+    def __init__(
+        self,
+        events: Sequence[Mapping[str, Any]],
+        chains: Sequence[tuple[_Rep, ...]],
+        latency: int,
+        budget: _Budget,
+    ) -> None:
+        self.events, self.chains, self.latency, self.budget = events, chains, latency, budget
+
+    def apart(self, i: int, ref: int) -> tuple[list[_Rep], int]:
+        """The loops event *i* is in and readout *ref* is not, whose copy
+        decides how far apart the two are, and the cycles the readout's
+        copy (the last of each loop it is in alone) starts after its first."""
+        mine, theirs = self.chains[i], self.chains[ref]
+        separate = []
+        for rep in mine:
+            if rep in theirs:
+                continue
+            if rep.begin - (rep.end - rep.begin) <= ref < rep.begin:
+                continue
+            separate.append(rep)
+        later = sum((rep.copies - 1) * rep.period for rep in theirs if rep not in mine)
+        return separate, later
+
+    def refs(self, i: int) -> Iterator[tuple[int, Mapping[str, Any]]]:
+        for condition in self.events[i]["conditions"]:
+            for ref in condition["readouts"]:
+                readout = self.events[ref]
+                if readout["end_cycles"] is not None:
+                    yield ref, readout
+
+    def walk(self, nodes: list[Any], fixed: dict[_Rep, int | None]) -> list[Any]:
+        parts: list[Any] = []
+        for node in nodes:
+            if type(node) is int:
+                parts.extend(self.late(node, fixed))
+                continue
+            rep = node.orig
+            head = min(rep.copies, self.head(node, rep, fixed))
+            if head:
+                self.budget.spend(head)
+            for j in range(head):
+                body = self.walk(node.body, {**fixed, rep: j})
+                if body:
+                    parts.append(_Copies(body, j, j + 1, rep.period))
+            if head < rep.copies:
+                body = self.walk(node.body, {**fixed, rep: None})
+                if body:
+                    parts.append(_Copies(body, head, rep.copies, rep.period))
+        return parts
+
+    def head(self, node: _Rep, rep: _Rep, fixed: Mapping[_Rep, int | None]) -> int:
+        """The first copies of *rep* that may start too early after a readout
+        outside it."""
+        copies = 0
+        for i in _events_of(node.body):
+            start = self.events[i]["start_cycles"]
+            for ref, readout in self.refs(i):
+                separate, later = self.apart(i, ref)
+                if rep not in separate:
+                    continue
+                shift = 0
+                for other in separate:
+                    if other in fixed:
+                        j = fixed[other]
+                        if j is None:
+                            break
+                        shift += j * other.period
+                else:
+                    gap = readout["end_cycles"] + later + self.latency - start - shift
+                    if gap > 0:
+                        copies = max(
+                            copies,
+                            math.ceil(gap / rep.period) if rep.period > 0 else rep.copies,
+                        )
+        return copies
+
+    def late(self, i: int, fixed: Mapping[_Rep, int | None]) -> list[_Text]:
+        event = self.events[i]
+        start = event["start_cycles"]
+        found = []
+        for ref, readout in self.refs(i):
+            separate, later = self.apart(i, ref)
+            shift = 0
+            for rep in separate:
+                j = fixed.get(rep)
+                if j is None:
+                    break
+                shift += j * rep.period
+            else:
+                end = readout["end_cycles"] - shift + later
+                ready = end + self.latency
+                if start < ready:
+                    found.append(
+                        _Text(
+                            f"line {event['line']}: the {event['kind']} at ",
+                            start,
+                            " depends on the readout ending at ",
+                            end,
+                            f"; the controller needs {self.latency} cycles of feedback "
+                            "latency (start at ",
+                            ready,
+                            " or later; schedule with rcp and "
+                            "readout_latency_cycles >= feedback_latency_cycles)",
+                        )
+                    )
+        return found

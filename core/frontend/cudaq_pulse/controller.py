@@ -133,10 +133,12 @@ _PLAYED = frozenset({"drive", "readout"})
 class ControllerLimitError(CompilationError):
     """A scheduled program exceeds a limit of the controller it is for.
 
-    ``violations`` has every limit exceeded. For a control system with
-    processors, ``usage`` is the program's ``UsageReport``: what each
-    processor holds against its limits, and each limit exceeded with by how
-    much (``usage.exceeded``); the message ends with its table.
+    ``violations`` has every limit exceeded: a tuple, or past 10,000 of
+    them in rolled loops a sequence that builds each one when read, with an
+    exact ``len()``. For a control system with processors, ``usage`` is the
+    program's ``UsageReport``: what each processor holds against its limits,
+    and each limit exceeded with by how much (``usage.exceeded``); the
+    message ends with its table.
     """
 
     def __init__(
@@ -146,7 +148,7 @@ class ControllerLimitError(CompilationError):
         system: bool = False,
         usage: UsageReport | None = None,
     ) -> None:
-        self.violations = tuple(violations)
+        self.violations: Sequence[str] = tuple(violations) if _listed(violations) else violations
         self.usage = usage
         shown = "\n  ".join(self.violations[:10])
         more = len(self.violations) - 10
@@ -154,6 +156,15 @@ class ControllerLimitError(CompilationError):
         what = "does not fit the control system" if system else "exceeds the controller's limits"
         table = "" if usage is None else "\n" + _format_usage(usage, exceeds=False)
         super().__init__(f"the program {what}:\n  {shown}{tail}{table}")
+
+
+def _listed(violations: Sequence[str]) -> bool:
+    """Whether *violations* are not the lazy ones of a summarized loop."""
+    if isinstance(violations, (list, tuple)):
+        return True
+    from ._loops import Violations
+
+    return not isinstance(violations, Violations)
 
 
 def _limit_error(lowered: Lowered, violations: Sequence[str]) -> ControllerLimitError:
@@ -482,9 +493,13 @@ def _walk(
     own: _clocks.ControllerClock | None = None,
     waveforms: bool = True,
     slots: list[int] | None = None,
+    repeats: list[tuple[int, ...]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], Sequence[tuple[int, int, int]], list[str]]:
     """The lines and events of *lowered*, at the values of its call; without
     *values*, a module with float parameters has ``None`` where they reach.
+    With *repeats* (and no *own*), for a check: a long rolled loop whose
+    iterations repeat has its events once, and *repeats* gets its copies
+    (``_loops``).
 
     With *own*, the events' times are in that controller's cycles (their
     waveforms' too, with *waveforms*), what they compute at run time too
@@ -508,7 +523,13 @@ def _walk(
     problems: list[str] = []
     with lowered._lock:
         if own is None:
-            lines, events = module.controller_events(_PARAMETERS, _AMPLITUDES, epochs, slots)
+            if repeats is None:
+                lines, events = module.controller_events(_PARAMETERS, _AMPLITUDES, epochs, slots)
+            else:
+                lines, events, found = module.controller_events(
+                    _PARAMETERS, _AMPLITUDES, epochs, slots, True
+                )
+                repeats += found
         else:
             ratio = own.ratio
             lines, events, off_grid, ends = module.controller_events_on(
@@ -1168,8 +1189,10 @@ def _rolled_loops(timed: Sequence[Mapping[str, Any]]) -> list[tuple[int, int, in
     return [(trips, start, extra) for trips, start, extra in loops if extra]
 
 
-def check(lowered: Lowered, limits: ControllerLimits | None = None) -> list[str]:
-    """The limits *lowered* exceeds, of *limits* or else its machine model's.
+def check(lowered: Lowered, limits: ControllerLimits | None = None) -> Sequence[str]:
+    """The limits *lowered* exceeds, of *limits* or else its machine model's:
+    a list, or past 10,000 violations in rolled loops a sequence that builds
+    each one when read (``ControllerLimitError.violations``).
 
     Of a module with float parameters (``lowered.generic``), the limits it
     exceeds whatever their values; a call's values are checked when it is
@@ -1183,7 +1206,7 @@ def check(lowered: Lowered, limits: ControllerLimits | None = None) -> list[str]
 
 def _compile_check(
     lowered: Lowered, limits: ControllerLimits | None, system: ControlSystem | None = None
-) -> tuple[list[str], bool]:
+) -> tuple[Sequence[str], bool]:
     """The limits *lowered* exceeds whatever its float values, and whether
     that is exact: ``False`` when some values may exceed others. With
     *system*, of its controllers (*limits* is then its only one, or ``None``)."""
@@ -1194,10 +1217,19 @@ def _compile_check(
         from . import _clocks
 
         clocks = _clocks.plan(limits, lowered.target.clock_ghz, machine.reference_clock_ghz)
-    lines, events, off, problems = _walk(
-        lowered, values=False, own=_native_clock(clocks), waveforms=False
-    )
     slots = lowered._role is not None and lowered._role.slots > 0
+    repeats: list[tuple[int, ...]] | None = None if system is not None or slots else []
+    lines, events, off, problems = _walk(
+        lowered, values=False, own=_native_clock(clocks), waveforms=False, repeats=repeats
+    )
+    if repeats:
+        from ._loops import violations
+
+        assert limits is not None
+        rates = None if limits is machine.controller else _sample_rates(lowered, limits)
+        pending: list[str] | None = [] if lowered.parameters else None
+        found = violations(lowered, events, repeats, limits, lines, pending, rates)
+        return found, not pending
     if system is not None and slots and not system._plays_everything:
         # Which controller plays a line depends on the qudits a call binds.
         return [], False
@@ -1224,16 +1256,21 @@ def _compile_check(
     return found, not unresolved
 
 
-def _call_violations(lowered: Lowered) -> list[str]:
+def _call_violations(lowered: Lowered) -> Sequence[str]:
     """The limits one call's values exceed, as its export checks them."""
     machine = lowered.options.machine
     clocks = (lowered._generic or lowered).clocks
-    lines, events, off, problems = _walk(lowered, own=_native_clock(clocks))
+    repeats: list[tuple[int, ...]] | None = [] if machine._system is None else None
+    lines, events, off, problems = _walk(lowered, own=_native_clock(clocks), repeats=repeats)
     if machine._system is not None:
         return machine._system._violations(
             lowered, lines, events, clocks, off, problems, True, None, None
         )
     assert machine.controller is not None
+    if repeats:
+        from ._loops import violations
+
+        return violations(lowered, events, repeats, machine.controller, lines, None)
     return _violations(lowered, events, machine.controller, lines, clocks, off, problems)
 
 
@@ -1246,6 +1283,21 @@ def _sample_rate_violations(
     """The sample arrays that *limits*' lines would play at another rate than
     the one they were made for: the rate of the lines *lowered* was compiled
     for."""
+    rates = _sample_rates(lowered, limits)
+    if rates is None:
+        return []
+    made_ghz, plays_ghz = rates
+    return [
+        f"line {e['line']}: the {e['kind']} at {e['start_cycles']} plays samples made for "
+        f"{made_ghz:g} GHz, and the controller's lines play {plays_ghz:g} GHz"
+        for e in events
+        if e["kind"] in _PLAYED and _has_samples(e.get("waveform"))
+    ]
+
+
+def _sample_rates(lowered: Lowered, limits: ControllerLimits) -> tuple[float, float] | None:
+    """The rate, in GHz, the samples of *lowered* were made for and the one
+    *limits*' lines play, when they differ."""
     from . import _clocks
 
     machine = lowered.options.machine
@@ -1255,15 +1307,10 @@ def _sample_rate_violations(
         made = _clocks.sample_rate(machine.controller, program)
     plays = _clocks.sample_rate(limits, program)
     if made == plays:
-        return []
+        return None
     made_ghz = program if made is None else program * made[0] / made[1]
     plays_ghz = program if plays is None else program * plays[0] / plays[1]
-    return [
-        f"line {e['line']}: the {e['kind']} at {e['start_cycles']} plays samples made for "
-        f"{made_ghz:g} GHz, and the controller's lines play {plays_ghz:g} GHz"
-        for e in events
-        if e["kind"] in _PLAYED and _has_samples(e.get("waveform"))
-    ]
+    return made_ghz, plays_ghz
 
 
 def _has_samples(node: Mapping[str, Any] | None) -> bool:
@@ -2054,7 +2101,7 @@ class ControllerModule(Protocol):
 
     def __call__(self, description: str | os.PathLike[str], /, **wiring: Any) -> Controller: ...
     def analyze(self, function: Any, limits: _Limits | None = None) -> _Resources: ...
-    def check(self, lowered: Lowered, limits: _Limits | None = None) -> list[str]: ...
+    def check(self, lowered: Lowered, limits: _Limits | None = None) -> Sequence[str]: ...
     def export(self, lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, Any]: ...
     def format_report(self, report: _Report) -> str: ...
     def resources(self, lowered: Lowered, limits: _Limits | None = None) -> _Report: ...

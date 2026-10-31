@@ -1077,6 +1077,12 @@ struct ControllerWalk {
     if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
       int64_t trips = pulse::constantTripCount(loop).value_or(0);
       iteration.push_back(0);
+      if constexpr (!RunTime)
+        if (summarize && trips > kSummarizeAfter) {
+          summarizeLoop(*loop.getBody(), trips);
+          iteration.pop_back();
+          return;
+        }
       for (int64_t k = 0; k < trips; ++k) {
         iteration.back() = k;
         block<RunTime>(*loop.getBody());
@@ -1158,6 +1164,207 @@ struct ControllerWalk {
       else
         frame.timeNs = std::max(frame.timeNs, theirs.timeNs);
     }
+  }
+
+  /// With `summarize` (for a check of a module that computes nothing at run
+  /// time): a rolled loop of more than kSummarizeAfter iterations whose third
+  /// iteration plays its second again one period later is walked three
+  /// times, and `repeats` records that the third stands for every later one.
+  /// Frame phases are not followed past such a loop.
+  bool summarize = false;
+  static constexpr int64_t kSummarizeAfter = 64;
+  /// The events a summarizing walk plays at most, loops that do not repeat
+  /// played out.
+  static constexpr size_t kMaxEvents = size_t(1) << 22;
+  /// (begin, end, copies, period, depth, branch, branches): result[begin,
+  /// end) is the first of `copies` copies. Copy j starts j * period cycles
+  /// later, has entry `depth` of its iteration j higher and the ids of its
+  /// branches from `branch` on j * branches higher; a readout or answer
+  /// event it refers to in the iteration before it or in itself is j copies
+  /// later, and an event after the loop refers to the last copy.
+  using Repeat = std::array<int64_t, 7>;
+  std::vector<Repeat> repeats;
+
+  struct Mark {
+    size_t event, repeat;
+    int64_t branch;
+  };
+  Mark mark() const { return {result.size(), repeats.size(), nextBranch}; }
+
+  LLVM_ATTRIBUTE_NOINLINE void summarizeLoop(mlir::Block &body, int64_t trips) {
+    Mark zero = mark();
+    iteration.back() = 0;
+    block<false>(body);
+    Mark one = mark();
+    iteration.back() = 1;
+    block<false>(body);
+    Mark two = mark();
+    auto framesOne = frames;
+    auto reachedOne = reached;
+    auto latestOne = latest;
+    iteration.back() = 2;
+    block<false>(body);
+    Mark three = mark();
+    if (auto period = repeating(zero, one, two, three, framesOne, reachedOne,
+                                latestOne)) {
+      int64_t copies = trips - 2, shift, branches;
+      int64_t stride = three.branch - two.branch;
+      bool overflow = __builtin_mul_overflow(copies - 1, *period, &shift) ||
+                      __builtin_mul_overflow(copies - 1, stride, &branches) ||
+                      __builtin_add_overflow(nextBranch, branches, &nextBranch);
+      for (auto &[allocation, time] : reached)
+        if (time && *time != *reachedOne[allocation])
+          overflow |= __builtin_add_overflow(*time, shift, &*time);
+      if (overflow)
+        throw std::overflow_error("a rolled loop runs past 2**63 cycles or "
+                                  "branches");
+      repeats.push_back({static_cast<int64_t>(two.event),
+                         static_cast<int64_t>(three.event), copies, *period,
+                         static_cast<int64_t>(iteration.size() - 1), two.branch,
+                         stride});
+      return;
+    }
+    for (int64_t k = 3; k < trips; ++k) {
+      if (result.size() > kMaxEvents)
+        throw std::length_error(
+            "the controller check plays more than " +
+            std::to_string(kMaxEvents) +
+            " events of a rolled loop whose iterations do not repeat one "
+            "period apart; give the loop fewer iterations, or sync its lines "
+            "so that every iteration plays alike");
+      iteration.back() = k;
+      block<false>(body);
+    }
+  }
+
+  /// Whether iteration 2 of the loop being walked, after `two`, plays
+  /// iteration 1 (after `one`) again and leaves the walk as iteration 1 did,
+  /// shifted by one iteration; its period, or 0 with nothing scheduled.
+  std::optional<int64_t> repeating(
+      Mark zero, Mark one, Mark two, Mark three,
+      const std::map<mlir::Operation *, Frame> &framesOne,
+      const std::map<mlir::Operation *, std::optional<int64_t>> &reachedOne,
+      const llvm::DenseMap<mlir::Operation *, int64_t> &latestOne) {
+    const int64_t len = static_cast<int64_t>(two.event - one.event);
+    const int64_t stride = two.branch - one.branch;
+    if (three.event - two.event != two.event - one.event ||
+        three.repeat - two.repeat != two.repeat - one.repeat ||
+        three.branch - two.branch != stride)
+      return std::nullopt;
+    const size_t depth = iteration.size() - 1;
+    auto same = [](double a, double b) {
+      return a == b || (std::isnan(a) && std::isnan(b));
+    };
+    auto ref = [&](int64_t a, int64_t b) {
+      bool moves = a >= static_cast<int64_t>(zero.event) &&
+                   a < static_cast<int64_t>(two.event);
+      return b == (moves ? a + len : a);
+    };
+    auto refs = [&](const std::vector<int64_t> &a,
+                    const std::vector<int64_t> &b) {
+      if (a.size() != b.size())
+        return false;
+      for (size_t k = 0; k < a.size(); ++k)
+        if (!ref(a[k], b[k]))
+          return false;
+      return true;
+    };
+    auto branch = [&](int64_t a, int64_t b) {
+      return b == (a >= zero.branch ? a + stride : a);
+    };
+    auto nodes = [&](const std::vector<WaveformNode> &a,
+                     const std::vector<WaveformNode> &b) {
+      if (a.size() != b.size())
+        return false;
+      for (size_t k = 0; k < a.size(); ++k) {
+        auto &[nameA, numbersA, childrenA] = a[k];
+        auto &[nameB, numbersB, childrenB] = b[k];
+        if (nameA != nameB || childrenA != childrenB ||
+            numbersA.size() != numbersB.size())
+          return false;
+        for (size_t n = 0; n < numbersA.size(); ++n)
+          if (!same(numbersA[n], numbersB[n]))
+            return false;
+      }
+      return true;
+    };
+    std::optional<int64_t> period;
+    for (size_t i = 0; i < static_cast<size_t>(len); ++i) {
+      const Event &a = result[one.event + i];
+      const Event &b = result[two.event + i];
+      if (std::get<0>(a) != std::get<0>(b) ||
+          std::get<1>(a) != std::get<1>(b) ||
+          std::get<2>(a) != std::get<2>(b) ||
+          std::get<4>(a) != std::get<4>(b) ||
+          std::get<10>(a) != std::get<10>(b) ||
+          std::get<12>(a) != std::get<12>(b) ||
+          std::get<13>(a) != std::get<13>(b) ||
+          !same(std::get<7>(a), std::get<7>(b)) ||
+          !same(std::get<14>(a), std::get<14>(b)) ||
+          !nodes(std::get<6>(a), std::get<6>(b)) ||
+          !refs(std::get<11>(a), std::get<11>(b)))
+        return std::nullopt;
+      auto &startA = std::get<3>(a);
+      auto &startB = std::get<3>(b);
+      if (startA.has_value() != startB.has_value())
+        return std::nullopt;
+      if (startA) {
+        int64_t shift = *startB - *startA;
+        if (shift < 0 || (period && shift != *period))
+          return std::nullopt;
+        period = shift;
+      }
+      auto &iterationA = std::get<5>(a);
+      auto &iterationB = std::get<5>(b);
+      if (iterationA.size() != iterationB.size())
+        return std::nullopt;
+      for (size_t k = 0; k < iterationA.size(); ++k)
+        if (iterationB[k] != iterationA[k] + (k == depth ? 1 : 0))
+          return std::nullopt;
+      auto &conditionsA = std::get<9>(a);
+      auto &conditionsB = std::get<9>(b);
+      if (conditionsA.size() != conditionsB.size())
+        return std::nullopt;
+      for (size_t k = 0; k < conditionsA.size(); ++k) {
+        auto &[idA, armA, readoutsA, answersA, testA] = conditionsA[k];
+        auto &[idB, armB, readoutsB, answersB, testB] = conditionsB[k];
+        if (!branch(idA, idB) || armA != armB || testA != testB ||
+            !refs(readoutsA, readoutsB) || !refs(answersA, answersB))
+          return std::nullopt;
+      }
+    }
+    for (size_t i = 0; i < two.repeat - one.repeat; ++i) {
+      const Repeat &a = repeats[one.repeat + i];
+      const Repeat &b = repeats[two.repeat + i];
+      if (b[0] != a[0] + len || b[1] != a[1] + len || b[2] != a[2] ||
+          b[3] != a[3] || b[4] != a[4] || !branch(a[5], b[5]) || b[6] != a[6])
+        return std::nullopt;
+    }
+    int64_t shift = period.value_or(0);
+    if (frames.size() != framesOne.size() ||
+        reached.size() != reachedOne.size() ||
+        latest.size() != latestOne.size())
+      return std::nullopt;
+    for (auto &[root, frame] : frames) {
+      auto found = framesOne.find(root);
+      if (found == framesOne.end() ||
+          !same(frame.frequencyHz, found->second.frequencyHz) ||
+          !same(frame.frameFrequencyHz, found->second.frameFrequencyHz))
+        return std::nullopt;
+    }
+    for (auto &[allocation, time] : reached) {
+      auto found = reachedOne.find(allocation);
+      if (found == reachedOne.end() ||
+          time.has_value() != found->second.has_value() ||
+          (time && *time != *found->second && *time != *found->second + shift))
+        return std::nullopt;
+    }
+    for (auto &[op, index] : latest) {
+      auto found = latestOne.find(op);
+      if (found == latestOne.end() || !ref(found->second, index))
+        return std::nullopt;
+    }
+    return shift;
   }
 };
 
@@ -1974,18 +2181,26 @@ public:
   /// dicts, with `parameters` the parameter names of each waveform shape,
   /// `amplitudes` the shapes with an overall amplitude and `epochs` each
   /// event's epoch (empty: all 0). A list `slots` gets each line's
-  /// runtime-qudit slot (-1 for none).
+  /// runtime-qudit slot (-1 for none). With `summarize`, for a check, a long
+  /// rolled loop whose iterations repeat has its events once, and a third
+  /// list has each such loop's ControllerWalk::Repeat.
   nb::tuple controller_events(nb::handle parameters, nb::handle amplitudes,
-                              nb::list epochs, nb::object slots) {
+                              nb::list epochs, nb::object slots,
+                              bool summarize) {
     ControllerObjects objects(parameters, amplitudes);
     std::unique_ptr<ControllerWalk> walk;
     std::vector<ControllerLine> lines;
     std::vector<int64_t> found;
+    // Epochs number the events every iteration plays.
+    bool once = summarize && nb::len(epochs) == 0;
     {
       nb::gil_scoped_release release;
-      walk = controllerWalk(lines, slots.is_none() ? nullptr : &found);
+      walk = controllerWalk(lines, slots.is_none() ? nullptr : &found, once);
     }
     lineSlots(found, slots);
+    if (summarize)
+      return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs),
+                            nb::cast(walk->repeats));
     return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs));
   }
 
@@ -2004,9 +2219,10 @@ public:
   /// `slots`; without the GIL.
   std::unique_ptr<ControllerWalk>
   controllerWalk(std::vector<ControllerLine> &lines,
-                 std::vector<int64_t> *slots) {
+                 std::vector<int64_t> *slots, bool summarize = false) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     auto walk = std::make_unique<ControllerWalk>(clock());
+    walk->summarize = summarize;
     if (runTime_)
       controllerEvents<true>(*walk, lines, slots);
     else
@@ -4819,7 +5035,7 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "native frequency its tone plays, or -1")
       .def("controller_events", &PulseModule::controller_events,
            nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
-           nb::arg("slots").none() = nb::none(),
+           nb::arg("slots").none() = nb::none(), nb::arg("summarize") = false,
            "The lines and events of the export for a controller, as "
            "controller.export() gives them; a list `slots` gets each line's "
            "runtime-qudit slot")
