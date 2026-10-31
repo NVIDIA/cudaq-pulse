@@ -90,21 +90,30 @@ class _WaitLength:
 
 
 class _WaitLengths:
-    """The variable waits of a module, checked together on every call."""
+    """The variable waits of a module, checked together on every call, and
+    with them the program's length: (its cycles op after op with each wait
+    at its lowest length, the most it may last, 1 if that is the
+    controller's longest program, how often each wait with a lowest length
+    runs), as ``PulseModule.program_length()`` gives it."""
 
-    __slots__ = ("ok", "waits")
+    __slots__ = ("length", "ok", "waits")
 
     # By wait, the steps of the lengths a controller with a coarser clock
     # than the program's can time (none: every length).
     grids: tuple[int, ...] = ()
 
     def __init__(
-        self, waits: Sequence[tuple[Any, ...]], kernel: str, grids: Sequence[int] = ()
+        self,
+        waits: Sequence[tuple[Any, ...]],
+        kernel: str,
+        grids: Sequence[int] = (),
+        length: tuple[int, int, int, Sequence[int]] | None = None,
     ) -> None:
         self.waits = tuple(
             _WaitLength(wait[0], wait[1], wait[2], kernel, wait[3] if len(wait) > 3 else None)
             for wait in waits
         )
+        self.length = length
         # floor(x + 0.5) is in [lowest, highest] exactly when
         # lowest <= x + 0.5 < highest + 1, which NaN fails; without a lowest,
         # -1e400 (minus infinity) < x + 0.5 also fails for minus infinity.
@@ -119,13 +128,27 @@ class _WaitLengths:
                 for w, grid in zip(self.waits, grids, strict=True)
                 if w.lowest is not None and grid > 1
             )
+        if self._timed():
+            assert length is not None
+            cycles, most, _, repeats = length
+            longer = " + ".join(
+                f"{r} * (({w.source} + 0.5) // 1 - {w.lowest})"
+                for w, r in zip(self._timed(), repeats, strict=True)
+            )
+            tests += f" and {cycles} + {longer} <= {most}"
         self.ok = eval(f"lambda a: {tests}", {"__builtins__": {}})
+
+    def _timed(self) -> tuple[_WaitLength, ...]:
+        """The waits the program's length counts at their lowest length."""
+        if self.length is None or not self.length[3]:
+            return ()
+        return tuple(w for w in self.waits if w.lowest is not None)
 
     def __reduce__(self) -> tuple[Any, ...]:
         # The check as compiled: the stamp of the pickle names the Python
         # whose marshal format wrote it.
         check = marshal.dumps(self.ok.__code__)
-        return (_rebuilt_wait_lengths, (type(self), self.waits, self.grids, check))
+        return (_rebuilt_wait_lengths, (type(self), self.waits, self.grids, check, self.length))
 
     def check(self, values: Sequence[float]) -> None:
         try:
@@ -145,6 +168,25 @@ class _WaitLengths:
                     f"{cycles} cycles isn't a whole number of timesteps: the nearest "
                     f"lengths are {lower} and {lower + grid}"
                 )
+        timed = self._timed()
+        if timed:
+            assert self.length is not None
+            cycles, most, controller, repeats = self.length
+            for wait, runs in zip(timed, repeats):
+                assert wait.lowest is not None
+                cycles += runs * (math.floor(wait.length(values) + 0.5) - wait.lowest)
+            if cycles > most:
+                kernel = timed[0].kernel
+                if controller:
+                    raise ValueError(
+                        f"{kernel}(): with these wait lengths the program lasts more than "
+                        f"{most} cycles, the longest program of the controller "
+                        "(ControllerLimits.max_program_duration)"
+                    )
+                raise ValueError(
+                    f"{kernel}(): with these wait lengths the program lasts more than 2**60 "
+                    "cycles, more than a schedule counts"
+                )
 
 
 class _GridWaitLengths(_WaitLengths):
@@ -154,20 +196,31 @@ class _GridWaitLengths(_WaitLengths):
 
     __slots__ = ("grids",)
 
-    def __init__(self, waits: Sequence[tuple[Any, ...]], kernel: str, grids: Sequence[int]) -> None:
+    def __init__(
+        self,
+        waits: Sequence[tuple[Any, ...]],
+        kernel: str,
+        grids: Sequence[int],
+        length: tuple[int, int, int, Sequence[int]] | None = None,
+    ) -> None:
         self.grids = tuple(grids)
-        super().__init__(waits, kernel, self.grids)
+        super().__init__(waits, kernel, self.grids, length)
 
 
 def wait_lengths(
-    waits: Sequence[tuple[Any, ...]], kernel: str, grid: int, grids: Sequence[int] | None = None
+    waits: Sequence[tuple[Any, ...]],
+    kernel: str,
+    grid: int,
+    grids: Sequence[int] | None = None,
+    length: tuple[int, int, int, Sequence[int]] | None = None,
 ) -> _WaitLengths:
-    """The checks of *waits*, each on *grid*, or on its own of *grids*."""
+    """The checks of *waits*, each on *grid*, or on its own of *grids*, and
+    of the program's *length*."""
     if grids is not None:
-        return _GridWaitLengths(waits, kernel, grids)
+        return _GridWaitLengths(waits, kernel, grids, length)
     if grid == 1:
-        return _WaitLengths(waits, kernel)
-    return _GridWaitLengths(waits, kernel, [grid] * len(waits))
+        return _WaitLengths(waits, kernel, (), length)
+    return _GridWaitLengths(waits, kernel, [grid] * len(waits), length)
 
 
 def _rebuilt_wait(
@@ -184,10 +237,15 @@ def _rebuilt_wait(
 
 
 def _rebuilt_wait_lengths(
-    cls: type[_WaitLengths], waits: tuple[_WaitLength, ...], grids: tuple[int, ...], check: bytes
+    cls: type[_WaitLengths],
+    waits: tuple[_WaitLength, ...],
+    grids: tuple[int, ...],
+    check: bytes,
+    length: tuple[int, int, int, Sequence[int]] | None = None,
 ) -> _WaitLengths:
     lengths = cls.__new__(cls)
     lengths.waits = waits
+    lengths.length = length
     if isinstance(lengths, _GridWaitLengths):
         lengths.grids = grids
     lengths.ok = FunctionType(marshal.loads(check), {"__builtins__": {}})

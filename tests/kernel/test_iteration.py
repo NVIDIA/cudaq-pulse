@@ -247,14 +247,15 @@ def test_a_range_too_long_for_a_loop_names_the_limit_and_the_line(bounds, unroll
     assert "for _ in range(*bounds)" in "\n".join(info.value.__notes__)
 
 
-def test_the_longest_range_a_loop_can_run_still_compiles():
+def test_the_longest_range_a_loop_can_run_counts_without_wrapping():
     @pulse.kernel
     def longest(q):
         d = get_drive_line(q)
         for _ in range(2**63 - 1):
             wait(d, 4)
 
-    assert longest.lower(Q[0]) is not None
+    with pytest.raises(CompilationError, match=r"the program lasts more than 2\*\*60 cycles"):
+        longest.lower(Q[0])
 
 
 def _holding(n):

@@ -15,6 +15,7 @@ that pick passes and a schedule, the native build of one specialization, and
 
 from __future__ import annotations
 
+import math
 import sys
 import threading
 import time
@@ -1222,7 +1223,11 @@ def build(
         from ._waits import wait_lengths
 
         waits = wait_lengths(
-            builder.variable_waits, name, 1 if clocks is None else clocks.lcm, builder.wait_grids
+            builder.variable_waits,
+            name,
+            1 if clocks is None else clocks.lcm,
+            builder.wait_grids,
+            module.program_length(),
         )
     if plain and role is None:
         lowered = Lowered(
@@ -1276,21 +1281,26 @@ def _clocked_builder(
     from . import _clocks
 
     system = machine._system
-    if system is not None and machine.controller is None:
+    controller = machine.controller
+    if system is not None and controller is None:
         clocks = system._clock_plan(target.clock_ghz)
-    elif machine.controller is None and machine.reference_clock_ghz is None:
+    elif controller is None and machine.reference_clock_ghz is None:
         clocks = None
     else:
-        clocks = _clocks.plan(machine.controller, target.clock_ghz, machine.reference_clock_ghz)
+        clocks = _clocks.plan(controller, target.clock_ghz, machine.reference_clock_ghz)
     if clocks is not None:
         builder.line_grid = clocks.grid_of
         builder.wait_grid = clocks.lcm
         if clocks.owners is not None:
             builder.wait_grids = []
-    if machine.controller is not None:
-        builder.sample_rate = _clocks.sample_rate(machine.controller, target.clock_ghz)
-        if machine.controller.max_instructions is not None:
-            builder.limit_instructions(machine.controller.max_instructions)
+    if controller is not None:
+        builder.sample_rate = _clocks.sample_rate(controller, target.clock_ghz)
+        if controller.max_instructions is not None:
+            builder.limit_instructions(controller.max_instructions)
+        if controller.max_program_duration is not None:
+            builder.limit_cycles(
+                max(1, math.floor(controller.max_program_duration * target.clock_ghz + 1e-9))
+            )
     elif system is not None:
         rates = [_clocks.sample_rate(c, target.clock_ghz) for c in system.controllers]
         if len(set(rates)) == 1:

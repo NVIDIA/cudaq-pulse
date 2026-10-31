@@ -144,6 +144,14 @@ behavior may change in any 0.x release.
   another version of an installed description is noticed once
   (`UpgradeNotice`). `python -m cudaq_pulse.doctor --system FILE` checks a
   system file and whether its controllers' backends are installed.
+- **A bound on how long a program runs.** `ControllerLimits` takes
+  `max_program_duration`, a time or a number of ns, the longest program the
+  controller runs. Building the module sums the program op after op, every
+  iteration of its loops, and a program longer than it, or than 2**60
+  cycles without one, is a `CompilationError` at the op or loop that passes
+  it; trip counts multiply without overflow. A wait whose length a float
+  sets is counted at its lowest length, and the call checks the length
+  again with its value.
 
 ### Changed
 

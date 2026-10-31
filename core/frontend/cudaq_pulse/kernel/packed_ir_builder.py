@@ -86,6 +86,7 @@ _CLASSICAL_WAIT = 38
 _CLASSICAL_COMPARE = 39
 _VARIABLE_WAIT = 40
 _SELECT = 41
+_MAX_CYCLES = 42
 _LATENCY_MODE = {"bounded": 0, "timeout": 1, "blocking": 2}
 _COMPARE = {"==": 0, "!=": 1, "<": 2, "<=": 3, ">": 4, ">=": 5}
 
@@ -454,6 +455,11 @@ class PackedIRBuilder:
         self.max_instructions = limit
         self._cap = 0
         self._ensure(0)
+
+    def limit_cycles(self, cycles: int) -> None:
+        """Make a program longer than *cycles* (the controller's longest
+        program) an error when the module is built."""
+        self._record(_MAX_CYCLES, [cycles])
 
     def _w(self, val: int) -> None:
         self._buf[self._cur] = val

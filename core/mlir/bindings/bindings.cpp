@@ -160,6 +160,7 @@ constexpr int kOpClassicalWait = 38;
 constexpr int kOpClassicalCompare = 39;
 constexpr int kOpVariableWait = 40;
 constexpr int kOpSelect = 41;
+constexpr int kOpMaxCycles = 42;
 // A payload length of 0xFF means the length is in the next word.
 constexpr int kExtendedPayload = 0xFF;
 
@@ -2204,6 +2205,14 @@ public:
     return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs));
   }
 
+  /// For waits whose length floats set: (cycles op after op with each at its
+  /// lowest length, the most the program may last, 1 if that is the
+  /// controller's longest program, how often each such wait runs).
+  nb::tuple program_length() const {
+    return nb::make_tuple(length_.cycles, length_.most, length_.controller,
+                          nb::cast(length_.repeats));
+  }
+
   /// `found`, each line's runtime-qudit slot, into the list `slots`, unless
   /// it is None.
   static void lineSlots(const std::vector<int64_t> &found, nb::handle slots) {
@@ -3444,6 +3453,14 @@ private:
   // in a branch: false only where the builder saw neither, so that
   // controller_events() looks for them only where there can be any.
   bool runTime_ = true;
+  /// For a module with waits whose length floats set: what it lasts op after
+  /// op with each at its lowest length, the most it may last, whether that
+  /// is the controller's, and how often each such wait runs.
+  struct Length {
+    int64_t cycles = 0, most = 0, controller = 0;
+    std::vector<int64_t> repeats;
+  };
+  Length length_;
   // The module before scheduling, while it has schedule blocks (see
   // keepSource).
   mlir::OwningOpRef<mlir::ModuleOp> source_;
@@ -3713,6 +3730,36 @@ pulse::ScheduleBlockOp buildScheduleBlock(mlir::OpBuilder &builder,
   return block;
 }
 
+/// The cycles a waveform lasts, from constants; 0 when they do not say.
+static int64_t waveformCycles(mlir::Value waveform) {
+  mlir::Operation *def = waveform.getDefiningOp();
+  if (!def)
+    return 0;
+  if (auto op = mlir::dyn_cast<pulse::CustomSamplesOp>(def))
+    return op.getDurationCycles();
+  if (mlir::isa<pulse::PulseAddOp, pulse::PulseSubOp, pulse::PulseMulOp,
+                pulse::PulseScaleOp, pulse::PulseNegOp>(def))
+    return waveformCycles(def->getOperand(0));
+  mlir::Value duration;
+  if (auto op = mlir::dyn_cast<pulse::GaussianPulseOp>(def))
+    duration = op.getDuration();
+  else if (auto op = mlir::dyn_cast<pulse::SquarePulseOp>(def))
+    duration = op.getDuration();
+  else if (auto op = mlir::dyn_cast<pulse::DRAGPulseOp>(def))
+    duration = op.getDuration();
+  else if (auto op = mlir::dyn_cast<pulse::CosinePulseOp>(def))
+    duration = op.getDuration();
+  else if (auto op = mlir::dyn_cast<pulse::TanhRampOp>(def))
+    duration = op.getDuration();
+  else if (auto op = mlir::dyn_cast<pulse::GaussianSquarePulseOp>(def))
+    duration = op.getDuration();
+  else if (auto op = mlir::dyn_cast<pulse::CustomOp>(def))
+    duration = op.getDuration();
+  else
+    return 0;
+  return pulse::constantIndex(duration).value_or(0);
+}
+
 class PulseModuleBuilder {
 public:
   PulseModuleBuilder() : ctx_(SharedContextPool::acquire()) {
@@ -3840,6 +3887,10 @@ public:
       // The links of classical calls as the region began, and as its then
       // arm ended: a link a region sends on is carried out of it.
       std::map<int64_t, mlir::Value> linksBefore = {}, linksThen = {};
+      // What the region lasts serially (its else arm in `elseCycles`), and
+      // the word of its first record.
+      int64_t cycles = 0, elseCycles = 0;
+      size_t word = 0;
     };
     std::vector<Region> regions;
     // A schedule block is a region with neither loop bounds nor a condition.
@@ -3909,6 +3960,39 @@ public:
     };
 
     size_t cur = 0;
+    // What the program lasts played op after op, in cycles, which no
+    // schedule of it exceeds: a loop's body times its trip count, the longer
+    // arm of an if. Past `maxCycles` (the controller's longest program, else
+    // 2**60) it is an error at the record that crosses it.
+    int64_t maxCycles = int64_t(1) << 60;
+    bool controllerLimit = false;
+    int64_t serialCycles = 0;
+    std::vector<int64_t> waitRepeats;
+    auto tooLong = [&](size_t word) {
+      throw PackedValueError(
+          controllerLimit
+              ? "the program lasts more than " + std::to_string(maxCycles) +
+                    " cycles, the longest program of the controller "
+                    "(ControllerLimits.max_program_duration)"
+              : std::string("the program lasts more than 2**60 cycles, more "
+                            "than a schedule counts"),
+          word);
+    };
+    auto lengthen = [&](int64_t cycles, size_t word) {
+      int64_t &into = regions.empty()           ? serialCycles
+                      : regions.back().elseBody ? regions.back().elseCycles
+                                                : regions.back().cycles;
+      if (__builtin_add_overflow(into, cycles, &into) || into > maxCycles)
+          [[unlikely]]
+        tooLong(word);
+    };
+    auto trips = [](const Region &loop) -> uint64_t {
+      return loop.ub > loop.lb
+                 ? (static_cast<uint64_t>(loop.ub) -
+                    static_cast<uint64_t>(loop.lb) + loop.step - 1) /
+                       static_cast<uint64_t>(loop.step)
+                 : 0;
+    };
     while (cur < len) {
       int64_t hdr = d[cur];
       int opcode = static_cast<int>(hdr & 0xFF);
@@ -3978,6 +4062,7 @@ public:
                       nullptr};
         if (region.step <= 0)
           throw std::invalid_argument("packed: loop step must be positive");
+        region.word = cur;
         region.linksBefore = links;
         builder_->setInsertionPointToEnd(region.body.get());
         regions.push_back(std::move(region));
@@ -3989,6 +4074,15 @@ public:
           throw std::invalid_argument("packed: malformed loop end");
         Region region = std::move(regions.back());
         regions.pop_back();
+        {
+          uint64_t total;
+          if (__builtin_mul_overflow(trips(region),
+                                     static_cast<uint64_t>(region.cycles),
+                                     &total) ||
+              total > static_cast<uint64_t>(maxCycles)) [[unlikely]]
+            tooLong(region.word);
+          lengthen(static_cast<int64_t>(total), region.word);
+        }
         builder_->setInsertionPointToEnd(region.parent);
         const int64_t n = p[0];
         // A value carried under two names is one iteration argument.
@@ -4058,6 +4152,7 @@ public:
                       builder_->getBlock(),
                       std::make_unique<mlir::Block>(),
                       nullptr};
+        region.word = cur;
         region.linksBefore = links;
         builder_->setInsertionPointToEnd(region.body.get());
         regions.push_back(std::move(region));
@@ -4082,6 +4177,7 @@ public:
           throw std::invalid_argument("packed: malformed if end");
         Region region = std::move(regions.back());
         regions.pop_back();
+        lengthen(std::max(region.cycles, region.elseCycles), region.word);
         --openIfs;
         builder_->setInsertionPointToEnd(region.parent);
         const int64_t n = p[0];
@@ -4158,6 +4254,7 @@ public:
               "packed: schedule block end without a begin");
         Region region = std::move(regions.back());
         regions.pop_back();
+        lengthen(region.cycles, cur);
         auto [policy, callee] = std::move(blocks.back());
         blocks.pop_back();
         builder_->setInsertionPointToEnd(region.parent);
@@ -4497,6 +4594,7 @@ public:
                            builder_->getI64IntegerAttr(p[6]));
         bind(p[3], driveOp.getUpdatedLine());
         bind(p[4], driveOp.getUpdatedTone());
+        lengthen(waveformCycles(driveOp.getPulse()), cur);
         break;
       }
 
@@ -4509,6 +4607,7 @@ public:
         bind(p[3], roOp.getUpdatedLine());
         bind(p[4], roOp.getUpdatedTone());
         bind(p[5], roOp.getResult());
+        lengthen(waveformCycles(roOp.getPulse()), cur);
         break;
       }
 
@@ -4545,6 +4644,10 @@ public:
         auto waitOp = pulse::WaitOp::create(*builder_, loc, lineVal.getType(),
                                             lineVal, durOp.getResult());
         bind(p[1], waitOp.getResult());
+        lengthen((pmask & (1 << 2))
+                     ? pulse::constantIndex(durCycles).value_or(0)
+                     : p[2],
+                 cur);
         break;
       }
 
@@ -4565,6 +4668,20 @@ public:
         if (p[5])
           waitOp->setAttr("classical.variable", builder_->getUnitAttr());
         bind(p[1], waitOp.getResult());
+        // A length from floats is checked again with each call's values; one
+        // that waits for an answer is clamped to its highest length.
+        if (p[5]) {
+          lengthen(p[4] >= 0 ? p[4] : p[3], cur);
+        } else {
+          uint64_t repeats = 1;
+          for (const Region &region : regions)
+            if (region.isLoop &&
+                __builtin_mul_overflow(repeats, trips(region), &repeats))
+              repeats = std::numeric_limits<int64_t>::max();
+          waitRepeats.push_back(static_cast<int64_t>(std::min<uint64_t>(
+              repeats, std::numeric_limits<int64_t>::max())));
+          lengthen(p[3], cur);
+        }
         break;
       }
 
@@ -4717,6 +4834,17 @@ public:
         break;
       }
 
+      case kOpMaxCycles: {
+        // [the controller's longest program, in cycles]
+        requirePayload(1);
+        if (p[0] < 1)
+          throw std::invalid_argument(
+              "packed: longest program must be positive");
+        controllerLimit = p[0] < maxCycles;
+        maxCycles = std::min(maxCycles, p[0]);
+        break;
+      }
+
       default:
         throw std::invalid_argument("packed: unknown opcode " +
                                     std::to_string(opcode));
@@ -4730,6 +4858,9 @@ public:
     mlir::func::ReturnOp::create(*builder_, loc);
     PulseModule result(ctx_, std::move(owningModule));
     result.runTime_ = runTime;
+    if (!waitRepeats.empty())
+      result.length_ = {serialCycles, maxCycles, controllerLimit ? 1 : 0,
+                        std::move(waitRepeats)};
     return result;
   }
 
@@ -5039,6 +5170,10 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "The lines and events of the export for a controller, as "
            "controller.export() gives them; a list `slots` gets each line's "
            "runtime-qudit slot")
+      .def("program_length", &PulseModule::program_length,
+           "For waits whose length floats set: (serial cycles at their "
+           "lowest lengths, the longest program, whether that is the "
+           "controller's, the runs of each such wait)")
       .def("controller_events_on", &PulseModule::controller_events_on,
            nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
            nb::arg("num"), nb::arg("den"), nb::arg("grid"),

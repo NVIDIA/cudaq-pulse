@@ -224,6 +224,12 @@ class ControllerLimits:
     body once per iteration, a rolled one once; tracing stops when the
     program grows past the limit, and the error names the loop that
     unrolled it. Exports list it among the limits only when it is set.
+    ``max_program_duration``: the longest program the controller runs, a
+    time or a number of ns (``None``: no limit); the compiler sums the
+    program op after op, every iteration of its loops, and a program longer
+    than that is a compile error at the op or loop that passes it (a wait
+    whose length floats set, at the call). Without it, a program may last
+    up to 2**60 cycles. Exports list it only when it is set.
     ``max_fine_delay_ns``: the longest delay, below one grid step, each line
     can add to its output (0: none), a time or a number of ns; it plays the
     part of a calibrated line delay (``MachineModel.line_delays_ns``) that
@@ -272,6 +278,7 @@ class ControllerLimits:
     buffer_bytes: int | None = None
     controller_form: bool = False
     max_instructions: int | None = None
+    max_program_duration: float | Time | None = None
 
     def __post_init__(self) -> None:
         if self.clock_ghz is not None and not self.clock_ghz > 0:
@@ -287,6 +294,10 @@ class ControllerLimits:
             if getattr(self, name) < 0:
                 raise ValueError(f"ControllerLimits.{name} cannot be negative")
         object.__setattr__(self, "max_fine_delay_ns", as_nanoseconds(self.max_fine_delay_ns))
+        if self.max_program_duration is not None:
+            object.__setattr__(
+                self, "max_program_duration", _longest_program(self.max_program_duration)
+            )
         for name in ("max_fine_delay_ns", "alignment_tolerance_cycles"):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) < 0:
                 raise InvalidValueError(f"ControllerLimits.{name} must be a finite number >= 0")
@@ -381,10 +392,22 @@ class ControllerLimits:
         data["acquirers"] = {str(k): v for k, v in sorted(self.acquirers.items())}
         data["op_cycles"] = dict(sorted(self.op_cycles.items()))
         data["compute_links"] = list(self.compute_links)
-        for name in ("max_amplitude", "max_instructions"):
+        for name in ("max_amplitude", "max_instructions", "max_program_duration"):
             if data[name] is None:
                 del data[name]
         return data
+
+
+def _longest_program(value: Any) -> float:
+    """``ControllerLimits.max_program_duration`` in ns."""
+    if not isinstance(value, bool) and isinstance(value, (int, float)):
+        ns = float(as_nanoseconds(value))
+        if math.isfinite(ns) and ns > 0:
+            return ns
+    raise InvalidValueError(
+        "ControllerLimits.max_program_duration must be a positive time or number of "
+        f"nanoseconds, or None; got {value!r}"
+    )
 
 
 # ── Waveforms ────────────────────────────────────────────────────────────────

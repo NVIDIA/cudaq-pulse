@@ -207,6 +207,15 @@ them, with a ``CompilationError`` at the line of the loop that unrolled it,
 naming the loop, about how many operations it unrolls to and the limit. A
 rolled loop holds its body once.
 
+**Program length.** A program runs at most its controller's
+``ControllerLimits(max_program_duration=...)``, a time or a number of ns,
+and at most 2**60 clock cycles without one. Building the module sums the
+program op after op, every iteration of its loops (the longer arm of an
+``if``), and a program longer than that is a ``CompilationError`` at the
+op or loop that passes it. A wait whose length a float sets counts at its
+lowest length; a call whose values make the program longer is a
+``ValueError`` when it binds them.
+
 **For loops over Python values** known when the kernel is traced: lists,
 tuples, dictionaries, ``enumerate()``, ``zip()``, ``reversed()``, a qubit
 vector, or any other finite iterable. These loops are always unrolled, one
