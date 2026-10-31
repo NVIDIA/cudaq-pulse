@@ -41,8 +41,12 @@
 #include <vector>
 
 struct ControllerRecord {
+  /// A branch, its arm, the readout and answer records its condition is
+  /// computed from, its test, and for the test "expression" the walk's
+  /// expression of the condition, whose leaves are places in those lists
+  /// (else -1).
   using Condition = std::tuple<int64_t, int64_t, std::vector<int64_t>,
-                               std::vector<int64_t>, std::string>;
+                               std::vector<int64_t>, std::string, int32_t>;
 
   const char *kind = "";
   mlir::Operation *op = nullptr;
@@ -640,6 +644,9 @@ struct ControllerWalk {
     // The export counts times in cycles, which a duration holds.
     if (mlir::isa<pulse::DurationFromIntOp>(def))
       return of(def->getOperand(0));
+    // A readout's leaf is the level it observed.
+    if (mlir::isa<pulse::OutcomeOp>(def))
+      return of(def->getOperand(0));
     // A readout's outcome is set when it observed a level other than 0.
     if (mlir::isa<pulse::IsSetOp>(def)) {
       int32_t outcome = of(def->getOperand(0));
@@ -711,25 +718,39 @@ struct ControllerWalk {
       int32_t extremum = minMax(select, *result, depth);
       if (extremum >= 0)
         return extremum;
+      // A choice of bool constants is the condition or its negation.
+      double then = number(select.getTrueValue()),
+             other = number(select.getFalseValue());
+      if (*result == T::Bool && !std::isnan(then) && !std::isnan(other) &&
+          (then != 0.0) != (other != 0.0))
+        return equality(true, select.getCondition(), select.getTrueValue(),
+                        depth);
       int32_t condition = of(select.getCondition());
-      int32_t then = of(select.getTrueValue());
+      int32_t chosen = of(select.getTrueValue());
       return op(Expression::Select, *result,
-                {condition, then, of(select.getFalseValue())});
+                {condition, chosen, of(select.getFalseValue())});
+    }
+    if (mlir::isa<arith::AndIOp, arith::OrIOp, arith::XOrIOp>(def)) {
+      if (*type != T::Bool || *result != T::Bool)
+        return unknown();
+      return logic(def, depth);
     }
     if (auto cmp = mlir::dyn_cast<arith::CmpIOp>(def)) {
+      using P = arith::CmpIPredicate;
+      if (*type == T::Bool &&
+          (cmp.getPredicate() == P::eq || cmp.getPredicate() == P::ne))
+        return equality(cmp.getPredicate() == P::eq, cmp.getLhs(), cmp.getRhs(),
+                        depth);
       std::optional<Expression::Term> term = comparison(cmp.getPredicate());
-      if (!term || (*type == T::Bool && *term != Expression::Eq &&
-                    *term != Expression::Ne))
+      if (!term || *type == T::Bool)
         return unknown();
-      int32_t lhs = of(cmp.getLhs());
-      return op(*term, *type, {lhs, of(cmp.getRhs())});
+      return compared(*term, *type, cmp.getLhs(), cmp.getRhs(), depth);
     }
     if (auto cmp = mlir::dyn_cast<arith::CmpFOp>(def)) {
       std::optional<Expression::Term> term = comparison(cmp.getPredicate());
       if (!term)
         return unknown();
-      int32_t lhs = of(cmp.getLhs());
-      return op(*term, *type, {lhs, of(cmp.getRhs())});
+      return compared(*term, *type, cmp.getLhs(), cmp.getRhs(), depth);
     }
     // A bool as an integer: 1, or -1 sign-extended, when true, else 0.
     if (mlir::isa<arith::ExtUIOp, arith::ExtSIOp>(def)) {
@@ -742,6 +763,108 @@ struct ControllerWalk {
                 {condition, then, constant(0.0, T::Int)});
     }
     return unknown();
+  }
+
+  /// Bool logic `def` computes: a and b is select(a, b, false), a or b is
+  /// select(a, true, b), and exclusive or is ne.
+  LLVM_ATTRIBUTE_NOINLINE int32_t logic(mlir::Operation *def, int depth) {
+    using T = Expression::Type;
+    mlir::Value x = def->getOperand(0), y = def->getOperand(1);
+    if (mlir::isa<mlir::arith::XOrIOp>(def))
+      return equality(false, x, y, depth);
+    bool both = mlir::isa<mlir::arith::AndIOp>(def);
+    if (!std::isnan(number(x)))
+      std::swap(x, y);
+    // With a constant: a and true is a, a or false is a, and the others
+    // the constant.
+    if (double c = number(y); !std::isnan(c))
+      return (c != 0.0) == both ? expression(x, depth + 1)
+                                : constant(c != 0.0, T::Bool);
+    int32_t a = expression(x, depth + 1), b = expression(y, depth + 1);
+    if (both)
+      return op(Expression::Select, T::Bool, {a, b, constant(0.0, T::Bool)});
+    return op(Expression::Select, T::Bool, {a, constant(1.0, T::Bool), b});
+  }
+
+  /// Comparison `term` of `x` with `y` in `type`, a constant second: c < x
+  /// is x > c, for integers and, as neither holds of NaN, for floats.
+  LLVM_ATTRIBUTE_NOINLINE int32_t compared(Expression::Term term,
+                                           Expression::Type type, mlir::Value x,
+                                           mlir::Value y, int depth) {
+    if (!std::isnan(number(x)) && std::isnan(number(y))) {
+      std::swap(x, y);
+      switch (term) {
+      case Expression::Lt:
+        term = Expression::Gt;
+        break;
+      case Expression::Le:
+        term = Expression::Ge;
+        break;
+      case Expression::Gt:
+        term = Expression::Lt;
+        break;
+      case Expression::Ge:
+        term = Expression::Le;
+        break;
+      default:
+        break;
+      }
+    }
+    int32_t lhs = expression(x, depth + 1);
+    return op(term, type, {lhs, expression(y, depth + 1)});
+  }
+
+  /// Makes comparison `e` its negation where that is a comparison too, and
+  /// says whether it did: not (a < b) is a >= b for integers, and for
+  /// floats, where NaN is in no order, only eq and ne negate each other.
+  static bool negate(Expression &e) {
+    if (e.kind != Expression::Op)
+      return false;
+    using X = Expression;
+    switch (e.term) {
+    case X::Eq:
+      e.term = X::Ne;
+      return true;
+    case X::Ne:
+      e.term = X::Eq;
+      return true;
+    case X::Lt:
+    case X::Le:
+    case X::Gt:
+    case X::Ge:
+      if (e.type != X::Int)
+        return false;
+      e.term = e.term == X::Lt   ? X::Ge
+               : e.term == X::Le ? X::Gt
+               : e.term == X::Gt ? X::Le
+                                 : X::Lt;
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  /// Whether bools `x` and `y` are equal (`equal`), else whether they
+  /// differ. Against a constant that is the other bool itself or its
+  /// negation, ne(it, true).
+  LLVM_ATTRIBUTE_NOINLINE int32_t equality(bool equal, mlir::Value x,
+                                           mlir::Value y, int depth) {
+    double first = number(x), second = number(y);
+    if (!std::isnan(first)) {
+      std::swap(x, y);
+      std::swap(first, second);
+    }
+    int32_t lhs = expression(x, depth + 1);
+    if (!std::isnan(second)) {
+      if ((second != 0.0) == equal)
+        return lhs;
+      if (negate(expressions[lhs]))
+        return lhs;
+      return op(Expression::Ne, Expression::Bool,
+                {lhs, constant(1.0, Expression::Bool)});
+    }
+    return op(equal ? Expression::Eq : Expression::Ne, Expression::Bool,
+              {lhs, expression(y, depth + 1)});
   }
 
   /// `select` as the max or min of the values its condition compares,
@@ -860,6 +983,37 @@ struct ControllerWalk {
     if (k.operands)
       for (int32_t expr : *k.operands)
         move(expr, move);
+  }
+
+  /// Whether `e` is whether a readout is set: ne(readout, 0).
+  bool isSet(const Expression &e) const {
+    if (e.kind != Expression::Op || e.term != Expression::Ne ||
+        e.type != Expression::Int || e.of.size() != 2)
+      return false;
+    const Expression &level = expressions[e.of[0]],
+                     &zero = expressions[e.of[1]];
+    return level.kind == Expression::Readout &&
+           zero.kind == Expression::Constant && zero.number == 0.0;
+  }
+
+  /// The expression of a branch condition computed from `readouts` and
+  /// `answers`, its leaves numbering their places in those lists rather
+  /// than records: a record's copy of the condition moves with the lists.
+  LLVM_ATTRIBUTE_NOINLINE int32_t conditionExpression(
+      mlir::Value condition, const std::vector<int64_t> &readouts,
+      const std::vector<int64_t> &answers) {
+    int32_t root = expression(condition);
+    auto place = [&](int32_t index, auto &self) -> void {
+      Expression &e = expressions[index];
+      if (e.kind == Expression::Readout || e.kind == Expression::Answer) {
+        const auto &list = e.kind == Expression::Readout ? readouts : answers;
+        e.event = llvm::find(list, e.event) - list.begin();
+      }
+      for (int32_t child : e.of)
+        self(child, self);
+    };
+    place(root, place);
+    return root;
   }
 
   /// A frame change's value: its number, else its expression.
@@ -1464,11 +1618,25 @@ struct ControllerWalk {
       std::vector<int64_t> readouts, answers;
       inputs(condition, readouts, answers);
       std::string test = "expression";
-      if (mlir::Operation *def = condition.getDefiningOp()) {
-        if (mlir::isa<pulse::IsSetOp>(def) && readouts.size() == 1)
-          test = "is_set";
-        else if (mlir::isa<classical::WaitOp>(def) && answers.size() == 1)
+      int32_t computed = -1;
+      mlir::Operation *def = condition.getDefiningOp();
+      if (mlir::isa_and_nonnull<pulse::IsSetOp>(def) && readouts.size() == 1)
+        test = "is_set";
+      else if (mlir::isa_and_nonnull<classical::WaitOp>(def) &&
+               answers.size() == 1)
+        test = "answer";
+      else
+        computed = conditionExpression(condition, readouts, answers);
+      if (computed >= 0) {
+        // A condition computed in another way than its test names.
+        const Expression &e = expressions[computed];
+        if (e.kind == Expression::Answer) {
           test = "answer";
+          computed = -1;
+        } else if (isSet(e)) {
+          test = "is_set";
+          computed = -1;
+        }
       }
       int64_t id = nextBranch++;
       auto framesBefore = frames;
@@ -1480,7 +1648,7 @@ struct ControllerWalk {
       if (track)
         dependenciesBefore = frameDependencies;
       branches.emplace_back(id, 1, std::move(readouts), std::move(answers),
-                            std::move(test));
+                            std::move(test), computed);
       if (branch->hasAttr("pulse.then_updates"))
         listedUpdates(branch, "pulse.then_updates");
       block(*branch.thenBlock());
@@ -2595,7 +2763,8 @@ private:
       event["epoch"] = epoch;
     if (!compact || !r.conditions.empty()) {
       nb::list conditions;
-      for (const auto &[branch, arm, readouts, answers, test] : r.conditions) {
+      for (const auto &[branch, arm, readouts, answers, test, computed] :
+           r.conditions) {
         nb::dict condition;
         condition["branch"] = branch;
         condition["arm"] = static_cast<bool>(arm);
@@ -2604,6 +2773,8 @@ private:
         if (!compact || !answers.empty())
           condition["answers"] = ints(answers);
         condition["test"] = test;
+        if (computed >= 0)
+          condition["expression"] = expression(computed, readouts, answers);
         conditions.append(condition);
       }
       event["conditions"] = conditions;
@@ -2682,6 +2853,34 @@ private:
     return nb::float_(value);
   }
 
+  /// A branch condition's expression (see conditionExpression), with the
+  /// records its leaves' places in `readouts` and `answers` hold.
+  LLVM_ATTRIBUTE_NOINLINE nb::object
+  expression(int32_t index, const std::vector<int64_t> &readouts,
+             const std::vector<int64_t> &answers) const {
+    const Expression &e = walk.expressions[index];
+    if (e.kind != Expression::Op) {
+      nb::object out = expression(index);
+      if (e.kind == Expression::Readout)
+        out[names->readout] = readouts[e.event];
+      else if (e.kind == Expression::Answer)
+        out[names->answer] = answers[e.event];
+      return out;
+    }
+    if (!names)
+      names.emplace();
+    const Names &key = *names;
+    nb::dict out;
+    out[key.op] = key.terms[e.term];
+    out[key.type] = key.types[e.type];
+    nb::list of;
+    for (int32_t child : e.of)
+      of.append(expression(child, readouts, answers));
+    out[key.of] = of;
+    return out;
+  }
+
+  /// Expression `index` as the export gives it.
   nb::object expression(int32_t index) const {
     const Expression &e = walk.expressions[index];
     if (e.kind == Expression::Number)
@@ -2803,13 +3002,15 @@ private:
     nb::list out;
     for (const auto &update : all) {
       nb::list conditions;
-      for (const auto &[branch, arm, readouts, answers, test] :
+      for (const auto &[branch, arm, readouts, answers, test, computed] :
            update.conditions) {
         nb::dict condition;
         if (!compact || !answers.empty())
           condition["answers"] = ints(answers);
         condition["arm"] = static_cast<bool>(arm);
         condition["branch"] = branch;
+        if (computed >= 0)
+          condition["expression"] = expression(computed, readouts, answers);
         if (!compact || !readouts.empty())
           condition["readouts"] = ints(readouts);
         condition["test"] = test;

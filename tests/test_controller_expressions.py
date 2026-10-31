@@ -287,6 +287,222 @@ def test_a_float_max_keeps_the_order_of_its_operands_which_nan_tells_apart():
     assert math.isnan(evaluate_expression(other, answers={answer: [math.nan, 0]}))
 
 
+# ── Branch conditions ────────────────────────────────────────────────────────
+
+_BRANCH = ["if n > 3:", "    drive(d, square(40, 0.1))", "drive(d, square(20, 0.2))"]
+
+
+def _branching(form):
+    """The program driving first only when ``%cond``, MLIR computing it by
+    *form* from the answers ``%x`` and ``%n`` and the measurement ``%m``."""
+    lowered = pulse.compile(_kernel(_BRANCH)).lower(Q[0])
+    text = lowered._concrete().print()
+    line = next(line for line in text.splitlines() if "arith.cmpi sgt" in line)
+    condition, answers = re.match(r"\s*(%\S+) = arith.cmpi sgt, (%[^#\s]+)#1,", line).groups()
+    measurement = re.search(r"(%\S+) = pulse.readout ", text).group(1).split(", ")[-1]
+    constants = [
+        "%one = arith.constant 1 : i64",
+        "%two = arith.constant 2 : i64",
+        "%three = arith.constant 3 : i64",
+        "%tenth = arith.constant 0.1 : f64",
+        "%true = arith.constant true",
+        "%false = arith.constant false",
+    ]
+    computed = "; ".join([*constants, form]).replace("%cond", condition)
+    for name, value in (("%x", f"{answers}#0"), ("%n", f"{answers}#1"), ("%m", measurement)):
+        computed = re.sub(rf"{name}\b", value, computed)
+    module = MLIRPipeline().parse_to_module(text.replace(line, "\n".join(computed.split("; "))))
+    object.__setattr__(lowered, "_module", module)
+    return lowered
+
+
+def _condition(program):
+    """The condition of the drive played only on one arm."""
+    if program["format"] != FORMAT:
+        program = unroll(program)
+    [condition] = next(e["conditions"] for e in program["events"] if e["conditions"])
+    return condition
+
+
+_CONDITIONS = {
+    "select compared": (
+        "%big = arith.cmpf ogt, %x, %tenth : f64; "
+        "%z = arith.select %big, %n, %two : i64; %cond = arith.cmpi eq, %z, %three : i64"
+    ),
+    "integer arithmetic": (
+        "%a = arith.muli %n, %three : i64; %b = arith.floordivsi %a, %two : i64; "
+        "%c = arith.remsi %n, %two : i64; %d = arith.subi %b, %c : i64; "
+        "%cond = arith.cmpi sge, %d, %three : i64"
+    ),
+    "float arithmetic": (
+        "%f = arith.sitofp %n : i64 to f64; %g = arith.mulf %f, %x : f64; "
+        "%h = arith.subf %g, %tenth : f64; %cond = arith.cmpf olt, %h, %x : f64"
+    ),
+    "and": (
+        "%p = arith.cmpi sgt, %n, %three : i64; %q = arith.cmpf ogt, %x, %tenth : f64; "
+        "%cond = arith.andi %p, %q : i1"
+    ),
+    "or": (
+        "%p = arith.cmpi sgt, %n, %three : i64; %q = arith.cmpf ogt, %x, %tenth : f64; "
+        "%cond = arith.ori %p, %q : i1"
+    ),
+    "exclusive or": (
+        "%p = arith.cmpi sgt, %n, %three : i64; %q = arith.cmpf ogt, %x, %tenth : f64; "
+        "%cond = arith.xori %p, %q : i1"
+    ),
+    "readout plus answer": (
+        "%s = pulse.is_set %m : !pulse.measurement -> i1; %e = arith.extui %s : i1 to i64; "
+        "%t = arith.addi %e, %n : i64; %cond = arith.cmpi sgt, %t, %three : i64"
+    ),
+    "readout selects": (
+        "%s = pulse.is_set %m : !pulse.measurement -> i1; "
+        "%z = arith.select %s, %x, %tenth : f64; %cond = arith.cmpf oge, %z, %x : f64"
+    ),
+    "readout level": (
+        "%k = pulse.outcome %m : !pulse.measurement -> i64; "
+        "%l = arith.muli %k, %n : i64; %cond = arith.cmpi slt, %l, %three : i64"
+    ),
+}
+_BRANCH_INPUTS = [
+    (x, n, level) for x in (0.05, 0.1, 0.25, math.nan) for n in (2, 3, 4, 6) for level in (0, 1)
+]
+
+
+@pytest.mark.parametrize("form", _CONDITIONS.values(), ids=_CONDITIONS)
+def test_a_branch_condition_runs_the_arm_the_emulation_runs(form):
+    lowered = _branching(form)
+    condition = _condition(lowered.export_controller())
+    assert condition["test"] == "expression"
+    assert _condition(lowered.export_controller(version=2)) == condition
+    args = lowered.options.schedule_args()
+    module = lowered._concrete().simulation_module(*args)
+    readout, iteration = module.next_measurement([])[:2]
+    for x, n, level in _BRANCH_INPUTS:
+        path = [[readout, *iteration, level]]
+        bound = module.bind_call(module.next_call(path)[0], [x, float(n)], *args)
+        played = any(drive[0] == 0 for drive in bound.drive_frames(path)[0])
+        value = evaluate_expression(
+            condition["expression"],
+            readouts={r: level for r in condition["readouts"]},
+            answers={a: [x, n] for a in condition["answers"]},
+        )
+        assert type(value) is bool
+        assert (value == condition["arm"]) == played, (x, n, level)
+
+
+@pulse.kernel
+def _looped(q):
+    d = get_drive_line(q)  # noqa: F821
+    ro = get_readout_line(q)  # noqa: F821
+    x, n = _inputs.submit([readout(ro, square(100, 0.05))]).result()  # noqa: F821
+    for _ in range(4):
+        m = readout(ro, square(100, 0.05))  # noqa: F821
+        if m:
+            drive(d, square(40, 0.1))  # noqa: F821
+        if n > 3:
+            drive(d, square(30, 0.1))  # noqa: F821
+        wait(d, 200)  # noqa: F821
+
+
+def test_a_condition_in_a_rolled_loop_computes_from_the_readout_of_its_iteration():
+    lowered = pulse.compile(_looped).lower(Q[0])
+    text = lowered._concrete().print()
+    line = next(line for line in text.splitlines() if "pulse.is_set" in line)
+    condition, measurement = re.match(r"\s*(%\S+) = pulse.is_set (%\S+) :", line).groups()
+    level = (
+        f"%k = pulse.outcome {measurement} : !pulse.measurement -> i64\n"
+        f"%one = arith.constant 1 : i64\n{condition} = arith.cmpi eq, %k, %one : i64"
+    )
+    module = MLIRPipeline().parse_to_module(text.replace(line, level))
+    object.__setattr__(lowered, "_module", module)
+    structured = lowered.export_controller(version=2)
+    [loop] = (e for e in structured["events"] if e["kind"] == "loop")
+    assert loop["trips"] == 4
+    flat = lowered.export_controller()
+    assert [e["conditions"] for e in unroll(structured)["events"]] == [
+        e["conditions"] for e in flat["events"]
+    ]
+    readouts = [e["index"] for e in flat["events"] if e["kind"] == "readout"][1:]
+    tested = [
+        c["expression"]["of"][0]
+        for e in flat["events"]
+        for c in e["conditions"]
+        if c["expression"]["op"] == "eq"
+    ]
+    assert tested == [{"readout": r} for r in readouts]
+
+
+def test_a_condition_of_the_kernel_exports_its_expression():
+    lowered = pulse.compile(_kernel(["if (n * 3 - 4) // 2 >= n % 2 + 1:", *_BRANCH[1:]]))
+    condition = _condition(lowered.lower(Q[0]).export_controller())
+    assert condition["test"] == "expression"
+    assert {"ge", "floor_div", "rem", "mul", "sub"} <= _ops(condition["expression"])
+    answers = {a: [0.0, 4] for a in condition["answers"]}
+    assert evaluate_expression(condition["expression"], answers=answers) is True
+
+
+@pytest.mark.parametrize(
+    "forms",
+    [
+        [
+            "%cond = arith.cmpi sgt, %n, %three : i64",
+            "%cond = arith.cmpi slt, %three, %n : i64",
+            "%le = arith.cmpi sle, %n, %three : i64; %cond = arith.xori %le, %true : i1",
+            "%le = arith.cmpi sle, %n, %three : i64; %cond = arith.xori %true, %le : i1",
+            "%le = arith.cmpi sle, %n, %three : i64; %cond = arith.cmpi eq, %le, %false : i1",
+            "%le = arith.cmpi sle, %n, %three : i64; %cond = arith.select %le, %false, %true : i1",
+        ],
+        [
+            "%cond = arith.cmpf ogt, %x, %tenth : f64",
+            "%cond = arith.cmpf olt, %tenth, %x : f64",
+            "%gt = arith.cmpf ogt, %x, %tenth : f64; %cond = arith.cmpi ne, %gt, %false : i1",
+            "%gt = arith.cmpf ogt, %x, %tenth : f64; %cond = arith.select %gt, %true, %false : i1",
+        ],
+        [
+            "%cond = pulse.is_set %m : !pulse.measurement -> i1",
+            "%k = pulse.outcome %m : !pulse.measurement -> i64; "
+            "%zero = arith.constant 0 : i64; %cond = arith.cmpi ne, %k, %zero : i64",
+            "%k = pulse.outcome %m : !pulse.measurement -> i64; "
+            "%zero = arith.constant 0 : i64; %cond = arith.cmpi ne, %zero, %k : i64",
+        ],
+        [
+            "%p = arith.cmpi sgt, %n, %three : i64; %cond = arith.andi %p, %true : i1",
+            "%cond = arith.cmpi sgt, %n, %three : i64",
+        ],
+    ],
+    ids=["integer", "float", "readout", "and true"],
+)
+def test_a_condition_written_in_equivalent_ways_exports_the_same(forms):
+    exported = [_condition(_branching(form).export_controller()) for form in forms]
+    assert all(e == exported[0] for e in exported), exported
+
+
+def test_a_float_condition_negated_keeps_what_nan_tells_apart():
+    # not (x <= 0.1) holds of NaN, which x > 0.1 does not.
+    negated = _condition(
+        _branching(
+            "%le = arith.cmpf ole, %x, %tenth : f64; %cond = arith.xori %le, %true : i1"
+        ).export_controller()
+    )
+    greater = _condition(_branching("%cond = arith.cmpf ogt, %x, %tenth : f64").export_controller())
+    assert negated["expression"] != greater["expression"]
+    answers = {a: [math.nan, 0] for a in negated["answers"]}
+    assert evaluate_expression(negated["expression"], answers=answers) is True
+    assert evaluate_expression(greater["expression"], answers=answers) is False
+
+
+def test_a_condition_a_plain_test_names_has_no_expression():
+    branch = ["if m:", *_BRANCH[1:]]
+    program = pulse.compile(_kernel(branch)).lower(Q[0]).export_controller()
+    assert _condition(program) == {
+        "branch": 0,
+        "arm": True,
+        "readouts": [0],
+        "answers": [],
+        "test": "is_set",
+    }
+
+
 # ── No operation of the compiler in any export ───────────────────────────────
 
 _DIALECT = re.compile(
@@ -320,7 +536,13 @@ def test_no_export_of_the_corpus_names_an_operation_of_the_compiler(version):
     # Format /2 is for controllers on the program clock.
     clock = ControllerLimits(clock_ghz=2.0, cycles_per_timestep=4) if version == 1 else None
     machine = MachineModel(controller=clock)
-    for body in (*_PHASES.values(), *_WAITS.values(), ["wait(d, n * 4, bounds=(8, 400))"]):
+    for body in (
+        *_PHASES.values(),
+        *_WAITS.values(),
+        ["wait(d, n * 4, bounds=(8, 400))"],
+        _BRANCH,
+        ["if (n * 3 - 4) // 2 >= n % 2 + 1:", *_BRANCH[1:]],
+    ):
         lowered = pulse.compile(_kernel(body), machine=machine).lower(Q[0])
         _no_dialect(lowered.export_controller(version=version))
 

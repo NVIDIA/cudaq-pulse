@@ -1449,6 +1449,7 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
                         "answers": [latest[r] for r in c.get("answers", ())],
                         "arm": c["arm"],
                         "branch": branch(c),
+                        **({"expression": resolve(c["expression"])} if "expression" in c else {}),
                         "readouts": [latest[r] for r in c.get("readouts", ())],
                         "test": c["test"],
                     }
@@ -1493,6 +1494,11 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
                     "readouts": [latest[r] for r in condition.get("readouts", ())],
                     "answers": [latest[r] for r in condition.get("answers", ())],
                     "test": condition["test"],
+                    **(
+                        {"expression": resolve(condition["expression"])}
+                        if "expression" in condition
+                        else {}
+                    ),
                 }
                 for condition in item.get("conditions", ())
             ]

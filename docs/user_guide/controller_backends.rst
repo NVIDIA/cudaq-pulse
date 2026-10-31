@@ -61,10 +61,12 @@ iteration and both arms of a branch. ``epochs``, ``calls``, ``links`` and
     The measurement-conditioned branches the event lies in, outermost
     first: the ``branch``, the ``arm`` (``true`` for the ``if`` arm), and
     the ``readouts`` and ``answers`` (event indices) the condition is
-    computed from. ``test`` is ``"is_set"`` when the condition is one
-    readout's outcome, ``"answer"`` when it is one answer value, else
-    ``"expression"``. Events in the two arms of one branch may overlap
-    in time; only one arm plays.
+    computed from. ``test`` is ``"is_set"`` when the condition is whether
+    one readout is set, ``"answer"`` when it is one answer value, else
+    ``"expression"``, and then ``expression`` is the condition, a bool
+    expression (see `Run-time expressions`_) over those readouts and
+    answers. The event plays when every condition is its ``arm``. Events
+    in the two arms of one branch may overlap in time; only one arm plays.
 
 Drives and readouts also have:
 
@@ -173,10 +175,10 @@ Run-time expressions
 
 What a program computes from its readouts and answers (a run-time waveform
 parameter, a wait's ``length``, a frame update's ``value``, a submit's
-``operands``) is an expression in a closed vocabulary of terms, whatever
-operations the compiler computes it with: ``y = x if x > 0.1`` (else
-``0.1``) and ``y = x if 0.1 < x`` are both ``max``. An expression is one
-of:
+``operands``, a branch's ``expression``) is an expression in a closed
+vocabulary of terms, whatever operations the compiler computes it with:
+``y = x if x > 0.1`` (else ``0.1``) and ``y = x if 0.1 < x`` are both
+``max``. An expression is one of:
 
 ``{"const": x}``
     A number, or ``true`` or ``false``.
@@ -243,7 +245,14 @@ complement and floats IEEE 754 binary64, rounded to nearest, ties to even.
 A frontend computes an integer answer used as a time in floats, so
 ``wait(d, n + 4)`` is ``to_int(add(add(to_float(n), 4), 0.5))``. Whether
 a readout is set is ``ne(readout, 0)``, and a bool used as an integer a
-``select`` of 1 (or −1) and 0. There is no JSON schema; this section and
+``select`` of 1 (or −1) and 0. A comparison has its constant second:
+``3 < n`` is ``gt(n, 3)``. Bools combine without terms of their own:
+``a and b`` is ``select(a, b, false)``, ``a or b`` is ``select(a, true,
+b)``, ``a != b`` (exclusive or) is ``ne(a, b)``, and ``not a`` is
+``ne(a, true)``, except that ``not`` of an integer comparison is the
+opposite comparison (``not (n <= 3)`` is ``gt(n, 3)``) and of ``eq`` or
+``ne`` the other; a float ``not (x <= 0.1)`` stays as it is, since it holds
+of NaN and ``x > 0.1`` does not. There is no JSON schema; this section and
 ``evaluate_expression`` define the expressions.
 
 The structured format
