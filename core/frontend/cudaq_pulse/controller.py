@@ -3273,7 +3273,52 @@ _Usage = UsageReport
 # ── pulse.controller(...) ────────────────────────────────────────────────────
 
 
-class ControllerModule(Protocol):
+class ControllerNames(Protocol):
+    """The names this module exports, as attributes: what a module
+    satisfies of ``ControllerModule``, which it can't be called as."""
+
+    EXPRESSION_TERMS: frozenset[str]
+    FORMAT: str
+    OP_CLASSES: tuple[str, ...]
+    ControllerLimitError: type[ControllerLimitError]
+    ControllerLimits: type[ControllerLimits]
+    Event: type[Event]
+    FunctionCost: type[FunctionCost]
+    FunctionResources: type[FunctionResources]
+    LimitExceeded: type[LimitExceeded]
+    LinkUsage: type[LinkUsage]
+    ResourceReport: type[ResourceReport]
+    ControllerUsage: type[ControllerUsage]
+    FunctionUsage: type[FunctionUsage]
+    ProcessorUsage: type[ProcessorUsage]
+    UsageReport: type[UsageReport]
+    WaveformMemoryScope: type[WaveformMemoryScope]
+
+    def analyze(self, function: Any, limits: _Limits | None = None) -> _Resources: ...
+    def check(self, lowered: Lowered, limits: _Limits | None = None) -> Sequence[str]: ...
+    def evaluate_expression(
+        self,
+        expression: Any,
+        readouts: Mapping[int, int] | None = None,
+        answers: Mapping[int, Sequence[float | int | bool]] | None = None,
+    ) -> float | int | bool: ...
+    def export(
+        self,
+        lowered: Lowered,
+        sample_rate_ghz: float | None = None,
+        controller: int | None = None,
+        version: int = 1,
+    ) -> dict[str, Any]: ...
+    def resources(self, lowered: Lowered, limits: _Limits | None = None) -> _Report: ...
+    def sample_waveform(
+        self, node: Mapping[str, Any], duration_cycles: int, samples_per_cycle: float = 1
+    ) -> np.ndarray: ...
+    def shape_key(self, node: Mapping[str, Any] | None) -> tuple[Any, ...] | None: ...
+    def unroll(self, program: Mapping[str, Any]) -> dict[str, Any]: ...
+    def usage(self, lowered: Lowered) -> _Usage: ...
+
+
+class ControllerModule(ControllerNames, Protocol):
     """What type checkers take ``pulse.controller`` to be: the loader of
     controller descriptions, with this module's names as attributes.
 
@@ -3285,38 +3330,7 @@ class ControllerModule(Protocol):
     it is this module.
     """
 
-    EXPRESSION_TERMS: frozenset[str]
-    FORMAT: str
-    OP_CLASSES: tuple[str, ...]
-    ControllerLimitError: type[ControllerLimitError]
-    ControllerLimits: type[ControllerLimits]
-    FunctionCost: type[FunctionCost]
-    FunctionResources: type[FunctionResources]
-    LimitExceeded: type[LimitExceeded]
-    LinkUsage: type[LinkUsage]
-    ResourceReport: type[ResourceReport]
-    ControllerUsage: type[ControllerUsage]
-    FunctionUsage: type[FunctionUsage]
-    ProcessorUsage: type[ProcessorUsage]
-    UsageReport: type[UsageReport]
-
     def __call__(self, description: str | os.PathLike[str], /, **wiring: Any) -> Controller: ...
-    def analyze(self, function: Any, limits: _Limits | None = None) -> _Resources: ...
-    def check(self, lowered: Lowered, limits: _Limits | None = None) -> Sequence[str]: ...
-    def evaluate_expression(
-        self,
-        expression: Any,
-        readouts: Mapping[int, int] | None = None,
-        answers: Mapping[int, Sequence[float | int | bool]] | None = None,
-    ) -> float | int | bool: ...
-    def export(self, lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, Any]: ...
-    def format_report(self, report: _Report) -> str: ...
-    def resources(self, lowered: Lowered, limits: _Limits | None = None) -> _Report: ...
-    def sample_waveform(
-        self, node: Mapping[str, Any], duration_cycles: int, samples_per_cycles: int = 1
-    ) -> np.ndarray: ...
-    def shape_key(self, node: Mapping[str, Any] | None) -> tuple[Any, ...] | None: ...
-    def usage(self, lowered: Lowered) -> _Usage: ...
 
 
 class _ControllerModule(types.ModuleType):

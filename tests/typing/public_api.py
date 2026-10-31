@@ -17,9 +17,16 @@ from collections.abc import Mapping, Sequence
 from typing import Any, assert_type
 
 import cudaq_pulse as pulse
+import cudaq_pulse.controller as controller_module
+import numpy as np
 from cudaq_pulse.classical import Bits, ClassicalFunction, Pending
 from cudaq_pulse.compiler import CompileMetrics, ScheduledEvent
-from cudaq_pulse.controller import ControllerLimits
+from cudaq_pulse.controller import (
+    ControllerLimits,
+    ControllerModule,
+    ControllerNames,
+    WaveformMemoryScope,
+)
 from cudaq_pulse.ops import Waveform
 
 wave = pulse.ops.gaussian(40, 0.1, 10.0)
@@ -154,6 +161,15 @@ assert_type(pulse.controller.ControllerLimits(issue_cycles=2), ControllerLimits)
 assert_type(pulse.controller.FORMAT, str)
 assert_type(pulse.controller.EXPRESSION_TERMS, frozenset[str])
 assert_type(pulse.controller.evaluate_expression({"const": 1.0}), float | int | bool)
+assert_type(pulse.controller.unroll({"format": "cudaq-pulse.controller/2"}), dict[str, Any])
+assert_type(pulse.controller.sample_waveform({}, 40, samples_per_cycle=2.5), np.ndarray)
+assert_type(pulse.controller.export(lowered, version=2), dict[str, Any])
+assert_type(pulse.controller.WaveformMemoryScope("program"), WaveformMemoryScope)
+pulse.controller.sample_waveform({}, 40, samples_per_cycles=2)  # type: ignore[call-arg]
+# The module is what checkers take pulse.controller to be, but for the call.
+module_names: ControllerNames = controller_module
+declared: ControllerNames = pulse.controller
+assert_type(pulse.controller, ControllerModule)
 control = pulse.ControlSystem(controllers=[box], links={"feedback": pulse.Link(controllers=[box])})
 assert_type(control.controllers, Sequence[pulse.Controller])
 pulse.ControlSystem(line_delays_ns={("drive", 0): 2 * pulse.ns, ("readout", 0): 1.5})

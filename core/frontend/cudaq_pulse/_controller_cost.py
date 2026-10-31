@@ -40,7 +40,7 @@ from typing import Any
 from ._units import as_nanoseconds
 
 # The classes operations are counted in.
-OP_CLASSES = (
+OP_CLASSES: tuple[str, ...] = (
     "add",
     "mul",
     "div",
