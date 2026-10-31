@@ -13,6 +13,7 @@ kernel using matplotlib.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from .._errors import InvalidValueError
@@ -30,7 +31,7 @@ _CLASSICAL_KINDS = ("submit", "answer")
 
 
 def plot_schedule(
-    schedule: Lowered | list[ScheduledEvent],
+    schedule: Lowered | Sequence[ScheduledEvent],
     figsize: tuple[float, float] = (14, 4),
     title: str | None = None,
 ) -> Figure:
@@ -47,8 +48,8 @@ def plot_schedule(
     Returns:
         matplotlib Figure.
     """
-    events = schedule if isinstance(schedule, list) else schedule.schedule
-    names = {} if isinstance(schedule, list) else dict(schedule.options.machine.link_names)
+    events = schedule if isinstance(schedule, Sequence) else schedule.schedule
+    names = {} if isinstance(schedule, Sequence) else dict(schedule.options.machine.link_names)
     link_label = {v: k for k, v in names.items()}
     # Rows are lines, then the links of classical calls.
     spans: list[tuple[str, tuple[bool, int], int, int]] = []
@@ -152,7 +153,7 @@ def plot_schedule(
 
 
 def save_schedule(
-    schedule: Lowered | list[ScheduledEvent],
+    schedule: Lowered | Sequence[ScheduledEvent],
     path: str,
     **kwargs: Any,
 ) -> None:

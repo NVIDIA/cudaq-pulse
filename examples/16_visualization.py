@@ -14,6 +14,8 @@ idle gaps, and verifying sync alignment.
 Plots need matplotlib, from the viz extra: pip install "cudaq-pulse[viz]".
 """
 
+from collections.abc import Sequence
+
 import cudaq_pulse as pulse
 
 cal = {
@@ -47,7 +49,7 @@ def vis_demo(q0, q1, q2):
     readout(r0, square(cal["readout_duration"], 0.05))
 
 
-def print_ascii_timeline(events: list[pulse.compiler.ScheduledEvent], width: int = 70) -> None:
+def print_ascii_timeline(events: Sequence[pulse.compiler.ScheduledEvent], width: int = 70) -> None:
     """Render a simple ASCII timeline for terminals without matplotlib."""
     max_t = max(ev.end for ev in events)
     for line in sorted({ev.line for ev in events}):

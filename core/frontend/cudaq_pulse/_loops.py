@@ -10,10 +10,13 @@ walk summarized (``ControllerWalk::summarizeLoop``): the events of one
 iteration stand for those of every later one, so each check works on a
 loop's body once and counts its copies. A check finds what it finds with
 every iteration played, in the same order; past ``LAZY_AFTER`` violations
-they are built when read. Only a check that met such a loop loads this."""
+they are built when read. So is a schedule of more than ``LAZY_AFTER``
+events (``Schedule``). Only a check that met such a loop, or such a
+schedule, loads this."""
 
 from __future__ import annotations
 
+import bisect
 import math
 import operator
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -152,6 +155,118 @@ class Violations(Sequence[str]):
 
     def __repr__(self) -> str:
         return f"<{self._size} controller violations>"
+
+
+class _Block:
+    """Nodes of ``PulseModule.event_tree()``: ops, and loops as (trips,
+    their body's block), with where each starts among the events listed."""
+
+    __slots__ = ("items", "offsets", "size")
+
+    def __init__(self, nodes: Sequence[Any]) -> None:
+        self.items: list[Any] = []
+        self.offsets: list[int] = []
+        self.size = 0
+        for node in nodes:
+            if len(node) == 2:
+                body = _Block(node[1])
+                size = node[0] * body.size
+                if not size:
+                    continue
+                node = (node[0], body)
+            else:
+                size = 1
+            self.items.append(node)
+            self.offsets.append(self.size)
+            self.size += size
+
+
+class Schedule(Sequence[Any]):
+    """``Lowered.schedule`` past ``LAZY_AFTER`` events: each event built when
+    read from its op and the iteration of each loop around it, whose start
+    is the op's first plus each iteration's shift. ``len()`` is exact;
+    indexing, slicing and iterating give what a list of every event would."""
+
+    __slots__ = ("_event", "_root")
+
+    def __init__(self, nodes: Sequence[Any], event: Callable[..., Any]) -> None:
+        self._root = _Block(nodes)
+        self._event = event
+
+    def __len__(self) -> int:
+        return self._root.size
+
+    @overload
+    def __getitem__(self, index: int) -> Any: ...
+    @overload
+    def __getitem__(self, index: slice) -> list[Any]: ...
+    def __getitem__(self, index: int | slice) -> Any:
+        if isinstance(index, slice):
+            return [self[k] for k in range(*index.indices(self._root.size))]
+        k = operator.index(index)
+        if k < 0:
+            k += self._root.size
+        if not 0 <= k < self._root.size:
+            raise IndexError("schedule index out of range")
+        block, at = self._root, []
+        while True:
+            j = bisect.bisect_right(block.offsets, k) - 1
+            item = block.items[j]
+            k -= block.offsets[j]
+            if len(item) == 2:
+                trips, block = item
+                i, k = divmod(k, block.size)
+                at.append(i)
+            else:
+                return self._made(item, at)
+
+    def __iter__(self) -> Iterator[Any]:
+        return self._each(self._root, [])
+
+    def _each(self, block: _Block, at: list[int]) -> Iterator[Any]:
+        for item in block.items:
+            if len(item) == 2:
+                trips, body = item
+                at.append(0)
+                for i in range(trips):
+                    at[-1] = i
+                    yield from self._each(body, at)
+                at.pop()
+            else:
+                yield self._made(item, at)
+
+    def _made(self, op: tuple[Any, ...], at: Sequence[int]) -> Any:
+        kind, line, qubit, start, duration, shifts = op
+        if start is not None:
+            start += sum(i * s for i, s in zip(at, shifts, strict=True) if s is not None)
+        return self._event(kind, line, qubit, start, duration)
+
+    def latest_end(self) -> int | None:
+        """The latest end of an event, or ``None`` when some event has no
+        start or duration yet."""
+        end = 0
+        work: list[tuple[_Block, tuple[int, ...]]] = [(self._root, ())]
+        while work:
+            block, trips = work.pop()
+            for item in block.items:
+                if len(item) == 2:
+                    work.append((item[1], (*trips, item[0])))
+                    continue
+                _, _, _, start, duration, shifts = item
+                if start is None or duration is None:
+                    return None
+                # Each loop's iterations shift the op alike: the latest takes
+                # each loop's last iteration that moves it later.
+                late = sum(
+                    (t - 1) * s
+                    for t, s in zip(trips, shifts, strict=True)
+                    if s is not None and s > 0
+                )
+                end = max(end, start + late + duration)
+        return end
+
+    def __repr__(self) -> str:
+        return f"<{self._root.size} scheduled events>"
 
 
 def _tree(count: int, repeats: Sequence[Sequence[int]]) -> tuple[list[Any], list[tuple[_Rep, ...]]]:

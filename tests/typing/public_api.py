@@ -61,7 +61,7 @@ assert_type(lowered, pulse.Lowered)
 assert_type(lowered.mlir(), str)
 assert_type(lowered.mlir("llvm"), str)
 assert_type(lowered.metrics, CompileMetrics)
-assert_type(lowered.schedule, list[ScheduledEvent])
+assert_type(lowered.schedule, Sequence[ScheduledEvent])
 assert_type(lowered.arguments, tuple[float, ...])
 
 compiled = pulse.compile(rabi, schedule="asap", device=dev)

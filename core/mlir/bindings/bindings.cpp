@@ -2118,6 +2118,103 @@ public:
     return result;
   }
 
+  /// events(), or, when it lists more than `limit` events, a 1-tuple of
+  /// their loops: a list of nodes in program order, each (kind, line, qubit,
+  /// start_cycles, duration_cycles, shifts) for an op at the first iteration
+  /// of its loops, `shifts` its start's shift per iteration of each loop
+  /// around it, outermost first, or (trips, nodes) for a loop.
+  nb::object event_tree(int64_t limit) {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    auto timed = [](mlir::Operation &op) {
+      return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
+                       classical::SubmitOp, classical::WaitOp>(op);
+    };
+    auto add = [](uint64_t a, uint64_t b) {
+      uint64_t sum;
+      return __builtin_add_overflow(a, b, &sum) ? UINT64_MAX : sum;
+    };
+    std::function<uint64_t(mlir::Block &)> count =
+        [&](mlir::Block &block) -> uint64_t {
+      uint64_t n = 0;
+      for (mlir::Operation &op : block) {
+        if (timed(op)) {
+          n = add(n, 1);
+        } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+          uint64_t trips = static_cast<uint64_t>(
+              std::max<int64_t>(0, pulse::constantTripCount(loop).value_or(0)));
+          uint64_t all;
+          if (__builtin_mul_overflow(trips, count(*loop.getBody()), &all))
+            all = UINT64_MAX;
+          n = add(n, all);
+        } else {
+          for (mlir::Region &region : op.getRegions())
+            for (mlir::Block &nested : region)
+              n = add(n, count(nested));
+        }
+      }
+      return n;
+    };
+    if (limit >= 0 &&
+        count(*module_->getBody()) <= static_cast<uint64_t>(limit))
+      return nb::cast(events());
+    llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
+    module_->walk([&](mlir::Operation *op) {
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+        lineIndex.try_emplace(op, static_cast<int64_t>(lineIndex.size()));
+    });
+    llvm::SmallVector<int64_t, 2> iteration;
+    pulse::AllocationTracer trace;
+    auto node = [&](mlir::Operation &op, std::string kind, int64_t line,
+                    int64_t qubit) {
+      std::optional<int64_t> start = pulse::scheduledStart(&op, iteration);
+      nb::list shifts;
+      if (start)
+        for (int64_t &k : iteration) {
+          k = 1;
+          std::optional<int64_t> next = pulse::scheduledStart(&op, iteration);
+          k = 0;
+          shifts.append(next ? nb::cast(*next - *start) : nb::none());
+        }
+      return nb::make_tuple(std::move(kind), line, qubit, start,
+                            pulse::scheduledDuration(&op), shifts);
+    };
+    std::function<void(mlir::Block &, nb::list &)> build =
+        [&](mlir::Block &block, nb::list &out) {
+          for (mlir::Operation &op : block) {
+            if (mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(
+                    op)) {
+              mlir::Operation *allocation = trace(op.getOperand(0));
+              int64_t line = allocation ? lineIndex.lookup(allocation) : -1;
+              int64_t qubit = -1;
+              if (allocation)
+                if (auto attr =
+                        allocation->getAttrOfType<mlir::IntegerAttr>("qubit"))
+                  qubit = attr.getInt();
+              out.append(
+                  node(op, op.getName().stripDialect().str(), line, qubit));
+            } else if (mlir::isa<classical::SubmitOp, classical::WaitOp>(op)) {
+              out.append(node(
+                  op, mlir::isa<classical::SubmitOp>(op) ? "submit" : "answer",
+                  classical::intAttr(&op, "classical.device"), -1));
+            } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+              int64_t trips = pulse::constantTripCount(loop).value_or(0);
+              nb::list body;
+              iteration.push_back(0);
+              build(*loop.getBody(), body);
+              iteration.pop_back();
+              out.append(nb::make_tuple(std::max<int64_t>(trips, 0), body));
+            } else {
+              for (mlir::Region &region : op.getRegions())
+                for (mlir::Block &nested : region)
+                  build(nested, out);
+            }
+          }
+        };
+    nb::list root;
+    build(*module_->getBody(), root);
+    return nb::make_tuple(root);
+  }
+
   /// (role, qudit): a runtime qudit's line has qudit -1.
   using ControllerLine = std::tuple<std::string, int64_t>;
 
@@ -5154,6 +5251,9 @@ NB_MODULE(_cudaq_pulse_native, m) {
           "events", &PulseModule::events,
           nb::call_guard<nb::gil_scoped_release>(),
           "(kind, line, qubit, start_cycles, duration_cycles) of each timed op")
+      .def("event_tree", &PulseModule::event_tree, nb::arg("limit"),
+           "events(), or past `limit` events the ops once each with the "
+           "loops they repeat in")
       .def("controller_dependencies", &PulseModule::controller_dependencies,
            "For each controller_events() event: the arguments its tone "
            "frequency, frame phase and waveform depend on")

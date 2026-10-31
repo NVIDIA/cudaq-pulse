@@ -178,6 +178,8 @@ _LEVELS = tuple(IRLevel)
 # The parameters a measurement can select while the program runs, in the
 # order lowering asks about them, and those any target takes that way.
 _RUNTIME_KINDS = ("amplitude", "phase", "frequency")
+# Lowered.schedule is a list up to this many events.
+_LISTED_EVENTS = 10_000
 _SELECTED_AT_RUNTIME: frozenset[str] = frozenset()
 
 
@@ -875,28 +877,46 @@ class Lowered:
 
         A wait a float parameter sets counts once the module has values."""
         clock = Fraction(self.target.clock_ghz)
-        end = 0
-        for event in self.schedule:
-            if event.start_cycles is None or event.duration_cycles is None:
-                raise ValueError(
-                    "the module is scheduled when it has the values of its float "
-                    f"parameters ({', '.join(self.parameters)}); lower it with them first"
-                )
-            end = max(end, event.start_cycles + event.duration_cycles)
+        schedule = self.schedule
+        if type(schedule) is list:
+            end: int | None = 0
+            for event in schedule:
+                if event.start_cycles is None or event.duration_cycles is None:
+                    end = None
+                    break
+                end = max(end, event.start_cycles + event.duration_cycles)
+        else:
+            from ._loops import Schedule
+
+            assert isinstance(schedule, Schedule)
+            end = schedule.latest_end()
+        if end is None:
+            raise ValueError(
+                "the module is scheduled when it has the values of its float "
+                f"parameters ({', '.join(self.parameters)}); lower it with them first"
+            )
         return Time(end / clock)
 
     @property
-    def schedule(self) -> list[ScheduledEvent]:
+    def schedule(self) -> Sequence[ScheduledEvent]:
         """The drives, readouts and waits with their timing.
 
         Ops in a loop are listed once per iteration; both arms of a
         measurement-conditioned branch are listed. Without values, a wait
         whose length a float parameter sets is listed at its lowest length.
+        Up to 10,000 events this is a list; past that, a sequence that
+        builds each event when it is read, from its op and its loops'
+        iterations: ``len()`` is exact, and indexing, slicing and iterating
+        give what the list would.
         """
         module = self._concrete() if self._retimed or self.carriers else self._module
         with self._lock:
-            events = module.events()
-        return [ScheduledEvent(*event) for event in events]
+            events = module.event_tree(_LISTED_EVENTS)
+        if type(events) is list:
+            return [ScheduledEvent(*event) for event in events]
+        from ._loops import Schedule
+
+        return Schedule(events[0], ScheduledEvent)
 
     def epochs(self) -> list[Epoch]:
         """The epochs of the program, separated by variable and blocking waits.

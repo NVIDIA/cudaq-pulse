@@ -37,7 +37,7 @@ import types
 import typing
 import warnings
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any, NamedTuple
 
@@ -840,7 +840,7 @@ class CompiledKernel[**P]:
         return self._view().mlir(stage)
 
     @property
-    def schedule(self) -> list[Any]:
+    def schedule(self) -> Sequence[Any]:
         return self._view().schedule
 
     def timeline(self, **kwargs: Any) -> Any:

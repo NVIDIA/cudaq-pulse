@@ -188,6 +188,9 @@ the module of one call:
    cycles (``ScheduledEvent``). ``event.start`` and ``event.end`` are the
    scheduled times as ``int``; they raise ``ValueError`` on an event that is
    not scheduled yet, whose ``start_cycles`` and ``duration_cycles`` are ``None``.
+   Up to 10,000 events it is a list; past that, a sequence that builds each
+   event when it is read, with an exact ``len()``, so a rolled loop of many
+   iterations is listed without holding every event.
 
 ``.duration``
    How long the program runs, as a time: the latest end of its operations,

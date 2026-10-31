@@ -155,6 +155,18 @@ behavior may change in any 0.x release.
 
 ### Changed
 
+- **Long rolled loops are checked without playing every iteration.** The
+  controller check walks a rolled loop of more than 64 iterations three
+  times when its iterations play alike one period apart, and finds what it
+  found with every iteration played, in the same order. Past 10,000
+  violations, `ControllerLimitError.violations` and `check()` give a
+  sequence that builds each violation when read, with an exact `len()`;
+  `str(error)` is unchanged. `Lowered.schedule` is a list up to 10,000
+  events and past that a sequence that builds each event when read, from
+  its op and its loops' iterations, so its type is now
+  `Sequence[ScheduledEvent]`; `Lowered.duration` no longer lists the
+  events.
+
 - **The simulator says which systems it has no model for.** Simulating a
   system that is not a transmon raises `UnsupportedError` (a
   `NotImplementedError`): export and hardware runs work.
