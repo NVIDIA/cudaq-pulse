@@ -490,16 +490,22 @@ def test_what_a_program_computes_at_run_time_is_in_the_controllers_cycles():
     wait = next(e for e in program["events"] if e["kind"] == "wait")
     gaussian_, drag_ = (e for e in program["events"] if e["kind"] == "drive")
     in_program_cycles = {
-        "op": "pulse.duration_from_int",
-        "of": [{"op": "arith.fptosi", "of": [{"op": "arith.addf", "of": [delay, {"const": 0.5}]}]}],
+        "op": "to_int",
+        "type": "float",
+        "of": [{"op": "add", "type": "float", "of": [delay, {"const": 0.5}]}],
     }
     # The length clamped as the run clamps it, then in own cycles: 1 for 2.
     clamped = {
-        "op": "arith.minsi",
-        "of": [{"op": "arith.maxsi", "of": [in_program_cycles, {"const": 8}]}, {"const": 400}],
+        "op": "min",
+        "type": "int",
+        "of": [
+            {"op": "max", "type": "int", "of": [in_program_cycles, {"const": 8}]},
+            {"const": 400},
+        ],
     }
     assert json.loads(json.dumps(wait["length"])) == {
-        "op": "pulse.own_cycles",
+        "op": "controller_cycles",
+        "type": "int",
         "of": [clamped],
         "num": 1,
         "den": 2,
@@ -510,14 +516,15 @@ def test_what_a_program_computes_at_run_time_is_in_the_controllers_cycles():
     assert gaussian_["waveform"]["params"]["duration"] == 20.0
     assert gaussian_["waveform"]["runtime"] == {
         "sigma": {
-            "op": "arith.mulf",
-            "of": [{"op": "arith.mulf", "of": [delay, {"const": 0.25}]}, {"const": 0.5}],
+            "op": "mul",
+            "type": "float",
+            "of": [{"op": "mul", "type": "float", "of": [delay, {"const": 0.25}]}, {"const": 0.5}],
         }
     }
     assert drag_["waveform"]["params"]["sigma"] == 4.0
     assert drag_["waveform"]["runtime"] == {
         "amplitude": {**answer, "result": 0},
-        "beta": {"op": "arith.mulf", "of": [delay, {"const": 0.5}]},
+        "beta": {"op": "mul", "type": "float", "of": [delay, {"const": 0.5}]},
     }
     # On the program clock, nothing changes.
     plain = pulse.compile(timed_at_run_time).lower(Q[0]).export_controller()
@@ -525,7 +532,7 @@ def test_what_a_program_computes_at_run_time_is_in_the_controllers_cycles():
     assert wait["length"] == in_program_cycles
     assert (wait["min_cycles"], wait["max_cycles"]) == (8, 400)
     assert next(e for e in plain["events"] if e["kind"] == "drive")["waveform"]["runtime"] == {
-        "sigma": {"op": "arith.mulf", "of": [delay, {"const": 0.25}]}
+        "sigma": {"op": "mul", "type": "float", "of": [delay, {"const": 0.25}]}
     }
 
 
@@ -535,7 +542,7 @@ def test_a_clock_that_only_steps_checks_a_run_time_length_on_its_timesteps():
     machine = MachineModel(controller=ControllerLimits(clock_ghz=2.0, cycles_per_timestep=4))
     program = pulse.compile(timed_at_run_time, machine=machine).lower(Q[0]).export_controller()
     wait = next(e for e in program["events"] if e["kind"] == "wait")
-    assert wait["length"]["op"] == "pulse.own_cycles"
+    assert wait["length"]["op"] == "controller_cycles"
     assert (wait["length"]["num"], wait["length"]["den"], wait["length"]["timestep"]) == (1, 1, 4)
     assert (wait["min_cycles"], wait["max_cycles"]) == (8, 400)
     drive = next(e for e in program["events"] if e["kind"] == "drive")
@@ -552,8 +559,13 @@ _HALF = _clocks.ControllerClock("awg", 1.0, _clocks.Fraction(1, 2))
 
 def test_a_run_time_length_known_now_to_be_off_the_timesteps_is_a_compile_error():
     select = {
-        "op": "arith.select",
-        "of": [{"readout": 1}, {"const": 9}, {"const": 12}],
+        "op": "select",
+        "type": "int",
+        "of": [
+            {"op": "ne", "type": "int", "of": [{"readout": 1}, {"const": 0}]},
+            {"const": 9},
+            {"const": 12},
+        ],
     }
     event = _line_event(kind="wait", length=select, min_cycles=None, max_cycles=None)
     [message] = _clocks.own_run_time(_HALF, _LINE, event)
@@ -566,11 +578,12 @@ def test_a_run_time_length_known_now_to_be_off_the_timesteps_is_a_compile_error(
     [message] = _clocks.own_run_time(_HALF, _LINE, event)
     assert "waveform's duration, computed at run time, of 9 cycles" in message
     # On the timesteps for every outcome, or not known now: converted.
-    event = _line_event(kind="wait", length={**select, "of": [{"readout": 1}, *[{"const": 8}] * 2]})
+    eights = {**select, "of": [select["of"][0], {"const": 8}, {"const": 8}]}
+    event = _line_event(kind="wait", length=eights)
     assert _clocks.own_run_time(_HALF, _LINE, event) == []
     event = _line_event(kind="wait", length={"answer": 0, "result": 0})
     assert _clocks.own_run_time(_HALF, _LINE, event) == []
-    assert event["length"]["op"] == "pulse.own_cycles"
+    assert event["length"]["op"] == "controller_cycles"
 
 
 def test_a_run_time_operand_the_export_cannot_tell_is_a_time_is_a_compile_error():
@@ -628,7 +641,7 @@ def test_lines_on_several_controllers_convert_what_they_compute_at_run_time():
     converted = events()
     assert _clocks.off_grid(plan, lines, converted, True, True, True) == []
     assert converted[0]["length"] == length and converted[0]["max_cycles"] == 40
-    assert converted[1]["length"]["op"] == "pulse.own_cycles"
+    assert converted[1]["length"]["op"] == "controller_cycles"
     assert (converted[1]["min_cycles"], converted[1]["max_cycles"]) == (4, 20)
     # A program that computes nothing at run time keeps its bounds.
     kept = events()

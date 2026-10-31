@@ -144,12 +144,8 @@ whose frame depends on run time, its ``tone`` and the ``frame_updates`` not
 yet taken.
 
 A waveform parameter computed from a readout or an answer is ``null`` in
-``params`` and has an expression in the node's ``runtime``, by parameter
-name. An expression is ``{"const": x}``, ``{"answer": i, "result": k}``
-(result ``k`` of the answer event ``i``), ``{"readout": i}`` (the outcome of
-the readout event ``i``), ``{"op": name, "of": [...]}`` for an MLIR
-operation (``"arith.mulf"``, ``"arith.fptosi"``, ...; comparisons add
-``predicate``) over expressions, or ``{"unknown": name}``. A variable
+``params`` and has an expression (see `Run-time expressions`_) in the
+node's ``runtime``, by parameter name. A variable
 wait's ``duration_cycles`` is its least length, and it also has ``length``,
 the expression of its length in cycles, and ``min_cycles`` and
 ``max_cycles``, its bounds. A program that computes nothing from its
@@ -171,6 +167,84 @@ with ``timeout_ns``.
 The events of one operation, and of operations with the same waveform,
 share their ``waveform`` and ``amplitude`` objects; copy one before
 changing it.
+
+Run-time expressions
+--------------------
+
+What a program computes from its readouts and answers (a run-time waveform
+parameter, a wait's ``length``, a frame update's ``value``, a submit's
+``operands``) is an expression in a closed vocabulary of terms, whatever
+operations the compiler computes it with: ``y = x if x > 0.1`` (else
+``0.1``) and ``y = x if 0.1 < x`` are both ``max``. An expression is one
+of:
+
+``{"const": x}``
+    A number, or ``true`` or ``false``.
+``{"readout": i}``
+    The level the readout event ``i`` observed, an integer; 0 is the
+    ground state, and the outcome is set for any other level.
+``{"answer": i, "result": k}``
+    Result ``k`` of the answer event ``i``: a float for a ``float``
+    result, an integer for an ``int`` one, a bool for a bit.
+``{"op": term, "type": t, "of": [...]}``
+    A term over the expressions in ``of``, computed in the type ``t`` of
+    its operands, ``"int"``, ``"float"`` or ``"bool"``. A ``const`` in a
+    float term is that float, so ``{"const": 3}`` there is 3.0.
+
+``cudaq_pulse.controller.EXPRESSION_TERMS`` holds every term. A value
+computed any other way is an ``UnsupportedError`` when the program is
+exported, never a term a backend has to guess at;
+``cudaq_pulse.controller.evaluate_expression(expression, readouts,
+answers)`` computes an expression as the controller must, which is the
+reference for a backend's own evaluation. Integers are 64-bit two's
+complement and floats IEEE 754 binary64, rounded to nearest, ties to even.
+
+``add``, ``sub``, ``mul``
+    ``a + b``, ``a - b`` and ``a * b``. Integers wrap modulo 2\ :sup:`64`;
+    floats overflow to ±inf.
+``div``
+    ``a / b``. An integer quotient is truncated toward zero; a float
+    divided by zero is ±inf, and 0 / 0 is NaN.
+``floor_div``, ``rem``
+    Integers only: the quotient rounded toward −inf, and the remainder
+    ``a - b * div(a, b)``, which has the sign of ``a``. An integer ``div``,
+    ``floor_div`` or ``rem`` by 0, or of −2\ :sup:`63` by −1, has no value,
+    and the controller fails the run.
+``neg``
+    ``-a``. The integer −2\ :sup:`63` wraps to itself; a float changes
+    sign, 0 and NaN too.
+``max``, ``min``
+    ``max(a, b)`` is ``a`` when ``a > b``, else ``b``, and ``min(a, b)`` is
+    ``a`` when ``a < b``, else ``b``. For integers that is the usual
+    maximum and minimum, which the export writes with the operands of the
+    comparison it comes from. For floats the order is part of the value,
+    as the kernel's comparison was: ``max(NaN, 1)`` is 1 and ``max(1,
+    NaN)`` NaN, ``max(-0.0, 0.0)`` is 0.0 and ``max(0.0, -0.0)`` −0.0.
+``eq``, ``ne``, ``lt``, ``le``, ``gt``, ``ge``
+    A bool: ``a == b``, ``a != b``, ``a < b``, ``a <= b``, ``a > b``, ``a
+    >= b``. Integers compare signed. Floats compare ordered, so every
+    comparison with a NaN is false but ``ne``, which is true. Bools have
+    only ``eq`` and ``ne``.
+``select``
+    ``of`` is ``[c, a, b]``: ``a`` when the bool ``c`` is true, else ``b``;
+    ``type`` is the type of ``a`` and ``b``.
+``to_float``
+    The integer ``a`` as the nearest float (``type`` ``"int"``).
+``to_int``
+    The float ``a`` truncated toward zero (``type`` ``"float"``); NaN, ±inf
+    and floats outside the 64-bit integers have no value, and the
+    controller fails the run.
+``controller_cycles``
+    A length of ``a`` program cycles in the controller's cycles, ``a *
+    num / den``, with ``num``, ``den`` and ``timestep`` beside ``of`` (see
+    `Clocks`_); the controller fails the run when ``a`` is
+    not a whole number of timesteps.
+
+A frontend computes an integer answer used as a time in floats, so
+``wait(d, n + 4)`` is ``to_int(add(add(to_float(n), 4), 0.5))``. Whether
+a readout is set is ``ne(readout, 0)``, and a bool used as an integer a
+``select`` of 1 (or −1) and 0. There is no JSON schema; this section and
+``evaluate_expression`` define the expressions.
 
 The structured format
 ---------------------
@@ -435,16 +509,17 @@ follows another controller's on the same lane starts their start
 uncertainty after it, so the two never overlap.
 
 What the program computes at run time is converted by the same rule. A
-variable wait's ``length`` is clamped to its bounds, as the run clamps it,
-and then wrapped in ``{"op": "pulse.own_cycles", "of": [x], "num": a,
-"den": b, "timestep": g}``: the length ``x`` program cycles is ``x * a / b``
+variable wait's ``length`` is clamped to its bounds, as the run clamps it
+(an integer ``max`` and ``min``), and then wrapped in ``{"op":
+"controller_cycles", "type": "int", "of": [x], "num": a, "den": b,
+"timestep": g}``: the length ``x`` program cycles is ``x * a / b``
 of the controller's, and the controller must fail the run when ``x`` is not
 a whole number of the line's timesteps of ``g`` program cycles. A
 controller with the program's clock but longer timesteps gets the wrapper
 too, with ``num`` and ``den`` 1, as that check. ``min_cycles`` rounds down
 and ``max_cycles`` up. A run-time ``duration`` is wrapped the same way, and
 a run-time ``sigma``, ``beta`` or ``risefall`` is multiplied by ``a / b``
-(``arith.mulf``). A run-time length whose values are all known while the
+(a float ``mul``). A run-time length whose values are all known while the
 kernel compiles (it selects between constants) and include one off the
 timesteps is a ``ControllerLimitError`` then. A run-time operand of a
 waveform whose parameters the export does not name can't be converted, so

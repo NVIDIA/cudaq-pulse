@@ -69,7 +69,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from . import _controller_cost
 from ._controller_cost import OP_CLASSES, FunctionCost
-from ._errors import InvalidTypeError, InvalidValueError, UnsupportedError
+from ._errors import ExecutionError, InvalidTypeError, InvalidValueError, UnsupportedError
 from ._units import Time, as_nanoseconds
 from .kernel.ir_builder import CompilationError
 
@@ -87,6 +87,7 @@ if TYPE_CHECKING:
     from .compiler import Lowered
 
 __all__ = [
+    "EXPRESSION_TERMS",
     "FORMAT",
     "OP_CLASSES",
     "ControllerLimitError",
@@ -104,6 +105,7 @@ __all__ = [
     "WaveformMemoryScope",
     "analyze",
     "check",
+    "evaluate_expression",
     "export",
     "resources",
     "sample_waveform",
@@ -641,6 +643,128 @@ def _exact(value: float) -> Fraction:
     """*value* as the decimal it is written as, so that rates such as 2.4
     samples per cycle divide exactly."""
     return Fraction(repr(float(value)))
+
+
+# The terms of the expressions of run-time values; see evaluate_expression.
+_ARITHMETIC = frozenset({"add", "sub", "mul", "div", "neg", "max", "min"})
+_COMPARISONS: Mapping[str, Any] = {
+    "eq": lambda a, b: a == b,
+    "ne": lambda a, b: a != b,
+    "lt": lambda a, b: a < b,
+    "le": lambda a, b: a <= b,
+    "gt": lambda a, b: a > b,
+    "ge": lambda a, b: a >= b,
+}
+_INTEGER = frozenset({"floor_div", "rem"})
+_CONVERSIONS = frozenset({"to_float", "to_int", "controller_cycles"})
+#: Every ``op`` an exported expression of a run-time value may have.
+EXPRESSION_TERMS = frozenset({*_ARITHMETIC, *_COMPARISONS, *_INTEGER, *_CONVERSIONS, "select"})
+_TYPES = {"int": int, "float": float, "bool": bool}
+_INT_MIN = -(1 << 63)
+
+
+def evaluate_expression(
+    expression: Any,
+    readouts: Mapping[int, int] | None = None,
+    answers: Mapping[int, Sequence[float | int | bool]] | None = None,
+) -> float | int | bool:
+    """The value an exported run-time *expression* takes, as a controller
+    must compute it (see the controller backends guide for each term).
+
+    *readouts* gives the level each readout event the expression reads
+    observed, and *answers* the results of each answer event, both by the
+    event index the expression names. A frame change's value may be a
+    number, which is its value. Raises ``ExecutionError`` where the
+    controller must fail the run (a division by zero, say), and
+    ``InvalidValueError`` for an input not given or a term not in
+    ``EXPRESSION_TERMS``.
+    """
+    value: float | int | bool = _evaluate(expression, readouts or {}, answers or {})
+    return value
+
+
+def _evaluate(
+    expression: Any,
+    readouts: Mapping[int, int],
+    answers: Mapping[int, Sequence[float | int | bool]],
+) -> Any:
+    if not isinstance(expression, Mapping):
+        if isinstance(expression, (int, float)):
+            return expression
+        raise InvalidValueError(f"not an expression: {expression!r}")
+    if "const" in expression:
+        return expression["const"]
+    if "readout" in expression:
+        index = expression["readout"]
+        if index not in readouts:
+            raise InvalidValueError(f"no level given for readout event {index}")
+        return int(readouts[index])
+    if "answer" in expression:
+        index, result = expression["answer"], expression["result"]
+        if index not in answers or not 0 <= result < len(answers[index]):
+            raise InvalidValueError(f"no result {result} given for answer event {index}")
+        return answers[index][result]
+    op = expression.get("op")
+    if op not in EXPRESSION_TERMS:
+        raise InvalidValueError(f"{op!r} is not a term of the expression vocabulary")
+    kind = _TYPES[expression["type"]]
+    values = [_evaluate(x, readouts, answers) for x in expression["of"]]
+    if op == "select":
+        condition, then, other = values
+        return kind(then if condition else other)
+    if op == "to_float":
+        return float(int(values[0]))
+    if op == "to_int":
+        x = float(values[0])
+        if not math.isfinite(x) or not _INT_MIN <= math.trunc(x) < -_INT_MIN:
+            raise _failed(f"to_int of {x!r}, which no 64-bit integer holds")
+        return math.trunc(x)
+    if op == "controller_cycles":
+        cycles = int(values[0])
+        if cycles % expression["timestep"]:
+            raise _failed(
+                f"{cycles} program cycles, not a whole number of the line's timesteps of "
+                f"{expression['timestep']}"
+            )
+        return cycles * expression["num"] // expression["den"]
+    values = [kind(v) for v in values]
+    if op in _COMPARISONS:
+        return _COMPARISONS[op](*values)
+    if op == "neg":
+        return _integer(-values[0]) if kind is int else -values[0]
+    a, b = values
+    if op == "max":
+        return a if a > b else b
+    if op == "min":
+        return a if a < b else b
+    if kind is float:
+        if op == "div":
+            if b == 0.0:
+                if a != a or a == 0.0:
+                    return math.nan
+                return math.copysign(math.inf, a) * math.copysign(1.0, b)
+            return a / b
+        return a + b if op == "add" else a - b if op == "sub" else a * b
+    if op in ("add", "sub", "mul"):
+        return _integer(a + b if op == "add" else a - b if op == "sub" else a * b)
+    if b == 0 or (a == _INT_MIN and b == -1):
+        raise _failed(f"{op} of {a} by {b}")
+    quotient = abs(a) // abs(b) * (1 if (a < 0) == (b < 0) else -1)
+    if op == "div":
+        return quotient
+    if op == "floor_div":
+        return a // b
+    return a - b * quotient
+
+
+def _integer(value: int) -> int:
+    """*value* in 64-bit two's complement, as integer arithmetic wraps."""
+    value &= (1 << 64) - 1
+    return value - (1 << 64) if value >= 1 << 63 else value
+
+
+def _failed(what: str) -> ExecutionError:
+    return ExecutionError(f"the controller fails the run: {what}")
 
 
 def sample_waveform(
@@ -3155,6 +3279,7 @@ class ControllerModule(Protocol):
     it is this module.
     """
 
+    EXPRESSION_TERMS: frozenset[str]
     FORMAT: str
     OP_CLASSES: tuple[str, ...]
     ControllerLimitError: type[ControllerLimitError]
@@ -3172,6 +3297,12 @@ class ControllerModule(Protocol):
     def __call__(self, description: str | os.PathLike[str], /, **wiring: Any) -> Controller: ...
     def analyze(self, function: Any, limits: _Limits | None = None) -> _Resources: ...
     def check(self, lowered: Lowered, limits: _Limits | None = None) -> Sequence[str]: ...
+    def evaluate_expression(
+        self,
+        expression: Any,
+        readouts: Mapping[int, int] | None = None,
+        answers: Mapping[int, Sequence[float | int | bool]] | None = None,
+    ) -> float | int | bool: ...
     def export(self, lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, Any]: ...
     def format_report(self, report: _Report) -> str: ...
     def resources(self, lowered: Lowered, limits: _Limits | None = None) -> _Report: ...

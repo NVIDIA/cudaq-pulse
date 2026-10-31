@@ -37,6 +37,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 struct ControllerRecord {
@@ -377,15 +378,47 @@ struct ControllerWalk {
   }
 
   /// How a value is computed at run time, children before their parent: a
-  /// number (a frame change's value), a constant, an unknown (`name`: what),
-  /// the result of a readout or answer record, or an op (`name`, and a
-  /// comparison's `predicate`) over the expressions `of`.
+  /// number (a frame change's value), a constant, the result of a readout
+  /// or answer record, an op of the export's vocabulary (`name`) over the
+  /// expressions `of` of one `type`, or what the vocabulary has no term
+  /// for (`name`: an op's MLIR name, else what it is), which no export
+  /// gives.
   struct Expression {
     enum Kind : uint8_t { Number, Constant, Unknown, Readout, Answer, Op };
+    enum Type : uint8_t { Int, Float, Bool, Types };
+    // The terms of the export's expression vocabulary, in `names` order.
+    enum Term : uint8_t {
+      Add,
+      Sub,
+      Mul,
+      Div,
+      FloorDiv,
+      Rem,
+      Neg,
+      Max,
+      Min,
+      Eq,
+      Ne,
+      Lt,
+      Le,
+      Gt,
+      Ge,
+      Select,
+      ToFloat,
+      ToInt,
+      Terms
+    };
+    static constexpr const char *names[Terms] = {
+        "add", "sub", "mul", "div",    "floor_div", "rem",
+        "neg", "max", "min", "eq",     "ne",        "lt",
+        "le",  "gt",  "ge",  "select", "to_float",  "to_int"};
+    static constexpr const char *typeNames[Types] = {"int", "float", "bool"};
     Kind kind = Number;
+    Type type = Float;
+    Term term = Add;
     double number = 0.0;
     int64_t event = 0, result = 0;
-    llvm::StringRef name, predicate;
+    llvm::StringRef name; // what an Unknown is computed from
     std::vector<int32_t> of;
   };
   std::vector<Expression> expressions;
@@ -495,47 +528,275 @@ struct ControllerWalk {
     return add(std::move(expression));
   }
 
+  int32_t constant(double number, Expression::Type type) {
+    int32_t index = add(Expression::Constant, number);
+    expressions[index].type = type;
+    return index;
+  }
+
+  int32_t op(Expression::Term term, Expression::Type type,
+             std::vector<int32_t> of) {
+    Expression expression;
+    expression.kind = Expression::Op;
+    expression.type = type;
+    expression.term = term;
+    expression.of = std::move(of);
+    return add(std::move(expression));
+  }
+
+  static std::optional<Expression::Type> valueType(mlir::Type type) {
+    if (type.isInteger(1))
+      return Expression::Bool;
+    if (type.isInteger(64) || type.isIndex())
+      return Expression::Int;
+    if (type.isF64())
+      return Expression::Float;
+    return std::nullopt;
+  }
+
+  static std::optional<Expression::Term>
+  comparison(mlir::arith::CmpIPredicate predicate) {
+    using P = mlir::arith::CmpIPredicate;
+    switch (predicate) {
+    case P::eq:
+      return Expression::Eq;
+    case P::ne:
+      return Expression::Ne;
+    case P::slt:
+      return Expression::Lt;
+    case P::sle:
+      return Expression::Le;
+    case P::sgt:
+      return Expression::Gt;
+    case P::sge:
+      return Expression::Ge;
+    default:
+      return std::nullopt;
+    }
+  }
+
+  // Ordered, but for ne: a NaN compares unequal and in no order.
+  static std::optional<Expression::Term>
+  comparison(mlir::arith::CmpFPredicate predicate) {
+    using P = mlir::arith::CmpFPredicate;
+    switch (predicate) {
+    case P::OEQ:
+      return Expression::Eq;
+    case P::UNE:
+      return Expression::Ne;
+    case P::OLT:
+      return Expression::Lt;
+    case P::OLE:
+      return Expression::Le;
+    case P::OGT:
+      return Expression::Gt;
+    case P::OGE:
+      return Expression::Ge;
+    default:
+      return std::nullopt;
+    }
+  }
+
   /// How `value` is computed at run time: a constant, a result of a readout
-  /// or answer record, or an op (by its MLIR name) over such expressions.
+  /// or answer record, or a term of the export's vocabulary over such
+  /// expressions (see term()).
   int32_t expression(mlir::Value value, int depth = 0) {
-    double constant = number(value);
-    if (!std::isnan(constant))
-      return add(Expression::Constant, constant);
+    double number = this->number(value);
+    if (!std::isnan(number)) {
+      if (value.getType().isInteger(1))
+        return constant(number != 0.0, Expression::Bool);
+      return constant(number, Expression::Float);
+    }
     mlir::Operation *def = value.getDefiningOp();
     if (!def)
-      return add(Expression::Unknown, 0.0, 0, 0, "argument");
-    llvm::StringRef name = def->getName().getStringRef();
+      return add(Expression::Unknown, 0.0, 0, 0, "a value the kernel is given");
     if (mlir::isa<pulse::ReadoutOp, classical::WaitOp>(def)) {
       auto found = latest.find(def);
       if (found == latest.end())
-        return add(Expression::Unknown, 0.0, 0, 0, name);
+        return add(Expression::Unknown, 0.0, 0, 0,
+                   "a readout or answer the program has not reached");
       if (mlir::isa<pulse::ReadoutOp>(def))
         return add(Expression::Readout, 0.0, found->second);
       return add(Expression::Answer, 0.0, found->second,
                  static_cast<int64_t>(
                      mlir::cast<mlir::OpResult>(value).getResultNumber()));
     }
-    if (depth > 64 || def->getNumRegions() != 0 || def->getNumResults() != 1)
-      return add(Expression::Unknown, 0.0, 0, 0, name);
-    Expression op;
-    op.kind = Expression::Op;
-    op.name = name;
-    for (mlir::Value operand : def->getOperands())
-      op.of.push_back(expression(operand, depth + 1));
-    if (auto cmp = mlir::dyn_cast<mlir::arith::CmpFOp>(def))
-      op.predicate = mlir::arith::stringifyCmpFPredicate(cmp.getPredicate());
-    else if (auto cmp = mlir::dyn_cast<mlir::arith::CmpIOp>(def))
-      op.predicate = mlir::arith::stringifyCmpIPredicate(cmp.getPredicate());
-    return add(std::move(op));
+    if (depth > 64)
+      return add(Expression::Unknown, 0.0, 0, 0,
+                 "an expression more than 64 operations deep");
+    if (def->getNumRegions() != 0 || def->getNumResults() != 1)
+      return add(Expression::Unknown, 0.0, 0, 0, def->getName().getStringRef());
+    return term(def, depth);
+  }
+
+  /// The term of the export's vocabulary `def` computes, over its operands'
+  /// expressions; forms that compute the same value give the same term.
+  int32_t term(mlir::Operation *def, int depth) {
+    namespace arith = mlir::arith;
+    auto of = [&](mlir::Value value) { return expression(value, depth + 1); };
+    auto unknown = [&] {
+      return add(Expression::Unknown, 0.0, 0, 0, def->getName().getStringRef());
+    };
+    // The export counts times in cycles, which a duration holds.
+    if (mlir::isa<pulse::DurationFromIntOp>(def))
+      return of(def->getOperand(0));
+    // A readout's outcome is set when it observed a level other than 0.
+    if (mlir::isa<pulse::IsSetOp>(def)) {
+      int32_t outcome = of(def->getOperand(0));
+      return op(Expression::Ne, Expression::Int,
+                {outcome, constant(0.0, Expression::Int)});
+    }
+    std::optional<Expression::Type> result =
+        valueType(def->getResult(0).getType());
+    if (!result || def->getNumOperands() == 0)
+      return unknown();
+    std::optional<Expression::Type> type =
+        valueType(def->getOperand(0).getType());
+    if (!type)
+      return unknown();
+    using T = Expression::Type;
+    struct Simple {
+      mlir::TypeID op;
+      Expression::Term term;
+      T type, result;
+    };
+    static const Simple simple[] = {
+        {mlir::TypeID::get<arith::AddFOp>(), Expression::Add, T::Float,
+         T::Float},
+        {mlir::TypeID::get<arith::MulFOp>(), Expression::Mul, T::Float,
+         T::Float},
+        {mlir::TypeID::get<arith::FPToSIOp>(), Expression::ToInt, T::Float,
+         T::Int},
+        {mlir::TypeID::get<arith::SIToFPOp>(), Expression::ToFloat, T::Int,
+         T::Float},
+        {mlir::TypeID::get<arith::SubFOp>(), Expression::Sub, T::Float,
+         T::Float},
+        {mlir::TypeID::get<arith::DivFOp>(), Expression::Div, T::Float,
+         T::Float},
+        {mlir::TypeID::get<arith::NegFOp>(), Expression::Neg, T::Float,
+         T::Float},
+        {mlir::TypeID::get<arith::AddIOp>(), Expression::Add, T::Int, T::Int},
+        {mlir::TypeID::get<arith::MulIOp>(), Expression::Mul, T::Int, T::Int},
+        {mlir::TypeID::get<arith::DivSIOp>(), Expression::Div, T::Int, T::Int},
+        {mlir::TypeID::get<arith::FloorDivSIOp>(), Expression::FloorDiv, T::Int,
+         T::Int},
+        {mlir::TypeID::get<arith::RemSIOp>(), Expression::Rem, T::Int, T::Int},
+        {mlir::TypeID::get<arith::MaxSIOp>(), Expression::Max, T::Int, T::Int},
+        {mlir::TypeID::get<arith::MinSIOp>(), Expression::Min, T::Int, T::Int},
+    };
+    mlir::TypeID id = def->getName().getTypeID();
+    for (const Simple &s : simple) {
+      if (s.op != id)
+        continue;
+      if (*type != s.type || *result != s.result)
+        return unknown();
+      std::vector<int32_t> operands;
+      for (mlir::Value operand : def->getOperands()) {
+        if (valueType(operand.getType()) != s.type)
+          return unknown();
+        operands.push_back(of(operand));
+      }
+      return op(s.term, s.type, std::move(operands));
+    }
+    // Integer subtraction from 0 is negation.
+    if (mlir::isa<arith::SubIOp>(def)) {
+      if (*type != T::Int || *result != T::Int)
+        return unknown();
+      if (this->number(def->getOperand(0)) == 0.0)
+        return op(Expression::Neg, T::Int, {of(def->getOperand(1))});
+      int32_t lhs = of(def->getOperand(0));
+      return op(Expression::Sub, T::Int, {lhs, of(def->getOperand(1))});
+    }
+    if (auto select = mlir::dyn_cast<arith::SelectOp>(def)) {
+      int32_t extremum = minMax(select, *result, depth);
+      if (extremum >= 0)
+        return extremum;
+      int32_t condition = of(select.getCondition());
+      int32_t then = of(select.getTrueValue());
+      return op(Expression::Select, *result,
+                {condition, then, of(select.getFalseValue())});
+    }
+    if (auto cmp = mlir::dyn_cast<arith::CmpIOp>(def)) {
+      std::optional<Expression::Term> term = comparison(cmp.getPredicate());
+      if (!term || (*type == T::Bool && *term != Expression::Eq &&
+                    *term != Expression::Ne))
+        return unknown();
+      int32_t lhs = of(cmp.getLhs());
+      return op(*term, *type, {lhs, of(cmp.getRhs())});
+    }
+    if (auto cmp = mlir::dyn_cast<arith::CmpFOp>(def)) {
+      std::optional<Expression::Term> term = comparison(cmp.getPredicate());
+      if (!term)
+        return unknown();
+      int32_t lhs = of(cmp.getLhs());
+      return op(*term, *type, {lhs, of(cmp.getRhs())});
+    }
+    // A bool as an integer: 1, or -1 sign-extended, when true, else 0.
+    if (mlir::isa<arith::ExtUIOp, arith::ExtSIOp>(def)) {
+      if (*type != T::Bool || *result != T::Int)
+        return unknown();
+      int32_t condition = of(def->getOperand(0));
+      double set = mlir::isa<arith::ExtUIOp>(def) ? 1.0 : -1.0;
+      int32_t then = constant(set, T::Int);
+      return op(Expression::Select, T::Int,
+                {condition, then, constant(0.0, T::Int)});
+    }
+    return unknown();
+  }
+
+  /// `select` as the max or min of the values its condition compares,
+  /// when it is that for every value they take, else -1: max(a, b) is a
+  /// when a > b, else b, so select(a > b, a, b) is max(a, b) and
+  /// select(a < b, b, a) is max(b, a), and integers also for >= and <=.
+  /// The max and min of integers do not depend on the order of their
+  /// operands, which keep the comparison's.
+  int32_t minMax(mlir::arith::SelectOp select, Expression::Type type,
+                 int depth) {
+    namespace arith = mlir::arith;
+    mlir::Value a, b;
+    bool greater;
+    if (auto cmp = select.getCondition().getDefiningOp<arith::CmpIOp>()) {
+      using P = arith::CmpIPredicate;
+      P predicate = cmp.getPredicate();
+      if (type != Expression::Int ||
+          (predicate != P::sgt && predicate != P::sge && predicate != P::slt &&
+           predicate != P::sle))
+        return -1;
+      greater = predicate == P::sgt || predicate == P::sge;
+      a = cmp.getLhs();
+      b = cmp.getRhs();
+    } else if (auto cmp =
+                   select.getCondition().getDefiningOp<arith::CmpFOp>()) {
+      using P = arith::CmpFPredicate;
+      P predicate = cmp.getPredicate();
+      if (type != Expression::Float ||
+          (predicate != P::OGT && predicate != P::OLT))
+        return -1;
+      greater = predicate == P::OGT;
+      a = cmp.getLhs();
+      b = cmp.getRhs();
+    } else {
+      return -1;
+    }
+    mlir::Value then = select.getTrueValue(), other = select.getFalseValue();
+    if (then == b && other == a) {
+      greater = !greater;
+      if (type != Expression::Int)
+        std::swap(a, b);
+    } else if (then != a || other != b)
+      return -1;
+    int32_t first = expression(a, depth + 1);
+    return op(greater ? Expression::Max : Expression::Min, type,
+              {first, expression(b, depth + 1)});
   }
 
   /// Whether expression `y` is `x` one iteration on: records [a, b) moved
   /// to [b, 2b - a), the rest the same.
   bool sameExpression(int32_t x, int32_t y, int64_t a, int64_t b) const {
     const Expression &p = expressions[x], &q = expressions[y];
-    if (p.kind != q.kind || p.name != q.name || p.predicate != q.predicate ||
-        p.result != q.result || p.of.size() != q.of.size() ||
-        !same(p.number, q.number))
+    if (p.kind != q.kind || p.term != q.term || p.name != q.name ||
+        p.type != q.type || p.result != q.result ||
+        p.of.size() != q.of.size() || !same(p.number, q.number))
       return false;
     if (p.kind == Expression::Readout || p.kind == Expression::Answer) {
       int64_t moved = p.event >= a && p.event < b ? p.event + (b - a) : p.event;
@@ -2110,6 +2371,23 @@ private:
   bool compact;
   std::vector<std::optional<std::pair<nb::object, nb::object>>> made;
 
+  // The keys and names of run-time expressions, made at an export's first.
+  struct Names {
+    nb::str op{"op"}, type{"type"}, of{"of"}, constant{"const"},
+        readout{"readout"}, answer{"answer"}, result{"result"};
+    std::array<nb::str, Expression::Terms> terms = make<Expression::Terms>(
+        Expression::names, std::make_index_sequence<Expression::Terms>());
+    std::array<nb::str, Expression::Types> types = make<Expression::Types>(
+        Expression::typeNames, std::make_index_sequence<Expression::Types>());
+
+    template <size_t N, size_t... I>
+    static std::array<nb::str, N> make(const char *const (&names)[N],
+                                       std::index_sequence<I...>) {
+      return {nb::str(names[I])...};
+    }
+  };
+  mutable std::optional<Names> names;
+
   // The names of a waveform shape's numbers, where its amplitude and scale
   // factor are among them, and whether it has an overall amplitude.
   struct Shape {
@@ -2408,32 +2686,54 @@ private:
     const Expression &e = walk.expressions[index];
     if (e.kind == Expression::Number)
       return textNumber(e.number);
+    if (e.kind == Expression::Unknown)
+      unexportable(e.name);
+    if (!names)
+      names.emplace();
+    const Names &key = *names;
     nb::dict out;
     switch (e.kind) {
     case Expression::Constant:
-      out["const"] = textNumber(e.number);
-      break;
-    case Expression::Unknown:
-      out["unknown"] = nb::str(e.name.data(), e.name.size());
+      if (e.type == Expression::Bool)
+        out[key.constant] = nb::bool_(e.number != 0.0);
+      else
+        out[key.constant] = textNumber(e.number);
       break;
     case Expression::Readout:
-      out["readout"] = e.event;
+      out[key.readout] = e.event;
       break;
     case Expression::Answer:
-      out["answer"] = e.event;
-      out["result"] = e.result;
+      out[key.answer] = e.event;
+      out[key.result] = e.result;
       break;
     default: {
+      out[key.op] = key.terms[e.term];
+      out[key.type] = key.types[e.type];
       nb::list of;
       for (int32_t child : e.of)
         of.append(expression(child));
-      out["of"] = of;
-      out["op"] = nb::str(e.name.data(), e.name.size());
-      if (!e.predicate.empty())
-        out["predicate"] = nb::str(e.predicate.data(), e.predicate.size());
+      out[key.of] = of;
     }
     }
     return out;
+  }
+
+  /// Raises UnsupportedError for a value computed at run time from `what`
+  /// (an op's MLIR name, else what it is), which no expression names.
+  [[noreturn]] static void unexportable(llvm::StringRef what) {
+    std::string message =
+        "cannot export a value the program computes at run time from ";
+    if (what.contains('.'))
+      message += "the operation '" + what.str() + "'";
+    else
+      message += what.str();
+    message += ": a controller program computes only the terms of its "
+               "expression vocabulary (see the controller backends guide); "
+               "compute this value while the kernel compiles";
+    nb::object error =
+        nb::module_::import_("cudaq_pulse._errors").attr("UnsupportedError");
+    PyErr_SetString(error.ptr(), message.c_str());
+    throw nb::python_error();
   }
 
   /// The name of number `operand` of a node: its parameter's, where the

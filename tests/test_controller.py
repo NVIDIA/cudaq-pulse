@@ -728,7 +728,8 @@ def test_values_from_answers_are_exported_as_expressions():
     assert first["amplitude"] is None and first["frequency_hz"] is None
     assert first["waveform"]["runtime"] == {
         "amplitude": {
-            "op": "arith.mulf",
+            "op": "mul",
+            "type": "float",
             "of": [{"answer": answer, "result": 0}, {"const": 0.5}],
         }
     }
@@ -789,7 +790,8 @@ def test_a_submission_carries_its_arguments_in_order():
     assert first["operands"] == [{"readout": a}, {"readout": b}, {"const": 0.5}]
     assert second["operands"][:2] == [{"readout": b}, {"readout": a}]
     assert second["operands"][2] == {
-        "op": "arith.mulf",
+        "op": "mul",
+        "type": "float",
         "of": [{"answer": answer, "result": 0}, {"const": 2.0}],
     }
 
@@ -813,9 +815,10 @@ def test_a_value_a_readout_selects_at_run_time_is_exported_as_its_select(monkeyp
     readout = next(e for e in events if e["kind"] == "readout")["index"]
     [drive] = (e for e in events if e["kind"] == "drive")
     select = {
-        "op": "arith.select",
+        "op": "select",
+        "type": "float",
         "of": [
-            {"op": "pulse.is_set", "of": [{"readout": readout}]},
+            {"op": "ne", "type": "int", "of": [{"readout": readout}, {"const": 0}]},
             {"const": 0.3},
             {"const": 0.1},
         ],

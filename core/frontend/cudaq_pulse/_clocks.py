@@ -518,10 +518,10 @@ def own_run_time(
         low = event.get("min_cycles")
         high = event.get("max_cycles")
         if low is not None:
-            length = {"op": "arith.maxsi", "of": [length, {"const": low}]}
+            length = {"op": "max", "type": "int", "of": [length, {"const": low}]}
             event["min_cycles"] = low * a // b
         if high is not None:
-            length = {"op": "arith.minsi", "of": [length, {"const": high}]}
+            length = {"op": "min", "type": "int", "of": [length, {"const": high}]}
             event["max_cycles"] = -((-high * a) // b)
         event["length"] = _own_length(length, a, b, grid)
         found.extend(_decided(controller, line, event, "length", length))
@@ -532,7 +532,14 @@ def own_run_time(
 
 
 def _own_length(cycles: Any, a: int, b: int, grid: int) -> dict[str, Any]:
-    return {"op": "pulse.own_cycles", "of": [cycles], "num": a, "den": b, "timestep": grid}
+    return {
+        "op": "controller_cycles",
+        "type": "int",
+        "of": [cycles],
+        "num": a,
+        "den": b,
+        "timestep": grid,
+    }
 
 
 def _own_operands(
@@ -562,7 +569,8 @@ def _own_operands(
             elif key in times and a != b and convert:
                 factor = a / b
                 computed[key] = {
-                    "op": "arith.mulf",
+                    "op": "mul",
+                    "type": "float",
                     "of": [value, {"const": int(factor) if factor.is_integer() else factor}],
                 }
     for child in node.get("of", ()):
@@ -624,17 +632,13 @@ def _unconvertible(
 
 # The results of the ops a set of values passes through unchanged in kind.
 _VALUE_OPS: Mapping[str, Any] = {
-    "arith.addf": lambda x, y: x + y,
-    "arith.addi": lambda x, y: x + y,
-    "arith.subf": lambda x, y: x - y,
-    "arith.subi": lambda x, y: x - y,
-    "arith.mulf": lambda x, y: x * y,
-    "arith.muli": lambda x, y: x * y,
-    "arith.maxsi": max,
-    "arith.minsi": min,
-    "arith.fptosi": lambda x: int(x),
-    "arith.sitofp": float,
-    "pulse.duration_from_int": lambda x: x,
+    "add": lambda x, y: x + y,
+    "sub": lambda x, y: x - y,
+    "mul": lambda x, y: x * y,
+    "max": lambda x, y: x if x > y else y,
+    "min": lambda x, y: x if x < y else y,
+    "to_int": lambda x: int(x),
+    "to_float": float,
 }
 
 
@@ -649,7 +653,7 @@ def _values(expression: Any, limit: int = 64) -> set[float] | None:
         return {expression["const"]}
     op: str = expression.get("op", "")
     of = expression.get("of", ())
-    if op == "arith.select" and len(of) == 3:
+    if op == "select" and len(of) == 3:
         then, other = _values(of[1], limit), _values(of[2], limit)
         if then is None or other is None:
             return None

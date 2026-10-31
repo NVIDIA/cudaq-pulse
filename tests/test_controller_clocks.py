@@ -591,7 +591,7 @@ def test_a_run_time_wait_is_exported_in_its_controllers_cycles():
     lowered = pulse.compile(answer_wait, device=qpu).lower(qpu.qudits[2])
     wait = next(e for e in lowered.export_controller()["events"] if e["kind"] == "wait")
     assert (wait["min_cycles"], wait["max_cycles"]) == (2, 100)
-    assert wait["length"]["op"] == "pulse.own_cycles" and wait["length"]["den"] == 4
+    assert wait["length"]["op"] == "controller_cycles" and wait["length"]["den"] == 4
 
 
 def test_each_controller_exports_the_reference_clock():

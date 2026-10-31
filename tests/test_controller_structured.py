@@ -598,7 +598,7 @@ def test_a_value_a_readout_selects_unrolls_to_its_select(monkeypatch):
     flat = lowered.export_controller()
     structured = lowered.export_controller(version=2)
     [play] = (e for e in structured["events"] if e["kind"] == "play")
-    assert _amplitude_of(structured, play)["op"] == "arith.select"
+    assert _amplitude_of(structured, play)["op"] == "select"
     assert _differences(_canonical(flat), _canonical(unroll(structured))) == []
 
 
@@ -681,7 +681,8 @@ def test_a_loop_whose_calls_and_amplitudes_come_from_answers_stays_rolled():
     assert by_kind["call"]["operands"] == [{"readout": place["acquire"]}]
     assert _amplitude_of(structured, by_kind["play"]) == {
         "of": [{"answer": place["answer"], "result": 0}, {"const": 0.5}],
-        "op": "arith.mulf",
+        "op": "mul",
+        "type": "float",
     }
 
 

@@ -39,6 +39,10 @@ Export and limits
 
 .. autofunction:: cudaq_pulse.controller.sample_waveform
 
+.. autofunction:: cudaq_pulse.controller.evaluate_expression
+
+.. autodata:: cudaq_pulse.controller.EXPRESSION_TERMS
+
 .. autofunction:: cudaq_pulse.controller.shape_key
 
 What classical functions cost
