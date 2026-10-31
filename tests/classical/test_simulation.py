@@ -404,6 +404,34 @@ def test_whole_program_lowering_rejects_unanswered_calls():
         lowered.mlir("llvm")
 
 
+@pulse.classical(max_latency_ns=200)
+def count(bits: pulse.Bits) -> int:
+    return 5 + bits[0]
+
+
+@pulse.kernel
+def counted_waits(q):
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    m = readout(ro, square(100, 0.05))
+    n = count.submit([m]).result()
+    wait(d, n // 2 + 1)
+    wait(d, n % 3 + 4)
+
+
+def test_a_bound_answer_waits_as_its_integer_arithmetic_gives():
+    dev = _device()
+    lowered = pulse.compile(counted_waits, device=dev).lower(dev.qudit_handles[0])
+    args = lowered.options.schedule_args()
+    module = lowered._concrete().simulation_module(*args)
+    readout_index, iteration = module.next_measurement([])[:2]
+    call = module.next_call([[readout_index, *iteration, 0]])[0]
+    for n in (5, 6, 7):
+        bound = module.bind_call(call, [float(n)], *args)
+        waits = [e[4] for e in bound.events() if e[0] == "wait"]
+        assert waits == [n // 2 + 1, n % 3 + 4], n
+
+
 def test_a_segment_with_bound_answers_lowers_to_llvm_without_classical_ops():
     from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 

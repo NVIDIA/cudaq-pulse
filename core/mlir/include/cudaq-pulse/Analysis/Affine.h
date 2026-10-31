@@ -162,6 +162,13 @@ inline std::optional<double> boundNumber(mlir::Value value) {
   if (!def || def->getNumRegions() != 0)
     return std::nullopt;
   llvm::StringRef name = def->getName().getStringRef();
+  if (auto select = mlir::dyn_cast<mlir::arith::SelectOp>(def)) {
+    auto condition = boundNumber(select.getCondition());
+    if (!condition)
+      return std::nullopt;
+    return boundNumber(*condition != 0.0 ? select.getTrueValue()
+                                         : select.getFalseValue());
+  }
   if (def->getNumOperands() == 1) {
     auto x = boundNumber(def->getOperand(0));
     if (!x)
@@ -191,6 +198,52 @@ inline std::optional<double> boundNumber(mlir::Value value) {
     return *a / *b;
   if (name == "arith.divsi" && *b != 0)
     return std::trunc(*a / *b);
+  if (name == "arith.floordivsi" && *b != 0)
+    return std::floor(*a / *b);
+  if (name == "arith.remsi" && *b != 0)
+    return std::fmod(*a, *b);
+  if (name == "arith.maxsi")
+    return std::max(*a, *b);
+  if (name == "arith.minsi")
+    return std::min(*a, *b);
+  if (auto cmp = mlir::dyn_cast<mlir::arith::CmpIOp>(def)) {
+    using P = mlir::arith::CmpIPredicate;
+    switch (cmp.getPredicate()) {
+    case P::eq:
+      return *a == *b;
+    case P::ne:
+      return *a != *b;
+    case P::slt:
+      return *a < *b;
+    case P::sle:
+      return *a <= *b;
+    case P::sgt:
+      return *a > *b;
+    case P::sge:
+      return *a >= *b;
+    default:
+      return std::nullopt;
+    }
+  }
+  if (auto cmp = mlir::dyn_cast<mlir::arith::CmpFOp>(def)) {
+    using P = mlir::arith::CmpFPredicate;
+    switch (cmp.getPredicate()) {
+    case P::OEQ:
+      return *a == *b;
+    case P::UNE:
+      return *a != *b;
+    case P::OLT:
+      return *a < *b;
+    case P::OLE:
+      return *a <= *b;
+    case P::OGT:
+      return *a > *b;
+    case P::OGE:
+      return *a >= *b;
+    default:
+      return std::nullopt;
+    }
+  }
   return std::nullopt;
 }
 
