@@ -16,6 +16,7 @@ methods themselves.
 
 from __future__ import annotations
 
+import numbers
 import sys
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
@@ -42,6 +43,7 @@ from .ir_builder import (
 
 if TYPE_CHECKING:
     from .._units import Time
+    from .packed_ir_builder import PackedIRBuilder
 
 # The values an f64 argument takes as they are: _numbers would pass them
 # straight to _get_numeric_vid.
@@ -419,7 +421,55 @@ def condition(builder: Any, value: Any) -> IRValue:
             return IRValue(value.vid, "i1")
         return IRValue(builder.classical_compare("!=", value, 0), "i1")
     if isinstance(value, UndecidableComparison):
-        if isinstance(value.lhs, IRValue) or isinstance(value.rhs, IRValue):
+        if value.lhs.__class__ is AnswerValue and value.rhs.__class__ in _NUMBERS:
+            try:
+                return IRValue(builder.classical_compare(value.op, value.lhs, value.rhs), "i1")
+            except CompilationError:
+                # classical_compare rejects an answer bit before it records anything.
+                if value.lhs.dtype != "i1":
+                    raise
+        lhs, rhs = value.lhs, value.rhs
+        if _is_bit(lhs) or _is_bit(rhs):
+            return IRValue(_compare_bits(builder, value.op, lhs, rhs), "i1")
+        if isinstance(lhs, IRValue) or isinstance(rhs, IRValue):
             raise CompilationError("an answer cannot be compared with a measurement result")
-        return IRValue(builder.classical_compare(value.op, value.lhs, value.rhs), "i1")
+        return IRValue(builder.classical_compare(value.op, lhs, rhs), "i1")
     raise CompilationError(f"cannot branch on {value!r}")
+
+
+_NUMBERS = frozenset({int, float, bool})
+
+
+def _is_bit(value: Any) -> bool:
+    """Whether *value* is a bool known only when the program runs: a
+    comparison, or an answer bit."""
+    return isinstance(value, UndecidableComparison) or (
+        isinstance(value, AnswerValue) and value.dtype == "i1"
+    )
+
+
+def _compare_bits(builder: PackedIRBuilder, op: str, lhs: Any, rhs: Any) -> int:
+    """The ``i1`` of *lhs* ``op`` *rhs*, one of them a bool known only when
+    the program runs and the other such a bool or a number, as Python
+    compares bools."""
+    if op not in ("==", "!="):
+        raise CompilationError(
+            f"cannot order the conditions in ({lhs!r} {op} {rhs!r}), which are known only "
+            "when the program runs; compare them with == or !=, or combine them with "
+            "and, or, not"
+        )
+    for constant, bit in ((lhs, rhs), (rhs, lhs)):
+        if _is_bit(constant):
+            continue
+        if not isinstance(constant, numbers.Real):
+            raise CompilationError(
+                f"cannot compare the condition {bit!r} with {constant!r}; a condition known "
+                "only when the program runs compares with another such condition, True or False"
+            )
+        if constant != 0 and constant != 1:
+            return builder.bit_constant(op == "!=")
+        vid = condition(builder, bit).vid
+        if bool(constant) == (op == "=="):
+            return vid
+        return builder.compare_bits("==", vid, builder.bit_constant(False))
+    return builder.compare_bits(op, condition(builder, lhs).vid, condition(builder, rhs).vid)
