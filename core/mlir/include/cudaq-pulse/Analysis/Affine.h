@@ -146,8 +146,22 @@ inline std::optional<double> boundAnswer(mlir::Value value) {
   return answers[result.getResultNumber()];
 }
 
-/// A number computed from constants and bound answers alone.
-inline std::optional<double> boundNumber(mlir::Value value) {
+template <typename Leaf>
+std::optional<double> computedTerm(mlir::Value value, Leaf &leaf);
+
+/// A number computed from constants and the values `leaf` gives (else
+/// none), by the terms of the controller export's expression vocabulary
+/// and the bool logic it expresses with them. A bool is 1 or 0.
+template <typename Leaf>
+std::optional<double> computedNumber(mlir::Value value, Leaf &leaf) {
+  std::optional<double> out = computedTerm(value, leaf);
+  if (out && value.getType().isInteger(1))
+    out = *out != 0.0 ? 1.0 : 0.0;
+  return out;
+}
+
+template <typename Leaf>
+std::optional<double> computedTerm(mlir::Value value, Leaf &leaf) {
   mlir::Attribute attribute;
   if (mlir::matchPattern(value, mlir::m_Constant(&attribute))) {
     if (auto number = mlir::dyn_cast<mlir::FloatAttr>(attribute))
@@ -156,27 +170,30 @@ inline std::optional<double> boundNumber(mlir::Value value) {
       return static_cast<double>(number.getInt());
     return std::nullopt;
   }
-  if (auto answer = boundAnswer(value))
-    return answer;
+  if (auto known = leaf(value))
+    return known;
   mlir::Operation *def = value.getDefiningOp();
   if (!def || def->getNumRegions() != 0)
     return std::nullopt;
   llvm::StringRef name = def->getName().getStringRef();
   if (auto select = mlir::dyn_cast<mlir::arith::SelectOp>(def)) {
-    auto condition = boundNumber(select.getCondition());
+    auto condition = computedNumber(select.getCondition(), leaf);
     if (!condition)
       return std::nullopt;
-    return boundNumber(*condition != 0.0 ? select.getTrueValue()
-                                         : select.getFalseValue());
+    return computedNumber(*condition != 0.0 ? select.getTrueValue()
+                                            : select.getFalseValue(),
+                          leaf);
   }
   if (def->getNumOperands() == 1) {
-    auto x = boundNumber(def->getOperand(0));
+    auto x = computedNumber(def->getOperand(0), leaf);
     if (!x)
       return std::nullopt;
     if (name == "arith.negf")
       return -*x;
     if (name == "arith.fptosi")
       return std::trunc(*x);
+    if (name == "arith.extsi" && def->getOperand(0).getType().isInteger(1))
+      return -*x;
     if (name == "arith.sitofp" || name == "arith.extui" ||
         name == "arith.extsi" || name == "arith.trunci" ||
         name == "arith.index_cast")
@@ -185,9 +202,19 @@ inline std::optional<double> boundNumber(mlir::Value value) {
   }
   if (def->getNumOperands() != 2)
     return std::nullopt;
-  auto a = boundNumber(def->getOperand(0)), b = boundNumber(def->getOperand(1));
+  auto a = computedNumber(def->getOperand(0), leaf),
+       b = computedNumber(def->getOperand(1), leaf);
   if (!a || !b)
     return std::nullopt;
+  if (name == "arith.xori")
+    return static_cast<double>(static_cast<int64_t>(*a) ^
+                               static_cast<int64_t>(*b));
+  if (name == "arith.andi")
+    return static_cast<double>(static_cast<int64_t>(*a) &
+                               static_cast<int64_t>(*b));
+  if (name == "arith.ori")
+    return static_cast<double>(static_cast<int64_t>(*a) |
+                               static_cast<int64_t>(*b));
   if (name == "arith.addf" || name == "arith.addi")
     return *a + *b;
   if (name == "arith.subf" || name == "arith.subi")
@@ -221,8 +248,14 @@ inline std::optional<double> boundNumber(mlir::Value value) {
       return *a > *b;
     case P::sge:
       return *a >= *b;
-    default:
-      return std::nullopt;
+    case P::ult:
+      return *a < *b;
+    case P::ule:
+      return *a <= *b;
+    case P::ugt:
+      return *a > *b;
+    case P::uge:
+      return *a >= *b;
     }
   }
   if (auto cmp = mlir::dyn_cast<mlir::arith::CmpFOp>(def)) {
@@ -230,8 +263,8 @@ inline std::optional<double> boundNumber(mlir::Value value) {
     switch (cmp.getPredicate()) {
     case P::OEQ:
       return *a == *b;
-    case P::UNE:
-      return *a != *b;
+    case P::ONE:
+      return *a < *b || *a > *b;
     case P::OLT:
       return *a < *b;
     case P::OLE:
@@ -240,11 +273,29 @@ inline std::optional<double> boundNumber(mlir::Value value) {
       return *a > *b;
     case P::OGE:
       return *a >= *b;
+    case P::UEQ:
+      return !(*a < *b || *a > *b);
+    case P::UNE:
+      return *a != *b;
+    case P::ULT:
+      return !(*a >= *b);
+    case P::ULE:
+      return !(*a > *b);
+    case P::UGT:
+      return !(*a <= *b);
+    case P::UGE:
+      return !(*a < *b);
     default:
       return std::nullopt;
     }
   }
   return std::nullopt;
+}
+
+/// A number computed from constants and bound answers alone.
+inline std::optional<double> boundNumber(mlir::Value value) {
+  auto bound = [](mlir::Value v) { return boundAnswer(v); };
+  return computedNumber(value, bound);
 }
 
 /// `value` as an affine function of the entry function's arguments, if it

@@ -341,41 +341,10 @@ private:
     return false;
   }
 
-  /// The value of a branch condition, computed from measurement outcomes.
-  std::optional<int64_t> evaluate(mlir::Value value) {
-    if (auto number = constantNumber(value))
-      return static_cast<int64_t>(*number);
-    mlir::Operation *def = value.getDefiningOp();
-    if (!def)
-      return std::nullopt;
-    if (auto cmp = mlir::dyn_cast<mlir::arith::CmpFOp>(def)) {
-      auto a = number(cmp.getLhs()), b = number(cmp.getRhs());
-      if (!a || !b)
-        return std::nullopt;
-      using P = mlir::arith::CmpFPredicate;
-      switch (cmp.getPredicate()) {
-      case P::OEQ:
-      case P::UEQ:
-        return *a == *b;
-      case P::ONE:
-      case P::UNE:
-        return *a != *b;
-      case P::OLT:
-      case P::ULT:
-        return *a < *b;
-      case P::OLE:
-      case P::ULE:
-        return *a <= *b;
-      case P::OGT:
-      case P::UGT:
-        return *a > *b;
-      case P::OGE:
-      case P::UGE:
-        return *a >= *b;
-      default:
-        return std::nullopt;
-      }
-    }
+  /// The value of a branch condition, computed from measurement outcomes
+  /// and bound answers as a controller computes the condition's
+  /// expression.
+  std::optional<double> evaluate(mlir::Value value) {
     auto outcome = [&](mlir::Value measurement) -> std::optional<int64_t> {
       auto key = measurementOf.find(measurement);
       if (key == measurementOf.end())
@@ -387,46 +356,21 @@ private:
       }
       return chosen->second;
     };
-    if (auto isSet = mlir::dyn_cast<IsSetOp>(def)) {
-      auto level = outcome(isSet.getMeasurement());
-      return level ? std::optional<int64_t>(*level != 0) : std::nullopt;
-    }
-    if (auto level = mlir::dyn_cast<OutcomeOp>(def))
-      return outcome(level.getMeasurement());
-    auto lhs = def->getNumOperands() == 2 ? evaluate(def->getOperand(0))
-                                          : std::nullopt;
-    auto rhs = def->getNumOperands() == 2 ? evaluate(def->getOperand(1))
-                                          : std::nullopt;
-    if (!lhs || !rhs)
-      return std::nullopt;
-    if (auto cmp = mlir::dyn_cast<mlir::arith::CmpIOp>(def)) {
-      using P = mlir::arith::CmpIPredicate;
-      switch (cmp.getPredicate()) {
-      case P::eq:
-        return *lhs == *rhs;
-      case P::ne:
-        return *lhs != *rhs;
-      case P::slt:
-      case P::ult:
-        return *lhs < *rhs;
-      case P::sle:
-      case P::ule:
-        return *lhs <= *rhs;
-      case P::sgt:
-      case P::ugt:
-        return *lhs > *rhs;
-      case P::sge:
-      case P::uge:
-        return *lhs >= *rhs;
+    auto leaf = [&](mlir::Value v) -> std::optional<double> {
+      if (auto answer = boundAnswer(v))
+        return answer;
+      mlir::Operation *def = v.getDefiningOp();
+      if (auto isSet = mlir::dyn_cast_or_null<IsSetOp>(def)) {
+        auto level = outcome(isSet.getMeasurement());
+        return level ? std::optional<double>(*level != 0) : std::nullopt;
       }
-    }
-    if (mlir::isa<mlir::arith::XOrIOp>(def))
-      return *lhs ^ *rhs;
-    if (mlir::isa<mlir::arith::AndIOp>(def))
-      return *lhs & *rhs;
-    if (mlir::isa<mlir::arith::OrIOp>(def))
-      return *lhs | *rhs;
-    return std::nullopt;
+      if (auto level = mlir::dyn_cast_or_null<OutcomeOp>(def)) {
+        auto chosen = outcome(level.getMeasurement());
+        return chosen ? std::optional<double>(*chosen) : std::nullopt;
+      }
+      return std::nullopt;
+    };
+    return computedNumber(value, leaf);
   }
 
   bool ifOp(mlir::scf::IfOp branch) {
@@ -438,9 +382,10 @@ private:
       return fail(branch, "cannot evaluate this branch condition from "
                           "measurement outcomes");
     }
-    if (!*taken && branch.getElseRegion().empty())
+    if (*taken == 0.0 && branch.getElseRegion().empty())
       return true;
-    mlir::Block &arm = *taken ? *branch.thenBlock() : *branch.elseBlock();
+    mlir::Block &arm =
+        *taken != 0.0 ? *branch.thenBlock() : *branch.elseBlock();
     if (!block(arm))
       return false;
     carry(arm.getTerminator()->getOperands(), branch.getResults());
