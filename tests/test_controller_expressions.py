@@ -11,6 +11,7 @@ operations the compiler computes them with."""
 
 from __future__ import annotations
 
+import itertools
 import math
 import re
 import warnings
@@ -30,6 +31,7 @@ from cudaq_pulse.controller import (
 )
 
 from tests._handles import Q
+from tests.kernel.test_runtime_conditions import _kernel as _traced
 
 
 @pulse.classical(max_latency_ns=200, name="expression_inputs")
@@ -501,6 +503,75 @@ def test_a_condition_a_plain_test_names_has_no_expression():
         "answers": [],
         "test": "is_set",
     }
+
+
+# ── Conditions the kernel frontend traces ────────────────────────────────────
+
+# Answers n (int), x (float) and b (bool), and a readout m: the comparisons of
+# conditions, bool() and `not` that the frontend lowers to i1 compares.
+_TRACED = [
+    "(n > 3) == (x > 0.1)",
+    "(n > 3) ^ (x > 0.1)",
+    "((n > 3) == (x > 0.1)) == (n < 7)",
+    "not ((n > 3) == (x > 0.1))",
+    "b == (x > 0.1)",
+    "(n > 3) == False",
+    "(x > 0.1) == False",
+    "(n > 3) == 2",
+    "b != True",
+    "bool(n)",
+    "x == n",
+]
+
+
+def _traced_events(condition: str, version: int) -> list[dict]:
+    lowered = pulse.compile(_traced(condition)).lower(Q[0])
+    return lowered.export_controller(version=version)["events"]
+
+
+def _traced_condition(condition: str, version: int) -> dict:
+    events = _traced_events(condition, version)
+    [played] = (e for e in events if e["kind"] in ("drive", "play") and e.get("conditions"))
+    [found] = played["conditions"]
+    return found
+
+
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("condition", _TRACED)
+def test_a_traced_condition_exports_the_branch_python_takes(condition, version):
+    events = _traced_events(condition, version)
+    [played] = (e for e in events if e["kind"] in ("drive", "play") and e.get("conditions"))
+    [found] = played["conditions"]
+    assert found["test"] == "expression"
+    n, x, b = (i for i, e in enumerate(events) if e["kind"] == "answer")
+    for values in itertools.product((0, 5, 9), (0.05, 0.5, math.nan), (False, True)):
+        answers = dict(zip((n, x, b), ([v] for v in values), strict=True))
+        held = evaluate_expression(found["expression"], answers=answers)
+        expected = eval(condition, {}, dict(zip("nxb", values, strict=True)))  # noqa: S307
+        assert (held == found["arm"]) == bool(expected), values
+
+
+@pytest.mark.parametrize(
+    "forms",
+    [
+        ["(n > 3) == True", "True == (n > 3)", "(n > 3) != False", "bool(n > 3)", "(n > 3) == 1"],
+        ["(n > 3) == False", "(n > 3) != True"],
+        ["(n > 3) != (x > 0.1)", "(n > 3) ^ (x > 0.1)"],
+        ["b != True", "b == False"],
+    ],
+    ids=["is", "is not", "differ", "bool is not"],
+)
+def test_a_traced_condition_written_in_equivalent_ways_exports_the_same(forms):
+    exported = [_traced_condition(form, 1) for form in forms]
+    assert all(e == exported[0] for e in exported), exported
+
+
+@pytest.mark.parametrize(
+    ("condition", "arm"), [("m", True), ("bool(m)", True), ("not m", False), ("bool(not m)", False)]
+)
+def test_the_truth_of_a_readout_is_its_plain_test(condition, arm):
+    found = _traced_condition(condition, 1)
+    assert found["test"] == "is_set" and found["arm"] is arm and "expression" not in found
 
 
 # ── No operation of the compiler in any export ───────────────────────────────
