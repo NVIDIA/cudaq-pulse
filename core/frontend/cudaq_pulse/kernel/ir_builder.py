@@ -49,40 +49,6 @@ def parameter_names(value: Any) -> tuple[str, ...]:
     return ()
 
 
-class UndecidableComparison:
-    """A comparison whose outcome is only known when the program runs.
-
-    Comparing a symbolic parameter or an IR value builds one of these
-    instead of falling back to object identity; using it as a condition
-    raises, so a kernel never silently takes one branch.
-    """
-
-    __slots__ = ("lhs", "op", "rhs")
-
-    def __init__(self, lhs: Any, op: str, rhs: Any):
-        self.lhs = lhs
-        self.op = op
-        self.rhs = rhs
-
-    def __bool__(self) -> bool:
-        operands = (self.lhs, self.rhs)
-        if any(isinstance(v, IRValue) for v in operands):
-            raise CompilationError(
-                f"cannot compare a runtime IR value at trace time ({self.lhs!r} {self.op} "
-                f"{self.rhs!r}); branch on a measurement result directly with "
-                "`if result:` or `if not result:`"
-            )
-        raise SymbolicValueError(
-            f"cannot decide {self.lhs!r} {self.op} {self.rhs!r} at trace time: a float "
-            "argument has no value while the kernel compiles",
-            parameter_names(self),
-            f"the comparison {self.op}",
-        )
-
-    def __repr__(self) -> str:
-        return f"({self.lhs!r} {self.op} {self.rhs!r})"
-
-
 class _UndecidableComparisons:
     """Comparison operators that defer to ``UndecidableComparison``."""
 
@@ -106,6 +72,72 @@ class _UndecidableComparisons:
 
     def __ge__(self, other: Any) -> UndecidableComparison:
         return UndecidableComparison(self, ">=", other)
+
+
+class UndecidableComparison(_UndecidableComparisons):
+    """A comparison whose outcome is only known when the program runs.
+
+    Comparing a symbolic parameter or an IR value builds one of these
+    instead of falling back to object identity, and so does comparing one
+    of these; using it as a condition raises, so a kernel never silently
+    takes one branch.
+    """
+
+    __slots__ = ("lhs", "op", "rhs")
+
+    def __init__(self, lhs: Any, op: str, rhs: Any):
+        self.lhs = lhs
+        self.op = op
+        self.rhs = rhs
+
+    def __bool__(self) -> bool:
+        operands = (self.lhs, self.rhs)
+        if any(isinstance(v, IRValue) for v in operands):
+            raise CompilationError(
+                f"cannot compare a runtime IR value at trace time ({self.lhs!r} {self.op} "
+                f"{self.rhs!r}); branch on a measurement result directly with "
+                "`if result:` or `if not result:`"
+            )
+        names = parameter_names(self)
+        if not names or contains_answer(self):
+            raise CompilationError(
+                f"cannot decide {self!r} at trace time: it is known only when the program "
+                "runs; use it as an if condition, alone or with and, or, not"
+            )
+        raise SymbolicValueError(
+            f"cannot decide {self.lhs!r} {self.op} {self.rhs!r} at trace time: a float "
+            "argument has no value while the kernel compiles",
+            names,
+            f"the comparison {self.op}",
+        )
+
+    # On bools, ``^`` is ``!=``.
+    def __xor__(self, other: Any) -> UndecidableComparison:
+        return UndecidableComparison(self, "!=", other)
+
+    __rxor__ = __xor__
+
+    def _both(self, op: str, other: Any) -> NoReturn:
+        word = "and" if op == "&" else "or"
+        raise CompilationError(
+            f"cannot trace {self!r} {op} {other!r}: it is known only when the program runs; "
+            f"combine conditions with `{word}` in an if condition instead"
+        )
+
+    def __and__(self, other: Any) -> NoReturn:
+        self._both("&", other)
+
+    def __rand__(self, other: Any) -> NoReturn:
+        self._both("&", other)
+
+    def __or__(self, other: Any) -> NoReturn:
+        self._both("|", other)
+
+    def __ror__(self, other: Any) -> NoReturn:
+        self._both("|", other)
+
+    def __repr__(self) -> str:
+        return f"({self.lhs!r} {self.op} {self.rhs!r})"
 
 
 class _SymbolicNumber(_UndecidableComparisons):
@@ -382,6 +414,13 @@ class IRValue(_UndecidableComparisons):
         # The qudit channel cell this line or tone value is, or was, a
         # version of; set by the tracer.
         self.chan: Any = None
+
+    def __bool__(self) -> bool:
+        raise CompilationError(
+            f"cannot decide {self!r} at trace time: it is known only when the program runs; "
+            "use a measurement result directly as an if condition (`if result:` or "
+            "`if not result:`)"
+        )
 
     def __repr__(self) -> str:
         return f"{self.name or f'%v{self.vid}'}:{self.vtype}"

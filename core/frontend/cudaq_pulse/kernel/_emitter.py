@@ -81,7 +81,10 @@ from .ir_builder import (
     Selection,
     SymbolicValueError,
     UndecidableComparison,
+    _UndecidableComparisons,
+    contains_answer,
     is_symbolic,
+    parameter_names,
 )
 from .packed_ir_builder import MAX_CUSTOM_SAMPLES
 
@@ -115,12 +118,18 @@ _REJOIN_MESSAGE = (
 _BRANCH_TYPE_MESSAGE = (
     "only measurement results can control a branch at runtime; got an IR value of type {}"
 )
+_BRANCH_VALUE_MESSAGE = (
+    "a conditional expression, `and` or `or` would give a value that depends on a "
+    "condition known only when the program runs; use the condition in an if statement, "
+    "and assign the value in each arm of the if"
+)
 
 # The emulated stack mixes IR values with arbitrary Python constants
 # (tuples, dicts, callables), so entries are dynamically typed.
 StackVal = Any
 
 _BUILTINS = vars(_builtins_mod)
+_IS_NOT = operator.is_not
 _SCALARS = (int, float, complex, str, bytes, bool, type(None))
 
 # Bad-argument failures of a Python call evaluated at trace time. Anything
@@ -309,13 +318,63 @@ def _truth(value: StackVal) -> bool:
     return bool(value)
 
 
-class _NotMeasurement:
+class _NotMeasurement(_UndecidableComparisons):
     """``not result`` for a measurement result, pending use as a condition."""
 
     __slots__ = ("value",)
 
     def __init__(self, value: IRValue):
         self.value = value
+
+    def __bool__(self) -> bool:
+        raise CompilationError(
+            f"cannot decide {self!r} at trace time: it is known only when the program runs; "
+            "use it directly as an if condition"
+        )
+
+    def __repr__(self) -> str:
+        return f"(not {self.value!r})"
+
+
+def _runtime_bit(value: Any) -> bool:
+    """Whether *value* is a bool known only when the program runs."""
+    cls = value.__class__
+    if cls is UndecidableComparison or cls is _NotMeasurement:
+        return True
+    if cls is IRValue:
+        return bool(value.vtype == "measurement" or value.vtype == "i1")
+    return cls is AnswerValue and value.dtype == "i1"
+
+
+def _identity_unknown(left: Any, right: Any) -> bool:
+    """Whether ``left is right`` depends on values known only when the
+    program runs: one is such a value, the other one too or a number."""
+    a = _runtime_bit(left) or is_symbolic(left)
+    b = _runtime_bit(right) or is_symbolic(right)
+    return (a or b) and (a or left.__class__ in _NUMBERS) and (b or right.__class__ in _NUMBERS)
+
+
+_NUMBERS = (bool, int, float)
+
+
+def _identity_error(left: Any, right: Any) -> CompilationError:
+    """The error for ``left is right``, which ``_identity_unknown`` holds
+    depends on the program's run; a kernel specializes on the float
+    arguments of one that depends on nothing else."""
+    message = (
+        f"cannot decide {left!r} is {right!r} at trace time: it is known only when the "
+        "program runs; compare values with == or !="
+    )
+
+    def run_time(value: Any) -> bool:
+        if value.__class__ is UndecidableComparison:
+            return run_time(value.lhs) or run_time(value.rhs)
+        return isinstance(value, (IRValue, _NotMeasurement)) or contains_answer(value)
+
+    names = parameter_names(left) + parameter_names(right)
+    if not names or run_time(left) or run_time(right):
+        return CompilationError(message)
+    return SymbolicValueError(message, tuple(dict.fromkeys(names)), "the identity test is")
 
 
 # ── Values a measurement-conditioned if chose ───────────────────────────
@@ -1637,6 +1696,8 @@ class PulseIREmitter:
                 elif op is bc.IS:
                     right = pop()
                     left = pop()
+                    if left is not None and right is not None and _identity_unknown(left, right):
+                        raise _identity_error(left, right)
                     push((left is right) != arg)
 
                 elif op is bc.CONTAINS:
@@ -1892,9 +1953,8 @@ class PulseIREmitter:
 
         first = builder._next_id  # the first id made in the if
         builder.emit("scf.if", (value,), ())
-        then_locals, then_slots = self._trace_arm(
-            view, index, join, then_start, saved_stack, containers
-        )
+        then_locals, then_slots = self._trace_arm(view, index, join, then_start, None, containers)
+        then_stack = list(stack)
         then_held = [cell.value for cell, _ in entering]
         stack[:] = saved_stack
         self.locals.clear()
@@ -1905,7 +1965,7 @@ class PulseIREmitter:
         else_index = builder.mark()
         builder.emit("scf.else", (), ())
         else_locals, else_slots = self._trace_arm(
-            view, index, join, else_start, saved_stack, containers
+            view, index, join, else_start, then_stack, containers
         )
 
         merged: dict[str, StackVal] = {}
@@ -2036,9 +2096,11 @@ class PulseIREmitter:
             _restore_channels(held, n_held, ())
         self.locals.clear()
         self.locals.update(merged)
-        stack[:] = saved_stack
-        # Both arms returned: continue at the trailing ``return None``.
-        return len(prog.instrs) - 2 if returns else join
+        if returns:
+            stack[:] = saved_stack
+            # Both arms returned: continue at the trailing ``return None``.
+            return len(prog.instrs) - 2
+        return join
 
     def _check_choosable(
         self, name: str, a: Any, b: Any, prog: bc.DecodedCode, index: int, first: int
@@ -2087,10 +2149,12 @@ class PulseIREmitter:
         branch: int,
         join: int,
         start: int,
-        saved_stack: list[StackVal],
+        expected: list[StackVal] | None,
         containers: list[tuple[Any, Any]],
     ) -> tuple[dict[str, StackVal], list[tuple[list[Any], int, IRValue]]]:
-        """Trace one arm until it reaches *join*; return its locals and rebound slots."""
+        """Trace one arm until it reaches *join*, there with the stack
+        *expected* (the other arm's) if given; return its locals and rebound
+        slots."""
         returns = join >= len(view.instrs)
         # An arm may only move forward from the branch, except that a join at
         # an enclosing loop header (both arms continue) ends the arm.
@@ -2112,8 +2176,11 @@ class PulseIREmitter:
         if returns:
             if outcome is not None:
                 raise CompilationError("a measurement-conditioned branch cannot return a value")
-        elif outcome is not _REGION_DONE or len(self.stack) != len(saved_stack):
+        elif outcome is not _REGION_DONE:
             raise CompilationError(_REJOIN_MESSAGE)
+        # Python joins the arms at one stack depth.
+        elif expected is not None and self.stack and any(map(_IS_NOT, self.stack, expected)):
+            raise CompilationError(_BRANCH_VALUE_MESSAGE)
         slots = _slot_changes(containers)
         if slots is None or not _only_containers(mutated, containers):
             raise CompilationError(
@@ -2646,6 +2713,9 @@ class PulseIREmitter:
                 if callable_val is float:
                     self.stack.append(call_args[0].cast("f64"))
                     return
+                if callable_val is bool and call_args[0].__class__ is AnswerValue:
+                    self.stack.append(UndecidableComparison(call_args[0], "!=", 0))
+                    return
             if any(is_symbolic(a) for a in call_args) or (
                 kwargs and any(is_symbolic(v) for v in kwargs.values())
             ):
@@ -2685,6 +2755,12 @@ class PulseIREmitter:
                     "only functions, methods and kernels are inlined into a kernel; "
                     f"call {e.name}() from a module-level function instead"
                 ) from e
+            except CompilationError:
+                # bool() of a condition known only at run time is that condition.
+                if callable_val is bool and not kwargs and _runtime_bit(call_args[0]):
+                    self.stack.append(call_args[0])
+                    return
+                raise
             self.stack.append(result)
             if (callable_val.__class__ is type and callable_val in _CONTAINERS) or (
                 owner.__class__ in _CONTAINERS and fname == "copy"

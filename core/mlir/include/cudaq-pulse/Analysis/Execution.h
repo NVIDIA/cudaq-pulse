@@ -324,8 +324,11 @@ private:
       mlir::Operation *def = v.getDefiningOp();
       if (!def)
         continue;
-      if (def->getName().getStringRef() == "classical.wait")
-        return !def->hasAttr("classical.answers");
+      if (def->getName().getStringRef() == "classical.wait") {
+        if (!def->hasAttr("classical.answers"))
+          return true;
+        continue;
+      }
       if (def->getNumRegions() == 0)
         work.append(def->getOperands().begin(), def->getOperands().end());
     }

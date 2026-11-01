@@ -1068,6 +1068,17 @@ class PackedIRBuilder:
         self._record(_CLASSICAL_COMPARE, [result, _COMPARE[predicate], int(is_float), a, b])
         return result
 
+    def compare_bits(self, predicate: str, lhs: int, rhs: int) -> int:
+        """Record ``==`` or ``!=`` of the i1 values *lhs* and *rhs*; returns the i1 id."""
+        result = self._next_id
+        self._next_id += 1
+        self._record(_CLASSICAL_COMPARE, [result, _COMPARE[predicate], 0, lhs, rhs])
+        return result
+
+    def bit_constant(self, value: bool) -> int:
+        """The id of an i1 that is *value*."""
+        return self.classical_compare("==" if value else "!=", 0, 0)
+
     def mark(self) -> int:
         return self._cur
 
