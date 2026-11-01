@@ -147,7 +147,24 @@ LogicalResult CustomOp::verify() {
 LogicalResult CustomSamplesOp::verify() {
   if (getSamples().empty())
     return emitOpError("samples array must not be empty");
+  if (auto rate = getRate()) {
+    if (rate->size() != 2 || (*rate)[0] < 1 || (*rate)[1] < 1)
+      return emitOpError("rate must be two positive integers, n samples every "
+                         "d cycles");
+    auto count = static_cast<int64_t>(getSamples().size());
+    if (count * (*rate)[1] % (*rate)[0])
+      return emitOpError() << count << " samples at " << (*rate)[0] << " every "
+                           << (*rate)[1]
+                           << " cycles do not last a whole number of cycles";
+  }
   return success();
+}
+
+int64_t CustomSamplesOp::getDurationCycles() {
+  auto count = static_cast<int64_t>(getSamples().size());
+  if (auto rate = getRate())
+    return count * (*rate)[1] / (*rate)[0];
+  return count;
 }
 
 LogicalResult WaitOp::verify() {
@@ -255,7 +272,7 @@ static std::optional<int64_t> waveformDuration(Value waveform) {
             TanhRampOp, GaussianSquarePulseOp, CustomOp>(
           [](auto op) { return getConstantI64(op.getDuration()); })
       .Case([](CustomSamplesOp op) {
-        return std::optional<int64_t>(op.getSamples().size());
+        return std::optional<int64_t>(op.getDurationCycles());
       })
       .Case<PulseAddOp, PulseSubOp, PulseMulOp>(
           [](auto op) { return waveformDuration(op.getLhs()); })

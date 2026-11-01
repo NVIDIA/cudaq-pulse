@@ -15,42 +15,58 @@ to MLIR operations in the Pulse dialect.
 Channel Access
 --------------
 
-.. function:: get_drive_line(qubit) -> (line, tone)
+.. function:: get_drive_line(qudit) -> Line
 
-   Obtain the drive channel for a qubit. Returns a ``(line, tone)`` pair:
-   the *line* is passed to ``drive()``, ``wait()``, and ``sync()``; the
-   *tone* is passed to phase and frequency ops.
+   Obtain the drive line of a qudit. The line is passed to ``drive()``,
+   ``wait()`` and ``sync()``; its tone, ``line.tone``, is passed to the phase
+   and frequency ops, as in ``shift_phase(line.tone, math.pi)``. A line is
+   one value: it is not unpacked or iterated.
 
-   A qubit has one drive channel for the whole program. The first call
+   ``line.tone`` drives the qudit's default transition, which its device's
+   model declares (levels 0 and 1 unless the model says otherwise).
+   ``line.tones`` maps each transition the model lists, as a
+   ``(lower, upper)`` pair of levels, to its tone, so
+   ``line.tones[(1, 2)]`` is the tone of the 1-2 transition; the default
+   transition's entry is ``line.tone`` itself. A transition the model does
+   not list raises a ``KeyError`` that names the ones it does. The mapping is
+   read-only.
+
+   A qudit has one drive line for the whole program. The first call
    acquires it; every later call, in the kernel or in a kernel it calls,
-   returns the channel's current line and tone. Pulses on it play one after
+   returns the line in its current state. Pulses on it play one after
    another, and phase and frequency changes carry over: ``x90(q); x90(q)``,
    where ``x90`` calls ``get_drive_line(q)`` itself, plays two pulses in
-   sequence. A loop whose body acquires the channel of a qubit that exists
+   sequence. A loop whose body acquires the line of a qudit that exists
    before the loop acquires it once, before the loop, and stays rolled.
 
-.. function:: get_readout_line(qubit) -> (line, tone)
+.. function:: get_readout_line(qudit) -> Line
 
-   Obtain the readout channel for a qubit. Same return convention, and the
-   same one channel per qubit.
+   Obtain the readout line of a qudit: the same one value per qudit for the
+   whole program, with its tone in ``line.tone``. A readout line has only
+   its own tone, so its ``line.tones`` holds that one entry.
 
 Scheduling Operations
 ---------------------
 
-.. function:: drive(line, waveform, tone)
+.. function:: drive(line, waveform, *, tone=None)
 
-   Play a waveform envelope on a drive line at the given tone frequency.
+   Play a waveform envelope on a drive line, at the line's own tone or, given
+   ``tone=``, at another one, such as ``drive(control, cr, tone=target.tone)``
+   for a cross-resonance pulse.
 
-.. function:: readout(line, waveform, tone)
+.. function:: readout(line, waveform, *, tone=None)
 
-   Acquire a measurement through a readout line.
+   Acquire a measurement through a readout line, at its own tone unless
+   ``tone=`` gives another.
 
 .. function:: wait(line, duration, bounds=None)
 
-   Insert an idle delay of *duration* clock cycles on a line. A duration
-   computed from ``float`` parameters stays a runtime value, rounded to the
-   nearest cycle on each call; *bounds*, ``(lowest, highest)`` in cycles,
-   limits it. See :ref:`wait-lengths`.
+   Insert an idle delay of *duration* on a line: an ``int`` number of clock
+   cycles or a time, such as ``wait(line, 10 * pulse.ns)`` (see
+   :ref:`durations`). A duration computed from ``float`` parameters stays a
+   runtime value, rounded to the nearest cycle on each call; *bounds*,
+   ``(lowest, highest)`` in cycles or as times, limits it. See
+   :ref:`wait-lengths`.
 
 .. function:: sync(line1, line2, ...)
 
@@ -96,7 +112,10 @@ Waveform Constructors
 ---------------------
 
 Each constructor returns a waveform value that can be passed to
-``drive()`` or combined with waveform arithmetic.
+``drive()`` or combined with waveform arithmetic. A *duration* or *width* is
+an ``int`` number of clock cycles or a time such as ``20 * pulse.ns``;
+*sigma* and *beta* take clock cycles, fractional too, or times. See
+:ref:`durations`.
 
 .. list-table::
    :header-rows: 1
@@ -110,8 +129,8 @@ Each constructor returns a waveform value that can be passed to
      - Constant-amplitude (flat-top) envelope
    * - ``drag(duration, amplitude, sigma, beta)``
      - DRAG pulse for leakage suppression: ``G + i beta dG/dt`` for the
-       Gaussian ``G``, with *beta* in clock cycles like *sigma*. Leakage of a
-       transmon is smallest near ``beta = -1 / alpha``, for the
+       Gaussian ``G``, with *beta* in clock cycles or a time, like *sigma*.
+       Leakage of a transmon is smallest near ``beta = -1 / alpha``, for the
        anharmonicity ``alpha`` in radians per clock cycle (``2 pi f_alpha /
        f_clock``, negative for a transmon).
    * - ``cosine(duration, amplitude)``
@@ -123,25 +142,47 @@ Each constructor returns a waveform value that can be passed to
    * - ``custom(duration, envelope_fn)``
      - A Python function ``f(t)`` of the time in clock cycles, sampled while
        tracing (below)
-   * - ``custom_samples(samples)``
-     - Waveform from a non-empty sequence of at most 252 real-valued samples
+   * - ``custom_samples(samples, sample_rate_ghz=None)``
+     - Waveform from a non-empty sequence of at most 252 real-valued samples,
+       made for one sample per clock cycle or for ``sample_rate_ghz``
+       (below)
 
-For ``gaussian_square``, ``width`` is the flat-top width in clock cycles;
-``duration - width`` must be a positive even integer so the two edges have the
-same integer duration.
+For ``gaussian_square``, ``width`` is the flat-top width;
+``duration - width`` must be a positive even number of clock cycles so the
+two edges have the same integer duration.
 
-``custom(duration, f)`` calls ``f`` once per clock cycle while the kernel is
-traced, at the middle of each cycle (``t = 0.5, 1.5, ..., duration - 0.5``),
-and holds each value for its cycle: the IR records the
-``custom_samples`` of those values, so a custom envelope compiles, schedules
-and simulates on the CPU and the GPU like the built-in ones. Built-in
+``custom(duration, f)`` calls ``f`` once per sample of the lines it plays on
+while the kernel is traced, at the middle of each sample, and holds each
+value until the next: the IR records the ``custom_samples`` of those values,
+so a custom envelope compiles, schedules and simulates on the CPU and the
+GPU like the built-in ones. On the program clock that is once per clock
+cycle (``t = 0.5, 1.5, ..., duration - 0.5``); a controller with its own
+clock, or several samples per cycle, plays at its own rate, and ``f`` is
+sampled at that rate (at half the clock, ``t = 1, 3, ...``). Built-in
 envelopes are evaluated continuously, so a function that reproduces one,
-such as a Gaussian for ``gaussian``, matches it up to that per-cycle
-sampling. ``f`` must be defined outside the kernel and return real numbers
-that do not depend on kernel parameters; scale the waveform by a parameter
-with ``wf_scale(custom(duration, f), amplitude)``. The duration must be known
-while tracing and at most 252 clock cycles, the length of one sample record;
-play a longer envelope as consecutive drives.
+such as a Gaussian for ``gaussian``, matches it up to that sampling. ``f``
+must be defined outside the kernel and return real numbers that do not
+depend on kernel parameters; scale the waveform by a parameter with
+``wf_scale(custom(duration, f), amplitude)``. The duration must be known
+while tracing and at most 252 samples (250 at a controller's own rate), the
+length of one sample record; play a longer envelope as consecutive drives.
+
+A ``custom_samples`` array is made for one rate and plays only at that
+rate: one sample per clock cycle, or ``sample_rate_ghz``. On lines whose
+controller plays another rate (its ``sample_rate_ghz``)
+it is a compile error, never a pulse that lasts longer or shorter than the
+samples were made for; resample the array for the line and pass its rate,
+or use ``custom``:
+
+.. code-block:: python
+   :class: fragment
+
+   @pulse.kernel
+   def raw(q):
+       d = get_drive_line(q)
+       # 1 GHz samples, for a controller at half of a 2 GHz program clock:
+       # 8 samples last 16 clock cycles.
+       drive(d, custom_samples(samples_1ghz, sample_rate_ghz=1.0))
 
 Waveform Arithmetic
 -------------------
@@ -153,10 +194,12 @@ Waveforms can be combined algebraically inside kernels:
    import cudaq_pulse as pulse
 
    @pulse.kernel
-   def combined_waveform(qubit):
-       drive_line, tone = get_drive_line(qubit)
-       envelope_a = gaussian(64, 0.5, 16.0)
-       envelope_b = gaussian(64, 0.3, 10.0)
+   def combined_waveform(qubit, duration):
+       drive_line = get_drive_line(qubit)
+       wide_sigma = 8 * pulse.ns
+       narrow_sigma = 5 * pulse.ns
+       envelope_a = gaussian(duration, 0.5, wide_sigma)
+       envelope_b = gaussian(duration, 0.3, narrow_sigma)
        combined = wf_add(envelope_a, envelope_b)
        scaled = wf_scale(envelope_a, 0.5)
        inverted = wf_neg(envelope_a)

@@ -10,7 +10,7 @@ Examples
 
 The examples in the ``examples/`` directory cover pulse-level programming
 from single-qubit Rabi oscillations to multi-qubit error-correction cycles.
-Every example except ``transmon/krinner_evolve_gpu.py`` runs on a CPU-only
+Every example except ``transmon/transmon_17q_evolve_gpu.py`` runs on a CPU-only
 machine, Linux or macOS, and the test suite runs each of them. Those marked
 *(simulates)* also evolve the program with the NumPy reference
 (``pulse.simulate``); the others compile kernels and print their MLIR,
@@ -100,6 +100,17 @@ Core Examples
        Qubits", arXiv:2602.11912 (2026), and Berritta et al., "Real-time
        adaptive tracking of fluctuating relaxation rates in superconducting
        qubits", arXiv:2506.09576 (2025) *(simulates)*
+   * - 22
+     - ``22_runtime_qudits.py``
+     - One compile for every qudit of a device: the qudit is bound at each
+       call, and a frequency the kernel needs, read from the device on the
+       host, is an ordinary float parameter
+   * - 23
+     - ``23_define_a_qpu.py``
+     - Define a QPU: two controllers loaded from an installed description
+       with the installation's wiring, a "feedback" link that takes a readout
+       of one and answers the other, the compile-time checks against the
+       control system, and the QPU saved and loaded as one system file
 
 Custom Passes
 -------------
@@ -149,29 +160,15 @@ Hardware Target Examples
 
    * - File
      - Description
-   * - ``krinner_rabi.py``
-     - Rabi oscillation on the Krinner 17-qubit transmon target
-   * - ``krinner_full_pipeline.py``
+   * - ``transmon_17q_rabi.py``
+     - Rabi oscillation on the 17-qubit transmon target
+   * - ``transmon_17q_full_pipeline.py``
      - Each stage of the native lowering: Pulse MLIR, QOp, and LLVM IR
-   * - ``krinner_evolve_gpu.py``
-     - ``pulse.simulate(..., backend="gpu")`` on the Krinner target (needs an
+   * - ``transmon_17q_evolve_gpu.py``
+     - ``pulse.simulate(..., backend="gpu")`` on the 17-qubit transmon target (needs an
        NVIDIA GPU and the ``[cu12]`` or ``[cu13]`` extra)
-   * - ``krinner_surface_code_cycle.py``
-     - Timeline of one error correction cycle from the Krinner lattice and CZ schedule
-
-**Neutral Atom** (``examples/neutral_atom/``). The neutral-atom targets
-compile only; simulating them is not supported yet.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - File
-     - Description
-   * - ``rydberg_blockade_demo.py``
-     - Two-atom Rydberg blockade interaction
-   * - ``rydberg_chain_adiabatic.py``
-     - Adiabatic detuning sweep on a 1D Rydberg atom chain
+   * - ``transmon_17q_surface_code_cycle.py``
+     - Timeline of one error correction cycle from the 17-qubit lattice and CZ schedule
 
 Running Examples
 ----------------

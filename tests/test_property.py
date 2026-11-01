@@ -20,10 +20,10 @@ from tests.property_settings import examples
 def _random_kernel(amplitudes, durations, waits, phases):
     @pulse.kernel
     def k(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         for i in range(len(durations)):
-            t0 = shift_phase(t0, phases[i % len(phases)])
-            drive(d0, square(durations[i], amplitudes[i % len(amplitudes)]), t0)
+            shift_phase(d0.tone, phases[i % len(phases)])
+            drive(d0, square(durations[i], amplitudes[i % len(amplitudes)]))
             if i < len(waits):
                 wait(d0, waits[i])
 
@@ -86,15 +86,15 @@ def test_iterating_a_list_traces_like_indexing_it(amplitudes, durations):
 
     @pulse.kernel
     def iterated(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         for duration, amplitude in pairs:
-            drive(d0, square(duration, amplitude), t0)
+            drive(d0, square(duration, amplitude))
 
     @pulse.kernel
     def indexed(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         for i in range(len(pairs)):
-            drive(d0, square(pairs[i][0], pairs[i][1]), t0)
+            drive(d0, square(pairs[i][0], pairs[i][1]))
 
     def text(kernel):
         return _compile(kernel)._module.print().split("\n", 1)[1]

@@ -13,20 +13,28 @@ Usage::
 
     @pulse.kernel
     def rabi(qubit, amplitude: float):
-        drive_line, tone = get_drive_line(qubit)
-        drive(drive_line, gaussian(64, amplitude, 16.0), tone)
+        drive_line = get_drive_line(qubit)
+        drive(drive_line, gaussian(64, amplitude, 16.0))
 
-    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    dev = pulse.device("transmon_17q")
     rabi(dev.qudit_handles[0], 0.5)            # compile on first call, then run
     lowered = rabi.lower(dev.qudit_handles[0], 0.5)
     print(lowered.mlir())
 
 The kernel language (``drive``, ``gaussian``, ``get_drive_line``, ...) lives
 in ``cudaq_pulse.ops``; inside a ``@pulse.kernel`` its names are used bare.
+A bare int duration is a number of cycles of the device's clock; a time
+with units, ``20 * pulse.ns`` (``pulse.us``, ``pulse.ms``, ``pulse.s``),
+converts to cycles exactly when the kernel compiles, so one kernel runs on
+devices with different clocks. ``pulse.round_duration(line, n)`` rounds a
+length to whole timesteps of the line, for controllers that start
+operations only every few program cycles.
 Compiler types (``CompileMetrics``, ``ScheduledEvent``, ``MachineModel``,
 ``DEFAULT_PASSES``) are in ``cudaq_pulse.compiler``, target descriptions and
 calibrations in ``cudaq_pulse.targets``. ``pulse.classical`` declares the
-classical functions a kernel calls while the QPU runs. ``pulse.controller``
+classical functions a kernel calls while the QPU runs; ``pulse.Bits`` and
+``pulse.Length`` (``typing.Annotated``, for a fixed list length) type their
+parameters and results. ``pulse.controller``
 exports a compiled kernel to a controller and states a controller's limits,
 and ``pulse.backends`` finds the controller backends installed beside
 cudaq-pulse.
@@ -35,6 +43,7 @@ cudaq-pulse.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from typing import Annotated as Length
 
 from . import _build_config
 from . import ops as ops
@@ -43,9 +52,7 @@ from ._device import DeviceMismatchError as DeviceMismatchError
 from ._device import NoDeviceError as NoDeviceError
 from ._device import Qudit as Qudit
 from ._device import Register as Register
-from ._device import Target as Target
 from ._device import device as device
-from ._device import get_device as get_device
 from ._errors import CompilationError as CompilationError
 from ._errors import DeviceDefinitionError as DeviceDefinitionError
 from ._errors import ExecutionError as ExecutionError
@@ -59,19 +66,24 @@ from ._errors import PulseWarning as PulseWarning
 from ._errors import TimingError as TimingError
 from ._errors import UnsupportedError as UnsupportedError
 from ._errors import UpgradeNotice as UpgradeNotice
+from .classical import Bits as Bits
 from .compiler import Lowered as Lowered
 from .compiler import Pass as Pass
 from .compiler import compile as compile
 from .kernel import kernel as kernel
 from .kernel._kernel import CompiledKernel as CompiledKernel
 from .kernel._kernel import Kernel as Kernel
+from .ops import RoundDirection as RoundDirection
+from .ops import round_duration as round_duration
 from .targets._registry import NoTargetError as NoTargetError
 
 # A module can't be declared callable, so checkers see the decorator's type.
 if TYPE_CHECKING:
     from .classical import ClassicalDecorator
+    from .controller import ControllerModule
 
     classical: ClassicalDecorator
+    controller: ControllerModule
 else:
     from . import classical as classical
 
@@ -82,16 +94,39 @@ __version__: str = _build_config.PACKAGE_VERSION
 # use.
 if TYPE_CHECKING:
     from . import backends as backends
-    from . import controller as controller
     from . import viz as viz
+    from ._system import Capability as Capability
+    from ._system import Controller as Controller
+    from ._system import ControlSystem as ControlSystem
+    from ._system import Processor as Processor
+    from ._units import Time as Time
+    from ._units import ms as ms
+    from ._units import ns as ns
+    from ._units import s as s
+    from ._units import us as us
+    from .classical import Link as Link
     from .runtime.gpu import GpuRuntimeError as GpuRuntimeError
+    from .runtime.simulate import BranchCoverage as BranchCoverage
     from .runtime.simulate import SimulationResult as SimulationResult
     from .runtime.simulate import simulate as simulate
 
 _LAZY_EXPORTS = {
     "SimulationResult": ".runtime.simulate",
+    "BranchCoverage": ".runtime.simulate",
     "simulate": ".runtime.simulate",
     "GpuRuntimeError": ".runtime.gpu",
+    # Times with units load exact arithmetic (fractions), which a program in
+    # cycles does not need.
+    "Time": "._units",
+    "ns": "._units",
+    "us": "._units",
+    "ms": "._units",
+    "s": "._units",
+    "Capability": "._system",
+    "Controller": "._system",
+    "ControlSystem": "._system",
+    "Processor": "._system",
+    "Link": ".classical",
 }
 _LAZY_MODULES = {"viz": ".viz", "backends": ".backends", "controller": ".controller"}
 
@@ -104,12 +139,16 @@ __all__ = [
     "Pass",
     "simulate",
     "SimulationResult",
+    "BranchCoverage",
     "device",
-    "get_device",
     "Device",
     "Qudit",
     "Register",
-    "Target",
+    "Controller",
+    "ControlSystem",
+    "Processor",
+    "Capability",
+    "Link",
     "PulseError",
     "Problem",
     "DeviceDefinitionError",
@@ -127,8 +166,17 @@ __all__ = [
     "NoDeviceError",
     "DeviceMismatchError",
     "GpuRuntimeError",
+    "round_duration",
+    "RoundDirection",
+    "Time",
+    "ns",
+    "us",
+    "ms",
+    "s",
     "viz",
     "classical",
+    "Bits",
+    "Length",
     "controller",
     "backends",
 ]

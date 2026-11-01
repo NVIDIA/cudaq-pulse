@@ -39,7 +39,7 @@ _DRIVE = (
     "!pulse.tone -> !pulse.drive_line, !pulse.tone"
 )
 
-PROGRAMS = {
+programs = {
     "linearity: one drive line consumed twice": f"""
   %c40 = arith.constant 40 : i64
   %wf = {_SQUARE.format(dur="%c40")}
@@ -93,12 +93,14 @@ def check(body: str) -> str:
 
 @pulse.kernel
 def zero_length(q0):
-    d0, t0 = get_drive_line(q0)
-    drive(d0, gaussian(0, 0.1, 10.0), t0)
+    d0 = get_drive_line(q0)
+    duration = 0 * pulse.ns
+    sigma = 5 * pulse.ns
+    drive(d0, gaussian(duration, 0.1, sigma))
 
 
 def main():
-    for title, body in PROGRAMS.items():
+    for title, body in programs.items():
         print(f"=== {title} ===")
         print(check(body))
         print()
@@ -111,5 +113,5 @@ def main():
 
 
 if __name__ == "__main__":
-    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    dev = pulse.device("transmon_17q")
     main()

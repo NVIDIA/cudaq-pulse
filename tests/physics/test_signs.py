@@ -26,9 +26,9 @@ def test_ef_rabi_sign(tone):
 
     @pulse.kernel
     def ef(q, f: float):
-        d, t = get_drive_line(q)
-        t = set_frequency(t, f)
-        drive(d, square(duration, p["A_rad_per_ns"]), t)
+        d = get_drive_line(q)
+        set_frequency(d.tone, f)
+        drive(d, square(duration, p["A_rad_per_ns"]))
 
     dev = device([p["f_q_hz"]], [p["alpha_hz"]])
     result = run(
@@ -48,10 +48,10 @@ def test_cr_target_excitation(control):
 
     @pulse.kernel
     def cr(qc, qt):
-        dc, tc = get_drive_line(qc)
-        dt, _ = get_drive_line(qt)
-        tc = set_frequency(tc, p["ft_hz"])
-        drive(dc, square(duration, p["drive_rad_per_ns"]), tc)
+        dc = get_drive_line(qc)
+        dt = get_drive_line(qt)
+        set_frequency(dc.tone, p["ft_hz"])
+        drive(dc, square(duration, p["drive_rad_per_ns"]))
         wait(dt, duration)
 
     dev = device([p["fc_hz"], p["ft_hz"]], [p["alpha_c_hz"], p["alpha_t_hz"]], [(0, 1, p["g_hz"])])
@@ -78,12 +78,12 @@ def test_shift_phase_is_a_mckay_virtual_z(theta, x, passes):
 
     @pulse.kernel
     def x90_after_z(q):
-        d, t = get_drive_line(q)
-        t = shift_phase(t, theta)
-        drive(d, square(cycles(20.0), rate), t)
+        d = get_drive_line(q)
+        shift_phase(d.tone, theta)
+        drive(d, square(cycles(20.0), rate))
 
     dev = device([5.0e9], [-200e6])
     lowered = pulse.compile(x90_after_z, passes=passes).lower(dev.qudit_handles[0])
-    rho = pulse.simulate(lowered, dt_ns=0.01).density_matrix
+    rho = pulse.simulate(lowered, dt_ns=0.01, levels=2).density_matrix
     assert 2 * rho[0, 1].real == pytest.approx(x, abs=1e-6)
     assert abs(rho[0, 1].imag) < 1e-6

@@ -8,7 +8,7 @@
 """Version-isolated bytecode decoder.
 
 This is the ONLY module that knows how CPython lays out bytecode. It decodes
-a code object once, with :func:`dis.get_instructions`, into a flat program
+a code object once, with the tables :mod:`dis` reads, into a flat program
 over a small canonical instruction set whose semantics are identical on every
 supported interpreter (3.12 through 3.15):
 
@@ -26,7 +26,9 @@ supported interpreter (3.12 through 3.15):
   ``RETURN``
 
 Constructs the tracer does not support decode to ``UNSUPPORTED`` and raise
-only when executed, so the error is the same on every version.
+only when executed, so the error is the same on every version. What each
+one stood for is kept in ``DecodedCode.notes``, for readers that follow
+more of Python than the tracer (``classical._infer``).
 
 Other interpreters fail fast with ``UnsupportedInterpreterError``. Adding a
 CPython version means adding it to ``SUPPORTED_MINORS`` and its loop epilogue
@@ -390,12 +392,134 @@ ITER_SLOTS = _iter_slots()
 _COMPARE_ARG_SHIFT = 4 if _PY_MINOR == 12 else 5
 
 
-def _compare_fn(instr: dis.Instruction) -> Any:
+def _compare_fn(instr: _Instr) -> Any:
     if isinstance(instr.argval, str):
         name = instr.argval.removeprefix("bool(").removesuffix(")")
     else:
         name = dis.cmp_op[(instr.arg or 0) >> _COMPARE_ARG_SHIFT]
     return _COMPARE[name]
+
+
+# ── Reading instructions ─────────────────────────────────────────────
+
+# What ``dis.get_instructions`` gives an argument, by opcode: dis's own
+# tables, read for each opcode the first time one is decoded, so its rules
+# hold on every version without the text it formats for each instruction.
+(
+    _A_PLAIN,
+    _A_CONST,
+    _A_NAME,
+    _A_NAME_2,
+    _A_NAME_4,
+    _A_JUMP,
+    _A_BACK,
+    _A_LOCAL,
+    _A_LOCAL_PAIR,
+    _A_COMPARE,
+) = range(10)
+_EXTENDED_ARG = dis.EXTENDED_ARG
+_INTRINSIC_1 = opcode.opmap.get("CALL_INTRINSIC_1", -1)
+_INTRINSIC_1_NAMES: list[str] = list(getattr(dis, "_intrinsic_1_descs", ()))
+# By raw opcode: its name, deoptimized opcode, argument kind, inline cache
+# count and whether it takes an argument.
+_OpInfo = tuple[str, int, int, int, bool]
+_OP_INFO: list[_OpInfo | None] = [None] * 256
+
+
+def _op_info(raw: int) -> _OpInfo:
+    op: int = dis._deoptop(raw)  # type: ignore[attr-defined]
+    all_opname: list[str] = getattr(dis, "_all_opname", opcode.opname)
+    name = all_opname[op] if op < len(all_opname) else f"<{op}>"
+    cache_table: Any = getattr(opcode, "_inline_cache_entries", {})
+    caches = cache_table[op] if isinstance(cache_table, list) else cache_table.get(name, 0)
+    kind = _A_PLAIN
+    if op in dis.hasconst:
+        kind = _A_CONST
+    elif op in dis.hasname:
+        kind = _A_NAME_2 if name in ("LOAD_GLOBAL", "LOAD_ATTR") else _A_NAME
+        # 3.15 keeps IMPORT_NAME's lazy/eager flags in its low two bits.
+        if name == "LOAD_SUPER_ATTR" or (name == "IMPORT_NAME" and sys.version_info >= (3, 15)):
+            kind = _A_NAME_4
+    elif op in dis.hasjrel:
+        kind = _A_BACK if "JUMP_BACKWARD" in name else _A_JUMP
+    elif name in _SUPERINSTRUCTIONS:
+        kind = _A_LOCAL_PAIR
+    elif op in dis.haslocal or op in dis.hasfree:
+        kind = _A_LOCAL
+    elif op in dis.hascompare:
+        kind = _A_COMPARE
+    takes_arg = op in getattr(dis, "hasarg", range(dis.HAVE_ARGUMENT, 256))
+    info = _OP_INFO[raw] = (name, op, kind, caches, takes_arg)
+    return info
+
+
+class _Instr:
+    """The fields of ``dis.Instruction`` the decoder reads. ``argrepr`` is
+    only filled for ``CALL_INTRINSIC_1``; see :func:`_argrepr`."""
+
+    __slots__ = ("arg", "argrepr", "argval", "offset", "opcode", "opname", "positions")
+
+    def __init__(
+        self, opname: str, op: int, arg: int | None, argval: Any, offset: int, positions: Any
+    ) -> None:
+        self.opname, self.opcode, self.arg, self.argval = opname, op, arg, argval
+        self.offset, self.positions, self.argrepr = offset, positions, ""
+
+
+def _instructions(code: CodeType) -> list[_Instr]:
+    """*code*'s instructions with the arguments ``dis.get_instructions``
+    resolves (``tests/kernel/test_bytecode_normalize.py`` checks that they
+    decode the same)."""
+    infos = _OP_INFO
+    raw = code.co_code
+    positions = [dis.Positions(*p) for p in code.co_positions()]
+    consts, names, local = code.co_consts, code.co_names, code._varname_from_oparg  # type: ignore[attr-defined]
+    compare_shift = _COMPARE_ARG_SHIFT
+    out: list[_Instr] = []
+    append = out.append
+    extended = 0
+    i, n = 0, len(raw)
+    while i < n:
+        info = infos[raw[i]] or _op_info(raw[i])
+        name, op, kind, caches, takes_arg = info
+        if takes_arg:
+            arg: int | None = raw[i + 1] | extended
+            extended = arg << 8 if op == _EXTENDED_ARG else 0  # type: ignore[operator]
+        else:
+            arg, extended = None, 0
+        argval: Any = arg
+        if arg is not None:
+            if kind == _A_PLAIN:
+                pass
+            elif kind == _A_LOCAL:
+                argval = local(arg)
+            elif kind == _A_CONST:
+                argval = consts[arg]
+            elif kind == _A_NAME_2:
+                argval = names[arg >> 1]
+            elif kind == _A_NAME:
+                argval = names[arg]
+            elif kind == _A_JUMP:
+                argval = i + 2 + 2 * arg + 2 * caches
+            elif kind == _A_BACK:
+                argval = i + 2 - 2 * arg + 2 * caches
+            elif kind == _A_LOCAL_PAIR:
+                argval = (local(arg >> 4), local(arg & 15))
+            elif kind == _A_COMPARE:
+                argval = dis.cmp_op[arg >> compare_shift]
+            else:
+                argval = names[arg >> 2]
+        ins = _Instr(name, op, arg, argval, i, positions[i >> 1])
+        if op == _INTRINSIC_1 and arg is not None:
+            ins.argrepr = _INTRINSIC_1_NAMES[arg]
+        append(ins)
+        i += 2 + 2 * caches
+    return out
+
+
+def _argrepr(code: CodeType, offset: int) -> str:
+    """``dis``'s text for the instruction at *offset*, for an error message."""
+    return next((i.argrepr for i in dis.get_instructions(code) if i.offset == offset), "")
 
 
 # ── Decoding ─────────────────────────────────────────────────────────
@@ -411,19 +535,30 @@ class DecodedCode:
 
     ``positions[i]`` is the source span of ``instrs[i]`` (None for the
     synthetic trailing return).
+
+    ``notes`` is None, or says what each ``UNSUPPORTED`` index stood for:
+    ``("while", head)`` for a while loop's jump back to *head*, ``("try",)``
+    for the start of a ``try`` or ``with`` body, else ``(opname, oparg)``
+    of the raw instruction. Under the key ``"handlers"`` it lists
+    ``(start, end, handler, depth, lasti)`` per instruction range a
+    ``try`` or ``with`` handler catches, as in ``dis``'s exception table
+    but in instruction indices; a range whose handler only re-raises
+    (an inlined comprehension's) is listed with the handler it reaches.
     """
 
-    __slots__ = ("code", "instrs", "positions")
+    __slots__ = ("code", "instrs", "notes", "positions")
 
     def __init__(
         self,
         code: CodeType,
         instrs: tuple[Instr, ...],
         positions: tuple[Position | None, ...],
+        notes: dict[Any, Any] | None = None,
     ):
         self.code = code
         self.instrs = instrs
         self.positions = positions
+        self.notes = notes
 
     def location(self, index: int) -> tuple[str, int | None, int | None, int | None, int | None]:
         """``(filename, line, end_line, col, end_col)`` of instruction *index*."""
@@ -442,27 +577,43 @@ class DecodedCode:
         return "\n".join(lines)
 
 
-def _protected_starts(code: CodeType, raw: list[dis.Instruction]) -> list[int]:
+def _protected(
+    code: CodeType, raw: list[_Instr]
+) -> tuple[list[int], list[tuple[int, int, int, int, bool]]]:
     """Byte offsets where a ``try`` or ``with`` block's exception-table range
-    begins.
+    begins, and ``(start, end, handler, depth, lasti)`` per range such a
+    handler catches.
 
-    An inlined comprehension (3.12+) has an entry too, whose handler restores
-    the iteration variable; ``try`` and ``with`` handlers start with
-    ``PUSH_EXC_INFO``.
+    ``try`` and ``with`` handlers start with ``PUSH_EXC_INFO``. An inlined
+    comprehension (3.12+) has an entry too, whose handler restores the
+    iteration variable and re-raises: its range is listed with the handler
+    that catches the re-raise, if any.
     """
     if not code.co_exceptiontable:
-        return []
+        return [], []
     entries = getattr(dis.Bytecode(code), "exception_entries", ())
     handlers = {ins.offset for ins in raw if ins.opname == "PUSH_EXC_INFO"}
-    return sorted({e.start for e in entries if e.target in handlers})
+    starts = sorted({e.start for e in entries if e.target in handlers})
+    out = []
+    for e in entries:
+        reached = e
+        for _ in range(len(entries)):
+            if reached.target in handlers:
+                out.append((e.start, e.end, reached.target, reached.depth, reached.lasti))
+                break
+            reached = next((o for o in entries if o.start <= reached.target < o.end), None)
+            if reached is None:
+                break
+    return starts, out
 
 
 def _decode(code: CodeType) -> DecodedCode:
     """Decode *code* into canonical instructions (uncached)."""
-    raw = list(dis.get_instructions(code))
+    raw = _instructions(code)
 
     exit_offsets = {ins.argval for ins in raw if ins.opname == "FOR_ITER"}
-    protected = _protected_starts(code, raw)
+    protected, handled = _protected(code, raw)
+    notes: dict[Any, Any] = {}
     # Variables a comprehension saves and restores; restoring stores the
     # saved value, or unbinds the name if it had none.
     cleared = {ins.argval for ins in raw if ins.opname == "LOAD_FAST_AND_CLEAR"}
@@ -486,7 +637,7 @@ def _decode(code: CodeType) -> DecodedCode:
     index_at: dict[int, int] = {}
     pending_kw_names = False
     cleanup = 0  # remaining loop-exit cleanup instructions to drop
-    previous: dis.Instruction | None = None  # the raw instruction before *ins*
+    previous: _Instr | None = None  # the raw instruction before *ins*
     asserting = False  # an AssertionError was loaded and not yet raised
 
     for ins in raw:
@@ -512,6 +663,7 @@ def _decode(code: CodeType) -> DecodedCode:
 
         while next_protected < len(protected) and protected[next_protected] <= off:
             next_protected += 1
+            notes[len(out)] = ("try",)
             out.append([UNSUPPORTED, _TRY_MESSAGE])
 
         if name == "PUSH_NULL" and off in iterator_slots:
@@ -622,13 +774,18 @@ def _decode(code: CodeType) -> DecodedCode:
         elif name == "MAKE_FUNCTION":
             made = prev.argval if prev is not None and prev.opname == "LOAD_CONST" else None
             message = _NESTED_MESSAGES.get(getattr(made, "co_name", ""), _NESTED_MESSAGE)
+            notes[len(out)] = (name, iarg)
             out.append([UNSUPPORTED, message])
         elif name in _UNSUPPORTED:
+            notes[len(out)] = (name, iarg)
             out.append([UNSUPPORTED, _UNSUPPORTED[name]])
         elif name == "CALL_INTRINSIC_1" and ins.argrepr in _INTRINSICS:
+            notes[len(out)] = (name, iarg)
             out.append([UNSUPPORTED, _INTRINSICS[ins.argrepr]])
         else:
-            what = f"{name} {ins.argrepr}" if ins.argrepr else name
+            notes[len(out)] = (name, iarg)
+            argrepr = _argrepr(code, off)
+            what = f"{name} {argrepr}" if argrepr else name
             out.append(
                 [
                     UNSUPPORTED,
@@ -659,6 +816,7 @@ def _decode(code: CodeType) -> DecodedCode:
         elif target <= i and out[target][0] != FOR_ITER:
             # Only for-loops jump backwards to their FOR_ITER header.
             out[i] = [UNSUPPORTED, _WHILE_MESSAGE]
+            notes[i] = ("while", target)
             spans = [p for p in positions[target : i + 1] if p is not None and p[0] is not None]
             if spans:
                 positions[i] = min(spans, key=_condition_rank)
@@ -667,7 +825,12 @@ def _decode(code: CodeType) -> DecodedCode:
             if op != JUMP and i > 0:
                 positions[i] = positions[i - 1]
 
-    return DecodedCode(code, tuple((op, arg) for op, arg in out), tuple(positions))
+    if handled:
+        notes["handlers"] = tuple(
+            (index_at[s], index_at.get(e, end), index_at[t], depth, lasti)
+            for s, e, t, depth, lasti in handled
+        )
+    return DecodedCode(code, tuple((op, arg) for op, arg in out), tuple(positions), notes or None)
 
 
 _CO_GENERATOR = 0x20
@@ -680,7 +843,7 @@ _ENDS_FLOW = frozenset(
 )
 
 
-def _genexpr_calls(raw: list[dis.Instruction]) -> dict[int, int]:
+def _genexpr_calls(raw: list[_Instr]) -> dict[int, int]:
     """Map the offset of each MAKE_FUNCTION that makes a generator
     expression to the offset of the CALL that runs it.
 
@@ -812,7 +975,7 @@ def region_view(decoded: DecodedCode, join: int) -> DecodedCode:
         return hit[1]
     instrs = list(decoded.instrs)
     instrs[join] = (REGION_END, None)
-    view = DecodedCode(decoded.code, tuple(instrs), decoded.positions)
+    view = DecodedCode(decoded.code, tuple(instrs), decoded.positions, decoded.notes)
     _VIEWS[key] = (decoded, view)
     return view
 

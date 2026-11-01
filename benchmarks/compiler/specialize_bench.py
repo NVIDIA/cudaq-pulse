@@ -28,7 +28,7 @@ from collections.abc import Callable
 
 import cudaq_pulse as pulse
 
-_QUBIT = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q).qudit_handles[0]
+_QUBIT = pulse.device("transmon_17q").qudit_handles[0]
 _DRIVE_COUNTS = (1, 2, 5, 10, 20)
 
 
@@ -41,9 +41,9 @@ def _drives(count: int) -> pulse.Kernel:
 
     @pulse.kernel
     def drives(q, amp: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(count):
-            drive(d, gaussian(40 + 4 * (i % 3), amp, 10.0), t)
+            drive(d, gaussian(40 + 4 * (i % 3), amp, 10.0))
 
     return drives
 

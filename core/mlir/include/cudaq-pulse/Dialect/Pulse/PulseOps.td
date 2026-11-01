@@ -220,16 +220,24 @@ def CustomOp : PulseOp<"custom", [Pure]> {
 def CustomSamplesOp : PulseOp<"custom_samples", [Pure]> {
   let summary = "Create a waveform from raw sample data";
   let description = [{
-    A waveform from explicit real samples, one per clock cycle and held
-    constant over that cycle, so its duration is the number of samples.
-    The array must not be empty.
+    A waveform from explicit real samples, each held constant until the
+    next. Without `rate` there is one sample per clock cycle, so the
+    duration is the number of samples; with `rate = array<i64: n, d>` there
+    are `n` samples every `d` cycles (the rate of the line's controller the
+    samples were made for), and the samples must last a whole number of
+    cycles. The array must not be empty.
   }];
   let arguments = (ins
-    F64ArrayAttr:$samples
+    F64ArrayAttr:$samples,
+    OptionalAttr<DenseI64ArrayAttr>:$rate
   );
   let results = (outs WaveformType:$pulse);
   let assemblyFormat = "$samples attr-dict `:` type($pulse)";
   let hasVerifier = 1;
+  let extraClassDeclaration = [{
+    /// The duration in clock cycles: the samples at their rate.
+    int64_t getDurationCycles();
+  }];
 }
 
 //===----------------------------------------------------------------------===//

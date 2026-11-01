@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import numbers
 import struct
+import sys
 from array import array
 from collections.abc import Callable
 from typing import Any
 
+from ..classical import _LIST_NAME, _RESERVED_KEYS, _unsized_names
 from .ir_builder import (
+    MAX_CYCLES,
     UNDEFINED_VID,
     AnswerValue,
     CompilationError,
@@ -110,9 +113,38 @@ _WF_MAP = {
     "tanh_ramp": _WF_TANH_RAMP,
     "gaussian_square": _WF_GAUSS_SQUARE,
 }
+_WF_NAMES = {code: name for name, code in _WF_MAP.items()}
+
+# The name of each waveform and of its slots, as the kernel writes them.
+_WF_FIELDS = {
+    _WF_GAUSSIAN: ("gaussian", ("duration", "amplitude", "sigma")),
+    _WF_DRAG: ("drag", ("duration", "amplitude", "sigma", "beta")),
+    _WF_COSINE: ("cosine", ("duration", "amplitude")),
+    _WF_TANH_RAMP: ("tanh_ramp", ("duration", "amplitude", "sigma")),
+    _WF_GAUSS_SQUARE: ("gaussian_square", ("duration", "amplitude", "sigma", "width")),
+}
 
 _UNSCHEDULED = -1
 _ZERO = (0,)
+
+
+def _real(value: Any, description: str) -> float:
+    """*value* as a float, or the error naming *description* and what it got."""
+    try:
+        if isinstance(value, (str, bytes)):
+            raise TypeError
+        return float(value)
+    except (TypeError, ValueError):
+        raise CompilationError(f"{description} must be a real number, got {value!r}") from None
+
+
+def _tables(machine: Any) -> dict[int, dict[str, tuple[int, str]]]:
+    """Per link id, the keys *machine*'s controllers fix."""
+    if machine is None or (machine.controller is None and machine._system is None):
+        return {}
+    from ..compiler import _dispatch_tables
+
+    return _dispatch_tables(machine)
 
 
 def _link_without_machine(link: Any) -> int:
@@ -121,6 +153,45 @@ def _link_without_machine(link: Any) -> int:
             f"link {link!r} is a name; compile with a MachineModel whose links name it"
         )
     return int(link)
+
+
+def _fixed_key(function: Any, table: dict[str, tuple[int, str]]) -> tuple[int, str]:
+    """The key a controller's firmware gives *function*: a function on its
+    links must be listed, and has one layout."""
+    name = function.base_name
+    found = table.get(name)
+    if found is None:
+        from .._errors import _closest
+
+        served = sorted(table)
+        close = _closest(name, served)
+        hint = f" (did you mean {close!r}?)" if close else ""
+        raise CompilationError(
+            f"{name} runs on {table[served[0]][1]}, whose dispatch_keys have no {name!r}{hint};"
+            f" its firmware answers {', '.join(served)}. Add it to the controller's"
+            " dispatch_keys, or call it on another link"
+        )
+    key, label = found
+    template = function._template
+    if template is not None:
+        unsized = _unsized_names(template)[0]
+        kind = _LIST_NAME[template._shape.plan[template._shape.names.index(unsized)]]
+        raise CompilationError(
+            f"{name} has the fixed dispatch key {key} from {label}.dispatch_keys[{name!r}], so"
+            f" it has one layout, but its parameter {unsized!r} is {kind} with no length. Give"
+            f" it a fixed size: {unsized}: pulse.Length[{kind}, 8]"
+        )
+    return key, label
+
+
+def _collision(first: Any, second: Any, key: int) -> str:
+    """Two functions of one program whose names hash to one key on one link
+    (a controller that fixes keys lists every function on its links)."""
+    link = f"{second.link!r}" if isinstance(second.link, str) else str(second.link)
+    return (
+        f"{first.name} and {second.name} hash to the same dispatch key {key:#x} on link"
+        f" {link}; rename one of them"
+    )
 
 
 def _f2i(x: float) -> int:
@@ -209,6 +280,47 @@ class PackedIRBuilder:
 
     # Loops and measurement-conditioned branches become region records.
     supports_regions = True
+    # The grid of a (role, qudit) line, in program cycles; compile() sets it
+    # when a controller runs a coarser clock. None: every line is 1.
+    line_grid: Callable[[str, int], int] | None = None
+    # The samples every line plays per program cycle, as (n, d): n every d
+    # cycles; compile() sets it when that is not one. custom() samples at
+    # it, and a custom_samples array must be made for it.
+    sample_rate: tuple[int, int] | None = None
+    # A carrier's default transition and the tone frequency of each
+    # transition its line drives, by (qudit, is_readout); compile() sets it
+    # from the target's model. None: line.tones is refused.
+    line_tones: (
+        Callable[[int, bool], tuple[tuple[int, int], dict[tuple[int, int], float]]] | None
+    ) = None
+    # The sample rate of a (role, qudit) line, when the lines play different
+    # ones (a runtime qudit's line: none is known); compile() sets it for a
+    # control system of several controllers. Waveforms are then sampled for
+    # the line that plays them.
+    sample_rate_of: Callable[[str, int], tuple[int, int] | None] | None = None
+    # The machine model, which names links and whose controllers may fix
+    # dispatch keys; compile() sets it. None: links are ids.
+    machine: Any = None
+    # Per link id, the keys the machine's controllers fix, by function name,
+    # each with what fixes it; read from the machine at the first call.
+    dispatch_tables: dict[int, dict[str, tuple[int, str]]] | None = None
+    # Per entry of classical, its link id, dispatch key and the controller
+    # that fixes the key (None for a hashed or built-in key); made at the
+    # first call.
+    routes: list[tuple[int, int, str | None]] | None = None
+    # Per (link id, dispatch key), the entry of classical sent to it; made
+    # at the first call.
+    _dispatched: dict[tuple[int, int], int] | None = None
+    # Per template, its versions in this program by key (list lengths);
+    # made at the first call of a template.
+    _versions: dict[Any, dict[Any, Any]] | None = None
+    # Where every line can meet, in program cycles: a wait whose length
+    # comes from an answer moves every later op by it, so its bounds must be
+    # multiples of this.
+    wait_grid = 1
+    # When lines move on different grids, the grid each variable wait's
+    # length must be a whole number of steps of (compile() sets it).
+    wait_grids: list[int] | None = None
     # Of the float arguments that reach an integer, those named here record
     # the instructions being traced then, innermost first, in structural_at.
     locate_structural: frozenset[str] = frozenset()
@@ -267,9 +379,6 @@ class PackedIRBuilder:
         # Classical functions declared so far, in record order, and the
         # regions open now (ids), which bound where an answer is defined.
         self.classical: list[Any] = []
-        # Resolves a classical function's link (a name or an id) to its id;
-        # compile() sets it from the machine model.
-        self.link_id: Callable[[Any], int] = _link_without_machine
         self._classical_index: dict[int, int] = {}
         self._scope: list[int] = []
         # Loops and branch arms open now, as (id, is_loop): where a future
@@ -341,20 +450,26 @@ class PackedIRBuilder:
         wf_code = _WF_MAP.get(wf_name)
         if wf_code is not None or wf_name == "custom_samples":
             rv = results[0].vid
-            dur_raw = a.get("duration", 0)
-            dur = dur_raw if is_symbolic(dur_raw) else _as_i64(dur_raw, f"{wf_name} duration")
+            dur = a.get("duration", 0)
+            if dur.__class__ is not int or dur < 1 or dur > MAX_CYCLES:
+                dur = self._duration(wf_name, a)
 
             if wf_code == _WF_GAUSSIAN:
                 amp_raw = a.get("amplitude", 0.0)
                 sig_raw = a.get("sigma", 1.0)
                 vals: list[Any] = [dur, amp_raw, sig_raw]
-                self._emit_wf(_WF_GAUSSIAN, rv, vals, ["i64", "f64", "f64"])
+                self._emit_wf(_WF_GAUSSIAN, rv, vals, ["i64", "f64", "t64"])
             elif wf_code == _WF_SQUARE:
                 amp_raw = a.get("amplitude", 0.0)
                 if is_symbolic(amp_raw):
                     vals = [dur, amp_raw, 0.0]
                 else:
-                    re, im = _complex_parts(amp_raw)
+                    try:
+                        re, im = _complex_parts(amp_raw)
+                    except (TypeError, ValueError):
+                        raise CompilationError(
+                            f"square amplitude must be a number or [re, im], got {amp_raw!r}"
+                        ) from None
                     vals = [dur, re, im]
                 self._emit_wf(_WF_SQUARE, rv, vals, ["i64", "f64", "f64"])
             elif wf_code == _WF_DRAG:
@@ -362,7 +477,7 @@ class PackedIRBuilder:
                 sig_raw = a.get("sigma", 1.0)
                 beta_raw = a.get("beta", 0.0)
                 vals = [dur, amp_raw, sig_raw, beta_raw]
-                self._emit_wf(_WF_DRAG, rv, vals, ["i64", "f64", "f64", "f64"])
+                self._emit_wf(_WF_DRAG, rv, vals, ["i64", "f64", "t64", "t64"])
             elif wf_code == _WF_COSINE:
                 amp_raw = a.get("amplitude", 0.0)
                 vals = [dur, amp_raw]
@@ -371,15 +486,18 @@ class PackedIRBuilder:
                 amp_raw = a.get("amplitude", 0.0)
                 sig_raw = a.get("sigma", 1.0)
                 vals = [dur, amp_raw, sig_raw]
-                self._emit_wf(_WF_TANH_RAMP, rv, vals, ["i64", "f64", "f64"])
+                self._emit_wf(_WF_TANH_RAMP, rv, vals, ["i64", "f64", "t64"])
             elif wf_code == _WF_GAUSS_SQUARE:
                 amp_raw = a.get("amplitude", 0.0)
                 sig_raw = a.get("sigma", 1.0)
                 width_raw = a.get("width", 0)
                 # The Python API specifies flat-top width while the dialect
                 # stores the duration of each rise/fall edge.
-                if not is_symbolic(width_raw):
-                    width_raw = _as_i64(width_raw, "gaussian_square flat-top width")
+                if width_raw.__class__ is not int or width_raw < 0 or width_raw > MAX_CYCLES:
+                    self._times(wf_name, a)
+                    width_raw = a.get("width", 0)
+                    if not is_symbolic(width_raw):
+                        width_raw = _as_i64(width_raw, "gaussian_square flat-top width")
                 if not is_symbolic(dur) and not is_symbolic(width_raw):
                     if width_raw < 0 or width_raw >= dur:
                         raise CompilationError(
@@ -393,9 +511,9 @@ class PackedIRBuilder:
                         )
                 rf_raw = (dur - width_raw) // 2
                 vals = [dur, amp_raw, sig_raw, rf_raw]
-                self._emit_wf(_WF_GAUSS_SQUARE, rv, vals, ["i64", "f64", "f64", "i64"])
+                self._emit_wf(_WF_GAUSS_SQUARE, rv, vals, ["i64", "f64", "t64", "i64"])
             else:
-                self._emit_custom_samples(rv, a.get("samples", ()))
+                self._emit_custom_samples(rv, a.get("samples", ()), a.get("rate"))
             return results
 
         # --- drive ---
@@ -465,14 +583,33 @@ class PackedIRBuilder:
             rlv = results[0].vid
             dur_raw = a.get("duration", 0)
             bounds = a.get("bounds")
+            if bounds is None and dur_raw.__class__ is int and 0 <= dur_raw <= MAX_CYCLES:
+                self._ensure(4)
+                self._w(_header(_WAIT, 3))
+                self._w(lv)
+                self._w(rlv)
+                self._w(dur_raw)
+                return results
+            if "duration" in a:
+                self._times("wait", a)
+                dur_raw = a["duration"]
+                bounds = a.get("bounds")
             symbolic = is_symbolic(dur_raw)
             if bounds is not None or symbolic:
                 lowest, highest = (0, -1) if bounds is None else _wait_bounds(bounds)
                 if symbolic and self.classical and contains_answer(dur_raw):
-                    self._variable_wait(lv, rlv, dur_raw, lowest, highest, answer=True)
+                    if self.wait_grid > 1:
+                        self._check_answer_bounds(operands[0], lowest, highest)
+                    self._variable_wait(
+                        lv, rlv, dur_raw, lowest, highest, answer=True, grid=self.wait_grid
+                    )
                     return results
                 if symbolic and is_arithmetic(dur_raw):
-                    self._variable_wait(lv, rlv, dur_raw, lowest, highest)
+                    grid = None
+                    if self.wait_grids is not None:
+                        assert self.line_grid is not None
+                        grid = self.line_grid(*self._role_and_qudit(operands[0]))
+                    self._variable_wait(lv, rlv, dur_raw, lowest, highest, grid=grid)
                     return results
                 if not symbolic:
                     dur = _as_i64(dur_raw, "wait duration")
@@ -510,7 +647,10 @@ class PackedIRBuilder:
                 self._w(rtv)
                 self._w(pvid)
             else:
-                delta = float(val_raw)
+                try:
+                    delta = float(val_raw)
+                except (TypeError, ValueError):
+                    delta = _real(val_raw, "shift_phase phase")
                 self._ensure(4)
                 self._w(_header(_SHIFT_PHASE, 3))
                 self._w(tv)
@@ -531,7 +671,10 @@ class PackedIRBuilder:
                 self._w(rtv)
                 self._w(pvid)
             else:
-                phase = float(val_raw)
+                try:
+                    phase = float(val_raw)
+                except (TypeError, ValueError):
+                    phase = _real(val_raw, "set_phase phase")
                 self._ensure(4)
                 self._w(_header(_SET_PHASE, 3))
                 self._w(tv)
@@ -557,7 +700,10 @@ class PackedIRBuilder:
                 self._w(rtv)
                 self._w(pvid)
             else:
-                freq = float(val_raw)
+                try:
+                    freq = float(val_raw)
+                except (TypeError, ValueError):
+                    freq = _real(val_raw, "shift_frequency frequency")
                 self._ensure(4)
                 self._w(_header(_SHIFT_FREQ, 3))
                 self._w(tv)
@@ -583,7 +729,10 @@ class PackedIRBuilder:
                 self._w(rtv)
                 self._w(pvid)
             else:
-                freq = float(val_raw)
+                try:
+                    freq = float(val_raw)
+                except (TypeError, ValueError):
+                    freq = _real(val_raw, "set_frequency frequency")
                 self._ensure(4)
                 self._w(_header(_SET_FREQ, 3))
                 self._w(tv)
@@ -611,12 +760,23 @@ class PackedIRBuilder:
 
         if kind == "pulse.wf_scale":
             rv = results[0].vid
-            scale_vid = self._get_numeric_vid(a["scale"], "f64")
+            scale = a["scale"]
+            if scale.__class__ is float and scale - scale != 0.0:
+                raise CompilationError(f"wf_scale scale must be finite, got {scale!r}")
+            scale_vid = self._get_numeric_vid(scale, "f64")
             self._ensure(4)
             self._w(_header(_WF_SCALE, 3))
             self._w(rv)
             self._w(operands[0].vid)
             self._w(scale_vid)
+            return results
+
+        if kind == "pulse.tone":
+            self._ensure(4)
+            self._w(_header(_ALLOC_TONE, 3))
+            self._w(results[0].vid)
+            self._w(_f2i(a["frequency_hz"]))
+            self._w(_f2i(a["phase_rad"]))
             return results
 
         raise CompilationError(f"unsupported packed pulse op: {kind}")
@@ -766,15 +926,51 @@ class PackedIRBuilder:
         index = self._classical_index.get(id(function))
         if index is not None:
             return index
+        if function._plan is not None:  # a template reached with no arguments
+            raise CompilationError(
+                f"{function.name}.submit() takes {len(function._plan)} arguments, got 0"
+            )
         for other in self.classical:
             if other.name == function.name:
                 raise CompilationError(
                     f"two different classical functions are named {function.name!r}"
                 )
         index = len(self.classical)
+        machine = self.machine
+        if machine is None:
+            link = _link_without_machine(function.link)
+        else:
+            link = machine.link_id(function.link)
+        # Its key: its controller's, else its own; one function per key on a
+        # link.
+        key = function._dispatch_key
+        fixed_by = None
+        own = function._key_route is None
+        tables = self.dispatch_tables
+        if tables is None:
+            tables = self.dispatch_tables = _tables(machine)
+        if tables and own:
+            table = tables.get(link)
+            if table is not None:
+                key, fixed_by = _fixed_key(function, table)
+        if own and key in _RESERVED_KEYS:
+            raise CompilationError(
+                f"{function.name} is dispatch key {key:#x}, which {_RESERVED_KEYS[key]} uses"
+                " for its decoder messages; rename it"
+            )
+        dispatched = self._dispatched
+        if dispatched is None:
+            dispatched = self._dispatched = {}
+        else:
+            other = dispatched.get((link, key))
+            if other is not None:
+                first = self.classical[other]
+                if own or first._key_route is None:
+                    raise CompilationError(_collision(first, function, key))
         mode = _LATENCY_MODE[function.latency_mode]
         flags = mode | (4 if function.submit_policy == "lazy" else 0)
-        flags |= 8 if function.custom_id else 0
+        # Its own key is its name's hash, unless a built-in's.
+        flags |= 8 if key != function._dispatch_key or not own else 0
         flags |= 16 if function.timeout_ns is not None else 0
         flags |= 32 if function.deadline_ns is not None else 0
         name = function.name.encode("utf-8")
@@ -787,8 +983,8 @@ class PackedIRBuilder:
             _CLASSICAL_DECLARE,
             [
                 index,
-                function.id,
-                self.link_id(function.link),
+                key,
+                link,
                 flags,
                 _f2i(function.min_latency_ns),
                 _f2i(function.nominal_latency_ns),
@@ -802,8 +998,29 @@ class PackedIRBuilder:
             ],
         )
         self.classical.append(function)
+        routes = self.routes
+        if routes is None:
+            routes = self.routes = []
+        routes.append((link, key, fixed_by))
+        dispatched[(link, key)] = index
         self._classical_index[id(function)] = index
         return index
+
+    def _forget_classical(self, n_classical: int) -> None:
+        """Drop the classical functions declared after the first
+        *n_classical*, with their keys and versions."""
+        dispatched = self._dispatched
+        assert dispatched is not None and self.routes is not None
+        for sent, entry in list(dispatched.items()):
+            if entry >= n_classical:
+                del dispatched[sent]
+        del self.routes[n_classical:]
+        for function in self.classical[n_classical:]:
+            del self._classical_index[id(function)]
+            template = function._template
+            if template is not None and self._versions:
+                self._versions.get(template, {}).pop(function._key, None)
+        del self.classical[n_classical:]
 
     def classical_submit(self, index: int, operands: list[int]) -> int:
         """Record a submission; returns the future's id."""
@@ -893,12 +1110,13 @@ class PackedIRBuilder:
         ) = checkpoint
         self._regions = regions
         del self.variable_waits[waits:]
+        if self.wait_grids is not None:
+            del self.wait_grids[waits:]
         del self._block_marks[blocks:]
         self._scope = scope
         self._flow = flow
-        for function in self.classical[n_classical:]:
-            del self._classical_index[id(function)]
-        del self.classical[n_classical:]
+        if len(self.classical) > n_classical:
+            self._forget_classical(n_classical)
         live = self._next_id
         for vid in [vid for vid in self.readouts if vid >= live]:
             del self.readouts[vid]
@@ -1078,8 +1296,45 @@ class PackedIRBuilder:
             return int(value.vid)
         return self._get_numeric_vid(value, dtype, specializes)
 
+    def _check_answer_bounds(self, line: IRValue, lowest: int, highest: int) -> None:
+        """Reject the bounds of a wait whose length comes from an answer when
+        they are not on ``wait_grid``: the run clamps the length to them, and
+        every later op on every line moves by it."""
+        grid = self.wait_grid
+        off = [b for b in (lowest, highest) if b >= 0 and b % grid]
+        if not off:
+            return
+        role, qudit = self._role_and_qudit(line)
+        top = "None" if highest < 0 else str(highest)
+
+        def nearest(b: int) -> str:
+            return f"{b // grid * grid} or {-(-b // grid) * grid}"
+
+        raise CompilationError(
+            f"wait() on line {role[0]}{qudit}: its length comes from a classical answer, "
+            "so every later operation on every line moves by it, and together the lines "
+            f"move in timesteps of {grid} cycles; its bounds ({lowest}, {top}) aren't "
+            "whole numbers of timesteps: " + "; ".join(f"for {b}, use {nearest(b)}" for b in off)
+        )
+
+    def _role_and_qudit(self, line: IRValue) -> tuple[str, int]:
+        """The role of *line* and its qudit (-1 for a runtime qudit's)."""
+        qudit = self._line_qubit.get(line.vid)
+        if qudit is None:
+            # A later version of the line: its channel names the qudit.
+            held = getattr(line.chan, "held", None)
+            qudit = -1 if held is None else self._qref_to_qubit.get(held.key[0], -1)
+        return line.vtype.removesuffix("_line"), qudit
+
     def _variable_wait(
-        self, line: int, result: int, duration: Any, lowest: int, highest: int, answer: bool = False
+        self,
+        line: int,
+        result: int,
+        duration: Any,
+        lowest: int,
+        highest: int,
+        answer: bool = False,
+        grid: int | None = None,
     ) -> None:
         """A wait whose length is computed at run time, rounded to the nearest
         cycle (ties up). From float arguments it does not specialize on them,
@@ -1102,9 +1357,13 @@ class PackedIRBuilder:
             if at_call:
                 text = f"{arithmetic_text(duration)} (its answers at 0)"
                 self.variable_waits.append((floats, None, highest, text))
+                if self.wait_grids is not None:
+                    self.wait_grids.append(grid or 1)
         else:
             cycles = self._get_numeric_vid(rounded, "i64", specializes=False)
             self.variable_waits.append((duration, lowest, highest))
+            if self.wait_grids is not None:
+                self.wait_grids.append(grid or 1)
         self._ensure(7)
         self._w(_header(_VARIABLE_WAIT, 6))
         self._w(line)
@@ -1127,6 +1386,38 @@ class PackedIRBuilder:
         self._w(operand)
         return result
 
+    def _times(self, fname: str, attrs: dict[str, Any]) -> None:
+        """Convert the times in *attrs*, a *fname* op's, to program cycles,
+        and reject plain floats and out-of-range lengths in its durations."""
+        # No time exists before _units is imported, so neither does one
+        # inside a symbolic wait.
+        if (
+            fname == "wait"
+            and attrs.get("bounds") is None
+            and is_symbolic(attrs["duration"])
+            and "cudaq_pulse._units" not in sys.modules
+        ):
+            return
+        from ._durations import in_program_cycles
+
+        in_program_cycles(fname, attrs, self.clock_ghz)
+
+    def _duration(self, wf_name: str, attrs: dict[str, Any]) -> Any:
+        """The duration of a waveform whose duration is not a whole number
+        of cycles in range, after its times are converted."""
+        if wf_name != "custom_samples":
+            self._times(wf_name, attrs)
+        dur_raw = attrs.get("duration", 0)
+        return dur_raw if is_symbolic(dur_raw) else _as_i64(dur_raw, f"{wf_name} duration")
+
+    def _shape_time(self, wf_code: int, slot: int, value: Any) -> Any:
+        """*value*, a waveform's shape time (sigma or beta) in operand *slot*,
+        in program cycles."""
+        from ._durations import cycles
+
+        what = ("duration", "amplitude", "sigma", "beta")[slot]
+        return cycles(_WF_NAMES[wf_code], what, value, False, "", self.clock_ghz)
+
     def _emit_wf(self, wf_code: int, rv: int, vals: list[Any], dtypes: list[str]) -> None:
         """Emit a waveform record, handling mixed Parameter/concrete values.
 
@@ -1136,15 +1427,35 @@ class PackedIRBuilder:
         """
         encoded: list[int] = []
         param_mask = 0
-        for i, (v, dtype) in enumerate(zip(vals, dtypes)):
-            if is_symbolic(v):
-                pvid = self._get_numeric_vid(v, dtype)
-                encoded.append(pvid)
-                param_mask |= 1 << (i + 1)  # +1 because slot 0 is the rv
-            elif dtype == "i64":
-                encoded.append(_as_i64(v, "integer operand"))
-            else:
-                encoded.append(_f2i(float(v)))
+        try:
+            for i, (v, dtype) in enumerate(zip(vals, dtypes)):
+                # A float or a whole number in an integer slot as it is; "t64" is
+                # a shape time ("f64"), which may be a time to convert.
+                cls = v.__class__
+                if cls is float:
+                    encoded.append(_f2i(v))
+                    continue
+                if cls is int and dtype == "i64":
+                    encoded.append(v)
+                    continue
+                if dtype == "t64":
+                    if cls is not int:
+                        v = self._shape_time(wf_code, i, v)
+                    dtype = "f64"
+                if is_symbolic(v):
+                    pvid = self._get_numeric_vid(v, dtype)
+                    encoded.append(pvid)
+                    param_mask |= 1 << (i + 1)  # +1 because slot 0 is the rv
+                elif dtype == "i64":
+                    encoded.append(_as_i64(v, "integer operand"))
+                else:
+                    encoded.append(_f2i(float(v)))
+        except (TypeError, ValueError):
+            op, fields = _WF_FIELDS[wf_code]
+            for v, dtype, field in zip(vals, dtypes, fields):
+                if dtype != "i64" and not is_symbolic(v):
+                    _real(v, f"{op} {field}")
+            raise
         payload_len = 1 + len(encoded)  # rv + values
         self._ensure(1 + payload_len)
         self._w(_header(wf_code, payload_len, param_mask))
@@ -1152,15 +1463,17 @@ class PackedIRBuilder:
         for e in encoded:
             self._w(e)
 
-    def _emit_custom_samples(self, rv: int, samples: Any) -> None:
+    def _emit_custom_samples(
+        self, rv: int, samples: Any, rate: tuple[int, int] | None = None
+    ) -> None:
+        """A custom_samples record; with *rate*, n samples every d cycles."""
         try:
             sample_values = list(samples)
         except TypeError as exc:
             raise CompilationError("custom_samples() requires a finite sequence") from exc
-        if len(sample_values) > MAX_CUSTOM_SAMPLES:
-            raise CompilationError(
-                f"custom_samples() supports at most {MAX_CUSTOM_SAMPLES} samples per waveform"
-            )
+        most = MAX_CUSTOM_SAMPLES if rate is None else MAX_CUSTOM_SAMPLES - 2
+        if len(sample_values) > most:
+            raise CompilationError(f"custom_samples() supports at most {most} samples per waveform")
         if not sample_values:
             raise CompilationError("custom_samples() requires at least one sample")
         encoded: list[int] = []
@@ -1172,12 +1485,16 @@ class PackedIRBuilder:
                     "real-valued envelope samples"
                 )
             encoded.append(_f2i(value.real))
-        self._ensure(3 + len(encoded))
-        self._w(_header(_WF_CUSTOM_SAMPLES, 2 + len(encoded)))
+        extra = 0 if rate is None else 2
+        self._ensure(3 + len(encoded) + extra)
+        self._w(_header(_WF_CUSTOM_SAMPLES, 2 + len(encoded) + extra))
         self._w(rv)
         self._w(len(encoded))
         for word in encoded:
             self._w(word)
+        if rate is not None:
+            self._w(rate[0])
+            self._w(rate[1])
 
     @property
     def param_names(self) -> list[str]:
@@ -1190,10 +1507,13 @@ class PackedIRBuilder:
 
     def get_freq_array(self) -> array[float]:
         """Return qubit frequencies as float64 values indexed by qubit."""
-        arr = array("d", bytes(8 * self._next_qubit))
-        for q, f in self._freq_hz.items():
-            if q < self._next_qubit:
-                arr[q] = f
+        n = self._next_qubit
+        freq = self._freq_hz
+        arr = array("d", bytes(8 * n))
+        # The program's qudits, not all of the target's.
+        for q in range(n):
+            if q in freq:
+                arr[q] = freq[q]
         return arr
 
     @property
@@ -1202,14 +1522,52 @@ class PackedIRBuilder:
 
     @property
     def qubits(self) -> tuple[int, ...]:
-        """Indices of the allocated qudits."""
+        """Indices of the allocated qudits (runtime qudit k: -1 - k)."""
         return tuple(sorted(set(self._qref_to_qubit.values())))
 
     @property
     def used_qubits(self) -> tuple[int, ...]:
-        """Indices of the qudits the program gets a drive or readout line on."""
+        """Indices of the qudits the program gets a drive or readout line on
+        (runtime qudit k: -1 - k)."""
         return tuple(sorted(set(self._line_qubit.values())))
+
+    @property
+    def used_slots(self) -> tuple[int, ...]:
+        """The runtime qudits (slots) the program gets a line on."""
+        return tuple(sorted(-1 - q for q in set(self._line_qubit.values()) if q < 0))
 
     @property
     def op_count(self) -> int:
         return self._op_count
+
+    def finder(self, word: int) -> _RecordFinder:
+        """A builder configured like this one that, given the same trace,
+        records the instructions that write the record at *word*."""
+        found = _RecordFinder(
+            name=self.name,
+            clock_ghz=self.clock_ghz,
+            qubit_freq_hz=self._freq_hz,
+            flatten_schedules=not self.schedule_blocks,
+        )
+        found.word = word
+        found.unroll_threshold = self.unroll_threshold
+        found.machine = self.machine
+        found.locate_structural = self.locate_structural
+        return found
+
+
+class _RecordFinder(PackedIRBuilder):
+    """Traces a kernel again, after the extension rejected the record at
+    ``word``, to find where it was written: ``frames`` as ``tracing_frames()``
+    gives them. Every record is written right after an ``_ensure`` at its
+    first word, so the last one there is the one that wrote it."""
+
+    word = -1
+    frames: list[Any] | None = None
+
+    def _ensure(self, n: int) -> None:
+        if self._cur == self.word:
+            from ._emitter import tracing_frames
+
+            self.frames = tracing_frames()
+        super()._ensure(n)

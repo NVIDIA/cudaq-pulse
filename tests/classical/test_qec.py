@@ -16,7 +16,7 @@ from pathlib import Path
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import qec, wire
+from cudaq_pulse.classical import emulation, qec, wire
 
 from tests.classical.test_simulation import PI_AMP, _device
 
@@ -28,20 +28,75 @@ def _decoder(decode=None):
     return qec.Decoder(3, syndromes=12, corrections=2, max_latency_ns=500, decode=decode)
 
 
+def _key(request):
+    return struct.unpack_from("<I", request, 4)[0]
+
+
 def test_calls_carry_the_cudaqx_ids_and_payloads():
     decoder = _decoder()
-    assert decoder.enqueue_function.id == CUDAQX["function_ids"]["enqueue_syndromes"]
-    assert decoder.corrections_function.id == CUDAQX["function_ids"]["get_corrections"]
-    assert decoder.reset_function.id == CUDAQX["function_ids"]["reset_decoder"]
     bits = [1, 0] * 6
     enqueue = wire.encode_request(decoder.enqueue_function, (3, 5, 0, 12, bits))
+    assert _key(enqueue) == CUDAQX["function_ids"]["enqueue_syndromes"]
     header = CUDAQX["payload_bytes"]["enqueue_syndromes_header"]
     assert len(enqueue) - 24 == header + 2
     assert struct.unpack_from("<qqqq", enqueue, 24) == (3, 5, 0, 12)
     get = wire.encode_request(decoder.corrections_function, (3, 2, 1))
+    assert _key(get) == CUDAQX["function_ids"]["get_corrections"]
     assert len(get) - 24 == CUDAQX["payload_bytes"]["get_corrections"]
     reset = wire.encode_request(decoder.reset_function, (3,))
+    assert _key(reset) == CUDAQX["function_ids"]["reset_decoder"]
     assert len(reset) - 24 == CUDAQX["payload_bytes"]["reset_decoder"]
+
+
+def _two_decoders():
+    small = qec.Decoder(0, syndromes=1, corrections=1, max_latency_ns=100, decode=lambda b: [b[0]])
+    same = qec.Decoder(1, syndromes=1, corrections=1, max_latency_ns=100, decode=lambda b: [0])
+    large = qec.Decoder(
+        2, syndromes=2, corrections=1, max_latency_ns=100, decode=lambda b: [b[0] ^ b[1]]
+    )
+    return small, same, large
+
+
+def test_decoders_share_the_cudaqx_keys_in_one_program():
+    decoders = _two_decoders()
+
+    @pulse.kernel
+    def k(q):
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
+        for decoder in decoders:
+            qec.enqueue_syndromes(decoder, [m] * decoder.syndromes)
+            qec.get_corrections(decoder).result()
+
+    dev = _device()
+    low = pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
+    keys = {c.dispatch_key for c in low.classical_report()}
+    assert keys == {CUDAQX["function_ids"][n] for n in ("enqueue_syndromes", "get_corrections")}
+
+
+def test_a_udp_server_tells_decoders_that_share_a_key_apart():
+    decoders = _two_decoders()
+    functions = [f for d in decoders for f in (d.enqueue_function, d.corrections_function)]
+    handlers = {n: h for d in decoders for n, h in d.handlers().items()}
+    served = {}
+    for d in decoders:
+        get = d.corrections_function.name
+        served[get] = lambda *args, decoder=d: [decoder.decoder_id % 2]
+    _, address, stop = emulation.serve_udp(functions, {**handlers, **served})
+    channel = emulation.UdpChannel(address)
+    try:
+        for d in decoders:
+            fn = d.enqueue_function
+            request = wire.encode_request(fn, (d.decoder_id, 0, 0, d.syndromes, [1] * d.syndromes))
+            answer, _ = channel.call(fn, request)
+            assert wire.decode_answer(fn, answer)[0] == 0
+            fn = d.corrections_function
+            request = wire.encode_request(fn, (d.decoder_id, 1, 0))
+            answer, _ = channel.call(fn, request)
+            assert wire.decode_answer(fn, answer)[2] == [d.decoder_id % 2]
+    finally:
+        channel.close()
+        stop()
 
 
 def test_each_path_keeps_its_own_decoder_state():
@@ -53,31 +108,36 @@ def test_each_path_keeps_its_own_decoder_state():
     def k(a, b, flag):
         qec.reset_decoder(decoder)
         for q in (a, b):
-            r, rt = get_readout_line(q)
-            qec.enqueue_syndromes(decoder, [readout(r, square(100, 0.05), rt)])
-        f, ft = get_drive_line(flag)
+            r = get_readout_line(q)
+            qec.enqueue_syndromes(decoder, [readout(r, square(100, 0.05))])
+        f = get_drive_line(flag)
         if qec.get_corrections(decoder).result()[0]:
-            drive(f, square(40, PI_AMP), ft)
+            drive(f, square(40, PI_AMP))
 
     dev = _device(n=3)
     low = pulse.compile(k, device=dev).lower(*dev.qudit_handles[:3])
     plus = np.array([1, 1]) / np.sqrt(2)
     state = np.kron(np.array([1, 0]), np.kron(plus, plus))  # a, b in |+>, flag in |0>
-    result = pulse.simulate(low, initial_state=state)
+    result = pulse.simulate(low, initial_state=state, levels=2)
     assert len(result.branches) == 4
-    for (ma, mb), weight in [((o[0], o[1]), w) for o, w in result.branches]:
-        assert weight == pytest.approx(0.25)
+    for branch in result.branches:
+        assert branch.probability == pytest.approx(0.25)
     # The flag is flipped exactly on the odd-parity paths: P(flag) = 1/2.
     flag = sum(result.density_matrix[i, i].real for i in range(8) if i & 4)
     assert flag == pytest.approx(0.5, abs=1e-6)
-    for calls, (outcomes, _) in zip(result.calls, result.branches):
-        assert [c.function.split("_")[0] for c in calls] == ["reset", "enqueue", "enqueue", "get"]
-        assert calls[-1].answer == [(outcomes[0] + outcomes[1]) % 2]
+    for branch in result.branches:
+        assert [c.function.split("_")[0] for c in branch.calls] == [
+            "reset",
+            "enqueue",
+            "enqueue",
+            "get",
+        ]
+        assert branch.calls[-1].answer == [(branch.levels[0] + branch.levels[1]) % 2]
 
 
 def test_a_decoder_without_decode_needs_handlers():
     decoder = _decoder()
-    with pytest.raises(TypeError, match="no reference implementation"):
+    with pytest.raises(TypeError, match="has no body to run here. Give it a handler"):
         decoder.corrections_function(3, 2, 0)
     handlers = qec.Decoder(3, syndromes=12, corrections=2, max_latency_ns=500).handlers()
     assert set(handlers) == {
@@ -93,10 +153,10 @@ def test_a_mapped_enqueue_sends_its_mapping_row():
 
     @pulse.kernel
     def rounds(q):
-        r, rt = get_readout_line(q)
+        r = get_readout_line(q)
         ms = []
         for _ in range(12):
-            ms.append(readout(r, square(100, 0.05), rt))
+            ms.append(readout(r, square(100, 0.05)))
         qec.enqueue_syndromes_mapped(decoder, ms, 4, 2)
 
     def enqueue(decoder_id, round, mapping, count, bits):
@@ -104,5 +164,7 @@ def test_a_mapped_enqueue_sends_its_mapping_row():
 
     dev = _device()
     lowered = pulse.compile(rounds, device=dev).lower(dev.qudit_handles[0])
-    pulse.simulate(lowered, handlers={decoder.enqueue_function.name: enqueue}, shots=1, seed=0)
+    pulse.simulate(
+        lowered, handlers={decoder.enqueue_function.name: enqueue}, shots=1, seed=0, levels=2
+    )
     assert set(seen) == {(3, 4, 2, 12)}

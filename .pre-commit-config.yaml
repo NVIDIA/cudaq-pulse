@@ -53,6 +53,11 @@ repos:
         entry: python3 tools/check-release-hygiene.py
         language: system
         types: [text]
+      - id: classical-remnants
+        name: classical functions declared by type hints, not the old types
+        entry: python3 tools/check-classical-remnants.py
+        language: system
+        files: \.(py|pyi|md|rst|txt|ipynb|td|h)$
       - id: workflow-pins
         name: actions and images pinned by commit or digest
         entry: python3 tools/check-workflow-pins.py

@@ -31,7 +31,8 @@ backend gets a new version.
 At the top level, ``target`` and ``clock_ghz`` name the device and its
 clock, ``schedule`` the schedule policy, ``qudits`` the device qudits the
 program uses, ``lines`` each line's index, ``role`` (``"drive"`` or
-``"readout"``) and qudit, and ``limits`` the controller limits it was
+``"readout"``) and qudit (and, with line delays, its ``fine_delay_ns``;
+see below), and ``limits`` the controller limits it was
 checked against (``null`` without). ``events`` lists every drive, readout,
 wait, sync and classical call in program order, once per loop iteration and
 both arms of a branch. ``epochs``, ``calls``, ``links`` and ``manifest`` are
@@ -71,7 +72,8 @@ Drives and readouts also have:
     {"duration": ..., "amplitude": ..., "sigma": ...}}``, with ``scale``,
     ``neg``, ``add``, ``sub`` and ``mul`` nodes over ``of``, and
     ``samples`` for ``custom_samples`` (which ``custom()`` envelopes become
-    when the kernel is traced); and its overall complex amplitude,
+    when the kernel is traced), at the line's own rate (its controller's
+    ``sample_rate_ghz``); and its overall complex amplitude,
     ``{"re": ..., "im": ...}``. Times in parameters are in cycles.
 ``samples``
     With ``export_controller(sample_rate_ghz=...)``, a whole multiple of the
@@ -123,10 +125,195 @@ measurement), each an expression; an answer has ``wait``,
 ``"bounded"`` (by the latency budget), ``"blocking"`` or ``"timeout"``,
 with ``timeout_ns``.
 
+Clocks
+------
+
+A kernel counts time in cycles of the device's program clock,
+``Device.clock_ghz`` (a device config's ``"clock_ghz"``, else the
+target's); a duration written as a time converts to them when the kernel
+compiles (see :ref:`durations`). A controller may run its own clock,
+``ControllerLimits.clock_ghz``, at a whole-cycle ratio of it; may start
+and time operations only every ``ControllerLimits.cycles_per_timestep`` of
+its own cycles (default 1); and may play samples at
+``ControllerLimits.sample_rate_ghz`` (default one per cycle of its clock),
+at any ratio of whole numbers to its clock.
+
+.. _timestep:
+
+A line's **timestep** is the shortest time, in program cycles, at whose
+multiples its controller can start and end operations: the fewest whole
+program cycles that are a whole number of the controller's steps and of
+its samples. On the program clock with one sample per cycle it is
+``cycles_per_timestep``; at ``a / b`` of the program clock (in lowest
+terms), with one cycle per step, it is ``b``; at 2.4 GHz samples on a
+1 GHz clock it is 5 cycles, 12 samples. A length off the samples is an
+error like any other off its timesteps; it is never rounded.
+
+The scheduler places every operation on whole timesteps of its line and
+meets a sync on a multiple of every synced line's timestep; a length that
+is not a whole number of timesteps fails to compile with
+``ControllerLimitError``, which names the line and the fix:
+``line d3 moves in timesteps of 4 cycles; 22 cycles isn't a whole number of
+timesteps``. ``pulse.round_duration(line, duration)`` in a kernel rounds a
+length to whole timesteps (``direction="up"`` by default, ``"down"`` or
+``"nearest"``, or a ``pulse.RoundDirection``), so a kernel can be written
+for any controller::
+
+    drive(line, gaussian(pulse.round_duration(line, 41), 0.1, 10.0))
+
+The export counts the controller's own cycles: ``clock_ghz`` is the
+controller's clock, and when that is not the program clock the export also
+gives ``program_clock_ghz``, converts every time to the controller's cycles
+(exactly for operations on its lines; rounded up for classical calls and
+epochs) and scales each waveform's time parameters (``duration``,
+``sigma``, ``beta``, ``risefall``) with them. A program for a controller at
+the program clock is unchanged. ``ControlSystem(reference_clock_ghz=...)``
+(or ``MachineModel(reference_clock_ghz=...)`` without a control system)
+states a clock the controllers share; every controller's clock must be a
+whole multiple of it, and the export gives it as ``reference_clock_ghz``.
+Without one, each controller's start is known only to within one of its own
+cycles, which budgets between controllers count.
+
+Each ``pulse.Controller`` of a control system may run its own clock.
+Without a declared ``"clock_ghz"`` the device's program clock is the
+fastest controller clock when it is a whole multiple of every other; clocks
+that are not are a ``DeviceDefinitionError`` listing the program clocks
+that would work, never one picked for you. Every line is then scheduled on
+the timesteps of the controller that plays it, and checked against that
+controller's limits in its own cycles. A sync, and a wait whose length
+comes from a classical answer, meet where every line's timesteps do. So do
+the lines of a runtime qudit, so that the kernel's one schedule fits
+whichever qudits a call binds. A line's delay is split by its own
+controller's fine delay, and ``rcp`` keeps a branch on a readout for the
+reading controller's ``feedback_latency_cycles`` converted to program
+cycles. ``custom(duration, f)`` samples ``f`` at the rate of the line that
+plays it, the waveforms made from it too; samples given to
+``custom_samples`` play only on lines of the rate they were made for, and
+on a runtime qudit's line, whose rate depends on the call, ``custom()`` is
+a compile error when the controllers' rates differ.
+
+Each controller gets its own program: ``lowered.export_controller(controller=k)``
+is controller ``k``'s part, in its own cycles, with ``"controller": k``,
+its ``lines`` and ``limits``, and the events it takes part in: those on its
+lines, a sync with only its lines, the submit of a call whose measurements
+it reads and the answer it takes, whether to branch on or to compute with.
+Event and line ids stay the program's, so a value computed from an answer
+names the answer by the same ``index`` in every controller's program. A
+program that plays the lines of more than one controller needs
+``controller=``; one on a single controller exports it without, and one
+that plays no lines is exported by the controller that makes its calls.
+A controller the program does not use exports a valid empty program: no
+lines, events or calls. ``export_emulation(controller=k)`` gives the same
+part for an emulator.
+
+A link is shared by default: every controller it reaches sends its
+requests to one instance, which holds ``max_in_flight`` requests for all
+of them. A link that each controller has its own instance of, a decoder
+beside each controller for example, is declared per controller:
+
+.. code-block:: python
+
+   import cudaq_pulse as pulse
+
+   links = {"decoder": pulse.Link(fixed_ns=10, max_in_flight=1, per_controller=True)}
+
+or ``per_controller = true`` in the link's table of a system file
+(``[control_system.links.decoder]``). Each controller's calls over it then
+use that controller's slots, so calls on two controllers are scheduled
+without waiting for each other's slots, and each controller exports only
+its own calls, with the call's ``"controller"`` in its submit, answer and
+``calls`` entries. A call never crosses between controllers, so its
+answer is due without the start uncertainty of a second controller. The
+call's measurements and the pulses that use its answer must be on one
+controller, or the program fails to compile, naming both controllers.
+When the scheduler cannot tell a call's controller (it reads no
+measurement and its answer is unused, or leaves the kernel), the link's
+calls share one set of slots, as on a shared link. Each controller may
+place the link on one of its own processors; ``controller_usage`` counts
+each instance's calls on its controller's processor, and
+``resources(lowered).links`` has a row per instance.
+
+Times between controllers are budgeted with how well each one's start is
+known: its ``clock_skew_cycles``, plus one of its own cycles without a
+``reference_clock_ghz``. A pulse that branches on, or computes with,
+another controller's readout starts once the outcome can reach it: the
+reader's ``feedback_latency_cycles`` and its ``peer_latency_cycles`` to the
+user, in the reader's cycles, and both controllers' start uncertainty.
+``rcp`` and ``alap_rcp`` wait that long for each pair of reader and user,
+and a pulse on the reader's own controller waits its feedback latency
+alone; a program that starts the pulse sooner fails to compile with the
+cycle it may start at. An answer taken on another controller than the one
+that sent the request is budgeted with the two controllers' start
+uncertainty, and ``due_cycles`` includes it; one controller sending and
+taking it adds none. When the scheduler cannot tell which controllers they
+are (the request carries no measurement, or the answer leaves the kernel),
+the budget adds the start uncertainty of the two controllers the link
+reaches that are known least well.
+
+A sync of lines on several controllers lines up the first pulse after it
+on each of its lines. Each of those lands within its controller's start
+uncertainty of where it is meant to, plus how far its line delay is
+rounded to its grid when the controller has no fine delay, all in the
+controller's cycles, and that must fit the controller's
+``alignment_tolerance_cycles``; otherwise the program fails to compile,
+suggesting a shared ``reference_clock_ghz`` or the tolerance it needs.
+Under ``rcp`` and ``alap_rcp``, ``max_concurrent_drives`` and
+``max_concurrent_readouts`` count pulses on every controller: a pulse that
+follows another controller's on the same lane starts their start
+uncertainty after it, so the two never overlap.
+
+What the program computes at run time is converted by the same rule. A
+variable wait's ``length`` is clamped to its bounds, as the run clamps it,
+and then wrapped in ``{"op": "pulse.own_cycles", "of": [x], "num": a,
+"den": b, "timestep": g}``: the length ``x`` program cycles is ``x * a / b``
+of the controller's, and the controller must fail the run when ``x`` is not
+a whole number of the line's timesteps of ``g`` program cycles. A
+controller with the program's clock but longer timesteps gets the wrapper
+too, with ``num`` and ``den`` 1, as that check. ``min_cycles`` rounds down
+and ``max_cycles`` up. A run-time ``duration`` is wrapped the same way, and
+a run-time ``sigma``, ``beta`` or ``risefall`` is multiplied by ``a / b``
+(``arith.mulf``). A run-time length whose values are all known while the
+kernel compiles (it selects between constants) and include one off the
+timesteps is a ``ControllerLimitError`` then. A run-time operand of a
+waveform whose parameters the export does not name can't be converted, so
+on a controller with its own clock it is a ``ControllerLimitError`` too,
+never exported in program cycles.
+
+Line delays
+-----------
+
+Cables and electronics delay each line differently. The calibrated delays
+belong to the system, not to kernels: ``ControlSystem(line_delays_ns=...)``
+(or ``MachineModel(line_delays_ns=...)`` without a control system) gives
+them by line, ``("drive", qudit)`` or ``("readout", qudit)``, as times
+(``2.3 * pulse.ns``) or numbers of ns, and every operation on a delayed line starts that much later than scheduled.
+Whole :ref:`timesteps <timestep>` of the line move its operations, which
+are then checked against the controller's limits like any others; the rest,
+less than one timestep, is the line's ``fine_delay_ns`` in the export, for
+a controller that can delay a line's output by less than that
+(``ControllerLimits.max_fine_delay_ns``). A controller without fine delay
+rounds the delay to the nearest timestep if that is within its
+``alignment_tolerance_cycles``, and otherwise the program fails to compile
+with an error naming the line, the rest and the fixes::
+
+    machine = MachineModel(
+        controller=ControllerLimits(clock_ghz=1.0, max_fine_delay_ns=1.0),
+        line_delays_ns={("drive", 0): 2.3, ("readout", 0): 41.0},
+    )
+    # The drive line of qudit 0 moves 2 ns (4 cycles of a 2 GHz program
+    # clock) and plays with fine_delay_ns = 0.3.
+
+Compiling a kernel again with only other delays, such as a control system
+calibrated again, reuses its trace and optimized module and schedules it
+again, with the same result, byte for byte, as compiling it anew. A delay
+of a line no controller of the system plays, or of a qudit the quantum
+system lacks, is a ``DeviceDefinitionError``.
+
 Controller limits
 -----------------
 
-``ControllerLimits`` states what a controller can play: its clock, how
+``ControllerLimits`` states what a controller can play, in its own clock
+cycles: its clock, how
 closely two operations on one line can follow each other, its waveform
 memory and tones per line, which acquirer reads each qudit and how long a
 readout holds it, the least feedback latency from a readout to an operation
@@ -135,9 +322,12 @@ timeout, and the most drives and readouts in one program. Given
 to the machine model as ``MachineModel(controller=...)``, they make every
 compilation check the scheduled program, so that a program the controller
 cannot play fails at compile time with ``ControllerLimitError``, which lists
-each violated limit. ``cudaq_pulse.controller.check(lowered, limits)``
-returns the violations without raising. Without ``controller``, compiling
-checks nothing more.
+each violated limit. A limit that only some values of a ``float``
+parameter exceed, such as the tones a frequency shift adds or the memory
+a waveform width takes, is checked when a call supplies the values, once
+per distinct values, so a call that compiles also exports.
+``cudaq_pulse.controller.check(lowered, limits)`` returns the violations
+without raising. Without ``controller``, compiling checks nothing more.
 
 A minimal backend
 -----------------
@@ -212,20 +402,21 @@ same name:
        {
            "target": TargetDescription(
                name="one-qubit",
-               clock_ghz=1.0,
                qubits={0: Qubit(0, 5.0e9, -2.0e8, 50.0, 30.0)},
-           )
+           ),
+           "clock_ghz": 1.0,
        }
    )
+   cal = {"x_duration": 40 * pulse.ns, "x_sigma": 10 * pulse.ns, "readout_duration": 200 * pulse.ns}
 
 
    @pulse.kernel
    def drive_and_measure(q):
-       drive_line, drive_tone = get_drive_line(q)
-       readout_line, readout_tone = get_readout_line(q)
-       drive(drive_line, gaussian(40, 0.5, 10.0), drive_tone)
+       drive_line = get_drive_line(q)
+       readout_line = get_readout_line(q)
+       drive(drive_line, gaussian(cal["x_duration"], 0.5, cal["x_sigma"]))
        sync(drive_line, readout_line)
-       readout(readout_line, square(200, 0.05), readout_tone)
+       readout(readout_line, square(cal["readout_duration"], 0.05))
 
 
    compiled = pulse.compile(drive_and_measure, device=dev, machine=backend.machine_model())

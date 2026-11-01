@@ -28,10 +28,13 @@ import cudaq_pulse
 import pytest
 from cudaq_pulse import ops
 
+from tests._tools import missing
+
 _ROOT = Path(__file__).resolve().parents[2]
 _EXAMPLES = [
     _ROOT / "examples" / "19_classical_calls.py",
     _ROOT / "examples" / "20_adaptive_calibration.py",
+    _ROOT / "examples" / "21_calibration_protocol.py",
 ]
 _PACKAGE_ROOT = Path(cudaq_pulse.__file__).resolve().parents[1]
 _BARE_NAMES = frozenset(
@@ -40,21 +43,32 @@ _BARE_NAMES = frozenset(
 
 _PLANTED = """\
 import cudaq_pulse as pulse
-from cudaq_pulse.classical import Bits, Float
 
 
-@pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=400, link="gpu")
-def decode(syndrome):
-    return [syndrome[0]]
+@pulse.classical(max_latency_ns=400, link="gpu")
+def decode(syndrome: pulse.Bits) -> bool:
+    return bool(syndrome[0])
 
 
-@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns="soon")  # planted
-def scale(x):
-    return [2 * x]
+@pulse.classical(max_latency_ns="soon")  # planted
+def scale(x: float) -> float:
+    return 2 * x
 
 
-in_time, correction = decode.submit([1]).result(timeout_ns=350)
-table = pulse.classical.external("table", args=(Bits(2),), max_latency_ns=50)
+@pulse.classical.external(max_latency_ns=50)
+def table(index: pulse.Length[pulse.Bits, 2]) -> float:
+    return float()
+
+
+@pulse.classical.external(max_latency_ns=50)
+def lookup(index: pulse.Bits) -> tuple[float, pulse.Length[pulse.Bits, 2]]:
+    return (float(), pulse.Bits())
+
+
+in_time, flip = decode.submit([1]).result(timeout=350 * pulse.ns)
+correction: bool = flip
+offset: float = table.submit([0, 1]).result()
+gain, bits = lookup.submit([1, 0, 1]).result()
 """
 
 
@@ -83,7 +97,7 @@ def pyright(
 ) -> list[tuple[Path, int, str, str]]:
     exe = shutil.which("pyright")
     if exe is None:
-        pytest.skip("pyright is not installed")
+        missing("pyright", "pyright is not installed")
     work = tmp_path_factory.mktemp("pyright")
     config = work / "pyrightconfig.json"
     config.write_text(
@@ -125,7 +139,7 @@ def mypy(
     elif (exe := shutil.which("mypy")) is not None:
         command = [exe, "--python-executable", sys.executable]
     else:
-        pytest.skip("mypy is not installed")
+        missing("mypy", "mypy is not installed")
     work = tmp_path_factory.mktemp("mypy")
     config = work / "mypy.ini"
     config.write_text("[mypy]\ncheck_untyped_defs = True\n")

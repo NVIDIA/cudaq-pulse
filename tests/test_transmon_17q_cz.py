@@ -5,7 +5,7 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""The in-model CZ knobs of the shipped Krinner calibration.
+"""The in-model CZ knobs of the shipped transmon_17q calibration.
 
 The sudden-net-zero pulse (Negirneac et al., PRL 126, 220502 (2021)): the
 data qubit at the interaction frequency and the auxiliary's 1-2 transition
@@ -22,7 +22,7 @@ import statistics
 
 import numpy as np
 import pytest
-from cudaq_pulse.targets import _krinner17 as _k
+from cudaq_pulse.targets import _transmon_17q as _k
 from cudaq_pulse.targets.calibration import Calibration
 
 SIGMA_NS = 0.5
@@ -32,7 +32,7 @@ LEVELS = 5
 
 @pytest.fixture(scope="module")
 def cal():
-    return Calibration.load("krinner17")
+    return Calibration.load("transmon_17q")
 
 
 def _knobs(cal):

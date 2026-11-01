@@ -23,7 +23,7 @@ Functions and links
 .. autoclass:: cudaq_pulse.classical.ClassicalDecorator
 
 .. autoclass:: cudaq_pulse.classical.ClassicalFunction
-   :members: submit
+   :members: submit, specialize
 
 .. autoclass:: cudaq_pulse.classical.Pending
    :members: result
@@ -35,18 +35,18 @@ Functions and links
    :members: link_id, link_name, link
    :no-index:
 
-Types
------
+Measurements and randomness
+---------------------------
 
 .. autoclass:: cudaq_pulse.classical.Bits
-.. autoclass:: cudaq_pulse.classical.Levels
-.. autoclass:: cudaq_pulse.classical.IQ
-.. autoclass:: cudaq_pulse.classical.Float
-.. autoclass:: cudaq_pulse.classical.Integer
-.. autoclass:: cudaq_pulse.classical.Byte
-.. autoclass:: cudaq_pulse.classical.Floats
-.. autoclass:: cudaq_pulse.classical.Integers
-.. autoclass:: cudaq_pulse.classical.Bytes
+
+.. autodata:: cudaq_pulse.Length
+   :no-value:
+
+   ``typing.Annotated``, re-exported to state a fixed list length:
+   ``pulse.Length[pulse.Bits, 8]`` takes or answers eight bits and
+   ``pulse.Length[list[int], 8]`` eight numbers. The length is a positive
+   whole number.
 
 .. autofunction:: cudaq_pulse.classical.random_index
 

@@ -9,8 +9,8 @@
 
 from __future__ import annotations
 
+import sys
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 
 import cudaq_pulse as pulse
@@ -24,15 +24,15 @@ _FREQ = {i: 5e9 + 1e8 * i for i in range(4)}
 def _many_drives(n):
     @pulse.kernel
     def many(q0):
-        d, t = get_drive_line(q0)
+        d = get_drive_line(q0)
         for i in range(n):
-            drive(d, square(4 + (i % 7), 0.01 * (i % 5)), t)
+            drive(d, square(4 + (i % 7), 0.01 * (i % 5)))
 
     return many
 
 
 def _compile(kernel, schedule="alap"):
-    return pulse.compile(kernel, schedule=schedule).lower(Q[0])
+    return pulse.compile(kernel, schedule=schedule, unroll_threshold=0).lower(Q[0])
 
 
 def test_concurrent_compiles_match_sequential_ones():
@@ -80,28 +80,36 @@ def test_one_module_used_from_several_threads():
 
 def test_lowering_runs_while_python_keeps_running():
     module = _compile(_many_drives(400))._module
+    inside = threading.Event()  # the worker is in (or just around) the native call
+    seen = threading.Event()  # this thread ran while the worker was inside
     done = threading.Event()
-    elapsed = []
+    rounds = []
 
     def lower():
-        start = time.perf_counter()
-        module.run_full_lowering()
-        elapsed.append(time.perf_counter() - start)
+        while not seen.is_set() and len(rounds) < 200:
+            inside.set()
+            module.run_full_lowering()
+            inside.clear()
+            rounds.append(None)
         done.set()
 
-    worker = threading.Thread(target=lower)
-    # With the GIL held for the whole lowering, this thread would stall for
-    # all of it (already in start(), which waits for the worker to run);
-    # released, it keeps ticking.
-    gaps, last = [], time.perf_counter()
-    worker.start()
-    while not done.is_set():
-        time.sleep(0.001)
-        now = time.perf_counter()
-        gaps.append(now - last)
-        last = now
-    worker.join()
-    assert max(gaps) < 0.5 * elapsed[0]
+    # With a switch interval this long, a thread that holds the GIL keeps it
+    # until it blocks or releases it. The worker never blocks, so this thread
+    # can run while the worker is inside only if the native call releases
+    # the GIL; then it sees `inside` set and the worker stops.
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(100.0)
+    try:
+        worker = threading.Thread(target=lower)
+        worker.start()
+        while not done.is_set():
+            if inside.is_set():
+                seen.set()
+            done.wait(0.001)
+        worker.join()
+    finally:
+        sys.setswitchinterval(interval)
+    assert seen.is_set(), f"no Python ran during {len(rounds)} native lowerings"
 
 
 def _together(n, work):
@@ -128,7 +136,16 @@ def test_concurrent_first_loads_build_each_target_and_calibration_once(monkeypat
         "load",
         staticmethod(lambda *a, **k: loads.append(a) or load(*a, **k)),
     )
-    targets = _together(16, lambda i: transmon.transmon_krinner_17q())
+    indexed = calibration._indexed
+
+    def counted(*a):
+        found = indexed(*a)
+        if found is not None:
+            loads.append(a)
+        return found
+
+    monkeypatch.setattr(calibration, "_indexed", counted)
+    targets = _together(16, lambda i: transmon.transmon_17q())
     assert len(loads) == 1
     assert all(t is targets[0] for t in targets)
 
@@ -161,8 +178,8 @@ def test_concurrent_first_traces_see_every_pulse_operation(monkeypatch):
     def work(i):
         @pulse.kernel
         def k(q):
-            line, tone = get_drive_line(q)
-            play(line, square(8 + i, 0.1), tone)
+            line = get_drive_line(q)
+            play(line, square(8 + i, 0.1))
 
         return k.lower(Q[0]).mlir().count("pulse.drive %")
 

@@ -17,9 +17,9 @@ from tests.runtime._lowering import evolve, on
 
 @pulse.kernel
 def _jit_test_kernel(q0):
-    d0, t0 = get_drive_line(q0)
+    d0 = get_drive_line(q0)
     wf = gaussian(40, 0.3, 10.0)
-    drive(d0, wf, t0)
+    drive(d0, wf)
 
 
 @pytest.mark.gpu

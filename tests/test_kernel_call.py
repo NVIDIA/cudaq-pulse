@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import random
@@ -21,7 +22,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import Qubit, TargetDescription, TransmonModel
 from cudaq_pulse.targets._registry import ENV_VAR
 
 from tests._handles import Q
@@ -49,17 +50,17 @@ def _device(n=4, **kwargs):
 
 @pulse.kernel
 def rabi(q, amp: float, *, duration: int = 40):
-    d, t = get_drive_line(q)
-    drive(d, square(duration, amp), t)
+    d = get_drive_line(q)
+    drive(d, square(duration, amp))
 
 
 @pulse.kernel
 def flip_and_measure(q):
-    d, t = get_drive_line(q)
-    drive(d, square(40, _PI_AMPLITUDE), t)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    drive(d, square(40, _PI_AMPLITUDE))
+    r = get_readout_line(q)
     sync(d, r)
-    return readout(r, square(20, 0.05), rt)
+    return readout(r, square(20, 0.05))
 
 
 # ── Binding ──────────────────────────────────────────────────────────────
@@ -106,8 +107,8 @@ def test_compile_takes_no_kernel_arguments_and_float_values_never_recompile():
 def test_a_call_without_qudit_handles_has_no_device():
     @pulse.kernel
     def drive_amp(q, amp: float):
-        d, t = get_drive_line(q)
-        drive(d, square(40, amp), t)
+        d = get_drive_line(q)
+        drive(d, square(40, amp))
 
     with pytest.raises(pulse.NoDeviceError, match="without qudit handles"):
         drive_amp.lower(0, 0.1)
@@ -127,7 +128,7 @@ def test_the_lru_holds_cache_size_specializations(monkeypatch):
 
     @pulse.kernel
     def wait_for(q, n: int):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, n)
 
     q = _device().qudit_handles[0]
@@ -159,8 +160,8 @@ SETTINGS = {"duration": 40}
 
 @pulse.kernel
 def reads_globals(q):
-    d, t = get_drive_line(q)
-    drive(d, square(SETTINGS["duration"], AMPLITUDE), t)
+    d = get_drive_line(q)
+    drive(d, square(SETTINGS["duration"], AMPLITUDE))
 
 
 def test_a_changed_global_is_seen_on_the_next_call():
@@ -193,8 +194,8 @@ PULSES = _Pulses(0.1)
 
 @pulse.kernel
 def calls_a_method(q):
-    d, t = get_drive_line(q)
-    drive(d, square(40, PULSES.scaled(1.0)), t)
+    d = get_drive_line(q)
+    drive(d, square(40, PULSES.scaled(1.0)))
 
 
 def test_a_method_of_a_global_is_cached_until_the_global_changes():
@@ -220,8 +221,8 @@ def test_a_changed_closure_cell_is_seen_on_the_next_call():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        drive(d, square(40, amplitude), t)
+        d = get_drive_line(q)
+        drive(d, square(40, amplitude))
 
     q = _device().qudit_handles[0]
     assert "1.000000e-01" in k.lower(q).mlir()
@@ -232,8 +233,8 @@ def test_a_changed_closure_cell_is_seen_on_the_next_call():
 def test_a_trace_that_calls_an_impure_host_function_is_never_reused():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        drive(d, square(40, random.random()), t)
+        d = get_drive_line(q)
+        drive(d, square(40, random.random()))
 
     q = _device().qudit_handles[0]
     k.lower(q)
@@ -254,7 +255,7 @@ def test_the_device_comes_from_the_qudit_handles():
 def test_devices_from_the_same_config_are_equal_and_share_specializations():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, 4)
 
     a, b = _device(), _device()
@@ -265,7 +266,7 @@ def test_devices_from_the_same_config_are_equal_and_share_specializations():
 def test_mixing_devices_in_one_call_is_an_error():
     @pulse.kernel
     def pair(q0, q1):
-        sync(get_drive_line(q0)[0], get_drive_line(q1)[0])
+        sync(get_drive_line(q0), get_drive_line(q1))
 
     a, other = _device(), _device(n=5)
     with pytest.raises(pulse.DeviceMismatchError, match="two different devices"):
@@ -295,7 +296,7 @@ def test_registers_index_like_sequences():
     @pulse.kernel
     def all_of(qs):
         for q in qs:
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wait(d, 4)
 
     assert all_of.lower(dev.qudit_handles[[5, 7]]).qudits == (5, 7)
@@ -315,22 +316,22 @@ def test_device_values_are_read_only():
 
 def test_a_device_from_a_config_file(tmp_path: Path):
     path = tmp_path / "dev.json"
-    path.write_text(json.dumps({"target": "transmon_krinner_17q", "layout": [4, 5]}))
+    path.write_text(json.dumps({"target": "transmon_17q", "layout": [4, 5]}))
     dev = pulse.device(path)
     assert [q.index for q in dev.qudit_handles] == [4, 5]
-    assert dev == pulse.device({"target": "transmon_krinner_17q", "layout": [4, 5]})
-    assert dev != pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    assert dev == pulse.device({"target": "transmon_17q", "layout": [4, 5]})
+    assert dev != pulse.device("transmon_17q")
     with pytest.raises(pulse.DeviceDefinitionError, match="lattice: unknown device config key"):
-        pulse.device({"target": "transmon_krinner_17q", "lattice": []})
+        pulse.device({"target": "transmon_17q", "lattice": []})
     with pytest.raises(pulse.DeviceDefinitionError, match="zones: is reserved"):
-        pulse.device({"target": "transmon_krinner_17q", "zones": []})
+        pulse.device({"target": "transmon_17q", "zones": []})
 
 
 def test_a_waveform_as_a_frequency_is_reserved():
     @pulse.kernel
     def chirp(q):
-        d, t = get_drive_line(q)
-        set_frequency(t, square(8, 0.1))
+        d = get_drive_line(q)
+        set_frequency(d.tone, square(8, 0.1))
 
     with pytest.raises(CompilationError, match="time-varying frequencies"):
         chirp.lower(_device().qudit_handles[0])
@@ -347,9 +348,9 @@ def test_a_qudit_the_target_lacks_is_an_error():
 
 @pulse.kernel
 def detuned(q, frequency: float):
-    d, t = get_drive_line(q)
-    t = set_frequency(t, frequency)
-    drive(d, square(40, 0.02), t)
+    d = get_drive_line(q)
+    set_frequency(d.tone, frequency)
+    drive(d, square(40, 0.02))
 
 
 def test_a_float_argument_used_as_a_frequency_stays_symbolic():
@@ -372,7 +373,11 @@ def test_calling_a_kernel_runs_it_and_returns_none_without_a_return():
 
 
 def test_a_returned_measurement_is_its_outcome():
-    q = _device().qudit_handles[0]
+    # A call samples its outcome unseeded. On three levels this pi pulse
+    # leaves 0.5% outside level 1; on two, outcome 1 is certain.
+    target = dataclasses.replace(_device().target, model=TransmonModel(levels={0: 2}))
+    q = pulse.device({"target": target}).qudit_handles[0]
+    assert [b.levels for b in pulse.simulate(flip_and_measure.lower(q)).branches] == [(1,)]
     assert flip_and_measure(q) == 1
     assert pulse.compile(flip_and_measure)(q) == 1
 
@@ -380,9 +385,9 @@ def test_a_returned_measurement_is_its_outcome():
 def test_returned_values_known_at_compile_time_and_tuples_of_measurements():
     @pulse.kernel
     def both(q0, q1):
-        r0, t0 = get_readout_line(q0)
-        r1, t1 = get_readout_line(q1)
-        return readout(r0, square(20, 0.05), t0), readout(r1, square(20, 0.05), t1), 7
+        r0 = get_readout_line(q0)
+        r1 = get_readout_line(q1)
+        return readout(r0, square(20, 0.05)), readout(r1, square(20, 0.05)), 7
 
     dev = _device()
     assert both(dev.qudit_handles[0], dev.qudit_handles[1]) == (0, 0, 7)
@@ -407,7 +412,7 @@ def test_the_launcher_sets_the_process_target(tmp_path: Path):
             """
             import sys
             import cudaq_pulse as pulse
-            print(pulse.get_device().name, sys.argv[1:])
+            print(pulse.device().name, sys.argv[1:])
             """
         )
     )
@@ -438,10 +443,10 @@ def test_the_launcher_sets_the_process_target(tmp_path: Path):
 def test_a_float_that_decides_control_flow_or_a_duration_is_specialized_on():
     @pulse.kernel
     def shaped(q, amp: float, width: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         if amp > 0.5:
             wait(d, 4)
-        drive(d, square(int(width), amp), t)
+        drive(d, square(int(width), amp))
 
     q = _device().qudit_handles[0]
     ck = pulse.compile(shaped)
@@ -471,6 +476,80 @@ def test_simulating_new_float_values_shares_the_module():
     assert b > a > 0
 
 
+def test_lowering_the_same_values_again_specializes_once_they_recur():
+    q = _device().qudit_handles[0]
+    first = rabi.lower(q, 0.3125)
+    program = first.export_controller()
+    second = rabi.lower(q, 0.3125)
+    assert second is not first
+    assert second._concrete() is not first._concrete()
+    again = rabi.lower(q, 0.3125)
+    assert again._concrete() is second._concrete()
+    assert again.export_controller() == program
+    assert rabi.lower(q, 0.4125)._concrete() is not again._concrete()
+
+
+def test_specialized_modules_are_told_apart_by_their_bits():
+    q = _device().qudit_handles[0]
+    for value in (0.0, -0.0, 0.0, -0.0):
+        rabi.lower(q, value)._concrete()
+    assert rabi.lower(q, 0.0)._concrete() is rabi.lower(q, 0.0)._concrete()
+    assert rabi.lower(q, -0.0)._concrete() is rabi.lower(q, -0.0)._concrete()
+    assert rabi.lower(q, 0.0)._concrete() is not rabi.lower(q, -0.0)._concrete()
+
+
+@pytest.fixture
+def specialized_cache():
+    """The native cache of rabi's module, its bounds restored afterwards."""
+    module = rabi.lower(_device().qudit_handles[0], 1.0).generic._module
+    _, entries, ops = module.specialized_cache()
+    yield module.specialized_cache
+    module.specialized_cache(entries, ops)
+
+
+def test_values_seen_once_keep_no_specialized_module(specialized_cache):
+    q = _device().qudit_handles[0]
+    specialized_cache(entries=specialized_cache()[1])
+    for k in range(8):
+        rabi.lower(q, 3.0 + k)._concrete()
+    assert specialized_cache()[0] == 0
+
+
+def test_the_specialized_modules_kept_are_bounded(specialized_cache):
+    q = _device().qudit_handles[0]
+    kept = specialized_cache()[1]
+    for k in range(2 * kept):
+        for _ in range(2):
+            rabi.lower(q, 1.0 + k)._concrete()
+        # The most recently used survives other values.
+        rabi.lower(q, 1.0)._concrete()
+    assert specialized_cache()[0] == kept
+    assert rabi.lower(q, 1.0)._concrete() is rabi.lower(q, 1.0)._concrete()
+    specialized_cache(entries=2)
+    for k in range(8):
+        for _ in range(2):
+            rabi.lower(q, 2.0 + k)._concrete()
+    assert specialized_cache()[0] == 2
+
+
+def test_a_large_module_keeps_fewer_specialized_modules(specialized_cache):
+    q = _device().qudit_handles[0]
+    specialized_cache(ops=1)
+    for k in range(8):
+        for _ in range(2):
+            rabi.lower(q, 2.0 + k)._concrete()
+    assert specialized_cache()[0] == 1
+
+
+def test_a_module_changed_in_place_is_not_shared():
+    q = _device().qudit_handles[0]
+    rabi.lower(q, 5.0)._concrete()
+    first = rabi.lower(q, 5.0)._concrete()
+    assert rabi.lower(q, 5.0)._concrete() is first
+    first.schedule("asap")
+    assert rabi.lower(q, 5.0)._concrete() is not first
+
+
 def test_concurrent_simulations_of_one_specialization_agree():
     from concurrent.futures import ThreadPoolExecutor
 
@@ -488,9 +567,28 @@ def test_a_qudit_passed_twice_is_an_error():
     def pair(q0, q1):
         pass
 
-    q = _device().qudit_handles[0]
-    with pytest.raises(TypeError, match="got qudit 0 more than once"):
+    @pulse.kernel
+    def cz(control, target):
+        pass
+
+    @pulse.kernel
+    def layer(qubits):
+        pass
+
+    handles = _device().qudit_handles
+    q = handles[0]
+    with pytest.raises(
+        pulse.InvalidTypeError, match=r"^pair\(\) got qudit 0 for both 'q0' and 'q1'; each"
+    ):
         pair.lower(q, q)
+    message = (
+        r"^cz\(\) got qudit 0 for both 'control' and 'target'; each argument needs a "
+        r"distinct qudit$"
+    )
+    with pytest.raises(TypeError, match=message):
+        cz(q, q)
+    with pytest.raises(TypeError, match=r"^layer\(\) got qudit 1 twice in 'qubits'; each qudit"):
+        layer.lower(handles[[0, 1, 1]])
 
 
 def test_each_call_returns_its_own_container():
@@ -506,11 +604,11 @@ def test_each_call_returns_its_own_container():
 def test_the_schedule_option_is_part_of_the_compiled_kernel():
     @pulse.kernel
     def two(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
-        drive(d0, square(40, 0.1), t0)
-        drive(d0, square(40, 0.1), t0)
-        drive(d1, square(20, 0.1), t1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
+        drive(d0, square(40, 0.1))
+        drive(d0, square(40, 0.1))
+        drive(d1, square(20, 0.1))
         sync(d0, d1)
 
     dev = _device()
@@ -529,20 +627,20 @@ def test_the_schedule_option_is_part_of_the_compiled_kernel():
 
 @pulse.kernel
 def pulse_once(q, amp: float):
-    d, t = get_drive_line(q)
-    drive(d, square(8, amp), t)
+    d = get_drive_line(q)
+    drive(d, square(8, amp))
 
 
 def test_a_kernel_called_in_a_range_loop_keeps_the_loop_rolled():
     @pulse.kernel
     def play(d, t, amp: float):
-        drive(d, square(8, amp), t)
+        drive(d, square(8, amp), tone=t)
 
-    @pulse.kernel
+    @pulse.kernel(unroll_threshold=0)
     def train(q, n: int):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(n):
-            play(d, t, 0.01)
+            play(d, d.tone, 0.01)
 
     q = _device().qudit_handles[0]
     small, large = train.lower(q, 4), train.lower(q, 64)
@@ -554,7 +652,7 @@ def test_a_kernel_called_in_a_range_loop_keeps_the_loop_rolled():
 def test_a_kernel_called_with_the_loop_variable_sees_each_value():
     @pulse.kernel
     def idle(q, i):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, 4 * (i + 1))
 
     @pulse.kernel
@@ -582,21 +680,21 @@ def test_nested_kernel_calls_and_tone_state_carried_across_iterations():
     @pulse.kernel
     def advance(d, t):
         shift_phase(t, 0.25)
-        drive(d, square(8, 0.02), t)
+        drive(d, square(8, 0.02), tone=t)
 
     @pulse.kernel
-    def block(d, t):
-        advance(d, t)
-        advance(d, t)
+    def block(d):
+        advance(d, d.tone)
+        advance(d, d.tone)
 
     @pulse.kernel
     def carried(q, n: int):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(n):
-            block(d, t)
+            block(d)
 
     q = _device().qudit_handles[0]
-    lowered = pulse.compile(carried, passes=()).lower(q, 5)
+    lowered = pulse.compile(carried, passes=(), unroll_threshold=0).lower(q, 5)
     text = lowered.mlir()
     assert text.count("scf.for") == 1 and text.count("pulse.shift_phase") == 2
     # The tone, with its phase, is carried from one iteration to the next.
@@ -622,8 +720,8 @@ def test_a_helper_that_calls_a_kernel_is_inlined():
 
 @pulse.kernel
 def x90(q):
-    d, t = get_drive_line(q)
-    drive(d, square(16, 0.02), t)
+    d = get_drive_line(q)
+    drive(d, square(16, 0.02))
 
 
 def test_two_calls_that_acquire_the_same_drive_line_play_in_sequence():
@@ -641,11 +739,11 @@ def test_two_calls_that_acquire_the_same_drive_line_play_in_sequence():
 def test_a_callee_shares_the_line_its_caller_holds():
     @pulse.kernel
     def outer(q):
-        d, t = get_drive_line(q)
-        t = shift_phase(t, 0.5)
-        drive(d, square(8, 0.02), t)
+        d = get_drive_line(q)
+        shift_phase(d.tone, 0.5)
+        drive(d, square(8, 0.02))
         x90(q)
-        drive(d, square(8, 0.02), t)
+        drive(d, square(8, 0.02))
 
     lowered = pulse.compile(outer, passes=()).lower(_device().qudit_handles[0])
     assert [e.start_cycles for e in lowered.schedule] == [0, 8, 24]
@@ -656,18 +754,18 @@ def test_a_callee_shares_the_line_its_caller_holds():
 def test_two_names_for_one_line_stay_in_step():
     @pulse.kernel
     def aliased(q):
-        d1, t1 = get_drive_line(q)
-        d2, t2 = get_drive_line(q)
-        drive(d1, square(8, 0.02), t1)
-        drive(d2, square(8, 0.02), t2)
-        drive(d1, square(8, 0.02), t1)
+        d1 = get_drive_line(q)
+        d2 = get_drive_line(q)
+        drive(d1, square(8, 0.02))
+        drive(d2, square(8, 0.02))
+        drive(d1, square(8, 0.02))
 
     lowered = pulse.compile(aliased, passes=()).lower(_device().qudit_handles[0])
     assert [e.start_cycles for e in lowered.schedule] == [0, 8, 16]
 
 
 def test_a_callee_acquiring_the_line_in_a_rolled_loop_is_hoisted():
-    @pulse.kernel
+    @pulse.kernel(unroll_threshold=0)
     def train(q, n: int):
         for _ in range(n):
             x90(q)
@@ -684,8 +782,8 @@ def test_a_callee_acquiring_the_line_in_a_rolled_loop_is_hoisted():
 def test_each_arm_of_a_branch_acquires_a_line_it_first_uses():
     @pulse.kernel
     def feedback(q0, q1):
-        r, rt = get_readout_line(q0)
-        if readout(r, square(20, 0.05), rt):
+        r = get_readout_line(q0)
+        if readout(r, square(20, 0.05)):
             x90(q1)
         else:
             x90(q1)
@@ -698,22 +796,22 @@ def test_each_arm_of_a_branch_acquires_a_line_it_first_uses():
 
 @pulse.kernel
 def _flip_if_set(q, amp: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(20, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(20, 0.05))
     sync(d, r)
     if m:
-        drive(d, square(40, amp), t)
+        drive(d, square(40, amp))
 
 
 @pulse.kernel
 def _same_value_inside_and_after_a_branch(q, amp: float):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     half = amp * 0.5
     # First made inside the branch of the called kernel, then used after it:
     # it must be made again there, where the branch's value does not reach.
     _flip_if_set(q, half)
-    drive(d, square(40, half), t)
+    drive(d, square(40, half))
 
 
 def test_a_value_first_made_in_a_branch_is_made_again_after_it():

@@ -10,7 +10,7 @@
 Stretches with a constant Lindbladian (idle waits, square pulses in their
 frame) are propagated exactly; driven stretches on small registers by their
 RK4 map, built at once. Both must agree with stepping RK4 on the state, and
-``paths="sampled"`` must follow only the paths shots take.
+``branches="sampled"`` must follow only the branches shots take.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import time
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import Bits, Float, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.runtime import _propagate
 from cudaq_pulse.runtime import simulate as simulate_module
@@ -52,15 +52,15 @@ def _target(t1_us=30.0, t2_us=20.0, thermal=0.02, offset_hz=0.0):
 
 @pulse.kernel
 def _mixed_pulses(q0):
-    d, t = get_drive_line(q0)
-    drive(d, gaussian(120, _PI, 30), t)
+    d = get_drive_line(q0)
+    drive(d, gaussian(120, _PI, 30))
     # Short enough that stepping does not damp a qutrit's 0-2 coherence.
     wait(d, 40)
-    shift_phase(t, 0.3)
-    drive(d, square(40, _PI / 2), t)
-    drive(d, drag(60, _PI, 15, 0.4), t)
-    shift_frequency(t, 3e6)
-    drive(d, square(80, _PI / 3), t)
+    shift_phase(d.tone, 0.3)
+    drive(d, square(40, _PI / 2))
+    drive(d, drag(60, _PI, 15, 0.4))
+    shift_frequency(d.tone, 3e6)
+    drive(d, square(80, _PI / 3))
 
 
 def _simulated(lowered, monkeypatch, *, maps=True, exact=True, **kwargs):
@@ -101,16 +101,16 @@ def test_exact_stretches_agree_with_stepping_within_its_error(levels, monkeypatc
 
 @pulse.kernel
 def _excite_and_wait(q0, wait_cycles: int):
-    d, t = get_drive_line(q0)
-    drive(d, square(40, _PI), t)
+    d = get_drive_line(q0)
+    drive(d, square(40, _PI))
     wait(d, wait_cycles)
 
 
 def test_a_long_idle_decays_exactly_and_quickly():
     target = _target(t1_us=30.0, thermal=0.0)
-    short = pulse.simulate(on(target, _excite_and_wait, Q[0], 200_000)).density_matrix
+    short = pulse.simulate(on(target, _excite_and_wait, Q[0], 200_000), levels=2).density_matrix
     start = time.perf_counter()
-    long = pulse.simulate(on(target, _excite_and_wait, Q[0], 400_000)).density_matrix
+    long = pulse.simulate(on(target, _excite_and_wait, Q[0], 400_000), levels=2).density_matrix
     elapsed = time.perf_counter() - start
     # 100 us more of pure decay.
     assert long[1, 1].real / short[1, 1].real == pytest.approx(math.exp(-100.0 / 30.0), rel=1e-9)
@@ -137,59 +137,70 @@ def test_expm_matches_a_diagonalizable_exponential():
 
 @pulse.kernel
 def _three_measurements(q0):
-    d, t = get_drive_line(q0)
-    r, rt = get_readout_line(q0)
+    d = get_drive_line(q0)
+    r = get_readout_line(q0)
     for _ in range(3):
-        drive(d, square(40, _PI / 2), t)
+        drive(d, square(40, _PI / 2))
         sync(d, r)
-        readout(r, square(200, 0.05), rt)
+        readout(r, square(200, 0.05))
         sync(d, r)
 
 
-def test_sampled_paths_have_the_frequencies_of_the_exact_paths():
+def test_sampled_branches_have_the_frequencies_of_the_exact_branches():
     lowered = on(_target(t1_us=0.0, t2_us=0.0, thermal=0.0), _three_measurements, Q[0])
-    exact = dict(pulse.simulate(lowered).branches)
+    exact = {b.levels: b.probability for b in pulse.simulate(lowered, levels=2).branches}
     shots = 4000
-    sampled = pulse.simulate(lowered, shots=shots, seed=5, paths="sampled")
+    sampled = pulse.simulate(lowered, shots=shots, seed=5, branches="sampled", levels=2)
     assert len(sampled.branches) <= shots
-    assert sum(p for _, p in sampled.branches) == pytest.approx(1.0)
+    assert sum(b.probability for b in sampled.branches) == pytest.approx(1.0)
     assert np.trace(sampled.density_matrix).real == pytest.approx(1.0)
-    for outcomes, p in sampled.branches:
-        assert abs(p - exact[outcomes]) < 5 * math.sqrt(exact[outcomes] / shots)
+    for branch in sampled.branches:
+        p = exact[branch.levels]
+        assert abs(branch.probability - p) < 5 * math.sqrt(p / shots)
     assert sampled.records is not None and sampled.records.shape == (shots, 3)
 
 
-def test_sampled_paths_need_shots():
+def test_sampled_branches_need_shots():
     lowered = on(_target(), _three_measurements, Q[0])
     with pytest.raises(ValueError, match="shots"):
-        pulse.simulate(lowered, paths="sampled")
-    with pytest.raises(ValueError, match="paths"):
-        pulse.simulate(lowered, shots=1, paths="some")
+        pulse.simulate(lowered, branches="sampled", levels=2)
+    with pytest.raises(ValueError, match="unknown branches 'some'; choose 'all' or 'sampled'"):
+        pulse.simulate(lowered, shots=1, branches="some", levels=2)
+
+
+def test_branch_coverage_takes_its_members_or_their_strings():
+    lowered = on(_target(), _three_measurements, Q[0])
+    by_string = pulse.simulate(lowered, shots=50, seed=2, branches="sampled", levels=2)
+    by_member = pulse.simulate(
+        lowered, shots=50, seed=2, branches=pulse.BranchCoverage.SAMPLED, levels=2
+    )
+    assert by_member.branches == by_string.branches
+    assert pulse.BranchCoverage("all") is pulse.BranchCoverage.ALL
 
 
 _MACHINE = MachineModel(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
 
 
-@pulse.classical(args=(Bits(1), Float()), results=(Float(),), max_latency_ns=200, link="controller")
-def _halve_or_double(bit, wait_cycles):
+@pulse.classical(max_latency_ns=200, link="controller")
+def _halve_or_double(bit: pulse.Bits, wait_cycles: float) -> float:
     return min(max(wait_cycles * (2.0 if bit[0] else 0.5), 20.0), 20000.0)
 
 
 @pulse.kernel
 def _adaptive_loop(q0, rounds: int):
-    d, t = get_drive_line(q0)
-    r, rt = get_readout_line(q0)
+    d = get_drive_line(q0)
+    r = get_readout_line(q0)
     w = 2000.0
-    drive(d, square(40, _PI), t)
+    drive(d, square(40, _PI))
     wait(d, 2000)
     for _ in range(rounds):
         sync(d, r)
-        m = readout(r, square(200, 0.05), rt)
+        m = readout(r, square(200, 0.05))
         w = _halve_or_double.submit([m], w).result()
         sync(d, r)
         if m:
-            drive(d, square(40, _PI), t)
-        drive(d, square(40, _PI), t)
+            drive(d, square(40, _PI))
+        drive(d, square(40, _PI))
         wait(d, w, bounds=(20, 20000))
 
 
@@ -199,21 +210,21 @@ def test_a_long_adaptive_loop_follows_one_path_per_shot():
     lowered = pulse.compile(_adaptive_loop, device=dev, machine=_MACHINE).lower(
         dev.qudit_handles[0], 60
     )
-    result = pulse.simulate(lowered, shots=3, seed=1, paths="sampled")
+    result = pulse.simulate(lowered, shots=3, seed=1, branches="sampled", levels=2)
     assert 1 <= len(result.branches) <= 3
-    assert all(len(calls) == 60 for calls in result.calls)
+    assert all(len(branch.calls) == 60 for branch in result.branches)
     assert result.records is not None and result.records.shape == (3, 60)
 
 
 def test_kept_propagators_are_keyed_compactly():
-    @pulse.kernel
+    @pulse.kernel(unroll_threshold=0)
     def train(q0):
-        d, t = get_drive_line(q0)
+        d = get_drive_line(q0)
         for _ in range(4):
-            drive(d, gaussian(400, _PI, 100), t)
+            drive(d, gaussian(400, _PI, 100))
 
     _propagate.clear_cache()
-    pulse.simulate(on(_target(), train, Q[0]))
+    pulse.simulate(on(_target(), train, Q[0]), levels=2)
     sizes = [
         sum(len(part) for part in key[2:] if isinstance(part, bytes)) for key in _propagate._cache
     ]

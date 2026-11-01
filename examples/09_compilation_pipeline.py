@@ -18,6 +18,13 @@ import math
 import cudaq_pulse as pulse
 from cudaq_pulse.compiler import DEFAULT_PASSES
 
+cal = {
+    "x_duration": 20 * pulse.ns,
+    "x_sigma": 5 * pulse.ns,
+    "idle": 50 * pulse.ns,
+    "square_duration": 25 * pulse.ns,
+}
+
 
 @pulse.kernel
 def pipeline_demo(qubit_0, qubit_1):
@@ -29,23 +36,23 @@ def pipeline_demo(qubit_0, qubit_1):
         passes, merges them)
       - Adjacent same-amplitude square pulses (FUSE_PULSES merges them)
     """
-    drive_line_0, tone_0 = get_drive_line(qubit_0)
-    drive_line_1, tone_1 = get_drive_line(qubit_1)
+    drive_line_0 = get_drive_line(qubit_0)
+    drive_line_1 = get_drive_line(qubit_1)
 
-    shift_phase(tone_0, math.pi / 4)
-    gaussian_envelope = gaussian(40, 0.3, 10.0)
-    drive(drive_line_0, gaussian_envelope, tone_0)
+    shift_phase(drive_line_0.tone, math.pi / 4)
+    gaussian_envelope = gaussian(cal["x_duration"], 0.3, cal["x_sigma"])
+    drive(drive_line_0, gaussian_envelope)
 
-    wait(drive_line_0, 100)
-    wait(drive_line_0, 100)
+    wait(drive_line_0, cal["idle"])
+    wait(drive_line_0, cal["idle"])
 
-    square_pulse_1 = square(50, 0.2)
-    drive(drive_line_0, square_pulse_1, tone_0)
-    square_pulse_2 = square(50, 0.2)
-    drive(drive_line_0, square_pulse_2, tone_0)
+    square_pulse_1 = square(cal["square_duration"], 0.2)
+    drive(drive_line_0, square_pulse_1)
+    square_pulse_2 = square(cal["square_duration"], 0.2)
+    drive(drive_line_0, square_pulse_2)
 
-    gaussian_envelope_2 = gaussian(40, 0.3, 10.0)
-    drive(drive_line_1, gaussian_envelope_2, tone_1)
+    gaussian_envelope_2 = gaussian(cal["x_duration"], 0.3, cal["x_sigma"])
+    drive(drive_line_1, gaussian_envelope_2)
 
 
 def main():
@@ -76,5 +83,5 @@ def main():
 
 
 if __name__ == "__main__":
-    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    dev = pulse.device("transmon_17q")
     main()

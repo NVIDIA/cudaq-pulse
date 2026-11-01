@@ -208,8 +208,8 @@ class GoldenSection:
     """The state of a golden-section search on [lo, hi].
 
     ``c`` and ``d`` are the interior points, ``fc`` and ``fd`` their costs
-    (NaN until measured). ``as_floats``/``from_floats`` pack it for a
-    ``Floats(7)`` argument.
+    (NaN until measured). ``as_floats``/``from_floats`` pack it into the 7
+    values of a ``list[float]`` argument.
     """
 
     lo: float
@@ -285,7 +285,7 @@ class NelderMead:
     the start (``index``), the reflection, the expansion, the contraction,
     or a vertex of a shrink. ``trial`` and ``trial_cost`` keep the
     reflection while its expansion or contraction is measured.
-    ``as_floats``/``from_floats`` pack it for a ``Floats`` argument of
+    ``as_floats``/``from_floats`` pack it into a ``list[float]`` argument of
     ``NelderMead.size(dim)`` values.
     """
 

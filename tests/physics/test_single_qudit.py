@@ -22,8 +22,8 @@ def test_rabi_resonant(case):
 
     @pulse.kernel
     def rabi(q):
-        d, t = get_drive_line(q)
-        drive(d, square(duration, amplitude), t)
+        d = get_drive_line(q)
+        drive(d, square(duration, amplitude))
 
     result = run(device([p["f_q_hz"]], [0.0]), rabi, dt_ns=entry["tolerance"]["dt_ns"])
     assert result.density_matrix[1, 1].real == pytest.approx(
@@ -40,9 +40,9 @@ def test_rabi_detuned(case):
 
     @pulse.kernel
     def rabi(q, f: float):
-        d, t = get_drive_line(q)
-        t = set_frequency(t, f)
-        drive(d, square(duration, p["A_rad_per_ns"]), t)
+        d = get_drive_line(q)
+        set_frequency(d.tone, f)
+        drive(d, square(duration, p["A_rad_per_ns"]))
 
     result = run(device([p["f_q_hz"]], [0.0]), rabi, frequency, dt_ns=entry["tolerance"]["dt_ns"])
     assert result.density_matrix[1, 1].real == pytest.approx(
@@ -71,21 +71,21 @@ def test_ramsey_and_echo_keep_the_tone_phase_across_waits(entry_id, sequence):
 
     @pulse.kernel
     def ramsey(q, f: float):
-        d, t = get_drive_line(q)
-        t = set_frequency(t, f)
-        drive(d, square(x90, amplitude), t)
+        d = get_drive_line(q)
+        set_frequency(d.tone, f)
+        drive(d, square(x90, amplitude))
         wait(d, tau)
-        drive(d, square(x90, amplitude), t)
+        drive(d, square(x90, amplitude))
 
     @pulse.kernel
     def echo(q, f: float):
-        d, t = get_drive_line(q)
-        t = set_frequency(t, f)
-        drive(d, square(x90, amplitude), t)
+        d = get_drive_line(q)
+        set_frequency(d.tone, f)
+        drive(d, square(x90, amplitude))
         wait(d, tau)
-        drive(d, square(x180, amplitude), t)
+        drive(d, square(x180, amplitude))
         wait(d, tau)
-        drive(d, square(x90, amplitude), t)
+        drive(d, square(x90, amplitude))
 
     kernel = ramsey if sequence == "ramsey" else echo
     result = run(

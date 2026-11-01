@@ -135,10 +135,12 @@ To inspect the lowered LLVM IR:
 
    @pulse.kernel
    def my_kernel(qubit):
-       drive_line, tone = get_drive_line(qubit)
-       drive(drive_line, gaussian(40, 0.3, 10.0), tone)
+       drive_line = get_drive_line(qubit)
+       duration = 20 * pulse.ns
+       sigma = 5 * pulse.ns
+       drive(drive_line, gaussian(duration, 0.3, sigma))
 
-   dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+   dev = pulse.device("transmon_17q")
    llvm_ir = my_kernel.lower(dev.qudit_handles[0]).mlir("llvm")
    print(llvm_ir)
 
@@ -184,13 +186,13 @@ To execute on a GPU (requires cuDensityMat runtime):
    )
 
    @pulse.kernel
-   def x_gate(qubit):
-       drive_line, tone = get_drive_line(qubit)
-       # 40 virtual units at 2 GHz is 20 ns.
-       drive(drive_line, square(40, math.pi / 20.0), tone)
+   def x_gate(qubit, duration):
+       drive_line = get_drive_line(qubit)
+       drive(drive_line, square(duration, math.pi / 20.0))
 
    dev = pulse.device({"target": target})
-   lowered = x_gate.lower(dev.qudit_handles[0])
+   pi_time = 20 * pulse.ns
+   lowered = x_gate.lower(dev.qudit_handles[0], pi_time)
    result = pulse.simulate(lowered, backend="gpu", t_end=20.0, dt_ns=0.1, integrator="rk4")
    print(result.density_matrix)
 
@@ -216,7 +218,7 @@ Physical Model
 
 The simulated space holds only the qudits the program uses: those it gets a
 drive or readout line on, one mode each in increasing order of device index.
-A pair at qudits 13 and 3 of the 17-qudit Krinner device is a 3 x 3 problem
+A pair at qudits 13 and 3 of the 17-qudit ``transmon_17q`` device is a 3 x 3 problem
 with three levels, not a 3^14 one. Couplings and crosstalk between those
 qudits keep their device values; the other qudits are left out, with their
 couplings, as classical spectators in their ground state. To simulate an
@@ -226,7 +228,8 @@ each mode: ``result.qudits[i]`` has ``result.dims[i]`` levels and is digit
 uses the same layout, and measurements report device qudits.
 
 The native execution lowering is a transmon model in one rotating frame per
-qudit, with two levels unless ``levels`` asks for more. Drive envelopes are converted to X/Y Hamiltonian
+qudit, with the levels the target's simulation model declares for it (three
+for a ``TransmonModel``) unless ``levels`` sets them. Drive envelopes are converted to X/Y Hamiltonian
 coefficients in radians per nanosecond; tone frequency and phase determine the
 rotating-frame detuning and quadrature. A target may supply
 ``amplitude_scale_rad_per_ns`` explicitly, or pulse infers a scale from its
@@ -253,8 +256,8 @@ metadata only.
 Unsupported Execution Features
 ------------------------------
 
-The execution lowering fails explicitly for observables, neutral-atom
-targets, products of two float arguments, arbitrary Python waveform
+The execution lowering fails explicitly for observables, systems with
+no simulation model, products of two float arguments, arbitrary Python waveform
 callbacks, and waveform-algebra nodes. Built-in waveforms and
 ``custom_samples`` are supported. The callback runtime holds 1024
 time-dependent coefficients per evolution: two per drive op (a drive
@@ -299,20 +302,26 @@ of the outcomes from the same branch probabilities.
 
    @pulse.kernel
    def active_reset(qubit):
-       drive_line, drive_tone = get_drive_line(qubit)
-       readout_line, readout_tone = get_readout_line(qubit)
-       result = readout(readout_line, square(1000, 0.05), readout_tone)
+       drive_line = get_drive_line(qubit)
+       readout_line = get_readout_line(qubit)
+       readout_time = 500 * pulse.ns
+       pi_time = 20 * pulse.ns
+       result = readout(readout_line, square(readout_time, 0.05))
        sync(drive_line, readout_line)
        if result:
-           drive(drive_line, square(40, math.pi / 20.0), drive_tone)
+           drive(drive_line, square(pi_time, math.pi / 20.0))
 
    lowered = active_reset.lower(dev.qudit_handles[0])
    result = pulse.simulate(lowered, shots=1000, backend="cpu")
    result.density_matrix   # ensemble state at the end
-   result.branches         # [(outcomes, probability), ...]
+   result.level_population(1)   # P(1) of the one qudit; level_population(1, qudit=q) for one of several
+   result.level_populations()   # [P(0), P(1), P(2)] for a three-level qudit
+   result.branches         # [Branch(levels=(0,), probability=0.5, calls=()), ...]
    result.records          # one row of outcomes per shot
 
 ``backend="cpu"`` integrates the same lowered operator with a NumPy RK4
 reference; ``backend="gpu"`` evolves each segment with cuDensityMat, starting
-from the projected state. ``levels`` gives qudits more than two levels; a
-transmon target then includes its anharmonicity.
+from the projected state. By default each qudit has the levels its target's
+model declares (three for a transmon); ``levels=2`` simulates qubits, an int
+sets every qudit's levels and a dict by device qudit index sets those it
+names. With three or more levels a transmon includes its anharmonicity.

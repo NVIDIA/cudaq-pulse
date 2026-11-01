@@ -24,12 +24,33 @@ if(CUDAQ_PULSE_FREE_THREADED)
   set(_cudaq_pulse_free_threaded FREE_THREADED)
 endif()
 
+# The stamp a pickled program records of the build that compiled it, from the
+# native sources and the LLVM they build with (see cmake/write_build_stamp.cmake).
+file(GLOB_RECURSE _cudaq_pulse_native_sources CONFIGURE_DEPENDS
+  "${CUDAQ_PULSE_SOURCE_DIR}/core/mlir/*.cpp"
+  "${CUDAQ_PULSE_SOURCE_DIR}/core/mlir/*.h"
+  "${CUDAQ_PULSE_SOURCE_DIR}/core/mlir/*.td")
+set(_build_stamp_sources "${CMAKE_CURRENT_BINARY_DIR}/build_stamp_sources.txt")
+list(JOIN _cudaq_pulse_native_sources "\n" _build_stamp_list)
+file(CONFIGURE OUTPUT "${_build_stamp_sources}" CONTENT "${_build_stamp_list}\n")
+set(_build_stamp "${CMAKE_CURRENT_BINARY_DIR}/build_stamp.cpp")
+add_custom_command(
+  OUTPUT "${_build_stamp}"
+  COMMAND "${CMAKE_COMMAND}" "-DSOURCES=${_build_stamp_sources}"
+    "-DLLVM_VERSION=${LLVM_PACKAGE_VERSION}" "-DOUTPUT=${_build_stamp}"
+    -P "${CUDAQ_PULSE_SOURCE_DIR}/cmake/write_build_stamp.cmake"
+  DEPENDS ${_cudaq_pulse_native_sources} "${_build_stamp_sources}"
+    "${CUDAQ_PULSE_SOURCE_DIR}/cmake/write_build_stamp.cmake"
+  COMMENT "Stamping the native extension's build")
+
 nanobind_add_module(
   _cudaq_pulse_native
   NB_STATIC
   STABLE_ABI
   ${_cudaq_pulse_free_threaded}
   bindings.cpp
+  "${_build_stamp}"
+  LengthInference.cpp
 )
 
 target_link_libraries(_cudaq_pulse_native PRIVATE
@@ -46,6 +67,7 @@ target_link_libraries(_cudaq_pulse_native PRIVATE
   MLIRFuncToLLVM
   MLIRReconcileUnrealizedCasts
   MLIRParser
+  MLIRBytecodeWriter
   MLIRSCFDialect
   MLIRUBDialect
   MLIRTargetLLVMIRExport

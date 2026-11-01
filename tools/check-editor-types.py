@@ -37,8 +37,8 @@ import cudaq_pulse as pulse
 
 @pulse.kernel
 def probe(qubit):
-    line, tone = get_drive_line(qubit)
-    drive(tone, gaussian(40, 0.1, 10.0), line)
+    line = get_drive_line(qubit)
+    drive(line.tone, gaussian(40, 0.1, 10.0), tone=line)
     drve(line)
 """
 # (line, rule) of what the probe must report, by mode.

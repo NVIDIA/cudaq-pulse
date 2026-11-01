@@ -45,7 +45,7 @@ def _compile_time_workloads():
 
 @pytest.mark.parametrize("n", [1, 8, 32, 128, 512])
 def test_dd_loop_is_retained_with_constant_op_count(n):
-    ir = python_ir(dd_loop(n), Q[0])
+    ir = python_ir(dd_loop(n), Q[0], unroll_threshold=0)
     # get_drive_line, square, scf.for, drive, scf.for_end
     assert ir.op_count() == 5
     (loop,) = [op for op in ir.ops if op.kind == "scf.for"]
@@ -70,7 +70,7 @@ def test_compile_time_workload_op_counts():
 
 @pytest.mark.parametrize("n", [1, 8, 512])
 def test_compile_retains_loops_in_the_packed_program(n):
-    ck = pulse.compile(dd_loop(n), passes=()).lower(Q[0])
+    ck = pulse.compile(dd_loop(n), passes=(), unroll_threshold=0).lower(Q[0])
     # get_drive_line, square, scf.for, drive, scf.for_end
     assert ck.metrics.op_count == 5
     assert ck.mlir().count("= pulse.drive ") == 1
@@ -118,11 +118,11 @@ def test_list_held_lines_are_rebound():
 
     @pulse.kernel
     def k(q0):
-        line, tone = get_drive_line(q0)
-        lines, tones = [line], [tone]
+        line = get_drive_line(q0)
+        lines, tones = [line], [line.tone]
         x = square(40, 0.1)
-        drive(lines[0], x, tones[0])
-        drive(lines[0], x, tones[0])
+        drive(lines[0], x, tone=tones[0])
+        drive(lines[0], x, tone=tones[0])
 
     first, second = [op for op in python_ir(k, Q[0]).ops if op.kind == "pulse.drive"]
     assert second.operands[0] is first.results[0]
@@ -132,16 +132,16 @@ def test_list_held_lines_are_rebound():
 def test_loop_over_a_list_held_line_stays_rolled():
     @pulse.kernel
     def k(q0):
-        line, tone = get_drive_line(q0)
-        lines, tones = [line], [tone]
+        line = get_drive_line(q0)
+        lines, tones = [line], [line.tone]
         x = square(40, 0.1)
         for _ in range(6):
-            drive(lines[0], x, tones[0])
+            drive(lines[0], x, tone=tones[0])
         wait(lines[0], 10)
 
-    ir = python_ir(k, Q[0])
+    ir = python_ir(k, Q[0], unroll_threshold=0)
     assert [op.kind for op in ir.ops].count("scf.for") == 1
-    compiled = pulse.compile(k, schedule="asap").lower(Q[0])
+    compiled = pulse.compile(k, schedule="asap", unroll_threshold=0).lower(Q[0])
     assert max(e.start_cycles + e.duration_cycles for e in compiled.schedule) == 6 * 40 + 10
 
 
@@ -161,14 +161,14 @@ def test_closure_values_and_inlined_helpers():
     shift = 0.25
 
     def play(line, tone, amp=0.3):
-        drive(line, square(10, amp), tone)
+        drive(line, square(10, amp), tone=tone)
 
     @pulse.kernel
     def k(q0):
-        d0, t0 = get_drive_line(q0)
-        t0 = shift_phase(t0, shift)
-        play(d0, t0)
-        play(d0, t0, amp=shift)
+        d0 = get_drive_line(q0)
+        shift_phase(d0.tone, shift)
+        play(d0, d0.tone)
+        play(d0, d0.tone, amp=shift)
 
     ir = python_ir(k, Q[0])
     amps = [op.attrs["amplitude"] for op in ir.ops if op.kind == "pulse.square"]
@@ -181,8 +181,8 @@ def test_symbolic_parameters_compile_once():
 
     @pulse.kernel
     def k(q0, amp: float):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, gaussian(40, amp, 10.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, gaussian(40, amp, 10.0))
 
     ck = pulse.compile(k)
     q = Q[0]
@@ -195,8 +195,8 @@ def test_compile_retains_a_measurement_branch():
 
     @pulse.kernel
     def k(q0):
-        r0, t0 = get_readout_line(q0)
-        bit = readout(r0, square(10, 0.2), t0)
+        r0 = get_readout_line(q0)
+        bit = readout(r0, square(10, 0.2))
         if bit:
             wait(r0, 10)
 

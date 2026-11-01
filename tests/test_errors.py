@@ -168,7 +168,12 @@ def test_library_errors_are_pulse_errors_of_their_kind():
 
 # The modules that still raise built-in errors, and how many; every other
 # module raises library errors only.
-BUILTIN_RAISES = {"compiler.py": 19, "controller.py": 11, "kernel/_kernel.py": 8}
+BUILTIN_RAISES = {
+    "_waits.py": 4,
+    "compiler.py": 15,
+    "controller.py": 11,
+    "kernel/_kernel.py": 7,
+}
 
 
 def test_only_known_modules_raise_builtin_errors():
@@ -193,8 +198,8 @@ def test_the_specialization_warning_is_a_pulse_warning_and_a_runtime_warning():
 
     @pulse.kernel
     def k(q, x: float):
-        d, t = get_drive_line(q)
-        drive(d, square(int(x), 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(int(x), 0.1))
 
     with pytest.warns(pulse.PulseWarning, match="float argument 'x'") as record:
         pulse.compile(k).lower(Q[0], 8.0)

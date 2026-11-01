@@ -22,31 +22,31 @@ NUM_QUBITS = 2
 
 @pulse.kernel
 def build(q0, q1):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
-    r0, rt0 = get_readout_line(q0)
-    r1, rt1 = get_readout_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
+    r0 = get_readout_line(q0)
+    r1 = get_readout_line(q1)
 
     # Hadamard on q0 as Rz(pi/2) · SX · Rz(pi/2)
-    shift_phase(t0, math.pi / 2)
+    shift_phase(d0.tone, math.pi / 2)
     sx = drag(40, 0.25, 10.0, 0.5)
-    drive(d0, sx, t0)
-    shift_phase(t0, math.pi / 2)
+    drive(d0, sx)
+    shift_phase(d0.tone, math.pi / 2)
 
     sync(d0, d1)
 
     # CNOT via echo cross-resonance
-    drive(d1, sx, t1)
+    drive(d1, sx)
     cr = gaussian(200, 0.10, 50.0)
-    drive(d0, cr, t1)
+    drive(d0, cr, tone=d1.tone)
     x_ctrl = square(40, [0.047, 0.0])
-    drive(d0, x_ctrl, t0)
+    drive(d0, x_ctrl)
     cr_neg = gaussian(200, -0.10, 50.0)
-    drive(d0, cr_neg, t1)
-    drive(d1, sx, t1)
+    drive(d0, cr_neg, tone=d1.tone)
+    drive(d1, sx)
 
     sync(d0, d1, r0, r1)
 
     ro = square(1000, [0.05, 0.0])
-    readout(r0, ro, rt0)
-    readout(r1, ro, rt1)
+    readout(r0, ro)
+    readout(r1, ro)

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.classical import Bits, Float
 
 from tests._handles import Q
 from tests.classical._schedule_matrix import line_timelines
@@ -24,14 +23,10 @@ LONG, RO, BOUNDS = 2000, 200, (16, 4000)
 
 
 def _length(mode):
-    return pulse.classical(
-        lambda bits: 100.0 + 50.0 * bits[0],
-        name=f"length_{mode}",
-        args=(Bits(1),),
-        results=(Float(),),
-        max_latency_ns=50,
-        latency_mode=mode,
-    )
+    def length(bits: pulse.Bits) -> float:
+        return 100.0 + 50.0 * bits[0]
+
+    return pulse.classical(length, name=f"length_{mode}", max_latency_ns=50, latency_mode=mode)
 
 
 LENGTH = {"bounded": _length("bounded"), "blocking": _length("blocking")}
@@ -39,7 +34,7 @@ LENGTH = {"bounded": _length("bounded"), "blocking": _length("blocking")}
 
 def _take(future, take):
     if take == "timeout":
-        _, x = future.result(timeout_ns=100)
+        _, x = future.result(timeout=100 * pulse.ns)
         return x
     return future.result()
 
@@ -47,19 +42,19 @@ def _take(future, take):
 def _round(q, take):
     """Measure, ask for a wait's length from the bit, wait that long and
     drive."""
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, 0.1), t)
-    m = readout(r, square(RO, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, 0.1))
+    m = readout(r, square(RO, 0.05))
     fn = LENGTH["blocking" if take == "blocking" else "bounded"]
     wait(d, _take(fn.submit([m]), take), bounds=BOUNDS)
-    drive(d, square(40, 0.1), t)
+    drive(d, square(40, 0.1))
 
 
 def _busy(p, length=LONG):
-    e, u = get_drive_line(p)
-    drive(e, square(length, 0.01), u)
-    return e, u
+    e = get_drive_line(p)
+    drive(e, square(length, 0.01))
+    return e, e.tone
 
 
 def _own(low, k=0):
@@ -121,14 +116,14 @@ def test_two_qubits_with_their_own_waits_do_not_stall_each_other(policy, take):
 def test_a_sync_after_a_run_time_wait_still_aligns(policy, take):
     @pulse.kernel
     def k(q, p):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         e, u = _busy(p)
-        m = readout(r, square(RO, 0.05), rt)
+        m = readout(r, square(RO, 0.05))
         wait(d, _take(LENGTH["blocking" if take == "blocking" else "bounded"].submit([m]), take))
         sync(d, e)
-        drive(d, square(40, 0.1), t)
-        drive(e, square(40, 0.1), u)
+        drive(d, square(40, 0.1))
+        drive(e, square(40, 0.1), tone=u)
 
     low = _lower(k, Q[0], Q[1], schedule=policy)
     (variable,) = [e for e in low.schedule if e.kind == "wait" and e.link is None and e.line == 0]
@@ -143,14 +138,14 @@ def test_a_sync_after_a_run_time_wait_still_aligns(policy, take):
 def test_an_answer_used_on_two_lines_holds_back_both(policy, take):
     @pulse.kernel
     def k(q, p):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         e, u = _busy(p)
-        m = readout(r, square(RO, 0.05), rt)
+        m = readout(r, square(RO, 0.05))
         x = _take(LENGTH["blocking" if take == "blocking" else "bounded"].submit([m]), take)
         wait(d, x, bounds=BOUNDS)
         wait(e, x, bounds=BOUNDS)
-        drive(d, square(40, 0.1), t)
+        drive(d, square(40, 0.1))
 
     low = _lower(k, Q[0], Q[1], schedule=policy)
     assert len(set(line_timelines(low).values())) == 1
@@ -171,15 +166,15 @@ def test_an_answer_used_on_two_lines_holds_back_both(policy, take):
 def test_a_called_kernel_with_its_own_schedule_feeds_only_its_lines(policy, inner, take):
     @pulse.kernel(schedule=inner)
     def measure(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        drive(d, square(40, 0.1), t)
-        return LENGTH["bounded"].submit([readout(r, square(RO, 0.05), rt)])
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        drive(d, square(40, 0.1))
+        return LENGTH["bounded"].submit([readout(r, square(RO, 0.05))])
 
     def own(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, _take(measure(q), take), bounds=BOUNDS)
-        drive(d, square(40, 0.1), t)
+        drive(d, square(40, 0.1))
 
     def pair(length):
         @pulse.kernel

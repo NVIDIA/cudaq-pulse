@@ -29,9 +29,9 @@ def test_rabi_mlir_structure():
 
     @pulse.kernel
     def rabi(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         wf = gaussian(100, 0.1, 25.0)
-        drive(d0, wf, t0)
+        drive(d0, wf)
 
     ir = (rabi, Q[0])
     mlir = pulse_mlir(ir, clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
@@ -63,9 +63,9 @@ def test_rabi_gpu_execution():
 
     @pulse.kernel
     def rabi(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         wf = square(40, math.pi / 20.0)
-        drive(d0, wf, t0)
+        drive(d0, wf)
 
     ir = (rabi, Q[0])
     result = evolve(on(target, *ir), t_start=0.0, t_end=20.0, num_steps=200, integrator="rk4")
@@ -102,9 +102,9 @@ def test_rabi_gpu_integrator_parity(integrator):
 
     @pulse.kernel
     def rabi(q0):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         wf = square(40, math.pi / 20.0)
-        drive(d0, wf, t0)
+        drive(d0, wf)
 
     ir = (rabi, Q[0])
     result = evolve(on(target, *ir), t_start=0.0, t_end=20.0, num_steps=200, integrator=integrator)

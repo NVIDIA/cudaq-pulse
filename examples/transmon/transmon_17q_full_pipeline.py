@@ -6,7 +6,7 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""Target-aware lowering demo on the Krinner target.
+"""Target-aware lowering demo on the 17-qubit transmon target.
 
   kernel -> pulse.compile (default passes, ALAP) -> Pulse MLIR
          -> QOp (operator algebra) -> CuDensityMat -> LLVM
@@ -25,13 +25,14 @@ import shutil
 import subprocess
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import transmon_krinner_17q
+from cudaq_pulse.targets import transmon_17q
 
-target = transmon_krinner_17q()
+target = transmon_17q()
+dev = pulse.device("transmon_17q")
 index = {q.label: q.index for q in target.qubits.values()}
 auxiliary, data = index["X1"], index["D2"]
 coupling = next(c for c in target.couplings if {c.qubit_a, c.qubit_b} == {auxiliary, data})
-# The Krinner target gives each CZ's published duration; a generic Coupling
+# The transmon_17q target gives each CZ's published duration; a generic Coupling
 # leaves it unspecified (None).
 cz_ns = coupling.gate_duration_ns
 assert cz_ns is not None
@@ -45,35 +46,38 @@ print(
 
 # The published 40 ns, sigma = 10 ns pulse; amplitudes are rates in rad/ns.
 drive_params = target.get_drive_params(data)
-clock_ghz = target.clock_ghz
+clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
 duration_ns, sigma_ns = drive_params["x_dur"], drive_params["x_sigma"]
 area_ns = sigma_ns * math.sqrt(2 * math.pi) * math.erf(duration_ns / (2 * math.sqrt(2) * sigma_ns))
-duration, sigma = round(duration_ns * clock_ghz), sigma_ns * clock_ghz
 pi_amplitude = math.pi / area_ns
-cz_slot = round(cz_ns * clock_ghz)
+cal = {
+    "x_duration": duration_ns * pulse.ns,
+    "x_sigma": sigma_ns * pulse.ns,
+    "cz_slot": cz_ns * pulse.ns,
+}
 
 
 @pulse.kernel
-def krinner_pair(qubit_aux, qubit_data):
-    drive_line_aux, tone_aux = get_drive_line(qubit_aux)
-    drive_line_data, tone_data = get_drive_line(qubit_data)
+def cz_pair(qubit_aux, qubit_data):
+    drive_line_aux = get_drive_line(qubit_aux)
+    drive_line_data = get_drive_line(qubit_data)
+    duration, sigma = cal["x_duration"], cal["x_sigma"]
 
     # pi/2 on the auxiliary qubit, pi on the data qubit
-    drive(drive_line_aux, drag(duration, pi_amplitude / 2, sigma, 0.0), tone_aux)
-    drive(drive_line_data, drag(duration, pi_amplitude, sigma, 0.0), tone_data)
+    drive(drive_line_aux, drag(duration, pi_amplitude / 2, sigma, 0.0))
+    drive(drive_line_data, drag(duration, pi_amplitude, sigma, 0.0))
     sync(drive_line_aux, drive_line_data)
 
     # The CZ slot
-    wait(drive_line_aux, cz_slot)
-    wait(drive_line_data, cz_slot)
+    wait(drive_line_aux, cal["cz_slot"])
+    wait(drive_line_data, cal["cz_slot"])
     sync(drive_line_aux, drive_line_data)
 
-    drive(drive_line_aux, drag(duration, pi_amplitude / 2, sigma, 0.0), tone_aux)
+    drive(drive_line_aux, drag(duration, pi_amplitude / 2, sigma, 0.0))
 
 
 print("=== Stage 1: compile (default passes, ALAP schedule) ===")
-dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
-compiled = pulse.compile(krinner_pair, device=dev).lower(
+compiled = pulse.compile(cz_pair, device=dev).lower(
     dev.qudit_handles[auxiliary], dev.qudit_handles[data]
 )
 total_cycles = max(e.end for e in compiled.schedule)

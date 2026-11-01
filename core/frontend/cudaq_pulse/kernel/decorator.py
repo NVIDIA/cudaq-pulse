@@ -59,10 +59,10 @@ def kernel[**P](
 
         @cudaq_pulse.kernel
         def rabi(q, amp: float):
-            d, t = get_drive_line(q)
-            drive(d, gaussian(40, amp, 10.0), t)
+            d = get_drive_line(q)
+            drive(d, gaussian(40, amp, 10.0))
 
-        dev = cudaq_pulse.get_device(cudaq_pulse.Target.TRANSMON_KRINNER_17Q)
+        dev = cudaq_pulse.device("transmon_17q")
         rabi(dev.qudit_handles[0], 0.3)
 
     A kernel called from another kernel is scheduled with it, unless it
@@ -73,8 +73,8 @@ def kernel[**P](
     ``cudaq_pulse.compile(k, schedule=...)`` overrides it.
 
     *unroll_threshold* sets which ``for ... in range(n)`` loops are unrolled
-    while tracing (see ``cudaq_pulse.compile``); by default
-    ``CUDAQ_PULSE_UNROLL_THRESHOLD``, else ``DEFAULT_UNROLL_THRESHOLD``.
+    while tracing (see ``cudaq_pulse.compile``): a non-negative ``int``, 8 by
+    default, and 0 never unrolls.
     """
     from ._bytecode_normalize import check_interpreter
     from ._kernel import Kernel

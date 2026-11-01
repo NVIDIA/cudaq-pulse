@@ -26,8 +26,8 @@ def _pi_pulse(beta_cycles):
 
     @pulse.kernel
     def pi_pulse(q, beta: float):
-        d, t = get_drive_line(q)
-        drive(d, drag(duration, amplitude, sigma, beta), t)
+        d = get_drive_line(q)
+        drive(d, drag(duration, amplitude, sigma, beta))
 
     result = run(
         device([P["f_q_hz"]], [P["alpha_hz"]]),

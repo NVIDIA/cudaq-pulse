@@ -14,18 +14,18 @@ names one carrier of that device. A kernel called with handles runs on their
 device, so one compiled kernel serves every device it is called with.
 
 Devices compare by content: two devices built from the same config are equal
-and share compiled kernels.
+and share compiled kernels. The content is the target, layout and
+calibration (a shipped one by name, cooldown and file, any other by its
+values); ``name`` and ``source`` are labels, and equal devices may differ
+in them.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import enum
-import hashlib
-import json
 import os
 from collections.abc import Iterator, Mapping, Sequence
-from typing import Any, overload
+from typing import TYPE_CHECKING, Any, overload
 
 from ._errors import (
     DeviceDefinitionError,
@@ -35,10 +35,23 @@ from ._errors import (
     PulseError,
     _closest,
     _count,
+    _QuditIndexError,
     _ranges,
 )
 from .targets._registry import NoTargetError, UnknownTargetError
-from .targets.base import TargetDescription
+from .targets.base import _EXCHANGE, TargetDescription, _coupling_kind
+from .targets.models import SimulationModel
+
+try:
+    # hashlib's own blake2b, without hashlib's import of OpenSSL (a millisecond).
+    from _blake2 import blake2b as _blake2b
+except ImportError:  # pragma: no cover - CPython builds without the _blake2 module
+    from hashlib import blake2b as _blake2b
+
+if TYPE_CHECKING:
+    from array import array
+
+    from ._system import ControlSystem
 
 __all__ = [
     "Device",
@@ -46,9 +59,7 @@ __all__ = [
     "NoDeviceError",
     "Qudit",
     "Register",
-    "Target",
     "device",
-    "get_device",
 ]
 
 
@@ -62,16 +73,18 @@ class DeviceMismatchError(PulseError, RuntimeError):
     """A kernel call mixes handles of different devices, or of an unpinned one."""
 
 
-class Target(enum.Enum):
-    """Targets shipped with cudaq-pulse, for ``get_device``."""
-
-    TRANSMON_KRINNER_17Q = "transmon_krinner_17q"
-    RYDBERG_CHAIN_8 = "rydberg_chain:8"
-    RYDBERG_SQUARE_3X3 = "rydberg_square:3x3"
-
-
 _CARRIER = "qudit"
-_CONFIG_KEYS = ("target", "layout", "calibration", "cooldown")
+_CONFIG_KEYS = (
+    "format",
+    "written_by",
+    "quantum_system",
+    "target",
+    "layout",
+    "calibration",
+    "cooldown",
+    "control_system",
+    "clock_ghz",
+)
 # Reserved for a model of where carriers are and how they move.
 _RESERVED_CONFIG = frozenset({"zones", "sites", "moves", "transport"})
 
@@ -81,8 +94,9 @@ def _read_only(array: Any) -> Any:
     return array
 
 
-def _fingerprint(target: TargetDescription, layout: tuple[int, ...]) -> str:
-    """Content hash of everything a compiled kernel depends on."""
+def _fingerprint(target: TargetDescription, layout: tuple[int, ...], calibration: Any) -> str:
+    """Content hash of everything a compiled kernel depends on, and of the
+    calibration the device holds: devices of one fingerprint are one device."""
     qubits = [
         (
             q.index,
@@ -97,15 +111,30 @@ def _fingerprint(target: TargetDescription, layout: tuple[int, ...]) -> str:
         )
         for q in sorted(target.qubits.values(), key=lambda q: q.index)
     ]
-    couplings = [
+    # An exchange coupling adds no kind, so exchange-only devices keep their
+    # fingerprints.
+    couplings: list[tuple[Any, ...]] = [
         (c.qubit_a, c.qubit_b, c.coupling_strength_hz, c.gate_type, sorted(c.gate_params.items()))
         for c in target.couplings
     ]
+    if target._exchange_view is not target.couplings:
+        couplings = [
+            entry + (() if (kind := _coupling_kind(c)) == _EXCHANGE else (kind,))
+            for entry, c in zip(couplings, target.couplings)
+        ]
     crosstalk = [(x.qubit_a, x.qubit_b, x.static_zz_hz) for x in target.crosstalk]
-    content = repr(
-        (target.architecture, target.clock_ghz, qubits, couplings, crosstalk, layout)
-    ).encode()
-    return hashlib.blake2b(content, digest_size=16).hexdigest()
+    content: tuple[Any, ...] = (
+        target.model,
+        target.clock_ghz,
+        qubits,
+        couplings,
+        crosstalk,
+        layout,
+    )
+    # Uncalibrated devices keep their fingerprints.
+    if calibration is not None:
+        content += (calibration._identity,)
+    return _blake2b(repr(content).encode(), digest_size=16).hexdigest()
 
 
 class Qudit:
@@ -136,6 +165,16 @@ class Qudit:
     def __hash__(self) -> int:
         return hash(self._key)
 
+    # Read-only: a copy is the handle itself.
+    def __copy__(self) -> Qudit:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Qudit:
+        return self
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (Qudit, (self.device, self.index, self.logical))
+
     def __repr__(self) -> str:
         return f"<Qudit {self.logical} -> {self.carrier} {self.index} of {self.device.name}>"
 
@@ -157,12 +196,22 @@ class Register(Sequence[Qudit]):
     def __getitem__(self, index: slice | Sequence[int]) -> Register: ...
 
     def __getitem__(self, index: Any) -> Qudit | Register:
-        if isinstance(index, slice):
-            return Register(self._qudits[index])
-        if isinstance(index, Sequence) and not isinstance(index, str):
-            return Register([self._qudits[i] for i in index])
-        qudit: Qudit = self._qudits[index]
+        qudit: Qudit
+        try:
+            if index.__class__ is int:
+                qudit = self._qudits[index]
+                return qudit
+            if isinstance(index, slice):
+                return Register(self._qudits[index])
+            if isinstance(index, Sequence) and not isinstance(index, str):
+                return Register([self._qudits[i] for i in index])
+            qudit = self._qudits[index]
+        except IndexError:
+            raise _out_of_range(index, len(self._qudits), self._owner()) from None
         return qudit
+
+    def _owner(self) -> str:
+        return "the register"
 
     def __iter__(self) -> Iterator[Qudit]:
         return iter(self._qudits)
@@ -172,6 +221,9 @@ class Register(Sequence[Qudit]):
 
     def __hash__(self) -> int:
         return hash(self._qudits)
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (type(self), (self._qudits,))
 
     def __repr__(self) -> str:
         return f"Register({[q.logical for q in self._qudits]})"
@@ -183,7 +235,7 @@ class _Handles:
     __slots__ = ("_all",)
 
     def __init__(self, qudits: tuple[Qudit, ...]) -> None:
-        self._all = Register(qudits)
+        self._all = _DeviceRegister(qudits)
 
     def __len__(self) -> int:
         return len(self._all)
@@ -200,14 +252,56 @@ class _Handles:
         handles: Qudit | Register = self._all[index]
         return handles
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (_Handles, (self._all._qudits,))
+
+
+class _DeviceRegister(Register):
+    """All the qudits of a device, which its errors name."""
+
+    __slots__ = ()
+
+    def _owner(self) -> str:
+        return f"device {self._qudits[0].device.name!r}" if self._qudits else "the device"
+
+
+def _out_of_range(index: Any, n: int, owner: str) -> _QuditIndexError:
+    """The error for *index*, which names a qudit past the *n* of *owner*."""
+    wrong = index
+    if isinstance(index, Sequence) and not isinstance(index, str):
+        wrong = next((i for i in index if isinstance(i, int) and not -n <= i < n), index)
+    if n == 0:
+        return _QuditIndexError(f"qudit index {wrong!r} is out of range: {owner} has no qudits")
+    return _QuditIndexError(
+        f"qudit index {wrong!r} is out of range: {owner} has {_count(n, 'qudit')}, "
+        f"indexed 0 to {n - 1} (or -{n} to -1)"
+    )
+
 
 class Device:
     """A read-only machine description; see the module docstring.
 
+    ``clock_ghz`` is the program clock: kernels count time in its cycles. A
+    config's ``"clock_ghz"`` sets it; else the fastest clock of the control
+    system's controllers, when every other one divides it (controllers whose
+    clocks do not divide evenly need it declared); else the target's. Each
+    controller may run its own clock, a whole-cycle ratio of it (see
+    ``cudaq_pulse.controller``).
+
     ``qubit_freq[q]`` is the 0-1 transition frequency of qudit ``q`` (Hz) and
-    ``transition_freq[q, i, j]`` that of levels ``i`` and ``j``; both are
-    indexed by the user's qudit numbering and are read-only arrays.
+    ``transition_freq[q, i, j]`` that of levels ``i`` and ``j``, over the
+    levels the target's model gives each qudit (NaN past a qudit's last
+    level); both are indexed by the user's qudit numbering and are read-only
+    arrays.
+    ``control_system`` is the ``ControlSystem`` that plays it, if given;
+    ``compile(kernel, device=dev)`` checks every program against it.
     """
+
+    # The registered target the device was made from, as ``as_dict`` writes it.
+    _spec: str | None = None
+    # What a kernel whose qudits are runtime parameters depends on, made by
+    # the first such kernel (_programs._structure).
+    _structure: str | None = None
 
     def __init__(
         self,
@@ -217,15 +311,39 @@ class Device:
         layout: Sequence[int] | None = None,
         source: str = "",
         calibration: Any = None,
+        control_system: ControlSystem | None = None,
+        clock_ghz: float | None = None,
     ) -> None:
+        if control_system is not None:
+            from ._system import ControlSystem
+
+            if not isinstance(control_system, ControlSystem):
+                raise InvalidTypeError(
+                    f"Device control_system must be a ControlSystem, got {control_system!r}"
+                )
         problems: list[Problem] = []
+        if clock_ghz is not None or (control_system is not None and control_system._needs_clock):
+            from ._clocks import _program_clock
+
+            clock, problems = _program_clock(control_system, clock_ghz, target.clock_ghz)
+            if clock is None:
+                raise DeviceDefinitionError(problems=problems)
+            if clock != target.clock_ghz:
+                target = dataclasses.replace(target, clock_ghz=clock)
         layout = (
             tuple(sorted(target.qubits))
             if layout is None
             else _layout(layout, target, name, problems)
         )
-        if layout is None:
+        if control_system is not None:
+            from ._system import _wiring_problems
+
+            problems.extend(_wiring_problems(control_system, target))
+        if layout is None or problems:
             raise DeviceDefinitionError(problems=problems)
+        self.control_system = control_system
+        # The target before its calibration was applied, as ``as_dict`` writes it.
+        self._base_target = target
         self.target = target
         self.name = name
         self.source = source
@@ -234,25 +352,48 @@ class Device:
         self.layout = layout
         self.clock_ghz = float(target.clock_ghz)
         self.frequencies: Mapping[int, float] = target.frequencies
-        self.fingerprint = _fingerprint(target, layout)
+        self.fingerprint = _fingerprint(target, layout, calibration)
+        # What equality compares: the fingerprint alone without a control
+        # system, so comparing such devices costs one string comparison.
+        self._identity: Any = (
+            self.fingerprint if control_system is None else (self.fingerprint, control_system)
+        )
         self.qudit_handles = _Handles(tuple(Qudit(self, p, i) for i, p in enumerate(layout)))
         self._arrays: tuple[Any, Any] | None = None
+        self._table: array[float] | None = None
 
     def _frequency_arrays(self) -> tuple[Any, Any]:
         if self._arrays is None:
             import numpy as np
 
-            levels = 3 if self.target.architecture == "transmon" else 2
-            n = len(self.layout)
-            f01 = np.array([self.target.qubits[p].frequency_hz for p in self.layout], dtype=float)
-            energies = np.zeros((n, levels))
-            energies[:, 1] = f01
-            if levels > 2:
-                alpha = np.array([self.target.qubits[p].anharmonicity_hz for p in self.layout])
-                energies[:, 2] = 2 * f01 + alpha
+            target = self.target
+            model = target.model if isinstance(target.model, SimulationModel) else SimulationModel()
+            qubits = [target.qubits[p] for p in self.layout]
+            levels = [model.levels_of(p) for p in self.layout]
+            f01 = np.array([q.frequency_hz for q in qubits], dtype=float)
+            energies = np.full((len(qubits), max(levels, default=model.levels)), np.nan)
+            for row, qubit, n in zip(energies, qubits, levels):
+                row[:n] = model.energies_hz(qubit, n)
             transitions = np.abs(energies[:, None, :] - energies[:, :, None])
             self._arrays = (_read_only(f01), _read_only(transitions))
         return self._arrays
+
+    def _line_tones(
+        self, index: int, readout: bool
+    ) -> tuple[tuple[int, int], dict[tuple[int, int], float]]:
+        """The default transition of carrier *index*, and the frequency of
+        each transition its line has a tone for: every transition of a
+        drive line, only the default of a readout line."""
+        target = self.target
+        model = target.model if isinstance(target.model, SimulationModel) else SimulationModel()
+        default = model.default_transition
+        if index < 0:
+            # A runtime qudit: its own tone is bound per call, and no other.
+            return default, {}
+        qubit = target.qubits[index]
+        if readout:
+            return default, {default: qubit.frequency_hz}
+        return default, model.transitions_hz(qubit, model.levels_of(index))
 
     @property
     def qubit_freq(self) -> Any:
@@ -262,22 +403,76 @@ class Device:
     def transition_freq(self) -> Any:
         return self._frequency_arrays()[1]
 
+    def qudit(self, label: str) -> Qudit:
+        """The handle of the qudit labelled *label* (``Qubit.label``), as in
+        ``dev.qudit("D1")``; a ``NotFoundError`` names the labels there are."""
+        qubits = self.target.qubits
+        for handle in self.qudit_handles:
+            if qubits[handle.index].label == label:
+                return handle
+        labels = [qubits[p].label for p in self.layout if qubits[p].label]
+        carrier = next((q.index for q in qubits.values() if q.label == label), None)
+        if carrier is not None:
+            raise NotFoundError(
+                f"qudit {label!r} is carrier {carrier} of {self.target.name}, which the "
+                f"layout of device {self.name!r} leaves out"
+            )
+        close = _closest(str(label), labels)
+        hint = f"did you mean {close!r}? " if close else ""
+        known = f"its labels are {', '.join(labels)}" if labels else "its qudits have no labels"
+        raise NotFoundError(f"device {self.name!r} has no qudit labelled {label!r}; {hint}{known}")
+
+    @property
+    def quantum_system(self) -> TargetDescription:
+        """The calibrated physics of the device (``target``)."""
+        return self.target
+
+    @property
+    def qudits(self) -> _Handles:
+        """The qudit handles, by the user's numbering (``qudit_handles``)."""
+        return self.qudit_handles
+
+    def as_dict(self) -> dict[str, Any]:
+        """The device as JSON-serializable data, which ``pulse.device()``
+        reads back: its format (``cudaq-pulse.system/1``), the version that
+        wrote it, its quantum system (a registered name, or every value
+        inline), layout and calibration, and its control system."""
+        from ._system import _device_data
+
+        return _device_data(self)
+
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, Device) and other.fingerprint == self.fingerprint
+        return isinstance(other, Device) and other._identity == self._identity
 
     def __hash__(self) -> int:
         return hash(self.fingerprint)
+
+    # Read-only: a copy is the device itself.
+    def __copy__(self) -> Device:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Device:
+        return self
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        from ._pickling import device_reduce
+
+        return device_reduce(self)
 
     def __repr__(self) -> str:
         return f"<Device {self.name} ({len(self.layout)} qudits)>"
 
 
 def _from_spec(
-    spec: str, source: str, layout: Sequence[int] | None = None, calibration: Any = None
+    spec: str,
+    source: str,
+    layout: Sequence[int] | None = None,
+    calibration: Any = None,
+    control_system: ControlSystem | None = None,
 ) -> Device:
     from .targets._registry import make_target
 
-    return _calibrated(make_target(spec), spec, source, layout, calibration)
+    return _calibrated(make_target(spec), spec, source, layout, calibration, control_system)
 
 
 def _calibrated(
@@ -286,20 +481,35 @@ def _calibrated(
     source: str,
     layout: Sequence[int] | None,
     calibration: Any,
+    control_system: ControlSystem | None = None,
+    clock_ghz: float | None = None,
 ) -> Device:
     """The device of *target*, registered as *spec* (``None`` for a
-    ``TargetDescription``), with *calibration* applied."""
+    ``TargetDescription``), with *calibration* applied and *clock_ghz* (if
+    given) its program clock."""
+    base = target
     if calibration is not None:
         target = calibration.apply(target)
-    elif spec == "transmon_krinner_17q":
+    elif spec == "transmon_17q":
         from .targets.calibration import shipped_calibration
 
-        calibration = shipped_calibration("krinner17")
+        calibration = shipped_calibration("transmon_17q")
     name = target.name if spec is None else spec
-    return Device(target, name=name, layout=layout, source=source, calibration=calibration)
+    made = Device(
+        target,
+        name=name,
+        layout=layout,
+        source=source,
+        calibration=calibration,
+        control_system=control_system,
+        clock_ghz=clock_ghz,
+    )
+    made._spec = spec
+    made._base_target = base
+    return made
 
 
-def _target(spec: Any, problems: list[Problem]) -> TargetDescription | None:
+def _target(spec: Any, problems: list[Problem], key: str = "target") -> TargetDescription | None:
     from .targets._registry import available_targets, make_target
 
     if isinstance(spec, TargetDescription):
@@ -308,7 +518,7 @@ def _target(spec: Any, problems: list[Problem]) -> TargetDescription | None:
         problems.append(
             Problem(
                 "is missing",
-                path="target",
+                path=key,
                 fix="give a registered target name ("
                 + ", ".join(available_targets())
                 + ") or a TargetDescription",
@@ -320,7 +530,7 @@ def _target(spec: Any, problems: list[Problem]) -> TargetDescription | None:
             Problem(
                 f"must be a registered target name or a TargetDescription, "
                 f"got {type(spec).__name__}",
-                path="target",
+                path=key,
                 value=spec,
             )
         )
@@ -328,7 +538,7 @@ def _target(spec: Any, problems: list[Problem]) -> TargetDescription | None:
     try:
         return make_target(spec)
     except (UnknownTargetError, ValueError) as error:
-        problems.append(Problem(Exception.__str__(error), path="target", value=spec))
+        problems.append(Problem(Exception.__str__(error), path=key, value=spec))
         return None
 
 
@@ -412,11 +622,19 @@ def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:
             )
             return None
         return given
+    if isinstance(given, Mapping):
+        try:
+            return Calibration(given, name="inline", cooldown=cooldown)
+        except (KeyError, TypeError, ValueError) as error:
+            problems.append(
+                Problem(f"is not calibration data: {Exception.__str__(error)}", path="calibration")
+            )
+            return None
     if not isinstance(given, (str, os.PathLike)):
         problems.append(
             Problem(
-                "must be a shipped calibration name, the path of a calibration file or a "
-                f"Calibration, got {type(given).__name__}",
+                "must be a shipped calibration name, the path of a calibration file, "
+                f"calibration data or a Calibration, got {type(given).__name__}",
                 path="calibration",
                 value=given,
             )
@@ -426,12 +644,15 @@ def _calibration(config: Mapping[str, Any], problems: list[Problem]) -> Any:
         return Calibration.load(given, cooldown=cooldown)
     except NotFoundError as error:
         problems.append(Problem(str(error), path="calibration", value=given))
-    except json.JSONDecodeError as error:
-        problems.append(
-            Problem(f"the calibration file is not valid JSON: {error}", path="calibration")
-        )
     except ValueError as error:
-        problems.append(Problem(str(error), path="cooldown", value=cooldown))
+        import json
+
+        if isinstance(error, json.JSONDecodeError):
+            problems.append(
+                Problem(f"the calibration file is not valid JSON: {error}", path="calibration")
+            )
+        else:
+            problems.append(Problem(str(error), path="cooldown", value=cooldown))
     return None
 
 
@@ -469,18 +690,50 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
                 else "the keys are " + ", ".join(_CONFIG_KEYS),
             )
         )
-    spec = config.get("target")
-    target = _target(spec, problems)
+    key = "quantum_system" if "quantum_system" in config else "target"
+    if "quantum_system" in config and "target" in config:
+        problems.append(
+            Problem(
+                "is the former name of 'quantum_system', which the config also gives",
+                path="target",
+                fix="remove 'target'",
+            )
+        )
+    spec = config.get(key)
+    control = config.get("control_system")
+    # A target by name or as a TargetDescription, without a format or a
+    # control system, needs none of the system file machinery.
+    if "format" in config or isinstance(spec, Mapping) or control is not None:
+        from ._system import _config_systems
+
+        target, control = _config_systems(config, key, source, problems)
+        if isinstance(spec, Mapping):
+            spec = target
+    else:
+        target = _target(spec, problems, key)
     name = spec if isinstance(spec, str) else getattr(target, "name", "")
     layout = config.get("layout")
     if layout is not None:
         layout = _layout(layout, target, name, problems)
     calibration = _calibration(config, problems)
+    clock_ghz = config.get("clock_ghz")
+    if clock_ghz is not None or (control is not None and control._needs_clock):
+        from ._clocks import _program_clock
+
+        problems.extend(
+            _program_clock(control, clock_ghz, 0.0 if target is None else target.clock_ghz)[1]
+        )
     if problems or target is None:
         return None
     try:
         return _calibrated(
-            target, spec if isinstance(spec, str) else None, source, layout, calibration
+            target,
+            spec if isinstance(spec, str) else None,
+            source,
+            layout,
+            calibration,
+            control,
+            clock_ghz,
         )
     except (KeyError, ValueError) as error:
         problems.append(
@@ -491,6 +744,8 @@ def _checked(config: Mapping[str, Any], source: str, problems: list[Problem]) ->
 
 def _json_positions(text: str) -> dict[str, tuple[int, int]]:
     """The line and column of each value of the JSON *text*, by its path."""
+    import json
+
     decoder = json.JSONDecoder()
     found: dict[str, int] = {}
 
@@ -534,32 +789,66 @@ def _located(problems: list[Problem], file: str, text: str) -> list[Problem]:
     positions = _json_positions(text)
     located = []
     for problem in problems:
-        line, column = positions.get(problem.path, (None, None))
+        # A path the file has no value at (a missing key) points at the
+        # nearest value that holds it.
+        path = problem.path
+        while path and path not in positions:
+            path = path[: max(path.rfind("."), path.rfind("["), 0)]
+        line, column = positions.get(path, (None, None))
         located.append(dataclasses.replace(problem, file=file, line=line, column=column))
     return located
 
 
-def device(config: Mapping[str, Any] | str | os.PathLike[str]) -> Device:
-    """A device from a config: a mapping, or the path of a JSON file.
+def device(config: Mapping[str, Any] | str | os.PathLike[str] | None = None) -> Device:
+    """The device of a target name, a config, or the path of a JSON config file.
 
-    The config gives the target, by registered name or as a ``TargetDescription``
-    description, and may give a layout and a calibration::
+    ``device("transmon_17q")`` is the device of a registered target,
+    with every carrier in order (a name takes its argument after a colon, as
+    in ``"transmon_generic:4"``); ``cudaq_pulse.targets.available_targets()``
+    lists the names. ``device()`` is the process target, named by
+    ``CUDAQ_PULSE_TARGET`` (``python -m cudaq_pulse --target NAME`` sets it);
+    without one it raises ``NoTargetError``. A string that names no
+    registered target is the path of a config file.
 
-        {"target": "transmon_krinner_17q", "layout": [4, 5, 6],
-         "calibration": "krinner17", "cooldown": "K22-main"}
+    A config gives the quantum system, by registered name or as a
+    ``TargetDescription``, and may give a layout, a calibration, the
+    control system and a program clock::
+
+        {"quantum_system": "transmon_17q", "layout": [4, 5, 6],
+         "calibration": "transmon_17q", "cooldown": "2022-main",
+         "control_system": pulse.ControlSystem(controllers=[...]), "clock_ghz": 2.0}
 
     ``layout[i]`` is the carrier that qudit ``i`` names; by default every
     carrier of the target, in order. ``calibration`` is a ``Calibration``,
     the name of a shipped one or the path of a calibration file, and
     ``cooldown`` one of its cooldowns; the calibration's couplings replace
-    the target's, and ``Device.calibration`` holds it. The Krinner target
-    uses the shipped ``krinner17`` calibration by default.
+    the target's, and ``Device.calibration`` holds it. The ``transmon_17q``
+    target uses the shipped ``transmon_17q`` calibration by default.
+    ``control_system`` is a ``ControlSystem``, whose lines must be carriers
+    of the quantum system. ``clock_ghz`` is the program clock kernels count
+    cycles of (``Device.clock_ghz``); by default the fastest controller clock
+    when the others divide it, else the quantum system's. Controller clocks
+    that do not divide evenly into one need it, and the problem lists the
+    clocks that work.
+    ``"target"`` is the former name of ``"quantum_system"``. A system file,
+    as ``Device.as_dict()`` writes it, gives each of these as data.
 
     A config with problems raises ``DeviceDefinitionError`` listing all of
     them, each with its path in the config and, for a file, its line and
     column; ``python -m cudaq_pulse.doctor --system FILE`` runs the same
     checks.
     """
+    if config is None:
+        from .targets._registry import current_target
+
+        return current_target()
+    if isinstance(config, str):
+        from .targets._registry import _registry, make_target
+
+        if config.partition(":")[0] in _registry():
+            return _from_spec(config, f"target {config}")
+        if not os.path.exists(config) and os.sep not in config and "." not in config:
+            make_target(config)
     if not isinstance(config, (str, os.PathLike)):
         if not isinstance(config, Mapping):
             raise InvalidTypeError(f"device config must be a mapping, got {type(config).__name__}")
@@ -570,6 +859,8 @@ def device(config: Mapping[str, Any] | str | os.PathLike[str]) -> Device:
                 f"{_count(len(problems), 'problem')} in the device config", problems=problems
             )
         return found
+    import json
+
     file = os.fspath(config)
     with open(config, encoding="utf-8") as f:
         text = f.read()
@@ -596,16 +887,3 @@ def device(config: Mapping[str, Any] | str | os.PathLike[str]) -> Device:
             problems=_located(problems, file, text),
         )
     return found
-
-
-def get_device(target: Target | None = None) -> Device:
-    """A device of a shipped target, or the process target with no argument."""
-    if target is None:
-        from .targets._registry import current_target
-
-        return current_target()
-    if not isinstance(target, Target):
-        raise InvalidTypeError(
-            f"get_device() expects a cudaq_pulse.Target, got {type(target).__name__}"
-        )
-    return _from_spec(target.value, f"shipped {target.name}")

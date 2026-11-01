@@ -21,7 +21,13 @@ import cudaq_pulse as pulse
 import numpy as np
 
 # A 20 ns DRAG X90 for the 17-qubit transmon device.
-HALF_PI_AMPLITUDE = 0.13
+cal = {
+    "x_duration": 20 * pulse.ns,
+    "x_sigma": 5 * pulse.ns,
+    "drag_beta": 0.25 * pulse.ns,
+    "half_pi_amp": 0.13,
+    "readout_duration": 500 * pulse.ns,
+}
 
 _NATIVE = {
     "X90": np.array([[1, -1j], [-1j, 1]]) / math.sqrt(2),
@@ -59,8 +65,8 @@ def _clifford_decompositions():
     return words
 
 
-CLIFFORD_DECOMPOSITIONS = _clifford_decompositions()
-assert len(CLIFFORD_DECOMPOSITIONS) == 24
+clifford_decompositions = _clifford_decompositions()
+assert len(clifford_decompositions) == 24
 
 
 def rb_sequence(depth, seed):
@@ -68,8 +74,8 @@ def rb_sequence(depth, seed):
     rng = random.Random(seed)
     gates: tuple[str, ...] = ()
     for _ in range(depth):
-        gates += rng.choice(list(CLIFFORD_DECOMPOSITIONS.values()))
-    return gates + CLIFFORD_DECOMPOSITIONS[_up_to_phase(_unitary(gates).conj().T)]
+        gates += rng.choice(list(clifford_decompositions.values()))
+    return gates + clifford_decompositions[_up_to_phase(_unitary(gates).conj().T)]
 
 
 @pulse.kernel
@@ -78,25 +84,25 @@ def clifford_sequence(qubit, gates):
 
     *gates* is a tuple of names, so the loop unrolls while tracing.
     """
-    drive_line, drive_tone = get_drive_line(qubit)
-    readout_line, readout_tone = get_readout_line(qubit)
+    drive_line = get_drive_line(qubit)
+    readout_line = get_readout_line(qubit)
 
-    x90 = drag(40, HALF_PI_AMPLITUDE, 10.0, 0.5)
+    x90 = drag(cal["x_duration"], cal["half_pi_amp"], cal["x_sigma"], cal["drag_beta"])
 
     for gate in gates:
         if gate == "Y90":
-            shift_phase(drive_tone, math.pi / 2)
-            drive(drive_line, x90, drive_tone)
-            shift_phase(drive_tone, -math.pi / 2)
+            shift_phase(drive_line.tone, math.pi / 2)
+            drive(drive_line, x90)
+            shift_phase(drive_line.tone, -math.pi / 2)
         else:
-            drive(drive_line, x90, drive_tone)
+            drive(drive_line, x90)
 
     sync(drive_line, readout_line)
-    readout(readout_line, square(1000, 0.05), readout_tone)
+    readout(readout_line, square(cal["readout_duration"], 0.05))
 
 
 if __name__ == "__main__":
-    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    dev = pulse.device("transmon_17q")
     qubit = dev.qudit_handles[0]
     rb = pulse.compile(clifford_sequence, device=dev)
 
@@ -109,7 +115,7 @@ if __name__ == "__main__":
     for depth in [1, 5, 10, 20]:
         gates = rb_sequence(depth, seed=depth)
         compiled_kernel = rb.lower(qubit, gates)
-        survival = pulse.simulate(compiled_kernel, dt_ns=0.5).density_matrix[0, 0].real
+        survival = pulse.simulate(compiled_kernel, dt_ns=0.5).level_population(0)
         print(
             f"  depth={depth:3d} ({len(gates):3d} pulses): P(0) = {survival:.3f}, "
             f"compiled in {compiled_kernel.metrics.total_ms:.3f} ms"

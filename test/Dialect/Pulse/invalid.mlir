@@ -174,6 +174,22 @@ func.func @custom_samples_without_samples() {
 
 // -----
 
+func.func @custom_samples_bad_rate() {
+  // expected-error @+1 {{'pulse.custom_samples' op rate must be two positive integers}}
+  %w = pulse.custom_samples [0.1, 0.2] {rate = array<i64: 0, 1>} : !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @custom_samples_partial_cycle() {
+  // expected-error @+1 {{'pulse.custom_samples' op 3 samples at 2 every 1 cycles do not last a whole number of cycles}}
+  %w = pulse.custom_samples [0.1, 0.2, 0.3] {rate = array<i64: 2, 1>} : !pulse.waveform
+  return
+}
+
+// -----
+
 func.func @wait_that_changes_the_line_kind(%line: !pulse.drive_line, %dur: !pulse.duration) {
   // expected-error @+1 {{'pulse.wait' op input and output line types must match}}
   %r = pulse.wait %line, %dur : (!pulse.drive_line, !pulse.duration) -> !pulse.readout_line

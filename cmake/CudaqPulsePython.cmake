@@ -16,7 +16,8 @@ file(GLOB_RECURSE _cudaq_pulse_python_sources
   RELATIVE "${CUDAQ_PULSE_FRONTEND_DIR}"
   "${CUDAQ_PULSE_FRONTEND_DIR}/*.py"
   "${CUDAQ_PULSE_FRONTEND_DIR}/*.pyi"
-  "${CUDAQ_PULSE_FRONTEND_DIR}/*.json")
+  "${CUDAQ_PULSE_FRONTEND_DIR}/*.json"
+  "${CUDAQ_PULSE_FRONTEND_DIR}/*.toml")
 list(APPEND _cudaq_pulse_python_sources py.typed)
 
 cudaq_pulse_stage_python_sources(CudaqPulsePythonStaging
@@ -26,6 +27,25 @@ cudaq_pulse_stage_python_sources(CudaqPulsePythonStaging
 add_dependencies(_cudaq_pulse_native CudaqPulsePythonStaging)
 
 set(CUDAQ_PULSE_PYTHONPATH "${CMAKE_BINARY_DIR}/python")
+
+# A hash of those sources, written at build time so that import reads it
+# rather than computes it (see cmake/write_source_stamp.cmake).
+set(_cudaq_pulse_source_list "${CMAKE_BINARY_DIR}/python_sources.txt")
+list(JOIN _cudaq_pulse_python_sources "\n" _cudaq_pulse_source_lines)
+file(CONFIGURE OUTPUT "${_cudaq_pulse_source_list}" CONTENT "${_cudaq_pulse_source_lines}\n")
+list(TRANSFORM _cudaq_pulse_python_sources PREPEND "${CUDAQ_PULSE_FRONTEND_DIR}/"
+  OUTPUT_VARIABLE _cudaq_pulse_python_paths)
+set(_cudaq_pulse_source_stamp "${CMAKE_BINARY_DIR}/python/cudaq_pulse/_source_stamp.py")
+add_custom_command(
+  OUTPUT "${_cudaq_pulse_source_stamp}"
+  COMMAND "${CMAKE_COMMAND}" "-DROOT=${CUDAQ_PULSE_FRONTEND_DIR}"
+    "-DSOURCES=${_cudaq_pulse_source_list}" "-DOUTPUT=${_cudaq_pulse_source_stamp}"
+    -P "${CUDAQ_PULSE_SOURCE_DIR}/cmake/write_source_stamp.cmake"
+  DEPENDS ${_cudaq_pulse_python_paths} "${_cudaq_pulse_source_list}"
+    "${CUDAQ_PULSE_SOURCE_DIR}/cmake/write_source_stamp.cmake"
+  COMMENT "Hashing the Python sources into _source_stamp.py")
+add_custom_target(CudaqPulseSourceStamp DEPENDS "${_cudaq_pulse_source_stamp}")
+add_dependencies(_cudaq_pulse_native CudaqPulseSourceStamp)
 
 # The kernel language as builtins for type checkers, beside the package at
 # the root of site-packages (see cmake/write_builtins_stub.py).
@@ -66,7 +86,8 @@ set(_cudaq_pulse_build_targets
   cudaq-pulse-opt
   _cudaq_pulse_native
   _cudaq_pulse_native_stub
-  CudaqPulsePythonStaging)
+  CudaqPulsePythonStaging
+  CudaqPulseSourceStamp)
 
 set(_cudaq_pulse_runtime_libraries "")
 set(_cudaq_pulse_cudensitymat_versions "")
@@ -105,6 +126,7 @@ install(DIRECTORY "${CUDAQ_PULSE_FRONTEND_DIR}"
   PATTERN "__pycache__" EXCLUDE
   PATTERN "*.pyc" EXCLUDE)
 install(FILES "${CMAKE_BINARY_DIR}/python/cudaq_pulse/_build_config.py"
+  "${_cudaq_pulse_source_stamp}"
   DESTINATION cudaq_pulse
   COMPONENT CudaqPulse)
 install(FILES "${_cudaq_pulse_builtins_stub}"

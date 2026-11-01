@@ -88,9 +88,15 @@ fails instead of skipping), `physics` (everything in `tests/physics`),
 `nightly` (slow physics checks, skipped without `--run-nightly`),
 `benchmark` (timing guards, skipped without `--run-benchmarks`) and
 `scaling` (benchmarks that compare two sizes in one run). `tests/conftest.py`
-sets `CUDAQ_PULSE_TARGET=ladder:8192` and `CUDAQ_PULSE_UNROLL_THRESHOLD=0`
-for the whole session, so a kernel's loops stay rolled unless a test says
-otherwise.
+sets `CUDAQ_PULSE_TARGET=ladder:8192` for the whole session. Tests run with
+the default unroll threshold; a test of a rolled loop of a few iterations
+passes `unroll_threshold=` to `pulse.compile` or `@pulse.kernel`.
+
+Tests that need pyright, mypy, matplotlib or a C compiler skip without
+them, except when `CI` is set: there they fail, unless the job names the
+tool in `CUDAQ_PULSE_OPTIONAL_TOOLS` (`tests/_tools.py`). Rewrite the IR
+goldens with `CUDAQ_PULSE_UPDATE_GOLDENS=1`; a run that changes them fails
+and names the changed cases, and the next run, without the variable, passes.
 
 The property tests use hypothesis profiles (`tests/property_settings.py`),
 chosen with `HYPOTHESIS_PROFILE`: `ci`, the default, is derandomized so every
@@ -336,8 +342,8 @@ after its release. [zizmor](https://docs.zizmor.sh/) audits the workflows
 
 - `ci.yml`: ruff and pre-commit; build, lit, pytest, mypy, and the benchmark
   baseline on Linux x86_64 (Python 3.12 to 3.15), Linux aarch64 (3.12 and
-  3.15), and macOS (3.12), and the lit and pytest suites on free-threaded
-  CPython 3.14t with the GIL off (configured with
+  3.15), and macOS (3.12 to 3.14), and the lit and pytest suites on
+  free-threaded CPython 3.14t with the GIL off (configured with
   `-DCUDAQ_PULSE_FREE_THREADED=ON`, which declares the extension safe
   without the GIL; release wheels are not free-threaded yet). The `gpu` job
   builds with GPU support and runs the GPU tests (see [GPU CI](#gpu-ci)).
@@ -349,10 +355,11 @@ after its release. [zizmor](https://docs.zizmor.sh/) audits the workflows
   release (see [Releases](#releases)).
 - `gpu-tests.yml`: the GPU tests, called by `ci.yml` and `wheels.yml`.
 - `docs.yml`: Sphinx with warnings as errors; deploys `main` to GitHub Pages.
-- `property-nightly.yml`: the property tests with random examples, the
-  slow physics checks (`nightly`) and the perf guard, every night and on
-  manual dispatch, with the seed in the job summary and the example database
-  kept in the Actions cache. GitHub runs scheduled workflows from the default
+- `property-nightly.yml`: the property tests (every test file that imports
+  hypothesis) with random examples, the slow physics checks (`nightly`),
+  the perf guard and check-pulse on macOS with Python 3.15, every night and
+  on manual dispatch, with the seed in the job summary and the example
+  database kept in the Actions cache. GitHub runs scheduled workflows from the default
   branch, so the schedule tests `main`; a manual dispatch tests the branch it
   is dispatched on.
 

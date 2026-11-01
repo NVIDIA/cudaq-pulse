@@ -31,7 +31,7 @@ import time
 import tracemalloc
 
 import cudaq_pulse as pulse
-from cudaq_pulse.classical import Bits, Float, emulation
+from cudaq_pulse.classical import emulation
 from cudaq_pulse.targets import Qubit, TargetDescription
 
 PI_AMP = math.pi / 20
@@ -45,75 +45,71 @@ def _device(t1_us: float = 0.0) -> pulse.Device:
 def many_calls(n: int, links: int):
     """A kernel of *n* calls, round-robin over *links* links, each answer
     setting the next drive's amplitude."""
+
+    def same(x: float) -> float:
+        return x
+
     functions = [
-        pulse.classical(
-            lambda x: x,
-            name=f"f{k}",
-            args=(Float(),),
-            results=(Float(),),
-            max_latency_ns=20,
-            link=k,
-        )
-        for k in range(links)
+        pulse.classical(same, name=f"f{k}", max_latency_ns=20, link=k) for k in range(links)
     ]
 
     @pulse.kernel
     def kernel(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(n):
             a = functions[i % links].submit(0.1).result()
-            drive(d, square(8, a), t)
+            drive(d, square(8, a))
 
     return kernel
 
 
-decode = pulse.classical(
-    lambda bits: [bits[0]], name="decode", args=(Bits(1),), results=(Bits(1),), max_latency_ns=200
-)
+@pulse.classical(max_latency_ns=200)
+def decode(bits: pulse.Length[pulse.Bits, 1]) -> pulse.Length[pulse.Bits, 1]:
+    return [bits[0]]
 
 
 @pulse.kernel
 def active_reset(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(1000, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(1000, 0.05))
     sync(d, r)
     if m:
-        drive(d, square(40, PI_AMP), t)
+        drive(d, square(40, PI_AMP))
 
 
 @pulse.kernel
 def waiting_reset(q):
     # Active reset that idles as long as the decoder's budget, for a
     # comparison on the same timeline.
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(1000, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(1000, 0.05))
     sync(d, r)
     wait(d, 401)
     if m:
-        drive(d, square(40, PI_AMP), t)
+        drive(d, square(40, PI_AMP))
 
 
 @pulse.kernel
 def decoded_reset(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(1000, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(1000, 0.05))
     sync(d, r)
     if decode.submit([m]).result()[0]:
-        drive(d, square(40, PI_AMP), t)
+        drive(d, square(40, PI_AMP))
 
 
 @pulse.kernel
 def feedback(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(300, 0.05), rt)
-    ok, fix = decode.submit([m]).result(timeout_ns=500)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(300, 0.05))
+    ok, fix = decode.submit([m]).result(timeout=500 * pulse.ns)
     if ok:
         if fix[0]:
-            drive(d, square(40, 0.1), t)
+            drive(d, square(40, 0.1))
 
 
 def _median(fn, repeats: int) -> float:
@@ -181,8 +177,8 @@ def bench_simulate(repeats: int) -> None:
     plain = pulse.compile(waiting_reset, device=dev).lower(q)
     called = pulse.compile(decoded_reset, device=dev).lower(q)
     plus = [2**-0.5, 2**-0.5]
-    a = _median(lambda: pulse.simulate(plain, initial_state=plus), repeats)
-    b = _median(lambda: pulse.simulate(called, initial_state=plus), repeats)
+    a = _median(lambda: pulse.simulate(plain, initial_state=plus, levels=2), repeats)
+    b = _median(lambda: pulse.simulate(called, initial_state=plus, levels=2), repeats)
     print(
         f"simulate: active reset idling for the decoder's budget {a * 1e3:.1f} ms, "
         f"with the decoder call {b * 1e3:.1f} ms ({(b / a - 1) * 100:+.1f}%)"

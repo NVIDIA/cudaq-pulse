@@ -11,6 +11,9 @@ CI runs these on every supported interpreter. Each test states a property of
 the canonical instruction stream that must hold on all of them.
 """
 
+import inspect
+import types
+
 import pytest
 from cudaq_pulse.kernel import _bytecode_normalize as bc
 from cudaq_pulse.kernel._bytecode_normalize import _decode, decode
@@ -124,3 +127,88 @@ def test_positions_cover_every_instruction():
 @pytest.mark.parametrize("name", bc.OP_NAMES)
 def test_op_names_match_constants(name):
     assert bc.OP_NAMES[getattr(bc, name)] == name
+
+
+def _codes(*modules):
+    for module in modules:
+        stack = [compile(inspect.getsource(module), module.__file__, "exec", dont_inherit=True)]
+        while stack:
+            code = stack.pop()
+            yield code
+            stack.extend(k for k in code.co_consts if isinstance(k, types.CodeType))
+
+
+def _same(a, b):
+    if a == b:
+        return True
+    if isinstance(a, (tuple, list)) and isinstance(b, (tuple, list)) and len(a) == len(b):
+        return all(_same(x, y) for x, y in zip(a, b))
+    return a is b  # a constant unequal to itself, such as nan
+
+
+def test_the_instruction_reader_decodes_as_dis_does(monkeypatch):
+    import ast
+    import dis
+
+    from cudaq_pulse.classical import _infer, _infer_rare
+    from cudaq_pulse.kernel import _emitter
+
+    codes = list(_codes(ast, dis, inspect, bc, _emitter, _infer, _infer_rare))
+    lean = [bc._decode(c) for c in codes]
+    monkeypatch.setattr(bc, "_instructions", lambda c: list(dis.get_instructions(c)))
+    for code, a in zip(codes, lean):
+        b = bc._decode(code)
+        assert _same(a.instrs, b.instrs), code
+        assert a.positions == b.positions, code
+        assert a.notes == b.notes, code
+
+
+def test_notes_say_what_each_unsupported_instruction_was():
+
+    def f(n, xs):
+        while n:
+            n -= 1
+
+        def g():
+            return n
+
+        try:
+            xs.append(g())
+        except ValueError:
+            pass
+        return xs
+
+    d = decode(f.__code__)
+    notes = {i: d.notes[i] for i, (op, _) in enumerate(d.instrs) if op == bc.UNSUPPORTED}
+    assert set(notes) <= set(d.notes)
+    kinds = sorted(note[0] for note in notes.values())
+    assert "while" in kinds and "try" in kinds and "MAKE_FUNCTION" in kinds
+    ((head,),) = [note[1:] for note in notes.values() if note[0] == "while"]
+    assert d.instrs[head][0] != bc.UNSUPPORTED or head in notes
+    ((start, end, handler, depth, lasti),) = [h for h in d.notes["handlers"]]
+    assert start < end <= handler < len(d.instrs)
+    assert d.instrs[start][0] == bc.UNSUPPORTED and d.notes[start] == ("try",)
+    assert isinstance(depth, int) and isinstance(lasti, bool)
+
+
+def test_a_comprehension_inside_a_try_is_caught_by_the_try():
+
+    def f(xs):
+        try:
+            return [x + 1 for x in xs]
+        except TypeError:
+            return []
+
+    d = decode(f.__code__)
+    handlers = {h[2] for h in d.notes["handlers"]}
+    assert len(handlers) == 1  # the comprehension's own cleanup re-raises to it
+
+
+def test_code_without_unsupported_instructions_has_no_notes():
+
+    def f(xs, k):
+        if k:
+            return xs[1:]
+        return xs + [k]
+
+    assert decode(f.__code__).notes is None

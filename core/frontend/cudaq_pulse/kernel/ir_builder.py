@@ -392,6 +392,9 @@ LINEAR_TYPES = frozenset({"drive_line", "readout_line", "tone"})
 # The vid of a loop-carried value that has no value entering the loop.
 UNDEFINED_VID = -1
 
+# The longest duration, in cycles: a time a float holds to the cycle.
+MAX_CYCLES = 2**53
+
 # (n_value_args, attr_names, result_types)
 #   n_value_args: leading args that are IR values; -1 = variadic all-values
 #   result_types: None = mirror operand types
@@ -422,6 +425,10 @@ OP_TABLE: dict[str, tuple[int, tuple[str, ...], tuple[str, ...] | None]] = {
 }
 
 
+# The ops with times (pulse.custom is sampled before it is emitted).
+_TIMED_OPS = frozenset(
+    {"gaussian", "square", "drag", "cosine", "tanh_ramp", "gaussian_square", "wait"}
+)
 _UNCOUNTED_OPS = frozenset({"pulse.qudit_arg", "pulse.qudit_alloc", "scf.yield"})
 
 
@@ -431,11 +438,17 @@ class PythonIRBuilder:
 
     # Accepts scf.for regions, so the tracer may emit a loop once.
     supports_regions = True
+    # The samples every line plays per program cycle; see PackedIRBuilder.
+    sample_rate: tuple[int, int] | None = None
+    # Each line's sample rate, when they differ; see PackedIRBuilder.
+    sample_rate_of: Any = None
 
     def __init__(self, name: str = "main"):
         self.name = name
         self.ops: list[Op] = []
         self._next_id = 0
+        # The trace's loop-unroll threshold; None for the default.
+        self.unroll_threshold: int | None = None
         # What the traced kernel returned.
         self.result: Any = None
 
@@ -452,6 +465,10 @@ class PythonIRBuilder:
         attrs: dict[str, Any] | None = None,
     ) -> tuple[IRValue, ...]:
         results = tuple(self._mk(rt) for rt in result_types)
+        if attrs and kind.removeprefix("pulse.") in _TIMED_OPS:
+            from ._durations import in_program_cycles
+
+            in_program_cycles(kind.removeprefix("pulse."), attrs, getattr(self, "clock_ghz", 2.0))
         self.ops.append(Op(kind, operands, results, attrs or {}))
         return results
 

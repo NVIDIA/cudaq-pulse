@@ -14,7 +14,6 @@ import re
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import Bits, Float, Integer
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -25,13 +24,13 @@ from tests.property_settings import examples
 POLICIES = ("asap", "alap", "rcp", "alap_rcp")
 
 
-@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=50)
-def next_tau(x):
+@pulse.classical(max_latency_ns=50)
+def next_tau(x: float) -> float:
     return 2.0 * x
 
 
-@pulse.classical(args=(Bits(1),), results=(Integer(),), max_latency_ns=50)
-def tau_index(bits):
+@pulse.classical(max_latency_ns=50)
+def tau_index(bits: pulse.Bits) -> int:
     return 10 * bits[0]
 
 
@@ -41,11 +40,11 @@ def _mlir(kernel, *args, **options):
 
 @pulse.kernel
 def single(q, tau0: float):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     tau = next_tau.submit(tau0).result()
-    drive(d, square(40, 0.1), t)
+    drive(d, square(40, 0.1))
     wait(d, tau, bounds=(16, 4000))
-    drive(d, square(40, 0.1), t)
+    drive(d, square(40, 0.1))
 
 
 def test_a_wait_from_an_answer_is_a_variable_wait():
@@ -62,11 +61,11 @@ def test_a_wait_from_an_answer_is_a_variable_wait():
 def test_integer_answers_and_no_bounds():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        n = tau_index.submit([readout(r, square(100, 0.05), rt)]).result()
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        n = tau_index.submit([readout(r, square(100, 0.05))]).result()
         wait(d, n)
-        drive(d, square(40, 0.1), t)
+        drive(d, square(40, 0.1))
 
     text = _mlir(k, Q[0])
     assert re.search(r"classical.variable, .*pulse.min_cycles = 0 : i64, pulse.variable_wait", text)
@@ -75,15 +74,15 @@ def test_integer_answers_and_no_bounds():
 
 def test_bounds_errors():
     def bad_bounds(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, next_tau.submit(1.0).result(), bounds=(10, 5))
 
     def fixed_outside_bounds(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, 30, bounds=(0, 20))
 
     def not_a_pair(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, next_tau.submit(1.0).result(), bounds=5)
 
     for body, message in (
@@ -97,7 +96,7 @@ def test_bounds_errors():
     # A concrete length within its bounds is a plain wait.
     @pulse.kernel
     def fixed_with_bounds(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, 10, bounds=(0, 20))
 
     assert "pulse.variable_wait" not in pulse.compile(fixed_with_bounds).lower(Q[0]).mlir()
@@ -110,15 +109,15 @@ def test_a_variable_wait_cannot_be_in_a_block_or_a_branch_arm():
 
     @pulse.kernel
     def in_block(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         inner(d, next_tau.submit(1.0).result())
 
     @pulse.kernel
     def in_branch(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         x = next_tau.submit(1.0).result()
-        if readout(r, square(100, 0.05), rt):
+        if readout(r, square(100, 0.05)):
             wait(d, x)
 
     with pytest.raises(RuntimeError, match="cannot be inside a pulse.schedule_block"):
@@ -134,17 +133,17 @@ def test_a_variable_wait_cannot_be_in_a_block_or_a_branch_arm():
 def test_epochs_and_their_shift_ranges(policy, tied):
     @pulse.kernel
     def k(q, p):
-        d, t = get_drive_line(q)
-        e, u = get_drive_line(p)
-        drive(e, square(400, 0.01), u)
+        d = get_drive_line(q)
+        e = get_drive_line(p)
+        drive(e, square(400, 0.01))
         if tied:
             sync(d, e)
         a = next_tau.submit(1.0).result()
         wait(d, a, bounds=(8, 100))
-        drive(d, square(40, 0.1), t)
+        drive(d, square(40, 0.1))
         b = next_tau.submit(a).result()
         wait(d, b)
-        drive(e, square(40, 0.1), u)
+        drive(e, square(40, 0.1))
 
     low = pulse.compile(k, schedule=policy).lower(Q[0], Q[1])
     epochs = low.epochs()
@@ -168,8 +167,8 @@ def test_epochs_and_their_shift_ranges(policy, tied):
 def test_a_program_without_variable_waits_has_one_epoch():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        drive(d, square(40, next_tau.submit(1.0).result()), t)
+        d = get_drive_line(q)
+        drive(d, square(40, next_tau.submit(1.0).result()))
 
     assert pulse.compile(k).lower(Q[0]).epochs() == [pulse.compiler.Epoch(0, "start", -1, 0, 0, 0)]
 
@@ -185,12 +184,12 @@ def _program(steps):
         qs = (q0, q1, q2)
         x = 1.0
         for kind, q in steps:
-            d, t = get_drive_line(qs[q])
-            r, rt = get_readout_line(qs[q])
+            d = get_drive_line(qs[q])
+            r = get_readout_line(qs[q])
             if kind == "drive":
-                drive(d, square(30, 0.1), t)
+                drive(d, square(30, 0.1))
             elif kind == "readout":
-                readout(r, square(50, 0.05), rt)
+                readout(r, square(50, 0.05))
             elif kind == "call":
                 x = next_tau.submit(x).result()
             elif kind == "variable_wait":
@@ -232,14 +231,14 @@ def test_epoch_invariants(steps, policy):
 def test_a_wait_from_a_float_parameter_beside_calls_is_no_barrier():
     @pulse.kernel
     def k(q, p, tau: float):
-        d, t = get_drive_line(q)
-        e, u = get_drive_line(p)
-        drive(e, square(400, 0.01), u)
+        d = get_drive_line(q)
+        e = get_drive_line(p)
+        drive(e, square(400, 0.01))
         wait(d, tau, bounds=(0, 100))
-        drive(d, square(40, 0.1), t)
+        drive(d, square(40, 0.1))
         a = next_tau.submit(1.0).result()
         wait(d, a, bounds=(8, 100))
-        drive(d, square(40, 0.1), t)
+        drive(d, square(40, 0.1))
 
     compiled = pulse.compile(k, schedule="asap")
     low = compiled.lower(Q[0], Q[1], 10.4)
@@ -260,13 +259,13 @@ def test_a_wait_from_a_float_parameter_beside_calls_is_no_barrier():
 
 @pulse.kernel
 def offset_by_tau(q, p, tau: float):
-    d, t = get_drive_line(q)
-    e, u = get_drive_line(p)
-    drive(e, square(400, 0.01), u)
-    drive(d, square(40, 0.1), t)
+    d = get_drive_line(q)
+    e = get_drive_line(p)
+    drive(e, square(400, 0.01))
+    drive(d, square(40, 0.1))
     a = next_tau.submit(10.0).result()
     wait(d, a + tau, bounds=(8, 1000))
-    drive(d, square(40, 0.1), t)
+    drive(d, square(40, 0.1))
 
 
 def test_a_wait_from_an_answer_and_a_float_compiles_once():
@@ -307,9 +306,9 @@ def test_the_float_part_of_a_wait_from_an_answer_is_checked_at_call_time(tau, me
 def test_a_float_part_below_the_lowest_length_is_clamped_with_the_answer(tau):
     @pulse.kernel
     def k(q, tau: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, next_tau.submit(10.0).result() + tau, bounds=(8, 100))
-        drive(d, square(40, 0.1), t)
+        drive(d, square(40, 0.1))
 
     # Only the float part's highest length is checked when called: the
     # answer adds to it, and the run clamps the sum to the bounds.
@@ -337,24 +336,24 @@ def test_a_wait_from_an_answer_and_a_float_runs_their_sum_clamped(tau):
 
     @pulse.kernel
     def fixed(q, p):
-        d, t = get_drive_line(q)
-        e, u = get_drive_line(p)
-        drive(e, square(400, 0.01), u)
+        d = get_drive_line(q)
+        e = get_drive_line(p)
+        drive(e, square(400, 0.01))
         if drive_d.start:
             wait(d, drive_d.start)
-        drive(d, square(40, 0.1), t)
+        drive(d, square(40, 0.1))
         if variable.start > drive_d.end:
             wait(d, variable.start - drive_d.end)
         wait(d, length)
-        drive(d, square(40, 0.1), t)
+        drive(d, square(40, 0.1))
 
     mixed = pulse.simulate(low)
     reference = pulse.simulate(pulse.compile(fixed, device=dev, schedule="asap").lower(q, p))
     np.testing.assert_allclose(mixed.density_matrix, reference.density_matrix, atol=1e-9)
 
 
-@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=50, latency_mode="blocking")
-def blocking_tau(x):
+@pulse.classical(max_latency_ns=50, latency_mode="blocking")
+def blocking_tau(x: float) -> float:
     return x
 
 
@@ -362,17 +361,17 @@ def blocking_tau(x):
 def test_pulses_either_side_of_a_barrier_are_not_fused(barrier):
     @pulse.kernel
     def k(q, p):
-        d, t = get_drive_line(q)
-        e, u = get_drive_line(p)
-        drive(e, square(400, 0.05), u)
+        d = get_drive_line(q)
+        e = get_drive_line(p)
+        drive(e, square(400, 0.05))
         if barrier == "variable":
             wait(d, next_tau.submit(10.0).result(), bounds=(8, 100))
         elif barrier == "blocking":
-            drive(d, square(40, blocking_tau.submit(0.1).result()), t)
+            drive(d, square(40, blocking_tau.submit(0.1).result()))
         else:
             for _ in range(2):
                 wait(d, next_tau.submit(10.0).result(), bounds=(8, 100))
-        drive(e, square(30, 0.05), u)
+        drive(e, square(30, 0.05))
 
     low = pulse.compile(k, unroll_threshold=0).lower(Q[0], Q[1])
     spectator = [e for e in low.schedule if e.kind == "drive" and e.qubit == 1]

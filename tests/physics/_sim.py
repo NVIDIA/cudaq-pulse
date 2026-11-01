@@ -49,13 +49,15 @@ def device(freqs_hz, alphas_hz, couplings=(), t1_us=0.0, t2_us=0.0, **qubit):
     return pulse.device({"target": target})
 
 
-def run(dev, kernel, *args, n=None, backend="cpu", **simulate):
-    """Simulate ``kernel`` on the first *n* qudits of *dev*, then *args*."""
+def run(dev, kernel, *args, n=None, backend="cpu", levels=2, **simulate):
+    """Simulate ``kernel`` on the first *n* qudits of *dev*, then *args*,
+    with two levels per qudit unless *levels* says otherwise: the checks
+    compare with two-level formulas."""
     n = len(dev.qudit_handles) if n is None else n
     lowered = pulse.compile(kernel, passes=PASSES).lower(
         *[dev.qudit_handles[i] for i in range(n)], *args
     )
-    return pulse.simulate(lowered, backend=backend, **simulate)
+    return pulse.simulate(lowered, backend=backend, levels=levels, **simulate)
 
 
 def basis(levels, *digits):

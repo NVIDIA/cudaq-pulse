@@ -13,7 +13,8 @@ import math
 import struct
 from typing import Any
 
-from .._errors import InvalidValueError
+from .._errors import InvalidValueError, UnsupportedError
+from ..targets.base import _DENSITY_DENSITY, _EXCHANGE, _coupling_kind
 
 _VALID_INTEGRATORS = frozenset(
     {
@@ -27,14 +28,30 @@ _VALID_INTEGRATORS = frozenset(
 
 
 def _level_attributes(
-    target: Any, qudits: tuple[int, ...], levels: int | dict[int, int]
+    target: Any, qudits: tuple[int, ...], levels: int | dict[int, int] | None
 ) -> tuple[tuple[int, ...], str]:
     """Levels of each simulated qudit, in the order of *qudits*, and the
-    module attributes that model them (indexed by device qudit)."""
-    dims = tuple((levels.get(q, 2) if isinstance(levels, dict) else int(levels)) for q in qudits)
+    module attributes that model them (indexed by device qudit).
+
+    A qudit has the levels its target's model declares for it
+    (``model.levels_of``) unless *levels* sets them: an int for every
+    qudit, a dict by device qudit index for those it names."""
+    model = target.model
+    if levels is None:
+        dims = tuple(model.levels_of(q) for q in qudits)
+    elif isinstance(levels, dict):
+        dims = tuple(levels[q] if q in levels else model.levels_of(q) for q in qudits)
+    else:
+        dims = (int(levels),) * len(qudits)
     if any(d < 2 for d in dims):
         raise InvalidValueError("every qudit needs at least two levels")
-    by_index = [2] * _extent(qudits)
+    # Qudits the program does not use are not simulated, and keep the levels
+    # they would have.
+    extent = _extent(qudits)
+    if levels is None or isinstance(levels, dict):
+        by_index = [model.levels_of(q) for q in range(extent)]
+    else:
+        by_index = [int(levels)] * extent
     for q, d in zip(qudits, dims):
         by_index[q] = d
     attrs = [f"pulse.levels = array<i64: {', '.join(map(str, by_index))}>"]
@@ -64,6 +81,23 @@ def _f64(value: float) -> str:
 
 def _f64_array(values: list[float]) -> str:
     return "array<f64: " + ", ".join(_f64_literal(v) for v in values) + ">"
+
+
+def _density_density(target: Any, active: set[int]) -> list[Any]:
+    """*target*'s density-density couplings; any other kind that is neither
+    that nor exchange, between *active* qudits, is refused."""
+    found = []
+    for c in target.couplings:
+        kind = _coupling_kind(c)
+        if kind == _DENSITY_DENSITY:
+            found.append(c)
+        elif kind != _EXCHANGE and c.qubit_a in active and c.qubit_b in active:
+            raise UnsupportedError(
+                f"the coupling of qudits {c.qubit_a} and {c.qubit_b} is a {kind} "
+                "coupling, which the simulator does not model; it models "
+                f"{_EXCHANGE} and {_DENSITY_DENSITY} couplings"
+            )
+    return found
 
 
 def _target_attributes(
@@ -111,15 +145,19 @@ def _target_attributes(
     if any(thermal):
         attrs.append(f"pulse.thermal_populations = {_f64_array(thermal)}")
     active = set(qubits)
-    for kind, entries, strength in (
-        ("coupling", target.couplings, "coupling_strength_hz"),
+    exchange = target._exchange_view
+    groups: tuple[tuple[str, Any, str], ...] = (
+        ("coupling", exchange, "coupling_strength_hz"),
         ("crosstalk", target.crosstalk, "static_zz_hz"),
-    ):
+    )
+    if exchange is not target.couplings:
+        groups += (("density_density", _density_density(target, active), "coupling_strength_hz"),)
+    for name, entries, strength in groups:
         entries = [e for e in entries if e.qubit_a in active and e.qubit_b in active]
         if entries:
             pairs = ", ".join(f"{e.qubit_a}, {e.qubit_b}" for e in entries)
-            attrs.append(f"pulse.{kind}_pairs = array<i64: {pairs}>")
+            attrs.append(f"pulse.{name}_pairs = array<i64: {pairs}>")
             attrs.append(
-                f"pulse.{kind}_strength_hz = " + _f64_array([getattr(e, strength) for e in entries])
+                f"pulse.{name}_strength_hz = " + _f64_array([getattr(e, strength) for e in entries])
             )
     return "{" + ", ".join(attrs) + "}"

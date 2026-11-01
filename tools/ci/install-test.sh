@@ -106,7 +106,10 @@ run_pytest() {
   mkdir -p "$dir/benchmarks/compiler" "$dir/benchmarks/baselines"
   cp "${repo_root}/benchmarks/compiler/compile_time.py" "$dir/benchmarks/compiler/"
   cp "${repo_root}/benchmarks/baselines/compile_time.json" "$dir/benchmarks/baselines/"
+  # A user's environment: no type checkers or matplotlib, and the slim images
+  # have no C compiler. Without these, their tests skip here instead of failing.
   (cd "$dir" && PATH="${venv}/bin:${PATH}" VIRTUAL_ENV="$venv" \
+    CUDAQ_PULSE_OPTIONAL_TOOLS="pyright,mypy,matplotlib,cc" \
     python -m pytest -p no:cacheprovider -m "$markers")
 }
 
@@ -122,11 +125,11 @@ assert package.is_relative_to(Path(sys.prefix).resolve()), f"not installed: {pac
 
 @pulse.kernel
 def rabi(qubit, duration: int, amplitude: float):
-    drive_line, tone = get_drive_line(qubit)
-    drive(drive_line, square(duration, amplitude), tone)
+    drive_line = get_drive_line(qubit)
+    drive(drive_line, square(duration, amplitude))
 
 
-device = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+device = pulse.device("transmon_17q")
 compiled = pulse.compile(rabi).lower(device.qudit_handles[0], 100, 0.5)
 assert compiled.mlir().strip(), "compile produced no MLIR"
 Path("kernel.mlir").write_text(compiled.mlir())

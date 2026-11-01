@@ -79,45 +79,45 @@ def _target(n, t1_us=0.0):
 def _active_reset(prepare):
     @pulse.kernel
     def reset(q0):
-        d0, t0 = get_drive_line(q0)
-        r0, rt = get_readout_line(q0)
-        drive(d0, square(40, prepare), t0)
+        d0 = get_drive_line(q0)
+        r0 = get_readout_line(q0)
+        drive(d0, square(40, prepare))
         sync(d0, r0)
-        bit = readout(r0, square(200, 0.05), rt)
+        bit = readout(r0, square(200, 0.05))
         if bit:
-            drive(d0, square(40, _PI), t0)
+            drive(d0, square(40, _PI))
 
     return reset
 
 
 @pulse.kernel
 def conditional_flip(q0, q1):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
-    r0, rt = get_readout_line(q0)
-    drive(d0, square(40, _HALF_PI), t0)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
+    r0 = get_readout_line(q0)
+    drive(d0, square(40, _HALF_PI))
     sync(d0, r0)
-    bit = readout(r0, square(200, 0.05), rt)
+    bit = readout(r0, square(200, 0.05))
     if bit:
-        drive(d1, square(40, _PI), t1)
+        drive(d1, square(40, _PI))
 
 
 @pulse.kernel
 def measure(q0):
-    r0, rt = get_readout_line(q0)
-    readout(r0, square(200, 0.05), rt)
+    r0 = get_readout_line(q0)
+    readout(r0, square(200, 0.05))
 
 
 @pulse.kernel
 def repeated_reset(q0):
-    d0, t0 = get_drive_line(q0)
-    r0, rt = get_readout_line(q0)
-    drive(d0, square(40, _HALF_PI), t0)
+    d0 = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    drive(d0, square(40, _HALF_PI))
     for _ in range(3):
         sync(d0, r0)
-        bit = readout(r0, square(200, 0.05), rt)
+        bit = readout(r0, square(200, 0.05))
         if bit:
-            drive(d0, square(40, _PI), t0)
+            drive(d0, square(40, _PI))
 
 
 _P1 = math.exp(-100.0 / 500.0)
@@ -176,12 +176,13 @@ CASES = {
 def _simulate(kernel, n, backend, kwargs):
     kwargs = dict(kwargs)
     target = kwargs.pop("target", None) or _target(n)
+    kwargs.setdefault("levels", 2)
     program = (kernel, *[Q[i] for i in range(n)])
     return pulse.simulate(on(target, *program), backend=backend, seed=7, **kwargs)
 
 
 def _weights(result):
-    return {o: p for o, p in result.branches if p > 1e-9}
+    return {b.levels: b.probability for b in result.branches if b.probability > 1e-9}
 
 
 # The stand-in keeps pure states as vectors, as the GPU backend does, and
@@ -220,6 +221,7 @@ def test_gpu_setup_lowers_a_program_that_measures_at_any_start(t_start, t1_us, g
         backend="gpu",
         t_start=t_start,
         t_end=t_start + 200.0,
+        levels=2,
     )
     assert np.trace(result.density_matrix).real == pytest.approx(1.0, abs=1e-9)
 
@@ -233,11 +235,11 @@ def test_evolve_of_a_program_that_measures_runs_the_gpu_backend(gpu_on_cpu):
 
 @pulse.kernel
 def measure_then_flip(q0):
-    d0, t0 = get_drive_line(q0)
-    r0, rt = get_readout_line(q0)
-    readout(r0, square(200, 0.05), rt)
+    d0 = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    readout(r0, square(200, 0.05))
     sync(d0, r0)
-    drive(d0, square(40, _PI), t0)
+    drive(d0, square(40, _PI))
 
 
 @pytest.mark.parametrize("backend", ["cpu", "gpu"])
@@ -250,6 +252,7 @@ def test_a_late_start_evolves_from_the_start_not_the_measurement(backend, gpu_on
         backend=backend,
         t_start=120.0,
         t_end=140.0,
+        levels=2,
     )
     np.testing.assert_allclose(result.density_matrix, np.diag([1.0, 0.0]), atol=1e-12)
     assert result.times_ns == (120.0, 140.0)

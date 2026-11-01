@@ -30,25 +30,48 @@ import re as _re
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
 
-from .._errors import ExecutionError, InvalidTypeError, InvalidValueError, UnsupportedError
+from .._errors import (
+    ExecutionError,
+    InvalidTypeError,
+    InvalidValueError,
+    NotFoundError,
+    UnsupportedError,
+    _positive_int,
+)
 from .._native._cudaq_pulse_native import evaluate_callback
+from .._units import Time, as_nanoseconds
 from ..compiler import ScheduledEvent
 from . import _propagate
 from ._attributes import _VALID_INTEGRATORS, _f64, _level_attributes, _target_attributes
 
 if TYPE_CHECKING:
+    from .._device import Qudit
     from ..compiler import Lowered
+    from ..kernel._kernel import CompiledKernel, Kernel
+    from ..targets.models import SimulationModel
+    from ._calls import CallRecord
 
-__all__ = ["Measurement", "SimulationResult", "simulate"]
+__all__ = ["Branch", "BranchCoverage", "Measurement", "SimulationResult", "simulate"]
 
 # Branches whose weight falls below this fraction of the initial state's are
 # not followed.
 _NEGLIGIBLE = 1e-14
+
+
+class BranchCoverage(StrEnum):
+    """Which measurement branches ``simulate`` follows; the strings
+    ``"all"`` and ``"sampled"`` mean the same."""
+
+    #: Every outcome of every measurement: the exact ensemble.
+    ALL = "all"
+    #: Only the outcomes the shots draw, at most ``shots`` branches.
+    SAMPLED = "sampled"
 
 
 @dataclass(frozen=True)
@@ -63,6 +86,34 @@ class Measurement:
     end_ns: float
 
 
+@dataclass(frozen=True)
+class Branch:
+    """One path of the ensemble: the levels its measurements gave, its
+    probability, and the classical calls it made.
+
+    ``levels`` holds one entry per entry of ``SimulationResult.measurements``,
+    -1 where this branch did not measure. With ``branches="sampled"``,
+    ``probability`` is the fraction of the shots that took the branch."""
+
+    levels: tuple[int, ...]
+    probability: float
+    #: The classical calls this branch made, in time order.
+    calls: tuple[CallRecord, ...] = ()
+
+    def answers(self, function: str) -> list[Any]:
+        """The answers of this branch's calls to *function* (its name), in
+        call order. A function it did not call is a ``KeyError`` listing
+        those it called."""
+        found = [call.answer for call in self.calls if call.function == function]
+        if not found:
+            called = list(dict.fromkeys(call.function for call in self.calls))
+            raise NotFoundError(
+                f"this branch made no call to {function!r}; it called "
+                + (", ".join(map(repr, called)) if called else "no classical function")
+            )
+        return found
+
+
 @dataclass
 class SimulationResult:
     """The ensemble final state, and per-shot records if shots were taken.
@@ -73,11 +124,12 @@ class SimulationResult:
     significant digit. Qudits the program does not use are left out, with
     their couplings, as classical spectators in their ground state.
     ``measurements`` lists every measurement any path made, in the order of
-    their end times; ``branches`` gives each path's outcomes (one
-    per entry of ``measurements``, -1 where that path did not measure) and
-    probability. ``records`` holds one such row per shot. With
-    ``paths="sampled"``, ``branches`` holds the paths the shots took, each
-    with the fraction of shots that took it, and the state is their
+    their end times; ``branches`` holds one ``Branch`` per path, with its
+    measured levels (one per entry of ``measurements``, -1 where that path
+    did not measure), its probability and its classical calls.
+    ``records`` holds one row of levels per shot. With
+    ``branches="sampled"``, ``branches`` holds the branches the shots took,
+    each with the fraction of shots that took it, and the state is their
     average.
     """
 
@@ -85,43 +137,98 @@ class SimulationResult:
     dims: tuple[int, ...]
     qudits: tuple[int, ...]
     measurements: list[Measurement]
-    branches: list[tuple[tuple[int, ...], float]]
+    branches: list[Branch]
     records: npt.NDArray[np.int64] | None = None
     times_ns: tuple[float, float] = (0.0, 0.0)
     _states: list[Any] = field(default_factory=list, repr=False)
-    #: For a program that calls classical functions: per entry of
-    #: ``branches``, the calls that path made, in time order.
-    calls: list[list[Any]] = field(default_factory=list)
+
+    def level_populations(self, qudit: int | Qudit | None = None) -> list[float]:
+        """The probability of each level of *qudit*, from level 0 up: the
+        diagonal of its reduced density matrix, summing to 1.
+
+        *qudit* is a device qudit index or a qudit handle, one of
+        ``qudits``; it may be left out when the result models one qudit."""
+        mode = self._mode(qudit)
+        dims = self.dims
+        diagonal = np.real(np.diagonal(self.density_matrix)).reshape(dims[::-1])
+        axis = len(dims) - 1 - mode
+        others = tuple(a for a in range(len(dims)) if a != axis)
+        return [float(p) for p in diagonal.sum(axis=others)]
+
+    def level_population(self, level: int, qudit: int | Qudit | None = None) -> float:
+        """The probability that *qudit* is in *level*, as in
+        ``level_populations(qudit)[level]``."""
+        populations = self.level_populations(qudit)
+        if level.__class__ is not int or not 0 <= level < len(populations):
+            which = f"qudit {self.qudits[self._mode(qudit)]}"
+            raise InvalidValueError(
+                f"{which} has levels 0 to {len(populations) - 1} in this result "
+                f"({len(populations)} levels); got level {level!r}"
+            )
+        return populations[level]
+
+    def _mode(self, qudit: int | Qudit | None) -> int:
+        """The position in ``qudits`` of *qudit*, a device index or handle."""
+        qudits = self.qudits
+        if qudit is None:
+            if len(qudits) == 1:
+                return 0
+            raise InvalidValueError(
+                f"the result models qudits {list(qudits)}; pass qudit=, one of them"
+            )
+        index = qudit if isinstance(qudit, int) else getattr(qudit, "index", None)
+        if index.__class__ is not int or index not in qudits:
+            raise InvalidValueError(
+                f"qudit {qudit!r} is not in the result; it models qudits {list(qudits)}"
+            )
+        return qudits.index(index)
 
 
 def simulate(
-    lowered: Lowered,
-    *,
-    levels: int | dict[int, int] = 2,
+    program: Kernel[...] | CompiledKernel[...] | Lowered,
+    /,
+    *args: Any,
+    levels: int | dict[int, int] | None = None,
     initial_state: npt.ArrayLike | None = None,
     shots: int | None = None,
     seed: int | None = None,
     backend: str = "cpu",
-    t_end: float | None = None,
-    dt_ns: float | None = None,
+    t_end: float | Time | None = None,
+    dt_ns: float | Time | None = None,
     integrator: str = "rk4",
     dephasing: str = "t2_star",
     handlers: Mapping[str, Callable[..., Any]] | None = None,
     readout: str = "ideal",
     latency_branching: bool = False,
     plant: Any = None,
-    paths: str = "all",
+    branches: BranchCoverage | str = BranchCoverage.ALL,
 ) -> SimulationResult:
-    """Simulate one compiled kernel call on the target it was compiled for.
+    """Simulate one kernel call on the target it is compiled for.
+
+    ``simulate(kernel, *args)`` compiles the call as ``kernel.lower(*args)``
+    does and simulates it, as ``compile(kernel)`` takes the kernel first and
+    its options by keyword. A program compiled already is simulated without
+    compiling it again, such as one a worker process receives pickled:
+    ``simulate(program, *values)`` binds the values of its run-time float
+    parameters as ``program.bind(values)`` does.
 
     Parameters
     ----------
-    lowered:
-        The module of one call, from ``kernel.lower(*args)`` or
-        ``compiled.lower(*args)``.
+    program:
+        A ``@cudaq_pulse.kernel`` or the ``CompiledKernel`` of one, called
+        with *args*; a module with run-time float parameters, such as
+        ``lowered.generic``, bound with *args*; or the module of one call,
+        from ``kernel.lower(*args)`` or ``bind``, with no *args*.
+    args:
+        For a kernel, its arguments by position: the qudit handles, then its
+        other parameters. For a module with run-time parameters, their
+        values, in the order of ``program.parameters``.
     levels:
-        Levels per qudit (an int for all, or a dict by device qudit index).
-        A transmon with three or more levels includes its anharmonicity.
+        Levels per qudit. By default each qudit has the levels its target's
+        simulation model declares for it (``TargetDescription.model``; 3 for
+        a ``TransmonModel``); an int sets every qudit's, and a dict by device
+        qudit index sets those it names. A transmon with three or more
+        levels includes its anharmonicity.
     initial_state:
         A state vector or density matrix over ``lowered.qudits``, the
         qudits the program uses, with the first the least significant
@@ -132,16 +239,18 @@ def simulate(
         0). T1 then relaxes it back there, with downward and upward rates
         (1 - p) / T1 and p / T1, whatever the initial state.
     shots:
-        Sample this many per-shot measurement records.
+        Sample this many per-shot measurement records: a positive int.
+        ``None`` (the default) samples none.
     seed:
         Seed for sampling the records.
     backend:
         ``"cpu"`` for the NumPy reference integrator (RK4), ``"gpu"`` for
         the cuDensityMat runtime.
     t_end:
-        End of the simulation in ns; the end of the schedule by default.
+        End of the simulation: a time (``40 * pulse.ns``) or a number of
+        ns; the end of the schedule by default.
     dt_ns:
-        Integration step in ns. By default 0.05 ns, or shorter when coupled
+        Integration step: a time or a number of ns. By default 0.05 ns, or shorter when coupled
         qudits are far detuned: a coupling turns at their detuning, and the
         step resolves it with 20 steps per period (0.024 ns at 2.1 GHz),
         a whole fraction of a clock cycle.
@@ -165,11 +274,12 @@ def simulate(
         ``error_1to0`` and ``error_0to1``) and ``"model_with_decay"`` adds
         relaxation during the readout window; branches and calls see the
         reported outcome, and the state is projected on the true one. A
-        call that takes ``IQ`` points gets points synthesized per shot at
-        each readout's true level, from its tone's frequency and its pulse's
-        amplitude (``IQModel``; with ``"model_with_decay"``, relaxation
-        during the window too); it needs ``shots``, and each shot from the
-        call on is simulated as its own trajectory.
+        call that takes IQ points (``complex`` or ``list[complex]``) gets
+        points synthesized per shot at each readout's true level, from its
+        tone's frequency and its pulse's amplitude (``IQModel``; with
+        ``"model_with_decay"``, relaxation during the window too); it needs
+        ``shots``, and each shot from the call on is simulated as its own
+        trajectory.
     plant:
         A target description to simulate instead of the device the program
         was compiled for: its qubits' frequencies, T1, T2, thermal
@@ -182,22 +292,38 @@ def simulate(
         probability of the function's latency model; by default, without
         shots, the answer is in time when the nominal latency is within the
         timeout. With shots the in-time outcome is always sampled.
-    paths:
+    branches:
         ``"all"`` (the default) follows every outcome of every measurement,
         so the state is the exact ensemble. ``"sampled"`` follows only the
-        outcomes the shots draw: at most ``shots`` paths, so a program that
-        measures many times inside one shot (an adaptive loop of readouts
-        and calls) costs time linear in its measurements, not exponential.
-        The state is then the average over the shots' paths, and
-        ``branches`` gives each path's share of the shots. It needs
-        ``shots``.
+        outcomes the shots draw: at most ``shots`` branches, so a program
+        that measures many times inside one shot (an adaptive loop of
+        readouts and calls) costs time linear in its measurements, not
+        exponential. The state is then the average over the shots'
+        branches, and ``result.branches`` gives each one's share of the
+        shots. It needs ``shots``. A ``BranchCoverage`` or its string.
     """
     from ..compiler import Lowered
+    from ..kernel._kernel import CompiledKernel, Kernel
 
-    if not isinstance(lowered, Lowered):
+    if isinstance(program, Lowered):
+        if not args:
+            lowered = program
+        elif program.parameters:
+            lowered = program.bind(args)
+        else:
+            raise InvalidTypeError(
+                "simulate() got arguments with the module of a call, which has its "
+                "arguments already; pass the kernel and its arguments, as in "
+                "simulate(kernel, q), or the module alone"
+            )
+    elif isinstance(program, (Kernel, CompiledKernel)):
+        lowered = program.lower(*args)
+    else:
         raise InvalidTypeError(
-            "simulate() expects the module of one kernel call, from "
-            f"kernel.lower(*args); got {type(lowered).__name__}"
+            "simulate() expects a kernel and its arguments, as in simulate(kernel, q), "
+            "a module and the values of its run-time parameters, as in "
+            "simulate(lowered.generic, 0.5), or the module of one call; "
+            f"got {type(program).__name__}"
         )
     return _simulate_lowered(
         lowered,
@@ -214,33 +340,37 @@ def simulate(
         readout=readout,
         latency_branching=latency_branching,
         plant=plant,
-        paths=paths,
+        branches=branches,
     )
 
 
 def _simulate_lowered(
     lowered: Lowered,
     *,
-    levels: int | dict[int, int] = 2,
+    levels: int | dict[int, int] | None = None,
     initial_state: npt.ArrayLike | None = None,
     shots: int | None = None,
     seed: int | None = None,
     backend: str = "cpu",
     t_start: float = 0.0,
-    t_end: float | None = None,
-    dt_ns: float | None = None,
+    t_end: float | Time | None = None,
+    dt_ns: float | Time | None = None,
     integrator: str = "rk4",
     dephasing: str = "t2_star",
     handlers: Mapping[str, Callable[..., Any]] | None = None,
     readout: str = "ideal",
     latency_branching: bool = False,
     plant: Any = None,
-    paths: str = "all",
+    branches: BranchCoverage | str = BranchCoverage.ALL,
 ) -> SimulationResult:
-    if paths not in ("all", "sampled"):
-        raise InvalidValueError(f"unknown paths {paths!r}; choose 'all' or 'sampled'")
-    if paths == "sampled" and not shots:
-        raise InvalidValueError("paths='sampled' follows the paths of the shots; pass shots >= 1")
+    if shots is not None and (shots.__class__ is not int or shots < 1):
+        shots = _positive_int("shots", shots)
+    if branches not in ("all", "sampled"):
+        raise InvalidValueError(f"unknown branches {branches!r}; choose 'all' or 'sampled'")
+    if branches == "sampled" and not shots:
+        raise InvalidValueError(
+            "branches='sampled' follows the branches of the shots; pass shots >= 1"
+        )
     if backend not in ("cpu", "gpu"):
         raise InvalidValueError(f"unknown backend {backend!r}; choose 'cpu' or 'gpu'")
     if dephasing not in ("t2_star", "t2_echo"):
@@ -249,12 +379,12 @@ def _simulate_lowered(
         raise InvalidValueError(
             f"unknown readout {readout!r}; choose 'ideal', 'model' or 'model_with_decay'"
         )
+    t_end = as_nanoseconds(t_end)
+    dt_ns = as_nanoseconds(dt_ns)
     if dt_ns is None:
         dt_ns = _default_step(lowered)
     elif dt_ns <= 0:
         raise InvalidValueError("dt_ns must be positive")
-    if shots is not None and shots < 0:
-        raise InvalidValueError("shots must not be negative")
     if integrator not in _VALID_INTEGRATORS:
         raise InvalidValueError(
             f"Unknown integrator {integrator!r}. "
@@ -263,15 +393,12 @@ def _simulate_lowered(
     if lowered.parameters:
         raise InvalidValueError(
             "the module has float parameters "
-            f"({', '.join(lowered.parameters)}); lower it with their values first"
+            f"({', '.join(lowered.parameters)}); pass their values, as in "
+            "simulate(program, 0.5), or lower the kernel with them"
         )
     target = lowered.target.target if plant is None else _check_plant(lowered, plant)
-    if getattr(target, "architecture", None) != "transmon":
-        raise UnsupportedError(
-            "simulation supports transmon targets; the neutral-atom Hamiltonian "
-            "(Rabi drive, detuning and C6 / r^6 n n interactions) is not lowered"
-        )
-    return _simulate_compiled(
+    model = _simulation_model(target)
+    return model(
         lowered,
         target,
         levels=levels,
@@ -289,8 +416,20 @@ def _simulate_lowered(
         readout=readout,
         latency_branching=latency_branching,
         plant=plant is not None,
-        sampled=paths == "sampled",
+        sampled=branches == "sampled",
     )
+
+
+def _simulation_model(target: Any) -> Callable[..., SimulationResult]:
+    """The simulator of *target*'s model, the one place a system is matched
+    to a model."""
+    model: SimulationModel | None = target.model
+    if model is None:
+        raise UnsupportedError(
+            f"the system {target.name!r} has no simulation model (its model is None). "
+            "Export and hardware runs work."
+        )
+    return model._simulate
 
 
 def _check_plant(lowered: Lowered, plant: Any) -> Any:
@@ -311,14 +450,14 @@ _STEPS_PER_COUPLING_PERIOD = 20
 
 def _default_step(lowered: Lowered) -> float:
     """The integration step: 0.05 ns, or 20 steps per period of the fastest
-    coupling between the program's qudits, which turns at their detuning,
-    rounded down to a whole fraction of a clock cycle."""
+    exchange coupling between the program's qudits, which turns at their
+    detuning, rounded down to a whole fraction of a clock cycle."""
     target = lowered.target.target
     active = set(lowered.qudits)
     detuning = max(
         (
             abs(target.qubits[c.qubit_a].frequency_hz - target.qubits[c.qubit_b].frequency_hz)
-            for c in target.couplings
+            for c in target._exchange_view
             if c.qubit_a in active and c.qubit_b in active
         ),
         default=0.0,
@@ -335,7 +474,7 @@ def _simulate_compiled(
     compiled: Any,
     target: Any,
     *,
-    levels: int | dict[int, int],
+    levels: int | dict[int, int] | None,
     initial_state: npt.ArrayLike | None,
     shots: int | None,
     seed: int | None,
@@ -359,6 +498,10 @@ def _simulate_compiled(
     # a private copy of the module.
     lock = compiled._lock
     arguments = list(compiled.arguments)
+    for v in arguments:
+        if v.__class__ is not float and v.__class__ is not int or v - v != 0.0:
+            arguments = compiled._checked_arguments()
+            break
     functions = tuple(getattr(compiled, "classical", ()))
     tree = bool(functions) or readout != "ideal"
     if functions:
@@ -367,12 +510,16 @@ def _simulate_compiled(
         module = compiled._concrete().simulation_module(*compiled.options.schedule_args())
         arguments = []
         lock = threading.RLock()
+    elif backend == "gpu" or compiled.waits is not None:
+        module = compiled._concrete()
+    elif compiled.carriers:
+        from .._programs import _placement
+
+        # With float values, the placement's module evaluated at them: no
+        # copy of the module per value.
+        module = _placement(compiled) if compiled.arguments else compiled._concrete()
     else:
-        module = (
-            compiled._concrete()
-            if backend == "gpu" or compiled.waits is not None
-            else compiled._module
-        )
+        module = compiled._module
     if compiled.runtime_selects:
         # A path plays the values its measurements select: on a copy, each op
         # that reads a run-time value runs in both arms of an if on the
@@ -502,7 +649,7 @@ def _simulate_compiled(
         outcomes = [-1] * len(measurements)
         for key, k in path:
             outcomes[column[key]] = k
-        branches.append((tuple(outcomes), float(np.real(np.trace(density)))))
+        branches.append(Branch(tuple(outcomes), float(np.real(np.trace(density)))))
         rows.extend([outcomes] * count)
     records = None
     if shots is not None:
@@ -543,10 +690,10 @@ def _simulate_tree(
 
     Without *t_end* each path runs to the end of its own schedule, which
     variable waits make path-dependent."""
+    from ..classical import _handlers_for
     from ._calls import IQModel, ReadoutModel, simulate_tree, takes_iq
 
-    chosen = {f.name: f.implementation for f in functions if f.implementation is not None}
-    chosen.update(handlers or {})
+    chosen = _handlers_for(functions, handlers)
     model = (
         None
         if readout == "ideal"
@@ -584,7 +731,6 @@ def _simulate_tree(
     rho = np.zeros((dim, dim), dtype=np.complex128)
     branches = []
     rows = []
-    calls = []
     for leaf in leaves:
         density = engine.density(leaf.state)
         if sampled:
@@ -595,8 +741,9 @@ def _simulate_tree(
         outcomes = [-1] * len(measurements)
         for key, k in leaf.path:
             outcomes[column[key]] = k
-        branches.append((tuple(outcomes), float(np.real(np.trace(density)))))
-        calls.append(leaf.calls)
+        branches.append(
+            Branch(tuple(outcomes), float(np.real(np.trace(density))), tuple(leaf.calls))
+        )
         rows.extend([outcomes] * leaf.count)
     records = None
     if shots is not None:
@@ -611,7 +758,6 @@ def _simulate_tree(
         records=records,
         times_ns=(t_start, t_end),
         _states=[leaf.state for leaf in leaves],
-        calls=calls,
     )
 
 

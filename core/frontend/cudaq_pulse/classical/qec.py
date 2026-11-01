@@ -8,8 +8,9 @@
 """Real-time decoding with the messages of the CUDA-Q QEC decoders.
 
 A ``Decoder`` declares the three calls of a CUDA-QX real-time decoder with
-their wire ids and payloads, so a program built with it talks to a CUDA-QX
-decoding server unchanged:
+their dispatch keys and payloads, so a program built with it talks to a
+CUDA-QX decoding server unchanged. Every decoder sends the same three keys;
+the server tells them apart by the decoder id in the payload:
 
 - ``enqueue_syndromes(decoder, measurements, round)``: send one round's
   syndrome bits (``{decoder id, round, mapping id, count}`` and the bits);
@@ -41,7 +42,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from .._errors import InvalidTypeError, InvalidValueError
-from . import Bits, Byte, ClassicalFunction, Integer, function_id
+from . import ClassicalFunction, _Bits, _Byte, _Integer, function_id
 
 __all__ = [
     "Decoder",
@@ -81,32 +82,35 @@ class Decoder:
         self.corrections = corrections
         self.decode = decode
         suffix = f"{decoder_id}_{syndromes}_{corrections}"
-        self.enqueue_function = ClassicalFunction(
+        self.enqueue_function = ClassicalFunction._declared(
             None,
+            (_Integer(), _Integer(), _Integer(), _Integer(), _Bits(syndromes)),
+            (),
             name=f"enqueue_syndromes_{suffix}",
-            args=(Integer(), Integer(), Integer(), Integer(), Bits(syndromes)),
-            results=(),
             max_latency_ns=enqueue_latency_ns,
             link=link,
-            id=ENQUEUE_SYNDROMES_ID,
+            _dispatch_key=ENQUEUE_SYNDROMES_ID,
+            _key_route=decoder_id,
         )
-        self.corrections_function = ClassicalFunction(
+        self.corrections_function = ClassicalFunction._declared(
             None,
+            (_Integer(), _Integer(), _Byte()),
+            (_Bits(corrections),),
             name=f"get_corrections_{suffix}",
-            args=(Integer(), Integer(), Byte()),
-            results=(Bits(corrections),),
             max_latency_ns=max_latency_ns,
             link=link,
-            id=GET_CORRECTIONS_ID,
+            _dispatch_key=GET_CORRECTIONS_ID,
+            _key_route=decoder_id,
         )
-        self.reset_function = ClassicalFunction(
+        self.reset_function = ClassicalFunction._declared(
             None,
+            (_Integer(),),
+            (),
             name=f"reset_decoder_{suffix}",
-            args=(Integer(),),
-            results=(),
             max_latency_ns=enqueue_latency_ns,
             link=link,
-            id=RESET_DECODER_ID,
+            _dispatch_key=RESET_DECODER_ID,
+            _key_route=decoder_id,
         )
         if decode is not None:
             for fn, handler in zip(

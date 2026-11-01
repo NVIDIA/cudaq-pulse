@@ -17,6 +17,14 @@ measurement-conditioned branches it lies in, and the epochs and calls of
 ``Lowered.export_emulation()``. The schedule is final: a backend places each
 event at its ``start_cycles`` and does not schedule again.
 
+Times count the controller's own clock cycles, at ``clock_ghz``. When the
+controller's clock is not the program clock, the export also gives
+``program_clock_ghz``, every time is converted to its cycles (exactly for
+operations on its lines, which are on its grid, and rounded up for the
+others) and every waveform's time parameters are scaled with them. With a
+shared reference clock (``MachineModel.reference_clock_ghz``) it also gives
+``reference_clock_ghz``.
+
 The number after the slash is the format's major version. Within one version,
 new keys and new event kinds may be added, so a backend ignores keys it does
 not know and refuses event kinds it does not know; a change that removes or
@@ -45,18 +53,25 @@ exceptions. ``analyze`` does the same for one function on its own.
 from __future__ import annotations
 
 import math
+import os
+import sys
+import types
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from . import _controller_cost
 from ._controller_cost import OP_CLASSES, FunctionCost
+from ._errors import InvalidTypeError, InvalidValueError
+from ._units import Time, as_nanoseconds
 from .kernel.ir_builder import CompilationError
 
 if TYPE_CHECKING:
     import numpy as np
 
+    from . import _clocks
+    from ._system import Controller, ControlSystem, Processor
     from .compiler import Lowered
 
 __all__ = [
@@ -64,16 +79,22 @@ __all__ = [
     "OP_CLASSES",
     "ControllerLimitError",
     "ControllerLimits",
+    "ControllerUsage",
     "FunctionCost",
     "FunctionResources",
+    "FunctionUsage",
+    "LimitExceeded",
     "LinkUsage",
+    "ProcessorUsage",
     "ResourceReport",
+    "UsageReport",
     "analyze",
     "check",
     "export",
     "resources",
     "sample_waveform",
     "shape_key",
+    "usage",
 ]
 
 FORMAT = "cudaq-pulse.controller/1"
@@ -102,43 +123,98 @@ _AMPLITUDES: Mapping[str, tuple[int, ...]] = MappingProxyType(
         "tanh_ramp": (1,),
     }
 )
+# The names of those operands.
+_AMPLITUDE_NAMES: Mapping[str, frozenset[str]] = MappingProxyType(
+    {shape: frozenset(_PARAMETERS[shape][i] for i in at) for shape, at in _AMPLITUDES.items()}
+)
 _PLAYED = frozenset({"drive", "readout"})
 
 
 class ControllerLimitError(CompilationError):
-    """A scheduled program exceeds a limit of the controller it is for."""
+    """A scheduled program exceeds a limit of the controller it is for.
 
-    def __init__(self, violations: Sequence[str]) -> None:
+    ``violations`` has every limit exceeded. For a control system with
+    processors, ``usage`` is the program's ``UsageReport``: what each
+    processor holds against its limits, and each limit exceeded with by how
+    much (``usage.exceeded``); the message ends with its table.
+    """
+
+    def __init__(
+        self,
+        violations: Sequence[str],
+        *,
+        system: bool = False,
+        usage: UsageReport | None = None,
+    ) -> None:
         self.violations = tuple(violations)
+        self.usage = usage
         shown = "\n  ".join(self.violations[:10])
         more = len(self.violations) - 10
         tail = f"\n  ... and {more} more" if more > 0 else ""
-        super().__init__(f"the program exceeds the controller's limits:\n  {shown}{tail}")
+        what = "does not fit the control system" if system else "exceeds the controller's limits"
+        table = "" if usage is None else "\n" + _format_usage(usage, exceeds=False)
+        super().__init__(f"the program {what}:\n  {shown}{tail}{table}")
+
+
+def _limit_error(lowered: Lowered, violations: Sequence[str]) -> ControllerLimitError:
+    """The error for the *violations* of *lowered*, with its usage report
+    when its control system has processors and they were checked: always
+    for one call, and at compile time without float or qudit parameters."""
+    system = lowered.options.machine._system
+    report = None
+    if system is not None and system._placement:
+        placed = lowered._role is not None and lowered._role.slots > 0
+        if lowered._generic is not None or not (lowered.parameters or placed):
+            report = usage(lowered)
+    return ControllerLimitError(violations, system=system is not None, usage=report)
 
 
 @dataclass(frozen=True)
 class ControllerLimits:
-    """What a controller can play; every limit is in clock cycles.
+    """What a controller can play; every limit is in its own clock cycles.
 
-    ``clock_ghz``: the only clock the controller runs at (``None``: any).
+    ``clock_ghz``: the controller's clock (``None``: the program clock,
+    ``Device.clock_ghz``). It must be a whole-cycle ratio of the program
+    clock; its program counts its own cycles.
+    ``cycles_per_timestep``: the controller starts and times operations only
+    every this many of its own cycles; every operation on its lines must
+    start and last whole timesteps (see "Clocks" in the controller backends
+    guide; ``pulse.round_duration`` rounds a length to them).
     ``issue_cycles`` and ``min_wait_cycles``: two operations on one line start
     exactly ``issue_cycles`` apart, or at least ``issue_cycles + min_wait_cycles``
     apart, because the controller issues one instruction per ``issue_cycles``
     and idles no less than ``min_wait_cycles``.
-    ``samples_per_cycles`` and ``waveform_samples``: the waveform memory of a
-    line holds this many samples, at this many samples per cycle; waveforms
-    of one shape at different amplitudes share it (``shape_key``).
+    ``sample_rate_ghz``: the rate its lines play samples at (``None``: one
+    per cycle of its clock). Its ratio to the clock may be a fraction, and
+    every operation on its lines must start and last a whole number of
+    samples, which the timestep includes: at 2.4 GHz on a 1 GHz clock, whole
+    multiples of 5 cycles. A length off them is a compile error, never
+    rounded.
+    ``waveform_samples``: the waveform memory of a line holds this many
+    samples, at ``sample_rate_ghz``; waveforms of one shape at different
+    amplitudes share it (``shape_key``).
     ``tones_per_line``: distinct tone frequencies one line plays.
+    ``max_amplitude``: the largest magnitude of a sample its lines play
+    (``None``: no limit). The compiler sets no amplitude limit of its own;
+    a drive or readout whose envelope peaks above this one is a violation
+    naming its line. Exports list it among the limits only when it is set.
     ``acquirers`` and ``acquirer_hold_cycles``: the acquirer reading each
     qudit; readouts on one acquirer are serialized, each holding it for its
     duration plus ``acquirer_hold_cycles``.
     ``feedback_latency_cycles``: the least time from the end of a readout to
     the start of an operation in a branch on its outcome.
     ``answer_timeouts``: whether the controller can stop waiting for an
-    answer after a timeout (``result(timeout_ns=...)``, ``latency_mode=
+    answer after a timeout (``result(timeout=...)``, ``latency_mode=
     "timeout"``); without, only waits that block or are budgeted are
     allowed.
     ``max_events``: the drives and readouts of one program.
+    ``max_fine_delay_ns``: the longest delay, below one grid step, each line
+    can add to its output (0: none), a time or a number of ns; it plays the
+    part of a calibrated line delay (``MachineModel.line_delays_ns``) that
+    whole grid steps cannot.
+    ``alignment_tolerance_cycles``: without fine delay, how far a line's
+    delay may be from a whole number of grid steps; the compiler rounds it
+    to the nearest one.
 
     What it computes, for the classical functions on ``compute_links`` (link
     names or ids; by default the link named ``"controller"``):
@@ -157,15 +233,19 @@ class ControllerLimits:
     """
 
     clock_ghz: float | None = None
+    cycles_per_timestep: int = 1
     issue_cycles: int = 1
     min_wait_cycles: int = 0
-    samples_per_cycles: int | None = None
+    sample_rate_ghz: float | None = None
     waveform_samples: int | None = None
     tones_per_line: int | None = None
+    max_amplitude: float | None = None
     acquirers: Mapping[int, int] = field(default_factory=dict)
     acquirer_hold_cycles: int = 0
     feedback_latency_cycles: int = 0
     max_events: int | None = None
+    max_fine_delay_ns: float | Time = 0.0
+    alignment_tolerance_cycles: float = 0.0
     answer_timeouts: bool = True
     compute_links: tuple[int | str, ...] = ("controller",)
     op_cycles: Mapping[str, int] = field(default_factory=dict)
@@ -179,13 +259,41 @@ class ControllerLimits:
     def __post_init__(self) -> None:
         if self.clock_ghz is not None and not self.clock_ghz > 0:
             raise ValueError(f"ControllerLimits.clock_ghz must be positive, got {self.clock_ghz}")
+        steps = self.cycles_per_timestep
+        if isinstance(steps, bool) or not isinstance(steps, int) or steps < 1:
+            raise InvalidValueError(
+                f"ControllerLimits.cycles_per_timestep must be an int of at least 1, got {steps!r}"
+            )
         if self.issue_cycles < 1:
             raise ValueError("ControllerLimits.issue_cycles must be at least 1")
         for name in ("min_wait_cycles", "acquirer_hold_cycles", "feedback_latency_cycles"):
             if getattr(self, name) < 0:
                 raise ValueError(f"ControllerLimits.{name} cannot be negative")
+        object.__setattr__(self, "max_fine_delay_ns", as_nanoseconds(self.max_fine_delay_ns))
+        for name in ("max_fine_delay_ns", "alignment_tolerance_cycles"):
+            if not math.isfinite(getattr(self, name)) or getattr(self, name) < 0:
+                raise InvalidValueError(f"ControllerLimits.{name} must be a finite number >= 0")
+        peak = self.max_amplitude
+        if peak is not None and (
+            isinstance(peak, bool)
+            or not isinstance(peak, (int, float))
+            or not math.isfinite(peak)
+            or not peak > 0
+        ):
+            raise InvalidValueError(
+                f"ControllerLimits.max_amplitude must be a positive number or None, got {peak!r}"
+            )
+        rate = self.sample_rate_ghz
+        if rate is not None and (
+            isinstance(rate, bool)
+            or not isinstance(rate, (int, float))
+            or not math.isfinite(rate)
+            or not rate > 0
+        ):
+            raise InvalidValueError(
+                f"ControllerLimits.sample_rate_ghz must be a positive number or None, got {rate!r}"
+            )
         for name in (
-            "samples_per_cycles",
             "waveform_samples",
             "tones_per_line",
             "max_events",
@@ -223,6 +331,16 @@ class ControllerLimits:
             )
         )
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        from ._pickling import frozen_reduce
+
+        return frozen_reduce(self)
+
+    @property
+    def _runs_loops(self) -> bool:
+        """Whether a rolled loop's body counts once against ``max_events``."""
+        return False
+
     @property
     def computes(self) -> bool:
         """Whether any limit on what the controller computes is set."""
@@ -241,6 +359,8 @@ class ControllerLimits:
         data["acquirers"] = {str(k): v for k, v in sorted(self.acquirers.items())}
         data["op_cycles"] = dict(sorted(self.op_cycles.items()))
         data["compute_links"] = list(self.compute_links)
+        if self.max_amplitude is None:
+            del data["max_amplitude"]
         return data
 
 
@@ -251,8 +371,9 @@ def shape_key(node: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
     """A key equal for waveforms that differ only in overall amplitude.
 
     Scale and negation drop out, and so does the amplitude of a built-in
-    shape; custom samples are normalized to their largest magnitude.
-    ``None`` when the waveform is not built from numbers alone.
+    shape, known or not; custom samples are normalized to their largest
+    magnitude. ``None`` when a parameter other than the amplitude is not
+    known while the program compiles.
     """
     if node is None:
         return None
@@ -269,18 +390,19 @@ def shape_key(node: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
         if any(child is None for child in children):
             return None
         return (shape, tuple(node.get("values", ())), children)
-    if any(v is None for v in params.values()):
+    skip = _AMPLITUDE_NAMES.get(shape, frozenset())
+    kept = tuple((k, v) for k, v in params.items() if k not in skip)
+    if any(v is None for _, v in kept):
         return None
-    skip = {_PARAMETERS[shape][i] for i in _AMPLITUDES.get(shape, ())}
-    return (shape, node.get("name"), tuple((k, v) for k, v in params.items() if k not in skip))
+    return (shape, node.get("name"), kept)
 
 
 def sample_waveform(
-    node: Mapping[str, Any], duration_cycles: int, samples_per_cycles: int = 1
+    node: Mapping[str, Any], duration_cycles: int, samples_per_cycle: int = 1
 ) -> np.ndarray:
-    """The complex envelope of a waveform, ``samples_per_cycles`` per cycle.
+    """The complex envelope of a waveform, ``samples_per_cycle`` per cycle.
 
-    Sample ``k`` is the envelope at ``k / samples_per_cycles`` cycles from the
+    Sample ``k`` is the envelope at ``k / samples_per_cycle`` cycles from the
     start, with the definitions of the waveform ops (times in cycles), the
     same the simulator plays. Raises ``ValueError`` for a waveform the
     export cannot evaluate: a ``pulse.custom`` op of hand-written IR, whose
@@ -288,8 +410,8 @@ def sample_waveform(
     """
     import numpy as np
 
-    count = int(duration_cycles) * int(samples_per_cycles)
-    t = np.arange(count, dtype=float) / samples_per_cycles
+    count = int(duration_cycles) * int(samples_per_cycle)
+    t = np.arange(count, dtype=float) / samples_per_cycle
 
     def evaluate(node: Mapping[str, Any]) -> Any:
         shape = node["shape"]
@@ -343,63 +465,147 @@ def sample_waveform(
 
 
 def _walk(
-    lowered: Lowered, values: bool = True
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    lowered: Lowered,
+    values: bool = True,
+    own: _clocks.ControllerClock | None = None,
+    waveforms: bool = True,
+    slots: list[int] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], Sequence[tuple[int, int, int]], list[str]]:
     """The lines and events of *lowered*, at the values of its call; without
-    *values*, a module with float parameters has ``None`` where they reach."""
-    if values and lowered.parameters:
-        raise ValueError(
-            "the module has float parameters "
-            f"({', '.join(lowered.parameters)}); lower it with their values first"
-        )
+    *values*, a module with float parameters has ``None`` where they reach.
+
+    With *own*, the events' times are in that controller's cycles (their
+    waveforms' too, with *waveforms*), what they compute at run time too
+    (``_clocks.own_run_time``), and the line events off its grid are
+    returned as (index, start, duration) in program cycles, with the
+    violations of what they compute at run time. *slots* gets the
+    runtime-qudit slot of each line (-1 for none)."""
+    if values:
+        if lowered.parameters:
+            raise ValueError(
+                "the module has float parameters "
+                f"({', '.join(lowered.parameters)}); lower it with their values first"
+            )
+        if lowered._role is not None and lowered._unbound():
+            raise InvalidValueError("the module has runtime qudits; lower it with handles first")
     # Waveforms and frames depend on the call's values, which only the
     # concrete module holds.
     module = lowered._concrete()
     epochs = lowered._event_epochs(syncs=True)
+    off_grid: Sequence[tuple[int, int, int]] = ()
+    problems: list[str] = []
     with lowered._lock:
-        lines, events = module.controller_events(_PARAMETERS, _AMPLITUDES, epochs)
-    return lines, events
+        if own is None:
+            lines, events = module.controller_events(_PARAMETERS, _AMPLITUDES, epochs, slots)
+        else:
+            ratio = own.ratio
+            lines, events, off_grid, ends = module.controller_events_on(
+                _PARAMETERS,
+                _AMPLITUDES,
+                epochs,
+                ratio.numerator,
+                ratio.denominator,
+                own.grid,
+                slots,
+            )
+    if own is not None:
+        from . import _clocks
+
+        for index, end in ends:
+            events[index]["end_cycles"] = end
+        if waveforms and ratio != 1:
+            factor = float(ratio)
+            for event in events:
+                tree = event.get("waveform")
+                if tree is not None:
+                    _clocks._scale(tree, factor)
+        if _computes_at_run_time(lowered):
+            for event in events:
+                if event["kind"] in _clocks._GRIDDED:
+                    problems.extend(
+                        _clocks.own_run_time(own, lines[event["line"]], event, waveforms)
+                    )
+    fine = (lowered._generic or lowered).fine_delays
+    if fine is not None:
+        for line in lines:
+            line["fine_delay_ns"] = fine.get((line["role"], line["qudit"]), 0.0)
+    return lines, events, off_grid, problems
 
 
-def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, Any]:
+def _computes_at_run_time(lowered: Lowered) -> bool:
+    """Whether the program computes values at run time: from the answers of
+    classical calls, or values a readout selects while it runs."""
+    return bool(lowered.classical) or lowered.runtime_selects
+
+
+def _native_clock(clocks: _clocks.ClockPlan | None) -> _clocks.ControllerClock | None:
+    """The controller whose cycles the native walk counts the events in, when
+    the program has one and it is not on the program clock or times in
+    steps of more than one cycle."""
+    if clocks is None or clocks.owners is not None:
+        return None
+    own = clocks.controllers[0]
+    return None if own.ratio == 1 and own.grid == 1 else own
+
+
+def export(
+    lowered: Lowered, sample_rate_ghz: float | None = None, controller: int | None = None
+) -> dict[str, Any]:
     """A scheduled kernel for a controller backend, as JSON-serializable data.
 
     With *sample_rate_ghz*, each drive and readout also carries its
     envelope's samples at that rate (``samples``: real and imaginary parts),
     which must be a whole multiple of the clock. Raises
     ``ControllerLimitError`` when the machine model's controller limits are
-    exceeded.
+    exceeded. On a control system of several controllers, the program of
+    the one *controller* indexes (see ``_export_part``); without it, a
+    program on more than one is a ``ValueError``.
     """
-    from .classical.emulation import export as emulation
+    from .classical.emulation import _export as emulation
 
-    lines, events = _walk(lowered)
-    limits = lowered.options.machine.controller
-    if limits is not None:
-        violations = _violations(lowered, events, limits)
-        if violations:
-            raise ControllerLimitError(violations)
-    clock = lowered.target.clock_ghz
-    if sample_rate_ghz is not None:
-        ratio = sample_rate_ghz / clock
-        per_cycles = round(ratio)
-        if per_cycles < 1 or abs(ratio - per_cycles) > 1e-9:
-            raise ValueError(
-                f"sample_rate_ghz={sample_rate_ghz} is not a whole multiple of the "
-                f"{clock} GHz clock"
+    machine = lowered.options.machine
+    limits = machine.controller
+    system = machine._system
+    role = lowered._role
+    plan: _ExportPlan | None = None
+    slots: list[int] | None = None
+    if system is not None or role is not None or controller is not None:
+        if system is not None and limits is None:
+            return _export_part(lowered, sample_rate_ghz, controller)
+        if controller is not None:
+            _controller_index(controller, 1)
+        if role is not None:
+            plan = role.export_plan
+            if plan is None:
+                slots = []
+    clocks = (lowered._generic or lowered).clocks
+    native = None if clocks is None else _native_clock(clocks)
+    # In the controller's own cycles from here on.
+    lines, events, off, problems = _walk(lowered, True, native, True, slots)
+    if system is not None or limits is not None:
+        if system is not None:
+            violations = system._violations(
+                lowered, lines, events, clocks, off, problems, True, None, None
             )
-        for event in events:
-            if event.get("waveform") is None or event["duration_cycles"] is None:
-                continue
-            try:
-                samples = sample_waveform(event["waveform"], event["duration_cycles"], per_cycles)
-            except ValueError as e:
-                raise ValueError(f"event {event['index']} ({event['kind']}): {e}") from None
-            event["samples"] = {"re": samples.real.tolist(), "im": samples.imag.tolist()}
-    base = emulation(lowered)
-    return {
+        else:
+            assert limits is not None
+            violations = _violations(lowered, events, limits, lines, clocks, off, problems)
+        if violations:
+            raise _limit_error(lowered, violations)
+    own = None
+    if clocks is not None:
+        from . import _clocks
+
+        own = clocks.controllers[0]
+    clock = lowered.target.clock_ghz if own is None else own.clock_ghz
+    if sample_rate_ghz is not None:
+        _add_samples(events, sample_rate_ghz, clock)
+    base = emulation(lowered, False)
+    exported = {
         "format": FORMAT,
         "target": lowered.target.name,
         "clock_ghz": clock,
+        **({} if clocks is None else _clocks.clock_keys(clocks, clocks.controllers[0])),
         "schedule": lowered.options.schedule,
         "sample_rate_ghz": sample_rate_ghz,
         "qudits": list(lowered.qudits),
@@ -411,6 +617,264 @@ def export(lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, 
         "manifest": base["manifest"],
         "limits": None if limits is None else limits.as_dict(),
     }
+    if role is not None:
+        if plan is None or len(plan[1]) != len(events):
+            if slots is None:
+                slots = []
+                _walk(lowered, own=native, slots=slots)
+            plan = _export_plan(lowered, role, slots, events)
+        exported["program_id"] = role.program_id
+        exported["symbols"] = _symbols(lowered, plan[0])
+        for event, template in zip(events, plan[1], strict=True):
+            if template is not None:
+                symbols = template[0].copy()
+                for key in template[1]:
+                    symbols[key] = symbols[key][:]
+                event["symbols"] = symbols
+    return exported
+
+
+def _add_samples(events: Sequence[dict[str, Any]], sample_rate_ghz: float, clock: float) -> None:
+    """Give each drive and readout of *events* its envelope's samples at
+    *sample_rate_ghz*, a whole multiple of the *clock* its times count."""
+    ratio = sample_rate_ghz / clock
+    per_cycles = round(ratio)
+    if per_cycles < 1 or abs(ratio - per_cycles) > 1e-9:
+        raise ValueError(
+            f"sample_rate_ghz={sample_rate_ghz} is not a whole multiple of the {clock} GHz clock"
+        )
+    for event in events:
+        if event.get("waveform") is None or event["duration_cycles"] is None:
+            continue
+        try:
+            samples = sample_waveform(event["waveform"], event["duration_cycles"], per_cycles)
+        except ValueError as e:
+            raise ValueError(f"event {event['index']} ({event['kind']}): {e}") from None
+        event["samples"] = {"re": samples.real.tolist(), "im": samples.imag.tolist()}
+
+
+def _controller_index(controller: Any, count: int) -> int:
+    """*controller*, checked as the index of one of *count* controllers."""
+    if isinstance(controller, bool) or not isinstance(controller, int):
+        raise InvalidTypeError(
+            f"controller= is the index of a controller of the control system, got {controller!r}"
+        )
+    if not 0 <= controller < count:
+        raise InvalidValueError(
+            f"controller={controller}, and the program's control system has "
+            + ("one controller (0)" if count == 1 else f"{count} controllers (0 to {count - 1})")
+        )
+    return controller
+
+
+def _part(
+    lowered: Lowered, controller: int | None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[int | None], list[list[int]], int]:
+    """Of a program on a control system of several controllers: its lines
+    and events in program cycles, each line's controller, the controllers
+    taking part in each event, and the controller whose program is wanted:
+    *controller*, else the only one the program uses (``ValueError`` when it
+    uses more). A controller the program does not use gets an empty part."""
+    system = lowered.options.machine._system
+    assert system is not None
+    lines, events, _, _ = _walk(lowered, slots=None)
+    owners, _ = system._owners(lines)
+    parts = system._parts(events, owners)
+    count = len(system.controllers)
+    if controller is not None:
+        index = _controller_index(controller, count)
+    else:
+        used = sorted({o for o in owners if o is not None})
+        if len(used) > 1:
+            raise InvalidValueError(
+                f"the program plays lines of {len(used)} controllers ("
+                + ", ".join(f"controllers[{i}]" for i in used)
+                + f"); pass controller= (0 to {count - 1}) to export one controller's program"
+            )
+        if not used:
+            # Without lines, the program is its calls.
+            used = sorted({c for part in parts for c in part})
+            if len(used) > 1:
+                raise InvalidValueError(
+                    f"the program's calls are made on {len(used)} controllers ("
+                    + ", ".join(f"controllers[{i}]" for i in used)
+                    + f"); pass controller= (0 to {count - 1}) to export one controller's "
+                    "program"
+                )
+        index = used[0] if used else 0
+    return lines, events, owners, parts, index
+
+
+def _export_part(
+    lowered: Lowered, sample_rate_ghz: float | None, controller: int | None
+) -> dict[str, Any]:
+    """``export`` on a control system of several controllers: the program of
+    one, in its own cycles, with its lines and limits and the events it
+    takes part in (see ``ControlSystem._parts``); a sync lists its lines
+    alone. Line and event ids are the program's, so an event names one
+    another controller plays (a readout whose outcome it is sent) by the id
+    that controller's program gives it."""
+    import copy
+
+    from .classical.emulation import _export as emulation
+
+    machine = lowered.options.machine
+    system = machine._system
+    assert system is not None
+    clocks = (lowered._generic or lowered).clocks
+    lines, events, owners, parts, index = _part(lowered, controller)
+    # The checks count each controller's events in its cycles, in place.
+    checked = events if clocks is None else copy.deepcopy(events)
+    violations = system._violations(lowered, lines, checked, clocks, (), (), True, None, None)
+    if violations:
+        raise _limit_error(lowered, violations)
+    role = lowered._role
+    plan: _ExportPlan | None = None if role is None else role.export_plan
+    if role is not None:
+        if plan is None or len(plan[1]) != len(events):
+            slots: list[int] = []
+            _walk(lowered, slots=slots)
+            plan = _export_plan(lowered, role, slots, events)
+        for event, template in zip(events, plan[1], strict=True):
+            if template is not None:
+                symbols = template[0].copy()
+                for key in template[1]:
+                    symbols[key] = symbols[key][:]
+                event["symbols"] = symbols
+    mine = []
+    for event, part in zip(events, parts, strict=True):
+        if index in part:
+            if event["kind"] == "sync":
+                event["lines"] = [line for line in event["lines"] if owners[line] == index]
+            mine.append(event)
+    own = None
+    keys: dict[str, float] = {}
+    if clocks is not None:
+        from . import _clocks
+
+        own = clocks.controllers[index]
+        keys = _clocks.clock_keys(clocks, own)
+        if own.ratio != 1 or own.grid > 1:
+            alone = _clocks.ClockPlan(clocks.program_ghz, (own,), clocks.reference_clock_ghz)
+            _clocks.off_grid(alone, lines, mine, True, True, _computes_at_run_time(lowered))
+    clock = lowered.target.clock_ghz if own is None else own.clock_ghz
+    if sample_rate_ghz is not None:
+        _add_samples(mine, sample_rate_ghz, clock)
+    functions = frozenset(e["function"] for e in mine if e["kind"] in ("submit", "answer"))
+    base = emulation(lowered, False, (index, own, functions, ()))
+    played = [line for line, owner in zip(lines, owners, strict=True) if owner == index]
+    exported = {
+        "format": FORMAT,
+        "target": lowered.target.name,
+        "clock_ghz": clock,
+        **keys,
+        "controller": index,
+        "schedule": lowered.options.schedule,
+        "sample_rate_ghz": sample_rate_ghz,
+        "qudits": sorted({line["qudit"] for line in played}),
+        "lines": played,
+        "events": mine,
+        "epochs": base["epochs"],
+        "calls": base["calls"],
+        "links": base["links"],
+        "manifest": base["manifest"],
+        "limits": system.controllers[index].as_dict(),
+    }
+    if role is not None:
+        assert plan is not None
+        exported["program_id"] = role.program_id
+        exported["symbols"] = _symbols(lowered, plan[0])
+    return exported
+
+
+_DEPENDENT_FIELDS = ("frequency_hz", "phase_rad", "waveform")
+
+
+# Where a symbol's value comes from in a call: its float arguments, the
+# carrier bound to a slot, or that carrier's native frequency.
+_ARGUMENT, _CARRIER, _NATIVE = range(3)
+
+
+def _symbols(
+    lowered: Lowered, templates: list[tuple[dict[str, Any], int, int]]
+) -> list[dict[str, Any]]:
+    """Every symbol of a call's module, with its value in the call: its
+    float arguments, its slots (the carriers bound) and the native frequency
+    of each slot that gets a line."""
+    arguments = lowered.arguments
+    carriers = lowered.carriers
+    found = []
+    for template, source, k in templates:
+        entry = template.copy()
+        if source == _ARGUMENT:
+            entry["value"] = arguments[k]
+        elif source == _CARRIER:
+            entry["value"] = carriers[k]
+        else:
+            entry["value"] = lowered.target.frequencies[carriers[k]]
+        found.append(entry)
+    return found
+
+
+# Each symbol without its value and where the value comes from; each event's
+# symbols, with the keys whose values are lists.
+_ExportPlan = tuple[
+    list[tuple[dict[str, Any], int, int]],
+    list[tuple[dict[str, Any], tuple[str, ...]] | None],
+]
+
+
+def _export_plan(
+    lowered: Lowered, role: Any, slots: Sequence[int], events: list[dict[str, Any]]
+) -> _ExportPlan:
+    """What a role's exports share, built once per role from a call's
+    *events* and the runtime-qudit *slots* of its lines."""
+    lined = set(slots)
+    symbols: list[tuple[dict[str, Any], int, int]] = []
+    argument = 0
+    for name, kind, parameter, position in role.symbols:
+        entry: dict[str, Any] = {"symbol": name, "kind": kind, "parameter": parameter}
+        if position is not None:
+            entry["position"] = position
+        if kind == "slot":
+            slot = int(name[1:])
+            symbols.append((entry, _CARRIER, slot))
+            if slot in lined:
+                native = {"symbol": f"{name}.f01", "kind": "frequency", "slot": name}
+                symbols.append((native, _NATIVE, slot))
+        else:
+            symbols.append((entry, _ARGUMENT, argument))
+            argument += 1
+
+    dependencies = role.dependencies
+    if dependencies is None:
+        with lowered._lock:
+            found = lowered._module.controller_dependencies()
+        names = [name for name, kind, _, _ in role.symbols if kind != "slot"]
+        names += [f"s{k}.f01" for k in range(role.slots)]
+        dependencies = role.dependencies = [
+            {
+                field: [names[a] for a in arguments]
+                for field, arguments in zip(_DEPENDENT_FIELDS, item, strict=True)
+                if arguments
+            }
+            for item in found
+        ]
+    aligned = len(dependencies) == len(events)
+    templates: list[tuple[dict[str, Any], tuple[str, ...]] | None] = []
+    for index, event in enumerate(events):
+        template: dict[str, Any] = {}
+        line = event["line"]
+        if (event["kind"] in _PLAYED or event["kind"] == "wait") and line is not None:
+            if 0 <= line < len(slots) and slots[line] >= 0:
+                template["qudit"] = f"s{slots[line]}"
+        if aligned:
+            template.update(dependencies[index])
+        lists = tuple(k for k, v in template.items() if type(v) is list)
+        templates.append((template, lists) if template else None)
+    plan: _ExportPlan = (symbols, templates)
+    role.export_plan = plan
+    return plan
 
 
 # ── Checks ───────────────────────────────────────────────────────────────────
@@ -444,23 +908,49 @@ def _pairs(
 
 
 def _violations(
-    lowered: Lowered, events: Sequence[Mapping[str, Any]], limits: ControllerLimits
+    lowered: Lowered,
+    events: Sequence[dict[str, Any]],
+    limits: ControllerLimits,
+    lines: Sequence[Mapping[str, Any]],
+    clocks: _clocks.ClockPlan | None,
+    off: Sequence[tuple[int, int, int]] = (),
+    run_time: Sequence[str] = (),
+    waveforms: bool = True,
+    unresolved: list[str] | None = None,
+    natives: Sequence[int] | None = None,
 ) -> list[str]:
-    found: list[str] = []
-    clock = lowered.target.clock_ghz
-    if limits.clock_ghz is not None and abs(clock - limits.clock_ghz) > 1e-12:
-        found.append(
-            f"the target's clock is {clock} GHz; the controller runs at {limits.clock_ghz} GHz"
-        )
-    timed = [e for e in events if e["kind"] in _PLAYED and e["end_cycles"] is not None]
+    """The limits *events* exceed. With *clocks*, the events are in the
+    controller's own cycles: the native walk's, with *off* its line events
+    off the grid and *run_time* the violations of what they compute at run
+    time, or else (lines on several controllers) converted here in place,
+    their waveforms too unless *waveforms* is false (the limits count
+    waveforms alike either way). With *unresolved*, a tone or waveform
+    whose value is not known yet counts only if the limit is exceeded
+    whatever its value; a limit that only some values exceed is appended to
+    *unresolved* instead, to be checked with them. *natives* has, by event
+    index, the qudit argument whose native frequency the event plays, or -1."""
+    if clocks is None:
+        found = []
+    else:
+        from . import _clocks
+
+        if clocks.owners is None:
+            found = _clocks.off_grid_messages(clocks.controllers[0], lines, events, off)
+            found.extend(run_time)
+        else:
+            found = _clocks.off_grid(
+                clocks, lines, events, True, waveforms, _computes_at_run_time(lowered)
+            )
+    timed: list[Mapping[str, Any]] = [
+        e for e in events if e["kind"] in _PLAYED and e["end_cycles"] is not None
+    ]
     if limits.max_events is not None and len(timed) > limits.max_events:
-        found.append(
-            f"{len(timed)} drives and readouts; the controller plays at most {limits.max_events}"
-        )
+        found.extend(_event_count(timed, limits.max_events, limits._runs_loops))
     by_line: dict[int, list[Mapping[str, Any]]] = {}
     for event in timed:
         by_line.setdefault(event["line"], []).append(event)
     issue, gap = limits.issue_cycles, limits.issue_cycles + limits.min_wait_cycles
+    num, den = _samples_per_own_cycle(limits, lowered.target.clock_ghz)
     for line, items in sorted(by_line.items()):
         for previous, event in _pairs(items):
             distance = event["start_cycles"] - previous["start_cycles"]
@@ -478,20 +968,39 @@ def _violations(
                     f"line {line}: {len(tones)} tone frequencies; the controller holds "
                     f"{limits.tones_per_line} per line"
                 )
+            elif unresolved is not None:
+                unknown = [e for e in items if e.get("frequency_hz") is None]
+                if natives is None:
+                    count = len(unknown)
+                else:
+                    # A runtime qudit's own frequency is one tone however
+                    # often it plays: an upper bound for every placement.
+                    keys = [natives[e["index"]] for e in unknown]
+                    count = len({k for k in keys if k >= 0}) + keys.count(-1)
+                if len(tones) + count > limits.tones_per_line:
+                    unresolved.append(f"line {line}: tone frequencies")
+        if limits.max_amplitude is not None:
+            found.extend(_over_amplitude(lines[line], items, limits.max_amplitude, unresolved))
         if limits.waveform_samples is not None:
-            per_cycles = limits.samples_per_cycles or 1
             shapes: dict[Any, int] = {}
+            unknown_samples = 0
             for e in items:
                 key = shape_key(e.get("waveform"))
-                shapes[
-                    (key, e["duration_cycles"]) if key is not None else ("event", e["index"])
-                ] = e["duration_cycles"] * per_cycles
+                samples = -(-e["duration_cycles"] * num // den)
+                if key is not None:
+                    shapes[(key, e["duration_cycles"])] = samples
+                elif unresolved is not None:
+                    unknown_samples += samples
+                else:
+                    shapes[("event", e["index"])] = samples
             used = sum(shapes.values())
             if used > limits.waveform_samples:
                 found.append(
                     f"line {line}: its waveforms take {used} samples; the controller's "
                     f"waveform memory holds {limits.waveform_samples}"
                 )
+            elif unresolved is not None and used + unknown_samples > limits.waveform_samples:
+                unresolved.append(f"line {line}: waveform memory")
     if limits.acquirers:
         by_acquirer: dict[int, list[Mapping[str, Any]]] = {}
         for event in timed:
@@ -532,19 +1041,223 @@ def _violations(
                 found.append(
                     f"the wait for {event['function']} at {event['start_cycles']} has a timeout; "
                     "the controller cannot stop waiting for an answer, so take it with "
-                    "result() (no timeout_ns)"
+                    "result() (no timeout)"
                 )
     if limits.computes:
         found.extend(resources(lowered, limits).violations)
     return found
 
 
+def _over_amplitude(
+    line: Mapping[str, Any],
+    events: Sequence[Mapping[str, Any]],
+    most: float,
+    unresolved: list[str] | None = None,
+) -> list[str]:
+    """The events of *line* whose envelope peaks above *most*. With
+    *unresolved*, an envelope whose peak needs the call's values is noted
+    there, to be checked with them."""
+    found = []
+    for event in events:
+        tree = event.get("waveform")
+        peak = _peak_amplitude(tree)
+        if peak is None and tree is not None and unresolved is not None:
+            unresolved.append(f"line {line['line']}: amplitude")
+            unresolved = None
+        if peak is not None and peak > most:
+            found.append(
+                f"line {line['line']} ({line['role']} of qudit {line['qudit']}): the "
+                f"{event['kind']} at {event['start_cycles']} peaks at amplitude {peak:.6g}; "
+                f"the controller plays at most {most:g} (ControllerLimits.max_amplitude)"
+            )
+    return found
+
+
+# Samples per cycle the peak of an envelope is found at.
+_PEAK_SAMPLES_PER_CYCLE = 8
+
+
+def _peak_amplitude(node: Mapping[str, Any] | None) -> float | None:
+    """The largest magnitude of the envelope of *node*, over its own
+    duration; ``None`` when it is not built from numbers alone."""
+    if node is None:
+        return None
+    duration = _span(node)
+    if duration is None:
+        return None
+    try:
+        samples = sample_waveform(node, math.ceil(duration), _PEAK_SAMPLES_PER_CYCLE)
+    except (ValueError, TypeError, KeyError):
+        return None
+    return float(abs(samples).max()) if len(samples) else 0.0
+
+
+def _span(node: Mapping[str, Any]) -> float | None:
+    """The duration, in cycles, a waveform tree states for itself."""
+    duration = node.get("params", {}).get("duration")
+    if duration is not None:
+        return float(duration)
+    if node["shape"] == "custom_samples":
+        return float(len(node.get("samples", ())) or 1)
+    for child in node.get("of", ()):
+        found = _span(child)
+        if found is not None:
+            return found
+    return None
+
+
+def _samples_per_own_cycle(limits: ControllerLimits, program_ghz: float) -> tuple[int, int]:
+    """The controller's samples per cycle of its clock, as (num, den)."""
+    if limits.sample_rate_ghz is None:
+        return 1, 1
+    from . import _clocks
+
+    return _clocks.made_for(limits.sample_rate_ghz, limits.clock_ghz or program_ghz)
+
+
+def _event_count(timed: Sequence[Mapping[str, Any]], most: int, runs_loops: bool) -> list[str]:
+    """The violation of ``max_events`` (*most*) by *timed*, which exceeds it
+    unrolled; a controller that *runs_loops* holds a rolled body once."""
+    if runs_loops:
+        held = sum(1 for e in timed if not any(e["iteration"]))
+        if held <= most:
+            return []
+        return [
+            f"{held} drives and readouts, a rolled loop's body counted once; the "
+            f"controller holds at most {most}"
+        ]
+    text = f"{len(timed)} drives and readouts; the controller plays at most {most}"
+    loops = _rolled_loops(timed)
+    if loops:
+        grown = "; ".join(
+            f"the loop of {trips} iterations from cycle {start} plays {extra} more"
+            for trips, start, extra in loops
+        )
+        text += f". It does not support 'loop', so rolled loops are unrolled for it: {grown}"
+    return [text]
+
+
+def _rolled_loops(timed: Sequence[Mapping[str, Any]]) -> list[tuple[int, int, int]]:
+    """Each outermost rolled loop of *timed* (in program order): its trip
+    count, its first start cycle and the events past its first iteration."""
+    loops: list[list[int]] = []
+    previous = -1
+    for e in timed:
+        iteration = e["iteration"]
+        if not iteration:
+            previous = -1
+            continue
+        if previous < 0 or iteration[0] < previous:
+            loops.append([0, e["start_cycles"], 0])
+        loop = loops[-1]
+        loop[0] = max(loop[0], iteration[0] + 1)
+        loop[2] += any(iteration)
+        previous = iteration[0]
+    return [(trips, start, extra) for trips, start, extra in loops if extra]
+
+
 def check(lowered: Lowered, limits: ControllerLimits | None = None) -> list[str]:
-    """The limits *lowered* exceeds, of *limits* or else its machine model's."""
+    """The limits *lowered* exceeds, of *limits* or else its machine model's.
+
+    Of a module with float parameters (``lowered.generic``), the limits it
+    exceeds whatever their values; a call's values are checked when it is
+    made, so a limit never fails first at export.
+    """
     limits = limits if limits is not None else lowered.options.machine.controller
     if limits is None:
         return []
-    return _violations(lowered, _walk(lowered, values=False)[1], limits)
+    return _compile_check(lowered, limits)[0]
+
+
+def _compile_check(
+    lowered: Lowered, limits: ControllerLimits | None, system: ControlSystem | None = None
+) -> tuple[list[str], bool]:
+    """The limits *lowered* exceeds whatever its float values, and whether
+    that is exact: ``False`` when some values may exceed others. With
+    *system*, of its controllers (*limits* is then its only one, or ``None``)."""
+    machine = lowered.options.machine
+    if limits is machine.controller:
+        clocks = (lowered._generic or lowered).clocks
+    else:
+        from . import _clocks
+
+        clocks = _clocks.plan(limits, lowered.target.clock_ghz, machine.reference_clock_ghz)
+    lines, events, off, problems = _walk(
+        lowered, values=False, own=_native_clock(clocks), waveforms=False
+    )
+    slots = lowered._role is not None and lowered._role.slots > 0
+    if system is not None and slots and not system._plays_everything:
+        # Which controller plays a line depends on the qudits a call binds.
+        return [], False
+    unresolved: list[str] | None = [] if lowered.parameters or slots else None
+    natives = None
+    if slots and limits is not None and limits.tones_per_line is not None:
+        with lowered._lock:
+            natives = lowered._module.controller_native_tones()
+    if system is None:
+        assert limits is not None
+        found = _violations(
+            lowered, events, limits, lines, clocks, off, problems, False, unresolved, natives
+        )
+    else:
+        found = system._violations(
+            lowered, lines, events, clocks, off, problems, False, unresolved, natives
+        )
+    if slots and limits is not None and limits.acquirers:
+        assert unresolved is not None
+        # Acquirers are given per carrier, which each call binds.
+        unresolved.append("acquirers")
+    if limits is not None and limits is not machine.controller:
+        found.extend(_sample_rate_violations(lowered, limits, clocks, events))
+    return found, not unresolved
+
+
+def _call_violations(lowered: Lowered) -> list[str]:
+    """The limits one call's values exceed, as its export checks them."""
+    machine = lowered.options.machine
+    clocks = (lowered._generic or lowered).clocks
+    lines, events, off, problems = _walk(lowered, own=_native_clock(clocks))
+    if machine._system is not None:
+        return machine._system._violations(
+            lowered, lines, events, clocks, off, problems, True, None, None
+        )
+    assert machine.controller is not None
+    return _violations(lowered, events, machine.controller, lines, clocks, off, problems)
+
+
+def _sample_rate_violations(
+    lowered: Lowered,
+    limits: ControllerLimits,
+    clocks: _clocks.ClockPlan | None,
+    events: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    """The sample arrays that *limits*' lines would play at another rate than
+    the one they were made for: the rate of the lines *lowered* was compiled
+    for."""
+    from . import _clocks
+
+    machine = lowered.options.machine
+    made = None
+    program = lowered.target.clock_ghz
+    if machine.controller is not None:
+        made = _clocks.sample_rate(machine.controller, program)
+    plays = _clocks.sample_rate(limits, program)
+    if made == plays:
+        return []
+    made_ghz = program if made is None else program * made[0] / made[1]
+    plays_ghz = program if plays is None else program * plays[0] / plays[1]
+    return [
+        f"line {e['line']}: the {e['kind']} at {e['start_cycles']} plays samples made for "
+        f"{made_ghz:g} GHz, and the controller's lines play {plays_ghz:g} GHz"
+        for e in events
+        if e["kind"] in _PLAYED and _has_samples(e.get("waveform"))
+    ]
+
+
+def _has_samples(node: Mapping[str, Any] | None) -> bool:
+    if node is None:
+        return False
+    return node["shape"] == "custom_samples" or any(_has_samples(c) for c in node.get("of", ()))
 
 
 # ── What the classical functions cost ───────────────────────────────────────
@@ -565,10 +1278,13 @@ class FunctionResources:
     without them), against ``max_latency_ns``. ``calls_per_shot`` counts its
     executions in one shot of the program (0 from ``analyze``).
     ``on_controller`` says whether it runs on the controller (its link is
-    one of the limits' ``compute_links``).
+    one of the limits' ``compute_links``). ``function`` is the name it is
+    declared with and ``compiled_name`` the version's, such as
+    ``"adaptive_t1__1"`` (the same name for one of one schema).
     """
 
     function: str
+    compiled_name: str
     link: int | str
     on_controller: bool
     cost: FunctionCost
@@ -590,7 +1306,8 @@ class FunctionResources:
 class LinkUsage:
     """One link's use in one shot: its calls, the most requests it holds
     at once against its slots, its largest message against its slot size,
-    and the bytes of all its requests and answers."""
+    and the bytes of all its requests and answers. A per-controller link has
+    a row for each controller's instance (``controller``)."""
 
     link: int | str
     calls_per_shot: int
@@ -599,6 +1316,7 @@ class LinkUsage:
     largest_message_bytes: int
     slot_bytes: int
     bytes_per_shot: int
+    controller: int | None = None
 
 
 @dataclass(frozen=True)
@@ -676,7 +1394,17 @@ def _function_resources(
             function.name, {}, 0, 0, 0, (), (f"{function.name}: external, with no body to read",)
         )
     elif function.uniform is not None:
-        cost = FunctionCost(function.name, {"load": 1}, 1, 0, 0, (), ())
+        cost = FunctionCost(
+            function.name,
+            {"load": 1},
+            1,
+            0,
+            0,
+            (),
+            (),
+            unrolled_size=1,
+            uses={"load": function.name},
+        )
     else:
         cost = _controller_cost.analyze_callable(function.implementation, _value_lengths(function))
     args_bytes = _payload_bytes(function.args)
@@ -689,7 +1417,8 @@ def _function_resources(
         if rate:
             compute_ns = cycles / rate
     return FunctionResources(
-        function=function.name,
+        function=function.base_name,
+        compiled_name=function.name,
         link=_link_key(function),
         on_controller=_on_controller(function, limits, machine),
         cost=cost,
@@ -704,13 +1433,27 @@ def _function_resources(
 
 
 def analyze(function: Any, limits: ControllerLimits | None = None) -> FunctionResources:
-    """What one classical function costs, on its own (see ``resources``)."""
+    """What one classical function costs, on its own (see ``resources``).
+    A function whose list lengths come from its calls has a cost per
+    version: analyze one, ``analyze(flip.specialize(outcomes=3))``."""
+    from .classical import ClassicalFunction, _resolve, _unsized_names
+
+    if isinstance(function, ClassicalFunction):
+        _resolve(function)
+        if function._shape is not None:
+            names = _unsized_names(function)
+            example = ", ".join(f"{n}=3" for n in names)
+            raise InvalidTypeError(
+                f"{function.name}'s list lengths come from its calls ({', '.join(names)}), so it"
+                f" has no single cost; analyze one version, e.g."
+                f" analyze({function.name}.specialize({example}))"
+            )
     return _function_resources(function, limits, None)
 
 
 def _function_violations(row: FunctionResources, limits: ControllerLimits) -> list[str]:
     found = []
-    name = row.function
+    name = row.compiled_name
     if limits.controller_form and row.cost.violations:
         found.append(
             f"{name} is not in controller form: "
@@ -752,19 +1495,21 @@ def resources(lowered: Lowered, limits: ControllerLimits | None = None) -> Resou
     calls = lowered.classical_report() if lowered.classical and lowered.scheduled else []
     per_function: dict[str, int] = {}
     for call in calls:
-        per_function[call.function] = per_function.get(call.function, 0) + 1
+        per_function[call.compiled_name] = per_function.get(call.compiled_name, 0) + 1
     rows = tuple(
         _function_resources(
             fn, limits, lowered.target.clock_ghz, machine, per_function.get(fn.name, 0)
         )
         for fn in lowered.classical
     )
-    by_name = {row.function: row for row in rows}
-    usage: dict[int, dict[str, Any]] = {}
+    by_name = {row.compiled_name: row for row in rows}
+    usage: dict[tuple[int, int], dict[str, Any]] = {}
     for call in calls:
-        row = by_name.get(call.function)
+        row = by_name.get(call.compiled_name)
+        instance = -1 if call.controller is None else call.controller
         entry = usage.setdefault(
-            call.link, {"calls": 0, "bytes": 0, "largest": 0, "spans": [], "name": call.link_name}
+            (call.link, instance),
+            {"calls": 0, "bytes": 0, "largest": 0, "spans": [], "name": call.link_name},
         )
         entry["calls"] += 1
         if row is not None:
@@ -773,7 +1518,7 @@ def resources(lowered: Lowered, limits: ControllerLimits | None = None) -> Resou
         end = call.taken_cycles if call.taken_cycles is not None else call.due_cycles
         entry["spans"].append((call.submit_cycles, max(end, call.submit_cycles + 1)))
     links = []
-    for link_id, entry in sorted(usage.items()):
+    for (link_id, instance), entry in sorted(usage.items()):
         edges = sorted([(a, 1) for a, _ in entry["spans"]] + [(b, -1) for _, b in entry["spans"]])
         peak = held = 0
         for _, step in edges:
@@ -789,6 +1534,7 @@ def resources(lowered: Lowered, limits: ControllerLimits | None = None) -> Resou
                 largest_message_bytes=entry["largest"],
                 slot_bytes=link.slot_bytes,
                 bytes_per_shot=entry["bytes"],
+                controller=None if instance < 0 else instance,
             )
         )
     found: list[str] = []
@@ -811,14 +1557,19 @@ def resources(lowered: Lowered, limits: ControllerLimits | None = None) -> Resou
                 f"bytes; its buffer holds {limits.buffer_bytes}"
             )
     for usage_row in links:
+        where = (
+            f"link {usage_row.link!r}"
+            if usage_row.controller is None
+            else f"link {usage_row.link!r} on controllers[{usage_row.controller}]"
+        )
         if usage_row.peak_in_flight > usage_row.max_in_flight:
             found.append(
-                f"link {usage_row.link!r} holds {usage_row.peak_in_flight} requests at once; it "
+                f"{where} holds {usage_row.peak_in_flight} requests at once; it "
                 f"has {usage_row.max_in_flight} slots"
             )
         if usage_row.largest_message_bytes > usage_row.slot_bytes:
             found.append(
-                f"link {usage_row.link!r} carries a {usage_row.largest_message_bytes}-byte "
+                f"{where} carries a {usage_row.largest_message_bytes}-byte "
                 f"message; its slots hold {usage_row.slot_bytes}"
             )
     return ResourceReport(
@@ -843,7 +1594,7 @@ def format_report(report: ResourceReport) -> str:
         compute = "-" if row.compute_ns is None else f"{row.compute_ns:.0f} ns"
         form = "ok" if row.cost.in_controller_form else "no"
         lines.append(
-            f"  {row.function:<24} {str(row.link):<11} {row.cost.total:>5} {row.cost.size:>5} "
+            f"  {row.compiled_name:<24} {str(row.link):<11} {row.cost.total:>5} {row.cost.size:>5} "
             f"{row.state_bytes:>7} {compute:>9} {row.max_latency_ns:>5.0f} ns "
             f"{row.calls_per_shot:>5}  {form}"
         )
@@ -854,8 +1605,11 @@ def format_report(report: ResourceReport) -> str:
         lines.append("Links, per shot")
         lines.append(f"  {'link':<11} {'calls':>5} {'in flight':>9} {'largest B':>9} {'bytes':>7}")
         for usage in report.links:
+            name = str(usage.link)
+            if usage.controller is not None:
+                name += f"@{usage.controller}"
             lines.append(
-                f"  {str(usage.link):<11} {usage.calls_per_shot:>5} "
+                f"  {name:<11} {usage.calls_per_shot:>5} "
                 f"{usage.peak_in_flight:>4}/{usage.max_in_flight:<4} "
                 f"{usage.largest_message_bytes:>4}/{usage.slot_bytes:<4} {usage.bytes_per_shot:>7}"
             )
@@ -864,3 +1618,448 @@ def format_report(report: ResourceReport) -> str:
         lines.append("Exceeds:")
         lines.extend(f"  {v}" for v in report.violations)
     return "\n".join(lines)
+
+
+# ── What the processors of a control system run ─────────────────────────────
+
+
+@dataclass(frozen=True)
+class FunctionUsage:
+    """One classical function on the processor that runs it, in
+    ``Lowered.controller_usage``.
+
+    ``ops`` is the operations it holds there: its body as written, or with
+    every loop unrolled (``unrolled``) on a processor without ``"loop"``.
+    ``state_bytes`` adds its arguments, results and locals;
+    ``request_bytes`` and ``answer_bytes`` are its messages with their
+    headers. ``compute_ns`` is its longest path at the processor's
+    ``cycles_per_op`` and clock, against ``max_latency_ns``;
+    ``calls_per_shot`` counts its calls in one shot.
+    """
+
+    function: str
+    link: int | str
+    ops: int
+    unrolled: bool
+    state_bytes: int
+    request_bytes: int
+    answer_bytes: int
+    compute_cycles: int
+    compute_ns: float
+    max_latency_ns: float
+    calls_per_shot: int
+    cost: FunctionCost
+
+    @property
+    def slack_ns(self) -> float:
+        """How much of ``max_latency_ns`` the compute time leaves."""
+        return self.max_latency_ns - self.compute_ns
+
+
+@dataclass(frozen=True)
+class ProcessorUsage:
+    """What one processor runs (``functions``) and its totals: the
+    operations and state bytes of all its functions, its calls and their
+    bytes per shot, and the most calls it computes at once; ``processor``
+    has the limits."""
+
+    controller: int
+    index: int
+    processor: Processor
+    clock_ghz: float
+    functions: tuple[FunctionUsage, ...]
+    ops: int
+    state_bytes: int
+    calls_per_shot: int
+    bytes_per_shot: int
+    peak_concurrent_calls: int
+
+
+@dataclass(frozen=True)
+class ControllerUsage:
+    """One controller of the system, by its index, and its processors."""
+
+    controller: int
+    model: str | None
+    processors: tuple[ProcessorUsage, ...]
+
+
+@dataclass(frozen=True)
+class LimitExceeded:
+    """A limit of a processor that a program exceeds, in
+    ``UsageReport.exceeded``: the function, or the processor, that exceeds
+    it (``where``), the limit (a ``Processor`` field, or the function's
+    ``max_latency_ns``), what the program needs of it (``value``, in
+    ``unit``) and what the limit allows (``most``)."""
+
+    where: str
+    limit: str
+    value: float
+    most: float
+    unit: str
+
+    @property
+    def over(self) -> float:
+        """By how much the program exceeds the limit."""
+        return self.value - self.most
+
+
+@dataclass(frozen=True)
+class UsageReport:
+    """What a program's classical functions use of the processors of its
+    control system (``Lowered.controller_usage``): one row per controller
+    with processors, the functions that run off them (``off_board``, by
+    name, whose links alone are checked) and the limits exceeded, as text
+    (``violations``) and for each numeric limit by how much (``exceeded``).
+    ``str(report)`` is a table. A program over a limit does not compile:
+    its ``ControllerLimitError`` carries the report as ``usage``."""
+
+    controllers: tuple[ControllerUsage, ...]
+    off_board: tuple[str, ...]
+    violations: tuple[str, ...]
+    exceeded: tuple[LimitExceeded, ...] = ()
+
+    @property
+    def within_limits(self) -> bool:
+        """Whether the program fits every processor."""
+        return not self.violations
+
+    def __str__(self) -> str:
+        return _format_usage(self)
+
+
+def _peak(spans: Sequence[tuple[int, int]]) -> int:
+    edges = sorted([(a, 1) for a, _ in spans] + [(b, -1) for _, b in spans])
+    peak = held = 0
+    for _, step in edges:
+        held += step
+        peak = max(peak, held)
+    return peak
+
+
+def usage(lowered: Lowered) -> UsageReport:
+    """What *lowered*'s classical functions use of its control system's
+    processors, and the limits they exceed (see ``Processor``)."""
+    machine = lowered.options.machine
+    system = machine._system
+    placement = system._placement if system is not None else {}
+    if system is None or not placement:
+        return UsageReport((), tuple(fn.name for fn in lowered.classical), ())
+    calls = lowered.classical_report() if lowered.classical and lowered.scheduled else []
+    # By function and the controller whose instance of a per-controller
+    # link runs the call (None: shared, or not known).
+    spans: dict[tuple[str, int | None], list[tuple[int, int]]] = {}
+    for call in calls:
+        end = max(call.due_cycles, call.submit_cycles + 1)
+        spans.setdefault((call.compiled_name, call.controller), []).append(
+            (call.submit_cycles, end)
+        )
+    # Calls over a per-controller link whose instance is not known count on each.
+    placed: dict[tuple[int, int], list[tuple[Any, list[tuple[int, int]]]]] = {}
+    off_board = []
+    for fn in lowered.classical:
+        where = placement.get(machine.link_id(fn.link))
+        if where is None or fn.implementation is None:
+            off_board.append(fn.name)
+            continue
+        own = machine.link(fn.link).per_controller
+        unknown = spans.get((fn.name, None), [])
+        for index, number in where.items():
+            mine = spans.get((fn.name, index), []) + unknown if own else unknown
+            placed.setdefault((index, number), []).append((fn, mine))
+    found = _Found()
+    rows: list[ControllerUsage] = []
+    for index, controller in enumerate(system.controllers):
+        processors = []
+        for number, processor in enumerate(controller.processors):
+            label = f"processors[{number}] of {_system_label(index, controller)}"
+            clock = processor.clock_ghz or controller.clock_ghz or lowered.target.clock_ghz
+            assigned = placed.get((index, number), [])
+            functions = [
+                _function_usage(fn, processor, clock, len(made), label, found)
+                for fn, made in assigned
+            ]
+            local = {fn.name: made for fn, made in assigned}
+            processors.append(
+                _processor_usage(index, number, processor, clock, functions, local, label, found)
+            )
+        if processors:
+            rows.append(ControllerUsage(index, controller.model, tuple(processors)))
+    return UsageReport(tuple(rows), tuple(off_board), tuple(found), tuple(found.exceeded))
+
+
+class _Found(list[str]):
+    """The limits a program exceeds, as text, and the numeric ones also as
+    ``LimitExceeded`` (``exceeded``)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.exceeded: list[LimitExceeded] = []
+
+    def over(self, text: str, where: str, limit: str, value: float, most: float, unit: str) -> None:
+        """*text*, with by how much *value* exceeds *most*."""
+        found = LimitExceeded(where, limit, value, most, unit)
+        self.exceeded.append(found)
+        amount = f"{found.over:.0f}" if isinstance(value, float) else str(found.over)
+        self.append(f"{text}: {amount} {unit} over")
+
+
+def _system_label(index: int, controller: Controller) -> str:
+    name = f"controllers[{index}]"
+    return f"{name} ({controller.model})" if controller.model else name
+
+
+def _function_usage(
+    fn: Any, processor: Processor, clock: float, calls: int, label: str, found: _Found
+) -> FunctionUsage:
+    base = _function_resources(fn, None, clock)
+    cost = base.cost
+    unrolled = not processor.loops and cost.loops > 0
+    ops = cost.unrolled_size if unrolled else cost.size
+    cycles = cost.processor_cycles(processor.cycles_per_op, processor.loops)
+    row = FunctionUsage(
+        function=fn.name,
+        link=base.link,
+        ops=ops,
+        unrolled=unrolled,
+        state_bytes=base.state_bytes,
+        request_bytes=base.request_bytes,
+        answer_bytes=base.answer_bytes,
+        compute_cycles=cycles,
+        compute_ns=cycles / clock,
+        max_latency_ns=fn.max_latency_ns,
+        calls_per_shot=calls,
+        cost=cost,
+    )
+    name = fn.name
+    for op in processor.unsupported:
+        if op != "loop" and op in cost.uses:
+            found.append(f"{name} uses {op} ({cost.uses[op]}), which {label} does not support")
+    if processor.fixed_cost_only and cost.violations:
+        more = len(cost.violations) - 4
+        found.append(
+            f"{name} is not fixed-cost, which {label} runs only: "
+            + "; ".join(cost.violations[:4])
+            + (f" (and {more} more)" if more > 0 else "")
+        )
+    most = processor.max_ops_per_function
+    if most is not None and ops > most:
+        how = f" with its loops unrolled ({label} does not support 'loop')" if unrolled else ""
+        found.over(
+            f"{name} holds {ops} operations{how}; {label} holds {most} per function "
+            "(max_ops_per_function)",
+            name,
+            "max_ops_per_function",
+            ops,
+            most,
+            "operations",
+        )
+    most = processor.max_state_bytes_per_function
+    if most is not None and row.state_bytes > most:
+        found.over(
+            f"{name} needs {row.state_bytes} bytes of state (arguments, results and "
+            f"{cost.locals} locals); {label} holds {most} per function "
+            "(max_state_bytes_per_function)",
+            name,
+            "max_state_bytes_per_function",
+            row.state_bytes,
+            most,
+            "bytes",
+        )
+    if row.compute_ns > row.max_latency_ns:
+        found.over(
+            f"{name} computes for about {row.compute_ns:.0f} ns on {label} ({cycles} cycles on "
+            f"its longest path), beyond its max_latency_ns={row.max_latency_ns:g}",
+            name,
+            "max_latency_ns",
+            row.compute_ns,
+            float(row.max_latency_ns),
+            "ns",
+        )
+    return row
+
+
+def _processor_usage(
+    controller: int,
+    index: int,
+    processor: Processor,
+    clock: float,
+    functions: list[FunctionUsage],
+    spans: Mapping[str, list[tuple[int, int]]],
+    label: str,
+    found: _Found,
+) -> ProcessorUsage:
+    ops = sum(row.ops for row in functions)
+    state = sum(row.state_bytes for row in functions)
+    calls = sum(row.calls_per_shot for row in functions)
+    bytes_per_shot = sum(
+        row.calls_per_shot * (row.request_bytes + row.answer_bytes) for row in functions
+    )
+    peak = _peak([span for row in functions for span in spans.get(row.function, ())])
+    for value, most, what, field_name, unit in (
+        (ops, processor.max_ops_total, "operations", "max_ops_total", "operations"),
+        (
+            state,
+            processor.max_state_bytes_total,
+            "bytes of state",
+            "max_state_bytes_total",
+            "bytes",
+        ),
+    ):
+        if most is not None and value > most:
+            found.over(
+                f"{label}: its classical functions hold {value} {what}; it holds {most} in all "
+                f"({field_name})",
+                label,
+                field_name,
+                value,
+                most,
+                unit,
+            )
+    most = processor.max_calls_per_shot
+    if most is not None and calls > most:
+        found.over(
+            f"{label}: one shot makes {calls} calls to it; it takes {most} (max_calls_per_shot)",
+            label,
+            "max_calls_per_shot",
+            calls,
+            most,
+            "calls",
+        )
+    most = processor.max_bytes_per_shot
+    if most is not None and bytes_per_shot > most:
+        found.over(
+            f"{label}: one shot's requests and answers to it take {bytes_per_shot} bytes; it "
+            f"takes {most} (max_bytes_per_shot)",
+            label,
+            "max_bytes_per_shot",
+            bytes_per_shot,
+            most,
+            "bytes",
+        )
+    most = processor.max_concurrent_calls
+    if peak > most:
+        found.over(
+            f"{label}: {peak} calls compute on it at once; it computes {most} "
+            "(max_concurrent_calls)",
+            label,
+            "max_concurrent_calls",
+            peak,
+            most,
+            "calls",
+        )
+    return ProcessorUsage(
+        controller=controller,
+        index=index,
+        processor=processor,
+        clock_ghz=clock,
+        functions=tuple(functions),
+        ops=ops,
+        state_bytes=state,
+        calls_per_shot=calls,
+        bytes_per_shot=bytes_per_shot,
+        peak_concurrent_calls=peak,
+    )
+
+
+def _of(value: int, most: int | None, unit: str = "") -> str:
+    return f"{value}{unit}" if most is None else f"{value} / {most}{unit}"
+
+
+def _format_usage(report: UsageReport, exceeds: bool = True) -> str:
+    lines = ["Controller usage: " + ("within limits" if report.within_limits else "over limits")]
+    for row in report.controllers:
+        name = f"controller {row.controller}" + (f" ({row.model})" if row.model else "")
+        for usage_row in row.processors:
+            p = usage_row.processor
+            links = ", ".join(str(link) for link in p.links)
+            lines.append(
+                f"{name}, processor {usage_row.index} at {usage_row.clock_ghz:g} GHz "
+                f"(links: {links})"
+            )
+            lines.append(
+                f"  in all: ops {_of(usage_row.ops, p.max_ops_total)}, "
+                f"state {_of(usage_row.state_bytes, p.max_state_bytes_total, ' B')}, "
+                f"calls per shot {_of(usage_row.calls_per_shot, p.max_calls_per_shot)}, "
+                f"bytes per shot {_of(usage_row.bytes_per_shot, p.max_bytes_per_shot)}, "
+                f"at once {usage_row.peak_concurrent_calls} / {p.max_concurrent_calls}"
+            )
+            if not usage_row.functions:
+                continue
+            lines.append(
+                f"  {'function':<24} {'ops':>13} {'state B':>13} {'compute / budget':>20} "
+                f"{'calls':>5}"
+            )
+            for f in usage_row.functions:
+                ops = _of(f.ops, p.max_ops_per_function) + (" unrolled" if f.unrolled else "")
+                state = _of(f.state_bytes, p.max_state_bytes_per_function)
+                compute = f"{f.compute_ns:.0f} / {f.max_latency_ns:.0f} ns"
+                lines.append(
+                    f"  {f.function:<24} {ops:>13} {state:>13} {compute:>20} {f.calls_per_shot:>5}"
+                )
+    if report.off_board:
+        lines.append("Off the processors: " + ", ".join(report.off_board))
+    if exceeds and report.violations:
+        lines.append("Exceeds:")
+        lines.extend(f"  {v}" for v in report.violations)
+    return "\n".join(lines)
+
+
+_Limits = ControllerLimits
+_Report = ResourceReport
+_Resources = FunctionResources
+_Usage = UsageReport
+
+
+# ── pulse.controller(...) ────────────────────────────────────────────────────
+
+
+class ControllerModule(Protocol):
+    """What type checkers take ``pulse.controller`` to be: the loader of
+    controller descriptions, with this module's names as attributes.
+
+    ``pulse.controller("vendor.model", drive_lines=..., readout_lines=...)``
+    is the ``Controller`` an installed description (or a TOML file, by path)
+    states, with the installation's wiring; each file is parsed once. A
+    module can't be declared callable, so ``cudaq_pulse`` declares its
+    ``controller`` attribute with this type for checkers only; at run time
+    it is this module.
+    """
+
+    FORMAT: str
+    OP_CLASSES: tuple[str, ...]
+    ControllerLimitError: type[ControllerLimitError]
+    ControllerLimits: type[ControllerLimits]
+    FunctionCost: type[FunctionCost]
+    FunctionResources: type[FunctionResources]
+    LimitExceeded: type[LimitExceeded]
+    LinkUsage: type[LinkUsage]
+    ResourceReport: type[ResourceReport]
+    ControllerUsage: type[ControllerUsage]
+    FunctionUsage: type[FunctionUsage]
+    ProcessorUsage: type[ProcessorUsage]
+    UsageReport: type[UsageReport]
+
+    def __call__(self, description: str | os.PathLike[str], /, **wiring: Any) -> Controller: ...
+    def analyze(self, function: Any, limits: _Limits | None = None) -> _Resources: ...
+    def check(self, lowered: Lowered, limits: _Limits | None = None) -> list[str]: ...
+    def export(self, lowered: Lowered, sample_rate_ghz: float | None = None) -> dict[str, Any]: ...
+    def format_report(self, report: _Report) -> str: ...
+    def resources(self, lowered: Lowered, limits: _Limits | None = None) -> _Report: ...
+    def sample_waveform(
+        self, node: Mapping[str, Any], duration_cycles: int, samples_per_cycles: int = 1
+    ) -> np.ndarray: ...
+    def shape_key(self, node: Mapping[str, Any] | None) -> tuple[Any, ...] | None: ...
+    def usage(self, lowered: Lowered) -> _Usage: ...
+
+
+class _ControllerModule(types.ModuleType):
+    """This module, callable as ``pulse.controller(description, **wiring)``."""
+
+    def __call__(self, description: str | os.PathLike[str], /, **wiring: Any) -> Controller:
+        from ._system import load_controller
+
+        return load_controller(description, **wiring)
+
+
+sys.modules[__name__].__class__ = _ControllerModule

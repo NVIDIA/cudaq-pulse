@@ -9,48 +9,51 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
+import re
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.classical import Bits, Float, Link, emulation, wire
+from cudaq_pulse import classical
+from cudaq_pulse.classical import Link, emulation, wire
 from cudaq_pulse.compiler import MachineModel
 
 from tests._handles import Q
 
 
-@pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=1000)
-def decode(bits):
+@pulse.classical(max_latency_ns=1000)
+def decode(bits: pulse.Bits) -> pulse.Bits:
     return [bits[0]]
 
 
-@pulse.classical(args=(Bits(1),), results=(Float(),), max_latency_ns=10)
-def next_wait(bits):
+@pulse.classical(max_latency_ns=10)
+def next_wait(bits: pulse.Bits) -> float:
     return 400.0 * bits[0]
 
 
 @pulse.kernel
 def feedback(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(300, 0.05), rt)
-    ok, fix = decode.submit([m]).result(timeout_ns=500)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(300, 0.05))
+    ok, fix = decode.submit([m]).result(timeout=500 * pulse.ns)
     if ok:
         if fix[0]:
-            drive(d, square(40, 0.1), t)
+            drive(d, square(40, 0.1))
 
 
 @pulse.kernel
 def adaptive(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(300, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(300, 0.05))
     w = next_wait.submit([m]).result()
-    drive(d, square(40, 0.1), t)
+    drive(d, square(40, 0.1))
     wait(d, w, bounds=(0, 1000))
     sync(d, r)
-    readout(r, square(300, 0.05), rt)
+    readout(r, square(300, 0.05))
 
 
 def test_export_and_manifest_are_json():
@@ -62,10 +65,24 @@ def test_export_and_manifest_are_json():
     after = [e for e in artifact["events"] if e["epoch"] == 1]
     assert after and all(e["start_cycles"] >= e["epoch_start_cycles"] for e in after)
     (entry,) = artifact["manifest"]["functions"]
-    assert entry["function_id"] == next_wait.id and entry["slot_bytes"] == 256
-    assert entry["schema"] == wire.schema(next_wait)
+    version = next_wait.specialize(bits=1)
+    assert version.name == "next_wait__1"
+    assert entry["dispatch_key"] == classical.function_id("next_wait__1")
+    assert entry["slot_bytes"] == 256
+    assert entry["schema"] == wire.schema(version)
     assert entry["request_bytes"] == 25 and entry["answer_bytes"] == 32
     assert artifact["links"]["0"]["max_in_flight"] == 8
+
+
+def test_a_call_exports_its_fields_in_order():
+    (call,) = pulse.compile(adaptive).lower(Q[0]).classical_report()
+    fields = {**dataclasses.asdict(call), "iteration": list(call.iteration)}
+    # An emulator serves the compiled name, and the manifest gives the key.
+    fields["function"] = fields.pop("compiled_name")
+    del fields["dispatch_key"], fields["controller"]
+    assert list(emulation._call_data(call).items()) == list(fields.items())
+    placed = dataclasses.replace(call, controller=1)
+    assert list(emulation._call_data(placed).items()) == list({**fields, "controller": 1}.items())
 
 
 def test_variable_waits_take_their_emulated_lengths():
@@ -112,6 +129,21 @@ def test_udp_gives_the_same_answers_as_in_process():
     assert udp.ends_ns == local.ends_ns
 
 
+def test_an_answer_of_the_wrong_length_is_an_error():
+    @pulse.classical(max_latency_ns=0)
+    def flip(outcomes: pulse.Bits) -> pulse.Bits:
+        return [1 - b for b in outcomes]
+
+    version = flip.specialize(outcomes=2)
+    assert wire.decode_answer(version, wire.encode_answer(version, [1, 0]))[2] == [1, 0]
+    message = "flip__2 returned 3 bits; its result is pulse.Length[pulse.Bits, 2]"
+    with pytest.raises(ValueError, match=re.escape(message)):
+        wire.encode_answer(version, [1, 0, 1])
+    channel = emulation.InProcess([version], {"flip": lambda o: [0]})
+    with pytest.raises(ValueError, match="flip__2 returned 1 bit; its result"):
+        channel.call(version, wire.encode_request(version, [[1, 0]]))
+
+
 def test_throughput_is_reported():
     low = pulse.compile(feedback).lower(Q[0])
     result = emulation.emulate(low, shots=50, seed=1)
@@ -129,17 +161,17 @@ def test_the_realtime_channel_and_device_call_export_are_seams():
 def test_exports_with_calls_in_loops_are_json_data():
     import json
 
-    @pulse.classical(args=(Bits(1),), results=(Bits(1),), max_latency_ns=100, name="json_decode")
-    def json_decode(bits):
+    @pulse.classical(max_latency_ns=100, name="json_decode")
+    def json_decode(bits: pulse.Bits) -> pulse.Bits:
         return [bits[0]]
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
         for _ in range(2):
-            if json_decode.submit([readout(r, square(100, 0.05), rt)]).result()[0]:
-                drive(d, square(40, 0.1), t)
+            if json_decode.submit([readout(r, square(100, 0.05))]).result()[0]:
+                drive(d, square(40, 0.1))
 
     low = pulse.compile(k, unroll_threshold=0).lower(Q[0])
     for program in (low.export_emulation(), low.export_controller()):

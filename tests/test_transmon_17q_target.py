@@ -20,11 +20,11 @@ from cudaq_pulse.targets import (
     Coupling,
     Qubit,
     TargetDescription,
+    transmon_17q,
     transmon_generic,
-    transmon_krinner_17q,
 )
-from cudaq_pulse.targets import _krinner17 as _k
-from cudaq_pulse.targets.transmon import krinner_idle_zz_hz
+from cudaq_pulse.targets import _transmon_17q as _k
+from cudaq_pulse.targets.transmon import transmon_17q_idle_zz_hz
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -47,7 +47,7 @@ _X_LOGICAL = {"D1", "D4", "D7"}
 
 @pytest.fixture(scope="module")
 def target():
-    return transmon_krinner_17q()
+    return transmon_17q()
 
 
 def _label(target, index):
@@ -94,7 +94,7 @@ def test_couplings_are_the_stabilizer_supports(target):
 
 
 def test_without_a_calibration_the_exchange_is_the_published_value_over_sqrt2():
-    for c in transmon_krinner_17q(calibration=None).couplings:
+    for c in transmon_17q(calibration=None).couplings:
         assert c.coupling_strength_hz == pytest.approx(
             c.gate_params["coupling_11_20_hz"] / math.sqrt(2.0)
         )
@@ -135,7 +135,7 @@ def test_gate_errors_reproduce_the_published_statistics(target):
 
 
 def test_idle_zz_is_a_few_kilohertz(target):
-    zz = krinner_idle_zz_hz()
+    zz = transmon_17q_idle_zz_hz()
     assert set(zz) == {(c.qubit_a, c.qubit_b) for c in target.couplings}
     # Calculated idle ZZ "lower than ~8 kHz" (Methods A).
     assert all(-7.5e3 < v < -4.4e3 for v in zz.values())
@@ -151,14 +151,16 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
     }
     (g_hz,) = (c.coupling_strength_hz for c in target.couplings if (c.qubit_a, c.qubit_b) == (a, d))
     pair_target = TargetDescription(
-        name="krinner-pair", qubits=qubits, couplings=[Coupling(0, 1, coupling_strength_hz=g_hz)]
+        name="transmon-17q-pair",
+        qubits=qubits,
+        couplings=[Coupling(0, 1, coupling_strength_hz=g_hz)],
     )
 
     @pulse.kernel
     def idle(q0, q1):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         get_drive_line(q1)  # simulate the idle partner
-        drive(d0, square(2, 0.0), t0)
+        drive(d0, square(2, 0.0))
 
     lowered = on(pair_target, idle, Q[0], Q[1])
     t_ns, levels = 1500.0, 3
@@ -182,11 +184,11 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
     detuning = target.qubits[d].frequency_hz - target.qubits[a].frequency_hz
     second_order = 2 * g_hz**2 * (alpha_a + alpha_d) / ((detuning + alpha_d) * (detuning - alpha_a))
     assert zeta == pytest.approx(second_order, rel=2e-2)
-    assert zeta == pytest.approx(krinner_idle_zz_hz()[(a, d)], rel=7e-2)
+    assert zeta == pytest.approx(transmon_17q_idle_zz_hz()[(a, d)], rel=7e-2)
 
 
 def test_echo_t2_and_thermal_populations_are_on_the_target():
-    target = transmon_krinner_17q()
+    target = transmon_17q()
     echo = target.t2_echo_times
     thermal = target.thermal_populations
     assert all(t is not None and t > 0 for t in echo.values())
@@ -214,9 +216,9 @@ def test_the_time_step_resolves_the_fastest_coupled_detuning():
 
     @pulse.kernel
     def flip_and_idle(qa, qb):
-        da, ta = get_drive_line(qa)
-        db, tb = get_drive_line(qb)
-        drive(da, square(40, math.pi / 20), ta)
+        da = get_drive_line(qa)
+        db = get_drive_line(qb)
+        drive(da, square(40, math.pi / 20))
         sync(da, db)
         wait(da, 400)
 
@@ -233,8 +235,8 @@ def test_the_time_step_resolves_the_fastest_coupled_detuning():
 
 @pulse.kernel
 def x90_alone(q):
-    d, t = get_drive_line(q)
-    drive(d, square(40, 0.02), t)
+    d = get_drive_line(q)
+    drive(d, square(40, 0.02))
 
 
 def test_a_generic_coupling_makes_no_gate_claims():

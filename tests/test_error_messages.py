@@ -13,7 +13,7 @@ import socket
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.classical import Bits, emulation, wire
+from cudaq_pulse.classical import emulation, wire
 from cudaq_pulse.kernel.ir_builder import Parameter, SymbolicValueError
 
 from tests._handles import Q
@@ -24,8 +24,8 @@ NOT_CALLABLE = object()
 def test_qudit_handles_in_a_list_say_how_to_pass_them():
     @pulse.kernel
     def k(qs):
-        d, t = get_drive_line(qs[0])
-        drive(d, square(8, 0.1), t)
+        d = get_drive_line(qs[0])
+        drive(d, square(8, 0.1))
 
     with pytest.raises(pulse.CompilationError) as info:
         pulse.compile(k).lower([Q[0], Q[1]])
@@ -41,8 +41,8 @@ def test_a_name_used_before_it_is_assigned_is_a_plain_compilation_error():
     def k(q, flag: int):
         if flag:
             w = square(8, 0.1)
-        d, t = get_drive_line(q)
-        drive(d, w, t)
+        d = get_drive_line(q)
+        drive(d, w)
 
     pulse.compile(k).lower(Q[0], 1)
     with pytest.raises(pulse.CompilationError) as info:
@@ -52,13 +52,13 @@ def test_a_name_used_before_it_is_assigned_is_a_plain_compilation_error():
         "'w' is used before it is assigned; assign it on every path that reaches this "
         "line (an if on a value known while tracing takes only one arm)"
     )
-    assert "drive(d, w, t)" in "".join(info.value.__notes__)
+    assert "drive(d, w)" in "".join(info.value.__notes__)
 
 
 def test_unpacking_what_an_op_returns_says_it_returns_nothing():
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         _, _ = wait(d, 8)
 
     with pytest.raises(pulse.CompilationError, match=r"cannot unpack None into 2 names: a call"):
@@ -101,8 +101,8 @@ def test_qudits_of_two_devices_of_one_target_name_their_layouts():
 
     @pulse.kernel
     def k(q0, q1):
-        d, t = get_drive_line(q0)
-        drive(d, square(8, 0.1), t)
+        d = get_drive_line(q0)
+        drive(d, square(8, 0.1))
 
     with pytest.raises(pulse.DeviceMismatchError) as info:
         k.lower(a.qudit_handles[0], b.qudit_handles[1])
@@ -126,7 +126,10 @@ def test_a_udp_call_without_an_answer_is_a_timeout_and_an_execution_error():
     silent.bind(("127.0.0.1", 0))
     host, port = silent.getsockname()
 
-    f = pulse.classical.external("f", args=(Bits(1),), max_latency_ns=1)
+    @pulse.classical.external(max_latency_ns=1)
+    def f(bits: pulse.Length[pulse.Bits, 1]) -> None:
+        pass
+
     channel = emulation.UdpChannel((host, port), timeout_s=0.05)
     try:
         with pytest.raises(TimeoutError) as info:
@@ -144,3 +147,60 @@ def test_a_udp_call_without_an_answer_is_a_timeout_and_an_execution_error():
 def test_an_unsupported_cast_is_an_internal_error():
     with pytest.raises(pulse.InternalError, match="unsupported symbolic cast to i1; this is a bug"):
         Parameter("x", 0, "f64").cast("i1")
+
+
+@pytest.fixture(scope="module")
+def idle():
+    @pulse.kernel
+    def k(q):
+        d = get_drive_line(q)
+        wait(d, 8)
+
+    return k.lower(Q[0])
+
+
+@pytest.mark.parametrize(
+    ("shots", "error"),
+    [
+        (0, pulse.InvalidValueError),
+        (-1, pulse.InvalidValueError),
+        (2.5, pulse.InvalidTypeError),
+        ("ten", pulse.InvalidTypeError),
+        (True, pulse.InvalidTypeError),
+    ],
+)
+@pytest.mark.parametrize("run", ["simulate", "emulate"])
+def test_shots_is_a_positive_int(idle, run, shots, error):
+    call = pulse.simulate if run == "simulate" else emulation.emulate
+    with pytest.raises(error) as info:
+        call(idle, shots=shots)
+    assert str(info.value) == f"shots must be a positive int, got {shots!r}"
+
+
+def test_no_shots_is_the_documented_simulate_default(idle):
+    assert pulse.simulate(idle, shots=None).records is None
+
+
+@pytest.mark.parametrize(
+    ("index", "message"),
+    [
+        (999, "qudit index 999 is out of range: device 'transmon_17q' has 17 qudits"),
+        (-18, "qudit index -18 is out of range: device 'transmon_17q' has 17 qudits"),
+        ([0, 999], "qudit index 999 is out of range"),
+    ],
+)
+def test_a_qudit_index_past_the_device_says_how_many_qudits_it_has(index, message):
+    handles = pulse.device("transmon_17q").qudit_handles
+    with pytest.raises(IndexError, match=message) as info:
+        handles[index]
+    assert isinstance(info.value, pulse.PulseError)
+    assert str(info.value).endswith("indexed 0 to 16 (or -17 to -1)")
+
+
+def test_a_qudit_index_past_a_register_says_how_many_qudits_it_has():
+    register = pulse.device("transmon_17q").qudit_handles[0:3]
+    with pytest.raises(IndexError) as info:
+        register[5]
+    assert str(info.value) == (
+        "qudit index 5 is out of range: the register has 3 qudits, indexed 0 to 2 (or -3 to -1)"
+    )

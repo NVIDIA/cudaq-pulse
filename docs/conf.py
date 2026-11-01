@@ -50,7 +50,15 @@ napoleon_google_docstring = True
 napoleon_numpy_docstring = True
 
 
+def _own_docstrings_only(app, what, name, obj, options, lines):
+    # pulse.Length is typing.Annotated: its page describes it, not typing's
+    # docstring.
+    if name == "cudaq_pulse.Length":
+        lines.clear()
+
+
 def setup(app):
     # The generated dialect reference fences its examples as ```mlir, which
     # Pygments has no lexer for.
     app.add_lexer("mlir", TextLexer)
+    app.connect("autodoc-process-docstring", _own_docstrings_only)

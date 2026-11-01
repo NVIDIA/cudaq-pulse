@@ -16,6 +16,7 @@ second-order perturbation theory. A crosstalk entry adds exactly its ZZ rate.
 from __future__ import annotations
 
 import cmath
+import dataclasses
 import math
 import re
 
@@ -23,7 +24,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline, evaluate_callback
-from cudaq_pulse.targets import Coupling, CrosstalkEntry, Qubit, TargetDescription, rydberg_chain
+from cudaq_pulse.targets import Coupling, CrosstalkEntry, Qubit, SimulationModel, TargetDescription
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -45,9 +46,9 @@ def _pair(f0, f1, *, g_hz=0.0, zz_hz=0.0, alphas=(-200.0e6, -180.0e6)):
 
 @pulse.kernel
 def _idle(q0, q1):
-    d0, t0 = get_drive_line(q0)
+    d0 = get_drive_line(q0)
     get_drive_line(q1)  # simulate the idle partner
-    drive(d0, square(2, 0.0), t0)
+    drive(d0, square(2, 0.0))
 
 
 def _lowered(target):
@@ -182,11 +183,88 @@ def test_crosstalk_zz_is_the_conditional_frequency_shift(levels):
 
 
 @pytest.mark.parametrize("backend", ["cpu", "gpu"])
-def test_neutral_atom_targets_are_not_simulated_as_transmons(backend):
-    # A Rydberg interaction is C6 / r^6 n n, not an exchange coupling.
-    target = rydberg_chain(2, spacing_um=4.0).to_target()
-    with pytest.raises(NotImplementedError, match="neutral-atom"):
+def test_systems_without_a_simulation_model_are_refused(backend):
+    target = dataclasses.replace(_pair(5.0e9, 5.5e9, g_hz=10.0e6), model=None)
+    with pytest.raises(NotImplementedError, match=r"has no simulation model \(its model is None\)"):
         pulse.simulate(_lowered(target), backend=backend)
+    target = dataclasses.replace(target, model=SimulationModel)
+    with pytest.raises(NotImplementedError, match="SimulationModel has no simulator"):
+        pulse.simulate(_lowered(target), backend=backend)
+
+
+@dataclasses.dataclass(frozen=True)
+class _KindedCoupling(Coupling):
+    kind: str = "exchange"
+
+
+def _kinded_pair(kind, f0=5.0e9, f1=5.5e9, strength_hz=1.0e5):
+    target = _pair(f0, f1)
+    return dataclasses.replace(
+        target, couplings=[_KindedCoupling(0, 1, coupling_strength_hz=strength_hz, kind=kind)]
+    )
+
+
+@pytest.mark.parametrize("levels", [2, 3])
+def test_a_density_density_coupling_is_a_cross_kerr_term(levels):
+    v_hz = 1.0e5
+    target = _kinded_pair("density_density", strength_hz=v_hz)
+    zeta, shift = _ramsey_zz_hz(target, levels, 1000.0, 0.05)
+    assert zeta == pytest.approx(v_hz, rel=1e-6)
+    assert abs(shift) < 1e-3
+
+
+def test_a_kind_of_coupling_the_simulator_does_not_model_is_refused():
+    with pytest.raises(NotImplementedError, match="is a dipolar coupling"):
+        pulse.simulate(_lowered(_kinded_pair("dipolar")))
+
+
+def test_an_exchange_kind_is_the_plain_coupling():
+    plain = _pair(5.0e9, 5.5e9, g_hz=1.0e5)
+    kinded = _kinded_pair("exchange")
+    assert _ramsey_zz_hz(kinded, 3, 300.0, 0.02) == _ramsey_zz_hz(plain, 3, 300.0, 0.02)
+    fingerprints = {pulse.device({"target": t}).fingerprint for t in (kinded, plain)}
+    assert len(fingerprints) == 1
+    assert kinded.hamiltonian_terms() == plain.hamiltonian_terms()
+
+
+def test_the_coupling_kind_is_part_of_the_fingerprint():
+    exchange = pulse.device({"target": _kinded_pair("exchange")})
+    density = pulse.device({"target": _kinded_pair("density_density")})
+    assert exchange.fingerprint != density.fingerprint
+
+
+def test_two_level_terms_refuse_a_coupling_that_is_not_exchange():
+    target = _kinded_pair("density_density")
+    for _ in range(2):
+        with pytest.raises(NotImplementedError, match="density_density coupling"):
+            target.hamiltonian_terms()
+
+
+def test_the_coupling_kind_cache_is_not_a_target_field():
+    target = _pair(5.0e9, 5.5e9, g_hz=10.0e6)
+    assert target.hamiltonian_terms() == target.hamiltonian_terms()
+    names = [f.name for f in dataclasses.fields(TargetDescription)]
+    assert names == [
+        "name",
+        "qubits",
+        "couplings",
+        "crosstalk",
+        "model",
+        "attribution",
+        "clock_ghz",
+    ]
+    assert list(TargetDescription.__dataclass_fields__) == names
+    assert target._exchange_view is target.couplings
+    kinded = _kinded_pair("exchange")
+    assert kinded._exchange_view == kinded.couplings
+    assert kinded._two_level_couplings is kinded.couplings
+    replaced = dataclasses.replace(target, couplings=_kinded_pair("density_density").couplings)
+    assert "_exchange_view" not in vars(replaced)
+    assert replaced._exchange_view == ()
+    for _ in range(2):
+        with pytest.raises(NotImplementedError, match="density_density coupling"):
+            replaced.hamiltonian_terms()
+    assert "_two_level_couplings" not in vars(replaced)
 
 
 # The GPU path lowers the same pulse-to-qop operator to cuDensityMat terms:
@@ -277,9 +355,9 @@ def test_gpu_lowering_builds_the_cpu_operator(levels):
 
     @pulse.kernel
     def driven(q0, q1):
-        d0, t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         get_drive_line(q1)
-        drive(d0, gaussian(40, 0.05, 10.0), t0)
+        drive(d0, gaussian(40, 0.05, 10.0))
 
     lowered = on(target, driven, Q[0], Q[1])
     # A CPU run leaves the module with the attributes of its segment, which
@@ -287,9 +365,10 @@ def test_gpu_lowering_builds_the_cpu_operator(levels):
     pulse.simulate(lowered, levels=levels, t_end=20.0)
     dims = (levels, levels)
     times = [0.0, 3.3, 11.7, 19.9]
-    cpu_terms = list(_cpu_hamiltonian(lowered._module.operator_program([]), dims))
+    module = lowered._concrete()
+    cpu_terms = list(_cpu_hamiltonian(module.operator_program([]), dims))
     pipeline = MLIRPipeline()
-    text = pipeline.run_qop_to_cudm(pipeline.run_pulse_to_qop(lowered._module.print()))
+    text = pipeline.run_qop_to_cudm(pipeline.run_pulse_to_qop(module.print()))
     gpu_terms = list(_cudm_hamiltonian(text, dims))
     assert len(gpu_terms) == len(cpu_terms)
     cpu = _at(cpu_terms, times)

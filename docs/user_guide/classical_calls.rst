@@ -29,32 +29,134 @@ see :doc:`../examples`.
 Declaring a function
 --------------------
 
-``@pulse.classical`` declares a function with the types of its arguments and
-results, its latency and the link its requests travel on. The body is the
-reference implementation: simulation and emulation run it in place of the
-service.
+``@pulse.classical`` declares a function from its body: the type hints of its
+parameters and result say what it takes and returns, and the options give
+its latency and the link its requests travel on. The body is the reference
+implementation: simulation and emulation run it in place of the service.
 
 .. code-block:: python
 
    import cudaq_pulse as pulse
-   from cudaq_pulse.classical import Bits, Float
 
    @pulse.classical(
-       args=(Bits(1),),
-       results=(Bits(1),),
        min_latency_ns=200,
        nominal_latency_ns=300,
        max_latency_ns=400,
        link="gpu",
    )
-   def decode(syndrome):
-       return [syndrome[0]]
+   def decode(syndrome: pulse.Bits) -> bool:
+       return bool(syndrome[0])
 
-Argument types are ``Bits(n)`` and ``Levels(n)`` (measurement results),
-``IQ(n)`` (the IQ points of ``n`` readouts), ``Float()``, ``Integer()``,
-``Byte()`` and the arrays ``Floats(n)``, ``Integers(n)`` and ``Bytes(n)``.
-Results use the same types; a ``Bits`` or ``Levels`` result gives booleans or
-integers a branch can test.
+A parameter is one of:
+
+- ``pulse.Bits``: measurement results read as bits, as in ``decode.submit([m])``;
+- ``list[int]``: measurement results read as levels (``0``, ``1``, ``2``, ...
+  for a qudit), or a list of integers;
+- ``list[complex]``: the IQ points of readouts, or ``complex`` for one, with I
+  as the real part and Q as the imaginary part;
+- ``float``, ``int`` or ``list[float]``.
+
+A result is ``float``, ``int``, ``bool``, ``pulse.Bits``, ``list[float]``,
+``list[int]``, a tuple of them, or ``None``. A ``bool`` or ``pulse.Bits``
+result gives values a branch can test.
+
+**List lengths.** A list parameter takes its length from the call. A
+function called with lists of two lengths has two *versions*, each with its
+own schema, named by its lengths: ``flip.submit([m0, m1, m2])`` and
+``flip.submit([m0])`` call ``flip__3`` and ``flip__1``. A call record or
+report row gives both names: ``call.function`` is ``"flip"`` and
+``call.compiled_name`` is ``"flip__3"``, and the call manifest lists every
+version with its dispatch key and layout. The length of a list result is read from
+the body, for each version:
+
+.. code-block:: python
+   :class: fragment
+
+   @pulse.classical(max_latency_ns=100)
+   def flip(outcomes: pulse.Bits) -> pulse.Bits:
+       return [b ^ 1 for b in outcomes]  # flip__3 answers with 3 bits
+
+Lengths are read from the function's bytecode, not its source: from
+slices, concatenation, comprehensions, ``for`` loops, ``while`` loops the
+lengths end, branches the lengths decide, a table of equal-length lists, and
+counts that cancel (the set bits of a ``pulse.Bits`` and the items a
+comprehension keeps, padded back to an input's length), and through the
+plain Python functions the body calls (a function that calls itself is not
+followed). Where the values
+decide it (a comprehension with a condition, a ``while`` loop the values
+end, two returns of different lengths), compiling says so and names the
+line; return a fixed maximum and a count instead (``positions = [0] *
+len(syndrome)``, fill the first ``count`` items, ``return count,
+positions``). ``flip.specialize(outcomes=3)`` is the version of one length,
+for ``wire.schema``, ``wire.native`` or ``controller.analyze``.
+
+**Fixed lengths.** Where one size is wanted, the signature states it with
+``pulse.Length`` (``typing.Annotated``, so checkers read the type inside
+it); the function then has one version, named as declared:
+
+.. code-block:: python
+   :class: fragment
+
+   @pulse.classical(max_latency_ns=900, link="gpu")
+   def frozen(
+       syndromes: pulse.Length[pulse.Bits, 24],
+       counts: pulse.Length[list[int], 4],
+   ) -> pulse.Length[pulse.Bits, 4]:
+       return [syndromes[i] ^ syndromes[i + 1] for i in range(4)]
+
+``pulse.Length[pulse.Bits, 24]`` takes 24 bits, and a call with another
+length is a compile error that names the size: ``frozen.submit():
+'syndromes' takes 24 bits (pulse.Length[pulse.Bits, 24]), got 23``. In a
+fixed-size signature ``pulse.Bits`` takes measurement outcomes and
+``list[int]`` plain numbers. A length is a positive whole number; a list
+result without one takes its length from the body, per version. Functions
+whose lengths come from their calls need none of this.
+
+**Dispatch keys.** Each request carries the key its service is registered
+under: the 32-bit FNV-1a hash of the compiled name
+(``classical.function_id("flip__3")``), the hash CUDA-Q Realtime registers
+handlers by. ``call.dispatch_key`` gives it next to ``call.compiled_name``,
+and the call manifest's ``"dispatch_key"``. A controller whose firmware
+fixes the keys of the functions it runs lists them by name in its
+description's ``dispatch_keys``; every function on its links must be
+listed, with a fixed size, and the manifest marks each such entry with
+``"dispatch_key_fixed_by"``. Two names of one program that hash to one key
+on one link are a compile error that asks to rename one; the keys of
+``classical.qec`` are reserved for its decoder messages.
+
+The hints are read when a program that calls the function is first
+compiled, and a mistake in them is raised there, naming the function. The
+body is a ``def``: a lambda has no hints.
+
+**External functions.** ``pulse.classical.external`` declares a function
+that is served elsewhere. Its stub is a declaration: the hints give its
+schema, and the body, which never runs, is a placeholder for its result
+that gives the result's shape:
+
+.. code-block:: python
+   :class: fragment
+
+   @pulse.classical.external(max_latency_ns=50, link="feedback")
+   def table(index: pulse.Length[pulse.Bits, 3]) -> float:
+       return float()
+
+   @pulse.classical.external(max_latency_ns=900, link="gpu")
+   def decode(syndrome: pulse.Bits) -> tuple[float, pulse.Bits]:
+       return (float(), syndrome[:2])
+
+   @pulse.classical.external(max_latency_ns=900, link="gpu")
+   def echo(outcomes: pulse.Bits) -> pulse.Bits:
+       return outcomes
+
+A placeholder is a value of the result's type: ``float()``, ``int()``,
+``pulse.Bits()`` (an empty list, for a result whose length the signature
+states), an input or a slice of one. A ``None`` result needs no return.
+mypy and pyright check these bodies like any other. A list parameter of no
+stated length works as for ``pulse.classical``: ``decode`` called with 6 and
+with 8 bits is two versions, ``decode__6`` and ``decode__8``, each served
+under its own id and listed in the manifest with its layout. A device that
+takes one size is declared with it, as ``table`` is. Calling an external
+function in Python is an error that says to give it a handler.
 
 The latency has a minimum, a nominal value and a maximum. The scheduler
 budgets the maximum. Simulation and emulation use a triangular distribution
@@ -109,34 +211,44 @@ In a kernel, ``fn.submit(...)`` sends the request and returns a future, and
 
    @pulse.kernel
    def feed_forward(q):
-       d, t = get_drive_line(q)
-       r, rt = get_readout_line(q)
-       m = readout(r, square(1000, 0.05), rt)
-       in_time, correction = decode.submit([m]).result(timeout_ns=350)
+       d = get_drive_line(q)
+       r = get_readout_line(q)
+       readout_time = 500 * pulse.ns
+       decode_deadline = 350 * pulse.ns
+       pi_time = 20 * pulse.ns
+       pi_amplitude = 0.16  # square(pi_time, pi_amplitude) is a pi pulse
+       m = readout(r, square(readout_time, 0.05))
+       in_time, correction = decode.submit([m]).result(timeout=decode_deadline)
        sync(d, r)
        if in_time:
-           if correction[0]:
-               drive(d, square(40, PI_AMP), t)
+           if correction:
+               drive(d, square(pi_time, pi_amplitude))
        else:
            if m:
-               drive(d, square(40, PI_AMP), t)
+               drive(d, square(pi_time, pi_amplitude))
 
-With ``timeout_ns`` the result starts with a flag that is true when the
+With ``timeout`` the result starts with a flag that is true when the
 answer came in time; the other values are zero when it did not, and the
-program takes its fallback. A future is taken in the loop iteration that
+program takes its fallback. ``timeout`` is a duration like any other: an
+``int`` number of program cycles, or a time such as ``350 * pulse.ns``,
+which converts once when the kernel compiles. A future is taken in the loop iteration that
 submitted it. It may be passed to a kernel the program calls, or returned
 from one, and taken there; an answer taken inside a kernel called with its
 own ``schedule=`` is used only inside it, so return the future instead when
 the caller needs the answer. Answers may be carried from one iteration to
 the next, as an estimator's state is.
 
-A wait may take its length from an answer, between bounds:
+A wait may take its length from an answer, between bounds. An answer is a
+plain number, a number of cycles; multiply it by a unit for an answer in
+nanoseconds:
 
 .. code-block:: python
    :class: fragment
 
+   shortest_wait = 100 * pulse.ns
+   longest_wait = 20 * pulse.us
    alpha, beta, tau = update_t1.submit([m], alpha, beta, tau).result()
-   wait(d, tau, bounds=(200, 40000))
+   wait(d, tau * pulse.ns, bounds=(shortest_wait, longest_wait))
 
 Such a variable wait is a barrier for the lines that depend on it, and it
 opens a new *epoch* for them. The static schedule places it at its lower
@@ -159,7 +271,7 @@ get a share of its slots and budget each request as sent after the others',
 so a request on a shared link is due a few cycles later than alone.
 
 A length may also add ``float`` kernel parameters to an answer, as in
-``wait(d, answer + tau, bounds=(8, 1000))``. The kernel still compiles once:
+``wait(d, (answer + tau) * pulse.ns, bounds=(4 * pulse.ns, 500 * pulse.ns))``. The kernel still compiles once:
 ``tau`` is taken when the kernel is called, and each call checks that the
 length with its answers taken as 0 (here ``tau``) is finite and at most the
 upper bound, raising ``ValueError`` otherwise; it may be below the lower
@@ -220,11 +332,17 @@ it.
    :class: fragment
 
    result = pulse.simulate(lowered, initial_state=plus, latency_branching=True)
-   for calls, (outcomes, p) in zip(result.calls, result.branches):
-       print(outcomes, p, [c.answer for c in calls])
+   for branch in result.branches:
+       print(branch.levels, branch.probability, branch.answers("decode"))
 
-- ``handlers={"decode": fn}`` replaces a function's body, or provides one
-  for a function declared with ``pulse.classical.external``.
+- ``handlers={"decode": fn}`` replaces a function's body in every version
+  of it, or provides one for a function declared with
+  ``pulse.classical.external``; a handler named by a version, such as
+  ``"flip__3"``, serves that version only. Each answer's list lengths are
+  checked every time a body or handler runs, in simulation and emulation
+  (compiled controller code is not checked):
+  ``decode_surface returned 3 bits; its result is pulse.Length[pulse.Bits,
+  2]``.
 - ``latency_branching=True`` branches a timeout on whether the answer came
   in time, with the probability of the latency model; with ``shots`` that
   outcome is sampled.
@@ -232,11 +350,14 @@ it.
   errors, and ``"model_with_decay"`` adds relaxation during the readout.
   Calls and branches see the reported outcome; the state is projected on the
   true one.
-- A function that takes ``IQ`` points gets them synthesized per shot from a
+- A function that takes IQ points (``complex`` or ``list[complex]``) gets
+  them synthesized per shot from a
   dispersive readout model, at the true level of each readout, from the
   frequency of its tone and the amplitude of its pulse. It needs ``shots``.
-- ``SimulationResult.calls`` lists each path's calls: inputs, answer, and
-  whether it came in time.
+- Each of ``result.branches`` lists its path's ``calls``: the function's
+  name and its version's (``function``, ``compiled_name``), inputs, answer,
+  and whether it came in time; ``branch.answers("decode")`` gives the
+  answers of one function, in call order.
 
 A whole program with unanswered calls does not lower to LLVM:
 ``Lowered.mlir("llvm")`` points to ``pulse.simulate``, which lowers each
@@ -268,7 +389,7 @@ Emulation
 ``Lowered.export_emulation()`` writes what a controller or an emulator runs
 the program from, as JSON-ready data: the static schedule, each event's
 epoch, the epochs, the calls, the links and the call manifest (every
-function's wire id, link, payload sizes, latency and slots).
+function's dispatch key, link, payload sizes, latency and slots).
 
 ``cudaq_pulse.classical.emulation.emulate`` runs the program shot by shot in
 virtual time without physics. Outcomes come from a source you give; each
@@ -309,19 +430,19 @@ kernel calls between measurements and runs between shots:
 - ``golden_section_step`` and ``nelder_mead_step``: ask-and-tell searches;
   each step takes the cost at the point the last one asked for and returns
   the next point and whether the search has converged. Their states pack
-  into ``Floats`` for calls.
+  into a ``list[float]`` for calls.
 
 .. code-block:: python
    :class: fragment
 
    from cudaq_pulse.classical import calibration as cal
 
-   @pulse.classical(args=(Bits(1), Float(), Float(), Float()),
-                    results=(Float(), Float(), Float()),
-                    max_latency_ns=200, link="controller")
-   def t1_estimator(survived, alpha, beta, wait_cycles):
-       alpha, beta = cal.t1_update(alpha, beta, bool(survived[0]), wait_cycles / 2.0)
-       return alpha, beta, min(max(cal.t1_wait(alpha, beta) * 2.0, 200), 20000)
+   @pulse.classical(max_latency_ns=200, link="controller")
+   def t1_estimator(
+       survived: pulse.Bits, alpha: float, beta: float, wait_ns: float
+   ) -> tuple[float, float, float]:
+       alpha, beta = cal.t1_update(alpha, beta, bool(survived[0]), wait_ns)
+       return alpha, beta, min(max(cal.t1_wait(alpha, beta), 100), 10000)
 
 **The converged pattern.** A kernel's trip counts are fixed when it
 compiles. To stop early, the estimator carries a converged flag in its state,
@@ -334,10 +455,10 @@ call stays outside it:
 
    for _ in range(iterations):
        if done < 0.5:
-           shift_frequency(t, x)
-           drive(d, probe, t)
-           shift_frequency(t, -x)
-       m = readout(r, ro, rt)
+           shift_frequency(d.tone, x)
+           drive(d, probe)
+           shift_frequency(d.tone, -x)
+       m = readout(r, ro)
        state, x, done = golden_step.submit([m], state).result()
 
 **Choosing among settings.** An integer answer selects among arms with
@@ -364,19 +485,20 @@ when it is known.
 .. code-block:: python
    :class: fragment
 
-   store = ParameterStore(wait_cycles=4000.0)
-   read_wait = store.reader("wait_cycles", link="controller", bounds=(0.0, 40000.0))
+   store = ParameterStore(wait_ns=2000.0)
+   read_wait = store.reader("wait_ns", link="controller", bounds=(0.0, 20000.0))
 
    @pulse.kernel
    def shot(q, amplitude: float):
        ...
-       wait(d, read_wait.submit().result(), bounds=(0, 40000))
+       longest_wait = 20 * pulse.us
+       wait(d, read_wait.submit().result() * pulse.ns, bounds=(0, longest_wait))
 
    compiled = pulse.compile(shot, device=dev, machine=machine)
    for i in range(10_000):
        lowered = compiled.lower(q, amplitude)   # no compiling after the first
        ...
-       store.set("wait_cycles", next_wait, iteration=i)
+       store.set("wait_ns", next_wait, iteration=i)
 
 **A drifting device.** ``cudaq_pulse.runtime.drift.DriftingPlant`` moves one
 qubit's T1 (``TelegraphT1``, switching between two values), frequency and
@@ -432,7 +554,7 @@ answer's length; under ASAP the excitation plays as early as it can, and
 the qubit also decays through the call's latency.
 
 A program that measures hundreds of times in one shot is simulated one
-path per shot: ``pulse.simulate(lowered, shots=n, paths="sampled")``. Idle
+path per shot: ``pulse.simulate(lowered, shots=n, branches="sampled")``. Idle
 waits and square pulses are propagated exactly, so a shot's cost does not
 grow with its waits.
 
@@ -495,3 +617,20 @@ Not available yet: a channel through the CUDA-Q Realtime host library
 links to a controller dialect. The wire format, the manifest and the
 handler signature are those of CUDA-Q Realtime, so these slot in without
 changing programs.
+
+Questions
+---------
+
+**Can a parameter be a** ``Sequence`` **rather than a** ``list``**?** Yes:
+``Sequence[int]``, ``Sequence[float]`` and ``Sequence[complex]``, from
+``collections.abc`` or ``typing``, mean what the ``list`` forms do. A type
+checker then also accepts a tuple where ``list[int]`` takes only a list;
+this guide writes ``list``.
+
+**Why does a type checker show** ``pulse.Bits`` **as** ``list[int]``**?**
+Checkers see ``pulse.Bits`` as ``list[int]``, so a body may return any list
+of bits and an external's placeholder ``pulse.Bits()`` checks; at run time
+it is a list type of its own, which tells the compiler the items are bits.
+A list is invariant, so a variable typed as a list of another item type
+(``list[bool]``, say) is flagged where ``pulse.Bits`` is expected, while a
+list written in the call, ``decode.submit([m0, m1])``, is not.

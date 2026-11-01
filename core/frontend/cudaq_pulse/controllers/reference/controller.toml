@@ -1,0 +1,39 @@
+# A reference controller: a generic description to build control systems
+# with in tests and examples, not a model of any product. Its limits are
+# loose enough for every shipped example to fit.
+#
+# A description states what one model of controller can do. The lines it
+# plays and its acquirers are the installation's, given when it is loaded:
+#
+#     pulse.controller("reference.controller", drive_lines=[0, 1], readout_lines=[0, 1])
+#
+# So is how this controller's outcomes reach the others: peer_latency_cycles
+# is the latency of an outcome it reads to a receiving controller, in this
+# controller's own cycles, one number for every receiver or keyed by the
+# receiver's index in the control system (peer_latency_cycles={1: 12}; in a
+# system file, {"1": 12}). A receiver it does not list gets the outcome with
+# no peer latency.
+
+model = "reference.controller"
+version = "1"
+owner = "cudaq-pulse maintainers"
+
+issue_cycles = 1
+min_wait_cycles = 0
+waveform_samples = 1048576
+tones_per_line = 16
+acquirer_hold_cycles = 0
+feedback_latency_cycles = 0
+answer_timeouts = true
+supports = [
+    "play",
+    "acquire",
+    "wait",
+    "sync",
+    "call",
+    "answer",
+    "branch",
+    "runtime_frame_update",
+    "forward_outcome",
+    "loop",
+]

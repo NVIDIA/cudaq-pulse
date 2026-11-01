@@ -16,12 +16,15 @@ QOp lowering.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, fields
 from types import MappingProxyType
-from typing import Any
+from typing import Any, overload
 
-from .._errors import InvalidValueError, NotFoundError
+from .._errors import InvalidTypeError, InvalidValueError, NotFoundError, UnsupportedError
+from .models import SimulationModel, TransmonModel
+
+_TRANSMON = TransmonModel()
 
 _SECONDS_PER_NANOSECOND = 1.0e-9
 _NANOSECONDS_PER_MICROSECOND = 1.0e3
@@ -49,6 +52,14 @@ class Qubit:
         object.__setattr__(self, "drive_params", MappingProxyType(dict(self.drive_params)))
         object.__setattr__(self, "readout_params", MappingProxyType(dict(self.readout_params)))
 
+    def __hash__(self) -> int:
+        return hash((self.index, self.frequency_hz, self.label))
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        from .._pickling import frozen_reduce
+
+        return frozen_reduce(self)
+
     @property
     def depletion_ns(self) -> float:
         """How long the readout resonator takes to empty after a readout.
@@ -75,7 +86,7 @@ class Coupling:
     ``gate_type``, ``gate_duration_ns``, ``gate_buffer_ns`` (the idle time
     around the gate) and ``gate_fidelity`` describe the edge's two-qubit gate.
     Each defaults to ``None``: the target does not specify it. Neither
-    compilation nor simulation reads them; ``transmon_krinner_17q`` gives the
+    compilation nor simulation reads them; ``transmon_17q`` gives the
     published values.
     """
 
@@ -90,6 +101,65 @@ class Coupling:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "gate_params", MappingProxyType(dict(self.gate_params)))
+
+    def __hash__(self) -> int:
+        return hash((self.qubit_a, self.qubit_b, self.coupling_strength_hz))
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        from .._pickling import frozen_reduce
+
+        return frozen_reduce(self)
+
+
+# The interactions a coupling can stand for: exchange g (a^dagger b + a b^dagger)
+# and density-density V n_a n_b. A Coupling without a kind is an exchange
+# coupling.
+_EXCHANGE = "exchange"
+_DENSITY_DENSITY = "density_density"
+_KINDLESS = "kind" not in Coupling.__dataclass_fields__
+_PLAIN_COUPLING = frozenset({Coupling})
+
+
+def _coupling_kind(coupling: Any) -> str:
+    """The kind of interaction *coupling* stands for."""
+    if _KINDLESS and type(coupling) is Coupling:
+        return _EXCHANGE
+    return str(getattr(coupling, "kind", _EXCHANGE))
+
+
+def _all_exchange(couplings: Any) -> bool:
+    """Whether every coupling is a plain kindless Coupling, so exchange."""
+    return _KINDLESS and _PLAIN_COUPLING.issuperset(map(type, couplings))
+
+
+class _Cached[T]:
+    """A value computed from a frozen object on first access, then stored on
+    it, so later reads are plain attribute loads.
+
+    Unlike functools.cached_property it stores with object.__setattr__ rather
+    than through ``__dict__``: touching ``__dict__`` makes every later
+    attribute load on the object slower. Not being an annotation, it is no
+    dataclass field.
+    """
+
+    def __init__(self, compute: Callable[[Any], T]) -> None:
+        self._compute = compute
+        self._name = compute.__name__
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self._name = name
+
+    @overload
+    def __get__(self, obj: None, owner: type | None = None) -> _Cached[T]: ...
+    @overload
+    def __get__(self, obj: object, owner: type | None = None) -> T: ...
+
+    def __get__(self, obj: object | None, owner: type | None = None) -> T | _Cached[T]:
+        if obj is None:
+            return self
+        value = self._compute(obj)
+        object.__setattr__(obj, self._name, value)
+        return value
 
 
 @dataclass(frozen=True)
@@ -116,23 +186,73 @@ class TargetDescription:
 
     A target is read-only once built: ``qubits`` is a read-only mapping and
     ``couplings`` and ``crosstalk`` are tuples. ``clock_ghz`` is the pulse
-    clock that converts nanoseconds to clock cycles.
+    clock that converts nanoseconds to clock cycles. ``model`` is how the
+    simulator treats its qudits, and how many levels each has: a
+    ``SimulationModel`` class or instance (``TransmonModel`` by default,
+    ``TransmonModel(levels={0: 4})`` to give qudit 0 four levels), or
+    ``None`` for a system with no simulation model. Targets compare by
+    content, so a target unpickled is equal to the one pickled.
     """
 
     name: str
     qubits: Mapping[int, Qubit] = field(default_factory=dict)
     couplings: Sequence[Coupling] = ()
     crosstalk: Sequence[CrosstalkEntry] = ()
-    architecture: str = "transmon"
+    model: SimulationModel | type[SimulationModel] | None = _TRANSMON
     attribution: str = ""
     clock_ghz: float = 2.0
 
     def __post_init__(self) -> None:
         if not self.clock_ghz > 0:
             raise InvalidValueError(f"clock_ghz must be positive, got {self.clock_ghz}")
+        model = self.model
+        if isinstance(model, type) and issubclass(model, SimulationModel):
+            object.__setattr__(self, "model", model())
+        elif model is not None and not isinstance(model, SimulationModel):
+            raise InvalidTypeError(
+                "model must be a SimulationModel class or instance, such as TransmonModel, "
+                f"or None; got {model!r}"
+            )
         object.__setattr__(self, "qubits", MappingProxyType(dict(self.qubits)))
         object.__setattr__(self, "couplings", tuple(self.couplings))
         object.__setattr__(self, "crosstalk", tuple(self.crosstalk))
+
+    def __eq__(self, other: object) -> bool:
+        if type(other) is not type(self):
+            return NotImplemented
+        return all(getattr(self, f.name) == getattr(other, f.name) for f in fields(self))
+
+    def __hash__(self) -> int:
+        return hash((self.name, self.clock_ghz, len(self.qubits), len(self.couplings)))
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        from .._pickling import frozen_reduce
+
+        return frozen_reduce(self)
+
+    # Cached on first use; sound because the target is frozen and its
+    # couplings are a tuple of frozen Couplings.
+
+    @_Cached
+    def _exchange_view(self) -> Sequence[Coupling]:
+        """The exchange couplings: ``couplings`` itself (the same object) when
+        every coupling is a plain Coupling, else those whose kind is exchange."""
+        if _all_exchange(self.couplings):
+            return self.couplings
+        return tuple(c for c in self.couplings if _coupling_kind(c) == _EXCHANGE)
+
+    @_Cached
+    def _two_level_couplings(self) -> Sequence[Coupling]:
+        """``couplings``, which the two-level terms model; refused, and not
+        cached, unless every coupling is exchange."""
+        if self._exchange_view is not self.couplings:
+            for c in self.couplings:
+                if (kind := _coupling_kind(c)) != _EXCHANGE:
+                    raise UnsupportedError(
+                        f"the coupling of qubits {c.qubit_a} and {c.qubit_b} is a {kind} "
+                        "coupling; the two-level terms model exchange couplings only"
+                    )
+        return self.couplings
 
     @property
     def n_qubits(self) -> int:
@@ -173,6 +293,24 @@ class TargetDescription:
     @property
     def coupling_map(self) -> list[tuple[int, int]]:
         return [(c.qubit_a, c.qubit_b) for c in self.couplings]
+
+    def coupling(self, a: int, b: int) -> Coupling:
+        """The coupling of qudits *a* and *b*, in either order (the target's
+        qudit indices, as ``Qudit.index``); a ``NotFoundError`` names the
+        qudits *a* couples to."""
+        for c in self.couplings:
+            if (c.qubit_a == a and c.qubit_b == b) or (c.qubit_a == b and c.qubit_b == a):
+                return c
+        partners = sorted(
+            c.qubit_b if c.qubit_a == a else c.qubit_a
+            for c in self.couplings
+            if a in (c.qubit_a, c.qubit_b)
+        )
+        if partners:
+            which = f"qudit {a} couples to {', '.join(map(str, partners))}"
+        else:
+            which = f"qudit {a} has no couplings"
+        raise NotFoundError(f"qudits {a} and {b} of {self.name} are not coupled; {which}")
 
     def connectivity_graph(self) -> dict[int, list[int]]:
         """Adjacency list representation of qubit connectivity."""
@@ -246,7 +384,7 @@ class TargetDescription:
                     "time_dependent": False,
                 }
             )
-        for c in self.couplings:
+        for c in self._two_level_couplings:
             g = c.coupling_strength_hz * 2.0 * math.pi * _SECONDS_PER_NANOSECOND
             terms.append(
                 {

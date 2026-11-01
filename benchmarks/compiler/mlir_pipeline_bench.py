@@ -58,36 +58,36 @@ def _median_ms(fn: Callable[[], Any], repeats: int) -> float:
 # --- 1Q Rabi kernel ---
 @pulse.kernel
 def rabi_1q(q0):
-    d0, t0 = get_drive_line(q0)
+    d0 = get_drive_line(q0)
     wf = gaussian(100, 0.1, 25.0)
-    drive(d0, wf, t0)
+    drive(d0, wf)
 
 
 # --- 2Q CR-CNOT kernel ---
 @pulse.kernel
 def cr_cnot_2q(q0, q1):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
     x90 = gaussian(40, 0.25, 10.0)
-    drive(d0, x90, t0)
+    drive(d0, x90)
     sync(d0, d1)
     cr = square(160, 0.05)
-    drive(d0, cr, t0)
+    drive(d0, cr)
     sync(d0, d1)
-    drive(d1, x90, t1)
+    drive(d1, x90)
 
 
 # --- Echo DD kernel ---
 @pulse.kernel
 def echo_dd(q0):
-    d0, t0 = get_drive_line(q0)
+    d0 = get_drive_line(q0)
     for _ in range(10):
         wf = gaussian(40, 0.3, 10.0)
-        drive(d0, wf, t0)
+        drive(d0, wf)
         wait(d0, 100)
-        shift_phase(t0, math.pi)
+        shift_phase(d0.tone, math.pi)
         wf_neg = gaussian(40, 0.3, 10.0)
-        drive(d0, wf_neg, t0)
+        drive(d0, wf_neg)
         wait(d0, 100)
 
 

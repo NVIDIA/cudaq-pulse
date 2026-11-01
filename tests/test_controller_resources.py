@@ -10,11 +10,12 @@
 from __future__ import annotations
 
 import math
+import re
 
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import _controller_cost
-from cudaq_pulse.classical import Bits, Float, Floats, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import (
@@ -32,26 +33,26 @@ N = 4
 _SCALE = 2.0
 
 
-@pulse.classical(args=(Float(), Float(), Float()), results=(Float(),), max_latency_ns=100)
-def _arithmetic(x, y, z):
+@pulse.classical(max_latency_ns=100)
+def _arithmetic(x: float, y: float, z: float) -> float:
     return x * y + z / y - math.sqrt(x)
 
 
-@pulse.classical(args=(Float(), Float()), results=(Float(),), max_latency_ns=100)
-def _by_constants(x, y):
+@pulse.classical(max_latency_ns=100)
+def _by_constants(x: float, y: float) -> float:
     return x / _SCALE + y / (2.0 * math.pi * 1e-9) + x / y
 
 
-@pulse.classical(args=(Floats(N),), results=(Float(),), max_latency_ns=100)
-def _looped(values):
+@pulse.classical(max_latency_ns=100)
+def _looped(values: list[float]) -> float:
     total = 0.0
     for i in range(N):
         total += values[i] * _SCALE
     return total
 
 
-@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=100)
-def _branched(x):
+@pulse.classical(max_latency_ns=100)
+def _branched(x: float) -> float:
     if x > 0:
         y = math.exp(x) * 2.0
     else:
@@ -63,13 +64,13 @@ def _square(x):
     return x * x
 
 
-@pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=100)
-def _with_helper(x):
+@pulse.classical(max_latency_ns=100)
+def _with_helper(x: float) -> float:
     return _square(x) + _square(x + 1.0)
 
 
-@pulse.classical(args=(Bits(150),), results=(Float(),), max_latency_ns=100)
-def _counted(bits):
+@pulse.classical(max_latency_ns=100)
+def _counted(bits: pulse.Length[pulse.Bits, 50]) -> float:
     return cal.count_ones(bits[0:50]) / 50.0
 
 
@@ -86,7 +87,7 @@ def test_constants_fold_and_dividing_by_a_constant_is_a_multiply():
 
 
 def test_a_loop_multiplies_its_body_by_its_trip_count():
-    cost = analyze(_looped).cost
+    cost = analyze(_looped.specialize(values=N)).cost
     # Per trip: a load and a multiply, the accumulation, the counter and
     # the branch back.
     assert cost.ops["mul"] == N and cost.ops["load"] == N
@@ -111,11 +112,27 @@ def test_counting_measurement_bits_is_by_word():
     assert cost.ops["popcount"] == 2 and cost.in_controller_form
 
 
+def test_a_function_of_call_lengths_is_analyzed_per_version():
+    @pulse.classical(max_latency_ns=100)
+    def flip(outcomes: pulse.Bits) -> pulse.Bits:
+        return [1 - b for b in outcomes]
+
+    message = (
+        "flip's list lengths come from its calls (outcomes), so it has no single cost; analyze"
+        " one version, e.g. analyze(flip.specialize(outcomes=3))"
+    )
+    with pytest.raises(TypeError, match=re.escape(message)):
+        analyze(flip)
+    row = analyze(flip.specialize(outcomes=3))
+    assert (row.function, row.compiled_name) == ("flip", "flip__3")
+    assert (analyze(_counted).function, analyze(_counted).compiled_name) == ("_counted",) * 2
+
+
 def _bad(source_kind):
     if source_kind == "while":
 
-        @pulse.classical(args=(Bits(4),), results=(Bits(1),), max_latency_ns=10)
-        def f(bits):
+        @pulse.classical(max_latency_ns=10)
+        def f(bits: pulse.Bits) -> pulse.Bits:
             i = 0
             while i < 4:
                 i += 1
@@ -123,35 +140,35 @@ def _bad(source_kind):
 
     elif source_kind == "list":
 
-        @pulse.classical(args=(Bits(4),), results=(Float(),), max_latency_ns=10)
-        def f(bits):
+        @pulse.classical(max_latency_ns=10)
+        def f(bits: pulse.Bits) -> float:
             kept = [bits[0], bits[1]]
             return kept[0]
 
     elif source_kind == "comprehension":
 
-        @pulse.classical(args=(Bits(4),), results=(Float(),), max_latency_ns=10)
-        def f(bits):
+        @pulse.classical(max_latency_ns=10)
+        def f(bits: pulse.Bits) -> float:
             return max([b for b in bits])
 
     elif source_kind == "raise":
 
-        @pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=10)
-        def f(x):
+        @pulse.classical(max_latency_ns=10)
+        def f(x: float) -> float:
             if x < 0:
                 raise ValueError("negative")
             return x
 
     elif source_kind == "unknown call":
 
-        @pulse.classical(args=(Bits(4),), results=(Float(),), max_latency_ns=10)
-        def f(bits):
+        @pulse.classical(max_latency_ns=10)
+        def f(bits: pulse.Bits) -> float:
             return sum(bits)
 
     elif source_kind == "unbounded loop":
 
-        @pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=10)
-        def f(x):
+        @pulse.classical(max_latency_ns=10)
+        def f(x: float) -> float:
             total = 0.0
             for _ in range(int(x)):
                 total += 1.0
@@ -162,11 +179,16 @@ def _bad(source_kind):
         def recurse(x):
             return x if x < 1 else recurse(x / 2)
 
-        @pulse.classical(args=(Float(),), results=(Float(),), max_latency_ns=10)
-        def f(x):
+        @pulse.classical(max_latency_ns=10)
+        def f(x: float) -> float:
             return recurse(x)
 
-    return f
+    # A function of call lengths is analyzed one version at a time.
+    return (
+        f.specialize(bits=4)
+        if source_kind in ("while", "list", "comprehension", "unknown call")
+        else f
+    )
 
 
 @pytest.mark.parametrize(
@@ -227,13 +249,13 @@ def test_unknown_operation_classes_are_rejected():
     assert a.as_dict()["op_cycles"] == {"div": 8}
 
 
-@pulse.classical(args=(Bits(1), Float()), results=(Float(),), max_latency_ns=40, link="controller")
-def _update(bit, x):
+@pulse.classical(max_latency_ns=40, link="controller")
+def _update(bit: pulse.Bits, x: float) -> float:
     return math.exp(x) * 0.5 + bit[0]
 
 
-@pulse.classical(args=(Bits(1), Float()), results=(Float(),), max_latency_ns=40, link="gpu")
-def _remote(bit, x):
+@pulse.classical(max_latency_ns=40, link="gpu")
+def _remote(bit: pulse.Bits, x: float) -> float:
     total = 0.0
     while total < x:
         total += 1.0
@@ -242,17 +264,17 @@ def _remote(bit, x):
 
 @pulse.kernel
 def _rounds(q, n: int):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     x = 0.1
     for _ in range(n):
-        drive(d, square(40, x), t)
+        drive(d, square(40, x))
         sync(d, r)
-        m = readout(r, square(200, 0.05), rt)
+        m = readout(r, square(200, 0.05))
         x = _update.submit([m], x).result()
         y = _remote.submit([m], x).result()
         sync(d, r)
-        drive(d, square(40, y * 0.0), t)
+        drive(d, square(40, y * 0.0))
 
 
 def _machine(**limits):
@@ -268,7 +290,7 @@ def _lower(machine, n=3):
 
 def test_a_function_that_computes_past_its_budget_fails_to_compile():
     # exp at 12 cycles, a multiply, a load and an add, at 4 ns per cycle.
-    with pytest.raises(ControllerLimitError, match="_update computes for about 60 ns"):
+    with pytest.raises(ControllerLimitError, match="_update__1 computes for about 60 ns"):
         _lower(_machine(op_cycles=_CYCLES, compute_clock_ghz=0.25))
     _lower(_machine(op_cycles=_CYCLES, compute_clock_ghz=1.0))
 
@@ -276,17 +298,18 @@ def test_a_function_that_computes_past_its_budget_fails_to_compile():
 def test_only_functions_on_the_controller_links_are_checked():
     # _remote's while loop runs on the GPU link: reported, not checked.
     report = resources(_lower(_machine(controller_form=True)))
-    remote = next(row for row in report.functions if row.function == "_remote")
+    remote = next(row for row in report.functions if row.compiled_name == "_remote__1")
+    assert remote.function == "_remote"
     assert not remote.on_controller and not remote.cost.in_controller_form
     assert report.violations == ()
-    with pytest.raises(ControllerLimitError, match="_remote is not in controller form"):
+    with pytest.raises(ControllerLimitError, match="_remote__1 is not in controller form"):
         _lower(_machine(controller_form=True, compute_links=("controller", "gpu")))
 
 
 def test_per_shot_limits_count_calls_and_bytes():
     lowered = _lower(_machine(), n=5)
     report = resources(lowered, ControllerLimits())
-    update = next(row for row in report.functions if row.function == "_update")
+    update = next(row for row in report.functions if row.compiled_name == "_update__1")
     assert update.calls_per_shot == 5 and report.calls_per_shot == 10
     per_call = update.request_bytes + update.answer_bytes  # 24 + 9, 24 + 8
     assert per_call == 65

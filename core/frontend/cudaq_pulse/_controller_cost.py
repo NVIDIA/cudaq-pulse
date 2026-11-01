@@ -28,7 +28,6 @@ import ast
 import builtins
 import inspect
 import math
-import textwrap
 import threading
 import types
 import weakref
@@ -110,6 +109,12 @@ class FunctionCost:
     most, beyond the arguments and results. ``violations`` lists what keeps
     the body out of controller form; empty when it is in it. ``helpers``
     names the functions it calls whose bodies were counted too.
+
+    For a ``Processor``: ``iterations`` counts the loop iterations on the
+    longest path (each also counted in ``ops`` as an ``add`` and a
+    ``branch``, the loop's counter and jump); ``unrolled_size`` is ``size``
+    with every loop unrolled; ``uses`` gives, by operation class (and
+    ``"loop"``), where the body or a helper first uses it.
     """
 
     name: str
@@ -119,6 +124,9 @@ class FunctionCost:
     loops: int
     helpers: tuple[str, ...]
     violations: tuple[str, ...]
+    iterations: int = 0
+    unrolled_size: int = 0
+    uses: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def total(self) -> int:
@@ -134,20 +142,54 @@ class FunctionCost:
         of each class (classes not given cost one cycle)."""
         return sum(n * int(op_cycles.get(kind, 1)) for kind, n in self.ops.items())
 
+    def processor_cycles(self, cycles_per_op: Mapping[str, int], loops: bool) -> int:
+        """Clock cycles of the longest path on a processor: ``cycles_per_op``
+        by class (absent: 1), and a loop's counter and jump as one ``"loop"``
+        per iteration if the processor *loops*, else nothing (unrolled)."""
+        overhead = self.iterations
+        total = 0
+        for kind, n in self.ops.items():
+            if kind == "add" or kind == "branch":
+                n -= overhead
+            total += n * int(cycles_per_op.get(kind, 1))
+        if loops:
+            total += overhead * int(cycles_per_op.get("loop", 1))
+        return total
+
 
 @dataclass
 class _Cost:
+    # The body's own operations, by class, on the longest path.
     ops: Counter[str] = field(default_factory=Counter)
     size: int = 0
+    # Operations counted beside the body's own: loop counters and jumps,
+    # inlined calls and the operations of the helpers they inline.
+    placed: Counter[str] = field(default_factory=Counter)
+    # Every class the body's own operations use, on any path.
+    kinds: set[str] = field(default_factory=set)
+    unrolled: int = 0
+    iterations: int = 0
+
+    @property
+    def weight(self) -> int:
+        return sum(self.ops.values()) + sum(self.placed.values())
 
     def add(self, kind: str, n: int = 1) -> None:
         self.ops[kind] += n
         self.size += n
+        self.unrolled += n
+        if n:
+            self.kinds.add(kind)
 
     def extend(self, other: _Cost, times: int = 1) -> None:
         for kind, n in other.ops.items():
             self.ops[kind] += n * times
+        for kind, n in other.placed.items():
+            self.placed[kind] += n * times
         self.size += other.size
+        self.unrolled += other.unrolled * times
+        self.iterations += other.iterations * times
+        self.kinds |= other.kinds
 
 
 class _NotAnalyzableError(Exception):
@@ -155,6 +197,8 @@ class _NotAnalyzableError(Exception):
 
 
 def _source_tree(fn: Callable[..., Any]) -> ast.FunctionDef:
+    import textwrap
+
     lines, start = inspect.getsourcelines(fn)
     module = ast.parse(textwrap.dedent("".join(lines)))
     ast.increment_lineno(module, max(start - 1, 0))
@@ -177,6 +221,7 @@ class _Walker:
         self.helpers: list[str] = []
         self.names: set[str] = set()
         self.loops = 0
+        self.uses: dict[str, str] = {}
         self.extra_locals = 0
         self.constants: dict[str, Any] = {}
         self.globals = getattr(fn, "__globals__", {})
@@ -286,7 +331,10 @@ class _Walker:
     def body(self, statements: list[ast.stmt]) -> _Cost:
         cost = _Cost()
         for statement in statements:
-            cost.extend(self.statement(statement))
+            done = self.statement(statement)
+            for kind in done.kinds - self.uses.keys():
+                self.uses[kind] = self.where(statement)
+            cost.extend(done)
         return cost
 
     def statement(self, node: ast.stmt) -> _Cost:
@@ -395,8 +443,12 @@ class _Walker:
         self.loops += 1
         self.bind(node.target, None)
         body = self.body(node.body)
-        body.add("add")  # the counter
-        body.add("branch")
+        # The counter and the jump back.
+        body.placed["add"] += 1
+        body.placed["branch"] += 1
+        body.size += 2
+        body.iterations += 1
+        self.uses.setdefault("loop", self.where(node))
         # A controller stores a loop's body once.
         cost.extend(body, trips)
         return cost
@@ -586,10 +638,16 @@ class _Walker:
         self.violations.extend(helper.violations)
         self.loops += helper.loops
         self.extra_locals = max(self.extra_locals, helper.locals + len(parameters))
-        cost.add("branch")  # the call, inlined
+        for kind, where in helper.uses.items():
+            self.uses.setdefault(kind, where)
+        cost.placed["branch"] += 1  # the call, inlined
+        cost.size += 1
+        cost.unrolled += 1
         for kind, n in helper.ops.items():
-            cost.ops[kind] += n
+            cost.placed[kind] += n
         cost.size += helper.size
+        cost.unrolled += helper.unrolled_size
+        cost.iterations += helper.iterations
         return cost
 
 
@@ -605,10 +663,15 @@ def _branch(test: _Cost, then: _Cost, other: _Cost) -> _Cost:
     """The longest path through a branch, and both arms' size."""
     out = _Cost()
     out.extend(test)
-    longer = then if sum(then.ops.values()) >= sum(other.ops.values()) else other
+    longer = then if then.weight >= other.weight else other
     for kind, n in longer.ops.items():
         out.ops[kind] += n
+    for kind, n in longer.placed.items():
+        out.placed[kind] += n
+    out.iterations += longer.iterations
     out.size += then.size + other.size
+    out.unrolled += then.unrolled + other.unrolled
+    out.kinds |= then.kinds | other.kinds
     return out
 
 
@@ -641,14 +704,20 @@ def analyze_callable(
     walker.names |= parameters
     cost = walker.body(tree.body)
     local_count = len(walker.names - parameters) + walker.extra_locals
+    ops = Counter(cost.ops)
+    for kind, n in cost.placed.items():
+        ops[kind] += n
     result = FunctionCost(
         name,
-        dict(sorted(cost.ops.items())),
+        dict(sorted(ops.items())),
         cost.size,
         local_count,
         walker.loops,
         tuple(dict.fromkeys(walker.helpers)),
         tuple(dict.fromkeys(walker.violations)),
+        cost.iterations,
+        cost.unrolled,
+        walker.uses,
     )
     with _lock:
         try:

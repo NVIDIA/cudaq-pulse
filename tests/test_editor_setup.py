@@ -21,6 +21,8 @@ import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import doctor
 
+from tests._tools import import_module
+
 OPS = list(pulse.ops.__all__)
 PLUGIN = "cudaq_pulse.mypy_plugin"
 
@@ -120,20 +122,20 @@ def square(x: int) -> int:
 
 @pulse.kernel
 def good(qubit: pulse.Qudit, amplitude: float) -> None:
-    line, tone = get_drive_line(qubit)
-    drive(line, gaussian(40, amplitude, 10.0), tone)
+    line = get_drive_line(qubit)
+    drive(line, gaussian(40, amplitude, 10.0))
 
 
 @pulse.kernel
 def bad(qubit: pulse.Qudit) -> None:
-    line, tone = get_drive_line(qubit)
-    drive(tone, gaussian(40, 0.1, 10.0), line)
+    line = get_drive_line(qubit)
+    drive(line.tone, gaussian(40, 0.1, 10.0), tone=line)
     drve(line)
 """
 
 
 def test_mypy_plugin_defines_and_types_the_kernel_language(tmp_path):
-    api = pytest.importorskip("mypy.api")
+    api = import_module("mypy.api")
     (tmp_path / "app.py").write_text(KERNELS)
     (tmp_path / "plain.py").write_text("drive(1)\n")
     (tmp_path / "mypy.ini").write_text(f"[mypy]\nplugins = {PLUGIN}\n")

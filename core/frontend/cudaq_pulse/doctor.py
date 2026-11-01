@@ -22,7 +22,11 @@ prints each problem as ``FILE:LINE:COLUMN: error: PATH: MESSAGE``, or with
 ``--json`` as one JSON object; it exits 1 if the file has a problem.
 ``--setup-editor`` instead shows the change to the mypy and ruff
 configuration of the project in the current directory (or ``--project``)
-and writes it only when confirmed, or with ``--yes``.
+and writes it only when confirmed, or with ``--yes``. ``--system`` loads a
+system file (``Device.as_dict()``), lists every problem of its definition
+with its line, and shows its controllers, links and whether each
+controller's backend is installed; it exits non-zero if the file has a
+problem or names a backend that is not installed.
 """
 
 from __future__ import annotations
@@ -272,7 +276,8 @@ def _problem_json(problem: Problem) -> dict[str, Any]:
 
 
 def _check_system(file: Path, as_json: bool, write: Callable[[str], None]) -> int:
-    """Check the device file *file*; return the exit code."""
+    """Check the device or system file *file*, and that the backends of its
+    controllers are installed; return the exit code."""
     from ._device import device
 
     problems: tuple[Problem, ...] = ()
@@ -285,6 +290,8 @@ def _check_system(file: Path, as_json: bool, write: Callable[[str], None]) -> in
         problems = (Problem(f"cannot read the file: {error.strerror or error}", file=str(file)),)
     else:
         summary = {"name": dev.name, "qudits": len(dev.layout), "layout": list(dev.layout)}
+        if dev.control_system is not None:
+            summary["control_system"], problems = _control_summary(dev.control_system, file)
     if as_json:
         report = {
             "file": str(file),
@@ -293,13 +300,78 @@ def _check_system(file: Path, as_json: bool, write: Callable[[str], None]) -> in
             "problems": [_problem_json(p) for p in problems],
         }
         write(json.dumps(report, indent=2))
-    elif summary is not None:
-        write(f"{file}: ok, device {summary['name']} with {summary['qudits']} qudits")
-    else:
-        for problem in problems:
-            write(_problem_line(problem))
+        return 1 if problems else 0
+    if summary is not None:
+        state = "ok" if not problems else "loads"
+        write(f"{file}: {state}, device {summary['name']} with {summary['qudits']} qudits")
+        for line in _control_lines(summary.get("control_system")):
+            write(f"  {line}")
+    for problem in problems:
+        write(_problem_line(problem))
+    if problems:
         write(f"{file}: {len(problems)} problem{'' if len(problems) == 1 else 's'}")
     return 1 if problems else 0
+
+
+def _control_summary(system: Any, file: Path) -> tuple[dict[str, Any], tuple[Problem, ...]]:
+    """The controllers and links of *system* as data, and a problem for each
+    backend of a controller that is not installed."""
+    from . import backends
+
+    installed = set(backends.available())
+    controllers = []
+    missing = []
+    for index, controller in enumerate(system.controllers):
+        entry: dict[str, Any] = {
+            "model": controller.model,
+            "version": controller.version,
+            "drive_lines": list(controller.drive_lines),
+            "readout_lines": list(controller.readout_lines),
+            "backend": controller.backend,
+        }
+        if controller.backend is not None:
+            entry["backend_installed"] = controller.backend in installed
+            if not entry["backend_installed"]:
+                missing.append(
+                    Problem(
+                        f"backend {controller.backend!r} is not installed",
+                        path=f"control_system.controllers[{index}].backend",
+                        value=controller.backend,
+                        file=str(file),
+                        fix="install the package that provides it; python -m "
+                        "cudaq_pulse.doctor lists the installed backends",
+                    )
+                )
+        controllers.append(entry)
+    links = {
+        name: None if link.controllers is None else [system._index(c) for c in link.controllers]
+        for name, link in system.links.items()
+    }
+    return {"controllers": controllers, "links": links}, tuple(missing)
+
+
+def _control_lines(summary: dict[str, Any] | None) -> list[str]:
+    if summary is None:
+        return []
+    from ._errors import _ranges
+
+    lines = []
+    for index, c in enumerate(summary["controllers"]):
+        name = c["model"] or "unnamed"
+        version = f" version {c['version']}" if c["version"] else ""
+        text = (
+            f"controllers[{index}]: {name}{version}, drive lines "
+            f"{_ranges(c['drive_lines']) if c['drive_lines'] else 'none'}, readout lines "
+            f"{_ranges(c['readout_lines']) if c['readout_lines'] else 'none'}"
+        )
+        if c["backend"] is not None:
+            found = "installed" if c["backend_installed"] else "not installed"
+            text += f", backend {c['backend']} ({found})"
+        lines.append(text)
+    for name, reached in summary["links"].items():
+        whom = "every controller" if reached is None else f"controllers {reached}"
+        lines.append(f"link {name!r}: reaches {whom}")
+    return lines
 
 
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
@@ -331,7 +403,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "--system",
         type=Path,
         metavar="FILE",
-        help="check the device file FILE as pulse.device(FILE) does, and list every problem",
+        help="check the device or system file FILE as pulse.device(FILE) does: every "
+        "problem, its controllers and links, and whether their backends are installed",
     )
     parser.add_argument(
         "--json", action="store_true", help="with --system, print the report as JSON"

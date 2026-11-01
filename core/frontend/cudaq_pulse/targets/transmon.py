@@ -9,7 +9,7 @@
 
 The default target is the 17-qubit distance-three surface-code device of
 Krinner et al., Nature 605, 669 (2022), arXiv:2112.03708, built from the
-values the paper publishes (``_krinner17``, with a citation for each).
+values the paper publishes (``_transmon_17q``, with a citation for each).
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ import threading
 from typing import Any
 
 from .._errors import InvalidValueError
-from . import _krinner17 as _k
+from . import _transmon_17q as _k
 from .base import Coupling, Qubit, TargetDescription
 
 
-def transmon_krinner_17q(calibration: Any = "krinner17") -> TargetDescription:
+def transmon_17q(calibration: Any = "transmon_17q") -> TargetDescription:
     """17-qubit surface-code device of Krinner et al., Nature 605, 669 (2022).
 
     Qudits 0-16 are D1-D9, X1-X4, Z1-Z4, the column order of the paper's
@@ -44,9 +44,9 @@ def transmon_krinner_17q(calibration: Any = "krinner17") -> TargetDescription:
     MHz measured on X2-D4 at 4.4 GHz, Hellings et al., arXiv:2503.04610).
     *calibration* (a ``Calibration``, the name of a shipped one, or None)
     supplies the device-wide charge coupling g_c (fitted to the X2-D4
-    measurement, 3.12 MHz in ``krinner17``), and each coupling is the
+    measurement, 3.12 MHz in ``transmon_17q``), and each coupling is the
     exchange J_qq = g_c ``<0|n_a|1> <0|n_d|1>`` at the qubits' idle points:
-    5.67-6.08 MHz with the shipped ``krinner17``. With
+    5.67-6.08 MHz with the shipped ``transmon_17q``. With
     ``calibration=None`` it is the published value over sqrt(2), 4.95 MHz.
     Each coupling carries its CZ time step, interaction frequency and
     ``|11> <-> |20>`` coupling (``gate_params``) and measured gate fidelity; the
@@ -57,12 +57,12 @@ def transmon_krinner_17q(calibration: Any = "krinner17") -> TargetDescription:
 
     No residual ZZ is listed: the paper gives no per-pair values, only
     that the calculated idle ZZ is below about 8 kHz. Simulated with three
-    or more levels, the couplings produce it; ``krinner_idle_zz_hz`` gives
-    the charge model's value, -4.5 to -7.3 kHz with ``krinner17``.
+    or more levels, the couplings produce it; ``transmon_17q_idle_zz_hz`` gives
+    the charge model's value, -4.5 to -7.3 kHz with ``transmon_17q``.
     """
     if isinstance(calibration, str):
-        return _calibrated_krinner(calibration)
-    target = _published_krinner()
+        return _calibrated_17q(calibration)
+    target = _published_17q()
     return target if calibration is None else calibration.apply(target)
 
 
@@ -71,7 +71,7 @@ _BUILT: dict[str | None, TargetDescription] = {}
 _BUILT_LOCK = threading.RLock()
 
 
-def _calibrated_krinner(name: str) -> TargetDescription:
+def _calibrated_17q(name: str) -> TargetDescription:
     from .calibration import shipped_calibration
 
     built = _BUILT.get(name)
@@ -79,21 +79,21 @@ def _calibrated_krinner(name: str) -> TargetDescription:
         with _BUILT_LOCK:
             built = _BUILT.get(name)
             if built is None:
-                built = _BUILT[name] = shipped_calibration(name).apply(_published_krinner())
+                built = _BUILT[name] = shipped_calibration(name).apply(_published_17q())
     return built
 
 
-def _published_krinner() -> TargetDescription:
+def _published_17q() -> TargetDescription:
     built = _BUILT.get(None)
     if built is None:
         with _BUILT_LOCK:
             built = _BUILT.get(None)
             if built is None:
-                built = _BUILT[None] = _build_published_krinner()
+                built = _BUILT[None] = _build_published_17q()
     return built
 
 
-def _build_published_krinner() -> TargetDescription:
+def _build_published_17q() -> TargetDescription:
     qubits = {}
     for index, q in enumerate(_k.QUBITS):
         qubits[index] = Qubit(
@@ -136,22 +136,21 @@ def _build_published_krinner() -> TargetDescription:
         for e in _k.EDGES
     ]
     return TargetDescription(
-        name="transmon_krinner_17q",
+        name="transmon_17q",
         qubits=qubits,
         couplings=couplings,
-        architecture="transmon",
         attribution=_k.CITATION,
     )
 
 
-def krinner_idle_zz_hz(calibration: Any = "krinner17") -> dict[tuple[int, int], float]:
-    """Idle ZZ of each coupled pair of the Krinner target, keyed by the
+def transmon_17q_idle_zz_hz(calibration: Any = "transmon_17q") -> dict[tuple[int, int], float]:
+    """Idle ZZ of each coupled pair of the ``transmon_17q`` target, keyed by the
     coupling's (auxiliary, data) qudit indices.
 
     zeta = E_11 - E_10 - E_01 + E_00 of the dressed levels of the
     charge-coupled pair (charge basis, five levels each, no rotating-wave
     approximation) at the idle sweet spots, with the circuits and couplings
-    of *calibration*: -4.5 to -7.3 kHz with the shipped ``krinner17``, below
+    of *calibration*: -4.5 to -7.3 kHz with the shipped ``transmon_17q``, below
     the paper's "below about 8 kHz". The simulation's Duffing ladder with
     exchange J_qq reproduces it within a few percent.
     """
@@ -234,5 +233,4 @@ def transmon_generic(
         name=f"transmon_generic_{n_qubits}q_{topology}",
         qubits=qubits,
         couplings=couplings,
-        architecture="transmon",
     )

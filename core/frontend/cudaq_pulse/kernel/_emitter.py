@@ -13,9 +13,10 @@ concretely, so compile-time conditions, short-circuit operators and loop
 bounds resolve exactly as Python would; pulse operations (``drive``,
 ``gaussian``, ...) are emitted as IR operations instead of being called.
 
-``get_drive_line(q)`` and ``get_readout_line(q)`` return the qudit's one
-channel of that kind for the whole trace (``_Lines``), threaded linearly
-through every op and inlined call that advances it.
+``get_drive_line(q)`` and ``get_readout_line(q)`` return the line of the
+qudit's one channel of that kind for the whole trace (``_Lines``), threaded
+linearly through every op and inlined call that advances it; ``line.tone``
+is the channel's tone, and ``line.tones[(lower, upper)]`` a transition's.
 
 A ``for ... in range(n)`` loop whose induction variable is never read is
 emitted once as a structured ``scf.for`` when the builder supports regions.
@@ -28,7 +29,6 @@ vector, ...) run as Python runs them, one traced iteration per element.
 from __future__ import annotations
 
 import builtins as _builtins_mod
-import difflib
 import dis
 import functools
 import inspect
@@ -38,9 +38,10 @@ import numbers
 import operator
 import sys
 import types
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, NoReturn
 
+from .._errors import NotFoundError, PulseError
 from ..classical import ClassicalFunction
 from . import _bytecode_normalize as bc
 from . import _classical
@@ -68,6 +69,7 @@ from ._bytecode_normalize import (
 from ._unroll import resolve_unroll_threshold
 from .ir_builder import (
     LINEAR_TYPES,
+    MAX_CYCLES,
     OP_TABLE,
     UNDEFINED_VID,
     AnswerValue,
@@ -153,6 +155,8 @@ def _extract_closures(fn: Any) -> dict[str, Any]:
 
 
 _PULSE_FUNCTIONS: dict[Any, str] = {}
+_PLAY_FUNCTIONS: dict[Any, str] = {}
+_TONE_KEYWORD = ("tone",)
 _SUBMIT = ClassicalFunction.submit
 _RESULT = _classical.Future.result
 
@@ -166,6 +170,9 @@ def _load_pulse_functions() -> None:
         op = getattr(ops, name, None)
         if op is not None:
             loaded[op] = name
+    # Not an op: _emit_pulse_call computes it while tracing.
+    loaded[ops.round_duration] = "round_duration"
+    _PLAY_FUNCTIONS.update({op: name for op, name in loaded.items() if name in _PLAYS})
     # One update, so another thread never sees part of the map.
     _PULSE_FUNCTIONS.update(loaded)
 
@@ -658,6 +665,9 @@ _MISSING = object()
 _UNBOUND = object()
 
 _LINE_OPS = frozenset({"get_drive_line", "get_readout_line"})
+# Ops that play a waveform on a line, at its tone or at the keyword tone.
+_PLAYS = frozenset({"drive", "readout"})
+_first = operator.itemgetter(0)
 
 _LINE_TYPES = ("drive_line", "readout_line")
 _QUDIT = ("qref",)
@@ -680,6 +690,9 @@ _OPERAND_TYPES: dict[str, tuple[tuple[str, ...], ...]] = {
     "wf_scale": (_WAVEFORM,),
     "wf_neg": (_WAVEFORM,),
 }
+# The ops with an optional last argument, and its attribute.
+_OPTIONAL_LAST = {"wait": "bounds", "custom_samples": "sample_rate_ghz"}
+
 _EMIT_TABLE = {
     name: (n_val, attrs, rtypes, _OPERAND_TYPES.get(name, ()))
     for name, (n_val, attrs, rtypes) in OP_TABLE.items()
@@ -748,32 +761,11 @@ def add_source_note(e: BaseException) -> None:
         pass
 
 
-def _did_you_mean(name: str, candidates: Any, call: bool = False) -> str:
-    """``"; did you mean 'x'?"`` for the closest of *candidates*, or ``""``."""
-    names = [c for c in dict.fromkeys(candidates) if isinstance(c, str) and not c.startswith("__")]
-    close = difflib.get_close_matches(name, names, n=1)
-    if not close:
-        return ""
-    return f"; did you mean {close[0]}()?" if call else f"; did you mean {close[0]!r}?"
-
-
 def _attribute_error(obj: Any, attr: str) -> str:
     """The error for ``obj.attr`` when *obj* has no attribute *attr*."""
-    if isinstance(obj, types.ModuleType):
-        module = obj.__name__
-        if module.split(".")[0] == "cudaq_pulse" and attr in OP_TABLE:
-            return (
-                f"module {module!r} has no attribute {attr!r}: the kernel language is in "
-                f"cudaq_pulse.ops; write {attr}(...) or cudaq_pulse.ops.{attr}(...)"
-            )
-        return f"cannot resolve attribute {attr!r} on module {module!r}" + _did_you_mean(
-            attr, dir(obj)
-        )
-    try:
-        names = dir(obj)
-    except Exception:  # a broken __dir__ only loses the suggestion
-        names = []
-    return f"cannot resolve attribute {attr!r} on {type(obj).__name__}" + _did_you_mean(attr, names)
+    from ._emit_errors import attribute_error
+
+    return attribute_error(obj, attr)
 
 
 def _describe(value: Any) -> str:
@@ -811,22 +803,34 @@ def _sync_lines(fname: str, call_args: list[Any]) -> list[IRValue]:
         else:
             message = f"{fname}(): {where} must be a line, got {_describe(value)}"
             if value.__class__ is IRValue and value.vtype == "tone":
-                message += f"; pass the lines only, as in {fname}(*[line for line, _ in pairs])"
+                message += f"; pass the lines, not their tones, as in {fname}(d, r)"
             raise CompilationError(message)
 
     for i, value in enumerate(call_args):
         add(value, f"argument {i + 1}")
-    if len(lines) < 2:
-        raise CompilationError(f"{fname}() needs at least 2 lines, got {len(lines)}")
+    if not lines:
+        raise CompilationError(
+            f"{fname}() got no lines; it aligns two or more lines, as in {fname}(d, r)"
+        )
+    if len(lines) == 1:
+        raise CompilationError(
+            f"{fname}() got one line, which has no other line to align with; pass two "
+            f"or more lines, as in {fname}(d, r), or remove the call"
+        )
     if len({id(v) for v in lines}) != len(lines):
         raise CompilationError(f"{fname}(): a line is passed more than once")
     return lines
 
 
-def _sample_envelope(duration: Any, envelope: Any) -> list[float]:
+def _sample_envelope(
+    duration: Any, envelope: Any, rate: tuple[int, int] | None = None
+) -> list[float]:
     """The samples of ``custom(duration, envelope)``: *envelope* called at the
     middle of each clock cycle, ``t = k + 0.5`` for ``k`` in
-    ``range(duration)``, as ``wf_mul`` products are sampled."""
+    ``range(duration)``, as ``wf_mul`` products are sampled; with *rate*
+    (n samples every d cycles, the lines' rate), at the middle of each
+    sample instead, ``t = (k + 0.5) * d / n``."""
+    scale = 1.0
     if isinstance(envelope, str):
         raise CompilationError(
             f"custom(): got the name {envelope!r}; pass a callable f(t) that returns "
@@ -847,8 +851,10 @@ def _sample_envelope(duration: Any, envelope: Any) -> list[float]:
         raise CompilationError(
             f"custom(): the duration must be an int number of clock cycles, got {duration!r}"
         ) from None
-    if count <= 0:
-        raise CompilationError(f"custom(): the duration must be positive, got {count}")
+    if rate is not None:
+        from ._durations import at_rate
+
+        count, scale, envelope = at_rate(count, rate, envelope)
     if count > MAX_CUSTOM_SAMPLES:
         raise CompilationError(
             f"custom(): a duration of {count} clock cycles is over the limit of "
@@ -869,50 +875,19 @@ def _sample_envelope(duration: Any, envelope: Any) -> list[float]:
             number = complex(value)
         except (TypeError, ValueError):
             raise CompilationError(
-                f"custom(): the envelope returned {_describe(value)} at t={t}, not a number"
+                f"custom(): the envelope returned {_describe(value)} at t={t * scale}, not a number"
             ) from None
         if number.imag != 0.0:
             raise CompilationError(
-                f"custom(): the envelope returned {number} at t={t}; complex envelopes "
+                f"custom(): the envelope returned {number} at t={t * scale}; complex envelopes "
                 "are not supported yet, so return real values"
             )
         if not math.isfinite(number.real):
-            raise CompilationError(f"custom(): the envelope returned {number.real} at t={t}")
+            raise CompilationError(
+                f"custom(): the envelope returned {number.real} at t={t * scale}"
+            )
         samples.append(number.real)
     return samples
-
-
-def _operand_error(fname: str, call_args: list[Any]) -> CompilationError:
-    """The error for the first operand of *fname* that is not of its type."""
-    index, want = 0, _OPERAND_TYPES[fname][0]
-    for index, (v, want) in enumerate(zip(call_args, _OPERAND_TYPES[fname])):
-        if v.__class__ is not IRValue or v.vtype not in want:
-            break
-    value = call_args[index]
-    wanted = " or ".join(_TYPE_WORDS[t] for t in want)
-    message = f"{fname}(): argument {index + 1} must be a {wanted}, got {_describe(value)}"
-    vtype = value.vtype if value.__class__ is IRValue else None
-    play = fname in ("drive", "readout")
-    if play and ((index == 0 and vtype == "tone") or (index == 2 and vtype in _LINE_TYPES)):
-        message += f"; the line comes first and the tone last: {fname}(line, waveform, tone)"
-    elif play and vtype in _LINE_TYPES:
-        message += "; drive() takes a drive line and readout() a readout line"
-    elif fname == "wf_scale":
-        message += "; call it as wf_scale(waveform, scalar)"
-    elif want is _WAVEFORM and vtype is None:
-        message += "; pass a waveform such as square(duration, amplitude)"
-    elif want is _QUDIT and vtype is None:
-        from .._device import Qudit
-
-        if isinstance(value, Qudit):
-            message = (
-                f"{fname}(): argument {index + 1} is a qudit handle that reached the kernel "
-                "inside a list; pass qudits as separate arguments, a Register "
-                "(dev.qudit_handles[0:4]) or a tuple, not a list"
-            )
-        else:
-            message += "; pass one of the kernel's qudit arguments"
-    return CompilationError(message)
 
 
 def _unpack_error(value: Any, count: int) -> str:
@@ -923,6 +898,11 @@ def _unpack_error(value: Any, count: int) -> str:
             f"cannot unpack None into {count} names: a call that returns nothing, such as "
             "drive() or wait(), gives None; call it on its own line, not as "
             "`a, b = drive(...)` (its arguments stay usable after it)"
+        )
+    if value.__class__ is IRValue and value.vtype in _LINE_TYPES:
+        return (
+            f"cannot unpack {_describe(value)} into {count} names: a line is one value, "
+            f"not a pair; write `line = get_{value.vtype}(q)` and use line.tone for its tone"
         )
     return (
         f"cannot unpack {_describe(value)} into {count} names; "
@@ -945,7 +925,8 @@ class _Chan:
 
 
 class _Held:
-    """The current (line, tone) of one qudit's drive or readout channel.
+    """The current (line, tone) of one qudit's drive or readout channel, or
+    the current (tone,) of one of its transitions.
 
     Indexing reads and writes the line (0) and the tone (1); a value written
     records the channel in ``IRValue.chan``.
@@ -953,9 +934,13 @@ class _Held:
 
     __slots__ = ("cells", "key")
 
-    def __init__(self, values: tuple[IRValue, ...], key: tuple[int, str]) -> None:
-        line, tone = values
-        self.cells = (_Chan(line, self, 0), _Chan(tone, self, 1))
+    def __init__(self, values: tuple[IRValue, ...], key: tuple[Any, ...]) -> None:
+        try:
+            line, tone = values
+        except ValueError:
+            self.cells: tuple[_Chan, ...] = (_Chan(values[0], self, 0),)
+        else:
+            self.cells = (_Chan(line, self, 0), _Chan(tone, self, 1))
         self.key = key
 
     def __getitem__(self, index: int) -> IRValue:
@@ -974,32 +959,38 @@ class _Held:
 
     @property
     def label(self) -> str:
-        return f"{self.key[1].removeprefix('get_')}{self.key[0]}"
+        label = f"{self.key[1].removeprefix('get_')}{self.key[0]}"
+        if len(self.key) == 3:
+            lower, upper = self.key[2]
+            label += f"_tone_{lower}_{upper}"
+        return label
 
 
 class _Lines:
     """The drive and readout channels acquired so far in one trace.
 
-    ``get_drive_line(q)`` returns the one drive channel of ``q`` for the
-    whole program: the first call acquires it, later calls, in the kernel or
-    in a kernel it calls, return its current line and tone, so pulses on it
-    play one after another. Each value a channel takes records the channel
-    in ``IRValue.chan``, so an op that consumes it moves the channel to the
-    op's result, and a name left holding an old value of a shared channel
-    can be brought up to date.
+    ``get_drive_line(q)`` returns the line of the one drive channel of ``q``
+    for the whole program: the first call acquires it, later calls, in the
+    kernel or in a kernel it calls, return its current line, so pulses on
+    it play one after another. Each value a channel takes records the
+    channel in ``IRValue.chan``, so an op that consumes it moves the channel
+    to the op's result, and a name left holding an old value of a shared
+    channel can be brought up to date. The tone of a transition other than
+    the default is a channel of its own, keyed by the line's key and the
+    transition.
     """
 
     __slots__ = ("held", "shared", "log")
 
     def __init__(self) -> None:
-        self.held: dict[tuple[int, str], _Held] = {}
+        self.held: dict[tuple[Any, ...], _Held] = {}
         # Whether any channel was handed out more than once.
         self.shared = False
         # Line acquisitions, in order: those a rolled loop body makes are
         # hoisted before the loop.
         self.log: list[tuple[str, IRValue]] = []
 
-    def add(self, key: tuple[int, str], values: tuple[IRValue, ...]) -> None:
+    def add(self, key: tuple[Any, ...], values: tuple[IRValue, ...]) -> None:
         self.held[key] = _Held(values, key)
 
     def share(self, held: _Held) -> None:
@@ -1012,6 +1003,86 @@ class _Lines:
         """The channel value now standing for *value*, if it is a channel's."""
         chan: _Chan | None = value.chan
         return None if chan is None else chan.value
+
+
+class _Tones(Mapping[tuple[int, int], IRValue]):
+    """``line.tones`` while tracing: the current tone of each transition of
+    the line's qudit, by ``(lower, upper)`` level. The default transition's
+    is the line's own tone; the first read of another makes a tone at that
+    transition's frequency, with phase 0, which later reads return as it
+    then is."""
+
+    __slots__ = ("_emitter", "_held", "_default", "_frequencies", "_slot")
+
+    def __init__(self, emitter: PulseIREmitter, held: _Held) -> None:
+        builder = emitter.b
+        line_tones = getattr(builder, "line_tones", None)
+        qudit = getattr(builder, "_qref_to_qubit", {}).get(held.key[0])
+        if line_tones is None or qudit is None:
+            raise CompilationError(
+                "line.tones needs the transitions of the system's model; this trace "
+                "has no device, so use line.tone"
+            )
+        self._emitter = emitter
+        self._held = held
+        self._slot = qudit < 0
+        self._default, self._frequencies = line_tones(qudit, held.key[1] == "get_readout_line")
+
+    def __getitem__(self, transition: tuple[int, int]) -> IRValue:
+        held = self._held
+        if transition == self._default:
+            return held.cells[1].value
+        frequency = self._frequencies.get(transition) if transition.__class__ is tuple else None
+        if frequency is None:
+            raise NotFoundError(self._missing(transition))
+        lines = self._emitter._lines
+        key = (*held.key, transition)
+        tone = lines.held.get(key)
+        if tone is not None:
+            lines.share(tone)
+            return tone.cells[0].value
+        value: IRValue
+        (value,) = self._emitter.b.emit(
+            "pulse.tone", (), ("tone",), {"frequency_hz": frequency, "phase_rad": 0.0}
+        )
+        # Made once for the whole program, like a line: a rolled loop body
+        # that makes one is unrolled.
+        self._emitter._acquired[0] += 1
+        lines.add(key, (value,))
+        return value
+
+    def _missing(self, transition: Any) -> str:
+        if self._slot:
+            return (
+                f"the qudit is a runtime parameter, so its transitions' frequencies depend on "
+                f"the carrier each call binds; line.tones has only the default "
+                f"{self._default!r}, line.tone. Pass the frequency of {transition!r} in as a "
+                "float parameter, e.g. f12_hz: float, called with "
+                "dev.transition_freq[q.logical, 1, 2], and play at it with "
+                "set_frequency(line.tone, f12_hz)"
+            )
+        if self._held.key[1] == "get_readout_line":
+            return (
+                f"a readout line has only its own tone, that of the default transition "
+                f"{self._default!r}; got {transition!r}"
+            )
+        known = ", ".join(map(repr, self._frequencies))
+        return (
+            f"the qudit has no transition {transition!r}; line.tones has the "
+            f"(lower, upper) levels {known}, the default {self._default!r} being line.tone"
+        )
+
+    def __contains__(self, transition: object) -> bool:
+        return transition in self._frequencies
+
+    def __iter__(self) -> Iterator[tuple[int, int]]:
+        return iter(self._frequencies)
+
+    def __len__(self) -> int:
+        return len(self._frequencies)
+
+    def __repr__(self) -> str:
+        return f"<tones of transitions {', '.join(map(repr, self._frequencies))}>"
 
 
 # Host calls evaluated at trace time whose result depends only on their
@@ -1058,34 +1129,16 @@ def _parameter_names(value: Any) -> list[str]:
     return []
 
 
-def _range_error(args: list[Any]) -> CompilationError:
-    choice = _find_choice(args)
-    if choice is not None:
-        return CompilationError(
-            f"a range() bound is {choice.origin}, which is known only when the program "
-            "runs; loop inside each arm of the if instead"
-        )
-    names = sorted({n for a in args for n in _parameter_names(a)})
-    if names:
-        return SymbolicValueError(
-            "range() bound depends on kernel parameter "
-            + ", ".join(repr(n) for n in names)
-            + "; a float parameter stays symbolic, so annotate it as int to "
-            "specialize the kernel on its value",
-            tuple(names),
-            "a range() bound",
-        )
-    kinds = ", ".join(type(a).__name__ for a in args)
-    return CompilationError(f"range() bounds must be integers known at compile time; got ({kinds})")
-
-
 def _iterate(value: Any) -> Any:
     """``iter(value)`` for a ``for`` loop, with a kernel-specific error."""
     if isinstance(value, IRValue):
-        raise CompilationError(
+        message = (
             f"cannot iterate over a pulse {value.vtype} value; for loops "
             "in pulse kernels run over Python values known at compile time"
         )
+        if value.vtype in _LINE_TYPES:
+            message += "; a line is one value, and its tone is line.tone"
+        raise CompilationError(message)
     if is_symbolic(value):
         if value.__class__ is _Choice:
             raise CompilationError(f"cannot iterate over {value.origin}")
@@ -1414,7 +1467,14 @@ class PulseIREmitter:
 
                 elif op is _load_attr:
                     obj = pop()
-                    if isinstance(obj, tuple) and len(obj) == 2 and obj[0] == "__unresolved__":
+                    if obj.__class__ is IRValue:
+                        # line.tone, read in place: frame ops take it as their tone.
+                        chan = obj.chan
+                        if arg == "tone" and chan is not None and obj.vtype in _LINE_TYPES:
+                            push(chan.held.cells[1].value)
+                        else:
+                            push(self._value_attribute(obj, arg))
+                    elif isinstance(obj, tuple) and len(obj) == 2 and obj[0] == "__unresolved__":
                         push(("__unresolved__", arg))
                     else:
                         try:
@@ -1427,6 +1487,8 @@ class PulseIREmitter:
                     obj = pop()
                     try:
                         value = obj[index]
+                    except PulseError:
+                        raise
                     except (TypeError, IndexError, KeyError) as e:
                         raise CompilationError(
                             f"subscript failed: {type(obj).__name__}[{index!r}]: {e}"
@@ -1584,11 +1646,27 @@ class PulseIREmitter:
 
                 elif op is bc.CALL_KW:
                     names = pop()
-                    values = stack[-arg:]
-                    del stack[-arg:]
-                    n_pos = arg - len(names)
-                    kwargs = dict(zip(names, values[n_pos:]))
-                    self._dispatch_call(pop(), values[:n_pos], kwargs)
+                    play = None
+                    if names == _TONE_KEYWORD and arg == 3:
+                        # drive(line, waveform, tone=tone): the tone is the op's last operand.
+                        fn = stack[-4]
+                        if fn.__class__ is types.FunctionType:
+                            if fn in _PLAY_FUNCTIONS:
+                                play = _PLAY_FUNCTIONS[fn]
+                        elif (
+                            fn.__class__ is tuple and fn[0] == "__unresolved__" and fn[1] in _PLAYS
+                        ):
+                            play = fn[1]
+                    if play is not None:
+                        values = stack[-3:]
+                        del stack[-4:]
+                        self._push_pulse_results(play, values)
+                    else:
+                        values = stack[-arg:]
+                        del stack[-arg:]
+                        n_pos = arg - len(names)
+                        kwargs = dict(zip(names, values[n_pos:]))
+                        self._dispatch_call(pop(), values[:n_pos], kwargs)
 
                 elif op is bc.COPY:
                     push(stack[-arg])
@@ -1887,10 +1965,32 @@ class PulseIREmitter:
                 slot_results.append((cell.held, cell.index, a, b))
             else:
                 aliases.append((cell, alias))
-        labels = [name for name, _, _ in results]
-        labels += [self._slot_label(obj, i) for obj, i, _, _ in slot_results]
-        then_vals = tuple(a for _, a, _ in results) + tuple(a for _, _, a, _ in slot_results)
-        else_vals = tuple(b for _, _, b in results) + tuple(b for _, _, _, b in slot_results)
+        if slot_results:
+            pairs = {name: (a, b) for name, a, b in results}
+            order = self._carry_order(
+                [name for name, _, _ in results],
+                {n: ab[1] for n, ab in pairs.items()},
+                slot_results,
+            )
+            labels = []
+            then_list = []
+            else_list = []
+            for entry in order:
+                if type(entry) is str:
+                    a, b = pairs[entry]
+                    labels.append(entry)
+                else:
+                    _, _, a, b = slot_results[entry[0]]
+                    labels.append(entry[1])
+                then_list.append(a)
+                else_list.append(b)
+            then_vals = tuple(then_list)
+            else_vals = tuple(else_list)
+        else:
+            order = [name for name, _, _ in results]
+            labels = order
+            then_vals = tuple(a for _, a, _ in results)
+            else_vals = tuple(b for _, _, b in results)
         builder.insert(else_index, "scf.yield", then_vals)
         builder.emit("scf.yield", else_vals, ())
         outs = builder.emit(
@@ -1899,14 +1999,28 @@ class PulseIREmitter:
             tuple(v.vtype for v in then_vals),
             {"result_names": labels},
         )
-        for (name, _, _), out in zip(results, outs):
-            merged[name] = out
-        for (obj, i, a, b), out in zip(slot_results, outs[len(results) :]):
-            obj[i] = out
+        listed = []
+        carried: dict[tuple[int, int], IRValue] = {}
+        for entry, out in zip(order, outs):
+            if type(entry) is str:
+                merged[entry] = out
+                continue
+            obj, i, a, b = slot_results[entry[0]]
             self._slots.pop(id(a), None)
             self._slots.pop(id(b), None)
-            if not isinstance(obj, _Held):
-                self._slots[id(out)] = (obj, i, out)
+            if isinstance(obj, _Held):
+                carried[(id(a), id(b))] = out
+                obj[i] = out
+            else:
+                listed.append((obj, i, a, b, out))
+        if listed:
+            for name, a, b in results:
+                carried.setdefault((id(a), id(b)), merged[name])
+        # A list slot that holds its channel's values takes the channel's result.
+        for obj, i, a, b, out in listed:
+            out = carried.get((id(a), id(b)), out)
+            obj[i] = out
+            self._slots[id(out)] = (obj, i, out)
         if chosen:
             line = prog.location(index)[1]
             scope = getattr(builder, "scope", ())
@@ -2142,6 +2256,7 @@ class PulseIREmitter:
             return False
 
         assert slot_changes is not None
+        lists_carried = True if slot_changes else False
         for n, _ in stale:
             del delta[n]
         qudits = [(n, delta.pop(n)) for n in fixed]
@@ -2165,41 +2280,89 @@ class PulseIREmitter:
                 aliases.append((cell, alias))
         if delta or slot_changes:
             names = sorted(delta)
-            vals = tuple(delta[n] for n in names) + tuple(new for _, _, new in slot_changes)
+            order: list[Any] = (
+                self._carry_order(names, delta, slot_changes) if slot_changes else names
+            )
             # A name first bound in the body has no value entering the loop;
             # the body binds it before reading it, unless it binds it to a
             # channel's value read from a container: then it enters with
             # the channel's value.
             before_of: dict[int, IRValue] | None = None
+            vals_list = []
             entering_vals = []
-            for n in names:
-                if n in saved_locals:
-                    entering_vals.append(saved_locals[n])
-                    continue
-                if before_of is None:
-                    before_of = {id(cell): before for cell, before in entering}
-                entering_vals.append(self._entering(delta[n], before_of))
-            entering_vals.extend(originals[id(obj)][i] for obj, i, _ in slot_changes)
+            labels = []
+            kept: list[Any] = []
+            # A slot that enters and leaves with the values an earlier entry
+            # carries takes that entry's result, not a loop value of its own;
+            # only a list slot can repeat another entry.
+            owner: dict[tuple[int, int], int] | None = {} if lists_carried else None
+            shared: list[tuple[Any, int]] = []
+            for n in order:
+                if type(n) is not str:
+                    obj, i, new = slot_changes[n[0]]
+                    before = originals[id(obj)][i]
+                    if owner is not None:
+                        at = owner.setdefault((id(new), id(before)), len(kept))
+                        if at != len(kept):
+                            shared.append((n, at))
+                            continue
+                    label = n[1]
+                else:
+                    new = delta[n]
+                    if n in saved_locals:
+                        before = saved_locals[n]
+                    else:
+                        if before_of is None:
+                            before_of = {id(cell): before for cell, before in entering}
+                        before = self._entering(new, before_of)
+                    if owner is not None:
+                        owner.setdefault((id(new), id(before)), len(kept))
+                    label = n
+                kept.append(n)
+                vals_list.append(new)
+                entering_vals.append(before)
+                labels.append(label)
+            vals = tuple(vals_list)
             inits = tuple(entering_vals)
-            labels = names + [self._slot_label(obj, i) for obj, i, _ in slot_changes]
             self.b.emit("scf.yield", vals, ())
             # The body was traced with the values carried into the loop; its
             # end lists them so that each iteration can rebind them.
             results = self.b.emit(
                 "scf.for_end", inits, tuple(v.vtype for v in vals), {"iter_args": labels}
             )
-            for n, r in zip(names, results):
-                self.locals[n] = r
-            for (obj, i, _), r in zip(slot_changes, results[len(names) :]):
+            listed = []
+            carried: dict[int, tuple[IRValue, IRValue]] = {}
+            for n, r in (
+                zip(kept, results)
+                if not shared
+                else [*zip(kept, results), *((n, results[at]) for n, at in shared)]
+            ):
+                if type(n) is str:
+                    self.locals[n] = r
+                    continue
+                obj, i, new = slot_changes[n[0]]
+                if isinstance(obj, _Held):
+                    carried[id(obj.cells[i])] = (new, r)
+                    obj[i] = r
+                else:
+                    listed.append((obj, i, new, r))
+            if listed:
+                for cell, alias in aliases:
+                    carried[id(cell)] = (cell.value, self.locals[alias])
+            # A list slot that yields its channel's value takes the channel's
+            # result, so the line read from it after the loop has its tone.
+            for obj, i, new, r in listed:
+                change = carried.get(id(new.chan))
+                if change is not None and change[0] is new:
+                    r = change[1]
                 obj[i] = r
-                if not isinstance(obj, _Held):
-                    self._slots[id(r)] = (obj, i, r)
+                self._slots[id(r)] = (obj, i, r)
         else:
             self.b.emit("scf.for_end", (), ())
         for cell, alias in aliases:
-            carried = self.locals[alias]
-            cell.value = carried
-            carried.chan = cell
+            result = self.locals[alias]
+            cell.value = result
+            result.chan = cell
         for n, chan in stale:
             self.locals[n] = chan.value
         for n, qudit in qudits:
@@ -2249,6 +2412,36 @@ class PulseIREmitter:
         if self._mutated is not None:
             self._mutated.setdefault(id(obj), (obj, None))
 
+    def _carry_order(
+        self, names: list[str], values: dict[str, Any], slots: list[tuple[Any, ...]]
+    ) -> list[Any]:
+        """The carried *names* and (slot index, label) entries, in their order.
+
+        A line's own tone follows the name the line is carried by, as
+        ``name.tone``; the other slots come last.
+        """
+        by_value = {id(v): n for n, v in values.items()}
+        keyed: list[tuple[str, Any]] = [(n, n) for n in names]
+        rest: list[Any] = []
+        unsorted = False
+        for k, slot in enumerate(slots):
+            obj, i = slot[0], slot[1]
+            if i == 1 and type(obj) is _Held:
+                line = obj.cells[0].value
+                n = by_value.get(id(line))
+                if n is None:
+                    n = next((m for m, v in self.locals.items() if v is line), None)
+                if n is not None:
+                    label = n + ".tone"
+                    if keyed and label < keyed[-1][0]:
+                        unsorted = True
+                    keyed.append((label, (k, label)))
+                    continue
+            rest.append((k, self._slot_label(obj, i)))
+        if unsorted:
+            keyed.sort(key=_first)
+        return [entry for _, entry in keyed] + rest
+
     def _slot_label(self, obj: Any, index: int) -> str:
         if isinstance(obj, _Held):
             return f"{obj.label}[{index}]"
@@ -2289,7 +2482,9 @@ class PulseIREmitter:
     def _unknown_name(self, name: str) -> str:
         """The error for calling *name*, which nothing in scope defines."""
         known = [*OP_TABLE, *self.locals, *self._fn_globals, *self._fn_closures, *self._builtins]
-        return f"unknown pulse op: {name}" + _did_you_mean(name, known, call=True)
+        from ._emit_errors import did_you_mean
+
+        return f"unknown pulse op: {name}" + did_you_mean(name, known, call=True)
 
     # ── Call dispatch ────────────────────────────────────────────────
 
@@ -2305,13 +2500,27 @@ class PulseIREmitter:
         if isinstance(callable_val, tuple) and len(callable_val) == 2:
             tag, name = callable_val
             if tag == "__unresolved__":
-                if kwargs:
+                if (
+                    kwargs
+                    and name in _PLAYS
+                    and "tone" in kwargs
+                    and call_args[1:]
+                    and not call_args[2:]
+                    # Equal by identity: the tone's own __eq__ is not called.
+                    and kwargs == {"tone": kwargs["tone"]}
+                ):
+                    call_args = [*call_args, kwargs["tone"]]
+                elif kwargs:
                     from .. import ops
 
                     op_fn = getattr(ops, name, None) if name in _PULSE_OP_NAMES else None
                     if op_fn is None:
                         raise CompilationError(self._unknown_name(name))
                     call_args = _bind_positional(op_fn, call_args, kwargs)
+                elif name in _PLAYS and call_args[2:]:
+                    from ._emit_errors import play_arity_error
+
+                    raise play_arity_error(name, len(call_args))
                 if name in OP_TABLE:
                     self._push_pulse_results(name, call_args)
                 elif name == "range":
@@ -2328,8 +2537,22 @@ class PulseIREmitter:
         except TypeError:  # unhashable callable
             op_name = None
         if op_name is not None:
-            if kwargs:
+            if (
+                kwargs
+                and op_name in _PLAYS
+                and "tone" in kwargs
+                and call_args[1:]
+                and not call_args[2:]
+                # Equal by identity: the tone's own __eq__ is not called.
+                and kwargs == {"tone": kwargs["tone"]}
+            ):
+                call_args = [*call_args, kwargs["tone"]]
+            elif kwargs:
                 call_args = _bind_positional(callable_val, call_args, kwargs)
+            elif op_name in _PLAYS and call_args[2:]:
+                from ._emit_errors import play_arity_error
+
+                raise play_arity_error(op_name, len(call_args))
             self._push_pulse_results(op_name, call_args)
             return
 
@@ -2551,6 +2774,10 @@ class PulseIREmitter:
         operands = tuple(
             self._select_waveform(v) if v.__class__ is _Choice else v for v in operands
         )
+        if getattr(self, "_sampled", None) is not None and fname in ("drive", "readout"):
+            from ._durations import for_line
+
+            operands = for_line(self, fname, operands)
         results: tuple[Any, ...] = b._unwatched_emit(op_name, operands, out_types, attrs)
         if fname in _MAKES_WAVEFORM:
             if fname in _WAVEFORMS:
@@ -2561,6 +2788,10 @@ class PulseIREmitter:
                 self._durations[results[0].vid] = duration
             else:
                 self._durations.pop(results[0].vid, None)
+            if getattr(self, "_sampled", None) is not None:
+                from ._durations import track_samples
+
+                track_samples(self, fname, None, operands, out_types, attrs, results[0].vid)
         return results
 
     def _select_waveform(self, choice: _Choice) -> IRValue:
@@ -2574,6 +2805,10 @@ class PulseIREmitter:
             known.pop(value.vid, None)
         else:
             known[value.vid] = duration
+        if getattr(self, "_sampled", None) is not None:
+            from ._durations import track_samples
+
+            track_samples(self, "select", None, tuple(_choice_leaves(choice)), (), {}, value.vid)
         return value
 
     def _emit_per_arm(
@@ -2621,6 +2856,10 @@ class PulseIREmitter:
         out_types: tuple[str, ...],
     ) -> tuple[Any, ...]:
         """Emit the op *fname* with the values an arm of a choice gives it."""
+        if getattr(self, "_sampled", None) is not None and fname in ("drive", "readout"):
+            from ._durations import for_line
+
+            operands = for_line(self, fname, operands)
         try:
             results: tuple[Any, ...] = self.b.emit(op_name, operands, out_types, attrs)
         except _ChosenOperandError:
@@ -2632,6 +2871,10 @@ class PulseIREmitter:
                 duration = self._waveform_duration(fname, operands, attrs)
             if duration.__class__ is int:
                 self._durations[results[0].vid] = duration
+            if getattr(self, "_sampled", None) is not None:
+                from ._durations import track_samples
+
+                track_samples(self, fname, op_name, operands, out_types, attrs, results[0].vid)
         return results
 
     def _run_genexpr(self, code: types.CodeType, call_args: list[StackVal]) -> None:
@@ -2644,7 +2887,7 @@ class PulseIREmitter:
             closures[name] = (
                 self._fn_closures.get(name, _EMPTY_CELL) if value is _MISSING else value
             )
-        helper = PulseIREmitter(
+        helper = self.__class__(
             self.b, fn_globals=self._fn_globals, fn_closures=closures, caller=self
         )
         yielded: list[Any] = []
@@ -2658,7 +2901,9 @@ class PulseIREmitter:
         if not 1 <= len(call_args) <= 3:
             raise CompilationError(f"range() takes 1 to 3 arguments, got {len(call_args)}")
         if not all(isinstance(a, int) for a in call_args):
-            raise _range_error(call_args)
+            from ._emit_errors import range_error
+
+            raise range_error(call_args)
         try:
             self.stack.append(range(*call_args))
         except ValueError as exc:
@@ -2690,7 +2935,7 @@ class PulseIREmitter:
                     f"{fn.__name__}: expected {len(params)} args, got {len(call_args)}"
                 )
 
-        helper = PulseIREmitter(
+        helper = self.__class__(
             self.b,
             fn_globals=fn.__globals__,
             fn_closures=_extract_closures(fn) if fn.__closure__ else {},
@@ -2739,6 +2984,8 @@ class PulseIREmitter:
             self.stack.append(results[-1])
         elif fname in {"drive", "wait", "sync"}:
             self.stack.append(None)
+        elif fname in _LINE_OPS:
+            self.stack.append(results[0])
         elif len(results) == 1:
             self.stack.append(results[0])
         elif len(results) > 1:
@@ -2746,15 +2993,37 @@ class PulseIREmitter:
         else:
             self.stack.append(None)
 
+    def _value_attribute(self, value: IRValue, name: str) -> Any:
+        """``value.name`` for an IR value: a line's ``tones``; ``line.tone``
+        the loop reads in place."""
+        chan = value.chan
+        if value.vtype in _LINE_TYPES and chan is not None:
+            if name == "tones":
+                return _Tones(self, chan.held)
+            if name == "tone":
+                return chan.held.cells[1].value
+        if value.vtype == "qref":
+            from ._emit_errors import qudit_attribute_error
+
+            raise qudit_attribute_error(self.locals, value, name)
+        word = _TYPE_WORDS.get(value.vtype, value.vtype)
+        article = "an" if word[0] in "aeiou" else "a"
+        hint = "its attributes are" if value.vtype in _LINE_TYPES else "only a line has attributes,"
+        raise CompilationError(f"{article} {word} has no attribute {name!r}; {hint} tone and tones")
+
     # ── Pulse IR emission ────────────────────────────────────────────
 
     def _emit_pulse_call(
         self,
         fname: str,
         call_args: list[StackVal],
-    ) -> tuple[IRValue, ...]:
+    ) -> tuple[StackVal, ...]:
         entry = _EMIT_TABLE.get(fname)
         if entry is None:
+            if fname == "round_duration":
+                from ._durations import traced_round_duration
+
+                return (traced_round_duration(self.b, call_args, None),)
             raise CompilationError(f"unknown pulse op: {fname}")
 
         n_val, attr_names, rtypes, operand_types = entry
@@ -2778,14 +3047,30 @@ class PulseIREmitter:
             attrs: dict[str, Any] = {}
             out_types = tuple(v.vtype for v in operands) if rtypes is None else rtypes
         else:
-            bounds = None
+            optional: tuple[str, StackVal] | None = None
             if len(call_args) != n_val + len(attr_names):
-                if fname != "wait" or len(call_args) != 3:
-                    raise CompilationError(
-                        f"{fname}: expected {n_val + len(attr_names)} args, got {len(call_args)}"
-                    )
-                bounds = call_args[2]
-                call_args = call_args[:2]
+                if n_val == 3:
+                    # drive(line, waveform) and readout(line, waveform): the
+                    # line's own tone; the operand checks name a non-line.
+                    if len(call_args) != 2:
+                        from ._emit_errors import play_arity_error
+
+                        raise play_arity_error(fname, len(call_args))
+                    line, waveform = call_args
+                    try:
+                        line_tone = line.chan.held.cells[1].value
+                    except (AttributeError, IndexError):
+                        line_tone = None
+                    call_args = [line, waveform, line_tone]
+                else:
+                    last = _OPTIONAL_LAST.get(fname)
+                    if last is None or len(call_args) != n_val + len(attr_names) + 1:
+                        raise CompilationError(
+                            f"{fname}: expected {n_val + len(attr_names)} args, "
+                            f"got {len(call_args)}"
+                        )
+                    optional = (last, call_args[-1])
+                    call_args = call_args[:-1]
             # Operands must have their op's types. A line or tone read from a
             # container the tracer does not rebind (a tuple in a list, a dict)
             # may be an old value of its channel; the op consumes the channel's
@@ -2803,7 +3088,9 @@ class PulseIREmitter:
                 except AttributeError:
                     bad = True
                 if bad:
-                    raise _operand_error(fname, call_args)
+                    from ._emit_errors import operand_error
+
+                    raise operand_error(fname, call_args)
                 ca = a.chan
                 cc = c.chan
                 if (ca is not None and ca.value is not a) or (cc is not None and cc.value is not c):
@@ -2816,7 +3103,9 @@ class PulseIREmitter:
                 except AttributeError:
                     bad = True
                 if bad:
-                    raise _operand_error(fname, call_args)
+                    from ._emit_errors import operand_error
+
+                    raise operand_error(fname, call_args)
                 ca = a.chan
                 if ca is not None and ca.value is not a:
                     call_args[0] = ca.value
@@ -2825,12 +3114,14 @@ class PulseIREmitter:
                     v = call_args[i]
                     if v.__class__ is not IRValue or v.vtype not in operand_types[i]:
                         if v.__class__ is not _Choice or v.vtype not in operand_types[i]:
-                            raise _operand_error(fname, call_args)
+                            from ._emit_errors import operand_error
+
+                            raise operand_error(fname, call_args)
                     call_args[i] = _current(v)
             operands = tuple(call_args[:n_val])
             attrs = dict(zip(attr_names, call_args[n_val:]))
-            if bounds is not None:
-                attrs["bounds"] = bounds
+            if optional is not None:
+                attrs[optional[0]] = optional[1]
             out_types = (operands[0].vtype,) if (rtypes is None and operands) else (rtypes or ())
 
         op_name = _OP_NAMES[fname]
@@ -2839,11 +3130,12 @@ class PulseIREmitter:
             if fname in _WAVEFORMS:
                 duration = attrs.get("duration")
                 if fname == "custom":
-                    attrs = {"samples": _sample_envelope(duration, attrs.get("name"))}
+                    attrs, duration = self._custom_samples(duration, attrs)
                     op_name = _OP_NAMES["custom_samples"]
-                    duration = len(attrs["samples"])
                 elif duration.__class__ is not int:
-                    duration = None
+                    from ._durations import traced_duration
+
+                    duration = traced_duration(self.b, fname, attrs)
             else:
                 duration = self._waveform_duration(fname, operands, attrs)
             try:
@@ -2867,6 +3159,14 @@ class PulseIREmitter:
         else:
             self._rebind_linear(fname, call_args, results)
         return results
+
+    def _custom_samples(self, duration: Any, attrs: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        if duration.__class__ is int and 1 <= duration <= MAX_CYCLES and self.b.sample_rate is None:
+            samples = _sample_envelope(duration, attrs.get("name"))
+            return {"samples": samples}, len(samples)
+        from ._durations import custom_samples
+
+        return custom_samples(self.b, duration, attrs)
 
     def _refresh_lines(self) -> None:
         """Bring names holding an old value of a shared channel up to date."""
@@ -2897,6 +3197,10 @@ class PulseIREmitter:
                 return left if left is not None else right
             return left
         if fname == "custom_samples":
+            if "sample_rate_ghz" in attrs or self.b.sample_rate is not None:
+                from ._durations import custom_samples_duration
+
+                return custom_samples_duration(self.b, attrs)
             try:
                 return len(attrs["samples"])
             except TypeError:
@@ -3169,10 +3473,15 @@ def _bound(fn: Any, args: list[StackVal], kwargs: dict[str, StackVal]) -> inspec
 
 
 def _bind_positional(fn: Any, args: list[StackVal], kwargs: dict[str, StackVal]) -> list[StackVal]:
-    """Bind a keyword call to *fn*'s parameters as a positional list."""
+    """Bind a keyword call to *fn*'s parameters as a positional list; the
+    keyword-only ``tone`` of drive and readout comes last, when given."""
     bound = _bound(fn, args, kwargs)
     if bound.kwargs:
-        raise CompilationError(f"{getattr(fn, '__name__', fn)}: keyword-only parameters")
+        keywords = dict(bound.kwargs)
+        tone = keywords.pop("tone", None)
+        if keywords:
+            raise CompilationError(f"{getattr(fn, '__name__', fn)}: keyword-only parameters")
+        return list(bound.args) if tone is None else [*bound.args, tone]
     return list(bound.args)
 
 

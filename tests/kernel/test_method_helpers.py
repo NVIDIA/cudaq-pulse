@@ -38,77 +38,77 @@ def _program(kernel):
 def _written_out(n, amp):
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        drive(d, square(n, amp), t)
+        d = get_drive_line(q)
+        drive(d, square(n, amp))
 
     return k
 
 
 @pulse.kernel
 def plain_method(q):
-    d, t = get_drive_line(q)
-    drive(d, _GATES.wf(), t)
+    d = get_drive_line(q)
+    drive(d, _GATES.wf())
 
 
 @pulse.kernel
 def method_with_lines(q):
-    d, t = get_drive_line(q)
-    _GATES.x90(d, t)
+    d = get_drive_line(q)
+    _GATES.x90(d, d.tone)
 
 
 @pulse.kernel
 def through_self(q):
-    d, t = get_drive_line(q)
-    drive(d, _GATES.x90_wf(), t)
+    d = get_drive_line(q)
+    drive(d, _GATES.x90_wf())
 
 
 @pulse.kernel
 def inherited(q):
-    d, t = get_drive_line(q)
-    drive(d, _DOUBLED.x180_wf(), t)
+    d = get_drive_line(q)
+    drive(d, _DOUBLED.x180_wf())
 
 
 @pulse.kernel
 def staticmethod_on_instance(q):
-    d, t = get_drive_line(q)
-    drive(d, _GATES.flat(40), t)
+    d = get_drive_line(q)
+    drive(d, _GATES.flat(40))
 
 
 @pulse.kernel
 def staticmethod_on_class(q):
-    d, t = get_drive_line(q)
-    drive(d, Gates.flat(40), t)
+    d = get_drive_line(q)
+    drive(d, Gates.flat(40))
 
 
 @pulse.kernel
 def classmethod_through_cls(q):
-    d, t = get_drive_line(q)
-    drive(d, Gates.default_wf(), t)
+    d = get_drive_line(q)
+    drive(d, Gates.default_wf())
 
 
 @pulse.kernel
 def callable_object(q):
-    d, t = get_drive_line(q)
-    drive(d, _GATES(40), t)
+    d = get_drive_line(q)
+    drive(d, _GATES(40))
 
 
 @pulse.kernel
 def stored_bound_method(q):
-    d, t = get_drive_line(q)
-    drive(d, _STORED(), t)
+    d = get_drive_line(q)
+    drive(d, _STORED())
 
 
 @pulse.kernel
 def bound_in_the_kernel(q):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     make = _GATES.x90_wf
-    drive(d, make(), t)
+    drive(d, make())
 
 
 @pulse.kernel
 def through_a_held_object(q):
-    d, t = get_drive_line(q)
-    drive(d, _DEVICE.pulse_wf(), t)
+    d = get_drive_line(q)
+    drive(d, _DEVICE.pulse_wf())
 
 
 @pytest.mark.parametrize(
@@ -145,8 +145,8 @@ def test_a_method_that_uses_no_pulse_op_runs_as_python():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        drive(d, square(40, calibration.amp()), t)
+        d = get_drive_line(q)
+        drive(d, square(40, calibration.amp()))
 
     assert _program(k) == _program(_written_out(40, 0.2))
     assert calibration.calls == 1
@@ -175,9 +175,9 @@ def test_host_objects_whose_methods_read_attributes_named_like_ops_run_as_python
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         barrier.wait()
-        drive(d, square(40, clock.tick() + clock()), t)
+        drive(d, square(40, clock.tick() + clock()))
 
     assert _program(k) == _program(_written_out(40, 0.2))
     assert clock.ticks == 2

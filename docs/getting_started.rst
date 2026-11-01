@@ -85,17 +85,23 @@ generated MLIR:
 
    import cudaq_pulse as pulse
 
+   cal = {"duration": 32 * pulse.ns, "sigma": 8 * pulse.ns}
+
    @pulse.kernel
    def rabi_oscillation(qubit, amplitude: float):
-       drive_line, tone = get_drive_line(qubit)
-       drive(drive_line, gaussian(64, amplitude, 16.0), tone)
+       drive_line = get_drive_line(qubit)
+       drive(drive_line, gaussian(cal["duration"], amplitude, cal["sigma"]))
 
-   dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
-   lowered = rabi_oscillation.lower(dev.qudit_handles[0], 0.5)
-   result = pulse.simulate(lowered)    # NumPy reference, no GPU needed
-   print(f"P(1) = {result.density_matrix[1, 1].real:.3f}")   # P(1) = 0.973
+   dev = pulse.device("transmon_17q")
+   qubit = dev.qudit_handles[0]
+   result = pulse.simulate(rabi_oscillation, qubit, 0.5)    # NumPy reference, no GPU needed
+   print(f"P(1) = {result.level_population(1):.3f}")   # P(1) = 0.972
+   lowered = rabi_oscillation.lower(qubit, 0.5)
    print(lowered.mlir())
    print(f"Compiled in {lowered.metrics.total_ms:.1f} ms")
+
+The pulse lasts 32 ns, 64 cycles of the device's 2 GHz clock. A duration is
+an ``int`` number of cycles or a time with units; see :ref:`durations`.
 
 The Compiler Pipeline
 ---------------------
@@ -111,10 +117,13 @@ cudaq-pulse is a Python-first compiler pipeline with four stages:
 3. **Extend the pipeline** -- check a compiled module's ``schedule`` in
    Python, or load your own MLIR passes into ``cudaq-pulse-opt`` as plugins.
    See :doc:`user_guide/custom_passes`.
-4. **Lower and simulate** -- ``pulse.simulate(lowered)`` evolves the
-   compiled module with the NumPy reference, and
-   ``pulse.simulate(lowered, backend="gpu")`` on the GPU, through the native
+4. **Lower and simulate** -- ``pulse.simulate(kernel, *args)`` compiles a
+   call and evolves it with the NumPy reference, and
+   ``pulse.simulate(kernel, *args, backend="gpu")`` on the GPU, through the native
    Pulse -> QOp -> CuDensityMat -> LLVM lowering (``lowered.mlir("llvm")``).
+   A program compiled already is simulated the same way without compiling
+   it again: ``pulse.simulate(program, *values)`` binds the values of its
+   run-time float parameters as ``program.bind(values)`` does.
 
 GPU simulation via NVIDIA cuDensityMat is a preview capability; see
 :doc:`user_guide/gpu_execution`.

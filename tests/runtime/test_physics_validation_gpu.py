@@ -45,8 +45,8 @@ def test_physics_validation_mlir_structure():
 
     @pulse.kernel
     def rabi(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, math.pi / 20.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, math.pi / 20.0))
 
     mlir = pulse_mlir((rabi, Q[0]), clock_ghz=2.0, qubit_freq_hz={0: 5.0e9})
     assert "pulse.square" in mlir
@@ -58,7 +58,7 @@ def test_free_drift_stays_ground():
 
     @pulse.kernel
     def idle(q0):
-        d0, _t0 = get_drive_line(q0)
+        d0 = get_drive_line(q0)
         wait(d0, 40)  # 20 ns free evolution
 
     result = evolve(
@@ -79,8 +79,8 @@ def test_rabi_half_pi_pulse():
 
     @pulse.kernel
     def half_pi(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, math.pi / 40.0), t0)  # angle = pi/2
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, math.pi / 40.0))  # angle = pi/2
 
     result = evolve(
         on(_single_qubit_target(), half_pi, Q[0]),
@@ -99,8 +99,8 @@ def test_rabi_pi_pulse():
 
     @pulse.kernel
     def pi_pulse(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, math.pi / 20.0), t0)  # angle = pi
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, math.pi / 20.0))  # angle = pi
 
     result = evolve(
         on(_single_qubit_target(), pi_pulse, Q[0]),
@@ -123,9 +123,9 @@ def test_two_qubit_selective_drive():
 
     @pulse.kernel
     def drive_q0(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, _t1 = get_drive_line(q1)
-        drive(d0, square(40, math.pi / 20.0), t0)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
+        drive(d0, square(40, math.pi / 20.0))
         wait(d1, 40)
         sync(d0, d1)
 
@@ -158,9 +158,9 @@ def test_xx_coupling_transfers_excitation():
 
     @pulse.kernel
     def excite_and_exchange(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, _t1 = get_drive_line(q1)
-        drive(d0, square(40, math.pi / 20.0), t0)  # prepare ~|10>
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
+        drive(d0, square(40, math.pi / 20.0))  # prepare ~|10>
         sync(d0, d1)
         wait(d0, 40)  # let XX coupling swap population
         wait(d1, 40)

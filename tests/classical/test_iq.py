@@ -14,7 +14,6 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import IQ, Bits
 from cudaq_pulse.runtime._calls import IQModel
 from cudaq_pulse.targets import Qubit, TargetDescription
 
@@ -47,10 +46,9 @@ def _threshold(dev):
     axis = (c1 - c0) / abs(c1 - c0)
     middle = (c0 + c1) / 2
 
-    @pulse.classical(args=(IQ(1),), results=(Bits(1),), max_latency_ns=0)
-    def discriminate(points):
-        (i, q) = points[0]
-        return [int(((complex(i, q) - middle) * axis.conjugate()).real > 0)]
+    @pulse.classical(max_latency_ns=0)
+    def discriminate(points: list[complex]) -> pulse.Bits:
+        return [int(((points[0] - middle) * axis.conjugate()).real > 0)]
 
     return discriminate
 
@@ -58,12 +56,12 @@ def _threshold(dev):
 def _iq_reset(discriminate):
     @pulse.kernel
     def iq_reset(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        result = readout(r, square(1000, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        result = readout(r, square(1000, 0.05))
         sync(d, r)
         if discriminate.submit([result]).result()[0]:
-            drive(d, square(40, PI_AMP), t)
+            drive(d, square(40, PI_AMP))
 
     return iq_reset
 
@@ -78,16 +76,13 @@ def test_discrimination_errors_match_the_gaussian_overlap():
         initial_state=PLUS,
         shots=shots,
         seed=11,
+        levels=2,
     )
     c0, c1 = _centers(dev)
     expected = 0.5 * math.erfc(abs(c1 - c0) / 2)  # sigma^2 = 1/2 per quadrature
     assert 0.1 < expected < 0.25
     tolerance = 4 * math.sqrt(expected * (1 - expected) / shots)
-    wrong = sum(
-        w
-        for calls, (outcomes, w) in zip(result.calls, result.branches)
-        if calls[0].answer[0] != outcomes[0]
-    )
+    wrong = sum(b.probability for b in result.branches if b.calls[0].answer[0] != b.levels[0])
     assert wrong == pytest.approx(expected, abs=tolerance)
     # A wrong answer leaves |1> in place or flips |0> to |1>.
     p1 = float(np.real(result.density_matrix[1, 1]))
@@ -102,18 +97,20 @@ def test_iq_points_scale_with_the_readout_amplitude():
 
     for amplitude in seen:
 
-        @pulse.classical(args=(IQ(1),), results=(Bits(1),), max_latency_ns=0, name="record")
-        def record(points, amplitude=amplitude):
-            seen[amplitude].append(complex(*points[0]))
-            return [0]
+        @pulse.classical(max_latency_ns=0, name="record")
+        def record(point: complex) -> bool:
+            seen[amplitude].append(point)
+            return False
 
         @pulse.kernel
         def probe(q, a: float):
-            r, rt = get_readout_line(q)
-            result = readout(r, square(1000, a), rt)
-            record.submit([result]).result()
+            r = get_readout_line(q)
+            result = readout(r, square(1000, a))
+            record.submit(result).result()
 
-        pulse.simulate(pulse.compile(probe, device=dev).lower(q, amplitude), shots=600, seed=5)
+        pulse.simulate(
+            pulse.compile(probe, device=dev).lower(q, amplitude), shots=600, seed=5, levels=2
+        )
 
     mean_low = np.mean(seen[0.05])
     mean_high = np.mean(seen[0.1])
@@ -159,9 +156,9 @@ def test_iq_calls_need_shots_and_are_seeded():
     q = dev.qudit_handles[0]
     lowered = pulse.compile(_iq_reset(_threshold(dev)), device=dev).lower(q)
     with pytest.raises(ValueError, match="simulate with shots"):
-        pulse.simulate(lowered, initial_state=PLUS)
-    a = pulse.simulate(lowered, initial_state=PLUS, shots=50, seed=4)
-    b = pulse.simulate(lowered, initial_state=PLUS, shots=50, seed=4)
+        pulse.simulate(lowered, initial_state=PLUS, levels=2)
+    a = pulse.simulate(lowered, initial_state=PLUS, shots=50, seed=4, levels=2)
+    b = pulse.simulate(lowered, initial_state=PLUS, shots=50, seed=4, levels=2)
     assert np.array_equal(a.density_matrix, b.density_matrix)
 
 
@@ -182,14 +179,14 @@ def test_emulation_draws_iq_points_at_the_reported_levels():
     assert all(a == [1] for a in answers)  # 5 sigma apart: no errors expected
     points = [traces[0].inputs[0][0] for traces in result.calls]
     _, c1 = _centers(dev)
-    assert abs(complex(*np.mean(points, axis=0)) - c1) < 0.2
+    assert abs(np.mean(points) - c1) < 0.2
 
 
-def test_the_krinner_twin_separates_its_readout_states():
+def test_the_17_qubit_twin_separates_its_readout_states():
     from cudaq_pulse.classical import emulation
-    from cudaq_pulse.targets import transmon_krinner_17q
+    from cudaq_pulse.targets import transmon_17q
 
-    dev = pulse.device({"target": transmon_krinner_17q()})
+    dev = pulse.device({"target": transmon_17q()})
     q = dev.qudit_handles[0]
     target = dev.target
     model = IQModel(target, (0,), decay=False)
@@ -198,17 +195,17 @@ def test_the_krinner_twin_separates_its_readout_states():
     c0, c1 = (model.center(0, k, params["ro_freq"], 1.0, tau) for k in (0, 1))
     assert abs(c1 - c0) > 3  # a high-fidelity single-shot readout
 
-    record = pulse.classical(
-        lambda points: [0], name="krinner_iq", args=(IQ(1),), results=(Bits(1),), max_latency_ns=0
-    )
+    @pulse.classical(name="transmon_17q_iq", max_latency_ns=0)
+    def record(points: list[complex]) -> pulse.Bits:
+        return [0]
 
     @pulse.kernel
     def probe(q):
-        r, rt = get_readout_line(q)
-        result = readout(r, square(400, 0.1), rt)
+        r = get_readout_line(q)
+        result = readout(r, square(400, 0.1))
         record.submit([result]).result()
 
     lowered = pulse.compile(probe, device=dev).lower(q)
     result = emulation.emulate(lowered, shots=20, outcomes=lambda q, _, rng: 0, seed=1)
     points = [traces[0].inputs[0][0] for traces in result.calls]
-    assert all(math.isfinite(i) and math.isfinite(qv) for i, qv in points)
+    assert all(math.isfinite(p.real) and math.isfinite(p.imag) for p in points)

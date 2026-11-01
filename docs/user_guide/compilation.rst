@@ -16,12 +16,14 @@ only run it.
 
    import cudaq_pulse as pulse
 
+   cal = {"x_duration": 20 * pulse.ns, "x_sigma": 5 * pulse.ns}
+
    @pulse.kernel
    def rabi(qubit, amplitude: float):
-       drive_line, tone = get_drive_line(qubit)
-       drive(drive_line, gaussian(40, amplitude, 10.0), tone)
+       drive_line = get_drive_line(qubit)
+       drive(drive_line, gaussian(cal["x_duration"], amplitude, cal["x_sigma"]))
 
-   dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+   dev = pulse.device("transmon_17q")
    q = dev.qudit_handles[0]
 
    rabi(q, 0.3)                    # compiles, then runs; returns None
@@ -47,8 +49,14 @@ Annotations decide what a compilation depends on:
   value never recompiles. A call whose values set a wait length schedules
   the module again with them, without tracing it; see
   :ref:`wait-lengths`.
-- Every other parameter (qudit handles, ``int``, anything unannotated) is
-  *static*: the kernel is specialized on its value.
+- A parameter annotated ``Qudit`` or ``Register`` is a runtime value too:
+  the compiled module takes the qudits as arguments, so calling on other
+  qudits of the device never recompiles.
+- Every other parameter (``int``, a list of handles, anything
+  unannotated, including an unannotated qudit or a duration passed as a
+  time) is *static*: the kernel is specialized on its value. Annotate a
+  qudit parameter to compile once for every placement. A time passed to a
+  ``float`` parameter is a ``TypeError``; see :ref:`durations`.
 - A ``float`` the program needs while it compiles -- one that sets a
   waveform duration, goes through ``int()``, decides an ``if`` or bounds a
   loop -- is specialized on as well. ``kernel.static_parameters`` and
@@ -168,16 +176,24 @@ Inspecting a compilation
 ``kernel.lower(*args)`` and ``compiled.lower(*args)`` return a ``Lowered``,
 the module of one call:
 
-``.mlir(stage="pulse")``
-   MLIR text: ``"pulse"`` for the scheduled pulse dialect (with the call's
-   float values substituted), ``"llvm"`` after the full Pulse -> QOp ->
-   CuDensityMat -> LLVM lowering.
+``.mlir(level="pulse")``
+   MLIR text at an IR level (``cudaq_pulse.compiler.IRLevel``, or its
+   name): ``"pulse"`` for the scheduled pulse dialect (with the call's float
+   values substituted), and ``"qop"``, ``"cudm"`` and ``"llvm"`` after
+   lowering it that far along Pulse -> QOp -> CuDensityMat -> LLVM.
 
 ``.schedule``
    The drives, readouts and waits with their start and duration in clock
    cycles (``ScheduledEvent``). ``event.start`` and ``event.end`` are the
    scheduled times as ``int``; they raise ``ValueError`` on an event that is
    not scheduled yet, whose ``start_cycles`` and ``duration_cycles`` are ``None``.
+
+``.duration``
+   How long the program runs, as a time: the latest end of its operations,
+   over both arms of every branch (``float(duration)`` is in ns).
+
+The device's handles find a qudit by its label, ``dev.qudit("D1")``, and a
+target gives the coupling of two qudits, ``dev.target.coupling(a, b)``.
 
 ``.timeline(**kwargs)``
    A matplotlib figure of the schedule, one row per line.
@@ -189,7 +205,14 @@ the module of one call:
 
 ``.arguments`` and ``.generic``
    The call's float values, and the module without them, in which the float
-   parameters are function arguments.
+   parameters are function arguments: ``generic.bind(values)`` makes a call
+   with new values. A module that holds no values is its own ``generic``.
+
+.. code-block:: python
+
+   program = rabi.lower(q, 0.3).generic
+   for amplitude in (0.1, 0.2, 0.3):
+       result = pulse.simulate(program, amplitude, t_end=20 * pulse.ns)
 
 Threads
 -------

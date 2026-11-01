@@ -90,25 +90,27 @@ for CUDA 12 or 13 is chosen from the installed extra; set
 ```python
 import cudaq_pulse as pulse
 
+cal = {"duration": 32 * pulse.ns, "sigma": 8 * pulse.ns}
+
 
 @pulse.kernel
 def rabi_oscillation(qubit, amplitude: float):
-    drive_line, tone = get_drive_line(qubit)
-    drive(drive_line, gaussian(64, amplitude, 16.0), tone)
+    drive_line = get_drive_line(qubit)
+    drive(drive_line, gaussian(cal["duration"], amplitude, cal["sigma"]))
 
 
-dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+dev = pulse.device("transmon_17q")
 qubit = dev.qudit_handles[0]
 
-lowered = rabi_oscillation.lower(qubit, 0.5)  # compile for the qubit's device
-result = pulse.simulate(lowered)  # NumPy reference, no GPU needed
-print(f"P(1) = {result.density_matrix[1, 1].real:.3f}")  # P(1) = 0.973
-print(lowered.mlir())  # the scheduled Pulse MLIR
+result = pulse.simulate(rabi_oscillation, qubit, 0.5)  # NumPy reference, no GPU needed
+print(f"P(1) = {result.level_population(1):.3f}")  # P(1) = 0.972
+print(rabi_oscillation.lower(qubit, 0.5).mlir())  # the scheduled Pulse MLIR
 ```
 
-`kernel.lower(...)` compiles a kernel for the device of its qudit handles,
-with frequencies from the device, and `pulse.simulate` evolves the result;
-this pulse leaves the qubit almost fully excited. Calling the
+`pulse.simulate(kernel, *args)` compiles the call for the device of its
+qudit handles, with frequencies from the device, and evolves it; this
+pulse leaves the qubit almost fully excited. `kernel.lower(*args)`
+compiles the call without running it. Calling the
 kernel, `rabi_oscillation(qubit, 0.5)`, compiles and runs it in one step, and
 `pulse.compile(kernel)` compiles ahead of the call. A `float`
 parameter stays symbolic, so a sweep over it compiles once. The compiler
@@ -174,8 +176,9 @@ release carries the wheels and the source distribution.
   `crank_nicolson` integrators. Waveform sums, differences, scaling, and
   negation are lowered exactly; products are sampled once per clock cycle.
   Envelopes from Python functions (`custom`) are sampled once per clock
-  cycle while tracing. Observable evaluation, neutral-atom models and
-  unspecialized parameters are rejected explicitly by the execution lowering.
+  cycle while tracing. Observable evaluation, systems without a
+  simulation model and unspecialized parameters are rejected explicitly by
+  the execution lowering.
 - GPU numerical results are research regression coverage, with no production
   compatibility or accuracy commitment.
 

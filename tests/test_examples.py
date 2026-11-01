@@ -16,7 +16,7 @@ import cudaq_pulse
 import pytest
 
 _EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
-_GPU_ONLY = {"krinner_evolve_gpu.py"}
+_GPU_ONLY = {"transmon_17q_evolve_gpu.py"}
 _SCRIPTS = sorted(p for p in _EXAMPLES.rglob("*.py") if p.name not in _GPU_ONLY)
 # A build tree stages the package in build/<dir>/python and cudaq-pulse-opt in
 # build/<dir>/bin; an installation puts the tool on PATH itself.

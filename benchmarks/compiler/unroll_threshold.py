@@ -42,28 +42,28 @@ def make(calls, trips):
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             for _ in range(trips):
-                drive(d, square(4, 0.01), t)
+                drive(d, square(4, 0.01))
 
     elif calls == 3:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             for _ in range(trips):
-                drive(d, square(4, 0.01), t)
+                drive(d, square(4, 0.01))
                 wait(d, 2)
 
     else:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             for _ in range(trips):
-                drive(d, square(4, 0.01), t)
-                t = shift_phase(t, 0.1)
-                drive(d, square(4, 0.01), t)
+                drive(d, square(4, 0.01))
+                shift_phase(d.tone, 0.1)
+                drive(d, square(4, 0.01))
                 wait(d, 2)
 
     return k
@@ -78,7 +78,7 @@ def measure(kernel, threshold, reps, simulate):
         t1 = time.perf_counter()
         compile_ms.append((t1 - t0) * 1e3)
         if simulate:
-            pulse.simulate(lowered, dt_ns=0.25)
+            pulse.simulate(lowered, dt_ns=0.25, levels=2)
             simulate_ms.append((time.perf_counter() - t1) * 1e3)
     return statistics.median(compile_ms), statistics.median(simulate_ms) if simulate else 0.0
 

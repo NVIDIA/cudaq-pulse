@@ -20,8 +20,8 @@ NUM_QUBITS = 2
 
 @pulse.kernel
 def build(q0, q1):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
 
     sync(d0, d1)
 
@@ -31,12 +31,12 @@ def build(q0, q1):
     x_ctrl = square(40, [0.047, 0.0])
 
     # Step 1: SX on target at target's tone
-    drive(d1, sx, t1)
+    drive(d1, sx)
     # Step 2: CR drive -- control's line at target's tone
-    drive(d0, cr, t1)
+    drive(d0, cr, tone=d1.tone)
     # Step 3: X echo on control at control's tone
-    drive(d0, x_ctrl, t0)
+    drive(d0, x_ctrl)
     # Step 4: negative-amplitude CR drive
-    drive(d0, cr_neg, t1)
+    drive(d0, cr_neg, tone=d1.tone)
     # Step 5: SX on target closes the echo
-    drive(d1, sx, t1)
+    drive(d1, sx)

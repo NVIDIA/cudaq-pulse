@@ -54,13 +54,13 @@ def test_bell_schedule_mlir_structure():
 
     @pulse.kernel
     def bell(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
-        shift_phase(t0, math.pi / 2)
-        drive(d0, drag(40, 0.25, 10.0, 0.5), t0)
-        shift_phase(t0, math.pi / 2)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
+        shift_phase(d0.tone, math.pi / 2)
+        drive(d0, drag(40, 0.25, 10.0, 0.5))
+        shift_phase(d0.tone, math.pi / 2)
         sync(d0, d1)
-        drive(d0, gaussian(160, 0.05, 40.0), t1)  # cross-resonance
+        drive(d0, gaussian(160, 0.05, 40.0), tone=d1.tone)  # cross-resonance
         sync(d0, d1)
 
     mlir = pulse_mlir(
@@ -77,13 +77,13 @@ def test_ghz_schedule_mlir_structure():
 
     @pulse.kernel
     def ghz(q0, q1, q2):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
-        d2, t2 = get_drive_line(q2)
-        drive(d0, square(40, math.pi / 40.0), t0)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
+        d2 = get_drive_line(q2)
+        drive(d0, square(40, math.pi / 40.0))
         sync(d0, d1, d2)
-        drive(d0, gaussian(160, 0.05, 40.0), t1)
-        drive(d1, gaussian(160, 0.05, 40.0), t2)
+        drive(d0, gaussian(160, 0.05, 40.0), tone=d1.tone)
+        drive(d1, gaussian(160, 0.05, 40.0), tone=d2.tone)
         sync(d0, d1, d2)
 
     mlir = pulse_mlir(
@@ -100,8 +100,8 @@ def test_single_qubit_x_rotation():
 
     @pulse.kernel
     def x_pi(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, math.pi / 20.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, math.pi / 20.0))
 
     assert abs(_evolve_1q(x_pi)[1]) ** 2 > 0.99
 
@@ -112,9 +112,9 @@ def test_single_qubit_y_rotation():
 
     @pulse.kernel
     def y_pi(q0):
-        d0, t0 = get_drive_line(q0)
-        shift_phase(t0, math.pi / 2)
-        drive(d0, square(40, math.pi / 20.0), t0)
+        d0 = get_drive_line(q0)
+        shift_phase(d0.tone, math.pi / 2)
+        drive(d0, square(40, math.pi / 20.0))
 
     assert abs(_evolve_1q(y_pi)[1]) ** 2 > 0.99
 
@@ -125,8 +125,8 @@ def test_bloch_half_rotation():
 
     @pulse.kernel
     def x90(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, math.pi / 40.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, math.pi / 40.0))
 
     assert abs(_evolve_1q(x90)[1]) ** 2 == pytest.approx(0.5, abs=0.05)
 
@@ -137,8 +137,8 @@ def test_gate_sequence_identity():
 
     @pulse.kernel
     def xx(q0):
-        d0, t0 = get_drive_line(q0)
-        drive(d0, square(40, math.pi / 20.0), t0)
-        drive(d0, square(40, math.pi / 20.0), t0)
+        d0 = get_drive_line(q0)
+        drive(d0, square(40, math.pi / 20.0))
+        drive(d0, square(40, math.pi / 20.0))
 
     assert abs(_evolve_1q(xx)[0]) ** 2 > 0.95

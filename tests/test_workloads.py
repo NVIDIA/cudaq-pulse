@@ -80,15 +80,12 @@ def test_bug_corpus_loads():
 
 @pytest.mark.parametrize("case", CORRECT, ids=[c.name for c in CORRECT])
 def test_correct_corpus_compiles(case: BugCase):
-    """Correct cases should compile without crash (kernel may be a factory)."""
-    fn_or_kern = case.build_fn()
-    if not callable(fn_or_kern):
-        pytest.skip("build_fn returned non-callable")
-    if not hasattr(fn_or_kern, "__wrapped__"):
-        pytest.skip("not a kernel")
+    """Every correct case builds a kernel, which compiles."""
+    kernel = case.build_fn()
+    assert isinstance(kernel, pulse.Kernel), f"{case.name}: build_fn() returned {kernel!r}"
 
-    nargs = fn_or_kern.__wrapped__.__code__.co_argcount
-    compiled = fn_or_kern.lower(*_make_qubits(nargs))
+    nargs = kernel.__wrapped__.__code__.co_argcount
+    compiled = pulse.compile(kernel, unroll_threshold=0).lower(*_make_qubits(nargs))
     assert compiled.metrics.op_count > 0
 
 
@@ -113,8 +110,8 @@ def test_list_amplitude_packs_like_complex():
     def words(amplitude):
         @pulse.kernel
         def k(q0):
-            d0, t0 = get_drive_line(q0)
-            drive(d0, square(40, amplitude), t0)
+            d0 = get_drive_line(q0)
+            drive(d0, square(40, amplitude))
 
         builder = PackedIRBuilder(name="k", qubit_freq_hz={0: 5e9})
         _trace_kernel_with_builder(k.__wrapped__, builder, [Q[0]])

@@ -22,7 +22,7 @@ import re
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import Bits, Link
+from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
 
 from tests._handles import Q
@@ -123,29 +123,29 @@ def _nested(outer, middle, inner, link, take):
 
     @pulse.kernel(schedule=inner)
     def measure(q):
-        r, rt = get_readout_line(q)
-        return decode.submit([readout(r, square(matrix.RO, 0.05), rt)])
+        r = get_readout_line(q)
+        return decode.submit([readout(r, square(matrix.RO, 0.05))])
 
     @pulse.kernel(schedule=middle)
     def beside(q, p):
-        e, u = get_drive_line(p)
+        e = get_drive_line(p)
         future = measure(q)
-        drive(e, square(400, 0.05), u)
+        drive(e, square(400, 0.05))
         return future
 
     @pulse.kernel(schedule=outer)
     def round_(q, p):
-        d, t = get_drive_line(q)
-        drive(d, square(matrix.X90, 0.1), t)
+        d = get_drive_line(q)
+        drive(d, square(matrix.X90, 0.1))
         return beside(q, p)
 
     @pulse.kernel
     def program(q, p):
-        d, t = get_drive_line(q)
-        e, u = get_drive_line(p)
-        drive(e, square(matrix.SPECTATOR, 0.05), u)
+        d = get_drive_line(q)
+        e = get_drive_line(p)
+        drive(e, square(matrix.SPECTATOR, 0.05))
         if answer(round_(q, p)):
-            drive(d, square(matrix.ARM, 0.3), t)
+            drive(d, square(matrix.ARM, 0.3))
 
     return program, measure
 
@@ -188,11 +188,15 @@ def test_simulation_matches_an_explicit_schedule(case):
     shifts = matrix.epoch_shifts(case, low)
     reference = matrix.explicit_reference(low, shifts).lower(Q[0], Q[1])
     assert matrix.pulses(reference) == matrix.pulses(low, shifts)
-    simulated, expected = pulse.simulate(low), pulse.simulate(reference)
+    simulated, expected = pulse.simulate(low, levels=2), pulse.simulate(reference, levels=2)
     np.testing.assert_allclose(simulated.density_matrix, expected.density_matrix, atol=1e-9)
-    paths, reference_paths = sorted(simulated.branches), sorted(expected.branches)
-    assert [o for o, _ in paths] == [o for o, _ in reference_paths]
-    np.testing.assert_allclose([w for _, w in paths], [w for _, w in reference_paths], atol=1e-9)
+    by_levels = lambda branch: branch.levels  # noqa: E731
+    paths = sorted(simulated.branches, key=by_levels)
+    reference_paths = sorted(expected.branches, key=by_levels)
+    assert [b.levels for b in paths] == [b.levels for b in reference_paths]
+    np.testing.assert_allclose(
+        [b.probability for b in paths], [b.probability for b in reference_paths], atol=1e-9
+    )
 
 
 # ── Kinds of call ────────────────────────────────────────────────────────────
@@ -203,7 +207,7 @@ def _in_flight(n, slots, schedule, callee):
     decode, _ = matrix.FUNCTIONS[("controller", "result")]
 
     def burst(r, rt):
-        m = readout(r, square(10, 0.05), rt)
+        m = readout(r, square(10, 0.05), tone=rt)
         futures = [decode.submit([m]) for _ in range(n)]
         for future in futures:
             future.result()
@@ -212,8 +216,8 @@ def _in_flight(n, slots, schedule, callee):
 
     @pulse.kernel
     def k(q):
-        r, rt = get_readout_line(q)
-        inner(r, rt)
+        r = get_readout_line(q)
+        inner(r, r.tone)
 
     return pulse.compile(k, schedule=schedule, machine=machine).lower(Q[0])
 
@@ -241,24 +245,20 @@ def test_requests_beyond_max_in_flight_wait_for_a_slot(callee, schedule, over):
 @pytest.mark.parametrize("link", matrix.LINKS)
 @pytest.mark.parametrize(("deadline", "meets"), [(150.0 + 50.0 + 20.0, True), (150.0, False)])
 def test_a_latency_meets_its_deadline_or_names_the_fix(link, deadline, meets):
-    tight = pulse.classical(
-        lambda bits: bits,
-        name=f"deadline_{link}",
-        args=(Bits(1),),
-        results=(Bits(1),),
-        max_latency_ns=matrix.LATENCY_NS,
-        deadline_ns=deadline,
-        link=link,
+    @pulse.classical(
+        name=f"deadline_{link}", max_latency_ns=matrix.LATENCY_NS, deadline_ns=deadline, link=link
     )
+    def tight(bits: pulse.Bits) -> pulse.Bits:
+        return bits
 
     @pulse.kernel(schedule="asap")
     def inner(r, rt):
-        return tight.submit([readout(r, square(matrix.RO, 0.05), rt)])
+        return tight.submit([readout(r, square(matrix.RO, 0.05), tone=rt)])
 
     @pulse.kernel
     def k(q):
-        r, rt = get_readout_line(q)
-        inner(r, rt).result()
+        r = get_readout_line(q)
+        inner(r, r.tone).result()
 
     compiled = pulse.compile(k, machine=matrix.MACHINE)
     budget = math.ceil(matrix.LATENCY_NS * matrix.CLOCK) + math.ceil(
@@ -280,9 +280,7 @@ def test_limits_without_timeouts_reject_a_timeout_and_name_the_fix():
     machine = MachineModel(
         links=dict(matrix.LINKS), controller=ControllerLimits(answer_timeouts=False)
     )
-    with pytest.raises(
-        ControllerLimitError, match=re.escape("take it with result() (no timeout_ns)")
-    ):
+    with pytest.raises(ControllerLimitError, match=re.escape("take it with result() (no timeout)")):
         matrix.lower_case(case, Q, machine=machine)
 
 
@@ -295,8 +293,8 @@ def test_a_future_is_taken_in_the_loop_iteration_that_submitted_it():
 
     @pulse.kernel
     def k(q):
-        r, rt = get_readout_line(q)
-        future = decode.submit([readout(r, square(matrix.RO, 0.05), rt)])
+        r = get_readout_line(q)
+        future = decode.submit([readout(r, square(matrix.RO, 0.05))])
         for _ in range(2):
             take(future)
 

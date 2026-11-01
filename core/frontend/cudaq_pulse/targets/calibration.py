@@ -11,7 +11,7 @@ A calibration file is JSON whose leaves are ``{value, units, kind, source,
 uncertainty, cooldown[, method]}`` objects: ``kind`` is ``published``,
 ``digitized`` or ``fitted``, ``source`` cites where the value comes from and
 ``cooldown`` names one of the file's ``cooldowns``. ``Calibration.load``
-reads one, a shipped name (``"krinner17"``) or a path, for one cooldown.
+reads one, a shipped name (``"transmon_17q"``) or a path, for one cooldown.
 
 A calibration gives each flux-tunable qubit its circuit (E_C, E_J,max and
 SQUID asymmetry d, so flux in flux quanta converts to frequency and back)
@@ -22,13 +22,11 @@ J(w_a, w_d) and the idle ZZ follow at any operating point.
 from __future__ import annotations
 
 import copy
-import json
 import os
 import threading
 from collections.abc import Mapping
 from dataclasses import replace
 from functools import cached_property
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .._errors import InvalidValueError, NotFoundError
@@ -36,7 +34,22 @@ from .._errors import InvalidValueError, NotFoundError
 if TYPE_CHECKING:
     from .transmon_model import ChargeCoupledPair, TransmonCircuit
 
-_SHIPPED = Path(__file__).resolve().parent / "calibrations"
+# A path string, not a pathlib.Path: pathlib (with urllib.parse) would add a
+# tenth to the time ``import cudaq_pulse`` takes.
+_SHIPPED = os.path.join(os.path.dirname(os.path.realpath(__file__)), "calibrations")
+
+
+def _shipped_file(name: str) -> str:
+    return os.path.join(_SHIPPED, name + ".json")
+
+
+def _read(path: str) -> Any:
+    import json
+
+    with open(path, encoding="utf-8") as file:
+        return json.load(file)
+
+
 # The flux at which a qubit idles, by the sweet spot it idles at.
 _SWEET_SPOT_FLUX = {"upper": 0.0, "lower": 0.5}
 
@@ -49,6 +62,10 @@ class Calibration:
     """
 
     def __init__(self, data: Mapping[str, Any], *, name: str, cooldown: str | None = None) -> None:
+        self._name(data, name, cooldown)
+        self._data = copy.deepcopy(dict(data))
+
+    def _name(self, data: Mapping[str, Any], name: str, cooldown: str | None) -> None:
         schema = data.get("_schema", {})
         cooldown = schema.get("default_cooldown") if cooldown is None else cooldown
         cooldowns = data.get("cooldowns", {})
@@ -57,29 +74,52 @@ class Calibration:
                 f"calibration {name!r} has no cooldown {cooldown!r}; "
                 f"it has {', '.join(sorted(cooldowns))}"
             )
-        self._data = copy.deepcopy(dict(data))
         self.name = name
         self.cooldown: str = cooldown
-        self.target: str | None = schema.get("target")
+        # The digest of the shipped file this was loaded from, if it was.
+        self._shipped: str | None = None
+
+    @cached_property
+    def _data(self) -> dict[str, Any]:
+        # Set by __init__; a shipped calibration that was unpickled reads its
+        # file when its values are first used.
+        data: dict[str, Any] = _read(_shipped_file(self.name))
+        return data
+
+    @cached_property
+    def target(self) -> str | None:
+        """The target the calibration was made for, if its file names one."""
+        target: str | None = self._data.get("_schema", {}).get("target")
+        return target
 
     @classmethod
     def load(
-        cls, source: str | os.PathLike[str] = "krinner17", *, cooldown: str | None = None
+        cls, source: str | os.PathLike[str] = "transmon_17q", *, cooldown: str | None = None
     ) -> Calibration:
         """A shipped calibration by name, or a calibration file by path."""
-        path = Path(source)
-        name = os.fspath(source)
-        if not path.suffix and (_SHIPPED / f"{name}.json").is_file():
-            path = _SHIPPED / f"{name}.json"
-        elif not path.is_file():
-            shipped = sorted(p.stem for p in _SHIPPED.glob("*.json"))
+        path = name = os.fspath(source)
+        stem, suffix = os.path.splitext(os.path.basename(path))
+        digest = None
+        if not suffix and os.path.isfile(_shipped_file(name)):
+            from .._source_stamp import CALIBRATIONS
+
+            path, digest = _shipped_file(name), CALIBRATIONS.get(name)
+        elif not os.path.isfile(path):
+            shipped = sorted(f[:-5] for f in os.listdir(_SHIPPED) if f.endswith(".json"))
             raise NotFoundError(
                 f"no calibration {name!r}: not a file, and the shipped ones are "
                 + ", ".join(shipped)
             )
         else:
-            name = path.stem
-        return cls(json.loads(path.read_text(encoding="utf-8")), name=name, cooldown=cooldown)
+            name = stem
+        data = _read(path)
+        loaded = cls.__new__(cls)
+        loaded._name(data, name, cooldown)
+        # Not copied: parsed here, it is held by this calibration alone, which
+        # only reads it and hands out copies (entry, value, cooldowns).
+        loaded._data = data
+        loaded._shipped = digest
+        return loaded
 
     @property
     def cooldowns(self) -> Mapping[str, str]:
@@ -108,12 +148,42 @@ class Calibration:
     def __hash__(self) -> int:
         return hash(self.fingerprint)
 
+    # Read-only: a copy is the calibration itself.
+    def __copy__(self) -> Calibration:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Calibration:
+        return self
+
+    def __reduce_ex__(self, protocol: Any) -> Any:
+        # A shipped calibration pickles as its name, not its values: the
+        # package that unpickles it ships it, checked by the file's digest.
+        if self._shipped is None or type(self) is not Calibration:
+            return super().__reduce_ex__(protocol)
+        from .._build_config import PACKAGE_VERSION
+        from .._pickling import rebuilt_shipped_calibration
+
+        return (
+            rebuilt_shipped_calibration,
+            (self.name, self.cooldown, self._shipped, PACKAGE_VERSION),
+        )
+
     @cached_property
     def fingerprint(self) -> str:
         import hashlib
+        import json
 
         content = json.dumps(self._data, sort_keys=True).encode() + self.cooldown.encode()
         return hashlib.blake2b(content, digest_size=16).hexdigest()
+
+    @property
+    def _identity(self) -> tuple[str, ...]:
+        """What a device's fingerprint takes of it: a shipped calibration's
+        name, cooldown and the file's digest, recorded when the package was
+        built; any other's ``fingerprint``, a hash of its contents."""
+        if self._shipped is not None:
+            return ("shipped", self.name, self.cooldown, self._shipped)
+        return ("contents", self.fingerprint)
 
     # ── Circuits and couplings ──────────────────────────────────────────
 
@@ -207,20 +277,31 @@ class Calibration:
         takes the exchange stored with it, computed when the file was built.
         """
         labels = {q.index: q.label for q in target.qubits.values()}
+        idle_exchange = self._idle_exchange
         couplings = []
         for c in target.couplings:
             name = f"{labels.get(c.qubit_a)}-{labels.get(c.qubit_b)}"
-            if name in self.pairs:
+            found = idle_exchange.get(name)
+            if found is not None:
                 at = (target.qubits[c.qubit_a].frequency_hz, target.qubits[c.qubit_b].frequency_hz)
-                entry = self._couplings()["idle_exchange"][name]
-                stored = entry.get("idle_frequencies_hz")
+                value, stored = found
                 if stored is not None and all(abs(f - g) < 1e3 for f, g in zip(at, stored)):
-                    strength = entry["value"]
+                    strength = value
                 else:
                     strength = self.exchange_hz(name, *at)
                 c = replace(c, coupling_strength_hz=strength)
             couplings.append(c)
         return replace(target, couplings=couplings)
+
+    @cached_property
+    def _idle_exchange(self) -> Mapping[str, tuple[float, Any]]:
+        """Each pair's stored idle exchange and the idle frequencies it was
+        computed at (None if not recorded); preset for an indexed shipped
+        calibration (see ``shipped_calibration``)."""
+        return {
+            pair: (entry["value"], entry.get("idle_frequencies_hz"))
+            for pair, entry in self._couplings()["idle_exchange"].items()
+        }
 
     def _couplings(self) -> Mapping[str, Any]:
         couplings: Mapping[str, Any] = self._data["coupling"]["charge_coupling_g_c"]
@@ -232,12 +313,52 @@ _LOADED_LOCK = threading.Lock()
 
 
 def shipped_calibration(name: str, cooldown: str | None = None) -> Calibration:
-    """A shipped calibration, loaded once."""
+    """A shipped calibration, loaded once: its default cooldown asked for by
+    name or as ``None`` is one calibration. One in ``_shipped_calibrations``
+    is not read until a value beyond what a device takes is used."""
     key = (name, cooldown)
     loaded = _LOADED.get(key)
     if loaded is None:
         with _LOADED_LOCK:
             loaded = _LOADED.get(key)
             if loaded is None:
-                loaded = _LOADED[key] = Calibration.load(name, cooldown=cooldown)
+                loaded = _indexed(name, cooldown) or Calibration.load(name, cooldown=cooldown)
+                loaded = _LOADED.setdefault((name, loaded.cooldown), loaded)
+                _LOADED[key] = loaded
     return loaded
+
+
+def _indexed(name: str, cooldown: str | None) -> Calibration | None:
+    """The shipped calibration *name* (*cooldown*), unread, from
+    ``_shipped_calibrations`` if its entry is of the file this package ships;
+    None otherwise, and for a cooldown the file does not have."""
+    from .._source_stamp import CALIBRATIONS
+    from ._shipped_calibrations import SHIPPED
+
+    entry = SHIPPED.get(name)
+    if entry is None or CALIBRATIONS.get(name) != entry[0]:
+        return None
+    digest, default, cooldowns, idle_exchange = entry
+    cooldown = default if cooldown is None else cooldown
+    if cooldown not in cooldowns:
+        return None
+    unread = Calibration.__new__(Calibration)
+    unread.name, unread.cooldown, unread._shipped = name, cooldown, digest
+    unread._idle_exchange = idle_exchange
+    return unread
+
+
+def _shipped_unread(name: str, cooldown: str, digest: str) -> Calibration | None:
+    """The shipped calibration *name* (*cooldown*), if this package ships the
+    file of that *digest*, without reading the file until its values are used."""
+    from .._source_stamp import CALIBRATIONS
+
+    if CALIBRATIONS.get(name) != digest:
+        return None
+    found = _LOADED.get((name, cooldown))
+    if found is None:
+        unread = Calibration.__new__(Calibration)
+        unread.name, unread.cooldown, unread._shipped = name, cooldown, digest
+        with _LOADED_LOCK:
+            found = _LOADED.setdefault((name, cooldown), unread)
+    return found

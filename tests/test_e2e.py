@@ -21,13 +21,13 @@ def test_single_qubit_full_pipeline():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
-        shift_phase(t, math.pi / 4)
+        d = get_drive_line(q)
+        shift_phase(d.tone, math.pi / 4)
         wf = gaussian(40, 0.3, 10.0)
-        drive(d, wf, t)
-        shift_phase(t, math.pi / 4)
+        drive(d, wf)
+        shift_phase(d.tone, math.pi / 4)
         wf2 = gaussian(40, 0.3, 10.0)
-        drive(d, wf2, t)
+        drive(d, wf2)
 
     ck = k.lower(Q[0])
     assert isinstance(ck, pulse.Lowered)
@@ -41,8 +41,8 @@ def test_full_lowering_reaches_llvm_dialect():
 
     @pulse.kernel
     def k(q):
-        drive_line, tone = get_drive_line(q)
-        drive(drive_line, gaussian(8, 0.2, 2.0), tone)
+        drive_line = get_drive_line(q)
+        drive(drive_line, gaussian(8, 0.2, 2.0))
 
     ck = k.lower(Q[0])
     llvm_ir = ck.mlir("llvm")
@@ -63,12 +63,12 @@ def test_two_qubit_full_pipeline():
 
     @pulse.kernel
     def k(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
         wf = gaussian(40, 0.3, 10.0)
-        drive(d0, wf, t0)
+        drive(d0, wf)
         sync(d0, d1)
-        drive(d1, wf, t1)
+        drive(d1, wf)
 
     ck = k.lower(Q[0], Q[1])
     assert isinstance(ck, pulse.Lowered)
@@ -81,10 +81,10 @@ def test_loop_full_pipeline():
 
     @pulse.kernel
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(5):
             wf = gaussian(40, 0.3, 10.0)
-            drive(d, wf, t)
+            drive(d, wf)
             wait(d, 20)
 
     ck = k.lower(Q[0])
@@ -98,11 +98,11 @@ def test_scheduling_pipeline():
 
     @pulse.kernel
     def k(q0, q1):
-        d0, t0 = get_drive_line(q0)
-        d1, t1 = get_drive_line(q1)
+        d0 = get_drive_line(q0)
+        d1 = get_drive_line(q1)
         wf = gaussian(40, 0.3, 10.0)
-        drive(d0, wf, t0)
-        drive(d1, wf, t1)
+        drive(d0, wf)
+        drive(d1, wf)
 
     ck = pulse.compile(k, schedule="alap").lower(Q[0], Q[1])
     assert isinstance(ck, pulse.Lowered)

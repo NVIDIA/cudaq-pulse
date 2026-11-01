@@ -16,13 +16,14 @@ from __future__ import annotations
 import re
 
 import pytest
+from cudaq_pulse import CompilationError
 from cudaq_pulse._native._cudaq_pulse_native import PulseModuleBuilder
 from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder
 from cudaq_pulse.kernel.ir_builder import Parameter
 from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 
 from tests._ir import python_ir
-from tests.kernel.ir_corpus import CASES
+from tests.kernel.ir_corpus import CASES, UNROLL_THRESHOLD
 
 _FREQ = {i: 5e9 + 1e6 * i for i in range(64)}
 _RENAMED = {
@@ -56,20 +57,31 @@ def _mlir_sequence(text):
     return sequence
 
 
-def _traces(case):
+# The corpus's cases that the frontend rejects, so there is no program to
+# compare; tests/kernel/test_ir_golden.py checks their errors.
+_REJECTED = {"bad_attribute", "compare_measurement", "compare_symbolic", "while_loop"}
+
+
+def _rejected(case) -> bool:
     try:
-        return python_ir(case.kernel, *case.args())
-    except Exception:  # noqa: BLE001
-        return None
+        python_ir(case.kernel, *case.args(), unroll_threshold=UNROLL_THRESHOLD)
+    except CompilationError:
+        return True
+    return False
 
 
-_PROGRAMS = [c for c in CASES if _traces(c) is not None]
+_PROGRAMS = [c for c in CASES if c.name not in _REJECTED]
+
+
+def test_only_the_rejected_cases_are_left_out():
+    assert {c.name for c in CASES if _rejected(c)} == _REJECTED
 
 
 @pytest.mark.parametrize("case", _PROGRAMS, ids=lambda c: c.name)
 def test_compile_builds_the_kernel_ir(case):
-    ir = python_ir(case.kernel, *case.args())
+    ir = python_ir(case.kernel, *case.args(), unroll_threshold=UNROLL_THRESHOLD)
     builder = PackedIRBuilder(name="k", qubit_freq_hz=_FREQ)
+    builder.unroll_threshold = UNROLL_THRESHOLD
     _trace_kernel_with_builder(case.kernel.__wrapped__, builder, case.args())
     params = [p for p in case.args() if isinstance(p, Parameter)]
     module = PulseModuleBuilder().build_from_packed(

@@ -16,7 +16,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import Bits, Float, Integer, emulation, random_index
+from cudaq_pulse.classical import emulation, random_index
 from cudaq_pulse.targets import Qubit, TargetDescription
 
 PI_AMP = math.pi / 20
@@ -34,43 +34,43 @@ def _device(**readout):
     return pulse.device({"target": TargetDescription(name="sim", qubits={0: qubit})})
 
 
-pick = pulse.classical(
-    lambda bits: 0, name="pick", args=(Bits(1),), results=(Integer(),), max_latency_ns=100
-)
+@pulse.classical(max_latency_ns=100)
+def pick(bits: pulse.Bits) -> int:
+    return 0
 
 
 @pulse.kernel
 def chain_switch(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(100, 0.05))
     i = pick.submit([m]).result()
     if i == 0:
-        drive(d, square(40, PI_AMP * 0.25), t)
+        drive(d, square(40, PI_AMP * 0.25))
     elif i == 1:
-        drive(d, square(80, PI_AMP * 0.25), t)
+        drive(d, square(80, PI_AMP * 0.25))
     elif i == 2:
-        drive(d, square(120, PI_AMP * 0.25), t)
+        drive(d, square(120, PI_AMP * 0.25))
     else:
-        drive(d, square(160, PI_AMP * 0.25), t)
+        drive(d, square(160, PI_AMP * 0.25))
 
 
 @pulse.kernel
 def balanced_switch(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    m = readout(r, square(100, 0.05), rt)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(100, 0.05))
     i = pick.submit([m]).result()
     if i < 2:
         if i == 0:
-            drive(d, square(40, PI_AMP * 0.25), t)
+            drive(d, square(40, PI_AMP * 0.25))
         else:
-            drive(d, square(80, PI_AMP * 0.25), t)
+            drive(d, square(80, PI_AMP * 0.25))
     else:
         if i == 2:
-            drive(d, square(120, PI_AMP * 0.25), t)
+            drive(d, square(120, PI_AMP * 0.25))
         else:
-            drive(d, square(160, PI_AMP * 0.25), t)
+            drive(d, square(160, PI_AMP * 0.25))
 
 
 @pytest.mark.parametrize("kernel", [chain_switch, balanced_switch], ids=["chain", "balanced"])
@@ -82,7 +82,7 @@ def test_an_n_way_switch_takes_the_arm_of_its_index(kernel):
     drives = [e for e in lowered.schedule if e.kind == "drive"]
     assert {e.start_cycles + e.duration_cycles for e in drives} == {call.due_cycles + 160}
     for index in range(4):
-        result = pulse.simulate(lowered, handlers={"pick": lambda bits, i=index: i})
+        result = pulse.simulate(lowered, handlers={"pick": lambda bits, i=index: i}, levels=2)
         angle = math.pi * 0.25 * (index + 1)
         assert result.density_matrix[1, 1].real == pytest.approx(math.sin(angle / 2) ** 2)
 
@@ -92,18 +92,18 @@ gate = random_index(4, name="gate", max_latency_ns=20, link=0)
 
 @pulse.kernel
 def random_rotation(q):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     i = gate.submit().result()
     if i < 2:
         if i == 0:
-            drive(d, square(40, PI_AMP * 0.25), t)
+            drive(d, square(40, PI_AMP * 0.25))
         else:
-            drive(d, square(40, PI_AMP * 0.5), t)
+            drive(d, square(40, PI_AMP * 0.5))
     else:
         if i == 2:
-            drive(d, square(40, PI_AMP * 0.75), t)
+            drive(d, square(40, PI_AMP * 0.75))
         else:
-            drive(d, square(40, PI_AMP), t)
+            drive(d, square(40, PI_AMP))
 
 
 def _expected_p1():
@@ -113,8 +113,8 @@ def _expected_p1():
 def test_a_random_source_follows_every_value_without_shots():
     dev = _device()
     lowered = pulse.compile(random_rotation, device=dev).lower(dev.qudit_handles[0])
-    result = pulse.simulate(lowered)
-    assert sorted(c[0].answer for c in result.calls) == [0, 1, 2, 3]
+    result = pulse.simulate(lowered, levels=2)
+    assert sorted(branch.calls[0].answer for branch in result.branches) == [0, 1, 2, 3]
     assert result.density_matrix[1, 1].real == pytest.approx(_expected_p1())
     assert result.density_matrix.trace().real == pytest.approx(1.0)
 
@@ -122,12 +122,12 @@ def test_a_random_source_follows_every_value_without_shots():
 def test_a_random_source_draws_per_shot():
     dev = _device()
     lowered = pulse.compile(random_rotation, device=dev).lower(dev.qudit_handles[0])
-    result = pulse.simulate(lowered, shots=4000, seed=2)
+    result = pulse.simulate(lowered, shots=4000, seed=2, levels=2)
     assert result.records is not None and len(result.records) == 4000
     # The ensemble state is exact; the shots split about evenly.
     assert result.density_matrix[1, 1].real == pytest.approx(_expected_p1())
-    a = pulse.simulate(lowered, shots=100, seed=9)
-    b = pulse.simulate(lowered, shots=100, seed=9)
+    a = pulse.simulate(lowered, shots=100, seed=9, levels=2)
+    b = pulse.simulate(lowered, shots=100, seed=9, levels=2)
     assert np.array_equal(a.records, b.records)
 
 
@@ -147,21 +147,18 @@ def test_a_random_source_is_marked_in_the_manifest_and_emulated_locally():
 @pytest.mark.parametrize("depletion_ns", [0.0, 150.0, 300.0, 500.0])
 def test_latency_within_the_depletion_time_is_hidden(depletion_ns):
     dev = _device(depletion_ns=depletion_ns)
-    decide = pulse.classical(
-        lambda bits: [bits[0]],
-        name="decide",
-        args=(Bits(1),),
-        results=(Bits(1),),
-        max_latency_ns=300,
-    )
+
+    @pulse.classical(max_latency_ns=300)
+    def decide(bits: pulse.Bits) -> pulse.Bits:
+        return [bits[0]]
 
     @pulse.kernel
     def feedback(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        m = readout(r, square(200, 0.05), rt)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(200, 0.05))
         if decide.submit([m]).result()[0]:
-            drive(d, square(40, 0.1), t)
+            drive(d, square(40, 0.1))
 
     lowered = pulse.compile(feedback, device=dev).lower(dev.qudit_handles[0])
     (call,) = lowered.classical_report()
@@ -192,12 +189,8 @@ def test_depletion_defaults_from_kappa():
 # kernel gates its probe pulses on the flag.
 
 
-@pulse.classical(
-    args=(Bits(1), Float(), Float()),
-    results=(Float(), Float()),
-    max_latency_ns=50,
-)
-def count_up(bits, x, done):
+@pulse.classical(max_latency_ns=50)
+def count_up(bits: pulse.Bits, x: float, done: float) -> tuple[float, float]:
     if done > 0.5:
         return x, 1.0
     x = x + 1.0
@@ -206,15 +199,15 @@ def count_up(bits, x, done):
 
 @pulse.kernel
 def converging(q):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     x = 0.0
     done = 0.0
     for _ in range(5):
         if done < 0.5:
-            drive(d, square(40, PI_AMP * 0.5), t)
+            drive(d, square(40, PI_AMP * 0.5))
         sync(d, r)
-        m = readout(r, square(100, 0.05), rt)
+        m = readout(r, square(100, 0.05))
         x, done = count_up.submit([m], x, done).result()
 
 
@@ -222,9 +215,9 @@ def test_the_converged_pattern_stops_probing_and_keeps_its_trip_count():
     dev = _device()
     lowered = pulse.compile(converging, device=dev).lower(dev.qudit_handles[0])
     assert len(lowered.classical_report()) == 5
-    result = pulse.simulate(lowered, initial_state=[1, 0])
-    for calls in result.calls:
-        assert [c.answer for c in calls] == [
+    result = pulse.simulate(lowered, initial_state=[1, 0], levels=2)
+    for branch in result.branches:
+        assert [c.answer for c in branch.calls] == [
             (1.0, 0.0),
             (2.0, 1.0),
             (2.0, 1.0),
@@ -233,11 +226,11 @@ def test_the_converged_pattern_stops_probing_and_keeps_its_trip_count():
         ]
     # Two pi/2 probes, then none: after the second measurement nothing
     # rotates the qubit, so every later outcome repeats it.
-    assert sum(p for _, p in result.branches) == pytest.approx(1.0)
-    for outcomes, p in result.branches:
-        assert len(outcomes) == 5
-        assert outcomes[2] == outcomes[3] == outcomes[4] == outcomes[1]
-    first = {o[0]: 0.0 for o, _ in result.branches}
-    for outcomes, p in result.branches:
-        first[outcomes[0]] += p
+    assert sum(branch.probability for branch in result.branches) == pytest.approx(1.0)
+    for branch in result.branches:
+        assert len(branch.levels) == 5
+        assert branch.levels[2] == branch.levels[3] == branch.levels[4] == branch.levels[1]
+    first = {branch.levels[0]: 0.0 for branch in result.branches}
+    for branch in result.branches:
+        first[branch.levels[0]] += branch.probability
     assert first == pytest.approx({0: 0.5, 1: 0.5})

@@ -51,6 +51,29 @@ What classical functions cost
 
 .. autodata:: cudaq_pulse.controller.OP_CLASSES
 
+What a program uses of each processor
+-------------------------------------
+
+``lowered.controller_usage`` is :func:`~cudaq_pulse.controller.usage` of a
+lowered program. A program over a processor's limits does not compile: its
+``ControllerLimitError`` carries the report as ``usage``, with each limit
+exceeded and by how much in ``usage.exceeded``.
+
+.. autofunction:: cudaq_pulse.controller.usage
+
+.. autoclass:: cudaq_pulse.controller.UsageReport
+   :members:
+
+.. autoclass:: cudaq_pulse.controller.LimitExceeded
+   :members:
+
+.. autoclass:: cudaq_pulse.controller.ControllerUsage
+
+.. autoclass:: cudaq_pulse.controller.ProcessorUsage
+
+.. autoclass:: cudaq_pulse.controller.FunctionUsage
+   :members:
+
 Backends
 --------
 

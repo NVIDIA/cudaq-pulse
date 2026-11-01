@@ -38,17 +38,17 @@ def _same(a, b, n_qubits=1):
 def test_list_and_tuple():
     @pulse.kernel
     def over_list(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for a in AMPS:
-            drive(d, square(16, a), t)
+            drive(d, square(16, a))
         for n in DURS:
             wait(d, n)
 
     @pulse.kernel
     def by_index(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(len(AMPS)):
-            drive(d, square(16, AMPS[i]), t)
+            drive(d, square(16, AMPS[i]))
         for i in range(len(DURS)):
             wait(d, DURS[i])
 
@@ -60,57 +60,58 @@ def test_enumerate_zip_reversed_and_dict_items():
 
     @pulse.kernel
     def builtins(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i, a in enumerate(AMPS):
-            drive(d, square(DURS[i], a), t)
+            drive(d, square(DURS[i], a))
         for a, n in zip(AMPS, DURS):
-            drive(d, square(n, a), t)
+            drive(d, square(n, a))
         for a in reversed(AMPS):
-            drive(d, square(16, a), t)
+            drive(d, square(16, a))
         for _, phase in phases.items():
-            shift_phase(t, phase)
+            shift_phase(d.tone, phase)
 
     @pulse.kernel
     def by_index(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(3):
-            drive(d, square(DURS[i], AMPS[i]), t)
+            drive(d, square(DURS[i], AMPS[i]))
         for i in range(3):
-            drive(d, square(DURS[i], AMPS[i]), t)
+            drive(d, square(DURS[i], AMPS[i]))
         for i in range(2, -1, -1):
-            drive(d, square(16, AMPS[i]), t)
-        shift_phase(t, 0.5)
-        shift_phase(t, -0.25)
+            drive(d, square(16, AMPS[i]))
+        shift_phase(d.tone, 0.5)
+        shift_phase(d.tone, -0.25)
 
     _same(builtins, by_index)
 
 
 def test_lines_and_tones_from_lists_stay_threaded():
-    @pulse.kernel
+    @pulse.kernel(unroll_threshold=0)
     def zipped(qubits):
         lines = []
         tones = []
         for q in qubits:
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
+            t = d.tone
             lines.append(d)
             tones.append(t)
         for _ in range(2):
             for d, t in zip(lines, tones):
-                drive(d, square(16, 0.1), t)
+                drive(d, square(16, 0.1), tone=t)
         for d in lines:
             wait(d, 8)
 
-    @pulse.kernel
+    @pulse.kernel(unroll_threshold=0)
     def by_index(qubits):
         lines = []
         tones = []
         for i in range(len(qubits)):
-            d, t = get_drive_line(qubits[i])
+            d = get_drive_line(qubits[i])
             lines.append(d)
-            tones.append(t)
+            tones.append(d.tone)
         for _ in range(2):
             for i in range(len(lines)):
-                drive(lines[i], square(16, 0.1), tones[i])
+                drive(lines[i], square(16, 0.1), tone=tones[i])
         for i in range(len(lines)):
             wait(lines[i], 8)
 
@@ -124,14 +125,14 @@ def test_iterating_a_qubit_vector():
     @pulse.kernel
     def each(qs):
         for q in qs:
-            d, t = get_drive_line(q)
-            drive(d, square(16, 0.1), t)
+            d = get_drive_line(q)
+            drive(d, square(16, 0.1))
 
     @pulse.kernel
     def by_index(qs):
         for i in range(len(qs)):
-            d, t = get_drive_line(qs[i])
-            drive(d, square(16, 0.1), t)
+            d = get_drive_line(qs[i])
+            drive(d, square(16, 0.1))
 
     _same(each, by_index, n_qubits=3)
 
@@ -139,7 +140,7 @@ def test_iterating_a_qubit_vector():
 def test_break_continue_and_else():
     @pulse.kernel
     def control(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for n in [8, 16, 0, 32, 64]:
             if n == 0:
                 continue
@@ -155,7 +156,7 @@ def test_break_continue_and_else():
 
     @pulse.kernel
     def flat(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, 8)
         wait(d, 16)
         wait(d, 32)
@@ -168,17 +169,17 @@ def test_break_continue_and_else():
 def test_nested_inside_a_retained_range_loop():
     @pulse.kernel
     def nested(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(64):
             for a in AMPS:
-                drive(d, square(16, a), t)
+                drive(d, square(16, a))
 
     @pulse.kernel
     def by_index(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(64):
             for i in range(len(AMPS)):
-                drive(d, square(16, AMPS[i]), t)
+                drive(d, square(16, AMPS[i]))
 
     _same(nested, by_index)
     assert "scf.for" in _text(nested)
@@ -187,9 +188,9 @@ def test_nested_inside_a_retained_range_loop():
 def test_range_loops_are_still_retained():
     @pulse.kernel
     def rolled(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(512):
-            drive(d, square(16, 0.1), t)
+            drive(d, square(16, 0.1))
 
     ir = python_ir(rolled, Q[0])
     assert [op.kind for op in ir.ops].count("scf.for") == 1
@@ -199,7 +200,7 @@ def test_range_loops_are_still_retained():
 def test_mutating_the_iterated_list_follows_python():
     @pulse.kernel
     def grows(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         waits = [4, 8]
         for n in waits:
             if n < 8:
@@ -208,7 +209,7 @@ def test_mutating_the_iterated_list_follows_python():
 
     @pulse.kernel
     def flat(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         wait(d, 4)
         wait(d, 8)
         wait(d, 16)
@@ -221,7 +222,7 @@ def test_an_endless_iterator_stops_at_the_unroll_limit(monkeypatch):
 
     @pulse.kernel
     def endless(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for n in itertools.count(1):
             wait(d, n)
 
@@ -232,7 +233,7 @@ def test_an_endless_iterator_stops_at_the_unroll_limit(monkeypatch):
 def test_iterating_a_pulse_value_is_an_error():
     @pulse.kernel
     def over_line(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for x in d:
             wait(d, 4)
 
@@ -243,7 +244,7 @@ def test_iterating_a_pulse_value_is_an_error():
 def test_range_errors_name_their_cause():
     @pulse.kernel
     def float_bound(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(2.5):
             wait(d, 4)
 
@@ -252,7 +253,7 @@ def test_range_errors_name_their_cause():
 
     @pulse.kernel
     def symbolic_bound(q, n: float):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(n):
             wait(d, 4)
 
@@ -266,7 +267,7 @@ def test_range_errors_name_their_cause():
 def test_while_loops_point_at_for_loops():
     @pulse.kernel
     def spin(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         n = 0
         while n < 3:
             wait(d, 4)

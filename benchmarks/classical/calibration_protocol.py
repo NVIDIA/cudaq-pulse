@@ -43,7 +43,7 @@ sampled path per shot of the protocol:
 - the frequency binary search, 15 shots without reset,
   from a 1 MHz prior over detunings drawn from it;
 - the calibration chain of Marciniak et al. (2026) on the
-  Krinner twin's qubit 0 at T1 = 18.3 us; the paper reports T1 =
+  17-qubit transmon twin's qubit 0 at T1 = 18.3 us; the paper reports T1 =
   18.3 +- 4.7 us from the decay estimator;
 - for each step on its own: compile time, simulation time per protocol
   shot and per step, the step's time to decision on the device's timeline,
@@ -67,12 +67,12 @@ from pathlib import Path
 import cudaq_pulse as pulse
 import numpy as np
 from cudaq_pulse.runtime import _propagate
-from cudaq_pulse.targets import transmon_krinner_17q
+from cudaq_pulse.targets import transmon_17q
 
 _EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "21_calibration_protocol.py"
 P = runpy.run_path(str(_EXAMPLE), run_name="calibration_protocol")
-CLOCK = P["CLOCK_GHZ"]
-PI_AMP = P["PI_AMP"]
+CLOCK = P["clock_ghz"]
+PI_AMP = P["nominal_pi_amplitude"]
 
 
 def _bootstrap(values, stat, rng, n=2000):
@@ -82,7 +82,7 @@ def _bootstrap(values, stat, rng, n=2000):
 
 
 def _att_target():
-    base = transmon_krinner_17q()
+    base = transmon_17q()
     qubit = base.qubits[0]
     att = dataclasses.replace(
         qubit,
@@ -101,7 +101,7 @@ ramsey = P["ramsey"]
 amplitude = P["amplitude"]
 decay = P["decay"]
 assignment = P["assignment"]
-TRAIN = P["TRAIN"]
+TRAIN = P["pulses_per_train"]
 
 
 @pulse.kernel
@@ -112,7 +112,7 @@ def att_paper(q):
 
 @pulse.kernel
 def step_assignment(q):
-    assignment(q, PI_AMP, P["SETTLE"])
+    assignment(q, PI_AMP, P["settle_time"])
 
 
 @pulse.kernel
@@ -137,21 +137,23 @@ def step_decay(q):
 
 @pulse.kernel
 def step_tracked(q):
-    tracked_t1(q, PI_AMP, 3.0, 3.0 * 20_000.0 * CLOCK, 0.03, 0.02, P["SETTLE"])
+    tracked_t1(q, PI_AMP, 3.0, 3.0 * 20_000.0 * CLOCK, 0.03, 0.02, P["settle_time"])
 
 
 def _shares(result, shots):
     """Each path's last calls and its number of shots."""
-    for calls, (_, p) in zip(result.calls, result.branches):
-        yield calls, round(p * shots)
+    for branch in result.branches:
+        yield branch.calls, round(branch.probability * shots)
 
 
 def adaptive_t1(n, seed):
     target = _att_target()
     dev = pulse.device({"target": target})
-    lowered = pulse.compile(att_paper, device=dev, machine=P["MACHINE"]).lower(dev.qudit_handles[0])
+    lowered = pulse.compile(att_paper, device=dev, machine=P["machine"]).lower(dev.qudit_handles[0])
     start = time.perf_counter()
-    result = pulse.simulate(lowered, shots=n, seed=seed, paths="sampled", readout="model")
+    result = pulse.simulate(
+        lowered, shots=n, seed=seed, branches="sampled", readout="model", levels=2
+    )
     seconds = time.perf_counter() - start
     estimates, posteriors = [], []
     for calls, count in _shares(result, n):
@@ -176,9 +178,9 @@ def adaptive_t1(n, seed):
 
 
 def binary_search(n, seed):
-    target = transmon_krinner_17q()
+    target = transmon_17q()
     dev = pulse.device({"target": target})
-    lowered = pulse.compile(P["binary_search"], device=dev, machine=P["MACHINE"]).lower(
+    lowered = pulse.compile(P["binary_search"], device=dev, machine=P["machine"]).lower(
         dev.qudit_handles[0], 15
     )
     rng = np.random.default_rng(seed)
@@ -191,10 +193,11 @@ def binary_search(n, seed):
             plant=P["search_plant"](target, offset),
             shots=1,
             seed=seed * 100_003 + k,
-            paths="sampled",
+            branches="sampled",
             readout="model",
+            levels=2,
         )
-        mean, sigma, _, _ = result.calls[0][-1].answer
+        mean, sigma, _, _ = result.branches[0].calls[-1].answer
         errors.append(mean - offset)
         sigmas.append(sigma)
     seconds = time.perf_counter() - start
@@ -210,9 +213,9 @@ def binary_search(n, seed):
 
 
 def chain(n, seed):
-    target = transmon_krinner_17q()
+    target = transmon_17q()
     dev = pulse.device({"target": target})
-    lowered = pulse.compile(P["calibration_chain"], device=dev, machine=P["MACHINE"]).lower(
+    lowered = pulse.compile(P["calibration_chain"], device=dev, machine=P["machine"]).lower(
         dev.qudit_handles[0], 20_000.0 * CLOCK
     )
     plant = P["chain_plant"](target)
@@ -220,9 +223,15 @@ def chain(n, seed):
     start = time.perf_counter()
     for k in range(n):
         result = pulse.simulate(
-            lowered, plant=plant, shots=1, seed=seed * 7919 + k, paths="sampled", readout="model"
+            lowered,
+            plant=plant,
+            shots=1,
+            seed=seed * 7919 + k,
+            branches="sampled",
+            readout="model",
+            levels=2,
         )
-        rows.append(P["chain_results"](result.calls[0]))
+        rows.append(P["chain_results"](result.branches[0]))
     seconds = time.perf_counter() - start
     truth = {
         "detuning (kHz)": 60.0,
@@ -252,33 +261,35 @@ def chain(n, seed):
 
 
 def steps(seed):
-    target = transmon_krinner_17q()
+    target = transmon_17q()
     dev = pulse.device({"target": target})
     q = dev.qudit_handles[0]
     plant = P["chain_plant"](target)
     shots_per_step = {
-        "readout errors": (step_assignment, 2 * P["SHOTS"] + 1),
-        "Ramsey frequency": (step_ramsey, 3 * P["SHOTS"]),
-        "pi amplitude": (step_pi, 3 * P["SHOTS"]),
-        "pi/2 amplitude": (step_half_pi, 3 * P["SHOTS"]),
-        "decay T1": (step_decay, 3 * P["SHOTS"]),
-        "adaptive T1": (step_tracked, P["ATT_SHOTS"]),
+        "readout errors": (step_assignment, 2 * P["shots_per_setting"] + 1),
+        "Ramsey frequency": (step_ramsey, 3 * P["shots_per_setting"]),
+        "pi amplitude": (step_pi, 3 * P["shots_per_setting"]),
+        "pi/2 amplitude": (step_half_pi, 3 * P["shots_per_setting"]),
+        "decay T1": (step_decay, 3 * P["shots_per_setting"]),
+        "adaptive T1": (step_tracked, P["tracker_shots"]),
     }
     out = {}
     for name, (kernel, shots) in shots_per_step.items():
         start = time.perf_counter()
-        lowered = pulse.compile(kernel, device=dev, machine=P["MACHINE"]).lower(q)
+        lowered = pulse.compile(kernel, device=dev, machine=P["machine"]).lower(q)
         compile_s = time.perf_counter() - start
         start = time.perf_counter()
         result = pulse.simulate(
-            lowered, plant=plant, shots=1, seed=seed, paths="sampled", readout="model"
+            lowered, plant=plant, shots=1, seed=seed, branches="sampled", readout="model", levels=2
         )
         simulate_s = time.perf_counter() - start
         # Tracing allocations slows NumPy several times over: measure apart,
         # from cold (no propagators kept).
         _propagate.clear_cache()
         tracemalloc.start()
-        pulse.simulate(lowered, plant=plant, shots=1, seed=seed, paths="sampled", readout="model")
+        pulse.simulate(
+            lowered, plant=plant, shots=1, seed=seed, branches="sampled", readout="model", levels=2
+        )
         peak = tracemalloc.get_traced_memory()[1]
         tracemalloc.stop()
         m = lowered.metrics

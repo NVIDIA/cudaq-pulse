@@ -51,6 +51,7 @@
 #include "cudaq-pulse/Dialect/QOp/QOpOps.h.inc"
 
 #include "cudaq-pulse/Analysis/Execution.h"
+#include "cudaq-pulse/Analysis/LineGrid.h"
 #include "cudaq-pulse/Runtime/WaveformCallback.h"
 
 #include <algorithm>
@@ -304,12 +305,12 @@ static bool collectTerms(Value waveform, std::complex<double> coefficient,
 /// The callbacks of one drive occurrence for one quadrature: one per term
 /// of its waveform. The control Hamiltonian is linear in the envelope, so a
 /// sum of waveforms is exactly a sum of callbacks. A product is sampled once
-/// per clock cycle into piecewise-constant samples, its real and imaginary
-/// parts as two callbacks.
+/// per cycle of the line's controller (every `grid` program cycles) into
+/// piecewise-constant samples, its real and imaginary parts as two callbacks.
 static std::optional<SmallVector<WaveformCallbackData>>
 getWaveformCallbacks(const pulse::Occurrence &occurrence, double clockGHz,
                      double qubitFrequencyHz, double driveScale,
-                     int32_t quadrature) {
+                     int32_t quadrature, int64_t grid) {
   Operation *drive = occurrence.op;
   SmallVector<WaveformTerm> terms;
   if (!collectTerms(drive->getOperand(1), 1.0, 1.0, terms))
@@ -326,10 +327,13 @@ getWaveformCallbacks(const pulse::Occurrence &occurrence, double clockGHz,
       callbacks.push_back(std::move(*callback));
       continue;
     }
-    const auto count = occurrence.durationCycles;
+    const int64_t step =
+        grid > 1 && occurrence.durationCycles % grid == 0 ? grid : 1;
+    const auto count = occurrence.durationCycles / step;
     SmallVector<double> real, imaginary;
     for (int64_t k = 0; k < count; ++k) {
-      auto value = envelopeAt(term.waveform->getResult(0), (k + 0.5) / clockGHz,
+      auto value = envelopeAt(term.waveform->getResult(0),
+                              (k + 0.5) * static_cast<double>(step) / clockGHz,
                               timing.durationNs, clockGHz);
       if (!value)
         return std::nullopt;
@@ -638,6 +642,7 @@ struct PulseToQOpPass
       return signalPassFailure();
     }
 
+    const pulse::LineGrid lineGrid(module);
     DenseMap<int64_t, double> qubitFreqHz;
     if (auto frequencies =
             module->getAttrOfType<DenseF64ArrayAttr>("pulse.qubit_freq_hz")) {
@@ -906,14 +911,19 @@ struct PulseToQOpPass
     };
     // Residual ZZ of rate zeta, E11 - E10 - E01 + E00 = zeta, as the
     // cross-Kerr term zeta n_a n_b, which leaves the frequencies with the
-    // other qudit in |0> unchanged.
+    // other qudit in |0> unchanged. A density-density coupling V n_a n_b is
+    // the same operator, and does not turn in the qudits' frames.
     auto crossKerr = [&](int64_t a, int64_t b, double zeta) {
       allProducts.push_back(ops.product({{a, "number"}, {b, "number"}}, zeta));
     };
+    // Each kind of coupling has its own pair of attributes.
     if (failed(appendInteractions("pulse.coupling_pairs",
                                   "pulse.coupling_strength_hz", exchange)) ||
         failed(appendInteractions("pulse.crosstalk_pairs",
-                                  "pulse.crosstalk_strength_hz", crossKerr)))
+                                  "pulse.crosstalk_strength_hz", crossKerr)) ||
+        failed(appendInteractions("pulse.density_density_pairs",
+                                  "pulse.density_density_strength_hz",
+                                  crossKerr)))
       return signalPassFailure();
 
     // A multilevel transmon's anharmonicity, (alpha / 2) n (n - 1).
@@ -964,12 +974,14 @@ struct PulseToQOpPass
         driveScale = scales.asArrayRef()[qubitIdx];
       }
 
+      const int64_t grid =
+          lineGrid.enabled() ? lineGrid.of(op->getOperand(0), trace) : 1;
       static constexpr llvm::StringLiteral quadratures[] = {"spin_x", "spin_y"};
       for (auto [quadrature, kind] : llvm::enumerate(quadratures)) {
         auto lower = [&](const pulse::Occurrence &occurrence) {
           return getWaveformCallbacks(occurrence, clockGHz,
                                       qubitFrequency->second, driveScale,
-                                      static_cast<int32_t>(quadrature));
+                                      static_cast<int32_t>(quadrature), grid);
         };
         auto first = lower(occurrences.front());
         if (!first) {

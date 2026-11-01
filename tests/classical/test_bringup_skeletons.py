@@ -6,7 +6,7 @@
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
 """Skeletons of fast bring-up experiments, with toy estimators, each on a
-generic transmon and on the Krinner 17-qubit twin.
+generic transmon and on the 17-qubit transmon twin.
 
 Each skeleton is expressed, scheduled, simulated and, where it calls
 estimators while the QPU runs, exported for emulation. They check the
@@ -23,13 +23,13 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.classical import Bits, Float, Floats, Integer, Link, random_index
+from cudaq_pulse.classical import Link, random_index
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.runtime._calls import IQModel
 from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck, TelegraphT1
-from cudaq_pulse.targets import transmon_generic, transmon_krinner_17q
+from cudaq_pulse.targets import transmon_17q, transmon_generic
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse (unit drive scale)
 CLOCK = 2.0  # GHz on both targets
@@ -54,7 +54,7 @@ def _generic():
     return dataclasses.replace(target, qubits={0: qubit})
 
 
-TARGETS = {"generic": _generic, "krinner": transmon_krinner_17q}
+TARGETS = {"generic": _generic, "transmon_17q": transmon_17q}
 
 
 @pytest.fixture(params=sorted(TARGETS))
@@ -71,13 +71,10 @@ def _device(target):
 T1_BOUNDS = (200, 20000)  # 0.1 to 10 us
 
 
-@pulse.classical(
-    args=(Bits(1), Float(), Float(), Float()),
-    results=(Float(), Float(), Float()),
-    max_latency_ns=200,
-    link="controller",
-)
-def t1_estimator(survived, alpha, beta, wait_cycles):
+@pulse.classical(max_latency_ns=200, link="controller")
+def t1_estimator(
+    survived: pulse.Bits, alpha: float, beta: float, wait_cycles: float
+) -> tuple[float, float, float]:
     alpha, beta = cal.t1_update(alpha, beta, bool(survived[0]), wait_cycles / CLOCK)
     wait_cycles = min(max(cal.t1_wait(alpha, beta) * CLOCK, T1_BOUNDS[0]), T1_BOUNDS[1])
     return alpha, beta, wait_cycles
@@ -85,39 +82,39 @@ def t1_estimator(survived, alpha, beta, wait_cycles):
 
 @pulse.kernel
 def adaptive_t1(q, rounds: int):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     alpha, beta, tau = 1.0, 5000.0, 10000.0
-    drive(d, square(40, PI_AMP), t)
+    drive(d, square(40, PI_AMP))
     wait(d, 10000)
     for _ in range(rounds):
         sync(d, r)
-        m = readout(r, square(400, 0.05), rt)
+        m = readout(r, square(400, 0.05))
         alpha, beta, tau = t1_estimator.submit([m], alpha, beta, tau).result()
         sync(d, r)
         if m:
-            drive(d, square(40, PI_AMP), t)
-        drive(d, square(40, PI_AMP), t)
+            drive(d, square(40, PI_AMP))
+        drive(d, square(40, PI_AMP))
         wait(d, tau, bounds=T1_BOUNDS)
     sync(d, r)
-    readout(r, square(400, 0.05), rt)
+    readout(r, square(400, 0.05))
 
 
 def test_k11_adaptive_t1_tracks_its_posterior_per_path(target):
     dev = _device(target)
     lowered = pulse.compile(adaptive_t1, device=dev, machine=MACHINE).lower(dev.qudit_handles[0], 2)
     assert [e.opened_by for e in lowered.epochs()] == ["start", "wait", "wait"]
-    result = pulse.simulate(lowered, dt_ns=4.0)
-    assert sum(p for _, p in result.branches) == pytest.approx(1.0)
-    for calls, (outcomes, _) in zip(result.calls, result.branches):
+    result = pulse.simulate(lowered, dt_ns=4.0, levels=2)
+    assert sum(branch.probability for branch in result.branches) == pytest.approx(1.0)
+    for branch in result.branches:
         alpha, beta, tau = 1.0, 5000.0, 10000.0
-        for call, outcome in zip(calls, outcomes):
+        for call, outcome in zip(branch.calls, branch.levels):
             alpha, beta, tau = t1_estimator(np.array([outcome]), alpha, beta, tau)
             assert call.answer == pytest.approx((alpha, beta, tau))
     # The first shot survives the 5 us wait (plus the 200 ns readout) at
     # exp(-t / T1).
     t1_ns = target.qubits[0].t1_us * 1e3
-    survived = sum(p for outcomes, p in result.branches if outcomes[0] == 1)
+    survived = sum(b.probability for b in result.branches if b.levels[0] == 1)
     assert survived == pytest.approx(math.exp(-(5000 + 200) / t1_ns), abs=0.02)
     artifact = json.loads(json.dumps(lowered.export_emulation()))
     assert len(artifact["epochs"]) == 3
@@ -131,13 +128,10 @@ W0, PHASE0 = cal.ramsey_setting(0.0, SIGMA0)
 RAMSEY_BOUNDS = (20, 40000)
 
 
-@pulse.classical(
-    args=(Bits(1), Float(), Float(), Float(), Float()),
-    results=(Float(), Float(), Float(), Float()),
-    max_latency_ns=300,
-    link="controller",
-)
-def frequency_estimator(bit, mean, sigma, wait_cycles, phase):
+@pulse.classical(max_latency_ns=300, link="controller")
+def frequency_estimator(
+    bit: pulse.Bits, mean: float, sigma: float, wait_cycles: float, phase: float
+) -> tuple[float, float, float, float]:
     # The Ramsey wait counts from the first pulse's centre to the second's.
     mean, sigma = cal.frequency_update(mean, sigma, int(bit[0]), wait_cycles / CLOCK + 20.0, phase)
     wait_ns, phase = cal.ramsey_setting(mean, sigma)
@@ -147,28 +141,28 @@ def frequency_estimator(bit, mean, sigma, wait_cycles, phase):
 
 @pulse.kernel
 def binary_search(q, rounds: int):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     mean, sigma = 0.0, SIGMA0
     tau = (W0 - 20.0) * CLOCK
     phase = PHASE0
-    drive(d, square(40, PI_AMP / 2), t)
+    drive(d, square(40, PI_AMP / 2))
     wait(d, int(tau))
-    shift_phase(t, math.pi - phase)
-    drive(d, square(40, PI_AMP / 2), t)
+    shift_phase(d.tone, math.pi - phase)
+    drive(d, square(40, PI_AMP / 2))
     for _ in range(rounds):
         sync(d, r)
-        m = readout(r, square(400, 0.05), rt)
+        m = readout(r, square(400, 0.05))
         mean, sigma, tau, phase = frequency_estimator.submit([m], mean, sigma, tau, phase).result()
         sync(d, r)
         if m:
-            drive(d, square(40, PI_AMP), t)
-        drive(d, square(40, PI_AMP / 2), t)
+            drive(d, square(40, PI_AMP))
+        drive(d, square(40, PI_AMP / 2))
         wait(d, tau, bounds=RAMSEY_BOUNDS)
-        shift_phase(t, math.pi - phase)
-        drive(d, square(40, PI_AMP / 2), t)
+        shift_phase(d.tone, math.pi - phase)
+        drive(d, square(40, PI_AMP / 2))
     sync(d, r)
-    readout(r, square(400, 0.05), rt)
+    readout(r, square(400, 0.05))
 
 
 def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
@@ -187,19 +181,19 @@ def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
     lowered = pulse.compile(binary_search, device=dev, machine=MACHINE).lower(
         dev.qudit_handles[0], 1
     )
-    result = pulse.simulate(lowered, plant=detuned, dt_ns=1.0)
+    result = pulse.simulate(lowered, plant=detuned, dt_ns=1.0, levels=2)
     # The first shot's outcome follows the surrogate's fringe (decay lowers
     # the contrast a little).
     plant.state = dataclasses.replace(plant.state, frequency_offset_hz=offset)
-    p1 = sum(p for outcomes, p in result.branches if outcomes[0] == 1)
+    p1 = sum(b.probability for b in result.branches if b.levels[0] == 1)
     assert p1 == pytest.approx(plant.p_ramsey(W0, PHASE0), abs=0.04)
-    for calls, (outcomes, _) in zip(result.calls, result.branches):
-        (call,) = calls
+    for branch in result.branches:
+        (call,) = branch.calls
         mean, sigma, _, _ = call.answer
-        expected = cal.frequency_update(0.0, SIGMA0, outcomes[0], W0, PHASE0)
+        expected = cal.frequency_update(0.0, SIGMA0, branch.levels[0], W0, PHASE0)
         assert (mean, sigma) == pytest.approx(expected)
     # On average the estimate moves toward the true detuning.
-    moved = sum(p * calls[0].answer[0] for calls, (_, p) in zip(result.calls, result.branches))
+    moved = sum(b.probability * b.calls[0].answer[0] for b in result.branches)
     assert moved > 0
 
 
@@ -208,18 +202,18 @@ def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
 
 @pulse.kernel
 def t1_shot(q, wait_cycles: int):
-    d, t = get_drive_line(q)
-    drive(d, square(40, PI_AMP), t)
+    d = get_drive_line(q)
+    drive(d, square(40, PI_AMP))
     wait(d, wait_cycles)
 
 
 @pulse.kernel
 def ramsey_shot(q, wait_cycles: int, phase: float):
-    d, t = get_drive_line(q)
-    drive(d, square(40, PI_AMP / 2), t)
+    d = get_drive_line(q)
+    drive(d, square(40, PI_AMP / 2))
     wait(d, wait_cycles)
-    shift_phase(t, phase)
-    drive(d, square(40, PI_AMP / 2), t)
+    shift_phase(d.tone, phase)
+    drive(d, square(40, PI_AMP / 2))
 
 
 def test_k13_three_point_decay_and_phase_recover_the_device(target):
@@ -228,7 +222,7 @@ def test_k13_three_point_decay_and_phase_recover_the_device(target):
     compiled = pulse.compile(t1_shot, device=dev)
     spacing_cycles = 8000
     p = [
-        pulse.simulate(compiled.lower(q, 2000 + k * spacing_cycles), dt_ns=4.0)
+        pulse.simulate(compiled.lower(q, 2000 + k * spacing_cycles), dt_ns=4.0, levels=2)
         .density_matrix[1, 1]
         .real
         for k in range(3)
@@ -250,7 +244,9 @@ def test_k13_three_point_decay_and_phase_recover_the_device(target):
     wait_cycles, theta, delta = 600, math.pi / 2, 0.5
     # The simulated fringe is a - b cos(theta + e) at kernel phase pi - theta.
     p = [
-        pulse.simulate(ramsey.lower(q, wait_cycles, math.pi - (theta + k * delta)), plant=detuned)
+        pulse.simulate(
+            ramsey.lower(q, wait_cycles, math.pi - (theta + k * delta)), plant=detuned, levels=2
+        )
         .density_matrix[1, 1]
         .real
         for k in (-1, 0, 1)
@@ -265,9 +261,9 @@ def test_k13_three_point_decay_and_phase_recover_the_device(target):
 
 @pulse.kernel
 def spectroscopy(q, detuning_hz: float):
-    d, t = get_drive_line(q)
-    shift_frequency(t, detuning_hz)
-    drive(d, square(800, math.pi / 400), t)  # a 400 ns pi pulse
+    d = get_drive_line(q)
+    shift_frequency(d.tone, detuning_hz)
+    drive(d, square(800, math.pi / 400))  # a 400 ns pi pulse
 
 
 def test_k14_golden_section_finds_the_qubit_frequency(target):
@@ -288,7 +284,9 @@ def test_k14_golden_section_finds_the_qubit_frequency(target):
     x, done, steps = state.next_point(), False, 0
     while not done:
         p1 = (
-            pulse.simulate(compiled.lower(q, x), plant=detuned, dt_ns=1.0).density_matrix[1, 1].real
+            pulse.simulate(compiled.lower(q, x), plant=detuned, dt_ns=1.0, levels=2)
+            .density_matrix[1, 1]
+            .real
         )
         state, x, done = cal.golden_section_step(state, 1 - p1)
         steps += 1
@@ -324,13 +322,10 @@ def test_k14_nelder_mead_optimizes_readout_frequency_and_amplitude(target):
 GOLDEN = cal.GoldenSection.start(-4e6, 4e6, tolerance=3e6)
 
 
-@pulse.classical(
-    args=(Bits(1), Floats(7)),
-    results=(Floats(7), Float(), Float()),
-    max_latency_ns=400,
-    link="controller",
-)
-def golden_step(bit, state):
+@pulse.classical(max_latency_ns=400, link="controller")
+def golden_step(
+    bit: pulse.Bits, state: pulse.Length[list[float], 7]
+) -> tuple[pulse.Length[list[float], 7], float, float]:
     # A toy cost from one shot: 0 if the qubit was excited, else 1.
     state = cal.GoldenSection.from_floats(state)
     state, x, done = cal.golden_section_step(state, 1.0 - bit[0])
@@ -339,22 +334,22 @@ def golden_step(bit, state):
 
 @pulse.kernel
 def golden_in_shot(q, iterations: int):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
     state = GOLDEN.as_floats()
     x = GOLDEN.next_point()
     done = 0.0
     for _ in range(iterations):
         if done < 0.5:
-            shift_frequency(t, x)
-            drive(d, square(800, math.pi / 400), t)
-            shift_frequency(t, -x)
+            shift_frequency(d.tone, x)
+            drive(d, square(800, math.pi / 400))
+            shift_frequency(d.tone, -x)
         sync(d, r)
-        m = readout(r, square(400, 0.05), rt)
+        m = readout(r, square(400, 0.05))
         state, x, done = golden_step.submit([m], state).result()
         sync(d, r)
         if m:
-            drive(d, square(40, PI_AMP), t)
+            drive(d, square(40, PI_AMP))
 
 
 def test_k14_golden_section_in_a_shot_uses_the_converged_pattern(target):
@@ -363,15 +358,15 @@ def test_k14_golden_section_in_a_shot_uses_the_converged_pattern(target):
         dev.qudit_handles[0], 4
     )
     assert len(lowered.classical_report()) == 4
-    result = pulse.simulate(lowered, dt_ns=1.0)
-    for calls, (outcomes, _) in zip(result.calls, result.branches):
+    result = pulse.simulate(lowered, dt_ns=1.0, levels=2)
+    for branch in result.branches:
         state, done = GOLDEN, False
-        for call, outcome in zip(calls, outcomes):
+        for call, outcome in zip(branch.calls, branch.levels):
             state, x, done = cal.golden_section_step(state, 1.0 - outcome)
             assert call.answer[1] == pytest.approx(x)
             assert call.answer[2] == float(done)
         # The tolerance is reached in at most three costs.
-        assert calls[-1].answer[2] == 1.0
+        assert branch.calls[-1].answer[2] == 1.0
 
 
 # ── K15: closed-loop cadence between shots ──────────────────────────────────
@@ -382,12 +377,12 @@ READ_WAIT = STORE.reader("wait_cycles", link="controller", bounds=(0.0, 40000.0)
 
 @pulse.kernel
 def cadence_shot(q, amplitude: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, amplitude), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, amplitude))
     wait(d, READ_WAIT.submit().result(), bounds=(0, 40000))
     sync(d, r)
-    readout(r, square(400, 0.05), rt)
+    readout(r, square(400, 0.05))
 
 
 def test_k15_the_closed_loop_runs_ten_thousand_iterations_on_one_compile(target):
@@ -399,8 +394,10 @@ def test_k15_the_closed_loop_runs_ten_thousand_iterations_on_one_compile(target)
         STORE.set("wait_cycles", 2000.0 + (i % 100) * 20.0, iteration=i)
         lowered = compiled.lower(q, PI_AMP * (1 + 1e-4 * (i % 10)))
         if i % 2500 == 0:
-            result = pulse.simulate(lowered, dt_ns=4.0)
-            log.record(i, "p_survive", dict(result.branches).get((1,), 0.0))
+            result = pulse.simulate(lowered, dt_ns=4.0, levels=2)
+            log.record(
+                i, "p_survive", {b.levels: b.probability for b in result.branches}.get((1,), 0.0)
+            )
     assert compiled.cache_info().compiled == 1
     assert len(log) == 4
 
@@ -459,21 +456,18 @@ def test_k17_latency_within_depletion_is_hidden(target):
     )
     dev = _device(depleting)
     for latency_ns, exposed_ns in ((200.0, 0.0), (400.0, 150.0)):
-        decide = pulse.classical(
-            lambda bits: [bits[0]],
-            name="decide",
-            args=(Bits(1),),
-            results=(Bits(1),),
-            max_latency_ns=latency_ns - 0.5,
-        )
+
+        @pulse.classical(max_latency_ns=latency_ns - 0.5)
+        def decide(bits: pulse.Bits) -> pulse.Bits:
+            return [bits[0]]
 
         @pulse.kernel
         def feedback(q):
-            d, t = get_drive_line(q)
-            r, rt = get_readout_line(q)
-            m = readout(r, square(400, 0.05), rt)
+            d = get_drive_line(q)
+            r = get_readout_line(q)
+            m = readout(r, square(400, 0.05))
             if decide.submit([m]).result()[0]:
-                drive(d, square(40, PI_AMP), t)
+                drive(d, square(40, PI_AMP))
 
         (call,) = pulse.compile(feedback, device=dev).lower(dev.qudit_handles[0]).classical_report()
         assert call.exposed_cycles / CLOCK == pytest.approx(exposed_ns, abs=1.0)
@@ -495,17 +489,17 @@ def test_k18_readout_models_on_the_target(target):
 
     @pulse.kernel
     def excite_and_measure(q):
-        d, t = get_drive_line(q)
-        r, rt = get_readout_line(q)
-        drive(d, square(40, PI_AMP), t)
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        drive(d, square(40, PI_AMP))
         sync(d, r)
-        readout(r, square(800, 0.05), rt)
+        readout(r, square(800, 0.05))
 
     lowered = pulse.compile(excite_and_measure, device=dev).lower(dev.qudit_handles[0])
-    ideal = dict(pulse.simulate(lowered, dt_ns=1.0).branches)
-    model = pulse.simulate(lowered, dt_ns=1.0, readout="model")
-    decay = pulse.simulate(lowered, dt_ns=1.0, readout="model_with_decay")
-    reported_zero = lambda r: sum(p for o, p in r.branches if o == (0,))  # noqa: E731
+    ideal = {b.levels: b.probability for b in pulse.simulate(lowered, dt_ns=1.0, levels=2).branches}
+    model = pulse.simulate(lowered, dt_ns=1.0, readout="model", levels=2)
+    decay = pulse.simulate(lowered, dt_ns=1.0, readout="model_with_decay", levels=2)
+    reported_zero = lambda r: sum(b.probability for b in r.branches if b.levels == (0,))  # noqa: E731
     # Asymmetric errors: |1> is reported 0 at error_1to0 (plus the little
     # it decayed before the readout); decay during the window adds more.
     p1 = ideal.get((1,), 0.0)
@@ -527,51 +521,48 @@ def test_k18_readout_models_on_the_target(target):
 PAULI = random_index(4, name="pauli", link="controller")
 
 
-@pulse.classical(
-    args=(Integer(), Integer(), Integer()),
-    results=(Integer(),),
-    max_latency_ns=50,
-    link="controller",
-)
-def recovery(a, b, c):
+@pulse.classical(max_latency_ns=50, link="controller")
+def recovery(a: int, b: int, c: int) -> int:
     return a ^ b ^ c
 
 
-def _apply(d, t, index):
+def _apply(d, index):
     if index < 2:
         if index == 1:
-            drive(d, square(40, PI_AMP), t)
+            drive(d, square(40, PI_AMP))
     else:
         if index == 2:
-            shift_phase(t, math.pi)
+            shift_phase(d.tone, math.pi)
         else:
-            shift_phase(t, math.pi / 2)
-            drive(d, square(40, PI_AMP), t)
-            shift_phase(t, -math.pi / 2)
+            shift_phase(d.tone, math.pi / 2)
+            drive(d, square(40, PI_AMP))
+            shift_phase(d.tone, -math.pi / 2)
 
 
 @pulse.kernel
 def pauli_rb(q):
-    d, t = get_drive_line(q)
+    d = get_drive_line(q)
     a = PAULI.submit().result()
-    _apply(d, t, a)
+    _apply(d, a)
     b = PAULI.submit().result()
-    _apply(d, t, b)
+    _apply(d, b)
     c = PAULI.submit().result()
-    _apply(d, t, c)
-    _apply(d, t, recovery.submit(a, b, c).result())
+    _apply(d, c)
+    _apply(d, recovery.submit(a, b, c).result())
 
 
 def test_k19_pauli_benchmarking_returns_to_zero_unless_miscalibrated(target):
     dev = _device(target)
     lowered = pulse.compile(pauli_rb, device=dev, machine=MACHINE).lower(dev.qudit_handles[0])
-    ideal = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0)
+    ideal = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0, levels=2)
     assert len(ideal.branches) == 64  # every sequence of three Paulis
     # Each sequence and its recovery multiply to the identity.
     assert ideal.density_matrix[0, 0].real == pytest.approx(1.0, abs=0.01)
     plant = DriftingPlant(target, amplitude=OrnsteinUhlenbeck(1e-9, 1.0), seed=1)
     plant.state = dataclasses.replace(plant.state, amplitude_scale=1.1)
-    drifted = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0, plant=plant.target())
+    drifted = pulse.simulate(
+        lowered, initial_state=[1, 0], dt_ns=1.0, plant=plant.target(), levels=2
+    )
     assert drifted.density_matrix[0, 0].real < ideal.density_matrix[0, 0].real - 0.01
-    shots = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0, shots=200, seed=3)
+    shots = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0, shots=200, seed=3, levels=2)
     assert shots.records is not None and len(shots.records) == 200

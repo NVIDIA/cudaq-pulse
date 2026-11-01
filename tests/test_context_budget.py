@@ -25,8 +25,8 @@ def _defaults(monkeypatch):
 
 @pulse.kernel
 def _pulse(q0):
-    d0, t0 = get_drive_line(q0)
-    drive(d0, square(16, 0.1), t0)
+    d0 = get_drive_line(q0)
+    drive(d0, square(16, 0.1))
 
 
 def _compile():

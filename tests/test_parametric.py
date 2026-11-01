@@ -42,9 +42,9 @@ class TestDialectRoundtrip:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(40, 0.3, 10.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0])
         mlir = ck.mlir()
@@ -57,9 +57,9 @@ class TestDialectRoundtrip:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = square(20, 0.1)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0])
         mlir = ck.mlir()
@@ -70,9 +70,9 @@ class TestDialectRoundtrip:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = drag(40, 0.3, 10.0, 0.5)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0])
         mlir = ck.mlir()
@@ -83,9 +83,9 @@ class TestDialectRoundtrip:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = cosine(40, 0.5)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0])
         mlir = ck.mlir()
@@ -95,9 +95,9 @@ class TestDialectRoundtrip:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = tanh_ramp(40, 0.5, 5.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0])
         mlir = ck.mlir()
@@ -107,9 +107,9 @@ class TestDialectRoundtrip:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian_square(100, 0.5, 10.0, 20)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0])
         mlir = ck.mlir()
@@ -119,9 +119,9 @@ class TestDialectRoundtrip:
 
         @pulse.kernel
         def k(q, amplitude: float):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(64, amplitude, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0], 0.5).generic
         mlir = ck.mlir()
@@ -133,9 +133,9 @@ class TestDialectRoundtrip:
 
         @pulse.kernel
         def k(q, amplitude: float):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(64, amplitude, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0], 0.5).generic
         assert 'pulse.param_names = ["amplitude"]' in ck.mlir()
@@ -144,9 +144,9 @@ class TestDialectRoundtrip:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(40, 0.3, 10.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0])
         assert "func.func @main()" in ck.mlir()
@@ -156,9 +156,9 @@ class TestDialectRoundtrip:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(40, 0.3, 10.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = pulse.compile(k, passes=("verify",)).lower(Q[0])
         assert ck.mlir() is not None
@@ -167,9 +167,9 @@ class TestDialectRoundtrip:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(40, 0.3, 10.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0])
         assert "start_cycles = 0" in ck.mlir()
@@ -188,9 +188,9 @@ class TestParametricCompilation:
 
         @pulse.kernel
         def k(q, amp: float):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(64, amp, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0], 0.5).generic
         assert bool(ck.parameters)
@@ -202,9 +202,9 @@ class TestParametricCompilation:
 
         @pulse.kernel
         def k(q, amp: float, duration: int):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(duration, amp, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0], 0.5, 64).generic
         assert ck.parameters == ("amp",)
@@ -217,9 +217,9 @@ class TestParametricCompilation:
 
         @pulse.kernel
         def k(q, amp: float):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(64, amp, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0], 0.5).generic
         mlir = ck.mlir()
@@ -231,13 +231,13 @@ class TestParametricCompilation:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(64, 0.5, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0])
         assert ck.parameters == ()
-        assert ck.generic is None
+        assert ck.generic is ck
         assert "func.func @main()" in ck.mlir()
         assert "start_cycles" in ck.mlir()  # scheduled
 
@@ -245,10 +245,10 @@ class TestParametricCompilation:
 
         @pulse.kernel
         def k(q, phi: float):
-            d, t = get_drive_line(q)
-            shift_phase(t, phi)
+            d = get_drive_line(q)
+            shift_phase(d.tone, phi)
             wf = gaussian(40, 0.3, 10.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0], 0.5).generic
         assert bool(ck.parameters)
@@ -259,9 +259,9 @@ class TestParametricCompilation:
 
         @pulse.kernel
         def k(q, delay: int):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(40, 0.3, 10.0)
-            drive(d, wf, t)
+            drive(d, wf)
             wait(d, delay)
 
         ck = pulse.compile(k)
@@ -274,11 +274,11 @@ class TestParametricCompilation:
 
         @pulse.kernel
         def k(q, amp: float):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf1 = gaussian(40, amp, 10.0)
-            drive(d, wf1, t)
+            drive(d, wf1)
             wf2 = gaussian(60, amp, 15.0)
-            drive(d, wf2, t)
+            drive(d, wf2)
 
         ck = k.lower(Q[0], 0.5).generic
         assert bool(ck.parameters)
@@ -301,9 +301,9 @@ class TestEvaluation:
 
         @pulse.kernel
         def k(q, amp: float):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(64, amp, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         return pulse.compile(k)
 
@@ -340,9 +340,9 @@ class TestEvaluation:
 
         @pulse.kernel
         def k(q, amp: float, duration: int):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(duration, amp, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = pulse.compile(k)
         result = ck.lower(Q[0], amp=0.5, duration=80)
@@ -365,9 +365,9 @@ class TestEvaluation:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(40, 0.3, 10.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         with pytest.raises(TypeError, match="takes 1 positional argument but 2 were given"):
             pulse.compile(k).lower(Q[0], 0.5)
@@ -410,9 +410,9 @@ class TestStrictScheduling:
 
         @pulse.kernel
         def k(q, dur: int):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(dur, 0.5, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = pulse.compile(k)
 
@@ -428,11 +428,11 @@ class TestStrictScheduling:
 
         @pulse.kernel
         def k(q, amp: float):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf1 = gaussian(40, amp, 10.0)
-            drive(d, wf1, t)
+            drive(d, wf1)
             wf2 = gaussian(60, amp, 15.0)
-            drive(d, wf2, t)
+            drive(d, wf2)
 
         ck = pulse.compile(k)
         result = ck.lower(Q[0], amp=0.5)
@@ -445,13 +445,13 @@ class TestStrictScheduling:
 
         @pulse.kernel
         def k(q0, q1, dur: int):
-            d0, t0 = get_drive_line(q0)
-            d1, t1 = get_drive_line(q1)
+            d0 = get_drive_line(q0)
+            d1 = get_drive_line(q1)
             wf0 = gaussian(dur, 0.5, 16.0)
-            drive(d0, wf0, t0)
+            drive(d0, wf0)
             sync(d0, d1)
             wf1 = gaussian(40, 0.5, 10.0)
-            drive(d1, wf1, t1)
+            drive(d1, wf1)
 
         ck = pulse.compile(k)
         result = ck.lower(Q[0], Q[1], dur=100)
@@ -470,12 +470,12 @@ class TestStrictScheduling:
 
         @pulse.kernel
         def k(q, delay: int):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(40, 0.3, 10.0)
-            drive(d, wf, t)
+            drive(d, wf)
             wait(d, delay)
             wf2 = gaussian(40, 0.3, 10.0)
-            drive(d, wf2, t)
+            drive(d, wf2)
 
         ck = pulse.compile(k)
         result = ck.lower(Q[0], delay=50)
@@ -488,9 +488,9 @@ class TestStrictScheduling:
 
         @pulse.kernel
         def k(q, amp: float):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(64, amp, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = pulse.compile(k)
         mlirs = [ck.lower(Q[0], amp=0.5).mlir() for _ in range(50)]
@@ -501,9 +501,9 @@ class TestStrictScheduling:
 
         @pulse.kernel
         def k(q, amp: float, dur: int):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(dur, amp, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = pulse.compile(k)
 
@@ -523,15 +523,15 @@ class TestStrictScheduling:
 
         @pulse.kernel
         def concrete(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(64, 0.5, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         @pulse.kernel
         def parametric(q, amp: float):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(64, amp, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck_concrete = concrete.lower(Q[0])
         ck_param = pulse.compile(parametric)
@@ -556,9 +556,9 @@ class TestE2ESweeps:
 
         @pulse.kernel
         def k(q, amp: float):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(64, amp, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = pulse.compile(k)
         for amp_val in [0.1 * i for i in range(1, 11)]:
@@ -570,9 +570,9 @@ class TestE2ESweeps:
 
         @pulse.kernel
         def k(q, dur: int):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(dur, 0.5, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = pulse.compile(k)
         for dur_val in [20, 40, 60, 80, 100, 200]:
@@ -583,10 +583,10 @@ class TestE2ESweeps:
 
         @pulse.kernel
         def k(q, phi: float):
-            d, t = get_drive_line(q)
-            shift_phase(t, phi)
+            d = get_drive_line(q)
+            shift_phase(d.tone, phi)
             wf = gaussian(40, 0.3, 10.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = pulse.compile(k)
         for angle in [0.0, math.pi / 4, math.pi / 2, math.pi, 2 * math.pi]:
@@ -598,13 +598,13 @@ class TestE2ESweeps:
 
         @pulse.kernel
         def k(q0, q1, amp: float):
-            d0, t0 = get_drive_line(q0)
-            d1, t1 = get_drive_line(q1)
+            d0 = get_drive_line(q0)
+            d1 = get_drive_line(q1)
             wf0 = gaussian(40, amp, 10.0)
-            drive(d0, wf0, t0)
+            drive(d0, wf0)
             sync(d0, d1)
             wf1 = gaussian(40, amp, 10.0)
-            drive(d1, wf1, t1)
+            drive(d1, wf1)
 
         ck = pulse.compile(k)
         assert bool(ck.parameters)
@@ -618,9 +618,9 @@ class TestE2ESweeps:
 
         @pulse.kernel
         def k(q, amp: float):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(64, amp, 16.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         # Full compile
         t0 = time.perf_counter()
@@ -653,9 +653,9 @@ class TestConcreteKernels:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(40, 0.3, 10.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0])
         assert "func.func @main()" in ck.mlir()
@@ -666,12 +666,12 @@ class TestConcreteKernels:
 
         @pulse.kernel
         def k(q0, q1):
-            d0, t0 = get_drive_line(q0)
-            d1, t1 = get_drive_line(q1)
+            d0 = get_drive_line(q0)
+            d1 = get_drive_line(q1)
             wf = gaussian(40, 0.3, 10.0)
-            drive(d0, wf, t0)
+            drive(d0, wf)
             sync(d0, d1)
-            drive(d1, wf, t1)
+            drive(d1, wf)
 
         ck = k.lower(Q[0], Q[1])
         assert "pulse.sync" in ck.mlir()
@@ -682,12 +682,12 @@ class TestConcreteKernels:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(40, 0.3, 10.0)
-            drive(d, wf, t)
+            drive(d, wf)
             wait(d, 20)
             wf2 = gaussian(40, 0.3, 10.0)
-            drive(d, wf2, t)
+            drive(d, wf2)
 
         ck = k.lower(Q[0])
         assert "pulse.wait" in ck.mlir()
@@ -697,10 +697,10 @@ class TestConcreteKernels:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
-            shift_phase(t, math.pi / 4)
+            d = get_drive_line(q)
+            shift_phase(d.tone, math.pi / 4)
             wf = gaussian(40, 0.3, 10.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0])
         assert ck.mlir() is not None
@@ -710,11 +710,11 @@ class TestConcreteKernels:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             sq1 = square(50, 0.2)
-            drive(d, sq1, t)
+            drive(d, sq1)
             sq2 = square(50, 0.2)
-            drive(d, sq2, t)
+            drive(d, sq2)
 
         ck = k.lower(Q[0])
         assert ck.mlir() is not None
@@ -723,9 +723,9 @@ class TestConcreteKernels:
 
         @pulse.kernel
         def k(q):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             wf = gaussian(40, 0.3, 10.0)
-            drive(d, wf, t)
+            drive(d, wf)
 
         ck = k.lower(Q[0])
         assert ck.metrics.total_ms > 0
@@ -765,11 +765,11 @@ class TestExpressionsAcrossRegions:
     def test_an_expression_used_in_a_rolled_loop_and_after_it(self):
         @pulse.kernel
         def k(q, amp: float):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             doubled = amp * 2
             for _ in range(4):
-                drive(d, square(40, doubled), t)
-            drive(d, square(40, doubled), t)
+                drive(d, square(40, doubled))
+            drive(d, square(40, doubled))
 
         lowered = pulse.compile(k, unroll_threshold=0).lower(Q[0], 0.1)
         assert "scf.for" in lowered.generic.mlir()
@@ -778,31 +778,31 @@ class TestExpressionsAcrossRegions:
     def test_an_expression_used_in_both_arms_and_after_the_branch(self):
         @pulse.kernel
         def k(q, phase: float):
-            d, t = get_drive_line(q)
-            r, rt = get_readout_line(q)
+            d = get_drive_line(q)
+            r = get_readout_line(q)
             half = phase / 2
-            m = readout(r, square(40, 0.05), rt)
+            m = readout(r, square(40, 0.05))
             sync(d, r)
             if m:
-                shift_phase(t, half)
+                shift_phase(d.tone, half)
             else:
-                shift_phase(t, -half)
-            shift_phase(t, half)
-            drive(d, square(40, 0.1), t)
+                shift_phase(d.tone, -half)
+            shift_phase(d.tone, half)
+            drive(d, square(40, 0.1))
 
         assert len(k.lower(Q[0], 0.4).schedule) == 2
 
     def test_an_expression_used_in_a_called_kernel_with_its_own_schedule_and_after(self):
         @pulse.kernel(schedule="asap")
-        def pulse_pair(line, tone, a):
-            drive(line, square(16, a), tone)
-            drive(line, square(16, a), tone)
+        def pulse_pair(line, a):
+            drive(line, square(16, a))
+            drive(line, square(16, a))
 
         @pulse.kernel
         def k(q, amp: float):
-            d, t = get_drive_line(q)
+            d = get_drive_line(q)
             scaled = amp * 0.5
-            pulse_pair(d, t, scaled)
-            drive(d, square(16, scaled), t)
+            pulse_pair(d, scaled)
+            drive(d, square(16, scaled))
 
         assert sum(e.duration_cycles for e in k.lower(Q[0], 0.2).schedule) == 48

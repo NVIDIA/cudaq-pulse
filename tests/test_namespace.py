@@ -7,6 +7,7 @@
 # ============================================================================ #
 """The public namespace is frozen: these names, and only these."""
 
+import re
 import subprocess
 import sys
 
@@ -22,12 +23,16 @@ TOP_LEVEL = {
     "Pass",
     "simulate",
     "SimulationResult",
+    "BranchCoverage",
     "device",
-    "get_device",
     "Device",
     "Qudit",
     "Register",
-    "Target",
+    "Controller",
+    "ControlSystem",
+    "Processor",
+    "Capability",
+    "Link",
     "PulseError",
     "Problem",
     "DeviceDefinitionError",
@@ -45,7 +50,16 @@ TOP_LEVEL = {
     "NoDeviceError",
     "DeviceMismatchError",
     "GpuRuntimeError",
+    "round_duration",
+    "RoundDirection",
+    "Time",
+    "ns",
+    "us",
+    "ms",
+    "s",
     "viz",
+    "Bits",
+    "Length",
     "classical",
     "controller",
     "backends",
@@ -176,14 +190,61 @@ def test_compiler_types_are_in_the_compiler_module():
         assert hasattr(compiler, name)
 
 
-def test_the_target_description_is_not_the_target_enum():
-    from cudaq_pulse.targets import TargetDescription
-
-    assert pulse.Target.TRANSMON_KRINNER_17Q.value == "transmon_krinner_17q"
-    assert not issubclass(TargetDescription, type(pulse.Target.TRANSMON_KRINNER_17Q))
+def test_device_is_the_one_device_getter():
     import cudaq_pulse.targets as targets
 
-    assert not hasattr(targets, "Target")
+    for removed in ("get_device", "Target"):
+        assert not hasattr(pulse, removed)
+        assert not hasattr(targets, removed)
+
+
+def test_the_release_ships_no_neutral_atom_target():
+    import cudaq_pulse.targets as targets
+
+    assert not [n for n in targets.available_targets() if n.startswith("rydberg")]
+    assert not [n for n in targets.__all__ if n.lower().startswith("rydberg")]
+
+
+# Neutral-atom work is kept out of the release; a line that must name one of
+# these says ``scope-ok``.
+_OUT_OF_SCOPE = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"rydberg",
+        r"neutral[ _-]?atoms?",
+        r"tweezers?",
+        r"\bblockade\b",
+        r"atom[ _-]?arrays?",
+        r"van der waals",
+        r"\batoms?\b",
+        r"\d+atoms\b",
+    )
+] + [re.compile(p) for p in (r"\bC6\b", r"\bRb-?87\b")]
+_SCOPE_EXEMPT = {"uv.lock", "tests/test_namespace.py"}
+
+
+def test_tracked_files_have_no_neutral_atom_remnants():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    try:
+        listed = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=True
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("needs a git checkout")
+    hits = []
+    for name in listed.decode().split("\0"):
+        if not name or name in _SCOPE_EXEMPT or not (root / name).is_file():
+            continue
+        try:
+            text = (root / name).read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for number, line in enumerate(text.splitlines(), start=1):
+            if "scope-ok" not in line and any(p.search(line) for p in _OUT_OF_SCOPE):
+                hits.append(f"{name}:{number}: {line.strip()}")
+    assert not hits, "\n".join(hits)
 
 
 def test_viz_loads_on_first_use():

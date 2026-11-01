@@ -7,7 +7,7 @@
 # ============================================================================ #
 """The wire format of a call: what a request and an answer look like.
 
-A request is a 24-byte header (magic ``'CUQR'``, function id, argument
+A request is a 24-byte header (magic ``'CUQR'``, dispatch key, argument
 length, request id, timestamp) followed by the arguments, tightly packed and
 little-endian in the order of the function's argument types; an answer is a
 24-byte header (magic ``'CUQS'``, status, result length, request id,
@@ -24,13 +24,19 @@ handler for simulation.
 
 from __future__ import annotations
 
-import ctypes
 import struct
 from collections.abc import Sequence
 from typing import Any
 
-from .._errors import ExecutionError, InvalidValueError
-from . import ClassicalFunction, ValueType
+from .._errors import ExecutionError, InvalidTypeError, InvalidValueError
+from . import (
+    ClassicalFunction,
+    ValueType,
+    _LazyTypes,
+    _resolve,
+    _unsized_names,
+    _wrong_length,
+)
 
 __all__ = [
     "HEADER_BYTES",
@@ -82,10 +88,13 @@ def _layout(spec: ValueType) -> tuple[int, int, int, str]:
     return type_id, spec.wire_bytes, 1, fmt
 
 
-def schema(function: ClassicalFunction) -> dict[str, Any]:
+def schema(function: ClassicalFunction[..., Any]) -> dict[str, Any]:
     """The function's handler schema: per argument and result its payload
     type id, size in bytes and element count, as a dispatcher function table
-    entry declares them."""
+    entry declares them. A function whose list lengths come from its calls
+    has a schema per version: pass ``fn.specialize(...)``."""
+    if function._shape is not None or function.args.__class__ is _LazyTypes:  # type: ignore[comparison-overlap]
+        _one_schema(function, "wire.schema")
 
     def describe(specs: Sequence[ValueType]) -> list[dict[str, int]]:
         out = []
@@ -95,19 +104,41 @@ def schema(function: ClassicalFunction) -> dict[str, Any]:
         return out
 
     return {
-        "function_id": function.id,
         "args": describe(function.args),
         "results": describe(function.results),
     }
 
 
-def _pack(specs: Sequence[ValueType], values: Sequence[Any], what: str) -> bytes:
+def _one_schema(function: ClassicalFunction[..., Any], what: str) -> None:
+    _resolve(function)
+    if function._shape is not None:
+        names = _unsized_names(function)
+        example = ", ".join(f"{n}=..." for n in names)
+        raise InvalidTypeError(
+            f"{function.name}'s list lengths come from its calls ({', '.join(names)}), so it has"
+            f" a schema per version; for one version use {what}("
+            f"{function.name}.specialize({example}))"
+        )
+
+
+def _pack(
+    specs: Sequence[ValueType],
+    values: Sequence[Any],
+    what: str,
+    answering: ClassicalFunction[..., Any] | None = None,
+) -> bytes:
     if len(values) != len(specs):
         raise InvalidValueError(f"{len(specs)} {what} expected, got {len(values)}")
     out = bytearray()
     for spec, value in zip(specs, values):
         _, size, _, fmt = _layout(spec)
-        items = [value] if spec.is_scalar else list(value)
+        if spec.is_scalar:
+            items = [value]
+        else:
+            items = list(value)
+            if answering is not None and len(items) != spec.count:
+                position = [s is spec for s in specs].index(True)
+                raise InvalidValueError(_wrong_length(answering, position, len(items)))
         if spec.descriptor.startswith("bits:"):
             packed = bytearray(size)
             for i, bit in enumerate(items):
@@ -116,9 +147,17 @@ def _pack(specs: Sequence[ValueType], values: Sequence[Any], what: str) -> bytes
             out += packed
         else:
             if spec.descriptor.startswith("iq:") and len(items) == spec.count:
-                items = [c for point in items for c in point]
+                items = [c for point in items for c in _iq_pair(point)]
             out += struct.pack("<" + fmt * len(items), *items)
     return bytes(out)
+
+
+def _iq_pair(point: Any) -> tuple[float, float]:
+    """An IQ point's (I, Q): a complex number, or an (i, q) pair."""
+    if isinstance(point, complex):
+        return (point.real, point.imag)
+    i, q = point
+    return (i, q)
 
 
 def _unpack(specs: Sequence[ValueType], data: bytes) -> list[Any]:
@@ -135,34 +174,45 @@ def _unpack(specs: Sequence[ValueType], data: bytes) -> list[Any]:
         else:
             items = list(struct.unpack("<" + fmt * elements, chunk))
             if spec.descriptor.startswith("iq:"):
-                items = list(zip(items[0::2], items[1::2]))
+                items = [complex(i, q) for i, q in zip(items[0::2], items[1::2], strict=True)]
         values.append(items[0] if spec.is_scalar else items)
     return values
 
 
 def encode_request(
-    function: ClassicalFunction, args: Sequence[Any], request_id: int = 0, timestamp: int = 0
+    function: ClassicalFunction[..., Any],
+    args: Sequence[Any],
+    request_id: int = 0,
+    timestamp: int = 0,
+    dispatch_key: int | None = None,
 ) -> bytes:
-    """A request to *function* with *args* (as a handler receives them)."""
+    """A request to *function* with *args* (as a handler receives them),
+    sent to *dispatch_key*: the program's (``call.dispatch_key``), by default
+    the hash of the function's compiled name."""
     payload = _pack(function.args, args, "arguments")
-    header = _REQUEST.pack(REQUEST_MAGIC, function.id, len(payload), request_id, timestamp)
+    key = function._dispatch_key if dispatch_key is None else dispatch_key
+    header = _REQUEST.pack(REQUEST_MAGIC, key, len(payload), request_id, timestamp)
     return header + payload
 
 
-def decode_request(function: ClassicalFunction, data: bytes) -> tuple[int, int, list[Any]]:
-    """``(request id, timestamp, arguments)`` of a request to *function*."""
-    magic, fid, length, request_id, timestamp = _REQUEST.unpack_from(data)
+def decode_request(
+    function: ClassicalFunction[..., Any], data: bytes, dispatch_key: int | None = None
+) -> tuple[int, int, list[Any]]:
+    """``(request id, timestamp, arguments)`` of a request to *function* at
+    *dispatch_key* (as for ``encode_request``)."""
+    magic, key, length, request_id, timestamp = _REQUEST.unpack_from(data)
     if magic != REQUEST_MAGIC:
         raise ExecutionError(f"not a request: magic {magic:#x}")
-    if fid != function.id:
+    expected = function._dispatch_key if dispatch_key is None else dispatch_key
+    if key != expected:
         raise ExecutionError(
-            f"request for function {fid:#x}, not {function.name} ({function.id:#x})"
+            f"request for dispatch key {key:#x}, not {function.name}'s ({expected:#x})"
         )
     return request_id, timestamp, _unpack(function.args, data[HEADER_BYTES : HEADER_BYTES + length])
 
 
 def encode_answer(
-    function: ClassicalFunction,
+    function: ClassicalFunction[..., Any],
     answer: Any,
     request_id: int = 0,
     timestamp: int = 0,
@@ -171,7 +221,7 @@ def encode_answer(
     """The answer of *function* (as a handler returns it) to one request."""
     results = function.results
     values = list(answer) if len(results) > 1 else ([answer] if results else [])
-    payload = _pack(results, values, "results")
+    payload = _pack(results, values, "results", function)
     return _RESPONSE.pack(RESPONSE_MAGIC, status, len(payload), request_id, timestamp) + payload
 
 
@@ -183,7 +233,7 @@ def call_failed(name: str, request_id: int, status: int) -> ExecutionError:
     )
 
 
-def decode_answer(function: ClassicalFunction, data: bytes) -> tuple[int, int, Any]:
+def decode_answer(function: ClassicalFunction[..., Any], data: bytes) -> tuple[int, int, Any]:
     """``(status, request id, answer)`` of an answer from *function*."""
     magic, status, length, request_id, _ = _RESPONSE.unpack_from(data)
     if magic != RESPONSE_MAGIC:
@@ -199,12 +249,17 @@ def decode_answer(function: ClassicalFunction, data: bytes) -> tuple[int, int, A
 class _Native:
     """A C host handler, called through its request and answer slots."""
 
-    def __init__(self, handler: Any, function: ClassicalFunction, slot_bytes: int) -> None:
+    def __init__(
+        self, handler: Any, function: ClassicalFunction[..., Any], slot_bytes: int
+    ) -> None:
+        import ctypes
+
         self._handler = handler
         self._function = function
         self._slot_bytes = slot_bytes
         self._request = ctypes.create_string_buffer(slot_bytes)
         self._answer = ctypes.create_string_buffer(slot_bytes)
+        self._memmove = ctypes.memmove
         self._next_id = 0
 
     def __call__(self, *args: Any) -> Any:
@@ -213,7 +268,7 @@ class _Native:
             raise ExecutionError(
                 f"{self._function.name}: request of {len(request)} bytes exceeds the slot"
             )
-        ctypes.memmove(self._request, request, len(request))
+        self._memmove(self._request, request, len(request))
         self._handler(self._request, self._answer, self._slot_bytes)
         status, request_id, answer = decode_answer(self._function, self._answer.raw)
         if request_id != self._next_id:
@@ -226,9 +281,14 @@ class _Native:
         return answer
 
 
-def native(library: str, symbol: str, function: ClassicalFunction, slot_bytes: int = 1024) -> Any:
+def native(
+    library: str, symbol: str, function: ClassicalFunction[..., Any], slot_bytes: int = 1024
+) -> Any:
     """A handler for *function* that calls the C function *symbol* in the
     shared library *library* with a request and an answer slot."""
+    import ctypes
+
+    _one_schema(function, "wire.native")
     handler = getattr(ctypes.CDLL(library), symbol)
     handler.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
     handler.restype = None

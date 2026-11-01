@@ -11,7 +11,8 @@ either way the program is the same."""
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.kernel._unroll import DEFAULT_UNROLL_THRESHOLD, UNROLL_THRESHOLD_ENV
+from cudaq_pulse.kernel._unroll import DEFAULT_UNROLL_THRESHOLD
+from cudaq_pulse.kernel.bytecode_bridge import compile_kernel_bytecode
 from cudaq_pulse.targets import Coupling, Qubit, TargetDescription
 
 TARGET = TargetDescription(
@@ -31,9 +32,9 @@ Q = DEV.qudit_handles
 def _train(n):
     @pulse.kernel
     def train(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(n):
-            drive(d, square(4, 0.02), t)
+            drive(d, square(4, 0.02))
             wait(d, 2)
 
     return train
@@ -43,8 +44,7 @@ def _rolled(lowered):
     return "scf.for" in lowered.mlir()
 
 
-def test_the_default_unrolls_a_loop_up_to_the_threshold(monkeypatch):
-    monkeypatch.delenv(UNROLL_THRESHOLD_ENV, raising=False)
+def test_the_default_unrolls_a_loop_up_to_the_threshold():
     assert DEFAULT_UNROLL_THRESHOLD == 8
     # Three calls per iteration (drive, square, wait): 2 x 3 <= 8 < 3 x 3.
     assert not _rolled(_train(2).lower(Q[0]))
@@ -57,78 +57,71 @@ def test_the_estimate_is_the_trip_count_times_the_calls_in_the_body(threshold, r
     assert _rolled(lowered) is rolled
 
 
-def test_the_environment_variable_sets_the_threshold(monkeypatch):
-    monkeypatch.setenv(UNROLL_THRESHOLD_ENV, "100")
-    assert not _rolled(_train(20).lower(Q[0]))
-    monkeypatch.setenv(UNROLL_THRESHOLD_ENV, "x")
-    with pytest.raises(ValueError, match=UNROLL_THRESHOLD_ENV):
-        _train(20).lower(Q[0])
-
-
-def test_the_kernel_option_and_compile_override(monkeypatch):
-    monkeypatch.setenv(UNROLL_THRESHOLD_ENV, "0")
-
+def test_the_kernel_option_and_compile_override():
     @pulse.kernel(unroll_threshold=1000)
     def k(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for _ in range(10):
-            drive(d, square(4, 0.02), t)
+            drive(d, square(4, 0.02))
 
     assert not _rolled(k.lower(Q[0]))
     assert not _rolled(pulse.compile(k).lower(Q[0]))
     assert _rolled(pulse.compile(k, unroll_threshold=0).lower(Q[0]))
-    for bad in (-1, 1.5, True):
-        with pytest.raises(ValueError, match="non-negative integer"):
+    message = r"must be a non-negative int \(0 means never unroll\), got "
+    for bad in (-1, 1.5, "8", True, np.int64(8)):
+        with pytest.raises(ValueError, match=message):
             pulse.compile(k, unroll_threshold=bad)
-        with pytest.raises(ValueError, match="non-negative integer"):
+        with pytest.raises(ValueError, match=message):
             pulse.kernel(unroll_threshold=bad)
+        with pytest.raises(ValueError, match=message):
+            compile_kernel_bytecode(k.__wrapped__, unroll_threshold=bad)
 
 
 def test_a_loop_whose_variable_is_read_is_unrolled_at_any_threshold():
     @pulse.kernel
     def ramp(q):
-        d, t = get_drive_line(q)
+        d = get_drive_line(q)
         for i in range(20):
-            drive(d, square(4, 0.001 * i), t)
+            drive(d, square(4, 0.001 * i))
 
     assert not _rolled(pulse.compile(ramp, unroll_threshold=0).lower(Q[0]))
 
 
-def test_the_threshold_is_part_of_the_cache_key(monkeypatch):
-    k = _train(4)
-    monkeypatch.setenv(UNROLL_THRESHOLD_ENV, "0")
+def test_a_compiled_kernel_keeps_its_threshold():
+    k = _train(2)
+    rolled = pulse.compile(k, unroll_threshold=0)
+    assert _rolled(rolled.lower(Q[0]))
+    assert not _rolled(k.lower(Q[0]))
     k(Q[0])
-    k(Q[0])
-    monkeypatch.setenv(UNROLL_THRESHOLD_ENV, "100")
-    k(Q[0])
-    info = k.cache_info()
-    assert info.compiled == 2 and info.size == 2
+    rolled(Q[0])
+    assert _rolled(rolled.lower(Q[0]))
+    assert k.cache_info().compiled == 1
 
 
 @pulse.kernel
 def pulse_pair(q0, q1):
-    d0, t0 = get_drive_line(q0)
-    d1, t1 = get_drive_line(q1)
-    drive(d0, square(6, 0.03), t0)
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
+    drive(d0, square(6, 0.03))
     sync(d0, d1)
-    drive(d1, square(6, 0.03), t1)
+    drive(d1, square(6, 0.03))
 
 
 def _kernels():
     @pulse.kernel
     def train(q0, q1):
-        d, t = get_drive_line(q0)
+        d = get_drive_line(q0)
         for _ in range(6):
-            drive(d, square(4, 0.02), t)
-            t = shift_phase(t, 0.3)
+            drive(d, square(4, 0.02))
+            shift_phase(d.tone, 0.3)
             wait(d, 2)
 
     @pulse.kernel
     def nested(q0, q1):
-        d, t = get_drive_line(q0)
+        d = get_drive_line(q0)
         for _ in range(3):
             for _ in range(2):
-                drive(d, gaussian(8, 0.05, 2.0), t)
+                drive(d, gaussian(8, 0.05, 2.0))
             wait(d, 3)
 
     @pulse.kernel
@@ -138,10 +131,10 @@ def _kernels():
 
     @pulse.kernel
     def detuned(q0, q1):
-        d, t = get_drive_line(q0)
-        t = set_frequency(t, 5.01e9)
+        d = get_drive_line(q0)
+        set_frequency(d.tone, 5.01e9)
         for _ in range(5):
-            drive(d, square(4, 0.02), t)
+            drive(d, square(4, 0.02))
             wait(d, 5)
 
     return {"train": train, "nested": nested, "calls": calls, "detuned": detuned}

@@ -74,27 +74,27 @@ def test_the_truth_trace_is_json_and_seeded():
 
 @pulse.kernel
 def t1_shot(q, wait_ns: float):
-    d, t = get_drive_line(q)
-    r, rt = get_readout_line(q)
-    drive(d, square(40, PI_AMP), t)
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(40, PI_AMP))
     wait(d, wait_ns)
     sync(d, r)
-    readout(r, square(40, 0.05), rt)
+    readout(r, square(40, 0.05))
 
 
 @pulse.kernel
 def rabi(q, scale: float):
-    d, t = get_drive_line(q)
-    drive(d, square(40, PI_AMP * scale), t)
+    d = get_drive_line(q)
+    drive(d, square(40, PI_AMP * scale))
 
 
 @pulse.kernel
 def ramsey(q, phase: float):
-    d, t = get_drive_line(q)
-    drive(d, square(40, PI_AMP / 2), t)
+    d = get_drive_line(q)
+    drive(d, square(40, PI_AMP / 2))
     wait(d, 400)
-    shift_phase(t, phase)
-    drive(d, square(40, PI_AMP / 2), t)
+    shift_phase(d.tone, phase)
+    drive(d, square(40, PI_AMP / 2))
 
 
 def _plant():
@@ -119,8 +119,10 @@ def test_the_surrogates_match_simulating_the_plant():
     q = dev.qudit_handles[0]
     compiled_t1 = pulse.compile(t1_shot, device=dev)
     for wait_cycles in (0.0, 4000.0, 16000.0):
-        result = pulse.simulate(compiled_t1.lower(q, wait_cycles), plant=target, dt_ns=1.0)
-        p1 = dict(result.branches).get((1,), 0.0)
+        result = pulse.simulate(
+            compiled_t1.lower(q, wait_cycles), plant=target, dt_ns=1.0, levels=2
+        )
+        p1 = {b.levels: b.probability for b in result.branches}.get((1,), 0.0)
         # The surrogate counts the wait; the pi pulse and readout add 40 ns.
         elapsed = wait_cycles / dev.clock_ghz + 40
         assert p1 == pytest.approx(plant.p_survive(elapsed), abs=0.03)
@@ -128,7 +130,7 @@ def test_the_surrogates_match_simulating_the_plant():
     resonant = DriftingPlant(_target(t1_us=0.0), amplitude=OrnsteinUhlenbeck(0.05, 1.0), seed=3)
     compiled_rabi = pulse.compile(rabi, device=dev)
     for scale in (0.5, 1.0):
-        result = pulse.simulate(compiled_rabi.lower(q, scale), plant=resonant.target())
+        result = pulse.simulate(compiled_rabi.lower(q, scale), plant=resonant.target(), levels=2)
         assert result.density_matrix[1, 1].real == pytest.approx(
             resonant.p_rabi(math.pi * scale), abs=1e-6
         )
@@ -138,7 +140,9 @@ def test_the_surrogates_match_simulating_the_plant():
     compiled_ramsey = pulse.compile(ramsey, device=dev)
     separation_ns = (400 + 40) / dev.clock_ghz
     for phase in (0.0, 1.0, 2.5):
-        result = pulse.simulate(compiled_ramsey.lower(q, phase), plant=offset_only.target())
+        result = pulse.simulate(
+            compiled_ramsey.lower(q, phase), plant=offset_only.target(), levels=2
+        )
         expected = offset_only.p_ramsey(separation_ns, math.pi - phase)
         assert result.density_matrix[1, 1].real == pytest.approx(expected, abs=0.03)
 
@@ -148,6 +152,6 @@ def test_the_plant_must_define_the_programs_qudits():
     lowered = pulse.compile(rabi, device=dev).lower(dev.qudit_handles[0], 1.0)
     empty = TargetDescription(name="none", qubits={})
     with pytest.raises(ValueError, match="does not define qudits"):
-        pulse.simulate(lowered, plant=empty)
+        pulse.simulate(lowered, plant=empty, levels=2)
     with pytest.raises(TypeError, match="TargetDescription"):
-        pulse.simulate(lowered, plant=dev)
+        pulse.simulate(lowered, plant=dev, levels=2)

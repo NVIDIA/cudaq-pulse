@@ -16,10 +16,21 @@ methods themselves.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ..classical import ClassicalFunction, ValueType
+from ..classical import (
+    _F64,
+    _KIND_BITS,
+    _KIND_FLOATS,
+    _KIND_IQ,
+    _LIST_NAME,
+    ClassicalFunction,
+    ValueType,
+    _enter_slow,
+    _spelled,
+)
 from .ir_builder import (
     AnswerValue,
     CompilationError,
@@ -29,6 +40,13 @@ from .ir_builder import (
     is_symbolic,
 )
 
+if TYPE_CHECKING:
+    from .._units import Time
+
+# The values an f64 argument takes as they are: _numbers would pass them
+# straight to _get_numeric_vid.
+_DIRECT_F64 = frozenset({float, int, AnswerValue})
+
 
 class Future:
     """A request to a classical function, sent from inside a kernel."""
@@ -37,7 +55,7 @@ class Future:
 
     def __init__(
         self,
-        function: ClassicalFunction,
+        function: ClassicalFunction[..., Any],
         index: int,
         vid: int,
         flow: tuple[tuple[int, bool], ...],
@@ -49,7 +67,7 @@ class Future:
         self.answers: Any = None
         self.timeout_ns: float | None = None
 
-    def result(self, timeout_ns: float | None = None) -> Any:
+    def result(self, timeout: float | Time | None = None) -> Any:
         """Take the answer; only meaningful while a kernel is traced."""
         raise CompilationError("a future's result() is taken inside the kernel that submitted it")
 
@@ -62,38 +80,106 @@ def _builder_supports(builder: Any) -> None:
         raise CompilationError("classical calls need the packed IR builder")
 
 
-def _measurements(value: Any, spec: ValueType, name: str, position: int) -> list[int]:
-    items = list(value) if isinstance(value, (list, tuple)) else [value]
+def _wrong_count(
+    function: ClassicalFunction[..., Any], spec: ValueType, position: int, got: int
+) -> CompilationError:
+    """A call passing a list of another length than its parameter's."""
+    parameter = f"argument {position}"
+    code = getattr(function.__wrapped__, "__code__", None)
+    if code is not None and position < code.co_argcount:
+        parameter = repr(code.co_varnames[position])
+    spelled, unit = _spelled(spec)
+    return CompilationError(
+        f"{function.name}.submit(): {parameter} takes {spec.count} {unit}"
+        f"{'s' if spec.count != 1 else ''} ({spelled}), got {got}"
+    )
+
+
+# What a list of each kind holds, for an error.
+_HOLDS = {
+    _KIND_BITS: "a list of outcomes",
+    _KIND_IQ: "a list of IQ points",
+    _KIND_FLOATS: "a list of numbers",
+}
+
+
+def _is_readout(value: Any) -> bool:
+    return isinstance(value, IRValue) and value.vtype == "measurement"
+
+
+def _local_name(value: Any) -> str | None:
+    """The name the traced kernel binds *value* to, if it has one: a local
+    of the emitter running its code (``_emitter``'s ``locals``)."""
+    frame = sys._getframe(1)
+    while frame is not None:
+        found = getattr(frame.f_locals.get("self"), "locals", None)
+        if found.__class__ is dict:
+            for name, bound in found.items():
+                if bound is value and name.isidentifier():
+                    return str(name)
+            return None
+        frame = frame.f_back  # type: ignore[assignment]
+    return None
+
+
+def _one_readout(
+    function: ClassicalFunction[..., Any], position: int, kind: str, holds: str, value: Any
+) -> CompilationError:
+    """A call passing one readout where its parameter takes a list."""
+    code = getattr(function.__wrapped__, "__code__", None)
+    names = list(code.co_varnames[: code.co_argcount]) if code is not None else []
+    parameter = names[position] if position < len(names) else f"argument {position}"
+    shown = _local_name(value)
+    listed = f"[{shown or 'm'}]"
+    arguments = [listed if k == position else n for k, n in enumerate(names)] or [listed]
+    called = function.base_name
+    return CompilationError(
+        f"{called}.submit(): {parameter} is {kind} ({holds}) but {shown or 'the argument'} is"
+        f" one readout. Write {called}.submit({', '.join(arguments)})."
+    )
+
+
+def _measurements(
+    value: Any, spec: ValueType, function: ClassicalFunction[..., Any], position: int
+) -> list[int]:
+    if isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
+        if not spec.is_scalar and _is_readout(value):
+            holds = (
+                "a list of IQ points" if spec.descriptor.startswith("iq") else "a list of outcomes"
+            )
+            raise _one_readout(function, position, _spelled(spec)[0], holds, value)
+        items = [value]
     if len(items) != spec.count:
-        raise CompilationError(
-            f"{name}: argument {position} is {spec.descriptor}, which takes "
-            f"{spec.count} measurement result{'s' if spec.count != 1 else ''}, got {len(items)}"
-        )
+        raise _wrong_count(function, spec, position, len(items))
     vids = []
     for item in items:
         if not (isinstance(item, IRValue) and item.vtype == "measurement"):
             raise CompilationError(
-                f"{name}: argument {position} ({spec.descriptor}) takes measurement "
+                f"{function.name}: argument {position} ({spec.descriptor}) takes measurement "
                 f"results from readout(), got {item!r}"
             )
         vids.append(item.vid)
     return vids
 
 
-def _numbers(builder: Any, value: Any, spec: ValueType, name: str, position: int) -> list[int]:
+def _numbers(
+    builder: Any, value: Any, spec: ValueType, function: ClassicalFunction[..., Any], position: int
+) -> list[int]:
+    name = function.name
     if spec.is_scalar:
         items = [value]
     elif isinstance(value, (list, tuple)):
         items = list(value)
+    elif _is_readout(value):
+        raise _one_readout(function, position, _spelled(spec)[0], "a list of numbers", value)
     else:
         raise CompilationError(
             f"{name}: argument {position} is {spec.descriptor}; pass a list of {spec.count} numbers"
         )
     if len(items) != spec.count:
-        raise CompilationError(
-            f"{name}: argument {position} is {spec.descriptor}, which takes "
-            f"{spec.count} numbers, got {len(items)}"
-        )
+        raise _wrong_count(function, spec, position, len(items))
     dtype = "f64" if spec.source == "float" else "i64"
     vids = []
     builder._answer_integers = True
@@ -118,28 +204,154 @@ def _numbers(builder: Any, value: Any, spec: ValueType, name: str, position: int
 
 
 def submit(
-    builder: Any, function: ClassicalFunction, args: Sequence[Any], kwargs: dict[str, Any] | None
+    builder: Any,
+    function: ClassicalFunction[..., Any],
+    args: Sequence[Any],
+    kwargs: dict[str, Any] | None,
 ) -> Future:
     """Record ``function.submit(*args)``."""
     _builder_supports(builder)
     if kwargs:
         raise CompilationError(f"{function.name}.submit() takes positional arguments only")
-    if len(args) != len(function.args):
-        raise CompilationError(
-            f"{function.name}.submit() takes {len(function.args)} arguments, got {len(args)}"
-        )
+    try:
+        arity = len(function.args)
+    except TypeError as error:  # a mistake in its declaration
+        raise CompilationError(str(error)) from None
+    if len(args) != arity:
+        # A template has args == (): its calls give the list lengths.
+        plan = function._plan
+        if plan is None or len(args) != len(plan):
+            arity = arity if plan is None else len(plan)
+            raise CompilationError(
+                f"{function.name}.submit() takes {arity} arguments, got {len(args)}"
+            )
+        return _submit_template(builder, function, args, plan)
     operands: list[int] = []
     for position, (spec, value) in enumerate(zip(function.args, args)):
         if spec.source == "measurement":
-            operands.extend(_measurements(value, spec, function.name, position))
+            operands.extend(_measurements(value, spec, function, position))
+        elif spec is _F64 and value.__class__ in _DIRECT_F64:
+            # What _numbers gives a plain number or an answer, without its checks.
+            operands.append(builder._get_numeric_vid(value, "f64"))
         else:
-            operands.extend(_numbers(builder, value, spec, function.name, position))
+            operands.extend(_numbers(builder, value, spec, function, position))
     index = builder.classical_function(function)
     vid = builder.classical_submit(index, operands)
     return Future(function, index, vid, builder.flow)
 
 
-def _group(function: ClassicalFunction, answers: list[AnswerValue]) -> Any:
+def _submit_template(
+    builder: Any,
+    template: ClassicalFunction[..., Any],
+    args: Sequence[Any],
+    plan: tuple[Any, ...],
+) -> Future:
+    """Record a call of a template, *args* one per entry of its *plan*: one
+    pass over the arguments makes the operands and the version's key (per
+    unsized list its length, negative for a ``list[int]`` of numbers), then
+    one lookup finds the version."""
+    name = template.name
+    operands: list[int] = []
+    key: Any = 0 if template._n == 1 else []
+    for position, (kind, value) in enumerate(zip(plan, args)):
+        if kind.__class__ is not int:  # a wire type
+            if kind.source == "measurement":
+                operands.extend(_measurements(value, kind, template, position))
+            elif kind is _F64 and value.__class__ in _DIRECT_F64:
+                # What _numbers gives a plain number or an answer, without its checks.
+                operands.append(builder._get_numeric_vid(value, "f64"))
+            else:
+                operands.extend(_numbers(builder, value, kind, template, position))
+        else:
+            if value.__class__ is not list and value.__class__ is not tuple:
+                _not_a_list(template, position, value)
+            if not value:
+                raise CompilationError(
+                    f"{name}.submit(): {_parameter(template, position)!r} is an empty list"
+                )
+            if kind >= _KIND_FLOATS and (
+                kind == _KIND_FLOATS or not _measured(value, template, position)
+            ):
+                operands.extend(_number_list(builder, value, name, position, kind == _KIND_FLOATS))
+                n = len(value) if kind == _KIND_FLOATS else -len(value)
+            else:
+                for item in value:
+                    if not (isinstance(item, IRValue) and item.vtype == "measurement"):
+                        raise CompilationError(
+                            f"{name}.submit(): {_parameter(template, position)!r}"
+                            f" ({_LIST_NAME[kind]}) takes measurement results from readout(),"
+                            f" got {item!r}"
+                        )
+                    operands.append(item.vid)
+                n = len(value)
+            if key.__class__ is int:
+                key = n
+            else:
+                key.append(n)
+    if key.__class__ is list:
+        key = tuple(key)
+    version = template._fast.get(key)
+    if version is None:
+        version = _enter_slow(builder, template, key)
+    index = builder.classical_function(version)
+    vid = builder.classical_submit(index, operands)
+    return Future(version, index, vid, builder.flow)
+
+
+def _parameter(template: ClassicalFunction[..., Any], position: int) -> str:
+    shape = template._shape
+    assert shape is not None
+    return shape.names[position]
+
+
+def _measured(value: Sequence[Any], template: ClassicalFunction[..., Any], position: int) -> bool:
+    """Whether a ``list[int]`` holds measurements (levels) or numbers."""
+    measured = [isinstance(v, IRValue) and v.vtype == "measurement" for v in value]
+    if any(measured) and not all(measured):
+        raise CompilationError(
+            f"{template.name}.submit(): {_parameter(template, position)!r} is list[int]: all"
+            " measurements (sent as levels) or all numbers, not both"
+        )
+    return measured[0]
+
+
+def _number_list(
+    builder: Any, items: Sequence[Any], name: str, position: int, floats: bool
+) -> list[int]:
+    dtype = "f64" if floats else "i64"
+    vids = []
+    builder._answer_integers = True
+    try:
+        for item in items:
+            if isinstance(item, bool) or not (isinstance(item, (int, float)) or is_symbolic(item)):
+                raise CompilationError(f"{name}: argument {position} takes numbers, got {item!r}")
+            if dtype == "i64" and isinstance(item, float):
+                if not item.is_integer():
+                    raise CompilationError(
+                        f"{name}: argument {position} takes integers, got {item!r}"
+                    )
+                item = int(item)
+            vids.append(builder._get_numeric_vid(item, dtype))
+    finally:
+        builder._answer_integers = False
+    return vids
+
+
+def _not_a_list(template: ClassicalFunction[..., Any], position: int, value: Any) -> None:
+    parameter = _parameter(template, position)
+    shape = template._shape
+    assert shape is not None
+    plan = shape.plan[position]
+    kind = _LIST_NAME[plan]
+    if _is_readout(value):
+        holds = _HOLDS.get(plan, "a list of outcomes or numbers")
+        raise _one_readout(template, position, kind, holds, value)
+    raise CompilationError(
+        f"{template.name}.submit(): {parameter!r} is {kind}; pass a list, got {value!r}"
+    )
+
+
+def _group(function: ClassicalFunction[..., Any], answers: list[AnswerValue]) -> Any:
     """Answers as the kernel sees them: per result a value or a list."""
     grouped: list[Any] = []
     cursor = 0
@@ -151,29 +363,24 @@ def _group(function: ClassicalFunction, answers: list[AnswerValue]) -> Any:
 
 
 def take(builder: Any, future: Future, args: Sequence[Any], kwargs: dict[str, Any] | None) -> Any:
-    """Record ``future.result(timeout_ns=...)``."""
-    timeout_ns = None
+    """Record ``future.result(timeout=...)``."""
+    timeout = None
     if args:
         if len(args) > 1:
-            raise CompilationError("result() takes at most one argument, timeout_ns")
-        timeout_ns = args[0]
+            raise CompilationError("result() takes at most one argument, timeout")
+        timeout = args[0]
     for key, value in (kwargs or {}).items():
-        if key != "timeout_ns":
+        if key != "timeout":
             raise CompilationError(f"result() got an unexpected keyword {key!r}")
-        timeout_ns = value
+        timeout = value
     function = future.function
-    if timeout_ns is not None:
-        if (
-            is_symbolic(timeout_ns)
-            or isinstance(timeout_ns, bool)
-            or not isinstance(timeout_ns, (int, float))
-        ):
-            raise CompilationError("result(timeout_ns=...) takes a number known when compiling")
-        if not timeout_ns > 0:
-            raise CompilationError(f"timeout_ns must be positive, got {timeout_ns!r}")
+    timeout_ns = None
+    if timeout is not None:
+        from ._durations import timeout_ns as _timeout_ns
+
+        timeout_ns = _timeout_ns(builder, timeout)
         if function.latency_mode == "blocking":
             raise CompilationError(f"{function.name} blocks until it answers; it has no timeout")
-        timeout_ns = float(timeout_ns)
     if future.answers is not None:
         if timeout_ns != future.timeout_ns:
             raise CompilationError("an answer is taken once; call result() with the same timeout")

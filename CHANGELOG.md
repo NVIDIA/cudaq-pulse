@@ -16,6 +16,140 @@ behavior may change in any 0.x release.
 
 ### Added
 
+- **Pickling, for process pools and caches on disk.** Kernels pickle as
+  functions do: by reference, or with cloudpickle (Ray, Dask) by value
+  when defined in `__main__`, at the prompt or inside a function. Targets, devices, qudit handles and registers
+  pickle as what they were built from and unpickle equal, with equal
+  hashes; a process builds each device it unpickles once. A device's
+  fingerprint covers its calibration: a target with and without one are
+  two devices. A shipped calibration pickles as its name, checked against
+  the file shipped where it unpickles; any other, as its values. Programs
+  (`ck.lower(...)`, bound or not) pickle as MLIR bytecode stamped with the
+  build that compiled them (hashes of its native and Python sources, taken
+  when it was built) and the Python, and run unpickled (export, simulate, bind)
+  without compiling again; another build refuses them with
+  `UnsupportedError`, saying to compile again. Errors pickle with what they
+  report, so a process pool re-raises them in the parent as they were
+  raised. Targets now compare by content.
+- **Controllers with their own clocks.** Kernels count cycles of the
+  device's program clock, `"clock_ghz"` in the device config (or the
+  target's). A controller whose clock is slower starts and times operations
+  only every few program cycles: the scheduler puts each line's operations
+  on its controller's grid and a `sync` on the grid its lines share, an
+  operation off the grid is a compile error naming the line, its controller
+  and the nearest valid lengths, and `pulse.cycles_on(line, n)` rounds a
+  length onto the grid (`pulse.Rounding`). Controller programs count their
+  own cycles, with `"program_clock_ghz"` written when it differs;
+  `MachineModel.reference_clock_ghz` is checked against every controller
+  clock and exported; the simulator samples generated waveforms at the
+  line's controller clock.
+- **Runtime qudits.** A parameter annotated `Qudit` or `Register` (or
+  `list[Qudit]`, `tuple[Qudit, ...]`) is bound at each call, like a float:
+  the kernel compiles once and runs on any qudits of a device with the same
+  structure, including a recalibrated one. An unannotated qudit parameter
+  stays static, whatever the call passes. `list[float]` parameters are runtime vectors. Their
+  controller exports carry a `program_id`, shared by every call of one
+  compile, and `symbols`: each symbol's value in the call, and per event the
+  symbols its qudit, frequency, phase and waveform depend on.
+- **Control systems.** A device can hold the controllers that play it:
+  `pulse.Controller` (a controller's limits, the drive and readout lines it
+  plays, its peer latency, clock skew and alignment tolerance, its
+  `supports`, `backend`, `model` and `version`) and `pulse.ControlSystem`
+  (its controllers, its links by name, each `Link` with the `controllers`
+  it reaches). `pulse.device({"quantum_system": ..., "control_system":
+  ...})` checks the wiring against the quantum system and raises one
+  `DeviceDefinitionError` listing every problem; `"target"` still names the
+  quantum system. `compile(kernel, device=qpu)` checks every program against
+  the system: a line on no controller, each controller's own limits, a
+  capability (`pulse.Capability`) a controller lacks, and a call over a link
+  that does not reach its controllers fail to compile. A controller that
+  supports `loop` holds a rolled loop's body once against `max_events`; one
+  that does not plays it unrolled, and its limit error names the loop; unrolling adds pulses,
+  not waveform memory, which holds each shape once. `rcp` keeps a branch
+  on a readout the `feedback_latency_cycles` of the controllers that read out.
+  A control system's `line_delays_ns` (times or numbers of ns) and
+  `reference_clock_ghz` are its calibrated line delays and shared clock, as
+  on a `MachineModel`; new
+  delays alone schedule its programs again without tracing them. Without a
+  declared `"clock_ghz"`, a device's program clock is its fastest
+  controller clock when every other one divides it; clocks that do not
+  divide evenly are a `DeviceDefinitionError` that lists the program clocks
+  that work, and every controller clock must be a whole multiple of the
+  reference clock. Each controller of a system may run its own clock: every
+  line is scheduled on its own controller's grid, a `sync` and a wait from
+  an answer on the grid all lines share, and a runtime qudit's lines on that
+  shared grid too, so one schedule fits any qudits a call binds. Each
+  controller's limits, line delays and `rcp` readout latency count its own
+  cycles, and `custom()` samples an envelope at the rate of the line that
+  plays it, while samples given at another rate fail to compile.
+  `export_controller(controller=k)` and `export_emulation(controller=k)`
+  export controller `k`'s part of the program in its own cycles: its
+  lines, the events it plays, submits or takes the answer of, its calls and
+  its limits, with the program's event and line ids. A program that plays
+  the lines of more than one controller needs `controller=`; a controller
+  the program does not use exports a valid empty program, and a program
+  of calls alone is exported by the controller that makes them.
+  `Link(per_controller=True)` (`per_controller = true` in a system file)
+  gives each controller its own instance of a link, shared by default:
+  its own slots, so its calls do not wait for another controller's, its own
+  calls in its export (tagged `"controller"`), its own processor to place
+  the link on, and no cross-controller start uncertainty in its budgets. A
+  call whose measurements and answer are on different controllers fails to
+  compile.
+  Budgets between controllers add each one's start uncertainty, its
+  `clock_skew_cycles` plus one of its own cycles without a
+  `reference_clock_ghz`: a pulse that branches on, or computes with,
+  another controller's readout waits for the reader's feedback and peer
+  latency and both uncertainties (`rcp` waits that long for each pair of
+  reader and user, and a pulse on the reader's controller its feedback
+  latency alone; starting sooner is a `ControllerLimitError` naming the
+  cycle), and an answer taken on another controller than the one that sent
+  the request is due that much later (the two controllers' uncertainty; the
+  link's worst pair when the scheduler cannot tell which they are). The
+  first pulse after a sync of several controllers' lines, on each of them,
+  must land within its controller's `alignment_tolerance_cycles`: its start
+  uncertainty and its rounded line delay, else a `ControllerLimitError`.
+  Under `rcp`, a pulse that follows another controller's on one of the
+  `max_concurrent_drives` or `max_concurrent_readouts` lanes starts their
+  start uncertainty after it.
+- **Processors.** `pulse.Processor` is a classical processor on a
+  controller (`Controller(processors=[...])`), which runs the classical
+  functions called on its `links`; a link belongs to at most one processor
+  of a system (of each controller, for a per-controller link). Compiling checks each function there: an operation in its
+  `unsupported` list (named with its line), `max_ops_per_function`,
+  `max_state_bytes_per_function`, `fixed_cost_only`, and its compute time at
+  the processor's `cycles_per_op` and `clock_ghz` against its
+  `max_latency_ns`. It checks each processor's `max_ops_total`,
+  `max_state_bytes_total`, `max_calls_per_shot`, `max_bytes_per_shot` and
+  `max_concurrent_calls` (default 1) across its functions. `"loop"` is a
+  processor operation too: its cost is a rolled loop's counter and jump per
+  iteration, and a processor without it runs loops unrolled, so their size
+  counts unrolled. `dispatch_keys={"name": key}` gives the functions a
+  processor runs fixed dispatch keys; a controller that computes with its
+  own fields states them as `Controller(dispatch_keys=...)` (a
+  `[dispatch_keys]` table in its description). `lowered.controller_usage` reports
+  each processor's functions and totals against its limits
+  (`.within_limits`; `print` it for a table). A program over them does not
+  compile: its `ControllerLimitError` carries the report as `usage`, every
+  limit exceeded with by how much (`usage.exceeded`, `LimitExceeded`), and
+  ends its message with the table. Descriptions and system files state
+  processors as `[[processors]]` tables.
+- **Controller descriptions.** `pulse.controller("vendor.model",
+  drive_lines=..., readout_lines=...)` loads a controller from a TOML
+  description installed with cudaq-pulse (or one given by path), parsed
+  once, with the installation's wiring. `reference.controller` ships.
+- **System files.** `Device.as_dict()` writes a QPU as one mapping, format
+  `cudaq-pulse.system/1`, which `pulse.device()` reads back from a mapping
+  or a JSON file, reporting each problem with its line. A file written from
+  another version of an installed description is noticed once
+  (`UpgradeNotice`). `python -m cudaq_pulse.doctor --system FILE` checks a
+  system file and whether its controllers' backends are installed.
+
+### Changed
+
+- **The simulator says which systems it has no model for.** Simulating a
+  system that is not a transmon raises `UnsupportedError` (a
+  `NotImplementedError`): export and hardware runs work.
 - **Calibration on the controller.** `cudaq_pulse.classical.calibration`
   adds the estimators of millisecond on-controller calibration in controller
   form: adaptive T1 tracking with assignment errors (`adaptive_t1_update`,
@@ -48,9 +182,9 @@ behavior may change in any 0.x release.
   their frame are propagated exactly, at a cost independent of their
   length, and driven stretches on registers of up to four levels by RK4
   maps built at once (a 100 us T1 shot: 104 s to under 1 ms).
-  `simulate(paths="sampled")` follows only the paths the shots take, so a
-  program that measures many times in one shot costs time linear in its
-  measurements. Finding a program's next measurement and next call is now
+  `simulate(branches="sampled")` (or `pulse.BranchCoverage.SAMPLED`) follows
+  only the branches the shots take, so a program that measures many times in
+  one shot costs time linear in its measurements. Finding a program's next measurement and next call is now
   linear in its length.
 
 - **Kernels.** `@pulse.kernel` traces a Python function into Pulse-dialect
@@ -58,7 +192,9 @@ behavior may change in any 0.x release.
   first use, caches the specialization, and runs it; `kernel.lower(...)`
   stops before running, and `pulse.compile(kernel)` compiles ahead of the
   call. `float` parameters stay symbolic, so a parameter sweep compiles once.
-  Kernels call other kernels, loop with `range`, and branch on measurement
+  The module with a call's values substituted, which exports and the LLVM
+  stage read, is shared by every call with the same values once they
+  recur. Kernels call other kernels, loop with `range`, and branch on measurement
   results. A number the arms of an `if` on a measurement set differently
   (`if m: amp = 0.3` / `else: amp = 0.1`) holds the value of the arm that
   ran, as one `arith.select` on the measurement, in `elif` chains, nested
@@ -73,11 +209,26 @@ behavior may change in any 0.x release.
   Kernels take their qudits as parameters; a call without qudit
   handles raises `NoDeviceError` unless the kernel was compiled for a device
   (`pulse.compile(k, device=dev)`).
+- **Lines and their tones.** `get_drive_line(q)` and `get_readout_line(q)`
+  return the line alone, one value that is not unpacked or iterated;
+  `line.tone` is its own tone, and `line.tones[(lower, upper)]`, a
+  read-only mapping keyed by levels, the tone of each transition of its
+  qudit: the line's own tone is that of the model's `default_transition`
+  (`(0, 1)` in the shipped models), and another transition's starts at its
+  frequency from the model, with phase 0. `drive(line, waveform)` and
+  `readout(line, waveform)` play on the line's own tone and, by keyword
+  only, `tone=` on another, such as another line's; the frame operations
+  take the tone, as in `shift_phase(line.tone, phase)`.
+  A transition the qudit does not have raises a `KeyError`
+  (`pulse.NotFoundError`) that lists those it has.
 - **Loop unrolling.** A `range` loop whose variable is never read is kept
   as one rolled loop, unless its estimated unrolled size (trip count times
   the calls in its body) is at most the unroll threshold: 8 by default, the
-  measured break-even point, set with `pulse.compile(k, unroll_threshold=)`,
-  `@pulse.kernel(unroll_threshold=)` or `CUDAQ_PULSE_UNROLL_THRESHOLD`.
+  measured break-even point. The threshold is a compile option only, an
+  `int` of 0 or more set with `pulse.compile(k, unroll_threshold=)` or
+  `@pulse.kernel(unroll_threshold=)`; 0 means never unroll, so every such
+  loop stays rolled, even one of no or one iteration. No environment
+  variable sets it.
   Lines and tones kept in a list, tuple or dict, retuned with
   `set_frequency` or not, are carried through a rolled loop. A rolled body
   may iterate over qudits (`for q in qs`) and gather their lines in a list.
@@ -112,8 +263,8 @@ behavior may change in any 0.x release.
   holds (`self.wf()`, `self.gates.x90(...)`), when it is inherited, a
   `staticmethod` or `classmethod`, stored as a bound method, or an
   object's `__call__`. Lines
-  and tones may be kept in any container, such as a list of `(line, tone)`
-  pairs or a dict, and lists of them support `pop`, `insert`, `extend`,
+  and tones may be kept in any container, such as a list of lines or a
+  dict, and lists of them support `pop`, `insert`, `extend`,
   `remove` and `del xs[i]`. `sync()` takes lists and tuples of lines, as
   in `sync(lines)`. A pulse op given the wrong kind of argument, such as a
   tone where its line belongs, raises a `CompilationError` that names the
@@ -174,11 +325,14 @@ behavior may change in any 0.x release.
 - **Compilation.** Verification, constant and phase folding and pulse
   fusion by default; ASAP, ALAP and resource-constrained schedules
   (`cudaq_pulse.compiler.MachineModel`); per-kernel schedule policies and
-  schedule blocks. `pulse.Lowered.mlir()` returns the scheduled Pulse MLIR
-  or the LLVM-dialect module, `Lowered.schedule` the timed events
-  (`cudaq_pulse.compiler.ScheduledEvent`), `Lowered.metrics` the compile
+  schedule blocks. `pulse.Lowered.mlir(level)` returns the module at an IR
+  level (`cudaq_pulse.compiler.IRLevel`: `"pulse"`, the scheduled Pulse
+  MLIR, `"qop"`, `"cudm"` or `"llvm"`), `Lowered.schedule` the timed events
+  (`cudaq_pulse.compiler.ScheduledEvent`), `Lowered.duration` how long the
+  program runs as a `pulse.Time`, `Lowered.metrics` the compile
   times (`cudaq_pulse.compiler.CompileMetrics`), and `Lowered.timeline()` a
-  plot (with the `[viz]` extra).
+  plot (with the `[viz]` extra). `Device.qudit(label)` finds a qudit by
+  its label and `TargetDescription.coupling(a, b)` the coupling of two.
 - **Optimization passes.** `passes=` takes members of `pulse.Pass`, a
   string enum, or their names, in any order and combination: `VERIFY`,
   `FOLD_CONSTANTS` (constant arithmetic computed at compile time),
@@ -201,15 +355,22 @@ behavior may change in any 0.x release.
   `pulse-hoist-loop-invariants`), as well as `pulse-unroll-classical-loops`
   and `pulse-schedule-rcp` with its machine model as options (`max-drives`,
   `max-readouts`, `readout-latency`, `switch-penalty`, `alap`).
-- **Devices and targets.** `pulse.get_device` and `pulse.device` describe a
-  machine as a target plus a qudit layout; devices compare by content and
-  share compiled kernels. Target descriptions are
-  `cudaq_pulse.targets.TargetDescription`; `pulse.Target` names the shipped
-  targets: a 17-qubit transmon device built from Krinner et al., Nature 605,
-  669 (2022), and Rydberg chain and square arrays (compile only).
+- **Devices and targets.** `pulse.device` is the one device getter: it
+  describes a machine as a target plus a qudit layout, from a registered
+  target name (`pulse.device("transmon_17q")`), a config mapping
+  or file, or, with no argument, the process target. Devices compare by
+  content and share compiled kernels. Target descriptions are
+  `cudaq_pulse.targets.TargetDescription`; the shipped target,
+  `"transmon_17q"`, is a 17-qubit transmon device built from
+  Krinner et al., Nature 605, 669 (2022).
+  A target's `model` (`cudaq_pulse.targets.TransmonModel` by default, a
+  `SimulationModel` class or instance, or `None`) says how the simulator
+  treats its qudits; each model class declares its levels (3 for
+  transmons), and `TransmonModel(levels={0: 4})` sets a qudit's own. No
+  label changes the physics: targets have no `architecture`.
   A `Coupling`'s gate fields (`gate_type`, `gate_duration_ns`,
   `gate_buffer_ns`, `gate_fidelity`) default to `None`, unspecified; the
-  Krinner target gives its published CZ values. A config or file with
+  `transmon_17q` target gives its published CZ values. A config or file with
   problems raises `pulse.DeviceDefinitionError` (a `ValueError`) listing all
   of them in `problems`, each a `pulse.Problem` with its path in the config
   (`layout[2]`), the offending value and a fix, and for a file its line and
@@ -221,31 +382,61 @@ behavior may change in any 0.x release.
   apart from the published target, and a device config takes `"calibration"`
   and `"cooldown"`. `cudaq_pulse.targets.transmon_model` computes
   flux-tunable transmon levels and charge-coupled pairs from circuit values.
-  The shipped `krinner17` calibration has one device-wide charge coupling,
-  fitted to the measured `|11>`-`|20>` coupling of X2-D4, so the Krinner
-  target's exchange (5.67-6.08 MHz) and idle ZZ (-4.5 to -7.3 kHz) depend on
+  The shipped `transmon_17q` calibration has one device-wide charge coupling,
+  fitted to the measured `|11>`-`|20>` coupling of X2-D4, so the
+  `transmon_17q` target's exchange (5.67-6.08 MHz) and idle ZZ (-4.5 to -7.3 kHz) depend on
   each pair's frequencies; calibrated qubits convert detunings to and from flux quanta.
   It also holds in-model sudden-net-zero CZ knobs for all 24 pairs (mean
   duration 65.0 +- 4.8 ns against the published 68(7) ns), each with its
   predicted phase and leakage, flags and alternatives.
 - **Simulation.** `pulse.simulate` evolves a compiled call with T1, T2 or
   Hahn-echo dephasing, thermal populations, exchange couplings, residual ZZ
-  and any number of transmon levels, either with a NumPy reference
+  and any number of transmon levels (by default those the target's model
+  declares, 3 for a transmon; `levels=` sets them for every qudit or, as a
+  dict, per qudit), either with a NumPy reference
   integrator (`backend="cpu"`) or on NVIDIA GPUs through cuDensityMat
   (`backend="gpu"`, Linux, experimental). Programs that measure and branch
   are evolved as an exact ensemble over outcomes. The simulated space holds
   only the qudits the program gets a line on, whatever their device indices
   (a pair at qudits 13 and 3 is a two-mode problem); `SimulationResult.qudits`
   and `Lowered.qudits` give the device qudit of each mode, and the other
-  qudits are classical spectators.
+  qudits are classical spectators. `result.level_population(level, qudit)`
+  and `result.level_populations(qudit)` give a qudit's level probabilities
+  from its reduced state, for any number of levels; `qudit` (a device index
+  or handle) may be left out when the result models one qudit, and a qudit
+  or level the result does not have is an `InvalidValueError` listing those
+  it has. `result.branches` holds one `Branch` per measurement path: its
+  `levels`, `probability` and classical `calls`, with `answers(function)`
+  for the answers of one function.
 - **Classical calls at QPU runtime.** `classical`, a classical real-time
   dialect for co-processing at QPU runtime: pulse programs call GPU, host or
   FPGA services (decoders, estimators, calibration updates) while the QPU
   runs and use their answers in the same shot. `@pulse.classical` declares a
-  function with typed arguments and results, a latency model and a link;
-  `fn.submit(...).result()` calls it in a kernel, with `timeout_ns=` for a
-  fallback. Type checkers and editors see the decorator with its keyword
-  options, and `.submit()` returns a `Pending`. Links are named in
+  function from its type hints (`def decode(syndrome: pulse.Bits) -> bool`),
+  with a latency model and a link; a list parameter takes its length from
+  the call, each length makes a version of the function (`flip__3`), and
+  list results take theirs from the body (and the plain Python helpers it
+  calls). `pulse.Length` (`typing.Annotated`)
+  states a fixed length where one schema is wanted:
+  `pulse.Length[pulse.Bits, 8]` (eight measurements read as bits) and
+  `pulse.Length[list[int], 8]` (eight numbers). One readout passed where a
+  list is taken is a compile error that gives the fix
+  (`decode.submit([m])`). A call record or
+  report row names the function (`call.function`, `"flip"`), its version
+  (`call.compiled_name`, `"flip__3"`) and the key its requests are
+  dispatched by (`call.dispatch_key`: the FNV-1a hash of the compiled name,
+  or the key a controller's `dispatch_keys` fixes; the call manifest's
+  `"dispatch_key"`). Two names that hash to one key on one link are a
+  compile error. An external function's stub is a
+  declaration whose body is a placeholder for its result (`return float()`,
+  `return syndrome[:2]`); its unsized list parameters make versions as for
+  `@pulse.classical`. Simulation and emulation check every answer's list
+  lengths. `fn.submit(...).result()` calls it in a kernel, with `timeout=`
+  (a time such as `350 * pulse.ns`, or a number of nanoseconds, as the
+  declaration's latencies take) for a fallback. Type checkers and editors see
+  the function's own signature: a wrong argument is an error where it is
+  passed, and
+  `.submit()` returns a `Pending` of the result's type. Links are named in
   `MachineModel(links={...})`. Every schedule budgets the worst-case
   latency, holds link slots and reports each call's slack and its hidden and
   exposed latency (`Lowered.classical_report()`); `pulse-classical-check`
@@ -290,10 +481,13 @@ behavior may change in any 0.x release.
   computes nothing at run time exports exactly as before. Within a version,
   keys and event kinds are only added. `MachineModel(controller=
   ControllerLimits(...))` states what a controller can play (clock, issue
-  spacing, waveform memory, tones, readout acquirers, feedback latency,
-  answer timeouts, program size) and makes compilation fail with
+  spacing, waveform memory at its `sample_rate_ghz`, tones, the largest
+  amplitude, readout acquirers, feedback latency, answer timeouts, program
+  size; the compiler itself limits no amplitude) and makes compilation fail with
   `ControllerLimitError` when a program exceeds it, parametric kernels
-  included. `cudaq_pulse.backends` finds backends installed under the
+  included: a limit that only some values of a float parameter exceed, such
+  as a tone shift, a waveform width or a wait length, is checked at the call
+  with its values, so a call that lowers also exports. `cudaq_pulse.backends` finds backends installed under the
   `cudaq_pulse.backends` entry-point group; a backend that fails to load, is
   not a `Backend` or does not read this export format raises
   `IncompatibleBackendError`, and an unknown name `BackendNotFoundError`,
@@ -301,13 +495,24 @@ behavior may change in any 0.x release.
   the "Writing a Controller Backend" guide walks through one.
 - **Public API.** The top level is exactly `kernel`, `Kernel`, `compile`,
   `CompiledKernel`, `Lowered`, `Pass`, `simulate`, `SimulationResult`,
-  `device`, `get_device`, `Device`, `Qudit`, `Register`, `Target`,
+  `BranchCoverage`, `device`, `Device`, `Qudit`, `Register`,
   `PulseError`, `Problem`, `DeviceDefinitionError`, `InvalidValueError`,
   `InvalidTypeError`, `NotFoundError`, `UnsupportedError`,
   `CompilationError`, `TimingError`, `ExecutionError`, `InternalError`,
   `PulseWarning`, `UpgradeNotice`, `NoTargetError`, `NoDeviceError`,
   `DeviceMismatchError`, `GpuRuntimeError`, `viz`, `classical`,
   `controller` and `backends`, plus `__version__`.
+  `simulate(program, *args, **options)` is the one way to simulate: it
+  takes a kernel and its arguments as `compile` takes a kernel, or a
+  program compiled already, such as one a worker process receives pickled,
+  without compiling it again. A module with run-time float parameters
+  (`lowered.generic`) takes their values as `bind` does; the module of a
+  call, from `kernel.lower(*args)` or `bind`, takes none. `bind(values)`
+  takes one real number per parameter, in the order of `parameters`; too
+  few or too many values are an `InvalidTypeError` naming the parameters.
+  A bool, str or other non-number is an `InvalidTypeError`, and a NaN or
+  infinity an `InvalidValueError`, naming the parameter where the module
+  is used, as for a kernel call's float arguments.
   Every error cudaq-pulse raises on purpose derives from `PulseError` and
   has the built-in base of its kind: `InvalidValueError` is a `ValueError`,
   `InvalidTypeError` a `TypeError`, `NotFoundError` a `KeyError`,
@@ -350,5 +555,20 @@ behavior may change in any 0.x release.
   value an arm of an `if` yields is now ready only once its condition is,
   under every schedule, also in kernels with classical calls. Programs
   without such an arm schedule as before.
+- Values no op can take are a `CompilationError` that names the op, the
+  value and the kernel line that wrote it, rather than compiling silently
+  or failing in an MLIR pass: a NaN or infinite amplitude, sigma, beta,
+  phase, frequency or `custom_samples` sample; a sigma that is not
+  positive; an amplitude or other float that is not a number, such as
+  `None`; and a duration outside its cycles. A waveform lasts 1 to 2**53
+  cycles, and a wait, a flat top (`gaussian_square` width) or a bound 0 to
+  2**53, whether given as an `int`, a time, or an `int` or `float` argument
+  the kernel is compiled for. `simulate(shots=...)` and `emulate(shots=...)`
+  take a positive `int` (`InvalidTypeError` or `InvalidValueError`
+  otherwise; `simulate`'s default `None` still samples nothing), and a
+  qudit index past a device or register is an `IndexError` that says how
+  many qudits it has. A NaN or infinite float argument is an
+  `InvalidValueError` naming the parameter wherever the program is used:
+  run, simulated, exported or printed.
 
 [0.1.0]: https://github.com/NVIDIA/cudaq-pulse/releases/tag/v0.1.0

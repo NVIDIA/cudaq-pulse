@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-import difflib
+import numbers
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, ClassVar, Final
@@ -104,6 +104,11 @@ class PulseError(Exception):
         if problems:
             self.problems = tuple(problems)
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        from ._pickling import error_reduce
+
+        return error_reduce(self)
+
     @property
     def location(self) -> Problem | None:
         """The first problem that names a file, if any."""
@@ -189,6 +194,10 @@ class _CallTimeoutError(ExecutionError, TimeoutError):
     """A classical call got no answer in time."""
 
 
+class _QuditIndexError(PulseError, IndexError):
+    """A qudit index past the qudits of a device or register."""
+
+
 class PulseWarning(UserWarning):
     """Base class of the warnings cudaq-pulse issues, so that
     ``warnings.filterwarnings("error", category=pulse.PulseWarning)`` turns
@@ -204,12 +213,24 @@ class _SpecializationWarning(PulseWarning, RuntimeWarning):
     """A kernel call compiled a new specialization of the kernel."""
 
 
+def _positive_int(name: str, value: Any) -> int:
+    """*value*, a count such as ``shots``, as an int of at least 1; otherwise
+    the error saying what it got."""
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+        raise InvalidTypeError(f"{name} must be a positive int, got {value!r}")
+    if value < 1:
+        raise InvalidValueError(f"{name} must be a positive int, got {value!r}")
+    return int(value)
+
+
 def _count(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 
 def _closest(name: str, candidates: Iterable[str]) -> str | None:
     """The candidate closest to *name*, if one is close."""
+    import difflib
+
     close = difflib.get_close_matches(name, list(candidates), n=1)
     return close[0] if close else None
 

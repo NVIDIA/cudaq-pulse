@@ -19,68 +19,73 @@ import numpy as np
 @pulse.kernel
 def hahn_echo(qubit, sigma, amp_half_pi, amp_pi, tau):
     """Hahn echo: pi/2_X - tau - pi_X - tau - pi/2_X."""
-    drive_line, tone = get_drive_line(qubit)
+    drive_line = get_drive_line(qubit)
 
-    dur_half_pi = int(4 * sigma)
-    dur_pi = int(4 * sigma)
+    dur_half_pi = 4 * sigma
+    dur_pi = 4 * sigma
 
     half_pi_envelope = gaussian(dur_half_pi, amp_half_pi, sigma)
     pi_envelope = gaussian(dur_pi, amp_pi, sigma)
 
     # pi/2 pulse about X
-    drive(drive_line, half_pi_envelope, tone)
+    drive(drive_line, half_pi_envelope)
 
     # Free evolution
     wait(drive_line, tau)
 
     # pi refocusing pulse about X
-    drive(drive_line, pi_envelope, tone)
+    drive(drive_line, pi_envelope)
 
     # Free evolution
     wait(drive_line, tau)
 
     # Final pi/2 pulse about X
-    drive(drive_line, half_pi_envelope, tone)
+    drive(drive_line, half_pi_envelope)
 
 
 @pulse.kernel
 def cpmg_echo(qubit, sigma, amp_half_pi, amp_pi, tau, n_refocus):
     """CPMG dynamical decoupling: pi/2_X - [tau - pi_Y - tau]^n - pi/2_X."""
-    drive_line, tone = get_drive_line(qubit)
+    drive_line = get_drive_line(qubit)
 
-    dur_half_pi = int(4 * sigma)
-    dur_pi = int(4 * sigma)
+    dur_half_pi = 4 * sigma
+    dur_pi = 4 * sigma
 
     half_pi_envelope = gaussian(dur_half_pi, amp_half_pi, sigma)
     pi_envelope = gaussian(dur_pi, amp_pi, sigma)
 
     # Initial pi/2 about X
-    drive(drive_line, half_pi_envelope, tone)
+    drive(drive_line, half_pi_envelope)
 
     for _i in range(n_refocus):
         wait(drive_line, tau)
         # pi about Y = phase shift of pi/2 then pi_X
-        shift_phase(tone, np.pi / 2)
-        drive(drive_line, pi_envelope, tone)
-        shift_phase(tone, -np.pi / 2)
+        shift_phase(drive_line.tone, np.pi / 2)
+        drive(drive_line, pi_envelope)
+        shift_phase(drive_line.tone, -np.pi / 2)
         wait(drive_line, tau)
 
     # Final pi/2 about X
-    drive(drive_line, half_pi_envelope, tone)
+    drive(drive_line, half_pi_envelope)
+
+
+def cycles(time):
+    """*time* in cycles of the device's program clock."""
+    return time / pulse.ns * dev.clock_ghz
 
 
 def main():
-    sigma = 10.0  # Gaussian sigma in clock cycles
+    sigma = 5 * pulse.ns  # Gaussian sigma; pulses last 4 sigma
     amp_half_pi = 0.25
     amp_pi = 0.50
-    tau = 500  # clock cycles
+    tau = 250 * pulse.ns
 
     print("=== Hahn Echo ===")
     compiled_kernel = pulse.compile(hahn_echo, device=dev).lower(
         dev.qudit_handles[0], sigma, amp_half_pi, amp_pi, tau
     )
-    total_hahn = 2 * int(4 * sigma) + int(4 * sigma) + 2 * tau
-    print(f"  Expected duration: {total_hahn} clock cycles")
+    total_hahn = 2 * (4 * sigma) + 4 * sigma + 2 * tau
+    print(f"  Expected duration: {cycles(total_hahn):.0f} clock cycles")
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
@@ -89,12 +94,12 @@ def main():
     compiled_kernel = pulse.compile(cpmg_echo, device=dev).lower(
         dev.qudit_handles[0], sigma, amp_half_pi, amp_pi, tau, n_refocus
     )
-    total_cpmg = 2 * int(4 * sigma) + n_refocus * (int(4 * sigma) + 2 * tau)
-    print(f"  Expected duration: {total_cpmg} clock cycles")
+    total_cpmg = 2 * (4 * sigma) + n_refocus * (4 * sigma + 2 * tau)
+    print(f"  Expected duration: {cycles(total_cpmg):.0f} clock cycles")
     print(compiled_kernel.mlir())
     print(f"  Compile metrics: {compiled_kernel.metrics}")
 
 
 if __name__ == "__main__":
-    dev = pulse.get_device(pulse.Target.TRANSMON_KRINNER_17Q)
+    dev = pulse.device("transmon_17q")
     main()
