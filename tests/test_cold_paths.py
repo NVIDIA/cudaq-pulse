@@ -90,7 +90,14 @@ def test_devices_and_a_classical_program_load_no_heavy_module(tmp_path):
 
 
 def test_exports_load_no_heavy_module(tmp_path):
-    code = _PROGRAM + "low.export_controller(); low.export_emulation()\n"
+    code = (
+        _PROGRAM
+        + "from cudaq_pulse.controller import evaluate_expression, unroll\n"
+        + "low.export_controller(); low.export_emulation()\n"
+        + "unroll(low.export_controller(version=2))\n"
+        + "evaluate_expression({'op': 'ne', 'type': 'int', 'of': [{'readout': 0}, {'const': 0}]},"
+        + " readouts={0: 1})\n"
+    )
     assert _loaded(code, tmp_path) == []
 
 
