@@ -78,11 +78,18 @@ if(APPLE)
 else()
   set(_cudaq_pulse_opt_strip_flags "")
 endif()
-install(CODE "
-  if(CMAKE_INSTALL_DO_STRIP)
+if(CMAKE_STRIP)
+  set(_cudaq_pulse_opt_strip "
     execute_process(
       COMMAND \"${CMAKE_STRIP}\" ${_cudaq_pulse_opt_strip_flags} \"${_cudaq_pulse_opt_installed}\"
-      COMMAND_ERROR_IS_FATAL ANY)
+      COMMAND_ERROR_IS_FATAL ANY)")
+else()
+  set(_cudaq_pulse_opt_strip "
+    message(WARNING \"Installing cudaq-pulse-opt unstripped: CMake found no strip \"
+      \"tool. Configure with -DCMAKE_STRIP=<path to strip> to strip it.\")")
+endif()
+install(CODE "
+  if(CMAKE_INSTALL_DO_STRIP)${_cudaq_pulse_opt_strip}
   endif()"
   COMPONENT CudaqPulse
 )
