@@ -213,6 +213,10 @@ class _SpecializationWarning(PulseWarning, RuntimeWarning):
     """A kernel call compiled a new specialization of the kernel."""
 
 
+class _CoarseStepWarning(PulseWarning, RuntimeWarning):
+    """A simulation's ``dt_ns`` is too coarse for the frequencies it holds."""
+
+
 def _positive_int(name: str, value: Any) -> int:
     """*value*, a count such as ``shots``, as an int of at least 1; otherwise
     the error saying what it got."""

@@ -192,8 +192,9 @@ if __name__ == "__main__":
     )
     dev = pulse.device({"target": target})
     q = dev.qudit_handles[0]
-    # A 2 ns step resolves these 20 ns pulses on one uncoupled qubit.
-    dt_ns = 2.0
+    # A 0.25 ns step resolves the third level's 200 MHz anharmonicity, with
+    # 20 steps per period.
+    dt_ns = 0.25
 
     print("=== 1. Decoding with feed-forward ===")
     decoded = pulse.compile(decoded_feed_forward, device=dev, machine=machine).lower(q)

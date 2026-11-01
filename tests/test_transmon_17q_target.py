@@ -169,7 +169,7 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
         psi = np.zeros(levels * levels, dtype=complex)
         psi[levels * k] = psi[1 + levels * k] = 1.0 / math.sqrt(2.0)
         rho = pulse.simulate(
-            lowered, levels=levels, initial_state=psi, t_end=t_ns, dt_ns=0.025
+            lowered, levels=levels, initial_state=psi, t_end=t_ns, dt_ns=0.02
         ).density_matrix
         phases.append(cmath.phase(rho[levels * k, 1 + levels * k]))
         # The excitation stays on the auxiliary qubit, up to the weak
@@ -229,7 +229,8 @@ def test_the_time_step_resolves_the_fastest_coupled_detuning():
     assert _default_step(x90_alone.lower(dev.qudit_handles[0])) == pytest.approx(0.05)
     automatic = pulse.simulate(lowered).density_matrix
     fine = pulse.simulate(lowered, dt_ns=0.0125).density_matrix
-    coarse = pulse.simulate(lowered, dt_ns=0.05).density_matrix
+    with pytest.warns(pulse.PulseWarning, match="qudits 0 and 1 turns at their detuning"):
+        coarse = pulse.simulate(lowered, dt_ns=0.05).density_matrix
     assert np.abs(automatic - fine).max() < np.abs(coarse - fine).max() / 10
 
 

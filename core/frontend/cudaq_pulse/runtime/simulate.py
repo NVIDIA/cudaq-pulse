@@ -253,7 +253,11 @@ def simulate(
         Integration step: a time or a number of ns. By default 0.05 ns, or shorter when coupled
         qudits are far detuned: a coupling turns at their detuning, and the
         step resolves it with 20 steps per period (0.024 ns at 2.1 GHz),
-        a whole fraction of a clock cycle.
+        a whole fraction of a clock cycle. A step passed here that takes
+        fewer than 20 steps per period of the fastest frequency the
+        simulation holds, a qudit's anharmonicity with three or more levels
+        or the detuning of coupled qudits, warns with a ``PulseWarning``
+        that names that frequency and a step that resolves it.
     integrator:
         cuDensityMat integrator for the GPU backend: ``"rk1"``, ``"rk2"``,
         ``"rk4"``, ``"magnus"`` or ``"crank_nicolson"``.
@@ -381,10 +385,6 @@ def _simulate_lowered(
         )
     t_end = as_nanoseconds(t_end)
     dt_ns = as_nanoseconds(dt_ns)
-    if dt_ns is None:
-        dt_ns = _default_step(lowered)
-    elif dt_ns <= 0:
-        raise InvalidValueError("dt_ns must be positive")
     if integrator not in _VALID_INTEGRATORS:
         raise InvalidValueError(
             f"Unknown integrator {integrator!r}. "
@@ -398,6 +398,12 @@ def _simulate_lowered(
         )
     target = lowered.target.target if plant is None else _check_plant(lowered, plant)
     model = _simulation_model(target)
+    if dt_ns is None:
+        dt_ns = _default_step(lowered)
+    elif dt_ns <= 0:
+        raise InvalidValueError("dt_ns must be positive")
+    else:
+        _check_step(lowered, target, levels, dt_ns)
     return model(
         lowered,
         target,
@@ -468,6 +474,100 @@ def _default_step(lowered: Lowered) -> float:
     # A whole number of steps per clock cycle keeps pulse edges on the grid.
     cycle = 1.0 / lowered.target.clock_ghz
     return cycle / math.ceil(cycle / step - 1e-9)
+
+
+def _check_step(
+    lowered: Lowered, target: Any, levels: int | dict[int, int] | None, dt_ns: float
+) -> None:
+    """Warn when a step of *dt_ns* takes fewer than 20 steps per period of
+    the fastest frequency the simulation holds, as ``_default_step`` keeps.
+
+    Each qudit turns in the frame of its 0-1 transition: a coherence of two
+    of its levels turns at the difference of their energies' offsets from
+    evenly spaced levels, which is zero with two levels, and an exchange
+    coupling at the qudits' detuning."""
+    qubits = target.qubits
+    active = lowered.qudits
+    fastest = 0.0
+    source = ("", 0, 0)
+    if levels.__class__ is not int or levels > 2:
+        model = target.model
+        for q in active:
+            if levels is None:
+                d = model.levels_of(q)
+            elif isinstance(levels, dict):
+                d = levels[q] if q in levels else model.levels_of(q)
+            else:
+                d = int(levels)
+            if d > 2:
+                offsets = _level_offsets_hz(model, qubits[q], d)
+                spread = max(offsets) - min(offsets)
+                if spread > fastest:
+                    fastest, source = spread, ("levels", q, d)
+    for c in target._exchange_view:
+        a, b = c.qubit_a, c.qubit_b
+        if a in active and b in active:
+            detuning = abs(qubits[a].frequency_hz - qubits[b].frequency_hz)
+            if detuning > fastest:
+                fastest, source = detuning, ("coupling", a, b)
+    if fastest and fastest * dt_ns > _MAX_HZ_NS:
+        _warn_coarse_step(target, source, fastest, dt_ns, lowered.target.clock_ghz)
+
+
+# The largest frequency (Hz) times step (ns) that keeps 20 steps per period.
+_MAX_HZ_NS = 1e9 / _STEPS_PER_COUPLING_PERIOD * (1 + 1e-9)
+
+
+def _level_offsets_hz(model: Any, qubit: Any, levels: int) -> list[float]:
+    """Each level's energy less that of evenly spaced levels at the 0-1
+    frequency: the frequency it turns at in the qudit's frame."""
+    f01 = qubit.frequency_hz
+    return [e - k * f01 for k, e in enumerate(model.energies_hz(qubit, levels))]
+
+
+def _hz(frequency: float) -> str:
+    if frequency >= 1e9:
+        return f"{frequency / 1e9:.4g} GHz"
+    return f"{frequency / 1e6:.4g} MHz"
+
+
+def _warn_coarse_step(
+    target: Any, source: tuple[str, int, int], fastest: float, dt_ns: float, clock_ghz: float
+) -> None:
+    import os
+    import warnings
+
+    from .._errors import _CoarseStepWarning
+
+    kind, a, b = source
+    if kind == "levels":
+        offsets = _level_offsets_hz(target.model, target.qubits[a], b)
+        low, high = sorted((offsets.index(min(offsets)), offsets.index(max(offsets))))
+        cause = (
+            f"qudit {a} has {b} levels, and in its frame the coherence of levels "
+            f"{low} and {high} turns at {_hz(fastest)}"
+        )
+    else:
+        cause = (
+            f"the exchange coupling of qudits {a} and {b} turns at their detuning, {_hz(fastest)}"
+        )
+    bound = 1e9 / (_STEPS_PER_COUPLING_PERIOD * fastest)
+    cycle = 1.0 / clock_ghz
+    per_cycle = math.ceil(cycle / bound - 1e-9)
+    # The step as printed must not exceed the bound once rounded.
+    while float(f"{cycle / per_cycle:.3g}") > bound * (1 + 1e-9):
+        per_cycle += 1
+    suggested = f"{cycle / per_cycle:.3g}"
+    warnings.warn(
+        f"simulate(dt_ns={dt_ns:g}): {cause}, so a step of {dt_ns:g} ns takes "
+        f"{1e9 / (fastest * dt_ns):.3g} steps per period of it. A fixed-step "
+        f"integrator damps and dephases what it resolves with fewer than "
+        f"{_STEPS_PER_COUPLING_PERIOD} steps per period, so the result may be wrong. "
+        f"Pass dt_ns={suggested} or less ({per_cycle} steps per {cycle:g} ns clock "
+        "cycle keep pulse edges on the step grid).",
+        _CoarseStepWarning,
+        skip_file_prefixes=(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),),
+    )
 
 
 def _simulate_compiled(

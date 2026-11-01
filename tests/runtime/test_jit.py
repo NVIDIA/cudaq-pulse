@@ -64,7 +64,7 @@ def _qubit_target(t1_us=50.0, t2_us=30.0):
 
 def test_simulate_annotates_the_module_with_the_target():
     lowered = on(_qubit_target(), _jit_test_kernel, Q[0])
-    pulse.simulate(lowered, dt_ns=0.5)
+    pulse.simulate(lowered, dt_ns=0.25)
     mlir = lowered.mlir()
     assert "pulse.t1_times" in mlir
     assert 'qop.integrator = "rk4"' in mlir
@@ -74,7 +74,7 @@ def test_simulate_annotates_the_module_with_the_target():
 def test_simulate_emits_the_selected_integrator(integrator):
     """Every supported integrator name lowers to its dialect attribute."""
     lowered = on(_qubit_target(), _jit_test_kernel, Q[0])
-    pulse.simulate(lowered, dt_ns=0.5, integrator=integrator)
+    pulse.simulate(lowered, dt_ns=0.25, integrator=integrator)
     assert f'qop.integrator = "{integrator}"' in lowered.mlir()
 
 
@@ -88,7 +88,7 @@ def test_simulate_lowers_multilevel_transmons():
     from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 
     lowered = on(_qubit_target(0.0, 0.0), _jit_test_kernel, Q[0])
-    result = pulse.simulate(lowered, dt_ns=0.5, levels=3)
+    result = pulse.simulate(lowered, dt_ns=0.25, levels=3)
     assert result.density_matrix.shape == (3, 3)
     mlir = lowered.mlir()
     assert "pulse.levels = array<i64: 3>" in mlir

@@ -131,7 +131,7 @@ if __name__ == "__main__":
         },
     )
     lowered = pulse.compile(binary_search, device=dev, machine=machine).lower(q, 2)
-    result = pulse.simulate(lowered, plant=detuned, dt_ns=1.0)
+    result = pulse.simulate(lowered, plant=detuned, dt_ns=0.25)
     print(f"  true detuning {offset_hz / 1e3:.0f} kHz; prior 0 +- {initial_sigma_hz / 1e6:.0f} MHz")
     for branch in sorted(result.branches, key=lambda branch: -branch.probability):
         mean, sigma, _, _ = branch.answers("frequency_estimator")[-1]
@@ -196,7 +196,7 @@ if __name__ == "__main__":
     # differ by the qubit's thermal population, which the surrogate leaves out.
     wait_ns = 8000
     p_full = pulse.simulate(
-        compiled.lower(q, wait_ns), plant=plant.target(), dt_ns=4.0
+        compiled.lower(q, wait_ns), plant=plant.target(), dt_ns=0.25
     ).level_population(1)
     print(
         f"  check at {wait_ns / 1e3:.0f} us: simulated P(1) = {p_full:.3f}, "

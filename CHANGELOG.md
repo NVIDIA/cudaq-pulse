@@ -150,6 +150,16 @@ behavior may change in any 0.x release.
 - **The simulator says which systems it has no model for.** Simulating a
   system that is not a transmon raises `UnsupportedError` (a
   `NotImplementedError`): export and hardware runs work.
+- **A simulation step too coarse for its qudits warns.** A `dt_ns` passed to
+  `simulate` that takes fewer than 20 steps per period of the fastest
+  frequency the simulation holds (a qudit's level spread with three or more
+  levels, or the detuning of coupled qudits) issues a `PulseWarning` at the
+  caller's line, naming that frequency and a step that resolves it; such a
+  step damped the coherence of levels 0 and 2 silently. Examples 03, 14,
+  19, 20 and `transmon/transmon_17q_evolve_gpu.py` take steps that resolve
+  their qudits, so two print converged values: example 14's survival at
+  depth 20 is 0.952 (was 0.954), and example 20's level-2 branch
+  probabilities change (outcomes `(1, 2, 2)` 0.002, was 0.006).
 - **Calibration on the controller.** `cudaq_pulse.classical.calibration`
   adds the estimators of millisecond on-controller calibration in controller
   form: adaptive T1 tracking with assignment errors (`adaptive_t1_update`,

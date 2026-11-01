@@ -93,9 +93,9 @@ if __name__ == "__main__":
     t1 = pulse.compile(t1_experiment, device=dev)
     first = None
     for wait_time in [0 * pulse.ns, 2 * pulse.us, 5 * pulse.us, 10 * pulse.us]:
-        # A 0.5 ns step (one clock cycle) resolves these pulses and keeps
-        # the long waits fast.
-        result = pulse.simulate(t1.lower(qubit, wait_time), dt_ns=0.5)
+        # A 0.25 ns step (two per clock cycle) resolves these pulses and the
+        # third level's anharmonicity, and keeps the long waits fast.
+        result = pulse.simulate(t1.lower(qubit, wait_time), dt_ns=0.25)
         p1 = result.level_population(1)
         readout_ns = result.measurements[0].start_ns
         if first is None:

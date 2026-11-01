@@ -589,7 +589,7 @@ def test_an_adaptive_loop_of_fifty_rounds_simulates_one_path_per_shot():
     dev = pulse.device({"target": ladder_target(1)})
     lowered = pulse.compile(rounds, device=dev, machine=machine).lower(dev.qudit_handles[0], 50)
     seconds = _best(
-        lambda: pulse.simulate(lowered, shots=1, seed=1, branches="sampled", dt_ns=0.5), 2, 0
+        lambda: pulse.simulate(lowered, shots=1, seed=1, branches="sampled", dt_ns=0.125), 2, 0
     )
     # Following all 2^50 paths is out of reach; one path takes about 0.1 s.
     assert seconds < 2.0, seconds

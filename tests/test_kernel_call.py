@@ -468,8 +468,8 @@ def test_simulating_new_float_values_shares_the_module():
     q = _device().qudit_handles[0]
     first = rabi.lower(q, 0.01)
     second = rabi.lower(q, 0.02)
-    a = pulse.simulate(first, dt_ns=0.5).density_matrix[1, 1].real
-    b = pulse.simulate(second, dt_ns=0.5).density_matrix[1, 1].real
+    a = pulse.simulate(first, dt_ns=0.125).density_matrix[1, 1].real
+    b = pulse.simulate(second, dt_ns=0.125).density_matrix[1, 1].real
     assert first.generic is second.generic
     # The CPU path evaluates the lowering at the values: no copy of the module.
     assert first._concrete_module is None and second._concrete_module is None
@@ -555,9 +555,9 @@ def test_concurrent_simulations_of_one_specialization_agree():
 
     q = _device().qudit_handles[0]
     calls = [rabi.lower(q, 0.01 * (i % 4 + 1)) for i in range(16)]
-    expected = [pulse.simulate(c, dt_ns=0.5).density_matrix for c in calls]
+    expected = [pulse.simulate(c, dt_ns=0.125).density_matrix for c in calls]
     with ThreadPoolExecutor(max_workers=8) as pool:
-        got = list(pool.map(lambda c: pulse.simulate(c, dt_ns=0.5).density_matrix, calls))
+        got = list(pool.map(lambda c: pulse.simulate(c, dt_ns=0.125).density_matrix, calls))
     for g, e in zip(got, expected):
         np.testing.assert_allclose(g, e, atol=1e-12)
 

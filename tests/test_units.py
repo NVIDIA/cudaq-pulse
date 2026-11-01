@@ -545,8 +545,8 @@ def _pulse_then_idle(q):
 
 
 def test_simulate_takes_its_end_and_step_as_times():
-    by_number = pulse.simulate(_pulse_then_idle, Q[0], t_end=40.0, dt_ns=0.5)
-    for t_end, dt_ns in ((40 * ns, 0.5 * ns), (0.04 * us, 0.5), (40.0, ns / 2)):
+    by_number = pulse.simulate(_pulse_then_idle, Q[0], t_end=40.0, dt_ns=0.125)
+    for t_end, dt_ns in ((40 * ns, 0.125 * ns), (0.04 * us, 0.125), (40.0, ns / 8)):
         by_time = pulse.simulate(_pulse_then_idle, Q[0], t_end=t_end, dt_ns=dt_ns)
         assert by_time.times_ns == by_number.times_ns == (0.0, 40.0)
         assert by_time.level_populations() == by_number.level_populations()

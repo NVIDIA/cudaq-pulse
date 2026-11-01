@@ -14,11 +14,12 @@ cuDensityMat backend agrees with it.
 from __future__ import annotations
 
 import math
+import warnings
 
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import Coupling, Qubit, TargetDescription
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -316,3 +317,76 @@ def test_level_population_names_the_qudits_and_levels_it_has(call, message):
     result = _run(conditional_flip, 2, levels={0: 2, 1: 3})
     with pytest.raises(pulse.InvalidValueError, match=message):
         call(result)
+
+
+@pulse.kernel
+def _shaped(q0):
+    d0 = get_drive_line(q0)
+    drive(d0, gaussian(400, 1e-6, 80.0))
+
+
+# Levels 0 and 2 in equal parts: their coherence turns at the anharmonicity.
+_ZERO_TWO = np.array([1.0, 0.0, 1.0]) / math.sqrt(2.0)
+
+
+def test_a_step_too_coarse_for_the_anharmonicity_warns_at_the_caller():
+    with pytest.warns(pulse.PulseWarning) as caught:
+        coarse = _run(_shaped, levels=3, initial_state=_ZERO_TWO, dt_ns=0.5)
+    (warning,) = caught
+    assert issubclass(warning.category, RuntimeWarning)
+    assert warning.filename == __file__
+    message = str(warning.message)
+    assert message.startswith(
+        "simulate(dt_ns=0.5): qudit 0 has 3 levels, and in its frame the coherence of "
+        "levels 0 and 2 turns at 200 MHz, so a step of 0.5 ns takes 10 steps per period"
+    )
+    assert "Pass dt_ns=0.25 or less (2 steps per 0.5 ns clock cycle" in message
+    # The coarse step damps the coherence the warning names; the step it
+    # suggests keeps it.
+    assert abs(coarse.density_matrix[0, 2]) < 0.45
+    fine = _run(_shaped, levels=3, initial_state=_ZERO_TWO, dt_ns=0.25)
+    assert abs(fine.density_matrix[0, 2]) == pytest.approx(0.5, abs=5e-3)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"levels": 3},  # the default step
+        {"levels": 3, "dt_ns": 0.25},  # 20 steps per period
+        {"levels": 2, "dt_ns": 2.0},  # two levels turn together in the frame
+    ],
+)
+def test_a_step_that_resolves_the_simulation_does_not_warn(options, recwarn):
+    _run(_shaped, **options)
+    assert not [w for w in recwarn if issubclass(w.category, pulse.PulseWarning)]
+
+
+def test_the_check_follows_the_model_s_levels_not_a_transmon_s():
+    # Evenly spaced levels (no anharmonicity) all turn with the frame.
+    harmonic = TargetDescription(
+        name="harmonic",
+        qubits={0: Qubit(0, 5.0e9, 0.0, 0.0, 0.0)},
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pulse.PulseWarning)
+        _run(_shaped, target=harmonic, levels=4, dt_ns=2.0)
+    # With four levels, the fastest coherence is of levels 0 and 3, at 3 alpha.
+    with pytest.warns(pulse.PulseWarning, match=r"levels 0 and 3 turns at 600 MHz"):
+        _run(_shaped, levels=4, dt_ns=0.25)
+
+
+def test_a_step_too_coarse_for_coupled_qudits_names_their_detuning():
+    pair = TargetDescription(
+        name="pair",
+        qubits={q: Qubit(q, 5.0e9 + 2.0e9 * q, -200.0e6, 0.0, 0.0) for q in range(2)},
+        couplings=[Coupling(0, 1, 5.0e6)],
+    )
+    with pytest.warns(
+        pulse.PulseWarning,
+        match=r"the exchange coupling of qudits 0 and 1 turns at their detuning, 2 GHz, "
+        r"so a step of 0\.05 ns takes 10 steps per period",
+    ):
+        _run(conditional_flip, 2, target=pair, dt_ns=0.05)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pulse.PulseWarning)
+        _run(conditional_flip, 2, target=pair, dt_ns=0.025)

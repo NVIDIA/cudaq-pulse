@@ -54,9 +54,11 @@ def test_t2_of_a_qubit():
 
 def test_t1_of_a_qutrit_from_2_follows_the_harmonic_ladder():
     """|2> decays at 2 / T1. Populations alone carry no coherence that the
-    anharmonicity turns, so a 1 ns step resolves them."""
+    anharmonicity turns, so a 1 ns step resolves them; simulate, which does
+    not look at the state, warns that it would not resolve one."""
     entry = ref("t1_qutrit_from_2")
-    rho = _decay("t1_qutrit_from_2", 3, basis(3, 2), dt_ns=1.0)
+    with pytest.warns(pulse.PulseWarning, match="coherence of levels 0 and 2"):
+        rho = _decay("t1_qutrit_from_2", 3, basis(3, 2), dt_ns=1.0)
     assert rho[2, 2].real == pytest.approx(
         entry["expected"]["harmonic_ladder_P2"], rel=entry["tolerance"]["rel"]
     )
