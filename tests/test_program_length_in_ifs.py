@@ -1,0 +1,152 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+"""A call's float wait lengths in an if arm count only as far as they make
+that arm the longer one: each call is checked as the same program with
+those lengths written in is when built."""
+
+from __future__ import annotations
+
+import math
+import pickle
+import re
+
+import cudaq_pulse as pulse
+import pytest
+from cudaq_pulse import CompilationError
+from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse.controller import ControllerLimits
+
+from tests._handles import Q
+
+# 5000 ns on the 2 GHz clock of Q's device: 10,000 cycles.
+MACHINE = MachineModel(controller=ControllerLimits(max_program_duration=5_000))
+LIMIT = r"ControllerLimits\.max_program_duration"
+BOUNDS = (4, 10**6)
+LENGTHS = [4.0, 1999.5, 3000.0, 4400.4, 6000.0, 7600.0, 9700.0, 12_000.0]
+SHAPES = ["longer other arm", "both arms", "no else", "nested in a loop", "loop in an arm"]
+
+
+def _hold(d, n, written):
+    if written:
+        wait(d, n)
+    else:
+        wait(d, n, bounds=BOUNDS)
+
+
+def _kernel(shape, written=None):
+    """*shape*, whose waits a and then b last the floats x and y, or the
+    lengths *written* in."""
+    w = written is not None
+
+    @pulse.kernel
+    def kernel(q, x: float, y: float):
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(100, 0.05))
+        sync(d, r)
+        a, b = (x, y) if written is None else written
+        if shape == "longer other arm":
+            if m:
+                _hold(d, a, w)
+            else:
+                drive(d, square(4000, 0.1))
+            _hold(d, b, w)
+        elif shape == "both arms":
+            if m:
+                _hold(d, a, w)
+                drive(d, square(500, 0.1))
+            else:
+                _hold(d, b, w)
+        elif shape == "no else":
+            _hold(d, a, w)
+            if m:
+                _hold(d, b, w)
+        elif shape == "nested in a loop":
+            for _ in range(3):
+                if m:
+                    if m:
+                        _hold(d, a, w)
+                    else:
+                        drive(d, square(2500, 0.1))
+                else:
+                    _hold(d, b, w)
+        elif shape == "loop in an arm":
+            if m:
+                drive(d, square(3000, 0.1))
+            else:
+                for _ in range(2):
+                    _hold(d, a, w)
+                    if m:
+                        drive(d, square(1000, 0.1))
+                    else:
+                        _hold(d, b, w)
+
+    return kernel
+
+
+def _round(x):
+    return math.floor(x + 0.5)
+
+
+@pytest.mark.parametrize("shape", SHAPES)
+def test_a_call_is_checked_as_the_program_with_its_lengths_written_in(shape):
+    compiled = pulse.compile(_kernel(shape), machine=MACHINE)
+    waits = compiled.lower(Q[0], 4.0, 4.0).generic.waits
+    assert len(waits.length) == 5
+    cycles, most, _, repeats = waits.length[:4]
+    newly = 0
+    outcomes = set()
+    for x in LENGTHS:
+        for y in LENGTHS:
+            written = (_round(x), _round(y))
+            try:
+                pulse.compile(_kernel(shape, written), machine=MACHINE).lower(Q[0], 0.0, 0.0)
+                fits = True
+            except CompilationError as error:
+                assert re.search(LIMIT, str(error)), error
+                fits = False
+            if fits:
+                assert compiled.lower(Q[0], x, y) is not None, (x, y)
+            else:
+                with pytest.raises(ValueError, match=LIMIT):
+                    compiled.lower(Q[0], x, y)
+            # Each wait added in full, as the check was before.
+            summed = cycles + sum(
+                r * (_round(wait.length((x, y))) - wait.lowest)
+                for r, wait in zip(repeats, waits.waits, strict=True)
+            )
+            newly += fits and summed > most
+            outcomes.add(fits)
+    assert outcomes == {True, False}
+    # An arm that is empty, else, is never the longer one.
+    assert bool(newly) == (shape != "no else")
+
+
+def test_an_unpickled_module_checks_waits_in_ifs_as_compiled():
+    waits = (
+        pulse.compile(_kernel("longer other arm"), machine=MACHINE)
+        .lower(Q[0], 4.0, 4.0)
+        .generic.waits
+    )
+    again = pickle.loads(pickle.dumps(waits))
+    assert again.length == waits.length and len(waits.length) == 5
+    assert again.ok.__code__.co_code == waits.ok.__code__.co_code
+    again.check([5000.0, 4.0])
+    with pytest.raises(ValueError, match=LIMIT):
+        again.check([5000.0, 6000.0])
+
+
+def test_waits_outside_ifs_keep_the_sum():
+    @pulse.kernel
+    def flat(q, x: float):
+        d = get_drive_line(q)
+        for _ in range(3):
+            wait(d, x, bounds=BOUNDS)
+
+    waits = pulse.compile(flat, machine=MACHINE).lower(Q[0], 4.0).generic.waits
+    assert len(waits.length) == 4

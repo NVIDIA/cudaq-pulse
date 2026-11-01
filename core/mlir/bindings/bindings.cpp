@@ -2330,8 +2330,14 @@ public:
 
   /// For waits whose length floats set: (cycles op after op with each at its
   /// lowest length, the most the program may last, 1 if that is the
-  /// controller's longest program, how often each such wait runs).
+  /// controller's longest program, how often each such wait runs), and when
+  /// such a wait is in an if, the loops and ifs around them (`excess` in
+  /// the decoder).
   nb::tuple program_length() const {
+    if (!length_.excess.empty())
+      return nb::make_tuple(length_.cycles, length_.most, length_.controller,
+                            nb::cast(length_.repeats),
+                            nb::cast(length_.excess));
     return nb::make_tuple(length_.cycles, length_.most, length_.controller,
                           nb::cast(length_.repeats));
   }
@@ -3599,7 +3605,7 @@ private:
   /// is the controller's, and how often each such wait runs.
   struct Length {
     int64_t cycles = 0, most = 0, controller = 0;
-    std::vector<int64_t> repeats;
+    std::vector<int64_t> repeats, excess;
   };
   Length length_;
   // The module before scheduling, while it has schedule blocks (see
@@ -4032,6 +4038,9 @@ public:
       // the word of its first record.
       int64_t cycles = 0, elseCycles = 0;
       size_t word = 0;
+      // Where its record in `excess` begins, once a wait whose length floats
+      // set is in it.
+      size_t excessAt = 0;
     };
     std::vector<Region> regions;
     // A schedule block is a region with neither loop bounds nor a condition.
@@ -4109,6 +4118,13 @@ public:
     bool controllerLimit = false;
     int64_t serialCycles = 0;
     std::vector<int64_t> waitRepeats;
+    // The loops and ifs around those waits, from the first: wait k is
+    // [0, k], a loop [1, trips] ... [3], an if [2, then cycles, else
+    // cycles] ... [4] ... [3] (its arms at their waits' lowest lengths).
+    // Kept only when such a wait is in an if, whose longer arm can depend on
+    // the lengths.
+    std::vector<int64_t> excess;
+    bool waitInIf = false;
     auto tooLong = [&](size_t word) {
       throw PackedValueError(
           controllerLimit
@@ -4223,6 +4239,8 @@ public:
             tooLong(region.word);
           lengthen(static_cast<int64_t>(*total), region.word);
         }
+        if (region.excessAt)
+          excess.push_back(3);
         builder_->setInsertionPointToEnd(region.parent);
         const int64_t n = p[0];
         // A value carried under two names is one iteration argument.
@@ -4305,6 +4323,8 @@ public:
             isBlock(regions.back()) || regions.back().elseBody)
           throw std::invalid_argument("packed: else outside an if");
         regions.back().elseBody = std::make_unique<mlir::Block>();
+        if (regions.back().excessAt)
+          excess.push_back(4);
         regions.back().linksThen = links;
         links = regions.back().linksBefore;
         builder_->setInsertionPointToEnd(regions.back().elseBody.get());
@@ -4318,6 +4338,11 @@ public:
         Region region = std::move(regions.back());
         regions.pop_back();
         lengthen(std::max(region.cycles, region.elseCycles), region.word);
+        if (region.excessAt) {
+          excess[region.excessAt + 1] = region.cycles;
+          excess[region.excessAt + 2] = region.elseCycles;
+          excess.push_back(3);
+        }
         --openIfs;
         builder_->setInsertionPointToEnd(region.parent);
         const int64_t n = p[0];
@@ -4818,6 +4843,26 @@ public:
             if (region.isLoop)
               repeats = checkedMul(repeats, trips(region))
                             .value_or(std::numeric_limits<int64_t>::max());
+          if (excess.empty())
+            excess.push_back(0);
+          for (Region &region : regions) {
+            if (region.excessAt || isBlock(region))
+              continue;
+            region.excessAt = excess.size();
+            if (region.isLoop) {
+              excess.insert(excess.end(),
+                            {1, static_cast<int64_t>(std::min<uint64_t>(
+                                    trips(region),
+                                    std::numeric_limits<int64_t>::max()))});
+            } else {
+              excess.insert(excess.end(), {2, 0, 0});
+              if (region.elseBody)
+                excess.push_back(4);
+            }
+          }
+          waitInIf |= openIfs > 0;
+          excess.insert(excess.end(),
+                        {0, static_cast<int64_t>(waitRepeats.size())});
           waitRepeats.push_back(static_cast<int64_t>(std::min<uint64_t>(
               repeats, std::numeric_limits<int64_t>::max())));
           lengthen(p[3], cur);
@@ -5000,7 +5045,8 @@ public:
     result.runTime_ = runTime;
     if (!waitRepeats.empty())
       result.length_ = {serialCycles, maxCycles, controllerLimit ? 1 : 0,
-                        std::move(waitRepeats)};
+                        std::move(waitRepeats),
+                        waitInIf ? std::move(excess) : std::vector<int64_t>{}};
     return result;
   }
 

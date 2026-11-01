@@ -151,7 +151,8 @@ behavior may change in any 0.x release.
   cycles without one, is a `CompilationError` at the op or loop that passes
   it; trip counts multiply without overflow. A wait whose length a float
   sets is counted at its lowest length, and the call checks the length
-  again with its value.
+  again with its value; in an `if` arm, it counts only as far as it makes
+  that arm the longer one.
 
 ### Changed
 

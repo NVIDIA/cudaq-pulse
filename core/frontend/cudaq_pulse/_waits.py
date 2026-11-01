@@ -22,6 +22,10 @@ from .kernel.ir_builder import MAX_CYCLES
 # Longest wait a call may ask for: lengths stay exact in a float.
 _MAX_WAIT_CYCLES = MAX_CYCLES
 
+# ``PulseModule.program_length()``, with the loops and ifs around the waits
+# when one is in an if.
+_Length = tuple[int, int, int, Sequence[int]] | tuple[int, int, int, Sequence[int], Sequence[int]]
+
 
 class _WaitLength:
     """A wait whose length the module computes from its float arguments.
@@ -94,7 +98,8 @@ class _WaitLengths:
     with them the program's length: (its cycles op after op with each wait
     at its lowest length, the most it may last, 1 if that is the
     controller's longest program, how often each wait with a lowest length
-    runs), as ``PulseModule.program_length()`` gives it."""
+    runs, and when one is in an if the loops and ifs around them), as
+    ``PulseModule.program_length()`` gives it."""
 
     __slots__ = ("length", "ok", "waits")
 
@@ -107,7 +112,7 @@ class _WaitLengths:
         waits: Sequence[tuple[Any, ...]],
         kernel: str,
         grids: Sequence[int] = (),
-        length: tuple[int, int, int, Sequence[int]] | None = None,
+        length: _Length | None = None,
     ) -> None:
         self.waits = tuple(
             _WaitLength(wait[0], wait[1], wait[2], kernel, wait[3] if len(wait) > 3 else None)
@@ -130,11 +135,14 @@ class _WaitLengths:
             )
         if self._timed():
             assert length is not None
-            cycles, most, _, repeats = length
-            longer = " + ".join(
-                f"{r} * (({w.source} + 0.5) // 1 - {w.lowest})"
-                for w, r in zip(self._timed(), repeats, strict=True)
-            )
+            cycles, most, _, repeats = length[:4]
+            if len(length) > 4:
+                longer = _longer_in_ifs(self._timed(), length[4])
+            else:
+                longer = " + ".join(
+                    f"{r} * (({w.source} + 0.5) // 1 - {w.lowest})"
+                    for w, r in zip(self._timed(), repeats, strict=True)
+                )
             tests += f" and {cycles} + {longer} <= {most}"
         self.ok = eval(f"lambda a: {tests}", {"__builtins__": {}})
 
@@ -171,10 +179,14 @@ class _WaitLengths:
         timed = self._timed()
         if timed:
             assert self.length is not None
-            cycles, most, controller, repeats = self.length
-            for wait, runs in zip(timed, repeats):
-                assert wait.lowest is not None
-                cycles += runs * (math.floor(wait.length(values) + 0.5) - wait.lowest)
+            cycles, most, controller, repeats = self.length[:4]
+            if len(self.length) > 4:
+                longer = _longer_in_ifs(timed, self.length[4])
+                cycles += eval(f"lambda a: {longer}", {"__builtins__": {}})(values)
+            else:
+                for wait, runs in zip(timed, repeats):
+                    assert wait.lowest is not None
+                    cycles += runs * (math.floor(wait.length(values) + 0.5) - wait.lowest)
             if cycles > most:
                 kernel = timed[0].kernel
                 if controller:
@@ -201,10 +213,63 @@ class _GridWaitLengths(_WaitLengths):
         waits: Sequence[tuple[Any, ...]],
         kernel: str,
         grids: Sequence[int],
-        length: tuple[int, int, int, Sequence[int]] | None = None,
+        length: _Length | None = None,
     ) -> None:
         self.grids = tuple(grids)
         super().__init__(waits, kernel, self.grids, length)
+
+
+def _longer_in_ifs(timed: Sequence[_WaitLength], excess: Sequence[int]) -> str:
+    """The cycles the lengths of *timed* add to the program's with each at
+    its lowest, as an expression of the call's values ``a``, from the loops
+    and ifs around them (``PulseModule.program_length()``): a loop adds its
+    trips times its body's, an if what its longer arm lasts past the longer
+    arm with the lowest lengths. Each region is a name assigned in turn, so
+    the expression nests no deeper with the program."""
+    steps: list[str] = []
+    at = 1
+
+    def named(terms: list[str]) -> str:
+        if not terms:
+            return "0"
+        k = len(steps)
+        steps.append(f"(_v{k} := {' + '.join(terms)}) == _v{k}")
+        return f"_v{k}"
+
+    def body() -> list[str]:
+        nonlocal at
+        terms: list[str] = []
+        while at < len(excess) and excess[at] not in (3, 4):
+            kind = excess[at]
+            if kind == 0:
+                wait = timed[excess[at + 1]]
+                at += 2
+                terms.append(f"(({wait.source} + 0.5) // 1 - {wait.lowest})")
+            elif kind == 1:
+                trips = excess[at + 1]
+                at += 2
+                inner = named(body())
+                at += 1
+                terms.append(f"{trips} * {inner}")
+            else:
+                then, other = excess[at + 1], excess[at + 2]
+                at += 3
+                longer_then = named(body())
+                longer_else = "0"
+                if excess[at] == 4:
+                    at += 1
+                    longer_else = named(body())
+                at += 1
+                k = len(steps)
+                steps.append(
+                    f"(_t{k} := {then} + {longer_then}) == _t{k} and "
+                    f"(_e{k} := {other} + {longer_else}) == _e{k}"
+                )
+                terms.append(f"(_t{k} if _t{k} >= _e{k} else _e{k}) - {max(then, other)}")
+        return terms
+
+    total = " + ".join(body()) or "0"
+    return f"({' and '.join(steps)} and {total})" if steps else total
 
 
 def wait_lengths(
@@ -212,7 +277,7 @@ def wait_lengths(
     kernel: str,
     grid: int,
     grids: Sequence[int] | None = None,
-    length: tuple[int, int, int, Sequence[int]] | None = None,
+    length: _Length | None = None,
 ) -> _WaitLengths:
     """The checks of *waits*, each on *grid*, or on its own of *grids*, and
     of the program's *length*."""
@@ -241,7 +306,7 @@ def _rebuilt_wait_lengths(
     waits: tuple[_WaitLength, ...],
     grids: tuple[int, ...],
     check: bytes,
-    length: tuple[int, int, int, Sequence[int]] | None = None,
+    length: _Length | None = None,
 ) -> _WaitLengths:
     lengths = cls.__new__(cls)
     lengths.waits = waits
