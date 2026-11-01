@@ -13,6 +13,6 @@ import cudaq_pulse as pulse
 @pulse.kernel
 def detuned_rabi(qubit, duration: int, amplitude: float, detuning_hz: float):
     """A square drive *detuning_hz* off the qudit's nominal frequency."""
-    drive_line, tone = get_drive_line(qubit)  # noqa: F821
-    shift_frequency(tone, detuning_hz)  # noqa: F821
-    drive(drive_line, square(duration, amplitude), tone)  # noqa: F821
+    drive_line = get_drive_line(qubit)  # noqa: F821
+    shift_frequency(drive_line.tone, detuning_hz)  # noqa: F821
+    drive(drive_line, square(duration, amplitude))  # noqa: F821

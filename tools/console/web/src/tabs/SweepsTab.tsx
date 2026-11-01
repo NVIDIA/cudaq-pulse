@@ -348,7 +348,7 @@ const SweepsTab = () => {
   const meta = useConsole((s) => s.meta);
   const simple = useConsole((s) => s.mode === "overview");
   const targets = (meta?.targets ?? []).filter((t) => t.id.startsWith("transmon"));
-  const [target, setTarget] = useState("transmon_krinner_17q");
+  const [target, setTarget] = useState("transmon_17q");
   const [info, setInfo] = useState<DeviceInfo | null>(null);
   const [axes, setAxes] = useState<Axes | null>(null);
   const [labels, setLabels] = useState<string[]>([]);

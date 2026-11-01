@@ -52,35 +52,7 @@ def _example_request(name: str) -> dict[str, Any]:
         "source": adapter.example_source(name),
         "kernel": preset["kernel"],
         "args": preset["args"],
-        "target": "transmon_krinner_17q",
-        "passes": adapter.default_passes(),
-        "schedule": "alap",
-        "llvm": False,
-    }
-
-
-def _example_request(name: str) -> dict[str, Any]:
-    """The request the compiler explorer sends for an example at its defaults."""
-    preset = adapter.EXAMPLE_PRESETS[name]
-    return {
-        "source": adapter.example_source(name),
-        "kernel": preset["kernel"],
-        "args": preset["args"],
-        "target": "transmon_krinner_17q",
-        "passes": adapter.default_passes(),
-        "schedule": "alap",
-        "llvm": False,
-    }
-
-
-def _example_request(name: str) -> dict[str, Any]:
-    """The request the compiler explorer sends for an example at its defaults."""
-    preset = adapter.EXAMPLE_PRESETS[name]
-    return {
-        "source": adapter.example_source(name),
-        "kernel": preset["kernel"],
-        "args": preset["args"],
-        "target": "transmon_krinner_17q",
+        "target": adapter.DEFAULT_TARGET,
         "passes": adapter.default_passes(),
         "schedule": "alap",
         "llvm": False,
@@ -105,7 +77,7 @@ def _post_routes() -> dict[str, Callable[[dict[str, Any]], Any]]:
 def _streams() -> dict[str, Callable[[dict[str, str]], Iterator[dict[str, Any]]]]:
     return {
         "/api/sweeps": lambda q: adapter.device_sweeps(
-            q.get("target", "transmon_krinner_17q"), int(q.get("seed", 3))
+            q.get("target", adapter.DEFAULT_TARGET), int(q.get("seed", 3))
         ),
     }
 

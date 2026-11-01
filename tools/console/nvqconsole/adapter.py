@@ -35,8 +35,10 @@ from typing import Any
 
 import cudaq_pulse as pulse
 import numpy as np
+from cudaq_pulse import InvalidValueError
 from cudaq_pulse import compiler as _compiler
 from cudaq_pulse import controller as _controller
+from cudaq_pulse.targets import TransmonModel, available_targets, transmon_17q
 
 # One compile or simulation at a time: the native module builder is shared.
 LOCK = threading.Lock()
@@ -87,16 +89,39 @@ def _controller_usage(lowered: Any, limits: Any = None) -> Any:
 _DEVICES: dict[str, Any] = {}
 
 
+DEFAULT_TARGET = "transmon_17q"
+
+# Registered targets that take a qudit count are listed at this size.
+_SIZED_TARGET_COUNT = 5
+
+
 def targets() -> list[dict[str, Any]]:
-    return [{"id": t.value, "name": t.name.lower()} for t in pulse.Target]
+    found = []
+    for name in available_targets():
+        target_id = name
+        try:
+            device(name)
+        except InvalidValueError:
+            target_id = f"{name}:{_SIZED_TARGET_COUNT}"
+        found.append({"id": target_id, "name": target_id})
+    return found
 
 
 def device(target_id: str) -> Any:
     found = _DEVICES.get(target_id)
     if found is None:
-        found = pulse.get_device(pulse.Target(target_id))
+        found = pulse.device(target_id)
         _DEVICES[target_id] = found
     return found
+
+
+def _architecture(target: Any) -> str:
+    model = getattr(target, "model", None)
+    return (
+        "transmon"
+        if model is None or isinstance(model, TransmonModel)
+        else type(model).__name__.lower()
+    )
 
 
 def _num(value: Any) -> Any:
@@ -145,7 +170,7 @@ def device_info(target_id: str) -> dict[str, Any]:
     return {
         "id": target_id,
         "name": dev.name,
-        "architecture": target.architecture,
+        "architecture": _architecture(target),
         "clock_ghz": dev.clock_ghz,
         "qudits": qudits,
         "couplings": couplings,
@@ -175,7 +200,7 @@ EXAMPLE_PRESETS: dict[str, dict[str, str]] = {
     "20_adaptive_calibration.py": {"kernel": "binary_search", "args": "q[0], 2"},
     "21_calibration_protocol.py": {
         "kernel": "calibration_chain",
-        "args": "q[0], 20_000.0 * CLOCK_GHZ",
+        "args": "q[0], 20_000.0 * clock_ghz",
     },
 }
 
@@ -294,7 +319,7 @@ def kernels(source: str) -> list[dict[str, Any]]:
 
 
 def _machine(module: Any) -> Any:
-    found = getattr(module, "MACHINE", None)
+    found = getattr(module, "machine", None)
     return found if isinstance(found, _compiler.MachineModel) else None
 
 
@@ -500,7 +525,9 @@ def _simulate_populations(request: dict[str, Any], points: int, levels: int) -> 
         "dims": list(final.dims),
         "series": series,
         "clock_ghz": clock,
-        "branches": [{"outcomes": list(o), "p": float(p)} for o, p in final.branches[:32]],
+        "branches": [
+            {"outcomes": list(b.levels), "p": float(b.probability)} for b in final.branches[:32]
+        ],
         "wall_s": time.perf_counter() - started,
     }
 
@@ -524,10 +551,8 @@ def _example(name: str) -> Any:
     return found
 
 
-def _krinner() -> tuple[Any, Any]:
-    from cudaq_pulse.targets import transmon_krinner_17q
-
-    target = transmon_krinner_17q()
+def _transmon_17q() -> tuple[Any, Any]:
+    target = transmon_17q()
     return target, pulse.device({"target": target})
 
 
@@ -538,7 +563,7 @@ def _param(spec: dict[str, Any], params: dict[str, Any]) -> float:
 
 def _rabi(p: dict[str, float]) -> dict[str, Any]:
     ex = _example("01_single_qubit_rabi.py")
-    _, dev = _krinner()
+    _, dev = _transmon_17q()
     q = dev.qudit_handles[0]
     length = int(p["length"])
     amps = np.linspace(0.0, p["max_amp"], int(p["points"]))
@@ -571,7 +596,7 @@ def _rabi(p: dict[str, float]) -> dict[str, Any]:
 
 def _t1(p: dict[str, float]) -> dict[str, Any]:
     ex = _example("03_t1_t2_dissipator.py")
-    target, dev = _krinner()
+    target, dev = _transmon_17q()
     q = dev.qudit_handles[0]
     clock = target.clock_ghz
     waits = np.linspace(0, p["max_wait_us"] * 1e3 * clock, int(p["points"])).astype(int)
@@ -605,7 +630,7 @@ def _drift(p: dict[str, float]) -> dict[str, Any]:
     from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck, TelegraphT1
 
     _example("20_adaptive_calibration.py")
-    target, _ = _krinner()
+    target, _ = _transmon_17q()
     qubit = target.qubits[0]
     iterations, block = 6000, 150
     telegraph = TelegraphT1(qubit.t1_us / 4, qubit.t1_us, rate_hz=p["switch_hz"])
@@ -676,12 +701,12 @@ def _drift(p: dict[str, float]) -> dict[str, Any]:
 
 def _chain(_: dict[str, float]) -> dict[str, Any]:
     ex = _example("21_calibration_protocol.py")
-    target, dev = _krinner()
+    target, dev = _transmon_17q()
     q = dev.qudit_handles[0]
     started = time.perf_counter()
     with LOCK:
-        compiled = pulse.compile(ex.calibration_chain, device=dev, machine=ex.MACHINE)
-        lowered = compiled.lower(q, 20_000.0 * ex.CLOCK_GHZ)
+        compiled = pulse.compile(ex.calibration_chain, device=dev, machine=ex.machine)
+        lowered = compiled.lower(q, 20_000.0 * ex.clock_ghz)
     compile_s = time.perf_counter() - started
     n_readouts = sum(1 for e in lowered.schedule if e.kind == "readout")
     started = time.perf_counter()
@@ -691,13 +716,14 @@ def _chain(_: dict[str, float]) -> dict[str, Any]:
             plant=ex.chain_plant(target),
             shots=1,
             seed=7,
-            paths="sampled",
+            branches="sampled",
             readout="model",
         )
     simulate_s = time.perf_counter() - started
     report = _controller_usage(lowered)
-    clock = ex.CLOCK_GHZ
-    calls = result.calls[0]
+    clock = ex.clock_ghz
+    branch = result.branches[0]
+    calls = branch.calls
     steps = []
     for call in calls:
         answer = call.answer if isinstance(call.answer, tuple) else (call.answer,)
@@ -724,8 +750,8 @@ def _chain(_: dict[str, float]) -> dict[str, Any]:
     truth = {
         "readout errors": (0.03, 0.02),
         "detuning (kHz)": 60.0,
-        "pi amplitude": ex.PI_AMP / 1.015,
-        "pi/2 amplitude": ex.PI_AMP / 2 / 1.015,
+        "pi amplitude": ex.nominal_pi_amplitude / 1.015,
+        "pi/2 amplitude": ex.nominal_pi_amplitude / 2 / 1.015,
         "T1, decay estimator (us)": 18.3,
         "T1, adaptive (us)": 18.3,
     }
@@ -742,7 +768,7 @@ def _chain(_: dict[str, float]) -> dict[str, Any]:
         "end_us": max((s["t_us"] for s in steps), default=0.0),
         "results": [
             {"name": name, "value": plain(value), "truth": plain(truth[name])}
-            for name, value in ex.chain_results(calls).items()
+            for name, value in ex.chain_results(branch).items()
         ],
         "steps": steps,
         "tracker": tracker,
@@ -877,7 +903,7 @@ def warm_up(on_ready: Callable[[str, float], None] | None = None) -> None:
         if on_ready is not None:
             on_ready(name, time.perf_counter() - started)
     started = time.perf_counter()
-    for _ in device_sweeps("transmon_krinner_17q"):
+    for _ in device_sweeps(DEFAULT_TARGET):
         pass
     if on_ready is not None:
         on_ready("device sweeps", time.perf_counter() - started)
@@ -960,7 +986,10 @@ def _sweep_qudit(sweeps: dict[str, Any], dev: Any, plant: Any, k: int, key: Any)
             * 2
         ).astype(int)
         t2_rows = [
-            pulse.simulate(sweeps["echo"].lower(q, int(w)), plant=plant, dt_ns=dt) for w in t2_taus
+            pulse.simulate(
+                sweeps["echo"].lower(q, int(w) / clock * pulse.ns), plant=plant, dt_ns=dt
+            )
+            for w in t2_taus
         ]
     grid = np.asarray(chevron)
     dets = np.asarray(SWEEP_DETUNINGS_HZ)

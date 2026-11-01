@@ -36,7 +36,7 @@ export const useConsole = create<ConsoleState>((set) => ({
   kernels: [],
   kernel: "",
   args: "",
-  target: "transmon_krinner_17q",
+  target: "transmon_17q",
   passes: [],
   schedule: "alap",
   result: null,
