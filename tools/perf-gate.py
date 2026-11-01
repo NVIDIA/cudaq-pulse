@@ -27,9 +27,10 @@ measured in, so a baseline is versioned by it: the baseline holds the
 environment CI measured in (``environment``: the MLIR toolchain, Python,
 compiler, libc and Valgrind) and the run it was taken from (``source``).
 Counts measured in another environment fail the gate even when they are
-within the limits, so changing a pin takes a new baseline in the same
-change; ``git log benchmarks/baselines/perf_gate.json`` lists the earlier
-ones, and ``--baseline`` compares with any of them.
+within the limits, so a change of pin is followed by a new baseline, taken
+on staging (``--help``, "taking a baseline"); ``git log
+benchmarks/baselines/perf_gate.json`` lists the earlier ones, and
+``--baseline`` compares with any of them.
 
 A baseline with ``"bootstrap": true`` and no instruction counts is in
 bootstrap mode: the counts are measured and reported but do not fail the
@@ -599,7 +600,7 @@ def environment_error(baseline: dict[str, Any], environment: dict[str, str]) -> 
         return None
     return (
         f"its counts were measured in another environment ({'; '.join(differ)}): "
-        "take this run as the baseline in the same change"
+        "take this run as the baseline (--help, taking a baseline)"
     )
 
 
@@ -676,22 +677,27 @@ taking a baseline:
   job of .github/workflows/ci.yml); every run of the job uploads its
   measurements, in the baseline's format, as the perf-gate-baseline
   artifact. To take a new baseline, for a change that moves the counts on
-  purpose or for a new toolchain pin:
+  purpose or for a new toolchain pin, whose counts fail the gate until
+  then:
 
-  1. Run only the perf gate on the branch, with 5 identical Callgrind runs:
-       gh workflow run ci.yml --ref BRANCH -f perf_baseline=true
-     (a pull request's or a push's run will do too, with 2).
+  1. Once the change is on staging, run only the perf gate there, with 5
+     identical Callgrind runs, and find the run:
+       gh workflow run ci.yml --ref staging -f perf_baseline=true
+       gh run list -w ci.yml -b staging -e workflow_dispatch -L 1
+     (staging's push run of the change will do too, with 2).
   2. In the run's job summary, check that the counts are valid (no "not
      valid" banner) and that no case's identical runs differed by more
      than its tolerance allows (the spread column; no "Identical runs
      differed" banner).
-  3. Take its measurements as the baseline, and commit them on top of the
-     commit the run measured, with no other change:
+  3. Take its measurements as the baseline and commit them, with no other
+     change, on top of staging, which must still be the commit the run
+     measured (the file's source.commit; if staging has moved, take the
+     baseline again):
        gh run download RUN -R OWNER/REPO -n perf-gate-baseline \\
          -D benchmarks/baselines
      The file then records the run, its environment (with the MLIR
      toolchain) and the cases' tolerances, and has no "bootstrap" field.
-  4. The commit's own run must pass the gate.
+  4. Staging's push run of that commit must pass the gate.
 
   A case whose identical runs differ declares its own tolerance in
   benchmarks/perf_gate/cases.py, and the next baseline records it. To
@@ -791,7 +797,9 @@ def main() -> int:
     if note:
         print(f"\n{note}")
     gated = any("instructions" in c for c in baseline.get("cases", {}).values())
-    env_diff = environment_error(baseline, environment) if instructions is not None else None
+    env_diff = None
+    if instructions is not None and (gated or baseline.get("environment")):
+        env_diff = environment_error(baseline, environment)
     if env_diff and not gated:
         print(f"\nNot gated, but {env_diff.removeprefix('its ')}")
     bootstrapped = [r for r in rows if r.verdict == "bootstrap"]

@@ -22,8 +22,8 @@ on:
         description: Also build with CUDAQ_PULSE_ENABLE_GPU=ON and run the GPU tests
         type: boolean
         default: false
-      # Its perf-gate-baseline artifact is the baseline to commit
-      # (python tools/perf-gate.py --help, "taking a baseline").
+      # Run on staging, its perf-gate-baseline artifact is the baseline to
+      # commit there (python tools/perf-gate.py --help, "taking a baseline").
       perf_baseline:
         description: Run only the perf gate, with 5 identical Callgrind runs, to take its baseline
         type: boolean
@@ -199,11 +199,11 @@ jobs:
   # informational (the test job's perf guard). The counts also depend on the
   # toolchain, so everything is pinned: the image by digest, its packages by
   # an Ubuntu archive snapshot, uv and Python by version. Changing a pin
-  # changes the counts: take a new baseline in the same pull request (the
-  # gate fails on counts from another environment than the baseline's).
-  # While the baseline says "bootstrap": true and has no counts, the counts
-  # are reported, not gated (CONTRIBUTING.md, The perf gate). A manual run
-  # with perf_baseline runs this job alone, to take a baseline.
+  # changes the counts, and the gate fails on counts from another
+  # environment than the baseline's until a new baseline is taken on
+  # staging. While the baseline says "bootstrap": true and has no counts,
+  # the counts are reported, not gated (CONTRIBUTING.md, The perf gate). A
+  # manual run with perf_baseline runs this job alone, to take a baseline.
   perf-gate:
     name: perf gate (instructions and sizes, linux-x86_64)
     if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') }}
