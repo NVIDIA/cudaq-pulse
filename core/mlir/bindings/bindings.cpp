@@ -2519,6 +2519,21 @@ public:
     };
     EpochWalk epochs(*module_);
     llvm::SmallVector<int64_t, 2> iteration;
+    llvm::DenseMap<mlir::Operation *, bool> busy;
+    auto callsOrBoundaries = [&](mlir::scf::ForOp loop) {
+      auto [it, inserted] = busy.try_emplace(loop, false);
+      if (inserted)
+        it->second =
+            loop->walk([](mlir::Operation *inner) {
+                  return mlir::isa<classical::SubmitOp>(inner) ||
+                                 inner->hasAttr("classical.variable") ||
+                                 inner->hasAttr("classical.blocking")
+                             ? mlir::WalkResult::interrupt()
+                             : mlir::WalkResult::advance();
+                })
+                .wasInterrupted();
+      return it->second;
+    };
     std::function<void(mlir::Block &)> collect = [&](mlir::Block &block) {
       for (mlir::Operation &op : block) {
         if (auto submit = mlir::dyn_cast<classical::SubmitOp>(op)) {
@@ -2555,6 +2570,9 @@ public:
         } else if (mlir::isa<classical::WaitOp, pulse::WaitOp>(op)) {
           epochs.visit(&op, iteration);
         } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
+          // A loop without calls or epoch boundaries adds nothing.
+          if (!callsOrBoundaries(loop))
+            continue;
           int64_t trips = pulse::constantTripCount(loop).value_or(0);
           iteration.push_back(0);
           for (int64_t k = 0; k < trips; ++k) {

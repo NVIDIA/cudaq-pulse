@@ -165,7 +165,8 @@ behavior may change in any 0.x release.
   events and past that a sequence that builds each event when read, from
   its op and its loops' iterations, so its type is now
   `Sequence[ScheduledEvent]`; `Lowered.duration` no longer lists the
-  events.
+  events. `classical_report()` takes a long loop without classical calls
+  once instead of once per iteration, with the same report.
 
 - **The simulator says which systems it has no model for.** Simulating a
   system that is not a transmon raises `UnsupportedError` (a
