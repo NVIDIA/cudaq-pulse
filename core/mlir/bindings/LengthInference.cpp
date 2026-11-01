@@ -383,10 +383,25 @@ struct Declined {};
 
 [[noreturn]] void decline() { throw Declined{}; }
 
-int64_t checked(bool overflowed, int64_t value) {
-  if (overflowed)
+int64_t add(int64_t a, int64_t b) {
+  int64_t r = 0;
+  if (__builtin_add_overflow(a, b, &r))
     decline();
-  return value;
+  return r;
+}
+
+int64_t subtract(int64_t a, int64_t b) {
+  int64_t r = 0;
+  if (__builtin_sub_overflow(a, b, &r))
+    decline();
+  return r;
+}
+
+int64_t multiply(int64_t a, int64_t b) {
+  int64_t r = 0;
+  if (__builtin_mul_overflow(a, b, &r))
+    decline();
+  return r;
 }
 
 int64_t floorDivide(int64_t a, int64_t b) {
@@ -399,7 +414,7 @@ int64_t floorDivide(int64_t a, int64_t b) {
 }
 
 int64_t remainder(int64_t a, int64_t b) {
-  return checked(__builtin_mul_overflow(floorDivide(a, b), b, &b), a - b);
+  return subtract(a, multiply(floorDivide(a, b), b));
 }
 
 /// Python's slice length of a sequence of `length` items.
@@ -646,17 +661,14 @@ private:
     if (arith == Arith::Subscript)
       return subscript(a, b);
     if (a.kind == Kind::Int && b.kind == Kind::Int) {
-      int64_t x = a.n, y = b.n, r = 0;
+      int64_t x = a.n, y = b.n;
       switch (arith) {
       case Arith::Add:
-        return Value::of(Kind::Int,
-                         checked(__builtin_add_overflow(x, y, &r), r));
+        return Value::of(Kind::Int, add(x, y));
       case Arith::Subtract:
-        return Value::of(Kind::Int,
-                         checked(__builtin_sub_overflow(x, y, &r), r));
+        return Value::of(Kind::Int, subtract(x, y));
       case Arith::Multiply:
-        return Value::of(Kind::Int,
-                         checked(__builtin_mul_overflow(x, y, &r), r));
+        return Value::of(Kind::Int, multiply(x, y));
       case Arith::FloorDivide:
         return Value::of(Kind::Int, floorDivide(x, y));
       case Arith::Remainder:
@@ -681,7 +693,7 @@ private:
           decline();
         int64_t p = 1;
         for (int64_t i = 0; i < y; ++i)
-          p = checked(__builtin_mul_overflow(p, x, &p), p);
+          p = multiply(p, x);
         return Value::of(Kind::Int, p);
       }
       case Arith::TrueDivide:
@@ -704,11 +716,8 @@ private:
     // A list changed in place may have other names: classical._infer.
     if (inPlace)
       decline();
-    if (arith == Arith::Add && a.kind == Kind::List && b.kind == Kind::List) {
-      int64_t r = 0;
-      return Value::of(Kind::List,
-                       checked(__builtin_add_overflow(a.n, b.n, &r), r));
-    }
+    if (arith == Arith::Add && a.kind == Kind::List && b.kind == Kind::List)
+      return Value::of(Kind::List, add(a.n, b.n));
     if (arith == Arith::Add && a.kind == Kind::Tuple && b.kind == Kind::Tuple) {
       std::vector<Value> items(*a.items);
       items.insert(items.end(), b.items->begin(), b.items->end());
@@ -717,12 +726,9 @@ private:
     if (arith == Arith::Multiply) {
       const Value *list = a.kind == Kind::List ? &a : &b;
       const Value *times = a.kind == Kind::List ? &b : &a;
-      if (list->kind == Kind::List && times->kind == Kind::Int) {
-        int64_t r = 0;
-        int64_t k = std::max<int64_t>(0, times->n);
+      if (list->kind == Kind::List && times->kind == Kind::Int)
         return Value::of(Kind::List,
-                         checked(__builtin_mul_overflow(list->n, k, &r), r));
-      }
+                         multiply(list->n, std::max<int64_t>(0, times->n)));
     }
     decline();
   }
@@ -786,10 +792,7 @@ private:
       int64_t step = argc == 3 ? args[2].n : 1;
       if (step == 0 || step == INT64_MIN)
         decline();
-      int64_t span = 0;
-      checked(__builtin_sub_overflow(step > 0 ? stop : start,
-                                     step > 0 ? start : stop, &span),
-              span);
+      int64_t span = step > 0 ? subtract(stop, start) : subtract(start, stop);
       int64_t width = step > 0 ? step : -step;
       return Value::of(Kind::Range, span <= 0 ? 0 : (span - 1) / width + 1);
     }
@@ -1366,10 +1369,7 @@ private:
         for (size_t i = 0; i < result.stack.size(); ++i) {
           if (!growth[i])
             continue;
-          int64_t added = 0, total = 0;
-          checked(__builtin_mul_overflow(growth[i], n, &added), added);
-          result.stack[i].n = checked(
-              __builtin_add_overflow(s.stack[i].n, added, &total), total);
+          result.stack[i].n = add(s.stack[i].n, multiply(growth[i], n));
         }
       }
       s = std::move(result);

@@ -11,7 +11,9 @@ number lists, and the bodies most functions have take the native path."""
 
 import inspect
 import random
+import re
 import typing
+from pathlib import Path
 
 import cudaq_pulse as pulse
 import pytest
@@ -95,6 +97,20 @@ def test_common_bodies_take_the_native_path(fn):
         names, positions, count = _signature(fn)
         lengths = {name: n for name in names if name != "k"}
         assert _agrees(fn, names, lengths, positions, count)
+
+
+_SOURCE = Path(__file__).resolve().parents[2] / "core" / "mlir" / "bindings" / "LengthInference.cpp"
+
+
+@pytest.mark.skipif(not _SOURCE.is_file(), reason="needs the source tree")
+def test_overflow_results_are_read_after_the_check():
+    """An overflow builtin's result read in another argument of the same call
+    is read before it is written where arguments are evaluated right to left
+    (GCC on x86-64), so each one is the condition of its own `if`."""
+    source = _SOURCE.read_text()
+    calls = re.findall(r"(.{0,4})__builtin_\w+_overflow\(", source)
+    assert calls
+    assert all(before == "if (" for before in calls), calls
 
 
 def _signature(fn):
