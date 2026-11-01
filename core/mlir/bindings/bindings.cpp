@@ -164,6 +164,25 @@ constexpr int kOpMaxCycles = 42;
 // A payload length of 0xFF means the length is in the next word.
 constexpr int kExtendedPayload = 0xFF;
 
+/// a + b and a * b, or nothing where they overflow. Each builtin is the
+/// condition of its own if: a call's arguments run in no fixed order, so
+/// one argument must not read what another writes.
+template <typename T>
+std::optional<T> checkedAdd(T a, T b) {
+  T r{};
+  if (__builtin_add_overflow(a, b, &r))
+    return std::nullopt;
+  return r;
+}
+
+template <typename T>
+std::optional<T> checkedMul(T a, T b) {
+  T r{};
+  if (__builtin_mul_overflow(a, b, &r))
+    return std::nullopt;
+  return r;
+}
+
 /// A literal in a packed program that its op cannot take. `word` is the
 /// offset of the record that holds it, which the frontend maps back to the
 /// kernel line that wrote it.
@@ -1208,17 +1227,27 @@ struct ControllerWalk {
     Mark three = mark();
     if (auto period = repeating(zero, one, two, three, framesOne, reachedOne,
                                 latestOne)) {
-      int64_t copies = trips - 2, shift, branches;
+      int64_t copies = trips - 2;
       int64_t stride = three.branch - two.branch;
-      bool overflow = __builtin_mul_overflow(copies - 1, *period, &shift) ||
-                      __builtin_mul_overflow(copies - 1, stride, &branches) ||
-                      __builtin_add_overflow(nextBranch, branches, &nextBranch);
+      auto overflowed = [] {
+        return std::overflow_error("a rolled loop runs past 2**63 cycles or "
+                                   "branches");
+      };
+      std::optional<int64_t> shift = checkedMul(copies - 1, *period);
+      std::optional<int64_t> branches = checkedMul(copies - 1, stride);
+      if (!shift || !branches)
+        throw overflowed();
+      std::optional<int64_t> next = checkedAdd(nextBranch, *branches);
+      if (!next)
+        throw overflowed();
+      nextBranch = *next;
       for (auto &[allocation, time] : reached)
-        if (time && *time != *reachedOne[allocation])
-          overflow |= __builtin_add_overflow(*time, shift, &*time);
-      if (overflow)
-        throw std::overflow_error("a rolled loop runs past 2**63 cycles or "
-                                  "branches");
+        if (time && *time != *reachedOne[allocation]) {
+          std::optional<int64_t> later = checkedAdd(*time, *shift);
+          if (!later)
+            throw overflowed();
+          time = *later;
+        }
       repeats.push_back({static_cast<int64_t>(two.event),
                          static_cast<int64_t>(three.event), copies, *period,
                          static_cast<int64_t>(iteration.size() - 1), two.branch,
@@ -2130,8 +2159,7 @@ public:
                        classical::SubmitOp, classical::WaitOp>(op);
     };
     auto add = [](uint64_t a, uint64_t b) {
-      uint64_t sum;
-      return __builtin_add_overflow(a, b, &sum) ? UINT64_MAX : sum;
+      return checkedAdd(a, b).value_or(UINT64_MAX);
     };
     std::function<uint64_t(mlir::Block &)> count =
         [&](mlir::Block &block) -> uint64_t {
@@ -2142,10 +2170,8 @@ public:
         } else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
           uint64_t trips = static_cast<uint64_t>(
               std::max<int64_t>(0, pulse::constantTripCount(loop).value_or(0)));
-          uint64_t all;
-          if (__builtin_mul_overflow(trips, count(*loop.getBody()), &all))
-            all = UINT64_MAX;
-          n = add(n, all);
+          uint64_t body = count(*loop.getBody());
+          n = add(n, checkedMul(trips, body).value_or(UINT64_MAX));
         } else {
           for (mlir::Region &region : op.getRegions())
             for (mlir::Block &nested : region)
@@ -4079,9 +4105,10 @@ public:
       int64_t &into = regions.empty()           ? serialCycles
                       : regions.back().elseBody ? regions.back().elseCycles
                                                 : regions.back().cycles;
-      if (__builtin_add_overflow(into, cycles, &into) || into > maxCycles)
-          [[unlikely]]
+      std::optional<int64_t> sum = checkedAdd(into, cycles);
+      if (!sum || *sum > maxCycles) [[unlikely]]
         tooLong(word);
+      into = *sum;
     };
     auto trips = [](const Region &loop) -> uint64_t {
       return loop.ub > loop.lb
@@ -4172,13 +4199,11 @@ public:
         Region region = std::move(regions.back());
         regions.pop_back();
         {
-          uint64_t total;
-          if (__builtin_mul_overflow(trips(region),
-                                     static_cast<uint64_t>(region.cycles),
-                                     &total) ||
-              total > static_cast<uint64_t>(maxCycles)) [[unlikely]]
+          std::optional<uint64_t> total =
+              checkedMul(trips(region), static_cast<uint64_t>(region.cycles));
+          if (!total || *total > static_cast<uint64_t>(maxCycles)) [[unlikely]]
             tooLong(region.word);
-          lengthen(static_cast<int64_t>(total), region.word);
+          lengthen(static_cast<int64_t>(*total), region.word);
         }
         builder_->setInsertionPointToEnd(region.parent);
         const int64_t n = p[0];
@@ -4772,9 +4797,9 @@ public:
         } else {
           uint64_t repeats = 1;
           for (const Region &region : regions)
-            if (region.isLoop &&
-                __builtin_mul_overflow(repeats, trips(region), &repeats))
-              repeats = std::numeric_limits<int64_t>::max();
+            if (region.isLoop)
+              repeats = checkedMul(repeats, trips(region))
+                            .value_or(std::numeric_limits<int64_t>::max());
           waitRepeats.push_back(static_cast<int64_t>(std::min<uint64_t>(
               repeats, std::numeric_limits<int64_t>::max())));
           lengthen(p[3], cur);

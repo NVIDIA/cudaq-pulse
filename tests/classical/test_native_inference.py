@@ -113,6 +113,19 @@ def test_overflow_results_are_read_after_the_check():
     assert all(before == "if (" for before in calls), calls
 
 
+@pytest.mark.skipif(not _SOURCE.is_file(), reason="needs the source tree")
+def test_every_native_overflow_check_is_the_condition_of_its_own_if():
+    sources = sorted(_SOURCE.parents[1].rglob("*.[ch]*"))
+    calls = [
+        (path.name, before)
+        for path in sources
+        if path.suffix in (".cpp", ".h")
+        for before in re.findall(r"(.{0,4})__builtin_\w+_overflow\(", path.read_text())
+    ]
+    assert len({name for name, _ in calls}) >= 2
+    assert all(before == "if (" for _, before in calls), calls
+
+
 def _signature(fn):
     """Parameter names, list-result positions and result count, from the hints."""
     names = tuple(inspect.signature(fn).parameters)
