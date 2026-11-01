@@ -2065,6 +2065,18 @@ struct ControllerWaveforms {
   void add(mlir::Operation *op) {
     if (of.count(op))
       return;
+    // An op computing its waveform as an earlier one does, from the same
+    // values, plays the same waveform.
+    mlir::Operation *shape = op->getOperand(1).getDefiningOp();
+    if (shape && shape->getNumRegions() != 0)
+      shape = nullptr;
+    if (shape) {
+      auto same = byShape.find(shape);
+      if (same != byShape.end()) {
+        of[op] = same->second;
+        return;
+      }
+    }
     Nodes nodes;
     ControllerWalk::waveform(op->getOperand(1), nodes);
     std::string key;
@@ -2083,10 +2095,37 @@ struct ControllerWaveforms {
     if (inserted)
       distinct.push_back(std::move(nodes));
     of[op] = it->second;
+    if (shape)
+      byShape.try_emplace(shape, it->second);
   }
 
 private:
+  /// Ops alike as CSE compares them: name, attributes, properties, result
+  /// types and the very same operands.
+  struct SameShape : llvm::DenseMapInfo<mlir::Operation *> {
+    static unsigned getHashValue(const mlir::Operation *op) {
+      auto *mutableOp = const_cast<mlir::Operation *>(op);
+      llvm::hash_code hash = llvm::hash_combine(
+          mutableOp->getName().getAsOpaquePointer(),
+          mutableOp->getRawDictionaryAttrs().getAsOpaquePointer());
+      for (mlir::Value operand : mutableOp->getOperands())
+        hash = llvm::hash_combine(hash, operand.getAsOpaquePointer());
+      return static_cast<unsigned>(hash);
+    }
+    static bool isEqual(const mlir::Operation *a, const mlir::Operation *b) {
+      if (a == b)
+        return true;
+      if (a == getEmptyKey() || a == getTombstoneKey() || b == getEmptyKey() ||
+          b == getTombstoneKey())
+        return false;
+      return mlir::OperationEquivalence::isEquivalentTo(
+          const_cast<mlir::Operation *>(a), const_cast<mlir::Operation *>(b),
+          mlir::OperationEquivalence::IgnoreLocations);
+    }
+  };
+
   std::unordered_map<std::string, int64_t> index;
+  llvm::DenseMap<mlir::Operation *, int64_t, SameShape> byShape;
 };
 
 // ── Controller clocks ─────────────────────────────────────────────────────
