@@ -193,30 +193,38 @@ PYTHONPATH=build/dev/python python tools/perf-gate.py --update
 Without Valgrind (macOS, or Linux on another architecture), the tool
 compares and updates only the program sizes. The instruction counts depend
 on the toolchain, so they are taken in CI's environment, where the image,
-its packages, uv and Python are pinned. If a change is intended, the job
-summary of the failed run prints the one command that makes that run's
-measurements the baseline:
+its packages, uv and Python are pinned. Once a change that moves them on
+purpose is on `staging`, a manual run of CI there with `perf_baseline` runs
+only the perf gate, with five identical runs, and its `perf-gate-baseline`
+artifact is the new baseline:
 
 ```bash
+gh workflow run ci.yml --ref staging -f perf_baseline=true
+gh run list -w ci.yml -b staging -e workflow_dispatch -L 1    # its <run-id>
 gh run download <run-id> -R <owner>/<repo> -n perf-gate-baseline -D benchmarks/baselines
 ```
 
-Commit the updated `perf_gate.json` and say why in the pull request.
+Check the run's summary first (no banner saying the counts aren't valid or
+that identical runs differed). Then commit `perf_gate.json` alone on top of
+`staging`, which must still be the commit the run measured (the file's
+`source.commit`), and check that staging's run of it passes.
+`python tools/perf-gate.py --help` lists the same steps.
 
 **Bootstrap mode.** A baseline that says `"bootstrap": true` and holds no
 instruction counts is in bootstrap mode. The job still measures every case
 twice and reports the counts and their spread, but they don't fail the run;
 program sizes block as always. The summary says so in a banner, together
-with the command above. Taking a run's measurements as the baseline removes
-the field, and `"bootstrap": true` next to any instruction count is an
+with the `gh run download` command for that run. Taking a run's
+measurements as the baseline removes the field, and `"bootstrap": true`
+next to any instruction count is an
 error (in the job and in `tests/test_perf_gate.py`), so the gate can't stay
 in bootstrap mode once it has counts. Bootstrap mode also can't reach a
 release: the field fails the perf gate on `main`, and `tools/release-meta.py`
 refuses a release tag while it is there. Without the field, a case with no
 count fails. If the two runs of a bootstrap differ at all for some case, the
-summary flags it: give that case its own `"tolerance"` before committing
-the baseline. A new case added later needs its count taken the same way,
-from the run that fails on it.
+summary flags it: give that case its own `tolerance` in
+`benchmarks/perf_gate/cases.py` before taking the baseline. A new case
+added later needs its count taken the same way, once it is on `staging`.
 
 **Counts that can't be right fail in every mode**, bootstrap included: a
 case without a count, a count of zero, a compile under 100,000 instructions
@@ -229,10 +237,14 @@ holds each run's raw Callgrind dumps and Valgrind log for inspection
 The
 summary lists every case with its baseline, its count in this run, the
 change, and the spread between two identical runs made in the same job. A
-case whose own numbers move more than the default allows can carry a
-`"tolerance"` (a fraction) in the baseline. Changing a pin in the job (image
-digest, `UBUNTU_SNAPSHOT`, uv or Python version, MLIR toolchain) changes the
-counts, so take a new baseline in the same pull request.
+case whose own numbers move more than the default allows declares its own
+`tolerance` (a fraction, below 0.5%) in `benchmarks/perf_gate/cases.py`;
+the baseline records it, and fails if it doesn't match. The baseline also
+records the environment its counts were measured in and the run they came
+from. Changing a pin in the job (image digest, `UBUNTU_SNAPSHOT`, uv or
+Python version, MLIR toolchain) changes the counts, and counts from another
+environment fail the gate, so take a new baseline as above once the change
+is on `staging`.
 
 Wall-clock times are informational only: shared runners are too noisy to
 block on. The test job still reports `tests/test_perf_guard.py`'s
