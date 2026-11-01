@@ -22,9 +22,15 @@ on:
         description: Also build with CUDAQ_PULSE_ENABLE_GPU=ON and run the GPU tests
         type: boolean
         default: false
+      # Its perf-gate-baseline artifact is the baseline to commit
+      # (python tools/perf-gate.py --help, "taking a baseline").
+      perf_baseline:
+        description: Run only the perf gate, with 5 identical Callgrind runs, to take its baseline
+        type: boolean
+        default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}${{ inputs.perf_baseline && '-perf-baseline' || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -33,7 +39,7 @@ permissions:
 jobs:
   lint:
     name: lint (pre-commit, zizmor)
-    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') }}
+    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') && !inputs.perf_baseline }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -58,7 +64,7 @@ jobs:
 
   test:
     name: test (${{ matrix.platform }}, py${{ matrix.python }})
-    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') }}
+    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') && !inputs.perf_baseline }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -193,9 +199,11 @@ jobs:
   # informational (the test job's perf guard). The counts also depend on the
   # toolchain, so everything is pinned: the image by digest, its packages by
   # an Ubuntu archive snapshot, uv and Python by version. Changing a pin
-  # changes the counts: take a new baseline in the same pull request. While
-  # the baseline says "bootstrap": true and has no counts, the counts are
-  # reported, not gated (CONTRIBUTING.md, The perf gate).
+  # changes the counts: take a new baseline in the same pull request (the
+  # gate fails on counts from another environment than the baseline's).
+  # While the baseline says "bootstrap": true and has no counts, the counts
+  # are reported, not gated (CONTRIBUTING.md, The perf gate). A manual run
+  # with perf_baseline runs this job alone, to take a baseline.
   perf-gate:
     name: perf gate (instructions and sizes, linux-x86_64)
     if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') }}
@@ -240,11 +248,14 @@ jobs:
             -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
           uv run --no-sync cmake --build build/dev --target pulse
 
-      # Two identical Callgrind runs side by side: the summary shows how far
-      # they differ (the spread) next to each case's change.
+      # Identical Callgrind runs side by side: the summary shows how far
+      # they differ (the spread) next to each case's change. A run taken as
+      # the baseline makes 5, for a closer look at the spread.
       - name: Perf gate
+        env:
+          PROCESSES: ${{ inputs.perf_baseline && 5 || 2 }}
         run: >
-          uv run --no-sync python tools/perf-gate.py --processes 2
+          uv run --no-sync python tools/perf-gate.py --processes "$PROCESSES"
           --out perf-gate/perf_gate.json --dumps perf-gate/callgrind
           --summary "$GITHUB_STEP_SUMMARY"
 
@@ -272,7 +283,7 @@ jobs:
   # environment and no configuration; a typo is still reported.
   editor-types:
     name: editor types (pyright, no configuration)
-    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') }}
+    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') && !inputs.perf_baseline }}
     needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -306,7 +317,7 @@ jobs:
   # stay GIL-only until their free-threaded layout is chosen.
   test-free-threaded:
     name: test (linux-x86_64, py3.14t)
-    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') }}
+    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') && !inputs.perf_baseline }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -351,7 +362,7 @@ jobs:
   # Code that runs only in a subprocess the tests start is not measured.
   coverage:
     name: coverage (report only, linux-x86_64, py3.12)
-    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') }}
+    if: ${{ !startsWith(github.ref, 'refs/heads/pull-request/') && !inputs.perf_baseline }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     continue-on-error: true

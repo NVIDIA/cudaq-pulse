@@ -243,16 +243,108 @@ def test_without_instruction_counts_only_the_sizes_are_compared():
     assert rows[0].verdict == "ok"
 
 
+_SOURCE = {"repository": "o/r", "run": 7, "commit": "a" * 40, "processes": 5}
+
+
 def test_a_baseline_without_instruction_counts_keeps_the_previous_ones():
-    previous = {"environment": {"python": "3.12.15"}, **_baseline(tolerance=0.01)}
-    kept = gate.as_baseline({"python": "other"}, {"c": {"op_count": 16}}, None, previous)
+    previous = {"environment": {"python": "3.12.15"}, "source": _SOURCE, **_baseline()}
+    kept = gate.as_baseline(
+        {"python": "other"}, {"c": {"op_count": 16}}, None, previous, {"c": 0.0045}, {"run": 8}
+    )
     assert kept["environment"] == {"python": "3.12.15"}
-    assert kept["cases"]["c"] == {"instructions": 1_000_000, "op_count": 16, "tolerance": 0.01}
+    assert kept["source"] == _SOURCE
+    assert kept["cases"]["c"] == {"instructions": 1_000_000, "op_count": 16, "tolerance": 0.0045}
     runs = {"c": gate.Measured([2_000_000.4, 2_000_100.0], [3_000_000.0, 3_000_001.0])}
-    taken = gate.as_baseline({"python": "other"}, {"c": {"op_count": 16}}, runs, previous)
+    taken = gate.as_baseline({"python": "other"}, {"c": {"op_count": 16}}, runs, previous, {})
     assert taken["environment"] == {"python": "other"}
+    assert "source" not in taken
     assert taken["cases"]["c"]["instructions"] == 2_000_000
     assert taken["cases"]["c"]["estimated_cycles"] == 3_000_000
+
+
+def test_a_measured_baseline_records_its_run_and_the_declared_tolerances(monkeypatch):
+    for name, value in {
+        "GITHUB_RUN_ID": "41000000001",
+        "GITHUB_RUN_ATTEMPT": "2",
+        "GITHUB_REPOSITORY": "o/r",
+        "GITHUB_EVENT_NAME": "workflow_dispatch",
+        "GITHUB_REF": "refs/heads/perf-baseline",
+        "GITHUB_SHA": "b" * 40,
+    }.items():
+        monkeypatch.setenv(name, value)
+    source = gate._source(5)
+    assert source == {
+        "repository": "o/r",
+        "run": 41000000001,
+        "attempt": 2,
+        "event": "workflow_dispatch",
+        "ref": "refs/heads/perf-baseline",
+        "commit": "b" * 40,
+        "processes": 5,
+    }
+    previous = {"cases": {"c": {"op_count": 15, "tolerance": 0.02}}}
+    runs = {"c": gate.Measured([1_000_000.0] * 5, [2.0] * 5)}
+    taken = gate.as_baseline(
+        {"python": "3.12.15"}, {"c": {"op_count": 15}}, runs, previous, {}, source
+    )
+    assert taken["source"] == source
+    assert "tolerance" not in taken["cases"]["c"]
+    monkeypatch.delenv("GITHUB_RUN_ID")
+    assert gate._source(2) is None
+
+
+def test_the_baseline_must_record_the_tolerances_the_cases_declare():
+    baseline = _baseline(tolerance=0.0045)
+    assert gate.tolerance_error(baseline, {"c": 0.0045}) is None
+    assert "declares" in gate.tolerance_error(baseline, {"c": 0.005})
+    assert "declares" in gate.tolerance_error(baseline, {})
+    assert "declares" in gate.tolerance_error(_baseline(), {"c": 0.0045})
+
+
+def test_counts_from_another_environment_are_named():
+    baseline = {"environment": {"mlir_toolchain": "mlir-toolchain-22.1.8", "python": "3.12.15"}}
+    same = {"mlir_toolchain": "mlir-toolchain-22.1.8", "python": "3.12.15"}
+    assert gate.environment_error(baseline, same) is None
+    error = gate.environment_error(baseline, {**same, "mlir_toolchain": "mlir-toolchain-23.1.4"})
+    assert "'mlir-toolchain-22.1.8' -> 'mlir-toolchain-23.1.4'" in error
+    assert "python" not in error
+    assert "valgrind None ->" in gate.environment_error(baseline, {**same, "valgrind": "3.22"})
+
+
+def _differences(*values):
+    return [(f"case{i} (run0/callgrind.out.{i})", v) for i, v in enumerate(values)]
+
+
+def test_a_summary_above_every_total_by_the_same_few_instructions_is_the_marks():
+    # The difference CI's dumps showed: the same 4 instructions in every one.
+    same = {"Ir": 4, "Dr": 0, "Dw": 0}
+    warnings, note = gate.dump_notes(_differences(same, same, dict(same)))
+    assert warnings == []
+    assert note.startswith("every dump's summary: is Ir +4") and "marks' own blocks" in note
+    assert gate.dump_notes(_differences({"Ir": -2}, {"Ir": -2}))[0] == []
+    assert gate.dump_notes(_differences({"Ir": 0, "Dr": 0})) == ([], "")
+    assert gate.dump_notes([]) == ([], "")
+
+
+def test_a_summary_that_differs_from_case_to_case_or_by_much_is_a_warning():
+    warnings, note = gate.dump_notes(_differences({"Ir": 4}, {"Ir": 5}, {"Ir": 4}))
+    assert warnings == [
+        "case1 (run0/callgrind.out.1): the dump's summary: differs from its totals: by "
+        "Ir +5, not Ir +4 like the other dumps"
+    ]
+    assert note.startswith("every other dump's summary: is Ir +4")
+    assert gate.dump_notes(_differences({"Ir": 0}, {"Ir": 3}, {"Ir": 0}))[1] == ""
+    many = {"Ir": gate.MARKS_INSTRUCTIONS + 1}
+    assert gate.dump_notes(_differences(many, many)) == (
+        [
+            "case0 (run0/callgrind.out.0): the dump's summary: differs from its totals: by Ir +65",
+            "case1 (run0/callgrind.out.1): the dump's summary: differs from its totals: by Ir +65",
+        ],
+        "",
+    )
+    # The first CI run's summaries were 0: below each total by the case.
+    zeros = gate.dump_notes(_differences({"Ir": -941_000}, {"Ir": -27}))
+    assert len(zeros[0]) == 2 and zeros[1] == ""
 
 
 def test_in_bootstrap_mode_a_case_without_a_count_is_reported_and_passes():
@@ -291,10 +383,10 @@ def test_a_baseline_count_of_zero_is_an_error():
 def test_taking_a_measured_run_as_the_baseline_ends_bootstrap_mode():
     previous = {"bootstrap": True, "environment": {}, "cases": {"c": {"op_count": 15}}}
     runs = {"c": gate.Measured([1_000_000.0, 1_000_000.0], [2.0, 2.0])}
-    taken = gate.as_baseline({"python": "3.12.15"}, {"c": {"op_count": 15}}, runs, previous)
+    taken = gate.as_baseline({"python": "3.12.15"}, {"c": {"op_count": 15}}, runs, previous, {})
     assert "bootstrap" not in taken
     assert gate.baseline_error(taken) is None
-    sizes_only = gate.as_baseline({}, {"c": {"op_count": 16}}, None, previous)
+    sizes_only = gate.as_baseline({}, {"c": {"op_count": 16}}, None, previous, {})
     assert sizes_only["bootstrap"] is True
 
 
@@ -306,6 +398,24 @@ def test_the_checked_in_baseline_is_bootstrapping_or_has_every_count():
     if BASELINE.get("bootstrap") is not True:
         missing = [n for n, c in BASELINE["cases"].items() if "instructions" not in c]
         assert not missing, f"no instruction count for {missing}"
+
+
+def test_a_measured_baseline_is_of_the_locked_toolchain_and_names_its_run():
+    # A new MLIR toolchain moves the counts: its pull request takes a new
+    # baseline, and the old one stays in the file's history.
+    if BASELINE.get("bootstrap") is True:
+        pytest.skip("the baseline has no instruction counts yet")
+    lock = json.loads((_ROOT / "tools" / "mlir-toolchain.lock.json").read_text())
+    assert BASELINE["environment"]["mlir_toolchain"] == lock["release_tag"]
+    assert {"repository", "run", "commit", "processes"} <= set(BASELINE["source"])
+
+
+def test_a_case_of_its_own_tolerance_still_fails_a_half_percent_regression():
+    # The baseline's tolerances are the cases' own (the size test below).
+    own = {n: c["tolerance"] for n, c in BASELINE["cases"].items() if "tolerance" in c}
+    assert "simulate_setup" in own
+    for name, tolerance in own.items():
+        assert gate.REGRESSION < tolerance < 0.005, name
 
 
 def test_every_case_gates_at_least_one_program_size():
@@ -322,7 +432,8 @@ def test_the_program_sizes_match_the_baseline(tmp_path):
     for name in ("LD_PRELOAD", "ASAN_OPTIONS", "UBSAN_OPTIONS", "TSAN_OPTIONS", "LSAN_OPTIONS"):
         if name in os.environ:
             env[name] = os.environ[name]
-    sizes = gate._structural(sys.executable, env)
+    sizes, tolerances = gate._structural(sys.executable, env)
+    assert gate.tolerance_error(BASELINE, tolerances) is None
     expected = {
         name: {
             k: v

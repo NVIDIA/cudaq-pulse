@@ -64,7 +64,8 @@
     },
     "simulate_setup": {
       "density_matrix_entries": 4,
-      "time_points": 2
+      "time_points": 2,
+      "tolerance": 0.0045
     },
     "specialize_amplitude": {
       "mlir_bytes": 1177

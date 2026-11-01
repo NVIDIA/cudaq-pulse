@@ -15,15 +15,21 @@ Runs the cases of ``benchmarks/perf_gate/cases.py`` and compares them with
   natively; any difference fails.
 - instructions executed per repetition (Callgrind's ``Ir``), measured under
   Valgrind on Linux x86-64; more than ``REGRESSION`` above the baseline
-  fails, and more than ``IMPROVEMENT`` below it fails too, until the
-  baseline is updated, so that the gain is kept. Callgrind's cache
-  simulation, with a fixed cache geometry, also gives an estimate of cycles
-  (``L1 hits + 5 x LL hits + 35 x memory accesses``); it is reported, not
-  gated.
+  fails (a case of ``cases.py`` may declare its own ``tolerance``, which
+  the baseline records), and more than ``IMPROVEMENT`` below it fails too,
+  until the baseline is updated, so that the gain is kept. Callgrind's
+  cache simulation, with a fixed cache geometry, also gives an estimate of
+  cycles (``L1 hits + 5 x LL hits + 35 x memory accesses``); it is
+  reported, not gated.
 
 The instruction counts repeat exactly only in the environment they were
-measured in: the baseline holds the one CI measures in (``environment``),
-and a difference is reported with the comparison.
+measured in, so a baseline is versioned by it: the baseline holds the
+environment CI measured in (``environment``: the MLIR toolchain, Python,
+compiler, libc and Valgrind) and the run it was taken from (``source``).
+Counts measured in another environment fail the gate even when they are
+within the limits, so changing a pin takes a new baseline in the same
+change; ``git log benchmarks/baselines/perf_gate.json`` lists the earlier
+ones, and ``--baseline`` compares with any of them.
 
 A baseline with ``"bootstrap": true`` and no instruction counts is in
 bootstrap mode: the counts are measured and reported but do not fail the
@@ -48,6 +54,7 @@ CI uploads it, so a baseline can be taken from a CI run (CONTRIBUTING.md).
 from __future__ import annotations
 
 import argparse
+import collections
 import concurrent.futures
 import json
 import os
@@ -125,13 +132,17 @@ def _run_env(pythonpath: str, home: str) -> dict[str, str]:
     }
 
 
-def _structural(python: str, env: dict[str, str]) -> dict[str, dict[str, int]]:
+def _structural(
+    python: str, env: dict[str, str]
+) -> tuple[dict[str, dict[str, int]], dict[str, float]]:
+    """Each case's program sizes, and the tolerances the cases declare."""
     out = subprocess.run(
         [python, str(CASES), "--structural"], env=env, capture_output=True, text=True, cwd=ROOT
     )
     if out.returncode:
         sys.exit(f"perf gate: {CASES.name} --structural failed:\n{out.stderr}")
-    return json.loads(out.stdout)
+    result = json.loads(out.stdout)
+    return result["sizes"], result["tolerances"]
 
 
 def _build_marks(directory: Path) -> Path:
@@ -234,11 +245,15 @@ def estimated_cycles(events: dict[str, int]) -> float | None:
     return (accesses - l1_misses) + 5 * (l1_misses - ll_misses) + 35 * ll_misses
 
 
+Difference = tuple[str, dict[str, int]]
+
+
 def _callgrind(
     python: str, env: dict[str, str], marks: Path, directory: Path, prefix: list[str]
-) -> tuple[dict[str, dict[str, float]], list[str]]:
-    """One Callgrind run of every case: its events per repetition, and
-    notes on its dumps. The dumps and Valgrind's log stay in *directory*."""
+) -> tuple[dict[str, dict[str, float]], list[Difference]]:
+    """One Callgrind run of every case: its events per repetition, and how
+    far each dump's summary is above its totals. The dumps and Valgrind's
+    log stay in *directory*."""
     directory.mkdir(parents=True)
     command = [
         *prefix,
@@ -259,7 +274,7 @@ def _callgrind(
         raise GateError(f"Callgrind run failed ({directory.name}):\n{out.stderr[-4000:]}")
     reps = json.loads(out.stdout.strip().splitlines()[-1])
     results: dict[str, dict[str, float]] = {}
-    notes = []
+    differences: list[Difference] = []
     for path in sorted(directory.glob("callgrind.out*")):
         dump = parse_dump(path.read_text(errors="replace"))
         if dump is None:
@@ -272,23 +287,65 @@ def _callgrind(
             "instructions": dump.events.get("Ir", 0) / n,
             "estimated_cycles": float("nan") if cycles is None else cycles / n,
         }
-        if dump.summary is not None and dump.summary != dump.events:
-            notes.append(
-                f"{dump.name}: the dump's summary: Ir {dump.summary.get('Ir')} differs "
-                f"from its totals: Ir {dump.events.get('Ir')} ({directory.name}/{path.name})"
-            )
+        if dump.summary is not None:
+            above = {k: dump.summary.get(k, 0) - v for k, v in dump.events.items()}
+            differences.append((f"{dump.name} ({directory.name}/{path.name})", above))
     missing = set(reps) - set(results)
     if missing:
         raise GateError(f"no Callgrind dump for {', '.join(sorted(missing))} ({directory.name})")
-    return results, notes
+    return results, differences
+
+
+# The most instructions the marks' own blocks can put between a dump's
+# summary and its totals.
+MARKS_INSTRUCTIONS = 64
+
+
+def dump_notes(differences: list[Difference]) -> tuple[list[str], str]:
+    """Warnings for the dumps whose summary: differs from their totals: in
+    a way the marks do not explain, and a note when every dump differs by
+    the same few instructions, which the marks do.
+
+    The summary is the running total since the zeroing request, counted
+    instruction by instruction under --cache-sim=yes. The cost lines count
+    a block's instructions when the next block starts: they leave out the
+    marks' block that ends in the dump request, and take in the one that
+    ends in the zeroing request, which the summary leaves out. So the two
+    differ by the same number of instructions in every dump, fixed by the
+    machine code of marks.c, which cancels out of every comparison."""
+    if not differences:
+        return [], ""
+
+    def moved(above: dict[str, int]) -> str:
+        return ", ".join(f"{k} {v:+d}" for k, v in above.items() if v)
+
+    counted = collections.Counter(tuple(sorted(above.items())) for _, above in differences)
+    shared = dict(counted.most_common(1)[0][0])
+    if not all(abs(v) <= MARKS_INSTRUCTIONS for v in shared.values()):
+        shared = {}
+    odd = [(where, above) for where, above in differences if not shared or above != shared]
+    warnings = [
+        f"{where}: the dump's summary: differs from its totals: by {moved(above)}"
+        + (f", not {moved(shared)} like the other dumps" if any(shared.values()) else "")
+        for where, above in odd
+        if any(above.values())
+    ]
+    note = ""
+    if any(shared.values()):
+        note = (
+            f"{'every other' if odd else 'every'} dump's summary: is {moved(shared)} from its "
+            "totals: (the marks' own blocks); the totals are used"
+        )
+    return warnings, note
 
 
 def measure_instructions(
     python: str, env: dict[str, str], processes: int, workdir: Path, dumps: Path
-) -> tuple[dict[str, Measured], list[str], bool]:
+) -> tuple[dict[str, Measured], list[Difference], bool]:
     """Each case's instructions per repetition in *processes* identical
-    runs, made side by side (their dumps in *dumps*), notes on the dumps,
-    and whether address randomization was off."""
+    runs, made side by side (their dumps in *dumps*), how far each dump's
+    summary is above its totals, and whether address randomization was
+    off."""
     marks = _build_marks(workdir)
     prefix = _no_aslr()
     with concurrent.futures.ThreadPoolExecutor(processes) as pool:
@@ -299,14 +356,14 @@ def measure_instructions(
             )
         )
     measured: dict[str, Measured] = {}
-    notes = []
-    for run, run_notes in runs:
-        notes += run_notes
+    differences: list[Difference] = []
+    for run, run_differences in runs:
+        differences += run_differences
         for name, values in run.items():
             m = measured.setdefault(name, Measured())
             m.instructions.append(values["instructions"])
             m.estimated_cycles.append(values["estimated_cycles"])
-    return measured, notes, bool(prefix)
+    return measured, differences, bool(prefix)
 
 
 # Instructions per repetition below which a count is wrong, not fast (a
@@ -517,14 +574,62 @@ def render(rows: list[Row], markdown: bool) -> str:
     )
 
 
+def tolerance_error(baseline: dict[str, Any], tolerances: dict[str, float]) -> str | None:
+    """Why the baseline's tolerances are not the ones the cases declare, or
+    None."""
+    recorded = {n: c["tolerance"] for n, c in baseline.get("cases", {}).items() if "tolerance" in c}
+    if recorded == tolerances:
+        return None
+    return (
+        f"its tolerances {recorded} are not those {CASES.name} declares {tolerances}: "
+        "update the baseline (without Valgrind, --update keeps its counts)"
+    )
+
+
+def environment_error(baseline: dict[str, Any], environment: dict[str, str]) -> str | None:
+    """Why counts measured in *environment* cannot be compared with the
+    baseline's, or None: they were measured in another one."""
+    expected = baseline.get("environment", {})
+    differ = [
+        f"{key} {expected.get(key)!r} -> {value!r}"
+        for key, value in environment.items()
+        if expected.get(key) != value
+    ]
+    if not differ:
+        return None
+    return (
+        f"its counts were measured in another environment ({'; '.join(differ)}): "
+        "take this run as the baseline in the same change"
+    )
+
+
+def _source(processes: int) -> dict[str, Any] | None:
+    """The CI run a measurement is taken in, or None outside GitHub Actions."""
+    run = os.environ.get("GITHUB_RUN_ID")
+    if not run:
+        return None
+    return {
+        "repository": os.environ.get("GITHUB_REPOSITORY", ""),
+        "run": int(run),
+        "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")),
+        "event": os.environ.get("GITHUB_EVENT_NAME", ""),
+        "ref": os.environ.get("GITHUB_REF", ""),
+        "commit": os.environ.get("GITHUB_SHA", ""),
+        "processes": processes,
+    }
+
+
 def as_baseline(
     environment: dict[str, str],
     sizes: dict[str, dict[str, int]],
     instructions: dict[str, Measured] | None,
     previous: dict[str, Any],
+    tolerances: dict[str, float],
+    source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """This run in the baseline's format. Without instruction counts the
-    previous baseline's are kept."""
+    """This run in the baseline's format, with the tolerances the cases
+    declare and the run it was measured in. Without instruction counts the
+    previous baseline's are kept, with their environment and run."""
     old = previous.get("cases", {})
     cases = {}
     for name in sorted(sizes):
@@ -539,15 +644,20 @@ def as_baseline(
             for key in ("instructions", "estimated_cycles"):
                 if key in old.get(name, {}):
                     entry[key] = old[name][key]
-        if "tolerance" in old.get(name, {}):
-            entry["tolerance"] = old[name]["tolerance"]
+        if name in tolerances:
+            entry["tolerance"] = tolerances[name]
         cases[name] = entry
-    if instructions is not None:
-        return {"format": FORMAT, "environment": environment, "cases": cases}
     out: dict[str, Any] = {"format": FORMAT}
-    if previous.get("bootstrap") is True:
-        out["bootstrap"] = True
-    out["environment"] = previous.get("environment", {})
+    if instructions is not None:
+        out["environment"] = environment
+        if source is not None:
+            out["source"] = source
+    else:
+        if previous.get("bootstrap") is True:
+            out["bootstrap"] = True
+        out["environment"] = previous.get("environment", {})
+        if "source" in previous:
+            out["source"] = previous["source"]
     out["cases"] = cases
     return out
 
@@ -560,8 +670,44 @@ def _update_command() -> str:
     return "python tools/perf-gate.py --update   (on Linux x86-64, in CI's environment)"
 
 
+_REGENERATE = """\
+taking a baseline:
+  The instruction counts are only taken in CI's environment (the perf-gate
+  job of .github/workflows/ci.yml); every run of the job uploads its
+  measurements, in the baseline's format, as the perf-gate-baseline
+  artifact. To take a new baseline, for a change that moves the counts on
+  purpose or for a new toolchain pin:
+
+  1. Run only the perf gate on the branch, with 5 identical Callgrind runs:
+       gh workflow run ci.yml --ref BRANCH -f perf_baseline=true
+     (a pull request's or a push's run will do too, with 2).
+  2. In the run's job summary, check that the counts are valid (no "not
+     valid" banner) and that no case's identical runs differed by more
+     than its tolerance allows (the spread column; no "Identical runs
+     differed" banner).
+  3. Take its measurements as the baseline, and commit them on top of the
+     commit the run measured, with no other change:
+       gh run download RUN -R OWNER/REPO -n perf-gate-baseline \\
+         -D benchmarks/baselines
+     The file then records the run, its environment (with the MLIR
+     toolchain) and the cases' tolerances, and has no "bootstrap" field.
+  4. The commit's own run must pass the gate.
+
+  A case whose identical runs differ declares its own tolerance in
+  benchmarks/perf_gate/cases.py, and the next baseline records it. To
+  compare with an earlier baseline, such as the last one of the previous
+  LLVM version:
+       git show COMMIT:benchmarks/baselines/perf_gate.json > old.json
+       python tools/perf-gate.py --baseline old.json
+"""
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        epilog=_REGENERATE,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--baseline", type=Path, default=BASELINE)
     parser.add_argument("--update", action="store_true", help="rewrite the baseline")
     parser.add_argument("--out", type=Path, help="write this run in the baseline's format")
@@ -586,7 +732,7 @@ def main() -> int:
     environment = _environment(args.python)
     # Instruction counts that cannot be right fail the gate in every mode.
     problems: list[str] = []
-    dump_notes: list[str] = []
+    differences: list[Difference] = []
 
     with tempfile.TemporaryDirectory(prefix="perf-gate-") as tmp:
         workdir = Path(tmp)
@@ -603,7 +749,7 @@ def main() -> int:
                 check=True,
                 stdout=subprocess.DEVNULL,
             )
-        sizes = _structural(args.python, env)
+        sizes, tolerances = _structural(args.python, env)
         instructions = None
         note = ""
         if args.sizes_only:
@@ -615,7 +761,7 @@ def main() -> int:
         else:
             dumps = args.dumps.resolve() if args.dumps else workdir / "callgrind"
             try:
-                instructions, dump_notes, no_aslr = measure_instructions(
+                instructions, differences, no_aslr = measure_instructions(
                     args.python, env, args.processes, workdir, dumps
                 )
             except GateError as e:
@@ -629,7 +775,14 @@ def main() -> int:
 
     rows = compare(baseline, sizes, instructions)
     # Counts that failed the checks are reported but never become a baseline.
-    measured = as_baseline(environment, sizes, None if problems else instructions, baseline)
+    measured = as_baseline(
+        environment,
+        sizes,
+        None if problems else instructions,
+        baseline,
+        tolerances,
+        _source(args.processes),
+    )
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(measured, indent=2) + "\n")
@@ -637,38 +790,40 @@ def main() -> int:
     print(render(rows, markdown=False))
     if note:
         print(f"\n{note}")
-    expected_env = baseline.get("environment", {})
-    env_diff = [
-        f"{key}: {expected_env.get(key)!r} -> {value!r}"
-        for key, value in environment.items()
-        if instructions is not None and expected_env.get(key) != value
-    ]
-    if env_diff:
-        print("\nThe environment differs from the baseline's, so counts may differ with it:")
-        for line in env_diff:
-            print(f"  {line}")
+    gated = any("instructions" in c for c in baseline.get("cases", {}).values())
+    env_diff = environment_error(baseline, environment) if instructions is not None else None
+    if env_diff and not gated:
+        print(f"\nNot gated, but {env_diff.removeprefix('its ')}")
     bootstrapped = [r for r in rows if r.verdict == "bootstrap"]
-    # A case taken into the baseline must repeat exactly; once gated, a
-    # spread of a quarter of its tolerance is worth a warning.
+    # A case taken into the baseline must repeat exactly, or within what
+    # its own tolerance allows above the default; once gated, a spread of
+    # a quarter of its tolerance is worth a warning.
     unstable = [
         r
         for r in rows
         if r.spread is not None
-        and (r.spread > 0 if r.verdict == "bootstrap" else r.spread > r.tolerance / 4)
+        and (
+            r.spread > max(0.0, r.tolerance - REGRESSION)
+            if r.verdict == "bootstrap"
+            else r.spread > r.tolerance / 4
+        )
     ]
     spread_lines = [
         f"{r.name} varied by {_spread(r.spread)} ({r.spread * (r.measured or 0):.3g} "
         f"instructions per repetition) between {args.processes} identical runs"
         + (
-            ': give it its own "tolerance" in the baseline before it blocks'
+            f": give it its own tolerance in {CASES.name}, or a larger one, before it blocks"
             if r.verdict == "bootstrap"
             else ""
         )
         for r in unstable
     ]
-    if len(dump_notes) > 3:
-        dump_notes = [*dump_notes[:3], f"and {len(dump_notes) - 3} more dumps"]
-    for line in spread_lines + dump_notes:
+    dump_warnings, dump_note = dump_notes(differences)
+    if len(dump_warnings) > 3:
+        dump_warnings = [*dump_warnings[:3], f"and {len(dump_warnings) - 3} more dumps"]
+    if dump_note:
+        print(f"\n{dump_note}")
+    for line in spread_lines + dump_warnings:
         print(f"::warning title=Perf gate::{line}")
     if bootstrapped and not problems:
         print(
@@ -698,7 +853,7 @@ def main() -> int:
     lines = list(problems)
     for r in failures:
         reason = {
-            "slower": f"{_pct(r.delta)} instructions (limit +{100 * r.tolerance:.1f}%)",
+            "slower": f"{_pct(r.delta)} instructions (limit +{100 * r.tolerance:g}%)",
             "improved": f"{_pct(r.delta)} instructions: update the baseline to keep the gain",
             "sizes": f"program sizes changed: {r.sizes}",
             "new": "not in the baseline",
@@ -709,6 +864,11 @@ def main() -> int:
     invalid = baseline_error(baseline, frozen=os.environ.get("GITHUB_REF") == "refs/heads/main")
     if invalid:
         lines.append(f"{args.baseline.name}: {invalid}")
+    stale = tolerance_error(baseline, tolerances)
+    if stale:
+        lines.append(f"{args.baseline.name}: {stale}")
+    if env_diff and gated:
+        lines.append(f"{args.baseline.name}: {env_diff}")
     if os.environ.get("GITHUB_ACTIONS"):
         dumps_hint = "the perf-gate-callgrind-dumps artifact has each run's dumps and Valgrind log"
     elif args.dumps:
@@ -747,24 +907,29 @@ def main() -> int:
                     + " ".join(f"{line}." for line in spread_lines)
                     + "\n\n"
                 )
-            if dump_notes:
+            if dump_warnings:
                 f.write(
                     "> [!WARNING]\n"
-                    "> **Callgrind's dump summaries differ from their totals** (the totals, "
-                    "the sum of the cost lines, are used): "
-                    + " ".join(f"{line}." for line in dump_notes)
+                    "> **Callgrind's dump summaries differ from their totals** more than "
+                    "the marks explain (the totals, the sum of the cost lines, are used): "
+                    + " ".join(f"{line}." for line in dump_warnings)
                     + f" To inspect: {dumps_hint}.\n\n"
                 )
             f.write(render(rows, markdown=True) + "\n\n")
+            own = ", ".join(f"{n} +{100 * t:g}%" for n, t in sorted(tolerances.items()))
             f.write(
-                f"Fails above +{100 * REGRESSION:.1f}% or below -{100 * IMPROVEMENT:.1f}% "
+                f"Fails above +{100 * REGRESSION:.1f}% "
+                + (f"(own tolerances: {own}) " if own else "")
+                + f"or below -{100 * IMPROVEMENT:.1f}% "
                 "instructions per repetition, or on any change in program size. "
                 f"Spread: largest difference between {args.processes} identical runs.\n\n"
             )
             if note:
                 f.write(f"{note}\n\n")
-            if env_diff:
-                f.write("Environment differs from the baseline's: " + "; ".join(env_diff) + "\n\n")
+            if dump_note:
+                f.write(f"{dump_note[0].upper()}{dump_note[1:]}.\n\n")
+            if env_diff and not gated:
+                f.write(f"Not gated, but {env_diff.removeprefix('its ')}.\n\n")
             if lines:
                 f.write("**Failed:**\n\n" + "".join(f"- {line}\n" for line in lines) + "\n")
                 if not problems:

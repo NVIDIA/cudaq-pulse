@@ -12,8 +12,8 @@ Each case is one operation of the compiler or the runtime on fixed inputs,
 run ``reps`` times. ``tools/perf-gate.py`` runs this file in two modes:
 
 - ``--structural``: natively, printing each case's program sizes (op count,
-  packed program bytes, export bytes) as JSON. These are the same on every
-  platform.
+  packed program bytes, export bytes) as JSON, with the cases' own
+  tolerances. The sizes are the same on every platform.
 - ``--measure LIB``: under Callgrind with instrumentation off. Around each
   case's repetitions it calls the Callgrind client requests in LIB (built
   from ``marks.c``), which zero the counters, instrument the repetitions and
@@ -89,6 +89,11 @@ class Case:
     warmup: int = 2
     # Program sizes of one run of the operation (see _structural).
     sizes: Callable[[object], dict[str, int]] | None = None
+    # The fraction of its baseline's instructions above which the case
+    # fails, if not the gate's default (tools/perf-gate.py, REGRESSION).
+    # It must stay below 0.5%, the smallest regression the gate is there to
+    # catch; the baseline records it, and taking a baseline copies it there.
+    tolerance: float | None = None
 
 
 def _compile(kernel: Any, args: tuple[Any, ...], **options: Any) -> Callable[[], Op]:
@@ -425,6 +430,11 @@ CASES: tuple[Case, ...] = (
         _simulate_setup,
         3,
         sizes=_simulation_size,
+        # The one case whose identical Callgrind runs have differed: by up
+        # to 0.0098% (169 instructions per repetition) on CI, where every
+        # other case repeated exactly. Its limit is the default 0.4% plus
+        # four times that difference.
+        tolerance=0.0045,
     ),
 )
 
@@ -483,7 +493,9 @@ def _measure(library: str, only: set[str] | None) -> dict[str, int]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--structural", action="store_true", help="print program sizes as JSON")
+    mode.add_argument(
+        "--structural", action="store_true", help="print program sizes and tolerances as JSON"
+    )
     mode.add_argument("--measure", metavar="LIB", help="run under Callgrind with these marks")
     mode.add_argument("--list", action="store_true", help="print the cases")
     parser.add_argument("--only", nargs="+", help="measure only these cases")
@@ -493,7 +505,9 @@ def main() -> int:
             print(f"{case.name:28s} x{case.reps:<4d} {case.description}")
         return 0
     if args.structural:
-        print(json.dumps(_structural(), indent=2, sort_keys=True))
+        tolerances = {case.name: case.tolerance for case in CASES if case.tolerance is not None}
+        out = {"sizes": _structural(), "tolerances": tolerances}
+        print(json.dumps(out, indent=2, sort_keys=True))
         return 0
     print(json.dumps(_measure(args.measure, set(args.only) if args.only else None)))
     return 0
