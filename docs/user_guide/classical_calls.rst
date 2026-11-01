@@ -634,4 +634,3 @@ it is a list type of its own, which tells the compiler the items are bits.
 A list is invariant, so a variable typed as a list of another item type
 (``list[bool]``, say) is flagged where ``pulse.Bits`` is expected, while a
 list written in the call, ``decode.submit([m0, m1])``, is not.
-
