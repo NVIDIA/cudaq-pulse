@@ -119,6 +119,9 @@ def _run_env(pythonpath: str, home: str) -> dict[str, str]:
         # case reaches that number.
         "CUDAQ_PULSE_CONTEXT_MAX_MODULES": str(1 << 40),
         "CUDAQ_PULSE_CONTEXT_MAX_WORDS": str(1 << 40),
+        # NumPy's OpenBLAS otherwise starts a worker per CPU, whose waiting
+        # for work Callgrind counts with the case that runs meanwhile.
+        "OPENBLAS_NUM_THREADS": "1",
     }
 
 

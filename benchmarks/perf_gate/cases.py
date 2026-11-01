@@ -302,8 +302,10 @@ def _simulate_setup() -> Op:
         drive(d, square(8, 0.1))
 
     lowered = pulse.compile(pi_pulse, device=_DEVICE).lower(Q[0])
-    # Eight cycles at one step per cycle: the run is mostly its setup.
-    return lambda i: pulse.simulate(lowered, levels=2, dt_ns=0.5)
+    # Eight cycles at one step per cycle: the run is mostly its setup. The
+    # seed keeps its generator from being seeded with the system's entropy,
+    # different in every run.
+    return lambda i: pulse.simulate(lowered, levels=2, dt_ns=0.5, seed=0)
 
 
 def _workload(name: str) -> Callable[[], Op]:
