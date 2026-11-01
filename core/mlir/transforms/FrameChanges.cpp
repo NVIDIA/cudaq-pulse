@@ -564,17 +564,28 @@ struct PulseFrameChangesPass
     auto mark = mlir::UnitAttr::get(context);
     auto i64 = mlir::IntegerType::get(context, 64);
     int64_t nextId = 0;
+    llvm::SmallVector<mlir::StringAttr, 6> marks;
+    for (llvm::StringRef name :
+         {"pulse.unconsumed", "pulse.carried", "pulse.carried_in",
+          "pulse.exit_updates", "pulse.then_updates", "pulse.else_updates"})
+      marks.push_back(mlir::StringAttr::get(context, name));
+    bool changed = false;
     for (auto function : module.getOps<mlir::func::FuncOp>()) {
       FramePlacement placement(context);
+      bool changes = false;
       function.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation *op) {
-        for (llvm::StringRef name :
-             {"pulse.unconsumed", "pulse.carried", "pulse.carried_in",
-              "pulse.exit_updates", "pulse.then_updates", "pulse.else_updates"})
-          op->removeAttr(name);
-        if (isFrameChange(op))
+        if (!op->getRawDictionaryAttrs().empty())
+          for (mlir::StringAttr name : marks)
+            if (op->removeAttr(name))
+              changed = true;
+        if (isFrameChange(op)) {
           placement.place(op);
+          changes = true;
+        }
       });
-      if (persistent)
+      changed |= changes;
+      // Without a frame change, none is pending anywhere.
+      if (persistent || !changes)
         continue;
       PendingChanges pending(function, nextId);
       function.walk([&](mlir::Operation *op) {
@@ -600,6 +611,9 @@ struct PulseFrameChangesPass
         loop->setAttr("pulse.carried_in",
                       mlir::DenseI64ArrayAttr::get(context, ids));
     }
+    // An unchanged module needs no verifying again.
+    if (!changed)
+      markAllAnalysesPreserved();
   }
 };
 
