@@ -169,8 +169,11 @@ skip = ["*-musllinux_*", "*t-*"]
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
 build-verbosity = 1
-test-extras = ["cu12"]
+# The viz extra lets tests/test_viz.py run against the wheel. The type
+# checkers' tests run in ci.yml's test job, not here (tests/_tools.py).
+test-extras = ["cu12", "viz"]
 test-groups = ["test"]
+test-environment = { CUDAQ_PULSE_OPTIONAL_TOOLS = "pyright,mypy" }
 test-sources = [
     "tests",
     "pyproject.toml",
@@ -186,13 +189,17 @@ test-command = [
 [tool.cibuildwheel.linux]
 before-all = "bash tools/ci/manylinux-before-all.sh"
 environment = { CUDAQ_PULSE_ENABLE_GPU = "ON", CUDAQ_PULSE_CUDA12_ROOT = "/opt/cuda12", CUDAQ_PULSE_CUDA13_ROOT = "/opt/cuda13" }
+# The tests run in the manylinux container, which sees only the variables
+# passed in. With CI passed, a missing tool fails its tests here as it does
+# on the macOS host, instead of skipping them (tests/_tools.py).
+environment-pass = ["CI"]
 repair-wheel-command = "auditwheel repair --exclude libcudensitymat.so.0 --exclude libcudart.so.12 --exclude libcudart.so.13 -w {dest_dir} {wheel}"
 
 # macOS wheels are compiler-only: there is no CUDA on macOS.
 [tool.cibuildwheel.macos]
 archs = ["arm64"]
 environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
-test-extras = []
+test-extras = ["viz"]
 test-command = [
     "python -c \"import cudaq_pulse._build_config as c; assert not c.GPU_RUNTIME_ENABLED, 'macOS wheels must be compiler-only'\"",
     "cudaq-pulse-opt --help > /dev/null",
