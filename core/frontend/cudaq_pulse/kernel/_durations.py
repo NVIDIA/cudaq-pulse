@@ -200,16 +200,16 @@ def cycles(fname: str, what: str, value: Any, whole: bool, call: str, clock_ghz:
     """*value*, the *what* of a *fname* call, in program cycles."""
     cls = value.__class__
     if cls is Time:
-        exact = in_cycles(value, clock_ghz)
+        numerator, denominator = in_cycles(value, clock_ghz)
         if not whole:
-            return float(exact)
-        if exact.denominator != 1:
+            return numerator / denominator
+        if denominator != 1:
             raise CompilationError(
-                f"{fname}(): {what} {value} is {float(exact):g} cycles of the "
+                f"{fname}(): {what} {value} is {numerator / denominator:g} cycles of the "
                 f"{clock_ghz:g} GHz program clock, and durations are whole cycles; "
                 f"round it with pulse.round_duration(line, {_written(value)})"
             )
-        return int(exact)
+        return numerator
     if whole and isinstance(value, float) and cls is not Cycles:
         raise float_duration(fname, what, value, call)
     if is_symbolic(value) and _has_time(value):
@@ -300,7 +300,8 @@ def unit(value: Any, fname: str, what: str) -> int:
 
 def _replaced(value: Any, clock_ghz: float) -> Any:
     if value.__class__ is Time:
-        return float(in_cycles(value, clock_ghz))
+        numerator, denominator = in_cycles(value, clock_ghz)
+        return numerator / denominator
     if value.__class__ is ParameterExpression:
         return ParameterExpression(
             value.op,
@@ -325,7 +326,7 @@ def timeout_ns(builder: Any, timeout: Any) -> float:
             "a number of nanoseconds, or a time with units (350 * pulse.ns)"
         )
     time = timeout if timeout.__class__ is Time else Time(timeout)
-    if not time.exact_ns > 0:
+    if not time._n > 0:
         raise CompilationError(f"result(): timeout must be positive, got {timeout!r}")
     clock_ghz = getattr(builder, "clock_ghz", 2.0)
     cycles("result", "timeout", time, True, "f(...).result(timeout={})", clock_ghz)
@@ -357,7 +358,8 @@ def traced_round_duration(builder: Any, args: list[Any], kwargs: dict[str, Any] 
             "a round_duration() duration",
         )
     if n.__class__ is Time:
-        n = float(in_cycles(n, getattr(builder, "clock_ghz", 2.0)))
+        numerator, denominator = in_cycles(n, getattr(builder, "clock_ghz", 2.0))
+        n = numerator / denominator
     elif isinstance(n, float) and n.__class__ is not Cycles:
         raise float_duration("round_duration", "duration", n, "pulse.round_duration(line, {})")
     grid_of = getattr(builder, "line_grid", None)

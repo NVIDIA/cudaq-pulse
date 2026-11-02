@@ -29,7 +29,7 @@ import cudaq_pulse.classical as classical
 
 from ._errors import InvalidTypeError, InvalidValueError, _closest
 from ._native import PackedValueError, PulseModuleBuilder
-from ._units import Time
+from ._units import Time, _time
 from .kernel._bytecode_normalize import UnsupportedInterpreterError
 from .kernel._schedule_blocks import check_root_schedule, root_schedule
 from .kernel._unroll import DEFAULT_UNROLL_THRESHOLD, resolve_unroll_threshold
@@ -875,9 +875,8 @@ class Lowered:
         both arms of every branch, as a time (``float(duration)`` is in ns).
 
         A wait a float parameter sets counts once the module has values."""
-        from fractions import Fraction
-
-        clock = Fraction(self.target.clock_ghz)
+        # The clock exactly as its float holds it, as Fraction(clock_ghz) is.
+        numerator, denominator = self.target.clock_ghz.as_integer_ratio()
         schedule = self.schedule
         if type(schedule) is list:
             end: int | None = 0
@@ -896,7 +895,9 @@ class Lowered:
                 "the module is scheduled when it has the values of its float "
                 f"parameters ({', '.join(self.parameters)}); lower it with them first"
             )
-        return Time(end / clock)
+        if end.__class__ is not int:
+            return Time(end / self.target.clock_ghz)
+        return _time(end * denominator, numerator)
 
     @property
     def schedule(self) -> Sequence[ScheduledEvent]:

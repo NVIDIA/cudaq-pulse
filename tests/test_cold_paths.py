@@ -147,12 +147,26 @@ _REPORTS = (
 
 
 def test_a_program_in_cycles_loads_no_fractions(tmp_path):
-    # Importing fractions compiles two regular expressions; only a time
-    # (such as a program's duration), or a clock in GHz, needs exact arithmetic.
+    # Importing fractions compiles two regular expressions; only a clock
+    # ratio of a control system, or reading a time's exact_ns, needs it.
     code = _PLAIN + "low.schedule; low.export_controller(); low.export_emulation()\n"
     assert _loaded(code, tmp_path, ("fractions", "decimal")) == []
-    timed = _PLAIN + "low.duration\n"
-    assert _loaded(timed, tmp_path, ("fractions",)) == ["fractions"]
+
+
+def test_times_load_no_fractions(tmp_path):
+    # Times do their exact arithmetic on ints.
+    code = (
+        _PLAIN + "t = (0.1 * p.us + 3 * p.ns) / 7 - p.ns\n"
+        "assert repr(t) == '13.7143 ns' and t < low.duration and t // p.ns == 13\n"
+        "assert (t % p.ns) * 7 == 5 * p.ns and abs(-t) == t\n"
+        "dev2 = p.device({'target': 'transmon_17q', 'clock_ghz': 1.5})\n"
+        "low2 = p.compile(k).lower(dev2.qudit_handles[0])\n"
+        "assert low2.duration > 0 * p.ns\n"
+    )
+    assert _loaded(code, tmp_path, ("fractions", "decimal")) == []
+    exact = _PLAIN + "from fractions import Fraction\n"
+    exact += "assert (0.1 * p.us).exact_ns == Fraction(100)\n"
+    assert _loaded(exact, tmp_path, ("fractions",)) == ["fractions"]
 
 
 def test_exports_build_no_report(tmp_path):
