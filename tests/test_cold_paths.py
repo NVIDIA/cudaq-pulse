@@ -135,6 +135,16 @@ dev = p.device("transmon_17q")
 low = p.compile(k).lower(dev.qudit_handles[0])
 """
 
+# What exporting a program does not build: the reports and their analyzer,
+# the emulator and the call records.
+_REPORTS = (
+    "cudaq_pulse._controller_cost",
+    "cudaq_pulse._classical_report",
+    "cudaq_pulse.classical.emulation",
+    "cudaq_pulse.classical._link",
+    "cudaq_pulse.runtime._calls",
+)
+
 
 def test_a_program_in_cycles_loads_no_fractions(tmp_path):
     # Importing fractions compiles two regular expressions; only a time
@@ -143,6 +153,52 @@ def test_a_program_in_cycles_loads_no_fractions(tmp_path):
     assert _loaded(code, tmp_path, ("fractions", "decimal")) == []
     timed = _PLAIN + "low.duration\n"
     assert _loaded(timed, tmp_path, ("fractions",)) == ["fractions"]
+
+
+def test_exports_build_no_report(tmp_path):
+    code = _PLAIN + "low.export_controller(); low.export_emulation()\n"
+    assert _loaded(code, tmp_path, _REPORTS) == []
+    calls = _PROGRAM + "low.export_controller(); low.export_emulation()\n"
+    assert _loaded(calls, tmp_path, _REPORTS) == [
+        "cudaq_pulse._classical_report",
+        "cudaq_pulse.classical._link",
+    ]
+    report = _PLAIN + "import cudaq_pulse.controller as c\nc.resources(low)\n"
+    assert _loaded(report, tmp_path, _REPORTS) == ["cudaq_pulse._controller_cost"]
+
+
+def test_exporting_an_emulated_program_loads_no_module(tmp_path):
+    # The export lives in the wire format, which emulating loads too.
+    code = (
+        _PROGRAM + "from cudaq_pulse.classical import emulation\n"
+        "emulation.emulate(low, shots=2, seed=1)\nbefore = set(sys.modules)\n"
+        "low.export_controller(); low.export_emulation()\n"
+        "new = [m for m in set(sys.modules) - before if m.startswith('cudaq_pulse.classical')]\n"
+        "assert not new, new\n"
+    )
+    assert _loaded(code, tmp_path, ()) == []
+
+
+def test_the_report_names_resolve_on_first_use():
+    code = (
+        "import pickle, sys\n"
+        "import cudaq_pulse.controller as c\n"
+        "from cudaq_pulse.classical import emulation\n"
+        "assert 'cudaq_pulse._controller_cost' not in sys.modules\n"
+        "assert set(c.__all__) <= set(dir(c)) and set(emulation.__all__) <= set(dir(emulation))\n"
+        "from cudaq_pulse.controller import ResourceReport, usage\n"
+        "assert c.ResourceReport is ResourceReport and 'usage' in vars(c)\n"
+        "assert ResourceReport.__module__ == 'cudaq_pulse.controller'\n"
+        "assert pickle.loads(pickle.dumps(ResourceReport)) is ResourceReport\n"
+        "from cudaq_pulse.classical import wire\n"
+        "assert emulation.export is wire._emulation_export\n"
+        "assert emulation.FORMAT == wire._EMULATION_FORMAT\n"
+    )
+    env = dict(os.environ, PYTHONPATH=_ROOT)
+    result = subprocess.run(
+        [sys.executable, "-c", code], env=env, capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_simulating_without_shots_loads_no_random_generator(tmp_path):

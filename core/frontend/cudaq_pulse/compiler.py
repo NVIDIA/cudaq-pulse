@@ -972,7 +972,7 @@ class Lowered:
         calls and the manifest of its classical functions (see
         ``cudaq_pulse.classical.emulation``). On a control system of several
         controllers, that of the one *controller* indexes, in its cycles."""
-        from .classical.emulation import export
+        from .classical.wire import _emulation_export as export
 
         return export(self, controller)
 

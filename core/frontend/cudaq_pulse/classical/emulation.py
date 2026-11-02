@@ -27,13 +27,14 @@ from __future__ import annotations
 
 import math
 import struct
+import sys
 import threading
 import time
+import types
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .._classical_report import report
 from .._errors import (
     InvalidValueError,
     NotFoundError,
@@ -46,10 +47,13 @@ from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
 from . import ClassicalFunction, Link, _handlers_for, wire
 
 if TYPE_CHECKING:
-    # Exports import this module, and must not import numpy or socket.
     import numpy as np
 
-    from .. import _clocks
+    from .wire import _EMULATION_FORMAT as FORMAT  # noqa: F401
+    from .wire import _MANIFEST_FORMAT as MANIFEST_FORMAT  # noqa: F401
+    from .wire import _emulation_export as export  # noqa: F401
+    from .wire import _export_part as export_part  # noqa: F401
+    from .wire import _manifest as manifest  # noqa: F401
 
 __all__ = [
     "CallTrace",
@@ -64,210 +68,6 @@ __all__ = [
     "manifest",
     "serve_udp",
 ]
-
-FORMAT = "cudaq-pulse.emulation/1"
-MANIFEST_FORMAT = "cudaq-pulse.call-manifest/1"
-
-
-# ── Export ───────────────────────────────────────────────────────────────────
-
-
-def manifest(lowered: Any) -> dict[str, Any]:
-    """The classical functions a compiled kernel calls, for a dispatcher."""
-    machine = lowered.options.machine
-    functions = []
-    for fn in lowered.classical:
-        link = machine.link(fn.link)
-        link_id = machine.link_id(fn.link)
-        key, fixed_by = _dispatch_keys(lowered)[fn.name]
-        entry = {"name": fn.name, "dispatch_key": key}
-        if fixed_by is not None:
-            entry["dispatch_key_fixed_by"] = fixed_by
-        functions.append(
-            {
-                **entry,
-                "random": fn.uniform,
-                "link": link_id,
-                "link_name": machine.link_name(link_id),
-                "schema": wire.schema(fn),
-                "argument_types": [a.descriptor for a in fn.args],
-                "result_types": [r.descriptor for r in fn.results],
-                "latency_ns": {
-                    "min": fn.min_latency_ns,
-                    "nominal": fn.nominal_latency_ns,
-                    "max": fn.max_latency_ns,
-                },
-                "latency_mode": fn.latency_mode,
-                "timeout_ns": fn.timeout_ns,
-                "deadline_ns": fn.deadline_ns,
-                "submit": fn.submit_policy,
-                "request_bytes": wire.HEADER_BYTES + sum(a.wire_bytes for a in fn.args),
-                "answer_bytes": wire.HEADER_BYTES + sum(r.wire_bytes for r in fn.results),
-                "slot_bytes": link.slot_bytes,
-                "max_in_flight": link.max_in_flight,
-            }
-        )
-    return {"format": MANIFEST_FORMAT, "functions": functions}
-
-
-def export(lowered: Any, controller: int | None = None) -> dict[str, Any]:
-    """A compiled kernel for a controller emulator: schedule, epochs, calls,
-    links and manifest, as JSON-serializable data. Times are in clock cycles
-    of the controller, at ``clock_ghz`` (with ``program_clock_ghz`` when that
-    is not the program clock, as in ``cudaq_pulse.controller``); each event's
-    ``epoch_start_cycles`` is the static start of its epoch, which moves at
-    run time by the lengths of the run-time waits before it on its lines. An
-    epoch's shift adds to that of the epoch it follows, the one before it
-    unless it names another in ``after``. On a control system of several
-    controllers, the part of the one *controller* indexes, with only its
-    events, calls, links and functions, and ``controller`` its index."""
-    machine = lowered.options.machine
-    if machine._system is not None and machine.controller is None:
-        return export_part(lowered, controller)
-    if controller is not None:
-        from ..controller import _controller_index
-
-        _controller_index(controller, 1)
-    return _export(lowered, True)
-
-
-_Part = tuple[int, "_clocks.ControllerClock | None", frozenset[str], Sequence[bool]]
-
-
-def export_part(lowered: Any, controller: int | None) -> dict[str, Any]:
-    """``export`` on a control system of several controllers: the part of
-    one (as ``cudaq_pulse.controller.export`` chooses it), in its cycles."""
-    from ..controller import _part
-
-    _, events, _, parts, index = _part(lowered, controller)
-    functions = frozenset(
-        event["function"]
-        for event, part in zip(events, parts, strict=True)
-        if index in part and event["kind"] in ("submit", "answer")
-    )
-    # The schedule holds the controller events but their syncs, in order.
-    takes_part = [
-        index in part for event, part in zip(events, parts, strict=True) if event["kind"] != "sync"
-    ]
-    clocks = (lowered._generic or lowered).clocks
-    own = None if clocks is None else clocks.controllers[index]
-    return _export(lowered, True, (index, own, functions, takes_part))
-
-
-def _export(lowered: Any, with_events: bool, part: _Part | None = None) -> dict[str, Any]:
-    """``export``; without *with_events*, its ``events`` are left empty. With
-    *part* (a controller's index and clock, the functions it calls or takes
-    answers of, and whether it takes part in each scheduled event), only
-    that controller's part, in its cycles."""
-    epochs, after = lowered._epochs()
-    starts = [e.start_cycles for e in epochs]
-    epoch_of = lowered._event_epochs(syncs=False) if with_events else None
-    takes = None
-    if part is not None:
-        takes = part[3]
-        assert not with_events or len(takes) == len(lowered.schedule)
-    events = (
-        [
-            {
-                "kind": event.kind,
-                "line": event.line,
-                "link": event.link,
-                "qubit": event.qubit,
-                "start_cycles": event.start_cycles,
-                "duration_cycles": event.duration_cycles,
-                "epoch": (
-                    index := epoch_of[position]
-                    if epoch_of and event.start_cycles is not None
-                    else 0
-                ),
-                "epoch_start_cycles": starts[index],
-            }
-            for position, event in enumerate(lowered.schedule)
-            if takes is None or takes[position]
-        ]
-        if with_events
-        else []
-    )
-    machine = lowered.options.machine
-    data = {
-        "format": FORMAT,
-        "clock_ghz": lowered.target.clock_ghz,
-        "links": {
-            str(machine.link_id(fn.link)): {
-                **machine.link(fn.link).cost(),
-                "name": machine.link_name(machine.link_id(fn.link)),
-            }
-            for fn in lowered.classical
-            if part is None or fn.name in part[2]
-        },
-        "epochs": [
-            {**asdict(e), "after": a} if k and a != k - 1 else asdict(e)
-            for k, (e, a) in enumerate(zip(epochs, after, strict=False))
-        ],
-        "events": events,
-        "calls": [
-            _call_data(c)
-            for c in (report(lowered) if lowered.classical else ())
-            if part is None or (c.compiled_name in part[2] and c.controller in (None, part[0]))
-        ],
-        "manifest": manifest(lowered),
-    }
-    if machine._plain:
-        return data
-    if part is not None:
-        data["manifest"]["functions"] = [
-            fn for fn in data["manifest"]["functions"] if fn["name"] in part[2]
-        ]
-        data["controller"] = part[0]
-    clocks = (lowered._generic or lowered).clocks
-    if clocks is None:
-        return data
-    own = clocks.controllers[0] if part is None or part[1] is None else part[1]
-    return _in_own_clock(data, events, clocks, own)
-
-
-def _call_data(call: Any) -> dict[str, Any]:
-    """A ``ClassicalCall`` as export data: its fields, in order (the
-    ``asdict`` of one, made directly); ``controller`` only for a call over a
-    per-controller link. An emulator serves the compiled name:
-    ``"function"`` names it, as the manifest's ``"name"`` does, and the
-    manifest gives its dispatch key."""
-    data = {
-        "function": call.compiled_name,
-        "link": call.link,
-        "iteration": list(call.iteration),
-        "submit_cycles": call.submit_cycles,
-        "submit_duration_cycles": call.submit_duration_cycles,
-        "due_cycles": call.due_cycles,
-        "taken_cycles": call.taken_cycles,
-        "first_use_cycles": call.first_use_cycles,
-        "deadline_cycles": call.deadline_cycles,
-        "epoch": call.epoch,
-        "link_name": call.link_name,
-        "exposed_cycles": call.exposed_cycles,
-    }
-    if call.controller is not None:
-        data["controller"] = call.controller
-    return data
-
-
-def _in_own_clock(data: dict[str, Any], events: list[Any], clocks: Any, own: Any) -> dict[str, Any]:
-    """*data*, an export of a program on *clocks*, in the clock *own* of its
-    controller."""
-    from .. import _clocks
-
-    if own.ratio != 1:
-        _clocks.to_own(events, _clocks.EMULATION_EVENT_TIMES, own)
-        _clocks.to_own(data["epochs"], _clocks.EPOCH_TIMES, own, _clocks.EPOCH_LOWER_BOUNDS)
-        _clocks.to_own(data["calls"], _clocks.CALL_TIMES, own)
-        data["clock_ghz"] = own.clock_ghz
-    return {
-        "format": FORMAT,
-        "clock_ghz": data["clock_ghz"],
-        **_clocks.clock_keys(clocks, own),
-        **data,
-    }
-
 
 # ── Transport and channels ───────────────────────────────────────────────────
 
@@ -647,3 +447,38 @@ def emulate(
         result.ends_ns.append(max(ends, default=0) / clock)
     result.wall_s = time.perf_counter() - t_wall
     return result
+
+
+# ── The export, named here ───────────────────────────────────────────────────
+
+
+class _Exported(tuple[str, str]):
+    """A name of this module and that of what it names in ``wire``, looked up
+    on first use and then kept in this module's namespace, where later reads
+    find it as a plain attribute."""
+
+    def __get__(self, instance: types.ModuleType | None, owner: type) -> Any:
+        if instance is None:
+            return self
+        name, home = self
+        value = instance.__dict__[name] = getattr(wire, home)
+        return value
+
+
+class _EmulationModule(types.ModuleType):
+    # Emulating needs none of the export, and exporting loads only the wire
+    # format, where the export lives.
+    FORMAT = _Exported(("FORMAT", "_EMULATION_FORMAT"))
+    MANIFEST_FORMAT = _Exported(("MANIFEST_FORMAT", "_MANIFEST_FORMAT"))
+    export = _Exported(("export", "_emulation_export"))
+    export_part = _Exported(("export_part", "_export_part"))
+    manifest = _Exported(("manifest", "_manifest"))
+
+    def __dir__(self) -> list[str]:
+        exported = [
+            name for name, value in vars(_EmulationModule).items() if isinstance(value, _Exported)
+        ]
+        return sorted({*super().__dir__(), *exported})
+
+
+sys.modules[__name__].__class__ = _EmulationModule
