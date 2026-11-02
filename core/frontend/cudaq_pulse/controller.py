@@ -1009,16 +1009,9 @@ def _walk(
         epochs = lowered._event_epochs(syncs=True)
         with lowered._lock:
             if own is None:
-                if periods is None:
-                    lines, events, found = module.controller_events(
-                        _PARAMETERS, _AMPLITUDES, epochs, slots, True
-                    )
-                else:
-                    lines, events, found, moved = module.controller_events(
-                        _PARAMETERS, _AMPLITUDES, epochs, slots, True, True
-                    )
-                    periods += moved
-                repeats += found
+                lines, events = module.controller_events(
+                    _PARAMETERS, _AMPLITUDES, epochs, slots, repeats, periods
+                )
             else:
                 ratio = own.ratio
                 lines, events, off_grid, ends = module.controller_events_on(
@@ -1068,6 +1061,8 @@ def _walk(
                 if tree is not None:
                     _clocks._scale(tree, factor, scaled)
         if _computes_at_run_time(lowered):
+            from . import _clocks
+
             for event in events:
                 if event["kind"] in _clocks._GRIDDED:
                     problems.extend(
@@ -2545,12 +2540,19 @@ def _compile_check(
             lowered, limits, maybe if lowered.parameters else None
         ):
             return [], not maybe
-    repeats: list[tuple[int, ...]] | None = None if system is not None else []
+    repeats: list[tuple[int, ...]] | None = []
     # Loops of lines of different periods summarized too, then not, then none.
-    for unsynced in (True, False, None):
-        periods: list[tuple[int, int, int]] | None = [] if unsynced else None
-        if unsynced is None:
+    passes: tuple[bool | None, ...] = (True, False, None)
+    if system is not None:
+        passes = (False, None)
+        if not system._lines_up or slots and not system._plays_everything:
             repeats = None
+        elif clocks is not None and clocks.owners is not None:
+            # A controller counting cycles of its own is walked in full.
+            if any(c.ratio != 1 for c in clocks.controllers):
+                repeats = None
+    for unsynced in passes:
+        periods: list[tuple[int, int, int]] | None = [] if unsynced else None
         lines, events, _, off, problems = _walk(
             lowered,
             values=False,
@@ -2561,43 +2563,15 @@ def _compile_check(
         )
         if not repeats:
             break
-        from ._loops import UnsyncedError, loops_of, violations
+        assert not problems
+        from ._loops import summarized_check
 
-        assert limits is not None and not problems
-        natives = None
-        if slots and limits.tones_per_line is not None:
-            with lowered._lock:
-                natives, again, moved = lowered._module.controller_native_tones(
-                    True, bool(unsynced)
-                )
-            if loops_of(repeats, periods) != loops_of(again, moved):
-                repeats = []
-                continue
-        rates = None if limits is machine.controller else _sample_rates(lowered, limits)
-        pending: list[str] | None = [] if lowered.parameters or slots else None
-        own = _native_clock(clocks)
-        try:
-            found = violations(
-                lowered,
-                events,
-                repeats,
-                limits,
-                lines,
-                pending,
-                rates,
-                periods or (),
-                own,
-                off,
-                natives,
-            )
-        except UnsyncedError:
-            repeats = []
-            continue
-        if slots and limits.acquirers:
-            assert pending is not None
-            # Acquirers are given per carrier, which each call binds.
-            pending.append("acquirers")
-        return found, not pending
+        checked = summarized_check(
+            lowered, limits, system, clocks, slots, lines, events, repeats, periods, off
+        )
+        if checked is not None:
+            return checked
+        repeats = [] if unsynced else None
     if system is not None and slots and not system._plays_everything:
         # Which controller plays a line depends on the qudits a call binds.
         return [], False
@@ -2628,11 +2602,32 @@ def _call_violations(lowered: Lowered) -> Sequence[str]:
     """The limits one call's values exceed, as its export checks them."""
     machine = lowered.options.machine
     clocks = (lowered._generic or lowered).clocks
-    if machine._system is not None:
-        lines, events, _, off, problems = _walk(lowered, own=_native_clock(clocks))
-        return machine._system._violations(
-            lowered, lines, events, clocks, off, problems, True, None, None
-        )
+    system = machine._system
+    if system is not None:
+        repeats: list[tuple[int, ...]] | None = []
+        if not system._lines_up:
+            repeats = None
+        elif clocks is not None and clocks.owners is not None:
+            # A controller counting cycles of its own is walked in full.
+            if any(c.ratio != 1 for c in clocks.controllers):
+                repeats = None
+        # Summarized while the system's controllers line up, else every iteration.
+        while True:
+            lines, events, _, off, problems = _walk(
+                lowered, own=_native_clock(clocks), repeats=repeats
+            )
+            if not repeats:
+                break
+            from ._loops import finished
+
+            assert not problems
+            parts = system._summarized(
+                lowered, lines, events, repeats, clocks, off, None, None, None
+            )
+            if parts is not None:
+                return finished(parts)
+            repeats = None
+        return system._violations(lowered, lines, events, clocks, off, problems, True, None, None)
     assert machine.controller is not None
     return _limit_violations(lowered, machine.controller, clocks)
 

@@ -550,6 +550,10 @@ class ControlSystem:
     _line_owners: Mapping[tuple[str, int], int] = field(init=False, repr=False, compare=False)
     # By program clock, the clocks of a program on several controllers.
     _plans: dict[float, _clocks.ClockPlan | None] = field(init=False, repr=False, compare=False)
+    # Whether a sync lines up its controllers' pulses exactly, so a check
+    # may take a rolled loop's copies for its first (``_summarized``) when
+    # they count program cycles.
+    _lines_up: bool = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         from ._clocks import checked_line_delays
@@ -639,6 +643,16 @@ class ControlSystem:
             ),
         )
         object.__setattr__(self, "_plans", {})
+        object.__setattr__(
+            self,
+            "_lines_up",
+            len(controllers) == 1
+            or (
+                self.reference_clock_ghz is not None
+                and not self.line_delays_ns
+                and not any(c.clock_skew_cycles for c in controllers)
+            ),
+        )
         links: dict[int | str, Link] = {name: link for name, link in self.links.items()}
         object.__setattr__(
             self,
@@ -1020,16 +1034,11 @@ class ControlSystem:
         for each line no controller plays."""
         if self._plays_everything:
             return [0] * len(lines), []
-        by_role: dict[str, dict[int, int]] = {"drive": {}, "readout": {}}
-        for index, controller in enumerate(self.controllers):
-            for carrier in controller.drive_lines:
-                by_role["drive"][carrier] = index
-            for carrier in controller.readout_lines:
-                by_role["readout"][carrier] = index
+        played = self._line_owners
         owners: list[int | None] = []
         found: list[str] = []
         for line in lines:
-            owner = by_role.get(line["role"], {}).get(line["qudit"])
+            owner = played.get((line["role"], line["qudit"]))
             owners.append(owner)
             if owner is None:
                 found.append(
@@ -1117,6 +1126,107 @@ class ControlSystem:
                 found.extend(usage(lowered).violations)
             else:
                 # When calls are due can depend on a call's values.
+                unresolved.append("processors")
+        return found
+
+    def _summarized(
+        self,
+        lowered: Lowered,
+        lines: Sequence[Mapping[str, Any]],
+        events: Sequence[dict[str, Any]],
+        repeats: Sequence[Sequence[int]],
+        clocks: _clocks.ClockPlan | None,
+        off: Sequence[tuple[int, int, int]],
+        unresolved: list[str] | None,
+        natives: Sequence[int] | None,
+        rates: tuple[float, float] | None,
+    ) -> list[Any] | None:
+        """``_violations`` of the events of a summarizing walk of loops of
+        one period, on a system that ``_lines_up``, as ``_loops.parts``
+        gives them, with *rates* those of
+        ``controller._sample_rate_violations``; ``None`` unless every copy of
+        a loop needs and forwards what its first does (the walk summarizes
+        no calls), each period is whole timesteps of every controller, and
+        *rates* come last. A sync lines up the pulses of several controllers
+        exactly, so ``_alignment`` finds nothing."""
+        from . import _loops
+
+        if clocks is not None and clocks.owners is not None:
+            grids = {c.grid for c in clocks.controllers}
+            if any(r[3] % grid for r in repeats for grid in grids):
+                return None
+            if _clocks.off_grid(clocks, lines, events):
+                return None
+        if rates is not None and self._placement:
+            return None
+        owners, found = self._owners(lines)
+        if self._needs(lowered, events, owners, unresolved):
+            return None
+        if len(self.controllers) == 1:
+            from .controller import _native_clock
+
+            found.extend(
+                _loops.parts(
+                    lowered,
+                    events,
+                    repeats,
+                    self.controllers[0],
+                    lines,
+                    unresolved,
+                    rates,
+                    (),
+                    _native_clock(clocks),
+                    off,
+                    natives,
+                )
+            )
+        else:
+            ranges = [(r[0], r[1]) for r in repeats]
+            for i, event in enumerate(events):
+                user = owners[event["line"]] if event["kind"] in _PLAYED else None
+                if user is None:
+                    continue
+                for condition in event["conditions"]:
+                    for ref in condition["readouts"]:
+                        # A later copy's readout reaches an event after its
+                        # loop later than the first copy's does.
+                        if owners[events[ref]["line"]] not in (None, user) and any(
+                            begin <= ref < end and not begin <= i < end for begin, end in ranges
+                        ):
+                            return None
+            if self._forwarding(events, owners, clocks):
+                return None
+            for index, controller in enumerate(self.controllers):
+                mine = [
+                    e
+                    if e["kind"] not in _PLAYED or owners[e["line"]] == index
+                    else {**e, "end_cycles": None}
+                    for e in events
+                ]
+                found.extend(
+                    _loops.labeled(
+                        _loops.parts(
+                            lowered,
+                            mine,
+                            repeats,
+                            controller,
+                            lines,
+                            unresolved,
+                            None,
+                            (),
+                            None,
+                            (),
+                            natives,
+                        ),
+                        f"{_label(index, controller)}: ",
+                    )
+                )
+        if self._placement:
+            if unresolved is None:
+                from .controller import usage
+
+                found.extend(usage(lowered).violations)
+            else:
                 unresolved.append("processors")
         return found
 

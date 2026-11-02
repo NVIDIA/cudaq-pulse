@@ -27,7 +27,9 @@ from .controller import (
     ControllerLimits,
     WaveformMemoryScope,
     _exclusive,
+    _native_clock,
     _peak_amplitude,
+    _sample_rates,
     _samples_per_own_cycle,
     resources,
     shape_key,
@@ -36,7 +38,8 @@ from .controller import (
 if TYPE_CHECKING:
     from fractions import Fraction
 
-    from ._clocks import ControllerClock
+    from ._clocks import ClockPlan, ControllerClock
+    from ._system import ControlSystem
     from .compiler import Lowered
 
 # Up to this many violations are a list, as without summarized loops.
@@ -562,7 +565,77 @@ def violations(
     off: Sequence[tuple[int, int, int]] = (),
     natives: Sequence[int] | None = None,
 ) -> list[str] | Violations:
-    """``controller._violations`` of the events of a summarizing walk, with
+    """``controller._violations`` of the events of a summarizing walk
+    (``parts``)."""
+    return finished(
+        parts(
+            lowered,
+            events,
+            repeats,
+            limits,
+            lines,
+            unresolved,
+            sample_rate,
+            periods,
+            own,
+            off,
+            natives,
+        )
+    )
+
+
+def finished(found: list[Any]) -> list[str] | Violations:
+    """The violations of *found*, parts of ``parts``: a list, or past
+    ``LAZY_AFTER`` built when read."""
+    if _length(found) <= LAZY_AFTER:
+        return list(_each(found, 0))
+    return Violations(found)
+
+
+class _Labeled:
+    """A violation of one controller of several: ``label``, then ``part``."""
+
+    __slots__ = ("label", "part")
+
+    def __init__(self, label: str, part: Any) -> None:
+        self.label, self.part = label, part
+
+    def render(self, shift: int) -> str:
+        return self.label + _render(self.part, shift)
+
+
+def labeled(found: list[Any], label: str) -> list[Any]:
+    """The parts *found* of ``parts``, each violation after *label*."""
+    out: list[Any] = []
+    for part in found:
+        if type(part) is _Copies:
+            out.append(
+                _Copies(
+                    labeled(part.parts, label), part.first, part.count, part.period, part.offset
+                )
+            )
+        elif type(part) is str:
+            out.append(label + part)
+        else:
+            out.append(_Labeled(label, part))
+    return out
+
+
+def parts(
+    lowered: Lowered,
+    events: Sequence[Mapping[str, Any]],
+    repeats: Sequence[Sequence[int]],
+    limits: ControllerLimits,
+    lines: Sequence[Mapping[str, Any]],
+    unresolved: list[str] | None,
+    sample_rate: tuple[float, float] | None = None,
+    periods: Sequence[Sequence[int]] = (),
+    own: ControllerClock | None = None,
+    off: Sequence[tuple[int, int, int]] = (),
+    natives: Sequence[int] | None = None,
+) -> list[Any]:
+    """``controller._violations`` of the events of a summarizing walk, as
+    violations and the copies of a loop's (``finished`` lists them), with
     *sample_rate* (made, plays) when a line plays samples made for another
     rate (``controller._sample_rate_violations``), and *periods* the line
     periods of its unsynced loops; in the cycles of *own*, when the walk
@@ -757,9 +830,7 @@ def violations(
             )
 
         found.extend(_each_event(tree, made_for))
-    if _length(found) <= LAZY_AFTER:
-        return list(_each(found, 0))
-    return Violations(found)
+    return found
 
 
 class _OnProgramClock:
@@ -982,3 +1053,63 @@ def loops_of(
         [(*r[:3], r[3] < 0, *r[4:]) for r in repeats],
         [tuple(p[:2]) for p in periods or ()],
     )
+
+
+def summarized_check(
+    lowered: Lowered,
+    limits: ControllerLimits | None,
+    system: ControlSystem | None,
+    clocks: ClockPlan | None,
+    slots: bool,
+    lines: Sequence[Mapping[str, Any]],
+    events: Sequence[dict[str, Any]],
+    repeats: list[tuple[int, ...]],
+    periods: list[tuple[int, int, int]] | None,
+    off: Sequence[tuple[int, int, int]],
+) -> tuple[Sequence[str], bool] | None:
+    """``controller._compile_check`` of the events of a summarizing walk with
+    *repeats* (and line *periods*); ``None`` when the loops must be walked
+    with fewer summarized."""
+    machine = lowered.options.machine
+    natives = None
+    if slots and limits is not None and limits.tones_per_line is not None:
+        with lowered._lock:
+            natives, again, moved = lowered._module.controller_native_tones(
+                True, periods is not None
+            )
+        if loops_of(repeats, periods) != loops_of(again, moved):
+            return None
+    rates = (
+        None if limits is None or limits is machine.controller else _sample_rates(lowered, limits)
+    )
+    pending: list[str] | None = [] if lowered.parameters or slots else None
+    if system is not None:
+        parts = system._summarized(
+            lowered, lines, events, repeats, clocks, off, pending, natives, rates
+        )
+        if parts is None:
+            return None
+        found: Sequence[str] = finished(parts)
+    else:
+        assert limits is not None
+        try:
+            found = violations(
+                lowered,
+                events,
+                repeats,
+                limits,
+                lines,
+                pending,
+                rates,
+                periods or (),
+                _native_clock(clocks),
+                off,
+                natives,
+            )
+        except UnsyncedError:
+            return None
+    if slots and limits is not None and limits.acquirers:
+        assert pending is not None
+        # Acquirers are given per carrier, which each call binds.
+        pending.append("acquirers")
+    return found, not pending

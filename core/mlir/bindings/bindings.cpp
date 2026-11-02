@@ -2576,34 +2576,44 @@ public:
   /// dicts, with `parameters` the parameter names of each waveform shape,
   /// `amplitudes` the shapes with an overall amplitude and `epochs` each
   /// event's epoch (empty: all 0). A list `slots` gets each line's
-  /// runtime-qudit slot (-1 for none). With `summarize`, for a check, a long
-  /// rolled loop whose iterations repeat has its events once, and a third
-  /// list has each such loop's ControllerEventWalk::Repeat; with `unsynced`
-  /// too, its lines may repeat at periods of their own, and a fourth list has
-  /// them (ControllerEventWalk::linePeriods).
+  /// runtime-qudit slot (-1 for none). With a list `repeats`, for a check, a
+  /// long rolled loop whose iterations repeat has its events once, and
+  /// `repeats` gets each such loop's ControllerEventWalk::Repeat; with a list
+  /// `periods` too, its lines may repeat at periods of their own, and
+  /// `periods` gets them (ControllerEventWalk::linePeriods).
   nb::tuple controller_events(nb::handle parameters, nb::handle amplitudes,
-                              nb::list epochs, nb::object slots, bool summarize,
-                              bool unsynced) {
+                              nb::list epochs, nb::object slots,
+                              nb::object repeats, nb::object periods) {
     ControllerObjects objects(parameters, amplitudes);
     std::unique_ptr<ControllerEventWalk> walk;
     std::vector<ControllerLine> lines;
     std::vector<int64_t> found;
     // Epochs number the events every iteration plays.
-    bool once = summarize && nb::len(epochs) == 0;
+    bool once = !repeats.is_none() && nb::len(epochs) == 0;
     {
       nb::gil_scoped_release release;
       walk = controllerWalk(lines, slots.is_none() ? nullptr : &found, once,
-                            once && unsynced);
+                            once && !periods.is_none());
     }
     lineSlots(found, slots);
-    if (summarize && unsynced)
-      return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs),
-                            nb::cast(walk->repeats),
-                            nb::cast(walk->linePeriods));
-    if (summarize)
-      return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs),
-                            nb::cast(walk->repeats));
+    appendRepeats(*walk, repeats, periods);
     return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs));
+  }
+
+  /// `walk`'s repeats into the list `repeats` and its line periods into the
+  /// list `periods`, where it has any.
+  static void appendRepeats(const ControllerEventWalk &walk, nb::handle repeats,
+                            nb::handle periods) {
+    if (!walk.repeats.empty()) {
+      auto out = nb::borrow<nb::list>(repeats);
+      for (const auto &repeat : walk.repeats)
+        out.append(nb::cast(repeat));
+    }
+    if (!walk.linePeriods.empty()) {
+      auto out = nb::borrow<nb::list>(periods);
+      for (const auto &linePeriod : walk.linePeriods)
+        out.append(nb::cast(linePeriod));
+    }
   }
 
   /// For waits whose length floats set: (cycles op after op with each at its
@@ -2912,16 +2922,7 @@ public:
       ownEventCycles(*walk, num, den, grid, offGrid, ends);
     }
     lineSlots(found, slots);
-    if (!walk->repeats.empty()) {
-      auto out = nb::borrow<nb::list>(repeats);
-      for (const auto &repeat : walk->repeats)
-        out.append(nb::cast(repeat));
-    }
-    if (!walk->linePeriods.empty()) {
-      auto out = nb::borrow<nb::list>(periods);
-      for (const auto &linePeriod : walk->linePeriods)
-        out.append(nb::cast(linePeriod));
-    }
+    appendRepeats(*walk, repeats, periods);
     return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs),
                           nb::cast(offGrid), nb::cast(ends));
   }
@@ -6221,8 +6222,9 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "trips for a loop (else -1), and what it depends on")
       .def("controller_events", &PulseModule::controller_events,
            nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
-           nb::arg("slots").none() = nb::none(), nb::arg("summarize") = false,
-           nb::arg("unsynced") = false,
+           nb::arg("slots").none() = nb::none(),
+           nb::arg("repeats").none() = nb::none(),
+           nb::arg("periods").none() = nb::none(),
            "The lines and events of the export for a controller, as "
            "controller.export() gives them; a list `slots` gets each line's "
            "runtime-qudit slot")

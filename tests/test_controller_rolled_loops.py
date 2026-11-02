@@ -31,7 +31,7 @@ from cudaq_pulse import controller
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, ControllerLimits, check
 
-from tests._handles import Q
+from tests._handles import Q, ladder_target
 
 # The child's limits: a check of one body takes well under a second and a
 # few hundred MB.
@@ -91,9 +91,20 @@ def runtime(q: pulse.Qudit):
         drive(d, square(5, 0.1))
         drive(d, gaussian(8, 0.1, 2.0))
 
-machine = MachineModel(controller=ControllerLimits({limits}))
+@pulse.kernel
+def across(q, r):
+    a = get_drive_line(q)
+    b = get_drive_line(r)
+    for _ in range(TRIPS):
+        drive(a, square(5, 0.1))
+        drive(b, square(5, 0.1))
+        sync(a, b)
+
+options = {{"machine": MachineModel(controller=ControllerLimits({limits}))}}
+handles = (Q[0],)
+{system}
 try:
-    lowered = pulse.compile({kernel}, machine=machine).lower(Q[0])
+    lowered = pulse.compile({kernel}, **options).lower(*handles)
 except ControllerLimitError as error:
     print(json.dumps({{"count": len(error.violations), "message": str(error)}}))
 else:
@@ -101,11 +112,12 @@ else:
 """
 
 
-def _in_a_child(kernel: str, trips: int, limits: str = "") -> dict[str, object]:
+def _in_a_child(kernel: str, trips: int, limits: str = "", system: str = "") -> dict[str, object]:
     """What compiling *kernel* of *trips* iterations under *limits* gives, in
-    a child process that is stopped past CPU_S seconds or RSS_MB MB."""
+    a child process that is stopped past CPU_S seconds or RSS_MB MB; with
+    *system*, code that sets the compile's ``options`` and ``handles``."""
     code = _LIMITS.format(wall=2 * CPU_S, cpu=CPU_S, mb=RSS_MB) + _KERNELS.format(
-        trips=trips, limits=limits, kernel=kernel
+        trips=trips, limits=limits, kernel=kernel, system=system
     )
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p))
@@ -719,6 +731,216 @@ def test_a_rolled_loop_of_10_15_iterations_of_a_runtime_qudit_is_checked_in_boun
         assert many["message"] == str(few["message"]).replace(
             f"... and {20 * each - 10} more", f"... and {each * 10**15 - 10} more"
         )
+
+
+_CAPABILITIES = [c.value for c in pulse.Capability]
+
+
+def _systems() -> dict[str, Any]:
+    """Control systems of one controller, or of two playing two qudits each."""
+
+    def two(
+        reference: float | None = None,
+        delays: Any = None,
+        skew: int = 0,
+        cores: bool = False,
+        **each: Any,
+    ) -> Any:
+        # A processor leaves a check with float values to each call.
+        processors = [pulse.Processor(links=["cores"])] if cores else []
+        return pulse.ControlSystem(
+            controllers=[
+                pulse.Controller(
+                    drive_lines=[0, 1], readout_lines=[0, 1], processors=processors, **each
+                ),
+                pulse.Controller(
+                    drive_lines=[2, 3], readout_lines=[2, 3], clock_skew_cycles=skew, **each
+                ),
+            ],
+            links={"cores": pulse.Link()} if cores else {},
+            reference_clock_ghz=reference,
+            line_delays_ns=delays or {},
+        )
+
+    one = pulse.Controller(
+        drive_lines=range(4), readout_lines=range(4), issue_cycles=4, min_wait_cycles=4
+    )
+    return {
+        "one": pulse.ControlSystem(controllers=[one]),
+        "unshared": two(issue_cycles=2),
+        "delayed": two(1.0, {("drive", 2): 3.0}, cores=True, issue_cycles=2),
+        "skewed": two(1.0, skew=1, issue_cycles=2),
+        "shared": two(1.0, issue_cycles=2, feedback_latency_cycles=60, peer_latency_cycles=8),
+        "counted": two(1.0, max_events=10, tones_per_line=1, waveform_samples=50),
+        "unrolled": two(1.0, supports=[c for c in _CAPABILITIES if c != "loop"], max_events=10),
+        "unforwarded": two(1.0, supports=[c for c in _CAPABILITIES if c != "forward_outcome"]),
+        "gridded": two(1.0, cycles_per_timestep=4, max_amplitude=0.05),
+        "processed": two(1.0, cores=True, issue_cycles=2),
+        "clocked": pulse.ControlSystem(
+            controllers=[
+                pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], clock_ghz=1.0),
+                pulse.Controller(
+                    drive_lines=[2, 3], readout_lines=[2, 3], clock_ghz=0.5, issue_cycles=2
+                ),
+            ],
+            reference_clock_ghz=0.5,
+        ),
+    }
+
+
+def _across(n: int) -> dict[str, Any]:
+    """Loops of two qudits, which two controllers play."""
+
+    @pulse.kernel
+    def synced(q, r):
+        a = get_drive_line(q)
+        b = get_drive_line(r)
+        for _ in range(n):
+            drive(a, square(12, 0.1))
+            sync(a, b)
+            drive(b, square(24, 0.1))
+            sync(b, a)
+
+    @pulse.kernel
+    def forwarded(q, r):
+        p = get_readout_line(q)
+        b = get_drive_line(r)
+        for _ in range(n):
+            m = readout(p, square(48, 0.05))
+            sync(p, b)
+            if m:
+                drive(b, square(12, 0.1))
+            sync(b, p)
+
+    @pulse.kernel
+    def apart(q, r):
+        a = get_drive_line(q)
+        b = get_drive_line(r)
+        for _ in range(n):
+            drive(a, square(12, 0.1))
+            drive(a, gaussian(24, 0.3, 4.0))
+        sync(a, b)
+        for _ in range(n):
+            drive(a, square(12, 0.1))
+            drive(b, square(12, 0.1))
+
+    @pulse.kernel
+    def odd(q, r):
+        a = get_drive_line(q)
+        b = get_drive_line(r)
+        for _ in range(n):
+            drive(a, square(10, 0.1))
+            sync(a, b)
+            drive(b, square(12, 0.1))
+            sync(b, a)
+
+    @pulse.kernel
+    def scaled(q, r, amp: float):
+        a = get_drive_line(q)
+        b = get_drive_line(r)
+        for _ in range(n):
+            drive(a, square(12, amp))
+            sync(a, b)
+            drive(b, square(12, amp))
+            sync(b, a)
+
+    @pulse.kernel
+    def loose(q, r, amp: float):
+        a = get_drive_line(q)
+        b = get_drive_line(r)
+        for _ in range(n):
+            drive(a, square(12, amp))
+            drive(b, square(12, amp))
+
+    return {
+        "synced": synced,
+        "forwarded": forwarded,
+        "apart": apart,
+        "odd": odd,
+        "scaled": scaled,
+        "loose": loose,
+    }
+
+
+def _on_system(kernel: Any, schedule: str, qpu: Any) -> Any:
+    """The ops of *kernel* compiled for *qpu* (and called, with a float), or
+    the limits it exceeds."""
+    try:
+        compiled = pulse.compile(kernel, device=qpu, schedule=schedule, unroll_threshold=0)
+        handles = (qpu.qudits[0], qpu.qudits[2])
+        if kernel.__wrapped__.__name__ in ("scaled", "loose"):
+            return compiled.lower(*handles, 0.6).metrics.op_count
+        return compiled.lower(*handles).metrics.op_count
+    except ControllerLimitError as error:
+        return list(error.violations)
+
+
+@pytest.mark.parametrize("trips", [65, 100])
+@pytest.mark.parametrize("name", list(_across(1)))
+@pytest.mark.parametrize("schedule", ["asap", "alap", "rcp"])
+@pytest.mark.parametrize("system", list(_systems()))
+def test_a_long_rolled_loop_on_a_control_system_is_checked_as_every_iteration(
+    monkeypatch, system, schedule, name, trips
+):
+    from cudaq_pulse import _system
+
+    qpu = pulse.device({"target": ladder_target(4), "control_system": _systems()[system]})
+    kernel = _across(trips)[name]
+    kept: list[bool] = []
+    summarized = _system.ControlSystem._summarized
+
+    def spied(self: Any, *args: Any) -> Any:
+        found = summarized(self, *args)
+        kept.append(found is not None)
+        return found
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_system.ControlSystem, "_summarized", spied)
+        found = _on_system(kernel, schedule, qpu)
+    walk = controller._walk
+
+    def played(*args: Any, repeats: Any = None, periods: Any = None, **kwargs: Any) -> Any:
+        return walk(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(controller, "_walk", played)
+        assert found == _on_system(kernel, schedule, qpu)
+    if system in ("unshared", "delayed", "skewed", "clocked"):
+        # A sync of controllers without a shared reference clock, or with
+        # line delays or skew, lines up their pulses within a cycle, and
+        # controllers of different clocks count each line's periods in their
+        # own cycles: every iteration is played.
+        assert not kept
+        return
+    # A pulse before its forwarded outcome, or that needs a capability, is
+    # reported for each copy, as is a pulse off its controller's grid.
+    played_out = name == "odd" and system == "gridded"
+    played_out |= name == "forwarded" and (
+        system == "unforwarded" or (system == "shared" and schedule != "rcp")
+    )
+    assert kept and any(kept) != played_out
+
+
+def test_a_rolled_loop_of_10_15_iterations_across_controllers_is_checked_in_bounds():
+    system = (
+        "from tests._handles import ladder_target\n"
+        "def _controller(lines):\n"
+        "    return pulse.Controller(drive_lines=lines, readout_lines=lines, issue_cycles=4,"
+        " min_wait_cycles=4)\n"
+        "qpu = pulse.device({'target': ladder_target(4), 'control_system': pulse.ControlSystem("
+        "controllers=[_controller([0, 1]), _controller([2, 3])], reference_clock_ghz=1.0)})\n"
+        "options = {'device': qpu}\n"
+        "handles = (qpu.qudits[0], qpu.qudits[2])\n"
+    )
+    few = _in_a_child("across", 20, system=system)
+    more = _in_a_child("across", 21, system=system)
+    many = _in_a_child("across", 10**15, system=system)
+    count = int(str(few["count"]))
+    each = int(str(more["count"])) - count
+    assert each and many["count"] == count + each * (10**15 - 20)
+    assert many["message"] == str(few["message"]).replace(
+        f"... and {count - 10} more", f"... and {count + each * (10**15 - 20) - 10} more"
+    )
 
 
 def test_past_10_000_violations_they_are_built_when_read(monkeypatch):
