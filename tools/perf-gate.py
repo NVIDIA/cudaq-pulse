@@ -24,12 +24,16 @@ Runs the cases of ``benchmarks/perf_gate/cases.py`` and compares them with
 - Python-level work per repetition (bytecodes executed, Python calls, C
   calls), counted with ``sys.monitoring`` in two native runs after the
   Callgrind runs, so it does not touch their counts. It does not gate: it
-  labels a case that fails on instructions. With the same work as the
-  baseline's, the count moved below Python, as when one new type at
-  import renumbers the interpreter's type version tags and so its method
-  cache's collisions; the case still fails, labelled ``LAYOUT_ONLY``, to
-  be judged before re-baselining. With other work, each counter's change
-  is shown. A baseline without it (format 1) labels nothing.
+  says what kind of failure a case's instructions are (``failure_kind``).
+  With the same work as the baseline's and a change within
+  ``LAYOUT_SHIFT`` either way, it is ``layout only``: the count moved
+  below Python, as when one new type at import renumbers the interpreter's
+  type version tags and so its method cache's collisions; the case still
+  fails, to be judged before re-baselining. Otherwise it is a
+  ``regression`` or a ``gain`` (to keep by updating the baseline), with
+  each counter's change if the work changed, or a note that the change is
+  in native code if it did not. A baseline without the work (format 1)
+  labels only regressions and gains.
 
 The instruction counts repeat exactly only in the environment they were
 measured in, so a baseline is versioned by it: the baseline holds the
@@ -92,6 +96,15 @@ NOT_SIZES = ("instructions", "estimated_cycles", "python_work", "tolerance")
 LAYOUT_ONLY = (
     "instructions moved with identical Python work, likely layout only (for example "
     "type version tags or allocation layout); judge before re-baselining"
+)
+# The largest change, either way, that identical Python work labels as
+# layout only: the shifts seen were up to 0.5% (one new metaclass at import
+# moved specialize_amplitude by +0.44%). Beyond it the change is in native
+# code, as when a compile's passes do less (-19% for compile_surface_d5).
+LAYOUT_SHIFT = 0.02
+NATIVE_ONLY = (
+    "instructions moved with identical Python work, by more than layout shifts do: "
+    "the change is below Python, in native code"
 )
 
 # Fractions of the baseline's instructions per repetition.
@@ -599,25 +612,51 @@ def compare(
 FAILING = {"slower", "improved", "sizes", "new", "removed", "no baseline"}
 
 
+def failure_kind(r: Row) -> str | None:
+    """What a failure on instructions is: ``layout only`` (the same Python
+    work as the baseline's, and a change within ``LAYOUT_SHIFT`` either
+    way), else a ``regression`` or a ``gain``; None for other failures."""
+    if r.verdict not in ("slower", "improved"):
+        return None
+    if r.work_changes == [] and r.delta is not None and abs(r.delta) <= LAYOUT_SHIFT:
+        return "layout only"
+    return "regression" if r.verdict == "slower" else "gain"
+
+
 def failure_reason(r: Row) -> str:
-    """Why a failing row fails. An instruction count that moved is labelled
-    with how the case's Python work compares with the baseline's: the
-    same work suggests the layout below Python moved (it still fails), and
-    changed work is shown counter by counter."""
+    """Why a failing row fails. A failure on instructions says its kind
+    (``failure_kind``) and how the case's Python work compares with the
+    baseline's: the same work means the change is below Python, and
+    changed work is shown counter by counter. Every kind fails."""
+    kind = failure_kind(r)
     reason = {
         "slower": f"{_pct(r.delta)} instructions (limit +{100 * r.tolerance:g}%)",
-        "improved": f"{_pct(r.delta)} instructions: update the baseline to keep the gain",
+        "improved": f"{_pct(r.delta)} instructions (limit -{100 * IMPROVEMENT:g}%)",
         "sizes": f"program sizes changed: {r.sizes}",
         "new": "not in the baseline",
         "removed": "in the baseline but no longer a case",
         "no baseline": "no instruction count in the baseline",
     }[r.verdict]
-    if r.verdict in ("slower", "improved") and r.work_changes is not None:
-        if r.work_changes:
-            reason += f"; Python work changed per repetition: {', '.join(r.work_changes)}"
-        else:
-            reason += f"; {LAYOUT_ONLY}"
-    return f"{r.name}: {reason}"
+    if kind is None:
+        return f"{r.name}: {reason}"
+    if kind == "gain":
+        reason += ": update the baseline to keep the gain"
+    if kind == "layout only":
+        reason += f"; {LAYOUT_ONLY}"
+    elif r.work_changes == []:
+        reason += f"; {NATIVE_ONLY}"
+    elif r.work_changes:
+        reason += f"; Python work changed per repetition: {', '.join(r.work_changes)}"
+    return f"{r.name}: {kind}, {reason}"
+
+
+def failure_counts(rows: list[Row]) -> str:
+    """The failures on instructions by kind, as "1 regression, 2 gains"."""
+    counted = collections.Counter(failure_kind(r) for r in rows if r.verdict in FAILING)
+    plural = {"regression": "regressions", "gain": "gains", "layout only": "layout only"}
+    return ", ".join(
+        f"{counted[k]} {k if counted[k] == 1 else plural[k]}" for k in plural if counted[k]
+    )
 
 
 def baseline_error(baseline: dict[str, Any], frozen: bool = False) -> str | None:
@@ -844,17 +883,26 @@ taking a baseline:
      and has no "bootstrap" field.
   4. Staging's push run of that commit must pass the gate.
 
-a failure "likely layout only":
-  A case that fails on instructions with the same Python work as the
-  baseline's (its "Python work" column says "same") ran the same bytecodes
-  and calls, so its count moved below Python: in native code, or in the
-  layout of the interpreter's caches and memory, which a change elsewhere
-  can shift (one new class at import renumbers the type version tags of the
-  types made after it). The gate still fails it. Judge it before taking a
-  new baseline: compare its Callgrind dumps (the perf-gate-callgrind-dumps
-  artifact, with callgrind_annotate) with those of the baseline's run, and
-  look for the functions whose counts moved. Where the work changed, the
-  failure lists each counter's change per repetition instead.
+regressions, gains and "layout only":
+  Every failure on instructions fails the gate, and says its kind; the
+  log's "Perf gate failed" line and the summary count them by kind.
+  - regression: above the limit. Find the cause, or, if it is intended,
+    take a new baseline.
+  - gain: more than 1% below. Take a new baseline to keep it, so that a
+    later regression cannot hide in it.
+  - layout only: the same Python work as the baseline's (its "Python
+    work" column says "same") and a change of at most 2% either way. The
+    case ran the same bytecodes and calls, so its count moved below
+    Python, most likely in the layout of the interpreter's caches and
+    memory, which a change elsewhere can shift (one new class at import
+    renumbers the type version tags of the types made after it). Judge it
+    before taking a new baseline: compare its Callgrind dumps (the
+    perf-gate-callgrind-dumps artifact, with callgrind_annotate) with
+    those of the baseline's run, and look for the functions whose counts
+    moved.
+  A regression or gain lists each counter of Python work that changed;
+  with the same work but more than 2%, it says the change is in native
+  code.
 
   A case whose identical runs differ declares its own tolerance in
   benchmarks/perf_gate/cases.py, and the next baseline records it. To
@@ -1016,6 +1064,7 @@ def main() -> int:
 
     lines = list(problems)
     lines += [failure_reason(r) for r in failures]
+    kinds = failure_counts(rows)
     invalid = baseline_error(baseline, frozen=os.environ.get("GITHUB_REF") == "refs/heads/main")
     if invalid:
         lines.append(f"{args.baseline.name}: {invalid}")
@@ -1091,14 +1140,18 @@ def main() -> int:
             if env_diff and not gated:
                 f.write(f"Not gated, but {env_diff.removeprefix('its ')}.\n\n")
             if lines:
-                f.write("**Failed:**\n\n" + "".join(f"- {line}\n" for line in lines) + "\n")
+                f.write(
+                    f"**Failed{f' ({kinds})' if kinds else ''}:**\n\n"
+                    + "".join(f"- {line}\n" for line in lines)
+                    + "\n"
+                )
                 if not problems:
                     f.write(
                         "If the change is intended, take this run as the baseline and "
                         f"commit it:\n\n```\n{_update_command()}\n```\n"
                     )
     if lines:
-        print("\nPerf gate failed:")
+        print(f"\nPerf gate failed{f' ({kinds})' if kinds else ''}:")
         for line in lines:
             print(f"  {line}")
         if problems:

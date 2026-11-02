@@ -360,19 +360,67 @@ def _with_work(work=_WORK, measured=1_005_000):
 def test_a_moved_count_with_the_same_python_work_still_fails_and_says_so():
     row = _with_work()
     assert row.verdict == "slower" and row.work == "same"
-    assert gate.failure_reason(row) == (f"c: +0.50% instructions (limit +0.4%); {gate.LAYOUT_ONLY}")
+    assert gate.failure_kind(row) == "layout only"
+    assert gate.failure_reason(row) == (
+        f"c: layout only, +0.50% instructions (limit +0.4%); {gate.LAYOUT_ONLY}"
+    )
     assert "judge before re-baselining" in gate.LAYOUT_ONLY
-    assert gate.failure_reason(_with_work(measured=980_000)).endswith(gate.LAYOUT_ONLY)
+    # A shift the other way is layout only too, not a gain to keep.
+    down = _with_work(measured=985_000)
+    assert down.verdict == "improved" and gate.failure_kind(down) == "layout only"
+    assert gate.failure_reason(down) == (
+        f"c: layout only, -1.50% instructions (limit -1%); {gate.LAYOUT_ONLY}"
+    )
 
 
 def test_a_moved_count_with_other_python_work_shows_each_counter():
     row = _with_work({**_WORK, "bytecodes": 452.6, "c_calls": 16.1})
-    assert row.work == "changed"
+    assert row.work == "changed" and gate.failure_kind(row) == "regression"
     assert gate.failure_reason(row) == (
-        "c: +0.50% instructions (limit +0.4%); Python work changed per repetition: "
-        "bytecodes 449.6 -> 452.6 (+3), python_calls same, c_calls 17.1 -> 16.1 (-1)"
+        "c: regression, +0.50% instructions (limit +0.4%); Python work changed per "
+        "repetition: bytecodes 449.6 -> 452.6 (+3), python_calls same, c_calls 17.1 -> 16.1 (-1)"
     )
     assert gate.work_changes({"a": 1.0}, {"a": 1.0, "b": 2.5}) == ["a same", "b none -> 2.5"]
+
+
+def test_a_gain_is_reported_as_a_gain_to_keep_not_as_a_regression_or_layout():
+    # compile_surface_d5 on 8f67cc3: -19.37%, its passes doing less.
+    row = _with_work({**_WORK, "bytecodes": 400.0}, measured=806_300)
+    assert gate.failure_kind(row) == "gain"
+    assert gate.failure_reason(row) == (
+        "c: gain, -19.37% instructions (limit -1%): update the baseline to keep the gain; "
+        "Python work changed per repetition: bytecodes 449.6 -> 400 (-49.6), "
+        "python_calls same, c_calls same"
+    )
+    assert gate.failure_reason(_verdict([806_300])) == (
+        "c: gain, -19.37% instructions (limit -1%): update the baseline to keep the gain"
+    )
+
+
+def test_the_same_python_work_beyond_a_layout_shift_is_a_change_in_native_code():
+    gain = _with_work(measured=806_300)
+    assert gate.failure_kind(gain) == "gain"
+    assert gate.failure_reason(gain) == (
+        "c: gain, -19.37% instructions (limit -1%): update the baseline to keep the gain; "
+        f"{gate.NATIVE_ONLY}"
+    )
+    worse = _with_work(measured=1_000_000 * (1 + gate.LAYOUT_SHIFT) + 1)
+    assert gate.failure_kind(worse) == "regression"
+    assert gate.failure_reason(worse).endswith(gate.NATIVE_ONLY)
+    within = _with_work(measured=1_019_900)
+    assert gate.failure_kind(within) == "layout only"
+
+
+def test_the_failures_are_counted_by_kind():
+    rows = [
+        _with_work(),
+        _with_work(measured=806_300),
+        _verdict([806_300]),
+        _verdict([1_005_000]),
+        _verdict([1_000_000], sizes={"op_count": 16}),
+    ]
+    assert gate.failure_counts(rows) == "1 regression, 2 gains, 1 layout only"
+    assert gate.failure_counts(rows[-1:]) == ""
 
 
 def test_python_work_labels_only_a_moved_count_and_never_gates():
@@ -387,12 +435,12 @@ def test_python_work_labels_only_a_moved_count_and_never_gates():
 def test_without_python_work_on_either_side_a_moved_count_is_not_labelled():
     row = _verdict([1_005_000])
     assert row.work_changes is None and row.work == ""
-    assert gate.failure_reason(row) == "c: +0.50% instructions (limit +0.4%)"
+    assert gate.failure_reason(row) == "c: regression, +0.50% instructions (limit +0.4%)"
     baseline = _baseline()
     baseline["cases"]["c"]["python_work"] = _WORK
     runs = {"c": gate.Measured([1_005_000.0], [0.0])}
     unmeasured = gate.compare(baseline, {"c": {"op_count": 15}}, runs, None)[0]
-    assert gate.failure_reason(unmeasured) == "c: +0.50% instructions (limit +0.4%)"
+    assert gate.failure_reason(unmeasured) == "c: regression, +0.50% instructions (limit +0.4%)"
 
 
 def test_a_baseline_records_the_python_work_measured_with_its_counts():
@@ -494,28 +542,44 @@ def fake_gate(tmp_path, monkeypatch, capsys):
 def test_the_gate_labels_a_failure_whose_python_work_is_the_same(fake_gate):
     code, log, summary, _ = fake_gate(1_005_000, _WORK)
     assert code == 1
-    line = f"c: +0.50% instructions (limit +0.4%); {gate.LAYOUT_ONLY}"
+    line = f"c: layout only, +0.50% instructions (limit +0.4%); {gate.LAYOUT_ONLY}"
     assert f"  {line}\n" in log
     assert f"- {line}\n" in summary
     assert "| same | slower |" in summary
+    assert "Perf gate failed (1 layout only):" in log
+    assert "**Failed (1 layout only):**" in summary
 
 
 def test_the_gate_shows_where_the_python_work_of_a_failure_changed(fake_gate):
     code, log, summary, _ = fake_gate(1_005_000, {**_WORK, "bytecodes": 452.6})
     assert code == 1
     line = (
-        "c: +0.50% instructions (limit +0.4%); Python work changed per repetition: "
-        "bytecodes 449.6 -> 452.6 (+3), python_calls same, c_calls same"
+        "c: regression, +0.50% instructions (limit +0.4%); Python work changed per "
+        "repetition: bytecodes 449.6 -> 452.6 (+3), python_calls same, c_calls same"
     )
     assert f"  {line}\n" in log and f"- {line}\n" in summary
     assert gate.LAYOUT_ONLY not in log + summary
+    assert "Perf gate failed (1 regression):" in log
+
+
+def test_the_gate_reports_a_large_gain_as_a_gain_to_keep(fake_gate):
+    code, log, summary, _ = fake_gate(806_300, {**_WORK, "bytecodes": 400.0})
+    assert code == 1
+    line = (
+        "c: gain, -19.37% instructions (limit -1%): update the baseline to keep the gain; "
+        "Python work changed per repetition: bytecodes 449.6 -> 400 (-49.6), "
+        "python_calls same, c_calls same"
+    )
+    assert f"  {line}\n" in log and f"- {line}\n" in summary
+    assert "Perf gate failed (1 gain):" in log and "**Failed (1 gain):**" in summary
+    assert gate.LAYOUT_ONLY not in log + summary and "regression" not in log
 
 
 def test_the_gate_fails_unlabelled_against_a_baseline_without_python_work(fake_gate):
     code, log, summary, taken = fake_gate(1_005_000, _WORK, baseline_work=None, form=1)
     assert code == 1
-    assert "  c: +0.50% instructions (limit +0.4%)\n" in log
-    assert "- c: +0.50% instructions (limit +0.4%)\n" in summary
+    assert "  c: regression, +0.50% instructions (limit +0.4%)\n" in log
+    assert "- c: regression, +0.50% instructions (limit +0.4%)\n" in summary
     assert gate.LAYOUT_ONLY not in log + summary and "Python work changed" not in log
     assert "the baseline has no Python work" in log
     # The run taken as the next baseline brings it.
@@ -533,7 +597,7 @@ def test_python_work_that_differs_between_identical_runs_labels_nothing(fake_gat
     code, log, summary, taken = fake_gate(1_005_000, _WORK)
     assert code == 1
     assert "two identical runs counted it differently (c)" in log
-    assert "  c: +0.50% instructions (limit +0.4%)\n" in log
+    assert "  c: regression, +0.50% instructions (limit +0.4%)\n" in log
     assert "python_work" not in taken["cases"]["c"]
 
 
