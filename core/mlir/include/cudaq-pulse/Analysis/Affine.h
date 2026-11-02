@@ -129,6 +129,17 @@ private:
   llvm::SmallVector<Term, 1> terms;
 };
 
+/// The attribute of a constant `value`, else null: an `arith.constant`'s
+/// read directly, another constant-like op's by folding it.
+inline mlir::Attribute constantAttribute(mlir::Value value) {
+  if (auto constant = value.getDefiningOp<mlir::arith::ConstantOp>())
+    return constant.getValue();
+  mlir::Attribute attribute;
+  if (mlir::matchPattern(value, mlir::m_Constant(&attribute)))
+    return attribute;
+  return {};
+}
+
 /// The answer simulation bound to `value`, a result of a `classical.wait`
 /// that carries `classical.answers`: the wait stays in the program, so what
 /// it feeds keeps its timing, and its results read as these constants.
@@ -162,8 +173,7 @@ std::optional<double> computedNumber(mlir::Value value, Leaf &leaf) {
 
 template <typename Leaf>
 std::optional<double> computedTerm(mlir::Value value, Leaf &leaf) {
-  mlir::Attribute attribute;
-  if (mlir::matchPattern(value, mlir::m_Constant(&attribute))) {
+  if (mlir::Attribute attribute = constantAttribute(value)) {
     if (auto number = mlir::dyn_cast<mlir::FloatAttr>(attribute))
       return number.getValueAsDouble();
     if (auto number = mlir::dyn_cast<mlir::IntegerAttr>(attribute))
@@ -301,8 +311,7 @@ inline std::optional<double> boundNumber(mlir::Value value) {
 /// `value` as an affine function of the entry function's arguments, if it
 /// is a constant, an argument, or arithmetic on them that stays affine.
 inline std::optional<Affine> affineNumber(mlir::Value value) {
-  mlir::Attribute attribute;
-  if (mlir::matchPattern(value, mlir::m_Constant(&attribute))) {
+  if (mlir::Attribute attribute = constantAttribute(value)) {
     if (auto number = mlir::dyn_cast<mlir::FloatAttr>(attribute))
       return Affine(number.getValueAsDouble());
     if (auto number = mlir::dyn_cast<mlir::IntegerAttr>(attribute))

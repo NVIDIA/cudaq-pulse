@@ -2467,7 +2467,7 @@ public:
     if (waveforms)
       for (const ControllerRecord &r : walk.result)
         if (r.played())
-          waveforms->add(r.op);
+          waveforms->add(r.op, &walk.played);
   }
 
   /// The lines and the events of the program as the dictionaries of the

@@ -29,10 +29,12 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -248,7 +250,7 @@ struct ControllerWalk {
   static constexpr double kUnknown = std::numeric_limits<double>::quiet_NaN();
 
   /// A number computed from constants alone, else NaN.
-  static double number(mlir::Value value) {
+  static double numberOf(mlir::Value value) {
     if (auto constant = pulse::constantNumber(value))
       return *constant;
     if (auto affine = pulse::affineNumber(value);
@@ -256,6 +258,16 @@ struct ControllerWalk {
       return affine->evaluate({});
     return kUnknown;
   }
+
+  /// numberOf(), once per value: the walk asks again at every execution
+  /// and at every node of an expression.
+  double number(mlir::Value value) {
+    auto [found, inserted] = numbers.try_emplace(value);
+    if (inserted)
+      found->second = numberOf(value);
+    return found->second;
+  }
+  llvm::DenseMap<mlir::Value, double> numbers;
 
   pulse::AllocationTracer trace;
   pulse::ToneRoots toneRoots;
@@ -288,8 +300,8 @@ struct ControllerWalk {
       return {kUnknown, kUnknown, 0.0, 0.0};
     if (root->getName().getStringRef() == "pulse.tone" &&
         root->getNumOperands() == 2) {
-      double frequency = number(root->getOperand(0));
-      return {frequency, frequency, number(root->getOperand(1)), 0.0};
+      double frequency = numberOf(root->getOperand(0));
+      return {frequency, frequency, numberOf(root->getOperand(1)), 0.0};
     }
     return {};
   }
@@ -515,6 +527,11 @@ struct ControllerWalk {
     std::optional<std::vector<int32_t>> operands;
   };
   std::vector<Known> known;
+  /// The waveform of each drive and readout runTimeOf() saw, and whether
+  /// some number of it is known only at run time: the same at every
+  /// execution.
+  llvm::DenseMap<mlir::Operation *, std::pair<std::vector<WaveformNode>, bool>>
+      played;
 
   int32_t add(Expression expression) {
     expressions.push_back(std::move(expression));
@@ -1152,12 +1169,15 @@ struct ControllerWalk {
       known.push_back(std::move(next));
       return static_cast<int32_t>(known.size()) - 1;
     }
-    std::vector<WaveformNode> nodes;
-    waveform(op->getOperand(1), nodes);
-    bool unknown = llvm::any_of(nodes, [](const WaveformNode &node) {
-      return llvm::any_of(std::get<1>(node),
-                          [](double v) { return std::isnan(v); });
-    });
+    auto &[nodes, unknown] = played.try_emplace(op).first->second;
+    if (nodes.empty()) {
+      auto cached = [this](mlir::Value value) { return number(value); };
+      waveform(op->getOperand(1), nodes, cached);
+      unknown = llvm::any_of(nodes, [](const WaveformNode &node) {
+        return llvm::any_of(std::get<1>(node),
+                            [](double v) { return std::isnan(v); });
+      });
+    }
     if (unknown) {
       std::vector<std::tuple<int64_t, int64_t, mlir::Value>> operands;
       int64_t count = 0;
@@ -1202,6 +1222,14 @@ struct ControllerWalk {
 
   /// The waveform expression of `value`, children before their parent.
   static int64_t waveform(mlir::Value value, std::vector<WaveformNode> &nodes) {
+    auto plain = [](mlir::Value number) { return numberOf(number); };
+    return waveform(value, nodes, plain);
+  }
+
+  /// waveform(), its numbers from `number`.
+  template <typename Number>
+  static int64_t waveform(mlir::Value value, std::vector<WaveformNode> &nodes,
+                          Number &number) {
     mlir::Operation *def = value.getDefiningOp();
     if (!def) {
       nodes.emplace_back("argument", std::vector<double>{},
@@ -1212,7 +1240,7 @@ struct ControllerWalk {
     std::vector<int64_t> children;
     for (mlir::Value operand : def->getOperands()) {
       if (mlir::isa<pulse::WaveformType>(operand.getType()))
-        children.push_back(waveform(operand, nodes));
+        children.push_back(waveform(operand, nodes, number));
       else
         numbers.push_back(number(operand));
     }
@@ -2058,11 +2086,14 @@ struct ControllerWalk {
 /// one each op plays: ops with the same expression share one.
 struct ControllerWaveforms {
   using Nodes = std::vector<ControllerWalk::WaveformNode>;
+  using Played = decltype(ControllerWalk::played);
 
   std::vector<Nodes> distinct;
   llvm::DenseMap<mlir::Operation *, int64_t> of;
 
-  void add(mlir::Operation *op) {
+  /// Add the waveform `op` plays, taking it from `known` (the walk's
+  /// `played`) where the walk computed it.
+  void add(mlir::Operation *op, Played *known = nullptr) {
     if (of.count(op))
       return;
     // An op computing its waveform as an earlier one does, from the same
@@ -2078,7 +2109,11 @@ struct ControllerWaveforms {
       }
     }
     Nodes nodes;
-    ControllerWalk::waveform(op->getOperand(1), nodes);
+    if (auto found = known ? known->find(op) : Played::iterator();
+        known && found != known->end())
+      nodes = std::move(found->second.first);
+    else
+      ControllerWalk::waveform(op->getOperand(1), nodes);
     std::string key;
     for (const auto &[name, numbers, children] : nodes) {
       key += name;
@@ -2100,8 +2135,8 @@ struct ControllerWaveforms {
   }
 
 private:
-  /// Ops alike as CSE compares them: name, attributes, properties, result
-  /// types and the very same operands.
+  /// Ops without regions alike as CSE compares them: name, attributes,
+  /// properties, result types and the very same operands.
   struct SameShape : llvm::DenseMapInfo<mlir::Operation *> {
     static unsigned getHashValue(const mlir::Operation *op) {
       auto *mutableOp = const_cast<mlir::Operation *>(op);
@@ -2118,9 +2153,14 @@ private:
       if (a == getEmptyKey() || a == getTombstoneKey() || b == getEmptyKey() ||
           b == getTombstoneKey())
         return false;
-      return mlir::OperationEquivalence::isEquivalentTo(
-          const_cast<mlir::Operation *>(a), const_cast<mlir::Operation *>(b),
-          mlir::OperationEquivalence::IgnoreLocations);
+      auto *x = const_cast<mlir::Operation *>(a);
+      auto *y = const_cast<mlir::Operation *>(b);
+      return x->getName() == y->getName() &&
+             x->getRawDictionaryAttrs() == y->getRawDictionaryAttrs() &&
+             x->getOperands() == y->getOperands() &&
+             x->getResultTypes() == y->getResultTypes() &&
+             x->getName().compareOpProperties(x->getPropertiesStorage(),
+                                              y->getPropertiesStorage());
     }
   };
 
@@ -2534,33 +2574,34 @@ public:
                    const ControllerWaveforms &waveforms, nb::object waveform,
                    nb::handle parameters, nb::handle amplitudes, bool compact)
       : records(walk.result), walk(walk), waveforms(waveforms),
-        waveform(std::move(waveform)), parameters(parameters), compact(compact),
-        made(waveforms.distinct.size()) {
-    if (this->waveform.is_none())
-      readShapes(amplitudes);
-  }
+        waveform(std::move(waveform)), compact(compact), key(keys()),
+        shapes(shapesOf(parameters, amplitudes)),
+        made(waveforms.distinct.size()) {}
 
   nb::list build() {
+    // Nothing built here is garbage until it is returned: a collection now
+    // would only walk the heap.
+    CollectorPause pause;
     size_t at = 0;
     return range(at, records.size());
   }
 
   /// The frame each tone ends the shot in (ControllerWalk::finalFrames),
   /// as the export's `frame_state`.
-  nb::list
-  frameState(const std::vector<ControllerWalk::FinalFrame> &all) const {
-    nb::list out;
-    for (const ControllerWalk::FinalFrame &final : all) {
+  nb::list frameState(const std::vector<ControllerWalk::FinalFrame> &all) {
+    nb::list out = list(all.size());
+    for (size_t i = 0; i < all.size(); ++i) {
+      const ControllerWalk::FinalFrame &final = all[i];
       nb::dict item;
-      item["line"] = final.line;
+      put(item, key.line, integer(final.line));
       if (final.tone >= 0) {
-        item["tone"] = final.tone;
-        item["frame_updates"] = frameUpdates(final.updates);
+        put(item, key.tone, integer(final.tone));
+        put(item, key.frameUpdates, frameUpdates(final.updates));
       } else {
-        item["frequency_hz"] = number(final.frequencyHz);
-        item["phase_rad"] = number(final.phase);
+        put(item, key.frequency, number(final.frequencyHz));
+        put(item, key.phase, number(final.phase));
       }
-      out.append(item);
+      set(out, i, std::move(item));
     }
     return out;
   }
@@ -2570,30 +2611,70 @@ private:
   using Nodes = ControllerWaveforms::Nodes;
   using Operands = std::vector<std::tuple<int64_t, int64_t, int32_t>>;
 
-  const std::vector<ControllerRecord> &records;
-  const ControllerWalk &walk;
-  const ControllerWaveforms &waveforms;
-  nb::object waveform;
-  nb::handle parameters;
-  bool compact;
-  std::vector<std::optional<std::pair<nb::object, nb::object>>> made;
-
-  // The keys and names of run-time expressions, made at an export's first.
-  struct Names {
-    nb::str op{"op"}, type{"type"}, of{"of"}, constant{"const"},
-        readout{"readout"}, answer{"answer"}, result{"result"};
-    std::array<nb::str, Expression::Terms> terms = make<Expression::Terms>(
-        Expression::names, std::make_index_sequence<Expression::Terms>());
-    std::array<nb::str, Expression::Types> types = make<Expression::Types>(
-        Expression::typeNames, std::make_index_sequence<Expression::Types>());
-
-    template <size_t N, size_t... I>
-    static std::array<nb::str, N> make(const char *const (&names)[N],
-                                       std::index_sequence<I...>) {
-      return {nb::str(names[I])...};
+  struct CollectorPause {
+    int enabled = PyGC_Disable();
+    ~CollectorPause() {
+      if (enabled)
+        PyGC_Enable();
     }
   };
-  mutable std::optional<Names> names;
+
+  // The keys and names of an export, interned once for the life of the
+  // process: an export sets them on every event.
+  struct Keys {
+    PyObject *amplitude = intern("amplitude"), *answer = intern("answer"),
+             *answers = intern("answers"), *arm = intern("arm"),
+             *body = intern("body"), *branch = intern("branch"),
+             *conditions = intern("conditions"), *constant = intern("const"),
+             *controller = intern("controller"),
+             *duration = intern("duration_cycles"), *end = intern("end_cycles"),
+             *epoch = intern("epoch"), *expression = intern("expression"),
+             *first = intern("first_iteration"),
+             *frameUpdates = intern("frame_updates"),
+             *frequency = intern("frequency_hz"),
+             *function = intern("function"), *id = intern("id"),
+             *im = intern("im"), *index = intern("index"),
+             *iteration = intern("iteration"), *kind = intern("kind"),
+             *length = intern("length"), *line = intern("line"),
+             *lines = intern("lines"), *link = intern("link"),
+             *maxCycles = intern("max_cycles"),
+             *measurements = intern("measurements"),
+             *minCycles = intern("min_cycles"), *name = intern("name"),
+             *of = intern("of"), *op = intern("op"),
+             *operands = intern("operands"), *params = intern("params"),
+             *path = intern("path"), *period = intern("period_cycles"),
+             *phase = intern("phase_rad"),
+             *phaseOffset = intern("phase_offset_rad"),
+             *phaseStep = intern("phase_step_rad"), *qudit = intern("qudit"),
+             *re = intern("re"), *readout = intern("readout"),
+             *readouts = intern("readouts"), *result = intern("result"),
+             *runtime = intern("runtime"), *samples = intern("samples"),
+             *shape = intern("shape"), *start = intern("start_cycles"),
+             *test = intern("test"), *timeout = intern("timeout_ns"),
+             *tone = intern("tone"), *tones = intern("tones"),
+             *trips = intern("trips"), *type = intern("type"),
+             *value = intern("value"), *values = intern("values"),
+             *wait = intern("wait"), *waveform = intern("waveform");
+    std::array<PyObject *, Expression::Terms> terms;
+    std::array<PyObject *, Expression::Types> types;
+
+    Keys() {
+      for (size_t i = 0; i < terms.size(); ++i)
+        terms[i] = intern(Expression::names[i]);
+      for (size_t i = 0; i < types.size(); ++i)
+        types[i] = intern(Expression::typeNames[i]);
+    }
+    static PyObject *intern(const char *text) {
+      PyObject *object = PyUnicode_InternFromString(text);
+      if (!object)
+        throw nb::python_error();
+      return object;
+    }
+  };
+  static const Keys &keys() {
+    static const Keys *shared = new Keys();
+    return *shared;
+  }
 
   // The names of a waveform shape's numbers, where its amplitude and scale
   // factor are among them, and whether it has an overall amplitude.
@@ -2602,11 +2683,21 @@ private:
     int real = -1, imag = -1, factor = -1;
     bool amplitude = false;
   };
-  llvm::StringMap<Shape> shapes;
+  using Shapes = llvm::StringMap<Shape>;
 
-  void readShapes(nb::handle amplitudes) {
+  /// The shapes of `parameters` (each shape's parameter names) and
+  /// `amplitudes` (the shapes with an overall amplitude). The exports pass
+  /// the same read-only mappings every time, which are read once.
+  static std::shared_ptr<const Shapes> shapesOf(nb::handle parameters,
+                                                nb::handle amplitudes) {
+    static PyObject *readParameters = nullptr, *readAmplitudes = nullptr;
+    static std::shared_ptr<const Shapes> read;
+    if (read && parameters.ptr() == readParameters &&
+        amplitudes.ptr() == readAmplitudes)
+      return read;
+    auto shapes = std::make_shared<Shapes>();
     for (nb::handle shape : parameters) {
-      Shape &info = shapes[nb::cast<std::string>(shape)];
+      Shape &info = (*shapes)[nb::cast<std::string>(shape)];
       info.amplitude = PySequence_Contains(amplitudes.ptr(), shape.ptr()) == 1;
       for (nb::handle name : parameters[shape]) {
         auto text = nb::cast<std::string>(name);
@@ -2620,72 +2711,145 @@ private:
         info.names.push_back(nb::borrow(name));
       }
     }
+    // Held for the life of the process, so that no other mapping takes
+    // their addresses.
+    Py_XDECREF(readParameters);
+    Py_XDECREF(readAmplitudes);
+    readParameters = Py_NewRef(parameters.ptr());
+    readAmplitudes = Py_NewRef(amplitudes.ptr());
+    read = shapes;
+    return shapes;
+  }
+
+  const std::vector<ControllerRecord> &records;
+  const ControllerWalk &walk;
+  const ControllerWaveforms &waveforms;
+  nb::object waveform;
+  bool compact;
+  const Keys &key;
+  std::shared_ptr<const Shapes> shapes;
+  std::vector<std::optional<std::pair<nb::object, nb::object>>> made;
+  // One object per string and per float: an export repeats few of them
+  // many times.
+  llvm::StringMap<nb::object> strings;
+  llvm::DenseMap<uint64_t, nb::object> floats;
+
+  static nb::object checked(PyObject *object) {
+    if (!object)
+      throw nb::python_error();
+    return nb::steal(object);
+  }
+  static nb::object none() { return nb::none(); }
+  static nb::list list(size_t size) {
+    return nb::steal<nb::list>(
+        checked(PyList_New(static_cast<Py_ssize_t>(size))).release());
+  }
+  static void set(nb::handle list, size_t index, nb::object value) {
+    PyList_SET_ITEM(list.ptr(), static_cast<Py_ssize_t>(index),
+                    value.release().ptr());
+  }
+  static void put(nb::handle dict, PyObject *name, nb::handle value) {
+    if (PyDict_SetItem(dict.ptr(), name, value.ptr()) != 0)
+      throw nb::python_error();
+  }
+  static nb::object integer(int64_t value) {
+    return checked(PyLong_FromLongLong(value));
+  }
+  static nb::object optional(const std::optional<int64_t> &v) {
+    return v ? integer(*v) : none();
+  }
+  static nb::list ints(const std::vector<int64_t> &values) {
+    nb::list out = list(values.size());
+    for (size_t i = 0; i < values.size(); ++i)
+      set(out, i, integer(values[i]));
+    return out;
+  }
+  nb::object text(llvm::StringRef value) {
+    auto [it, inserted] = strings.try_emplace(value);
+    if (inserted)
+      it->second = checked(PyUnicode_FromStringAndSize(
+          value.data(), static_cast<Py_ssize_t>(value.size())));
+    return it->second;
+  }
+  nb::object real(double value) {
+    auto bits = std::bit_cast<uint64_t>(value);
+    // Two NaNs are the map's own empty and erased keys.
+    if (bits >= llvm::DenseMapInfo<uint64_t>::getTombstoneKey())
+      return checked(PyFloat_FromDouble(value));
+    auto [it, inserted] = floats.try_emplace(bits);
+    if (inserted)
+      it->second = checked(PyFloat_FromDouble(value));
+    return it->second;
+  }
+  /// A number, None where it is NaN.
+  nb::object number(double value) {
+    return std::isnan(value) ? none() : real(value);
   }
 
   /// The names of a node's numbers, if its shape names them all.
   const Shape *named(llvm::StringRef shape, size_t numbers) const {
-    auto found = shapes.find(shape);
-    if (found == shapes.end() || found->second.names.size() != numbers)
+    auto found = shapes->find(shape);
+    if (found == shapes->end() || found->second.names.size() != numbers)
       return nullptr;
     return &found->second;
   }
 
   /// The waveform expression from node `index` down.
-  nb::object tree(const Nodes &nodes, int64_t index) const {
+  nb::object tree(const Nodes &nodes, int64_t index) {
     const auto &[name, numbers, children] = nodes[index];
     auto [shape, custom] = llvm::StringRef(name).split(':');
     nb::dict node;
-    node["shape"] = nb::str(shape.data(), shape.size());
+    put(node, key.shape, text(shape));
     if (!custom.empty())
-      node["name"] = nb::str(custom.data(), custom.size());
+      put(node, key.name, text(custom));
     const Shape *names = named(shape, numbers.size());
     if (shape == "custom_samples") {
-      nb::list samples;
-      for (double v : numbers)
-        samples.append(nb::float_(v));
-      node["samples"] = samples;
+      nb::list samples = list(numbers.size());
+      for (size_t i = 0; i < numbers.size(); ++i)
+        set(samples, i, real(numbers[i]));
+      put(node, key.samples, samples);
     } else if (names) {
       nb::dict params;
       for (size_t i = 0; i < numbers.size(); ++i)
-        params[names->names[i]] = number(numbers[i]);
-      node["params"] = params;
+        put(params, names->names[i].ptr(), number(numbers[i]));
+      put(node, key.params, params);
     } else if (!numbers.empty()) {
-      nb::list values;
-      for (double v : numbers)
-        values.append(number(v));
-      node["values"] = values;
+      nb::list values = list(numbers.size());
+      for (size_t i = 0; i < numbers.size(); ++i)
+        set(values, i, number(numbers[i]));
+      put(node, key.values, values);
     }
     if (!children.empty()) {
-      nb::list of;
-      for (int64_t child : children)
-        of.append(tree(nodes, child));
-      node["of"] = of;
+      nb::list of = list(children.size());
+      for (size_t i = 0; i < children.size(); ++i)
+        set(of, i, tree(nodes, children[i]));
+      put(node, key.of, of);
     }
     return node;
   }
 
   /// The overall complex amplitude of node `index`, through scale and neg,
   /// in Python's complex arithmetic; None where it is unknown.
-  nb::object complexAmplitude(const Nodes &nodes, int64_t index) const {
+  nb::object complexAmplitude(const Nodes &nodes, int64_t index) {
     const auto &[name, numbers, children] = nodes[index];
     llvm::StringRef shape = llvm::StringRef(name).split(':').first;
     const Shape *names = named(shape, numbers.size());
     if (shape == "scale" || shape == "neg") {
       if (children.empty())
-        return nb::none();
+        return none();
       nb::object inner = complexAmplitude(nodes, children[0]);
       if (inner.is_none())
         return inner;
       if (shape == "neg")
         return checked(PyNumber_Negative(inner.ptr()));
       if (!names || names->factor < 0 || std::isnan(numbers[names->factor]))
-        return nb::none();
-      nb::float_ factor(numbers[names->factor]);
-      return checked(PyNumber_Multiply(inner.ptr(), factor.ptr()));
+        return none();
+      return checked(
+          PyNumber_Multiply(inner.ptr(), real(numbers[names->factor]).ptr()));
     }
     if (shape == "custom_samples") {
       if (numbers.empty())
-        return nb::none();
+        return none();
       double peak = numbers[0];
       for (double sample : numbers)
         if (std::fabs(sample) > std::fabs(peak))
@@ -2693,66 +2857,52 @@ private:
       return checked(PyComplex_FromDoubles(peak, 0.0));
     }
     if (!names || !names->amplitude || names->real < 0)
-      return nb::none();
+      return none();
     double re = numbers[names->real];
     double im = names->imag < 0 ? 0.0 : numbers[names->imag];
     if (std::isnan(re) || std::isnan(im))
-      return nb::none();
+      return none();
     return checked(PyComplex_FromDoubles(re, im));
-  }
-
-  static nb::object checked(PyObject *object) {
-    if (!object)
-      throw nb::python_error();
-    return nb::steal(object);
   }
 
   /// (expression, amplitude as {re, im}) of a waveform, as the export has
   /// them.
-  std::pair<nb::object, nb::object> built(const Nodes &nodes) const {
+  std::pair<nb::object, nb::object> built(const Nodes &nodes) {
     if (nodes.empty())
-      return {nb::none(), nb::none()};
+      return {none(), none()};
     int64_t root = static_cast<int64_t>(nodes.size()) - 1;
     nb::object overall = complexAmplitude(nodes, root);
     if (overall.is_none())
-      return {tree(nodes, root), nb::none()};
+      return {tree(nodes, root), none()};
     nb::dict parts;
-    parts["re"] = nb::float_(PyComplex_RealAsDouble(overall.ptr()));
-    parts["im"] = nb::float_(PyComplex_ImagAsDouble(overall.ptr()));
+    put(parts, key.re, real(PyComplex_RealAsDouble(overall.ptr())));
+    put(parts, key.im, real(PyComplex_ImagAsDouble(overall.ptr())));
     return {tree(nodes, root), parts};
   }
 
-  static nb::object number(double v) {
-    return std::isnan(v) ? nb::none() : nb::object(nb::float_(v));
-  }
-  static nb::object optional(const std::optional<int64_t> &v) {
-    return v ? nb::object(nb::int_(*v)) : nb::none();
-  }
-  static nb::list ints(const std::vector<int64_t> &values) {
-    nb::list out;
-    for (int64_t v : values)
-      out.append(v);
-    return out;
-  }
-
+  /// The records `at` to `stop`, a loop's body after it, as events.
   nb::list range(size_t &at, size_t stop) {
-    nb::list out;
-    while (at < stop) {
+    size_t count = 0;
+    for (size_t i = at; i < stop; ++i, ++count)
+      if (std::strcmp(records[i].kind, "loop") == 0)
+        i += static_cast<size_t>(records[i].size);
+    nb::list out = list(count);
+    for (size_t k = 0; k < count; ++k) {
       size_t index = at++;
       const ControllerRecord &r = records[index];
       nb::dict event = common(r, index);
       if (std::strcmp(r.kind, "loop") == 0) {
-        event["trips"] = r.trips;
+        put(event, key.trips, integer(r.trips));
         if (!compact || r.first)
-          event["first_iteration"] = r.first;
-        event["period_cycles"] = r.period;
-        event["body"] = range(at, at + static_cast<size_t>(r.size));
+          put(event, key.first, integer(r.first));
+        put(event, key.period, integer(r.period));
+        put(event, key.body, range(at, at + static_cast<size_t>(r.size)));
       } else {
         details(r, event);
         if (r.known >= 0)
           runTime(r, walk.known[r.known], event);
       }
-      out.append(event);
+      set(out, k, std::move(event));
     }
     return out;
   }
@@ -2775,80 +2925,83 @@ private:
     bool loop = std::strcmp(r.kind, "loop") == 0;
     bool call = (r.kind[0] == 's' && !sync) || r.kind[0] == 'a';
     if (!compact)
-      event["index"] = index;
-    event["kind"] = compact ? structuredKind(r.kind) : r.kind;
+      put(event, key.index, integer(static_cast<int64_t>(index)));
+    put(event, key.kind, text(compact ? structuredKind(r.kind) : r.kind));
     // A frame update on a tone that plays on no line has none.
     bool unplaced = r.kind[0] == 'f' && r.line < 0;
     if (!compact)
-      event["line"] =
-          sync || loop || unplaced ? nb::none() : nb::object(nb::int_(r.line));
+      put(event, key.line, sync || loop || unplaced ? none() : integer(r.line));
     else if (!sync && !loop && !call)
-      event["line"] = unplaced ? nb::none() : nb::object(nb::int_(r.line));
+      put(event, key.line, unplaced ? none() : integer(r.line));
     if (!compact)
-      event["qudit"] =
-          sync || loop ? nb::none() : nb::object(nb::int_(call ? -1 : r.qudit));
-    event["start_cycles"] = optional(r.start);
-    event["duration_cycles"] = optional(r.duration);
+      put(event, key.qudit,
+          sync || loop ? none() : integer(call ? -1 : r.qudit));
+    put(event, key.start, optional(r.start));
+    put(event, key.duration, optional(r.duration));
     if (!compact)
-      event["end_cycles"] = optional(r.stop());
+      put(event, key.end, optional(r.stop()));
     if (!compact || !r.iteration.empty()) {
-      nb::list iteration;
-      for (int64_t k : r.iteration)
-        iteration.append(k < 0 ? nb::none() : nb::object(nb::int_(k)));
-      event["iteration"] = iteration;
+      nb::list iteration = list(r.iteration.size());
+      for (size_t i = 0; i < r.iteration.size(); ++i)
+        set(iteration, i,
+            r.iteration[i] < 0 ? none() : integer(r.iteration[i]));
+      put(event, key.iteration, iteration);
     }
     int64_t epoch = r.start ? r.epoch : 0;
     if (!compact || epoch)
-      event["epoch"] = epoch;
+      put(event, key.epoch, integer(epoch));
     if (!compact || !r.conditions.empty()) {
-      nb::list conditions;
-      for (const auto &[branch, arm, readouts, answers, test, computed] :
-           r.conditions) {
+      nb::list conditions = list(r.conditions.size());
+      for (size_t i = 0; i < r.conditions.size(); ++i) {
+        const auto &[branch, arm, readouts, answers, test, computed] =
+            r.conditions[i];
         nb::dict condition;
-        condition["branch"] = branch;
-        condition["arm"] = static_cast<bool>(arm);
+        put(condition, key.branch, integer(branch));
+        put(condition, key.arm, nb::bool_(arm != 0));
         if (!compact || !readouts.empty())
-          condition["readouts"] = ints(readouts);
+          put(condition, key.readouts, ints(readouts));
         if (!compact || !answers.empty())
-          condition["answers"] = ints(answers);
-        condition["test"] = test;
+          put(condition, key.answers, ints(answers));
+        put(condition, key.test, text(test));
         if (computed >= 0)
-          condition["expression"] = expression(computed, readouts, answers);
-        conditions.append(condition);
+          put(condition, key.expression,
+              expression(computed, readouts, answers));
+        set(conditions, i, std::move(condition));
       }
-      event["conditions"] = conditions;
+      put(event, key.conditions, conditions);
     }
     return event;
   }
 
   /// The frame of the tone of a play, acquire or frame update: in format /2
   /// as its `tones`.
-  void frame(const ControllerRecord &r, nb::dict &event) const {
+  void frame(const ControllerRecord &r, nb::handle event) {
     if (!compact) {
-      event["frequency_hz"] = number(r.frequency);
-      event["phase_rad"] = number(r.phase);
+      put(event, key.frequency, number(r.frequency));
+      put(event, key.phase, number(r.phase));
       return;
     }
     // A list, so that an event may later play more than one carrier.
     nb::dict tone;
-    tone["frequency_hz"] = number(r.frequency);
-    tone["phase_rad"] = number(r.phase);
+    put(tone, key.frequency, number(r.frequency));
+    put(tone, key.phase, number(r.phase));
     if (!r.phaseSteps.empty()) {
-      nb::list steps;
-      for (double step : r.phaseSteps)
-        steps.append(number(step));
-      tone["phase_step_rad"] = steps;
+      nb::list steps = list(r.phaseSteps.size());
+      for (size_t i = 0; i < r.phaseSteps.size(); ++i)
+        set(steps, i, number(r.phaseSteps[i]));
+      put(tone, key.phaseStep, steps);
     }
-    nb::list tones;
-    tones.append(tone);
-    event["tones"] = tones;
+    nb::list tones = list(1);
+    set(tones, 0, std::move(tone));
+    put(event, key.tones, tones);
   }
 
-  void details(const ControllerRecord &r, nb::dict &event) {
+  void details(const ControllerRecord &r, nb::handle event) {
     if (r.played()) {
-      auto &shape = made[static_cast<size_t>(waveforms.of.lookup(r.op))];
+      auto at = static_cast<size_t>(waveforms.of.lookup(r.op));
+      auto &shape = made[at];
       if (!shape) {
-        const Nodes &nodes = waveforms.distinct[waveforms.of.lookup(r.op)];
+        const Nodes &nodes = waveforms.distinct[at];
         if (waveform.is_none()) {
           shape.emplace(built(nodes));
         } else {
@@ -2856,27 +3009,27 @@ private:
           shape.emplace(pair[0], pair[1]);
         }
       }
-      event["waveform"] = shape->first;
+      put(event, key.waveform, shape->first);
       if (!compact)
-        event["amplitude"] = shape->second;
+        put(event, key.amplitude, shape->second);
       frame(r, event);
     } else if (r.kind[0] == 'f') {
-      event["op"] = nb::str(r.update.data(), r.update.size());
-      event["value"] = expression(r.value);
+      put(event, key.op, text(r.update));
+      put(event, key.value, expression(r.value));
       frame(r, event);
     } else if (std::strcmp(r.kind, "sync") == 0) {
-      event["lines"] = ints(r.joined);
+      put(event, key.lines, ints(r.joined));
     } else if (r.kind[0] == 's' || r.kind[0] == 'a') {
-      event["link"] = r.line;
+      put(event, key.link, integer(r.line));
       if (r.qudit >= 0)
-        event["controller"] = r.qudit;
-      event["function"] = r.callee;
+        put(event, key.controller, integer(r.qudit));
+      put(event, key.function, text(r.callee));
       if (r.kind[0] == 's') {
-        event["measurements"] = ints(r.refs);
+        put(event, key.measurements, ints(r.refs));
       } else {
-        event["wait"] = r.mode;
+        put(event, key.wait, text(r.mode));
         if (!compact || !std::isnan(r.timeout))
-          event["timeout_ns"] = number(r.timeout);
+          put(event, key.timeout, number(r.timeout));
       }
     }
   }
@@ -2885,72 +3038,66 @@ private:
 
   /// A number as the JSON text "%.17g" of it reads back: an int where that
   /// text has no fraction or exponent.
-  static nb::object textNumber(double value) {
+  nb::object textNumber(double value) {
     if (std::isfinite(value) && value == std::trunc(value) &&
         std::fabs(value) < 1e17)
-      return nb::int_(static_cast<int64_t>(value));
-    return nb::float_(value);
+      return integer(static_cast<int64_t>(value));
+    return real(value);
   }
 
   /// A branch condition's expression (see conditionExpression), with the
   /// records its leaves' places in `readouts` and `answers` hold.
   LLVM_ATTRIBUTE_NOINLINE nb::object
   expression(int32_t index, const std::vector<int64_t> &readouts,
-             const std::vector<int64_t> &answers) const {
+             const std::vector<int64_t> &answers) {
     const Expression &e = walk.expressions[index];
     if (e.kind != Expression::Op) {
       nb::object out = expression(index);
       if (e.kind == Expression::Readout)
-        out[names->readout] = readouts[e.event];
+        put(out, key.readout, integer(readouts[e.event]));
       else if (e.kind == Expression::Answer)
-        out[names->answer] = answers[e.event];
+        put(out, key.answer, integer(answers[e.event]));
       return out;
     }
-    if (!names)
-      names.emplace();
-    const Names &key = *names;
     nb::dict out;
-    out[key.op] = key.terms[e.term];
-    out[key.type] = key.types[e.type];
-    nb::list of;
-    for (int32_t child : e.of)
-      of.append(expression(child, readouts, answers));
-    out[key.of] = of;
+    put(out, key.op, key.terms[e.term]);
+    put(out, key.type, key.types[e.type]);
+    nb::list of = list(e.of.size());
+    for (size_t i = 0; i < e.of.size(); ++i)
+      set(of, i, expression(e.of[i], readouts, answers));
+    put(out, key.of, of);
     return out;
   }
 
   /// Expression `index` as the export gives it.
-  nb::object expression(int32_t index) const {
+  nb::object expression(int32_t index) {
     const Expression &e = walk.expressions[index];
     if (e.kind == Expression::Number)
       return textNumber(e.number);
     if (e.kind == Expression::Unknown)
       unexportable(e.name);
-    if (!names)
-      names.emplace();
-    const Names &key = *names;
     nb::dict out;
     switch (e.kind) {
     case Expression::Constant:
       if (e.type == Expression::Bool)
-        out[key.constant] = nb::bool_(e.number != 0.0);
+        put(out, key.constant, nb::bool_(e.number != 0.0));
       else
-        out[key.constant] = textNumber(e.number);
+        put(out, key.constant, textNumber(e.number));
       break;
     case Expression::Readout:
-      out[key.readout] = e.event;
+      put(out, key.readout, integer(e.event));
       break;
     case Expression::Answer:
-      out[key.answer] = e.event;
-      out[key.result] = e.result;
+      put(out, key.answer, integer(e.event));
+      put(out, key.result, integer(e.result));
       break;
     default: {
-      out[key.op] = key.terms[e.term];
-      out[key.type] = key.types[e.type];
-      nb::list of;
-      for (int32_t child : e.of)
-        of.append(expression(child));
-      out[key.of] = of;
+      put(out, key.op, key.terms[e.term]);
+      put(out, key.type, key.types[e.type]);
+      nb::list of = list(e.of.size());
+      for (size_t i = 0; i < e.of.size(); ++i)
+        set(of, i, expression(e.of[i]));
+      put(out, key.of, of);
     }
     }
     return out;
@@ -2977,42 +3124,45 @@ private:
   /// The name of number `operand` of a node: its parameter's, where the
   /// shape names all its numbers, else its index.
   nb::object parameter(const std::string &name, size_t numbers,
-                       int64_t operand) const {
-    nb::object names =
-        parameters.attr("get")(nb::str(name.substr(0, name.find(':')).c_str()));
-    if (!names.is_none() && nb::len(names) == numbers)
-      return names[static_cast<size_t>(operand)];
-    return nb::str(std::to_string(operand).c_str());
+                       int64_t operand) {
+    if (const Shape *names =
+            named(llvm::StringRef(name).split(':').first, numbers))
+      return names->names[static_cast<size_t>(operand)];
+    return text(std::to_string(operand));
   }
 
   /// The run-time operands of node `index`, by parameter name; none when it
   /// has none.
   nb::object computed(const Nodes &nodes, int64_t index,
-                      const Operands &operands) const {
+                      const Operands &operands) {
     const auto &[name, numbers, children] = nodes[index];
     nb::dict out;
     for (const auto &[at, operand, expr] : operands)
       if (at == index)
-        out[parameter(name, numbers.size(), operand)] = expression(expr);
-    return nb::len(out) ? nb::object(out) : nb::none();
+        put(out, parameter(name, numbers.size(), operand).ptr(),
+            expression(expr));
+    return PyDict_GET_SIZE(out.ptr()) ? nb::object(out) : none();
   }
 
   /// A copy of waveform `tree` (node `index` of `nodes`) with its operands
   /// known only at run time in the `runtime` of their nodes.
   nb::object withRunTime(const Nodes &nodes, int64_t index, nb::handle tree,
-                         const Operands &operands) const {
+                         const Operands &operands) {
     const auto &children = std::get<2>(nodes[index]);
-    nb::dict node = nb::steal<nb::dict>(PyDict_Copy(tree.ptr()));
+    nb::object node = checked(PyDict_Copy(tree.ptr()));
     if (!children.empty()) {
-      nb::object old = node["of"];
-      nb::list of;
+      PyObject *old = PyDict_GetItem(node.ptr(), key.of);
+      nb::list of = list(children.size());
       for (size_t i = 0; i < children.size(); ++i)
-        of.append(withRunTime(nodes, children[i], old[i], operands));
-      node["of"] = of;
+        set(of, i,
+            withRunTime(nodes, children[i],
+                        PyList_GET_ITEM(old, static_cast<Py_ssize_t>(i)),
+                        operands));
+      put(node, key.of, of);
     }
     nb::object here = computed(nodes, index, operands);
     if (!here.is_none())
-      node["runtime"] = here;
+      put(node, key.runtime, here);
     return node;
   }
 
@@ -3020,12 +3170,13 @@ private:
   /// to their nodes (the index in `of` at each node from the root) with
   /// their operands by parameter name.
   void paths(const Nodes &nodes, int64_t index, nb::list &path, nb::list &out,
-             const Operands &operands) const {
+             const Operands &operands) {
     nb::object here = computed(nodes, index, operands);
     if (!here.is_none()) {
       nb::dict item;
-      item["path"] = nb::list(path);
-      item["params"] = here;
+      put(item, key.path,
+          checked(PyList_GetSlice(path.ptr(), 0, PY_SSIZE_T_MAX)));
+      put(item, key.params, here);
       out.append(item);
     }
     const auto &children = std::get<2>(nodes[index]);
@@ -3036,32 +3187,34 @@ private:
     }
   }
 
-  nb::object
-  frameUpdates(const std::vector<ControllerWalk::FrameUpdate> &all) const {
-    nb::list out;
-    for (const auto &update : all) {
-      nb::list conditions;
-      for (const auto &[branch, arm, readouts, answers, test, computed] :
-           update.conditions) {
+  nb::list frameUpdates(const std::vector<ControllerWalk::FrameUpdate> &all) {
+    nb::list out = list(all.size());
+    for (size_t i = 0; i < all.size(); ++i) {
+      const auto &update = all[i];
+      nb::list conditions = list(update.conditions.size());
+      for (size_t j = 0; j < update.conditions.size(); ++j) {
+        const auto &[branch, arm, readouts, answers, test, computed] =
+            update.conditions[j];
         nb::dict condition;
         if (!compact || !answers.empty())
-          condition["answers"] = ints(answers);
-        condition["arm"] = static_cast<bool>(arm);
-        condition["branch"] = branch;
+          put(condition, key.answers, ints(answers));
+        put(condition, key.arm, nb::bool_(arm != 0));
+        put(condition, key.branch, integer(branch));
         if (computed >= 0)
-          condition["expression"] = expression(computed, readouts, answers);
+          put(condition, key.expression,
+              expression(computed, readouts, answers));
         if (!compact || !readouts.empty())
-          condition["readouts"] = ints(readouts);
-        condition["test"] = test;
-        conditions.append(condition);
+          put(condition, key.readouts, ints(readouts));
+        put(condition, key.test, text(test));
+        set(conditions, j, std::move(condition));
       }
       nb::dict item;
-      if (!compact || nb::len(conditions))
-        item["conditions"] = conditions;
-      item["id"] = update.seq;
-      item["op"] = nb::str(update.op.data(), update.op.size());
-      item["value"] = expression(update.value);
-      out.append(item);
+      if (!compact || !update.conditions.empty())
+        put(item, key.conditions, conditions);
+      put(item, key.id, integer(static_cast<int64_t>(update.seq)));
+      put(item, key.op, text(update.op));
+      put(item, key.value, expression(update.value));
+      set(out, i, std::move(item));
     }
     return out;
   }
@@ -3069,7 +3222,7 @@ private:
   /// What `r` has that is known only at run time, after the rest of
   /// `event`; format /1 adds the waveform's in place, in its nodes.
   void runTime(const ControllerRecord &r, const ControllerWalk::Known &known,
-               nb::dict &event) {
+               nb::handle event) {
     if (!known.waveform.empty() && r.played()) {
       const Nodes &nodes = waveforms.distinct[waveforms.of.lookup(r.op)];
       Operands sorted = known.waveform;
@@ -3080,31 +3233,33 @@ private:
                        });
       int64_t root = static_cast<int64_t>(nodes.size()) - 1;
       if (!compact) {
-        event["waveform"] = withRunTime(nodes, root, event["waveform"], sorted);
+        put(event, key.waveform,
+            withRunTime(nodes, root, PyDict_GetItem(event.ptr(), key.waveform),
+                        sorted));
       } else {
         nb::list path, out;
         paths(nodes, root, path, out, sorted);
-        event["runtime"] = out;
+        put(event, key.runtime, out);
       }
     }
     if (known.tone >= 0) {
-      event["tone"] = known.tone;
-      event["frame_updates"] = frameUpdates(known.updates);
+      put(event, key.tone, integer(known.tone));
+      put(event, key.frameUpdates, frameUpdates(known.updates));
       if (known.offset)
-        event["phase_offset_rad"] = textNumber(*known.offset);
+        put(event, key.phaseOffset, textNumber(*known.offset));
     }
     if (known.length >= 0) {
-      event["length"] = expression(known.length);
+      put(event, key.length, expression(known.length));
       if (!compact || known.minCycles)
-        event["min_cycles"] = optional(known.minCycles);
+        put(event, key.minCycles, optional(known.minCycles));
       if (!compact || known.maxCycles)
-        event["max_cycles"] = optional(known.maxCycles);
+        put(event, key.maxCycles, optional(known.maxCycles));
     }
     if (known.operands) {
-      nb::list operands;
-      for (int32_t expr : *known.operands)
-        operands.append(expression(expr));
-      event["operands"] = operands;
+      nb::list operands = list(known.operands->size());
+      for (size_t i = 0; i < known.operands->size(); ++i)
+        set(operands, i, expression((*known.operands)[i]));
+      put(event, key.operands, operands);
     }
   }
 };

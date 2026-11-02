@@ -73,8 +73,8 @@ struct Occurrence {
 inline std::optional<double> constantNumber(mlir::Value value) {
   if (auto answer = boundAnswer(value))
     return answer;
-  mlir::Attribute attribute;
-  if (!mlir::matchPattern(value, mlir::m_Constant(&attribute)))
+  mlir::Attribute attribute = constantAttribute(value);
+  if (!attribute)
     return std::nullopt;
   if (auto number = mlir::dyn_cast<mlir::FloatAttr>(attribute))
     return number.getValueAsDouble();
