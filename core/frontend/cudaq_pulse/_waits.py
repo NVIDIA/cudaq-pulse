@@ -119,12 +119,34 @@ class _WaitLengths:
             for wait in waits
         )
         self.length = length
+        # The program's length within the most it may last, tested on its
+        # own unless the waits' bounds already keep it there, or the one
+        # wait it depends on has a highest length that does.
+        highest = {id(w): _highest(w) for w in self.waits}
+        longer = None
+        timed = self._timed()
+        if timed:
+            assert length is not None
+            cycles, most, _, repeats = length[:4]
+            spare = most - cycles
+            runs = [(w, w.lowest or 0, r) for w, r in zip(timed, repeats, strict=True) if r]
+            if sum(r * (highest[id(w)] - lowest) for w, lowest, r in runs) > spare:
+                if len(length) > 4:
+                    longer = _longer_in_ifs(timed, length[4])
+                elif len(runs) == 1:
+                    ((w, lowest, r),) = runs
+                    highest[id(w)] = lowest + spare // r
+                else:
+                    longer = " + ".join(
+                        f"{r} * (({w.source} + 0.5) // 1 - {w.lowest})"
+                        for w, r in zip(timed, repeats, strict=True)
+                    )
         # floor(x + 0.5) is in [lowest, highest] exactly when
         # lowest <= x + 0.5 < highest + 1, which NaN fails; without a lowest,
         # -1e400 (minus infinity) < x + 0.5 also fails for minus infinity.
         tests = " and ".join(
             f"{'-1e400 <' if w.lowest is None else f'{w.lowest} <='} {w.source} + 0.5 < "
-            f"{(_MAX_WAIT_CYCLES if w.highest is None else w.highest) + 1}"
+            f"{highest[id(w)] + 1}"
             for w in self.waits
         )
         if grids:
@@ -133,16 +155,7 @@ class _WaitLengths:
                 for w, grid in zip(self.waits, grids, strict=True)
                 if w.lowest is not None and grid > 1
             )
-        if self._timed():
-            assert length is not None
-            cycles, most, _, repeats = length[:4]
-            if len(length) > 4:
-                longer = _longer_in_ifs(self._timed(), length[4])
-            else:
-                longer = " + ".join(
-                    f"{r} * (({w.source} + 0.5) // 1 - {w.lowest})"
-                    for w, r in zip(self._timed(), repeats, strict=True)
-                )
+        if longer is not None:
             tests += f" and {cycles} + {longer} <= {most}"
         self.ok = eval(f"lambda a: {tests}", {"__builtins__": {}})
 
@@ -217,6 +230,10 @@ class _GridWaitLengths(_WaitLengths):
     ) -> None:
         self.grids = tuple(grids)
         super().__init__(waits, kernel, self.grids, length)
+
+
+def _highest(wait: _WaitLength) -> int:
+    return _MAX_WAIT_CYCLES if wait.highest is None else wait.highest
 
 
 def _longer_in_ifs(timed: Sequence[_WaitLength], excess: Sequence[int]) -> str:

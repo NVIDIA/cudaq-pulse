@@ -101,3 +101,65 @@ def test_a_long_rolled_loop_past_the_controllers_longest_program_fails_fast():
     machine = MachineModel(controller=ControllerLimits(max_program_duration=10**6))
     with pytest.raises(CompilationError, match=r"ControllerLimits\.max_program_duration"):
         pulse.compile(_waits(10**15, 4), machine=machine).lower(Q[0])
+
+
+_LONGEST = MachineModel(controller=ControllerLimits(max_program_duration=5_000))
+# Loops stay rolled, so a wait in one is one wait run several times.
+_ROLLED = {"unroll_threshold": 0}
+
+
+def _held(d, n, bounds):
+    if bounds is None:
+        wait(d, n)
+    else:
+        wait(d, n, bounds=bounds)
+
+
+def _sweep(trips, bounds, written=None):
+    @pulse.kernel
+    def sweep(q, x: float, y: float):
+        d = get_drive_line(q)
+        a, b = (x, y) if written is None else written
+        drive(d, square(100, 0.1))
+        for _ in range(trips):
+            _held(d, a, bounds if written is None else None)
+        if trips == 1:
+            _held(d, b, bounds if written is None else None)
+
+    return sweep
+
+
+@pytest.mark.parametrize("trips, bounds", [(3, (4, 10**6)), (3, None), (1, (4, 10**6)), (1, None)])
+def test_a_call_fits_exactly_when_its_lengths_written_in_fit(trips, bounds):
+    # One wait three times, folded into its bounds; or two once, summed.
+    compiled = pulse.compile(_sweep(trips, bounds), machine=_LONGEST, **_ROLLED)
+    lowest = 0 if bounds is None else bounds[0]
+    values = [4.0, 3299.4, 3299.5, 3300.49, 3300.5, 4950.0, 9895.5, 9896.5, 20_000.0]
+    outcomes = set()
+    for x in values:
+        for y in values:
+            written = (math.floor(x + 0.5), math.floor(y + 0.5))
+            try:
+                pulse.compile(_sweep(trips, None, written), machine=_LONGEST, **_ROLLED).lower(
+                    Q[0], 0.0, 0.0
+                )
+                fits = True
+            except CompilationError as error:
+                assert "max_program_duration" in str(error)
+                fits = False
+            outcomes.add(fits)
+            if fits:
+                assert compiled.lower(Q[0], x, y) is not None, (x, y)
+            else:
+                with pytest.raises(ValueError, match=r"ControllerLimits\.max_program_duration"):
+                    compiled.lower(Q[0], x, y)
+    assert outcomes == {True, False}
+    waits = compiled.lower(Q[0], float(lowest), float(lowest)).generic.waits
+    # The most the program may last is its own test only with two waits.
+    assert (10_000 in waits.ok.__code__.co_consts) == (trips == 1)
+
+
+def test_waits_whose_bounds_keep_the_program_short_test_no_length():
+    waits = pulse.compile(_sweep(3, None), **_ROLLED).lower(Q[0], 4.0, 4.0).generic.waits
+    assert waits.length is not None and waits.length[3] == [3]
+    assert 2**60 not in waits.ok.__code__.co_consts
