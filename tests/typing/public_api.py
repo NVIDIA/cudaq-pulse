@@ -28,7 +28,17 @@ from cudaq_pulse.controller import (
     WaveformMemoryScope,
 )
 from cudaq_pulse.ops import Waveform
-from cudaq_pulse.targets import DispersiveReadout, MicrowaveDrive, Qubit, Readout
+from cudaq_pulse.targets import (
+    Coupling,
+    DispersiveReadout,
+    Gate,
+    MicrowaveDrive,
+    Qubit,
+    Readout,
+    ResidualZZ,
+    TargetDescription,
+)
+from cudaq_pulse.targets.transmon import CZ_LAYERS
 
 wave = pulse.ops.gaussian(40, 0.1, 10.0)
 assert_type(wave, Waveform)
@@ -194,3 +204,33 @@ DispersiveReadout(7.0e9)  # type: ignore[call-arg]
 readout.linewidth_hz = 2.0e6  # type: ignore[misc]
 qudit = Qubit(0, 5.0e9, -2.0e8, 50.0, 30.0, drive=MicrowaveDrive(x_amplitude=0.2), readout=readout)
 assert_type(qudit.readout, Readout | None)
+
+# A coupling gives its qudits and strength (None: not measured yet), and its
+# gate is one object of typed fields; leaving a required field out, or
+# giving one the gate does not have, is a type error.
+cz = Gate("cz", 98.0, buffer_ns=15.0, interaction_frequency_hz=4.4e9)
+assert_type(cz.duration_ns, float)
+assert_type(cz.interaction_frequency_hz, float | None)
+Gate("cz", 98.0, params={"cz_step": 1.0})  # type: ignore[call-arg]
+Gate("cz", 98.0, fidelity=0.99)  # type: ignore[call-arg]
+edge = Coupling((0, 1), 5.7e6, gate=cz)
+assert_type(edge.qudits, tuple[int, ...])
+assert_type(edge.strength_hz, float | None)
+assert_type(edge.gate, Gate | None)
+Coupling((0, 1), None)
+Coupling((0, 1))  # type: ignore[call-arg]
+Gate("cz")  # type: ignore[call-arg]
+zz = ResidualZZ((0, 1), 1.5e4)
+assert_type(zz.rate_hz, float)
+ResidualZZ((0, 1), 1.5e4, zz_coupling=0.5)  # type: ignore[call-arg]
+pair = TargetDescription(
+    name="pair",
+    qubits={0: Qubit(0, 5.0e9, -2.5e8, 50.0, 30.0)},
+    couplings=[edge],
+    residual_zz=[zz],
+)
+TargetDescription(name="pair", crosstalk=[zz])  # type: ignore[call-arg]
+assert_type(CZ_LAYERS, tuple[tuple[tuple[int, int], ...], ...])
+assert_type(pair.coupling_map, list[tuple[int, ...]])
+assert_type(pair.coupling(0, 1), Coupling)
+TargetDescription(name="pair", architecture="transmon")  # type: ignore[call-arg]
