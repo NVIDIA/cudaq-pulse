@@ -36,16 +36,27 @@ from tests._handles import Q
 CPU_S = 30
 RSS_MB = 600
 
+# Linux's ru_maxrss carries the parent's peak across fork and exec, which a
+# long test run takes past RSS_MB; VmHWM is this process's own.
 _LIMITS = """
 import os, resource, signal, sys, threading, time
 signal.alarm({wall})
 resource.setrlimit(resource.RLIMIT_CPU, ({cpu}, {cpu}))
-_scale = 1 if sys.platform == "darwin" else 1024
+def _peak():
+    if sys.platform == "darwin":
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    with open("/proc/self/status") as status:
+        for line in status:
+            if line.startswith("VmHWM:"):
+                return int(line.split()[1]) << 10
+    raise RuntimeError("no VmHWM in /proc/self/status")
 def _watch():
     while True:
-        if resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * _scale > {mb} << 20:
+        if (peak := _peak()) > {mb} << 20:
+            os.write(2, f"peak RSS {{peak >> 20}} MB, past {mb} MB\\n".encode())
             os._exit(3)
         time.sleep(0.005)
+_peak()
 threading.Thread(target=_watch, daemon=True).start()
 """
 
