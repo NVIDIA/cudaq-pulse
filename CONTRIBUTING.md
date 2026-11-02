@@ -180,8 +180,8 @@ on two measures:
 - **Instructions** executed per repetition, counted by Valgrind's Callgrind
   on Linux x86-64. A case fails at more than 0.4% above its baseline. It
   also fails at more than 1% below, so that a speedup is recorded in the
-  baseline instead of hiding a later regression. A failure is labelled by
-  the case's Python-level work (below).
+  baseline instead of hiding a later regression. A failure says whether it
+  is a regression, a gain or layout only (below).
 - **Program sizes**: op count, packed program bytes and export bytes. Any
   change fails. These are the same on every platform, and
   `tests/test_perf_gate.py` checks them in the regular test suite too.
@@ -247,18 +247,25 @@ Python version, MLIR toolchain) changes the counts, and counts from another
 environment fail the gate, so take a new baseline as above once the change
 is on `staging`.
 
-**Likely layout only.** The job also counts each case's Python-level work
-per repetition (bytecodes executed, Python calls and C calls, with
-`sys.monitoring`), natively and apart from the Callgrind runs, and the
-baseline records it. It never gates, but it labels a case that fails on
-instructions. With the same Python work as the baseline's, the summary's
-"Python work" column says `same` and the failure says the instructions
-moved with identical Python work, likely layout only: for example, one new
-class at import renumbers the interpreter's type version tags and changes
-its method cache's collisions. The case still fails; judge it (compare the
-Callgrind dumps with the baseline run's) before taking a new baseline.
-With other Python work, the failure lists each counter's change. A
-baseline without Python work labels nothing.
+**Regressions, gains and layout only.** The job also counts each case's
+Python-level work per repetition (bytecodes executed, Python calls and C
+calls, with `sys.monitoring`), natively and apart from the Callgrind runs,
+and the baseline records it. It never gates, but every failure on
+instructions says its kind, and the summary counts them by kind:
+
+- **regression**: above the limit;
+- **gain**: more than 1% below; take a new baseline to keep it;
+- **layout only**: the same Python work as the baseline's (the summary's
+  "Python work" column says `same`) and a change of at most 2% either way.
+  The instructions moved below Python, most likely in the layout of the
+  interpreter's caches and memory: for example, one new class at import
+  renumbers the interpreter's type version tags and changes its method
+  cache's collisions. Judge it (compare the Callgrind dumps with the
+  baseline run's) before taking a new baseline.
+
+A regression or a gain lists each counter of Python work that changed, or,
+with the same work, says the change is in native code. Every kind fails. A
+baseline without Python work tells only regressions from gains.
 
 Wall-clock times are informational only: shared runners are too noisy to
 block on. The test job still reports `tests/test_perf_guard.py`'s
