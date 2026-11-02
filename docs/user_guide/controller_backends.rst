@@ -380,6 +380,7 @@ Left out
 ``/1`` program of the same kernel, for a backend that needs every
 execution; phases agree up to rounding and branches are numbered in the
 order they first appear.
+
 Clocks
 ------
 
