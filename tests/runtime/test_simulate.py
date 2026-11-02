@@ -375,6 +375,39 @@ def test_the_check_follows_the_model_s_levels_not_a_transmon_s():
         _run(_shaped, levels=4, dt_ns=0.25)
 
 
+@pytest.mark.parametrize(
+    ("levels", "step"),
+    # Transmon level k sits k (k - 1) / 2 alpha off the frame: at -200 MHz,
+    # 4 levels spread over 600 MHz, 5 over 1.2 GHz and 6 over 2 GHz.
+    [(2, 0.05), (3, 0.05), (4, 0.05), (5, 0.5 / 12), (6, 0.025)],
+)
+def test_the_default_step_takes_20_steps_per_period_of_the_levels_spread(levels, step):
+    from cudaq_pulse.runtime.simulate import _default_step
+
+    target = _target()
+    lowered = on(target, _shaped, Q[0])
+    assert _default_step(lowered, target, levels) == step
+    assert _default_step(lowered, target, {0: levels}) == step
+
+
+@pulse.kernel
+def _short_shaped(q0):
+    d0 = get_drive_line(q0)
+    drive(d0, gaussian(80, 1e-6, 16.0))
+
+
+def test_the_default_step_resolves_six_levels_where_0_05_ns_did_not(recwarn):
+    zero_five = np.zeros(6)
+    zero_five[0] = zero_five[5] = 1 / math.sqrt(2.0)
+    options = {"levels": 6, "initial_state": zero_five}
+    default = _run(_short_shaped, **options).density_matrix
+    assert not [w for w in recwarn if issubclass(w.category, pulse.PulseWarning)]
+    with pytest.warns(pulse.PulseWarning, match=r"levels 0 and 5 turns at 2 GHz"):
+        coarse = _run(_short_shaped, dt_ns=0.05, **options).density_matrix
+    fine = _run(_short_shaped, dt_ns=0.025 / 8, **options).density_matrix
+    assert np.abs(default - fine).max() < np.abs(coarse - fine).max() / 4
+
+
 def test_a_step_too_coarse_for_coupled_qudits_names_their_detuning():
     pair = TargetDescription(
         name="pair",

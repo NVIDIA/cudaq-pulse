@@ -250,10 +250,13 @@ def simulate(
         End of the simulation: a time (``40 * pulse.ns``) or a number of
         ns; the end of the schedule by default.
     dt_ns:
-        Integration step: a time or a number of ns. By default 0.05 ns, or shorter when coupled
-        qudits are far detuned: a coupling turns at their detuning, and the
-        step resolves it with 20 steps per period (0.024 ns at 2.1 GHz),
-        a whole fraction of a clock cycle. A step passed here that takes
+        Integration step: a time or a number of ns. By default 0.05 ns, or
+        shorter when the simulation holds a faster frequency: a coupling
+        turns at its qudits' detuning, and a qudit's levels at the spread of
+        their energies in its frame (of four or more transmon levels, a
+        multiple of its anharmonicity). The step resolves it with 20 steps
+        per period (0.024 ns at 2.1 GHz), a whole fraction of a clock
+        cycle. A step passed here that takes
         fewer than 20 steps per period of the fastest frequency the
         simulation holds, a qudit's anharmonicity with three or more levels
         or the detuning of coupled qudits, warns with a ``PulseWarning``
@@ -399,7 +402,7 @@ def _simulate_lowered(
     target = lowered.target.target if plant is None else _check_plant(lowered, plant)
     model = _simulation_model(target)
     if dt_ns is None:
-        dt_ns = _default_step(lowered)
+        dt_ns = _default_step(lowered, target, levels)
     elif dt_ns <= 0:
         raise InvalidValueError("dt_ns must be positive")
     else:
@@ -451,29 +454,72 @@ def _check_plant(lowered: Lowered, plant: Any) -> Any:
 
 
 _DEFAULT_STEP_NS = 0.05
-_STEPS_PER_COUPLING_PERIOD = 20
+_STEPS_PER_PERIOD = 20
 
 
-def _default_step(lowered: Lowered) -> float:
+def _default_step(
+    lowered: Lowered, target: Any = None, levels: int | dict[int, int] | None = None
+) -> float:
     """The integration step: 0.05 ns, or 20 steps per period of the fastest
-    exchange coupling between the program's qudits, which turns at their
-    detuning, rounded down to a whole fraction of a clock cycle."""
-    target = lowered.target.target
-    active = set(lowered.qudits)
-    detuning = max(
-        (
-            abs(target.qubits[c.qubit_a].frequency_hz - target.qubits[c.qubit_b].frequency_hz)
-            for c in target._exchange_view
-            if c.qubit_a in active and c.qubit_b in active
-        ),
-        default=0.0,
-    )
+    frequency the simulation holds (see ``_check_step``), rounded down to a
+    whole fraction of a clock cycle.
+
+    Couplings turn at the detuning of the compiled device's qudits; levels
+    at the spread of the simulated *target*'s (the compiled one by default)."""
+    compiled = lowered.target.target
+    active = lowered.qudits
+    fastest = _level_spread(compiled if target is None else target, active, levels)[0]
+    if len(active) > 1:
+        qubits = compiled.qubits
+        for c in compiled._exchange_view:
+            if c.qubit_a in active and c.qubit_b in active:
+                detuning = abs(qubits[c.qubit_a].frequency_hz - qubits[c.qubit_b].frequency_hz)
+                if detuning > fastest:
+                    fastest = detuning
     step = _DEFAULT_STEP_NS
-    if detuning > 0:
-        step = min(step, 1e9 / (_STEPS_PER_COUPLING_PERIOD * detuning))
+    if fastest > 0:
+        step = min(step, 1e9 / (_STEPS_PER_PERIOD * fastest))
     # A whole number of steps per clock cycle keeps pulse edges on the grid.
     cycle = 1.0 / lowered.target.clock_ghz
     return cycle / math.ceil(cycle / step - 1e-9)
+
+
+def _level_spread(
+    target: Any, qudits: tuple[int, ...], levels: int | dict[int, int] | None
+) -> tuple[float, int, int]:
+    """The widest spread, in Hz, of the level offsets (``_level_offsets_hz``)
+    of one of *qudits*, with the qudit and its levels; zero with two levels
+    each, whose offsets are both zero."""
+    key = None if levels.__class__ is dict else (id(target), qudits, levels)
+    if key is not None:
+        hit = _SPREADS.get(key)
+        if hit is not None and hit[0] is target:
+            return hit[1]
+    spread, qudit, count = 0.0, 0, 0
+    model = target.model
+    for q in qudits:
+        if levels is None:
+            d = model.levels_of(q)
+        elif isinstance(levels, dict):
+            d = levels[q] if q in levels else model.levels_of(q)
+        else:
+            d = int(levels)
+        if d > 2:
+            offsets = _level_offsets_hz(model, target.qubits[q], d)
+            width = max(offsets) - min(offsets)
+            if width > spread:
+                spread, qudit, count = width, q, d
+    if key is not None:
+        if len(_SPREADS) >= 256:
+            _SPREADS.clear()
+        _SPREADS[key] = (target, (spread, qudit, count))
+    return spread, qudit, count
+
+
+# ``_level_spread`` of each target (frozen), qudits and levels seen, by the
+# target's id; each entry holds the target, so its id is not reused while
+# the entry lives.
+_SPREADS: dict[tuple[int, tuple[int, ...], Any], tuple[Any, tuple[float, int, int]]] = {}
 
 
 def _check_step(
@@ -491,19 +537,8 @@ def _check_step(
     fastest = 0.0
     source = ("", 0, 0)
     if levels.__class__ is not int or levels > 2:
-        model = target.model
-        for q in active:
-            if levels is None:
-                d = model.levels_of(q)
-            elif isinstance(levels, dict):
-                d = levels[q] if q in levels else model.levels_of(q)
-            else:
-                d = int(levels)
-            if d > 2:
-                offsets = _level_offsets_hz(model, qubits[q], d)
-                spread = max(offsets) - min(offsets)
-                if spread > fastest:
-                    fastest, source = spread, ("levels", q, d)
+        fastest, q, d = _level_spread(target, active, levels)
+        source = ("levels", q, d)
     for c in target._exchange_view:
         a, b = c.qubit_a, c.qubit_b
         if a in active and b in active:
@@ -515,7 +550,7 @@ def _check_step(
 
 
 # The largest frequency (Hz) times step (ns) that keeps 20 steps per period.
-_MAX_HZ_NS = 1e9 / _STEPS_PER_COUPLING_PERIOD * (1 + 1e-9)
+_MAX_HZ_NS = 1e9 / _STEPS_PER_PERIOD * (1 + 1e-9)
 
 
 def _level_offsets_hz(model: Any, qubit: Any, levels: int) -> list[float]:
@@ -551,7 +586,7 @@ def _warn_coarse_step(
         cause = (
             f"the exchange coupling of qudits {a} and {b} turns at their detuning, {_hz(fastest)}"
         )
-    bound = 1e9 / (_STEPS_PER_COUPLING_PERIOD * fastest)
+    bound = 1e9 / (_STEPS_PER_PERIOD * fastest)
     cycle = 1.0 / clock_ghz
     per_cycle = math.ceil(cycle / bound - 1e-9)
     # The step as printed must not exceed the bound once rounded.
@@ -562,7 +597,7 @@ def _warn_coarse_step(
         f"simulate(dt_ns={dt_ns:g}): {cause}, so a step of {dt_ns:g} ns takes "
         f"{1e9 / (fastest * dt_ns):.3g} steps per period of it. A fixed-step "
         f"integrator damps and dephases what it resolves with fewer than "
-        f"{_STEPS_PER_COUPLING_PERIOD} steps per period, so the result may be wrong. "
+        f"{_STEPS_PER_PERIOD} steps per period, so the result may be wrong. "
         f"Pass dt_ns={suggested} or less ({per_cycle} steps per {cycle:g} ns clock "
         "cycle keep pulse edges on the step grid).",
         _CoarseStepWarning,

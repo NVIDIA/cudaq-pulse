@@ -198,9 +198,12 @@ To execute on a GPU (requires cuDensityMat runtime):
 
 ``t_end`` and ``dt_ns`` are in nanoseconds; ``t_end`` defaults to the end of
 the schedule. ``dt_ns`` defaults to 0.05 ns, or to 20 steps per period of the
-fastest coupling between the program's qudits, which turns at their
-detuning, rounded to a whole fraction of a clock cycle: 0.024 ns for a pair
-2.1 GHz apart, where 0.05 ns drifts by about 3e-5 per microsecond. A
+fastest frequency the simulation holds, rounded to a whole fraction of a
+clock cycle: a coupling between the program's qudits turns at their
+detuning (0.024 ns for a pair 2.1 GHz apart, where 0.05 ns drifts by about
+3e-5 per microsecond), and a qudit's levels at the spread of their energies
+in its frame (0.015 ns for a transmon with 6 levels and a 330 MHz
+anharmonicity, whose levels spread over 3.3 GHz). A
 ``dt_ns`` you pass that takes fewer than 20 steps per period of the fastest
 frequency the simulation holds warns with a ``cudaq_pulse.PulseWarning``
 naming that frequency and a step that resolves it: with three or more levels,

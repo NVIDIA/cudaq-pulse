@@ -160,6 +160,13 @@ behavior may change in any 0.x release.
   their qudits, so two print converged values: example 14's survival at
   depth 20 is 0.952 (was 0.954), and example 20's level-2 branch
   probabilities change (outcomes `(1, 2, 2)` 0.002, was 0.006).
+- **The default simulation step resolves many levels.** Without `dt_ns`,
+  `simulate` takes 20 steps per period of a qudit's level spread as well as
+  of coupled qudits' detuning: 0.025 ns for a transmon with 6 levels and a
+  200 MHz anharmonicity, whose levels spread over 2 GHz and which 0.05 ns
+  dephased. Wherever 0.05 ns already resolved the simulation (a transmon
+  of up to four levels whose anharmonicity is under 333 MHz, as every
+  qudit of `transmon_17q`), the step and the results are unchanged.
 - **Calibration on the controller.** `cudaq_pulse.classical.calibration`
   adds the estimators of millisecond on-controller calibration in controller
   form: adaptive T1 tracking with assignment errors (`adaptive_t1_update`,
