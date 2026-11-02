@@ -9,8 +9,7 @@
 // Each qudit has its own rotating frame, so an exchange coupling between
 // qudits at 5.0 and 5.1 GHz turns at their difference: four products whose
 // callbacks are cos and sin of (-2 pi 0.1 GHz) t with amplitude g. Between
-// resonant qudits it is static. A crosstalk ZZ rate is a cross-Kerr n n term,
-// and so is a density-density coupling, which does not turn.
+// resonant qudits it is static. A crosstalk ZZ rate is a cross-Kerr n n term.
 // RUN: cudaq-pulse-opt --split-input-file --pulse-to-qop %s | FileCheck %s
 // RUN: cudaq-pulse-opt --split-input-file --pulse-to-qop --qop-to-cudm %s | FileCheck %s --check-prefix=CUDM
 
@@ -63,29 +62,6 @@ module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.coupling_pairs = 
     %q1 = pulse.qudit_alloc {qubit = 1 : i64} : !pulse.qref
     %d0, %t0 = pulse.get_drive_line %q0 {qubit = 0 : i64, frequency_hz = 5.000000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
     %d1, %t1 = pulse.get_drive_line %q1 {qubit = 1 : i64, frequency_hz = 5.000000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-    %c40 = arith.constant 40 : i64
-    %zero = arith.constant 0.0 : f64
-    %x = pulse.square %c40, %zero, %zero : i64, f64, f64 -> !pulse.waveform
-    %d2, %t2 = pulse.drive %d0, %x, %t0 {start_cycles = 0 : i64, duration_cycles = 40 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
-    return
-  }
-}
-
-// -----
-
-// CHECK-LABEL: module
-// CHECK-NOT: @coupling_
-// CHECK: qop.matrix_leaf({{.*}}) {dimensions = array<i64: 2>, targets = array<i64: 0>}
-// CHECK: qop.matrix_leaf({{.*}}) {dimensions = array<i64: 2>, targets = array<i64: 1>}
-// CHECK: qop.const_scalar {imag = 0.000000e+00 : f64, real = 0.031415926535897934 : f64}
-// CHECK-NOT: @coupling_
-// CUDM: cudm.append_elementary_product {{.*}} {coeff_imag = 0.000000e+00 : f64, coeff_real = 0.031415926535897934 : f64, duality = array<i32: 0, 0>, modes_acted_on = array<i32: 0, 1>
-module attributes {qop.n_qubits = 2 : i64, pulse.clock_ghz = 1.000000e+00 : f64, pulse.density_density_pairs = array<i64: 0, 1>, pulse.density_density_strength_hz = array<f64: 5.000000e+06>} {
-  func.func @main() {
-    %q0 = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
-    %q1 = pulse.qudit_alloc {qubit = 1 : i64} : !pulse.qref
-    %d0, %t0 = pulse.get_drive_line %q0 {qubit = 0 : i64, frequency_hz = 5.000000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
-    %d1, %t1 = pulse.get_drive_line %q1 {qubit = 1 : i64, frequency_hz = 5.100000e+09 : f64} : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
     %c40 = arith.constant 40 : i64
     %zero = arith.constant 0.0 : f64
     %x = pulse.square %c40, %zero, %zero : i64, f64, f64 -> !pulse.waveform

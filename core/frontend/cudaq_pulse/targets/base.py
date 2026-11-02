@@ -16,10 +16,10 @@ QOp lowering.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any
 
 from .._errors import InvalidTypeError, InvalidValueError, NotFoundError, UnsupportedError
 from .models import SimulationModel, TransmonModel
@@ -419,57 +419,6 @@ class Coupling:
         return frozen_reduce(self)
 
 
-# The interactions a coupling can stand for: exchange g (a^dagger b + a b^dagger)
-# and density-density V n_a n_b. A Coupling without a kind is an exchange
-# coupling.
-_EXCHANGE = "exchange"
-_DENSITY_DENSITY = "density_density"
-_KINDLESS = "kind" not in Coupling.__dataclass_fields__
-_PLAIN_COUPLING = frozenset({Coupling})
-
-
-def _coupling_kind(coupling: Any) -> str:
-    """The kind of interaction *coupling* stands for."""
-    if _KINDLESS and type(coupling) is Coupling:
-        return _EXCHANGE
-    return str(getattr(coupling, "kind", _EXCHANGE))
-
-
-def _all_exchange(couplings: Any) -> bool:
-    """Whether every coupling is a plain kindless Coupling, so exchange."""
-    return _KINDLESS and _PLAIN_COUPLING.issuperset(map(type, couplings))
-
-
-class _Cached[T]:
-    """A value computed from a frozen object on first access, then stored on
-    it, so later reads are plain attribute loads.
-
-    Unlike functools.cached_property it stores with object.__setattr__ rather
-    than through ``__dict__``: touching ``__dict__`` makes every later
-    attribute load on the object slower. Not being an annotation, it is no
-    dataclass field.
-    """
-
-    def __init__(self, compute: Callable[[Any], T]) -> None:
-        self._compute = compute
-        self._name = compute.__name__
-
-    def __set_name__(self, owner: type, name: str) -> None:
-        self._name = name
-
-    @overload
-    def __get__(self, obj: None, owner: type | None = None) -> _Cached[T]: ...
-    @overload
-    def __get__(self, obj: object, owner: type | None = None) -> T: ...
-
-    def __get__(self, obj: object | None, owner: type | None = None) -> T | _Cached[T]:
-        if obj is None:
-            return self
-        value = self._compute(obj)
-        object.__setattr__(obj, self._name, value)
-        return value
-
-
 @_dataclass_when_used(frozen=True)
 class CrosstalkEntry:
     """Residual ZZ or other parasitic coupling between qubit pairs.
@@ -537,30 +486,6 @@ class TargetDescription:
         from .._pickling import frozen_reduce
 
         return frozen_reduce(self)
-
-    # Cached on first use; sound because the target is frozen and its
-    # couplings are a tuple of frozen Couplings.
-
-    @_Cached
-    def _exchange_view(self) -> Sequence[Coupling]:
-        """The exchange couplings: ``couplings`` itself (the same object) when
-        every coupling is a plain Coupling, else those whose kind is exchange."""
-        if _all_exchange(self.couplings):
-            return self.couplings
-        return tuple(c for c in self.couplings if _coupling_kind(c) == _EXCHANGE)
-
-    @_Cached
-    def _two_level_couplings(self) -> Sequence[Coupling]:
-        """``couplings``, which the two-level terms model; refused, and not
-        cached, unless every coupling is exchange."""
-        if self._exchange_view is not self.couplings:
-            for c in self.couplings:
-                if (kind := _coupling_kind(c)) != _EXCHANGE:
-                    raise UnsupportedError(
-                        f"the coupling of qubits {c.qubit_a} and {c.qubit_b} is a {kind} "
-                        "coupling; the two-level terms model exchange couplings only"
-                    )
-        return self.couplings
 
     @property
     def n_qubits(self) -> int:
@@ -696,7 +621,7 @@ class TargetDescription:
                     "time_dependent": False,
                 }
             )
-        for c in self._two_level_couplings:
+        for c in self.couplings:
             g = c.coupling_strength_hz * 2.0 * math.pi * _SECONDS_PER_NANOSECOND
             terms.append(
                 {

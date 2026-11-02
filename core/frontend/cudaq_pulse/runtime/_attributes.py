@@ -13,8 +13,7 @@ import math
 import struct
 from typing import Any
 
-from .._errors import InvalidValueError, UnsupportedError
-from ..targets.base import _DENSITY_DENSITY, _EXCHANGE, _coupling_kind
+from .._errors import InvalidValueError
 
 _VALID_INTEGRATORS = frozenset(
     {
@@ -83,23 +82,6 @@ def _f64_array(values: list[float]) -> str:
     return "array<f64: " + ", ".join(_f64_literal(v) for v in values) + ">"
 
 
-def _density_density(target: Any, active: set[int]) -> list[Any]:
-    """*target*'s density-density couplings; any other kind that is neither
-    that nor exchange, between *active* qudits, is refused."""
-    found = []
-    for c in target.couplings:
-        kind = _coupling_kind(c)
-        if kind == _DENSITY_DENSITY:
-            found.append(c)
-        elif kind != _EXCHANGE and c.qubit_a in active and c.qubit_b in active:
-            raise UnsupportedError(
-                f"the coupling of qudits {c.qubit_a} and {c.qubit_b} is a {kind} "
-                "coupling, which the simulator does not model; it models "
-                f"{_EXCHANGE} and {_DENSITY_DENSITY} couplings"
-            )
-    return found
-
-
 def _target_attributes(
     target: Any,
     qubits: tuple[int, ...],
@@ -141,13 +123,10 @@ def _target_attributes(
     if any(thermal):
         attrs.append(f"pulse.thermal_populations = {_f64_array(thermal)}")
     active = set(qubits)
-    exchange = target._exchange_view
-    groups: tuple[tuple[str, Any, str], ...] = (
-        ("coupling", exchange, "coupling_strength_hz"),
+    groups = (
+        ("coupling", target.couplings, "coupling_strength_hz"),
         ("crosstalk", target.crosstalk, "static_zz_hz"),
     )
-    if exchange is not target.couplings:
-        groups += (("density_density", _density_density(target, active), "coupling_strength_hz"),)
     for name, entries, strength in groups:
         entries = [e for e in entries if e.qubit_a in active and e.qubit_b in active]
         if entries:
