@@ -157,6 +157,8 @@ class FunctionCost:
 
 @dataclass
 class _Cost:
+    """What a function body costs, as its operations are counted."""
+
     # The body's own operations, by class, on the longest path.
     ops: Counter[str] = field(default_factory=Counter)
     size: int = 0

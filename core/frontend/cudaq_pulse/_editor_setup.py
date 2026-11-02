@@ -33,6 +33,8 @@ MYPY_PLUGIN = "cudaq_pulse.mypy_plugin"
 
 @dataclass
 class Change:
+    """A file a tool's setup writes, with its old and new text."""
+
     tool: str
     path: Path
     old: str

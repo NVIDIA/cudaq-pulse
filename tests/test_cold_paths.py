@@ -179,6 +179,22 @@ def test_exporting_an_emulated_program_loads_no_module(tmp_path):
     assert _loaded(code, tmp_path, ()) == []
 
 
+def test_every_dataclass_has_a_docstring():
+    # dataclass writes a missing docstring from inspect.signature, which costs
+    # more than making the rest of the class.
+    root = Path(pulse.__file__).parent
+    missing = []
+    for path in sorted(root.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if (
+                isinstance(node, ast.ClassDef)
+                and any("dataclass" in ast.unparse(d) for d in node.decorator_list)
+                and ast.get_docstring(node) is None
+            ):
+                missing.append(f"{path.relative_to(root)}:{node.name}")
+    assert missing == []
+
+
 def test_copying_a_time_keeps_it():
     # Kernel globals are snapshotted by deepcopy on each definition; a time,
     # being immutable, is its own copy.

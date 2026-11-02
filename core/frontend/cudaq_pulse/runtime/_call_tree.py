@@ -54,6 +54,8 @@ _NEGLIGIBLE = 1e-14
 
 @dataclass
 class _Leaf:
+    """One branch of the call tree: its state, path, shots and calls."""
+
     state: Any
     path: list[tuple[tuple[int, tuple[int, ...]], int]]
     count: int
