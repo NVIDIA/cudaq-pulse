@@ -117,7 +117,7 @@ def test_a_device_s_clock_set_in_place_changes_the_step(steps):
 def test_couplings_of_another_device_change_the_step(steps):
     # Coupled qudits 2 GHz apart turn at their detuning: 20 steps per period
     # are 0.025 ns, finer than the 0.05 ns default.
-    coupled = _target(couplings=[Coupling(0, 1, 5.0e6)])
+    coupled = _target(couplings=[Coupling((0, 1), 5.0e6)])
     for target, step in ((coupled, 0.025), (_target(), 0.05), (coupled, 0.025)):
         pulse.simulate(on(target, _flip_both, Q[0], Q[1]), levels=2)
         assert steps[-1] == step
@@ -142,7 +142,7 @@ def test_what_a_kept_step_depends_on_cannot_change_in_place():
     with pytest.raises(dataclasses.FrozenInstanceError):
         qubit.anharmonicity_hz = -400.0e6
     with pytest.raises(dataclasses.FrozenInstanceError):
-        target.couplings = (Coupling(0, 1, 5.0e6),)
+        target.couplings = (Coupling((0, 1), 5.0e6),)
     with pytest.raises(TypeError):
         target.qubits[0] = dataclasses.replace(qubit, anharmonicity_hz=-400.0e6)
     model = TransmonModel(levels={0: 4})

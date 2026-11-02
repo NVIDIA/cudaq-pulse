@@ -27,6 +27,7 @@ import math
 
 import cudaq_pulse as pulse
 from cudaq_pulse.targets import MicrowaveDrive, transmon_17q
+from cudaq_pulse.targets.transmon import CZ_LAYERS
 
 target = transmon_17q()
 dev = pulse.device("transmon_17q")
@@ -37,16 +38,13 @@ data_qubits = [i for i in range(n_qubits) if labels[i].startswith("D")]
 z_auxiliaries = [i for i in range(n_qubits) if labels[i].startswith("Z")]
 x_auxiliaries = [i for i in range(n_qubits) if labels[i].startswith("X")]
 
-# The CZ gates of each time step, (auxiliary, data), and their slot.
-steps: dict[int, list[tuple[int, int]]] = {}
-for c in target.couplings:
-    steps.setdefault(int(c.gate_params["cz_step"]), []).append((c.qubit_a, c.qubit_b))
-z_steps = [[steps[1], steps[2]], [steps[3], steps[4]]]
-x_steps = [[steps[5], steps[6]], [steps[7], steps[8]]]
-cz_ns = max(c.gate_duration_ns for c in target.couplings if c.gate_duration_ns is not None)
+# The CZs of each time step, (auxiliary, data), and their slot.
+z_steps = [list(CZ_LAYERS[0:2]), list(CZ_LAYERS[2:4])]
+x_steps = [list(CZ_LAYERS[4:6]), list(CZ_LAYERS[6:8])]
+cz_ns = max(c.gate.duration_ns for c in target.couplings if c.gate is not None)
 
-for s in sorted(steps):
-    print(f"CZ step {s}: " + ", ".join(f"{labels[a]}-{labels[d]}" for a, d in steps[s]))
+for s, layer in enumerate(CZ_LAYERS, 1):
+    print(f"CZ step {s}: " + ", ".join(f"{labels[a]}-{labels[d]}" for a, d in layer))
 
 # The published 40 ns, sigma = 10 ns pulse; amplitudes are rates in rad/ns.
 microwave = target.qubits[0].drive

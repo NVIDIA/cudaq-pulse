@@ -153,7 +153,7 @@ def test_xx_coupling_transfers_excitation():
     target = TargetDescription(
         name="physics-xx",
         qubits={0: _unitary_qubit(0), 1: _unitary_qubit(1, 5.0e9)},
-        couplings=[Coupling(0, 1, coupling_strength_hz=25.0e6)],
+        couplings=[Coupling((0, 1), strength_hz=25.0e6)],
     )
 
     @pulse.kernel

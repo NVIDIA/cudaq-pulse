@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, fields
+from dataclasses import FrozenInstanceError, dataclass, fields
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -384,34 +384,90 @@ class Qubit:
         return 0.0 if readout is None else readout._depletion_ns()
 
 
-@dataclass(frozen=True)
-class Coupling:
-    """Coupling edge between two qubits.
+class Gate:
+    """The gate characterized on a coupling (``Coupling.gate``).
 
-    ``coupling_strength_hz`` is g / 2 pi of the exchange coupling
-    g (a^dagger b + a b^dagger).
-
-    ``gate_type``, ``gate_duration_ns``, ``gate_buffer_ns`` (the idle time
-    around the gate) and ``gate_fidelity`` describe the edge's two-qubit gate.
-    Each defaults to ``None``: the target does not specify it. Neither
-    compilation nor simulation reads them; ``transmon_17q`` gives the
-    published values.
+    ``name`` names it (``"cz"``), ``duration_ns`` is how long it takes,
+    ``buffer_ns`` the idle time around it and ``interaction_frequency_hz``
+    the frequency at which its qudits interact, for a flux-tuned CZ; ``None``
+    where not given. It acts on its coupling's qudits, in their order.
+    Neither compilation nor simulation reads it; ``transmon_17q`` gives the
+    published CZ values. A gate is read-only and compares by content.
     """
 
-    qubit_a: int
-    qubit_b: int
-    coupling_strength_hz: float
-    gate_type: str | None = None
-    gate_duration_ns: float | None = None
-    gate_buffer_ns: float | None = None
-    gate_fidelity: float | None = None
-    gate_params: Mapping[str, float] = _EMPTY
+    __slots__ = ("name", "duration_ns", "buffer_ns", "interaction_frequency_hz")
+    __match_args__ = ("name", "duration_ns", "buffer_ns", "interaction_frequency_hz")
 
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "gate_params", MappingProxyType(dict(self.gate_params)))
+    name: str
+    duration_ns: float
+    buffer_ns: float | None
+    interaction_frequency_hz: float | None
+
+    def __init__(
+        self,
+        name: str,
+        duration_ns: float,
+        buffer_ns: float | None = None,
+        interaction_frequency_hz: float | None = None,
+    ) -> None:
+        set_ = object.__setattr__
+        set_(self, "name", name)
+        set_(self, "duration_ns", duration_ns)
+        set_(self, "buffer_ns", buffer_ns)
+        set_(self, "interaction_frequency_hz", interaction_frequency_hz)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise FrozenInstanceError(f"cannot assign to field {name!r}")
+
+    def __delattr__(self, name: str) -> None:
+        raise FrozenInstanceError(f"cannot delete field {name!r}")
+
+    def __eq__(self, other: object) -> bool:
+        if other.__class__ is not self.__class__:
+            return NotImplemented
+        return all(getattr(self, n) == getattr(other, n) for n in self.__slots__)
 
     def __hash__(self) -> int:
-        return hash((self.qubit_a, self.qubit_b, self.coupling_strength_hz))
+        return hash((self.name, self.duration_ns, self.buffer_ns, self.interaction_frequency_hz))
+
+    def __repr__(self) -> str:
+        fields_ = ", ".join(f"{n}={getattr(self, n)!r}" for n in self.__slots__)
+        return f"{type(self).__name__}({fields_})"
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return type(self), (
+            self.name,
+            self.duration_ns,
+            self.buffer_ns,
+            self.interaction_frequency_hz,
+        )
+
+
+@dataclass(frozen=True)
+class Coupling:
+    """A coupling of the qudits ``qudits`` of a quantum system: two in this
+    release, by the system's qudit index, in the order the coupling names
+    them (``transmon_17q``'s are (auxiliary, data)).
+
+    The system's ``model`` decides the operator; a ``TransmonModel``
+    coupling is the exchange g (a^dagger b + a b^dagger), in the
+    rotating-wave approximation, and ``strength_hz`` is g / 2 pi. A
+    ``strength_hz`` of ``None`` is one not measured yet: the system
+    compiles, schedules and exports, and ``simulate`` refuses it. ``gate``
+    is the gate characterized on the coupling, if any.
+    """
+
+    qudits: tuple[int, ...]
+    strength_hz: float | None
+    gate: Gate | None = None
+
+    def __post_init__(self) -> None:
+        qudits = self.qudits
+        if qudits.__class__ is not tuple and isinstance(qudits, Sequence):
+            object.__setattr__(self, "qudits", tuple(qudits))
+
+    def __hash__(self) -> int:
+        return hash((self.qudits, self.strength_hz))
 
     def __reduce__(self) -> tuple[Any, ...]:
         from .._pickling import frozen_reduce
@@ -420,21 +476,38 @@ class Coupling:
 
 
 @_dataclass_when_used(frozen=True)
-class CrosstalkEntry:
-    """Residual ZZ or other parasitic coupling between qubit pairs.
+class ResidualZZ:
+    """Residual ZZ between the qudits ``qudits`` (two, by the system's qudit
+    index), in addition to what the couplings produce.
 
-    ``static_zz_hz`` is the ZZ rate zeta / 2 pi, zeta = E11 - E10 - E01 + E00,
-    modeled as zeta n_a n_b in addition to what the couplings produce.
-    ``zz_coupling`` and ``freq_delta_hz`` are reserved for a later crosstalk
-    model: they are stored, but neither compilation nor simulation reads
-    them yet.
+    ``rate_hz`` is the ZZ rate zeta / 2 pi, zeta = E11 - E10 - E01 + E00,
+    modeled as zeta n_a n_b.
     """
 
-    qubit_a: int
-    qubit_b: int
-    zz_coupling: float
-    static_zz_hz: float
-    freq_delta_hz: float
+    qudits: tuple[int, ...]
+    rate_hz: float
+
+    def __post_init__(self) -> None:
+        qudits = self.qudits
+        if qudits.__class__ is not tuple and isinstance(qudits, Sequence):
+            object.__setattr__(self, "qudits", tuple(qudits))
+
+
+# The operator a coupling stands for, by the simulation model of its system:
+# the entry of the model's class or of its nearest base class here.
+_COUPLING_OPERATORS: Mapping[type[SimulationModel], str] = MappingProxyType(
+    {TransmonModel: "exchange"}
+)
+
+
+def _coupling_operator(model: Any) -> str | None:
+    """The operator of the couplings of a system with the model *model*, or
+    None if the model gives them none."""
+    for cls in type(model).__mro__:
+        operator = _COUPLING_OPERATORS.get(cls)
+        if operator is not None:
+            return operator
+    return None
 
 
 @dataclass(frozen=True, eq=False)
@@ -442,19 +515,21 @@ class TargetDescription:
     """Full description of a quantum processing unit.
 
     A target is read-only once built: ``qubits`` is a read-only mapping and
-    ``couplings`` and ``crosstalk`` are tuples. ``clock_ghz`` is the pulse
+    ``couplings`` and ``residual_zz`` are tuples. ``clock_ghz`` is the pulse
     clock that converts nanoseconds to clock cycles. ``model`` is how the
     simulator treats its qudits, and how many levels each has: a
     ``SimulationModel`` class or instance (``TransmonModel`` by default,
     ``TransmonModel(levels={0: 4})`` to give qudit 0 four levels), or
-    ``None`` for a system with no simulation model. Targets compare by
-    content, so a target unpickled is equal to the one pickled.
+    ``None`` for a system with no simulation model. The model also decides
+    the operator of the couplings: the exchange for ``TransmonModel``.
+    Targets compare by content, so a target unpickled is equal to the one
+    pickled.
     """
 
     name: str
     qubits: Mapping[int, Qubit] = _EMPTY
     couplings: Sequence[Coupling] = ()
-    crosstalk: Sequence[CrosstalkEntry] = ()
+    residual_zz: Sequence[ResidualZZ] = ()
     model: SimulationModel | type[SimulationModel] | None = _TRANSMON
     attribution: str = ""
     clock_ghz: float = 2.0
@@ -472,7 +547,7 @@ class TargetDescription:
             )
         object.__setattr__(self, "qubits", MappingProxyType(dict(self.qubits)))
         object.__setattr__(self, "couplings", tuple(self.couplings))
-        object.__setattr__(self, "crosstalk", tuple(self.crosstalk))
+        object.__setattr__(self, "residual_zz", tuple(self.residual_zz))
 
     def __eq__(self, other: object) -> bool:
         if type(other) is not type(self):
@@ -524,21 +599,18 @@ class TargetDescription:
         return {q.index: q.thermal_population for q in self.qubits.values()}
 
     @property
-    def coupling_map(self) -> list[tuple[int, int]]:
-        return [(c.qubit_a, c.qubit_b) for c in self.couplings]
+    def coupling_map(self) -> list[tuple[int, ...]]:
+        """The qudits of each coupling, in the order of ``couplings``."""
+        return [c.qudits for c in self.couplings]
 
     def coupling(self, a: int, b: int) -> Coupling:
         """The coupling of qudits *a* and *b*, in either order (the target's
         qudit indices, as ``Qudit.index``); a ``NotFoundError`` names the
         qudits *a* couples to."""
         for c in self.couplings:
-            if (c.qubit_a == a and c.qubit_b == b) or (c.qubit_a == b and c.qubit_b == a):
+            if c.qudits == (a, b) or c.qudits == (b, a):
                 return c
-        partners = sorted(
-            c.qubit_b if c.qubit_a == a else c.qubit_a
-            for c in self.couplings
-            if a in (c.qubit_a, c.qubit_b)
-        )
+        partners = sorted(q for c in self.couplings if a in c.qudits for q in c.qudits if q != a)
         if partners:
             which = f"qudit {a} couples to {', '.join(map(str, partners))}"
         else:
@@ -546,11 +618,12 @@ class TargetDescription:
         raise NotFoundError(f"qudits {a} and {b} of {self.name} are not coupled; {which}")
 
     def connectivity_graph(self) -> dict[int, list[int]]:
-        """Adjacency list representation of qubit connectivity."""
+        """The qudits each qudit couples to, by qudit index, for every qudit."""
         g: dict[int, list[int]] = {idx: [] for idx in self.qubits}
         for c in self.couplings:
-            g.setdefault(c.qubit_a, []).append(c.qubit_b)
-            g.setdefault(c.qubit_b, []).append(c.qubit_a)
+            a, b = c.qudits
+            g[a].append(b)
+            g[b].append(a)
         return g
 
     def drive_amplitude_scale(self, qubit_index: int) -> float:
@@ -605,11 +678,26 @@ class TargetDescription:
         intentionally not emitted into this two-level spin Hamiltonian. A
         faithful anharmonicity term requires a three-or-more-level mode.
 
-        The terms are in the lab frame: ``static_z`` is (omega / 2) Z,
-        ``coupling_xx`` is g X X (the exchange coupling with its
-        counter-rotating terms), and ``crosstalk_zz`` is zeta n_a n_b.
+        The terms are in the lab frame: ``static_z`` is (omega / 2) Z, a
+        coupling is the operator of the system's model (``coupling_exchange``,
+        g (sigma+_a sigma-_b + sigma-_a sigma+_b) for ``TransmonModel``: the
+        exchange in the rotating-wave approximation, as the simulator lowers
+        it), and a ``residual_zz`` entry's ``crosstalk_zz`` is zeta n_a n_b.
+        A coupling whose strength
+        is not measured yet (``None``) is an ``InvalidValueError`` naming it,
+        and couplings of a model that gives them no operator an
+        ``UnsupportedError``.
         """
         terms: list[dict[str, Any]] = []
+        operator = _coupling_operator(self.model) if self.couplings else None
+        if self.couplings and operator is None:
+            known = ", ".join(f"{c.__name__} ({op})" for c, op in _COUPLING_OPERATORS.items())
+            raise UnsupportedError(
+                f"the model {self.model!r} of {self.name!r} gives its couplings no "
+                f"operator, so they have no Hamiltonian terms; the models whose couplings "
+                f"have one are {known}"
+            )
+        coupling_kind = f"coupling_{operator}"
 
         for q in self.qubits.values():
             omega = q.frequency_hz * 2.0 * math.pi * _SECONDS_PER_NANOSECOND
@@ -621,23 +709,31 @@ class TargetDescription:
                     "time_dependent": False,
                 }
             )
-        for c in self.couplings:
-            g = c.coupling_strength_hz * 2.0 * math.pi * _SECONDS_PER_NANOSECOND
+        unmeasured = []
+        for i, c in enumerate(self.couplings):
+            if c.strength_hz is None:
+                unmeasured.append(i)
+                continue
+            g = c.strength_hz * 2.0 * math.pi * _SECONDS_PER_NANOSECOND
             terms.append(
                 {
-                    "kind": "coupling_xx",
-                    "qubit_indices": (c.qubit_a, c.qubit_b),
+                    "kind": coupling_kind,
+                    "qubit_indices": c.qudits,
                     "coefficient": complex(g, 0),
                     "time_dependent": False,
                 }
             )
+        if unmeasured:
+            raise _unmeasured(
+                self, unmeasured, "the Hamiltonian terms need every coupling's strength"
+            )
 
-        for xt in self.crosstalk:
-            zz = xt.static_zz_hz * 2.0 * math.pi * _SECONDS_PER_NANOSECOND
+        for xt in self.residual_zz:
+            zz = xt.rate_hz * 2.0 * math.pi * _SECONDS_PER_NANOSECOND
             terms.append(
                 {
                     "kind": "crosstalk_zz",
-                    "qubit_indices": (xt.qubit_a, xt.qubit_b),
+                    "qubit_indices": xt.qudits,
                     "coefficient": complex(zz, 0),
                     "time_dependent": False,
                 }
@@ -688,3 +784,22 @@ class TargetDescription:
                     )
 
         return terms
+
+
+def _unmeasured(
+    target: TargetDescription,
+    indices: Sequence[int],
+    needs: str,
+    fix: str = "give the strength in Hz",
+) -> InvalidValueError:
+    """The error that *needs* the strengths of *target*'s couplings at
+    *indices*, which are not measured yet."""
+    named = [
+        f"couplings[{i}] (qudits {' and '.join(map(str, target.couplings[i].qudits))})"
+        for i in indices
+    ]
+    listed = named[0] if len(named) == 1 else ", ".join(named[:-1]) + " and " + named[-1]
+    verb = "has" if len(named) == 1 else "have"
+    return InvalidValueError(
+        f"{needs}; {listed} of {target.name!r} {verb} strength_hz None, not measured yet: {fix}"
+    )

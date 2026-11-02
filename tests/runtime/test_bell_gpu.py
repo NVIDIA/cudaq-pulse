@@ -65,7 +65,7 @@ def test_bell_gpu_execution():
     target = TargetDescription(
         name="xx-bell-test",
         qubits=qubits,
-        couplings=[Coupling(0, 1, coupling_strength_hz=5.0e6)],
+        couplings=[Coupling((0, 1), strength_hz=5.0e6)],
     )
 
     @pulse.kernel

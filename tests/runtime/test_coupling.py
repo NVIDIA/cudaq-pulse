@@ -10,7 +10,7 @@
 An exchange coupling g (a^dagger b + a b^dagger) between transmons at w_a and
 w_b swaps an excitation at 2g when they are resonant, barely at all when they
 are detuned by many g, and shifts |11> by the dispersive ZZ rate of
-second-order perturbation theory. A crosstalk entry adds exactly its ZZ rate.
+second-order perturbation theory. A residual ZZ entry adds exactly its rate.
 """
 
 from __future__ import annotations
@@ -26,9 +26,9 @@ import pytest
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline, evaluate_callback
 from cudaq_pulse.targets import (
     Coupling,
-    CrosstalkEntry,
     MicrowaveDrive,
     Qubit,
+    ResidualZZ,
     SimulationModel,
     TargetDescription,
 )
@@ -46,8 +46,8 @@ def _pair(f0, f1, *, g_hz=0.0, zz_hz=0.0, alphas=(-200.0e6, -180.0e6)):
             q: Qubit(q, f, a, 0.0, 0.0, drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0))
             for q, (f, a) in enumerate(zip((f0, f1), alphas, strict=True))
         },
-        couplings=[Coupling(0, 1, coupling_strength_hz=g_hz)] if g_hz else [],
-        crosstalk=[CrosstalkEntry(0, 1, 0.0, zz_hz, 0.0)] if zz_hz else [],
+        couplings=[Coupling((0, 1), strength_hz=g_hz)] if g_hz else [],
+        residual_zz=[ResidualZZ((0, 1), zz_hz)] if zz_hz else [],
     )
 
 
@@ -184,7 +184,7 @@ def test_dispersive_zz_matches_perturbation_theory(f0, f1, g_hz, t_ns, dt_ns):
 
 
 @pytest.mark.parametrize("levels", [2, 3])
-def test_crosstalk_zz_is_the_conditional_frequency_shift(levels):
+def test_residual_zz_is_the_conditional_frequency_shift(levels):
     zz_hz = 1.0e5
     zeta, shift = _ramsey_zz_hz(_pair(5.0e9, 5.5e9, zz_hz=zz_hz), levels, 1000.0, 0.05)
     assert zeta == pytest.approx(zz_hz, rel=1e-6)

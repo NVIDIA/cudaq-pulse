@@ -10,12 +10,13 @@
 from ._registry import UnknownTargetError, available_targets, register_target
 from .base import (
     Coupling,
-    CrosstalkEntry,
     DispersiveReadout,
     Drive,
+    Gate,
     MicrowaveDrive,
     Qubit,
     Readout,
+    ResidualZZ,
     TargetDescription,
 )
 from .calibration import Calibration
@@ -30,7 +31,8 @@ __all__ = [
     "Drive",
     "MicrowaveDrive",
     "Coupling",
-    "CrosstalkEntry",
+    "Gate",
+    "ResidualZZ",
     "SimulationModel",
     "TransmonModel",
     "Calibration",

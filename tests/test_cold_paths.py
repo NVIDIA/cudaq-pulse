@@ -285,9 +285,9 @@ if sys.argv[1] == "eager":
 
 import cudaq_pulse.controller as c
 from cudaq_pulse import Problem
-from cudaq_pulse.targets import CrosstalkEntry
+from cudaq_pulse.targets import ResidualZZ
 
-classes = [CrosstalkEntry, c.ControllerLimits, c.FunctionUsage, c.ProcessorUsage,
+classes = [ResidualZZ, c.ControllerLimits, c.FunctionUsage, c.ProcessorUsage,
            c.ControllerUsage, c.LimitExceeded, c.UsageReport, Problem]
 made = [type(vars(cls)["__dataclass_fields__"]) is dict for cls in classes]
 assert made == [sys.argv[1] == "eager"] * len(classes), made
@@ -314,7 +314,7 @@ else:
 # signature, a subclass, a call, is_dataclass.
 first = pickle.loads(pickled)
 out.append(outcome(lambda: (repr(first), hash(first), first == first, pickle.dumps(first))))
-out.append(outcome(lambda: dataclasses.fields(CrosstalkEntry)))
+out.append(outcome(lambda: dataclasses.fields(ResidualZZ)))
 out.append(outcome(lambda: c.ControllerLimits.acquirers))
 out.append(outcome(lambda: c.ControllerLimits.compute_links))
 out.append(outcome(lambda: inspect.signature(c.FunctionUsage)))
@@ -331,7 +331,7 @@ out.append(outcome(lambda: c.ControllerUsage(0, "m", ())))
 out.append(outcome(lambda: dataclasses.is_dataclass(c.UsageReport)))
 
 
-class Plain(CrosstalkEntry):
+class Plain(ResidualZZ):
     pass
 
 
@@ -416,12 +416,12 @@ def test_classes_most_programs_never_use_are_made_when_used():
         "ProcessorUsage",
         "UsageReport",
     ]
-    unmade = sorted(["CrosstalkEntry", "Problem", *usage])
+    unmade = sorted(["ResidualZZ", "Problem", *usage])
     code = (
         _PLAIN + "import cudaq_pulse.controller as c\n"
         "low.schedule; low.export_controller(); low.export_emulation(); c.resources(low)\n"
         f"names = [(n, getattr(c, n)) for n in {usage!r}]\n"
-        "names += [('CrosstalkEntry', p.targets.CrosstalkEntry), ('Problem', p.Problem)]\n"
+        "names += [('ResidualZZ', p.targets.ResidualZZ), ('Problem', p.Problem)]\n"
         "def unmade():\n"
         "    return sorted(n for n, cls in names\n"
         "                  if type(vars(cls)['__dataclass_fields__']) is not dict)\n"

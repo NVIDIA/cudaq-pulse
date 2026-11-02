@@ -112,16 +112,25 @@ def _fingerprint(target: TargetDescription, layout: tuple[int, ...], calibration
         for q in sorted(target.qubits.values(), key=lambda q: q.index)
     ]
     couplings = [
-        (c.qubit_a, c.qubit_b, c.coupling_strength_hz, c.gate_type, sorted(c.gate_params.items()))
+        (c.qudits, c.strength_hz)
+        if (g := c.gate) is None
+        else (
+            c.qudits,
+            c.strength_hz,
+            g.name,
+            g.duration_ns,
+            g.buffer_ns,
+            g.interaction_frequency_hz,
+        )
         for c in target.couplings
     ]
-    crosstalk = [(x.qubit_a, x.qubit_b, x.static_zz_hz) for x in target.crosstalk]
+    residual_zz = [(x.qudits, x.rate_hz) for x in target.residual_zz]
     content: tuple[Any, ...] = (
         target.model,
         target.clock_ghz,
         qubits,
         couplings,
-        crosstalk,
+        residual_zz,
         layout,
     )
     # Uncalibrated devices keep their fingerprints.

@@ -654,21 +654,12 @@ def test_a_custom_quantum_system_is_written_inline_with_the_new_key_names():
     target = TargetDescription(
         name="pair",
         qubits={i: Qubit(i, 5e9 + i * 1e8, -2.5e8, 50.0, 40.0) for i in range(2)},
-        couplings=[Coupling(0, 1, 3e6)],
+        couplings=[Coupling((0, 1), 3e6)],
     )
     qpu = pulse.device({"quantum_system": target})
     data = _round_trip(qpu)
     assert data["quantum_system"]["couplings"] == [
-        {
-            "a": 0,
-            "b": 1,
-            "strength_hz": 3e6,
-            "gate_type": None,
-            "gate_duration_ns": None,
-            "gate_buffer_ns": None,
-            "gate_fidelity": None,
-            "gate_params": {},
-        }
+        {"qudits": [0, 1], "strength_hz": 3e6, "gate": None}
     ]
     assert [q["index"] for q in data["quantum_system"]["qudits"]] == [0, 1]
     assert "control_system" not in data

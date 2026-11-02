@@ -20,7 +20,22 @@ from typing import Any
 
 from .._errors import InvalidValueError
 from . import _transmon_17q as _k
-from .base import Coupling, DispersiveReadout, MicrowaveDrive, Qubit, TargetDescription
+from .base import Coupling, DispersiveReadout, Gate, MicrowaveDrive, Qubit, TargetDescription
+
+#: The CZs of one error correction cycle of ``transmon_17q``, layer by layer
+#: (Fig. 3a and the edge labels of Fig. 6c): each layer is three CZs on
+#: disjoint pairs, each pair the (auxiliary, data) qudit indices of a
+#: coupling. Layers 1-4 measure the Z stabilizers, 5-8 the X stabilizers.
+CZ_LAYERS: tuple[tuple[tuple[int, int], ...], ...] = (
+    ((13, 0), (14, 4), (15, 2)),  # Z1-D1 Z2-D5 Z3-D3
+    ((13, 3), (14, 7), (15, 4)),  # Z1-D4 Z2-D8 Z3-D5
+    ((14, 3), (15, 1), (16, 5)),  # Z2-D4 Z3-D2 Z4-D6
+    ((14, 6), (15, 5), (16, 8)),  # Z2-D7 Z3-D6 Z4-D9
+    ((10, 0), (11, 4), (12, 6)),  # X2-D1 X3-D5 X4-D7
+    ((10, 1), (11, 5), (12, 7)),  # X2-D2 X3-D6 X4-D8
+    ((9, 2), (10, 4), (11, 8)),  # X1-D3 X2-D5 X3-D9
+    ((9, 1), (10, 3), (11, 7)),  # X1-D2 X2-D4 X3-D8
+)
 
 
 def transmon_17q(calibration: Any = "transmon_17q") -> TargetDescription:
@@ -48,9 +63,9 @@ def transmon_17q(calibration: Any = "transmon_17q") -> TargetDescription:
     exchange J_qq = g_c ``<0|n_a|1> <0|n_d|1>`` at the qubits' idle points:
     5.67-6.08 MHz with the shipped ``transmon_17q``. With
     ``calibration=None`` it is the published value over sqrt(2), 4.95 MHz.
-    Each coupling carries its CZ time step, interaction frequency and
-    ``|11> <-> |20>`` coupling (``gate_params``) and measured gate fidelity; the
-    gate takes 98 ns on average, with 15 ns buffers.
+    Each coupling's ``gate`` is its CZ: 98 ns on average, with 15 ns
+    buffers, at the pair's interaction frequency of Fig. 6c. ``CZ_LAYERS``
+    gives the time steps the CZs run in.
     Drives are the published 40 ns DRAG pulses with sigma = 10 ns; their
     amplitudes are not published, so amplitudes are angular rates in
     rad/ns. Readout parameters are those of Tab. I and App. F1.
@@ -118,18 +133,14 @@ def _build_published_17q() -> TargetDescription:
         )
     couplings = [
         Coupling(
-            _k.INDEX[e.auxiliary],
-            _k.INDEX[e.data],
-            coupling_strength_hz=_k.coupling_11_20_hz(e.auxiliary, e.data) / math.sqrt(2.0),
-            gate_type="cz",
-            gate_duration_ns=_k.CZ_DURATION_NS,
-            gate_buffer_ns=_k.CZ_BUFFER_NS,
-            gate_fidelity=1.0 - e.cz_error,
-            gate_params={
-                "cz_step": float(e.cz_step),
-                "interaction_frequency_hz": e.interaction_frequency_hz,
-                "coupling_11_20_hz": _k.coupling_11_20_hz(e.auxiliary, e.data),
-            },
+            (_k.INDEX[e.auxiliary], _k.INDEX[e.data]),
+            strength_hz=_k.coupling_11_20_hz(e.auxiliary, e.data) / math.sqrt(2.0),
+            gate=Gate(
+                "cz",
+                duration_ns=_k.CZ_DURATION_NS,
+                buffer_ns=_k.CZ_BUFFER_NS,
+                interaction_frequency_hz=e.interaction_frequency_hz,
+            ),
         )
         for e in _k.EDGES
     ]
@@ -225,7 +236,7 @@ def transmon_generic(
     else:
         raise InvalidValueError(f"Unknown topology {topology!r}. Use 'linear', 'ring', or 'grid'.")
 
-    couplings = [Coupling(a, b, coupling_strength_hz=coupling_strength_hz) for a, b in edges]
+    couplings = [Coupling((a, b), coupling_strength_hz) for a, b in edges]
 
     return TargetDescription(
         name=f"transmon_generic_{n_qubits}q_{topology}",

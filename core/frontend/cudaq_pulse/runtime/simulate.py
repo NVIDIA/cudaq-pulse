@@ -561,8 +561,9 @@ def _default_step(
     if len(active) > 1:
         qubits = compiled.qubits
         for c in compiled.couplings:
-            if c.qubit_a in active and c.qubit_b in active:
-                detuning = abs(qubits[c.qubit_a].frequency_hz - qubits[c.qubit_b].frequency_hz)
+            a, b = c.qudits
+            if a in active and b in active:
+                detuning = abs(qubits[a].frequency_hz - qubits[b].frequency_hz)
                 if detuning > fastest:
                     fastest = detuning
     step = _DEFAULT_STEP_NS
@@ -614,7 +615,7 @@ def _fastest(
         source = ("levels", q, d)
     qubits = target.qubits
     for c in target.couplings:
-        a, b = c.qubit_a, c.qubit_b
+        a, b = c.qudits
         if a in active and b in active:
             detuning = abs(qubits[a].frequency_hz - qubits[b].frequency_hz)
             if detuning > fastest:

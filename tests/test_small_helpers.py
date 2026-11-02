@@ -56,12 +56,13 @@ def test_the_close_name_suggested_is_the_one_difflib_picks():
 def test_a_coupling_by_its_qudits():
     target = pulse.device(TRANSMON_17Q).target
     first = target.couplings[0]
-    assert target.coupling(first.qubit_a, first.qubit_b) is first
-    assert target.coupling(first.qubit_b, first.qubit_a) is first
+    a, b = first.qudits
+    assert target.coupling(a, b) is first
+    assert target.coupling(b, a) is first
     with pytest.raises(pulse.NotFoundError, match=r"qudits 0 and 1 of .* are not coupled; qudit 0"):
         target.coupling(0, 1)
     generic = pulse.device("transmon_generic:3").target
-    assert generic.coupling(2, 1).coupling_strength_hz > 0
+    assert generic.coupling(2, 1).strength_hz > 0
     with pytest.raises(pulse.NotFoundError, match="qudit 0 couples to 1$"):
         generic.coupling(0, 2)
 

@@ -48,7 +48,11 @@ Couplings
    :members:
    :undoc-members:
 
-.. autoclass:: cudaq_pulse.targets.CrosstalkEntry
+.. autoclass:: cudaq_pulse.targets.Gate
+   :members:
+   :undoc-members:
+
+.. autoclass:: cudaq_pulse.targets.ResidualZZ
    :members:
    :undoc-members:
 
@@ -85,6 +89,9 @@ Shipped targets
 ---------------
 
 .. autofunction:: cudaq_pulse.targets.transmon_17q
+
+.. autodata:: cudaq_pulse.targets.transmon.CZ_LAYERS
+   :no-value:
 
 .. autofunction:: cudaq_pulse.targets.transmon_generic
 

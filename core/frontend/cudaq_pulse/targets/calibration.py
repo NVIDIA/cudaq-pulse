@@ -30,6 +30,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 from .._errors import InvalidValueError, NotFoundError
+from .base import Coupling
 
 if TYPE_CHECKING:
     from .transmon_model import ChargeCoupledPair, TransmonCircuit
@@ -271,19 +272,25 @@ class Calibration:
 
     def apply(self, target: Any) -> Any:
         """*target* with each calibrated pair's coupling set to its exchange
-        at the qubits' frequencies in the target.
+        at the qubits' frequencies in the target. A coupling matches the
+        pair of its qudits' labels in either order.
 
         A pair whose qubits sit at the idle frequencies its entry records
         takes the exchange stored with it, computed when the file was built.
         """
-        labels = {q.index: q.label for q in target.qubits.values()}
+        qubits = target.qubits
         idle_exchange = self._idle_exchange
         couplings = []
         for c in target.couplings:
-            name = f"{labels.get(c.qubit_a)}-{labels.get(c.qubit_b)}"
+            a, b = c.qudits
+            name = f"{qubits[a].label}-{qubits[b].label}"
             found = idle_exchange.get(name)
+            if found is None:
+                name = f"{qubits[b].label}-{qubits[a].label}"
+                found = idle_exchange.get(name)
+                a, b = b, a
             if found is not None:
-                at = (target.qubits[c.qubit_a].frequency_hz, target.qubits[c.qubit_b].frequency_hz)
+                at = (qubits[a].frequency_hz, qubits[b].frequency_hz)
                 value, stored = found
                 if stored is not None and all(
                     abs(f - g) < 1e3 for f, g in zip(at, stored, strict=False)
@@ -291,7 +298,10 @@ class Calibration:
                     strength = value
                 else:
                     strength = self.exchange_hz(name, *at)
-                c = replace(c, coupling_strength_hz=strength)
+                if c.__class__ is Coupling:
+                    c = Coupling(c.qudits, strength, c.gate)
+                else:
+                    c = replace(c, strength_hz=strength)
             couplings.append(c)
         return replace(target, couplings=couplings)
 

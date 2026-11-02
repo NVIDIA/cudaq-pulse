@@ -26,22 +26,23 @@ import subprocess
 
 import cudaq_pulse as pulse
 from cudaq_pulse.targets import MicrowaveDrive, transmon_17q
+from cudaq_pulse.targets.transmon import CZ_LAYERS
 
 target = transmon_17q()
 dev = pulse.device("transmon_17q")
 index = {q.label: q.index for q in target.qubits.values()}
 auxiliary, data = index["X1"], index["D2"]
-coupling = next(c for c in target.couplings if {c.qubit_a, c.qubit_b} == {auxiliary, data})
-# The transmon_17q target gives each CZ's published duration; a generic Coupling
-# leaves it unspecified (None).
-cz_ns = coupling.gate_duration_ns
-assert cz_ns is not None
+coupling = target.coupling(auxiliary, data)
+# The transmon_17q target gives each CZ's published values; a generic Coupling
+# has no gate (None).
+cz = coupling.gate
+assert cz is not None and coupling.strength_hz is not None
+assert cz.interaction_frequency_hz is not None
+cz_ns = cz.duration_ns
+layer = next(i for i, pairs in enumerate(CZ_LAYERS, 1) if (auxiliary, data) in pairs)
 print(
-    f"X1-D2: J_qq/2pi = {coupling.coupling_strength_hz / 1e6:.2f} MHz "
-    f"(|11>-|20>: {coupling.gate_params['coupling_11_20_hz'] / 1e6:.0f} MHz), CZ step "
-    f"{coupling.gate_params['cz_step']:.0f} at "
-    f"{coupling.gate_params['interaction_frequency_hz'] / 1e9:.2f} GHz, "
-    f"{cz_ns:.0f} ns"
+    f"X1-D2: J_qq/2pi = {coupling.strength_hz / 1e6:.2f} MHz, CZ layer {layer} at "
+    f"{cz.interaction_frequency_hz / 1e9:.2f} GHz, {cz_ns:.0f} ns"
 )
 
 # The published 40 ns, sigma = 10 ns pulse; amplitudes are rates in rad/ns.

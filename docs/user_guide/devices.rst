@@ -9,7 +9,7 @@ Devices and Targets
 ===================
 
 A *target* is the calibrated physics of a machine: qudit frequencies and
-anharmonicities, couplings, crosstalk, T1/T2 and drive calibration, and the
+anharmonicities, couplings, residual ZZ, T1/T2 and drive calibration, and the
 pulse clock. A *device* is a target together with a *layout*, which maps
 the qudit numbering a program uses to the target's carriers. Both are
 read-only.
@@ -33,7 +33,27 @@ read-only.
 A config is a mapping (or a JSON file of one) with ``"target"``, a
 registered target name or a ``cudaq_pulse.targets.TargetDescription``, and optionally
 ``"layout"``. ``layout[i]`` is the carrier that qudit ``i`` names; by
-default every carrier of the target, in order.
+default every carrier of the target, in order. A ``TargetDescription``'s
+``model`` (``TransmonModel`` by default) decides the operator of its
+couplings, for transmons the exchange g (a^dagger b + a b^dagger):
+
+.. code-block:: python
+
+   from cudaq_pulse.targets import Coupling, Gate, Qubit, TargetDescription
+
+   pair = TargetDescription(
+       name="pair",
+       qubits={i: Qubit(i, f, -2.0e8, 50.0, 30.0) for i, f in enumerate([4.8e9, 6.9e9])},
+       couplings=[Coupling((0, 1), strength_hz=5.7e6, gate=Gate("cz", duration_ns=98.0))],
+   )
+   qpu = pulse.device({"quantum_system": pair})
+
+A coupling's ``strength_hz`` is g / 2 pi; ``None`` says it is not measured
+yet, and such a system compiles, schedules and exports while
+``pulse.simulate`` refuses it, naming the coupling. ``residual_zz`` lists
+any ZZ between two qudits beyond what the couplings produce, as
+``ResidualZZ((0, 1), rate_hz=-2.0e4)``, rate zeta / 2 pi with
+zeta = E11 - E10 - E01 + E00.
 
 A config with problems raises ``DeviceDefinitionError``, a ``ValueError``,
 which lists every problem rather than the first. Each is a
@@ -93,14 +113,15 @@ Registered names are ``transmon_17q`` and ``transmon_generic:N``;
 Krinner et al., Nature 605, 669 (2022), built from the values the paper
 publishes. Its qudits 0-16 are D1-D9, X1-X4 and Z1-Z4 (``Qubit.label``), and
 its 24 couplings are the auxiliary-data pairs of the stabilizers, each with
-its CZ time step and interaction frequency.
+its CZ's duration, buffers and interaction frequency (``Coupling.gate``).
+``cudaq_pulse.targets.transmon.CZ_LAYERS`` gives the CZ time steps of a
+cycle, each a tuple of (auxiliary, data) qudit pairs.
 ``python -m cudaq_pulse.doctor`` lists them and reports the process target.
 
 The paper's J / 2 pi ~ 7 MHz is the ``|11> <-> |20>`` coupling of the CZ at
 each pair's interaction point (Lacroix, PhD thesis, ETH Zurich (2025), on the
 same device); X2-D4's is measured, 7.4 MHz at 4.4 GHz (Hellings et al.,
-arXiv:2503.04610). Each coupling records it in
-``gate_params["coupling_11_20_hz"]``. The simulated exchange comes from the
+arXiv:2503.04610). The simulated exchange comes from the
 device's calibration (below): one device-wide charge coupling g_c, and the
 exchange J_qq = g_c <0|n_a|1> <0|n_d|1> at the idle points is 5.67-6.08 MHz.
 The idle ZZ of the charge-coupled pairs is -4.5 to -7.3 kHz

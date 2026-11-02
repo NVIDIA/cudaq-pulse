@@ -44,7 +44,7 @@ def device(freqs_hz, alphas_hz, couplings=(), t1_us=0.0, t2_us=0.0, **qubit):
             )
             for i, (f, a) in enumerate(zip(freqs_hz, alphas_hz, strict=False))
         },
-        couplings=[Coupling(i, j, g) for i, j, g in couplings],
+        couplings=[Coupling((i, j), g) for i, j, g in couplings],
     )
     return pulse.device({"target": target})
 

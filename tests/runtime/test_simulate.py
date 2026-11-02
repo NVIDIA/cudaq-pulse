@@ -488,7 +488,7 @@ def test_a_step_too_coarse_for_coupled_qudits_names_their_detuning():
     pair = TargetDescription(
         name="pair",
         qubits={q: Qubit(q, 5.0e9 + 2.0e9 * q, -200.0e6, 0.0, 0.0) for q in range(2)},
-        couplings=[Coupling(0, 1, 5.0e6)],
+        couplings=[Coupling((0, 1), 5.0e6)],
     )
     with pytest.warns(
         pulse.PulseWarning,

@@ -14,6 +14,7 @@ import struct
 from typing import Any
 
 from .._errors import InvalidValueError
+from ..targets.base import _unmeasured
 
 _VALID_INTEGRATORS = frozenset(
     {
@@ -123,16 +124,28 @@ def _target_attributes(
     if any(thermal):
         attrs.append(f"pulse.thermal_populations = {_f64_array(thermal)}")
     active = set(qubits)
+    # pulse.coupling_* is the exchange, the operator of the couplings of the
+    # one model that simulates (targets.base._COUPLING_OPERATORS).
     groups = (
-        ("coupling", target.couplings, "coupling_strength_hz"),
-        ("crosstalk", target.crosstalk, "static_zz_hz"),
+        ("coupling", target.couplings, "strength_hz"),
+        ("crosstalk", target.residual_zz, "rate_hz"),
     )
     for name, entries, strength in groups:
-        entries = [e for e in entries if e.qubit_a in active and e.qubit_b in active]
+        entries = [e for e in entries if (q := e.qudits)[0] in active and q[1] in active]
         if entries:
-            pairs = ", ".join(f"{e.qubit_a}, {e.qubit_b}" for e in entries)
+            strengths = [getattr(e, strength) for e in entries]
+            if None in strengths:
+                raise _unmeasured(
+                    target,
+                    [
+                        i
+                        for i, c in enumerate(target.couplings)
+                        if c.strength_hz is None and active.issuperset(c.qudits)
+                    ],
+                    "simulating needs the strength of every coupling of the program's qudits",
+                    "give the strength in Hz, or leave those qudits out of the program",
+                )
+            pairs = ", ".join(f"{e.qudits[0]}, {e.qudits[1]}" for e in entries)
             attrs.append(f"pulse.{name}_pairs = array<i64: {pairs}>")
-            attrs.append(
-                f"pulse.{name}_strength_hz = " + _f64_array([getattr(e, strength) for e in entries])
-            )
+            attrs.append(f"pulse.{name}_strength_hz = " + _f64_array(strengths))
     return ", ".join(attrs)

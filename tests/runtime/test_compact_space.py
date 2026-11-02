@@ -23,22 +23,22 @@ _TRANSMON_17Q = pulse.device("transmon_17q")
 
 def _slice(indices):
     """A device of the transmon_17q qudits *indices*, renumbered 0, 1, ... in
-    increasing order, with the couplings and crosstalk between them."""
+    increasing order, with the couplings and residual ZZ between them."""
     target = _TRANSMON_17Q.target
     new = {q: i for i, q in enumerate(sorted(indices))}
 
     def renumbered(entries):
         return [
-            dataclasses.replace(e, qubit_a=new[e.qubit_a], qubit_b=new[e.qubit_b])
+            dataclasses.replace(e, qudits=tuple(new[q] for q in e.qudits))
             for e in entries
-            if e.qubit_a in new and e.qubit_b in new
+            if all(q in new for q in e.qudits)
         ]
 
     sliced = TargetDescription(
         name="transmon-17q-slice",
         qubits={i: dataclasses.replace(target.qubits[q], index=i) for q, i in new.items()},
         couplings=renumbered(target.couplings),
-        crosstalk=renumbered(target.crosstalk),
+        residual_zz=renumbered(target.residual_zz),
         clock_ghz=target.clock_ghz,
     )
     return pulse.device({"target": sliced}).qudit_handles, new

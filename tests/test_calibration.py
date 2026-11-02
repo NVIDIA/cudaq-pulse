@@ -228,11 +228,9 @@ def test_a_device_loads_a_calibration_from_its_config(tmp_path, cal):
     def x2_d4(dev):
         labels = {q.index: q.label for q in dev.target.qubits.values()}
         (c,) = (
-            c
-            for c in dev.target.couplings
-            if (labels[c.qubit_a], labels[c.qubit_b]) == ("X2", "D4")
+            c for c in dev.target.couplings if tuple(labels[q] for q in c.qudits) == ("X2", "D4")
         )
-        return c.coupling_strength_hz
+        return c.strength_hz
 
     assert x2_d4(custom) == pytest.approx(1.1 * x2_d4(base), rel=1e-9)
     with pytest.raises(ValueError, match="cooldown"):
@@ -245,7 +243,7 @@ def test_a_device_loads_a_calibration_from_its_config(tmp_path, cal):
 
 def test_a_published_only_target_uses_the_published_value_over_sqrt2():
     target = transmon_17q(calibration=None)
-    assert {round(c.coupling_strength_hz) for c in target.couplings} == {
+    assert {round(c.strength_hz) for c in target.couplings} == {
         round(7.0e6 / math.sqrt(2.0)),
         round(7.4e6 / math.sqrt(2.0)),
     }

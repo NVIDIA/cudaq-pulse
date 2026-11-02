@@ -24,7 +24,7 @@ from cudaq_pulse.targets import (
     transmon_generic,
 )
 from cudaq_pulse.targets import _transmon_17q as _k
-from cudaq_pulse.targets.transmon import transmon_17q_idle_zz_hz
+from cudaq_pulse.targets.transmon import CZ_LAYERS, transmon_17q_idle_zz_hz
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -75,11 +75,11 @@ def test_frequency_bands_and_anharmonicities(target):
 
 
 def edges_of(target, c):
-    return _label(target, c.qubit_a), _label(target, c.qubit_b)
+    return tuple(_label(target, q) for q in c.qudits)
 
 
 def test_couplings_are_the_stabilizer_supports(target):
-    edges = {(_label(target, c.qubit_a), _label(target, c.qubit_b)) for c in target.couplings}
+    edges = {edges_of(target, c) for c in target.couplings}
     assert len(target.couplings) == 24
     assert edges == {(a, d) for a, data in _STABILIZERS.items() for d in data}
     # The published 7 MHz (7.4 MHz measured on X2-D4) is the |11> <-> |20>
@@ -87,17 +87,17 @@ def test_couplings_are_the_stabilizer_supports(target):
     # frequency-dependent, near 7 MHz / sqrt(2).
     for c in target.couplings:
         g_11_20 = 7.4e6 if edges_of(target, c) == ("X2", "D4") else 7.0e6
-        assert c.gate_params["coupling_11_20_hz"] == g_11_20
-        assert 5.6e6 < c.coupling_strength_hz < 6.1e6
-    assert len({round(c.coupling_strength_hz) for c in target.couplings}) == 24
-    assert not target.crosstalk
+        assert _k.coupling_11_20_hz(*edges_of(target, c)) == g_11_20
+        assert 5.6e6 < c.strength_hz < 6.1e6
+    assert len({round(c.strength_hz) for c in target.couplings}) == 24
+    assert not target.residual_zz
 
 
 def test_without_a_calibration_the_exchange_is_the_published_value_over_sqrt2():
-    for c in transmon_17q(calibration=None).couplings:
-        assert c.coupling_strength_hz == pytest.approx(
-            c.gate_params["coupling_11_20_hz"] / math.sqrt(2.0)
-        )
+    published = transmon_17q(calibration=None)
+    for c in published.couplings:
+        g_11_20 = _k.coupling_11_20_hz(*edges_of(published, c))
+        assert c.strength_hz == pytest.approx(g_11_20 / math.sqrt(2.0))
 
 
 def test_stabilizers_and_logicals_commute_as_a_surface_code():
@@ -109,26 +109,29 @@ def test_stabilizers_and_logicals_commute_as_a_surface_code():
     assert len(_Z_LOGICAL & _X_LOGICAL) == 1
 
 
-def test_cz_schedule_runs_three_disjoint_gates_per_step(target):
-    steps: dict[int, list[Coupling]] = {}
-    for c in target.couplings:
-        steps.setdefault(int(c.gate_params["cz_step"]), []).append(c)
-    assert sorted(steps) == list(range(1, 9))
-    for step, gates in steps.items():
-        assert len(gates) == 3
-        qudits = [q for c in gates for q in (c.qubit_a, c.qubit_b)]
-        assert len(set(qudits)) == 6
+def test_cz_layers_run_three_disjoint_gates_per_step(target):
+    assert len(CZ_LAYERS) == 8
+    for step, layer in enumerate(CZ_LAYERS, 1):
+        assert len(layer) == 3 and len({q for pair in layer for q in pair}) == 6
         # Steps 1-4 measure the Z stabilizers, 5-8 the X stabilizers.
-        assert {_label(target, c.qubit_a)[0] for c in gates} == {"Z" if step <= 4 else "X"}
+        assert {_label(target, a)[0] for a, _ in layer} == {"Z" if step <= 4 else "X"}
+    # Every coupling once, as its (auxiliary, data) qudits, in the published step.
+    pairs = [pair for layer in CZ_LAYERS for pair in layer]
+    assert sorted(pairs) == sorted(c.qudits for c in target.couplings)
+    published = [
+        [(_k.INDEX[e.auxiliary], _k.INDEX[e.data]) for e in _k.EDGES if e.cz_step == s]
+        for s in range(1, 9)
+    ]
+    assert [list(layer) for layer in CZ_LAYERS] == published
     for c in target.couplings:
-        assert 4.3e9 <= c.gate_params["interaction_frequency_hz"] <= 5.61e9
-        assert c.gate_duration_ns == 98.0 and c.gate_buffer_ns == 15.0
+        assert c.gate.name == "cz"
+        assert c.gate.interaction_frequency_hz is not None
+        assert 4.3e9 <= c.gate.interaction_frequency_hz <= 5.61e9
+        assert c.gate.duration_ns == 98.0 and c.gate.buffer_ns == 15.0
 
 
-def test_gate_errors_reproduce_the_published_statistics(target):
-    fidelities = [c.gate_fidelity for c in target.couplings]
-    assert None not in fidelities
-    errors = [100 * (1 - f) for f in fidelities if f is not None]
+def test_gate_errors_reproduce_the_published_statistics():
+    errors = [100 * e.cz_error for e in _k.EDGES]
     # 1.5(1.0) % mean, 0.6 % best and 5.4 % worst (App. B, Fig. 5).
     assert statistics.mean(errors) == pytest.approx(1.5, abs=0.1)
     assert min(errors) == pytest.approx(0.6) and max(errors) == pytest.approx(5.4)
@@ -136,7 +139,7 @@ def test_gate_errors_reproduce_the_published_statistics(target):
 
 def test_idle_zz_is_a_few_kilohertz(target):
     zz = transmon_17q_idle_zz_hz()
-    assert set(zz) == {(c.qubit_a, c.qubit_b) for c in target.couplings}
+    assert set(zz) == {c.qudits for c in target.couplings}
     # Calculated idle ZZ "lower than ~8 kHz" (Methods A).
     assert all(-7.5e3 < v < -4.4e3 for v in zz.values())
 
@@ -150,11 +153,11 @@ def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
         k: Qubit(k, q.frequency_hz, q.anharmonicity_hz, 0.0, 0.0)
         for k, q in enumerate((target.qubits[a], target.qubits[d]))
     }
-    (g_hz,) = (c.coupling_strength_hz for c in target.couplings if (c.qubit_a, c.qubit_b) == (a, d))
+    (g_hz,) = (c.strength_hz for c in target.couplings if c.qudits == (a, d))
     pair_target = TargetDescription(
         name="transmon-17q-pair",
         qubits=qubits,
-        couplings=[Coupling(0, 1, coupling_strength_hz=g_hz)],
+        couplings=[Coupling((0, 1), strength_hz=g_hz)],
     )
 
     @pulse.kernel
@@ -211,7 +214,7 @@ def test_the_time_step_resolves_the_fastest_coupled_detuning():
             i: Qubit(i, q.idle_frequency_hz, q.anharmonicity_hz, 0.0, 0.0)
             for i, q in enumerate((x1, d2))
         },
-        couplings=[Coupling(0, 1, _k.COUPLING_11_20_HZ / math.sqrt(2.0))],
+        couplings=[Coupling((0, 1), _k.COUPLING_11_20_HZ / math.sqrt(2.0))],
     )
     dev = pulse.device({"target": pair})
 
@@ -242,12 +245,5 @@ def x90_alone(q):
 
 
 def test_a_generic_coupling_makes_no_gate_claims():
-    coupling = Coupling(0, 1, coupling_strength_hz=5e6)
-    assert coupling.gate_type is None
-    assert coupling.gate_duration_ns is None
-    assert coupling.gate_buffer_ns is None
-    assert coupling.gate_fidelity is None
-    assert all(
-        c.gate_duration_ns is None and c.gate_fidelity is None
-        for c in transmon_generic(3).couplings
-    )
+    assert Coupling((0, 1), strength_hz=5e6).gate is None
+    assert all(c.gate is None for c in transmon_generic(3).couplings)

@@ -422,12 +422,22 @@ behavior may change in any 0.x release.
   Krinner et al., Nature 605, 669 (2022).
   A target's `model` (`cudaq_pulse.targets.TransmonModel` by default, a
   `SimulationModel` class or instance, or `None`) says how the simulator
-  treats its qudits; each model class declares its levels (3 for
+  treats its qudits and which operator its couplings are (the exchange
+  g (a^dagger b + a b^dagger), in the rotating-wave approximation, for
+  `TransmonModel`); each model class declares its levels (3 for
   transmons), and `TransmonModel(levels={0: 4})` sets a qudit's own. No
   label changes the physics: targets have no `architecture`.
-  A `Coupling`'s gate fields (`gate_type`, `gate_duration_ns`,
-  `gate_buffer_ns`, `gate_fidelity`) default to `None`, unspecified; the
-  `transmon_17q` target gives its published CZ values. A config or file with
+  A coupling is `Coupling(qudits=(a, b), strength_hz, gate=None)`: the
+  qudits it couples, in order (two in this release), the strength in Hz of
+  the model's operator (g / 2 pi of the exchange), or `None` when it
+  is not measured yet, which compiles, schedules and exports while
+  `simulate` refuses it by name, and the gate characterized on it, if any,
+  a `cudaq_pulse.targets.Gate(name, duration_ns, buffer_ns=None,
+  interaction_frequency_hz=None)`; the `transmon_17q` target gives its
+  published CZ values, and `cudaq_pulse.targets.transmon.CZ_LAYERS` the
+  (auxiliary, data) pairs of each of its CZ time steps. A target's
+  `residual_zz` lists `ResidualZZ(qudits, rate_hz)` entries, a static ZZ
+  rate beyond what the couplings produce. A config or file with
   problems raises `pulse.DeviceDefinitionError` (a `ValueError`) listing all
   of them in `problems`, each a `pulse.Problem` with its path in the config
   (`layout[2]`), the offending value and a fix, and for a file its line and

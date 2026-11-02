@@ -28,7 +28,7 @@ TARGET = TargetDescription(
         )
         for i in range(2)
     },
-    couplings=[Coupling(0, 1, 2e6)],
+    couplings=[Coupling((0, 1), 2e6)],
 )
 DEV = pulse.device({"target": TARGET})
 Q = DEV.qudit_handles

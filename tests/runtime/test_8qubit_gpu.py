@@ -45,7 +45,7 @@ def _ladder_8q_target(coupling_hz=1.0e6):
         )
         for i in range(8)
     }
-    couplings = [Coupling(a, b, coupling_strength_hz=coupling_hz) for a, b in _LADDER_EDGES]
+    couplings = [Coupling((a, b), strength_hz=coupling_hz) for a, b in _LADDER_EDGES]
     return TargetDescription(name="ladder-8q", qubits=qubits, couplings=couplings)
 
 

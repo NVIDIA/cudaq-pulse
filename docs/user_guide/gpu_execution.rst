@@ -114,7 +114,7 @@ The public execution path is:
 1. ``kernel.lower(*args)`` verifies, optimizes and schedules the kernel for
    the device of its qudit handles.
 2. ``pulse.simulate(lowered, backend="gpu")`` annotates the module with the
-   device's calibration (drive scales, couplings, crosstalk, T1/T2) and the
+   device's calibration (drive scales, couplings, residual ZZ, T1/T2) and the
    native pipeline lowers it Pulse -> QOp -> CuDensityMat -> LLVM IR.
 3. MLIR's ExecutionEngine compiles the LLVM IR in process and executes it
    against the cuDensityMat runtime library; no external compiler or LLVM
@@ -232,7 +232,7 @@ Physical Model
 The simulated space holds only the qudits the program uses: those it gets a
 drive or readout line on, one mode each in increasing order of device index.
 A pair at qudits 13 and 3 of the 17-qudit ``transmon_17q`` device is a 3 x 3 problem
-with three levels, not a 3^14 one. Couplings and crosstalk between those
+with three levels, not a 3^14 one. Couplings and residual ZZ between those
 qudits keep their device values; the other qudits are left out, with their
 couplings, as classical spectators in their ground state. To simulate an
 idle qudit, get a line on it. ``result.qudits`` lists the device qudit of
@@ -255,11 +255,15 @@ Boltzmann ratio p / (1 - p) per level) unless ``initial_state`` is given,
 and relaxes towards it: down at (1 - p) / T1 and up at p / T1, so
 populations relax at the measured 1 / T1. Qudits dephase at their Ramsey
 T2*, or at their Hahn-echo T2 with ``simulate(..., dephasing="t2_echo")``.
-A coupling edge is an exchange coupling g (a^dagger b + a b^dagger); in the
+A coupling's operator comes from the system's ``model``: for a
+``TransmonModel`` it is the exchange g (a^dagger b + a b^dagger), with
+``strength_hz`` = g / 2 pi, in the rotating-wave approximation (the
+counter-rotating terms a b and a^dagger b^dagger are dropped). In the
 qudits' own frames it turns at their detuning, so detuned qudits exchange
 little and coupled transmons with three or more levels acquire the
-dispersive ZZ shift. Counter-rotating terms are dropped. A residual crosstalk
-entry of rate zeta (E11 - E10 - E01 + E00 = zeta) adds zeta n_a n_b. With
+dispersive ZZ shift. A coupling whose ``strength_hz`` is ``None``, not
+measured yet, is refused by name when the program's qudits include both of
+its qudits. A ``residual_zz`` entry of rate zeta (E11 - E10 - E01 + E00 = zeta) adds zeta n_a n_b. With
 three or more levels, a qudit's drive acts through
 its ladder operator (X = a + a^dagger, Y = i(a^dagger - a)) and
 ``anharmonicity_hz`` adds (alpha / 2) n (n - 1), so leakage out of the qubit

@@ -1767,26 +1767,22 @@ _QUDIT_FIELDS = (
     "t2_echo_us",
     "thermal_population",
 )
-_COUPLING_KEYS = MappingProxyType(
+_COUPLING_FIELDS = ("qudits", "strength_hz", "gate")
+_GATE_FIELDS = ("name", "duration_ns", "buffer_ns", "interaction_frequency_hz")
+_RESIDUAL_ZZ_FIELDS = ("qudits", "rate_hz")
+# The keys an entry must give, with the fix for each.
+_QUDITS_FIX = "give the indices of the two qudits, as [0, 1]"
+_COUPLING_REQUIRED = MappingProxyType(
     {
-        "a": "qubit_a",
-        "b": "qubit_b",
-        "strength_hz": "coupling_strength_hz",
-        "gate_type": "gate_type",
-        "gate_duration_ns": "gate_duration_ns",
-        "gate_buffer_ns": "gate_buffer_ns",
-        "gate_fidelity": "gate_fidelity",
-        "gate_params": "gate_params",
+        "qudits": _QUDITS_FIX,
+        "strength_hz": "give the strength in Hz, or null if it is not measured yet",
     }
 )
-_CROSSTALK_KEYS = MappingProxyType(
-    {
-        "a": "qubit_a",
-        "b": "qubit_b",
-        "zz_coupling": "zz_coupling",
-        "static_zz_hz": "static_zz_hz",
-        "freq_delta_hz": "freq_delta_hz",
-    }
+_GATE_REQUIRED = MappingProxyType(
+    {"name": 'give the name of the gate, as "cz"', "duration_ns": "give how long it takes, in ns"}
+)
+_RESIDUAL_ZZ_REQUIRED = MappingProxyType(
+    {"qudits": _QUDITS_FIX, "rate_hz": "give the ZZ rate in Hz"}
 )
 _SYSTEM_KEYS = (
     "name",
@@ -1795,7 +1791,7 @@ _SYSTEM_KEYS = (
     "clock_ghz",
     "qudits",
     "couplings",
-    "crosstalk",
+    "residual_zz",
 )
 _CONTROL_KEYS = (
     "controllers",
@@ -1886,12 +1882,18 @@ def _quantum_data(target: TargetDescription) -> dict[str, Any]:
             for q in sorted(target.qubits.values(), key=lambda q: q.index)
         ],
         "couplings": [
-            {key: _plain(getattr(c, name)) for key, name in _COUPLING_KEYS.items()}
+            {
+                "qudits": list(c.qudits),
+                "strength_hz": c.strength_hz,
+                "gate": None
+                if c.gate is None
+                else {key: _plain(getattr(c.gate, key)) for key in _GATE_FIELDS},
+            }
             for c in target.couplings
         ],
-        "crosstalk": [
-            {key: _plain(getattr(x, name)) for key, name in _CROSSTALK_KEYS.items()}
-            for x in target.crosstalk
+        "residual_zz": [
+            {key: _plain(getattr(x, key)) for key in _RESIDUAL_ZZ_FIELDS}
+            for x in target.residual_zz
         ],
     }
 
@@ -2013,7 +2015,7 @@ class _Reader:
             return None
 
     def quantum_system(self, data: Any, path: str) -> TargetDescription | None:
-        from .targets.base import Coupling, CrosstalkEntry, Qubit, TargetDescription
+        from .targets.base import Coupling, Qubit, ResidualZZ, TargetDescription
 
         system = self.mapping(data, path, _SYSTEM_KEYS)
         if system is None:
@@ -2031,18 +2033,29 @@ class _Reader:
                 qudit = self.build(f"{path}.qudits[{i}]", Qubit, **entry)
                 if qudit is not None:
                     qudits[qudit.index] = qudit
-        couplings = []
+        # The entries read, each with its index in the file.
+        entries: dict[str, list[tuple[int, Any]]] = {"couplings": [], "residual_zz": []}
         for i, item in enumerate(system.get("couplings", ())):
-            entry = self.mapping(item, f"{path}.couplings[{i}]", _COUPLING_KEYS)
-            if entry is not None:
-                fields_ = {_COUPLING_KEYS[k]: v for k, v in entry.items() if k in _COUPLING_KEYS}
-                couplings.append(self.build(f"{path}.couplings[{i}]", Coupling, **fields_))
-        crosstalk = []
-        for i, item in enumerate(system.get("crosstalk", ())):
-            entry = self.mapping(item, f"{path}.crosstalk[{i}]", _CROSSTALK_KEYS)
-            if entry is not None:
-                fields_ = {_CROSSTALK_KEYS[k]: v for k, v in entry.items() if k in _CROSSTALK_KEYS}
-                crosstalk.append(self.build(f"{path}.crosstalk[{i}]", CrosstalkEntry, **fields_))
+            where = f"{path}.couplings[{i}]"
+            entry = self.mapping(item, where, _COUPLING_FIELDS)
+            if entry is None or self.missing(entry, where, _COUPLING_REQUIRED):
+                continue
+            gate = entry.get("gate")
+            if gate is not None and (gate := self.gate(gate, f"{where}.gate")) is None:
+                continue
+            given = {k: entry[k] for k in ("qudits", "strength_hz")}
+            coupling = self.build(where, Coupling, **given, gate=gate)
+            if coupling is not None:
+                entries["couplings"].append((i, coupling))
+        for i, item in enumerate(system.get("residual_zz", ())):
+            where = f"{path}.residual_zz[{i}]"
+            entry = self.mapping(item, where, _RESIDUAL_ZZ_FIELDS)
+            if entry is None or self.missing(entry, where, _RESIDUAL_ZZ_REQUIRED):
+                continue
+            given = {k: v for k, v in entry.items() if k in _RESIDUAL_ZZ_FIELDS}
+            residual = self.build(where, ResidualZZ, **given)
+            if residual is not None:
+                entries["residual_zz"].append((i, residual))
         if "name" not in system:
             self.problem(path, "has no 'name'")
             return None
@@ -2054,10 +2067,26 @@ class _Reader:
             TargetDescription,
             name=system["name"],
             qubits=qudits,
-            couplings=[c for c in couplings if c is not None],
-            crosstalk=[x for x in crosstalk if x is not None],
+            couplings=[c for _, c in entries["couplings"]],
+            residual_zz=[x for _, x in entries["residual_zz"]],
             **rest,
         )
+
+    def gate(self, data: Any, path: str) -> Any:
+        from .targets.base import Gate
+
+        entry = self.mapping(data, path, _GATE_FIELDS)
+        if entry is None or self.missing(entry, path, _GATE_REQUIRED):
+            return None
+        return self.build(path, Gate, **{k: v for k, v in entry.items() if k in _GATE_FIELDS})
+
+    def missing(self, entry: Mapping[str, Any], path: str, required: Mapping[str, str]) -> bool:
+        """Whether *entry* lacks a key of *required*, each noted as a problem
+        with the fix *required* gives for it."""
+        absent = [key for key in required if key not in entry]
+        for key in absent:
+            self.problem(f"{path}.{key}", "is missing", fix=required[key])
+        return bool(absent)
 
     def model(self, data: Any, path: str) -> Any:
         if data is None:
