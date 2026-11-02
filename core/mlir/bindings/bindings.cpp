@@ -65,6 +65,7 @@
 #include "mlir/Transforms/Passes.h"
 
 #include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/Support/TargetSelect.h"
@@ -4494,6 +4495,16 @@ public:
       size_t excessAt = 0;
     };
     std::vector<Region> regions;
+    // A record that fails leaves regions open, whose blocks use values of
+    // the blocks around them, and a vector frees its elements in no set
+    // order: every open block drops its uses before any is freed.
+    auto dropOpenRegions = llvm::make_scope_exit([&regions] {
+      for (Region &region : regions)
+        for (mlir::Block *block : {region.body.get(), region.elseBody.get()})
+          if (block)
+            for (mlir::Operation &op : *block)
+              op.dropAllReferences();
+    });
     // A schedule block is a region with neither loop bounds nor a condition.
     auto isBlock = [](const Region &region) {
       return !region.isLoop && !region.condition;
