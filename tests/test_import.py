@@ -97,6 +97,10 @@ def test_modules_that_are_not_packages_have_no_module_getattr():
 
     pulse.simulate(pulse.compile(k).lower(Q[0]), levels=2)
     pulse.compile(k).lower(Q[0]).classical_report()
+    # Loaded but not yet used: lazy names must not be a module __getattr__.
+    importlib.import_module("cudaq_pulse.runtime._calls")
+    importlib.import_module("cudaq_pulse.classical.emulation")
+    importlib.import_module("cudaq_pulse.controller")
     plain = [
         name
         for name, module in list(sys.modules.items())

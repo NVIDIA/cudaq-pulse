@@ -19,6 +19,8 @@ Every export imports this module, so it loads neither numpy nor
 from __future__ import annotations
 
 import math
+import sys
+import types
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -28,6 +30,9 @@ from ..classical import ClassicalFunction
 
 if TYPE_CHECKING:
     import numpy as np
+
+    from ._call_tree import ReadoutModel as ReadoutModel
+    from ._call_tree import simulate_tree as simulate_tree
 
 
 @dataclass(frozen=True)
@@ -219,16 +224,27 @@ class IQModel:
         return (point.real + noise[0], point.imag + noise[1])
 
 
-def __getattr__(name: str) -> Any:
-    # Removed once it has bound both names: the import system asks a module
-    # for __path__ on every ``from ... import``, and simulate() imports from
-    # this module on every call.
-    if name in ("ReadoutModel", "simulate_tree"):
+class _FromTree(str):
+    """The name of a ``_call_tree`` attribute, imported on first use and then
+    kept in this module's namespace, where later reads find it as a plain
+    attribute."""
+
+    def __get__(self, module: types.ModuleType | None, owner: type) -> Any:
+        if module is None:
+            return self
         from . import _call_tree
 
-        found = globals()
-        found["ReadoutModel"] = _call_tree.ReadoutModel
-        found["simulate_tree"] = _call_tree.simulate_tree
-        found.pop("__getattr__", None)
-        return found[name]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        name = str(self)
+        value = module.__dict__[name] = getattr(_call_tree, name)
+        return value
+
+
+class _CallsModule(types.ModuleType):
+    # Not a module __getattr__: the import system asks a module for __path__
+    # on every ``from ... import``, and simulate() imports from this module
+    # on every call.
+    ReadoutModel = _FromTree("ReadoutModel")
+    simulate_tree = _FromTree("simulate_tree")
+
+
+sys.modules[__name__].__class__ = _CallsModule
