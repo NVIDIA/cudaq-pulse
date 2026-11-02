@@ -2062,15 +2062,35 @@ class _Reader:
         rest = {k: system[k] for k in ("attribution", "clock_ghz") if k in system}
         if "model" in system:
             rest["model"] = self.model(system["model"], f"{path}.model")
-        return self.build(
-            path,
-            TargetDescription,
-            name=system["name"],
-            qubits=qudits,
-            couplings=[c for _, c in entries["couplings"]],
-            residual_zz=[x for _, x in entries["residual_zz"]],
-            **rest,
-        )
+        try:
+            return TargetDescription(
+                name=system["name"],
+                qubits=qudits,
+                couplings=[c for _, c in entries["couplings"]],
+                residual_zz=[x for _, x in entries["residual_zz"]],
+                **rest,
+            )
+        except DeviceDefinitionError as error:
+            # The path in the file of an entry's problem, which the system
+            # gives as couplings[3]... by its own index: entries the file
+            # gives that could not be read are not in the system.
+            def in_file(entry_path: str) -> str:
+                kind, _, rest = entry_path.partition("[")
+                index, _, tail = rest.partition("]")
+                return f"{kind}[{entries[kind][int(index)][0]}]{tail}"
+
+            self.problems.extend(
+                Problem(
+                    p.message,
+                    path=f"{path}.{in_file(p.path)}",
+                    value=p.value,
+                    fix=p.fix,
+                )
+                for p in error.problems
+            )
+        except (TypeError, ValueError) as error:
+            self.problem(path, str(error))
+        return None
 
     def gate(self, data: Any, path: str) -> Any:
         from .targets.base import Gate

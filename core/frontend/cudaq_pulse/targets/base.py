@@ -16,12 +16,22 @@ QOp lowering.
 from __future__ import annotations
 
 import math
+import numbers
 from collections.abc import Mapping, Sequence
 from dataclasses import FrozenInstanceError, dataclass, fields
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from .._errors import InvalidTypeError, InvalidValueError, NotFoundError, UnsupportedError
+from .._errors import (
+    DeviceDefinitionError,
+    InvalidTypeError,
+    InvalidValueError,
+    NotFoundError,
+    Problem,
+    UnsupportedError,
+    _count,
+    _ranges,
+)
 from .models import SimulationModel, TransmonModel
 
 if TYPE_CHECKING:
@@ -524,6 +534,10 @@ class TargetDescription:
     the operator of the couplings: the exchange for ``TransmonModel``.
     Targets compare by content, so a target unpickled is equal to the one
     pickled.
+
+    A target's couplings and residual ZZ entries are checked when it is built,
+    and a ``DeviceDefinitionError`` lists every problem, each at its path in
+    the target (``couplings[3].qudits[1]``).
     """
 
     name: str
@@ -548,6 +562,12 @@ class TargetDescription:
         object.__setattr__(self, "qubits", MappingProxyType(dict(self.qubits)))
         object.__setattr__(self, "couplings", tuple(self.couplings))
         object.__setattr__(self, "residual_zz", tuple(self.residual_zz))
+        problems = _system_problems(self)
+        if problems:
+            raise DeviceDefinitionError(
+                f"{_count(len(problems), 'problem')} in the quantum system {self.name!r}",
+                problems=problems,
+            )
 
     def __eq__(self, other: object) -> bool:
         if type(other) is not type(self):
@@ -803,3 +823,242 @@ def _unmeasured(
     return InvalidValueError(
         f"{needs}; {listed} of {target.name!r} {verb} strength_hz None, not measured yet: {fix}"
     )
+
+
+def _system_problems(target: TargetDescription) -> list[Problem]:
+    """Every problem with *target*'s couplings and residual ZZ entries, each at
+    its path in the target; run once, when the target is built."""
+    problems: list[Problem] = []
+    known = target.qubits
+    groups: tuple[tuple[str, Any, Sequence[Any]], ...] = (
+        ("couplings", Coupling, target.couplings),
+        ("residual_zz", ResidualZZ, target.residual_zz),
+    )
+    for kind, cls, entries in groups:
+        pairs: dict[tuple[int, int], int] = {}
+        for i, entry in enumerate(entries):
+            if entry.__class__ is cls and _plain_entry(entry, known, pairs):
+                pairs[_pair_key(entry.qudits)] = i
+                continue
+            found, pair = _entry_problems(kind, i, entry, known, pairs)
+            problems += found
+            if pair is not None:
+                pairs[pair] = i
+    return problems
+
+
+def _pair_key(qudits: tuple[int, ...]) -> tuple[int, int]:
+    a, b = qudits
+    return (a, b) if a < b else (b, a)
+
+
+def _plain_entry(entry: Any, known: Mapping[int, Any], pairs: Mapping[Any, int]) -> bool:
+    """Whether *entry*, a coupling or residual ZZ entry, has nothing to report:
+    float values (or a strength of None) and two distinct known qudits of a
+    new pair. Anything else goes to ``_entry_problems``, which says what."""
+    cls = entry.__class__
+    if cls is Coupling:
+        value = entry.strength_hz
+        if value is not None and not (value.__class__ is float and value - value == 0.0):
+            return False
+        gate = entry.gate
+        if gate is not None and not _plain_gate(gate):
+            return False
+    elif cls is ResidualZZ:
+        value = entry.rate_hz
+        # x - x is 0.0 for every finite float, and NaN for inf and NaN.
+        if not (value.__class__ is float and value - value == 0.0):
+            return False
+    else:
+        return False
+    qudits = entry.qudits
+    if qudits.__class__ is not tuple:
+        return False
+    try:
+        a, b = qudits
+    except ValueError:
+        return False
+    return (
+        a.__class__ is int
+        and b.__class__ is int
+        and a != b
+        and a in known
+        and b in known
+        and ((a, b) if a < b else (b, a)) not in pairs
+    )
+
+
+def _plain_gate(gate: Any) -> bool:
+    if gate.__class__ is not Gate:
+        return False
+    name, duration, buffer = gate.name, gate.duration_ns, gate.buffer_ns
+    frequency = gate.interaction_frequency_hz
+    if not (name.__class__ is str and name):
+        return False
+    if not (duration.__class__ is float and duration - duration == 0.0 and duration >= 0.0):
+        return False
+    if buffer is not None and not (
+        buffer.__class__ is float and buffer - buffer == 0.0 and buffer >= 0.0
+    ):
+        return False
+    return frequency is None or (
+        frequency.__class__ is float and frequency - frequency == 0.0 and frequency > 0.0
+    )
+
+
+def _finite(value: Any) -> bool:
+    """Whether *value* is a finite real number, not a bool."""
+    return value.__class__ is not bool and isinstance(value, numbers.Real) and math.isfinite(value)
+
+
+def _entry_problems(
+    kind: str, index: int, entry: Any, known: Mapping[int, Any], pairs: Mapping[Any, int]
+) -> tuple[list[Problem], tuple[int, int] | None]:
+    """Every problem with *entry*, entry *index* of the system's *kind*
+    (``"couplings"`` or ``"residual_zz"``), each at its path in the system,
+    and its pair of qudits if they are two distinct known qudits of a new
+    pair. *pairs* holds the earlier entries' pairs, by entry index."""
+    where = f"{kind}[{index}]"
+    cls = Coupling if kind == "couplings" else ResidualZZ
+    if not isinstance(entry, cls):
+        problem = Problem(
+            f"must be a {cls.__name__}, got {type(entry).__name__}", path=where, value=entry
+        )
+        return [problem], None
+    noun = "coupling" if cls is Coupling else "residual ZZ entry"
+    problems = _qudit_problems(entry.qudits, where, known, pairs, noun)
+    pair = None if problems else _pair_key(entry.qudits)
+    if isinstance(entry, Coupling):
+        value = entry.strength_hz
+        if value is not None and not _finite(value):
+            problems.append(
+                Problem(
+                    f"{value!r} is not a finite number of Hz",
+                    path=f"{where}.strength_hz",
+                    value=value,
+                    fix="give the strength in Hz, or None (null in a file) if it is not "
+                    "measured yet",
+                )
+            )
+        if entry.gate is not None:
+            problems += _gate_problems(entry.gate, f"{where}.gate")
+        return problems, pair
+    if not _finite(entry.rate_hz):
+        problems.append(
+            Problem(
+                f"{entry.rate_hz!r} is not a finite number of Hz",
+                path=f"{where}.rate_hz",
+                value=entry.rate_hz,
+                fix="give the ZZ rate in Hz",
+            )
+        )
+    return problems, pair
+
+
+def _qudit_problems(
+    qudits: Any, where: str, known: Mapping[int, Any], pairs: Mapping[Any, int], noun: str
+) -> list[Problem]:
+    """The problems with *qudits*, the qudits of the entry at *where*."""
+    path = f"{where}.qudits"
+    fix = "give the indices of its two qudits, as (0, 1)"
+    if not isinstance(qudits, tuple):
+        return [
+            Problem(
+                f"must be a tuple of qudit indices, got {type(qudits).__name__}",
+                path=path,
+                value=qudits,
+                fix=fix,
+            )
+        ]
+    if len(qudits) != 2:
+        return [
+            Problem(
+                f"names {_count(len(qudits), 'qudit')}; a {noun} is between two qudits "
+                "in this release",
+                path=path,
+                value=qudits,
+                fix=fix,
+            )
+        ]
+    problems = []
+    for j, q in enumerate(qudits):
+        if q.__class__ is bool or not isinstance(q, int):
+            problems.append(
+                Problem(
+                    f"must be a qudit index (an int), got {type(q).__name__}",
+                    path=f"{path}[{j}]",
+                    value=q,
+                )
+            )
+        elif q not in known:
+            problems.append(
+                Problem(
+                    f"{q} is not a qudit of the quantum system",
+                    path=f"{path}[{j}]",
+                    value=q,
+                    fix=f"its qudits are {_ranges(known)}" if known else "it has no qudits",
+                )
+            )
+    if problems:
+        return problems
+    a, b = qudits
+    if a == b:
+        return [
+            Problem(
+                f"names qudit {a} twice",
+                path=path,
+                value=qudits,
+                fix=f"a {noun} is between two distinct qudits",
+            )
+        ]
+    earlier = pairs.get(_pair_key(qudits))
+    if earlier is not None:
+        kind = where.partition("[")[0]
+        return [
+            Problem(
+                f"names the same pair of qudits as {kind}[{earlier}]",
+                path=path,
+                value=qudits,
+                fix=f"give each pair one {noun}; ({a}, {b}) and ({b}, {a}) are the same pair",
+            )
+        ]
+    return []
+
+
+def _gate_problems(gate: Any, where: str) -> list[Problem]:
+    if not isinstance(gate, Gate):
+        return [
+            Problem(f"must be a Gate or None, got {type(gate).__name__}", path=where, value=gate)
+        ]
+    problems = []
+    if not isinstance(gate.name, str) or not gate.name:
+        problems.append(
+            Problem(
+                f"must be a non-empty string, got {gate.name!r}",
+                path=f"{where}.name",
+                value=gate.name,
+                fix='name the gate, as "cz"',
+            )
+        )
+    for name, required in (("duration_ns", True), ("buffer_ns", False)):
+        value = getattr(gate, name)
+        if (value is not None or required) and not (_finite(value) and value >= 0):
+            problems.append(
+                Problem(
+                    f"{value!r} is not a finite time of 0 ns or more",
+                    path=f"{where}.{name}",
+                    value=value,
+                    fix="give it in ns" if required else "give it in ns, or None",
+                )
+            )
+    frequency = gate.interaction_frequency_hz
+    if frequency is not None and not (_finite(frequency) and frequency > 0):
+        problems.append(
+            Problem(
+                f"{frequency!r} is not a finite frequency above 0 Hz",
+                path=f"{where}.interaction_frequency_hz",
+                value=frequency,
+                fix="give it in Hz, or None",
+            )
+        )
+    return problems

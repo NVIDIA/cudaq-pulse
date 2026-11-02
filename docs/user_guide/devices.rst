@@ -53,7 +53,9 @@ yet, and such a system compiles, schedules and exports while
 ``pulse.simulate`` refuses it, naming the coupling. ``residual_zz`` lists
 any ZZ between two qudits beyond what the couplings produce, as
 ``ResidualZZ((0, 1), rate_hz=-2.0e4)``, rate zeta / 2 pi with
-zeta = E11 - E10 - E01 + E00.
+zeta = E11 - E10 - E01 + E00. The values are checked when the system is
+built, and one ``DeviceDefinitionError`` lists every problem at its path
+(``couplings[1].qudits[0]``).
 
 A config with problems raises ``DeviceDefinitionError``, a ``ValueError``,
 which lists every problem rather than the first. Each is a

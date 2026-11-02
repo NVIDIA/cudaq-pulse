@@ -271,3 +271,226 @@ def test_a_calibration_matches_a_pair_named_in_either_order():
     assert [c.strength_hz for c in backward] == [c.strength_hz for c in forward]
     assert [c.qudits for c in backward] == [c.qudits[::-1] for c in forward]
     assert {c.strength_hz for c in forward}.isdisjoint(c.strength_hz for c in published.couplings)
+
+
+# ── Value checks ────────────────────────────────────────────────────────────
+
+
+def _problems(**fields):
+    with pytest.raises(DeviceDefinitionError) as raised:
+        _system(**fields)
+    return [str(p) for p in raised.value.problems]
+
+
+def test_every_problem_of_every_coupling_is_listed_at_its_path():
+    problems = _problems(
+        couplings=[
+            Coupling((0, 7), 1.0e6),
+            Coupling((1, 1), 1.0e6),
+            Coupling((0, 1), math.nan),
+            Coupling((2, True), math.inf),  # type: ignore[arg-type]
+        ]
+    )
+    assert problems == [
+        "couplings[0].qudits[1]: 7 is not a qudit of the quantum system; its qudits are 0..2",
+        "couplings[1].qudits: names qudit 1 twice; a coupling is between two distinct qudits",
+        "couplings[2].strength_hz: nan is not a finite number of Hz; give the strength in Hz, "
+        "or None (null in a file) if it is not measured yet",
+        "couplings[3].qudits[1]: must be a qudit index (an int), got bool",
+        "couplings[3].strength_hz: inf is not a finite number of Hz; give the strength in Hz, "
+        "or None (null in a file) if it is not measured yet",
+    ]
+
+
+def test_zero_negative_and_unmeasured_strengths_are_allowed():
+    target = _system(
+        couplings=[Coupling((0, 1), 0.0), Coupling((1, 2), -2.5e6), Coupling((0, 2), None)]
+    )
+    assert [c.strength_hz for c in target.couplings] == [0.0, -2.5e6, None]
+    assert _system(couplings=[Coupling((0, 1), 3)]).couplings[0].strength_hz == 3
+
+
+def test_a_pair_has_one_coupling_in_either_order():
+    problems = _problems(
+        couplings=[Coupling((0, 1), 1.0e6), Coupling((0, 1), 2.0e6), Coupling((1, 0), 3.0e6)]
+    )
+    assert problems == [
+        "couplings[1].qudits: names the same pair of qudits as couplings[0]; give each pair "
+        "one coupling; (0, 1) and (1, 0) are the same pair",
+        "couplings[2].qudits: names the same pair of qudits as couplings[0]; give each pair "
+        "one coupling; (1, 0) and (0, 1) are the same pair",
+    ]
+    # A coupling and a residual ZZ entry of one pair are two different terms.
+    _system(couplings=[Coupling((0, 1), 1.0e6)], residual_zz=[ResidualZZ((1, 0), 1.0e4)])
+
+
+def test_a_coupling_is_between_two_qudits_in_this_release():
+    problems = _problems(
+        couplings=[Coupling((0, 1, 2), 1.0e6), Coupling((0,), 1.0e6), Coupling(0, 1.0e6)]  # type: ignore[arg-type]
+    )
+    assert problems == [
+        "couplings[0].qudits: names 3 qudits; a coupling is between two qudits in this "
+        "release; give the indices of its two qudits, as (0, 1)",
+        "couplings[1].qudits: names 1 qudit; a coupling is between two qudits in this "
+        "release; give the indices of its two qudits, as (0, 1)",
+        "couplings[2].qudits: must be a tuple of qudit indices, got int; give the indices of "
+        "its two qudits, as (0, 1)",
+    ]
+
+
+def test_a_gate_is_checked_with_its_coupling():
+    problems = _problems(
+        couplings=[
+            Coupling((0, 1), 1.0e6, gate=Gate("", -1.0, buffer_ns=math.nan)),
+            Coupling((1, 2), 1.0e6, gate=Gate("cz", 98.0, interaction_frequency_hz="4.4e9")),  # type: ignore[arg-type]
+            Coupling((0, 2), 1.0e6, gate="cz"),  # type: ignore[arg-type]
+        ]
+    )
+    assert problems == [
+        "couplings[0].gate.name: must be a non-empty string, got ''; name the gate, as \"cz\"",
+        "couplings[0].gate.duration_ns: -1.0 is not a finite time of 0 ns or more; give it in ns",
+        "couplings[0].gate.buffer_ns: nan is not a finite time of 0 ns or more; give it in ns, "
+        "or None",
+        "couplings[1].gate.interaction_frequency_hz: '4.4e9' is not a finite frequency above "
+        "0 Hz; give it in Hz, or None",
+        "couplings[2].gate: must be a Gate or None, got str",
+    ]
+    assert _problems(couplings=[Coupling((0, 1), 1.0e6, gate=Gate("cz", 98.0, None, 0.0))]) == [
+        "couplings[0].gate.interaction_frequency_hz: 0.0 is not a finite frequency above 0 Hz; "
+        "give it in Hz, or None",
+    ]
+    gate = _system(couplings=[Coupling((0, 1), 1.0e6, gate=Gate("cz", 0, 0, 4))]).couplings[0].gate
+    assert gate is not None and (gate.duration_ns, gate.interaction_frequency_hz) == (0, 4)
+
+
+def test_residual_zz_has_the_qudit_checks_of_couplings():
+    problems = _problems(
+        residual_zz=[
+            ResidualZZ((0, 1), 1.0e4),
+            ResidualZZ((1, 0), math.inf),
+            ResidualZZ((2, 2), 1.0e4),
+            Coupling((1, 2), 1.0e6),
+        ]
+    )
+    assert problems == [
+        "residual_zz[1].qudits: names the same pair of qudits as residual_zz[0]; give each pair "
+        "one residual ZZ entry; (1, 0) and (0, 1) are the same pair",
+        "residual_zz[1].rate_hz: inf is not a finite number of Hz; give the ZZ rate in Hz",
+        "residual_zz[2].qudits: names qudit 2 twice; a residual ZZ entry is between two "
+        "distinct qudits",
+        "residual_zz[3]: must be a ResidualZZ, got Coupling",
+    ]
+
+
+def test_coupling_and_residual_zz_problems_come_in_one_error():
+    with pytest.raises(DeviceDefinitionError) as raised:
+        _system(couplings=[Coupling((0, 9), 1.0e6)], residual_zz=[ResidualZZ((1, 1), 1.0e4)])
+    assert str(raised.value).splitlines() == [
+        "2 problems in the quantum system 'checked':",
+        "  couplings[0].qudits[1]: 9 is not a qudit of the quantum system; its qudits are 0..2",
+        "  residual_zz[0].qudits: names qudit 1 twice; a residual ZZ entry is between two "
+        "distinct qudits",
+    ]
+
+
+def test_a_calibration_keeps_the_checks():
+    from cudaq_pulse.targets import transmon_17q
+
+    target = transmon_17q()
+    assert all(c.gate is not None for c in target.couplings)
+    with pytest.raises(DeviceDefinitionError, match=r"couplings\[1\].qudits: names the same pair"):
+        dataclasses.replace(target, couplings=[target.couplings[0]] * 2)
+
+
+# ── System files: missing keys and value problems at their lines ───────────
+
+
+def _coupled_data():
+    target = _system(
+        couplings=[Coupling((0, 1), 5.0e6, gate=Gate("cz", 98.0)), Coupling((1, 2), 4.0e6)],
+        residual_zz=[ResidualZZ((0, 2), 1.0e4)],
+    )
+    return pulse.device({"quantum_system": target}).as_dict()
+
+
+def test_a_system_file_names_each_missing_key_by_its_file_name_and_line(tmp_path):
+    data = _coupled_data()
+    system = data["quantum_system"]
+    del system["couplings"][0]["strength_hz"]
+    del system["couplings"][0]["gate"]["duration_ns"]
+    del system["couplings"][1]["qudits"]
+    del system["residual_zz"][0]["rate_hz"]
+    problems, lines = _file_problems(tmp_path, data)
+    assert [(p.path, p.message, p.fix) for p in problems] == [
+        (
+            "quantum_system.couplings[0].strength_hz",
+            "is missing",
+            "give the strength in Hz, or null if it is not measured yet",
+        ),
+        (
+            "quantum_system.couplings[1].qudits",
+            "is missing",
+            "give the indices of the two qudits, as [0, 1]",
+        ),
+        ("quantum_system.residual_zz[0].rate_hz", "is missing", "give the ZZ rate in Hz"),
+    ]
+    first = _line_of(lines, '"couplings"')
+    assert problems[0].line == _line_of(lines, "{", after=first)
+    assert problems[2].line == _line_of(lines, "{", after=_line_of(lines, '"residual_zz"'))
+    assert all(p.file is not None and p.file.endswith("qpu.json") for p in problems)
+
+
+def test_a_config_mapping_lists_every_missing_key_and_value_problem():
+    data = _coupled_data()
+    system = data["quantum_system"]
+    del system["couplings"][0]["gate"]["name"]
+    system["couplings"][1]["strength_hz"] = math.nan
+    system["residual_zz"][0]["qudits"] = [2, 2]
+    with pytest.raises(DeviceDefinitionError) as raised:
+        pulse.device(data)
+    assert [(p.path, p.message, p.file) for p in raised.value.problems] == [
+        ("quantum_system.couplings[0].gate.name", "is missing", None),
+        ("quantum_system.couplings[1].strength_hz", "nan is not a finite number of Hz", None),
+        ("quantum_system.residual_zz[0].qudits", "names qudit 2 twice", None),
+    ]
+
+
+def test_a_missing_gate_key_is_named_inside_the_gate(tmp_path):
+    data = _coupled_data()
+    del data["quantum_system"]["couplings"][0]["gate"]["duration_ns"]
+    data["quantum_system"]["couplings"][0]["gate"]["interaction_frequency"] = 4.4e9
+    problems, lines = _file_problems(tmp_path, data)
+    assert [str(p).split(": ", 1)[1] for p in problems] == [
+        "quantum_system.couplings[0].gate.interaction_frequency: is not a known key; did you "
+        "mean 'interaction_frequency_hz'?",
+        "quantum_system.couplings[0].gate.duration_ns: is missing; give how long it takes, in ns",
+    ]
+    assert problems[1].line == _line_of(lines, '"gate"')
+
+
+def test_a_coupling_of_unknown_keys_names_each_and_its_missing_qudits(tmp_path):
+    data = _coupled_data()
+    data["quantum_system"]["couplings"][1] = {"a": 1, "b": 2, "strength_hz": 4.0e6}
+    problems, _ = _file_problems(tmp_path, data)
+    assert [(p.path, p.message) for p in problems] == [
+        ("quantum_system.couplings[1].a", "is not a known key"),
+        ("quantum_system.couplings[1].b", "is not a known key"),
+        ("quantum_system.couplings[1].qudits", "is missing"),
+    ]
+
+
+def test_a_value_problem_in_a_file_has_its_file_path_and_line(tmp_path):
+    data = _coupled_data()
+    system = data["quantum_system"]
+    del system["couplings"][0]["strength_hz"]
+    system["couplings"][1]["qudits"] = [1, 9]
+    system["residual_zz"][0]["rate_hz"] = "1e4"
+    problems, lines = _file_problems(tmp_path, data)
+    assert [(p.path, p.message) for p in problems] == [
+        ("quantum_system.couplings[0].strength_hz", "is missing"),
+        ("quantum_system.couplings[1].qudits[1]", "9 is not a qudit of the quantum system"),
+        ("quantum_system.residual_zz[0].rate_hz", "'1e4' is not a finite number of Hz"),
+    ]
+    first = _line_of(lines, '"qudits"', after=_line_of(lines, '"couplings"'))
+    assert problems[1].line == _line_of(lines, "9", after=_line_of(lines, '"qudits"', after=first))
+    assert problems[2].line == _line_of(lines, '"rate_hz"')

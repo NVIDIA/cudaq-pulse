@@ -437,7 +437,12 @@ behavior may change in any 0.x release.
   published CZ values, and `cudaq_pulse.targets.transmon.CZ_LAYERS` the
   (auxiliary, data) pairs of each of its CZ time steps. A target's
   `residual_zz` lists `ResidualZZ(qudits, rate_hz)` entries, a static ZZ
-  rate beyond what the couplings produce. A config or file with
+  rate beyond what the couplings produce. Couplings and residual ZZ entries
+  are checked when the system is built, all of them at once: each is
+  between two distinct qudits of the system (three or more are refused in
+  this release), one per pair in either order, with finite strengths and
+  rates (zero and negative allowed), a gate's non-empty name, times of 0 ns
+  or more and an interaction frequency above 0 Hz. A config or file with
   problems raises `pulse.DeviceDefinitionError` (a `ValueError`) listing all
   of them in `problems`, each a `pulse.Problem` with its path in the config
   (`layout[2]`), the offending value and a fix, and for a file its line and
