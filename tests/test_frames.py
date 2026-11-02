@@ -196,6 +196,11 @@ def _simulated(lowered, outcome=-1):
     return sorted((start, list(it), f, _wrapped(p)) for _, it, start, f, p in drives)
 
 
+def _approx(drives):
+    """*drives* as from _simulated, the frequency and phase approximately."""
+    return [(start, it, pytest.approx(f), pytest.approx(p)) for start, it, f, p in drives]
+
+
 def _exported(program, outcome=-1):
     """The same from a format /1 *program*, applying the frame changes of a
     tone tracked at run time as a controller does."""
@@ -240,7 +245,7 @@ def test_the_simulator_plays_each_drive_with_the_frame_the_export_gives(kernel, 
     simulated = _simulated(lowered)
     assert simulated
     for program in (lowered.export_controller(), unroll(lowered.export_controller(version=2))):
-        assert _exported(program) == pytest.approx(simulated)
+        assert _exported(program) == _approx(simulated)
 
 
 @pytest.mark.parametrize("outcome", [0, 1])
@@ -249,7 +254,7 @@ def test_a_frame_changed_in_a_branch_plays_as_the_controller_tracks_it(outcome):
     simulated = _simulated(lowered, outcome)
     assert len(simulated) == 2 + outcome
     for program in (lowered.export_controller(), unroll(lowered.export_controller(version=2))):
-        assert _exported(program, outcome) == pytest.approx(simulated)
+        assert _exported(program, outcome) == _approx(simulated)
 
 
 def test_a_frame_change_carried_to_the_next_iteration_is_a_phase_step():
@@ -361,7 +366,7 @@ def test_the_changes_a_loop_carries_out_of_its_last_iteration_follow_it(kernel, 
     if threshold == 0:
         assert [e["kind"] for e in structured["events"]] == ["loop", "frame_update"]
     # The drives play as before.
-    assert _exported(flat) == pytest.approx(_simulated(lowered))
+    assert _exported(flat) == _approx(_simulated(lowered))
 
 
 @pytest.mark.parametrize(("kernel", "arm"), [(one_arm, False), (other_arm, True)])
@@ -383,7 +388,7 @@ def test_a_change_before_a_branch_one_arm_plays_is_a_frame_update_in_the_other(k
         assert played["frequency_hz"] == _FREQUENCY_HZ + 2e6
     assert unroll(lowered.export_controller(version=2)) == flat
     for outcome in (0, 1):
-        assert _exported(flat, outcome) == pytest.approx(_simulated(lowered, outcome))
+        assert _exported(flat, outcome) == _approx(_simulated(lowered, outcome))
 
 
 @pytest.mark.parametrize("outcome", [0, 1])
@@ -395,7 +400,7 @@ def test_a_change_a_loop_carries_through_a_branch_is_a_frame_update_at_each_exec
     assert [(e["op"], e["conditions"]) for e in updates] == [("shift_phase", [])] * 3
     assert [e["phase_rad"] for e in updates] == pytest.approx([0.3, 0.6, 0.9])
     # A drive that plays with them has them in its frame as well.
-    assert _exported(flat, outcome) == pytest.approx(_simulated(lowered, outcome))
+    assert _exported(flat, outcome) == _approx(_simulated(lowered, outcome))
     assert _close(unroll(lowered.export_controller(version=2)), flat)
 
 
