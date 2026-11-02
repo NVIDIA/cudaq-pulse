@@ -963,6 +963,7 @@ def _walk(
     waveforms: bool = True,
     slots: list[int] | None = None,
     repeats: list[tuple[int, ...]] | None = None,
+    periods: list[tuple[int, int, int]] | None = None,
 ) -> tuple[
     list[Any],
     list[dict[str, Any]],
@@ -978,7 +979,8 @@ def _walk(
     *own*), for a check, the events are those the check walk gives: in a
     module that computes nothing at run time, a long rolled loop whose
     iterations repeat has its events once, and *repeats* gets its copies
-    (``_loops``).
+    (``_loops``); with *periods* too, a loop whose lines move by different
+    periods as well, and *periods* gets their (repeat, line, period).
 
     With *own*, the events' times are in that controller's cycles (their
     waveforms' too, with *waveforms*), what they compute at run time too
@@ -1002,9 +1004,15 @@ def _walk(
     if repeats is not None and own is None:
         epochs = lowered._event_epochs(syncs=True)
         with lowered._lock:
-            lines, events, found = module.controller_events(
-                _PARAMETERS, _AMPLITUDES, epochs, slots, True
-            )
+            if periods is None:
+                lines, events, found = module.controller_events(
+                    _PARAMETERS, _AMPLITUDES, epochs, slots, True
+                )
+            else:
+                lines, events, found, moved = module.controller_events(
+                    _PARAMETERS, _AMPLITUDES, epochs, slots, True, True
+                )
+                periods += moved
         repeats += found
         frame_state = []
     else:
@@ -2124,13 +2132,26 @@ def _limit_violations(
         lines, events, _, off, problems = walked
         return _violations(lowered, events, limits, lines, clocks, off, problems, True, unresolved)
     repeats: list[tuple[int, ...]] = []
-    lines, events, _, off, problems = _walk(
-        lowered, unresolved is None, _native_clock(clocks), False, repeats=repeats
-    )
-    if repeats:
-        from ._loops import violations
+    for unsynced in (True, False):
+        periods: list[tuple[int, int, int]] | None = [] if unsynced else None
+        lines, events, _, off, problems = _walk(
+            lowered,
+            unresolved is None,
+            _native_clock(clocks),
+            False,
+            repeats=repeats,
+            periods=periods,
+        )
+        if not repeats:
+            break
+        from ._loops import UnsyncedError, violations
 
-        return violations(lowered, events, repeats, limits, lines, unresolved)
+        try:
+            return violations(
+                lowered, events, repeats, limits, lines, unresolved, None, periods or ()
+            )
+        except UnsyncedError:
+            repeats = []
     return _violations(lowered, events, limits, lines, clocks, off, problems, False, unresolved)
 
 
@@ -2502,16 +2523,30 @@ def _compile_check(
         ):
             return [], not maybe
     repeats: list[tuple[int, ...]] | None = None if system is not None or slots else []
-    lines, events, _, off, problems = _walk(
-        lowered, values=False, own=_native_clock(clocks), waveforms=False, repeats=repeats
-    )
-    if repeats:
-        from ._loops import violations
+    for unsynced in (True, False):
+        periods: list[tuple[int, int, int]] | None = [] if unsynced else None
+        lines, events, _, off, problems = _walk(
+            lowered,
+            values=False,
+            own=_native_clock(clocks),
+            waveforms=False,
+            repeats=repeats,
+            periods=periods,
+        )
+        if not repeats:
+            break
+        from ._loops import UnsyncedError, violations
 
         assert limits is not None
         rates = None if limits is machine.controller else _sample_rates(lowered, limits)
         pending: list[str] | None = [] if lowered.parameters else None
-        found = violations(lowered, events, repeats, limits, lines, pending, rates)
+        try:
+            found = violations(
+                lowered, events, repeats, limits, lines, pending, rates, periods or ()
+            )
+        except UnsyncedError:
+            repeats = []
+            continue
         return found, not pending
     if system is not None and slots and not system._plays_everything:
         # Which controller plays a line depends on the qudits a call binds.

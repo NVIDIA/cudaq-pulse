@@ -19,7 +19,7 @@ from __future__ import annotations
 import bisect
 import math
 import operator
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, overload
 
 from .controller import (
@@ -44,22 +44,48 @@ LAZY_AFTER = 10_000
 _MAX_PLAYED = 1 << 20
 
 
+class UnsyncedError(Exception):
+    """A check pairs events of lines that a loop's copies move by different
+    periods: the caller walks the program again with only loops of one
+    period summarized."""
+
+
 class _Rep:
     """Copies of the events of ``body``: copy j starts j * ``period``
-    cycles after the first, which the events of ``body`` are."""
+    cycles after the first, which the events of ``body`` are; or, with
+    ``lines``, j times the period of its event's line."""
 
-    __slots__ = ("begin", "end", "copies", "period", "depth", "body", "orig")
+    __slots__ = ("begin", "end", "copies", "period", "depth", "body", "orig", "lines")
 
-    def __init__(self, begin: int, end: int, copies: int, period: int, depth: int) -> None:
+    def __init__(
+        self,
+        begin: int,
+        end: int,
+        copies: int,
+        period: int,
+        depth: int,
+        lines: dict[int, int] | None = None,
+    ) -> None:
         self.begin, self.end, self.copies = begin, end, copies
         self.period, self.depth = period, depth
+        self.lines = lines
         self.body: list[Any] = []
         self.orig = self
 
     def keeping(self, body: list[Any]) -> _Rep:
-        kept = _Rep(self.begin, self.end, self.copies, self.period, self.depth)
+        kept = _Rep(self.begin, self.end, self.copies, self.period, self.depth, self.lines)
         kept.body, kept.orig = body, self.orig
         return kept
+
+
+def _period(rep: _Rep, lines: Iterable[int]) -> int:
+    """The period of *rep*'s copies on *lines*, which they must share."""
+    if rep.lines is None:
+        return rep.period
+    found = {rep.lines[line] for line in lines if line in rep.lines}
+    if len(found) > 1:
+        raise UnsyncedError
+    return found.pop() if found else 0
 
 
 class _Text:
@@ -270,10 +296,25 @@ class Schedule(Sequence[Any]):
         return f"<{self._root.size} scheduled events>"
 
 
-def _tree(count: int, repeats: Sequence[Sequence[int]]) -> tuple[list[Any], list[tuple[_Rep, ...]]]:
+def _tree(
+    count: int,
+    repeats: Sequence[Sequence[int]],
+    periods: Sequence[Sequence[int]] = (),
+) -> tuple[list[Any], list[tuple[_Rep, ...]]]:
     """The events 0 to *count* - 1 with their repeats as nested nodes, and
-    the repeats each event lies in, outermost first."""
-    reps = sorted((_Rep(*r[:5]) for r in repeats if r[1] > r[0]), key=lambda r: (r.begin, -r.end))
+    the repeats each event lies in, outermost first; *periods* the
+    (repeat, line, period) of repeats whose lines have periods of their own."""
+    lines: dict[int, dict[int, int]] = {}
+    for index, line, period in periods:
+        lines.setdefault(index, {})[line] = period
+    reps = sorted(
+        (
+            _Rep(r[0], r[1], r[2], r[3], r[4], lines.get(k, {}) if r[3] < 0 else None)
+            for k, r in enumerate(repeats)
+            if r[1] > r[0]
+        ),
+        key=lambda r: (r.begin, -r.end),
+    )
     chains: list[tuple[_Rep, ...]] = [()] * count
     at = 0
 
@@ -322,9 +363,11 @@ def _events_of(nodes: list[Any]) -> Iterator[int]:
             yield from _events_of(node.body)
 
 
-def _each_event(nodes: list[Any], make: Callable[[int], Any]) -> list[Any]:
+def _each_event(
+    nodes: list[Any], make: Callable[[int], Any], lines: Iterable[int] | None = None
+) -> list[Any]:
     """The violation *make* gives for each event of *nodes* (or ``None``),
-    in program order."""
+    in program order; their events are on *lines*, else on any line."""
     parts: list[Any] = []
     for node in nodes:
         if type(node) is int:
@@ -332,9 +375,10 @@ def _each_event(nodes: list[Any], make: Callable[[int], Any]) -> list[Any]:
             if part is not None:
                 parts.append(part)
         else:
-            body = _each_event(node.body, make)
+            body = _each_event(node.body, make, lines)
             if body:
-                parts.append(_Copies(body, 0, node.copies, node.period))
+                on = lines if lines is not None else (node.lines or ())
+                parts.append(_Copies(body, 0, node.copies, _period(node, on)))
     return parts
 
 
@@ -365,9 +409,14 @@ class _Pairs:
         events: Sequence[Mapping[str, Any]],
         pair: Callable[[Mapping[str, Any], int, Mapping[str, Any], int], Any],
         budget: _Budget,
+        lines: Iterable[int],
     ) -> None:
         self.events, self.pair, self.budget = events, pair, budget
+        self.lines = tuple(lines)
         self.windows: dict[int, tuple[int, int]] = {}
+
+    def period(self, rep: _Rep) -> int:
+        return _period(rep, self.lines)
 
     def window(self, node: Any) -> tuple[int, int]:
         """The first and last start of *node* (all its copies)."""
@@ -377,7 +426,7 @@ class _Pairs:
         found = self.windows.get(id(node))
         if found is None:
             lo, hi = self.body_window(node)
-            found = self.windows[id(node)] = (lo, hi + (node.copies - 1) * node.period)
+            found = self.windows[id(node)] = (lo, hi + (node.copies - 1) * self.period(node))
         return found
 
     def body_window(self, rep: _Rep) -> tuple[int, int]:
@@ -395,7 +444,7 @@ class _Pairs:
                 node = items[k][0]
                 if type(node) is not int:
                     lo, hi = self.body_window(node)
-                    if hi - lo > node.period:
+                    if hi - lo > self.period(node):
                         bad = k
                         break
             if bad is None:
@@ -412,7 +461,7 @@ class _Pairs:
             items = (
                 items[:bad]
                 + [
-                    (child, dt + j * node.period, path + ((id(node.orig), j),))
+                    (child, dt + j * self.period(node), path + ((id(node.orig), j),))
                     for j in range(node.copies)
                     for child in node.body
                 ]
@@ -447,7 +496,7 @@ class _Pairs:
             parts.extend(first)
             assert last is not None
             if node.copies > 1:
-                period = node.period
+                period = self.period(node)
                 again, end = self.walk(
                     [(child, 0, inner) for child in node.body],
                     (last[0], last[1] - dt - period, ("copy",)),
@@ -505,11 +554,14 @@ def violations(
     lines: Sequence[Mapping[str, Any]],
     unresolved: list[str] | None,
     sample_rate: tuple[float, float] | None = None,
+    periods: Sequence[Sequence[int]] = (),
 ) -> list[str] | Violations:
     """``controller._violations`` of the events of a summarizing walk, with
     *sample_rate* (made, plays) when a line plays samples made for another
-    rate (``controller._sample_rate_violations``)."""
-    tree, chains = _tree(len(events), repeats)
+    rate (``controller._sample_rate_violations``), and *periods* the line
+    periods of its unsynced loops. ``UnsyncedError`` when a check pairs events
+    of lines of different periods."""
+    tree, chains = _tree(len(events), repeats, periods)
     budget = _Budget()
     found: list[Any] = []
     timed = _keep(
@@ -561,7 +613,9 @@ def violations(
 
     for line in on_lines:
         items = _keep(timed, lambda i: events[i]["line"] == line)  # noqa: B023
-        found.extend(_Pairs(events, spacing, budget).walk([(n, 0, ()) for n in items], None)[0])
+        found.extend(
+            _Pairs(events, spacing, budget, (line,)).walk([(n, 0, ()) for n in items], None)[0]
+        )
         templates = list(_events_of(items))
         if limits.tones_per_line is not None:
             tones = {
@@ -641,8 +695,9 @@ def violations(
         )
         for acquirer in sorted({acquirers[events[i]["qudit"]] for i in _events_of(readouts)}):
             items = _keep(readouts, lambda i: acquirers[events[i]["qudit"]] == acquirer)  # noqa: B023
+            joint = {events[i]["line"] for i in _events_of(items)}
             found.extend(
-                _Pairs(events, acquired, budget).walk([(n, 0, ()) for n in items], None)[0]
+                _Pairs(events, acquired, budget, joint).walk([(n, 0, ()) for n in items], None)[0]
             )
     if limits.feedback_latency_cycles:
         found.extend(
@@ -719,7 +774,7 @@ def _amplitudes(
             "(ControllerLimits.max_amplitude)",
         )
 
-    return _each_event(items, over)
+    return _each_event(items, over, (line["line"],))
 
 
 class _Feedback:
@@ -743,15 +798,24 @@ class _Feedback:
         decides how far apart the two are, and the cycles the readout's
         copy (the last of each loop it is in alone) starts after its first."""
         mine, theirs = self.chains[i], self.chains[ref]
+        line, readout = self.events[i]["line"], self.events[ref]["line"]
         separate = []
         for rep in mine:
+            if rep.lines is not None:
+                _period(rep, (line, readout))
             if rep in theirs:
                 continue
             if rep.begin - (rep.end - rep.begin) <= ref < rep.begin:
                 continue
             separate.append(rep)
-        later = sum((rep.copies - 1) * rep.period for rep in theirs if rep not in mine)
+        later = sum(
+            (rep.copies - 1) * _period(rep, (readout,)) for rep in theirs if rep not in mine
+        )
         return separate, later
+
+    def period(self, rep: _Rep, i: int) -> int:
+        """The period of *rep*'s copies of event *i*."""
+        return _period(rep, (self.events[i]["line"],))
 
     def refs(self, i: int) -> Iterator[tuple[int, Mapping[str, Any]]]:
         for condition in self.events[i]["conditions"]:
@@ -773,12 +837,22 @@ class _Feedback:
             for j in range(head):
                 body = self.walk(node.body, {**fixed, rep: j})
                 if body:
-                    parts.append(_Copies(body, j, j + 1, rep.period))
+                    parts.append(_Copies(body, j, j + 1, self.body_period(node, rep)))
             if head < rep.copies:
                 body = self.walk(node.body, {**fixed, rep: None})
                 if body:
-                    parts.append(_Copies(body, head, rep.copies, rep.period))
+                    parts.append(_Copies(body, head, rep.copies, self.body_period(node, rep)))
         return parts
+
+    def body_period(self, node: _Rep, rep: _Rep) -> int:
+        """The period of *rep*'s copies of the events of *node* that
+        depend on readouts."""
+        if rep.lines is None:
+            return rep.period
+        lines = {
+            self.events[i]["line"] for i in _events_of(node.body) if self.events[i]["conditions"]
+        }
+        return _period(rep, lines)
 
     def head(self, node: _Rep, rep: _Rep, fixed: Mapping[_Rep, int | None]) -> int:
         """The first copies of *rep* that may start too early after a readout
@@ -796,13 +870,14 @@ class _Feedback:
                         j = fixed[other]
                         if j is None:
                             break
-                        shift += j * other.period
+                        shift += j * self.period(other, i)
                 else:
                     gap = readout["end_cycles"] + later + self.latency - start - shift
                     if gap > 0:
+                        period = self.period(rep, i)
                         copies = max(
                             copies,
-                            math.ceil(gap / rep.period) if rep.period > 0 else rep.copies,
+                            math.ceil(gap / period) if period > 0 else rep.copies,
                         )
         return copies
 
@@ -817,7 +892,7 @@ class _Feedback:
                 j = fixed.get(rep)
                 if j is None:
                     break
-                shift += j * rep.period
+                shift += j * self.period(rep, i)
             else:
                 end = readout["end_cycles"] - shift + later
                 ready = end + self.latency

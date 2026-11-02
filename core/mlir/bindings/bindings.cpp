@@ -1357,6 +1357,13 @@ struct ControllerEventWalk {
   /// later, and an event after the loop refers to the last copy.
   using Repeat = std::array<int64_t, 7>;
   std::vector<Repeat> repeats;
+  /// With `unsynced` too: a loop whose lines each play their events of
+  /// iteration 1 again at a period of their own, which syncs only lines of
+  /// one period, also repeats. Its Repeat has period -1, and each line's
+  /// period is a (repeat index, line, period) here; a line with none moves
+  /// no event.
+  bool unsynced = false;
+  std::vector<std::array<int64_t, 3>> linePeriods;
 
   struct Mark {
     size_t event, repeat;
@@ -1378,8 +1385,14 @@ struct ControllerEventWalk {
     iteration.back() = 2;
     block<false>(body);
     Mark three = mark();
-    if (auto period = repeating(zero, one, two, three, framesOne, reachedOne,
-                                latestOne)) {
+    std::map<int64_t, int64_t> periods;
+    auto period = repeating(zero, one, two, three, framesOne, reachedOne,
+                            latestOne, periods);
+    if (period && *period < 0) {
+      summarizeUnsynced(two, three, trips, reachedOne, periods);
+      return;
+    }
+    if (period) {
       int64_t copies = trips - 2;
       int64_t stride = three.branch - two.branch;
       auto overflowed = [] {
@@ -1420,14 +1433,109 @@ struct ControllerEventWalk {
     }
   }
 
+  /// The later copies of a loop whose lines repeat at `periods`, as
+  /// summarizeLoop records those of one period: each line's reach moves by
+  /// its own period, which iteration 2 moved it by.
+  LLVM_ATTRIBUTE_NOINLINE void summarizeUnsynced(
+      Mark two, Mark three, int64_t trips,
+      const std::map<mlir::Operation *, std::optional<int64_t>> &reachedOne,
+      const std::map<int64_t, int64_t> &periods) {
+    int64_t copies = trips - 2;
+    int64_t stride = three.branch - two.branch;
+    auto overflowed = [] {
+      return std::overflow_error("a rolled loop runs past 2**63 cycles or "
+                                 "branches");
+    };
+    std::optional<int64_t> branches = checkedMul(copies - 1, stride);
+    if (!branches)
+      throw overflowed();
+    std::optional<int64_t> next = checkedAdd(nextBranch, *branches);
+    if (!next)
+      throw overflowed();
+    nextBranch = *next;
+    for (auto &[allocation, time] : reached) {
+      const std::optional<int64_t> &before = reachedOne.at(allocation);
+      if (!time || *time == *before)
+        continue;
+      std::optional<int64_t> shift = checkedMul(copies - 1, *time - *before);
+      if (!shift)
+        throw overflowed();
+      std::optional<int64_t> later = checkedAdd(*time, *shift);
+      if (!later)
+        throw overflowed();
+      time = *later;
+    }
+    const auto index = static_cast<int64_t>(repeats.size());
+    for (auto [line, period] : periods) {
+      if (!checkedMul(copies - 1, period))
+        throw overflowed();
+      linePeriods.push_back({index, line, period});
+    }
+    repeats.push_back({static_cast<int64_t>(two.event),
+                       static_cast<int64_t>(three.event), copies, -1,
+                       static_cast<int64_t>(iteration.size() - 1), two.branch,
+                       stride});
+  }
+
+  /// Whether repeats `a` and `b`, of lines of their own periods, have the
+  /// same lines at the same periods.
+  bool samePeriods(int64_t a, int64_t b) const {
+    std::vector<std::pair<int64_t, int64_t>> first, second;
+    for (const auto &[index, line, period] : linePeriods) {
+      if (index == a)
+        first.emplace_back(line, period);
+      else if (index == b)
+        second.emplace_back(line, period);
+    }
+    return first == second;
+  }
+
+  /// The period of each line of the events [one, two), by how far iteration
+  /// 2 moved their starts: those of a line by one period, a sync by that of
+  /// each line it syncs. None when a line's events move by more than one
+  /// period, or a sync syncs lines of two.
+  LLVM_ATTRIBUTE_NOINLINE std::optional<std::map<int64_t, int64_t>>
+  periodsOf(Mark one, Mark two) const {
+    std::map<int64_t, int64_t> periods;
+    auto agree = [&](int64_t line, int64_t shift) {
+      auto [it, inserted] = periods.try_emplace(line, shift);
+      return inserted || it->second == shift;
+    };
+    const size_t len = two.event - one.event;
+    for (size_t i = 0; i < len; ++i) {
+      const Event &a = result[one.event + i];
+      const Event &b = result[two.event + i];
+      if (!std::get<3>(a) || std::get<1>(a) < 0)
+        continue;
+      if (!agree(std::get<1>(a), *std::get<3>(b) - *std::get<3>(a)))
+        return std::nullopt;
+    }
+    for (size_t i = 0; i < len; ++i) {
+      const Event &a = result[one.event + i];
+      const Event &b = result[two.event + i];
+      if (!std::get<3>(a) || std::get<1>(a) >= 0)
+        continue;
+      const std::vector<int64_t> &synced = std::get<10>(a);
+      if (synced.empty())
+        return std::nullopt;
+      for (int64_t line : synced)
+        if (!agree(line, *std::get<3>(b) - *std::get<3>(a)))
+          return std::nullopt;
+    }
+    return periods;
+  }
+
   /// Whether iteration 2 of the loop being walked, after `two`, plays
   /// iteration 1 (after `one`) again and leaves the walk as iteration 1 did,
   /// shifted by one iteration; its period, or 0 with nothing scheduled.
+  /// With `unsynced`, -1 when its lines repeat at the `periods` of their
+  /// own (periodsOf).
   std::optional<int64_t> repeating(
       Mark zero, Mark one, Mark two, Mark three,
       const std::map<mlir::Operation *, Frame> &framesOne,
       const std::map<mlir::Operation *, std::optional<int64_t>> &reachedOne,
-      const llvm::DenseMap<mlir::Operation *, int64_t> &latestOne) {
+      const llvm::DenseMap<mlir::Operation *, int64_t> &latestOne,
+      std::map<int64_t, int64_t> &periods) {
     const int64_t len = static_cast<int64_t>(two.event - one.event);
     const int64_t stride = two.branch - one.branch;
     if (three.event - two.event != two.event - one.event ||
@@ -1472,6 +1580,7 @@ struct ControllerEventWalk {
       return true;
     };
     std::optional<int64_t> period;
+    bool mixed = false;
     for (size_t i = 0; i < static_cast<size_t>(len); ++i) {
       const Event &a = result[one.event + i];
       const Event &b = result[two.event + i];
@@ -1493,8 +1602,13 @@ struct ControllerEventWalk {
         return std::nullopt;
       if (startA) {
         int64_t shift = *startB - *startA;
-        if (shift < 0 || (period && shift != *period))
+        if (shift < 0)
           return std::nullopt;
+        if (period && shift != *period) [[unlikely]] {
+          if (!unsynced)
+            return std::nullopt;
+          mixed = true;
+        }
         period = shift;
       }
       auto &iterationA = std::get<5>(a);
@@ -1522,6 +1636,15 @@ struct ControllerEventWalk {
       if (b[0] != a[0] + len || b[1] != a[1] + len || b[2] != a[2] ||
           b[3] != a[3] || b[4] != a[4] || !branch(a[5], b[5]) || b[6] != a[6])
         return std::nullopt;
+      if (a[3] < 0 && !samePeriods(static_cast<int64_t>(one.repeat + i),
+                                   static_cast<int64_t>(two.repeat + i)))
+        return std::nullopt;
+    }
+    if (mixed) {
+      auto found = periodsOf(one, two);
+      if (!found)
+        return std::nullopt;
+      periods = std::move(*found);
     }
     int64_t shift = period.value_or(0);
     if (frames.size() != framesOne.size() ||
@@ -1538,15 +1661,25 @@ struct ControllerEventWalk {
     for (auto &[allocation, time] : reached) {
       auto found = reachedOne.find(allocation);
       if (found == reachedOne.end() ||
-          time.has_value() != found->second.has_value() ||
-          (time && *time != *found->second && *time != *found->second + shift))
+          time.has_value() != found->second.has_value())
         return std::nullopt;
+      if (!time || *time == *found->second)
+        continue;
+      if (mixed) {
+        auto line = periods.find(lineOf(allocation));
+        if (line == periods.end() || *time != *found->second + line->second)
+          return std::nullopt;
+      } else if (*time != *found->second + shift) {
+        return std::nullopt;
+      }
     }
     for (auto &[op, index] : latest) {
       auto found = latestOne.find(op);
       if (found == latestOne.end() || !ref(found->second, index))
         return std::nullopt;
     }
+    if (mixed)
+      return -1;
     return shift;
   }
 };
@@ -2444,10 +2577,12 @@ public:
   /// event's epoch (empty: all 0). A list `slots` gets each line's
   /// runtime-qudit slot (-1 for none). With `summarize`, for a check, a long
   /// rolled loop whose iterations repeat has its events once, and a third
-  /// list has each such loop's ControllerEventWalk::Repeat.
+  /// list has each such loop's ControllerEventWalk::Repeat; with `unsynced`
+  /// too, its lines may repeat at periods of their own, and a fourth list has
+  /// them (ControllerEventWalk::linePeriods).
   nb::tuple controller_events(nb::handle parameters, nb::handle amplitudes,
-                              nb::list epochs, nb::object slots,
-                              bool summarize) {
+                              nb::list epochs, nb::object slots, bool summarize,
+                              bool unsynced) {
     ControllerObjects objects(parameters, amplitudes);
     std::unique_ptr<ControllerEventWalk> walk;
     std::vector<ControllerLine> lines;
@@ -2456,9 +2591,14 @@ public:
     bool once = summarize && nb::len(epochs) == 0;
     {
       nb::gil_scoped_release release;
-      walk = controllerWalk(lines, slots.is_none() ? nullptr : &found, once);
+      walk = controllerWalk(lines, slots.is_none() ? nullptr : &found, once,
+                            once && unsynced);
     }
     lineSlots(found, slots);
+    if (summarize && unsynced)
+      return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs),
+                            nb::cast(walk->repeats),
+                            nb::cast(walk->linePeriods));
     if (summarize)
       return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs),
                             nb::cast(walk->repeats));
@@ -2494,10 +2634,12 @@ public:
   /// `slots`; without the GIL.
   std::unique_ptr<ControllerEventWalk>
   controllerWalk(std::vector<ControllerLine> &lines,
-                 std::vector<int64_t> *slots, bool summarize = false) {
+                 std::vector<int64_t> *slots, bool summarize = false,
+                 bool unsynced = false) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     auto walk = std::make_unique<ControllerEventWalk>(clock());
     walk->summarize = summarize;
+    walk->unsynced = unsynced;
     if (runTime_)
       controllerEvents<true>(*walk, lines, slots);
     else
@@ -5945,6 +6087,7 @@ NB_MODULE(_cudaq_pulse_native, m) {
       .def("controller_events", &PulseModule::controller_events,
            nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
            nb::arg("slots").none() = nb::none(), nb::arg("summarize") = false,
+           nb::arg("unsynced") = false,
            "The lines and events of the export for a controller, as "
            "controller.export() gives them; a list `slots` gets each line's "
            "runtime-qudit slot")

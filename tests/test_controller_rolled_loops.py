@@ -264,6 +264,170 @@ def test_a_long_rolled_loop_reports_what_every_iteration_played_does(
         assert list(found) == _every_iteration(monkeypatch, lowered, limits)
 
 
+def _timed(event: dict[str, Any]) -> tuple[Any, ...]:
+    return event["kind"], event["line"], event["start_cycles"], event["end_cycles"]
+
+
+def _unsynced(n: int) -> dict[str, Any]:
+    """Loops whose lines move by different periods."""
+
+    @pulse.kernel
+    def two_lines(q, r):
+        a = get_drive_line(q)
+        b = get_drive_line(r)
+        for _ in range(n):
+            drive(a, square(5, 0.1))
+            drive(b, gaussian(8, 0.1, 2.0))
+
+    @pulse.kernel
+    def then(q, r):
+        a = get_drive_line(q)
+        b = get_drive_line(r)
+        for _ in range(n):
+            drive(a, square(5, 0.1))
+            drive(b, gaussian(8, 0.1, 2.0))
+        sync(a, b)
+        drive(a, square(6, 0.2))
+        drive(b, square(2, 0.1))
+
+    @pulse.kernel
+    def two_readouts(q, r):
+        p = get_readout_line(q)
+        o = get_readout_line(r)
+        for _ in range(n):
+            readout(p, square(40, 0.05))
+            readout(o, square(48, 0.05))
+
+    @pulse.kernel
+    def feedback(q, r):
+        line = get_drive_line(q)
+        probe = get_readout_line(r)
+        for _ in range(n):
+            m = readout(probe, square(40, 0.05))
+            if m:
+                drive(line, square(8, 0.1))
+            else:
+                drive(line, square(4, 0.2))
+
+    @pulse.kernel
+    def early(q, r):
+        line = get_drive_line(q)
+        other = get_drive_line(r)
+        probe = get_readout_line(q)
+        m = readout(probe, square(40, 0.05))
+        sync(probe, line)
+        for _ in range(n):
+            if m:
+                drive(line, square(8, 0.1))
+            wait(line, 3)
+            drive(other, square(5, 0.1))
+
+    @pulse.kernel
+    def early_on_the_slower_line(q, r):
+        other = get_drive_line(q)
+        line = get_drive_line(r)
+        probe = get_readout_line(r)
+        m = readout(probe, square(40, 0.05))
+        sync(probe, line)
+        for _ in range(n):
+            drive(other, square(5, 0.1))
+            if m:
+                drive(line, square(8, 0.1))
+            wait(line, 3)
+
+    @pulse.kernel
+    def after(q, r):
+        line = get_drive_line(q)
+        probe = get_readout_line(r)
+        other = get_drive_line(r)
+        for _ in range(n):
+            m = readout(probe, square(40, 0.05))
+            drive(line, square(8, 0.1))
+            drive(other, square(4, 0.1))
+        if m:
+            drive(line, square(8, 0.1))
+
+    @pulse.kernel
+    def nested(q, r):
+        a = get_drive_line(q)
+        b = get_drive_line(r)
+        for _ in range(n):
+            for _ in range(n):
+                drive(a, square(5, 0.1))
+                wait(a, 2)
+            drive(b, gaussian(8, 0.1, 2.0))
+
+    @pulse.kernel
+    def partly_synced(q, r):
+        a = get_drive_line(q)
+        p = get_readout_line(q)
+        b = get_drive_line(r)
+        for _ in range(n):
+            drive(a, square(16, 0.1))
+            sync(a, p)
+            readout(p, square(40, 0.05))
+            drive(b, square(4, 0.1))
+            wait(b, 2)
+
+    return {
+        "two_lines": two_lines,
+        "then": then,
+        "two_readouts": two_readouts,
+        "feedback": feedback,
+        "early": early,
+        "early_on_the_slower_line": early_on_the_slower_line,
+        "after": after,
+        "nested": nested,
+        "partly_synced": partly_synced,
+    }
+
+
+@pytest.mark.parametrize("trips", [65, 100])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "two_lines",
+        "then",
+        "two_readouts",
+        "feedback",
+        "early",
+        "early_on_the_slower_line",
+        "after",
+        "nested",
+        "partly_synced",
+    ],
+)
+@pytest.mark.parametrize("schedule", ["asap", "alap", "rcp"])
+def test_a_loop_whose_lines_move_by_different_periods_reports_what_every_iteration_does(
+    monkeypatch, trips, name, schedule
+):
+    from cudaq_pulse import _loops
+
+    lowered = pulse.compile(_unsynced(trips)[name], schedule=schedule, unroll_threshold=0)
+    lowered = lowered.lower(Q[0], Q[1])
+    repeats: list[Any] = []
+    periods: list[Any] = []
+    lines, events, *_ = controller._walk(lowered, values=False, repeats=repeats, periods=periods)
+    if repeats:
+        rest = len(events) - max(r[1] for r in repeats)
+        full = controller._walk(lowered, values=False)[1]
+        assert [_timed(e) for e in events[len(events) - rest :]] == [
+            _timed(e) for e in full[len(full) - rest :]
+        ]
+    summarized = 0
+    for limits in LIMITS:
+        found = check(lowered, limits)
+        assert list(found) == _every_iteration(monkeypatch, lowered, limits)
+        if periods:
+            try:
+                _loops.violations(lowered, events, repeats, limits, lines, None, None, periods)
+            except _loops.UnsyncedError:
+                continue
+            summarized += 1
+    if periods and name != "feedback":
+        assert summarized, "some limits are checked on the summarized loop"
+
+
 def test_past_10_000_violations_they_are_built_when_read(monkeypatch):
     lowered = pulse.compile(_loops(6000)["close"], unroll_threshold=0).lower(Q[0])
     limits = LIMITS[0]
