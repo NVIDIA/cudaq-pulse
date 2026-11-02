@@ -180,7 +180,8 @@ on two measures:
 - **Instructions** executed per repetition, counted by Valgrind's Callgrind
   on Linux x86-64. A case fails at more than 0.4% above its baseline. It
   also fails at more than 1% below, so that a speedup is recorded in the
-  baseline instead of hiding a later regression.
+  baseline instead of hiding a later regression. A failure is labelled by
+  the case's Python-level work (below).
 - **Program sizes**: op count, packed program bytes and export bytes. Any
   change fails. These are the same on every platform, and
   `tests/test_perf_gate.py` checks them in the regular test suite too.
@@ -245,6 +246,19 @@ from. Changing a pin in the job (image digest, `UBUNTU_SNAPSHOT`, uv or
 Python version, MLIR toolchain) changes the counts, and counts from another
 environment fail the gate, so take a new baseline as above once the change
 is on `staging`.
+
+**Likely layout only.** The job also counts each case's Python-level work
+per repetition (bytecodes executed, Python calls and C calls, with
+`sys.monitoring`), natively and apart from the Callgrind runs, and the
+baseline records it. It never gates, but it labels a case that fails on
+instructions. With the same Python work as the baseline's, the summary's
+"Python work" column says `same` and the failure says the instructions
+moved with identical Python work, likely layout only: for example, one new
+class at import renumbers the interpreter's type version tags and changes
+its method cache's collisions. The case still fails; judge it (compare the
+Callgrind dumps with the baseline run's) before taking a new baseline.
+With other Python work, the failure lists each counter's change. A
+baseline without Python work labels nothing.
 
 Wall-clock times are informational only: shared runners are too noisy to
 block on. The test job still reports `tests/test_perf_guard.py`'s
