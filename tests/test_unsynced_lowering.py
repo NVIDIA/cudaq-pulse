@@ -18,6 +18,7 @@ leave them alike) and the duration.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import random
@@ -28,6 +29,8 @@ from typing import Any
 
 import cudaq_pulse as pulse
 import pytest
+from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse.controller import ControllerLimitError
 
 from tests._handles import Q
 
@@ -273,6 +276,17 @@ def _kernels(n: int) -> dict[str, Any]:
 
 NAMES = list(_kernels(1))
 
+# Under rcp a loop is extrapolated once its lanes repeat too; the lines of a
+# loop that move by periods of their own share lanes that do not, so those
+# play every iteration.
+_ROLLED = {"two_lines", "late_start", "then", "held_back", "partly_synced", "in_a_branch"}
+_ROLLED |= {"tested_before_a_loop", "tested_in_every_iteration", "nested"}
+_ROLLED |= {"on_a_measurement_before", "on_two_measurements_before"}
+_ROLLED |= {"peeled_on_a_measurement_before"}
+AT_SCALE = [(name, schedule) for name in NAMES for schedule in ("asap", "alap")]
+AT_SCALE += [(name, "rcp") for name in sorted(_ROLLED | {"feedback_and_another_line"})]
+AT_SCALE += [(name, "alap_rcp") for name in sorted(_ROLLED)]
+
 
 def _occupancy(schedule: Any) -> dict[tuple[str, int], list[list[int]]]:
     """Each line's busy intervals by kind, touching ones merged."""
@@ -475,6 +489,100 @@ def test_a_loop_that_drifts_then_locks_peels_the_shorter_part():
     assert shorter < _size(_kernels(100)["drifts_then_locks"], "asap")
 
 
+@functools.cache
+def _system() -> Any:
+    a = pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], model="box.a")
+    b = pulse.Controller(drive_lines=[2, 3], readout_lines=[2, 3], model="box.b")
+    system = pulse.ControlSystem(controllers=[a, b])
+    return pulse.device(
+        {"quantum_system": "transmon_17q", "layout": [0, 1, 2, 3], "control_system": system}
+    )
+
+
+def _outcome(kernel: Any, schedule: str, unroll_threshold: int, machine: str) -> Any:
+    if machine == "one_lane":
+        model = MachineModel(
+            max_concurrent_drives=1,
+            max_concurrent_readouts=1,
+            line_switch_penalty_cycles=3,
+            readout_latency_cycles=7,
+        )
+        options, handles = {"machine": model}, Q
+    else:
+        qpu = _system()
+        options, handles = {"device": qpu}, qpu.qudits
+    try:
+        lowered = pulse.compile(
+            kernel, schedule=schedule, unroll_threshold=unroll_threshold, passes=(), **options
+        ).lower(handles[0], handles[1], handles[2])
+    except ControllerLimitError as error:
+        return str(error)
+    events = [(e.kind, e.line, e.start_cycles, e.duration_cycles) for e in lowered.schedule]
+    return lowered.duration, sorted(events)
+
+
+# One lane of each kind, which every op waits for; and two controllers,
+# whose lanes are compared lane by lane, as their owners break ties.
+@pytest.mark.parametrize("schedule", ["rcp", "alap_rcp"])
+@pytest.mark.parametrize("machine", ["one_lane", "two_controllers"])
+def test_loops_play_every_event_as_unrolled_under_rcp_on_other_machines(machine, schedule):
+    differ = []
+    for trips in (3, 13, 40):
+        kernels = list(_kernels(trips).items())
+        kernels += [(f"r{seed}", _random_kernel(seed, trips, True, True)) for seed in range(30)]
+        for name, kernel in kernels:
+            if _outcome(kernel, schedule, 0, machine) != _outcome(kernel, schedule, 10**6, machine):
+                differ.append((name, trips))
+    assert differ == []
+
+
+def _driven_in_both_arms(n: int) -> Any:
+    @pulse.kernel
+    def driven_in_both_arms(q, r, t):
+        a = get_drive_line(q)
+        b = get_drive_line(r)
+        c = get_drive_line(t)
+        p = get_readout_line(q)
+        drive(b, square(37, 0.1))
+        drive(c, square(12, 0.1))
+        drive(b, square(13, 0.1))
+        for _ in range(n):
+            m = readout(p, square(21, 0.05))
+            if m:
+                drive(a, square(33, 0.1))
+                drive(a, square(22, 0.1))
+            else:
+                drive(b, square(37, 0.1))
+                drive(a, square(22, 0.1))
+                drive(b, square(3, 0.1))
+            drive(b, square(14, 0.1))
+            drive(c, square(12, 0.1))
+
+    return driven_in_both_arms
+
+
+# Each arm takes lanes of its own and the two merge lane by lane, so lanes
+# that repeat only as a set do not make the iterations repeat.
+@pytest.mark.parametrize("schedule", ["rcp", "alap_rcp"])
+def test_a_loop_whose_branch_drives_in_both_arms_plays_every_event_as_unrolled(schedule):
+    machine = MachineModel(max_concurrent_drives=3, line_switch_penalty_cycles=1)
+
+    def events(trips: int, unroll_threshold: int) -> Any:
+        program = pulse.compile(
+            _driven_in_both_arms(trips),
+            schedule=schedule,
+            unroll_threshold=unroll_threshold,
+            passes=(),
+            machine=machine,
+        )
+        lowered = program.lower(Q[0], Q[1], Q[2])
+        found = [(e.kind, e.line, e.start_cycles, e.duration_cycles) for e in lowered.schedule]
+        return lowered.duration, sorted(found)
+
+    differ = [trips for trips in (13, 40, 97) if events(trips, 0) != events(trips, 10**6)]
+    assert differ == []
+
+
 @pytest.mark.parametrize("trips", [2, 3, 5, 40])
 def test_a_measurement_before_a_loop_ends_before_its_first_iteration_tests_it(trips):
     # A value from before the loop waits for the loop's first iteration.
@@ -500,16 +608,16 @@ threading.Thread(target=_watch, daemon=True).start()
 import cudaq_pulse as pulse
 from cudaq_pulse.controller import ControllerLimits, check
 from tests._handles import Q
-from tests.test_unsynced_lowering import _kernels
+from tests.test_unsynced_lowering import AT_SCALE, _kernels
 
 limits = ControllerLimits(issue_cycles=4, min_wait_cycles=4, max_amplitude=0.05, max_events=7)
 out = {{}}
-for name, kernel in _kernels({trips}).items():
-    for schedule in ("asap", "alap"):
-        program = pulse.compile(kernel, schedule=schedule, unroll_threshold=0)
-        lowered = program.lower(Q[0], Q[1], Q[2])
-        found = [str(lowered.duration.exact_ns), len(check(lowered, limits))]
-        out[f"{{name}}/{{schedule}}"] = found
+kernels = _kernels({trips})
+for name, schedule in AT_SCALE:
+    program = pulse.compile(kernels[name], schedule=schedule, unroll_threshold=0)
+    lowered = program.lower(Q[0], Q[1], Q[2])
+    found = [str(lowered.duration.exact_ns), len(check(lowered, limits))]
+    out[f"{{name}}/{{schedule}}"] = found
 print(json.dumps(out))
 """
 
@@ -543,15 +651,15 @@ def test_a_loop_of_10_9_or_10_15_iterations_lowers_and_checks_in_bounded_time_an
     # Past its first iterations each loop adds the same to both.
     small: dict[tuple[str, int], tuple[Fraction, int]] = {}
     for trips in (100, 101):
-        for name, kernel in _kernels(trips).items():
-            for schedule in ("asap", "alap"):
-                lowered = pulse.compile(kernel, schedule=schedule, unroll_threshold=0)
-                lowered = lowered.lower(Q[0], Q[1], Q[2])
-                small[f"{name}/{schedule}", trips] = (
-                    lowered.duration.exact_ns,
-                    len(check(lowered, limits)),
-                )
-    assert len(found) == 2 * len(NAMES)
+        kernels = _kernels(trips)
+        for name, schedule in AT_SCALE:
+            lowered = pulse.compile(kernels[name], schedule=schedule, unroll_threshold=0)
+            lowered = lowered.lower(Q[0], Q[1], Q[2])
+            small[f"{name}/{schedule}", trips] = (
+                lowered.duration.exact_ns,
+                len(check(lowered, limits)),
+            )
+    assert len(found) == len(AT_SCALE)
     for key, (duration, violations) in found.items():
         (d100, v100), (d101, v101) = small[key, 100], small[key, 101]
         assert Fraction(duration) == d100 + (many - 100) * (d101 - d100), key

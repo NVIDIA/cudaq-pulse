@@ -886,6 +886,8 @@ private:
     size_t count = floors.size();
     driveLanes.assign(count, {});
     readoutLanes.assign(count, {});
+    driveUses.assign(count, 0);
+    readoutUses.assign(count, 0);
     for (size_t t = 0; t < count; ++t) {
       int64_t drives = isolated() ? lanesPer->drives[t] : resources.maxDrives;
       int64_t readouts =
@@ -1077,6 +1079,122 @@ private:
     if (start < 0)
       skippedNegative = true;
     arm = std::min(arm, start);
+  }
+
+  // ── Lanes over a loop's iterations ─────────────────────────────────────
+
+  using Lanes = llvm::SmallVector<llvm::SmallVector<int64_t>, 1>;
+
+  /// The lanes, and how many ops took each timeline's, before an iteration.
+  struct LaneState {
+    Lanes drives, readouts, driveOwners, readoutOwners;
+    llvm::SmallVector<int64_t, 1> driveUses, readoutUses;
+  };
+
+  LaneState laneState() const {
+    return {driveLanes,    readoutLanes, driveOwners,
+            readoutOwners, driveUses,    readoutUses};
+  }
+
+  /// Whether lanes of equal times are interchangeable for the rest of the
+  /// schedule: on one controller, with no branch whose arms both take lanes,
+  /// as their lanes merge lane by lane. An arm that takes none leaves each
+  /// lane where the other arm's is or before it.
+  bool lanesByTime() {
+    if (!lanesKnown) {
+      lanesKnown = true;
+      auto takesLanes = [](mlir::Region &arm) {
+        return arm
+            .walk([](mlir::Operation *op) {
+              return isTimedOp(op) && !mlir::isa<pulse::WaitOp>(op)
+                         ? mlir::WalkResult::interrupt()
+                         : mlir::WalkResult::advance();
+            })
+            .wasInterrupted();
+      };
+      lanesInterchangeable =
+          !several() && !region
+                             ->walk([&](mlir::scf::IfOp branch) {
+                               return takesLanes(branch.getThenRegion()) &&
+                                              takesLanes(branch.getElseRegion())
+                                          ? mlir::WalkResult::interrupt()
+                                          : mlir::WalkResult::advance();
+                             })
+                             .wasInterrupted();
+    }
+    return lanesInterchangeable;
+  }
+
+  /// Whether an iteration moved the lanes by `shift`, so that the next one
+  /// plays as it did moved by `shift`: on each timeline, the lanes of a kind
+  /// an op took are those before moved by `shift`, as a multiset when lanes
+  /// of equal times are interchangeable, else lane by lane with the same
+  /// owners.
+  bool lanesMoved(const LaneState &before, int64_t shift) {
+    bool byTime = lanesByTime();
+    auto moved = [&](const Lanes &was, const Lanes &now, const Lanes &wasOwners,
+                     const Lanes &nowOwners, llvm::ArrayRef<int64_t> wasUses,
+                     llvm::ArrayRef<int64_t> nowUses) {
+      for (size_t t = 0; t < now.size(); ++t) {
+        if (wasUses[t] == nowUses[t])
+          continue;
+        if (byTime) {
+          llvm::SmallVector<int64_t, 4> a(was[t].begin(), was[t].end());
+          llvm::SmallVector<int64_t, 4> b(now[t].begin(), now[t].end());
+          llvm::sort(a);
+          llvm::sort(b);
+          for (auto [x, y] : llvm::zip(a, b))
+            if (y != x + shift)
+              return false;
+          continue;
+        }
+        if (several() && wasOwners[t] != nowOwners[t])
+          return false;
+        for (auto [x, y] : llvm::zip(was[t], now[t]))
+          if (y != x + shift)
+            return false;
+      }
+      return true;
+    };
+    return moved(before.drives, driveLanes, before.driveOwners, driveOwners,
+                 before.driveUses, driveUses) &&
+           moved(before.readouts, readoutLanes, before.readoutOwners,
+                 readoutOwners, before.readoutUses, readoutUses);
+  }
+
+  /// How many iterations moving as the one before a loop's lanes are
+  /// compared over, past which they are not: lanes that will move as the
+  /// iterations do have once each was taken again (none without resources).
+  int64_t laneTriesPerLoop() const {
+    if (!resources.enabled)
+      return 0;
+    size_t most = 0;
+    for (auto [drives, readouts] : llvm::zip(driveLanes, readoutLanes))
+      most = std::max(most, drives.size() + readouts.size());
+    return 2 * static_cast<int64_t>(most) + 2;
+  }
+
+  /// lanesMoved, counting the tries left down when not.
+  bool lanesSteady(const LaneState &before, int64_t shift, int64_t &tries) {
+    if (tries <= 0)
+      return false;
+    if (lanesMoved(before, shift))
+      return true;
+    --tries;
+    return false;
+  }
+
+  /// Moves the lanes an iteration took by `distance`, as the iterations not
+  /// simulated do.
+  void moveLanes(const LaneState &before, int64_t distance) {
+    for (size_t t = 0; t < driveLanes.size(); ++t) {
+      if (driveUses[t] != before.driveUses[t])
+        for (int64_t &lane : driveLanes[t])
+          lane += distance;
+      if (readoutUses[t] != before.readoutUses[t])
+        for (int64_t &lane : readoutLanes[t])
+          lane += distance;
+    }
   }
 
   // ── Loops whose lines move by periods of their own ────────────────────
@@ -1548,6 +1666,7 @@ private:
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op)) {
         bool isDrive = mlir::isa<pulse::DriveOp>(op);
         auto &lanes = isDrive ? driveLanes[t] : readoutLanes[t];
+        ++(isDrive ? driveUses : readoutUses)[t];
         if (several()) {
           // Another controller's op ends a lane only as surely as the two
           // starts are known.
@@ -1675,6 +1794,7 @@ private:
 
     iteration.push_back(0);
     std::optional<int64_t> lastShift;
+    int64_t laneTries = laneTriesPerLoop();
     const LoopGroups *groups = nullptr;
     bool grouped = false;
     std::optional<GroupShifts> lastGroups;
@@ -1686,6 +1806,10 @@ private:
       std::fill(iterationEnds.begin(), iterationEnds.end(), -1);
       auto floorsBefore = floors;
       auto linksBefore = linkReady;
+      // Only an iteration moving as the one before can be steady.
+      LaneState lanesBefore;
+      if (lastShift && laneTries > 0)
+        lanesBefore = laneState();
       for (auto [arg, time] : llvm::zip(args, carried))
         readyAt[arg] = time;
       if (mlir::failed(forwardBlock(*loop.getBody())))
@@ -1701,10 +1825,11 @@ private:
 
       int64_t shift;
       bool shifted = uniformShift(carried, next, kinds, shift);
-      bool steady = !resources.enabled && !lanesBound && shifted &&
-                    lastShift == shift && shift >= 0 &&
-                    (!Gridded || shift % grid.lcm() == 0) &&
-                    slotsHoldSteadyState(loop, shift);
+      bool steady =
+          !lanesBound && shifted && lastShift == shift && shift >= 0 &&
+          (!Gridded || shift % grid.lcm() == 0) &&
+          slotsHoldSteadyState(loop, shift) &&
+          (!resources.enabled || lanesSteady(lanesBefore, shift, laneTries));
       bool bounded = true;
       for (auto [before, after, kind, bound] :
            llvm::zip(carried, next, kinds, outsideOf))
@@ -1763,6 +1888,8 @@ private:
         for (auto [now, before] : llvm::zip(floors, floorsBefore))
           if (now != before)
             now += distance;
+        if (resources.enabled)
+          moveLanes(lanesBefore, distance);
         extrapolations.push_back({loop, shift, nullptr});
         break;
       }
@@ -1772,8 +1899,6 @@ private:
       readyAt[result] = time;
     return mlir::success();
   }
-
-  using Lanes = llvm::SmallVector<llvm::SmallVector<int64_t>, 1>;
 
   /// After a branch, each lane is as busy as the busier arm left it.
   static void mergeLanes(Lanes &lanes, const Lanes &other, bool later) {
@@ -2026,6 +2151,7 @@ private:
         step = grid.of(op->getOperand(0), lines);
       if (resources.enabled && !mlir::isa<pulse::WaitOp>(op)) {
         auto &lanes = isReadout ? readoutLanes[t] : driveLanes[t];
+        ++(isReadout ? readoutUses : driveUses)[t];
         if (several()) {
           auto &owners = isReadout ? readoutOwners[t] : driveOwners[t];
           size_t best = 0;
@@ -2173,6 +2299,7 @@ private:
 
     iteration.push_back(0);
     std::optional<int64_t> lastShift;
+    int64_t laneTries = laneTriesPerLoop();
     const LoopGroups *groups = nullptr;
     bool grouped = false;
     std::optional<GroupShifts> lastGroups;
@@ -2188,6 +2315,10 @@ private:
         bound(value, time);
       auto ceilingsBefore = ceilings;
       auto linksBefore = linkLate;
+      // Only an iteration moving as the one before can be steady.
+      LaneState lanesBefore;
+      if (lastShift && laneTries > 0)
+        lanesBefore = laneState();
       if (groups) {
         track.earliest.assign(groups->count, kNever);
         tracks.push_back(&track);
@@ -2212,10 +2343,11 @@ private:
 
       int64_t shift;
       bool shifted = uniformShift(carried, next, kinds, shift);
-      bool steady = !resources.enabled && !lanesBound && shifted &&
-                    lastShift == shift && shift <= 0 &&
-                    (!Gridded || shift % grid.lcm() == 0) &&
-                    slotsHoldSteadyState(loop, -shift);
+      bool steady =
+          !lanesBound && shifted && lastShift == shift && shift <= 0 &&
+          (!Gridded || shift % grid.lcm() == 0) &&
+          slotsHoldSteadyState(loop, -shift) &&
+          (!resources.enabled || lanesSteady(lanesBefore, shift, laneTries));
       lastShift = shifted ? std::optional<int64_t>(shift) : std::nullopt;
       // Lines that move by periods of their own repeat too, group by group.
       std::optional<GroupShifts> nowGroups;
@@ -2281,6 +2413,8 @@ private:
           if (before == linksBefore.end() || before->second != time)
             time += distance;
         }
+        if (resources.enabled)
+          moveLanes(lanesBefore, distance);
         extrapolations.push_back({loop, -shift, nullptr});
         if (readsOutside) {
           simulatedFirst = true;
@@ -2461,6 +2595,9 @@ private:
   llvm::SmallVector<int64_t, 4> armStarts;
   /// The controller of each lane's last op.
   Lanes driveOwners, readoutOwners;
+  /// Per timeline, how many ops have taken its drive and readout lanes.
+  llvm::SmallVector<int64_t, 1> driveUses, readoutUses;
+  bool lanesKnown = false, lanesInterchangeable = false;
 };
 
 // ── Writing the schedule ─────────────────────────────────────────────────

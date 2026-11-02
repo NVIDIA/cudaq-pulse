@@ -389,8 +389,8 @@ _LEFT_TO_THE_WALK = (
 
 # The native check walks a loop that does not repeat one period apart at
 # every iteration; one of more trips than the summarizing walk keeps rolled
-# it leaves to that walk.
-@pytest.mark.parametrize("schedule", ["asap"])
+# (rcp peels a few first) it leaves to that walk.
+@pytest.mark.parametrize("schedule", ["asap", "rcp"])
 def test_the_native_check_leaves_a_long_loop_out_of_step_to_the_summarizing_walk(schedule):
     limits = ControllerLimits(issue_cycles=4, max_amplitude=0.05)
     left = []
