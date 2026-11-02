@@ -2465,12 +2465,50 @@ private:
 
 // ── Writing the schedule ─────────────────────────────────────────────────
 
-/// Why an op's samples are not affine in its iterations.
+/// Why an op's samples are not affine in its iterations: the iterations of
+/// `loop` to peel off its front and back, or none to unroll it fully.
 struct NotAffine {
   mlir::scf::ForOp loop;
-  bool peelFront = false;
-  bool peelBack = false;
+  int64_t peelFront = 0;
+  int64_t peelBack = 0;
 };
+
+/// The iterations to peel off `loop` so that of the starts `line` it plays
+/// one op at, by iteration, one run of equal steps between consecutive
+/// iterations is left: the run at an end of the line past which the
+/// scheduler extrapolated, as those iterations repeat it, else the longest
+/// run of two steps or more. None when there is no such run.
+static NotAffine peelAround(mlir::scf::ForOp loop,
+                            llvm::ArrayRef<std::pair<int64_t, int64_t>> line,
+                            int64_t trips) {
+  bool before = line.front().first > 0, after = line.back().first < trips - 1;
+  if (before && after)
+    return {loop};
+  size_t first = 0, last = 0;
+  for (size_t from = 0; from + 1 < line.size();) {
+    size_t to = from + 1;
+    if (line[to].first != line[from].first + 1) {
+      from = to;
+      continue;
+    }
+    int64_t step = line[to].second - line[from].second;
+    while (to + 1 < line.size() && line[to + 1].first == line[to].first + 1 &&
+           line[to + 1].second - line[to].second == step)
+      ++to;
+    bool wanted = before  ? from == 0
+                  : after ? to == line.size() - 1
+                          : to - from > last - first;
+    if (wanted) {
+      first = from;
+      last = to;
+    }
+    from = to;
+  }
+  if (last == first || (!before && !after && last - first < 2))
+    return {loop};
+  return {loop, before ? 0 : line[first].first,
+          after ? 0 : trips - 1 - line[last].first};
+}
 
 static std::optional<NotAffine>
 writeTiming(mlir::Operation *op, mlir::Operation *root,
@@ -2573,14 +2611,16 @@ writeTiming(mlir::Operation *op, mlir::Operation *root,
                    llvm::all_equal(llvm::ArrayRef(steps).drop_front());
       bool back = line.back().first == trips - 1 && steps.size() >= 2 &&
                   llvm::all_equal(llvm::ArrayRef(steps).drop_back());
-      return NotAffine{loops[level], front, !front && back};
+      if (front || back)
+        return NotAffine{loops[level], front, !front && back};
+      return peelAround(loops[level], line, trips);
     }
-    return NotAffine{loops.back(), false, false};
+    return NotAffine{loops.back()};
   }
   for (const Extrapolation &e : extrapolations)
     for (auto [level, loop] : llvm::enumerate(loops))
       if (e.loop == loop && periods[level] != e.periodOf(op))
-        return NotAffine{loop, false, false};
+        return NotAffine{loop};
 
   write(base, periods);
   return std::nullopt;
@@ -2682,7 +2722,7 @@ static std::optional<NotAffine> periodMismatch(mlir::Region &region,
     auto check = [&](mlir::Value line, int64_t period) {
       auto [it, inserted] = periodOf.try_emplace(trace(line), period);
       if (!inserted && it->second != period)
-        problem = NotAffine{loop, true, false};
+        problem = NotAffine{loop, 1};
     };
     forEachScheduled(loop.getRegion(), [&](mlir::Operation *timed) {
       auto periods =
@@ -3130,6 +3170,9 @@ static mlir::LogicalResult checkProgramBudget(mlir::func::FuncOp function) {
 
 // ── Driver ───────────────────────────────────────────────────────────────
 
+/// Rounds of a region's scheduling that may peel several iterations at once.
+constexpr int64_t kWidePeelRounds = 8;
+
 /// Schedule `region`, its schedule blocks done, in rounds until its schedule
 /// is affine.
 template <bool Gridded>
@@ -3140,6 +3183,7 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
                const pulse::Controllers &controllers) {
   // Each round either writes an affine schedule or removes an iteration from
   // a loop, so this terminates.
+  int64_t widePeels = 0;
   while (true) {
     Scheduler<Gridded> scheduler(region, resources, classical, grid,
                                  controllers, &timelines);
@@ -3178,11 +3222,16 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
       problem = periodMismatch(region, root);
     if (!problem)
       break;
-    if (problem->peelFront)
+    // Each round schedules the whole region again: a few may peel several
+    // iterations, the rest at most one or unroll.
+    bool wide = problem->peelFront + problem->peelBack > 1;
+    if (wide && ++widePeels > kWidePeelRounds)
+      problem->peelFront = problem->peelBack = 0;
+    for (int64_t i = 0; i < problem->peelFront; ++i)
       peelFront(problem->loop);
-    else if (problem->peelBack)
+    for (int64_t i = 0; i < problem->peelBack; ++i)
       peelBack(problem->loop);
-    else
+    if (!problem->peelFront && !problem->peelBack)
       unrollFully(problem->loop);
   }
 

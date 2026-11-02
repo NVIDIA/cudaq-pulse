@@ -262,10 +262,6 @@ def _kernels(n: int) -> dict[str, Any]:
 
 NAMES = list(_kernels(1))
 
-# Where a loop's schedule differs over more than its last iteration, the
-# loop is unrolled: its program grows with its trip count.
-UNROLLED = {("held_back", "alap")}
-
 
 def _occupancy(schedule: Any) -> dict[tuple[str, int], list[list[int]]]:
     """Each line's busy intervals by kind, touching ones merged."""
@@ -411,10 +407,8 @@ def _events(kernel: Any, schedule: str, unroll_threshold: int) -> tuple[Any, lis
 # Without passes the unrolled program fuses no pulses, so it has the same ops
 # as the rolled one, and under rcp the same requests for the same lanes.
 @pytest.mark.parametrize("schedule", ["asap", "alap", "rcp", "alap_rcp"])
-@pytest.mark.parametrize(("branched", "tested"), [(True, False), (False, True)])
-def test_random_loops_testing_a_measurement_play_every_event_as_unrolled(
-    branched, tested, schedule
-):
+@pytest.mark.parametrize(("branched", "tested"), [(False, False), (True, False), (False, True)])
+def test_random_loops_play_every_event_as_unrolled(branched, tested, schedule):
     differ = [
         (seed, trips)
         for seed in range(80)
@@ -423,6 +417,43 @@ def test_random_loops_testing_a_measurement_play_every_event_as_unrolled(
         != _events(kernel, schedule, 10**6)
     ]
     assert differ == []
+
+
+@pytest.mark.parametrize("schedule", ["asap", "alap", "rcp", "alap_rcp"])
+def test_every_kernel_plays_every_event_as_unrolled(schedule):
+    differ = [
+        (name, trips)
+        for trips in (3, 13, 40)
+        for name, kernel in _kernels(trips).items()
+        if _events(kernel, schedule, 0) != _events(kernel, schedule, 10**6)
+    ]
+    assert differ == []
+
+
+def _size(kernel: Any, schedule: str) -> int:
+    lowered = pulse.compile(kernel, schedule=schedule, unroll_threshold=0).lower(Q[0], Q[1], Q[2])
+    return lowered.mlir("pulse").count("start_cycles")
+
+
+# A loop whose first or last iterations differ from the rest has those
+# peeled off and the rest rolled, so its program does not grow with its
+# trip count; under rcp, every kernel above.
+@pytest.mark.parametrize("schedule", ["asap", "alap", "rcp", "alap_rcp"])
+def test_a_loop_irregular_at_its_ends_lowers_to_the_same_program_at_more_trips(schedule):
+    grow = [
+        name
+        for name in NAMES
+        if _size(_kernels(97)[name], schedule) != _size(_kernels(250)[name], schedule)
+    ]
+    if schedule in ("asap", "alap"):
+        grow += [
+            (seed, branched)
+            for seed in range(150)
+            for branched in (False, True)
+            if _size(_random_kernel(seed, 97, branched), schedule)
+            != _size(_random_kernel(seed, 250, branched), schedule)
+        ]
+    assert grow == []
 
 
 @pytest.mark.parametrize("trips", [2, 3, 5, 40])
@@ -450,14 +481,12 @@ threading.Thread(target=_watch, daemon=True).start()
 import cudaq_pulse as pulse
 from cudaq_pulse.controller import ControllerLimits, check
 from tests._handles import Q
-from tests.test_unsynced_lowering import UNROLLED, _kernels
+from tests.test_unsynced_lowering import _kernels
 
 limits = ControllerLimits(issue_cycles=4, min_wait_cycles=4, max_amplitude=0.05, max_events=7)
 out = {{}}
 for name, kernel in _kernels({trips}).items():
     for schedule in ("asap", "alap"):
-        if (name, schedule) in UNROLLED:
-            continue
         program = pulse.compile(kernel, schedule=schedule, unroll_threshold=0)
         lowered = program.lower(Q[0], Q[1], Q[2])
         found = [str(lowered.duration.exact_ns), len(check(lowered, limits))]
@@ -503,7 +532,7 @@ def test_a_loop_of_10_9_or_10_15_iterations_lowers_and_checks_in_bounded_time_an
                     lowered.duration.exact_ns,
                     len(check(lowered, limits)),
                 )
-    assert len(found) == 2 * len(NAMES) - len(UNROLLED)
+    assert len(found) == 2 * len(NAMES)
     for key, (duration, violations) in found.items():
         (d100, v100), (d101, v101) = small[key, 100], small[key, 101]
         assert Fraction(duration) == d100 + (many - 100) * (d101 - d100), key
