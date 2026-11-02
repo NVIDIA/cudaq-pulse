@@ -56,12 +56,13 @@ def evolve(lowered, *, t_start, t_end, num_steps, integrator="rk4", levels=2, in
         dt_ns=(t_end - t_start) / num_steps,
         integrator=integrator,
     )
-    rho = result.density_matrix
-    state = rho
-    # A pure final state is returned as a state vector, up to global phase.
-    if abs(np.trace(rho @ rho).real - 1.0) < 1e-9:
-        values, vectors = np.linalg.eigh(rho)
-        state = vectors[:, -1] * np.sqrt(values[-1])
+    # The state the runtime evolved: a closed system's state vector, or the
+    # density matrix of one with collapse operators. Purity cannot tell them
+    # apart: damping keeps the ground state pure, and a fixed-step integrator
+    # does not hold a closed system's norm exactly. A program that measures
+    # ends in the mixture of its branches.
+    states = result._states
+    state = states[0] if len(states) == 1 else result.density_matrix
     return SimpleNamespace(final_state=state, times=np.linspace(t_start, t_end, num_steps + 1))
 
 

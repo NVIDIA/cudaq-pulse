@@ -174,5 +174,6 @@ def test_xx_coupling_transfers_excitation():
     )
     state = result.final_state
     probs = np.abs(state) ** 2
-    # Population should have partly transferred q0 -> q1 (|10> -> |01>).
-    assert probs[1] > 0.1
+    # Population should have partly transferred q0 -> q1. The first qudit is
+    # the least significant digit, so index 2 is q1 alone excited.
+    assert probs[2] > 0.1

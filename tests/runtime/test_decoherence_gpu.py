@@ -165,9 +165,9 @@ def test_multiqubit_independent_decay():
     rho = result.final_state
     assert rho.shape == (4, 4)
     assert np.trace(rho).real == pytest.approx(1.0, abs=1.0e-3)
-    # Reduced excited populations: q0 = |01>+|11| diag, q1 = |10>+|11| diag.
-    # Basis order is |q0 q1>: indices 0=00,1=01,2=10,3=11.
-    p1_q0 = rho[2, 2].real + rho[3, 3].real
-    p1_q1 = rho[1, 1].real + rho[3, 3].real
+    # Reduced excited populations. The first qudit is the least significant
+    # digit: index 1 is q0 alone excited, 2 is q1 alone, 3 is both.
+    p1_q0 = rho[1, 1].real + rho[3, 3].real
+    p1_q1 = rho[2, 2].real + rho[3, 3].real
     assert p1_q0 < 0.9
     assert p1_q1 < 0.9

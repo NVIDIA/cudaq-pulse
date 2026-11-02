@@ -12,6 +12,7 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
+from cudaq_pulse.targets import Qubit, TargetDescription
 
 from tests._handles import Q
 from tests.runtime._lowering import pulse_mlir
@@ -43,7 +44,21 @@ def test_full_pipeline_mlir():
 
 @gpu
 def test_full_pipeline_gpu():
-    """Public compile -> MLIR lowering -> JIT -> GPU path."""
+    """Public device -> lower -> simulate on the GPU: MLIR lowering, JIT, cuDensityMat."""
+    target = TargetDescription(
+        name="pipeline-1q",
+        qubits={
+            0: Qubit(
+                index=0,
+                frequency_hz=5.0e9,
+                anharmonicity_hz=-200.0e6,
+                t1_us=0.0,
+                t2_star_us=0.0,
+                drive_params={"amplitude_scale_rad_per_ns": 1.0},
+            )
+        },
+    )
+    q0 = pulse.device({"target": target}).qudit_handles[0]
 
     @pulse.kernel
     def my_kernel(q0):
@@ -51,9 +66,8 @@ def test_full_pipeline_gpu():
         wf = square(40, math.pi / 20.0)
         drive(d0, wf)
 
-    compiled = my_kernel.lower(Q[0])
-    results = compiled.run()
-    state = results[0].to_numpy()
-    assert state.shape == (2,)
-    assert np.vdot(state, state).real == pytest.approx(1.0, abs=1.0e-6)
-    assert abs(state[1]) ** 2 > 0.999
+    result = pulse.simulate(my_kernel.lower(q0), levels=2, backend="gpu")
+    rho = result.density_matrix
+    assert rho.shape == (2, 2)
+    assert np.trace(rho).real == pytest.approx(1.0, abs=1.0e-6)
+    assert rho[1, 1].real > 0.999
