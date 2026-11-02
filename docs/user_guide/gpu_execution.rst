@@ -209,7 +209,11 @@ frequency the simulation holds warns with a ``cudaq_pulse.PulseWarning``
 naming that frequency and a step that resolves it: with three or more levels,
 a qudit's coherence of levels 0 and 2 turns at its anharmonicity, which a
 0.5 ns step (10 steps per period at 200 MHz) damps by about 15 % over a
-200 ns shaped pulse. The ``integrator`` argument selects the time-evolution scheme
+200 ns shaped pulse. A step so coarse that the integrator diverges, about two
+steps per period or fewer (1 ns for 4 levels at a 184 MHz anharmonicity,
+which spread over 552 MHz), raises a ``cudaq_pulse.ExecutionError`` naming
+the same and a step that resolves it, rather than returning a state that is
+not finite. The ``integrator`` argument selects the time-evolution scheme
 used by the cuDensityMat runtime path:
 
 - ``rk1``, ``rk2``, ``rk4`` -- fixed-step explicit Runge-Kutta methods.

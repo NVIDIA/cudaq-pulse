@@ -260,7 +260,10 @@ def simulate(
         fewer than 20 steps per period of the fastest frequency the
         simulation holds, a qudit's anharmonicity with three or more levels
         or the detuning of coupled qudits, warns with a ``PulseWarning``
-        that names that frequency and a step that resolves it.
+        that names that frequency and a step that resolves it. A step so
+        coarse that the integrator diverges raises ``ExecutionError``,
+        naming the same and the line that called ``simulate``, rather
+        than returning a state that is not finite.
     integrator:
         cuDensityMat integrator for the GPU backend: ``"rk1"``, ``"rk2"``,
         ``"rk4"``, ``"magnus"`` or ``"crank_nicolson"``.
@@ -402,31 +405,39 @@ def _simulate_lowered(
     target = lowered.target.target if plant is None else _check_plant(lowered, plant)
     model = _simulation_model(target)
     if dt_ns is None:
-        dt_ns = _default_step(lowered, target, levels)
+        step = _default_step(lowered, target, levels)
     elif dt_ns <= 0:
         raise InvalidValueError("dt_ns must be positive")
     else:
-        _check_step(lowered, target, levels, dt_ns)
-    return model(
-        lowered,
-        target,
-        levels=levels,
-        initial_state=initial_state,
-        shots=shots,
-        seed=seed,
-        backend=backend,
-        t_start=t_start,
-        t_end=t_end,
-        dt_ns=dt_ns,
-        integrator=integrator,
-        clock_ghz=lowered.target.clock_ghz,
-        dephasing=dephasing,
-        handlers=handlers,
-        readout=readout,
-        latency_branching=latency_branching,
-        plant=plant is not None,
-        sampled=branches == "sampled",
-    )
+        step = dt_ns
+        # A step of fewer than 20 per period of what the simulation holds
+        # warns, as the default step keeps.
+        fastest, source = _fastest(target, lowered.qudits, levels)
+        if fastest and fastest * dt_ns > _MAX_HZ_NS:
+            _warn_coarse_step(target, source, fastest, dt_ns, lowered.target.clock_ghz)
+    try:
+        return model(
+            lowered,
+            target,
+            levels=levels,
+            initial_state=initial_state,
+            shots=shots,
+            seed=seed,
+            backend=backend,
+            t_start=t_start,
+            t_end=t_end,
+            dt_ns=step,
+            integrator=integrator,
+            clock_ghz=lowered.target.clock_ghz,
+            dephasing=dephasing,
+            handlers=handlers,
+            readout=readout,
+            latency_branching=latency_branching,
+            plant=plant is not None,
+            sampled=branches == "sampled",
+        )
+    except _DivergedError as e:
+        raise _diverged_error(lowered, target, levels, dt_ns, e.step_ns) from None
 
 
 def _simulation_model(target: Any) -> Callable[..., SimulationResult]:
@@ -461,7 +472,7 @@ def _default_step(
     lowered: Lowered, target: Any = None, levels: int | dict[int, int] | None = None
 ) -> float:
     """The integration step: 0.05 ns, or 20 steps per period of the fastest
-    frequency the simulation holds (see ``_check_step``), rounded down to a
+    frequency the simulation holds (see ``_fastest``), rounded down to a
     whole fraction of a clock cycle.
 
     Couplings turn at the detuning of the compiled device's qudits; levels
@@ -522,31 +533,30 @@ def _level_spread(
 _SPREADS: dict[tuple[int, tuple[int, ...], Any], tuple[Any, tuple[float, int, int]]] = {}
 
 
-def _check_step(
-    lowered: Lowered, target: Any, levels: int | dict[int, int] | None, dt_ns: float
-) -> None:
-    """Warn when a step of *dt_ns* takes fewer than 20 steps per period of
-    the fastest frequency the simulation holds, as ``_default_step`` keeps.
+def _fastest(
+    target: Any, active: tuple[int, ...], levels: int | dict[int, int] | None
+) -> tuple[float, tuple[str, int, int]]:
+    """The fastest frequency, in Hz, that a simulation of *active* on
+    *target* holds, with its source: ``("levels", qudit, levels)``,
+    ``("coupling", qudit, qudit)``, or ``("", 0, 0)`` if none turns.
 
     Each qudit turns in the frame of its 0-1 transition: a coherence of two
     of its levels turns at the difference of their energies' offsets from
     evenly spaced levels, which is zero with two levels, and an exchange
     coupling at the qudits' detuning."""
-    qubits = target.qubits
-    active = lowered.qudits
     fastest = 0.0
     source = ("", 0, 0)
     if levels.__class__ is not int or levels > 2:
         fastest, q, d = _level_spread(target, active, levels)
         source = ("levels", q, d)
+    qubits = target.qubits
     for c in target._exchange_view:
         a, b = c.qubit_a, c.qubit_b
         if a in active and b in active:
             detuning = abs(qubits[a].frequency_hz - qubits[b].frequency_hz)
             if detuning > fastest:
                 fastest, source = detuning, ("coupling", a, b)
-    if fastest and fastest * dt_ns > _MAX_HZ_NS:
-        _warn_coarse_step(target, source, fastest, dt_ns, lowered.target.clock_ghz)
+    return fastest, source
 
 
 # The largest frequency (Hz) times step (ns) that keeps 20 steps per period.
@@ -566,43 +576,107 @@ def _hz(frequency: float) -> str:
     return f"{frequency / 1e6:.4g} MHz"
 
 
-def _warn_coarse_step(
-    target: Any, source: tuple[str, int, int], fastest: float, dt_ns: float, clock_ghz: float
-) -> None:
-    import os
-    import warnings
-
-    from .._errors import _CoarseStepWarning
-
+def _cause(target: Any, source: tuple[str, int, int], fastest: float) -> str:
+    """What turns at *fastest*, from ``_fastest``'s *source*."""
     kind, a, b = source
     if kind == "levels":
         offsets = _level_offsets_hz(target.model, target.qubits[a], b)
         low, high = sorted((offsets.index(min(offsets)), offsets.index(max(offsets))))
-        cause = (
+        return (
             f"qudit {a} has {b} levels, and in its frame the coherence of levels "
             f"{low} and {high} turns at {_hz(fastest)}"
         )
-    else:
-        cause = (
-            f"the exchange coupling of qudits {a} and {b} turns at their detuning, {_hz(fastest)}"
-        )
+    return f"the exchange coupling of qudits {a} and {b} turns at their detuning, {_hz(fastest)}"
+
+
+def _suggestion(fastest: float, clock_ghz: float) -> str:
+    """The largest step, as printed, that keeps 20 steps per period of
+    *fastest* and a whole number of steps per clock cycle, and why."""
     bound = 1e9 / (_STEPS_PER_PERIOD * fastest)
     cycle = 1.0 / clock_ghz
     per_cycle = math.ceil(cycle / bound - 1e-9)
     # The step as printed must not exceed the bound once rounded.
     while float(f"{cycle / per_cycle:.3g}") > bound * (1 + 1e-9):
         per_cycle += 1
-    suggested = f"{cycle / per_cycle:.3g}"
-    warnings.warn(
-        f"simulate(dt_ns={dt_ns:g}): {cause}, so a step of {dt_ns:g} ns takes "
-        f"{1e9 / (fastest * dt_ns):.3g} steps per period of it. A fixed-step "
-        f"integrator damps and dephases what it resolves with fewer than "
-        f"{_STEPS_PER_PERIOD} steps per period, so the result may be wrong. "
-        f"Pass dt_ns={suggested} or less ({per_cycle} steps per {cycle:g} ns clock "
-        "cycle keep pulse edges on the step grid).",
-        _CoarseStepWarning,
-        skip_file_prefixes=(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),),
+    return (
+        f"dt_ns={cycle / per_cycle:.3g} or less ({per_cycle} steps per {cycle:g} ns "
+        "clock cycle keep pulse edges on the step grid)"
     )
+
+
+def _package_dir() -> str:
+    import os
+
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _warn_coarse_step(
+    target: Any, source: tuple[str, int, int], fastest: float, dt_ns: float, clock_ghz: float
+) -> None:
+    import warnings
+
+    from .._errors import _CoarseStepWarning
+
+    warnings.warn(
+        f"simulate(dt_ns={dt_ns:g}): {_cause(target, source, fastest)}, so a step of "
+        f"{dt_ns:g} ns takes {1e9 / (fastest * dt_ns):.3g} steps per period of it. A "
+        f"fixed-step integrator damps and dephases what it resolves with fewer than "
+        f"{_STEPS_PER_PERIOD} steps per period, so the result may be wrong. "
+        f"Pass {_suggestion(fastest, clock_ghz)}.",
+        _CoarseStepWarning,
+        skip_file_prefixes=(_package_dir(),),
+    )
+
+
+class _DivergedError(Exception):
+    """An integration step of *step_ns* let the state grow without bound."""
+
+    def __init__(self, step_ns: float) -> None:
+        super().__init__(step_ns)
+        self.step_ns = step_ns
+
+
+def _diverged_error(
+    lowered: Lowered,
+    target: Any,
+    levels: int | dict[int, int] | None,
+    dt_ns: float | None,
+    step_ns: float,
+) -> ExecutionError:
+    """The error for a run whose state *step_ns* let grow without bound,
+    with the note of the line that called ``simulate``."""
+    import sys
+
+    fastest, source = _fastest(target, lowered.qudits, levels)
+    call = "simulate()" if dt_ns is None else f"simulate(dt_ns={dt_ns:g})"
+    text = (
+        f"{call}: the integrator diverged: with a step of {step_ns:.3g} ns its state "
+        "grew without bound, so there is no result."
+    )
+    if fastest and fastest * step_ns > _MAX_HZ_NS:
+        cause = _cause(target, source, fastest)
+        text += (
+            f" {cause[0].upper()}{cause[1:]}, and a step of {step_ns:.3g} ns takes "
+            f"{1e9 / (fastest * step_ns):.3g} steps per period of it: a fixed-step "
+            f"integrator needs {_STEPS_PER_PERIOD} to be accurate and diverges with "
+            f"fewer than about 2. Pass {_suggestion(fastest, lowered.target.clock_ghz)}."
+        )
+    else:
+        text += (
+            " The step resolves every frequency of the qudits' levels and couplings, so "
+            "a drive or decay rate is too fast for it: pass a smaller dt_ns, such as "
+            f"dt_ns={step_ns / 10:.3g}."
+        )
+    error = ExecutionError(text)
+    package = _package_dir()
+    frame = sys._getframe(1)
+    while frame is not None and frame.f_code.co_filename.startswith(package):
+        frame = frame.f_back  # type: ignore[assignment]
+    if frame is not None:
+        error.add_note(
+            f'simulate was called at File "{frame.f_code.co_filename}", line {frame.f_lineno}'
+        )
+    return error
 
 
 def _simulate_compiled(
@@ -990,6 +1064,17 @@ class _Backend:
         return np.asarray(state)
 
 
+def _bounded(state: Any, start: Any) -> bool:
+    """Whether every entry of *state*, evolved from *start*, is finite and
+    at most twice what evolution keeps it to: *start*'s trace bounds each
+    entry of a density matrix, and its norm each of a vector."""
+    if start.ndim == 1:
+        bound = math.sqrt(float(np.vdot(start, start).real))
+    else:
+        bound = abs(complex(np.trace(start)))
+    return bool(np.abs(state).max() <= 2.0 * bound)
+
+
 def _full_operator(factors: list[Any], dims: tuple[int, ...]) -> npt.NDArray[np.complex128]:
     """The product of single-mode factors on the whole register."""
     on_mode: dict[int, npt.NDArray[np.complex128]] = {}
@@ -1189,6 +1274,12 @@ class _Stepper:
             propagator = _propagate.rk4_map(
                 _propagate.liouvillian(self.static, self._dissipator), self._terms, values, self.h
             )
+            # A map that evolves states has no entry above 1 (each is a
+            # matrix element of the image of a unit-trace-norm operator); one
+            # with a larger or non-finite entry amplifies what it maps. Checked
+            # once, as it is built: the cache keeps no map that diverges.
+            if not np.abs(propagator).max() <= 2.0:
+                raise _DivergedError(self.h)
             _propagate.keep(key, propagator)
         return _propagate.apply(propagator, rho)
 
@@ -1205,13 +1296,18 @@ class _Stepper:
                 out -= 0.5 * (decay @ r + r @ decay)
             return out
 
-        for step in range(len(hs) // 3):
-            h0, hm, h1 = hs[3 * step], hs[3 * step + 1], hs[3 * step + 2]
-            k1 = lindblad(rho, h0)
-            k2 = lindblad(rho + 0.5 * h * k1, hm)
-            k3 = lindblad(rho + 0.5 * h * k2, hm)
-            k4 = lindblad(rho + h * k3, h1)
-            rho = rho + (h / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+        start = rho
+        # A state that diverges raises _DivergedError below, not numpy's warnings.
+        with np.errstate(over="ignore", invalid="ignore"):
+            for step in range(len(hs) // 3):
+                h0, hm, h1 = hs[3 * step], hs[3 * step + 1], hs[3 * step + 2]
+                k1 = lindblad(rho, h0)
+                k2 = lindblad(rho + 0.5 * h * k1, hm)
+                k3 = lindblad(rho + 0.5 * h * k2, hm)
+                k4 = lindblad(rho + h * k3, h1)
+                rho = rho + (h / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+        if not _bounded(rho, start):
+            raise _DivergedError(h)
         return rho
 
 
@@ -1309,7 +1405,10 @@ class _GpuBackend(_Backend):
         with self.lock:
             self.module.set_attributes(self._attributes_for(attributes + "}"))
             text = self.module.print()
-        return self._execute(text, state, mixed)
+        result = self._execute(text, state, mixed)
+        if not _bounded(result, state):
+            raise _DivergedError((t1 - t0) / self.steps(t0, t1))
+        return result
 
     def _execute(self, text: str, state: Any, mixed: bool) -> Any:
         """Run one segment, the module *text*, on the GPU from *state*."""

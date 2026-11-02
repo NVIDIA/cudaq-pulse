@@ -167,6 +167,14 @@ behavior may change in any 0.x release.
   dephased. Wherever 0.05 ns already resolved the simulation (a transmon
   of up to four levels whose anharmonicity is under 333 MHz, as every
   qudit of `transmon_17q`), the step and the results are unchanged.
+- **A simulation that diverges raises instead of returning NaN.** A step
+  too coarse for the integrator (4 transmon levels at `dt_ns=1.0`, about
+  two steps per period of their 552 MHz spread) made its state overflow,
+  and `simulate` returned a density matrix of NaN or of entries near
+  1e234. It now raises `ExecutionError`, naming the qudit or coupled pair
+  whose frequency the step misses, the step and one that resolves it, with
+  a note giving the line that called `simulate`; on the CPU and on the GPU,
+  with no cost to a run that does not diverge.
 - **Calibration on the controller.** `cudaq_pulse.classical.calibration`
   adds the estimators of millisecond on-controller calibration in controller
   form: adaptive T1 tracking with assignment errors (`adaptive_t1_update`,

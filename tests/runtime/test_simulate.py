@@ -408,6 +408,71 @@ def test_the_default_step_resolves_six_levels_where_0_05_ns_did_not(recwarn):
     assert np.abs(default - fine).max() < np.abs(coarse - fine).max() / 4
 
 
+@pytest.mark.parametrize(
+    ("levels", "spread", "steps", "suggested"),
+    [
+        # Four levels hold one RK4 map per stretch, checked as it is built.
+        (4, "levels 0 and 3 turns at 600 MHz", "1.67", "dt_ns=0.0833 or less"),
+        # Five step the state itself, checked at the end of the stretch.
+        (5, "levels 0 and 4 turns at 1.2 GHz", "0.833", "dt_ns=0.0385 or less"),
+    ],
+)
+def test_a_step_that_diverges_raises_naming_the_qudit_and_a_step_that_works(
+    levels, spread, steps, suggested
+):
+    with pytest.warns(pulse.PulseWarning), pytest.raises(pulse.ExecutionError) as caught:
+        _run(_shaped, levels=levels, dt_ns=1.0)
+    message = str(caught.value)
+    assert message.startswith(
+        "simulate(dt_ns=1): the integrator diverged: with a step of 1 ns its state grew "
+        f"without bound, so there is no result. Qudit 0 has {levels} levels, and in its "
+        f"frame the coherence of {spread}, and a step of 1 ns takes {steps} steps per period"
+    )
+    assert f"Pass {suggested}" in message
+    (note,) = caught.value.__notes__
+    assert note.startswith(f'simulate was called at File "{__file__}", line ')
+    assert caught.value.__cause__ is None
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pulse.PulseWarning)
+        result = _run(_shaped, levels=levels, dt_ns=float(suggested.split("=")[1].split()[0]))
+    assert np.isfinite(result.density_matrix).all()
+
+
+@pulse.kernel
+def _strong(q0):
+    d0 = get_drive_line(q0)
+    drive(d0, gaussian(40, 40.0, 8.0))
+
+
+def test_a_drive_too_fast_for_the_step_raises_rather_than_returning_nan():
+    # Two levels turn with the frame, so the step resolves every frequency
+    # of the qudit; a 40 rad/ns drive is what diverges.
+    with pytest.raises(pulse.ExecutionError) as caught:
+        _run(_strong, dt_ns=0.5)
+    assert str(caught.value) == (
+        "simulate(dt_ns=0.5): the integrator diverged: with a step of 0.5 ns its state grew "
+        "without bound, so there is no result. The step resolves every frequency of the "
+        "qudits' levels and couplings, so a drive or decay rate is too fast for it: pass a "
+        "smaller dt_ns, such as dt_ns=0.05."
+    )
+    assert np.isfinite(_run(_strong, dt_ns=0.005).density_matrix).all()
+
+
+def test_a_gpu_result_that_is_not_finite_raises(monkeypatch):
+    from cudaq_pulse.runtime import simulate as simulate_module
+
+    backend = simulate_module._GpuBackend
+
+    def init(self, module, dims, dt_ns, base, lock, integrator):
+        simulate_module._Backend.__init__(self, module, dims, dt_ns, base, lock)
+        self.dissipative = True
+
+    monkeypatch.setattr(backend, "__init__", init)
+    monkeypatch.setattr(backend, "_execute", lambda self, text, state, mixed: state * np.nan)
+    with pytest.raises(pulse.ExecutionError, match=r"^simulate\(\): the integrator diverged"):
+        _run(_shaped, levels=3, backend="gpu")
+
+
 def test_a_step_too_coarse_for_coupled_qudits_names_their_detuning():
     pair = TargetDescription(
         name="pair",
