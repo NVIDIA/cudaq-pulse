@@ -390,7 +390,6 @@ def _simulate_lowered(
             f"unknown readout {readout!r}; choose 'ideal', 'model' or 'model_with_decay'"
         )
     t_end = as_nanoseconds(t_end)
-    dt_ns = as_nanoseconds(dt_ns)
     if integrator not in _VALID_INTEGRATORS:
         raise InvalidValueError(
             f"Unknown integrator {integrator!r}. "
@@ -403,18 +402,13 @@ def _simulate_lowered(
             "simulate(program, 0.5), or lower the kernel with them"
         )
     target = lowered.target.target if plant is None else _check_plant(lowered, plant)
-    model = _simulation_model(target)
-    if dt_ns is None:
-        step = _default_step(lowered, target, levels)
-    elif dt_ns <= 0:
-        raise InvalidValueError("dt_ns must be positive")
-    else:
-        step = dt_ns
-        # A step of fewer than 20 per period of what the simulation holds
-        # warns, as the default step keeps.
-        fastest, source = _fastest(target, lowered.qudits, levels)
-        if fastest and fastest * dt_ns > _MAX_HZ_NS:
-            _warn_coarse_step(target, source, fastest, dt_ns, lowered.target.clock_ghz)
+    try:
+        known = _STEPS.get((id(lowered.target), id(target), lowered.qudits, levels, dt_ns))
+    except TypeError:  # levels by qudit, a dict
+        known = None
+    step = _step(lowered, target, levels, dt_ns) if known is None else known[0]
+    # _step refused a target without a model; a target does not change.
+    model: Callable[..., SimulationResult] = target.model._simulate  # type: ignore[union-attr]
     try:
         return model(
             lowered,
@@ -437,7 +431,47 @@ def _simulate_lowered(
             sampled=branches == "sampled",
         )
     except _DivergedError as e:
-        raise _diverged_error(lowered, target, levels, dt_ns, e.step_ns) from None
+        raise _diverged_error(lowered, target, levels, as_nanoseconds(dt_ns), e.step_ns) from None
+
+
+def _step(
+    lowered: Lowered, target: Any, levels: int | dict[int, int] | None, dt_ns: float | Time | None
+) -> float:
+    """The integration step of a simulation of *lowered* on *target*: *dt_ns*,
+    checked, or the default step; kept in ``_STEPS`` unless it warns."""
+    _simulation_model(target)
+    given = as_nanoseconds(dt_ns)
+    step: float
+    if given is None:
+        step = _default_step(lowered, target, levels)
+    elif given <= 0:
+        raise InvalidValueError("dt_ns must be positive")
+    else:
+        step = given
+        # A step of fewer than 20 per period of what the simulation holds
+        # warns, as the default step keeps, at every call.
+        fastest, source = _fastest(target, lowered.qudits, levels)
+        if fastest and fastest * step > _MAX_HZ_NS:
+            _warn_coarse_step(target, source, fastest, step, lowered.target.clock_ghz)
+            return step
+    if len(_STEPS) >= 256:
+        _STEPS.clear()
+    try:
+        _STEPS[id(lowered.target), id(target), lowered.qudits, levels, dt_ns] = (
+            step,
+            lowered.target,
+            target,
+        )
+    except TypeError:  # levels by qudit, a dict
+        pass
+    return step
+
+
+# The step of each device, simulated target, qudits, levels and dt_ns seen
+# (by the ids of the device and target, which every entry holds, so that
+# no other object takes their ids while it lives), with the device and
+# target: a call that hits it runs none of the checks that made it.
+_STEPS: dict[tuple[int, int, tuple[int, ...], Any, Any], tuple[float, Any, Any]] = {}
 
 
 def _simulation_model(target: Any) -> Callable[..., SimulationResult]:
@@ -501,11 +535,6 @@ def _level_spread(
     """The widest spread, in Hz, of the level offsets (``_level_offsets_hz``)
     of one of *qudits*, with the qudit and its levels; zero with two levels
     each, whose offsets are both zero."""
-    key = None if levels.__class__ is dict else (id(target), qudits, levels)
-    if key is not None:
-        hit = _SPREADS.get(key)
-        if hit is not None and hit[0] is target:
-            return hit[1]
     spread, qudit, count = 0.0, 0, 0
     model = target.model
     for q in qudits:
@@ -520,17 +549,7 @@ def _level_spread(
             width = max(offsets) - min(offsets)
             if width > spread:
                 spread, qudit, count = width, q, d
-    if key is not None:
-        if len(_SPREADS) >= 256:
-            _SPREADS.clear()
-        _SPREADS[key] = (target, (spread, qudit, count))
     return spread, qudit, count
-
-
-# ``_level_spread`` of each target (frozen), qudits and levels seen, by the
-# target's id; each entry holds the target, so its id is not reused while
-# the entry lives.
-_SPREADS: dict[tuple[int, tuple[int, ...], Any], tuple[Any, tuple[float, int, int]]] = {}
 
 
 def _fastest(
@@ -1064,6 +1083,18 @@ class _Backend:
         return np.asarray(state)
 
 
+def _keep_map(key: Any, propagator: npt.NDArray[np.complex128], h: float) -> None:
+    """Cache the RK4 map *propagator* of steps of *h*, unless it diverges.
+
+    A map that evolves states has no entry above 1 (each is a matrix element
+    of the image of a unit-trace-norm operator); one with a larger or
+    non-finite entry amplifies what it maps. Checked once, as it is built:
+    the cache keeps no map that diverges, and a hit is not checked again."""
+    if not np.abs(propagator).max() <= 2.0:
+        raise _DivergedError(h)
+    _propagate.keep(key, propagator)
+
+
 def _bounded(state: Any, start: Any) -> bool:
     """Whether every entry of *state*, evolved from *start*, is finite and
     at most twice what evolution keeps it to: *start*'s trace bounds each
@@ -1274,13 +1305,7 @@ class _Stepper:
             propagator = _propagate.rk4_map(
                 _propagate.liouvillian(self.static, self._dissipator), self._terms, values, self.h
             )
-            # A map that evolves states has no entry above 1 (each is a
-            # matrix element of the image of a unit-trace-norm operator); one
-            # with a larger or non-finite entry amplifies what it maps. Checked
-            # once, as it is built: the cache keeps no map that diverges.
-            if not np.abs(propagator).max() <= 2.0:
-                raise _DivergedError(self.h)
-            _propagate.keep(key, propagator)
+            _keep_map(key, propagator, self.h)
         return _propagate.apply(propagator, rho)
 
     def _rk4(self, rho: Any, hs: npt.NDArray[np.complex128]) -> Any:

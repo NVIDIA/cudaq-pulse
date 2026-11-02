@@ -390,6 +390,17 @@ def test_the_default_step_takes_20_steps_per_period_of_the_levels_spread(levels,
     assert _default_step(lowered, target, {0: levels}) == step
 
 
+@pytest.mark.parametrize("levels", [3, {0: 3}])
+def test_a_step_too_coarse_warns_at_every_call_not_only_the_first(levels):
+    lowered = on(_target(), _shaped, Q[0])
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", pulse.PulseWarning)
+        for _ in range(3):
+            pulse.simulate(lowered, levels=levels, dt_ns=0.5)
+            pulse.simulate(lowered, levels=levels, dt_ns=0.25)
+    assert [str(w.message)[:20] for w in caught] == ["simulate(dt_ns=0.5):"] * 3
+
+
 @pulse.kernel
 def _short_shaped(q0):
     d0 = get_drive_line(q0)
