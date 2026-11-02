@@ -158,6 +158,15 @@ def _kernels(n: int) -> dict[str, Any]:
         drive(a, square(4, 0.1))
 
     @pulse.kernel
+    def tested_before_a_loop(q, r, t):
+        a = get_drive_line(r)
+        p = get_readout_line(q)
+        m = readout(p, square(70, 0.05))
+        if m:
+            for _ in range(n):
+                drive(a, square(40, 0.1))
+
+    @pulse.kernel
     def on_a_measurement_before(q, r, t):
         line = get_drive_line(q)
         other = get_drive_line(r)
@@ -233,6 +242,7 @@ def _kernels(n: int) -> dict[str, Any]:
         "partly_synced": partly_synced,
         "only_syncs_on_two": only_syncs_on_two,
         "in_a_branch": in_a_branch,
+        "tested_before_a_loop": tested_before_a_loop,
         "on_a_measurement_before": on_a_measurement_before,
         "on_two_measurements_before": on_two_measurements_before,
         "peeled_on_a_measurement_before": peeled_on_a_measurement_before,
@@ -349,17 +359,45 @@ def _random_kernel(seed: int, trips: int, branched: bool) -> Any:
     return pulse.kernel(namespace["k"])
 
 
-# A loop in a branch is not compared under alap: there a measurement the
-# branch tests waits only for the iterations the scheduler simulates, which
-# for a loop all of whose lines move by one period is not its first.
-@pytest.mark.parametrize(("branched", "schedules"), [(False, ("asap", "alap")), (True, ("asap",))])
-def test_random_loops_schedule_as_every_iteration_does(branched, schedules):
+@pytest.mark.parametrize("branched", [False, True])
+def test_random_loops_schedule_as_every_iteration_does(branched):
     differ = [
         (seed, trips, schedule)
         for seed in range(80)
         for trips in (3, 13, 40)
-        for schedule in schedules
+        for schedule in ("asap", "alap")
         if _differs(_random_kernel(seed, trips, branched), schedule)
+    ]
+    assert differ == []
+
+
+@pytest.mark.parametrize("trips", [2, 3, 5, 40])
+def test_a_measurement_a_branch_tests_ends_before_the_first_iteration_of_a_loop_in_it(trips):
+    # The iterations the scheduler extrapolates start the branch too.
+    kernel = _kernels(trips)["tested_before_a_loop"]
+    lowered = pulse.compile(kernel, schedule="alap", unroll_threshold=0).lower(Q[0], Q[1], Q[2])
+    tested, *loop = lowered.schedule
+    assert tested.kind == "readout" and tested.start_cycles == 0
+    assert tested.start_cycles + tested.duration_cycles <= min(e.start_cycles for e in loop)
+
+
+def _events(kernel: Any, schedule: str, unroll_threshold: int) -> tuple[Any, list[Any]]:
+    lowered = pulse.compile(kernel, schedule=schedule, unroll_threshold=unroll_threshold, passes=())
+    lowered = lowered.lower(Q[0], Q[1], Q[2])
+    events = [(e.kind, e.line, e.start_cycles, e.duration_cycles) for e in lowered.schedule]
+    return lowered.duration, sorted(events)
+
+
+# Without passes the unrolled program fuses no pulses, so it has the same ops
+# as the rolled one, and under rcp the same requests for the same lanes.
+@pytest.mark.parametrize("schedule", ["asap", "alap", "rcp", "alap_rcp"])
+def test_random_loops_in_a_branch_play_every_event_as_unrolled(schedule):
+    differ = [
+        (seed, trips)
+        for seed in range(80)
+        for trips in (3, 13, 40)
+        if _events(kernel := _random_kernel(seed, trips, True), schedule, 0)
+        != _events(kernel, schedule, 10**6)
     ]
     assert differ == []
 

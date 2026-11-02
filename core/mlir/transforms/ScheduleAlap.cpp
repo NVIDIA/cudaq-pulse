@@ -1062,6 +1062,22 @@ private:
             std::min(track->earliest[it->second], start);
   }
 
+  /// Lower the earliest start `arm` of a branch's arm to `simulated`, a
+  /// start in the iteration last simulated, moved by `distance` to where it
+  /// is in an iteration the backward pass extrapolated.
+  void lowerArmStart(int64_t &arm, int64_t simulated, int64_t distance) {
+    if (simulated == kNever)
+      return;
+    int64_t start;
+    if (__builtin_add_overflow(simulated, distance, &start)) {
+      skippedNegative = true;
+      return;
+    }
+    if (start < 0)
+      skippedNegative = true;
+    arm = std::min(arm, start);
+  }
+
   // ── Loops whose lines move by periods of their own ────────────────────
 
   /// Whether a loop's carried values may move by a period per group (see
@@ -2168,11 +2184,20 @@ private:
         track.earliest.assign(groups->count, kNever);
         tracks.push_back(&track);
       }
+      // The earliest starts of this iteration, in the arm the loop is in.
+      int64_t armBefore = std::exchange(armStart, kNever);
+      llvm::SmallVector<int64_t, 4> armStartsBefore = armStarts;
+      std::fill(armStarts.begin(), armStarts.end(), kNever);
       mlir::LogicalResult simulated = backwardBlock(*loop.getBody());
       if (groups)
         tracks.pop_back();
       if (mlir::failed(simulated))
         return mlir::failure();
+      int64_t iterationArmStart = armStart;
+      llvm::SmallVector<int64_t, 4> iterationArmStarts = armStarts;
+      armStart = std::min(armBefore, armStart);
+      for (auto [start, saved] : llvm::zip(armStarts, armStartsBefore))
+        start = std::min(start, saved);
       llvm::SmallVector<int64_t> next;
       for (mlir::Value arg : args)
         next.push_back(late(arg));
@@ -2218,18 +2243,8 @@ private:
           // The iterations not simulated start their ops earlier, by
           // their group's distance in the first, and so the arm it is in.
           for (auto [earliest, distance] :
-               llvm::zip(track.earliest, *distances)) {
-            int64_t start;
-            if (earliest == kNever)
-              continue;
-            if (__builtin_add_overflow(earliest, distance, &start)) {
-              skippedNegative = true;
-              continue;
-            }
-            if (start < 0)
-              skippedNegative = true;
-            armStart = std::min(armStart, start);
-          }
+               llvm::zip(track.earliest, *distances))
+            lowerArmStart(armStart, earliest, distance);
           extrapolations.push_back(
               {loop, 0, opPeriods(*groups, *lastGroups, -1)});
           if (first) {
@@ -2241,6 +2256,11 @@ private:
         }
       }
       if (steady && k > 0) {
+        // The first iteration starts the arm earliest, by the distance.
+        lowerArmStart(armStart, iterationArmStart, k * shift);
+        for (auto [start, inIteration] :
+             llvm::zip(armStarts, iterationArmStarts))
+          lowerArmStart(start, inIteration, k * shift);
         extrapolate(carried, previous, kinds, k * shift);
         for (auto [now, before] : llvm::zip(ceilings, ceilingsBefore))
           if (now != before)
