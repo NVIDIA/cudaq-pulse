@@ -2013,15 +2013,24 @@ writeTiming(mlir::Operation *op, mlir::Operation *root,
     for (int64_t level = static_cast<int64_t>(loops.size()) - 1; level >= 0;
          --level) {
       auto trips = pulse::constantTripCount(loops[level]).value_or(0);
-      llvm::SmallVector<int64_t, 2> probe(sample.iteration.begin(),
-                                          sample.iteration.end());
+      // The simulated iterations along this loop, from the samples: an
+      // extrapolated loop has few of its trips among them.
       llvm::SmallVector<std::pair<int64_t, int64_t>> line;
-      for (int64_t k = 0; k < trips; ++k) {
-        probe[level] = k;
-        auto found = at.find(probe);
-        if (found != at.end())
-          line.push_back({k, found->second});
+      for (const Sample &other : samples) {
+        bool along = true;
+        for (auto [i, k] : llvm::enumerate(other.iteration))
+          if (static_cast<int64_t>(i) != level && k != sample.iteration[i])
+            along = false;
+        if (along && other.iteration[level] >= 0 &&
+            other.iteration[level] < trips)
+          line.push_back({other.iteration[level], at.lookup(other.iteration)});
       }
+      llvm::sort(line);
+      line.erase(std::unique(line.begin(), line.end(),
+                             [](const auto &a, const auto &b) {
+                               return a.first == b.first;
+                             }),
+                 line.end());
       llvm::SmallVector<int64_t> steps;
       for (size_t i = 1; i < line.size(); ++i)
         steps.push_back(line[i].second - line[i - 1].second);
