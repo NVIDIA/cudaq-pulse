@@ -21,6 +21,15 @@ Runs the cases of ``benchmarks/perf_gate/cases.py`` and compares them with
   cache simulation, with a fixed cache geometry, also gives an estimate of
   cycles (``L1 hits + 5 x LL hits + 35 x memory accesses``); it is
   reported, not gated.
+- Python-level work per repetition (bytecodes executed, Python calls, C
+  calls), counted with ``sys.monitoring`` in two native runs after the
+  Callgrind runs, so it does not touch their counts. It does not gate: it
+  labels a case that fails on instructions. With the same work as the
+  baseline's, the count moved below Python, as when one new type at
+  import renumbers the interpreter's type version tags and so its method
+  cache's collisions; the case still fails, labelled ``LAYOUT_ONLY``, to
+  be judged before re-baselining. With other work, each counter's change
+  is shown. A baseline without it (format 1) labels nothing.
 
 The instruction counts repeat exactly only in the environment they were
 measured in, so a baseline is versioned by it: the baseline holds the
@@ -73,7 +82,17 @@ ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / "benchmarks" / "perf_gate" / "cases.py"
 MARKS = ROOT / "benchmarks" / "perf_gate" / "marks.c"
 BASELINE = ROOT / "benchmarks" / "baselines" / "perf_gate.json"
-FORMAT = 1
+# Format 2 adds each case's python_work; a format 1 baseline reads as one
+# without it.
+FORMAT = 2
+READABLE_FORMATS = (1, 2)
+# A case's keys in the baseline that are not program sizes.
+NOT_SIZES = ("instructions", "estimated_cycles", "python_work", "tolerance")
+
+LAYOUT_ONLY = (
+    "instructions moved with identical Python work, likely layout only (for example "
+    "type version tags or allocation layout); judge before re-baselining"
+)
 
 # Fractions of the baseline's instructions per repetition.
 REGRESSION = 0.004
@@ -144,6 +163,22 @@ def _structural(
         sys.exit(f"perf gate: {CASES.name} --structural failed:\n{out.stderr}")
     result = json.loads(out.stdout)
     return result["sizes"], result["tolerances"]
+
+
+def _byte_compile(python: str, env: dict[str, str], pythonpath: str) -> None:
+    """Byte-compiles the package, the benchmarks and the installed packages
+    first, so no run compiles a module inside a case."""
+    purelib = subprocess.check_output(
+        [python, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+        text=True,
+    ).strip()
+    for directory in (pythonpath, str(ROOT / "benchmarks"), purelib):
+        subprocess.run(
+            [python, "-m", "compileall", "-q", directory],
+            env={**env, "PYTHONDONTWRITEBYTECODE": ""},
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
 
 
 def _build_marks(directory: Path) -> Path:
@@ -367,6 +402,70 @@ def measure_instructions(
     return measured, differences, bool(prefix)
 
 
+PythonWork = dict[str, dict[str, float]]
+
+
+def measure_python_work(python: str, env: dict[str, str]) -> tuple[PythonWork | None, str]:
+    """Each case's Python-level work per repetition (bytecodes, Python
+    calls, C calls), from two native runs of ``cases.py --python-work``
+    made side by side, or None and why it is not used: the counts take
+    Python 3.12's sys.monitoring, and two runs must agree."""
+
+    def run(_: int) -> PythonWork:
+        out = subprocess.run(
+            [python, str(CASES), "--python-work"],
+            env=env,
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+        )
+        if out.returncode:
+            raise GateError(f"{CASES.name} --python-work failed:\n{out.stderr[-4000:]}")
+        return json.loads(out.stdout.strip().splitlines()[-1])
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(2) as pool:
+            first, second = pool.map(run, range(2))
+    except GateError as e:
+        return None, f"Python work not counted: {e}"
+    if not first:
+        return None, "Python work not counted: it takes sys.monitoring (Python 3.12+)"
+    if first != second:
+        differ = sorted(n for n in set(first) | set(second) if first.get(n) != second.get(n))
+        return None, (
+            f"Python work not used: two identical runs counted it differently ({', '.join(differ)})"
+        )
+    return first, ""
+
+
+def _count(x: float) -> str:
+    return f"{x:,.3f}".rstrip("0").rstrip(".")
+
+
+def work_changes(expected: dict[str, float], measured: dict[str, float]) -> list[str]:
+    """Each counter of Python work with its change per repetition, or an
+    empty list if none changed."""
+    keys = [*measured, *(k for k in expected if k not in measured)]
+    if all(expected.get(k) == measured.get(k) for k in keys):
+        return []
+    changes = []
+    for k in keys:
+        old, new = expected.get(k), measured.get(k)
+        if old == new:
+            changes.append(f"{k} same")
+        elif old is None or new is None:
+            changes.append(
+                f"{k} {'none' if old is None else _count(old)} -> "
+                f"{'none' if new is None else _count(new)}"
+            )
+        else:
+            delta = _count(new - old)
+            changes.append(
+                f"{k} {_count(old)} -> {_count(new)} ({'' if new < old else '+'}{delta})"
+            )
+    return changes
+
+
 # Instructions per repetition below which a count is wrong, not fast (a
 # compile is well above a million), and pairs of cases whose first does
 # several times the work of the second.
@@ -412,6 +511,15 @@ class Row:
     sizes: str
     verdict: str
     tolerance: float = REGRESSION
+    # How the case's Python work compares with the baseline's: None where
+    # either has none, else each counter's change (empty if the same).
+    work_changes: list[str] | None = None
+
+    @property
+    def work(self) -> str:
+        if self.work_changes is None:
+            return ""
+        return "changed" if self.work_changes else "same"
 
     @property
     def delta(self) -> float | None:
@@ -424,12 +532,14 @@ def compare(
     baseline: dict[str, Any],
     sizes: dict[str, dict[str, int]],
     instructions: dict[str, Measured] | None,
+    python_work: PythonWork | None = None,
 ) -> list[Row]:
     """One row per case of the baseline or of this run, with its verdict:
     ``ok``, ``faster`` (within ``IMPROVEMENT``) or a failure: ``slower``,
     ``improved`` (update the baseline), ``sizes``, ``new``, ``removed``,
     ``no baseline``. In bootstrap mode a case without an instruction count
-    is ``bootstrap``, which passes."""
+    is ``bootstrap``, which passes. Where this run and the baseline both
+    have the case's Python work, the row has its changes."""
     cases = baseline.get("cases", {})
     bootstrap = baseline.get("bootstrap") is True
     rows = []
@@ -449,8 +559,7 @@ def compare(
         changed += [
             f"{key} {expected[key]} -> none"
             for key in sorted(expected)
-            if key not in ("instructions", "estimated_cycles", "tolerance")
-            and key not in sizes[name]
+            if key not in NOT_SIZES and key not in sizes[name]
         ]
         tolerance = float(expected.get("tolerance", REGRESSION))
         row = Row(
@@ -470,6 +579,9 @@ def compare(
                 row.measured = low
                 row.spread = high / low - 1 if low else 0.0
                 row.cycles = min(m.estimated_cycles)
+            work = (python_work or {}).get(name)
+            if work is not None and "python_work" in expected:
+                row.work_changes = work_changes(expected["python_work"], work)
             if row.baseline is None:
                 if row.verdict == "ok":
                     row.verdict = "bootstrap" if bootstrap else "no baseline"
@@ -487,6 +599,27 @@ def compare(
 FAILING = {"slower", "improved", "sizes", "new", "removed", "no baseline"}
 
 
+def failure_reason(r: Row) -> str:
+    """Why a failing row fails. An instruction count that moved is labelled
+    with how the case's Python work compares with the baseline's: the
+    same work suggests the layout below Python moved (it still fails), and
+    changed work is shown counter by counter."""
+    reason = {
+        "slower": f"{_pct(r.delta)} instructions (limit +{100 * r.tolerance:g}%)",
+        "improved": f"{_pct(r.delta)} instructions: update the baseline to keep the gain",
+        "sizes": f"program sizes changed: {r.sizes}",
+        "new": "not in the baseline",
+        "removed": "in the baseline but no longer a case",
+        "no baseline": "no instruction count in the baseline",
+    }[r.verdict]
+    if r.verdict in ("slower", "improved") and r.work_changes is not None:
+        if r.work_changes:
+            reason += f"; Python work changed per repetition: {', '.join(r.work_changes)}"
+        else:
+            reason += f"; {LAYOUT_ONLY}"
+    return f"{r.name}: {reason}"
+
+
 def baseline_error(baseline: dict[str, Any], frozen: bool = False) -> str | None:
     """Why the baseline is not allowed, or None: an instruction count that
     is not a positive number, a ``bootstrap`` field next to counts, or any
@@ -497,6 +630,11 @@ def baseline_error(baseline: dict[str, Any], frozen: bool = False) -> str | None
     is allowed only while no case has a count: taking a CI run's
     measurements as the baseline drops the field, so the gate cannot stay
     in bootstrap mode once it has counts."""
+    form = baseline.get("format", 1)
+    if form not in READABLE_FORMATS:
+        return (
+            f"format {form!r} is not one this tool reads ({', '.join(map(str, READABLE_FORMATS))})"
+        )
     cases = baseline.get("cases", {})
     bad = sorted(
         n
@@ -546,6 +684,7 @@ def render(rows: list[Row], markdown: bool) -> str:
         "spread",
         "est. cycles",
         "sizes",
+        "Python work",
         "verdict",
     )
     table = [
@@ -557,6 +696,7 @@ def render(rows: list[Row], markdown: bool) -> str:
             "" if r.spread is None else _spread(r.spread),
             _num(r.cycles),
             r.sizes,
+            r.work,
             r.verdict,
         )
         for r in rows
@@ -568,7 +708,7 @@ def render(rows: list[Row], markdown: bool) -> str:
     widths = [max(len(str(c)) for c in col) for col in zip(header, *table, strict=True)]
     return "\n".join(
         "  ".join(
-            str(c).ljust(w) if i in (0, 6) else str(c).rjust(w)
+            str(c).ljust(w) if i in (0, 6, 7) else str(c).rjust(w)
             for i, (c, w) in enumerate(zip(cells, widths, strict=True))
         ).rstrip()
         for cells in (header, *table)
@@ -627,10 +767,12 @@ def as_baseline(
     previous: dict[str, Any],
     tolerances: dict[str, float],
     source: dict[str, Any] | None = None,
+    python_work: PythonWork | None = None,
 ) -> dict[str, Any]:
     """This run in the baseline's format, with the tolerances the cases
-    declare and the run it was measured in. Without instruction counts the
-    previous baseline's are kept, with their environment and run."""
+    declare, the run it was measured in and the cases' Python work.
+    Without instruction counts the previous baseline's are kept, with their
+    Python work, environment and run."""
     old = previous.get("cases", {})
     cases = {}
     for name in sorted(sizes):
@@ -641,8 +783,10 @@ def as_baseline(
             cycles = min(m.estimated_cycles)
             if cycles == cycles:
                 entry["estimated_cycles"] = round(cycles)
+            if python_work and name in python_work:
+                entry["python_work"] = python_work[name]
         else:
-            for key in ("instructions", "estimated_cycles"):
+            for key in ("instructions", "estimated_cycles", "python_work"):
                 if key in old.get(name, {}):
                     entry[key] = old[name][key]
         if name in tolerances:
@@ -696,8 +840,21 @@ taking a baseline:
        gh run download RUN -R OWNER/REPO -n perf-gate-baseline \\
          -D benchmarks/baselines
      The file then records the run, its environment (with the MLIR
-     toolchain) and the cases' tolerances, and has no "bootstrap" field.
+     toolchain), the cases' tolerances and their Python work (format 2),
+     and has no "bootstrap" field.
   4. Staging's push run of that commit must pass the gate.
+
+a failure "likely layout only":
+  A case that fails on instructions with the same Python work as the
+  baseline's (its "Python work" column says "same") ran the same bytecodes
+  and calls, so its count moved below Python: in native code, or in the
+  layout of the interpreter's caches and memory, which a change elsewhere
+  can shift (one new class at import renumbers the type version tags of the
+  types made after it). The gate still fails it. Judge it before taking a
+  new baseline: compare its Callgrind dumps (the perf-gate-callgrind-dumps
+  artifact, with callgrind_annotate) with those of the baseline's run, and
+  look for the functions whose counts moved. Where the work changed, the
+  failure lists each counter's change per repetition instead.
 
   A case whose identical runs differ declares its own tolerance in
   benchmarks/perf_gate/cases.py, and the next baseline records it. To
@@ -743,21 +900,11 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="perf-gate-") as tmp:
         workdir = Path(tmp)
         env = _run_env(pythonpath, str(workdir))
-        # Byte-compile first, so no run compiles a module inside a case.
-        purelib = subprocess.check_output(
-            [args.python, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
-            text=True,
-        ).strip()
-        for directory in (pythonpath, str(ROOT / "benchmarks"), purelib):
-            subprocess.run(
-                [args.python, "-m", "compileall", "-q", directory],
-                env={**env, "PYTHONDONTWRITEBYTECODE": ""},
-                check=True,
-                stdout=subprocess.DEVNULL,
-            )
+        _byte_compile(args.python, env, pythonpath)
         sizes, tolerances = _structural(args.python, env)
         instructions = None
-        note = ""
+        python_work: PythonWork | None = None
+        note = work_note = ""
         if args.sizes_only:
             note = "instruction counts skipped (--sizes-only)"
         elif shutil.which("valgrind") is None:
@@ -778,8 +925,9 @@ def main() -> int:
                 note = "address randomization " + (
                     "off (setarch -R)" if no_aslr else "on: setarch -R is not permitted here"
                 )
+                python_work, work_note = measure_python_work(args.python, env)
 
-    rows = compare(baseline, sizes, instructions)
+    rows = compare(baseline, sizes, instructions, python_work)
     # Counts that failed the checks are reported but never become a baseline.
     measured = as_baseline(
         environment,
@@ -788,6 +936,7 @@ def main() -> int:
         baseline,
         tolerances,
         _source(args.processes),
+        python_work,
     )
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -831,6 +980,13 @@ def main() -> int:
         dump_warnings = [*dump_warnings[:3], f"and {len(dump_warnings) - 3} more dumps"]
     if dump_note:
         print(f"\n{dump_note}")
+    if python_work and not any("python_work" in c for c in baseline.get("cases", {}).values()):
+        work_note = (
+            "the baseline has no Python work, so a moved instruction count is not labelled "
+            "with it until the next baseline"
+        )
+    if work_note:
+        print(f"\n{work_note}")
     for line in spread_lines + dump_warnings:
         print(f"::warning title=Perf gate::{line}")
     if bootstrapped and not problems:
@@ -859,16 +1015,7 @@ def main() -> int:
         return 0
 
     lines = list(problems)
-    for r in failures:
-        reason = {
-            "slower": f"{_pct(r.delta)} instructions (limit +{100 * r.tolerance:g}%)",
-            "improved": f"{_pct(r.delta)} instructions: update the baseline to keep the gain",
-            "sizes": f"program sizes changed: {r.sizes}",
-            "new": "not in the baseline",
-            "removed": "in the baseline but no longer a case",
-            "no baseline": "no instruction count in the baseline",
-        }[r.verdict]
-        lines.append(f"{r.name}: {reason}")
+    lines += [failure_reason(r) for r in failures]
     invalid = baseline_error(baseline, frozen=os.environ.get("GITHUB_REF") == "refs/heads/main")
     if invalid:
         lines.append(f"{args.baseline.name}: {invalid}")
@@ -930,10 +1077,15 @@ def main() -> int:
                 + (f"(own tolerances: {own}) " if own else "")
                 + f"or below -{100 * IMPROVEMENT:.1f}% "
                 "instructions per repetition, or on any change in program size. "
-                f"Spread: largest difference between {args.processes} identical runs.\n\n"
+                f"Spread: largest difference between {args.processes} identical runs. "
+                "Python work: the bytecodes, Python calls and C calls of a repetition, "
+                "counted natively, against the baseline's; it labels a failure, and "
+                "does not gate.\n\n"
             )
             if note:
                 f.write(f"{note}\n\n")
+            if work_note:
+                f.write(f"{work_note[0].upper()}{work_note[1:]}.\n\n")
             if dump_note:
                 f.write(f"{dump_note[0].upper()}{dump_note[1:]}.\n\n")
             if env_diff and not gated:

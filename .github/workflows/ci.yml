@@ -256,7 +256,9 @@ jobs:
 
       # Identical Callgrind runs side by side: the summary shows how far
       # they differ (the spread) next to each case's change. A run taken as
-      # the baseline makes 5, for a closer look at the spread.
+      # the baseline makes 5, for a closer look at the spread. Two native
+      # runs after them count each case's Python work, which the baseline
+      # records and which labels a failure (perf-gate.py --help).
       - name: Perf gate
         env:
           PROCESSES: ${{ inputs.perf_baseline && 5 || 2 }}

@@ -9,7 +9,7 @@
 """The cases of the deterministic performance gate (tools/perf-gate.py).
 
 Each case is one operation of the compiler or the runtime on fixed inputs,
-run ``reps`` times. ``tools/perf-gate.py`` runs this file in two modes:
+run ``reps`` times. ``tools/perf-gate.py`` runs this file in three modes:
 
 - ``--structural``: natively, printing each case's program sizes (op count,
   packed program bytes, export bytes) as JSON, with the cases' own
@@ -18,6 +18,10 @@ run ``reps`` times. ``tools/perf-gate.py`` runs this file in two modes:
   case's repetitions it calls the Callgrind client requests in LIB (built
   from ``marks.c``), which zero the counters, instrument the repetitions and
   dump the counts under the case's name.
+- ``--python-work``: natively, after the Callgrind runs, printing each
+  case's Python-level work per repetition (``PYTHON_WORK``) as JSON. When
+  the instructions move but this work does not, the cause is below Python:
+  native code, or the layout of the interpreter's caches and memory.
 
 Caches are handled the same way in every run: ``first_compile`` is the first
 compile in the process (the MLIR context, lazy imports and the interpreter's
@@ -34,6 +38,7 @@ import gc
 import importlib.util
 import json
 import sys
+import types
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -490,6 +495,64 @@ def _measure(library: str, only: set[str] | None) -> dict[str, int]:
     return reps
 
 
+# The Python-level work of a case, counted by sys.monitoring (3.12+):
+# bytecodes executed, Python functions started, and calls from Python code
+# to anything else (C functions and methods, types, other callables).
+PYTHON_WORK = ("bytecodes", "python_calls", "c_calls")
+
+
+def _python_work(only: set[str] | None) -> dict[str, dict[str, float]]:
+    """Each case's Python-level work per repetition, to a thousandth, run
+    as ``_measure`` runs the cases (natively: the callbacks would weigh on
+    Callgrind's counts), or nothing before Python 3.12."""
+    monitoring = getattr(sys, "monitoring", None)
+    if monitoring is None:
+        return {}
+    tool = monitoring.PROFILER_ID
+    events = monitoring.events
+    counts = [0, 0, 0]
+    python = (types.FunctionType, types.MethodType)
+
+    def on_instruction(code: object, offset: int) -> None:
+        counts[0] += 1
+
+    def on_start(code: object, offset: int) -> None:
+        counts[1] += 1
+
+    def on_call(code: object, offset: int, callable: object, arg0: object) -> None:
+        if not isinstance(callable, python):
+            counts[2] += 1
+
+    monitoring.use_tool_id(tool, "perf gate")
+    monitoring.register_callback(tool, events.INSTRUCTION, on_instruction)
+    monitoring.register_callback(tool, events.PY_START, on_start)
+    monitoring.register_callback(tool, events.CALL, on_call)
+    counted = events.INSTRUCTION | events.PY_START | events.CALL
+    work = {}
+    try:
+        for case in CASES:
+            if only is not None and case.name not in only and case.name != "first_compile":
+                continue
+            op = case.setup()
+            for i in range(case.warmup):
+                op(case.reps + i)
+            gc.collect()
+            gc.disable()
+            counts[:] = [0, 0, 0]
+            monitoring.set_events(tool, counted)
+            for i in range(case.reps):
+                op(i)
+            monitoring.set_events(tool, 0)
+            gc.enable()
+            work[case.name] = {
+                k: round(n / case.reps, 3) for k, n in zip(PYTHON_WORK, counts, strict=True)
+            }
+    finally:
+        monitoring.set_events(tool, 0)
+        monitoring.free_tool_id(tool)
+    return work
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -497,6 +560,11 @@ def main() -> int:
         "--structural", action="store_true", help="print program sizes and tolerances as JSON"
     )
     mode.add_argument("--measure", metavar="LIB", help="run under Callgrind with these marks")
+    mode.add_argument(
+        "--python-work",
+        action="store_true",
+        help="print each case's bytecodes, Python calls and C calls per repetition as JSON",
+    )
     mode.add_argument("--list", action="store_true", help="print the cases")
     parser.add_argument("--only", nargs="+", help="measure only these cases")
     args = parser.parse_args()
@@ -509,7 +577,11 @@ def main() -> int:
         out = {"sizes": _structural(), "tolerances": tolerances}
         print(json.dumps(out, indent=2, sort_keys=True))
         return 0
-    print(json.dumps(_measure(args.measure, set(args.only) if args.only else None)))
+    only = set(args.only) if args.only else None
+    if args.python_work:
+        print(json.dumps(_python_work(only)))
+        return 0
+    print(json.dumps(_measure(args.measure, only)))
     return 0
 
 

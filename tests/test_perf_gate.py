@@ -347,6 +347,196 @@ def test_a_summary_that_differs_from_case_to_case_or_by_much_is_a_warning():
     assert len(zeros[0]) == 2 and zeros[1] == ""
 
 
+_WORK = {"bytecodes": 449.6, "python_calls": 16.0, "c_calls": 17.1}
+
+
+def _with_work(work=_WORK, measured=1_005_000):
+    baseline = _baseline()
+    baseline["cases"]["c"]["python_work"] = dict(_WORK)
+    runs = {"c": gate.Measured([measured], [0.0])}
+    return gate.compare(baseline, {"c": {"op_count": 15}}, runs, {"c": dict(work)})[0]
+
+
+def test_a_moved_count_with_the_same_python_work_still_fails_and_says_so():
+    row = _with_work()
+    assert row.verdict == "slower" and row.work == "same"
+    assert gate.failure_reason(row) == (f"c: +0.50% instructions (limit +0.4%); {gate.LAYOUT_ONLY}")
+    assert "judge before re-baselining" in gate.LAYOUT_ONLY
+    assert gate.failure_reason(_with_work(measured=980_000)).endswith(gate.LAYOUT_ONLY)
+
+
+def test_a_moved_count_with_other_python_work_shows_each_counter():
+    row = _with_work({**_WORK, "bytecodes": 452.6, "c_calls": 16.1})
+    assert row.work == "changed"
+    assert gate.failure_reason(row) == (
+        "c: +0.50% instructions (limit +0.4%); Python work changed per repetition: "
+        "bytecodes 449.6 -> 452.6 (+3), python_calls same, c_calls 17.1 -> 16.1 (-1)"
+    )
+    assert gate.work_changes({"a": 1.0}, {"a": 1.0, "b": 2.5}) == ["a same", "b none -> 2.5"]
+
+
+def test_python_work_labels_only_a_moved_count_and_never_gates():
+    assert _with_work(measured=1_000_000).verdict == "ok"
+    assert _with_work({**_WORK, "bytecodes": 1.0}, measured=1_000_000).verdict == "ok"
+    sizes = gate.compare(
+        {"cases": {"c": {"op_count": 15, "python_work": _WORK}}}, {"c": {"op_count": 16}}, None
+    )[0]
+    assert gate.failure_reason(sizes) == "c: program sizes changed: op_count 15 -> 16"
+
+
+def test_without_python_work_on_either_side_a_moved_count_is_not_labelled():
+    row = _verdict([1_005_000])
+    assert row.work_changes is None and row.work == ""
+    assert gate.failure_reason(row) == "c: +0.50% instructions (limit +0.4%)"
+    baseline = _baseline()
+    baseline["cases"]["c"]["python_work"] = _WORK
+    runs = {"c": gate.Measured([1_005_000.0], [0.0])}
+    unmeasured = gate.compare(baseline, {"c": {"op_count": 15}}, runs, None)[0]
+    assert gate.failure_reason(unmeasured) == "c: +0.50% instructions (limit +0.4%)"
+
+
+def test_a_baseline_records_the_python_work_measured_with_its_counts():
+    runs = {"c": gate.Measured([1_000_000.0], [2.0])}
+    taken = gate.as_baseline({}, {"c": {"op_count": 15}}, runs, {}, {}, None, {"c": _WORK})
+    assert taken["format"] == 2
+    assert taken["cases"]["c"]["python_work"] == _WORK
+    kept = gate.as_baseline({}, {"c": {"op_count": 15}}, None, taken, {})
+    assert kept["cases"]["c"]["python_work"] == _WORK
+    unlabelled = gate.as_baseline({}, {"c": {"op_count": 15}}, runs, taken, {}, None, None)
+    assert "python_work" not in unlabelled["cases"]["c"]
+
+
+def test_formats_1_and_2_are_read_and_others_are_errors():
+    assert gate.baseline_error({"format": 1, **_baseline()}) is None
+    assert gate.baseline_error({"format": 2, **_baseline()}) is None
+    assert "format 3" in gate.baseline_error({"format": 3, **_baseline()})
+
+
+# The fake-Valgrind harness: the gate's main() as CI runs it, with a fake
+# valgrind (it writes one dump per case of instructions.json, of one
+# repetition), a fake compiler for the marks, and a fake cases.py (its
+# sizes, and the Python work of python_work.json, which varies from run to
+# run while a file "varies" exists).
+_FAKE_VALGRIND = """\
+import json, pathlib, sys
+here = pathlib.Path(__file__).parent
+if sys.argv[1:] == ["--version"]:
+    print("valgrind-3.22.0 (fake)")
+    raise SystemExit
+out = next(a.split("=", 1)[1] for a in sys.argv if a.startswith("--callgrind-out-file="))
+counts = json.loads((here / "instructions.json").read_text())
+for k, (name, ir) in enumerate(counts.items(), 1):
+    pathlib.Path(f"{out}.{k}").write_text(
+        "# callgrind format\\nversion: 1\\ncreator: callgrind-3.22.0\\n"
+        f"desc: Trigger: Client Request: {name}\\n\\npositions: line\\nevents: Ir\\n"
+        f"summary: {ir}\\n\\nfl=(1) a.c\\nfn=(1) f\\n1 {ir}\\n\\ntotals: {ir}\\n"
+    )
+print(json.dumps({name: 1 for name in counts}))
+"""
+_FAKE_CC = """\
+import pathlib, sys
+pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).touch()
+"""
+_FAKE_CASES = """\
+import json, os, pathlib, sys
+here = pathlib.Path(__file__).parent
+if "--structural" in sys.argv:
+    print(json.dumps({"sizes": {"c": {"op_count": 15}}, "tolerances": {}}))
+elif "--python-work" in sys.argv:
+    work = json.loads((here / "python_work.json").read_text())
+    if (here / "varies").exists():
+        work["c"]["bytecodes"] += os.getpid()
+    print(json.dumps(work))
+"""
+
+
+@pytest.fixture
+def fake_gate(tmp_path, monkeypatch, capsys):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, text in (("valgrind", _FAKE_VALGRIND), ("cc", _FAKE_CC)):
+        path = bin_dir / name
+        path.write_text(f"#!{sys.executable}\n{text}")
+        path.chmod(0o755)
+    (tmp_path / "cases.py").write_text(_FAKE_CASES)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("CC", str(bin_dir / "cc"))
+    for name in ("GITHUB_ACTIONS", "GITHUB_RUN_ID", "GITHUB_REPOSITORY", "GITHUB_REF"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(gate, "CASES", tmp_path / "cases.py")
+    monkeypatch.setattr(gate, "_byte_compile", lambda *args: None)
+    monkeypatch.setattr(gate.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(gate.platform, "machine", lambda: "x86_64")
+    environment = gate._environment(sys.executable)
+
+    def run(instructions, work, baseline_work=_WORK, form=2):
+        case = {"op_count": 15, "instructions": 1_000_000}
+        if baseline_work is not None:
+            case["python_work"] = baseline_work
+        baseline = tmp_path / "perf_gate.json"
+        baseline.write_text(
+            json.dumps({"format": form, "environment": environment, "cases": {"c": case}})
+        )
+        (bin_dir / "instructions.json").write_text(json.dumps({"c": instructions}))
+        (tmp_path / "python_work.json").write_text(json.dumps({"c": work}))
+        summary, out = tmp_path / "summary.md", tmp_path / "out.json"
+        summary.unlink(missing_ok=True)
+        argv = ["perf-gate.py", "--baseline", str(baseline), "--python", sys.executable]
+        argv += ["--pythonpath", str(tmp_path), "--summary", str(summary), "--out", str(out)]
+        monkeypatch.setattr(sys, "argv", argv)
+        code = gate.main()
+        return code, capsys.readouterr().out, summary.read_text(), json.loads(out.read_text())
+
+    run.varies = tmp_path / "varies"
+    return run
+
+
+def test_the_gate_labels_a_failure_whose_python_work_is_the_same(fake_gate):
+    code, log, summary, _ = fake_gate(1_005_000, _WORK)
+    assert code == 1
+    line = f"c: +0.50% instructions (limit +0.4%); {gate.LAYOUT_ONLY}"
+    assert f"  {line}\n" in log
+    assert f"- {line}\n" in summary
+    assert "| same | slower |" in summary
+
+
+def test_the_gate_shows_where_the_python_work_of_a_failure_changed(fake_gate):
+    code, log, summary, _ = fake_gate(1_005_000, {**_WORK, "bytecodes": 452.6})
+    assert code == 1
+    line = (
+        "c: +0.50% instructions (limit +0.4%); Python work changed per repetition: "
+        "bytecodes 449.6 -> 452.6 (+3), python_calls same, c_calls same"
+    )
+    assert f"  {line}\n" in log and f"- {line}\n" in summary
+    assert gate.LAYOUT_ONLY not in log + summary
+
+
+def test_the_gate_fails_unlabelled_against_a_baseline_without_python_work(fake_gate):
+    code, log, summary, taken = fake_gate(1_005_000, _WORK, baseline_work=None, form=1)
+    assert code == 1
+    assert "  c: +0.50% instructions (limit +0.4%)\n" in log
+    assert "- c: +0.50% instructions (limit +0.4%)\n" in summary
+    assert gate.LAYOUT_ONLY not in log + summary and "Python work changed" not in log
+    assert "the baseline has no Python work" in log
+    # The run taken as the next baseline brings it.
+    assert taken["format"] == 2 and taken["cases"]["c"]["python_work"] == _WORK
+
+
+def test_the_gate_passes_and_records_the_python_work_it_measured(fake_gate):
+    code, log, summary, taken = fake_gate(1_000_000, _WORK)
+    assert code == 0 and "Perf gate passed." in log
+    assert taken["cases"]["c"]["python_work"] == _WORK
+
+
+def test_python_work_that_differs_between_identical_runs_labels_nothing(fake_gate):
+    fake_gate.varies.touch()
+    code, log, summary, taken = fake_gate(1_005_000, _WORK)
+    assert code == 1
+    assert "two identical runs counted it differently (c)" in log
+    assert "  c: +0.50% instructions (limit +0.4%)\n" in log
+    assert "python_work" not in taken["cases"]["c"]
+
+
 def test_in_bootstrap_mode_a_case_without_a_count_is_reported_and_passes():
     baseline = {"bootstrap": True, "cases": {"c": {"op_count": 15}}}
     row = _verdict([1_000_000, 1_000_000], baseline)
@@ -420,7 +610,7 @@ def test_a_case_of_its_own_tolerance_still_fails_a_half_percent_regression():
 
 def test_every_case_gates_at_least_one_program_size():
     sized = {
-        name: [k for k in case if k not in ("instructions", "estimated_cycles", "tolerance")]
+        name: [k for k in case if k not in gate.NOT_SIZES]
         for name, case in BASELINE["cases"].items()
     }
     assert not [name for name, keys in sized.items() if not keys]
@@ -435,11 +625,7 @@ def test_the_program_sizes_match_the_baseline(tmp_path):
     sizes, tolerances = gate._structural(sys.executable, env)
     assert gate.tolerance_error(BASELINE, tolerances) is None
     expected = {
-        name: {
-            k: v
-            for k, v in case.items()
-            if k not in ("instructions", "estimated_cycles", "tolerance")
-        }
+        name: {k: v for k, v in case.items() if k not in gate.NOT_SIZES}
         for name, case in BASELINE["cases"].items()
     }
     assert sizes == expected, "update with: python tools/perf-gate.py --update"
