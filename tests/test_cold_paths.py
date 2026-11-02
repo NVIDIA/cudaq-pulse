@@ -193,6 +193,19 @@ def test_exporting_an_emulated_program_loads_no_module(tmp_path):
     assert _loaded(code, tmp_path, ()) == []
 
 
+def test_a_name_with_no_close_match_loads_no_difflib(tmp_path):
+    # Only names that share enough letters with the unknown one go to difflib.
+    code = (
+        "import sys\nimport cudaq_pulse as p\n\n@p.kernel\ndef k(q):\n"
+        "    d = get_drive_line(q)\n    drive(d, zzz_not_a_waveform(40))\n\n"
+        "try:\n    p.compile(k).lower(p.device('transmon_17q').qudit_handles[0])\n"
+        "except p.CompilationError as e:\n    assert 'did you mean' not in str(e), e\n"
+    )
+    assert _loaded(code, tmp_path, ("difflib",)) == []
+    near = code.replace("zzz_not_a_waveform", "squar").replace("not in", "in")
+    assert _loaded(near, tmp_path, ("difflib",)) == ["difflib"]
+
+
 def test_every_dataclass_has_a_docstring():
     # dataclass writes a missing docstring from inspect.signature, which costs
     # more than making the rest of the class.

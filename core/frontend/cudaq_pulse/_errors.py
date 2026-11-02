@@ -234,10 +234,34 @@ def _count(n: int, noun: str) -> str:
 
 
 def _closest(name: str, candidates: Iterable[str]) -> str | None:
-    """The candidate closest to *name*, if one is close."""
+    """The candidate closest to *name*, if one is close: the one
+    ``difflib.get_close_matches`` picks."""
+    # difflib rejects a candidate whose characters shared with *name*,
+    # counted with repeats, are too few for its cutoff of 0.6 (its
+    # quick_ratio): 10 * shared < 3 * (len(name) + len(candidate)). Those are
+    # dropped before difflib, and most names go without loading it. A
+    # candidate's characters that occur in *name* bound its shared count; one
+    # translate finds them for every candidate, and only the candidates that
+    # bound lets through are counted exactly.
+    candidates = list(candidates)
+    size = len(name)
+    near = candidates
+    whole = "\0".join(candidates)
+    if whole.count("\0") == len(candidates) - 1:
+        foreign = "".join(set(whole).difference(name, "\0"))
+        kept = whole.translate(str.maketrans("", "", foreign)).split("\0")
+        lengths = zip(candidates, map(len, kept), strict=False)
+        near = [c for c, k in lengths if 10 * k >= 3 * (size + len(c))]
+    chars = tuple(set(name))
+    counts = tuple(map(name.count, chars))
+    near = [
+        c for c in near if 10 * sum(map(min, map(c.count, chars), counts)) >= 3 * (size + len(c))
+    ]
+    if not near:
+        return None
     import difflib
 
-    close = difflib.get_close_matches(name, list(candidates), n=1)
+    close = difflib.get_close_matches(name, near, n=1)
     return close[0] if close else None
 
 

@@ -11,10 +11,10 @@ when one is raised.
 
 from __future__ import annotations
 
-import difflib
 import types
 from typing import Any
 
+from .._errors import _closest
 from ._emitter import (
     _LINE_TYPES,
     _OPERAND_TYPES,
@@ -31,10 +31,10 @@ from .ir_builder import OP_TABLE, CompilationError, IRValue, SymbolicValueError
 def did_you_mean(name: str, candidates: Any, call: bool = False) -> str:
     """``"; did you mean 'x'?"`` for the closest of *candidates*, or ``""``."""
     names = [c for c in dict.fromkeys(candidates) if isinstance(c, str) and not c.startswith("__")]
-    close = difflib.get_close_matches(name, names, n=1)
-    if not close:
+    close = _closest(name, names)
+    if close is None:
         return ""
-    return f"; did you mean {close[0]}()?" if call else f"; did you mean {close[0]!r}?"
+    return f"; did you mean {close}()?" if call else f"; did you mean {close!r}?"
 
 
 def attribute_error(obj: Any, attr: str) -> str:

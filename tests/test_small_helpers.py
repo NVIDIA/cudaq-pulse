@@ -32,6 +32,27 @@ def test_a_qudit_by_its_label():
         generic.qudit("D1")
 
 
+def test_the_close_name_suggested_is_the_one_difflib_picks():
+    import difflib
+    import random
+
+    from cudaq_pulse._errors import _closest
+
+    rng = random.Random(7)
+    letters = "abcdeo_xyzé\0"
+
+    def word():
+        return "".join(rng.choices(letters, k=rng.randint(0, 9)))
+
+    for _ in range(3000):
+        candidates = [word() for _ in range(rng.randint(0, 12))]
+        name = word()
+        if candidates and rng.random() < 0.4:
+            name = "".join(ch for ch in rng.choice(candidates) if rng.random() > 0.2) + name[:1]
+        close = difflib.get_close_matches(name, candidates, n=1)
+        assert _closest(name, iter(candidates)) == (close[0] if close else None), (name, candidates)
+
+
 def test_a_coupling_by_its_qudits():
     target = pulse.device(TRANSMON_17Q).target
     first = target.couplings[0]

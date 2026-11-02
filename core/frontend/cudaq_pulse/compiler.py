@@ -147,10 +147,8 @@ def _passes(passes: Sequence[str]) -> tuple[Pass, ...]:
         try:
             members.append(Pass(name))
         except ValueError:
-            import difflib
-
-            close = difflib.get_close_matches(str(name), names, n=1)
-            hint = f" Did you mean {close[0]!r}?" if close else ""
+            close = _closest(str(name), names)
+            hint = "" if close is None else f" Did you mean {close!r}?"
             raise InvalidValueError(
                 f"Unknown pass {name!r}.{hint} The passes are: {', '.join(names)}"
             ) from None
