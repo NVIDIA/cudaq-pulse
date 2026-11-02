@@ -21,6 +21,7 @@ and of ``simulate(levels=...)``.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from .._errors import InvalidTypeError, InvalidValueError, UnsupportedError
@@ -32,13 +33,31 @@ if TYPE_CHECKING:
 __all__ = ["SimulationModel", "TransmonModel"]
 
 
-class SimulationModel:
+class _Sealed(type):
+    """The classes of this module, read-only once defined: what a model gives
+    a qudit never changes, so a step resolved for it stays right
+    (``runtime.simulate._STEPS``)."""
+
+    def __setattr__(cls, name: str, value: Any) -> None:
+        if cls.__module__ == __name__:
+            raise AttributeError(f"{cls.__name__} is read-only; subclass it to change {name}")
+        super().__setattr__(name, value)
+
+    def __delattr__(cls, name: str) -> None:
+        if cls.__module__ == __name__:
+            raise AttributeError(f"{cls.__name__} is read-only; subclass it to change {name}")
+        super().__delattr__(name)
+
+
+class SimulationModel(metaclass=_Sealed):
     """A model of a system's qudits, with ``levels`` levels each.
 
     The base model describes qudits by their 0-1 frequency alone, as evenly
     spaced levels, and has no simulator: a system with it compiles and
     exports, and ``simulate`` refuses it. Subclasses that simulate override
     ``_simulate``.
+
+    A model is read-only: its levels by qudit are fixed when it is made.
     """
 
     #: Levels per qudit, unless the instance sets a qudit's own.
@@ -48,6 +67,7 @@ class SimulationModel:
     default_transition: ClassVar[tuple[int, int]] = (0, 1)
 
     __slots__ = ("_levels",)
+    _levels: Mapping[int, int]
 
     def __init__(self, levels: dict[int, int] | None = None) -> None:
         own: dict[int, int] = {}
@@ -67,7 +87,20 @@ class SimulationModel:
                         f"qudit {qudit} needs 2 or more levels (an int), got {n!r}"
                     )
                 own[qudit] = n
-        self._levels = own
+        object.__setattr__(self, "_levels", MappingProxyType(own))
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "_levels":
+            raise AttributeError(f"{type(self).__name__} is read-only")
+        super().__setattr__(name, value)
+
+    def __delattr__(self, name: str) -> None:
+        if name == "_levels":
+            raise AttributeError(f"{type(self).__name__} is read-only")
+        super().__delattr__(name)
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return type(self), (dict(self._levels) or None,)
 
     def levels_of(self, qudit: int) -> int:
         """The levels of qudit *qudit*: its own, else the model's."""
@@ -101,7 +134,7 @@ class SimulationModel:
         return hash((self.__class__, tuple(self._levels.items())))
 
     def __repr__(self) -> str:
-        own = f"levels={self._levels!r}" if self._levels else ""
+        own = f"levels={dict(self._levels)!r}" if self._levels else ""
         return f"{type(self).__name__}({own})"
 
 

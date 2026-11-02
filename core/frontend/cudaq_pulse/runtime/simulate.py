@@ -401,12 +401,16 @@ def _simulate_lowered(
             f"({', '.join(lowered.parameters)}); pass their values, as in "
             "simulate(program, 0.5), or lower the kernel with them"
         )
-    target = lowered.target.target if plant is None else _check_plant(lowered, plant)
+    device = lowered.target
+    target = device.target if plant is None else _check_plant(lowered, plant)
     try:
-        known = _STEPS.get((id(lowered.target), id(target), lowered.qudits, levels, dt_ns))
-    except TypeError:  # levels by qudit, a dict
-        known = None
-    step = _step(lowered, target, levels, dt_ns) if known is None else known[0]
+        step = _STEPS.get(
+            (id(device.target), id(target), device.clock_ghz, lowered.qudits, levels, dt_ns)
+        )
+    except TypeError:  # levels by qudit, a dict: unhashable, and never kept
+        step = None
+    if step is None:
+        step = _step(lowered, target, levels, dt_ns)
     # _step refused a target without a model; a target does not change.
     model: Callable[..., SimulationResult] = target.model._simulate  # type: ignore[union-attr]
     try:
@@ -422,7 +426,7 @@ def _simulate_lowered(
             t_end=t_end,
             dt_ns=step,
             integrator=integrator,
-            clock_ghz=lowered.target.clock_ghz,
+            clock_ghz=device.clock_ghz,
             dephasing=dephasing,
             handlers=handlers,
             readout=readout,
@@ -438,7 +442,8 @@ def _step(
     lowered: Lowered, target: Any, levels: int | dict[int, int] | None, dt_ns: float | Time | None
 ) -> float:
     """The integration step of a simulation of *lowered* on *target*: *dt_ns*,
-    checked, or the default step; kept in ``_STEPS`` unless it warns."""
+    checked, or the default step; kept in ``_STEPS`` unless it warns or its
+    model may change."""
     _simulation_model(target)
     given = as_nanoseconds(dt_ns)
     step: float
@@ -454,24 +459,58 @@ def _step(
         if fastest and fastest * step > _MAX_HZ_NS:
             _warn_coarse_step(target, source, fastest, step, lowered.target.clock_ghz)
             return step
-    if len(_STEPS) >= 256:
-        _STEPS.clear()
-    try:
-        _STEPS[id(lowered.target), id(target), lowered.qudits, levels, dt_ns] = (
-            step,
-            lowered.target,
-            target,
-        )
-    except TypeError:  # levels by qudit, a dict
-        pass
+    if levels.__class__ is not dict and target.model.__class__ in _read_only_models():
+        compiled = lowered.target.target
+        key = (id(compiled), id(target), lowered.target.clock_ghz, lowered.qudits, levels, dt_ns)
+        _remember(key, step, compiled, target)
     return step
 
 
-# The step of each device, simulated target, qudits, levels and dt_ns seen
-# (by the ids of the device and target, which every entry holds, so that
-# no other object takes their ids while it lives), with the device and
-# target: a call that hits it runs none of the checks that made it.
-_STEPS: dict[tuple[int, int, tuple[int, ...], Any, Any], tuple[float, Any, Any]] = {}
+def _remember(key: tuple[Any, ...], step: float, *targets: Any) -> None:
+    """Keep *step* in ``_STEPS`` under *key*, which holds the ids of
+    *targets*, and forget it when one of them is freed."""
+    import weakref
+    from functools import partial
+
+    for target in targets:
+        if id(target) not in _WATCHED:
+            ref = weakref.ref(target, partial(_forget, id(target)))
+            _WATCHED.setdefault(id(target), ref)
+    if len(_STEPS) >= _MAX_STEPS:
+        _STEPS.clear()
+    _STEPS[key] = step
+
+
+def _forget(target_id: int, _: Any = None) -> None:
+    """Drop every step of the target whose id is *target_id*, which is being
+    freed: run before its memory is, so no other object has its id yet."""
+    _WATCHED.pop(target_id, None)
+    for key in _STEPS.copy():
+        if target_id in (key[0], key[1]):
+            _STEPS.pop(key, None)
+
+
+def _read_only_models() -> tuple[type, ...]:
+    from ..targets.models import TransmonModel
+
+    return (TransmonModel,)
+
+
+# The step resolved for each compiled target, simulated target, clock,
+# qudits, levels and dt_ns (by the ids of the targets): a call that hits it
+# runs none of the checks that made it. Every input of the step is in the
+# key or fixed with an object whose id is: targets, their qubits and
+# couplings are frozen, and the models kept (_read_only_models) are
+# read-only, with read-only classes. A device may change its target or
+# clock, both read into the key at each call. An entry holds no object; it
+# is dropped when either target is freed (_forget, before the id can be
+# reused), and the cache is emptied when it holds _MAX_STEPS. Each read and
+# write is one dict operation on an immutable key and float, atomic in the
+# free-threaded build too: a race recomputes a step, never returns another's.
+_MAX_STEPS = 256
+_STEPS: dict[tuple[Any, ...], float] = {}
+# A weak reference to each target with steps in _STEPS, by id.
+_WATCHED: dict[int, Any] = {}
 
 
 def _simulation_model(target: Any) -> Callable[..., SimulationResult]:
