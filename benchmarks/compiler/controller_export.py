@@ -66,10 +66,10 @@ def one_round(qs):
         shift_phase(d.tone, 0.25)
         drives.append(d)
     probes = [get_readout_line(qs[q]) for q in range(readers)]
-    sync(*drives, *[r for r, _ in probes])
-    for r, rt in probes:
-        readout(r, square(40, 0.05), tone=rt)
-    sync(*drives, *[r for r, _ in probes])
+    sync(*drives, *probes)
+    for r in probes:
+        readout(r, square(40, 0.05))
+    sync(*drives, *probes)
 
 
 @pulse.kernel
@@ -126,8 +126,10 @@ def run(name: str, lines: int, rounds: int, trips: int) -> dict:
         [sys.executable, "-c", _CHILD, name, str(lines), str(rounds), str(trips)],
         capture_output=True,
         text=True,
-        check=True,
     )
+    if out.returncode != 0:
+        sys.stderr.write(out.stderr)
+        raise SystemExit(f"the {name} program's process exited with status {out.returncode}")
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
