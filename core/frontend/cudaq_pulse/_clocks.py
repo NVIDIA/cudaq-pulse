@@ -30,7 +30,6 @@ import itertools
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from fractions import Fraction
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -39,6 +38,8 @@ from ._units import as_nanoseconds
 from .ops import RoundDirection, round_duration
 
 if TYPE_CHECKING:
+    from fractions import Fraction
+
     from ._system import ControlSystem
     from ._units import Time
     from .controller import ControllerLimits
@@ -62,6 +63,9 @@ def _ghz(value: float) -> str:
 
 def clock_ratio(clock_ghz: float, program_ghz: float) -> Fraction:
     """``clock_ghz / program_ghz`` as a fraction; an error if it is not one."""
+    # Imported here: a device whose clock is only declared needs no fraction.
+    from fractions import Fraction
+
     ratio = Fraction(clock_ghz / program_ghz).limit_denominator(_MAX_DENOMINATOR)
     if abs(float(ratio) * program_ghz - clock_ghz) > _TOLERANCE * clock_ghz:
         raise _definition_error(
@@ -73,6 +77,8 @@ def clock_ratio(clock_ghz: float, program_ghz: float) -> Fraction:
 
 
 def _fraction(ghz: float) -> Fraction:
+    from fractions import Fraction
+
     return Fraction(ghz).limit_denominator(1_000_000)
 
 
@@ -328,6 +334,8 @@ def controllers_plan(
     plans = [plan(c, program_ghz, reference_clock_ghz) for c in controllers]
     if all(p is None for p in plans):
         return None
+    from fractions import Fraction
+
     clocks = tuple(
         ControllerClock(name, program_ghz, Fraction(1))
         if p is None
@@ -362,6 +370,8 @@ def made_for(sample_rate_ghz: Any, program_ghz: float) -> tuple[int, int]:
         raise InvalidValueError(
             f"sample_rate_ghz must be a positive number, got {sample_rate_ghz!r}"
         )
+    from fractions import Fraction
+
     rate = Fraction(sample_rate_ghz / program_ghz).limit_denominator(_MAX_DENOMINATOR)
     if abs(float(rate) * program_ghz - sample_rate_ghz) > _TOLERANCE * sample_rate_ghz:
         raise InvalidValueError(

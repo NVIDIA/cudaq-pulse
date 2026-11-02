@@ -14,6 +14,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
+from fractions import Fraction
 
 import cudaq_pulse as pulse
 import numpy as np
@@ -71,7 +72,7 @@ def test_uneven_controller_clocks_need_a_declared_program_clock():
 def test_a_clock_without_a_whole_cycle_ratio_is_an_error():
     with pytest.raises(ValueError, match="no whole-cycle ratio"):
         _clocks.clock_ratio(math.pi, 2.0)
-    assert _clocks.clock_ratio(0.5, 2.0) == _clocks.Fraction(1, 4)
+    assert _clocks.clock_ratio(0.5, 2.0) == Fraction(1, 4)
     assert _clocks.clock_ratio(2.4, 1.0).denominator == 5
 
 
@@ -554,7 +555,7 @@ def _line_event(**parts):
 
 
 _LINE = {"role": "drive", "qudit": 0}
-_HALF = _clocks.ControllerClock("awg", 1.0, _clocks.Fraction(1, 2))
+_HALF = _clocks.ControllerClock("awg", 1.0, Fraction(1, 2))
 
 
 def test_a_run_time_length_known_now_to_be_off_the_timesteps_is_a_compile_error():
@@ -598,7 +599,7 @@ def test_a_run_time_operand_the_export_cannot_tell_is_a_time_is_a_compile_error(
     # Left as it was, never exported in the wrong cycles.
     assert event["waveform"] == unnamed()
     # Where the ratio is 1 there is nothing to convert.
-    steps = _clocks.ControllerClock("awg", 2.0, _clocks.Fraction(1), grid=4)
+    steps = _clocks.ControllerClock("awg", 2.0, Fraction(1), grid=4)
     assert _clocks.own_run_time(steps, _LINE, _line_event(waveform=unnamed())) == []
 
 
@@ -614,8 +615,8 @@ def test_lines_on_several_controllers_convert_what_they_compute_at_run_time():
     plan = _clocks.ClockPlan(
         2.0,
         (
-            _clocks.ControllerClock("awg", 2.0, _clocks.Fraction(1)),
-            _clocks.ControllerClock("readout", 1.0, _clocks.Fraction(1, 2)),
+            _clocks.ControllerClock("awg", 2.0, Fraction(1)),
+            _clocks.ControllerClock("readout", 1.0, Fraction(1, 2)),
         ),
         owners={("readout", 0): 1},
     )
@@ -670,8 +671,8 @@ def test_without_a_reference_each_controller_start_is_known_to_one_own_cycle():
     plan = _clocks.ClockPlan(
         2.0,
         (
-            _clocks.ControllerClock("awg", 2.0, _clocks.Fraction(1)),
-            _clocks.ControllerClock("readout", 0.5, _clocks.Fraction(1, 4)),
+            _clocks.ControllerClock("awg", 2.0, Fraction(1)),
+            _clocks.ControllerClock("readout", 0.5, Fraction(1, 4)),
         ),
     )
     assert plan.start_uncertainty_ns() == {"awg": 0.5, "readout": 2.0}
