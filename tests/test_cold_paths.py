@@ -206,6 +206,13 @@ def test_a_name_with_no_close_match_loads_no_difflib(tmp_path):
     assert _loaded(near, tmp_path, ("difflib",)) == ["difflib"]
 
 
+def test_the_doctor_loads_json_only_to_write_json(tmp_path):
+    code = "import io, sys\nimport cudaq_pulse.doctor as d\nd.main([], out=io.StringIO())\n"
+    assert _loaded(code, tmp_path, ("json",)) == []
+    report = code.replace("[]", f"['--system', {str(tmp_path / 'none.json')!r}, '--json']")
+    assert _loaded(report, tmp_path, ("json",)) == ["json"]
+
+
 def test_every_dataclass_has_a_docstring():
     # dataclass writes a missing docstring from inspect.signature, which costs
     # more than making the rest of the class.

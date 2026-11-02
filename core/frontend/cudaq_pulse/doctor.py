@@ -35,7 +35,6 @@ import argparse
 import ctypes
 import dataclasses
 import importlib.metadata
-import json
 import os
 import platform
 import sys
@@ -264,6 +263,8 @@ def _problem_line(problem: Problem) -> str:
 
 
 def _problem_json(problem: Problem) -> dict[str, Any]:
+    import json
+
     fields = dataclasses.asdict(problem)
     value = fields.pop("value")
     if value is not UNSET:
@@ -293,6 +294,8 @@ def _check_system(file: Path, as_json: bool, write: Callable[[str], None]) -> in
         if dev.control_system is not None:
             summary["control_system"], problems = _control_summary(dev.control_system, file)
     if as_json:
+        import json
+
         report = {
             "file": str(file),
             "ok": not problems,
