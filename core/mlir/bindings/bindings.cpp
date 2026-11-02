@@ -1594,7 +1594,8 @@ struct ControllerEventWalk {
           !same(std::get<7>(a), std::get<7>(b)) ||
           !same(std::get<14>(a), std::get<14>(b)) ||
           !nodes(std::get<6>(a), std::get<6>(b)) ||
-          !refs(std::get<11>(a), std::get<11>(b)))
+          !refs(std::get<11>(a), std::get<11>(b)) ||
+          (track && natives[one.event + i] != natives[two.event + i]))
         return std::nullopt;
       auto &startA = std::get<3>(a);
       auto &startB = std::get<3>(b);
@@ -2708,9 +2709,25 @@ public:
   /// the qref argument of `main` (see nativeOffset) whose native frequency
   /// its tone plays,
   /// because the tone is its line's and was never retuned; -1 for any other
-  /// event.
-  std::vector<int64_t> controller_native_tones() {
-    return std::move(trackedWalk()->natives);
+  /// event. With `summarize` (and `unsynced`), for each event of
+  /// controller_events()'s summarizing walk, which keeps a loop rolled only
+  /// if each copy plays the natives of the first: (natives, repeats, line
+  /// periods).
+  nb::object controller_native_tones(bool summarize, bool unsynced) {
+    if (!summarize)
+      return nb::cast(std::move(trackedWalk()->natives));
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    ControllerEventWalk walk(clock(), /*track=*/true);
+    walk.summarize = true;
+    walk.unsynced = unsynced;
+    module_->walk([&](mlir::Operation *op) {
+      if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+        walk.lineIndex.try_emplace(op,
+                                   static_cast<int64_t>(walk.lineIndex.size()));
+    });
+    walk.block<false>(*module_->getBody());
+    return nb::make_tuple(nb::cast(walk.natives), nb::cast(walk.repeats),
+                          nb::cast(walk.linePeriods));
   }
 
   /// For each event of controller_program() rolled, in the same order (a
@@ -6193,8 +6210,11 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "This module with its runtime qudits bound to carriers and its "
            "float arguments kept")
       .def("controller_native_tones", &PulseModule::controller_native_tones,
+           nb::arg("summarize") = false, nb::arg("unsynced") = false,
            "For each event of controller_program(), not rolled: the qref "
-           "argument whose native frequency its tone plays, or -1")
+           "argument whose native frequency its tone plays, or -1; with "
+           "summarize, of controller_events()'s summarizing walk, with its "
+           "repeats and line periods")
       .def("controller_rolled_dependencies",
            &PulseModule::controller_rolled_dependencies,
            "For each event of controller_program() rolled: its kind, its "

@@ -84,6 +84,13 @@ def close(q):
         drive(d, square(5, 0.1))
         drive(d, gaussian(8, 0.1, 2.0))
 
+@pulse.kernel
+def runtime(q: pulse.Qudit):
+    d = get_drive_line(q)
+    for _ in range(TRIPS):
+        drive(d, square(5, 0.1))
+        drive(d, gaussian(8, 0.1, 2.0))
+
 machine = MachineModel(controller=ControllerLimits({limits}))
 try:
     lowered = pulse.compile({kernel}, machine=machine).lower(Q[0])
@@ -619,6 +626,94 @@ def test_a_rolled_loop_of_10_15_iterations_on_a_controllers_own_clock_is_checked
     for clock in ("cycles_per_timestep=4", "clock_ghz=1.0"):
         few = _in_a_child("close", 20, f"issue_cycles=4, min_wait_cycles=4, {clock}")
         many = _in_a_child("close", 10**15, f"issue_cycles=4, min_wait_cycles=4, {clock}")
+        each = int(str(few["count"])) // 20
+        assert each and many["count"] == each * 10**15
+        assert many["message"] == str(few["message"]).replace(
+            f"... and {20 * each - 10} more", f"... and {each * 10**15 - 10} more"
+        )
+
+
+def _runtime(n: int) -> dict[str, Any]:
+    """Loops of runtime qudits, whose lines are bound per call."""
+
+    @pulse.kernel
+    def drives(q: pulse.Qudit):
+        d = get_drive_line(q)
+        for _ in range(n):
+            drive(d, square(12, 0.1))
+            drive(d, gaussian(24, 0.3, 4.0))
+
+    @pulse.kernel
+    def feedback(q: pulse.Qudit, r: pulse.Qudit):
+        a = get_drive_line(q)
+        p = get_readout_line(r)
+        for _ in range(n):
+            drive(a, square(12, 0.1))
+            sync(a, p)
+            m = readout(p, square(48, 0.05))
+            sync(p, a)
+            if m:
+                drive(a, square(12, 0.2))
+
+    @pulse.kernel
+    def tones(q: pulse.Qudit, r: pulse.Qudit):
+        d = get_drive_line(q)
+        e = get_drive_line(r)
+        for _ in range(n):
+            drive(d, square(12, 0.1))
+            drive(e, square(12, 0.1))
+        set_frequency(e.tone, 5.1e9)
+        for _ in range(n):
+            drive(e, square(12, 0.1))
+
+    @pulse.kernel
+    def two_lines(q: pulse.Qudit, r: pulse.Qudit):
+        a = get_drive_line(q)
+        b = get_drive_line(r)
+        for _ in range(n):
+            drive(a, square(12, 0.1))
+            drive(b, gaussian(24, 0.1, 4.0))
+
+    return {"drives": drives, "feedback": feedback, "tones": tones, "two_lines": two_lines}
+
+
+@pytest.mark.parametrize("clock", [None, *range(len(OWN_CLOCKS))])
+@pytest.mark.parametrize("trips", [65, 100])
+@pytest.mark.parametrize("name", list(_runtime(1)))
+@pytest.mark.parametrize("schedule", ["asap", "alap", "rcp"])
+def test_a_long_rolled_loop_of_runtime_qudits_is_summarized_and_checked_as_every_iteration(
+    monkeypatch, clock, trips, name, schedule
+):
+    kernel = _runtime(trips)[name]
+    generic = _lowered(kernel, schedule)
+    generic = generic._generic or generic
+    assert generic._role.slots
+    program: list[Any] = []
+    controller._walk(generic, values=False, repeats=program, periods=[])
+    assert program or (name, schedule) == ("two_lines", "rcp")
+    walk = controller._walk
+
+    def played(*args: Any, repeats: Any = None, periods: Any = None, **kwargs: Any) -> Any:
+        return walk(*args, **kwargs)
+
+    # A runtime qudit's own frequency is one tone wherever it plays.
+    tones = [ControllerLimits(tones_per_line=1), ControllerLimits(tones_per_line=2)]
+    for limits in [*LIMITS, *tones]:
+        if clock is not None:
+            limits = dataclasses.replace(limits, **OWN_CLOCKS[clock])
+        found, exact = controller._compile_check(generic, limits)
+        compiled = _compiled(kernel, schedule, limits)
+        with monkeypatch.context() as patch:
+            patch.setattr(controller, "_walk", played)
+            every, exactly = controller._compile_check(generic, limits)
+            assert (list(found), exact) == (list(every), exactly)
+            assert compiled == _compiled(kernel, schedule, limits)
+
+
+def test_a_rolled_loop_of_10_15_iterations_of_a_runtime_qudit_is_checked_in_bounds():
+    for limits in ("issue_cycles=4, min_wait_cycles=4", "tones_per_line=1, max_amplitude=0.05"):
+        few = _in_a_child("runtime", 20, limits)
+        many = _in_a_child("runtime", 10**15, limits)
         each = int(str(few["count"])) // 20
         assert each and many["count"] == each * 10**15
         assert many["message"] == str(few["message"]).replace(

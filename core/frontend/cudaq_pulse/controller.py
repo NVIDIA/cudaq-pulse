@@ -2545,9 +2545,12 @@ def _compile_check(
             lowered, limits, maybe if lowered.parameters else None
         ):
             return [], not maybe
-    repeats: list[tuple[int, ...]] | None = None if system is not None or slots else []
-    for unsynced in (True, False):
+    repeats: list[tuple[int, ...]] | None = None if system is not None else []
+    # Loops of lines of different periods summarized too, then not, then none.
+    for unsynced in (True, False, None):
         periods: list[tuple[int, int, int]] | None = [] if unsynced else None
+        if unsynced is None:
+            repeats = None
         lines, events, _, off, problems = _walk(
             lowered,
             values=False,
@@ -2558,19 +2561,42 @@ def _compile_check(
         )
         if not repeats:
             break
-        from ._loops import UnsyncedError, violations
+        from ._loops import UnsyncedError, loops_of, violations
 
         assert limits is not None and not problems
+        natives = None
+        if slots and limits.tones_per_line is not None:
+            with lowered._lock:
+                natives, again, moved = lowered._module.controller_native_tones(
+                    True, bool(unsynced)
+                )
+            if loops_of(repeats, periods) != loops_of(again, moved):
+                repeats = []
+                continue
         rates = None if limits is machine.controller else _sample_rates(lowered, limits)
-        pending: list[str] | None = [] if lowered.parameters else None
+        pending: list[str] | None = [] if lowered.parameters or slots else None
         own = _native_clock(clocks)
         try:
             found = violations(
-                lowered, events, repeats, limits, lines, pending, rates, periods or (), own, off
+                lowered,
+                events,
+                repeats,
+                limits,
+                lines,
+                pending,
+                rates,
+                periods or (),
+                own,
+                off,
+                natives,
             )
         except UnsyncedError:
             repeats = []
             continue
+        if slots and limits.acquirers:
+            assert pending is not None
+            # Acquirers are given per carrier, which each call binds.
+            pending.append("acquirers")
         return found, not pending
     if system is not None and slots and not system._plays_everything:
         # Which controller plays a line depends on the qudits a call binds.

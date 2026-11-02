@@ -560,13 +560,16 @@ def violations(
     periods: Sequence[Sequence[int]] = (),
     own: ControllerClock | None = None,
     off: Sequence[tuple[int, int, int]] = (),
+    natives: Sequence[int] | None = None,
 ) -> list[str] | Violations:
     """``controller._violations`` of the events of a summarizing walk, with
     *sample_rate* (made, plays) when a line plays samples made for another
     rate (``controller._sample_rate_violations``), and *periods* the line
     periods of its unsynced loops; in the cycles of *own*, when the walk
-    counted them, with *off* its events off the grid. ``UnsyncedError``
-    when a check pairs events of lines of different periods."""
+    counted them, with *off* its events off the grid, and *natives* by event
+    the runtime qudit whose own frequency its tone plays, or -1.
+    ``UnsyncedError`` when a check pairs events of lines of different
+    periods."""
     tree, chains = _tree(len(events), repeats, periods)
     budget = _Budget()
     found: list[Any] = []
@@ -638,7 +641,12 @@ def violations(
                     f"{limits.tones_per_line} per line"
                 )
             elif unresolved is not None:
-                count = _count(_keep(items, lambda i: events[i].get("frequency_hz") is None))
+                unknown = _keep(items, lambda i: events[i].get("frequency_hz") is None)
+                if natives is None:
+                    count = _count(unknown)
+                else:
+                    count = len({natives[i] for i in _events_of(unknown) if natives[i] >= 0})
+                    count += _count(_keep(unknown, lambda i: natives[i] < 0))
                 if len(tones) + count > limits.tones_per_line:
                     unresolved.append(f"line {line}: tone frequencies")
         if limits.max_amplitude is not None:
@@ -963,3 +971,14 @@ class _Feedback:
                         )
                     )
         return found
+
+
+def loops_of(
+    repeats: Sequence[Sequence[int]], periods: Sequence[Sequence[int]] | None
+) -> tuple[list[tuple[int, ...]], list[tuple[int, ...]]]:
+    """The loops a summarizing walk's *repeats* and line *periods* keep
+    rolled, whatever clock it counts their periods in."""
+    return (
+        [(*r[:3], r[3] < 0, *r[4:]) for r in repeats],
+        [tuple(p[:2]) for p in periods or ()],
+    )
