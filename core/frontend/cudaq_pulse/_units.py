@@ -118,6 +118,13 @@ class Time(float):
     def __reduce__(self) -> tuple[Any, ...]:
         return (_time, (self.exact_ns.numerator, self.exact_ns.denominator))
 
+    # A time is immutable, so a copy is the time itself.
+    def __copy__(self) -> Time:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Time:
+        return self
+
     def __repr__(self) -> str:
         value = self.exact_ns
         for unit, scale in (("s", 10**9), ("ms", 10**6), ("us", 10**3)):

@@ -179,6 +179,15 @@ def test_exporting_an_emulated_program_loads_no_module(tmp_path):
     assert _loaded(code, tmp_path, ()) == []
 
 
+def test_copying_a_time_keeps_it():
+    # Kernel globals are snapshotted by deepcopy on each definition; a time,
+    # being immutable, is its own copy.
+    import copy
+
+    t = 40 * pulse.ns
+    assert copy.copy(t) is t and copy.deepcopy({"t": t})["t"] is t
+
+
 def test_the_report_names_resolve_on_first_use():
     code = (
         "import pickle, sys\n"
