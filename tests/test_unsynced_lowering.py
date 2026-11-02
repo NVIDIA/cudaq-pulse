@@ -239,6 +239,16 @@ def _kernels(n: int) -> dict[str, Any]:
                 wait(a, 2)
             drive(b, gaussian(8, 0.1, 2.0))
 
+    @pulse.kernel
+    def drifts_then_locks(q, r, t):
+        b = get_drive_line(r)
+        p = get_readout_line(q)
+        wait(b, 600)
+        for _ in range(n):
+            m = readout(p, square(40, 0.05))
+            if m:
+                drive(b, square(10, 0.1))
+
     return {
         "two_lines": two_lines,
         "three_lines": three_lines,
@@ -257,6 +267,7 @@ def _kernels(n: int) -> dict[str, Any]:
         "on_two_measurements_before": on_two_measurements_before,
         "peeled_on_a_measurement_before": peeled_on_a_measurement_before,
         "nested": nested,
+        "drifts_then_locks": drifts_then_locks,
     }
 
 
@@ -454,6 +465,14 @@ def test_a_loop_irregular_at_its_ends_lowers_to_the_same_program_at_more_trips(s
             != _size(_random_kernel(seed, 250, branched), schedule)
         ]
     assert grow == []
+
+
+def test_a_loop_that_drifts_then_locks_peels_the_shorter_part():
+    # Its drive moves by its own 10 cycles for 20 iterations, then by the
+    # readout's 40: of 30 iterations the last 10 are peeled and the drift
+    # rolled, of 100 the drift is peeled.
+    shorter = _size(_kernels(30)["drifts_then_locks"], "asap")
+    assert shorter < _size(_kernels(100)["drifts_then_locks"], "asap")
 
 
 @pytest.mark.parametrize("trips", [2, 3, 5, 40])

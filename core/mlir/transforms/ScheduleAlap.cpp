@@ -2475,9 +2475,10 @@ struct NotAffine {
 
 /// The iterations to peel off `loop` so that of the starts `line` it plays
 /// one op at, by iteration, one run of equal steps between consecutive
-/// iterations is left: the run at an end of the line past which the
-/// scheduler extrapolated, as those iterations repeat it, else the longest
-/// run of two steps or more. None when there is no such run.
+/// iterations is left: the one over the most iterations, counting for the
+/// run at an end past which the scheduler extrapolated the iterations it
+/// did not simulate, as they repeat it; any other run has two steps or
+/// more. None when there is no such run.
 static NotAffine peelAround(mlir::scf::ForOp loop,
                             llvm::ArrayRef<std::pair<int64_t, int64_t>> line,
                             int64_t trips) {
@@ -2485,6 +2486,8 @@ static NotAffine peelAround(mlir::scf::ForOp loop,
   if (before && after)
     return {loop};
   size_t first = 0, last = 0;
+  int64_t longest = 0;
+  bool extended = false;
   for (size_t from = 0; from + 1 < line.size();) {
     size_t to = from + 1;
     if (line[to].first != line[from].first + 1) {
@@ -2495,19 +2498,22 @@ static NotAffine peelAround(mlir::scf::ForOp loop,
     while (to + 1 < line.size() && line[to + 1].first == line[to].first + 1 &&
            line[to + 1].second - line[to].second == step)
       ++to;
-    bool wanted = before  ? from == 0
-                  : after ? to == line.size() - 1
-                          : to - from > last - first;
-    if (wanted) {
+    // The run at the end extrapolated past spans the iterations past it too.
+    bool extends = (before && from == 0) || (after && to == line.size() - 1);
+    int64_t span = (extends && before ? 0 : line[from].first);
+    span = (extends && after ? trips - 1 : line[to].first) - span;
+    if (extends ? span >= 1 && span >= longest : span >= 2 && span > longest) {
       first = from;
       last = to;
+      longest = span;
+      extended = extends;
     }
     from = to;
   }
-  if (last == first || (!before && !after && last - first < 2))
+  if (longest == 0)
     return {loop};
-  return {loop, before ? 0 : line[first].first,
-          after ? 0 : trips - 1 - line[last].first};
+  return {loop, extended && before ? 0 : line[first].first,
+          extended && after ? 0 : trips - 1 - line[last].first};
 }
 
 static std::optional<NotAffine>
