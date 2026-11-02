@@ -54,6 +54,7 @@
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
@@ -276,6 +277,111 @@ void runPipeline(mlir::PassManager &pm, mlir::Operation *op,
   DiagnosticCollector diagnostics(pm.getContext());
   if (mlir::failed(pm.run(op)))
     diagnostics.fail(what);
+}
+
+/// Run `pm` on `op` and verify `op` once at the end, where the pass manager
+/// would verify all of it after each pass that changed it.
+void runPipelineVerifyingOnce(mlir::PassManager &pm, mlir::Operation *op,
+                              const std::string &what) {
+  DiagnosticCollector diagnostics(pm.getContext());
+  pm.enableVerifier(false);
+  if (mlir::failed(pm.run(op)) || mlir::failed(mlir::verify(op)))
+    diagnostics.fail(what);
+}
+
+/// The scheduling pass managers of each context made by makeContext, by the
+/// options that built them, for its next modules scheduled alike: building
+/// one, and its first run on a multithreaded context, which copies its
+/// nested passes for each thread, cost as much as scheduling a small module.
+/// One being run is taken out, so that no two threads run it at once.
+class SchedulePasses {
+public:
+  /// (policy, rcp's four resource limits or zeros, whether the classical
+  /// calls are checked, whether the frame-changes pass runs).
+  using Options =
+      std::tuple<std::string, int64_t, int64_t, int64_t, int64_t, bool, bool>;
+
+  explicit SchedulePasses(mlir::MLIRContext *context) : context(context) {
+    std::lock_guard<std::mutex> guard(lock());
+    contexts()[context] = this;
+  }
+  ~SchedulePasses() {
+    std::lock_guard<std::mutex> guard(lock());
+    contexts().erase(context);
+  }
+  SchedulePasses(const SchedulePasses &) = delete;
+  SchedulePasses &operator=(const SchedulePasses &) = delete;
+
+  /// A kept pass manager of `context` built with `options`, or null.
+  static std::unique_ptr<mlir::PassManager> take(mlir::MLIRContext *context,
+                                                 const Options &options) {
+    std::lock_guard<std::mutex> guard(lock());
+    auto found = contexts().find(context);
+    if (found == contexts().end())
+      return nullptr;
+    auto &kept = found->second->kept;
+    for (auto it = kept.begin(); it != kept.end(); ++it)
+      if (it->first == options) {
+        std::unique_ptr<mlir::PassManager> passes = std::move(it->second);
+        kept.erase(it);
+        return passes;
+      }
+    return nullptr;
+  }
+
+  /// Keep `passes`, built with `options`, if `context` keeps pass managers:
+  /// the latest few.
+  static void keep(mlir::MLIRContext *context, Options options,
+                   std::unique_ptr<mlir::PassManager> passes) {
+    std::unique_ptr<mlir::PassManager> dropped; // destroyed unlocked
+    std::lock_guard<std::mutex> guard(lock());
+    auto found = contexts().find(context);
+    if (found == contexts().end()) {
+      dropped = std::move(passes);
+      return;
+    }
+    auto &kept = found->second->kept;
+    if (kept.size() == kMaxKept) {
+      dropped = std::move(kept.front().second);
+      kept.erase(kept.begin());
+    }
+    kept.emplace_back(std::move(options), std::move(passes));
+  }
+
+  /// The lock is held across fork, so that a child inherits it unlocked.
+  static void handleForks() {
+    pthread_atfork([] { lock().lock(); }, [] { lock().unlock(); },
+                   [] { lock().unlock(); });
+  }
+
+private:
+  static constexpr size_t kMaxKept = 4;
+  mlir::MLIRContext *context;
+  std::vector<std::pair<Options, std::unique_ptr<mlir::PassManager>>> kept;
+
+  // Never destroyed, as the shared pool's last context is not.
+  static std::mutex &lock() {
+    static auto *mutex = new std::mutex();
+    return *mutex;
+  }
+  static llvm::DenseMap<mlir::MLIRContext *, SchedulePasses *> &contexts() {
+    static auto *all =
+        new llvm::DenseMap<mlir::MLIRContext *, SchedulePasses *>();
+    return *all;
+  }
+};
+
+/// A new context with `registry`'s dialects that keeps its modules'
+/// scheduling pass managers (SchedulePasses), destroyed before it.
+std::shared_ptr<mlir::MLIRContext>
+makeContext(const mlir::DialectRegistry &registry) {
+  struct Owner {
+    explicit Owner(const mlir::DialectRegistry &registry) : context(registry) {}
+    mlir::MLIRContext context;
+    SchedulePasses passes{&context};
+  };
+  auto owner = std::make_shared<Owner>(registry);
+  return std::shared_ptr<mlir::MLIRContext>(owner, &owner->context);
 }
 
 /// The pass registered as `name`, or null. The registry is filled once, on
@@ -2092,12 +2198,10 @@ public:
                 int64_t switchPenalty = 0) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     changed();
-    mlir::PassManager pm(ctx_.get());
-    addSchedule(pm, *module_, true, policy, maxDrives, maxReadouts,
-                readoutLatency, switchPenalty);
     programs_.clear();
     keepSource();
-    runPipeline(pm, *module_, "pulse scheduling failed");
+    runSchedule(*module_, true, policy, maxDrives, maxReadouts, readoutLatency,
+                switchPenalty, "pulse scheduling failed");
   }
 
   using Event = std::tuple<std::string, int64_t, int64_t,
@@ -2849,10 +2953,8 @@ public:
     PulseModule result(ctx_, std::move(copy));
     result.loops_ = loops_;
     result.keepSource();
-    mlir::PassManager pm(ctx_.get());
-    addSchedule(pm, *result.module_, false, policy, maxDrives, maxReadouts,
-                readoutLatency, switchPenalty);
-    runPipeline(pm, *result.module_, "simulation: scheduling failed");
+    runSchedule(*result.module_, false, policy, maxDrives, maxReadouts,
+                readoutLatency, switchPenalty, "simulation: scheduling failed");
     return result;
   }
 
@@ -2874,10 +2976,8 @@ public:
     result.loops_ = loops_;
     result.runTime_ = runTime_;
     result.keepSource();
-    mlir::PassManager pm(ctx_.get());
-    addSchedule(pm, *result.module_, true, policy, maxDrives, maxReadouts,
-                readoutLatency, switchPenalty);
-    runPipeline(pm, *result.module_, "pulse scheduling failed");
+    runSchedule(*result.module_, true, policy, maxDrives, maxReadouts,
+                readoutLatency, switchPenalty, "pulse scheduling failed");
     return result;
   }
 
@@ -3479,6 +3579,7 @@ public:
     if (specialized_.ops.load() < 0) {
       int64_t ops = 0;
       source().walk([&](mlir::Operation *) { ++ops; });
+      specialized_.frameChanges = pulse::hasFrameChangeWork(source());
       specialized_.ops.store(ops);
     }
     bool placed = !slots.carriers.empty();
@@ -3550,10 +3651,9 @@ public:
     result.loops_ = loops_;
     result.runTime_ = runTime_;
     result.keepSource();
-    mlir::PassManager pm(ctx_.get());
-    addSchedule(pm, *result.module_, true, schedule, maxDrives, maxReadouts,
-                readoutLatency, switchPenalty);
-    runPipeline(pm, *result.module_, "specialize: pass pipeline failed");
+    runSchedule(*result.module_, true, schedule, maxDrives, maxReadouts,
+                readoutLatency, switchPenalty,
+                "specialize: pass pipeline failed", specialized_.frameChanges);
     return result;
   }
 
@@ -3717,13 +3817,39 @@ private:
     return program;
   }
 
-  /// Add scheduling `module` to `pm`: the schedule pass of `policy` with
-  /// these resource limits, the check of its classical calls if `checkCalls`
-  /// and it declares any, then the passes that run on a scheduled module.
-  static void addSchedule(mlir::PassManager &pm, mlir::ModuleOp module,
-                          bool checkCalls, const std::string &policy,
-                          int64_t maxDrives, int64_t maxReadouts,
-                          int64_t readoutLatency, int64_t switchPenalty) {
+  /// Schedule `module` with the schedule pass of `policy` and these
+  /// resource limits, check its classical calls if `checkCalls` and it
+  /// declares any, then run the passes that run on a scheduled module,
+  /// raising with `what` on failure. `frameChanges`, when known, says
+  /// whether the module has frame-change work; otherwise a walk finds out.
+  void runSchedule(mlir::ModuleOp module, bool checkCalls,
+                   const std::string &policy, int64_t maxDrives,
+                   int64_t maxReadouts, int64_t readoutLatency,
+                   int64_t switchPenalty, const std::string &what,
+                   std::optional<bool> frameChanges = std::nullopt) {
+    bool rcp = policy == "rcp" || policy == "alap_rcp";
+    SchedulePasses::Options options{
+        policy,
+        rcp ? maxDrives : 0,
+        rcp ? maxReadouts : 0,
+        rcp ? readoutLatency : 0,
+        rcp ? switchPenalty : 0,
+        checkCalls && classical::declaresClassicalCalls(module),
+        frameChanges ? *frameChanges : pulse::hasFrameChangeWork(module)};
+    auto passes = SchedulePasses::take(ctx_.get(), options);
+    if (!passes) {
+      passes = std::make_unique<mlir::PassManager>(ctx_.get());
+      addSchedule(*passes, options);
+    }
+    runPipelineVerifyingOnce(*passes, module, what);
+    SchedulePasses::keep(ctx_.get(), std::move(options), std::move(passes));
+  }
+
+  /// Add to `pm` the passes runSchedule runs with `options`.
+  static void addSchedule(mlir::PassManager &pm,
+                          const SchedulePasses::Options &options) {
+    auto &[policy, maxDrives, maxReadouts, readoutLatency, switchPenalty,
+           checkCalls, frameChanges] = options;
     if (policy == "asap")
       pm.addNestedPass<mlir::func::FuncOp>(
           pulse::createPulseScheduleAsapPass());
@@ -3736,17 +3862,19 @@ private:
           policy == "alap_rcp"));
     else
       throw std::invalid_argument("unknown schedule policy: " + policy);
-    if (checkCalls && classical::declaresClassicalCalls(module))
+    if (checkCalls)
       pm.addPass(pulse::createPulseClassicalCheckPass());
-    addAfterSchedulePasses(pm);
+    addAfterSchedulePasses(pm, frameChanges);
   }
 
   /// Passes that run on every module once it is scheduled and checked, by
   /// schedule(), for a call's values (specialize) and for simulation: a
   /// pass that needs the times of the ops, or that must see each binding,
-  /// goes here.
-  static void addAfterSchedulePasses(mlir::PassManager &pm) {
-    pm.addPass(pulse::createPulseFrameChangesPass());
+  /// goes here. A pass that would leave the module as it is is not added:
+  /// a pass manager's run of one costs more than the walk that finds out.
+  static void addAfterSchedulePasses(mlir::PassManager &pm, bool frameChanges) {
+    if (frameChanges)
+      pm.addPass(pulse::createPulseFrameChangesPass());
   }
 
   /// Bind `values` to the results of `wait`: the wait stays, so what it
@@ -3859,6 +3987,9 @@ private:
     size_t maxEntries = 16;
     int64_t maxOps = int64_t(1) << 16;
     std::atomic<int64_t> ops{-1}; // of this module, once counted
+    // Whether the frame-changes pass has work in this module, counted with
+    // `ops`: binding values removes frame changes at most.
+    bool frameChanges = true;
     // Hashes of the keys last built and not kept: a module is kept only
     // once its key recurs, so that values seen once hold no memory.
     std::array<size_t, 32> missed{};
@@ -3866,7 +3997,8 @@ private:
     SpecializedCache() = default;
     SpecializedCache(SpecializedCache &&other) noexcept
         : entries(std::move(other.entries)), maxEntries(other.maxEntries),
-          maxOps(other.maxOps), ops(other.ops.load()), missed(other.missed),
+          maxOps(other.maxOps), ops(other.ops.load()),
+          frameChanges(other.frameChanges), missed(other.missed),
           nextMissed(other.nextMissed) {}
   };
   struct Version {
@@ -4007,7 +4139,7 @@ public:
     auto &pool = state();
     if (!pool.current || ++pool.uses > limits.modules ||
         pool.words >= limits.words) {
-      pool.current = std::make_shared<mlir::MLIRContext>(makeRegistry());
+      pool.current = makeContext(makeRegistry());
       pool.current->loadAllAvailableDialects();
       pool.uses = 1;
       pool.words = 0;
@@ -5581,8 +5713,7 @@ public:
   }
 
   PulseModule parse_to_module(const std::string &mlir_text) {
-    auto ctx = std::make_shared<mlir::MLIRContext>();
-    ctx->appendDialectRegistry(registry_);
+    auto ctx = makeContext(registry_);
     ctx->loadAllAvailableDialects();
     auto module =
         parseModule(mlir_text, ctx.get(), "Failed to parse MLIR text");
@@ -5597,6 +5728,9 @@ private:
 
 NB_MODULE(_cudaq_pulse_native, m) {
   m.doc() = "cudaq-pulse native MLIR pipeline bindings";
+  // Fork takes the locks in the reverse order of these: the pool's is held
+  // while a context, and its SchedulePasses, is made or destroyed.
+  SchedulePasses::handleForks();
   SharedContextPool::handleForks();
 
   // Kept for the life of the process, like the module that holds it.

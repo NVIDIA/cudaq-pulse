@@ -74,6 +74,9 @@ std::unique_ptr<mlir::Pass> createPulseClassicalCheckPass();
 /// pulse-frame-changes: place the frame changes of a scheduled program on
 /// their tones' timelines and mark those no pulse plays with.
 std::unique_ptr<mlir::Pass> createPulseFrameChangesPass();
+/// Whether pulse-frame-changes would change `op`: it holds a frame change,
+/// or a loop or branch the pass marked.
+bool hasFrameChangeWork(mlir::Operation *op);
 std::unique_ptr<mlir::Pass> createPulseUnrollClassicalLoopsPass();
 /// pulse-lower-selects with no parameter taken at run time, for
 /// cudaq-pulse-opt (where the `runtime` option sets them).

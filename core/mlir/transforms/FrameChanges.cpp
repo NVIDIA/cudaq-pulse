@@ -65,6 +65,7 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 
+#include <array>
 #include <optional>
 
 namespace {
@@ -103,10 +104,34 @@ bool passesThrough(mlir::scf::ForOp loop, unsigned index) {
   return value == loop.getRegionIterArg(index);
 }
 
+/// The names of the attributes the pass sets, interned once a run.
+struct Names {
+  explicit Names(mlir::MLIRContext *context)
+      : start(mlir::StringAttr::get(context, "start_cycles")),
+        duration(mlir::StringAttr::get(context, "duration_cycles")),
+        period(mlir::StringAttr::get(context, "period_cycles")),
+        unconsumed(mlir::StringAttr::get(context, "pulse.unconsumed")),
+        carried(mlir::StringAttr::get(context, "pulse.carried")),
+        carriedIn(mlir::StringAttr::get(context, "pulse.carried_in")),
+        exitUpdates(mlir::StringAttr::get(context, "pulse.exit_updates")),
+        thenUpdates(mlir::StringAttr::get(context, "pulse.then_updates")),
+        elseUpdates(mlir::StringAttr::get(context, "pulse.else_updates")) {}
+
+  mlir::StringAttr start, duration, period;
+  /// The marks, which a run first removes.
+  mlir::StringAttr unconsumed, carried, carriedIn, exitUpdates, thenUpdates,
+      elseUpdates;
+  std::array<mlir::StringAttr, 6> marks() const {
+    return {unconsumed,  carried,     carriedIn,
+            exitUpdates, thenUpdates, elseUpdates};
+  }
+};
+
 class FramePlacement {
 public:
-  explicit FramePlacement(mlir::MLIRContext *context)
-      : i64(mlir::IntegerType::get(context, 64)), context(context) {}
+  FramePlacement(mlir::MLIRContext *context, const Names &names)
+      : i64(mlir::IntegerType::get(context, 64)), context(context),
+        names(names) {}
 
   void place(mlir::Operation *change) {
     size_t depth = pulse::enclosingLoops(change).size();
@@ -134,23 +159,22 @@ public:
       }
     }
     mlir::NamedAttrList attributes(change->getAttrDictionary());
-    attributes.set("start_cycles", mlir::IntegerAttr::get(i64, time->base));
-    attributes.set("duration_cycles", mlir::IntegerAttr::get(i64, 0));
+    attributes.set(names.start, mlir::IntegerAttr::get(i64, time->base));
+    attributes.set(names.duration, mlir::IntegerAttr::get(i64, 0));
     if (time->periods.empty())
-      attributes.erase("period_cycles");
+      attributes.erase(names.period);
     else
-      attributes.set("period_cycles",
+      attributes.set(names.period,
                      mlir::DenseI64ArrayAttr::get(context, time->periods));
     change->setAttrs(attributes.getDictionary(context));
   }
 
 private:
-  static Time timeOf(mlir::Operation *op, int64_t offset) {
-    Time time{op->getAttrOfType<mlir::IntegerAttr>("start_cycles").getInt() +
+  Time timeOf(mlir::Operation *op, int64_t offset) const {
+    Time time{op->getAttrOfType<mlir::IntegerAttr>(names.start).getInt() +
                   offset,
               {}};
-    if (auto periods =
-            op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles"))
+    if (auto periods = op->getAttrOfType<mlir::DenseI64ArrayAttr>(names.period))
       time.periods.assign(periods.asArrayRef().begin(),
                           periods.asArrayRef().end());
     return time;
@@ -166,7 +190,7 @@ private:
     size_t level = pulse::enclosingLoops(loop).size();
     std::optional<Time> first;
     loop.getBody()->walk([&](mlir::Operation *op) {
-      if (isFrameChange(op) || !op->hasAttr("start_cycles"))
+      if (isFrameChange(op) || !op->hasAttr(names.start))
         return;
       Time time = timeOf(op, 0);
       if (time.periods.size() <= level)
@@ -221,12 +245,12 @@ private:
     }
     mlir::Operation *def = tone.getDefiningOp();
     if (isPulse(def)) {
-      if (!def->hasAttr("start_cycles"))
+      if (!def->hasAttr(names.start))
         return std::nullopt;
       return timeOf(def, pulse::scheduledDuration(def).value_or(0));
     }
     if (isFrameChange(def)) {
-      if (!def->hasAttr("start_cycles"))
+      if (!def->hasAttr(names.start))
         return std::nullopt;
       return timeOf(def, 0);
     }
@@ -275,8 +299,7 @@ private:
   /// whose result is `tone`, in iteration 0 of the loops inside `depth`.
   std::optional<Time> nextPulse(mlir::Value tone, size_t depth) {
     for (mlir::Operation *user : tone.getUsers()) {
-      if (isPulse(user) && toneOf(user) == tone &&
-          user->hasAttr("start_cycles")) {
+      if (isPulse(user) && toneOf(user) == tone && user->hasAttr(names.start)) {
         Time time = timeOf(user, 0);
         time.periods.resize(depth, 0);
         return time;
@@ -290,6 +313,7 @@ private:
 
   mlir::IntegerType i64;
   mlir::MLIRContext *context;
+  const Names &names;
   llvm::DenseMap<mlir::Operation *, std::optional<Time>> firsts;
 };
 
@@ -363,8 +387,9 @@ bool follows(mlir::Operation *before, mlir::Operation *user) {
 /// where the export gives them (see the top of this file).
 class PendingChanges {
 public:
-  PendingChanges(mlir::func::FuncOp function, int64_t &nextId)
-      : live(liveTones(function)), nextId(nextId) {}
+  PendingChanges(mlir::func::FuncOp function, const Names &names,
+                 int64_t &nextId)
+      : live(liveTones(function)), names(names), nextId(nextId) {}
 
   llvm::DenseSet<mlir::Value> live;
   /// The changes that are frame updates where they are made.
@@ -372,7 +397,7 @@ public:
   /// The id of each listed change, and the lists of each loop and branch:
   /// (op, attribute) -> ids in program order.
   llvm::MapVector<mlir::Operation *, int64_t> ids;
-  llvm::MapVector<std::pair<mlir::Operation *, llvm::StringRef>,
+  llvm::MapVector<std::pair<mlir::Operation *, mlir::StringAttr>,
                   llvm::SmallVector<int64_t>>
       lists;
 
@@ -387,7 +412,7 @@ public:
       mlir::Value yielded = loop.getBody()->getTerminator()->getOperand(j);
       if (mlir::isa<pulse::ToneType>(yielded.getType()) &&
           !live.contains(loop.getResult(j)) && live.contains(yielded))
-        list(loop, "pulse.exit_updates", yielded);
+        list(loop, names.exitUpdates, yielded);
     }
   }
 
@@ -405,13 +430,14 @@ public:
       if (!live.contains(tone) || playsAfter(tone, branch))
         continue;
       if (!playsIn(branch.getThenRegion(), tone))
-        list(branch, "pulse.then_updates", tone);
+        list(branch, names.thenUpdates, tone);
       if (!playsIn(branch.getElseRegion(), tone))
-        list(branch, "pulse.else_updates", tone);
+        list(branch, names.elseUpdates, tone);
     }
   }
 
 private:
+  const Names &names;
   int64_t &nextId;
 
   /// Whether `user` of `tone` plays with it, or passes it on to what does.
@@ -528,7 +554,7 @@ private:
     }
   }
 
-  void list(mlir::Operation *site, llvm::StringRef name, mlir::Value tone) {
+  void list(mlir::Operation *site, mlir::StringAttr name, mlir::Value tone) {
     llvm::SmallVector<mlir::Operation *> changes;
     if (!tail(tone, changes)) {
       fallback(tone);
@@ -564,21 +590,24 @@ struct PulseFrameChangesPass
     auto mark = mlir::UnitAttr::get(context);
     auto i64 = mlir::IntegerType::get(context, 64);
     int64_t nextId = 0;
-    llvm::SmallVector<mlir::StringAttr, 6> marks;
-    for (llvm::StringRef name :
-         {"pulse.unconsumed", "pulse.carried", "pulse.carried_in",
-          "pulse.exit_updates", "pulse.then_updates", "pulse.else_updates"})
-      marks.push_back(mlir::StringAttr::get(context, name));
+    const Names names(context);
     bool changed = false;
     for (auto function : module.getOps<mlir::func::FuncOp>()) {
-      FramePlacement placement(context);
+      FramePlacement placement(context, names);
       bool changes = false;
       function.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation *op) {
-        if (!op->getRawDictionaryAttrs().empty())
-          for (mlir::StringAttr name : marks)
-            if (op->removeAttr(name))
-              changed = true;
-        if (isFrameChange(op)) {
+        bool change = isFrameChange(op);
+        // Only a frame change, loop or branch carries a mark.
+        if (change || mlir::isa<mlir::scf::ForOp, mlir::scf::IfOp>(op)) {
+          mlir::DictionaryAttr attributes = op->getRawDictionaryAttrs();
+          if (!attributes.empty())
+            for (mlir::StringAttr name : names.marks())
+              if (attributes.contains(name)) {
+                op->removeAttr(name);
+                changed = true;
+              }
+        }
+        if (change) {
           placement.place(op);
           changes = true;
         }
@@ -587,7 +616,7 @@ struct PulseFrameChangesPass
       // Without a frame change, none is pending anywhere.
       if (persistent || !changes)
         continue;
-      PendingChanges pending(function, nextId);
+      PendingChanges pending(function, names, nextId);
       function.walk([&](mlir::Operation *op) {
         if (isFrameChange(op))
           pending.unconsumed(op);
@@ -597,10 +626,10 @@ struct PulseFrameChangesPass
           pending.arms(branch);
       });
       for (mlir::Operation *change : pending.inPlace)
-        change->setAttr("pulse.unconsumed", mark);
+        change->setAttr(names.unconsumed, mark);
       llvm::MapVector<mlir::Operation *, llvm::SmallVector<int64_t>> within;
       for (auto [change, id] : pending.ids) {
-        change->setAttr("pulse.carried", mlir::IntegerAttr::get(i64, id));
+        change->setAttr(names.carried, mlir::IntegerAttr::get(i64, id));
         for (mlir::scf::ForOp loop : pulse::enclosingLoops(change))
           within[loop].push_back(id);
       }
@@ -608,7 +637,7 @@ struct PulseFrameChangesPass
         site.first->setAttr(site.second,
                             mlir::DenseI64ArrayAttr::get(context, ids));
       for (auto &[loop, ids] : within)
-        loop->setAttr("pulse.carried_in",
+        loop->setAttr(names.carriedIn,
                       mlir::DenseI64ArrayAttr::get(context, ids));
     }
     // An unchanged module needs no verifying again.
@@ -621,4 +650,20 @@ struct PulseFrameChangesPass
 
 std::unique_ptr<mlir::Pass> pulse::createPulseFrameChangesPass() {
   return std::make_unique<PulseFrameChangesPass>();
+}
+
+bool pulse::hasFrameChangeWork(mlir::Operation *op) {
+  return op
+      ->walk([](mlir::Operation *op) {
+        if (isFrameChange(op))
+          return mlir::WalkResult::interrupt();
+        if (mlir::isa<mlir::scf::ForOp, mlir::scf::IfOp>(op))
+          for (llvm::StringRef name :
+               {"pulse.carried_in", "pulse.exit_updates", "pulse.then_updates",
+                "pulse.else_updates"})
+            if (op->hasAttr(name))
+              return mlir::WalkResult::interrupt();
+        return mlir::WalkResult::advance();
+      })
+      .wasInterrupted();
 }
