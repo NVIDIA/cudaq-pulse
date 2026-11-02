@@ -27,8 +27,6 @@ feed-line membership (Fig. 1b, drawing only) and the crosstalk matrices
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 CITATION = (
     "S. Krinner, N. Lacroix et al., 'Realizing repeated quantum error correction "
     "in a distance-three surface code', Nature 605, 669 (2022). arXiv:2112.03708"
@@ -180,44 +178,92 @@ READOUT_INTEGRATION_NS = 400.0
 CYCLE_NS = 1100.0
 
 
-@dataclass(frozen=True)
+# Plain classes, not dataclasses: every program on the default target loads
+# them, and nothing compares, prints or copies a row.
 class QubitData:
     """One column of Tab. I. Frequencies in Hz, times in us, errors and
     populations as fractions. Data qubits idle at their lower flux sweet spot
     and auxiliary qubits at their upper one (Methods A, p. 8)."""
 
-    label: str
-    idle_frequency_hz: float
-    anharmonicity_hz: float
-    t1_us: float
-    t2_ramsey_us: float
-    t2_echo_us: float
-    rb_error_1q: float
-    readout_frequency_hz: float
-    readout_qubit_frequency_hz: float
-    dispersive_shift_hz: float
-    readout_dispersive_shift_hz: float
-    kappa_eff_hz: float
-    resonator_coupling_hz: float
-    readout_error_2state: float
-    readout_error_3state: float
-    thermal_population: float
+    __slots__ = (
+        "label",
+        "idle_frequency_hz",
+        "anharmonicity_hz",
+        "t1_us",
+        "t2_ramsey_us",
+        "t2_echo_us",
+        "rb_error_1q",
+        "readout_frequency_hz",
+        "readout_qubit_frequency_hz",
+        "dispersive_shift_hz",
+        "readout_dispersive_shift_hz",
+        "kappa_eff_hz",
+        "resonator_coupling_hz",
+        "readout_error_2state",
+        "readout_error_3state",
+        "thermal_population",
+    )
+
+    def __init__(
+        self,
+        label: str,
+        idle_frequency_hz: float,
+        anharmonicity_hz: float,
+        t1_us: float,
+        t2_ramsey_us: float,
+        t2_echo_us: float,
+        rb_error_1q: float,
+        readout_frequency_hz: float,
+        readout_qubit_frequency_hz: float,
+        dispersive_shift_hz: float,
+        readout_dispersive_shift_hz: float,
+        kappa_eff_hz: float,
+        resonator_coupling_hz: float,
+        readout_error_2state: float,
+        readout_error_3state: float,
+        thermal_population: float,
+    ) -> None:
+        self.label = label
+        self.idle_frequency_hz = idle_frequency_hz
+        self.anharmonicity_hz = anharmonicity_hz
+        self.t1_us = t1_us
+        self.t2_ramsey_us = t2_ramsey_us
+        self.t2_echo_us = t2_echo_us
+        self.rb_error_1q = rb_error_1q
+        self.readout_frequency_hz = readout_frequency_hz
+        self.readout_qubit_frequency_hz = readout_qubit_frequency_hz
+        self.dispersive_shift_hz = dispersive_shift_hz
+        self.readout_dispersive_shift_hz = readout_dispersive_shift_hz
+        self.kappa_eff_hz = kappa_eff_hz
+        self.resonator_coupling_hz = resonator_coupling_hz
+        self.readout_error_2state = readout_error_2state
+        self.readout_error_3state = readout_error_3state
+        self.thermal_population = thermal_population
 
     @property
     def sweet_spot(self) -> str:
         return "lower" if self.label.startswith("D") else "upper"
 
 
-@dataclass(frozen=True)
 class EdgeData:
     """One auxiliary-data coupling: its CZ time step, interaction frequency
     (Hz) and two-qubit gate error (fraction)."""
 
-    auxiliary: str
-    data: str
-    cz_step: int
-    interaction_frequency_hz: float
-    cz_error: float
+    __slots__ = ("auxiliary", "data", "cz_step", "interaction_frequency_hz", "cz_error")
+
+    def __init__(
+        self,
+        auxiliary: str,
+        data: str,
+        cz_step: int,
+        interaction_frequency_hz: float,
+        cz_error: float,
+    ) -> None:
+        self.auxiliary = auxiliary
+        self.data = data
+        self.cz_step = cz_step
+        self.interaction_frequency_hz = interaction_frequency_hz
+        self.cz_error = cz_error
 
 
 QUBITS = tuple(
