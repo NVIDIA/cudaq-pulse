@@ -47,8 +47,12 @@ from ._units import as_nanoseconds
 from .controller import ControllerLimits
 
 if TYPE_CHECKING:
+    from dataclasses import dataclass as _dataclass_when_used
+
     from ._system import Controller, Processor
     from .compiler import Lowered
+else:
+    from ._errors import _dataclass_when_used
 
 _MATH = {
     "sqrt": ("sqrt",),
@@ -1106,7 +1110,7 @@ def format_report(report: ResourceReport) -> str:
 # ── What the processors of a control system run ─────────────────────────────
 
 
-@dataclass(frozen=True)
+@_dataclass_when_used(frozen=True)
 class FunctionUsage:
     """One classical function on the processor that runs it, in
     ``Lowered.controller_usage``.
@@ -1141,7 +1145,7 @@ class FunctionUsage:
         return self.max_latency_ns - self.compute_ns
 
 
-@dataclass(frozen=True)
+@_dataclass_when_used(frozen=True)
 class ProcessorUsage:
     """What one processor runs (``functions``) and its totals: the
     operations and state bytes of all its functions, its calls and their
@@ -1162,7 +1166,7 @@ class ProcessorUsage:
     peak_concurrent_calls: int
 
 
-@dataclass(frozen=True)
+@_dataclass_when_used(frozen=True)
 class ControllerUsage:
     """One controller of the system, by its index, and its processors."""
 
@@ -1173,7 +1177,7 @@ class ControllerUsage:
     processors: tuple[ProcessorUsage, ...]
 
 
-@dataclass(frozen=True)
+@_dataclass_when_used(frozen=True)
 class LimitExceeded:
     """A limit of a processor that a program exceeds, in
     ``UsageReport.exceeded``: the function, or the processor, that exceeds
@@ -1195,7 +1199,7 @@ class LimitExceeded:
         return self.value - self.most
 
 
-@dataclass(frozen=True)
+@_dataclass_when_used(frozen=True)
 class UsageReport:
     """What a program's classical functions use of the processors of its
     control system (``Lowered.controller_usage``): one row per controller

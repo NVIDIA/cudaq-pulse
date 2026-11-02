@@ -222,6 +222,181 @@ def test_every_dataclass_has_a_docstring():
     assert missing == []
 
 
+# Describes the classes made dataclasses when first used, after touching each
+# first in a different way: as made when used (argv[1] "used"), or made
+# dataclasses where defined ("eager"), which must describe them the same.
+_DESCRIBE = r"""
+import copy, dataclasses, inspect, pickle, re, sys, types
+
+if sys.argv[1] == "eager":
+    import importlib.util
+
+    class _Eager:
+        def find_spec(self, name, path=None, target=None):
+            if name != "cudaq_pulse._errors":
+                return None
+            sys.meta_path.remove(self)
+            spec = importlib.util.find_spec(name)
+            run = spec.loader.exec_module
+
+            def exec_module(module):
+                run(module)
+                module._dataclass_when_used = lambda *, frozen: dataclasses.dataclass(frozen=frozen)
+
+            spec.loader.exec_module = exec_module
+            return spec
+
+    sys.meta_path.insert(0, _Eager())
+
+import cudaq_pulse.controller as c
+from cudaq_pulse.targets import CrosstalkEntry
+
+classes = [CrosstalkEntry, c.ControllerLimits, c.FunctionUsage, c.ProcessorUsage,
+           c.ControllerUsage, c.LimitExceeded, c.UsageReport]
+made = [type(vars(cls)["__dataclass_fields__"]) is dict for cls in classes]
+assert made == [sys.argv[1] == "eager"] * len(classes), made
+out = []
+
+
+def clean(value):
+    return re.sub(r" at 0x[0-9a-f]+", "", repr(value))
+
+
+def outcome(make):
+    try:
+        return clean(make())
+    except Exception as error:
+        return f"{type(error).__name__}: {error}"
+
+
+if sys.argv[1] == "eager":
+    pickled = pickle.dumps(c.LimitExceeded("f", "max_ops", 3.0, 2.0, "ops"))
+    print(pickled.hex())
+else:
+    pickled = bytes.fromhex(sys.argv[2])
+# The first use of each: unpickling, fields(), a class attribute, a
+# signature, a subclass, a call, is_dataclass.
+first = pickle.loads(pickled)
+out.append(outcome(lambda: (repr(first), hash(first), first == first, pickle.dumps(first))))
+out.append(outcome(lambda: dataclasses.fields(CrosstalkEntry)))
+out.append(outcome(lambda: c.ControllerLimits.acquirers))
+out.append(outcome(lambda: c.ControllerLimits.compute_links))
+out.append(outcome(lambda: inspect.signature(c.FunctionUsage)))
+
+
+@dataclasses.dataclass(frozen=True)
+class Sub(c.ProcessorUsage):
+    "A subclass."
+
+    extra: int = 0
+
+
+out.append(outcome(lambda: c.ControllerUsage(0, "m", ())))
+out.append(outcome(lambda: dataclasses.is_dataclass(c.UsageReport)))
+
+
+class Plain(CrosstalkEntry):
+    pass
+
+
+def describe(cls):
+    rows = [cls.__qualname__, [k.__name__ for k in cls.__mro__], clean(cls.__dataclass_params__)]
+    for name, value in sorted(vars(cls).items()):
+        if isinstance(value, types.FunctionType):
+            code = value.__code__
+            rows.append((name, value.__qualname__, value.__module__, code.co_code,
+                         code.co_names, code.co_varnames, clean(value.__defaults__),
+                         clean(value.__kwdefaults__), clean(value.__annotations__),
+                         value.__doc__, hasattr(value, "__wrapped__")))
+        else:
+            rows.append((name, clean(value)))
+    rows.append([clean(f) for f in dataclasses.fields(cls)])
+    rows.append(str(inspect.signature(cls)))
+    return rows
+
+
+samples = {c.ControllerLimits: c.ControllerLimits(issue_cycles=2, acquirers={0: 1})}
+for cls in classes + [Sub, Plain]:
+    out.append(describe(cls))
+    obj = samples.get(cls) or cls(*range(len(dataclasses.fields(cls))))
+    out.append([outcome(lambda: repr(obj)), outcome(lambda: hash(obj)),
+                outcome(lambda: obj == copy.copy(obj)),
+                outcome(lambda: obj == dataclasses.replace(obj)),
+                outcome(lambda: dataclasses.asdict(obj)), outcome(lambda: dataclasses.astuple(obj)),
+                outcome(lambda: setattr(obj, "x", 1)), outcome(lambda: delattr(obj, "x")),
+                outcome(lambda: obj.__match_args__), outcome(lambda: copy.deepcopy(obj) == obj)]
+               + [outcome(lambda: pickle.dumps(obj, protocol)) for protocol in (2, 4, 5)]
+               + [outcome(lambda: pickle.loads(pickle.dumps(obj)) == obj)])
+print(repr(out))
+"""
+
+
+def test_a_dataclass_made_when_used_is_the_dataclass_made_where_defined():
+    env = dict(os.environ, PYTHONPATH=_ROOT, PYTHONHASHSEED="0")
+
+    def run(*args):
+        result = subprocess.run(
+            [sys.executable, "-c", _DESCRIBE, *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip().splitlines()
+
+    pickled, eager = run("eager")
+    (used,) = run("used", pickled)
+    assert used == eager
+
+
+def test_a_dataclass_made_when_used_has_every_name_a_dataclass_sets():
+    from dataclasses import dataclass, field
+
+    from cudaq_pulse._errors import _DATACLASS_NAMES
+
+    class Row:
+        """A row."""
+
+        a: int
+        b: list[int] = field(default_factory=list)
+
+    before = dict(vars(Row))
+    dataclass(frozen=True)(Row)
+    changed = {k for k, v in vars(Row).items() if k not in before or before[k] is not v}
+    assert changed == set(_DATACLASS_NAMES)
+    assert "b" in before and "b" not in vars(Row)
+
+
+def test_classes_most_programs_never_use_are_made_when_used():
+    usage = [
+        "ControllerLimits",
+        "ControllerUsage",
+        "FunctionUsage",
+        "LimitExceeded",
+        "ProcessorUsage",
+        "UsageReport",
+    ]
+    unmade = sorted(["CrosstalkEntry", *usage])
+    code = (
+        _PLAIN + "import cudaq_pulse.controller as c\n"
+        "low.schedule; low.export_controller(); low.export_emulation(); c.resources(low)\n"
+        f"names = [(n, getattr(c, n)) for n in {usage!r}]\n"
+        "names += [('CrosstalkEntry', p.targets.CrosstalkEntry)]\n"
+        "def unmade():\n"
+        "    return sorted(n for n, cls in names\n"
+        "                  if type(vars(cls)['__dataclass_fields__']) is not dict)\n"
+        f"assert unmade() == {unmade!r}, unmade()\n"
+        "low.controller_usage\n"
+        f"assert unmade() == {[n for n in unmade if n != 'UsageReport']!r}, unmade()\n"
+    )
+    env = dict(os.environ, PYTHONPATH=_ROOT)
+    result = subprocess.run(
+        [sys.executable, "-c", code], env=env, capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_copying_a_time_keeps_it():
     # Kernel globals are snapshotted by deepcopy on each definition; a time,
     # being immutable, is its own copy.

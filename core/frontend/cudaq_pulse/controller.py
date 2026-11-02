@@ -61,7 +61,7 @@ import os
 import sys
 import types
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, fields
+from dataclasses import field, fields
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
@@ -77,6 +77,7 @@ except ImportError:  # pragma: no cover - CPython builds without the _blake2 mod
     from hashlib import blake2b as _blake2b
 
 if TYPE_CHECKING:
+    from dataclasses import dataclass as _dataclass_when_used
     from fractions import Fraction
 
     import numpy as np
@@ -97,6 +98,8 @@ if TYPE_CHECKING:
     from ._controller_cost import usage as usage
     from ._system import Controller, ControlSystem
     from .compiler import Lowered
+else:
+    from ._errors import _dataclass_when_used
 
 __all__ = [
     "EXPRESSION_TERMS",
@@ -326,7 +329,7 @@ class WaveformMemoryScope(StrEnum):
     SHARED = "shared"
 
 
-@dataclass(frozen=True)
+@_dataclass_when_used(frozen=True)
 class ControllerLimits:
     """What a controller can play; every limit is in its own clock cycles.
 

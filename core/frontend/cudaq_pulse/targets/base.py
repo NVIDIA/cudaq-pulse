@@ -19,10 +19,15 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from types import MappingProxyType
-from typing import Any, overload
+from typing import TYPE_CHECKING, Any, overload
 
 from .._errors import InvalidTypeError, InvalidValueError, NotFoundError, UnsupportedError
 from .models import SimulationModel, TransmonModel
+
+if TYPE_CHECKING:
+    from dataclasses import dataclass as _dataclass_when_used
+else:
+    from .._errors import _dataclass_when_used
 
 _TRANSMON = TransmonModel()
 
@@ -162,7 +167,7 @@ class _Cached[T]:
         return value
 
 
-@dataclass(frozen=True)
+@_dataclass_when_used(frozen=True)
 class CrosstalkEntry:
     """Residual ZZ or other parasitic coupling between qubit pairs.
 
