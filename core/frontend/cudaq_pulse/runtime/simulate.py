@@ -501,7 +501,7 @@ def _read_only_models() -> tuple[type, ...]:
 # runs none of the checks that made it. Every input of the step is in the
 # key or fixed with an object whose id is: targets, their qubits and
 # couplings are frozen, and the models kept (_read_only_models) are
-# read-only, with read-only classes. A device may change its target or
+# read-only, with immutable classes. A device may change its target or
 # clock, both read into the key at each call. An entry holds no object; it
 # is dropped when either target is freed (_forget, before the id can be
 # reused), and the cache is emptied when it holds _MAX_STEPS. Each read and

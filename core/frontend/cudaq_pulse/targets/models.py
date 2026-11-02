@@ -33,23 +33,7 @@ if TYPE_CHECKING:
 __all__ = ["SimulationModel", "TransmonModel"]
 
 
-class _Sealed(type):
-    """The classes of this module, read-only once defined: what a model gives
-    a qudit never changes, so a step resolved for it stays right
-    (``runtime.simulate._STEPS``)."""
-
-    def __setattr__(cls, name: str, value: Any) -> None:
-        if cls.__module__ == __name__:
-            raise AttributeError(f"{cls.__name__} is read-only; subclass it to change {name}")
-        super().__setattr__(name, value)
-
-    def __delattr__(cls, name: str) -> None:
-        if cls.__module__ == __name__:
-            raise AttributeError(f"{cls.__name__} is read-only; subclass it to change {name}")
-        super().__delattr__(name)
-
-
-class SimulationModel(metaclass=_Sealed):
+class SimulationModel:
     """A model of a system's qudits, with ``levels`` levels each.
 
     The base model describes qudits by their 0-1 frequency alone, as evenly
@@ -58,6 +42,10 @@ class SimulationModel(metaclass=_Sealed):
     ``_simulate``.
 
     A model is read-only: its levels by qudit are fixed when it is made.
+    This class and ``TransmonModel`` are immutable, as built-in types are
+    (``import cudaq_pulse`` freezes them), so what they give a qudit never
+    changes and a step resolved for it stays right
+    (``runtime.simulate._STEPS``); subclass them to change it.
     """
 
     #: Levels per qudit, unless the instance sets a qudit's own.

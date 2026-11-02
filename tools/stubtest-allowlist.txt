@@ -11,7 +11,7 @@
 # cannot compare them. Everything else in the package is checked.
 cudaq_pulse\._native\._cudaq_pulse_native\.(JITModule|MLIRPipeline|PulseModule|PulseModuleBuilder)
 cudaq_pulse\._native\._cudaq_pulse_native\.(JITModule|PulseModule)\.__init__
-cudaq_pulse\._native\._cudaq_pulse_native\.(build_stamp|evaluate_callback|identity_keys|infer_list_lengths|shared_context_budget|shared_context_stats)
+cudaq_pulse\._native\._cudaq_pulse_native\.(build_stamp|evaluate_callback|freeze_type|identity_keys|infer_list_lengths|shared_context_budget|shared_context_stats)
 # PEP 695 generic classes carry __type_params__ at runtime, which stubtest
 # looks for in the stub even when the stub is the same source.
 cudaq_pulse\.kernel\._kernel\.(CompiledKernel|Kernel)\.__type_params__

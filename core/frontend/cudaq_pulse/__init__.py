@@ -78,6 +78,14 @@ from .ops import RoundDirection as RoundDirection
 from .ops import round_duration as round_duration
 from .targets._registry import NoTargetError as NoTargetError
 
+# The built-in models are immutable, as built-in types are (targets.models).
+# Kept after the imports above, which load the native module and the models
+# in their order.
+from . import _native, targets  # isort: skip
+
+_native.freeze_type(targets.models.SimulationModel)
+_native.freeze_type(targets.models.TransmonModel)
+
 # A module can't be declared callable, so checkers see the decorator's type.
 if TYPE_CHECKING:
     from .classical import ClassicalDecorator

@@ -5768,6 +5768,60 @@ private:
 
 } // namespace
 
+namespace {
+
+/// Make `cls` immutable, as built-in types are: setting or deleting an
+/// attribute of the class raises TypeError. Its bases must be immutable
+/// already; its subclasses are not made immutable.
+void freezeType(nb::handle cls) {
+  if (!PyType_Check(cls.ptr()))
+    throw nb::type_error("freeze_type takes a class");
+  auto *type = reinterpret_cast<PyTypeObject *>(cls.ptr());
+#if !defined(Py_LIMITED_API) && PY_VERSION_HEX >= 0x030E0000
+  if (PyType_Freeze(type) < 0)
+    throw nb::python_error();
+#else
+#if defined(Py_LIMITED_API)
+  // Built against an older stable ABI: PyType_Freeze is the running
+  // Python's own where it has one (3.14).
+  using Freeze = int (*)(PyTypeObject *);
+  static const Freeze freeze =
+      Py_Version >= 0x030E0000
+          ? reinterpret_cast<Freeze>(dlsym(RTLD_DEFAULT, "PyType_Freeze"))
+          : nullptr;
+  if (freeze) {
+    if (freeze(type) < 0)
+      throw nb::python_error();
+    return;
+  }
+#endif
+  // What PyType_Freeze does, before 3.14.
+  nb::tuple mro = nb::borrow<nb::tuple>(cls.attr("__mro__"));
+  for (size_t i = 1; i < mro.size(); ++i)
+    if (!(PyType_GetFlags(reinterpret_cast<PyTypeObject *>(mro[i].ptr())) &
+          Py_TPFLAGS_IMMUTABLETYPE))
+      throw nb::type_error("freeze_type: a base of the class is mutable");
+#if defined(Py_LIMITED_API)
+  // The stable ABI hides PyTypeObject. tp_flags follows the object header
+  // and 18 pointer-sized slots in every CPython 3.12 and 3.13 (no stable
+  // ABI build runs free-threaded); checked against PyType_GetFlags.
+  auto *flags = reinterpret_cast<unsigned long *>(
+      reinterpret_cast<char *>(type) + 21 * sizeof(void *));
+  if (*flags != PyType_GetFlags(type))
+    throw std::runtime_error("freeze_type: unknown PyTypeObject layout");
+  *flags |= Py_TPFLAGS_IMMUTABLETYPE;
+#else
+  type->tp_flags |= Py_TPFLAGS_IMMUTABLETYPE;
+#endif
+  // No PyType_Modified: what the interpreter has cached of the class holds
+  // whether or not it is mutable, and keeping its version tag keeps the
+  // method cache as it was. Invalidating it would retag the class from the
+  // built-in types' counter.
+#endif
+}
+
+} // namespace
+
 NB_MODULE(_cudaq_pulse_native, m) {
   m.doc() = "cudaq-pulse native MLIR pipeline bindings";
   // Fork takes the locks in the reverse order of these: the pool's is held
@@ -6064,6 +6118,12 @@ NB_MODULE(_cudaq_pulse_native, m) {
       "is second), by identity, None where there is none; the tracer's scan "
       "of a kernel's locals",
       nb::arg("mapping"), nb::arg("first"), nb::arg("second"));
+
+  m.def("freeze_type", &freezeType,
+        nb::sig("def freeze_type(cls: type) -> None"),
+        "Make cls immutable, as built-in types are: setting or deleting its "
+        "attributes raises TypeError. Its bases must be immutable already",
+        nb::arg("cls"));
 
   nb::class_<JITModule>(m, "JITModule")
       .def("lookup", &JITModule::lookup,

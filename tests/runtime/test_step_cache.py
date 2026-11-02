@@ -10,8 +10,10 @@ what the step depends on, holds no target alive and stays small."""
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import gc
+import pickle
 import threading
 import warnings
 import weakref
@@ -150,14 +152,50 @@ def test_what_a_kept_step_depends_on_cannot_change_in_place():
         model._levels[0] = 6
     for change in (
         lambda: setattr(model, "_levels", {0: 6}),
+        lambda: object.__setattr__(model, "levels", 6),
+        lambda: delattr(model, "_levels"),
+    ):
+        with pytest.raises(AttributeError):
+            change()
+    for change in (
         lambda: setattr(TransmonModel, "levels", 5),
         lambda: setattr(TransmonModel, "energies_hz", lambda self, qubit, levels: []),
+        lambda: type.__setattr__(TransmonModel, "levels", 5),
         lambda: delattr(SimulationModel, "energies_hz"),
+        lambda: setattr(SimulationModel, "__init__", lambda self: None),
     ):
-        with pytest.raises(AttributeError, match="read-only"):
+        with pytest.raises(TypeError, match="immutable type"):
             change()
     assert TransmonModel.levels == 3
     assert model.levels_of(0) == 4
+
+
+def test_a_subclass_of_a_model_may_change(steps):
+    class Fine(TransmonModel):
+        pass
+
+    Fine.levels = 5
+    Fine.levels_of = lambda self, qudit: 2
+    del Fine.levels_of
+    lowered = on(dataclasses.replace(_target(), model=Fine()), _flip, Q[0])
+    pulse.simulate(lowered)
+    assert steps[-1] == 0.5 / 12
+    Fine.levels = 2
+    pulse.simulate(lowered)
+    assert steps[-1] == 0.05
+
+
+@pytest.mark.parametrize("model", [SimulationModel(), TransmonModel(levels={0: 4, 1: 2})])
+@pytest.mark.parametrize("move", [pickle.loads, copy.copy, copy.deepcopy])
+def test_a_model_pickles_and_copies_whole(model, move):
+    moved = move(pickle.dumps(model)) if move is pickle.loads else move(model)
+    assert type(moved) is type(model) and repr(moved) == repr(model)
+    assert [moved.levels_of(q) for q in range(3)] == [model.levels_of(q) for q in range(3)]
+    with pytest.raises(AttributeError):
+        moved._levels = {0: 6}
+    target = dataclasses.replace(_target(), model=model)
+    for again in (pickle.loads(pickle.dumps(target)), copy.deepcopy(target)):
+        assert repr(again.model) == repr(model)
 
 
 def test_a_model_of_the_user_s_own_is_not_kept(steps):

@@ -198,9 +198,10 @@ behavior may change in any 0.x release.
   a note giving the line that called `simulate`; on the CPU and on the GPU,
   with no cost to a run that does not diverge.
 - **Simulation models are read-only.** A model's levels by qudit are fixed
-  when it is made, and setting or deleting an attribute of
-  `SimulationModel` or `TransmonModel` raises `AttributeError`: subclass
-  them to change what they give a qudit. `simulate` keeps the step it
+  when it is made, and `SimulationModel` and `TransmonModel` are immutable,
+  as built-in types are: setting or deleting one of their attributes raises
+  `TypeError`. Subclass them to change what they give a qudit; a subclass
+  is not immutable. `simulate` keeps the step it
   resolves for a target with one of them, so a second call on that target
   skips the checks, and drops it when the target is freed.
 - **Calibration on the controller.** `cudaq_pulse.classical.calibration`
