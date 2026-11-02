@@ -143,3 +143,12 @@ def test_a_program_in_cycles_loads_no_fractions(tmp_path):
     assert _loaded(code, tmp_path, ("fractions", "decimal")) == []
     timed = _PLAIN + "low.duration\n"
     assert _loaded(timed, tmp_path, ("fractions",)) == ["fractions"]
+
+
+def test_simulating_without_shots_loads_no_random_generator(tmp_path):
+    # numpy.random takes milliseconds to import, with the hashing it loads;
+    # only drawing shots (or a program's calls) uses a generator.
+    modules = ("numpy.random", "hashlib")
+    assert _loaded(_PLAIN + "p.simulate(low)\n", tmp_path, modules) == []
+    shots = _PLAIN + "p.simulate(low, shots=10, seed=1)\n"
+    assert _loaded(shots, tmp_path, modules) != []

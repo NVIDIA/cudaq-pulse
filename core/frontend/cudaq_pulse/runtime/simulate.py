@@ -24,7 +24,6 @@ by the cuDensityMat runtime (``backend="gpu"``), from the projected state.
 
 from __future__ import annotations
 
-import hashlib
 import math
 import re as _re
 import threading
@@ -49,6 +48,12 @@ from .._units import Time, as_nanoseconds
 from ..compiler import ScheduledEvent
 from . import _propagate
 from ._attributes import _VALID_INTEGRATORS, _f64, _level_attributes, _target_attributes
+
+try:
+    # hashlib's own blake2b, without hashlib's import of OpenSSL (a millisecond).
+    from _blake2 import blake2b as _blake2b
+except ImportError:  # pragma: no cover - CPython builds without the _blake2 module
+    from hashlib import blake2b as _blake2b
 
 if TYPE_CHECKING:
     from .._device import Qudit
@@ -842,7 +847,6 @@ def _simulate_compiled(
         engine = _GpuBackend(module, dims, dt_ns, base, lock, integrator)
     state = engine.prepare(state)
 
-    rng = np.random.default_rng(seed)
     if tree:
         return _simulate_tree(
             module,
@@ -852,7 +856,7 @@ def _simulate_compiled(
             t_start,
             None if path_end else t_end,
             shots,
-            rng,
+            np.random.default_rng(seed),
             functions,
             handlers,
             compiled,
@@ -863,6 +867,8 @@ def _simulate_compiled(
             mode,
             sampled,
         )
+    # Only shots draw: numpy.random, and the hashing it imports, load for them.
+    rng: np.random.Generator = None if shots is None else np.random.default_rng(seed)  # type: ignore[assignment]
     seen: dict[tuple[int, tuple[int, ...]], Measurement] = {}
     leaves: list[tuple[Any, list[tuple[tuple[int, tuple[int, ...]], int]], int]] = []
 
@@ -1335,7 +1341,7 @@ class _Stepper:
             return self._rk4(rho, hs)
         # A digest, not the coefficients: a long pulse train's run to
         # megabytes, and the cache keeps thousands of keys.
-        digest = hashlib.blake2b(np.round(values, 12).tobytes(), digest_size=16).digest()
+        digest = _blake2b(np.round(values, 12).tobytes(), digest_size=16).digest()
         key = (self.key, "rk4", digest)
         propagator = _propagate.cached(key)
         if propagator is None:
