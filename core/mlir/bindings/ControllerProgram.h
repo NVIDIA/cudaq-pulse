@@ -2690,11 +2690,20 @@ private:
   /// the same read-only mappings every time, which are read once.
   static std::shared_ptr<const Shapes> shapesOf(nb::handle parameters,
                                                 nb::handle amplitudes) {
-    static PyObject *readParameters = nullptr, *readAmplitudes = nullptr;
-    static std::shared_ptr<const Shapes> read;
-    if (read && parameters.ptr() == readParameters &&
-        amplitudes.ptr() == readAmplitudes)
-      return read;
+    // Never destroyed: its names are Python objects, and static objects
+    // are destroyed at exit, after the interpreter has freed them.
+    struct Read {
+      nb::ft_mutex mutex;
+      PyObject *parameters = nullptr, *amplitudes = nullptr;
+      std::shared_ptr<const Shapes> shapes;
+    };
+    static Read *read = new Read();
+    {
+      nb::ft_lock_guard guard(read->mutex);
+      if (read->shapes && parameters.ptr() == read->parameters &&
+          amplitudes.ptr() == read->amplitudes)
+        return read->shapes;
+    }
     auto shapes = std::make_shared<Shapes>();
     for (nb::handle shape : parameters) {
       Shape &info = (*shapes)[nb::cast<std::string>(shape)];
@@ -2711,13 +2720,14 @@ private:
         info.names.push_back(nb::borrow(name));
       }
     }
-    // Held for the life of the process, so that no other mapping takes
-    // their addresses.
-    Py_XDECREF(readParameters);
-    Py_XDECREF(readAmplitudes);
-    readParameters = Py_NewRef(parameters.ptr());
-    readAmplitudes = Py_NewRef(amplitudes.ptr());
-    read = shapes;
+    nb::ft_lock_guard guard(read->mutex);
+    // Held while they are read, so that no other mapping takes their
+    // addresses.
+    Py_XDECREF(read->parameters);
+    Py_XDECREF(read->amplitudes);
+    read->parameters = Py_NewRef(parameters.ptr());
+    read->amplitudes = Py_NewRef(amplitudes.ptr());
+    read->shapes = shapes;
     return shapes;
   }
 
