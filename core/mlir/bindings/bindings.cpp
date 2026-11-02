@@ -2031,6 +2031,7 @@ public:
       return copy;
     };
     PulseModule result(ctx_, resolve(*module_));
+    result.loops_ = loops_;
     if (source_)
       result.source_ = resolve(*source_);
     return result;
@@ -2153,6 +2154,8 @@ public:
   /// of its loops, `shifts` its start's shift per iteration of each loop
   /// around it, outermost first, or (trips, nodes) for a loop.
   nb::object event_tree(int64_t limit) {
+    if (!loops_ && limit >= 0)
+      return nb::cast(events());
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     auto timed = [](mlir::Operation &op) {
       return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp,
@@ -2644,6 +2647,7 @@ public:
         pulse::createPulseUnrollClassicalLoopsPass());
     runPipeline(unroll, *copy, "simulation: unrolling classical loops failed");
     PulseModule result(ctx_, std::move(copy));
+    result.loops_ = loops_;
     result.keepSource();
     mlir::PassManager pm(ctx_.get());
     addSchedule(pm, *result.module_, false, policy, maxDrives, maxReadouts,
@@ -2667,6 +2671,7 @@ public:
       copy->getOperation()->setAttr("pulse.line_delays",
                                     mlir::parseAttribute(delays, ctx_.get()));
     PulseModule result(ctx_, std::move(copy));
+    result.loops_ = loops_;
     result.runTime_ = runTime_;
     result.keepSource();
     mlir::PassManager pm(ctx_.get());
@@ -2777,6 +2782,7 @@ public:
       rebound = true;
     }
     PulseModule result(ctx_, std::move(copy));
+    result.loops_ = loops_;
     if (rebound || unscheduled)
       result.schedule(policy, maxDrives, maxReadouts, readoutLatency,
                       switchPenalty);
@@ -2795,7 +2801,9 @@ public:
     });
     for (classical::WaitOp wait : waits)
       bindConstants(wait, std::vector<double>(wait.getValues().size(), 0.0));
-    return PulseModule(ctx_, std::move(copy));
+    PulseModule result(ctx_, std::move(copy));
+    result.loops_ = loops_;
+    return result;
   }
 
   using Measurement =
@@ -3182,6 +3190,7 @@ public:
     bindSlots(*owning, slots);
     dropQrefArguments(*owning);
     PulseModule result(ctx_, std::move(owning));
+    result.loops_ = loops_;
     if (source_) {
       result.source_ = mlir::OwningOpRef<mlir::ModuleOp>(source_->clone());
       bindSlots(*result.source_, slots);
@@ -3214,6 +3223,7 @@ public:
       bindSlots(*owning, slots);
       dropArguments(*owning);
       PulseModule result(ctx_, std::move(owning));
+      result.loops_ = loops_;
       if (source_) {
         result.source_ = mlir::OwningOpRef<mlir::ModuleOp>(source_->clone());
         bindSlots(*result.source_, slots);
@@ -3267,6 +3277,7 @@ public:
     foldBinding(clonedModule, bound);
     auto owning = mlir::OwningOpRef<mlir::ModuleOp>(clonedModule);
     PulseModule result(ctx_, std::move(owning));
+    result.loops_ = loops_;
     result.runTime_ = runTime_;
     result.keepSource();
     mlir::PassManager pm(ctx_.get());
@@ -3600,6 +3611,9 @@ private:
   // in a branch: false only where the builder saw neither, so that
   // controller_events() looks for them only where there can be any.
   bool runTime_ = true;
+  // False only for a module built from a program with no loop, whose
+  // event_tree() is its events().
+  bool loops_ = true;
   /// For a module with waits whose length floats set: what it lasts op after
   /// op with each at its lowest length, the most it may last, whether that
   /// is the controller's, and how often each such wait runs.
@@ -4116,6 +4130,7 @@ public:
     // 2**60) it is an error at the record that crosses it.
     int64_t maxCycles = int64_t(1) << 60;
     bool controllerLimit = false;
+    bool loops = false;
     int64_t serialCycles = 0;
     std::vector<int64_t> waitRepeats;
     // The loops and ifs around those waits, from the first: wait k is
@@ -4224,6 +4239,7 @@ public:
         region.linksBefore = links;
         builder_->setInsertionPointToEnd(region.body.get());
         regions.push_back(std::move(region));
+        loops = true;
         break;
       }
       case kOpForEnd: {
@@ -5043,6 +5059,7 @@ public:
     mlir::func::ReturnOp::create(*builder_, loc);
     PulseModule result(ctx_, std::move(owningModule));
     result.runTime_ = runTime;
+    result.loops_ = loops;
     if (!waitRepeats.empty())
       result.length_ = {serialCycles, maxCycles, controllerLimit ? 1 : 0,
                         std::move(waitRepeats),

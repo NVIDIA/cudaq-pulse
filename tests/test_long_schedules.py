@@ -63,3 +63,30 @@ def test_a_loop_of_10_15_iterations_is_read_without_its_iterations():
     assert float(lowered.duration) == 4 * 10**15 / lowered.target.clock_ghz
     assert repr(schedule) == f"<{10**15} scheduled events>"
     assert pickle.loads(pickle.dumps(schedule[7])) == schedule[7]
+
+
+def test_a_long_loop_stays_unlisted_through_a_float_argument_and_a_pickle():
+    @pulse.kernel
+    def waits(q, tau: float):
+        d = get_drive_line(q)
+        for _ in range(10**15):
+            wait(d, tau, bounds=(4, 8))
+
+    lowered = pulse.compile(waits, unroll_threshold=0).lower(Q[0], 6.0)
+    for program in (lowered, pickle.loads(pickle.dumps(lowered))):
+        schedule = program.schedule
+        assert len(schedule) == 10**15
+        assert schedule[-1] == ScheduledEvent("wait", 0, 0, 6 * (10**15 - 1), 6)
+
+
+def test_a_program_without_loops_lists_its_events_unless_asked_for_its_tree():
+    @pulse.kernel
+    def once(q):
+        d = get_drive_line(q)
+        drive(d, square(16, 0.1))
+        wait(d, 8)
+
+    module = pulse.compile(once).lower(Q[0])._module
+    assert module.event_tree(0) == module.events()
+    (nodes,) = module.event_tree(-1)
+    assert [node[0] for node in nodes] == ["drive", "wait"]
