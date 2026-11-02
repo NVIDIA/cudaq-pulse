@@ -1,83 +1,138 @@
 {
   "format": 1,
-  "bootstrap": true,
-  "environment": {},
+  "environment": {
+    "python": "3.12.15",
+    "machine": "x86_64",
+    "libc": "glibc 2.39",
+    "compiler": "c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+    "valgrind": "valgrind-3.22.0",
+    "mlir_toolchain": "mlir-toolchain-22.1.8"
+  },
+  "source": {
+    "repository": "NVIDIA/cudaq-pulse",
+    "run": 41369709269,
+    "attempt": 1,
+    "event": "workflow_dispatch",
+    "ref": "refs/heads/staging",
+    "commit": "b4511fc117ccbfdf716932b67a71b7134bcca51d",
+    "processes": 5
+  },
   "cases": {
     "bind_cached": {
-      "op_count": 8
+      "op_count": 8,
+      "instructions": 20493,
+      "estimated_cycles": 31629
     },
     "bind_new_value": {
-      "op_count": 8
+      "op_count": 8,
+      "instructions": 21249,
+      "estimated_cycles": 32906
     },
     "compile_bell": {
       "op_count": 15,
-      "packed_bytes": 744
+      "packed_bytes": 744,
+      "instructions": 3199197,
+      "estimated_cycles": 5009252
     },
     "compile_calls_large": {
       "op_count": 1025,
-      "packed_bytes": 59872
+      "packed_bytes": 59872,
+      "instructions": 98858526,
+      "estimated_cycles": 149647775
     },
     "compile_calls_small": {
       "op_count": 12,
-      "packed_bytes": 640
+      "packed_bytes": 640,
+      "instructions": 2746344,
+      "estimated_cycles": 4431829
     },
     "compile_cnot_cr": {
       "op_count": 12,
-      "packed_bytes": 616
+      "packed_bytes": 616,
+      "instructions": 2410835,
+      "estimated_cycles": 3826779
     },
     "compile_dd_cpmg8": {
       "op_count": 7,
-      "packed_bytes": 296
+      "packed_bytes": 296,
+      "instructions": 1868092,
+      "estimated_cycles": 3023060
     },
     "compile_qaoa4": {
       "op_count": 52,
-      "packed_bytes": 2656
+      "packed_bytes": 2656,
+      "instructions": 8817715,
+      "estimated_cycles": 13558491
     },
     "compile_surface_d5": {
       "op_count": 295,
-      "packed_bytes": 17248
+      "packed_bytes": 17248,
+      "instructions": 40469095,
+      "estimated_cycles": 61119834
     },
     "compile_syndrome": {
       "op_count": 53,
-      "packed_bytes": 2736
+      "packed_bytes": 2736,
+      "instructions": 9391915,
+      "estimated_cycles": 14409522
     },
     "compile_tone_list": {
       "op_count": 9,
-      "packed_bytes": 440
+      "packed_bytes": 440,
+      "instructions": 2608163,
+      "estimated_cycles": 4187158
     },
     "compile_vqe_hea": {
       "op_count": 58,
-      "packed_bytes": 2872
+      "packed_bytes": 2872,
+      "instructions": 9331017,
+      "estimated_cycles": 14340518
     },
     "export_controller": {
-      "export_bytes": 87081
+      "export_bytes": 87081,
+      "instructions": 10634018,
+      "estimated_cycles": 16052815
     },
     "export_controller_sampled": {
-      "export_bytes": 49216
+      "export_bytes": 49216,
+      "instructions": 5957894,
+      "estimated_cycles": 9516227
     },
     "export_emulation": {
-      "export_bytes": 38902
+      "export_bytes": 38902,
+      "instructions": 6441684,
+      "estimated_cycles": 9532374
     },
     "first_compile": {
       "op_count": 15,
-      "packed_bytes": 744
+      "packed_bytes": 744,
+      "instructions": 13891605,
+      "estimated_cycles": 21904176
     },
     "simulate_setup": {
       "density_matrix_entries": 4,
       "time_points": 2,
+      "instructions": 1735492,
+      "estimated_cycles": 2933702,
       "tolerance": 0.0045
     },
     "specialize_amplitude": {
-      "mlir_bytes": 1177
+      "mlir_bytes": 1177,
+      "instructions": 468845,
+      "estimated_cycles": 735037
     },
     "specialize_wait": {
       "schedule_cycles": 145,
-      "schedule_events": 3
+      "schedule_events": 3,
+      "instructions": 416116,
+      "estimated_cycles": 646768
     },
     "submit": {
       "call_args": 6,
       "call_results": 1,
-      "result_milli": 2500
+      "result_milli": 2500,
+      "instructions": 6215,
+      "estimated_cycles": 9120
     }
   }
 }
