@@ -2744,9 +2744,16 @@ private:
     return nb::steal<nb::list>(
         checked(PyList_New(static_cast<Py_ssize_t>(size))).release());
   }
+  /// Steals `value` into slot `index` of a new `list` of more items.
   static void set(nb::handle list, size_t index, nb::object value) {
+#ifdef Py_LIMITED_API
+    if (PyList_SetItem(list.ptr(), static_cast<Py_ssize_t>(index),
+                       value.release().ptr()) != 0)
+      throw nb::python_error();
+#else
     PyList_SET_ITEM(list.ptr(), static_cast<Py_ssize_t>(index),
                     value.release().ptr());
+#endif
   }
   static void put(nb::handle dict, PyObject *name, nb::handle value) {
     if (PyDict_SetItem(dict.ptr(), name, value.ptr()) != 0)
@@ -3141,7 +3148,7 @@ private:
       if (at == index)
         put(out, parameter(name, numbers.size(), operand).ptr(),
             expression(expr));
-    return PyDict_GET_SIZE(out.ptr()) ? nb::object(out) : none();
+    return NB_DICT_GET_SIZE(out.ptr()) ? nb::object(out) : none();
   }
 
   /// A copy of waveform `tree` (node `index` of `nodes`) with its operands
@@ -3151,13 +3158,12 @@ private:
     const auto &children = std::get<2>(nodes[index]);
     nb::object node = checked(PyDict_Copy(tree.ptr()));
     if (!children.empty()) {
+      // Borrowed from `node`, a copy no other thread sees.
       PyObject *old = PyDict_GetItem(node.ptr(), key.of);
       nb::list of = list(children.size());
       for (size_t i = 0; i < children.size(); ++i)
         set(of, i,
-            withRunTime(nodes, children[i],
-                        PyList_GET_ITEM(old, static_cast<Py_ssize_t>(i)),
-                        operands));
+            withRunTime(nodes, children[i], listItem(old, i), operands));
       put(node, key.of, of);
     }
     nb::object here = computed(nodes, index, operands);

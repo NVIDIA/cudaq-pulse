@@ -341,6 +341,12 @@ component tables. `tools/check-wheel-contents.py` checks the built wheels
 for the license files, the notices (and any library a wheel repair grafted),
 and for CUDA or GPL/LGPL libraries.
 
+The abi3 wheels build the extension against the limited Python API
+(`Py_LIMITED_API`), which a development build never sets, so a macro such
+as `PyList_SET_ITEM` builds everywhere but in the wheels. Check a change to
+`core/mlir/bindings` against it with
+`python tools/check-limited-api.py build/dev`, which CI's test job runs.
+
 ## The MLIR toolchain
 
 Configuring needs the pinned MLIR 22.1.8 toolchain:

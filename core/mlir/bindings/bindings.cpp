@@ -105,6 +105,32 @@ extern const char *const cudaqPulseBuildStamp;
 
 namespace {
 
+/// Item `index` of `list`, which has more items than that. Without the GIL
+/// another thread could replace and free a borrowed item, so the item is
+/// then a new reference; with it, the item is borrowed from `list`, which
+/// the caller keeps alive. Wheels build against the limited API
+/// (Py_LIMITED_API), where NB_LIST_GET_ITEM is PyList_GetItem, which can
+/// fail.
+#ifdef Py_GIL_DISABLED
+nb::object listItem(nb::handle list, size_t index) {
+  PyObject *item =
+      PyList_GetItemRef(list.ptr(), static_cast<Py_ssize_t>(index));
+  if (!item)
+    throw nb::python_error();
+  return nb::steal(item);
+}
+#else
+nb::handle listItem(nb::handle list, size_t index) {
+  PyObject *item =
+      NB_LIST_GET_ITEM(list.ptr(), static_cast<Py_ssize_t>(index));
+#ifdef Py_LIMITED_API
+  if (!item)
+    throw nb::python_error();
+#endif
+  return item;
+}
+#endif
+
 mlir::DialectRegistry makeRegistry() {
   mlir::DialectRegistry reg;
   reg.insert<pulse::PulseDialect>();
@@ -1880,8 +1906,14 @@ private:
         start && duration ? integer(*start + *duration) : nb::none());
     put(event, keys.iteration, integers(iteration));
     if (epochCount && start) {
-      PyObject *epoch =
+      // `epochs` is the caller's: no item is borrowed without the GIL.
+#ifdef Py_GIL_DISABLED
+      nb::object epoch = nb::steal(
+          PyList_GetItemRef(epochs.ptr(), static_cast<Py_ssize_t>(index)));
+#else
+      nb::handle epoch =
           PyList_GetItem(epochs.ptr(), static_cast<Py_ssize_t>(index));
+#endif
       if (!epoch)
         throw nb::python_error();
       put(event, keys.epoch, epoch);
