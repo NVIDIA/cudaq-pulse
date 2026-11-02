@@ -122,8 +122,7 @@ nb::object listItem(nb::handle list, size_t index) {
 }
 #else
 nb::handle listItem(nb::handle list, size_t index) {
-  PyObject *item =
-      NB_LIST_GET_ITEM(list.ptr(), static_cast<Py_ssize_t>(index));
+  PyObject *item = NB_LIST_GET_ITEM(list.ptr(), static_cast<Py_ssize_t>(index));
 #ifdef Py_LIMITED_API
   if (!item)
     throw nb::python_error();

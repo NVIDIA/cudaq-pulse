@@ -3172,8 +3172,7 @@ private:
       PyObject *old = PyDict_GetItem(node.ptr(), key.of);
       nb::list of = list(children.size());
       for (size_t i = 0; i < children.size(); ++i)
-        set(of, i,
-            withRunTime(nodes, children[i], listItem(old, i), operands));
+        set(of, i, withRunTime(nodes, children[i], listItem(old, i), operands));
       put(node, key.of, of);
     }
     nb::object here = computed(nodes, index, operands);
