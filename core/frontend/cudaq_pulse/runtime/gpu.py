@@ -268,7 +268,10 @@ def _resolve_runtime() -> tuple[int | None, Path]:
             "-DCUDAQ_PULSE_ENABLE_GPU=ON."
         )
     major = _select_cuda_major()
-    path = Path(__file__).resolve().parent.parent / _build_config.GPU_RUNTIME_LIBRARIES[major]
+    # Not resolve(): a source build stages the Python sources as symlinks back
+    # into core/frontend, and resolving them looks for the runtime library
+    # there instead of in the staged package that holds it.
+    path = Path(__file__).parent.parent / _build_config.GPU_RUNTIME_LIBRARIES[major]
     if not path.is_file():
         raise GpuRuntimeLoadError(
             f"cudaq-pulse was built with GPU support, but its CUDA {major} "
