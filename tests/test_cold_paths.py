@@ -120,3 +120,26 @@ def test_simulating_a_classical_program_loads_numpy(tmp_path):
     # The positive control of the checks above: the same probe sees numpy.
     code = _PROGRAM + "p.simulate(low)\n"
     assert _loaded(code, tmp_path, ("numpy",)) == ["numpy"]
+
+
+_PLAIN = """
+import sys
+import cudaq_pulse as p
+
+@p.kernel
+def k(q):
+    d = get_drive_line(q)
+    drive(d, drag(40, 0.2, 10.0, 0.5))
+
+dev = p.device("transmon_17q")
+low = p.compile(k).lower(dev.qudit_handles[0])
+"""
+
+
+def test_a_program_in_cycles_loads_no_fractions(tmp_path):
+    # Importing fractions compiles two regular expressions; only a time
+    # (such as a program's duration), or a clock in GHz, needs exact arithmetic.
+    code = _PLAIN + "low.schedule; low.export_controller(); low.export_emulation()\n"
+    assert _loaded(code, tmp_path, ("fractions", "decimal")) == []
+    timed = _PLAIN + "low.duration\n"
+    assert _loaded(timed, tmp_path, ("fractions",)) == ["fractions"]

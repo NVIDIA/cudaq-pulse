@@ -63,7 +63,6 @@ import types
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
-from fractions import Fraction
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -80,6 +79,8 @@ except ImportError:  # pragma: no cover - CPython builds without the _blake2 mod
     from hashlib import blake2b as _blake2b
 
 if TYPE_CHECKING:
+    from fractions import Fraction
+
     import numpy as np
 
     from . import _clocks
@@ -642,6 +643,8 @@ def shape_key(node: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
 def _exact(value: float) -> Fraction:
     """*value* as the decimal it is written as, so that rates such as 2.4
     samples per cycle divide exactly."""
+    from fractions import Fraction
+
     return Fraction(repr(float(value)))
 
 
@@ -783,7 +786,7 @@ def sample_waveform(
     return _sample(node, duration_cycles, _exact(samples_per_cycle))
 
 
-def _sample(node: Mapping[str, Any], duration_cycles: int, ratio: Fraction) -> np.ndarray:
+def _sample(node: Mapping[str, Any], duration_cycles: int, ratio: Fraction | int) -> np.ndarray:
     import numpy as np
 
     per, over = ratio.numerator, ratio.denominator
@@ -1233,6 +1236,8 @@ def _export_structured(
             raise InvalidValueError(
                 f"sample_rate_ghz={sample_rate_ghz}; the controller samples at {own_rate} GHz"
             )
+        from fractions import Fraction
+
         ratio = Fraction(*_clocks.made_for(sample_rate_ghz, clock))
         rate = sample_rate_ghz
         samples_of = _add_samples(events, sample_rate_ghz, clock, waveforms, ratio)
@@ -1632,7 +1637,7 @@ def _add_samples(
     sample_rate_ghz: float,
     clock: float,
     waveforms: _Waveforms | None = None,
-    ratio: Fraction | None = None,
+    ratio: Fraction | int | None = None,
 ) -> list[dict[str, list[float]] | None]:
     """Give each drive and readout of *events* its envelope's samples at
     *sample_rate_ghz*, a whole multiple of the *clock* its times count; with
@@ -1645,7 +1650,7 @@ def _add_samples(
                 f"sample_rate_ghz={sample_rate_ghz} is not a whole multiple of the "
                 f"{clock} GHz clock"
             )
-        ratio = Fraction(per_cycles)
+        ratio = per_cycles
     # The events of one op share its waveform, so each is sampled once.
     sampled: dict[tuple[int, int], dict[str, list[float]]] = {}
     samples_of: list[dict[str, list[float]] | None] = []

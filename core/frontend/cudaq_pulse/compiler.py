@@ -22,7 +22,6 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from fractions import Fraction
 from types import MappingProxyType, ModuleType
 from typing import TYPE_CHECKING, Any
 
@@ -876,6 +875,8 @@ class Lowered:
         both arms of every branch, as a time (``float(duration)`` is in ns).
 
         A wait a float parameter sets counts once the module has values."""
+        from fractions import Fraction
+
         clock = Fraction(self.target.clock_ghz)
         schedule = self.schedule
         if type(schedule) is list:

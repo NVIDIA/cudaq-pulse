@@ -24,31 +24,51 @@ from __future__ import annotations
 import math
 import numbers
 import sys
-from fractions import Fraction
-from typing import Any
+from collections.abc import Callable
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 
 from ._errors import InvalidValueError
 
+if TYPE_CHECKING:
+    from fractions import Fraction
+
 __all__ = ["Time", "ns", "us", "ms", "s"]
 
+# Importing fractions compiles two regular expressions, which a program in
+# cycles never needs: the first time made loads it.
+_Fraction: type[Fraction]
 
-def _exact(value: Any) -> Fraction:
+
+def _first_exact(value: Any) -> Fraction:
+    global _Fraction, _exact
+    from fractions import Fraction
+
+    _Fraction = Fraction
+    _exact = _exact_loaded
+    return _exact_loaded(value)
+
+
+def _exact_loaded(value: Any) -> Fraction:
     """*value*, a real number, as the fraction its decimal digits give:
     ``0.1`` is 1/10."""
     cls = value.__class__
     if cls is int:
-        return Fraction(value)
+        return _Fraction(value)
     # Below 1e15 an integral float's digits are the integer itself.
     if cls is float and value.is_integer() and abs(value) < 1e15:
-        return Fraction(int(value))
-    if isinstance(value, Fraction):
+        return _Fraction(int(value))
+    if isinstance(value, _Fraction):
         return value
     if isinstance(value, numbers.Rational):
-        return Fraction(int(value.numerator), int(value.denominator))
+        return _Fraction(int(value.numerator), int(value.denominator))
     value = float(value)
     if not math.isfinite(value):
         raise InvalidValueError(f"a time is a finite number of nanoseconds, not {value!r}")
-    return Fraction(repr(value))
+    return _Fraction(repr(value))
+
+
+_exact: Callable[[Any], Fraction] = _first_exact
 
 
 def _is_number(value: Any) -> bool:
@@ -247,6 +267,8 @@ def _compared(time: Time, op: str, number: Any) -> UnitError:
 
 
 def _time(numerator: int, denominator: int) -> Time:
+    from fractions import Fraction
+
     return Time(Fraction(numerator, denominator))
 
 
@@ -265,10 +287,33 @@ def as_nanoseconds(value: Any) -> Any:
     return float(value) if value.__class__ is Time else value
 
 
-ns = Time(Fraction(1))
-us = Time(Fraction(10**3))
-ms = Time(Fraction(10**6))
-s = Time(Fraction(10**9))
+class _Unit(tuple[str, int]):
+    """A unit's name and nanoseconds, made a ``Time`` on first use (which
+    loads fractions) and then kept in the module's namespace, where later
+    reads find it as a plain attribute."""
+
+    def __get__(self, module: ModuleType | None, owner: type) -> Any:
+        if module is None:
+            return self
+        name, nanoseconds = self
+        unit = module.__dict__[name] = Time(nanoseconds)
+        return unit
+
+
+class _Module(ModuleType):
+    ns = _Unit(("ns", 1))
+    us = _Unit(("us", 10**3))
+    ms = _Unit(("ms", 10**6))
+    s = _Unit(("s", 10**9))
+
+
+sys.modules[__name__].__class__ = _Module
+
+if TYPE_CHECKING:
+    ns: Time
+    us: Time
+    ms: Time
+    s: Time
 
 
 _CYCLES_PER_NS: dict[float, Fraction] = {}
