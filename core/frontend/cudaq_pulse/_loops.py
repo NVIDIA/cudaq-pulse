@@ -34,6 +34,9 @@ from .controller import (
 )
 
 if TYPE_CHECKING:
+    from fractions import Fraction
+
+    from ._clocks import ControllerClock
     from .compiler import Lowered
 
 # Up to this many violations are a list, as without summarized loops.
@@ -555,15 +558,21 @@ def violations(
     unresolved: list[str] | None,
     sample_rate: tuple[float, float] | None = None,
     periods: Sequence[Sequence[int]] = (),
+    own: ControllerClock | None = None,
+    off: Sequence[tuple[int, int, int]] = (),
 ) -> list[str] | Violations:
     """``controller._violations`` of the events of a summarizing walk, with
     *sample_rate* (made, plays) when a line plays samples made for another
     rate (``controller._sample_rate_violations``), and *periods* the line
-    periods of its unsynced loops. ``UnsyncedError`` when a check pairs events
-    of lines of different periods."""
+    periods of its unsynced loops; in the cycles of *own*, when the walk
+    counted them, with *off* its events off the grid. ``UnsyncedError``
+    when a check pairs events of lines of different periods."""
     tree, chains = _tree(len(events), repeats, periods)
     budget = _Budget()
     found: list[Any] = []
+    if off:
+        assert own is not None
+        found.extend(_off_grid(tree, events, lines, own, off))
     timed = _keep(
         tree, lambda i: events[i]["kind"] in _PLAYED and events[i]["end_cycles"] is not None
     )
@@ -743,6 +752,49 @@ def violations(
     if _length(found) <= LAZY_AFTER:
         return list(_each(found, 0))
     return Violations(found)
+
+
+class _OnProgramClock:
+    """A violation stated in program cycles of an event whose copies are
+    shifted in a controller's own cycles: ``make`` of its start, ``at``,
+    shifted."""
+
+    __slots__ = ("make", "at", "num", "den")
+
+    def __init__(self, make: Callable[[int], str], at: int, ratio: Fraction) -> None:
+        self.make, self.at = make, at
+        self.num, self.den = ratio.numerator, ratio.denominator
+
+    def render(self, shift: int) -> str:
+        # The periods are whole own cycles of whole timesteps, so a shift
+        # is whole program cycles.
+        return self.make(self.at + shift * self.den // self.num)
+
+
+def _off_grid(
+    tree: list[Any],
+    events: Sequence[Mapping[str, Any]],
+    lines: Sequence[Mapping[str, Any]],
+    own: ControllerClock,
+    off: Sequence[tuple[int, int, int]],
+) -> list[Any]:
+    """``_clocks.off_grid_messages`` of every copy of the events of *tree*
+    that *off* has (index, start, duration) in program cycles."""
+    from ._clocks import _off_grid as message
+
+    at = {index: (start, duration) for index, start, duration in off}
+
+    def make(i: int) -> _OnProgramClock | None:
+        found = at.get(i)
+        if found is None:
+            return None
+        start, duration = found
+        line, kind = events[i]["line"], events[i]["kind"]
+        return _OnProgramClock(
+            lambda s: message(own, lines[line], line, kind, s, duration), start, own.ratio
+        )
+
+    return _each_event(tree, make)
 
 
 def _amplitudes(

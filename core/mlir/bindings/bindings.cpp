@@ -2858,6 +2858,115 @@ public:
     return nb::make_tuple(roles, events, program.frameState(finals));
   }
 
+  /// `controller_events()` for a controller counting `num` of its cycles
+  /// every `den` program cycles: start and duration in its cycles, rounded
+  /// up (what an event computes at run time stays in program cycles, for
+  /// the caller to convert), with the drives, readouts and waits off its grid
+  /// of `grid` program cycles, and (index, end) for the events whose end,
+  /// rounded up in its cycles, is not its start plus its duration: (lines,
+  /// events, off grid, ends). A list `repeats` (and `periods`) gets the
+  /// repeats (and line periods) of a summarizing walk as controller_events()
+  /// gives them, in its cycles: of the loops whose every period is whole
+  /// steps of its grid, so that each copy is on or off it as the first is;
+  /// with a loop of another period, every iteration is played.
+  nb::tuple controller_events_on(nb::handle parameters, nb::handle amplitudes,
+                                 nb::list epochs, int64_t num, int64_t den,
+                                 int64_t grid, nb::object slots,
+                                 nb::object repeats, nb::object periods) {
+    if (num < 1 || den < 1 || grid < 1)
+      throw std::invalid_argument("controller_events_on: the ratio and grid "
+                                  "must be positive");
+    ControllerObjects objects(parameters, amplitudes);
+    std::unique_ptr<ControllerEventWalk> walk;
+    std::vector<ControllerLine> lines;
+    std::vector<int64_t> found;
+    std::vector<OffGridEvent> offGrid;
+    std::vector<std::tuple<int64_t, int64_t>> ends;
+    bool once = !repeats.is_none() && nb::len(epochs) == 0;
+    {
+      nb::gil_scoped_release release;
+      walk = controllerWalk(lines, slots.is_none() ? nullptr : &found, once,
+                            once && !periods.is_none());
+      if (!ownRepeats(*walk, num, den, grid)) {
+        lines.clear();
+        found.clear();
+        walk = controllerWalk(lines, slots.is_none() ? nullptr : &found);
+      }
+      ownEventCycles(*walk, num, den, grid, offGrid, ends);
+    }
+    lineSlots(found, slots);
+    if (!walk->repeats.empty()) {
+      auto out = nb::borrow<nb::list>(repeats);
+      for (const auto &repeat : walk->repeats)
+        out.append(nb::cast(repeat));
+    }
+    if (!walk->linePeriods.empty()) {
+      auto out = nb::borrow<nb::list>(periods);
+      for (const auto &linePeriod : walk->linePeriods)
+        out.append(nb::cast(linePeriod));
+    }
+    return nb::make_tuple(objects.lines(lines), objects.events(*walk, epochs),
+                          nb::cast(offGrid), nb::cast(ends));
+  }
+
+  /// Whether every period of `walk`'s repeats is whole steps of `grid`
+  /// program cycles and whole cycles of a controller counting `num` of them
+  /// every `den` program cycles; if so, they are converted to its cycles.
+  static bool ownRepeats(ControllerEventWalk &walk, int64_t num, int64_t den,
+                         int64_t grid) {
+    auto own = [&](int64_t period) -> std::optional<int64_t> {
+      if (period % grid)
+        return std::nullopt;
+      std::optional<int64_t> cycles = checkedMul(period, num);
+      if (!cycles || *cycles % den)
+        return std::nullopt;
+      return *cycles / den;
+    };
+    for (const auto &repeat : walk.repeats)
+      if (repeat[3] > 0 && !own(repeat[3]))
+        return false;
+    for (const auto &[index, line, period] : walk.linePeriods)
+      if (!own(period))
+        return false;
+    for (auto &repeat : walk.repeats)
+      if (repeat[3] > 0)
+        repeat[3] = *own(repeat[3]);
+    for (auto &linePeriod : walk.linePeriods)
+      linePeriod[2] = *own(linePeriod[2]);
+    return true;
+  }
+
+  static void ownEventCycles(ControllerEventWalk &walk, int64_t num,
+                             int64_t den, int64_t grid,
+                             std::vector<OffGridEvent> &offGrid,
+                             std::vector<std::tuple<int64_t, int64_t>> &ends) {
+    auto own = [&](std::optional<int64_t> &cycles) {
+      if (cycles)
+        *cycles = (*cycles * num + den - 1) / den;
+    };
+    auto &events = walk.result;
+    for (size_t index = 0; index < events.size(); ++index) {
+      auto &event = events[index];
+      const std::string &kind = std::get<0>(event);
+      auto &start = std::get<3>(event);
+      auto &duration = std::get<4>(event);
+      if (grid > 1 && start && duration &&
+          (kind == "drive" || kind == "readout" || kind == "wait") &&
+          (*start % grid || *duration % grid))
+        offGrid.emplace_back(static_cast<int64_t>(index), *start, *duration);
+      if (num != den) {
+        std::optional<int64_t> end;
+        if (start && duration)
+          end = *start + *duration;
+        own(start);
+        own(duration);
+        own(end);
+        if (end && *end != *start + *duration)
+          ends.emplace_back(static_cast<int64_t>(index), *end);
+      }
+    }
+  }
+
   /// The controller limits the schedule exceeds, as messages; -1 for a
   /// limit not set. A loop whose iterations repeat is checked at its first
   /// two iterations and its last. `memory` is (samples, granule, shared,
@@ -6097,6 +6206,15 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "The lines and events of the export for a controller, as "
            "controller.export() gives them; a list `slots` gets each line's "
            "runtime-qudit slot")
+      .def("controller_events_on", &PulseModule::controller_events_on,
+           nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
+           nb::arg("num"), nb::arg("den"), nb::arg("grid"),
+           nb::arg("slots").none() = nb::none(),
+           nb::arg("repeats").none() = nb::none(),
+           nb::arg("periods").none() = nb::none(),
+           "controller_events() in a controller's own cycles, num of them "
+           "every den program cycles, with the line events off its grid of "
+           "grid program cycles")
       .def("program_length", &PulseModule::program_length,
            "For waits whose length floats set: (serial cycles at their "
            "lowest lengths, the longest program, whether that is the "

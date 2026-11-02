@@ -975,12 +975,14 @@ def _walk(
     the values of its call; without *values*, a module with float parameters
     has ``None`` where they reach.
 
-    The lines are the dictionaries of format /1. With *repeats* (and no
-    *own*), for a check, the events are those the check walk gives: in a
-    module that computes nothing at run time, a long rolled loop whose
-    iterations repeat has its events once, and *repeats* gets its copies
-    (``_loops``); with *periods* too, a loop whose lines move by different
-    periods as well, and *periods* gets their (repeat, line, period).
+    The lines are the dictionaries of format /1. With *repeats*, for a
+    check, the events are those the check walk gives: in a module that
+    computes nothing at run time, a long rolled loop whose iterations repeat
+    has its events once, and *repeats* gets its copies (``_loops``); with
+    *periods* too, a loop whose lines move by different periods as well,
+    and *periods* gets their (repeat, line, period). With *own* too, only
+    loops whose periods are whole timesteps of its grid, their periods in
+    its cycles.
 
     With *own*, the events' times are in that controller's cycles (their
     waveforms' too, with *waveforms*), what they compute at run time too
@@ -1001,19 +1003,37 @@ def _walk(
     module = lowered._concrete()
     off_grid: Sequence[tuple[int, int, int]] = ()
     problems: list[str] = []
-    if repeats is not None and own is None:
+    # What the summarizing walk computes at run time is in MLIR's ops, not
+    # the export's vocabulary a controller's own cycles are converted in.
+    if repeats is not None and (own is None or not _computes_at_run_time(lowered)):
         epochs = lowered._event_epochs(syncs=True)
         with lowered._lock:
-            if periods is None:
-                lines, events, found = module.controller_events(
-                    _PARAMETERS, _AMPLITUDES, epochs, slots, True
-                )
+            if own is None:
+                if periods is None:
+                    lines, events, found = module.controller_events(
+                        _PARAMETERS, _AMPLITUDES, epochs, slots, True
+                    )
+                else:
+                    lines, events, found, moved = module.controller_events(
+                        _PARAMETERS, _AMPLITUDES, epochs, slots, True, True
+                    )
+                    periods += moved
+                repeats += found
             else:
-                lines, events, found, moved = module.controller_events(
-                    _PARAMETERS, _AMPLITUDES, epochs, slots, True, True
+                ratio = own.ratio
+                lines, events, off_grid, ends = module.controller_events_on(
+                    _PARAMETERS,
+                    _AMPLITUDES,
+                    epochs,
+                    ratio.numerator,
+                    ratio.denominator,
+                    own.grid,
+                    slots,
+                    repeats,
+                    periods,
                 )
-                periods += moved
-        repeats += found
+                for index, end in ends:
+                    events[index]["end_cycles"] = end
         frame_state = []
     else:
         # A check (without *values*) needs no value the export cannot name.
@@ -2147,9 +2167,11 @@ def _limit_violations(
             break
         from ._loops import UnsyncedError, violations
 
+        assert not problems
+        own = _native_clock(clocks)
         try:
             return violations(
-                lowered, events, repeats, limits, lines, unresolved, None, periods or ()
+                lowered, events, repeats, limits, lines, unresolved, None, periods or (), own, off
             )
         except UnsyncedError:
             repeats = []
@@ -2538,12 +2560,13 @@ def _compile_check(
             break
         from ._loops import UnsyncedError, violations
 
-        assert limits is not None
+        assert limits is not None and not problems
         rates = None if limits is machine.controller else _sample_rates(lowered, limits)
         pending: list[str] | None = [] if lowered.parameters else None
+        own = _native_clock(clocks)
         try:
             found = violations(
-                lowered, events, repeats, limits, lines, pending, rates, periods or ()
+                lowered, events, repeats, limits, lines, pending, rates, periods or (), own, off
             )
         except UnsyncedError:
             repeats = []

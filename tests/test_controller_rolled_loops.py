@@ -17,6 +17,7 @@ compared against.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import pickle
@@ -27,6 +28,7 @@ from typing import Any
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import controller
+from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, ControllerLimits, check
 
 from tests._handles import Q
@@ -244,6 +246,8 @@ LIMITS = [
     ),
     ControllerLimits(feedback_latency_cycles=500, max_events=10),
     ControllerLimits(issue_cycles=2, waveform_samples=10, waveform_memory="shared"),
+    # A float's amplitude is checked when it is called with one.
+    ControllerLimits(issue_cycles=4, min_wait_cycles=4, max_amplitude=0.05),
 ]
 
 
@@ -447,6 +451,179 @@ def test_a_loop_whose_lines_move_by_different_periods_reports_what_every_iterati
             summarized += 1
     if periods and name != "feedback":
         assert summarized, "some limits are checked on the summarized loop"
+
+
+# Controllers on clocks of their own: a 4-cycle timestep, half the program
+# clock, and two thirds of it (a 3-cycle grid).
+OWN_CLOCKS = [{"cycles_per_timestep": 4}, {"clock_ghz": 1.0}, {"clock_ghz": 4 / 3}]
+
+
+def _lowered(kernel: Any, schedule: str, **options: Any) -> Any:
+    compiled = pulse.compile(kernel, schedule=schedule, unroll_threshold=0, **options)
+    return compiled.lower(*Q[: kernel.__wrapped__.__code__.co_argcount])
+
+
+@pytest.mark.parametrize("clock", range(len(OWN_CLOCKS)))
+@pytest.mark.parametrize("trips", [65, 100])
+@pytest.mark.parametrize("name", [*_loops(1), *_unsynced(1)])
+@pytest.mark.parametrize("schedule", ["asap", "rcp"])
+def test_a_long_rolled_loop_checked_on_a_controllers_own_clock_reports_what_every_iteration_does(
+    monkeypatch, clock, trips, name, schedule
+):
+    kernels = {**_loops(trips), **_unsynced(trips)}
+    lowered = _lowered(kernels[name], schedule)
+    for limits in LIMITS:
+        limits = dataclasses.replace(limits, **OWN_CLOCKS[clock])
+        found = check(lowered, limits)
+        assert list(found) == _every_iteration(monkeypatch, lowered, limits)
+
+
+def _on_grid(n: int) -> dict[str, Any]:
+    """Loops whose operations last whole timesteps of every grid of
+    OWN_CLOCKS."""
+
+    @pulse.kernel
+    def drives(q):
+        d = get_drive_line(q)
+        for _ in range(n):
+            drive(d, square(12, 0.1))
+            drive(d, gaussian(24, 0.3, 4.0))
+
+    @pulse.kernel
+    def feedback(q, r):
+        line = get_drive_line(q)
+        probe = get_readout_line(r)
+        for _ in range(n):
+            m = readout(probe, square(48, 0.05))
+            if m:
+                drive(line, square(12, 0.1))
+            else:
+                drive(line, square(24, 0.2))
+
+    @pulse.kernel
+    def two_lines(q, r):
+        a = get_drive_line(q)
+        b = get_drive_line(r)
+        for _ in range(n):
+            drive(a, square(12, 0.1))
+            drive(b, gaussian(24, 0.1, 4.0))
+
+    @pulse.kernel
+    def nested(q):
+        d = get_drive_line(q)
+        for _ in range(n):
+            for _ in range(n):
+                drive(d, square(12, 0.1))
+                wait(d, 12)
+            drive(d, gaussian(24, 0.1, 2.0))
+
+    @pulse.kernel
+    def scaled(q, amp: float):
+        d = get_drive_line(q)
+        for _ in range(n):
+            drive(d, square(12, amp))
+            wait(d, 12)
+
+    return {
+        "drives": drives,
+        "feedback": feedback,
+        "two_lines": two_lines,
+        "nested": nested,
+        "scaled": scaled,
+    }
+
+
+def _on(kernel: Any, schedule: str, limits: Any) -> Any:
+    """*kernel* compiled under *limits*; one of a float is checked when
+    called with one, as its export is."""
+    machine = MachineModel(controller=limits)
+    if kernel.__wrapped__.__name__ != "scaled":
+        return _lowered(kernel, schedule, machine=machine)
+    compiled = pulse.compile(kernel, schedule=schedule, unroll_threshold=0, machine=machine)
+    return compiled.lower(Q[0], 0.6)
+
+
+@pulse.classical(max_latency_ns=200)
+def _delay_of(bits: pulse.Bits) -> float:
+    return 48.0 + 24.0 * bits[0]
+
+
+@pulse.kernel
+def _delayed_at_run_time(q):
+    d = get_drive_line(q)
+    ro = get_readout_line(q)
+    for _ in range(100):
+        drive(d, square(24, 0.1))
+    m = readout(ro, square(96, 0.05))
+    wait(d, _delay_of.submit([m]).result(), bounds=(48, 384))
+    drive(d, square(24, 0.1))
+
+
+# Its own cycles are converted in the export's terms of what is computed at
+# run time, so a check walk of a module that computes any gives them as the
+# export does.
+@pytest.mark.parametrize("clock", range(len(OWN_CLOCKS)))
+def test_a_check_on_a_controllers_own_clock_converts_what_runs_at_run_time_as_its_export(clock):
+    limits = dataclasses.replace(ControllerLimits(), **OWN_CLOCKS[clock])
+    lowered = _on(_delayed_at_run_time, "asap", limits)
+    own = controller._native_clock(lowered.clocks)
+    checked = controller._walk(lowered, values=False, own=own, waveforms=False, repeats=[])[1]
+    exported = controller._walk(lowered, values=False, own=own, waveforms=False)[1]
+    lengths = [
+        [e["length"] for e in events if e["kind"] == "wait"] for events in (checked, exported)
+    ]
+    assert lengths[0] == lengths[1]
+
+
+def _compiled(kernel: Any, schedule: str, limits: Any) -> Any:
+    """The ops of *kernel* compiled under *limits*, or the limits it exceeds."""
+    try:
+        lowered = _on(kernel, schedule, limits)
+    except ControllerLimitError as error:
+        return list(error.violations)
+    return lowered.metrics.op_count
+
+
+@pytest.mark.parametrize("clock", range(len(OWN_CLOCKS)))
+@pytest.mark.parametrize("trips", [65, 100])
+@pytest.mark.parametrize("name", list(_on_grid(1)))
+@pytest.mark.parametrize("schedule", ["asap", "alap", "rcp"])
+def test_a_long_rolled_loop_compiled_for_a_controllers_own_clock_is_summarized_and_exact(
+    monkeypatch, clock, trips, name, schedule
+):
+    kernel = _on_grid(trips)[name]
+    lowered = _on(kernel, schedule, dataclasses.replace(ControllerLimits(), **OWN_CLOCKS[clock]))
+    own = controller._native_clock(lowered.clocks)
+    repeats: list[Any] = []
+    periods: list[Any] = []
+    controller._walk(lowered, values=False, own=own, repeats=repeats, periods=periods)
+    program: list[Any] = []
+    controller._walk(lowered, values=False, repeats=program, periods=[])
+    # The lanes of two lines' alternate drives under rcp never repeat.
+    assert program or (name, schedule) == ("two_lines", "rcp")
+    assert len(repeats) == len(program), "summarized in the controller's cycles as in the program's"
+    walk = controller._walk
+    for limits in LIMITS:
+        limits = dataclasses.replace(limits, **OWN_CLOCKS[clock])
+        found = _compiled(kernel, schedule, limits)
+
+        def played(*args: Any, repeats: Any = None, periods: Any = None, **kwargs: Any) -> Any:
+            return walk(*args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(controller, "_walk", played)
+            assert found == _compiled(kernel, schedule, limits)
+
+
+def test_a_rolled_loop_of_10_15_iterations_on_a_controllers_own_clock_is_checked_in_bounds():
+    for clock in ("cycles_per_timestep=4", "clock_ghz=1.0"):
+        few = _in_a_child("close", 20, f"issue_cycles=4, min_wait_cycles=4, {clock}")
+        many = _in_a_child("close", 10**15, f"issue_cycles=4, min_wait_cycles=4, {clock}")
+        each = int(str(few["count"])) // 20
+        assert each and many["count"] == each * 10**15
+        assert many["message"] == str(few["message"]).replace(
+            f"... and {20 * each - 10} more", f"... and {each * 10**15 - 10} more"
+        )
 
 
 def test_past_10_000_violations_they_are_built_when_read(monkeypatch):
