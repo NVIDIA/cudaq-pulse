@@ -844,7 +844,10 @@ def _simulate_compiled(
     if backend == "cpu":
         engine = _CpuBackend(module, dims, dt_ns, base, lock, arguments)
     else:
-        engine = _GpuBackend(module, dims, dt_ns, base, lock, integrator)
+        # A program with classical calls lowers only with their answers
+        # bound: the backend lowers its placeholders, as each segment does.
+        probe = module.placeholders() if functions else module
+        engine = _GpuBackend(probe, dims, dt_ns, base, lock, integrator)
     state = engine.prepare(state)
 
     if tree:

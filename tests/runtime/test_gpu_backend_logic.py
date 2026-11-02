@@ -233,6 +233,55 @@ def test_evolve_of_a_program_that_measures_runs_the_gpu_backend(gpu_on_cpu):
     np.testing.assert_allclose(rho, np.diag([1.0, 0.0]), atol=1e-7)
 
 
+@pulse.classical(max_latency_ns=0)
+def _first_bit(bits: pulse.Bits) -> pulse.Bits:
+    return [bits[0]]
+
+
+@pulse.classical(max_latency_ns=0)
+def _same(x: float) -> float:
+    return x
+
+
+@pulse.kernel
+def decoded_reset(q0):
+    d0 = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    bit = readout(r0, square(200, 0.05))
+    sync(d0, r0)
+    if _first_bit.submit([bit]).result()[0]:
+        drive(d0, square(40, _PI))
+
+
+@pulse.kernel
+def answered_wait(q0, tau: float):
+    d0 = get_drive_line(q0)
+    r0 = get_readout_line(q0)
+    w = _same.submit(tau).result()
+    drive(d0, square(40, _PI))
+    wait(d0, w)
+    sync(d0, r0)
+    readout(r0, square(200, 0.05))
+
+
+# A program with classical calls evolves in segments between their answers,
+# each lowered with the answers so far bound.
+CALL_CASES = {
+    "decoded_reset": ((decoded_reset,), {"initial_state": [2**-0.5, 2**-0.5]}),
+    "answered_wait": ((answered_wait, 400.0), {}),
+}
+
+
+@pytest.mark.parametrize("name", CALL_CASES)
+def test_the_gpu_backend_simulates_a_program_with_classical_calls(name, gpu_on_cpu):
+    (kernel, *args), kwargs = CALL_CASES[name]
+    lowered = on(_target(1, t1_us=5.0), kernel, Q[0], *args)
+    gpu = pulse.simulate(lowered, backend="gpu", levels=2, **kwargs)
+    cpu = pulse.simulate(lowered, backend="cpu", levels=2, **kwargs)
+    np.testing.assert_allclose(gpu.density_matrix, cpu.density_matrix, atol=_ATOL)
+    assert _weights(gpu) == pytest.approx(_weights(cpu), abs=_ATOL)
+
+
 @pulse.kernel
 def measure_then_flip(q0):
     d0 = get_drive_line(q0)

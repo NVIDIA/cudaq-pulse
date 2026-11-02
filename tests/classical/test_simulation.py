@@ -455,7 +455,7 @@ def test_gpu_simulation_of_calls_matches_the_cpu(case):
     q = dev.qudit_handles[0]
     if case == "decoded_reset":
         lowered = pulse.compile(decoded_reset, device=dev).lower(q)
-        kwargs = {"initial_state": PLUS}
+        kwargs = {"initial_state": PLUS, "levels": 2}
     else:
         lowered = pulse.compile(variable_t1, device=dev).lower(q, 4000.0)
         kwargs = {}
