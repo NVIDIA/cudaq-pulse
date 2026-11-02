@@ -50,6 +50,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 
@@ -2147,6 +2148,8 @@ private:
     auto yield =
         mlir::cast<mlir::scf::YieldOp>(loop.getBody()->getTerminator());
     llvm::SmallVector<mlir::Value> bodyValues;
+    // Whether the body bounds a value from before the loop.
+    bool readsOutside = false;
     loop.getBody()->walk([&](mlir::Operation *inner) {
       for (mlir::Value result : inner->getResults())
         bodyValues.push_back(result);
@@ -2154,6 +2157,11 @@ private:
         for (mlir::Block &nested : region)
           for (mlir::Value arg : nested.getArguments())
             bodyValues.push_back(arg);
+      for (mlir::Value operand : inner->getOperands())
+        if ((isTimedType(operand.getType()) ||
+             (classical && !mlir::matchPattern(operand, mlir::m_Constant()))) &&
+            !loop->isAncestor(operand.getParentRegion()->getParentOp()))
+          readsOutside = true;
     });
     llvm::SmallVector<Carried> kinds;
     llvm::SmallVector<int64_t> carried;
@@ -2255,22 +2263,30 @@ private:
           break;
         }
       }
-      if (steady && k > 0) {
-        // The first iteration starts the arm earliest, by the distance.
-        lowerArmStart(armStart, iterationArmStart, k * shift);
+      // A value from before the loop is bounded by every iteration, the
+      // first the earliest: skip to it and simulate it.
+      if (steady && k > (readsOutside ? 1 : 0)) {
+        int64_t distance = (readsOutside ? k - 1 : k) * shift;
+        // The first iteration skipped starts the arm earliest.
+        lowerArmStart(armStart, iterationArmStart, distance);
         for (auto [start, inIteration] :
              llvm::zip(armStarts, iterationArmStarts))
-          lowerArmStart(start, inIteration, k * shift);
-        extrapolate(carried, previous, kinds, k * shift);
+          lowerArmStart(start, inIteration, distance);
+        extrapolate(carried, previous, kinds, distance);
         for (auto [now, before] : llvm::zip(ceilings, ceilingsBefore))
           if (now != before)
-            now += k * shift;
+            now += distance;
         for (auto &[key, time] : linkLate) {
           auto before = linksBefore.find(key);
           if (before == linksBefore.end() || before->second != time)
-            time += k * shift;
+            time += distance;
         }
         extrapolations.push_back({loop, -shift, nullptr});
+        if (readsOutside) {
+          simulatedFirst = true;
+          k = 1;
+          continue;
+        }
         break;
       }
     }

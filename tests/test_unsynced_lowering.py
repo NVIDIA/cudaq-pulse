@@ -167,6 +167,15 @@ def _kernels(n: int) -> dict[str, Any]:
                 drive(a, square(40, 0.1))
 
     @pulse.kernel
+    def tested_in_every_iteration(q, r, t):
+        a = get_drive_line(r)
+        p = get_readout_line(q)
+        m = readout(p, square(70, 0.05))
+        for _ in range(n):
+            if m:
+                drive(a, square(40, 0.1))
+
+    @pulse.kernel
     def on_a_measurement_before(q, r, t):
         line = get_drive_line(q)
         other = get_drive_line(r)
@@ -243,6 +252,7 @@ def _kernels(n: int) -> dict[str, Any]:
         "only_syncs_on_two": only_syncs_on_two,
         "in_a_branch": in_a_branch,
         "tested_before_a_loop": tested_before_a_loop,
+        "tested_in_every_iteration": tested_in_every_iteration,
         "on_a_measurement_before": on_a_measurement_before,
         "on_two_measurements_before": on_two_measurements_before,
         "peeled_on_a_measurement_before": peeled_on_a_measurement_before,
@@ -327,9 +337,10 @@ def _statement(rng: random.Random, depth: int, measured: list[str], indent: int)
     return [f"{pad}drive({rng.choice(_DRIVES)}, gaussian({rng.randint(4, 40)}, 0.1, 2.0))"]
 
 
-def _random_kernel(seed: int, trips: int, branched: bool) -> Any:
+def _random_kernel(seed: int, trips: int, branched: bool, tested: bool = False) -> Any:
     """A random loop of *trips* iterations between a random prologue and
-    epilogue; *branched*, in a branch on a measurement."""
+    epilogue; *branched*, in a branch on a measurement; *tested*, testing a
+    measurement made before it in every iteration."""
     rng = random.Random(seed)
     lines = [
         "def k(q, r, t):",
@@ -347,9 +358,17 @@ def _random_kernel(seed: int, trips: int, branched: bool) -> Any:
         lines += [f"    w = readout(p, square({rng.randint(10, 80)}, 0.05))", "    if w:"]
         indent = 2
     lines.append("    " * indent + f"for _ in range({trips}):")
+    body = len(lines)
     measured = list(before) if rng.random() < 0.2 else []
     for _ in range(rng.randint(2, 6)):
         lines += _statement(rng, 0, measured, indent + 1)
+    if tested:
+        pad = "    " * (indent + 1)
+        width = rng.randint(10, 80)
+        lines.insert(body - 1 - branched * 2, f"    v = readout(s, square({width}, 0.05))")
+        test = [f"{pad}if v:", f"{pad}    drive({rng.choice(_DRIVES)}, square(12, 0.1))"]
+        at = rng.choice([body + 1, len(lines)])
+        lines[at:at] = test
     if branched:
         lines.append(f"        drive({rng.choice(_DRIVES)}, square({rng.randint(1, 60)}, 0.1))")
     for _ in range(rng.randint(0, 2)):
@@ -359,14 +378,15 @@ def _random_kernel(seed: int, trips: int, branched: bool) -> Any:
     return pulse.kernel(namespace["k"])
 
 
+@pytest.mark.parametrize("tested", [False, True])
 @pytest.mark.parametrize("branched", [False, True])
-def test_random_loops_schedule_as_every_iteration_does(branched):
+def test_random_loops_schedule_as_every_iteration_does(branched, tested):
     differ = [
         (seed, trips, schedule)
         for seed in range(80)
         for trips in (3, 13, 40)
         for schedule in ("asap", "alap")
-        if _differs(_random_kernel(seed, trips, branched), schedule)
+        if _differs(_random_kernel(seed, trips, branched, tested), schedule)
     ]
     assert differ == []
 
@@ -391,15 +411,28 @@ def _events(kernel: Any, schedule: str, unroll_threshold: int) -> tuple[Any, lis
 # Without passes the unrolled program fuses no pulses, so it has the same ops
 # as the rolled one, and under rcp the same requests for the same lanes.
 @pytest.mark.parametrize("schedule", ["asap", "alap", "rcp", "alap_rcp"])
-def test_random_loops_in_a_branch_play_every_event_as_unrolled(schedule):
+@pytest.mark.parametrize(("branched", "tested"), [(True, False), (False, True)])
+def test_random_loops_testing_a_measurement_play_every_event_as_unrolled(
+    branched, tested, schedule
+):
     differ = [
         (seed, trips)
         for seed in range(80)
         for trips in (3, 13, 40)
-        if _events(kernel := _random_kernel(seed, trips, True), schedule, 0)
+        if _events(kernel := _random_kernel(seed, trips, branched, tested), schedule, 0)
         != _events(kernel, schedule, 10**6)
     ]
     assert differ == []
+
+
+@pytest.mark.parametrize("trips", [2, 3, 5, 40])
+def test_a_measurement_before_a_loop_ends_before_its_first_iteration_tests_it(trips):
+    # A value from before the loop waits for the loop's first iteration.
+    kernel = _kernels(trips)["tested_in_every_iteration"]
+    lowered = pulse.compile(kernel, schedule="alap", unroll_threshold=0).lower(Q[0], Q[1], Q[2])
+    tested, *loop = lowered.schedule
+    assert tested.kind == "readout" and tested.start_cycles == 0
+    assert tested.start_cycles + tested.duration_cycles <= min(e.start_cycles for e in loop)
 
 
 _CHILD = """
