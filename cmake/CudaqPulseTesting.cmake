@@ -146,9 +146,13 @@ endforeach()
 add_test(NAME PulsePythonGpuTests COMMAND ${_cudaq_pulse_pytest_command} -m gpu)
 set_tests_properties(PulsePythonGpuTests PROPERTIES LABELS "pulse;gpu")
 
+# VERBATIM escapes the label's `$` for the build tool: unescaped, Ninja reads
+# it as a line continuation and ctest gets a filter that matches no test.
+# --no-tests=error makes an empty selection fail rather than pass.
 add_custom_target(check-pulse-gpu
-  COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -L "^gpu$"
+  COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --no-tests=error -L "^gpu$"
   DEPENDS ${_cudaq_pulse_smoke_targets} pulse
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   COMMENT "Running cudaq-pulse cuDensityMat and numerical GPU tests"
-  USES_TERMINAL)
+  USES_TERMINAL
+  VERBATIM)
