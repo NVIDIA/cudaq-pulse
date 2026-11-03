@@ -222,7 +222,9 @@ the module of one call:
 
 ``.duration``
    How long the program runs, as a time: the latest end of its operations,
-   over both arms of every branch (``float(duration)`` is in ns).
+   over both arms of every branch (``float(duration)`` is in ns). Only a
+   ``Lowered`` has one: a kernel or ``CompiledKernel`` has no duration until
+   it is lowered for a call, since the call's arguments decide it.
 
 The device's handles find a qudit by its label, ``dev.qudit("D1")``, and a
 target gives the coupling of two qudits, ``dev.target.coupling(a, b)``.

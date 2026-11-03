@@ -872,7 +872,10 @@ class Lowered:
         """How long the program runs: the latest end of its operations, over
         both arms of every branch, as a time (``float(duration)`` is in ns).
 
-        A wait a float parameter sets counts once the module has values."""
+        Only a lowered program has a duration: a kernel or ``CompiledKernel``
+        has none until it is lowered for a call, since the call's arguments
+        decide it. A wait a float parameter sets counts once the module has
+        values."""
         # The clock exactly as its float holds it, as Fraction(clock_ghz) is.
         numerator, denominator = self.target.clock_ghz.as_integer_ratio()
         schedule = self.schedule
