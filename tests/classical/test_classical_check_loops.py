@@ -32,9 +32,11 @@ from tests.classical.test_answer_loops import (
     NAMES,
     POLICIES,
     _kernels,
+    _lowers_as_extrapolated,
     _machines,
     _random_kernel,
     _saturating,
+    decide,
 )
 
 
@@ -126,3 +128,38 @@ def test_random_long_loops_of_calls_are_checked_from_one_copy_as_every_iteration
     differ, failing = _differ(kernels, schedule)
     assert differ == []
     assert failing > 50
+
+
+def _calls_before(n: int) -> dict[str, Any]:
+    """A call before a loop that makes none: the check counts the loop's
+    iterations only where requests are."""
+
+    @pulse.kernel
+    def readouts(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        other = get_readout_line(r)
+        m = readout(ro, square(100, 0.05))
+        if decide.submit([m]).result()[0]:
+            drive(d, square(40, 0.1))
+        for _ in range(n):
+            drive(d, square(8, 0.1))
+            readout(other, square(12, 0.05))
+
+    @pulse.kernel
+    def drives(q, r, t):
+        d = get_drive_line(q)
+        e = get_drive_line(r)
+        ro = get_readout_line(q)
+        m = readout(ro, square(100, 0.05))
+        if decide.submit([m]).result()[0]:
+            drive(d, square(40, 0.1))
+        for _ in range(n):
+            drive(d, square(8, 0.1))
+            drive(e, square(12, 0.05))
+
+    return {"readouts": readouts, "drives": drives}
+
+
+def test_a_call_before_a_loop_of_10_7_iterations_lowers_in_bounded_time_and_memory():
+    _lowers_as_extrapolated(_calls_before, 10**7)
