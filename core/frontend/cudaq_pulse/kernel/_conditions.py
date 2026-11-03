@@ -16,7 +16,8 @@ from __future__ import annotations
 import numbers
 from typing import TYPE_CHECKING, Any
 
-from ._emitter import _Choice, _NotMeasurement, _watch_choices
+from ._bytecode_normalize import FOR_ITER, LOAD_CONST, POP_TOP
+from ._emitter import _REJOIN_MESSAGE, _Choice, _NotMeasurement, _watch_choices
 from .ir_builder import (
     AnswerValue,
     CompilationError,
@@ -437,3 +438,27 @@ def identity_error(left: Any, right: Any) -> CompilationError:
     if not names or run_time(left) or run_time(right):
         return CompilationError(message)
     return SymbolicValueError(message, tuple(dict.fromkeys(names)), "the identity test is")
+
+
+def rejoin_error(view: DecodedCode, branch: int) -> CompilationError:
+    """The error for the if at ``view.instrs[branch]``, one arm of which
+    leaves where the other continues. Python 3.14 compiles ``any()`` and
+    ``all()`` of a generator expression to a loop whose if leaves it, on
+    the first true (false) item, to push True (False)."""
+    instrs = view.instrs
+    target = instrs[branch][1]
+    if (
+        branch > 0
+        and instrs[branch - 1][0] is FOR_ITER
+        and target.__class__ is int
+        and target + 1 < len(instrs)
+        and instrs[target][0] is POP_TOP
+        and instrs[target + 1][0] is LOAD_CONST
+        and instrs[target + 1][1].__class__ is bool
+    ):
+        name, word = ("any", "or") if instrs[target + 1][1] else ("all", "and")
+        return CompilationError(
+            f"{name}() of a generator of conditions known only when the program runs is "
+            f"not traced; give it a list, {name}([...]), or combine them with `{word}`"
+        )
+    return CompilationError(_REJOIN_MESSAGE)

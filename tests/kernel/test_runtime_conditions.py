@@ -269,6 +269,7 @@ def test_float_arguments_in_compared_conditions_specialize(condition):
         ("any([m])", "known only when the program runs"),
         ("all([m, not m])", "known only when the program runs"),
         ("any(c > 3 for c in (n,))", "give it a list, any([...])"),
+        ("all(c > 3 for c in (n, 9))", "give it a list, all([...])"),
         ("[0.1, 0.2][n] > 0.1", "an index needs the value of get_n[0], the answer of a"),
         ("[1 for c in (n,) if c > 3]", "cannot filter on a condition known only"),
         ("sum(1 for c in (n,) if c > 3)", "cannot filter on a condition known only"),

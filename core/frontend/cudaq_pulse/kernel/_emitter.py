@@ -2392,7 +2392,9 @@ class PulseIREmitter:
         try:
             outcome = self._loop(view, start, branch, len(view.instrs), header)
         except _NotRollableError:
-            raise CompilationError(_REJOIN_MESSAGE) from None
+            from ._conditions import rejoin_error
+
+            raise rejoin_error(view, branch) from None
         finally:
             self._mutated = outer
             if outer is not None:
@@ -2404,7 +2406,9 @@ class PulseIREmitter:
             if outcome is not None:
                 raise CompilationError("a measurement-conditioned branch cannot return a value")
         elif outcome is not _REGION_DONE:
-            raise CompilationError(_REJOIN_MESSAGE)
+            from ._conditions import rejoin_error
+
+            raise rejoin_error(view, branch)
         slots = _slot_changes(containers)
         if slots is None or not _only_containers(mutated, containers):
             from ._conditions import filtered
