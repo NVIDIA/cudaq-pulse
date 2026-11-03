@@ -370,13 +370,15 @@ def emulate(
 
     result = EmulationResult()
     t_wall = time.perf_counter()
+    # Unique over the run, so that an answer to an earlier shot's request
+    # is not taken for one to this shot's.
+    request_id = 0
     for _ in range(shots):
         module = base
         path: list[tuple[tuple[int, tuple[int, ...]], int]] = []
         shot_outcomes: list[int] = []
         traces: list[CallTrace] = []
         seen: dict[tuple[int, tuple[int, ...]], tuple[int, float]] = {}
-        request_id = 0
         while True:
             entries = [[index, *iteration, k] for (index, iteration), k in path]
             found = module.next_measurement(entries)
@@ -410,13 +412,22 @@ def emulate(
                     module = module.bind_call(index, [float(value)], *schedule_args)
                     continue
                 request = wire.encode_request(fn, inputs, request_id, dispatch_key=keys[callee])
-                request_id += 1
                 answer_bytes, service_ns = channel.call(fn, request)
                 status, answered_id, answer = wire.decode_answer(fn, answer_bytes)
                 if status != 0:
                     raise wire.call_failed(callee, answered_id, status)
                 link = machine.link(fn.link)
                 path_transport = transport_of(machine.link_id(fn.link))
+                if answered_id != request_id:
+                    from .._errors import ExecutionError
+
+                    raise ExecutionError(
+                        f"classical function {callee!r} sent request {request_id} and got the "
+                        f"answer to request {answered_id}: a late or repeated answer to an "
+                        "earlier request, or one meant for another client; a channel must "
+                        "return the answer to the request it was given"
+                    )
+                request_id += 1
                 latency = path_transport.delay_ns(len(request), rng) + path_transport.delay_ns(
                     len(answer_bytes), rng
                 )

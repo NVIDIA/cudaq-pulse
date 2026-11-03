@@ -244,11 +244,10 @@ def decode_answer(function: ClassicalFunction[..., Any], data: bytes) -> tuple[i
     magic, status, length, request_id, _ = _RESPONSE.unpack_from(data)
     if magic != RESPONSE_MAGIC:
         raise ExecutionError(f"not an answer: magic {magic:#x}")
-    values = (
-        _unpack(function.results, data[HEADER_BYTES : HEADER_BYTES + length]) if status == 0 else []
-    )
-    if not function.results or status != 0:
+    results = function.results
+    if status != 0 or not results:
         return status, request_id, None
+    values = _unpack(results, data[HEADER_BYTES : HEADER_BYTES + length])
     return status, request_id, values[0] if len(values) == 1 else tuple(values)
 
 

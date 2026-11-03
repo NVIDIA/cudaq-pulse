@@ -144,6 +144,57 @@ def test_an_answer_of_the_wrong_length_is_an_error():
         channel.call(version, wire.encode_request(version, [[1, 0]]))
 
 
+class _Replayed:
+    """A channel that answers each request with an answer it gave before:
+    the one *back* requests earlier, once there is one."""
+
+    def __init__(self, inner, back):
+        self.inner, self.back, self.answers, self.sent = inner, back, [], []
+
+    def call(self, function, request):
+        self.sent.append(wire.decode_request(function, request, function._dispatch_key)[0])
+        self.answers.append(self.inner.call(function, request))
+        if len(self.answers) <= self.back:
+            return self.answers[-1]
+        return self.answers[-1 - self.back]
+
+
+def test_an_answer_to_another_request_is_an_error():
+    @pulse.classical(max_latency_ns=1000)
+    def echo(bits: pulse.Bits) -> pulse.Bits:
+        return [bits[0]]
+
+    @pulse.kernel
+    def twice(q):
+        r = get_readout_line(q)
+        echo.submit([readout(r, square(300, 0.05))]).result()
+        echo.submit([readout(r, square(300, 0.05))]).result()
+
+    low = pulse.compile(twice).lower(Q[0])
+    functions = low.classical
+    fresh = emulation.InProcess(functions, {"echo": echo.implementation})
+    recorded = _Replayed(fresh, 0)
+    emulation.emulate(low, shots=3, seed=1, channel=recorded)
+    # Request ids run on over shots.
+    assert recorded.sent == list(range(6))
+    # The second request gets the first's answer, as a late or repeated one.
+    message = r"'echo__1' sent request 1 and got the answer to request 0: a late or repeated"
+    with pytest.raises(pulse.ExecutionError, match=message):
+        emulation.emulate(low, shots=1, seed=1, channel=_Replayed(fresh, 1))
+
+    @pulse.kernel
+    def once(q):
+        r = get_readout_line(q)
+        echo.submit([readout(r, square(300, 0.05))]).result()
+
+    # The next shot's request gets the answer to the last shot's.
+    low = pulse.compile(once).lower(Q[0])
+    with pytest.raises(
+        pulse.ExecutionError, match=r"sent request 1 and got the answer to request 0"
+    ):
+        emulation.emulate(low, shots=2, seed=1, channel=_Replayed(fresh, 1))
+
+
 def test_throughput_is_reported():
     low = pulse.compile(feedback).lower(Q[0])
     result = emulation.emulate(low, shots=50, seed=1)
