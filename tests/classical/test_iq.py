@@ -128,6 +128,71 @@ def test_iq_points_scale_with_the_readout_amplitude():
     )
 
 
+def test_iq_points_follow_a_readout_amplitude_computed_from_an_answer():
+    from cudaq_pulse.classical import emulation
+
+    dev = _device(amplitude=0.05)
+    q = dev.qudit_handles[0]
+    seen: list[complex] = []
+
+    @pulse.classical(max_latency_ns=0)
+    def setting(x: float) -> float:
+        return 0.2
+
+    @pulse.classical(max_latency_ns=0, name="record")
+    def record(point: complex) -> bool:
+        seen.append(point)
+        return False
+
+    @pulse.kernel
+    def probe(q):
+        a = setting.submit(0.0).result()
+        r = get_readout_line(q)
+        record.submit(readout(r, square(1000, a * 0.5))).result()
+
+    lowered = pulse.compile(probe, device=dev).lower(q)
+    emulation.emulate(lowered, shots=400, outcomes=lambda q, _, rng: 0, seed=2)
+    pulse.simulate(lowered, initial_state=[1, 0], shots=400, seed=2, levels=2)
+    # Played at 0.1, twice the readout's amplitude: the points are twice as far.
+    (c0, _), (r0, _) = _centers(dev, amplitude=0.1), _centers(dev, amplitude=0.05)
+    assert c0 == pytest.approx(2 * r0)
+    assert abs(np.mean(seen[:400]) - c0) < 0.15
+    assert abs(np.mean(seen[400:]) - c0) < 0.15
+
+
+def test_a_readout_the_model_cannot_evaluate_is_an_error():
+    dev = _device(amplitude=0.05)
+    q = dev.qudit_handles[0]
+
+    @pulse.classical(max_latency_ns=0, name="record")
+    def record(point: complex) -> bool:
+        return False
+
+    @pulse.kernel
+    def probe(q):
+        r = get_readout_line(q)
+        record.submit(readout(r, custom_samples([0.05] * 200))).result()
+
+    lowered = pulse.compile(probe, device=dev).lower(q)
+    message = r"qudit 0 depend on its pulse's peak amplitude, .* DispersiveReadout's amplitude"
+    with pytest.raises(pulse.UnsupportedError, match=message):
+        pulse.simulate(lowered, shots=10, seed=2, levels=2)
+    # Without a readout amplitude the pulse's does not matter.
+    plain = _device()
+    pulse.simulate(
+        pulse.compile(probe, device=plain).lower(plain.qudit_handles[0]), shots=10, seed=2, levels=2
+    )
+    # Nor, without a readout frequency, does the frequency; with one, an unknown
+    # frequency is an error.
+    assert math.isfinite(
+        abs(IQModel(_device().target, (0,), False).center(0, 0, math.nan, 0.1, 500))
+    )
+    model = IQModel(_device(frequency_hz=7e9).target, (0,), decay=False)
+    message = r"its tone's frequency, .*DispersiveReadout's frequency_hz"
+    with pytest.raises(pulse.UnsupportedError, match=message):
+        model.center(0, 0, math.nan, 0.1, 500)
+
+
 def test_the_centers_follow_the_readout_frequency():
     dev = _device(frequency_hz=7e9)
     model = IQModel(dev.target, (0,), decay=False)

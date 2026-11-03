@@ -160,6 +160,10 @@ class IQModel:
     ``efficiency`` eta. With ``decay``, a qubit in ``|1>``
     that relaxes at a time ``t`` drawn from its T1 within the window
     integrates ``alpha_1`` for ``t`` and ``alpha_0`` after.
+
+    A readout whose tone frequency (with a ``frequency_hz``) or pulse
+    amplitude (with an ``amplitude``) is not a number where it plays is
+    ``UnsupportedError``.
     """
 
     def __init__(self, target: Any, qudits: Sequence[int], decay: bool) -> None:
@@ -222,12 +226,35 @@ class IQModel:
         """The noiseless integrated IQ point of *level*."""
         p = self._params[qudit]
         kappa, chi = p["kappa"], p["chi"]
-        f_r = p["f_r"] if math.isfinite(p["f_r"]) else frequency_hz
+        f_r = p["f_r"]
         if not math.isfinite(frequency_hz):
-            frequency_hz = f_r if math.isfinite(f_r) else 0.0
+            if math.isfinite(f_r):
+                from .._errors import UnsupportedError
+
+                raise UnsupportedError(
+                    f"the IQ points of a readout of qudit {qudit} depend on its tone's "
+                    "frequency, which is not a number where the readout plays: the readout "
+                    "model computes it from constants, float arguments and the answers of "
+                    "earlier calls; its DispersiveReadout's frequency_hz needs it"
+                )
+            frequency_hz = f_r = 0.0
+        elif not math.isfinite(f_r):
             f_r = frequency_hz
-        reference = p["amp"] if math.isfinite(p["amp"]) else amplitude
-        scale = amplitude / reference if math.isfinite(amplitude) and reference else 1.0
+        reference = p["amp"]
+        if not math.isfinite(amplitude):
+            if math.isfinite(reference):
+                from .._errors import UnsupportedError
+
+                raise UnsupportedError(
+                    f"the IQ points of a readout of qudit {qudit} depend on its pulse's peak "
+                    "amplitude, which is not a number where the readout plays: the readout "
+                    "model computes it from constants, float arguments and the answers of "
+                    "earlier calls, for a built-in waveform; its DispersiveReadout's amplitude "
+                    "needs it"
+                )
+            scale = 1.0
+        else:
+            scale = amplitude / reference if math.isfinite(reference) and reference else 1.0
         epsilon = math.sqrt(p["photons"]) * abs(complex(kappa / 2, -2 * math.pi * chi * 1e-9))
         tau = p["tau"] if math.isfinite(p["tau"]) else duration_ns
         detuning = 2 * math.pi * (frequency_hz - f_r - (2 * level - 1) * chi) * 1e-9

@@ -3303,7 +3303,8 @@ public:
   }
 
   /// The peak amplitude of a built-in waveform (its operand 1), through
-  /// `pulse.scale` by a real number and `pulse.neg`.
+  /// `pulse.scale` by a real number and `pulse.neg`; the numbers may be
+  /// computed from constants and bound answers.
   static double peakAmplitude(mlir::Value waveform) {
     double factor = 1.0;
     for (mlir::Operation *op = waveform.getDefiningOp(); op;) {
@@ -3313,7 +3314,7 @@ public:
         continue;
       }
       if (name == "pulse.scale") {
-        auto scale = pulse::constantNumber(op->getOperand(1));
+        auto scale = pulse::boundNumber(op->getOperand(1));
         if (!scale)
           break;
         factor *= *scale;
@@ -3322,7 +3323,7 @@ public:
       }
       if (op->getNumOperands() < 2)
         break;
-      if (auto amplitude = pulse::constantNumber(op->getOperand(1)))
+      if (auto amplitude = pulse::boundNumber(op->getOperand(1)))
         return std::abs(*amplitude * factor);
       break;
     }
