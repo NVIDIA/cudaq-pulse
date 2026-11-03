@@ -104,13 +104,12 @@ def _target_attributes(
     target: Any,
     qubits: tuple[int, ...],
     *,
-    t_start: float,
-    t_end: float,
-    num_steps: int,
     integrator: str,
     dephasing: str = "t2_star",
 ) -> str:
-    """Module attributes, in MLIR syntax, that the cuDensityMat lowering reads.
+    """Module attributes, in MLIR syntax and comma-separated, that the
+    cuDensityMat lowering reads, but for the time window, which each segment
+    sets.
 
     *qubits* are the simulated qudits, one mode each in this order; the
     others are left out, along with their couplings. Qudits dephase at their
@@ -134,9 +133,6 @@ def _target_attributes(
     attrs = [
         f"qop.n_qubits = {len(qubits)} : i64",
         f"pulse.modes = array<i64: {', '.join(map(str, qubits))}>",
-        f"qop.t_start = {_f64(t_start)}",
-        f"qop.t_end = {_f64(t_end)}",
-        f"qop.num_steps = {int(num_steps)} : i64",
         f'qop.integrator = "{integrator}"',
         "pulse.t1_times = [" + ", ".join(_f64(v) for v in t1_ns) + "]",
         "pulse.t2_times = [" + ", ".join(_f64(v) for v in t2_ns) + "]",
@@ -160,4 +156,4 @@ def _target_attributes(
             attrs.append(
                 f"pulse.{name}_strength_hz = " + _f64_array([getattr(e, strength) for e in entries])
             )
-    return "{" + ", ".join(attrs) + "}"
+    return ", ".join(attrs)

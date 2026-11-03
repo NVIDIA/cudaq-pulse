@@ -25,7 +25,6 @@ by the cuDensityMat runtime (``backend="gpu"``), from the projected state.
 from __future__ import annotations
 
 import math
-import re as _re
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -803,17 +802,8 @@ def _simulate_compiled(
         raise InvalidValueError("the program uses no qudits; there is nothing to simulate")
     mode = {q: i for i, q in enumerate(qudits)}
     dims, extra = _level_attributes(target, qudits, levels)
-    attributes = _target_attributes(
-        target,
-        qudits,
-        t_start=t_start,
-        t_end=t_start + 1.0,
-        num_steps=1,
-        integrator=integrator,
-        dephasing=dephasing,
-    )
-    # Segments set their own window.
-    base = _re.sub(r"qop\.(t_start|t_end|num_steps) = [^,]+, ", "", attributes[1:-1]) + ", " + extra
+    base = _target_attributes(target, qudits, integrator=integrator, dephasing=dephasing)
+    base += ", " + extra
     if plant:
         frequencies = [math.nan] * (max(qudits) + 1)
         for q in qudits:
