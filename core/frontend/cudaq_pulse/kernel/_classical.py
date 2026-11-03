@@ -539,6 +539,24 @@ def bit_select(cond: AnswerValue, then: Any, other: Any) -> Any:
     return bit_logic("|", bit_logic("&", cond, then), bit_logic("&", unset, other))
 
 
+def any_or_all(either: bool, items: list[Any] | tuple[Any, ...], error: CompilationError) -> Any:
+    """``any(items)`` if *either*, else ``all(items)``, where the truth of
+    some item, which raised *error*, is known only when the program runs:
+    an ``or`` (an ``and``) of the items' truth."""
+    found: Any = not either
+    for item in items:
+        if item.__class__ is AnswerValue and item.dtype != "i1":
+            item = UndecidableComparison(item, "!=", 0)
+        elif not is_condition(item):
+            if measured(item) or item.__class__ is IRValue:
+                raise error
+            if bool(item) == either:
+                return either
+            continue
+        found = bit_logic("|" if either else "&", found, item)
+    return found
+
+
 def runtime_value(value: Any) -> bool:
     """Whether *value* is known only when the program runs, so that a set or
     dict cannot look it up by its hash."""

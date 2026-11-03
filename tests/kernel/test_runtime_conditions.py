@@ -166,6 +166,12 @@ _SIMULATED = [
     "(n > 3) in {True}",
     "((n > 3) and (x > 0.1)) == True",
     "((n > 3) or b) != (x > 0.1)",
+    "any([n > 3, x > 0.1])",
+    "all([n > 3, x > 0.1])",
+    "any((n, x > 0.1))",
+    "all([True, b, n < 7])",
+    "any([False, 0, n > 3])",
+    "all([n > 3, 0])",
 ]
 
 
@@ -266,7 +272,12 @@ def test_float_arguments_in_compared_conditions_specialize(condition):
         ("{n: 1}.get(5)", "it cannot be a set member or a dict key"),
         ("any([m])", "known only when the program runs"),
         ("all([m, not m])", "known only when the program runs"),
-        ("any([n > 3])", "known only when the program runs"),
+        ("any(c > 3 for c in (n,))", "give it a list, any([...])"),
+        ("[0.1, 0.2][n] > 0.1", "an index needs the value of get_n[0], the answer of a"),
+        ("[1 for c in (n,) if c > 3]", "cannot filter on a condition known only"),
+        ("sum(1 for c in (n,) if c > 3)", "cannot filter on a condition known only"),
+        ("[c for c in (3, 5) if n > c]", "cannot filter on a condition known only"),
+        ("{c for c in (3, 5) if n > c}", "cannot filter on a condition known only"),
     ],
 )
 def test_conditions_that_cannot_be_traced_raise_at_their_line(condition, message):
@@ -341,6 +352,20 @@ def _mlir_with(prelude, condition):
 def test_a_value_that_cannot_be_chosen_raises(prelude, message):
     kernel = _kernel("c", prelude=prelude)
     with pytest.raises(CompilationError, match=re.escape(message)):
+        pulse.compile(kernel).lower(Q[0])
+
+
+@pytest.mark.parametrize(
+    "prelude",
+    [
+        "    assert n > 3\n",
+        "    assert m, 'not excited'\n",
+        "    if (n > 3) == (x > 0.1):\n        raise ValueError('too many')\n",
+    ],
+)
+def test_a_raise_a_runtime_condition_decides_is_rejected_at_its_line(prelude):
+    kernel = _kernel("True", prelude=prelude)
+    with pytest.raises(CompilationError, match="whether it fails is decided as the program runs"):
         pulse.compile(kernel).lower(Q[0])
 
 

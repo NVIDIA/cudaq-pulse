@@ -334,6 +334,20 @@ def _identity_unknown(left: Any, right: Any) -> bool:
 
 _NUMBERS = (bool, int, float)
 
+_BUILT = frozenset({list, set, dict})
+
+_RAISE_IN_ARM_MESSAGE = (
+    "this assert or raise is in an arm of an if on a value known only when the program "
+    "runs, so whether it fails is decided as the program runs, and a kernel cannot raise "
+    "then; check the value in the classical function, or handle each outcome with if/else"
+)
+
+_FILTER_MESSAGE = (
+    "a comprehension or generator expression cannot filter on a condition known only "
+    "when the program runs: which items it has would be decided as the program runs; "
+    "loop with a for statement and branch with an if statement in its body instead"
+)
+
 # The containers `in` looks a value up in by its hash.
 _HASHED: frozenset[type] = frozenset({dict, set, frozenset, type({}.keys())})
 
@@ -1970,6 +1984,8 @@ class PulseIREmitter:
 
                 elif op is bc.RAISE:
                     exc = pop() if arg else None
+                    if any(not loop for _, loop in getattr(self.b, "flow", ())):
+                        raise CompilationError(_RAISE_IN_ARM_MESSAGE)
                     if exc is AssertionError or isinstance(exc, AssertionError):
                         detail = f": {exc}" if isinstance(exc, AssertionError) and exc.args else ""
                         raise CompilationError(f"assertion failed in kernel{detail}")
@@ -2404,7 +2420,12 @@ class PulseIREmitter:
         returns = join >= len(view.instrs)
         # An arm may only move forward from the branch, except that a join at
         # an enclosing loop header (both arms continue) ends the arm.
-        header = join if join < branch else -1
+        if join < branch:
+            header = join
+            # There a comprehension's if adds to what it builds, on the stack.
+            _add_built(self.stack, containers)
+        else:
+            header = -1
         outer = self._mutated
         mutated: dict[int, tuple[Any, Any]] = {}
         self._mutated = mutated
@@ -2426,11 +2447,23 @@ class PulseIREmitter:
             raise CompilationError(_REJOIN_MESSAGE)
         slots = _slot_changes(containers)
         if slots is None or not _only_containers(mutated, containers):
+            if header >= 0 and self._filtered(containers):
+                raise CompilationError(_FILTER_MESSAGE)
             raise CompilationError(
                 "a measurement-conditioned branch may only change list entries that "
                 "hold lines or tones"
             )
         return dict(self.locals), slots
+
+    def _filtered(self, containers: list[tuple[Any, Any]]) -> bool:
+        """Whether the arm just traced added to what a comprehension or
+        generator expression builds."""
+        yielded = self.locals.get(".yielded")
+        return any(
+            len(obj) != len(copy)
+            for obj, copy in containers
+            if obj is yielded or any(obj is v for v in self.stack)
+        )
 
     @staticmethod
     def _jump(target: int, lo: int, hi: int, header: int) -> int:
@@ -3005,10 +3038,13 @@ class PulseIREmitter:
                     "only functions, methods and kernels are inlined into a kernel; "
                     f"call {e.name}() from a module-level function instead"
                 ) from e
-            except CompilationError:
+            except CompilationError as e:
                 # bool() of a condition known only at run time is that condition.
                 if callable_val is bool and not kwargs and _runtime_bit(call_args[0]):
                     self.stack.append(call_args[0])
+                    return
+                if (callable_val is any or callable_val is all) and len(call_args) == 1:
+                    self.stack.append(_any_or_all(callable_val is any, call_args[0], e))
                     return
                 raise
             self.stack.append(result)
@@ -3810,12 +3846,37 @@ def _only_containers(
     return all(copy is None or key in known for key, (_, copy) in mutated.items())
 
 
-def _container_unchanged(obj: list[Any] | dict[Any, Any], copy: Any) -> bool:
+def _container_unchanged(obj: list[Any] | dict[Any, Any] | set[Any], copy: Any) -> bool:
     if len(obj) != len(copy):
         return False
     if isinstance(obj, list):
         return all(a is b for a, b in zip(obj, copy, strict=False))
+    if isinstance(obj, set):
+        return all(k in copy for k in obj)
     return all(k in copy and obj[k] is copy[k] for k in obj)
+
+
+def _any_or_all(either: bool, items: Any, error: CompilationError) -> Any:
+    """``any(items)`` or ``all(items)``, whose evaluation raised *error*:
+    the condition on the items of a list or tuple."""
+    if items.__class__ is list or items.__class__ is tuple:
+        return _classical.any_or_all(either, items, error)
+    if items.__class__ is _Unrolled:
+        name, word = ("any", "or") if either else ("all", "and")
+        raise CompilationError(
+            f"{name}() of a generator of conditions known only when the program runs is "
+            f"not traced; give it a list, {name}([...]), or combine them with `{word}`"
+        ) from error
+    raise error
+
+
+def _add_built(stack: list[StackVal], containers: list[tuple[Any, Any]]) -> None:
+    """Add to *containers*, with a copy, each list, set or dict on *stack*
+    not in them yet: what a comprehension around a branch builds."""
+    known = {id(obj) for obj, _ in containers}
+    for value in stack:
+        if value.__class__ in _BUILT and id(value) not in known:
+            containers.append((value, value.copy()))
 
 
 _SIGNATURES: dict[int, tuple[Any, inspect.Signature]] = {}

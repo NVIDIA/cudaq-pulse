@@ -201,6 +201,12 @@ class _SymbolicNumber(_UndecidableComparisons):
 
     def _not_concrete(self, operation: str) -> NoReturn:
         names = parameter_names(self)
+        if not names:
+            raise CompilationError(
+                f"{operation} needs the value of {arithmetic_text(self)}, the answer of a "
+                "classical call, which is known only when the program runs; use it as a "
+                "pulse op argument (amplitude, phase, frequency) or in an if condition"
+            )
         quoted = ", ".join(map(repr, dict.fromkeys(names)))
         arguments = "argument" if len(set(names)) == 1 else "arguments"
         raise SymbolicValueError(
