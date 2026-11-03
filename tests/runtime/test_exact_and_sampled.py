@@ -135,6 +135,17 @@ def test_expm_matches_a_diagonalizable_exponential():
     np.testing.assert_allclose(_propagate.expm(-1j * a), expected, atol=1e-9)
 
 
+@pytest.mark.parametrize(("rows", "columns"), [(1, 1), (2, 3), (4, 4)])
+def test_kron_is_numpys_kron(rows, columns):
+    rng = np.random.default_rng(rows * columns)
+    a = rng.normal(size=(rows, columns)) + 1j * rng.normal(size=(rows, columns))
+    for b in (rng.normal(size=(3, 2)), np.eye(columns), -a.T):
+        for x, y in ((a, b), (b, a)):
+            expected = np.kron(x, y)
+            got = _propagate.kron(x, y)
+            assert got.dtype == expected.dtype and got.tobytes() == expected.tobytes()
+
+
 @pulse.kernel
 def _three_measurements(q0):
     d = get_drive_line(q0)

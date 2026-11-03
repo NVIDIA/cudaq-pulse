@@ -1153,7 +1153,9 @@ def _full_operator(factors: list[Any], dims: tuple[int, ...]) -> npt.NDArray[np.
         on_mode[mode] = matrix @ on_mode[mode] if mode in on_mode else matrix
     full: npt.NDArray[np.complex128] = np.ones((1, 1), dtype=np.complex128)
     for mode in reversed(range(len(dims))):
-        full = np.asarray(np.kron(full, on_mode.get(mode, np.eye(dims[mode]))), dtype=np.complex128)
+        full = np.asarray(
+            _propagate.kron(full, on_mode.get(mode, np.eye(dims[mode]))), dtype=np.complex128
+        )
     return full
 
 

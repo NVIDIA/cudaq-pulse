@@ -81,6 +81,14 @@ def expm(a: npt.NDArray[np.complex128]) -> npt.NDArray[np.complex128]:
     return r
 
 
+def kron(a: npt.NDArray[Any], b: npt.NDArray[Any]) -> npt.NDArray[Any]:
+    """``np.kron`` of two matrices: the same products, without its handling
+    of arrays of any rank, which costs more than they do."""
+    rows, columns = a.shape[0] * b.shape[0], a.shape[1] * b.shape[1]
+    out: npt.NDArray[Any] = (a[:, None, :, None] * b[None, :, None, :]).reshape(rows, columns)
+    return out
+
+
 def cached(key: Any) -> npt.NDArray[np.complex128] | None:
     with _cache_lock:
         return _cache.get(key)
@@ -128,9 +136,9 @@ def dissipator(
     ident = np.eye(dim, dtype=np.complex128)
     out = np.zeros((dim * dim, dim * dim), dtype=np.complex128)
     for c in jumps:
-        out += np.kron(c, c.conj())
+        out += kron(c, c.conj())
         decay = c.conj().T @ c
-        out -= 0.5 * (np.kron(decay, ident) + np.kron(ident, decay.T))
+        out -= 0.5 * (kron(decay, ident) + kron(ident, decay.T))
     keep(("dissipator", dim, key), out)
     return out
 
@@ -141,9 +149,7 @@ def liouvillian(
     """The superoperator of -i [H, rho] plus *dissipative*."""
     dim = hamiltonian.shape[0]
     ident = np.eye(dim, dtype=np.complex128)
-    out: npt.NDArray[np.complex128] = -1j * (
-        np.kron(hamiltonian, ident) - np.kron(ident, hamiltonian.T)
-    )
+    out: npt.NDArray[np.complex128] = -1j * (kron(hamiltonian, ident) - kron(ident, hamiltonian.T))
     return out + dissipative
 
 
@@ -159,9 +165,9 @@ def commutators(operators: Any) -> Any:
     """The superoperators of -i [op, rho], one per operator (stacked)."""
     dim = operators.shape[-1]
     ident = np.eye(dim, dtype=np.complex128)
-    return np.stack(
-        [-1j * (np.kron(op, ident) - np.kron(ident, op.T)) for op in operators]
-    ).reshape(len(operators), dim * dim, dim * dim)
+    return np.stack([-1j * (kron(op, ident) - kron(ident, op.T)) for op in operators]).reshape(
+        len(operators), dim * dim, dim * dim
+    )
 
 
 # Steps whose maps are built at once, bounding memory to a few MB.
