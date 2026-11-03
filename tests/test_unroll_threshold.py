@@ -11,6 +11,8 @@ either way the program is the same."""
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
+from cudaq_pulse.classical import Link
+from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.kernel._unroll import DEFAULT_UNROLL_THRESHOLD
 from cudaq_pulse.kernel.bytecode_bridge import compile_kernel_bytecode
 from cudaq_pulse.targets import Coupling, MicrowaveDrive, Qubit, TargetDescription
@@ -167,3 +169,171 @@ def test_rolled_and_unrolled_programs_are_the_same(name):
     rho_b = pulse.simulate(b, levels=3, dt_ns=0.05).density_matrix
     assert np.allclose(rho_a, rho_b, atol=1e-10)
     assert abs(rho_a[0, 0] - 1.0) > 1e-3
+
+
+POLICIES = ("asap", "alap", "rcp", "alap_rcp")
+MACHINE = MachineModel(links={0: Link(fixed_ns=4, max_in_flight=4)})
+
+
+def _first(bits: pulse.Bits) -> pulse.Bits:
+    return [bits[0]]
+
+
+FIRST = pulse.classical(_first, max_latency_ns=100, link=0)
+
+
+def _loops(n1, n2, n3):
+    """Kernels of several loops over one name, each rolled when n is large."""
+
+    @pulse.kernel
+    def sequential(q0, q1):
+        d = get_drive_line(q0)
+        for _ in range(n1):
+            drive(d, square(4, 0.02))
+            wait(d, 2)
+        for _ in range(n2):
+            drive(d, square(6, 0.02))
+            wait(d, 3)
+        for _ in range(n3):
+            shift_phase(d.tone, 0.3)
+            drive(d, square(8, 0.02))
+
+    @pulse.kernel
+    def calls(q0, q1):
+        for _ in range(n1):
+            pulse_pair(q0, q1)
+        for _ in range(n2):
+            pulse_pair(q1, q0)
+        for _ in range(n3):
+            pulse_pair(q0, q1)
+
+    @pulse.kernel
+    def readouts(q0, q1):
+        d = get_drive_line(q0)
+        r = get_readout_line(q0)
+        for _ in range(n1):
+            drive(d, square(4, 0.02))
+            sync(d, r)
+            readout(r, square(40, 0.05))
+            sync(r, d)
+        for _ in range(n2):
+            drive(d, square(6, 0.02))
+            sync(d, r)
+            readout(r, square(40, 0.05))
+            sync(r, d)
+        for _ in range(n3):
+            pulse_pair(q0, q1)
+            sync(d, r)
+            readout(r, square(40, 0.05))
+            sync(r, d)
+
+    @pulse.kernel
+    def nested(q0, q1):
+        d = get_drive_line(q0)
+        for _ in range(n1):
+            for _ in range(n2):
+                drive(d, square(4, 0.02))
+            for _ in range(n3):
+                drive(d, square(6, 0.02))
+            wait(d, 3)
+        for _ in range(n2):
+            for _ in range(n3):
+                drive(d, gaussian(8, 0.05, 2.0))
+
+    @pulse.kernel
+    def answers(q0, q1):
+        d = get_drive_line(q0)
+        r = get_readout_line(q0)
+        for _ in range(n1):
+            drive(d, square(8, 0.1))
+        for _ in range(n2):
+            sync(d, r)
+            m = readout(r, square(40, 0.05))
+            if FIRST.submit([m]).result()[0]:
+                drive(d, square(16, 0.1))
+        for _ in range(n3):
+            sync(d, r)
+            m = readout(r, square(40, 0.05))
+            if FIRST.submit([m]).result()[0]:
+                drive(d, square(16, 0.1))
+            else:
+                wait(d, 8)
+
+    return {
+        "sequential": sequential,
+        "calls": calls,
+        "readouts": readouts,
+        "nested": nested,
+        "answers": answers,
+    }
+
+
+_FOR_LOOPS = {"sequential": 3, "calls": 3, "readouts": 3, "nested": 5, "answers": 3}
+
+
+@pytest.mark.parametrize("name", sorted(_FOR_LOOPS))
+def test_every_loop_over_one_name_stays_rolled(name):
+    def lowered(n2, n3):
+        compiled = pulse.compile(_loops(3, n2, n3)[name], unroll_threshold=0, machine=MACHINE)
+        return compiled.lower(Q[0], Q[1])
+
+    small, large = lowered(4, 5), lowered(400, 5000)
+    assert small.mlir().count("scf.for ") == _FOR_LOOPS[name]
+    assert large.metrics.op_count == small.metrics.op_count
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+@pytest.mark.parametrize("name", sorted(_FOR_LOOPS))
+def test_several_rolled_loops_schedule_and_simulate_as_unrolled(name, policy):
+    kernel = _loops(3, 4, 5)[name]
+
+    def lowered(threshold, passes=None):
+        options = {} if passes is None else {"passes": passes}
+        compiled = pulse.compile(
+            kernel, unroll_threshold=threshold, schedule=policy, machine=MACHINE, **options
+        )
+        return compiled.lower(Q[0], Q[1])
+
+    rolled, unrolled = lowered(0, ()), lowered(10**6, ())
+    assert rolled.mlir().count("scf.for ") == _FOR_LOOPS[name] and not _rolled(unrolled)
+    assert _events(rolled) == _events(unrolled)
+    a, b = lowered(0), lowered(10**6)
+    end = max(e.start_cycles + e.duration_cycles for e in a.schedule)
+    assert end == max(e.start_cycles + e.duration_cycles for e in b.schedule)
+    if name in ("readouts", "answers"):
+        # Measurement makes the simulation slow; the schedules are compared.
+        return
+    rho_a = pulse.simulate(a, levels=3, dt_ns=0.05).density_matrix
+    rho_b = pulse.simulate(b, levels=3, dt_ns=0.05).density_matrix
+    assert np.allclose(rho_a, rho_b, atol=1e-10)
+    assert abs(rho_a[0, 0] - 1.0) > 1e-3
+
+
+def test_a_loop_variable_keeps_its_python_value_across_rolled_loops():
+    def kernel(n):
+        @pulse.kernel
+        def k(q0, q1):
+            d = get_drive_line(q0)
+            for _ in range(n):
+                drive(d, square(4, 0.02))
+            for _ in range(0):
+                drive(d, square(5, 0.02))
+            drive(d, square(4 + _, 0.02))
+            for _ in range(n):
+                drive(d, square(6, 0.02))
+            drive(d, square(4 + _, 0.02))
+            _ = get_drive_line(q1)
+            drive(_, square(4, 0.02))
+            for _ in range(n):
+                wait(d, 3)
+            drive(d, square(5 + _, 0.02))
+
+        return k
+
+    rolled = pulse.compile(kernel(30), unroll_threshold=0, passes=()).lower(Q[0], Q[1])
+    unrolled = pulse.compile(kernel(30), unroll_threshold=10**6, passes=()).lower(Q[0], Q[1])
+    assert rolled.mlir().count("scf.for ") == 4
+    assert _events(rolled) == _events(unrolled)
+    after = [e.duration_cycles for e in unrolled.schedule if e.kind == "drive" and e.line == 0]
+    assert after[30] == after[-2] == after[0] + 29
+    assert after[-1] == after[0] + 30

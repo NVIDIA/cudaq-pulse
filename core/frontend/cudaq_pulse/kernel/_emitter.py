@@ -2507,7 +2507,7 @@ class PulseIREmitter:
             slot_changes = _slot_changes(containers)
             ok = (
                 len(stack) == len(saved_stack)
-                and self._python_state_unchanged(saved_locals)
+                and self._python_state_unchanged(saved_locals, var)
                 and slot_changes is not None
                 and (not mutated or _only_containers(mutated, containers))
             )
@@ -2769,18 +2769,24 @@ class PulseIREmitter:
         name = next((n for n, v in self.locals.items() if v is obj), "")
         return f"{name}[{index}]"
 
-    def _python_state_unchanged(self, before: dict[str, StackVal]) -> bool:
+    def _python_state_unchanged(self, before: dict[str, StackVal], var: str) -> bool:
+        """Whether a traced loop iteration left the locals *before* it as it
+        found them. The loop variable *var* is exempt: the header binds it
+        and the body never reads it, so what it held before the loop (an
+        earlier loop's last value) is not state the iterations depend on."""
         after = self.locals
         for name, old in before.items():
             if isinstance(old, IRValue):
-                if name in after and not isinstance(after[name], IRValue):
+                if name in after and not isinstance(after[name], IRValue) and name != var:
                     return False
                 continue
             if name not in after:
                 return False
             new = after[name]
-            if new is not old and not (
-                type(new) is type(old) and isinstance(old, _SCALARS) and new == old
+            if (
+                new is not old
+                and not (type(new) is type(old) and isinstance(old, _SCALARS) and new == old)
+                and name != var
             ):
                 return False
         return True

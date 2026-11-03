@@ -698,6 +698,12 @@ behavior may change in any 0.x release.
 
 ### Fixed
 
+- Only the first rolled `range()` loop over a name stayed rolled: every
+  later loop over the same name (`for _ in range(n)` twice in a row, or an
+  inner loop in each iteration of an unrolled outer one) was unrolled, even
+  with `unroll_threshold=0`, because the value the name was left holding
+  counted as Python state the body changed. Each such loop now stays
+  rolled; the program, its schedule and its simulation are as before.
 - A tone that an arm of a measurement-conditioned `if` changed with
   `shift_phase`, `set_phase`, `shift_frequency` or `set_frequency` alone,
   with no drive on it in that arm and no `sync` with the readout line after

@@ -512,11 +512,16 @@ def test_a_controller_without_loop_gets_its_loops_unrolled_for_it_only():
     qpu = _qpu(small, b)
     with pytest.raises(ControllerLimitError, match="body counted once; the controller holds"):
         pulse.compile(two_loops, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
-    # A plain ControllerLimits counts every iteration, as before (the second
-    # loop's identical pulses fuse into one).
+    # A plain ControllerLimits counts every iteration of both loops, as before.
     machine = MachineModel(controller=ControllerLimits(max_events=60))
-    with pytest.raises(ControllerLimitError, match="61 drives and readouts; the controller plays"):
+    with pytest.raises(ControllerLimitError) as raised:
         pulse.compile(two_loops, machine=machine).lower(*qpu.qudits[:2])
+    text = str(raised.value)
+    assert "70 drives and readouts; the controller plays at most 60" in text
+    assert text.endswith(
+        "the loop of 30 iterations from cycle 0 plays 58 more; "
+        "the loop of 10 iterations from cycle 1000 plays 9 more"
+    )
 
 
 def test_a_call_sends_and_answers_only_controllers_its_link_reaches():
