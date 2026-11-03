@@ -210,6 +210,33 @@ static int64_t budgetOf(mlir::Operation *submit) {
   return classical::intAttr(submit, "classical.budget_cycles");
 }
 
+/// How many times a submission in the body of `loop` is in flight at once
+/// in steady state when the loop's iterations shift by `period`: once per
+/// run of it in an iteration (the trips of the loops between them), for
+/// ceil(busy / period) iterations each. None when that does not fit.
+static std::optional<int64_t> inFlight(mlir::Operation *submit,
+                                       mlir::scf::ForOp loop, int64_t period) {
+  int64_t busy = durationOf(submit) + budgetOf(submit);
+  int64_t runs = (busy + period - 1) / period;
+  for (auto inner = submit->getParentOfType<mlir::scf::ForOp>();
+       inner && inner != loop;
+       inner = inner->getParentOfType<mlir::scf::ForOp>()) {
+    auto trips = pulse::constantTripCount(inner);
+    if (!trips)
+      return std::nullopt;
+    if (__builtin_mul_overflow(runs, *trips, &runs))
+      return std::nullopt;
+  }
+  return runs;
+}
+
+/// Whether `loop`'s body makes a classical call.
+static bool holdsCalls(mlir::scf::ForOp loop) {
+  return loop.getBody()
+      ->walk([](classical::SubmitOp) { return mlir::WalkResult::interrupt(); })
+      .wasInterrupted();
+}
+
 /// Lines, tones and measurement results: the values that become available
 /// at a time. A tone is busy while a drive or readout plays on it, so pulses
 /// that share a tone run in the order the tone is threaded through them.
@@ -267,7 +294,8 @@ static mlir::Value toneResult(mlir::Operation *op) {
 static void conditionMeasurements(mlir::Value value,
                                   llvm::SmallVectorImpl<mlir::Value> &found,
                                   llvm::DenseSet<mlir::Value> &seen) {
-  if (!seen.insert(value).second)
+  if (mlir::isa<classical::LinkType>(value.getType()) ||
+      !seen.insert(value).second)
     return;
   if (mlir::isa<pulse::MeasurementType>(value.getType())) {
     found.push_back(value);
@@ -611,21 +639,64 @@ struct Extrapolation {
 /// back may move faster than the one holding it back: the constraint
 /// between them, once slack, only grows slacker. (Groups that hold each
 /// other back can then only move together.)
+///
+/// Backward, a call's wait moves with what its answer decides rather than
+/// with its request, and so does a lazy request, due by its wait, with the
+/// link it threads: `ofWaitBackward` has the group of each such wait and
+/// request, `ofArgBackward` each carried value's group backward, and
+/// `mixedWaits` whether some wait's answer decides several groups or some
+/// link is due by several.
 struct LoopGroups {
   unsigned count = 0;
-  llvm::SmallVector<unsigned> ofArg;
+  llvm::SmallVector<unsigned> ofArg, ofArgBackward;
   llvm::DenseMap<mlir::Operation *, unsigned> ofOp;
+  llvm::DenseMap<mlir::Operation *, unsigned> ofWaitBackward;
+  bool mixedWaits = false;
+  /// The groups of the drives, and of the readouts, in the body, which take
+  /// lanes under resources.
+  llvm::SmallBitVector driveGroups, readoutGroups;
   llvm::SmallVector<mlir::Value> outside;
   llvm::SmallVector<std::pair<unsigned, unsigned>> branches;
+
+  /// The group of a timed op in the body, the way the pass runs.
+  unsigned groupOf(mlir::Operation *op, bool backward) const {
+    if (backward)
+      if (auto it = ofWaitBackward.find(op); it != ofWaitBackward.end())
+        return it->second;
+    return ofOp.lookup(op);
+  }
+  /// The group of each carried value, the way the pass runs.
+  llvm::ArrayRef<unsigned> argGroups(bool backward) const {
+    return backward ? ofArgBackward : ofArg;
+  }
 };
 
+/// The waits of calls whose answers `value` is computed from.
+static void conditionWaits(mlir::Value value,
+                           llvm::SmallVectorImpl<mlir::Operation *> &found,
+                           llvm::DenseSet<mlir::Value> &seen) {
+  if (!seen.insert(value).second)
+    return;
+  mlir::Operation *def = value.getDefiningOp();
+  if (!def)
+    return;
+  if (mlir::isa<classical::WaitOp>(def)) {
+    found.push_back(def);
+    return;
+  }
+  for (mlir::Value operand : def->getOperands())
+    conditionWaits(operand, found, seen);
+}
+
 /// The groups of `loop`'s carried values, or none when their independence
-/// cannot be shown: a carried call value, or a carried measurement the body
-/// reads; a timed value other than a measurement from outside the loop read
-/// in it (other than through what it carries); a schedule block or another
-/// region op; a timed op that reads no carried value; or a line value that
-/// does not reach the loop's yield through timed ops and syncs. In a body
-/// with a loop of its own, a branch joins the groups it relates.
+/// cannot be shown: a carried call value other than a link, or a carried
+/// measurement the body reads; a call op that keeps state the values it
+/// reads do not carry; a timed value other than a measurement from outside
+/// the loop read in it (other than through what it carries); a schedule
+/// block or another region op; a timed op that reads no carried value; or a
+/// line value that does not reach the loop's yield through timed ops and
+/// syncs. In a body with a loop of its own, a branch joins the groups it
+/// relates.
 static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
   unsigned n = loop.getNumRegionIterArgs();
   for (mlir::Value arg : loop.getRegionIterArgs()) {
@@ -633,9 +704,25 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
     if (mlir::isa<pulse::MeasurementType>(type)
             ? !arg.use_empty()
             : isTimedType(type) && !isLineType(type) &&
-                  !mlir::isa<pulse::ToneType>(type))
+                  !mlir::isa<pulse::ToneType, classical::LinkType>(type))
       return nullptr;
   }
+  // A call's state off its values: a barrier, a wait of a run-time length,
+  // or a link order of an instance's own. And a wait in a loop of the body
+  // whose answers nothing reads: only its own time marks where it ends.
+  if (loop.getBody()
+          ->walk([&](mlir::Operation *op) {
+            bool unread = mlir::isa<classical::WaitOp>(op) &&
+                          op->getParentOfType<mlir::scf::ForOp>() != loop &&
+                          op->use_empty();
+            return unread || op->hasAttr("classical.blocking") ||
+                           op->hasAttr("classical.variable") ||
+                           op->hasAttr(classical::kInstanceAttr)
+                       ? mlir::WalkResult::interrupt()
+                       : mlir::WalkResult::advance();
+          })
+          .wasInterrupted())
+    return nullptr;
   llvm::SmallVector<mlir::Value> outside;
   llvm::DenseMap<mlir::Value, llvm::SmallBitVector> roots;
   for (auto [i, arg] : llvm::enumerate(loop.getRegionIterArgs())) {
@@ -664,6 +751,8 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
   // What each branch's condition and what it decides read.
   llvm::SmallVector<std::pair<llvm::SmallBitVector, llvm::SmallBitVector>>
       decides;
+  // What the answers of each wait decide.
+  llvm::DenseMap<mlir::Operation *, llvm::SmallBitVector> waitDecides;
   bool directed = true;
   loop.getBody()->walk([&](mlir::scf::ForOp) { directed = false; });
   bool ok = true;
@@ -738,6 +827,13 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
             if (directed) {
               for (size_t i = mark; i < related.size(); ++i)
                 decided |= related[i].second;
+              llvm::SmallVector<mlir::Operation *> waits;
+              llvm::DenseSet<mlir::Value> seen;
+              conditionWaits(branch.getCondition(), waits, seen);
+              for (mlir::Operation *wait : waits) {
+                auto [it, inserted] = waitDecides.try_emplace(wait, n);
+                it->second |= decided;
+              }
               decides.emplace_back(condition, std::move(decided));
             }
             continue;
@@ -805,12 +901,93 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
             !llvm::is_contained(groups->branches, branch))
           groups->branches.push_back(branch);
       }
+  groups->driveGroups.resize(groups->count);
+  groups->readoutGroups.resize(groups->count);
+  for (auto [op, group] : groups->ofOp) {
+    if (mlir::isa<pulse::DriveOp>(op))
+      groups->driveGroups.set(group);
+    else if (mlir::isa<pulse::ReadoutOp>(op))
+      groups->readoutGroups.set(group);
+  }
+  for (auto &[wait, decided] : waitDecides) {
+    std::optional<unsigned> only;
+    for (unsigned d : decided.set_bits()) {
+      unsigned group = index.lookup(find(d));
+      if (only && *only != group)
+        groups->mixedWaits = true;
+      only = group;
+    }
+    if (only)
+      groups->ofWaitBackward[wait] = *only;
+  }
+  groups->ofArgBackward = groups->ofArg;
+  llvm::SmallVector<std::optional<unsigned>> dueBy(n);
+  loop.getBody()->walk([&](classical::SubmitOp submit) {
+    mlir::Operation *op = submit;
+    std::optional<unsigned> group;
+    if (!op->hasAttr("classical.eager"))
+      for (mlir::Operation *user : submit.getFuture().getUsers())
+        if (auto it = groups->ofWaitBackward.find(user);
+            it != groups->ofWaitBackward.end()) {
+          if (group && *group != it->second)
+            groups->mixedWaits = true;
+          group = it->second;
+        }
+    if (group)
+      groups->ofWaitBackward[op] = *group;
+    unsigned own = group.value_or(groups->ofOp.lookup(op));
+    for (unsigned i : rootsOf(submit.getLink()).set_bits()) {
+      if (!mlir::isa<classical::LinkType>(
+              loop.getRegionIterArgs()[i].getType()))
+        continue;
+      if (dueBy[i] && *dueBy[i] != own)
+        groups->mixedWaits = true;
+      dueBy[i] = own;
+    }
+  });
+  for (auto [i, group] : llvm::enumerate(dueBy))
+    if (group)
+      groups->ofArgBackward[i] = *group;
   groups->outside = std::move(outside);
   return groups;
 }
 
 /// Where a Scheduler without grids would trace lines: nowhere.
 struct NoLineTrace {};
+
+/// The most iterations after which a loop's iterations may repeat for the
+/// scheduler to run that many in each (see Scheduler::regroup).
+constexpr int64_t kMostRegrouped = 8;
+
+/// The most iterations of a loop as written regrouping runs in each, over
+/// every time it regroups the loop.
+constexpr int64_t kMostRegroupedInAll = 16;
+
+/// The carried times after each of a loop's last iterations simulated, up
+/// to the most two runs of kMostRegrouped iterations compare.
+class RecentStates {
+public:
+  void push(llvm::ArrayRef<int64_t> state) {
+    if (states.size() < kSize)
+      states.emplace_back(state.begin(), state.end());
+    else
+      states[next].assign(state.begin(), state.end());
+    next = (next + 1) % kSize;
+    ++pushed;
+  }
+
+  /// The state pushed `back` pushes before the last one.
+  llvm::ArrayRef<int64_t> before(int64_t back) const {
+    return states[(next + kSize - 1 - static_cast<size_t>(back)) % kSize];
+  }
+
+  int64_t pushed = 0;
+
+private:
+  static constexpr size_t kSize = 2 * kMostRegrouped + 1;
+  llvm::SmallVector<llvm::SmallVector<int64_t, 8>, 0> states;
+  size_t next = 0;
+};
 
 /// Schedules one region: a function body, or a schedule block's body with
 /// every block argument available at time 0. `Gridded` when some line is on
@@ -865,6 +1042,26 @@ public:
   /// An iteration the backward pass did not simulate starts an op before
   /// zero.
   bool skippedNegative = false;
+
+  /// Whether a loop whose iterations repeat only every few of them stops
+  /// the pass, to be run that many iterations at a time (`regroup`).
+  bool mayRegroup = true;
+  /// Such a loop and how many iterations it repeats after, found when it
+  /// had more than two runs of them left: the pass stopped there, so its
+  /// schedule is not complete.
+  struct Regroup {
+    mlir::scf::ForOp loop;
+    int64_t iterations;
+  };
+  std::optional<Regroup> regroup;
+  /// How many iterations as written each loop regrouped before runs in each.
+  llvm::DenseMap<mlir::Operation *, int64_t> regroupedBy;
+  /// Whether the backward pass, finding a loop's first iterations kept
+  /// forward starts that do not repeat, stops to have them peeled
+  /// (`headPeel`) rather than simulating every iteration.
+  bool mayPeelHead = true;
+  /// Such a loop and how many of its first iterations to peel.
+  std::optional<Regroup> headPeel;
 
 private:
   /// The earliest start of each group's ops in the iteration being
@@ -1058,11 +1255,13 @@ private:
 
   void record(mlir::Operation *op, int64_t start) {
     samples[op].push_back({iteration, start});
+    // Only the backward pass tracks the earliest starts.
     for (Track *track : tracks)
-      if (auto it = track->groups->ofOp.find(op);
-          it != track->groups->ofOp.end())
-        track->earliest[it->second] =
-            std::min(track->earliest[it->second], start);
+      if (track->groups->ofOp.contains(op)) {
+        int64_t &earliest =
+            track->earliest[track->groups->groupOf(op, /*backward=*/true)];
+        earliest = std::min(earliest, start);
+      }
   }
 
   /// Lower the earliest start `arm` of a branch's arm to `simulated`, a
@@ -1131,10 +1330,17 @@ private:
   /// of equal times are interchangeable, else lane by lane with the same
   /// owners.
   bool lanesMoved(const LaneState &before, int64_t shift) {
+    return lanesMovedBy(before, shift, shift);
+  }
+
+  /// lanesMoved, the drive lanes by `driveShift` and the readout lanes by
+  /// `readoutShift`.
+  bool lanesMovedBy(const LaneState &before, int64_t driveShift,
+                    int64_t readoutShift) {
     bool byTime = lanesByTime();
     auto moved = [&](const Lanes &was, const Lanes &now, const Lanes &wasOwners,
                      const Lanes &nowOwners, llvm::ArrayRef<int64_t> wasUses,
-                     llvm::ArrayRef<int64_t> nowUses) {
+                     llvm::ArrayRef<int64_t> nowUses, int64_t shift) {
       for (size_t t = 0; t < now.size(); ++t) {
         if (wasUses[t] == nowUses[t])
           continue;
@@ -1157,9 +1363,9 @@ private:
       return true;
     };
     return moved(before.drives, driveLanes, before.driveOwners, driveOwners,
-                 before.driveUses, driveUses) &&
+                 before.driveUses, driveUses, driveShift) &&
            moved(before.readouts, readoutLanes, before.readoutOwners,
-                 readoutOwners, before.readoutUses, readoutUses);
+                 readoutOwners, before.readoutUses, readoutUses, readoutShift);
   }
 
   /// How many iterations moving as the one before a loop's lanes are
@@ -1172,6 +1378,13 @@ private:
     for (auto [drives, readouts] : llvm::zip(driveLanes, readoutLanes))
       most = std::max(most, drives.size() + readouts.size());
     return 2 * static_cast<int64_t>(most) + 2;
+  }
+
+  /// Add the lanes now to `history`, keeping the last kMostRegrouped.
+  void pushLanes(llvm::SmallVectorImpl<LaneState> &history) const {
+    if (static_cast<int64_t>(history.size()) == kMostRegrouped)
+      history.erase(history.begin());
+    history.push_back(laneState());
   }
 
   /// lanesMoved, counting the tries left down when not.
@@ -1187,23 +1400,30 @@ private:
   /// Moves the lanes an iteration took by `distance`, as the iterations not
   /// simulated do.
   void moveLanes(const LaneState &before, int64_t distance) {
+    moveLanesBy(before, distance, distance);
+  }
+
+  /// moveLanes, the drive lanes by `driveDistance` and the readout lanes by
+  /// `readoutDistance`.
+  void moveLanesBy(const LaneState &before, int64_t driveDistance,
+                   int64_t readoutDistance) {
     for (size_t t = 0; t < driveLanes.size(); ++t) {
       if (driveUses[t] != before.driveUses[t])
         for (int64_t &lane : driveLanes[t])
-          lane += distance;
+          lane += driveDistance;
       if (readoutUses[t] != before.readoutUses[t])
         for (int64_t &lane : readoutLanes[t])
-          lane += distance;
+          lane += readoutDistance;
     }
   }
 
   // ── Loops whose lines move by periods of their own ────────────────────
 
   /// Whether a loop's carried values may move by a period per group (see
-  /// LoopGroups): without resources, calls or timelines, whose state the
-  /// groups share.
+  /// LoopGroups): without timelines, whose state the groups share, or
+  /// resources on several controllers.
   bool groupsApply() const {
-    return !resources.enabled && !lanesBound && !classical && !isolated();
+    return !lanesBound && !isolated() && !(resources.enabled && several());
   }
 
   const LoopGroups *groupsOf(mlir::scf::ForOp loop) {
@@ -1215,16 +1435,87 @@ private:
 
   using GroupShifts = llvm::SmallVector<std::optional<int64_t>, 4>;
 
+  /// slotsHoldSteadyState for a loop whose groups move by `shifts`, the
+  /// way the pass runs (`sign`): each submission by its group's.
+  bool slotsHoldGroups(mlir::scf::ForOp loop, const LoopGroups &groups,
+                       const GroupShifts &shifts, int64_t sign) {
+    if (!classical)
+      return true;
+    std::map<LinkKey, std::pair<int64_t, int64_t>> perLink;
+    bool ok = true;
+    loop.getBody()->walk([&](classical::SubmitOp submit) {
+      mlir::Operation *op = submit;
+      int64_t period =
+          groups.ofOp.contains(op)
+              ? sign * shifts[groups.groupOf(op, sign < 0)].value_or(0)
+              : 0;
+      std::optional<int64_t> held;
+      if (period > 0)
+        held = inFlight(op, loop, period);
+      auto &[need, slots] = perLink[linkOf(op)];
+      if (!held) {
+        ok = false;
+        return;
+      }
+      if (__builtin_add_overflow(need, *held, &need)) {
+        ok = false;
+        return;
+      }
+      slots = classical::intAttr(op, "classical.max_in_flight", 64);
+    });
+    for (auto &[device, entry] : perLink)
+      ok = ok && entry.first <= entry.second;
+    return ok;
+  }
+
+  /// Under resources, whether an iteration of a loop whose groups moved by
+  /// `shifts` moved its lanes from `before` by as much: each kind's by the
+  /// one shift of the groups its ops are in. True without resources.
+  bool groupLanesMoved(const LaneState &before, const LoopGroups &groups,
+                       const GroupShifts &shifts) {
+    if (!resources.enabled)
+      return true;
+    auto shiftOf =
+        [&](const llvm::SmallBitVector &kind) -> std::optional<int64_t> {
+      std::optional<int64_t> shift;
+      for (unsigned group : kind.set_bits()) {
+        int64_t moved = shifts[group].value_or(0);
+        if (shift && *shift != moved)
+          return std::nullopt;
+        shift = moved;
+      }
+      return shift.value_or(0);
+    };
+    std::optional<int64_t> drives = shiftOf(groups.driveGroups),
+                           readouts = shiftOf(groups.readoutGroups);
+    return drives && readouts && lanesMovedBy(before, *drives, *readouts);
+  }
+
+  /// Move the lanes as the iterations a loop's groups skip `distances`
+  /// do (see groupLanesMoved).
+  void moveGroupLanes(const LaneState &before, const LoopGroups &groups,
+                      llvm::ArrayRef<int64_t> distances) {
+    if (!resources.enabled)
+      return;
+    auto distanceOf = [&](const llvm::SmallBitVector &kind) -> int64_t {
+      int first = kind.find_first();
+      return first < 0 ? 0 : distances[static_cast<unsigned>(first)];
+    };
+    moveLanesBy(before, distanceOf(groups.driveGroups),
+                distanceOf(groups.readoutGroups));
+  }
+
   /// How far each group of carried values moved from `before` to `after`
   /// (none: nothing timed in it moved), or none when a group's values moved
-  /// by different amounts.
+  /// by different amounts; `backward`, by their groups backward.
   static std::optional<GroupShifts> groupShifts(const LoopGroups &groups,
                                                 llvm::ArrayRef<int64_t> before,
                                                 llvm::ArrayRef<int64_t> after,
-                                                llvm::ArrayRef<Carried> kinds) {
+                                                llvm::ArrayRef<Carried> kinds,
+                                                bool backward) {
     GroupShifts shifts(groups.count);
     for (auto [group, b, a, kind] :
-         llvm::zip(groups.ofArg, before, after, kinds)) {
+         llvm::zip(groups.argGroups(backward), before, after, kinds)) {
       if (kind == Carried::Untimed || (kind == Carried::Tone && a == b))
         continue;
       std::optional<int64_t> &shift = shifts[group];
@@ -1251,11 +1542,11 @@ private:
   static bool extrapolateGroups(llvm::MutableArrayRef<int64_t> carried,
                                 llvm::ArrayRef<int64_t> previous,
                                 llvm::ArrayRef<Carried> kinds,
-                                const LoopGroups &groups,
+                                const LoopGroups &groups, bool backward,
                                 llvm::ArrayRef<int64_t> distances) {
     llvm::SmallVector<int64_t> moved(carried.begin(), carried.end());
     for (auto [time, now, before, kind, group] :
-         llvm::zip(moved, carried, previous, kinds, groups.ofArg))
+         llvm::zip(moved, carried, previous, kinds, groups.argGroups(backward)))
       if (kind == Carried::Timed || (kind == Carried::Tone && now != before))
         if (__builtin_add_overflow(now, distances[group], &time))
           return false;
@@ -1268,19 +1559,17 @@ private:
   opPeriods(const LoopGroups &groups, const GroupShifts &shifts, int64_t sign) {
     auto periods =
         std::make_shared<llvm::DenseMap<mlir::Operation *, int64_t>>();
-    for (auto [op, group] : groups.ofOp)
-      if (shifts[group])
-        (*periods)[op] = sign * *shifts[group];
+    for (mlir::Operation *op : llvm::make_first_range(groups.ofOp))
+      if (const std::optional<int64_t> &shift =
+              shifts[groups.groupOf(op, sign < 0)])
+        (*periods)[op] = sign * *shift;
     return periods;
   }
 
   /// Whether each group's shift is whole steps of every grid and points
-  /// the way the pass runs (`sign` 1 forward, -1 backward), some group
-  /// moves, and each group a branch holds back moves with the group holding
-  /// it back or ahead of it, with every op in the body where its group puts
-  /// it: then what holds it back stays behind.
-  bool groupsSteady(const LoopGroups &groups, const GroupShifts &shifts,
-                    int64_t sign) const {
+  /// the way the pass runs (`sign` 1 forward, -1 backward), and some group
+  /// moves.
+  bool groupsMove(const GroupShifts &shifts, int64_t sign) const {
     bool moves = false;
     for (const std::optional<int64_t> &shift : shifts) {
       if (!shift)
@@ -1292,7 +1581,16 @@ private:
           return false;
       moves = true;
     }
-    if (!moves)
+    return moves;
+  }
+
+  /// Whether groupsMove, each group a branch holds back moves with the
+  /// group holding it back or ahead of it, with every op in the body where
+  /// its group puts it (backward, each wait with what its answers decide):
+  /// then what holds it back stays behind.
+  bool groupsSteady(const LoopGroups &groups, const GroupShifts &shifts,
+                    int64_t sign) const {
+    if (!groupsMove(shifts, sign) || (sign < 0 && groups.mixedWaits))
       return false;
     bool ahead = false;
     for (auto [condition, decided] : groups.branches) {
@@ -1309,7 +1607,8 @@ private:
     if (!ahead)
       return true;
     // Each op's last two samples, this iteration's and the one before.
-    for (auto [op, group] : groups.ofOp) {
+    for (mlir::Operation *op : llvm::make_first_range(groups.ofOp)) {
+      unsigned group = groups.groupOf(op, sign < 0);
       auto found = samples.find(op);
       if (found == samples.end() || found->second.size() < 2)
         return false;
@@ -1350,6 +1649,77 @@ private:
       return false;
     period = *shift;
     return true;
+  }
+
+  /// The most iterations of `loop` regrouping may run in each now.
+  int64_t mostRegrouped(mlir::scf::ForOp loop) const {
+    return std::min(kMostRegrouped,
+                    kMostRegroupedInAll /
+                        std::max<int64_t>(1, regroupedBy.lookup(loop)));
+  }
+
+  /// Note the carried times after an iteration of `loop` that did not
+  /// repeat the one before, with `left` iterations after it; if the last
+  /// two runs of some fewer than kMostRegrouped iterations, from two on,
+  /// each moved every timed value by one shift the way the pass runs
+  /// (`sign`), and more than two such runs are left, ask for the loop to be
+  /// regrouped by that many.
+  void noteRecent(RecentStates &recent, mlir::scf::ForOp loop,
+                  llvm::ArrayRef<int64_t> state, llvm::ArrayRef<Carried> kinds,
+                  int64_t left, int64_t sign) {
+    recent.push(state);
+    const LoopGroups *groups = nullptr;
+    bool grouped = false;
+    int64_t most = mostRegrouped(loop);
+    for (int64_t n = 2; n <= most && 2 * n < recent.pushed; ++n) {
+      if (left < 2 * n)
+        return;
+      int64_t first, second;
+      if (uniformShift(recent.before(2 * n), recent.before(n), kinds, first) &&
+          uniformShift(recent.before(n), state, kinds, second) &&
+          first == second && sign * first > 0 &&
+          (!Gridded || first % grid.lcm() == 0)) {
+        regroup = Regroup{loop, n};
+        return;
+      }
+      // Or each group by a shift of its own.
+      if (!grouped) {
+        grouped = true;
+        groups = groupsApply() ? groupsOf(loop) : nullptr;
+      }
+      if (!groups)
+        continue;
+      auto earlier = groupShifts(*groups, recent.before(2 * n),
+                                 recent.before(n), kinds, sign < 0);
+      auto later =
+          groupShifts(*groups, recent.before(n), state, kinds, sign < 0);
+      if (earlier && later && *earlier == *later &&
+          groupsMove(*earlier, sign)) {
+        regroup = Regroup{loop, n};
+        return;
+      }
+    }
+  }
+
+  /// Note the lanes before an iteration of `loop` (`history`, the last
+  /// kMostRegrouped of them, this one's last), after which its carried
+  /// times moved by `shift` as they did in the one before but its lanes did
+  /// not; if they moved by as much each over the last run of some fewer
+  /// than kMostRegrouped iterations, from two on, and more than two such
+  /// runs are left (`left` iterations after this one), ask for the loop to
+  /// be regrouped by that many.
+  void noteRecentLanes(llvm::ArrayRef<LaneState> history, mlir::scf::ForOp loop,
+                       int64_t shift, int64_t left) {
+    int64_t most =
+        std::min(mostRegrouped(loop), static_cast<int64_t>(history.size()));
+    for (int64_t n = 2; n <= most; ++n) {
+      if (left < 2 * n)
+        return;
+      if (lanesMoved(history[history.size() - n], n * shift)) {
+        regroup = Regroup{loop, n};
+        return;
+      }
+    }
   }
 
   /// Advance the carried values that move with the loop by `distance`.
@@ -1420,13 +1790,18 @@ private:
     bool ok = true;
     loop.getBody()->walk([&](classical::SubmitOp submit) {
       mlir::Operation *op = submit;
-      int64_t busy = durationOf(op) + budgetOf(op);
-      if (period <= 0) {
+      std::optional<int64_t> held;
+      if (period > 0)
+        held = inFlight(op, loop, period);
+      auto &[need, slots] = perLink[linkOf(op)];
+      if (!held) {
         ok = false;
         return;
       }
-      auto &[need, slots] = perLink[linkOf(op)];
-      need += (busy + period - 1) / period;
+      if (__builtin_add_overflow(need, *held, &need)) {
+        ok = false;
+        return;
+      }
       slots = classical::intAttr(op, "classical.max_in_flight", 64);
     });
     for (auto &[device, entry] : perLink)
@@ -1798,6 +2173,11 @@ private:
     const LoopGroups *groups = nullptr;
     bool grouped = false;
     std::optional<GroupShifts> lastGroups;
+    RecentStates recent;
+    // Lanes that repeat only every few iterations regroup a loop of calls
+    // (a loop without is summarized by the controller check as it is).
+    bool regroupLanes = resources.enabled && mayRegroup && holdsCalls(loop);
+    llvm::SmallVector<LaneState, 0> laneHistory;
     for (int64_t k = 0; k < count; ++k) {
       iteration.back() = k;
       int64_t savedEnd = iterationEnd;
@@ -1810,6 +2190,11 @@ private:
       LaneState lanesBefore;
       if (lastShift && laneTries > 0)
         lanesBefore = laneState();
+      if (regroupLanes)
+        pushLanes(laneHistory);
+      LaneState groupLanes;
+      if (resources.enabled && groupsApply())
+        groupLanes = laneState();
       for (auto [arg, time] : llvm::zip(args, carried))
         readyAt[arg] = time;
       if (mlir::failed(forwardBlock(*loop.getBody())))
@@ -1825,8 +2210,9 @@ private:
 
       int64_t shift;
       bool shifted = uniformShift(carried, next, kinds, shift);
+      bool repeated = shifted && lastShift == shift;
       bool steady =
-          !lanesBound && shifted && lastShift == shift && shift >= 0 &&
+          !lanesBound && repeated && shift >= 0 &&
           (!Gridded || shift % grid.lcm() == 0) &&
           slotsHoldSteadyState(loop, shift) &&
           (!resources.enabled || lanesSteady(lanesBefore, shift, laneTries));
@@ -1846,22 +2232,39 @@ private:
           groups = groupsOf(loop);
         }
         if (groups)
-          nowGroups = groupShifts(*groups, carried, next, kinds);
+          nowGroups = groupShifts(*groups, carried, next, kinds, false);
       }
       bool mixed = nowGroups && bounded && lastGroups == nowGroups &&
-                   groupsSteady(*groups, *nowGroups, 1);
+                   groupsSteady(*groups, *nowGroups, 1) &&
+                   slotsHoldGroups(loop, *groups, *nowGroups, 1) &&
+                   groupLanesMoved(groupLanes, *groups, *nowGroups);
+      bool groupsRepeated = nowGroups && lastGroups == nowGroups;
       lastGroups = std::move(nowGroups);
       llvm::SmallVector<int64_t> previous = std::move(carried);
       carried = std::move(next);
       if (mixed) [[unlikely]] {
         auto distances = groupDistances(*lastGroups, count - 1 - k);
-        if (distances &&
-            extrapolateGroups(carried, previous, kinds, *groups, *distances)) {
-          // Each line ends its last iteration where it is carried to.
+        if (distances && extrapolateGroups(carried, previous, kinds, *groups,
+                                           false, *distances)) {
+          moveGroupLanes(groupLanes, *groups, *distances);
+          // Each line ends its last iteration where it is carried to, and
+          // each wait in the body where its group moves it.
           for (auto [init, time, group] :
                llvm::zip(loop.getInitArgs(), carried, groups->ofArg))
-            if (isLineType(init.getType()) && (*distances)[group] > 0)
+            if ((isLineType(init.getType()) ||
+                 mlir::isa<classical::LinkType>(init.getType())) &&
+                (*distances)[group] > 0)
               noteEnd(time, 0);
+          for (auto [op, group] : groups->ofOp) {
+            if (!mlir::isa<classical::WaitOp>(op) ||
+                op->getParentOfType<mlir::scf::ForOp>() != loop)
+              continue;
+            auto found = samples.find(op);
+            if (found != samples.end() && !found->second.empty() &&
+                llvm::ArrayRef(found->second.back().iteration) ==
+                    llvm::ArrayRef(iteration))
+              noteEnd(found->second.back().start + (*distances)[group], 0);
+          }
           extrapolations.push_back(
               {loop, 0, opPeriods(*groups, *lastGroups, 1)});
           break;
@@ -1892,6 +2295,22 @@ private:
           moveLanes(lanesBefore, distance);
         extrapolations.push_back({loop, shift, nullptr});
         break;
+      }
+      if (regroup)
+        break;
+      // Regrouping is for a loop that repeats only every few iterations:
+      // one whose groups or lanes repeat every iteration is left to the
+      // checks above.
+      if (k >= 2 && !repeated && !groupsRepeated && mayRegroup) {
+        noteRecent(recent, loop, carried, kinds, count - 1 - k, 1);
+        if (regroup)
+          break;
+      }
+      if (repeated && bounded && !lanesBound && laneTries <= 0 &&
+          !laneHistory.empty() && !lanesMoved(laneHistory.back(), shift)) {
+        noteRecentLanes(laneHistory, loop, shift, count - 1 - k);
+        if (regroup)
+          break;
       }
     }
     iteration.pop_back();
@@ -2014,32 +2433,89 @@ private:
   /// The forward start of a call op in the current iteration, also for an
   /// iteration the forward pass extrapolated.
   int64_t forwardStartOf(mlir::Operation *op) const {
-    std::pair<mlir::Operation *, llvm::SmallVector<int64_t, 2>> key{op,
-                                                                    iteration};
+    auto loops = pulse::enclosingLoops(op, region->getParentOp());
+    return forwardStartAt(op, iteration, loops);
+  }
+
+  /// forwardStartOf in iteration `at` of the loops around `op`, `loops`.
+  int64_t forwardStartAt(mlir::Operation *op, llvm::ArrayRef<int64_t> at,
+                         llvm::ArrayRef<mlir::scf::ForOp> loops) const {
+    std::pair<mlir::Operation *, llvm::SmallVector<int64_t, 2>> key{
+        op, llvm::SmallVector<int64_t, 2>(at)};
     auto it = forwardStarts.find(key);
     if (it != forwardStarts.end())
       return it->second;
-    // The latest simulated iteration before this one, shifted by the period
-    // of the innermost loop the forward pass extrapolated.
+    // The latest iteration simulated before this one of the innermost loop
+    // the forward pass extrapolated, in the same iteration of the loops
+    // around it, shifted by its period.
+    for (int64_t level = static_cast<int64_t>(at.size()) - 1; level >= 0;
+         --level) {
+      if (level >= static_cast<int64_t>(loops.size()))
+        continue;
+      std::optional<int64_t> period;
+      for (const Extrapolation &e : forwardExtrapolations)
+        if (e.loop == loops[level]) {
+          period = e.periodOf(op).value_or(0);
+          break;
+        }
+      if (!period)
+        continue;
+      key.second.assign(at.begin(), at.begin() + level + 1);
+      auto before = forwardStarts.lower_bound(key);
+      if (before == forwardStarts.begin())
+        continue;
+      --before;
+      const auto &seen = before->first.second;
+      if (before->first.first != op ||
+          static_cast<int64_t>(seen.size()) <= level ||
+          !std::equal(at.begin(), at.begin() + level, seen.begin()))
+        continue;
+      llvm::SmallVector<int64_t, 2> moved(at);
+      moved[level] = seen[level];
+      return forwardStartAt(op, moved, loops) +
+             (at[level] - seen[level]) * *period;
+    }
+    // Otherwise the latest simulated iteration before this one.
+    key.second.assign(at.begin(), at.end());
     auto before = forwardStarts.lower_bound(key);
     if (before == forwardStarts.begin())
       return 0;
     --before;
-    if (before->first.first != op || iteration.empty())
+    if (before->first.first != op || at.empty())
       return 0;
-    const auto &seen = before->first.second;
-    auto loops = pulse::enclosingLoops(op, region->getParentOp());
-    for (int64_t level = static_cast<int64_t>(iteration.size()) - 1; level >= 0;
-         --level) {
-      if (level >= static_cast<int64_t>(loops.size()) ||
-          !std::equal(seen.begin(), seen.begin() + level, iteration.begin()))
-        continue;
-      for (const Extrapolation &e : forwardExtrapolations)
-        if (e.loop == loops[level])
-          return before->second +
-                 (iteration[level] - seen[level]) * e.periodOf(op).value_or(0);
-    }
     return before->second;
+  }
+
+  /// How many of the first iterations of `loop`, the one the backward pass
+  /// is in, an extrapolation from iteration `k` moving each op by
+  /// `shiftOf(op)` each would misplace: those holding an op kept at its
+  /// forward start that the forward pass started off that line.
+  int64_t pinnedHead(mlir::scf::ForOp loop, int64_t k,
+                     llvm::function_ref<int64_t(mlir::Operation *)> shiftOf) {
+    size_t depth = iteration.size() - 1;
+    llvm::SmallVector<int64_t, 2> saved = iteration;
+    int64_t head = 0;
+    for (mlir::Operation *op : pinned) {
+      if (!loop->isProperAncestor(op))
+        continue;
+      std::pair<mlir::Operation *, llvm::SmallVector<int64_t, 2>> key{
+          op,
+          llvm::SmallVector<int64_t, 2>(saved.begin(), saved.begin() + depth)};
+      for (auto it = forwardStarts.lower_bound(key);
+           it != forwardStarts.end() && it->first.first == op; ++it) {
+        const auto &at = it->first.second;
+        if (at.size() <= depth ||
+            !std::equal(saved.begin(), saved.begin() + depth, at.begin()) ||
+            at[depth] >= k)
+          break;
+        iteration.assign(at.begin(), at.end());
+        iteration[depth] = k;
+        if (it->second != forwardStartOf(op) + (k - at[depth]) * shiftOf(op))
+          head = std::max(head, at[depth] + 1);
+      }
+    }
+    iteration = std::move(saved);
+    return head;
   }
 
   void backwardSubmit(classical::SubmitOp submit) {
@@ -2049,6 +2525,7 @@ private:
     int64_t start;
     if (op->hasAttr("classical.eager")) {
       start = forwardStartOf(op);
+      pinned.insert(op);
     } else {
       int64_t link = late(submit.getUpdatedLink());
       if (ownOrder(op)) {
@@ -2079,12 +2556,16 @@ private:
     int64_t start = kNever;
     for (mlir::Value value : wait.getValues())
       start = std::min(start, late(value));
-    if (start == kNever || wait->hasAttr("classical.blocking"))
+    if (start == kNever || wait->hasAttr("classical.blocking")) {
       start = forwardStartOf(wait);
+      pinned.insert(wait);
+    }
     // A timeline's share of a link holds only the requests it times; an
     // answer it took late would hold its slot after its due time.
-    else if (isolated())
+    else if (isolated()) {
       start = std::min(start, forwardStartOf(wait));
+      pinned.insert(wait);
+    }
     start = std::min(start, ceilings[t]);
     record(wait, start);
     armStart = std::min(armStart, start);
@@ -2120,6 +2601,7 @@ private:
     if (classical && op->hasAttr("classical.variable")) {
       // A variable wait keeps its forward time; nothing before it ends later.
       int64_t start = forwardStartOf(op);
+      pinned.insert(op);
       record(op, start);
       armStart = std::min(armStart, start);
       bound(op->getOperand(0), start);
@@ -2305,6 +2787,11 @@ private:
     std::optional<GroupShifts> lastGroups;
     Track track;
     bool simulatedFirst = false;
+    RecentStates recent;
+    // Lanes that repeat only every few iterations regroup a loop of calls
+    // (a loop without is summarized by the controller check as it is).
+    bool regroupLanes = resources.enabled && mayRegroup && holdsCalls(loop);
+    llvm::SmallVector<LaneState, 0> laneHistory;
     for (int64_t k = count - 1; k >= 0; --k) {
       iteration.back() = k;
       for (mlir::Value value : bodyValues)
@@ -2319,6 +2806,11 @@ private:
       LaneState lanesBefore;
       if (lastShift && laneTries > 0)
         lanesBefore = laneState();
+      if (regroupLanes)
+        pushLanes(laneHistory);
+      LaneState groupLanes;
+      if (resources.enabled && groupsApply())
+        groupLanes = laneState();
       if (groups) {
         track.earliest.assign(groups->count, kNever);
         tracks.push_back(&track);
@@ -2343,8 +2835,9 @@ private:
 
       int64_t shift;
       bool shifted = uniformShift(carried, next, kinds, shift);
+      bool repeated = shifted && lastShift == shift;
       bool steady =
-          !lanesBound && shifted && lastShift == shift && shift <= 0 &&
+          !lanesBound && repeated && shift <= 0 &&
           (!Gridded || shift % grid.lcm() == 0) &&
           slotsHoldSteadyState(loop, -shift) &&
           (!resources.enabled || lanesSteady(lanesBefore, shift, laneTries));
@@ -2358,7 +2851,7 @@ private:
           track.groups = groups;
         }
         if (groups)
-          nowGroups = groupShifts(*groups, carried, next, kinds);
+          nowGroups = groupShifts(*groups, carried, next, kinds, true);
       }
       // Each group that moves has an op to move: the syncs of one without
       // would not start where its ops do.
@@ -2369,6 +2862,23 @@ private:
         for (auto [shift, earliest] : llvm::zip(*nowGroups, track.earliest))
           if (shift.value_or(0) != 0 && earliest == kNever)
             mixed = false;
+      mixed = mixed && slotsHoldGroups(loop, *groups, *nowGroups, -1) &&
+              groupLanesMoved(groupLanes, *groups, *nowGroups);
+      if (mixed && k > 0 && !pinned.empty()) {
+        const GroupShifts &shifts = *nowGroups;
+        int64_t head = pinnedHead(loop, k, [&](mlir::Operation *op) {
+          return groups->ofOp.contains(op)
+                     ? shifts[groups->groupOf(op, /*backward=*/true)].value_or(
+                           0)
+                     : 0;
+        });
+        if (head > 0 && mayPeelHead) {
+          headPeel = Regroup{loop, head};
+          break;
+        }
+        mixed = head == 0;
+      }
+      bool groupsRepeated = nowGroups && lastGroups == nowGroups;
       lastGroups = std::move(nowGroups);
       llvm::SmallVector<int64_t> previous = std::move(carried);
       carried = std::move(next);
@@ -2378,8 +2888,9 @@ private:
         // it and simulate it.
         bool first = !groups->outside.empty();
         auto distances = groupDistances(*lastGroups, first ? k - 1 : k);
-        if (distances &&
-            extrapolateGroups(carried, previous, kinds, *groups, *distances)) {
+        if (distances && extrapolateGroups(carried, previous, kinds, *groups,
+                                           true, *distances)) {
+          moveGroupLanes(groupLanes, *groups, *distances);
           // The iterations not simulated start their ops earlier, by
           // their group's distance in the first, and so the arm it is in.
           for (auto [earliest, distance] :
@@ -2394,6 +2905,17 @@ private:
           }
           break;
         }
+      }
+      // Ops kept at their forward starts repeat only where the forward
+      // pass's did: peel the first iterations that do not.
+      if (steady && k > 0 && !pinned.empty()) {
+        int64_t head =
+            pinnedHead(loop, k, [&](mlir::Operation *) { return shift; });
+        if (head > 0 && mayPeelHead) {
+          headPeel = Regroup{loop, head};
+          break;
+        }
+        steady = head == 0;
       }
       // A value from before the loop is bounded by every iteration, the
       // first the earliest: skip to it and simulate it.
@@ -2422,6 +2944,19 @@ private:
           continue;
         }
         break;
+      }
+      if (regroup || headPeel)
+        break;
+      if (count - 1 - k >= 2 && !repeated && !groupsRepeated && mayRegroup) {
+        noteRecent(recent, loop, carried, kinds, k, -1);
+        if (regroup)
+          break;
+      }
+      if (repeated && !lanesBound && laneTries <= 0 && !laneHistory.empty() &&
+          !lanesMoved(laneHistory.back(), shift)) {
+        noteRecentLanes(laneHistory, loop, shift, k);
+        if (regroup)
+          break;
       }
     }
     // The first iteration was simulated for what it bounds before the loop;
@@ -2579,6 +3114,8 @@ private:
       blockRequests;
   std::map<std::pair<mlir::Operation *, llvm::SmallVector<int64_t, 2>>, int64_t>
       forwardStarts;
+  /// The ops the backward pass placed at their forward starts.
+  llvm::SmallPtrSet<mlir::Operation *, 8> pinned;
   llvm::SmallVector<Extrapolation> forwardExtrapolations;
   // Lines whose controllers start operations only every few program cycles.
   pulse::LineGrid grid;
@@ -2831,6 +3368,40 @@ static void peelBack(mlir::scf::ForOp loop) {
     loop.replaceAllUsesWith(loop.getInitArgs());
     loop.erase();
   }
+}
+
+/// Run `factor` iterations of `loop` in each of its iterations, executing
+/// those left over after it. The loop has at least 2 x `factor` trips.
+static void unrollBy(mlir::scf::ForOp loop, int64_t factor) {
+  for (int64_t left = *pulse::constantTripCount(loop) % factor; left > 0;
+       --left)
+    peelBack(loop);
+  int64_t step = *pulse::constantIndex(loop.getStep());
+  mlir::Block *body = loop.getBody();
+  mlir::Operation *yield = body->getTerminator();
+  llvm::SmallVector<mlir::Operation *> ops;
+  for (mlir::Operation &op : body->without_terminator())
+    ops.push_back(&op);
+  llvm::SmallVector<mlir::Value> yielded(yield->getOperands());
+  llvm::SmallVector<mlir::Value> carried = yielded;
+  mlir::OpBuilder builder(yield);
+  mlir::Value iv = loop.getInductionVar();
+  for (int64_t copy = 1; copy < factor; ++copy) {
+    mlir::IRMapping map;
+    if (!iv.use_empty())
+      map.map(iv, mlir::arith::AddIOp::create(
+                      builder, loop.getLoc(), iv,
+                      indexConstant(builder, loop.getLoc(), copy * step)));
+    for (auto [arg, value] : llvm::zip(loop.getRegionIterArgs(), carried))
+      map.map(arg, value);
+    for (mlir::Operation *op : ops)
+      builder.clone(*op, map);
+    for (auto [value, original] : llvm::zip(carried, yielded))
+      value = map.lookupOrDefault(original);
+  }
+  yield->setOperands(carried);
+  mlir::OpBuilder bounds(loop);
+  loop.setStep(indexConstant(bounds, loop.getLoc(), step * factor));
 }
 
 static void unrollFully(mlir::scf::ForOp loop) {
@@ -3316,6 +3887,9 @@ static mlir::LogicalResult checkProgramBudget(mlir::func::FuncOp function) {
 /// Rounds of a region's scheduling that may peel several iterations at once.
 constexpr int64_t kWidePeelRounds = 8;
 
+/// Rounds of a region's scheduling that may regroup a loop's iterations.
+constexpr int64_t kRegroupRounds = 4;
+
 /// Schedule `region`, its schedule blocks done, in rounds until its schedule
 /// is affine.
 template <bool Gridded>
@@ -3324,17 +3898,42 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
                bool isAlap, bool classical, const Timelines &timelines,
                const pulse::LineGrid &grid,
                const pulse::Controllers &controllers) {
-  // Each round either writes an affine schedule or removes an iteration from
-  // a loop, so this terminates.
-  int64_t widePeels = 0;
+  // Each round either writes an affine schedule, removes an iteration from
+  // a loop, or (a bounded number of times) regroups one, so this
+  // terminates.
+  int64_t widePeels = 0, regroups = 0, headPeels = 0;
+  llvm::DenseMap<mlir::Operation *, int64_t> regroupedBy;
   while (true) {
     Scheduler<Gridded> scheduler(region, resources, classical, grid,
                                  controllers, &timelines);
+    scheduler.mayRegroup = regroups < kRegroupRounds;
+    scheduler.mayPeelHead = headPeels < kRegroupRounds;
+    scheduler.regroupedBy = regroupedBy;
+    auto regrouped = [&] {
+      if (scheduler.headPeel) {
+        ++headPeels;
+        for (int64_t i = 0; i < scheduler.headPeel->iterations; ++i)
+          peelFront(scheduler.headPeel->loop);
+        return true;
+      }
+      if (!scheduler.regroup)
+        return false;
+      ++regroups;
+      auto [loop, factor] = *scheduler.regroup;
+      int64_t &by = regroupedBy.try_emplace(loop, 1).first->second;
+      by *= factor;
+      unrollBy(loop, factor);
+      return true;
+    };
     if (mlir::failed(scheduler.forward()))
       return mlir::failure();
+    if (regrouped())
+      continue;
     if (isAlap) {
       if (mlir::failed(scheduler.backward()))
         return mlir::failure();
+      if (regrouped())
+        continue;
       // Handing out resources in reverse program order can need time before
       // zero; the forward resource schedule is always feasible.
       bool feasible = !scheduler.skippedNegative &&
@@ -3346,36 +3945,54 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
       if (!feasible) {
         scheduler = Scheduler<Gridded>(region, resources, classical, grid,
                                        controllers, &timelines);
+        scheduler.mayRegroup = false;
+        scheduler.mayPeelHead = false;
         if (mlir::failed(scheduler.forward()))
           return mlir::failure();
       }
     }
 
-    std::optional<NotAffine> problem;
+    // The first problem of each loop that neither holds nor is held by the
+    // loop of one before it: peeling or unrolling one leaves the others'
+    // loops in place, and copies of a loop that peeling made (one per
+    // iteration peeled around it) are then all fixed in one round.
+    llvm::SmallVector<NotAffine> problems;
+    auto apart = [&](mlir::scf::ForOp loop) {
+      return llvm::none_of(problems, [&](const NotAffine &other) {
+        return other.loop->isAncestor(loop) || loop->isAncestor(other.loop);
+      });
+    };
     forEachScheduled(region, [&](mlir::Operation *op) {
-      if (problem)
-        return;
       auto it = scheduler.samples.find(op);
       llvm::ArrayRef<Sample> samples;
       if (it != scheduler.samples.end())
         samples = it->second;
-      problem = writeTiming(op, root, samples, scheduler.extrapolations);
+      if (auto problem =
+              writeTiming(op, root, samples, scheduler.extrapolations))
+        if (apart(problem->loop))
+          problems.push_back(*problem);
     });
-    if (!problem)
-      problem = periodMismatch(region, root);
-    if (!problem)
+    if (problems.empty())
+      if (auto problem = periodMismatch(region, root))
+        problems.push_back(*problem);
+    if (problems.empty())
       break;
     // Each round schedules the whole region again: a few may peel several
-    // iterations, the rest at most one or unroll.
-    bool wide = problem->peelFront + problem->peelBack > 1;
-    if (wide && ++widePeels > kWidePeelRounds)
-      problem->peelFront = problem->peelBack = 0;
-    for (int64_t i = 0; i < problem->peelFront; ++i)
-      peelFront(problem->loop);
-    for (int64_t i = 0; i < problem->peelBack; ++i)
-      peelBack(problem->loop);
-    if (!problem->peelFront && !problem->peelBack)
-      unrollFully(problem->loop);
+    // iterations of a loop, the rest at most one or unroll.
+    bool wide = llvm::any_of(problems, [](const NotAffine &problem) {
+      return problem.peelFront + problem.peelBack > 1;
+    });
+    bool narrow = wide && ++widePeels > kWidePeelRounds;
+    for (NotAffine &problem : problems) {
+      if (narrow && problem.peelFront + problem.peelBack > 1)
+        problem.peelFront = problem.peelBack = 0;
+      for (int64_t i = 0; i < problem.peelFront; ++i)
+        peelFront(problem.loop);
+      for (int64_t i = 0; i < problem.peelBack; ++i)
+        peelBack(problem.loop);
+      if (!problem.peelFront && !problem.peelBack)
+        unrollFully(problem.loop);
+    }
   }
 
   return mlir::success();
