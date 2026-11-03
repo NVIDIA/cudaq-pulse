@@ -524,6 +524,21 @@ def bit_logic(symbol: str, lhs: Any, rhs: Any) -> Any:
     return UndecidableComparison(lhs, word or "!=", rhs)
 
 
+def bit_select(cond: AnswerValue, then: Any, other: Any) -> Any:
+    """*then* where the answer bit *cond* is set, else *other*: bools, at
+    least one known only when the program runs."""
+    if then is True:
+        return bit_logic("|", cond, other)
+    if other is False:
+        return bit_logic("&", cond, then)
+    unset = UndecidableComparison(cond, "==", False)
+    if then is False:
+        return bit_logic("&", unset, other)
+    if other is True:
+        return bit_logic("|", unset, then)
+    return bit_logic("|", bit_logic("&", cond, then), bit_logic("&", unset, other))
+
+
 def runtime_value(value: Any) -> bool:
     """Whether *value* is known only when the program runs, so that a set or
     dict cannot look it up by its hash."""

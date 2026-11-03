@@ -164,6 +164,8 @@ _SIMULATED = [
     "x in {0.05}",
     "b in (True,)",
     "(n > 3) in {True}",
+    "((n > 3) and (x > 0.1)) == True",
+    "((n > 3) or b) != (x > 0.1)",
 ]
 
 
@@ -262,7 +264,6 @@ def test_float_arguments_in_compared_conditions_specialize(condition):
         ("x in range(100)", "compare it with <, <= and == instead"),
         ("{n} == {5}", "it cannot be a set member or a dict key"),
         ("{n: 1}.get(5)", "it cannot be a set member or a dict key"),
-        ("((n > 3) and (x > 0.1)) == True", "`and` or `or` would give a value"),
         ("any([m])", "known only when the program runs"),
         ("all([m, not m])", "known only when the program runs"),
         ("any([n > 3])", "known only when the program runs"),
@@ -277,22 +278,70 @@ def test_conditions_that_cannot_be_traced_raise_at_their_line(condition, message
     assert 'File "<conditions>", line 9' in "".join(info.value.__notes__)
 
 
+_CHOSEN = [
+    ("    c = (n > 3) and (x > 0.1)\n", "c", "(n > 3) and (x > 0.1)"),
+    ("    c = (n > 3) or (x > 0.1)\n", "c", "(n > 3) or (x > 0.1)"),
+    ("    c = b and (n > 3)\n", "c", "b and (n > 3)"),
+    ("    c = not b or (x > 0.1)\n", "c", "not b or (x > 0.1)"),
+    ("    c = 1 < n < 7\n", "c", "1 < n < 7"),
+    ("    c = (n > 3) if b else (x > 0.1)\n", "c", "(n > 3) if b else (x > 0.1)"),
+    ("    c = x > 0.1 if n > 3 else False\n", "c", "x > 0.1 if n > 3 else False"),
+    ("    c = (x > 0.1) == ((n > 3) and b)\n", "c", "(x > 0.1) == ((n > 3) and b)"),
+    (
+        "    if n > 3:\n        c = x > 0.1\n    else:\n        c = b\n",
+        "c",
+        "(x > 0.1) if n > 3 else b",
+    ),
+    # The amplitude `a` of a pulse after the if.
+    ("    a = PI_AMP if n > 3 else 0.0\n", None, "n > 3"),
+    ("    a = (n > 3) and PI_AMP\n", None, "n > 3"),
+    ("    a = PI_AMP if (n > 3) == (x > 0.1) else 0.0\n", None, "(n > 3) == (x > 0.1)"),
+]
+
+
+@pytest.mark.parametrize(("prelude", "condition", "expected"), _CHOSEN)
+def test_a_value_a_runtime_condition_chooses_is_the_one_python_would(prelude, condition, expected):
+    """Bools are chosen as a condition on answers, numbers with a select."""
+    for n, x, b in itertools.product((0, 5, 9), (0.05, 0.5), (0, 1)):
+        if condition is None:
+            after = "    drive(d, square(40, a))\n    wait(d, 8)\n"
+            source = _kernel("False", _answers(n, x, b), prelude=prelude, after=after)
+        else:
+            source = _kernel(condition, _answers(n, x, b), prelude=prelude)
+        kernel = pulse.compile(source, device=_DEVICE)
+        result = pulse.simulate(kernel.lower(_DEVICE.qudit_handles[0]), levels=2)
+        taken = bool(eval(expected, {}, {"n": n, "x": x, "b": bool(b)}))  # noqa: S307
+        assert result.level_population(1) == pytest.approx(float(taken), abs=1e-3), (n, x, b)
+
+
+def test_a_chosen_condition_is_one_compare_of_both_answers():
+    text = _mlir_with("    c = (n > 3) and (x > 0.1)\n", "c")
+    assert text.count("scf.if") == 1
+    assert len(re.findall(r"arith\.andi", text)) == 1
+    assert len(re.findall(r"arith\.cmp[if] ", text)) == 2
+
+
+def _mlir_with(prelude, condition):
+    return pulse.compile(_kernel(condition, prelude=prelude)).lower(Q[0]).mlir()
+
+
 @pytest.mark.parametrize(
-    "prelude",
+    ("prelude", "message"),
     [
-        "    c = (n > 3) and (x > 0.1)\n",
-        "    c = (n > 3) or (x > 0.1)\n",
-        "    c = m and (n > 3)\n",
-        "    c = 1 < n < 7\n",
-        "    c = 0.3 if n > 3 else 0.1\n",
-        "    c = 0.3 if (n > 3) == (x > 0.1) else 0.1\n",
+        ("    c = m and (n > 3)\n", "both a measurement result and a condition on answers"),
+        ("    c = m and b\n", "both a measurement result and a condition on answers"),
+        (
+            "    if m:\n        c = n > 3\n    else:\n        c = b\n",
+            "'c' would depend on both a measurement result and a condition on answers",
+        ),
+        ("    c = (n > 3) and m\n", "the value of the conditional expression, `and` or `or`"),
+        ("    c = 0.3 if n > 3 else 'a'\n", "an if chooses only between two numbers"),
     ],
 )
-def test_a_value_chosen_by_a_runtime_condition_raises(prelude):
+def test_a_value_that_cannot_be_chosen_raises(prelude, message):
     kernel = _kernel("c", prelude=prelude)
-    with pytest.raises(CompilationError, match="`and` or `or` would give a value") as info:
+    with pytest.raises(CompilationError, match=re.escape(message)):
         pulse.compile(kernel).lower(Q[0])
-    assert 'File "<conditions>", line 9' in "".join(info.value.__notes__)
 
 
 def test_a_while_loop_on_a_compared_condition_is_rejected():

@@ -119,11 +119,6 @@ _REJOIN_MESSAGE = (
 _BRANCH_TYPE_MESSAGE = (
     "only measurement results can control a branch at runtime; got an IR value of type {}"
 )
-_BRANCH_VALUE_MESSAGE = (
-    "a conditional expression, `and` or `or` would give a value that depends on a "
-    "condition known only when the program runs; use the condition in an if statement, "
-    "and assign the value in each arm of the if"
-)
 
 # The emulated stack mixes IR values with arbitrary Python constants
 # (tuples, dicts, callables), so entries are dynamically typed.
@@ -433,6 +428,8 @@ class _Choice(Selection):
 
     @property
     def origin(self) -> str:
+        if not self.name:
+            return f"the value the conditional expression, `and` or `or` at line {self.line} chose"
         return (
             f"the value the measurement-conditioned if at line {self.line} chose for {self.name!r}"
         )
@@ -485,6 +482,17 @@ class _Choice(Selection):
 
     def __repr__(self) -> str:
         return f"_Choice({self.cond!r}, {self.then!r}, {self.other!r})"
+
+
+def _bits_chosen(cond: IRValue, a: Any, b: Any) -> bool:
+    """Whether an if on *cond* whose arms leave *a* and *b* chooses a bool
+    known only when the program runs: *cond* is a condition on answers, and
+    *a* and *b* are such conditions or bools, at least one a condition."""
+    if cond.vtype != "i1":
+        return False
+    a_bit = _classical.is_condition(a)
+    b_bit = _classical.is_condition(b)
+    return (a_bit or b_bit) and (a_bit or a.__class__ is bool) and (b_bit or b.__class__ is bool)
 
 
 def _choice_size(value: Any) -> int:
@@ -647,6 +655,12 @@ def _choice_condition(choice: _Choice) -> Any:
     def truth(value: Any) -> bool:
         if isinstance(value, IRValue):
             raise CompilationError(f"{choice.origin} is a pulse {value.vtype}, not a condition")
+        if _classical.is_condition(value) or contains_answer(value):
+            raise CompilationError(
+                f"an if on {choice.origin} would test both a measurement result and "
+                f"{value!r}, an answer known only when the program runs; branch on them "
+                "in nested ifs, or with `and` and `or` in the if condition"
+            )
         return bool(value)
 
     decided = _choice_map(truth, choice)
@@ -2115,7 +2129,7 @@ class PulseIREmitter:
 
         first = builder._next_id  # the first id made in the if
         builder.emit("scf.if", (value,), ())
-        then_locals, then_slots = self._trace_arm(view, index, join, then_start, None, containers)
+        then_locals, then_slots = self._trace_arm(view, index, join, then_start, containers)
         then_stack = list(stack)
         then_held = [cell.value for cell, _ in entering]
         stack[:] = saved_stack
@@ -2126,14 +2140,18 @@ class PulseIREmitter:
         _restore_channels(held, n_held, entering)
         else_index = builder.mark()
         builder.emit("scf.else", (), ())
-        else_locals, else_slots = self._trace_arm(
-            view, index, join, else_start, then_stack, containers
-        )
+        else_locals, else_slots = self._trace_arm(view, index, join, else_start, containers)
+        # Names, and stack slots (ints), the arms leave different numbers,
+        # waveforms or conditions on.
+        chosen: list[tuple[str | int, Any, Any]] = []
+        # Python joins the arms at one stack depth.
+        if stack and not returns and any(map(_IS_NOT, stack, then_stack)):
+            self._stack_choices(
+                value, then_stack, saved_stack, jump_if_true, prog, index, first, chosen
+            )
 
         merged: dict[str, StackVal] = {}
         results: list[tuple[str, IRValue, IRValue]] = []
-        # Names the arms leave different numbers or waveforms on.
-        chosen: list[tuple[str, Any, Any]] = []
         for name in sorted(then_locals.keys() | else_locals.keys()):
             a = then_locals.get(name, _MISSING)
             b = else_locals.get(name, _MISSING)
@@ -2155,7 +2173,8 @@ class PulseIREmitter:
             elif type(a) is type(b) and isinstance(a, _SCALARS) and a == b:
                 merged[name] = a
             else:
-                self._check_choosable(name, a, b, prog, index, first)
+                if not _bits_chosen(value, a, b):
+                    self._check_choosable(name, a, b, prog, index, first, value)
                 chosen.append((name, a, b))
         # List slots holding lines or tones that either arm rebound.
         slot_results: list[tuple[Any, int, IRValue, IRValue]] = []
@@ -2246,9 +2265,11 @@ class PulseIREmitter:
         if chosen:
             line = prog.location(index)[1]
             scope = getattr(builder, "scope", ())
-            for name, a, b in chosen:
-                merged[name] = _Choice(value, a, b, name, line, scope)
-            _watch_choices(builder)
+            for chose, a, b in chosen:
+                if isinstance(chose, int):
+                    stack[chose] = self._chosen(value, a, b, "", line, scope)
+                else:
+                    merged[chose] = self._chosen(value, a, b, chose, line, scope)
         for cell, alias in aliases:
             out = merged[alias]
             cell.value = out
@@ -2265,30 +2286,96 @@ class PulseIREmitter:
         return join
 
     def _check_choosable(
-        self, name: str, a: Any, b: Any, prog: bc.DecodedCode, index: int, first: int
+        self,
+        name: str,
+        a: Any,
+        b: Any,
+        prog: bc.DecodedCode,
+        index: int,
+        first: int,
+        cond: IRValue,
     ) -> None:
-        """Reject the values *a* and *b* the arms of the if at
-        ``prog.instrs[index]`` leave on *name*, unless the if can choose
-        between them: two numbers or two waveforms that exist after it."""
+        """Reject the values *a* and *b* the arms of the if on *cond* at
+        ``prog.instrs[index]`` leave on *name* (on the stack, for ``""``:
+        the value of a conditional expression, ``and`` or ``or``), unless
+        the if can choose between them: two numbers or two waveforms that
+        exist after it."""
         line = prog.location(index)[1]
+        measurement = cond.vtype == "measurement"
+        on = "a measurement result" if measurement else "a runtime condition"
+        if name:
+            subject = f"{name!r}"
+            where = (
+                f"the {'measurement' if measurement else 'runtime'}-conditioned if at line {line}"
+            )
+            inside, outside = f"use {name!r} inside that arm", "use it inside each arm"
+        else:
+            subject = "the value of the conditional expression, `and` or `or`"
+            where = f"that expression at line {line}"
+            inside = outside = "use an if statement with the op in each arm"
+        if measurement and (_classical.is_condition(a) or _classical.is_condition(b)):
+            raise CompilationError(
+                f"{subject} would depend on both a measurement result and a condition on "
+                f"answers at line {line}, which one test cannot combine; branch on them in "
+                "nested ifs, or with `and` and `or` in the if condition"
+            )
         kind = _choice_kind(a)
         if kind is not None and kind == _choice_kind(b):
             scope = getattr(self.b, "scope", ())[:-1]  # around the if: this is its else arm
             if not (_made_in_if(a, first, scope) or _made_in_if(b, first, scope)):
                 return
             raise CompilationError(
-                f"{name!r} would depend on a measurement result through a value made "
-                f"inside an arm of the measurement-conditioned if at line {line}, which "
-                f"does not exist after the if; use {name!r} inside that arm, or make the "
-                "value before the if"
+                f"{subject} would depend on {on} through a value made inside an arm of "
+                f"{where}, which does not exist after it; {inside}, or make the value "
+                "before it"
             )
         raise CompilationError(
-            f"{name!r} would depend on a measurement result: the arms of the "
-            f"measurement-conditioned if at line {line} leave {_describe(a)} and "
+            f"{subject} would depend on {on}: the arms of {where} leave {_describe(a)} and "
             f"{_describe(b)} on it, and an if chooses only between two numbers or two "
-            "waveforms, or two lines or tones of one kind; compute it before the if, "
-            "or use it inside each arm"
+            "waveforms, two lines or tones of one kind, or two conditions on answers; "
+            f"compute it before the if, or {outside}"
         )
+
+    def _stack_choices(
+        self,
+        cond: IRValue,
+        then_stack: list[StackVal],
+        saved_stack: list[StackVal],
+        jump_if_true: bool,
+        prog: bc.DecodedCode,
+        index: int,
+        first: int,
+        chosen: list[tuple[str | int, Any, Any]],
+    ) -> None:
+        """Add to *chosen* the stack slots the arms of the if on *cond* at
+        ``prog.instrs[index]`` left different values in, as (slot, then
+        value, else value), each checked to be a pair the if can choose.
+
+        An arm that left a slot as it was before the if is the short cut of
+        an ``and`` (a jump if false) or an ``or``: the slot holds the value
+        the jump tested, which is false, or true, in that arm."""
+        for slot, (a, b) in enumerate(zip(then_stack, self.stack, strict=False)):
+            if a is not b:
+                if slot < len(saved_stack):
+                    kept = saved_stack[slot]
+                    if a is kept:
+                        a = jump_if_true
+                    elif b is kept:
+                        b = jump_if_true
+                if not _bits_chosen(cond, a, b):
+                    self._check_choosable("", a, b, prog, index, first, cond)
+                chosen.append((slot, a, b))
+
+    def _chosen(
+        self, cond: IRValue, a: Any, b: Any, name: str, line: int | None, scope: tuple[int, ...]
+    ) -> Any:
+        """What an if on *cond* leaves where its arms left *a* and *b*: for
+        bools on answers, the condition ``cond and a or not cond and b``;
+        else the choice between them."""
+        if _bits_chosen(cond, a, b):
+            return _classical.bit_select(AnswerValue(cond.vid, "i1", scope), a, b)
+        _watch_choices(self.b)
+        return _Choice(cond, a, b, name, line, scope)
 
     def _undefined(self, name: str) -> _UndefinedLocalError:
         """The error for reading *name*, which is not bound."""
@@ -2311,12 +2398,9 @@ class PulseIREmitter:
         branch: int,
         join: int,
         start: int,
-        expected: list[StackVal] | None,
         containers: list[tuple[Any, Any]],
     ) -> tuple[dict[str, StackVal], list[tuple[list[Any], int, IRValue]]]:
-        """Trace one arm until it reaches *join*, there with the stack
-        *expected* (the other arm's) if given; return its locals and rebound
-        slots."""
+        """Trace one arm until it reaches *join*; return its locals and rebound slots."""
         returns = join >= len(view.instrs)
         # An arm may only move forward from the branch, except that a join at
         # an enclosing loop header (both arms continue) ends the arm.
@@ -2340,9 +2424,6 @@ class PulseIREmitter:
                 raise CompilationError("a measurement-conditioned branch cannot return a value")
         elif outcome is not _REGION_DONE:
             raise CompilationError(_REJOIN_MESSAGE)
-        # Python joins the arms at one stack depth.
-        elif expected is not None and self.stack and any(map(_IS_NOT, self.stack, expected)):
-            raise CompilationError(_BRANCH_VALUE_MESSAGE)
         slots = _slot_changes(containers)
         if slots is None or not _only_containers(mutated, containers):
             raise CompilationError(
