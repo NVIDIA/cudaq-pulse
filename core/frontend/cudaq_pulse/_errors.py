@@ -14,7 +14,7 @@ import sys
 import threading
 from collections.abc import Callable, Iterable
 from dataclasses import Field, dataclass
-from typing import Any, ClassVar, Final
+from typing import TYPE_CHECKING, Any, ClassVar, Final
 
 __all__ = [
     "CompilationError",
@@ -51,7 +51,79 @@ class _Unset:
 UNSET: Final[Any] = _Unset()
 
 
-@dataclass(frozen=True, slots=True)
+# What ``dataclass(frozen=True)`` sets on a class whose body does not.
+_DATACLASS_NAMES = (
+    "__dataclass_params__",
+    "__dataclass_fields__",
+    "__init__",
+    "__repr__",
+    "__eq__",
+    "__hash__",
+    "__setattr__",
+    "__delattr__",
+    "__match_args__",
+) + (("__replace__",) if sys.version_info >= (3, 13) else ())
+_DATACLASS_LOCK = threading.RLock()
+
+
+class _WhenUsed(tuple[type, str, Any]):
+    """``(cls, name, field)``: a name ``dataclass`` is yet to set, or to
+    change, on *cls*. Reading it, from the class or from an instance, makes
+    the class the dataclass, and reads the name it then has. *field* is the
+    ``field()`` the class body gave the name, if it gave one."""
+
+    __slots__ = ()
+
+    def __get__(self, instance: object, owner: type | None = None) -> Any:
+        cls, name, _ = self
+        with _DATACLASS_LOCK:
+            if cls.__dict__.get(name) is self:
+                for waiting in [v for v in cls.__dict__.values() if v.__class__ is _WhenUsed]:
+                    if waiting[2] is None:
+                        delattr(cls, waiting[1])
+                    else:
+                        setattr(cls, waiting[1], waiting[2])
+                dataclass(frozen=True)(cls)
+        value = cls.__dict__.get(name, self)
+        if value is self:
+            return getattr(owner or cls, name) if instance is None else getattr(instance, name)
+        get = getattr(value.__class__, "__get__", None)
+        return value if get is None else get(value, instance, owner)
+
+
+def _dataclass_when_used(*, frozen: bool) -> Callable[[type], type]:
+    """``dataclass(frozen=True)``, applied when the class is first used, for
+    a class most programs never use. Every name the dataclass sets, and every
+    field given a ``field()``, reads as it would, from the class or an
+    instance (made, or unpickled), and makes the class the dataclass first:
+    ``dataclasses.fields``, ``is_dataclass``, ``inspect.signature``,
+    pickling and subclassing see the dataclass. Annotate with ``dataclass``
+    under ``TYPE_CHECKING``."""
+    if not frozen:
+        raise InternalError("only a frozen dataclass is made when used")
+
+    def wrap(cls: type) -> type:
+        namespace = cls.__dict__
+        for name in _DATACLASS_NAMES:
+            if name not in namespace:
+                setattr(cls, name, _WhenUsed((cls, name, None)))
+        for name in namespace.get("__annotations__", ()):
+            value = namespace.get(name)
+            if value.__class__ is Field:
+                setattr(cls, name, _WhenUsed((cls, name, value)))
+        return cls
+
+    return wrap
+
+
+# Checkers see the dataclass, as in the modules that import the decorator.
+if TYPE_CHECKING:
+    from dataclasses import dataclass as _made_when_used
+else:
+    _made_when_used = _dataclass_when_used
+
+
+@_made_when_used(frozen=True)
 class Problem:
     """One thing that is wrong, where it is, and how to fix it.
 
@@ -281,68 +353,3 @@ def _ranges(numbers: Iterable[int]) -> str:
     if run:
         parts.append(str(run[0]) if len(run) == 1 else f"{run[0]}..{run[-1]}")
     return ", ".join(parts)
-
-
-# What ``dataclass(frozen=True)`` sets on a class whose body does not.
-_DATACLASS_NAMES = (
-    "__dataclass_params__",
-    "__dataclass_fields__",
-    "__init__",
-    "__repr__",
-    "__eq__",
-    "__hash__",
-    "__setattr__",
-    "__delattr__",
-    "__match_args__",
-) + (("__replace__",) if sys.version_info >= (3, 13) else ())
-_DATACLASS_LOCK = threading.RLock()
-
-
-class _WhenUsed(tuple[type, str, Any]):
-    """``(cls, name, field)``: a name ``dataclass`` is yet to set, or to
-    change, on *cls*. Reading it, from the class or from an instance, makes
-    the class the dataclass, and reads the name it then has. *field* is the
-    ``field()`` the class body gave the name, if it gave one."""
-
-    __slots__ = ()
-
-    def __get__(self, instance: object, owner: type | None = None) -> Any:
-        cls, name, _ = self
-        with _DATACLASS_LOCK:
-            if cls.__dict__.get(name) is self:
-                for waiting in [v for v in cls.__dict__.values() if v.__class__ is _WhenUsed]:
-                    if waiting[2] is None:
-                        delattr(cls, waiting[1])
-                    else:
-                        setattr(cls, waiting[1], waiting[2])
-                dataclass(frozen=True)(cls)
-        value = cls.__dict__.get(name, self)
-        if value is self:
-            return getattr(owner or cls, name) if instance is None else getattr(instance, name)
-        get = getattr(value.__class__, "__get__", None)
-        return value if get is None else get(value, instance, owner)
-
-
-def _dataclass_when_used(*, frozen: bool) -> Callable[[type], type]:
-    """``dataclass(frozen=True)``, applied when the class is first used, for
-    a class most programs never use. Every name the dataclass sets, and every
-    field given a ``field()``, reads as it would, from the class or an
-    instance (made, or unpickled), and makes the class the dataclass first:
-    ``dataclasses.fields``, ``is_dataclass``, ``inspect.signature``,
-    pickling and subclassing see the dataclass. Annotate with ``dataclass``
-    under ``TYPE_CHECKING``."""
-    if not frozen:
-        raise InternalError("only a frozen dataclass is made when used")
-
-    def wrap(cls: type) -> type:
-        namespace = cls.__dict__
-        for name in _DATACLASS_NAMES:
-            if name not in namespace:
-                setattr(cls, name, _WhenUsed((cls, name, None)))
-        for name in namespace.get("__annotations__", ()):
-            value = namespace.get(name)
-            if value.__class__ is Field:
-                setattr(cls, name, _WhenUsed((cls, name, value)))
-        return cls
-
-    return wrap

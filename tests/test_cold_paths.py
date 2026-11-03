@@ -268,10 +268,14 @@ if sys.argv[1] == "eager":
                 return None
             sys.meta_path.remove(self)
             spec = importlib.util.find_spec(name)
-            run = spec.loader.exec_module
+            # Problem, defined beside the decorator, is made where defined.
+            source = spec.loader.get_source(name)
+            lazy = "_made_when_used = _dataclass_when_used"
+            assert lazy in source
+            source = source.replace(lazy, "_made_when_used = dataclass")
 
             def exec_module(module):
-                run(module)
+                exec(compile(source, spec.origin, "exec"), module.__dict__)
                 module._dataclass_when_used = lambda *, frozen: dataclasses.dataclass(frozen=frozen)
 
             spec.loader.exec_module = exec_module
@@ -280,10 +284,11 @@ if sys.argv[1] == "eager":
     sys.meta_path.insert(0, _Eager())
 
 import cudaq_pulse.controller as c
+from cudaq_pulse import Problem
 from cudaq_pulse.targets import CrosstalkEntry
 
 classes = [CrosstalkEntry, c.ControllerLimits, c.FunctionUsage, c.ProcessorUsage,
-           c.ControllerUsage, c.LimitExceeded, c.UsageReport]
+           c.ControllerUsage, c.LimitExceeded, c.UsageReport, Problem]
 made = [type(vars(cls)["__dataclass_fields__"]) is dict for cls in classes]
 assert made == [sys.argv[1] == "eager"] * len(classes), made
 out = []
@@ -411,12 +416,12 @@ def test_classes_most_programs_never_use_are_made_when_used():
         "ProcessorUsage",
         "UsageReport",
     ]
-    unmade = sorted(["CrosstalkEntry", *usage])
+    unmade = sorted(["CrosstalkEntry", "Problem", *usage])
     code = (
         _PLAIN + "import cudaq_pulse.controller as c\n"
         "low.schedule; low.export_controller(); low.export_emulation(); c.resources(low)\n"
         f"names = [(n, getattr(c, n)) for n in {usage!r}]\n"
-        "names += [('CrosstalkEntry', p.targets.CrosstalkEntry)]\n"
+        "names += [('CrosstalkEntry', p.targets.CrosstalkEntry), ('Problem', p.Problem)]\n"
         "def unmade():\n"
         "    return sorted(n for n, cls in names\n"
         "                  if type(vars(cls)['__dataclass_fields__']) is not dict)\n"
