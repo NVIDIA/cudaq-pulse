@@ -458,12 +458,17 @@ private:
     }
     if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
       auto yield = loop.getBody()->getTerminator();
+      auto trips = pulse::constantTripCount(loop);
+      bool runs = trips && *trips > 0;
       for (auto [init, arg, result] :
            llvm::zip(loop.getInitArgs(), loop.getRegionIterArgs(),
                      loop.getResults())) {
         if (isLink(arg))
           continue;
-        unsigned c = join(make(), join(context, of(init)));
+        // A value the body does not read, in a loop that runs, reaches
+        // nothing from before the loop: each iteration yields its own.
+        bool reaches = !runs || !arg.use_empty();
+        unsigned c = join(make(), reaches ? join(context, of(init)) : context);
         classOf[arg] = c;
         classOf[result] = c;
       }

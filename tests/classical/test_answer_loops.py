@@ -578,6 +578,67 @@ def test_an_answer_is_never_taken_before_it_is_due_when_lanes_run_out_backward(s
         assert events == _events(kernel, schedule, 10**6, {}), trips
 
 
+def _blocking_after_a_readout(n: int, rolled: bool) -> Any:
+    """A readout before a loop whose body measures into the same name, so the
+    loop carries a measurement it never reads, then calls blocking: as
+    written (*rolled*) or with the body written out *n* times."""
+    if rolled:
+        body = "    for _ in range({n}):\n{body}"
+        indent = "        "
+    else:
+        body = "{body}" * n
+        indent = "    "
+    lines = [
+        "m0 = readout(p, square(77, 0.05))",
+        "f0 = decide_blocking.submit([m0]).result()",
+        "sync(c, p)",
+        "if f0[0]:",
+        "    drive(a, gaussian(33, 0.1, 2.0))",
+        "drive(a, square(7, 0.1))",
+        "drive(b, square(57, 0.1))",
+    ]
+    source = "\n".join(
+        [
+            "def k(q, r, t):",
+            "    a = get_drive_line(q)",
+            "    b = get_drive_line(r)",
+            "    c = get_drive_line(t)",
+            "    p = get_readout_line(q)",
+            "    s = get_readout_line(r)",
+            "    m0 = readout(s, square(70, 0.05))",
+            "    wait(c, 3)",
+            body.format(n=n, body="".join(f"{indent}{line}\n" for line in lines)),
+        ]
+    )
+    namespace: dict[str, Any] = dict(_STATEFUL)
+    exec(compile(source, "<blocking after a readout>", "exec"), namespace)  # noqa: S102 - generated kernels
+    return pulse.kernel(namespace["k"])
+
+
+@pytest.mark.parametrize("schedule", POLICIES)
+def test_a_measurement_a_loop_carries_unread_does_not_hold_back_its_line(schedule):
+    # The readout before the loop is on a line the blocking call does not
+    # wait for: what the loop carries in its place is never read, so it
+    # plays where the program written out plays it.
+    for trips in (1, 2, 5):
+        for machine, options in _machines().items():
+            written_out = _events(_blocking_after_a_readout(trips, False), schedule, 0, options)
+            rolled = _blocking_after_a_readout(trips, True)
+            assert _events(rolled, schedule, 0, options) == written_out, (trips, machine)
+            assert _events(rolled, schedule, 10**6, options) == written_out, (trips, machine)
+
+
+@pytest.mark.parametrize("schedule", POLICIES)
+def test_random_loops_carrying_unread_measurements_past_blocking_calls_play_as_unrolled(schedule):
+    differ = [
+        (seed, trips, machine)
+        for machine, options in _machines().items()
+        for seed in (3058, 3070)
+        for trips in (1, 2, 7)
+        if not _same_as_unrolled(_random_kernel(seed, trips, True), schedule, options)
+    ]
+    assert differ == []
+
 
 # The child's limits, far past what lowering every kernel below at 10**6
 # trips under every policy takes: about 0.4 s and 300 MB each, nearly all of
