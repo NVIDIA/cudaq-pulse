@@ -65,6 +65,11 @@ def settle(bits: pulse.Bits) -> float:
     return 20.0 * bits[0]
 
 
+@pulse.classical(max_latency_ns=250)
+def tune(bits: pulse.Bits) -> tuple[float, float]:
+    return 0.1 * bits[0], 1.0e5 * bits[0]
+
+
 _CALLS = {
     "decide": decide,
     "decide_lazy": decide_lazy,
@@ -241,11 +246,30 @@ def _statement(
     scope: dict[str, list[str]],
     indent: int,
     stateful: bool = False,
+    valued: bool = False,
 ) -> list[str]:
     pad = "    " * indent
     calls = _STATEFUL if stateful else _CALLS
     roll = rng.random()
     measured, answered = scope["measured"], scope["answered"]
+    if valued and roll < 0.25 and measured:
+        # Answers as values: amplitudes, phase and frequency shifts.
+        tuned = scope.setdefault("tuned", [])
+        if not tuned or rng.random() < 0.4:
+            # Named by where it is taken, so an arm's never shadows one past it.
+            name = f"t{len(tuned)}_{indent}"
+            tuned.append(name)
+            return [f"{pad}{name}, {name}f = tune.submit([{rng.choice(measured)}]).result()"]
+        name, line = rng.choice(tuned), rng.choice(_DRIVES)
+        return [
+            rng.choice(
+                (
+                    f"{pad}drive({line}, square({rng.randint(4, 40)}, {name}))",
+                    f"{pad}shift_phase({line}.tone, {name})",
+                    f"{pad}shift_frequency({line}.tone, {name}f)",
+                )
+            )
+        ]
     if roll < 0.2:
         return [f"{pad}drive({rng.choice(_DRIVES)}, square({rng.randint(1, 60)}, 0.1))"]
     if roll < 0.3:
@@ -267,7 +291,7 @@ def _statement(
             bit = "[1][0]" if call == "decide_timed" else "[0]"
             inner = {"measured": list(measured), "answered": list(answered)}
             lines = [f"{pad}if {request}{bit}:"]
-            lines += _statement(rng, 2, inner, indent + 1, stateful)
+            lines += _statement(rng, 2, inner, indent + 1, stateful, valued)
             return lines
         name = f"f{len(answered)}"
         answered.append(name)
@@ -281,12 +305,12 @@ def _statement(
         inner = {"measured": list(measured), "answered": list(answered)}
         lines = [f"{pad}if {condition}:"]
         for _ in range(rng.randint(1, 2)):
-            lines += _statement(rng, depth + 1, inner, indent + 1, stateful)
+            lines += _statement(rng, depth + 1, inner, indent + 1, stateful, valued)
         if rng.random() < 0.4:
             lines.append(f"{pad}else:")
             inner = {"measured": list(measured), "answered": list(answered)}
             for _ in range(rng.randint(1, 2)):
-                lines += _statement(rng, depth + 1, inner, indent + 1, stateful)
+                lines += _statement(rng, depth + 1, inner, indent + 1, stateful, valued)
         return lines
     if roll < 0.95:
         first, second = rng.sample(_DRIVES + _READOUTS, 2)
@@ -294,11 +318,12 @@ def _statement(
     return [f"{pad}drive({rng.choice(_DRIVES)}, gaussian({rng.randint(4, 40)}, 0.1, 2.0))"]
 
 
-def _random_source(seed: int, trips: int, stateful: bool = False) -> str:
+def _random_source(seed: int, trips: int, stateful: bool = False, valued: bool = False) -> str:
     """A random loop of *trips* iterations that reads out, calls and branches
     on answers, between a random prologue and epilogue; some have a loop of
     their own in the body. *stateful* adds blocking calls and waits of an
-    answer's length, and answers an inner loop takes and need not test."""
+    answer's length, and answers an inner loop takes and need not test;
+    *valued* answers that set amplitudes, phases and frequencies."""
     rng = random.Random(seed)
     calls = _STATEFUL if stateful else _CALLS
     lines = [
@@ -325,23 +350,27 @@ def _random_source(seed: int, trips: int, stateful: bool = False) -> str:
         lines.append(f"        sync({line}, {ro})")
     test = ["        if f0[0]:", f"            drive({line}, square({rng.randint(4, 40)}, 0.2))"]
     scope = {"measured": ["m0"], "answered": ["f0"]}
+    if valued:
+        scope["tuned"] = ["t0"]
+        lines.append("        t0, t0f = tune.submit([m0]).result()")
+        test += _statement(rng, 1, {**scope, "tuned": ["t0"]}, 2, stateful, valued)
     extra: list[str] = []
     for _ in range(rng.randint(0, 4)):
-        extra += _statement(rng, 0, scope, 2, stateful)
+        extra += _statement(rng, 0, scope, 2, stateful, valued)
     if rng.random() < 0.15:
         inner = {"measured": list(scope["measured"]), "answered": list(scope["answered"])}
         extra.append(f"        for _ in range({rng.randint(2, 3)}):")
         for _ in range(rng.randint(1, 3)):
-            extra += _statement(rng, 0 if stateful else 1, inner, 3, stateful)
+            extra += _statement(rng, 0 if stateful else 1, inner, 3, stateful, valued)
     lines += test + extra if rng.random() < 0.5 else extra + test
     for _ in range(rng.randint(0, 2)):
         lines += _statement(rng, 2, {"measured": [], "answered": []}, 1)
     return "\n".join(lines) + "\n"
 
 
-def _random_kernel(seed: int, trips: int, stateful: bool = False) -> Any:
-    namespace: dict[str, Any] = dict(_STATEFUL, settle=settle)
-    source = _random_source(seed, trips, stateful)
+def _random_kernel(seed: int, trips: int, stateful: bool = False, valued: bool = False) -> Any:
+    namespace: dict[str, Any] = dict(_STATEFUL, settle=settle, tune=tune)
+    source = _random_source(seed, trips, stateful, valued)
     exec(compile(source, f"<answers {seed}>", "exec"), namespace)  # noqa: S102 - generated kernels
     return pulse.kernel(namespace["k"])
 
@@ -659,10 +688,11 @@ threading.Thread(target=_watch, daemon=True).start()
 
 import cudaq_pulse as pulse
 from tests._handles import Q
-from tests.classical.test_answer_loops import POLICIES, _kernels
+from tests.classical.test_answer_loops import POLICIES
+from {module} import {factory} as factory
 
 out = {{}}
-kernels = _kernels({trips})
+kernels = factory({trips})
 for name in kernels:
     for schedule in POLICIES:
         started = time.process_time()
@@ -674,11 +704,13 @@ print(json.dumps(out))
 """
 
 
-def _in_a_child(trips: int) -> dict[str, list[Any]]:
-    """The duration of every kernel of *trips* iterations under every policy,
-    and the CPU time its lowering took, in a child process that is stopped
-    past CPU_S seconds or RSS_MB MB."""
-    code = _CHILD.format(wall=2 * CPU_S, cpu=CPU_S, mb=RSS_MB, trips=trips)
+def _in_a_child(trips: int, factory: str, module: str) -> dict[str, list[Any]]:
+    """The duration of every kernel *factory* (in *module*) makes of *trips*
+    iterations under every policy, and the CPU time its lowering took, in a
+    child process that is stopped past CPU_S seconds or RSS_MB MB."""
+    code = _CHILD.format(
+        wall=2 * CPU_S, cpu=CPU_S, mb=RSS_MB, trips=trips, factory=factory, module=module
+    )
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p))
     out = subprocess.run(
@@ -694,25 +726,119 @@ def _in_a_child(trips: int) -> dict[str, list[Any]]:
     return result
 
 
-def test_a_loop_of_10_6_iterations_branching_on_answers_lowers_in_bounded_time_and_memory():
+def _lowers_as_extrapolated(factory: Any, many: int = 10**6) -> None:
+    """Lowering *factory*'s kernels at *many* trips in a child takes well
+    under a second each, to the duration two shorter loops extrapolate to."""
     from fractions import Fraction
 
-    many = 10**6
-    found = _in_a_child(many)
+    found = _in_a_child(many, factory.__name__, factory.__module__)
     small: dict[tuple[str, int], Fraction] = {}
-    # As many trips past the peeled ones as 10**6 is, modulo every run of
-    # iterations a loop repeats after.
-    fewer, more = 1240, 2080
+    # As many trips past the peeled ones as *many* is, modulo every run of
+    # iterations a loop repeats after (840 is a multiple of each).
+    fewer = 1240 + (many - 1240) % 840
+    more = fewer + 840
     for trips in (fewer, more):
-        kernels = _kernels(trips)
-        for name in NAMES:
+        kernels = factory(trips)
+        for kernel in kernels:
             for schedule in POLICIES:
-                program = pulse.compile(kernels[name], schedule=schedule, unroll_threshold=0)
+                program = pulse.compile(kernels[kernel], schedule=schedule, unroll_threshold=0)
                 lowered = program.lower(Q[0], Q[1], Q[2])
-                small[f"{name}/{schedule}", trips] = lowered.duration.exact_ns
-    assert len(found) == len(NAMES) * len(POLICIES)
+                small[f"{kernel}/{schedule}", trips] = lowered.duration.exact_ns
+    assert len(found) == len(factory(1)) * len(POLICIES)
     for key, (duration, spent) in found.items():
         step = small[key, more] - small[key, fewer]
         expected = small[key, fewer] + (many - fewer) // (more - fewer) * step
         assert Fraction(duration) == expected, key
         assert spent < 0.25, key
+
+
+def test_a_loop_of_10_6_iterations_branching_on_answers_lowers_in_bounded_time_and_memory():
+    _lowers_as_extrapolated(_kernels)
+
+
+def _valued(n: int) -> dict[str, Any]:
+    """Loops that use answers as values: what they set moves with its own
+    lines, not with the readout the call asks about."""
+
+    @pulse.kernel
+    def amplitude(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        for _ in range(n):
+            m = readout(ro, square(100, 0.05))
+            amp, _ = tune.submit([m]).result()
+            drive(d, square(20, amp))
+
+    @pulse.kernel
+    def framed(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        for _ in range(n):
+            m = readout(ro, square(100, 0.05))
+            amp, detuning = tune.submit([m]).result()
+            shift_frequency(d.tone, detuning)
+            drive(d, square(20, amp))
+            shift_phase(d.tone, amp)
+
+    @pulse.kernel
+    def with_a_branch(q, r, t):
+        d = get_drive_line(q)
+        e = get_drive_line(t)
+        ro = get_readout_line(q)
+        for _ in range(n):
+            m = readout(ro, square(61, 0.05))
+            fix = decide.submit([m]).result()
+            amp, _ = tune.submit([m]).result()
+            drive(e, square(52, amp))
+            if fix[0]:
+                drive(d, square(32, 0.2))
+
+    @pulse.kernel
+    def unplayed(q, r, t):
+        d = get_drive_line(q)
+        e = get_drive_line(r)
+        ro = get_readout_line(q)
+        for _ in range(n):
+            m = readout(ro, square(40, 0.05))
+            amp, _ = tune.submit([m]).result()
+            shift_phase(e.tone, amp)
+            drive(d, square(30, 0.1))
+
+    return {
+        "amplitude": amplitude,
+        "framed": framed,
+        "with_a_branch": with_a_branch,
+        "unplayed": unplayed,
+    }
+
+
+@pytest.mark.parametrize("schedule", POLICIES)
+def test_a_loop_using_answers_as_values_plays_every_event_as_unrolled(schedule):
+    differ = [
+        (name, trips, machine)
+        for machine, options in _machines().items()
+        for trips in (1, 2, 5, 64, 130)
+        for name, kernel in _valued(trips).items()
+        if not _same_as_unrolled(kernel, schedule, options)
+    ]
+    assert differ == []
+
+
+@pytest.mark.parametrize("schedule", POLICIES)
+def test_random_loops_using_answers_as_values_play_every_event_as_unrolled(schedule):
+    differ = [
+        (seed, trips, machine)
+        for machine, options in _machines().items()
+        for seed in range(40)
+        for trips in (3, 14, 100)
+        if not _same_as_unrolled(
+            _random_kernel(seed, trips, seed % 4 == 0, True), schedule, options
+        )
+    ]
+    assert differ == []
+
+
+def test_a_loop_of_10_6_iterations_using_answers_as_values_lowers_in_bounded_time_and_memory():
+    # Under alap the drives an answer sets move by their own period, the
+    # readouts and requests by theirs; each loop stays rolled.
+    _lowers_as_extrapolated(_valued)

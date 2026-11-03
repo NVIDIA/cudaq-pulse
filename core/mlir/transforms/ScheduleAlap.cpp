@@ -760,6 +760,21 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
   llvm::DenseMap<mlir::Operation *, llvm::SmallBitVector> waitDecides;
   bool directed = true;
   loop.getBody()->walk([&](mlir::scf::ForOp) { directed = false; });
+  // In a body without loops of its own an answer does not join what it is
+  // a value of with its call: it holds it back, as a branch's condition
+  // does what it decides. The waits each value is computed from, and what
+  // each wait's call reads.
+  llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Operation *, 1>> answers;
+  llvm::DenseMap<mlir::Operation *, llvm::SmallBitVector> callOf;
+  // What `value` reads, its answers' calls included.
+  auto readsOf = [&](mlir::Value value) {
+    llvm::SmallBitVector bits = rootsOf(value);
+    bits.resize(n);
+    if (auto it = answers.find(value); it != answers.end())
+      for (mlir::Operation *wait : it->second)
+        bits |= callOf.lookup(wait);
+    return bits;
+  };
   bool ok = true;
   std::function<void(mlir::Block &, const llvm::SmallBitVector &)> visit =
       [&](mlir::Block &block, const llvm::SmallBitVector &ambient) {
@@ -779,7 +794,7 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
           if (auto inner = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
             llvm::SmallVector<llvm::SmallBitVector> state;
             for (mlir::Value init : inner.getInitArgs())
-              state.push_back(rootsOf(init) | ambient);
+              state.push_back(readsOf(init) | ambient);
             auto yield = inner.getBody()->getTerminator();
             size_t mark = related.size();
             // Each round adds roots, of which there are `n`.
@@ -811,7 +826,7 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
               if (!inside(measurement))
                 outside.push_back(measurement);
             llvm::SmallBitVector condition =
-                rootsOf(branch.getCondition()) | ambient;
+                readsOf(branch.getCondition()) | ambient;
             size_t mark = related.size();
             visit(*branch.thenBlock(), condition);
             if (!branch.getElseRegion().empty())
@@ -821,9 +836,9 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
             llvm::SmallBitVector decided(n);
             for (auto [index, result] : llvm::enumerate(branch.getResults())) {
               llvm::SmallBitVector bits =
-                  rootsOf(branch.thenYield().getOperand(index));
+                  readsOf(branch.thenYield().getOperand(index));
               if (!branch.getElseRegion().empty())
-                bits |= rootsOf(branch.elseYield().getOperand(index));
+                bits |= readsOf(branch.elseYield().getOperand(index));
               if (!directed)
                 bits |= condition;
               decided |= bits;
@@ -849,10 +864,33 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
           }
           llvm::SmallBitVector bits =
               directed ? llvm::SmallBitVector(n) : ambient;
-          for (mlir::Value operand : op.getOperands())
-            bits |= rootsOf(operand);
-          for (mlir::Value result : op.getResults())
-            roots[result] = bits;
+          llvm::SmallVector<mlir::Operation *, 1> from;
+          for (mlir::Value operand : op.getOperands()) {
+            bits |= directed ? rootsOf(operand) : readsOf(operand);
+            if (auto it = answers.find(operand);
+                directed && it != answers.end())
+              for (mlir::Operation *wait : it->second)
+                if (!llvm::is_contained(from, wait))
+                  from.push_back(wait);
+          }
+          if (directed && mlir::isa<classical::WaitOp>(op)) {
+            callOf[&op] = bits;
+            for (mlir::Value result : op.getResults())
+              answers[result] = {&op};
+          } else {
+            // A line or tone an answer holds back moves with what it is.
+            for (mlir::Value result : op.getResults()) {
+              roots[result] = bits;
+              if (!from.empty() && !isTimedType(result.getType()))
+                answers[result] = from;
+            }
+          }
+          if (bits.any())
+            for (mlir::Operation *wait : from) {
+              decides.emplace_back(callOf.lookup(wait), bits);
+              auto [it, inserted] = waitDecides.try_emplace(wait, n);
+              it->second |= bits;
+            }
           if (isTimedOp(&op) || mlir::isa<pulse::SyncOp>(op))
             related.emplace_back(&op, std::move(bits));
         }
@@ -880,8 +918,7 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
   }
   auto yield = loop.getBody()->getTerminator();
   for (auto [i, value] : llvm::enumerate(yield->getOperands())) {
-    llvm::SmallBitVector bits = rootsOf(value);
-    bits.resize(n);
+    llvm::SmallBitVector bits = readsOf(value);
     bits.set(static_cast<unsigned>(i));
     join(bits);
   }
@@ -1561,15 +1598,14 @@ private:
     return true;
   }
 
-  /// Each timed op's period under `shifts` of its group, times `sign`.
+  /// Each timed op's period under `shifts` of its group, times `sign`: 0
+  /// in a group none of whose values move (a tone nothing plays on).
   static std::shared_ptr<const llvm::DenseMap<mlir::Operation *, int64_t>>
   opPeriods(const LoopGroups &groups, const GroupShifts &shifts, int64_t sign) {
     auto periods =
         std::make_shared<llvm::DenseMap<mlir::Operation *, int64_t>>();
     for (mlir::Operation *op : llvm::make_first_range(groups.ofOp))
-      if (const std::optional<int64_t> &shift =
-              shifts[groups.groupOf(op, sign < 0)])
-        (*periods)[op] = sign * *shift;
+      (*periods)[op] = sign * shifts[groups.groupOf(op, sign < 0)].value_or(0);
     return periods;
   }
 
