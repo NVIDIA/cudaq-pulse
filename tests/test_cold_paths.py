@@ -371,6 +371,9 @@ def test_a_dataclass_made_when_used_has_every_name_a_dataclass_sets():
     before = dict(vars(Row))
     dataclass(frozen=True)(Row)
     changed = {k for k, v in vars(Row).items() if k not in before or before[k] is not v}
+    # Python 3.14 and later cache the annotations they evaluate on the class,
+    # as here, where this module defers none (the package's modules all do).
+    changed.discard("__annotations_cache__")
     assert changed == set(_DATACLASS_NAMES)
     assert "b" in before and "b" not in vars(Row)
 
