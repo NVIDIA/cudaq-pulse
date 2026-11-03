@@ -79,7 +79,8 @@ static bool isTimedOp(mlir::Operation *op) {
 static void conditionMeasurements(mlir::Value value,
                                   llvm::SmallVectorImpl<mlir::Value> &found,
                                   llvm::DenseSet<mlir::Value> &seen) {
-  if (!seen.insert(value).second)
+  if (mlir::isa<classical::LinkType>(value.getType()) ||
+      !seen.insert(value).second)
     return;
   if (mlir::isa<pulse::MeasurementType>(value.getType())) {
     found.push_back(value);
