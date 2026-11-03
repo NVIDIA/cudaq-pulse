@@ -190,10 +190,10 @@ static std::pair<int64_t, int64_t> sweepInFlight(llvm::ArrayRef<Run> runs) {
 
 /// sweepInFlight from each loop's runs rather than every execution, or none
 /// when that would not be cheaper. The count only rises where a request
-/// starts. An execution of a loop's run away from the loop's first and last
-/// iterations, while no request outside the loop is in flight, finds as
-/// many of the loop's requests in flight as the next one: of those only the
-/// first is counted.
+/// starts. Past a loop's first iterations, each start of a run finds no
+/// more of the loop's requests in flight than the start a period before
+/// (as many until its last iterations, fewer in them): of the starts while
+/// no request outside the loop is in flight, only the first is counted.
 static std::optional<std::pair<int64_t, int64_t>>
 summarizedInFlight(llvm::ArrayRef<Run> runs) {
   int64_t executions = 0;
@@ -245,27 +245,20 @@ summarizedInFlight(llvm::ArrayRef<Run> runs) {
   for (auto &[id, group] : groups) {
     int64_t period = group.front()->period, trips = group.front()->count;
     for (const Run *run : group) {
-      // From `first` to `last`, the loop's requests in flight at each start
-      // of the run are those at the start before, moved by a period.
-      int64_t first = 0, last = trips - 1;
+      // From `first` on, the loop's requests in flight at each start of the
+      // run are those at the start before, moved by a period, but those of
+      // iterations past the last.
+      int64_t first = 0;
       for (const Run *other : group) {
         int64_t lo =
             floorDiv(run->start - other->start - other->busy, period) + 1;
-        int64_t hi = floorDiv(run->start - other->start, period);
-        if (hi < lo)
-          continue;
-        first = std::max(first, -lo);
-        last = std::min(last, trips - 1 - hi);
+        if (lo <= floorDiv(run->start - other->start, period))
+          first = std::max(first, -lo);
       }
+      first = std::min(first, trips);
       std::vector<std::pair<int64_t, int64_t>> ranges;
-      if (first > last) {
-        ranges.push_back({0, trips - 1});
-      } else {
-        if (first > 0)
-          ranges.push_back({0, first - 1});
-        if (last < trips - 1)
-          ranges.push_back({last + 1, trips - 1});
-      }
+      if (first > 0)
+        ranges.push_back({0, first - 1});
       for (const Span &span : spans) {
         if (span.group == id)
           continue;
@@ -293,7 +286,7 @@ summarizedInFlight(llvm::ArrayRef<Run> runs) {
         for (int64_t k = lo; k <= hi; ++k)
           starts.push_back(run->start + k * period);
       }
-      if (first <= last && steady <= last)
+      if (steady < trips)
         starts.push_back(run->start + steady * period);
     }
   }
