@@ -812,13 +812,53 @@ def _valued(n: int) -> dict[str, Any]:
     }
 
 
+def _valued_apart(n: int) -> dict[str, Any]:
+    """Answers as values that each iteration's own readout does not pace:
+    a drive slower than the readouts, one taking the answer of the
+    iteration before, one whose level a branch picks."""
+
+    @pulse.kernel
+    def slow_drive(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        for _ in range(n):
+            m = readout(ro, square(20, 0.05))
+            amp, _ = tune.submit([m]).result()
+            drive(d, square(300, amp))
+
+    @pulse.kernel
+    def carried(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        amp = 0.1
+        for _ in range(n):
+            drive(d, square(300, amp))
+            m = readout(ro, square(20, 0.05))
+            amp, _ = tune.submit([m]).result()
+
+    @pulse.kernel
+    def selected(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        for _ in range(n):
+            m = readout(ro, square(20, 0.05))
+            fix = decide.submit([m]).result()
+            amp, _ = tune.submit([m]).result()
+            level = 0.1
+            if fix[0]:
+                level = amp
+            drive(d, square(300, level))
+
+    return {"slow_drive": slow_drive, "carried": carried, "selected": selected}
+
+
 @pytest.mark.parametrize("schedule", POLICIES)
 def test_a_loop_using_answers_as_values_plays_every_event_as_unrolled(schedule):
     differ = [
         (name, trips, machine)
         for machine, options in _machines().items()
         for trips in (1, 2, 5, 64, 130)
-        for name, kernel in _valued(trips).items()
+        for name, kernel in {**_valued(trips), **_valued_apart(trips)}.items()
         if not _same_as_unrolled(kernel, schedule, options)
     ]
     assert differ == []
