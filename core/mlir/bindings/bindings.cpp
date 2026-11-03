@@ -2077,11 +2077,14 @@ struct EpochWalk {
 };
 
 /// The carrier of each runtime-qudit slot of a specialization, and the
-/// device's frequencies by carrier, which the caller keeps alive.
+/// device's frequencies by carrier (0-1, and of readout lines' tones), which
+/// the caller keeps alive.
 struct Slots {
   std::vector<int64_t> carriers;
   const double *frequencies = nullptr;
   size_t count = 0;
+  const double *readoutFrequencies = nullptr;
+  size_t readoutCount = 0;
 };
 #include "ControllerProgram.h"
 
@@ -3392,7 +3395,9 @@ public:
       const std::vector<int64_t> &carriers,
       std::optional<nb::ndarray<const double, nb::ndim<1>, nb::c_contig>>
           frequencies,
-      const std::string &device) {
+      const std::string &device,
+      std::optional<nb::ndarray<const double, nb::ndim<1>, nb::c_contig>>
+          readoutFrequencies = std::nullopt) {
     Slots slots{carriers};
     if (!carriers.empty()) {
       if (!frequencies)
@@ -3400,6 +3405,10 @@ public:
             "specialize: carriers need the device's frequencies");
       slots.frequencies = frequencies->data();
       slots.count = frequencies->shape(0);
+      if (readoutFrequencies) {
+        slots.readoutFrequencies = readoutFrequencies->data();
+        slots.readoutCount = readoutFrequencies->shape(0);
+      }
     }
     // By bits, so that -0.0 and 0.0, or two NaNs, are told apart. A device
     // stands for the frequencies its carriers are bound with.
@@ -3509,7 +3518,7 @@ public:
   }
 
   /// Bind each qref argument of *module* to its slot's carrier, as a static
-  /// qudit is allocated, and give its lines the carrier's frequency.
+  /// qudit is allocated, and give its lines the carrier's frequencies.
   static void bindSlots(mlir::ModuleOp module, const Slots &slots) {
     auto funcOp = module.lookupSymbol<mlir::func::FuncOp>("main");
     if (!funcOp)
@@ -3539,10 +3548,16 @@ public:
         continue;
       auto qubit = builder.getI64IntegerAttr(carrier);
       auto frequency = builder.getF64FloatAttr(slots.frequencies[carrier]);
+      auto readoutFrequency =
+          static_cast<size_t>(carrier) < slots.readoutCount
+              ? builder.getF64FloatAttr(slots.readoutFrequencies[carrier])
+              : frequency;
       for (mlir::Operation *user : arg.getUsers())
         if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(user)) {
           user->setAttr("qubit", qubit);
-          user->setAttr("frequency_hz", frequency);
+          user->setAttr("frequency_hz", mlir::isa<pulse::GetReadoutLineOp>(user)
+                                            ? readoutFrequency
+                                            : frequency);
           user->setAttr("pulse.slot", slot);
         }
       auto alloc = pulse::QuditAllocOp::create(
@@ -3583,11 +3598,17 @@ public:
   /// arguments kept: a simulation evaluates it at each call's values.
   PulseModule place_carriers(
       const std::vector<int64_t> &carriers,
-      nb::ndarray<const double, nb::ndim<1>, nb::c_contig> frequencies) {
+      nb::ndarray<const double, nb::ndim<1>, nb::c_contig> frequencies,
+      std::optional<nb::ndarray<const double, nb::ndim<1>, nb::c_contig>>
+          readoutFrequencies) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     Slots slots{carriers};
     slots.frequencies = frequencies.data();
     slots.count = frequencies.shape(0);
+    if (readoutFrequencies) {
+      slots.readoutFrequencies = readoutFrequencies->data();
+      slots.readoutCount = readoutFrequencies->shape(0);
+    }
     auto owning = mlir::OwningOpRef<mlir::ModuleOp>(module_->clone());
     bindSlots(*owning, slots);
     dropQrefArguments(*owning);
@@ -4364,13 +4385,15 @@ public:
   }
 
   // ─── Packed-buffer decoder (zero-copy path) ──────────────────────────
-  PulseModule
-  build_from_packed(nb::ndarray<int64_t, nb::ndim<1>, nb::c_contig> stream,
-                    double clock_ghz, int64_t n_qubits,
-                    nb::ndarray<double, nb::ndim<1>, nb::c_contig> qubit_freqs,
-                    std::vector<std::string> param_names = {},
-                    std::vector<std::string> param_types = {},
-                    const std::string &name = "main", int64_t n_slots = 0) {
+  PulseModule build_from_packed(
+      nb::ndarray<int64_t, nb::ndim<1>, nb::c_contig> stream, double clock_ghz,
+      int64_t n_qubits,
+      nb::ndarray<double, nb::ndim<1>, nb::c_contig> qubit_freqs,
+      std::vector<std::string> param_names = {},
+      std::vector<std::string> param_types = {},
+      const std::string &name = "main", int64_t n_slots = 0,
+      std::optional<nb::ndarray<const double, nb::ndim<1>, nb::c_contig>>
+          readout_freqs = std::nullopt) {
     std::lock_guard<std::mutex> guard(lock_);
 
     const int64_t *d = stream.data();
@@ -4384,9 +4407,9 @@ public:
       throw std::invalid_argument("packed: n_qubits cannot be negative");
     if (n_slots < 0)
       throw std::invalid_argument("packed: n_slots cannot be negative");
-    if (qubit_freqs.shape(0) != static_cast<size_t>(n_qubits))
+    if (qubit_freqs.shape(0) < static_cast<size_t>(n_qubits))
       throw std::invalid_argument(
-          "packed: qubit frequency count does not match n_qubits");
+          "packed: fewer qubit frequencies than n_qubits");
     if (param_names.size() != param_types.size())
       throw std::invalid_argument(
           "packed: parameter names and types have different lengths");
@@ -4397,12 +4420,15 @@ public:
     module->setAttr("pulse.n_qubits", builder_->getI64IntegerAttr(n_qubits));
     module->setAttr("pulse.clock_ghz", builder_->getF64FloatAttr(clock_ghz));
 
-    // Encode qubit frequencies as module attribute
+    // Encode the frequencies of qudits 0 to n_qubits - 1 as module attribute
     const double *fdata = qubit_freqs.data();
-    size_t flen = qubit_freqs.shape(0);
+    size_t flen = static_cast<size_t>(n_qubits);
     llvm::SmallVector<double> freqVec(fdata, fdata + flen);
     module->setAttr("pulse.qubit_freq_hz",
                     builder_->getDenseF64ArrayAttr(freqVec));
+    // A readout line's tone, by qudit: the readout frequency where given.
+    const double *readoutData = readout_freqs ? readout_freqs->data() : fdata;
+    size_t readoutLen = readout_freqs ? readout_freqs->shape(0) : flen;
 
     // Build func.func type: parameters become block arguments
     llvm::SmallVector<mlir::Type> argTypes;
@@ -4940,8 +4966,11 @@ public:
                                                    toneTy, qref);
         if (p[0] >= 0) {
           grl->setAttr("qubit", builder_->getI64IntegerAttr(p[0]));
-          grl->setAttr("frequency_hz",
-                       builder_->getF64FloatAttr(freqVec[p[0]]));
+          grl->setAttr(
+              "frequency_hz",
+              builder_->getF64FloatAttr(static_cast<size_t>(p[0]) < readoutLen
+                                            ? readoutData[p[0]]
+                                            : freqVec[p[0]]));
         }
         bind(p[1], grl.getLine());
         bind(p[2], grl.getTone());
@@ -5883,6 +5912,7 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "arguments its tone frequency, frame phase and waveform depend on")
       .def("place_carriers", &PulseModule::place_carriers, nb::arg("carriers"),
            nb::arg("frequencies"),
+           nb::arg("readout_frequencies").none() = nb::none(),
            "This module with its runtime qudits bound to carriers and its "
            "float arguments kept")
       .def("controller_native_tones", &PulseModule::controller_native_tones,
@@ -5981,12 +6011,14 @@ NB_MODULE(_cudaq_pulse_native, m) {
       .def("specialize_placed", &PulseModule::specialize_shared,
            "specialize, with each runtime qudit (slot k) bound to carrier "
            "carriers[k] of a device with the given 0-1 frequency of every "
-           "carrier; device (its fingerprint) is part of the key",
+           "carrier (and readout frequency, else the 0-1 one); device (its "
+           "fingerprint) is part of the key",
            nb::arg("f64_args"), nb::arg("i64_args"), nb::arg("schedule"),
            nb::arg("max_drives"), nb::arg("max_readouts"),
            nb::arg("readout_latency"), nb::arg("switch_penalty"),
            nb::arg("carriers"), nb::arg("frequencies").none(),
-           nb::arg("device"))
+           nb::arg("device"),
+           nb::arg("readout_frequencies").none() = nb::none())
       .def(
           "serialize",
           [](PulseModule &self) {
@@ -6013,12 +6045,15 @@ NB_MODULE(_cudaq_pulse_native, m) {
       .def(nb::init<>())
       .def("build_from_packed", &PulseModuleBuilder::build_from_packed,
            nb::call_guard<nb::gil_scoped_release>(),
-           "Build an in-memory PulseModule from a packed int64 numpy buffer",
+           "Build an in-memory PulseModule from a packed int64 numpy buffer; "
+           "qubit_freqs and readout_freqs give each qudit's 0-1 frequency "
+           "and readout tone by index (the first n_qubits are recorded)",
            nb::arg("stream"), nb::arg("clock_ghz"), nb::arg("n_qubits"),
            nb::arg("qubit_freqs"),
            nb::arg("param_names") = std::vector<std::string>{},
            nb::arg("param_types") = std::vector<std::string>{},
-           nb::arg("name") = "main", nb::arg("n_slots") = 0)
+           nb::arg("name") = "main", nb::arg("n_slots") = 0,
+           nb::arg("readout_freqs").none() = nb::none())
       .def(
           "load",
           [](PulseModuleBuilder &self, nb::bytes module, nb::bytes source,

@@ -20,8 +20,6 @@ from typing import TYPE_CHECKING, Any
 from .compiler import Lowered, _bind_checked
 
 if TYPE_CHECKING:
-    from array import array
-
     from . import _clocks
     from ._device import Device
     from .compiler import CompileOptions
@@ -63,13 +61,16 @@ def _concrete_general(self: Lowered) -> Any:
         args = _schedule_args(self.options, self.clocks)
         with self._lock:
             if self.carriers:
+                target = self.target
+                frequencies, readouts = target._tables or target._frequency_tables()
                 module = self._module.specialize_placed(
                     list(arguments),
                     [],
                     *args,
                     list(self.carriers),
-                    _frequency_table(self.target),
-                    self.target.fingerprint,
+                    frequencies,
+                    target.fingerprint,
+                    readouts,
                 )
             else:
                 module = self._module.specialize(list(arguments), [], *args)
@@ -216,7 +217,9 @@ def _placement(view: Lowered) -> Any:
     module = role.modules.get(key)
     if module is None:
         with view._lock:
-            module = view._module.place_carriers(list(view.carriers), _frequency_table(view.target))
+            target = view.target
+            frequencies, readouts = target._tables or target._frequency_tables()
+            module = view._module.place_carriers(list(view.carriers), frequencies, readouts)
         if len(role.modules) >= _PLACED_MODULES:
             role.modules.clear()
         role.modules[key] = module
@@ -361,17 +364,3 @@ def _schedule_args(
     if clocks is None or clocks.readout_latency_cycles is None:
         return args
     return (*args[:3], clocks.readout_latency_cycles, args[4])
-
-
-def _frequency_table(device: Device) -> array[float]:
-    """The 0-1 frequency of every carrier of *device*, by carrier index (0
-    where the target has none), as a compiled module records it."""
-    table = device._table
-    if table is None:
-        from array import array
-
-        table = array("d", bytes(8 * (max(device.frequencies, default=-1) + 1)))
-        for carrier, frequency in device.frequencies.items():
-            table[carrier] = frequency
-        device._table = table
-    return table

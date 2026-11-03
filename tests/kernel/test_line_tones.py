@@ -173,6 +173,47 @@ def test_a_missing_transition_is_a_key_error_listing_the_qudit_s():
         pulse.compile(readout_transition).lower(Q[0])
 
 
+def _readout_frequencies(lowered):
+    return [
+        e["frequency_hz"] for e in lowered.export_controller()["events"] if e["kind"] == "readout"
+    ]
+
+
+@pulse.kernel
+def read_static(q, df: float):
+    r = get_readout_line(q)
+    readout(r, square(100, 0.1))
+    shift_frequency(r.tone, df)
+    readout(r, square(100, 0.1), tone=r.tones[(0, 1)])
+
+
+@pulse.kernel
+def read_runtime(q: pulse.Qudit, df: float):
+    r = get_readout_line(q)
+    readout(r, square(100, 0.1))
+    shift_frequency(r.tone, df)
+    readout(r, square(100, 0.1), tone=r.tones[(0, 1)])
+
+
+def test_a_readout_line_plays_at_the_readout_frequency():
+    # transmon_17q's resonators are about 3 GHz above its qubits.
+    dev = pulse.device("transmon_17q")
+    for handle in dev.qudit_handles[[0, 9]]:
+        qubit = dev.target.qubits[handle.index]
+        resonator = qubit.readout.frequency_hz
+        assert abs(resonator - qubit.frequency_hz) > 1e9
+        for kernel in (read_static, read_runtime):
+            lowered = kernel.lower(handle, 2e6)
+            assert _readout_frequencies(lowered) == [resonator, resonator + 2e6]
+
+
+def test_a_readout_line_without_a_readout_frequency_plays_at_the_qudit_s():
+    dev = pulse.device({"target": _target(TransmonModel)})
+    q = dev.qudit_handles[0]
+    for kernel in (read_static, read_runtime):
+        assert _readout_frequencies(kernel.lower(q, 1e6)) == [5.0e9, 5.0e9 + 1e6]
+
+
 def test_the_tones_of_a_line_are_read_only():
     @pulse.kernel
     def assign(q):

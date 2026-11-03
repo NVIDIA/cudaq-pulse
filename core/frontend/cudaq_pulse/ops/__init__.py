@@ -150,7 +150,9 @@ def get_readout_line(qudit: Any) -> Line:
     """The readout line of a qudit.
 
     Like the drive line, a qudit has one readout line for the whole
-    program. Its tone is ``line.tone``.
+    program. Its tone is ``line.tone``, at the frequency its readout gives
+    (a ``DispersiveReadout``'s ``frequency_hz``), else at its 0-1
+    frequency.
 
     Args:
         qudit: The qudit whose readout line to use.

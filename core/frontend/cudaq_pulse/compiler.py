@@ -1143,7 +1143,6 @@ def build(
     builder = PackedIRBuilder(
         name=name,
         clock_ghz=target.clock_ghz,
-        qubit_freq_hz=dict(target.frequencies),
         flatten_schedules=options.flatten_schedules,
     )
     builder.unroll_threshold = options.unroll_threshold
@@ -1179,7 +1178,10 @@ def build(
                 f"{target.name!r} does not define (it defines qudits {span})"
             )
     buf: Any = builder.get_buffer()
-    freq: Any = builder.get_freq_array()
+    # The device's tables, of which the module records its qudits'.
+    freq: Any
+    readout_freqs: Any
+    freq, readout_freqs = target._tables or target._frequency_tables()
     routes = builder.routes
     links = [link for link, _, _ in routes] if routes else []
     metrics.trace_ms = (time.perf_counter() - t0) * 1000
@@ -1197,6 +1199,7 @@ def build(
                 ["f64"] * len(parameters),
                 name=name,
                 n_slots=slots,
+                readout_freqs=readout_freqs,
             )
         elif parameters:
             module = PulseModuleBuilder().build_from_packed(
@@ -1207,10 +1210,16 @@ def build(
                 list(parameters),
                 ["f64"] * len(parameters),
                 name=name,
+                readout_freqs=readout_freqs,
             )
         else:
             module = PulseModuleBuilder().build_from_packed(
-                buf, target.clock_ghz, builder.n_qubits, freq, name=name
+                buf,
+                target.clock_ghz,
+                builder.n_qubits,
+                freq,
+                name=name,
+                readout_freqs=readout_freqs,
             )
     except PackedValueError as error:
         raise _rejected_literal(fn, trace_args, builder, error) from None

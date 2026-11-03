@@ -211,6 +211,9 @@ def test_the_17_qubit_twin_separates_its_readout_states():
         record.submit([result]).result()
 
     lowered = pulse.compile(probe, device=dev).lower(q)
-    result = emulation.emulate(lowered, shots=20, outcomes=lambda q, _, rng: 0, seed=1)
+    result = emulation.emulate(lowered, shots=200, outcomes=lambda q, _, rng: 0, seed=1)
     points = [traces[0].inputs[0][0] for traces in result.calls]
     assert all(math.isfinite(p.real) and math.isfinite(p.imag) for p in points)
+    # The readout line's own tone is at the resonator, so the points gather
+    # at its |0> point.
+    assert abs(np.mean(points) - c0) < 0.25
