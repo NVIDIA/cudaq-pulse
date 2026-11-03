@@ -565,6 +565,20 @@ def test_a_loop_that_never_repeats_schedules_in_linear_time(schedule):
     assert timings[1000] < 7 * timings[250] + 0.02, timings
 
 
+@pytest.mark.parametrize("schedule", POLICIES)
+def test_an_answer_is_never_taken_before_it_is_due_when_lanes_run_out_backward(schedule):
+    # Under alap_rcp, handing out drive lanes in reverse moves the first
+    # round's last drive, and the waits deciding the syncs before it, ahead
+    # of the eager requests' answers: that schedule is left for the forward
+    # one, as one needing time before zero is.
+    for trips in (1, 3, 5, 8, 41):
+        kernel = _saturating(trips)
+        events = _events(kernel, schedule, 0, {})
+        assert isinstance(events, tuple), (trips, events)
+        assert events == _events(kernel, schedule, 10**6, {}), trips
+
+
+
 # The child's limits, far past what lowering every kernel below at 10**6
 # trips under every policy takes: about 0.4 s and 300 MB each, nearly all of
 # both in checking the calls' slots and deadlines, which grows with the trips.

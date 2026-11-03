@@ -1042,6 +1042,8 @@ public:
   /// An iteration the backward pass did not simulate starts an op before
   /// zero.
   bool skippedNegative = false;
+  /// The backward pass takes an answer before it is due.
+  bool answeredEarly = false;
 
   /// Whether a loop whose iterations repeat only every few of them stops
   /// the pass, to be run that many iterations at a time (`regroup`).
@@ -2567,6 +2569,13 @@ private:
       pinned.insert(wait);
     }
     start = std::min(start, ceilings[t]);
+    // An eager request keeps its forward time, so where lanes or slots
+    // handed out in reverse moved what its answer decides earlier, the
+    // answer would be taken before it is due.
+    if (auto submit = wait.getFuture().getDefiningOp<classical::SubmitOp>();
+        submit && submit->hasAttr("classical.eager") &&
+        start < forwardStartOf(submit) + durationOf(submit) + budgetOf(submit))
+      answeredEarly = true;
     record(wait, start);
     armStart = std::min(armStart, start);
     bound(wait.getFuture(), start);
@@ -3935,8 +3944,9 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
       if (regrouped())
         continue;
       // Handing out resources in reverse program order can need time before
-      // zero; the forward resource schedule is always feasible.
-      bool feasible = !scheduler.skippedNegative &&
+      // zero, or take an answer before it is due; the forward resource
+      // schedule is always feasible.
+      bool feasible = !scheduler.skippedNegative && !scheduler.answeredEarly &&
                       llvm::all_of(scheduler.samples, [](const auto &entry) {
                         return llvm::all_of(entry.second, [](const Sample &s) {
                           return s.start >= 0;
