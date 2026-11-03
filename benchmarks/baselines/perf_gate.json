@@ -1,5 +1,5 @@
 {
-  "format": 1,
+  "format": 2,
   "environment": {
     "python": "3.12.15",
     "machine": "x86_64",
@@ -10,129 +10,229 @@
   },
   "source": {
     "repository": "NVIDIA/cudaq-pulse",
-    "run": 41369709269,
+    "run": 41727993065,
     "attempt": 1,
     "event": "workflow_dispatch",
     "ref": "refs/heads/staging",
-    "commit": "b4511fc117ccbfdf716932b67a71b7134bcca51d",
+    "commit": "8f4e897942691877233d53f8c2a74ea3b9ea318e",
     "processes": 5
   },
   "cases": {
     "bind_cached": {
       "op_count": 8,
-      "instructions": 20493,
-      "estimated_cycles": 31629
+      "instructions": 19186,
+      "estimated_cycles": 29308,
+      "python_work": {
+        "bytecodes": 377.06,
+        "python_calls": 15.0,
+        "c_calls": 10.01
+      }
     },
     "bind_new_value": {
       "op_count": 8,
-      "instructions": 21249,
-      "estimated_cycles": 32906
+      "instructions": 19871,
+      "estimated_cycles": 30389,
+      "python_work": {
+        "bytecodes": 383.06,
+        "python_calls": 15.0,
+        "c_calls": 11.01
+      }
     },
     "compile_bell": {
       "op_count": 15,
       "packed_bytes": 744,
-      "instructions": 3199197,
-      "estimated_cycles": 5009252
+      "instructions": 2957187,
+      "estimated_cycles": 4646238,
+      "python_work": {
+        "bytecodes": 16295.2,
+        "python_calls": 269.0,
+        "c_calls": 713.2
+      }
     },
     "compile_calls_large": {
       "op_count": 1025,
       "packed_bytes": 59872,
-      "instructions": 98858526,
-      "estimated_cycles": 149647775
+      "instructions": 87456864,
+      "estimated_cycles": 133325215,
+      "python_work": {
+        "bytecodes": 839359.0,
+        "python_calls": 14504.0,
+        "c_calls": 37560.0
+      }
     },
     "compile_calls_small": {
       "op_count": 12,
       "packed_bytes": 640,
-      "instructions": 2746344,
-      "estimated_cycles": 4431829
+      "instructions": 2571252,
+      "estimated_cycles": 4178362,
+      "python_work": {
+        "bytecodes": 13643.4,
+        "python_calls": 270.0,
+        "c_calls": 661.4
+      }
     },
     "compile_cnot_cr": {
       "op_count": 12,
       "packed_bytes": 616,
-      "instructions": 2410835,
-      "estimated_cycles": 3826779
+      "instructions": 2204822,
+      "estimated_cycles": 3514560,
+      "python_work": {
+        "bytecodes": 12615.2,
+        "python_calls": 219.0,
+        "c_calls": 543.2
+      }
     },
     "compile_dd_cpmg8": {
       "op_count": 7,
       "packed_bytes": 296,
-      "instructions": 1868092,
-      "estimated_cycles": 3023060
+      "instructions": 1795733,
+      "estimated_cycles": 2918179,
+      "python_work": {
+        "bytecodes": 9331.2,
+        "python_calls": 170.0,
+        "c_calls": 431.2
+      }
     },
     "compile_qaoa4": {
       "op_count": 52,
       "packed_bytes": 2656,
-      "instructions": 8817715,
-      "estimated_cycles": 13558491
+      "instructions": 7862979,
+      "estimated_cycles": 12130980,
+      "python_work": {
+        "bytecodes": 58338.4,
+        "python_calls": 760.0,
+        "c_calls": 2422.4
+      }
     },
     "compile_surface_d5": {
       "op_count": 295,
       "packed_bytes": 17248,
-      "instructions": 40469095,
-      "estimated_cycles": 61119834
+      "instructions": 32600161,
+      "estimated_cycles": 49192227,
+      "python_work": {
+        "bytecodes": 656603.0,
+        "python_calls": 4880.0,
+        "c_calls": 24586.0
+      }
     },
     "compile_syndrome": {
       "op_count": 53,
       "packed_bytes": 2736,
-      "instructions": 9391915,
-      "estimated_cycles": 14409522
+      "instructions": 8351298,
+      "estimated_cycles": 12855168,
+      "python_work": {
+        "bytecodes": 60565.4,
+        "python_calls": 789.0,
+        "c_calls": 2534.4
+      }
     },
     "compile_tone_list": {
       "op_count": 9,
       "packed_bytes": 440,
-      "instructions": 2608163,
-      "estimated_cycles": 4187158
+      "instructions": 2524154,
+      "estimated_cycles": 4067288,
+      "python_work": {
+        "bytecodes": 17869.4,
+        "python_calls": 252.0,
+        "c_calls": 775.4
+      }
     },
     "compile_vqe_hea": {
       "op_count": 58,
       "packed_bytes": 2872,
-      "instructions": 9331017,
-      "estimated_cycles": 14340518
+      "instructions": 8304226,
+      "estimated_cycles": 12798210,
+      "python_work": {
+        "bytecodes": 69831.4,
+        "python_calls": 843.0,
+        "c_calls": 2812.4
+      }
     },
     "export_controller": {
       "export_bytes": 87081,
-      "instructions": 10634018,
-      "estimated_cycles": 16052815
+      "instructions": 4801185,
+      "estimated_cycles": 7372927,
+      "python_work": {
+        "bytecodes": 1491.0,
+        "python_calls": 28.0,
+        "c_calls": 74.667
+      }
     },
     "export_controller_sampled": {
       "export_bytes": 49216,
-      "instructions": 5957894,
-      "estimated_cycles": 9516227
+      "instructions": 1661625,
+      "estimated_cycles": 2630628,
+      "python_work": {
+        "bytecodes": 5490.0,
+        "python_calls": 43.0,
+        "c_calls": 170.667
+      }
     },
     "export_emulation": {
       "export_bytes": 38902,
-      "instructions": 6441684,
-      "estimated_cycles": 9532374
+      "instructions": 6455524,
+      "estimated_cycles": 9557284,
+      "python_work": {
+        "bytecodes": 34540.0,
+        "python_calls": 623.0,
+        "c_calls": 2383.667
+      }
     },
     "first_compile": {
       "op_count": 15,
       "packed_bytes": 744,
-      "instructions": 13891605,
-      "estimated_cycles": 21904176
+      "instructions": 13867059,
+      "estimated_cycles": 21896079,
+      "python_work": {
+        "bytecodes": 59668.0,
+        "python_calls": 982.0,
+        "c_calls": 2930.0
+      }
     },
     "simulate_setup": {
       "density_matrix_entries": 4,
       "time_points": 2,
-      "instructions": 1735492,
-      "estimated_cycles": 2933702,
+      "instructions": 1667654,
+      "estimated_cycles": 2812691,
+      "python_work": {
+        "bytecodes": 7916.0,
+        "python_calls": 218.0,
+        "c_calls": 732.667
+      },
       "tolerance": 0.0045
     },
     "specialize_amplitude": {
       "mlir_bytes": 1177,
-      "instructions": 468845,
-      "estimated_cycles": 735037
+      "instructions": 465433,
+      "estimated_cycles": 729067,
+      "python_work": {
+        "bytecodes": 449.6,
+        "python_calls": 16.0,
+        "c_calls": 17.1
+      }
     },
     "specialize_wait": {
       "schedule_cycles": 145,
       "schedule_events": 3,
-      "instructions": 416116,
-      "estimated_cycles": 646768
+      "instructions": 416079,
+      "estimated_cycles": 646116,
+      "python_work": {
+        "bytecodes": 646.6,
+        "python_calls": 22.0,
+        "c_calls": 38.1
+      }
     },
     "submit": {
       "call_args": 6,
       "call_results": 1,
       "result_milli": 2500,
-      "instructions": 6215,
-      "estimated_cycles": 9120
+      "instructions": 6193,
+      "estimated_cycles": 9078,
+      "python_work": {
+        "bytecodes": 73.024,
+        "python_calls": 6.0,
+        "c_calls": 4.004
+      }
     }
   }
 }
