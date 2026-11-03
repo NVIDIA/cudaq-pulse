@@ -8,10 +8,10 @@
 """Conditions built from values known only when the program runs.
 
 Comparing such conditions with each other or with True and False, ``^``,
-``&``, ``|``, ``bool()`` and ``not`` are tested at run time; what cannot be
-(``is``, ordering them, combining a measurement result with ``^``, ``&``,
-``|`` or ``==``) raises at the user's line. None of them is decided while
-tracing.
+``&``, ``|``, ``bool()``, ``not`` and ``in`` are tested at run time; what
+cannot be (``is``, ordering them, combining a measurement result with
+``^``, ``&``, ``|`` or ``==``, hashing an answer) raises at the user's line.
+None of them is decided while tracing.
 """
 
 from __future__ import annotations
@@ -147,6 +147,23 @@ _SIMULATED = [
     "(n > 3) == np.True_",
     "n == None",
     "n != None",
+    "n in (3, 5)",
+    "n in [3, 5]",
+    "n not in (0, 9)",
+    "n in {3, 5}",
+    "n in {5: 0.1, 9: 0.2}",
+    "n in {5: 0.1}.keys()",
+    "n in frozenset((5, 9))",
+    "n in range(3, 7)",
+    "n in range(9, 0, -4)",
+    "n in range(1, 10, 4)",
+    "n not in range(5, 5)",
+    "n in ('five', 5)",
+    "5 in [n, 3]",
+    "x in (0.05, 0.25)",
+    "x in {0.05}",
+    "b in (True,)",
+    "(n > 3) in {True}",
 ]
 
 
@@ -195,6 +212,9 @@ def test_a_chained_comparison_with_code_after_it_is_two_branches():
         "(x > 0.1) < (y > 0.2)",
         "(x > 0.1) & (y > 0.2)",
         "(x > 0.1) | (y > 0.2)",
+        "x in (0.05, 0.2)",
+        "x in {0.05, 0.2}",
+        "y not in {0.5: 1}",
     ],
 )
 def test_float_arguments_in_compared_conditions_specialize(condition):
@@ -237,6 +257,11 @@ def test_float_arguments_in_compared_conditions_specialize(condition):
         ("b | m", "branch on a measurement result with `if result:`"),
         ("n & 1", "bitwise operations on numbers"),
         ("(n > 3) & 2", "bitwise operations on numbers"),
+        ("m in (True,)", "branch on a measurement result directly"),
+        ("m in {True}", "branch on a measurement result directly"),
+        ("x in range(100)", "compare it with <, <= and == instead"),
+        ("{n} == {5}", "it cannot be a set member or a dict key"),
+        ("{n: 1}.get(5)", "it cannot be a set member or a dict key"),
         ("((n > 3) and (x > 0.1)) == True", "`and` or `or` would give a value"),
         ("any([m])", "known only when the program runs"),
         ("all([m, not m])", "known only when the program runs"),

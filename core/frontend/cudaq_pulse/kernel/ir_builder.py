@@ -285,6 +285,12 @@ class AnswerValue(_SymbolicNumber):
     def vtype(self) -> str:
         return self.dtype
 
+    def __hash__(self) -> int:
+        raise CompilationError(
+            f"{self!r} is known only when the program runs, so it has no hash: it cannot be "
+            "a set member or a dict key; compare it with == or test it with `in` a tuple"
+        )
+
     def __repr__(self) -> str:
         return f"AnswerValue({self.label or self.vid}, {self.dtype})"
 

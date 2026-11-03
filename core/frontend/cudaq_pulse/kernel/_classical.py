@@ -36,6 +36,8 @@ from .ir_builder import (
     AnswerValue,
     CompilationError,
     IRValue,
+    ParameterExpression,
+    SymbolicValueError,
     UndecidableComparison,
     _UndecidableComparisons,
     contains_answer,
@@ -520,6 +522,71 @@ def bit_logic(symbol: str, lhs: Any, rhs: Any) -> Any:
     if rhs.__class__ is _NotMeasurement:
         rhs = _negated(rhs)
     return UndecidableComparison(lhs, word or "!=", rhs)
+
+
+def runtime_value(value: Any) -> bool:
+    """Whether *value* is known only when the program runs, so that a set or
+    dict cannot look it up by its hash."""
+    cls = value.__class__
+    if cls is IRValue:
+        return bool(value.vtype == "measurement")
+    return cls is UndecidableComparison or cls is _NotMeasurement or is_symbolic(value)
+
+
+# Past this many items, `answer in range(...)` of a float answer is too
+# many comparisons; one of an integer answer is two whatever its length.
+_MAX_MEMBERS = 64
+
+
+def contains(left: Any, right: Any, error: CompilationError) -> Any:
+    """``left in right`` for a tuple, list or range *right*, where comparing
+    *left* with its items raised *error* because the outcome is known only
+    when the program runs: an ``or`` of the comparisons, as ``in`` tests
+    each item with ``is`` and ``==``."""
+    cls = right.__class__
+    if (
+        isinstance(error, SymbolicValueError)
+        or not (cls is tuple or cls is list or cls is range)
+        or measured(left)
+    ):
+        raise error
+    if cls is range and left.__class__ is AnswerValue and left.dtype == "i64":
+        start, stop, step = right.start, right.stop, right.step
+        if not right:
+            return False
+        if step > 0:
+            found: Any = UndecidableComparison(left >= start, "and", left < stop)
+        else:
+            found = UndecidableComparison(left <= start, "and", left > stop)
+        if step != 1 and step != -1:
+            offset = ParameterExpression("sub", left, start, dtype="i64")
+            remainder = ParameterExpression("mod", offset, abs(step), dtype="i64")
+            on_step = UndecidableComparison(remainder, "==", 0)
+            found = UndecidableComparison(found, "and", on_step)
+        return found
+    if len(right) > _MAX_MEMBERS:
+        raise CompilationError(
+            f"cannot trace {left!r} in a {cls.__name__} of {len(right)}: it is known only "
+            f"when the program runs, and `in` would compare it with each of more than "
+            f"{_MAX_MEMBERS} items; compare it with <, <= and == instead"
+        ) from error
+    found = False
+    for item in right:
+        if item is left:
+            return True
+        if (
+            left.__class__ is AnswerValue
+            and not isinstance(item, numbers.Real)
+            and _constant_bool(item) is None
+        ):
+            continue  # an answer is a number, equal to no other kind of value
+        term = left == item
+        if term.__class__ is bool:
+            if term:
+                return True
+            continue
+        found = term if found is False else UndecidableComparison(found, "or", term)
+    return found
 
 
 def is_answer_condition(value: Any) -> bool:

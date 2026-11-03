@@ -339,6 +339,9 @@ def _identity_unknown(left: Any, right: Any) -> bool:
 
 _NUMBERS = (bool, int, float)
 
+# The containers `in` looks a value up in by its hash.
+_HASHED: frozenset[type] = frozenset({dict, set, frozenset, type({}.keys())})
+
 
 def _identity_error(left: Any, right: Any) -> CompilationError:
     """The error for ``left is right``, which ``_identity_unknown`` holds
@@ -1579,6 +1582,7 @@ class PulseIREmitter:
         _not: int = bc.NOT,
         _is: int = bc.IS,
         _contains: int = bc.CONTAINS,
+        _hashed: frozenset[type] = _HASHED,
         _iter_slots: int = ITER_SLOTS,
     ) -> Any:
         """Run from *pc*. Jumps must stay inside ``(lo, hi)``.
@@ -1870,9 +1874,12 @@ class PulseIREmitter:
                 elif op is _contains:
                     right = pop()
                     left = pop()
-                    if right.__class__ is dict and dict_items is not None:
-                        self.b.dict_whole.add(id(right))
-                    push((left in right) != arg)
+                    if right.__class__ in _hashed:
+                        right = self._hashed_operand(left, right)
+                    try:
+                        push((left in right) != arg)
+                    except CompilationError as e:
+                        push(_classical.contains(left, right, e) != arg)
 
                 elif op is bc.COPY:
                     push(stack[-arg])
@@ -2053,6 +2060,16 @@ class PulseIREmitter:
         except Exception as e:
             _note_source(e, prog, pc - 1)
             raise
+
+    def _hashed_operand(self, left: Any, right: Any) -> Any:
+        """What ``left in right`` tests for a set or dict *right*: its items
+        compared one by one when *left* is known only at run time, as such a
+        value has no hash to look up."""
+        if right.__class__ is dict and self._dict_items is not None:
+            self.b.dict_whole.add(id(right))
+        if _classical.runtime_value(left):
+            return tuple(right)
+        return right
 
     # ── Measurement-conditioned branches ─────────────────────────────
 
