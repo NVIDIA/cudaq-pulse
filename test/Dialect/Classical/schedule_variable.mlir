@@ -125,4 +125,84 @@ func.func @rounds() {
   return
 }
 
+// A loop that runs carries a measurement its body does not read: what it
+// yields is the readout on r in it, so the readout on s before the loop
+// stays on a timeline of its own.
+// CHECK-LABEL: func.func @carried_unread
+// CHECK: pulse.get_drive_line {{.*}}classical.timeline = 0 : i64
+// CHECK: pulse.get_readout_line {{.*}}classical.timeline = 0 : i64
+// CHECK: pulse.get_readout_line {{.*}}classical.timeline = 1 : i64
+
+func.func @carried_unread() {
+  %q = pulse.qudit_alloc : !pulse.qref
+  %p = pulse.qudit_alloc : !pulse.qref
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %r0, %v0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %s0, %w0 = pulse.get_readout_line %p : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %c40 = arith.constant 40 : i64
+  %a = arith.constant 0.05 : f64
+  %z = arith.constant 0.0 : f64
+  %x = pulse.square %c40, %a, %z : i64, f64, f64 -> !pulse.waveform
+  %s1, %w1, %m0 = pulse.readout %s0, %x, %w0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %lb = arith.constant 0 : index
+  %ub = arith.constant 1 : index
+  %step = arith.constant 1 : index
+  %r2, %v2, %m = scf.for %i = %lb to %ub step %step iter_args(%r = %r0, %v = %v0, %mi = %m0) -> (!pulse.readout_line, !pulse.tone, !pulse.measurement) {
+    %r1, %v1, %m1 = pulse.readout %r, %x, %v, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    scf.yield %r1, %v1, %m1 : !pulse.readout_line, !pulse.tone, !pulse.measurement
+  }
+  %b = pulse.is_set %m : !pulse.measurement -> i1
+  %d1, %t1 = scf.if %b -> (!pulse.drive_line, !pulse.tone) {
+    %d5, %t5 = pulse.drive %d0, %x, %t0 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+    scf.yield %d5, %t5 : !pulse.drive_line, !pulse.tone
+  } else {
+    scf.yield %d0, %t0 : !pulse.drive_line, !pulse.tone
+  }
+  %l = classical.get_link {device = 0 : i64} : !classical.link
+  %l1, %h = classical.submit %l, @tau() : () -> (!classical.link, !classical.future)
+  %n = classical.wait %h, @tau : i64
+  %dur = pulse.duration_from_int %n : (i64) -> !pulse.duration
+  %d2 = pulse.wait %d1, %dur {classical.variable, pulse.variable_wait, pulse.min_cycles = 16 : i64, pulse.max_cycles = 1000 : i64} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+  return
+}
+
+// A loop of no trips yields the measurement it is given: the condition is
+// then the readout on s, which joins d's timeline, and every line is in one.
+// CHECK-LABEL: func.func @carried_no_trips
+// CHECK-NOT: classical.timeline
+// CHECK: return
+
+func.func @carried_no_trips() {
+  %q = pulse.qudit_alloc : !pulse.qref
+  %p = pulse.qudit_alloc : !pulse.qref
+  %d0, %t0 = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %r0, %v0 = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %s0, %w0 = pulse.get_readout_line %p : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %c40 = arith.constant 40 : i64
+  %a = arith.constant 0.05 : f64
+  %z = arith.constant 0.0 : f64
+  %x = pulse.square %c40, %a, %z : i64, f64, f64 -> !pulse.waveform
+  %s1, %w1, %m0 = pulse.readout %s0, %x, %w0, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %lb = arith.constant 0 : index
+  %ub = arith.constant 0 : index
+  %step = arith.constant 1 : index
+  %r2, %v2, %m = scf.for %i = %lb to %ub step %step iter_args(%r = %r0, %v = %v0, %mi = %m0) -> (!pulse.readout_line, !pulse.tone, !pulse.measurement) {
+    %r1, %v1, %m1 = pulse.readout %r, %x, %v, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+    scf.yield %r1, %v1, %m1 : !pulse.readout_line, !pulse.tone, !pulse.measurement
+  }
+  %b = pulse.is_set %m : !pulse.measurement -> i1
+  %d1, %t1 = scf.if %b -> (!pulse.drive_line, !pulse.tone) {
+    %d5, %t5 = pulse.drive %d0, %x, %t0 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+    scf.yield %d5, %t5 : !pulse.drive_line, !pulse.tone
+  } else {
+    scf.yield %d0, %t0 : !pulse.drive_line, !pulse.tone
+  }
+  %l = classical.get_link {device = 0 : i64} : !classical.link
+  %l1, %h = classical.submit %l, @tau() : () -> (!classical.link, !classical.future)
+  %n = classical.wait %h, @tau : i64
+  %dur = pulse.duration_from_int %n : (i64) -> !pulse.duration
+  %d2 = pulse.wait %d1, %dur {classical.variable, pulse.variable_wait, pulse.min_cycles = 16 : i64, pulse.max_cycles = 1000 : i64} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+  return
+}
+
 }
