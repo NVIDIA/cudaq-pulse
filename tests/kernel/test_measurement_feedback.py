@@ -162,7 +162,7 @@ def test_comparing_a_measurement_raises():
         if bit == 0:
             wait(r0, 10)
 
-    with pytest.raises(CompilationError, match="branch on a measurement result directly"):
+    with pytest.raises(CompilationError, match=r"branch on it directly with `if result:`"):
         k(Q[0])
 
 

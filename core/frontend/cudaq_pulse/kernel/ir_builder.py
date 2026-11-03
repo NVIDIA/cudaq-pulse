@@ -113,9 +113,11 @@ class UndecidableComparison(_UndecidableComparisons):
         self.rhs = rhs
 
     def __bool__(self) -> bool:
-        from ._conditions import measured
+        from ._conditions import measured, measurement_error
 
-        if self.lhs.__class__ is IRValue or self.rhs.__class__ is IRValue or measured(self):
+        if measured(self):
+            raise measurement_error(self.lhs, self.op, self.rhs)
+        if self.lhs.__class__ is IRValue or self.rhs.__class__ is IRValue:
             raise CompilationError(
                 f"cannot compare a runtime IR value at trace time ({self.lhs!r} {self.op} "
                 f"{self.rhs!r}); branch on a measurement result directly with "
@@ -426,10 +428,10 @@ class IRValue(_UndecidableComparisons):
         self.chan: Any = None
 
     def __bool__(self) -> bool:
+        what = "a measurement result" if self.vtype == "measurement" else repr(self)
         raise CompilationError(
-            f"cannot decide {self!r} at trace time: it is known only when the program runs; "
-            "use a measurement result directly as an if condition (`if result:` or "
-            "`if not result:`)"
+            f"cannot decide {what} at trace time: it is known only when the program runs; "
+            "branch on it directly with `if result:` or `if not result:`"
         )
 
     def __repr__(self) -> str:

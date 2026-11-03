@@ -2081,6 +2081,13 @@ class PulseIREmitter:
         except _NotRollableError:
             raise
         except Exception as e:
+            if e.__class__ is TypeError and (op is _unary or op is _binary):
+                from ._conditions import operator_error
+
+                error = operator_error(e, arg, (left, right) if op is _binary else None)
+                if error is not None:
+                    _note_source(error, prog, pc - 1)
+                    raise error from e
             _note_source(e, prog, pc - 1)
             raise
 
@@ -2979,6 +2986,10 @@ class PulseIREmitter:
             try:
                 result = callable_val(*call_args, **(kwargs or {}))
             except _EVALUATION_ERRORS as e:
+                if any(a.__class__ is IRValue and a.vtype == "measurement" for a in call_args):
+                    from ._conditions import measurement_operand_error
+
+                    raise measurement_operand_error(f"{fname}()") from e
                 raise CompilationError(f"failed to evaluate {fname}({call_args!r}): {e}") from e
             except NameError as e:
                 if e.name not in _PULSE_OP_NAMES:

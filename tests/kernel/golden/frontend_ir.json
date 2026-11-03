@@ -516,7 +516,7 @@
   ]
  },
  "compare_measurement": {
-  "error": "CompilationError: cannot compare a runtime IR value at trace time (%v6:measurement == 1); branch on a measurement result directly with `if result:` or `if not result:`",
+  "error": "CompilationError: cannot trace (measurement == 1): a measurement result is known only when the program runs, so it is not compared or combined while the kernel traces; branch on it directly with `if result:` or `if not result:`",
   "code": "compare_measurement",
   "span": [
    4,

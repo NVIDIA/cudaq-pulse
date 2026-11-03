@@ -428,16 +428,11 @@ def condition(builder: Any, value: Any) -> IRValue:
                 # classical_compare rejects an answer bit before it records anything.
                 if value.lhs.dtype != "i1":
                     raise
-        from ._conditions import is_condition, measured
+        from ._conditions import is_condition, measured, measurement_error
 
         lhs, rhs, op = value.lhs, value.rhs, value.op
         if measured(value):
-            raise CompilationError(
-                f"cannot trace {value!r}: a measurement result is known only when the program "
-                "runs, and a comparison of it is not traced; branch on it directly with "
-                "`if result:` or `if not result:`, and combine results and answers with "
-                "`and`, `or` and `not` in the if condition"
-            )
+            raise measurement_error(lhs, op, rhs)
         if op == "and" or op == "or":
             a = condition(builder, lhs).vid
             return IRValue(builder.compare_bits(op, a, condition(builder, rhs).vid), "i1")

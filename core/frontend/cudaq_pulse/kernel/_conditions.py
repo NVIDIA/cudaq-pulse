@@ -24,6 +24,7 @@ from .ir_builder import (
     ParameterExpression,
     SymbolicValueError,
     UndecidableComparison,
+    arithmetic_text,
     contains_answer,
     is_symbolic,
     parameter_names,
@@ -84,6 +85,92 @@ def is_condition(value: Any) -> bool:
     return cls is _NotMeasurement and answer_bit(value.value)
 
 
+def measurement_error(lhs: Any, symbol: str, rhs: Any) -> CompilationError:
+    """The error for ``lhs symbol rhs``, which a measurement result takes part
+    in: a test of it with a condition on answers needs nested ifs, and one
+    with anything else is a test of the result itself."""
+    text = f"{_text(lhs)} {symbol} {_text(rhs)}"
+    if _answered(lhs) or _answered(rhs):
+        return CompilationError(
+            f"cannot trace ({text}): it tests a measurement result and a condition on "
+            "answers together, which one branch cannot; test them in nested ifs, "
+            "`if result:` and in its arm an if on the condition"
+        )
+    return CompilationError(
+        f"cannot trace ({text}): a measurement result is known only when the program "
+        "runs, so it is not compared or combined while the kernel traces; branch on it "
+        "directly with `if result:` or `if not result:`"
+    )
+
+
+def measurement_operand_error(name: str) -> CompilationError:
+    """The error for *name* (an operator or function) given a measurement result."""
+    return CompilationError(
+        f"cannot trace {name} of a measurement result: it is known only when the program "
+        "runs; branch on it directly with `if result:` or `if not result:`"
+    )
+
+
+def operator_error(
+    error: TypeError, fn: Any, operands: tuple[Any, Any] | None
+) -> CompilationError | None:
+    """The error for the unary or binary operator *fn* that raised *error*
+    on a pulse value (the binary one's *operands* given), naming how to test
+    a measurement result; None for any other operand."""
+    symbol = _SYMBOLS.get(getattr(fn, "__name__", ""), "an operator")
+    if operands is not None:
+        lhs, rhs = operands
+        if measured(lhs) or measured(rhs):
+            return measurement_error(lhs, symbol, rhs)
+        return None
+    if "'IRValue'" not in str(error):
+        return None
+    return CompilationError(
+        f"cannot trace `{symbol}` of a pulse value; to test a measurement result, branch on "
+        "it directly with `if result:` or `if not result:`"
+    )
+
+
+_SYMBOLS = {
+    "invert": "~",
+    "neg": "-",
+    "pos": "+",
+    "add": "+",
+    "sub": "-",
+    "mul": "*",
+    "truediv": "/",
+    "floordiv": "//",
+    "mod": "%",
+    "pow": "**",
+    "lshift": "<<",
+    "rshift": ">>",
+    "matmul": "@",
+}
+
+
+def _text(value: Any) -> str:
+    """*value* in an error, a measurement result as "measurement"."""
+    cls = value.__class__
+    if cls is IRValue:
+        return "measurement" if value.vtype == "measurement" else repr(value)
+    if cls is _NotMeasurement:
+        return f"(not {_text(value.value)})"
+    if cls is UndecidableComparison:
+        return f"({_text(value.lhs)} {value.op} {_text(value.rhs)})"
+    if cls is AnswerValue or is_symbolic(value):
+        return arithmetic_text(value)
+    return repr(value)
+
+
+def _answered(value: Any) -> bool:
+    """Whether *value* holds a condition on answers."""
+    if value.__class__ is UndecidableComparison:
+        return _answered(value.lhs) or _answered(value.rhs)
+    if value.__class__ is _NotMeasurement:
+        return answer_bit(value.value)
+    return contains_answer(value)
+
+
 _LOGIC_WORDS = {"&": "and", "|": "or"}
 
 
@@ -102,18 +189,12 @@ def bit_logic(symbol: str, lhs: Any, rhs: Any) -> Any:
             return constant if constant == (word == "or") else b
     if not (is_condition(lhs) and is_condition(rhs)):
         if measured(lhs) or measured(rhs):
-            fix = (
-                "branch on a measurement result with `if result:` or `if not result:`, "
-                "combining results with `and`, `or` and `not` in the if condition"
-            )
-        else:
-            fix = (
-                f"`{symbol}` combines only conditions (comparisons and answer bits) and "
-                "True or False; bitwise operations on numbers known only when the program "
-                "runs are not supported"
-            )
+            raise measurement_error(lhs, symbol, rhs)
         raise CompilationError(
-            f"cannot trace {lhs!r} {symbol} {rhs!r}: it is known only when the program runs; " + fix
+            f"cannot trace {lhs!r} {symbol} {rhs!r}: it is known only when the program runs; "
+            f"`{symbol}` combines only conditions (comparisons and answer bits) and True or "
+            "False; bitwise operations on numbers known only when the program runs are not "
+            "supported"
         )
     if lhs.__class__ is _NotMeasurement:
         lhs = negated(lhs)
@@ -341,12 +422,10 @@ def identity_error(left: Any, right: Any) -> CompilationError:
     depends on the program's run; a kernel specializes on the float
     arguments of one that depends on nothing else."""
     if measured(left) or measured(right):
-        fix = "branch on a measurement result directly with `if result:` or `if not result:`"
-    else:
-        fix = "compare values with == or !="
+        return measurement_error(left, "is", right)
     message = (
         f"cannot decide {left!r} is {right!r} at trace time: it is known only when the "
-        f"program runs; {fix}"
+        "program runs; compare values with == or !="
     )
 
     def run_time(value: Any) -> bool:

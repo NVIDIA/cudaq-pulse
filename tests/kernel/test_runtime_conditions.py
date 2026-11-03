@@ -258,22 +258,11 @@ def test_float_arguments_in_compared_conditions_specialize(condition):
     ("condition", "message"),
     [
         ("(n > 3) is 1", "compare values with == or !="),
-        ("m is True", "branch on a measurement result directly"),
-        ("(not m) is False", "branch on a measurement result directly"),
         ("n is 5", "compare values with == or !="),
         ("(n > 3) < (x > 0.1)", "cannot order the conditions"),
         ("(n > 3) == x", "compares with another such condition, True or False"),
-        ("m == (n > 3)", "a comparison of it is not traced"),
-        ("(not m) == (n > 3)", "a comparison of it is not traced"),
-        ("(not m) == True", "cannot compare a runtime IR value"),
-        ("m == True", "cannot compare a runtime IR value"),
-        ("m ^ True", "branch on a measurement result with `if result:`"),
-        ("m & (n > 3)", "branch on a measurement result with `if result:`"),
-        ("b | m", "branch on a measurement result with `if result:`"),
         ("n & 1", "bitwise operations on numbers"),
         ("(n > 3) & 2", "bitwise operations on numbers"),
-        ("m in (True,)", "branch on a measurement result directly"),
-        ("m in {True}", "branch on a measurement result directly"),
         ("x in range(100)", "compare it with <, <= and == instead"),
         ("{n} == {5}", "it cannot be a set member or a dict key"),
         ("{n: 1}.get(5)", "it cannot be a set member or a dict key"),
@@ -294,6 +283,87 @@ def test_conditions_that_cannot_be_traced_raise_at_their_line(condition, message
     with pytest.raises(CompilationError, match=re.escape(message)) as info:
         pulse.compile(kernel).lower(Q[0])
     assert 'File "<conditions>", line 9' in "".join(info.value.__notes__)
+
+
+_MEASURED = (
+    "cannot trace ({}): a measurement result is known only when the program runs, so it is "
+    "not compared or combined while the kernel traces; branch on it directly with "
+    "`if result:` or `if not result:`"
+)
+_MIXED = (
+    "cannot trace ({}): it tests a measurement result and a condition on answers together, "
+    "which one branch cannot; test them in nested ifs, `if result:` and in its arm an if on "
+    "the condition"
+)
+_OF_A_PULSE_VALUE = (
+    "cannot trace `{}` of a pulse value; to test a measurement result, branch on it directly "
+    "with `if result:` or `if not result:`"
+)
+
+
+@pytest.mark.parametrize(
+    ("condition", "message"),
+    [
+        ("m == True", _MEASURED.format("measurement == True")),
+        ("m == False", _MEASURED.format("measurement == False")),
+        ("m != True", _MEASURED.format("measurement != True")),
+        ("True == m", _MEASURED.format("measurement == True")),
+        ("m == 1", _MEASURED.format("measurement == 1")),
+        ("m == 0", _MEASURED.format("measurement == 0")),
+        ("1 != m", _MEASURED.format("measurement != 1")),
+        ("m < 1", _MEASURED.format("measurement < 1")),
+        ("m == np.True_", _MEASURED.format("measurement == np.True_")),
+        ("bool(m) == True", _MEASURED.format("measurement == True")),
+        ("(not m) == True", _MEASURED.format("(not measurement) == True")),
+        ("m == m", _MEASURED.format("measurement == measurement")),
+        ("m is True", _MEASURED.format("measurement is True")),
+        ("m is not False", _MEASURED.format("measurement is False")),
+        ("(not m) is False", _MEASURED.format("(not measurement) is False")),
+        ("m ^ True", _MEASURED.format("measurement ^ True")),
+        ("True ^ m", _MEASURED.format("measurement ^ True")),
+        ("m & True", _MEASURED.format("measurement & True")),
+        ("m | False", _MEASURED.format("measurement | False")),
+        ("m ^ m", _MEASURED.format("measurement ^ measurement")),
+        ("m in (True,)", _MEASURED.format("measurement == True")),
+        ("m in {1}", _MEASURED.format("measurement == 1")),
+        ("m not in (0,)", _MEASURED.format("measurement == 0")),
+        ("m + 0 == 1", _MEASURED.format("measurement + 0")),
+        (
+            "int(m) == 1",
+            "cannot trace int() of a measurement result: it is known only when the program "
+            "runs; branch on it directly with `if result:` or `if not result:`",
+        ),
+        ("~m", _OF_A_PULSE_VALUE.format("~")),
+        ("-m", _OF_A_PULSE_VALUE.format("-")),
+        ("m == b", _MIXED.format("measurement == get_b[0]")),
+        ("b == m", _MIXED.format("get_b[0] == measurement")),
+        ("m != (n > 3)", _MIXED.format("measurement != (get_n[0] > 3)")),
+        ("(not m) == (n > 3)", _MIXED.format("(not measurement) == (get_n[0] > 3)")),
+        ("m & (n > 3)", _MIXED.format("measurement & (get_n[0] > 3)")),
+        ("b | m", _MIXED.format("get_b[0] | measurement")),
+        ("m ^ b", _MIXED.format("measurement ^ get_b[0]")),
+        ("m is b", _MIXED.format("measurement is get_b[0]")),
+        ("m in (b,)", _MIXED.format("get_b[0] == measurement")),
+        ("(m == True) == b", _MIXED.format("(measurement == True) == get_b[0]")),
+    ],
+)
+def test_a_measurement_result_compared_or_combined_raises_naming_the_fix(condition, message):
+    """A measurement result is tested only by `if result:` and `if not result:`;
+    with a condition on answers, in nested ifs."""
+    with pytest.raises(CompilationError) as info:
+        pulse.compile(_kernel(condition)).lower(Q[0])
+    assert str(info.value).splitlines()[0] == message
+    assert 'File "<conditions>", line 9' in "".join(info.value.__notes__)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    ["    match m:\n        case True:\n", "    match m:\n        case 1:\n"],
+)
+def test_a_match_on_a_measurement_result_raises_naming_the_fix(subject):
+    kernel = _kernel("False", prelude=subject + "            wait(d, 40)\n")
+    with pytest.raises(CompilationError, match=r"branch on it directly with `if result:`"):
+        pulse.compile(kernel).lower(Q[0])
 
 
 _CHOSEN = [
