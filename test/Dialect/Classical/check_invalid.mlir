@@ -299,14 +299,19 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
 
 // -----
 
-// S8 in the middle of a long loop: a request in a branch after the loop,
-// out of program order but not sent in it, starts while iterations 498 to
-// 500 hold the loop's three in flight.
+// S8 in the middle of a long loop: a short request in a branch after the
+// loop, out of program order but not sent in it, is in flight from 20025 to
+// 20056, while only iterations 499 and 500 are; the loop's next request
+// makes four.
 module attributes {pulse.clock_ghz = 1.0 : f64,
                    classical.links = {"0" = {max_in_flight = 3 : i64}}} {
   classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
       args = [], results = [], latency_min_ns = 0.0,
       latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",
+      submit = "eager"}
+  classical.callable @g {function_id = 3792446982 : i64, device = 0 : i64,
+      args = [], results = [], latency_min_ns = 0.0,
+      latency_nominal_ns = 30.0, latency_max_ns = 30.0, mode = "bounded",
       submit = "eager"}
   func.func @interleaved(%c: i1) {
     %l0 = classical.get_link {device = 0 : i64} : !classical.link
@@ -314,12 +319,12 @@ module attributes {pulse.clock_ghz = 1.0 : f64,
     %ub = arith.constant 1000 : index
     %step = arith.constant 1 : index
     %ln = scf.for %i = %lb to %ub step %step iter_args(%l = %l0) -> (!classical.link) {
-      // expected-error @+1 {{link 0 holds 4 requests at once at 20001, more than its 3 slots}}
+      // expected-error @+1 {{link 0 holds 4 requests at once at 20041, more than its 3 slots}}
       %l1, %h = classical.submit %l, @f() {start_cycles = 1 : i64, duration_cycles = 1 : i64, period_cycles = array<i64: 40>} : () -> (!classical.link, !classical.future)
       scf.yield %l1 : !classical.link
     }
     %lm = scf.if %c -> (!classical.link) {
-      %l2, %g = classical.submit %ln, @f() {start_cycles = 20001 : i64, duration_cycles = 1 : i64} : () -> (!classical.link, !classical.future)
+      %l2, %g = classical.submit %ln, @g() {start_cycles = 20025 : i64, duration_cycles = 1 : i64} : () -> (!classical.link, !classical.future)
       scf.yield %l2 : !classical.link
     } else {
       scf.yield %ln : !classical.link
