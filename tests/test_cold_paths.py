@@ -474,3 +474,9 @@ def test_simulating_without_shots_loads_no_random_generator(tmp_path):
     assert _loaded(_PLAIN + "p.simulate(low)\n", tmp_path, modules) == []
     shots = _PLAIN + "p.simulate(low, shots=10, seed=1)\n"
     assert _loaded(shots, tmp_path, modules) != []
+
+
+def test_simulating_loads_no_numpy_typing(tmp_path):
+    # numpy.typing compiles regular expressions on import; the simulator
+    # names its types for checkers only.
+    assert _loaded(_PLAIN + "p.simulate(low)\n", tmp_path, ("numpy", "numpy.typing")) == ["numpy"]

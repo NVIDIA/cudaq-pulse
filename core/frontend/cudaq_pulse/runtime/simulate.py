@@ -32,7 +32,6 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import numpy.typing as npt
 
 from .._errors import (
     ExecutionError,
@@ -55,6 +54,8 @@ except ImportError:  # pragma: no cover - CPython builds without the _blake2 mod
     from hashlib import blake2b as _blake2b
 
 if TYPE_CHECKING:
+    import numpy.typing as npt
+
     from .._device import Qudit
     from ..compiler import Lowered
     from ..kernel._kernel import CompiledKernel, Kernel

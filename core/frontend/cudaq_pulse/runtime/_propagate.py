@@ -26,10 +26,12 @@ from __future__ import annotations
 import math
 import threading
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import numpy.typing as npt
+
+if TYPE_CHECKING:
+    import numpy.typing as npt
 
 # A register of at most this many levels gets the RK4 map of a driven
 # stretch built and kept; its superoperator has (levels)^2 rows.
