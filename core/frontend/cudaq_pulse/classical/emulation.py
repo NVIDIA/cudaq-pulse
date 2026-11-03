@@ -18,10 +18,11 @@ without physics: measurement outcomes come from a source, each call is sent
 as a real request (``wire``) over a channel to a service, and the answer
 comes back after the modelled transport delay plus the service's measured
 time. Its budget is what the compiled program allows: it is in time if it
-arrives the link's feedback time before it is due. A late answer takes the
-timeout arm of a wait with a timeout, and is recorded as late otherwise.
-Answers are bound to the shot as in simulation, so variable waits get their
-real lengths and later epochs shift accordingly.
+arrives the link's feedback time before it is due. A late answer, or a
+decoder's NOT_READY, takes the timeout arm of a wait with a timeout; a late
+answer is recorded as late otherwise. Answers are bound to the shot as in
+simulation, so variable waits get their real lengths and later epochs shift
+accordingly.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from .._errors import (
+    ExecutionError,
     InvalidValueError,
     NotFoundError,
     UnsupportedError,
@@ -45,7 +47,7 @@ from .._errors import (
 )
 from ..compiler import _dispatch_keys
 from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
-from . import ClassicalFunction, _handlers_for, wire
+from . import _RESERVED_KEYS, ClassicalFunction, _handlers_for, wire
 
 if TYPE_CHECKING:
     import numpy as np
@@ -277,7 +279,7 @@ class CallTrace:
 
     ``budget_ns`` is how long after ``submit_ns`` the answer may arrive: until
     it is due, less the link's feedback time. ``in_time`` is whether
-    ``latency_ns`` is within it."""
+    ``latency_ns`` is within it (false for a decoder's NOT_READY)."""
 
     function: str
     submit_ns: float
@@ -306,6 +308,18 @@ class EmulationResult:
     def calls_per_second(self) -> float:
         n = sum(len(shot) for shot in self.calls)
         return n / self.wall_s if self.wall_s > 0 else math.inf
+
+
+# A CUDA-QX decoder's status for corrections it has not decoded yet.
+_NOT_READY = 4
+
+
+def _not_ready(callee: str, request_id: int) -> ExecutionError:
+    return ExecutionError(
+        f"decoder call {callee!r} was answered NOT_READY (status {_NOT_READY}) to request"
+        f" {request_id}, and the call has no timeout to fall back on; take it with"
+        " .result(timeout=...) and branch on the flag"
+    )
 
 
 def emulate(
@@ -417,7 +431,9 @@ def emulate(
                 request = wire.encode_request(fn, inputs, request_id, dispatch_key=keys[callee])
                 answer_bytes, service_ns = channel.call(fn, request)
                 status, answered_id, answer = wire.decode_answer(fn, answer_bytes)
-                if status != 0:
+                # A decoder not done decoding has no answer: it is late.
+                ready = status == 0
+                if not ready and (status != _NOT_READY or fn._dispatch_key not in _RESERVED_KEYS):
                     raise wire.call_failed(callee, answered_id, status)
                 path_transport = transport_of(machine.link_id(fn.link))
                 if answered_id != request_id:
@@ -435,15 +451,20 @@ def emulate(
                 )
                 if service_time == "measured":
                     latency += service_ns
-                in_time = latency <= budget
+                in_time = ready and latency <= budget
                 traces.append(CallTrace(callee, start, latency, budget, in_time, inputs, answer))
                 if not answered:
                     module = module.bind_call(index, [], *schedule_args)
                     continue
-                values = _answer_values(fn, answer)
                 has_timeout = timeout >= 0 or fn.timeout_ns is not None
-                if has_timeout:
-                    values = [1.0, *values] if in_time else [0.0] * (1 + len(values))
+                if not ready:
+                    if not has_timeout:
+                        raise _not_ready(callee, answered_id)
+                    values = [0.0] * (1 + sum(r.answer_count for r in fn.results))
+                else:
+                    values = _answer_values(fn, answer)
+                    if has_timeout:
+                        values = [1.0, *values] if in_time else [0.0] * (1 + len(values))
                 module = module.bind_call(index, values, *schedule_args)
                 continue
             if found is None:

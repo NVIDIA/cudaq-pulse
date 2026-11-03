@@ -13,11 +13,12 @@ import dataclasses
 import json
 import math
 import re
+import struct
 
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse import classical
-from cudaq_pulse.classical import Link, emulation, wire
+from cudaq_pulse.classical import Link, emulation, qec, wire
 from cudaq_pulse.compiler import MachineModel
 
 from tests._handles import Q
@@ -129,6 +130,70 @@ def test_an_answer_is_in_time_when_the_compiled_program_can_use_it(arrival_ns):
     for (trace,) in result.calls:
         assert trace.latency_ns == arrival_ns and trace.budget_ns == 602.5
         assert trace.in_time is (arrival_ns <= 602.5)
+
+
+class _Status:
+    """A channel to *inner* that answers *names* with *status* and no result."""
+
+    def __init__(self, inner, names, status):
+        self.inner, self.names, self.status = inner, names, status
+
+    def call(self, function, request):
+        if function.name not in self.names:
+            return self.inner.call(function, request)
+        request_id = wire.decode_request(function, request, struct.unpack_from("<I", request, 4)[0])
+        answer = wire.encode_answer(function, [0] * function.results[0].count, request_id[0])
+        return answer[:4] + struct.pack("<i", self.status) + answer[8:], 0.0
+
+
+def _decoded(timeout):
+    decoder = qec.Decoder(0, syndromes=1, corrections=1, max_latency_ns=300, decode=lambda b: [1])
+
+    @pulse.kernel
+    def k(q):
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(300, 0.05))
+        qec.enqueue_syndromes(decoder, [m])
+        if timeout:
+            ok, fix = qec.get_corrections(decoder).result(timeout=200 * pulse.ns)
+            sync(d, r)
+            if ok:
+                drive(d, square(400, 0.1))
+        else:
+            fix = qec.get_corrections(decoder).result()
+            sync(d, r)
+            if fix[0]:
+                drive(d, square(400, 0.1))
+
+    low = pulse.compile(k).lower(Q[0])
+    functions = low.classical
+    inner = emulation.InProcess(functions, {fn.name: fn.implementation for fn in functions})
+    return low, inner, decoder.corrections_function.name
+
+
+def test_a_decoder_not_ready_takes_the_timeout_arm():
+    low, inner, name = _decoded(timeout=True)
+    ready = emulation.emulate(low, shots=3, channel=inner, service_time="none", seed=2)
+    late = emulation.emulate(
+        low, shots=3, channel=_Status(inner, {name}, 4), service_time="none", seed=2
+    )
+    for fast, slow in zip(ready.calls, late.calls, strict=True):
+        assert [c.in_time for c in fast] == [True, True] and fast[1].answer == [1]
+        assert [c.in_time for c in slow] == [True, False] and slow[1].answer is None
+
+
+def test_a_decoder_not_ready_without_a_timeout_is_an_error():
+    low, inner, name = _decoded(timeout=False)
+    with pytest.raises(pulse.ExecutionError, match=r"answered NOT_READY \(status 4\).*timeout="):
+        emulation.emulate(low, channel=_Status(inner, {name}, 4), service_time="none")
+    # Another status, or status 4 from another function, is a failure.
+    with pytest.raises(pulse.ExecutionError, match="with status 5"):
+        emulation.emulate(low, channel=_Status(inner, {name}, 5), service_time="none")
+    low = pulse.compile(feedback).lower(Q[0])
+    inner = emulation.InProcess(low.classical, {"decode": decode.implementation})
+    with pytest.raises(pulse.ExecutionError, match="with status 4"):
+        emulation.emulate(low, channel=_Status(inner, {"decode__1"}, 4))
 
 
 def test_udp_gives_the_same_answers_as_in_process():

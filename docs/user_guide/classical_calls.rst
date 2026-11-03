@@ -423,7 +423,8 @@ call goes out as real wire bytes, in process or over UDP to a server from
 each direction plus the service's measured time. It is in time if it arrives
 by the time the compiled program allows: the link's feedback time before it
 is due (``classical_report()``'s ``due_cycles``). A late answer takes the
-timeout arm.
+timeout arm, as does a decoder's ``NOT_READY`` (status 4, corrections not
+decoded yet); a call without a timeout that gets ``NOT_READY`` is an error.
 
 .. code-block:: python
    :class: fragment
