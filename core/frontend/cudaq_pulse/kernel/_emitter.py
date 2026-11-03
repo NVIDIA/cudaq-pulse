@@ -2186,22 +2186,8 @@ class PulseIREmitter:
                 if not bits_chosen(value, a, b):
                     self._check_choosable(name, a, b, prog, index, first, value)
                 chosen.append((name, a, b))
-        # List slots holding lines or tones that either arm rebound.
         slot_results: list[tuple[Any, int, IRValue, IRValue]] = []
-        originals = {id(obj): copy for obj, copy in containers}
-        keys: dict[tuple[int, int], list[Any]] = {}
-        for obj, i, _ in then_slots + else_slots:
-            keys[(id(obj), i)] = obj
-        then_new = {(id(obj), i): new for obj, i, new in then_slots}
-        else_new = {(id(obj), i): new for obj, i, new in else_slots}
-        for key, obj in keys.items():
-            old = originals[key[0]][key[1]]
-            a = then_new.get(key, old)
-            b = else_new.get(key, old)
-            if a is not b:
-                slot_results.append((obj, key[1], a, b))
-
-        # Channels either arm advanced become results too, unless a name
+        # Channels either arm advanced become results, unless a name
         # carries the same pair of values.
         aliases: list[tuple[_Chan, str]] = []
         by_pair: dict[tuple[int, int], str] | None = None
@@ -2216,6 +2202,31 @@ class PulseIREmitter:
                 slot_results.append((cell.held, cell.index, a, b))
             else:
                 aliases.append((cell, alias))
+        # List slots holding lines or tones that either arm rebound. One that
+        # holds the values a name or channel carries takes its result, so
+        # that each arm yields a value once.
+        listed: list[tuple[Any, int, IRValue, IRValue, IRValue | None]] = []
+        originals = {id(obj): copy for obj, copy in containers}
+        keys: dict[tuple[int, int], list[Any]] = {}
+        for obj, i, _ in then_slots + else_slots:
+            keys[(id(obj), i)] = obj
+        then_new = {(id(obj), i): new for obj, i, new in then_slots}
+        else_new = {(id(obj), i): new for obj, i, new in else_slots}
+        if keys:
+            carrying = {(id(a), id(b)) for _, a, b in results}
+            carrying.update((id(a), id(b)) for _, _, a, b in slot_results)
+            for key, obj in keys.items():
+                old = originals[key[0]][key[1]]
+                a = then_new.get(key, old)
+                b = else_new.get(key, old)
+                if a is b:
+                    continue
+                if (id(a), id(b)) in carrying:
+                    self._slots.pop(id(a), None)
+                    self._slots.pop(id(b), None)
+                    listed.append((obj, key[1], a, b, None))
+                else:
+                    slot_results.append((obj, key[1], a, b))
         if slot_results:
             pairs = {name: (a, b) for name, a, b in results}
             order = self._carry_order(
@@ -2250,7 +2261,6 @@ class PulseIREmitter:
             tuple(v.vtype for v in then_vals),
             {"result_names": labels},
         )
-        listed = []
         carried: dict[tuple[int, int], IRValue] = {}
         for entry, out in zip(order, outs, strict=False):
             if type(entry) is str:
@@ -2270,6 +2280,7 @@ class PulseIREmitter:
         # A list slot that holds its channel's values takes the channel's result.
         for obj, i, a, b, out in listed:
             out = carried.get((id(a), id(b)), out)
+            assert out is not None
             obj[i] = out
             self._slots[id(out)] = (obj, i, out)
         if chosen:

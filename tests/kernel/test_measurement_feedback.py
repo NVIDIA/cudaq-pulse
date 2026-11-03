@@ -178,6 +178,151 @@ def test_only_measurements_can_be_conditions():
         k(Q[0])
 
 
+_HELD_HEAD = """\
+def k(q0, q1):
+    d0 = get_drive_line(q0)
+    d1 = get_drive_line(q1)
+    t0 = d0.tone
+    r = get_readout_line(q0)
+"""
+_HELD_READ = "    m = readout(r, square(100, 0.05))\n    sync(d0, d1, r)\n"
+_ARM = "square(20, 0.1)"
+_AFTER = "square(8, 0.1)"
+
+# (lines before the readout, the rest of the body, the body with plain names)
+_HELD = {
+    "unused list": (
+        "    lines = [d0, d1]\n",
+        f"    if m:\n        drive(d0, {_ARM})\n        drive(d1, {_ARM})\n",
+        None,
+    ),
+    "else arm": (
+        "    lines = [d0, d1]\n",
+        f"    if m:\n        pass\n    else:\n        drive(lines[0], {_ARM})\n"
+        f"    drive(lines[0], {_AFTER})\n",
+        f"    if m:\n        pass\n    else:\n        drive(d0, {_ARM})\n    drive(d0, {_AFTER})\n",
+    ),
+    "both arms": (
+        "    lines = [d0, d1]\n",
+        f"    if m:\n        drive(d0, {_ARM})\n    else:\n        drive(lines[1], {_ARM})\n"
+        f"    drive(lines[0], {_AFTER})\n    drive(d1, {_AFTER})\n",
+        f"    if m:\n        drive(d0, {_ARM})\n    else:\n        drive(d1, {_ARM})\n"
+        f"    drive(d0, {_AFTER})\n    drive(d1, {_AFTER})\n",
+    ),
+    "one line twice": (
+        "    lines = [d0, d0]\n",
+        f"    if m:\n        drive(lines[0], {_ARM})\n    drive(lines[1], {_AFTER})\n",
+        f"    if m:\n        drive(d0, {_ARM})\n    drive(d0, {_AFTER})\n",
+    ),
+    "two lists and an alias": (
+        "    e = d0\n    xs = [e]\n    ys = [d1, d0]\n",
+        f"    if m:\n        drive(e, {_ARM})\n    else:\n        drive(ys[1], {_ARM})\n"
+        f"    drive(xs[0], {_AFTER})\n    drive(ys[0], {_AFTER})\n",
+        f"    if m:\n        drive(d0, {_ARM})\n    else:\n        drive(d0, {_ARM})\n"
+        f"    drive(d0, {_AFTER})\n    drive(d1, {_AFTER})\n",
+    ),
+    "only the list": (
+        "    lines = [d0, d1]\n",
+        f"    del d0\n    if m:\n        drive(lines[0], {_ARM})\n    drive(lines[0], {_AFTER})\n",
+        f"    if m:\n        drive(d0, {_ARM})\n    drive(d0, {_AFTER})\n",
+    ),
+    "tuple": (
+        "    lines = (d0, d1)\n",
+        f"    if m:\n        drive(lines[0], {_ARM})\n    drive(lines[0], {_AFTER})\n",
+        f"    if m:\n        drive(d0, {_ARM})\n    drive(d0, {_AFTER})\n",
+    ),
+    "dict": (
+        "    lines = {'a': d0, 'b': d1}\n",
+        f"    if m:\n        drive(lines['a'], {_ARM})\n    else:\n        drive(d1, {_ARM})\n"
+        f"    drive(lines['a'], {_AFTER})\n",
+        f"    if m:\n        drive(d0, {_ARM})\n    else:\n        drive(d1, {_ARM})\n"
+        f"    drive(d0, {_AFTER})\n",
+    ),
+    "nested containers": (
+        "    lines = {'a': [d0, (d1,)], 'b': [[d0]]}\n",
+        f"    if m:\n        drive(lines['b'][0][0], {_ARM})\n"
+        f"    else:\n        drive(lines['a'][1][0], {_ARM})\n"
+        f"    drive(lines['a'][0], {_AFTER})\n    drive(lines['a'][1][0], {_AFTER})\n",
+        f"    if m:\n        drive(d0, {_ARM})\n    else:\n        drive(d1, {_ARM})\n"
+        f"    drive(d0, {_AFTER})\n    drive(d1, {_AFTER})\n",
+    ),
+    "tones": (
+        "    tones = [t0]\n    lines = [d0]\n",
+        f"    if m:\n        drive(lines[0], {_ARM}, tone=tones[0])\n"
+        f"    drive(d0, {_AFTER}, tone=tones[0])\n",
+        f"    if m:\n        drive(d0, {_ARM}, tone=t0)\n    drive(d0, {_AFTER}, tone=t0)\n",
+    ),
+    "nested ifs": (
+        "    lines = [d0, d1]\n",
+        "    m2 = readout(r, square(100, 0.05))\n"
+        f"    if m:\n        drive(lines[0], {_ARM})\n"
+        f"        if m2:\n            drive(lines[1], {_ARM})\n"
+        f"    drive(lines[1], {_AFTER})\n",
+        "    m2 = readout(r, square(100, 0.05))\n"
+        f"    if m:\n        drive(d0, {_ARM})\n        if m2:\n            drive(d1, {_ARM})\n"
+        f"    drive(d1, {_AFTER})\n",
+    ),
+}
+
+
+def _get_n() -> int:
+    return 5
+
+
+def _held_kernel(before, rest, tag, condition="m"):
+    if condition != "m":
+        rest = "    n = get_n.submit().result()\n" + rest.replace(
+            "    if m:", f"    if {condition}:"
+        )
+    source = _HELD_HEAD + before + _HELD_READ + rest
+    scope = vars(pulse) | {"__name__": tag, "get_n": pulse.classical(_get_n, max_latency_ns=0)}
+    namespace: dict = {}
+    exec(compile(source, f"<{tag}>", "exec"), scope, namespace)
+    return pulse.kernel(namespace["k"])
+
+
+def _yields_once(kernel):
+    for op in python_ir(kernel, Q[0], Q[1]).ops:
+        if op.kind in ("scf.yield", "scf.if_end", "scf.for_end"):
+            vids = [v.vid for v in (op.operands or op.results)]
+            assert len(vids) == len(set(vids)), op
+
+
+@pytest.mark.parametrize("condition", ["m", "n > 3"])
+@pytest.mark.parametrize("case", list(_HELD))
+def test_lines_held_in_containers_cross_a_runtime_branch(case, condition):
+    before, rest, plain = _HELD[case]
+    held = _held_kernel(before, rest, case, condition)
+    if condition == "m":  # the Python IR builder makes no classical calls
+        _yields_once(held)
+    compiled = _compile(held, 2, schedule="asap")
+    compiled._module.run_passes(["pulse-verify"])
+    reference = _compile(_held_kernel("", plain or rest, case, condition), 2, schedule="asap")
+    assert compiled.schedule == reference.schedule
+
+
+@pytest.mark.parametrize("unroll_threshold", [64, 0])
+def test_lines_held_in_a_list_cross_a_branch_in_a_loop(unroll_threshold):
+    loop = (
+        "    for _ in range(3):\n"
+        "        m = readout(r, square(100, 0.05))\n"
+        "        sync(d0, d1, r)\n"
+        "        if m:\n"
+        "            drive({0}, square(20, 0.1))\n"
+        "        else:\n"
+        "            drive({1}, square(30, 0.1))\n"
+        "    drive({0}, square(8, 0.1))\n"
+    )
+    held = _held_kernel("    lines = [d0, d1]\n", loop.format("lines[0]", "lines[1]"), "loop")
+    plain = _held_kernel("", loop.format("d0", "d1"), "loop")
+    _yields_once(held)
+    compiled = _compile(held, 2, schedule="asap", unroll_threshold=unroll_threshold)
+    compiled._module.run_passes(["pulse-verify"])
+    assert compiled.mlir().count("scf.for") == (unroll_threshold == 0)
+    reference = _compile(plain, 2, schedule="asap", unroll_threshold=unroll_threshold)
+    assert compiled.schedule == reference.schedule
+
+
 _ROUNDS = (0, 1)
 
 
