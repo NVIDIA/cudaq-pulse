@@ -651,8 +651,21 @@ struct Extrapolation {
 /// request, `ofArgBackward` each carried value's group backward, and
 /// `mixedWaits` whether some wait's answer decides several groups or some
 /// link is due by several.
+///
+/// Of `branches`, `eagerBranches` relate their groups only through the
+/// answers of eager requests: backward nothing in the condition's group is
+/// held back by what they decide (a request keeps its forward time), and
+/// without resources no wait is placed before its forward time, so no
+/// answer is taken early however the groups move.
 struct LoopGroups {
   unsigned count = 0;
+  /// Where a link is due by several groups (so `mixedWaits`), the groups
+  /// backward with each lazy request whose link goes on to an eager one
+  /// moving with that one, which keeps its forward time and bounds it in
+  /// link order: steady while that bound binds, so the group of its waits
+  /// is held to move no faster than the eager request's (a branch, the
+  /// waits' group deciding). None when that leaves a link due by several.
+  std::shared_ptr<const LoopGroups> linkBound;
   llvm::SmallVector<unsigned> ofArg, ofArgBackward;
   llvm::DenseMap<mlir::Operation *, unsigned> ofOp;
   llvm::DenseMap<mlir::Operation *, unsigned> ofWaitBackward;
@@ -661,7 +674,23 @@ struct LoopGroups {
   /// lanes under resources.
   llvm::SmallBitVector driveGroups, readoutGroups;
   llvm::SmallVector<mlir::Value> outside;
-  llvm::SmallVector<std::pair<unsigned, unsigned>> branches;
+  llvm::SmallVector<std::pair<unsigned, unsigned>> branches, eagerBranches;
+  /// Of `linkBound`'s branches, each lazy request and the eager one after
+  /// it on the link: forward right after it, the eager one bounds it
+  /// backward too (its answer's due time is never before its forward
+  /// start), so without resources the pair holds however its groups move.
+  struct LinkPair {
+    std::pair<unsigned, unsigned> branch;
+    mlir::Operation *lazy, *eager;
+  };
+  llvm::SmallVector<LinkPair> linkPairs;
+  /// Of `branches`, those some op relates other than through answers (a
+  /// branch on a measurement), and the lazy requests whose answers relate
+  /// each other one.
+  llvm::SmallVector<std::pair<unsigned, unsigned>> strictBranches;
+  llvm::SmallVector<std::pair<std::pair<unsigned, unsigned>,
+                              llvm::SmallVector<mlir::Operation *, 2>>>
+      lazyBranches;
 
   /// The group of a timed op in the body, the way the pass runs.
   unsigned groupOf(mlir::Operation *op, bool backward) const {
@@ -691,6 +720,22 @@ static void conditionWaits(mlir::Value value,
   }
   for (mlir::Value operand : def->getOperands())
     conditionWaits(operand, found, seen);
+}
+
+/// Whether `value` is computed from a measurement other than through the
+/// answer of a call.
+static bool readsMeasurement(mlir::Value value,
+                             llvm::DenseSet<mlir::Value> &seen) {
+  if (!seen.insert(value).second)
+    return false;
+  if (mlir::isa<pulse::MeasurementType>(value.getType()))
+    return true;
+  mlir::Operation *def = value.getDefiningOp();
+  if (!def || mlir::isa<classical::WaitOp>(def))
+    return false;
+  return llvm::any_of(def->getOperands(), [&](mlir::Value operand) {
+    return readsMeasurement(operand, seen);
+  });
 }
 
 /// The groups of `loop`'s carried values, or none when their independence
@@ -753,9 +798,30 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
   };
   // The ops that relate the values they read: timed ops and syncs.
   llvm::SmallVector<std::pair<mlir::Operation *, llvm::SmallBitVector>> related;
-  // What each branch's condition and what it decides read.
-  llvm::SmallVector<std::pair<llvm::SmallBitVector, llvm::SmallBitVector>>
-      decides;
+  // What each branch's condition and what it decides read, and whether
+  // the one holds back the other only through eager requests' answers.
+  struct Decides {
+    llvm::SmallBitVector condition, decided;
+    // Only through answers, all of eager requests; and the lazy requests
+    // among them (none when not only through answers).
+    bool eager, answers;
+    llvm::SmallVector<mlir::Operation *, 2> lazy;
+  };
+  llvm::SmallVector<Decides> decides;
+  auto eagerAnswer = [](mlir::Operation *wait) {
+    auto submit =
+        mlir::cast<classical::WaitOp>(wait).getFuture().getDefiningOp();
+    return submit && submit->hasAttr("classical.eager");
+  };
+  auto lazyOf = [&](llvm::ArrayRef<mlir::Operation *> waits) {
+    llvm::SmallVector<mlir::Operation *, 2> lazy;
+    for (mlir::Operation *wait : waits)
+      if (!eagerAnswer(wait))
+        if (mlir::Operation *submit =
+                mlir::cast<classical::WaitOp>(wait).getFuture().getDefiningOp())
+          lazy.push_back(submit);
+    return lazy;
+  };
   // What the answers of each wait decide.
   llvm::DenseMap<mlir::Operation *, llvm::SmallBitVector> waitDecides;
   bool directed = true;
@@ -854,7 +920,12 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
                 auto [it, inserted] = waitDecides.try_emplace(wait, n);
                 it->second |= decided;
               }
-              decides.emplace_back(condition, std::move(decided));
+              llvm::DenseSet<mlir::Value> read;
+              bool answers = ambient.none() && !waits.empty() &&
+                             !readsMeasurement(branch.getCondition(), read);
+              bool eager = answers && llvm::all_of(waits, eagerAnswer);
+              decides.push_back({condition, std::move(decided), eager, answers,
+                                 lazyOf(waits)});
             }
             continue;
           }
@@ -887,7 +958,8 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
           }
           if (bits.any())
             for (mlir::Operation *wait : from) {
-              decides.emplace_back(callOf.lookup(wait), bits);
+              decides.push_back({callOf.lookup(wait), bits, eagerAnswer(wait),
+                                 true, lazyOf(wait)});
               auto [it, inserted] = waitDecides.try_emplace(wait, n);
               it->second |= bits;
             }
@@ -934,15 +1006,32 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
     if (isTimedOp(op))
       groups->ofOp[op] =
           index.lookup(find(static_cast<unsigned>(bits.find_first())));
-  for (auto &[condition, decided] : decides)
+  llvm::SmallVector<std::pair<unsigned, unsigned>> checked;
+  for (auto &[condition, decided, eager, answers, lazy] : decides)
     for (unsigned c : condition.set_bits())
       for (unsigned d : decided.set_bits()) {
         std::pair<unsigned, unsigned> branch{index.lookup(find(c)),
                                              index.lookup(find(d))};
-        if (branch.first != branch.second &&
-            !llvm::is_contained(groups->branches, branch))
+        if (branch.first == branch.second)
+          continue;
+        if (!llvm::is_contained(groups->branches, branch))
           groups->branches.push_back(branch);
+        if (!eager && !llvm::is_contained(checked, branch))
+          checked.push_back(branch);
+        if (!answers && !llvm::is_contained(groups->strictBranches, branch))
+          groups->strictBranches.push_back(branch);
+        auto it = llvm::find_if(groups->lazyBranches, [&](const auto &entry) {
+          return entry.first == branch;
+        });
+        if (it == groups->lazyBranches.end())
+          it = groups->lazyBranches.insert(it, {branch, {}});
+        for (mlir::Operation *submit : lazy)
+          if (!llvm::is_contained(it->second, submit))
+            it->second.push_back(submit);
       }
+  for (auto branch : groups->branches)
+    if (!llvm::is_contained(checked, branch))
+      groups->eagerBranches.push_back(branch);
   groups->driveGroups.resize(groups->count);
   groups->readoutGroups.resize(groups->count);
   for (auto [op, group] : groups->ofOp) {
@@ -962,34 +1051,70 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
     if (only)
       groups->ofWaitBackward[wait] = *only;
   }
-  groups->ofArgBackward = groups->ofArg;
-  llvm::SmallVector<std::optional<unsigned>> dueBy(n);
-  loop.getBody()->walk([&](classical::SubmitOp submit) {
-    mlir::Operation *op = submit;
-    std::optional<unsigned> group;
-    if (!op->hasAttr("classical.eager"))
-      for (mlir::Operation *user : submit.getFuture().getUsers())
-        if (auto it = groups->ofWaitBackward.find(user);
-            it != groups->ofWaitBackward.end()) {
-          if (group && *group != it->second)
-            groups->mixedWaits = true;
-          group = it->second;
+  bool waitsMixed = groups->mixedWaits;
+  auto variant = std::make_shared<LoopGroups>(*groups);
+  // Which groups each carried link and lazy request are due by backward;
+  // `bound`, each lazy request going on to an eager one with that one.
+  auto assignDue = [&](LoopGroups &into, bool bound) {
+    into.ofArgBackward = into.ofArg;
+    llvm::SmallVector<std::optional<unsigned>> dueBy(n);
+    loop.getBody()->walk([&](classical::SubmitOp submit) {
+      mlir::Operation *op = submit;
+      std::optional<unsigned> group;
+      if (!op->hasAttr("classical.eager"))
+        for (mlir::Operation *user : submit.getFuture().getUsers())
+          if (auto it = into.ofWaitBackward.find(user);
+              it != into.ofWaitBackward.end()) {
+            if (group && *group != it->second)
+              into.mixedWaits = true;
+            group = it->second;
+          }
+      if (bound && group && submit.getUpdatedLink().hasOneUse())
+        if (auto next = mlir::dyn_cast<classical::SubmitOp>(
+                *submit.getUpdatedLink().getUsers().begin());
+            next && next->getBlock() == op->getBlock() &&
+            next->hasAttr("classical.eager")) {
+          unsigned eager = into.ofOp.lookup(next);
+          std::pair<unsigned, unsigned> held{eager, *group};
+          if (eager != *group) {
+            if (!llvm::is_contained(into.branches, held))
+              into.branches.push_back(held);
+            llvm::erase(into.eagerBranches, held);
+            into.linkPairs.push_back({held, op, next});
+            auto it = llvm::find_if(into.lazyBranches, [&](const auto &entry) {
+              return entry.first == held;
+            });
+            if (it == into.lazyBranches.end())
+              it = into.lazyBranches.insert(it, {held, {}});
+            if (!llvm::is_contained(it->second, op))
+              it->second.push_back(op);
+          }
+          group = eager;
         }
-    if (group)
-      groups->ofWaitBackward[op] = *group;
-    unsigned own = group.value_or(groups->ofOp.lookup(op));
-    for (unsigned i : rootsOf(submit.getLink()).set_bits()) {
-      if (!mlir::isa<classical::LinkType>(
-              loop.getRegionIterArgs()[i].getType()))
-        continue;
-      if (dueBy[i] && *dueBy[i] != own)
-        groups->mixedWaits = true;
-      dueBy[i] = own;
+      if (group)
+        into.ofWaitBackward[op] = *group;
+      unsigned own = group.value_or(into.ofOp.lookup(op));
+      for (unsigned i : rootsOf(submit.getLink()).set_bits()) {
+        if (!mlir::isa<classical::LinkType>(
+                loop.getRegionIterArgs()[i].getType()))
+          continue;
+        if (dueBy[i] && *dueBy[i] != own)
+          into.mixedWaits = true;
+        dueBy[i] = own;
+      }
+    });
+    for (auto [i, group] : llvm::enumerate(dueBy))
+      if (group)
+        into.ofArgBackward[i] = *group;
+  };
+  assignDue(*groups, /*bound=*/false);
+  if (groups->mixedWaits && !waitsMixed) {
+    assignDue(*variant, /*bound=*/true);
+    if (!variant->mixedWaits) {
+      variant->outside = outside;
+      groups->linkBound = std::move(variant);
     }
-  });
-  for (auto [i, group] : llvm::enumerate(dueBy))
-    if (group)
-      groups->ofArgBackward[i] = *group;
+  }
   groups->outside = std::move(outside);
   return groups;
 }
@@ -1627,6 +1752,29 @@ private:
     return moves;
   }
 
+  /// Whether `branch` relates its groups only through answers, and each
+  /// lazy request among them started right before the eager one after it
+  /// on its link in this iteration forward (see LoopGroups::linkPairs).
+  bool linkPairsHold(const LoopGroups &groups,
+                     std::pair<unsigned, unsigned> branch) const {
+    if (llvm::is_contained(groups.strictBranches, branch))
+      return false;
+    auto it = llvm::find_if(groups.lazyBranches, [&](const auto &entry) {
+      return entry.first == branch;
+    });
+    if (it == groups.lazyBranches.end())
+      return false;
+    for (mlir::Operation *lazy : it->second) {
+      auto pair = llvm::find_if(groups.linkPairs,
+                                [&](const auto &p) { return p.lazy == lazy; });
+      if (pair == groups.linkPairs.end() ||
+          forwardStartOf(lazy) + durationOf(lazy) !=
+              forwardStartOf(pair->eager))
+        return false;
+    }
+    return true;
+  }
+
   /// Whether groupsMove, each group a branch holds back moves with the
   /// group holding it back or ahead of it, with every op in the body where
   /// its group puts it (backward, each wait with what its answers decide):
@@ -1637,6 +1785,13 @@ private:
       return false;
     bool ahead = false;
     for (auto [condition, decided] : groups.branches) {
+      if (sign < 0 && !resources.enabled &&
+          llvm::is_contained(groups.eagerBranches,
+                             std::pair(condition, decided)))
+        continue;
+      if (sign < 0 && !resources.enabled && !lanesBound &&
+          linkPairsHold(groups, std::pair(condition, decided)))
+        continue;
       auto [holding, held] = sign > 0 ? std::pair(condition, decided)
                                       : std::pair(decided, condition);
       int64_t from = shifts[holding].value_or(0);
@@ -2898,6 +3053,8 @@ private:
         if (!grouped) {
           grouped = true;
           groups = groupsOf(loop);
+          if (groups && groups->mixedWaits && groups->linkBound)
+            groups = groups->linkBound.get();
           track.groups = groups;
         }
         if (groups)

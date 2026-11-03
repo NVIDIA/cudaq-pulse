@@ -688,13 +688,12 @@ threading.Thread(target=_watch, daemon=True).start()
 
 import cudaq_pulse as pulse
 from tests._handles import Q
-from tests.classical.test_answer_loops import POLICIES
 from {module} import {factory} as factory
 
 out = {{}}
 kernels = factory({trips})
 for name in kernels:
-    for schedule in POLICIES:
+    for schedule in {policies!r}:
         started = time.process_time()
         program = pulse.compile(kernels[name], schedule=schedule, unroll_threshold=0)
         lowered = program.lower(Q[0], Q[1], Q[2])
@@ -704,12 +703,20 @@ print(json.dumps(out))
 """
 
 
-def _in_a_child(trips: int, factory: str, module: str) -> dict[str, list[Any]]:
+def _in_a_child(
+    trips: int, factory: str, module: str, policies: tuple[str, ...] = POLICIES
+) -> dict[str, list[Any]]:
     """The duration of every kernel *factory* (in *module*) makes of *trips*
-    iterations under every policy, and the CPU time its lowering took, in a
+    iterations under *policies*, and the CPU time its lowering took, in a
     child process that is stopped past CPU_S seconds or RSS_MB MB."""
     code = _CHILD.format(
-        wall=2 * CPU_S, cpu=CPU_S, mb=RSS_MB, trips=trips, factory=factory, module=module
+        wall=2 * CPU_S,
+        cpu=CPU_S,
+        mb=RSS_MB,
+        trips=trips,
+        factory=factory,
+        module=module,
+        policies=tuple(policies),
     )
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p))
@@ -726,12 +733,15 @@ def _in_a_child(trips: int, factory: str, module: str) -> dict[str, list[Any]]:
     return result
 
 
-def _lowers_as_extrapolated(factory: Any, many: int = 10**6) -> None:
-    """Lowering *factory*'s kernels at *many* trips in a child takes well
-    under a second each, to the duration two shorter loops extrapolate to."""
+def _lowers_as_extrapolated(
+    factory: Any, many: int = 10**6, policies: tuple[str, ...] = POLICIES
+) -> None:
+    """Lowering *factory*'s kernels at *many* trips under *policies* in a
+    child takes well under a second each, to the duration two shorter loops
+    extrapolate to."""
     from fractions import Fraction
 
-    found = _in_a_child(many, factory.__name__, factory.__module__)
+    found = _in_a_child(many, factory.__name__, factory.__module__, policies)
     small: dict[tuple[str, int], Fraction] = {}
     # As many trips past the peeled ones as *many* is, modulo every run of
     # iterations a loop repeats after (840 is a multiple of each).
@@ -740,11 +750,11 @@ def _lowers_as_extrapolated(factory: Any, many: int = 10**6) -> None:
     for trips in (fewer, more):
         kernels = factory(trips)
         for kernel in kernels:
-            for schedule in POLICIES:
+            for schedule in policies:
                 program = pulse.compile(kernels[kernel], schedule=schedule, unroll_threshold=0)
                 lowered = program.lower(Q[0], Q[1], Q[2])
                 small[f"{kernel}/{schedule}", trips] = lowered.duration.exact_ns
-    assert len(found) == len(factory(1)) * len(POLICIES)
+    assert len(found) == len(factory(1)) * len(policies)
     for key, (duration, spent) in found.items():
         step = small[key, more] - small[key, fewer]
         expected = small[key, fewer] + (many - fewer) // (more - fewer) * step
@@ -882,3 +892,119 @@ def test_a_loop_of_10_6_iterations_using_answers_as_values_lowers_in_bounded_tim
     # Under alap the drives an answer sets move by their own period, the
     # readouts and requests by theirs; each loop stays rolled.
     _lowers_as_extrapolated(_valued)
+
+
+def _slack(n: int) -> dict[str, Any]:
+    """Loops whose answers' slack changes from one iteration to the next
+    under alap: a drive or branch slower than the readouts (its answers
+    taken ever later after they are due), and lazy requests sent on a link
+    right before an eager one, which bounds them."""
+
+    @pulse.kernel
+    def slow_drive(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        for _ in range(n):
+            m = readout(ro, square(20, 0.05))
+            amp, _ = tune.submit([m]).result()
+            drive(d, square(300, amp))
+
+    @pulse.kernel
+    def slow_branch(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        for _ in range(n):
+            m = readout(ro, square(20, 0.05))
+            if decide.submit([m]).result()[0]:
+                drive(d, square(300, 0.3))
+
+    @pulse.kernel
+    def lazy_slow(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        for _ in range(n):
+            m = readout(ro, square(40, 0.05))
+            f = decide_lazy.submit([m]).result()
+            amp, _ = tune.submit([m]).result()
+            shift_phase(d.tone, amp)
+            drive(d, square(300, 0.1))
+            if f[0]:
+                drive(d, square(5, 0.3))
+
+    return {"slow_drive": slow_drive, "slow_branch": slow_branch, "lazy_slow": lazy_slow}
+
+
+def _linked(n: int) -> dict[str, Any]:
+    """Lazy requests sent right before an eager one on their link."""
+
+    @pulse.kernel
+    def lazy(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        for _ in range(n):
+            m = readout(ro, square(40, 0.05))
+            f = decide_lazy.submit([m]).result()
+            amp, _ = tune.submit([m]).result()
+            shift_phase(d.tone, amp)
+            drive(d, square(30, 0.1))
+            if f[0]:
+                drive(d, square(5, 0.3))
+
+    @pulse.kernel
+    def lazy_fast(q, r, t):
+        d = get_drive_line(q)
+        e = get_drive_line(t)
+        ro = get_readout_line(q)
+        for _ in range(n):
+            m = readout(ro, square(200, 0.05))
+            f = decide_lazy.submit([m]).result()
+            amp, _ = tune.submit([m]).result()
+            drive(e, square(10, amp))
+            if f[0]:
+                drive(d, square(5, 0.3))
+
+    @pulse.kernel
+    def lazy_gap(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        so = get_readout_line(r)
+        for _ in range(n):
+            m = readout(ro, square(20, 0.05))
+            f = decide_lazy.submit([m]).result()
+            m2 = readout(so, square(90, 0.05))
+            amp, _ = tune.submit([m2]).result()
+            drive(d, square(200, amp))
+            if f[0]:
+                drive(d, square(5, 0.3))
+
+    return {"lazy": lazy, "lazy_fast": lazy_fast, "lazy_gap": lazy_gap}
+
+
+@pytest.mark.parametrize("schedule", POLICIES)
+def test_loops_whose_answers_slack_changes_play_every_event_as_unrolled(schedule):
+    differ = [
+        (name, trips, machine)
+        for machine, options in _machines().items()
+        for trips in (1, 2, 5, 64, 130, 1001)
+        for name, kernel in {**_slack(trips), **_linked(trips)}.items()
+        if not _same_as_unrolled(kernel, schedule, options)
+    ]
+    assert differ == []
+
+
+def test_a_loop_of_10_6_iterations_whose_answers_slack_changes_lowers_in_bounded_time():
+    # Without resources a request keeps its forward time and no wait is
+    # placed before its own, so how the slack moves bounds nothing; under
+    # alap_rcp, whose lanes may move a wait earlier, these loops are
+    # simulated iteration by iteration.
+    _lowers_as_extrapolated(_slack, policies=("asap", "alap", "rcp"))
+
+
+def _linked_tight(n: int) -> dict[str, Any]:
+    kernels = _linked(n)
+    del kernels["lazy_gap"]
+    return kernels
+
+
+def test_a_loop_of_10_6_iterations_with_lazy_requests_before_eager_ones_lowers_in_bounded_time():
+    _lowers_as_extrapolated(_linked_tight)
