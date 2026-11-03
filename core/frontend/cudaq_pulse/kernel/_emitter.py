@@ -66,7 +66,6 @@ from ._bytecode_normalize import (
     UNPACK_SEQUENCE,
     decode,
 )
-from ._classical import _NotMeasurement, measured
 from ._schedule_blocks import block_budget
 from ._unroll import resolve_unroll_threshold
 from .ir_builder import (
@@ -83,6 +82,7 @@ from .ir_builder import (
     Selection,
     SymbolicValueError,
     UndecidableComparison,
+    _UndecidableComparisons,
     contains_answer,
     is_symbolic,
     parameter_names,
@@ -314,6 +314,35 @@ def _truth(value: StackVal) -> bool:
     return bool(value)
 
 
+class _NotMeasurement(_UndecidableComparisons):
+    """``not value`` for a measurement result, or for the ``i1`` IR value
+    a condition on answers is tested as, pending use as a condition."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: Any):
+        self.value = value
+
+    def __bool__(self) -> bool:
+        raise CompilationError(
+            f"cannot decide {self!r} at trace time: it is known only when the program runs; "
+            "use it directly as an if condition"
+        )
+
+    def __eq__(self, other: object) -> UndecidableComparison:  # type: ignore[override]
+        from ._conditions import negated
+
+        return UndecidableComparison(negated(self), "==", other)
+
+    def __ne__(self, other: object) -> UndecidableComparison:  # type: ignore[override]
+        from ._conditions import negated
+
+        return UndecidableComparison(negated(self), "!=", other)
+
+    def __repr__(self) -> str:
+        return f"(not {self.value!r})"
+
+
 def _runtime_bit(value: Any) -> bool:
     """Whether *value* is a bool known only when the program runs."""
     cls = value.__class__
@@ -334,19 +363,6 @@ def _identity_unknown(left: Any, right: Any) -> bool:
 
 _NUMBERS = (bool, int, float)
 
-_BUILT = frozenset({list, set, dict})
-
-_RAISE_IN_ARM_MESSAGE = (
-    "this assert or raise is in an arm of an if on a value known only when the program "
-    "runs, so whether it fails is decided as the program runs, and a kernel cannot raise "
-    "then; check the value in the classical function, or handle each outcome with if/else"
-)
-
-_FILTER_MESSAGE = (
-    "a comprehension or generator expression cannot filter on a condition known only "
-    "when the program runs: which items it has would be decided as the program runs; "
-    "loop with a for statement and branch with an if statement in its body instead"
-)
 
 # The containers `in` looks a value up in by its hash.
 _HASHED: frozenset[type] = frozenset({dict, set, frozenset, type({}.keys())})
@@ -356,6 +372,8 @@ def _identity_error(left: Any, right: Any) -> CompilationError:
     """The error for ``left is right``, which ``_identity_unknown`` holds
     depends on the program's run; a kernel specializes on the float
     arguments of one that depends on nothing else."""
+    from ._conditions import measured
+
     if measured(left) or measured(right):
         fix = "branch on a measurement result directly with `if result:` or `if not result:`"
     else:
@@ -496,17 +514,6 @@ class _Choice(Selection):
 
     def __repr__(self) -> str:
         return f"_Choice({self.cond!r}, {self.then!r}, {self.other!r})"
-
-
-def _bits_chosen(cond: IRValue, a: Any, b: Any) -> bool:
-    """Whether an if on *cond* whose arms leave *a* and *b* chooses a bool
-    known only when the program runs: *cond* is a condition on answers, and
-    *a* and *b* are such conditions or bools, at least one a condition."""
-    if cond.vtype != "i1":
-        return False
-    a_bit = _classical.is_condition(a)
-    b_bit = _classical.is_condition(b)
-    return (a_bit or b_bit) and (a_bit or a.__class__ is bool) and (b_bit or b.__class__ is bool)
 
 
 def _choice_size(value: Any) -> int:
@@ -669,7 +676,9 @@ def _choice_condition(choice: _Choice) -> Any:
     def truth(value: Any) -> bool:
         if isinstance(value, IRValue):
             raise CompilationError(f"{choice.origin} is a pulse {value.vtype}, not a condition")
-        if _classical.is_condition(value) or contains_answer(value):
+        if contains_answer(value) or (
+            value.__class__ is _NotMeasurement and value.value.vtype == "i1"
+        ):
             raise CompilationError(
                 f"an if on {choice.origin} would test both a measurement result and "
                 f"{value!r}, an answer known only when the program runs; branch on them "
@@ -1903,11 +1912,15 @@ class PulseIREmitter:
                     right = pop()
                     left = pop()
                     if right.__class__ in _hashed:
-                        right = self._hashed_operand(left, right)
+                        from ._conditions import hashed_operand
+
+                        right = hashed_operand(self, left, right)
                     try:
                         push((left in right) != arg)
                     except CompilationError as e:
-                        push(_classical.contains(left, right, e) != arg)
+                        from ._conditions import contains
+
+                        push(contains(left, right, e) != arg)
 
                 elif op is bc.COPY:
                     push(stack[-arg])
@@ -1985,7 +1998,12 @@ class PulseIREmitter:
                 elif op is bc.RAISE:
                     exc = pop() if arg else None
                     if any(not loop for _, loop in getattr(self.b, "flow", ())):
-                        raise CompilationError(_RAISE_IN_ARM_MESSAGE)
+                        raise CompilationError(
+                            "this assert or raise is in an arm of an if on a value known only "
+                            "when the program runs, so whether it fails is decided as the "
+                            "program runs, and a kernel cannot raise then; check the value in "
+                            "the classical function, or handle each outcome with if/else"
+                        )
                     if exc is AssertionError or isinstance(exc, AssertionError):
                         detail = f": {exc}" if isinstance(exc, AssertionError) and exc.args else ""
                         raise CompilationError(f"assertion failed in kernel{detail}")
@@ -2091,16 +2109,6 @@ class PulseIREmitter:
             _note_source(e, prog, pc - 1)
             raise
 
-    def _hashed_operand(self, left: Any, right: Any) -> Any:
-        """What ``left in right`` tests for a set or dict *right*: its items
-        compared one by one when *left* is known only at run time, as such a
-        value has no hash to look up."""
-        if right.__class__ is dict and self._dict_items is not None:
-            self.b.dict_whole.add(id(right))
-        if _classical.runtime_value(left):
-            return tuple(right)
-        return right
-
     # ── Measurement-conditioned branches ─────────────────────────────
 
     def _runtime_branch(
@@ -2162,8 +2170,10 @@ class PulseIREmitter:
         chosen: list[tuple[str | int, Any, Any]] = []
         # Python joins the arms at one stack depth.
         if stack and not returns and any(map(_IS_NOT, stack, then_stack)):
-            self._stack_choices(
-                value, then_stack, saved_stack, jump_if_true, prog, index, first, chosen
+            from ._conditions import stack_choices
+
+            stack_choices(
+                self, value, then_stack, saved_stack, jump_if_true, prog, index, first, chosen
             )
 
         merged: dict[str, StackVal] = {}
@@ -2189,7 +2199,9 @@ class PulseIREmitter:
             elif type(a) is type(b) and isinstance(a, _SCALARS) and a == b:
                 merged[name] = a
             else:
-                if not _bits_chosen(value, a, b):
+                from ._conditions import bits_chosen
+
+                if not bits_chosen(value, a, b):
                     self._check_choosable(name, a, b, prog, index, first, value)
                 chosen.append((name, a, b))
         # List slots holding lines or tones that either arm rebound.
@@ -2279,13 +2291,15 @@ class PulseIREmitter:
             obj[i] = out
             self._slots[id(out)] = (obj, i, out)
         if chosen:
+            from ._conditions import chosen_value
+
             line = prog.location(index)[1]
             scope = getattr(builder, "scope", ())
             for chose, a, b in chosen:
                 if isinstance(chose, int):
-                    stack[chose] = self._chosen(value, a, b, "", line, scope)
+                    stack[chose] = chosen_value(self, value, a, b, "", line, scope)
                 else:
-                    merged[chose] = self._chosen(value, a, b, chose, line, scope)
+                    merged[chose] = chosen_value(self, value, a, b, chose, line, scope)
         for cell, alias in aliases:
             out = merged[alias]
             cell.value = out
@@ -2329,7 +2343,9 @@ class PulseIREmitter:
             subject = "the value of the conditional expression, `and` or `or`"
             where = f"that expression at line {line}"
             inside = outside = "use an if statement with the op in each arm"
-        if measurement and (_classical.is_condition(a) or _classical.is_condition(b)):
+        from ._conditions import is_condition
+
+        if measurement and (is_condition(a) or is_condition(b)):
             raise CompilationError(
                 f"{subject} would depend on both a measurement result and a condition on "
                 f"answers at line {line}, which one test cannot combine; branch on them in "
@@ -2351,47 +2367,6 @@ class PulseIREmitter:
             "waveforms, two lines or tones of one kind, or two conditions on answers; "
             f"compute it before the if, or {outside}"
         )
-
-    def _stack_choices(
-        self,
-        cond: IRValue,
-        then_stack: list[StackVal],
-        saved_stack: list[StackVal],
-        jump_if_true: bool,
-        prog: bc.DecodedCode,
-        index: int,
-        first: int,
-        chosen: list[tuple[str | int, Any, Any]],
-    ) -> None:
-        """Add to *chosen* the stack slots the arms of the if on *cond* at
-        ``prog.instrs[index]`` left different values in, as (slot, then
-        value, else value), each checked to be a pair the if can choose.
-
-        An arm that left a slot as it was before the if is the short cut of
-        an ``and`` (a jump if false) or an ``or``: the slot holds the value
-        the jump tested, which is false, or true, in that arm."""
-        for slot, (a, b) in enumerate(zip(then_stack, self.stack, strict=False)):
-            if a is not b:
-                if slot < len(saved_stack):
-                    kept = saved_stack[slot]
-                    if a is kept:
-                        a = jump_if_true
-                    elif b is kept:
-                        b = jump_if_true
-                if not _bits_chosen(cond, a, b):
-                    self._check_choosable("", a, b, prog, index, first, cond)
-                chosen.append((slot, a, b))
-
-    def _chosen(
-        self, cond: IRValue, a: Any, b: Any, name: str, line: int | None, scope: tuple[int, ...]
-    ) -> Any:
-        """What an if on *cond* leaves where its arms left *a* and *b*: for
-        bools on answers, the condition ``cond and a or not cond and b``;
-        else the choice between them."""
-        if _bits_chosen(cond, a, b):
-            return _classical.bit_select(AnswerValue(cond.vid, "i1", scope), a, b)
-        _watch_choices(self.b)
-        return _Choice(cond, a, b, name, line, scope)
 
     def _undefined(self, name: str) -> _UndefinedLocalError:
         """The error for reading *name*, which is not bound."""
@@ -2423,7 +2398,10 @@ class PulseIREmitter:
         if join < branch:
             header = join
             # There a comprehension's if adds to what it builds, on the stack.
-            _add_built(self.stack, containers)
+            if not _CONTAINERS.isdisjoint(map(type, self.stack)):
+                from ._conditions import add_built
+
+                add_built(self.stack, containers)
         else:
             header = -1
         outer = self._mutated
@@ -2447,23 +2425,20 @@ class PulseIREmitter:
             raise CompilationError(_REJOIN_MESSAGE)
         slots = _slot_changes(containers)
         if slots is None or not _only_containers(mutated, containers):
-            if header >= 0 and self._filtered(containers):
-                raise CompilationError(_FILTER_MESSAGE)
+            from ._conditions import filtered
+
+            if header >= 0 and filtered(self, containers):
+                raise CompilationError(
+                    "a comprehension or generator expression cannot filter on a condition "
+                    "known only when the program runs: which items it has would be decided "
+                    "as the program runs; loop with a for statement and branch with an if "
+                    "statement in its body instead"
+                )
             raise CompilationError(
                 "a measurement-conditioned branch may only change list entries that "
                 "hold lines or tones"
             )
         return dict(self.locals), slots
-
-    def _filtered(self, containers: list[tuple[Any, Any]]) -> bool:
-        """Whether the arm just traced added to what a comprehension or
-        generator expression builds."""
-        yielded = self.locals.get(".yielded")
-        return any(
-            len(obj) != len(copy)
-            for obj, copy in containers
-            if obj is yielded or any(obj is v for v in self.stack)
-        )
 
     @staticmethod
     def _jump(target: int, lo: int, hi: int, header: int) -> int:
@@ -3044,7 +3019,11 @@ class PulseIREmitter:
                     self.stack.append(call_args[0])
                     return
                 if (callable_val is any or callable_val is all) and len(call_args) == 1:
-                    self.stack.append(_any_or_all(callable_val is any, call_args[0], e))
+                    from ._conditions import any_or_all
+
+                    items = call_args[0]
+                    generated = items.__class__ is _Unrolled
+                    self.stack.append(any_or_all(callable_val is any, items, e, generated))
                     return
                 raise
             self.stack.append(result)
@@ -3854,29 +3833,6 @@ def _container_unchanged(obj: list[Any] | dict[Any, Any] | set[Any], copy: Any) 
     if isinstance(obj, set):
         return all(k in copy for k in obj)
     return all(k in copy and obj[k] is copy[k] for k in obj)
-
-
-def _any_or_all(either: bool, items: Any, error: CompilationError) -> Any:
-    """``any(items)`` or ``all(items)``, whose evaluation raised *error*:
-    the condition on the items of a list or tuple."""
-    if items.__class__ is list or items.__class__ is tuple:
-        return _classical.any_or_all(either, items, error)
-    if items.__class__ is _Unrolled:
-        name, word = ("any", "or") if either else ("all", "and")
-        raise CompilationError(
-            f"{name}() of a generator of conditions known only when the program runs is "
-            f"not traced; give it a list, {name}([...]), or combine them with `{word}`"
-        ) from error
-    raise error
-
-
-def _add_built(stack: list[StackVal], containers: list[tuple[Any, Any]]) -> None:
-    """Add to *containers*, with a copy, each list, set or dict on *stack*
-    not in them yet: what a comprehension around a branch builds."""
-    known = {id(obj) for obj, _ in containers}
-    for value in stack:
-        if value.__class__ in _BUILT and id(value) not in known:
-            containers.append((value, value.copy()))
 
 
 _SIGNATURES: dict[int, tuple[Any, inspect.Signature]] = {}

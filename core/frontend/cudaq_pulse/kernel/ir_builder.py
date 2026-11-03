@@ -76,17 +76,17 @@ class _UndecidableComparisons:
 
     # On bools &, | and ^ commute, so each is its own reflection.
     def __and__(self, other: Any) -> Any:
-        from ._classical import bit_logic
+        from ._conditions import bit_logic
 
         return bit_logic("&", self, other)
 
     def __or__(self, other: Any) -> Any:
-        from ._classical import bit_logic
+        from ._conditions import bit_logic
 
         return bit_logic("|", self, other)
 
     def __xor__(self, other: Any) -> Any:
-        from ._classical import bit_logic
+        from ._conditions import bit_logic
 
         return bit_logic("^", self, other)
 
@@ -113,7 +113,7 @@ class UndecidableComparison(_UndecidableComparisons):
         self.rhs = rhs
 
     def __bool__(self) -> bool:
-        from ._classical import measured
+        from ._conditions import measured
 
         if self.lhs.__class__ is IRValue or self.rhs.__class__ is IRValue or measured(self):
             raise CompilationError(

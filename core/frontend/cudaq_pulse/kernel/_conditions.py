@@ -1,0 +1,318 @@
+# ============================================================================ #
+# Copyright (c) 2026 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+"""Conditions known only when the program runs, as a kernel's Python
+combines them: ``&``, ``|`` and ``^``, ``in``, ``any()`` and ``all()``, and
+the bool a conditional expression, ``and`` or ``or`` chooses. The tracer
+imports this module when a kernel first does one of these.
+"""
+
+from __future__ import annotations
+
+import numbers
+from typing import TYPE_CHECKING, Any
+
+from ._emitter import _Choice, _NotMeasurement, _watch_choices
+from .ir_builder import (
+    AnswerValue,
+    CompilationError,
+    IRValue,
+    ParameterExpression,
+    SymbolicValueError,
+    UndecidableComparison,
+    is_symbolic,
+)
+
+if TYPE_CHECKING:
+    from ._bytecode_normalize import DecodedCode
+    from ._emitter import PulseIREmitter
+
+
+def negated(value: _NotMeasurement) -> Any:
+    """``not`` of a condition on answers as the comparison it is; a
+    measurement's stays itself."""
+    inner = value.value
+    if answer_bit(inner):
+        # The IR value carries no regions to check its uses against, so () checks none.
+        return UndecidableComparison(AnswerValue(inner.vid, "i1", ()), "==", False)
+    return value
+
+
+def answer_bit(value: Any) -> bool:
+    """Whether *value* is the ``i1`` a condition on answers is tested as."""
+    return value.__class__ is IRValue and value.vtype == "i1"
+
+
+def constant_bool(value: Any) -> Any:
+    """*value* if it is a bool (Python's or NumPy's) or the int 0 or 1, which
+    ``&``, ``|`` and ``^`` treat as one; else None."""
+    cls = value.__class__
+    if cls is bool or (cls is int and (value == 0 or value == 1)):
+        return value
+    if cls.__name__ == "bool" and cls.__module__ == "numpy":
+        return bool(value)
+    return None
+
+
+def measured(value: Any) -> bool:
+    """Whether the bool *value* is computed from a measurement result."""
+    cls = value.__class__
+    if cls is IRValue:
+        return bool(value.vtype == "measurement")
+    if cls is _NotMeasurement:
+        return measured(value.value)
+    if cls is UndecidableComparison:
+        return measured(value.lhs) or measured(value.rhs)
+    return False
+
+
+def is_condition(value: Any) -> bool:
+    """Whether *value* is a bool known only when the program runs that is
+    computed from answers or float arguments: a comparison, an answer bit,
+    or ``not`` of one."""
+    cls = value.__class__
+    if cls is UndecidableComparison:
+        return not measured(value)
+    if cls is AnswerValue:
+        return bool(value.dtype == "i1")
+    return cls is _NotMeasurement and answer_bit(value.value)
+
+
+_LOGIC_WORDS = {"&": "and", "|": "or"}
+
+
+def bit_logic(symbol: str, lhs: Any, rhs: Any) -> Any:
+    """``lhs & rhs``, ``lhs | rhs`` or ``lhs ^ rhs``, as Python computes them
+    on bools, where one is known only when the program runs: the value
+    when the other operand decides it, else a condition traced as ``and``,
+    ``or`` or ``!=``. Measurement results and numbers raise."""
+    word = _LOGIC_WORDS.get(symbol)
+    for a, b in ((lhs, rhs), (rhs, lhs)):
+        constant = constant_bool(a)
+        if constant is not None and is_condition(b):
+            if word is None:
+                return UndecidableComparison(b, "!=", constant)
+            # True | b and False & b are the constant; True & b and False | b are b.
+            return constant if constant == (word == "or") else b
+    if not (is_condition(lhs) and is_condition(rhs)):
+        if measured(lhs) or measured(rhs):
+            fix = (
+                "branch on a measurement result with `if result:` or `if not result:`, "
+                "combining results with `and`, `or` and `not` in the if condition"
+            )
+        else:
+            fix = (
+                f"`{symbol}` combines only conditions (comparisons and answer bits) and "
+                "True or False; bitwise operations on numbers known only when the program "
+                "runs are not supported"
+            )
+        raise CompilationError(
+            f"cannot trace {lhs!r} {symbol} {rhs!r}: it is known only when the program runs; " + fix
+        )
+    if lhs.__class__ is _NotMeasurement:
+        lhs = negated(lhs)
+    if rhs.__class__ is _NotMeasurement:
+        rhs = negated(rhs)
+    return UndecidableComparison(lhs, word or "!=", rhs)
+
+
+def bit_select(cond: AnswerValue, then: Any, other: Any) -> Any:
+    """*then* where the answer bit *cond* is set, else *other*: bools, at
+    least one known only when the program runs."""
+    if then is True:
+        return bit_logic("|", cond, other)
+    if other is False:
+        return bit_logic("&", cond, then)
+    unset = UndecidableComparison(cond, "==", False)
+    if then is False:
+        return bit_logic("&", unset, other)
+    if other is True:
+        return bit_logic("|", unset, then)
+    return bit_logic("|", bit_logic("&", cond, then), bit_logic("&", unset, other))
+
+
+def runtime_value(value: Any) -> bool:
+    """Whether *value* is known only when the program runs, so that a set or
+    dict cannot look it up by its hash."""
+    cls = value.__class__
+    if cls is IRValue:
+        return bool(value.vtype == "measurement")
+    return cls is UndecidableComparison or cls is _NotMeasurement or is_symbolic(value)
+
+
+# Past this many items, `answer in range(...)` of a float answer is too
+# many comparisons; one of an integer answer is two whatever its length.
+_MAX_MEMBERS = 64
+
+
+def contains(left: Any, right: Any, error: CompilationError) -> Any:
+    """``left in right`` for a tuple, list or range *right*, where comparing
+    *left* with its items raised *error* because the outcome is known only
+    when the program runs: an ``or`` of the comparisons, as ``in`` tests
+    each item with ``is`` and ``==``."""
+    cls = right.__class__
+    if (
+        isinstance(error, SymbolicValueError)
+        or not (cls is tuple or cls is list or cls is range)
+        or measured(left)
+    ):
+        raise error
+    if cls is range and left.__class__ is AnswerValue and left.dtype == "i64":
+        start, stop, step = right.start, right.stop, right.step
+        if not right:
+            return False
+        if step > 0:
+            found: Any = UndecidableComparison(left >= start, "and", left < stop)
+        else:
+            found = UndecidableComparison(left <= start, "and", left > stop)
+        if step != 1 and step != -1:
+            offset = ParameterExpression("sub", left, start, dtype="i64")
+            remainder = ParameterExpression("mod", offset, abs(step), dtype="i64")
+            on_step = UndecidableComparison(remainder, "==", 0)
+            found = UndecidableComparison(found, "and", on_step)
+        return found
+    if len(right) > _MAX_MEMBERS:
+        raise CompilationError(
+            f"cannot trace {left!r} in a {cls.__name__} of {len(right)}: it is known only "
+            f"when the program runs, and `in` would compare it with each of more than "
+            f"{_MAX_MEMBERS} items; compare it with <, <= and == instead"
+        ) from error
+    found = False
+    for item in right:
+        if item is left:
+            return True
+        if (
+            left.__class__ is AnswerValue
+            and not isinstance(item, numbers.Real)
+            and constant_bool(item) is None
+        ):
+            continue  # an answer is a number, equal to no other kind of value
+        term = left == item
+        if term.__class__ is bool:
+            if term:
+                return True
+            continue
+        found = term if found is False else UndecidableComparison(found, "or", term)
+    return found
+
+
+def any_or_all(either: bool, items: Any, error: CompilationError, generated: bool) -> Any:
+    """``any(items)`` if *either*, else ``all(items)``, whose evaluation
+    raised *error* because the truth of an item is known only when the
+    program runs: for a list or tuple, an ``or`` (an ``and``) of the items'
+    truth; *generated* items, a generator expression's, raise."""
+    if items.__class__ is not list and items.__class__ is not tuple:
+        if not generated:
+            raise error
+        name, word = ("any", "or") if either else ("all", "and")
+        raise CompilationError(
+            f"{name}() of a generator of conditions known only when the program runs is "
+            f"not traced; give it a list, {name}([...]), or combine them with `{word}`"
+        ) from error
+    found: Any = not either
+    for item in items:
+        if item.__class__ is AnswerValue and item.dtype != "i1":
+            item = UndecidableComparison(item, "!=", 0)
+        elif not is_condition(item):
+            if measured(item) or item.__class__ is IRValue:
+                raise error
+            if bool(item) == either:
+                return either
+            continue
+        found = bit_logic("|" if either else "&", found, item)
+    return found
+
+
+def bits_chosen(cond: IRValue, a: Any, b: Any) -> bool:
+    """Whether an if on *cond* whose arms leave *a* and *b* chooses a bool
+    known only when the program runs: *cond* is a condition on answers, and
+    *a* and *b* are such conditions or bools, at least one a condition."""
+    if cond.vtype != "i1":
+        return False
+    a_bit = is_condition(a)
+    b_bit = is_condition(b)
+    return (a_bit or b_bit) and (a_bit or a.__class__ is bool) and (b_bit or b.__class__ is bool)
+
+
+def add_built(stack: list[Any], containers: list[tuple[Any, Any]]) -> None:
+    """Add to *containers*, with a copy, each list, set or dict on *stack*
+    not in them yet: what a comprehension around a branch builds."""
+    known = {id(obj) for obj, _ in containers}
+    for value in stack:
+        if value.__class__ in (list, set, dict) and id(value) not in known:
+            containers.append((value, value.copy()))
+
+
+def hashed_operand(emitter: PulseIREmitter, left: Any, right: Any) -> Any:
+    """What ``left in right`` tests for a set or dict *right*: its items
+    compared one by one when *left* is known only at run time, as such a
+    value has no hash to look up."""
+    if right.__class__ is dict and emitter._dict_items is not None:
+        emitter.b.dict_whole.add(id(right))
+    if runtime_value(left):
+        return tuple(right)
+    return right
+
+
+def stack_choices(
+    emitter: PulseIREmitter,
+    cond: IRValue,
+    then_stack: list[Any],
+    saved_stack: list[Any],
+    jump_if_true: bool,
+    prog: DecodedCode,
+    index: int,
+    first: int,
+    chosen: list[tuple[str | int, Any, Any]],
+) -> None:
+    """Add to *chosen* the stack slots the arms of the if on *cond* at
+    ``prog.instrs[index]`` left different values in, as (slot, then
+    value, else value), each checked to be a pair the if can choose.
+
+    An arm that left a slot as it was before the if is the short cut of
+    an ``and`` (a jump if false) or an ``or``: the slot holds the value
+    the jump tested, which is false, or true, in that arm."""
+    for slot, (a, b) in enumerate(zip(then_stack, emitter.stack, strict=False)):
+        if a is not b:
+            if slot < len(saved_stack):
+                kept = saved_stack[slot]
+                if a is kept:
+                    a = jump_if_true
+                elif b is kept:
+                    b = jump_if_true
+            if not bits_chosen(cond, a, b):
+                emitter._check_choosable("", a, b, prog, index, first, cond)
+            chosen.append((slot, a, b))
+
+
+def chosen_value(
+    emitter: PulseIREmitter,
+    cond: IRValue,
+    a: Any,
+    b: Any,
+    name: str,
+    line: int | None,
+    scope: tuple[int, ...],
+) -> Any:
+    """What an if on *cond* leaves where its arms left *a* and *b*: for
+    bools on answers, the condition ``cond and a or not cond and b``;
+    else the choice between them."""
+    if bits_chosen(cond, a, b):
+        return bit_select(AnswerValue(cond.vid, "i1", scope), a, b)
+    _watch_choices(emitter.b)
+    return _Choice(cond, a, b, name, line, scope)
+
+
+def filtered(emitter: PulseIREmitter, containers: list[tuple[Any, Any]]) -> bool:
+    """Whether the arm just traced added to what a comprehension or
+    generator expression builds."""
+    yielded = emitter.locals.get(".yielded")
+    return any(
+        len(obj) != len(copy)
+        for obj, copy in containers
+        if obj is yielded or any(obj is v for v in emitter.stack)
+    )

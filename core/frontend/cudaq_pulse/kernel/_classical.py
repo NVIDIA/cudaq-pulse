@@ -36,10 +36,7 @@ from .ir_builder import (
     AnswerValue,
     CompilationError,
     IRValue,
-    ParameterExpression,
-    SymbolicValueError,
     UndecidableComparison,
-    _UndecidableComparisons,
     contains_answer,
     is_symbolic,
 )
@@ -411,217 +408,6 @@ def take(builder: Any, future: Future, args: Sequence[Any], kwargs: dict[str, An
     return result
 
 
-class _NotMeasurement(_UndecidableComparisons):
-    """``not value`` for a measurement result, or for the ``i1`` IR value
-    a condition on answers is tested as, pending use as a condition."""
-
-    __slots__ = ("value",)
-
-    def __init__(self, value: Any):
-        self.value = value
-
-    def __bool__(self) -> bool:
-        raise CompilationError(
-            f"cannot decide {self!r} at trace time: it is known only when the program runs; "
-            "use it directly as an if condition"
-        )
-
-    def __eq__(self, other: object) -> UndecidableComparison:  # type: ignore[override]
-        return UndecidableComparison(_negated(self), "==", other)
-
-    def __ne__(self, other: object) -> UndecidableComparison:  # type: ignore[override]
-        return UndecidableComparison(_negated(self), "!=", other)
-
-    def __repr__(self) -> str:
-        return f"(not {self.value!r})"
-
-
-def _negated(value: _NotMeasurement) -> Any:
-    """``not`` of a condition on answers as the comparison it is; a
-    measurement's stays itself."""
-    inner = value.value
-    if _answer_bit(inner):
-        # The IR value carries no regions to check its uses against, so () checks none.
-        return UndecidableComparison(AnswerValue(inner.vid, "i1", ()), "==", False)
-    return value
-
-
-def _answer_bit(value: Any) -> bool:
-    """Whether *value* is the ``i1`` a condition on answers is tested as."""
-    return value.__class__ is IRValue and value.vtype == "i1"
-
-
-def _constant_bool(value: Any) -> Any:
-    """*value* if it is a bool (Python's or NumPy's) or the int 0 or 1, which
-    ``&``, ``|`` and ``^`` treat as one; else None."""
-    cls = value.__class__
-    if cls is bool or (cls is int and (value == 0 or value == 1)):
-        return value
-    if cls.__name__ == "bool" and cls.__module__ == "numpy":
-        return bool(value)
-    return None
-
-
-def measured(value: Any) -> bool:
-    """Whether the bool *value* is computed from a measurement result."""
-    cls = value.__class__
-    if cls is IRValue:
-        return bool(value.vtype == "measurement")
-    if cls is _NotMeasurement:
-        return measured(value.value)
-    if cls is UndecidableComparison:
-        return measured(value.lhs) or measured(value.rhs)
-    return False
-
-
-def is_condition(value: Any) -> bool:
-    """Whether *value* is a bool known only when the program runs that is
-    computed from answers or float arguments: a comparison, an answer bit,
-    or ``not`` of one."""
-    cls = value.__class__
-    if cls is UndecidableComparison:
-        return not measured(value)
-    if cls is AnswerValue:
-        return bool(value.dtype == "i1")
-    return cls is _NotMeasurement and _answer_bit(value.value)
-
-
-_LOGIC_WORDS = {"&": "and", "|": "or"}
-
-
-def bit_logic(symbol: str, lhs: Any, rhs: Any) -> Any:
-    """``lhs & rhs``, ``lhs | rhs`` or ``lhs ^ rhs``, as Python computes them
-    on bools, where one is known only when the program runs: the value
-    when the other operand decides it, else a condition traced as ``and``,
-    ``or`` or ``!=``. Measurement results and numbers raise."""
-    word = _LOGIC_WORDS.get(symbol)
-    for a, b in ((lhs, rhs), (rhs, lhs)):
-        constant = _constant_bool(a)
-        if constant is not None and is_condition(b):
-            if word is None:
-                return UndecidableComparison(b, "!=", constant)
-            # True | b and False & b are the constant; True & b and False | b are b.
-            return constant if constant == (word == "or") else b
-    if not (is_condition(lhs) and is_condition(rhs)):
-        if measured(lhs) or measured(rhs):
-            fix = (
-                "branch on a measurement result with `if result:` or `if not result:`, "
-                "combining results with `and`, `or` and `not` in the if condition"
-            )
-        else:
-            fix = (
-                f"`{symbol}` combines only conditions (comparisons and answer bits) and "
-                "True or False; bitwise operations on numbers known only when the program "
-                "runs are not supported"
-            )
-        raise CompilationError(
-            f"cannot trace {lhs!r} {symbol} {rhs!r}: it is known only when the program runs; " + fix
-        )
-    if lhs.__class__ is _NotMeasurement:
-        lhs = _negated(lhs)
-    if rhs.__class__ is _NotMeasurement:
-        rhs = _negated(rhs)
-    return UndecidableComparison(lhs, word or "!=", rhs)
-
-
-def bit_select(cond: AnswerValue, then: Any, other: Any) -> Any:
-    """*then* where the answer bit *cond* is set, else *other*: bools, at
-    least one known only when the program runs."""
-    if then is True:
-        return bit_logic("|", cond, other)
-    if other is False:
-        return bit_logic("&", cond, then)
-    unset = UndecidableComparison(cond, "==", False)
-    if then is False:
-        return bit_logic("&", unset, other)
-    if other is True:
-        return bit_logic("|", unset, then)
-    return bit_logic("|", bit_logic("&", cond, then), bit_logic("&", unset, other))
-
-
-def any_or_all(either: bool, items: list[Any] | tuple[Any, ...], error: CompilationError) -> Any:
-    """``any(items)`` if *either*, else ``all(items)``, where the truth of
-    some item, which raised *error*, is known only when the program runs:
-    an ``or`` (an ``and``) of the items' truth."""
-    found: Any = not either
-    for item in items:
-        if item.__class__ is AnswerValue and item.dtype != "i1":
-            item = UndecidableComparison(item, "!=", 0)
-        elif not is_condition(item):
-            if measured(item) or item.__class__ is IRValue:
-                raise error
-            if bool(item) == either:
-                return either
-            continue
-        found = bit_logic("|" if either else "&", found, item)
-    return found
-
-
-def runtime_value(value: Any) -> bool:
-    """Whether *value* is known only when the program runs, so that a set or
-    dict cannot look it up by its hash."""
-    cls = value.__class__
-    if cls is IRValue:
-        return bool(value.vtype == "measurement")
-    return cls is UndecidableComparison or cls is _NotMeasurement or is_symbolic(value)
-
-
-# Past this many items, `answer in range(...)` of a float answer is too
-# many comparisons; one of an integer answer is two whatever its length.
-_MAX_MEMBERS = 64
-
-
-def contains(left: Any, right: Any, error: CompilationError) -> Any:
-    """``left in right`` for a tuple, list or range *right*, where comparing
-    *left* with its items raised *error* because the outcome is known only
-    when the program runs: an ``or`` of the comparisons, as ``in`` tests
-    each item with ``is`` and ``==``."""
-    cls = right.__class__
-    if (
-        isinstance(error, SymbolicValueError)
-        or not (cls is tuple or cls is list or cls is range)
-        or measured(left)
-    ):
-        raise error
-    if cls is range and left.__class__ is AnswerValue and left.dtype == "i64":
-        start, stop, step = right.start, right.stop, right.step
-        if not right:
-            return False
-        if step > 0:
-            found: Any = UndecidableComparison(left >= start, "and", left < stop)
-        else:
-            found = UndecidableComparison(left <= start, "and", left > stop)
-        if step != 1 and step != -1:
-            offset = ParameterExpression("sub", left, start, dtype="i64")
-            remainder = ParameterExpression("mod", offset, abs(step), dtype="i64")
-            on_step = UndecidableComparison(remainder, "==", 0)
-            found = UndecidableComparison(found, "and", on_step)
-        return found
-    if len(right) > _MAX_MEMBERS:
-        raise CompilationError(
-            f"cannot trace {left!r} in a {cls.__name__} of {len(right)}: it is known only "
-            f"when the program runs, and `in` would compare it with each of more than "
-            f"{_MAX_MEMBERS} items; compare it with <, <= and == instead"
-        ) from error
-    found = False
-    for item in right:
-        if item is left:
-            return True
-        if (
-            left.__class__ is AnswerValue
-            and not isinstance(item, numbers.Real)
-            and _constant_bool(item) is None
-        ):
-            continue  # an answer is a number, equal to no other kind of value
-        term = left == item
-        if term.__class__ is bool:
-            if term:
-                return True
-            continue
-        found = term if found is False else UndecidableComparison(found, "or", term)
-    return found
-
-
 def is_answer_condition(value: Any) -> bool:
     """Whether *value* is a branch condition computed from an answer."""
     return isinstance(value, (AnswerValue, UndecidableComparison)) and contains_answer(value)
@@ -642,9 +428,16 @@ def condition(builder: Any, value: Any) -> IRValue:
                 # classical_compare rejects an answer bit before it records anything.
                 if value.lhs.dtype != "i1":
                     raise
+        from ._conditions import is_condition, measured
+
         lhs, rhs, op = value.lhs, value.rhs, value.op
         if measured(value):
-            raise CompilationError(_MEASURED_MESSAGE.format(value))
+            raise CompilationError(
+                f"cannot trace {value!r}: a measurement result is known only when the program "
+                "runs, and a comparison of it is not traced; branch on it directly with "
+                "`if result:` or `if not result:`, and combine results and answers with "
+                "`and`, `or` and `not` in the if condition"
+            )
         if op == "and" or op == "or":
             a = condition(builder, lhs).vid
             return IRValue(builder.compare_bits(op, a, condition(builder, rhs).vid), "i1")
@@ -656,7 +449,9 @@ def condition(builder: Any, value: Any) -> IRValue:
         if isinstance(lhs, IRValue) or isinstance(rhs, IRValue):
             raise CompilationError(f"cannot compare {value!r}: a pulse value is not a number")
         return IRValue(builder.classical_compare(op, lhs, rhs), "i1")
-    if value.__class__ is _NotMeasurement and _answer_bit(value.value):
+    from ._emitter import _NotMeasurement
+
+    if value.__class__ is _NotMeasurement and value.value.vtype == "i1":
         bit = value.value.vid
         return IRValue(builder.compare_bits("==", bit, builder.bit_constant(False)), "i1")
     raise CompilationError(f"cannot branch on {value!r}")
@@ -664,18 +459,13 @@ def condition(builder: Any, value: Any) -> IRValue:
 
 _NUMBERS = frozenset({int, float, bool})
 
-_MEASURED_MESSAGE = (
-    "cannot trace {0!r}: a measurement result is known only when the program runs, and "
-    "a comparison of it is not traced; branch on it directly with `if result:` or "
-    "`if not result:`, and combine results and answers with `and`, `or` and `not` in "
-    "the if condition"
-)
-
 
 def _compare_bits(builder: PackedIRBuilder, op: str, lhs: Any, rhs: Any) -> int:
     """The ``i1`` of *lhs* ``op`` *rhs*, one of them a bool known only when
     the program runs and the other such a bool or a number, as Python
     compares bools."""
+    from ._conditions import constant_bool, is_condition
+
     if op not in ("==", "!="):
         raise CompilationError(
             f"cannot order the conditions in ({lhs!r} {op} {rhs!r}), which are known only "
@@ -688,7 +478,7 @@ def _compare_bits(builder: PackedIRBuilder, op: str, lhs: Any, rhs: Any) -> int:
         if constant is None:
             return builder.bit_constant(op == "!=")
         if not isinstance(constant, numbers.Real):
-            given, constant = constant, _constant_bool(constant)
+            given, constant = constant, constant_bool(constant)
             if constant is None:
                 raise CompilationError(
                     f"cannot compare the condition {bit!r} with {given!r}; a condition "
