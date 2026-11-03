@@ -169,13 +169,23 @@ def _static_key(value: Any) -> Any:
 # ── Return values ────────────────────────────────────────────────────────
 
 
-class _Measured(NamedTuple):
-    readout: int
+class _Measured:
+    """A returned measurement: the ordinal of its readout."""
+
+    __slots__ = ("readout",)
+
+    def __init__(self, readout: int):
+        self.readout = readout
 
 
-class _Sequence(NamedTuple):
-    kind: type
-    items: tuple[Any, ...]
+class _Sequence:
+    """A returned list or tuple (*kind*) holding measurements."""
+
+    __slots__ = ("kind", "items")
+
+    def __init__(self, kind: type, items: tuple[Any, ...]):
+        self.kind = kind
+        self.items = items
 
 
 _NO_RETURN = object()
