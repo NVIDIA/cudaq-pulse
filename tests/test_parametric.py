@@ -22,6 +22,14 @@ import pytest
 from cudaq_pulse.kernel.ir_builder import Parameter
 
 from tests._handles import Q
+from tests._work import python_work
+
+
+def _seconds(fn) -> float:
+    t0 = time.perf_counter()
+    fn()
+    return time.perf_counter() - t0
+
 
 # ===========================================================================
 # Helper frequencies
@@ -622,20 +630,23 @@ class TestE2ESweeps:
             wf = gaussian(64, amp, 16.0)
             drive(d, wf)
 
-        # Full compile
-        t0 = time.perf_counter()
-        for _ in range(20):
+        def recompile():
             k.cache_clear()
             k.lower(Q[0], 0.1)
-        compile_ms = (time.perf_counter() - t0) * 1000 / 20
 
         # Parametric: compile once, evaluate many
         ck = pulse.compile(k)
-        t0 = time.perf_counter()
-        for i in range(20):
-            ck.lower(Q[0], amp=0.1 * (i + 1))
-        specialize_ms = (time.perf_counter() - t0) * 1000 / 20
+        amps = iter(0.1 * (i + 1) for i in range(10**6))
 
+        def specialize():
+            ck.lower(Q[0], amp=next(amps))
+
+        # The Python work, counted, and the best of twenty times.
+        work = {"compile": python_work(recompile), "specialize": python_work(specialize)}
+        assert work["specialize"]["lines"] < work["compile"]["lines"], work
+        compile_ms, specialize_ms = (
+            1000 * min(_seconds(fn) for _ in range(20)) for fn in (recompile, specialize)
+        )
         assert specialize_ms < compile_ms, (
             f"specialize ({specialize_ms:.2f}ms) should be faster than compile ({compile_ms:.2f}ms)"
         )

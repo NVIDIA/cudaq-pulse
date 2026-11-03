@@ -16,7 +16,10 @@ with ``--update-perf-baseline`` after an intentional change.
 
 Tests marked ``scaling`` compare two sizes of one program in one process
 (the work counted, time or peak memory), so they hold on any machine; CI
-fails on them.
+fails on them. The Python work of each size is counted, and must be the same
+or in proportion to the size; the times, which also take in native code, are
+the best of many and are bounded loosely enough that a loaded runner cannot
+fail them, while a cost that grows with the size still does.
 """
 
 from __future__ import annotations
@@ -45,6 +48,7 @@ from cudaq_pulse.kernel.packed_ir_builder import PackedIRBuilder
 from tests._handles import Q, ladder_target
 from tests._ir import python_ir
 from tests._tools import missing
+from tests._work import python_work
 from tests.kernel.ir_corpus import (
     bicycle_syndrome,
     dd_loop,
@@ -58,24 +62,57 @@ pytestmark = pytest.mark.benchmark
 _ROOT = Path(__file__).resolve().parents[1]
 BASELINE = _ROOT / "benchmarks" / "baselines" / "frontend_perf.json"
 TOLERANCE = 3.0
-# A rolled loop's cost must not grow with its trip count.
-FLAT_LOOP_LIMIT = 2.0
+# A rolled loop's cost must not grow with its trip count: loops of ROLLED_TRIPS
+# trips, a hundred thousand times apart, do the same Python work and take
+# times within FLAT_LOOP_LIMIT of each other. Native code that went over the
+# trips at a nanosecond each would add 10 ms, over 30 times a compile.
+ROLLED_TRIPS = (100, 10**7)
+FLAT_LOOP_LIMIT = 10.0
 # A build tree stages the package in build/<dir>/python and cudaq-pulse-opt
 # in build/<dir>/bin.
 _BUILD_BIN = Path(pulse.__file__).parent.parent.parent / "bin"
 
 
-def _best(fn: Callable[[], object], min_reps: int = 5, budget_s: float = 0.25) -> float:
+def _best(
+    fn: Callable[[], object],
+    min_reps: int = 5,
+    budget_s: float = 0.25,
+    clock: Callable[[], float] = time.perf_counter,
+) -> float:
     fn()
     best = float("inf")
     reps = 0
     deadline = time.perf_counter() + budget_s
     while reps < min_reps or (time.perf_counter() < deadline and reps < 2000):
-        t0 = time.perf_counter()
+        t0 = clock()
         fn()
-        best = min(best, time.perf_counter() - t0)
+        best = min(best, clock() - t0)
         reps += 1
     return best
+
+
+def _assert_flat(what: str, runs: dict[int, Callable[[], object]]) -> None:
+    """The run of each size in *runs* does the same Python work, and the
+    largest takes less than FLAT_LOOP_LIMIT times the smallest's time."""
+    small, large = min(runs), max(runs)
+    work = {n: python_work(runs[n]) for n in (small, large)}
+    seconds = {n: _best(runs[n], 20) for n in (small, large)}
+    assert work[large] == work[small], (what, work)
+    assert seconds[large] < seconds[small] * FLAT_LOOP_LIMIT, (what, seconds)
+
+
+def _assert_linear(what: str, runs: dict[int, Callable[[], object]], limit: float) -> None:
+    """The run of each size in *runs* does Python work in at most proportion
+    to its size, and the largest takes less than *limit* times the smallest's
+    CPU time; a cost quadratic in the size takes the ratio of sizes squared.
+    The runs take milliseconds, long enough for a loaded machine to stretch
+    their wall-clock times unevenly."""
+    small, large = min(runs), max(runs)
+    work = {n: python_work(runs[n]) for n in (small, large)}
+    seconds = {n: _best(runs[n], 5, clock=time.process_time) for n in (small, large)}
+    for count in work[small]:
+        assert work[large][count] <= work[small][count] * large / small, (what, work)
+    assert seconds[large] < seconds[small] * limit, (what, seconds)
 
 
 def _calibration() -> None:
@@ -262,7 +299,7 @@ def test_verify_does_constant_work_per_unused_line(tmp_path):
 @pytest.mark.scaling
 def test_compiling_a_kernel_that_reads_a_dict_is_flat_in_its_size():
     def program(n: int):
-        table = {f"entry{i}": [0.1, 40] for i in range(n)}
+        table = dict.fromkeys(map("entry{}".format, range(n)), [0.1, 40])
         namespace = {"table": table}
         exec(
             "def kernel(q):\n"
@@ -276,11 +313,10 @@ def test_compiling_a_kernel_that_reads_a_dict_is_flat_in_its_size():
         compiled.lower(Q[0])
         return lambda: pulse.compile(kernel).lower(Q[0]), lambda: compiled.lower(Q[0])
 
-    small, large = program(16), program(100_000)
-    compile_s = {"16": _best(small[0], 5, 0), "100000": _best(large[0], 5, 0)}
-    call_s = {"16": _best(small[1], 20, 0), "100000": _best(large[1], 20, 0)}
-    assert compile_s["100000"] < compile_s["16"] * FLAT_LOOP_LIMIT, compile_s
-    assert call_s["100000"] < call_s["16"] * FLAT_LOOP_LIMIT, call_s
+    # Copying a million entries, or hashing them, takes some 10 ms.
+    programs = {n: program(n) for n in (16, 10**6)}
+    _assert_flat("compile", {n: runs[0] for n, runs in programs.items()})
+    _assert_flat("call", {n: runs[1] for n, runs in programs.items()})
 
 
 @pytest.mark.scaling
@@ -295,11 +331,14 @@ def test_a_wide_sync_traces_in_linear_time():
             for line in lines:
                 drive(line, square(8, 0.1))
 
-        return lambda: pulse.compile(kernel).lower(wide[0:n]).metrics.trace_ms
+        return lambda: pulse.compile(kernel).lower(wide[0:n])
 
     # Eight times the lines: about 8x the time when linear, 64x when not.
-    times = {n: min(program(n)() for _ in range(3)) for n in (500, 4000)}
-    assert times[4000] < 8 * times[500] * FLAT_LOOP_LIMIT, times
+    runs = {n: program(n) for n in (500, 4000)}
+    work = {n: python_work(run) for n, run in runs.items()}
+    times = {n: min(run().metrics.trace_ms for _ in range(5)) for n, run in runs.items()}
+    assert all(work[4000][count] <= 8 * work[500][count] for count in work[500]), work
+    assert times[4000] < 16 * times[500], times
 
 
 @pytest.mark.scaling
@@ -315,8 +354,8 @@ def test_the_events_of_a_long_line_are_listed_in_linear_time():
         return pulse.compile(kernel, passes=("verify",), unroll_threshold=100_000).lower(Q[0])
 
     # Eight times the drives: about 10x the time when linear, 64x when not.
-    times = {n: _best(lambda m=program(n): m.schedule, 3, 0) for n in (2000, 16000)}  # noqa: B008
-    assert times[16000] < 8 * times[2000] * TOLERANCE, times
+    runs = {n: lambda m=program(n): m.schedule for n in (2000, 16000)}  # noqa: B008
+    _assert_linear("schedule", runs, 8 * TOLERANCE)
 
 
 @pytest.mark.scaling
@@ -347,8 +386,8 @@ def test_a_long_program_is_exported_and_checked_in_linear_time():
         return compiled.lower(Q[0])
 
     # Eight times the events: about 8x the time when linear, 64x when not.
-    times = {n: _best(program(n).export_controller, 3, 0) for n in (500, 4000)}
-    assert times[4000] < 8 * times[500] * TOLERANCE, times
+    runs = {n: program(n).export_controller for n in (500, 4000)}
+    _assert_linear("export", runs, 8 * TOLERANCE)
 
 
 def _sweep(compiled, sweep: list[float], monkeypatch) -> None:
@@ -405,17 +444,18 @@ def test_a_rolled_loop_is_checked_and_exported_rolled_in_constant_time():
 
         return kernel
 
-    compile_s, export_s, size = {}, {}, {}
-    for n in (100, 100_000):
+    compiles, exports, size = {}, {}, {}
+    for n in ROLLED_TRIPS:
         kernel = program(n)
-        compile_s[n] = _best(lambda k=kernel: pulse.compile(k, machine=machine).lower(Q[0]), 3, 0)
-        lowered = pulse.compile(kernel, machine=machine).lower(Q[0])
-        export_s[n] = _best(lambda m=lowered: m.export_controller(version=2), 3, 0)
+        compiles[n] = lambda k=kernel: pulse.compile(k, machine=machine).lower(Q[0])
+        lowered = compiles[n]()
+        exports[n] = lambda m=lowered: m.export_controller(version=2)
         size[n] = len(json.dumps(lowered.export_controller(version=2)))
-    # A thousand times the iterations: the same cost when the loop stays rolled.
-    assert compile_s[100_000] < compile_s[100] * FLAT_LOOP_LIMIT, compile_s
-    assert export_s[100_000] < export_s[100] * FLAT_LOOP_LIMIT, export_s
-    assert size[100_000] < size[100] + 64, size
+    # The same cost at any trip count when the loop stays rolled.
+    _assert_flat("compile", compiles)
+    _assert_flat("export", exports)
+    small, large = ROLLED_TRIPS
+    assert size[large] < size[small] + 64, size
 
 
 @pytest.mark.scaling
@@ -436,11 +476,8 @@ def test_duration_budgets_of_a_rolled_loop_are_checked_in_constant_time():
 
         return kernel
 
-    compile_s = {}
-    for n in (100, 100_000):
-        kernel = program(n)
-        compile_s[n] = _best(lambda k=kernel: pulse.compile(k).lower(Q[0]), 3, 0)
-    assert compile_s[100_000] < compile_s[100] * FLAT_LOOP_LIMIT, compile_s
+    runs = {n: lambda k=program(n): pulse.compile(k).lower(Q[0]) for n in ROLLED_TRIPS}  # noqa: B008
+    _assert_flat("compile", runs)
 
 
 @pytest.mark.scaling
@@ -460,12 +497,12 @@ def test_a_waveform_memory_of_a_rolled_loop_is_checked_in_constant_time():
 
         return kernel
 
-    check_s = {}
-    for n in (100, 100_000):
+    runs = {}
+    for n in ROLLED_TRIPS:
         lowered = pulse.compile(program(n)).lower(Q[0])
         assert check(lowered, limits) == []
-        check_s[n] = _best(lambda m=lowered: check(m, limits), 5)
-    assert check_s[100_000] < check_s[100] * FLAT_LOOP_LIMIT, check_s
+        runs[n] = lambda m=lowered: check(m, limits)
+    _assert_flat("check", runs)
 
 
 @pytest.mark.scaling
@@ -495,7 +532,8 @@ def test_exporting_a_call_again_does_not_specialize_again():
     values = iter(1e-3 * k for k in range(1, 10**6))
     new = _best(lambda: compiled.lower(Q[0], next(values)).export_controller(), 20)
     again = _best(lambda: compiled.lower(Q[0], 0.5).export_controller(), 20)
-    # Specializing is most of an export of new values.
+    assert compiled.lower(Q[0], 0.5)._concrete() is compiled.lower(Q[0], 0.5)._concrete()
+    # Specializing is most of an export of new values: about 3x the time.
     assert again < new / 1.5, (again, new)
 
 
@@ -584,18 +622,18 @@ def _classical_benchmarks():
 def test_calls_compile_schedule_and_report_in_linear_time():
     bench = _classical_benchmarks()
     q = bench._device().qudit_handles[0]
-    compile_s, report_s = {}, {}
+    compiles, reports = {}, {}
     for n in (1000, 8000):
         kernel = bench.many_calls(n, 4)
-        compile_s[n] = _best(lambda k=kernel: pulse.compile(k, schedule="asap").lower(q), 3, 0)
-        lowered = pulse.compile(kernel, schedule="asap").lower(q)
-        report_s[n] = _best(lowered.classical_report, 3, 0)
-        events_s = _best(lambda m=lowered: m.schedule, 3, 0)
+        compiles[n] = lambda k=kernel: pulse.compile(k, schedule="asap").lower(q)
+        lowered = compiles[n]()
+        reports[n] = lowered.classical_report
         assert len(lowered.classical_report()) == n
     # 8x the calls: linear is 8x, quadratic 64x.
-    assert compile_s[8000] < 16 * compile_s[1000], compile_s
-    assert report_s[8000] < 16 * report_s[1000], report_s
-    assert events_s < report_s[8000] * 4
+    _assert_linear("compile", compiles, 16)
+    _assert_linear("report", reports, 16)
+    events_s = _best(lambda m=lowered: m.schedule, 5)
+    assert events_s < _best(lowered.classical_report, 5) * 4
 
 
 def test_a_cached_kernel_that_calls_lowers_in_microseconds():
@@ -660,15 +698,15 @@ def test_walking_a_long_program_along_a_path_is_linear():
     # Every drive's frame comes from its tone, threaded through every op on
     # the line before it: following that chain back from each drive was
     # quadratic in the program's length.
-    walk, export = {}, {}
+    walks, exports = {}, {}
     for n in (500, 4000):
         lowered = _measured_line(n)
         module = lowered._concrete().simulation_module(*lowered.options.schedule_args())
-        walk[n] = _best(lambda m=module: m.next_measurement([]), 3, 0)
-        export[n] = _best(lowered.export_controller, 2, 0)
+        walks[n] = lambda m=module: m.next_measurement([])
+        exports[n] = lowered.export_controller
     # 8x the ops: linear is 8x, quadratic 64x.
-    assert walk[4000] < 16 * walk[500], walk
-    assert export[4000] < 16 * export[500], export
+    _assert_linear("walk", walks, 16)
+    _assert_linear("export", exports, 16)
 
 
 def test_a_long_idle_simulates_in_constant_time():

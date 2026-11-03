@@ -20,6 +20,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from tests._handles import Q
+from tests._work import python_work
 from tests.property_settings import examples
 
 POLICIES = ("asap", "alap", "rcp", "alap_rcp")
@@ -342,21 +343,28 @@ def _many(n, links):
 
 @pytest.mark.parametrize("links", [1, 4])
 def test_very_many_calls_schedule_in_linear_time(links):
-    # The best of three, in CPU time: one wall-clock sample per size failed
-    # on a loaded machine, where other processes stretch it.
-    timings = {}
+    # The Python work is counted, the same at any load. The time, which also
+    # takes in native code, is the best of five in CPU time: one wall-clock
+    # sample per size failed on a loaded machine.
+    timings, work = {}, {}
     for n in (500, 2000):
         kernel = _many(n, links)
+
+        def run(kernel=kernel):
+            return pulse.compile(kernel, schedule="asap").lower(Q[0])
+
+        work[n] = python_work(run)
         timings[n] = float("inf")
-        for _ in range(3):
+        for _ in range(5):
             t0 = time.process_time()
-            low = pulse.compile(kernel, schedule="asap").lower(Q[0])
+            low = run()
             timings[n] = min(timings[n], time.process_time() - t0)
         calls = low.classical_report()
         assert len(calls) == n
         # Each call waits for the previous drive; answers are due 41 later.
         assert calls[-1].due_cycles == calls[-1].submit_cycles + 1 + 40
     # 4x the calls in well under 16x the time (quadratic would be 16x).
+    assert all(work[2000][count] <= 4 * work[500][count] for count in work[500]), work
     assert timings[2000] < 8 * timings[500], timings
 
 
