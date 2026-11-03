@@ -141,6 +141,7 @@ def test_idle_zz_is_a_few_kilohertz(target):
     assert all(-7.5e3 < v < -4.4e3 for v in zz.values())
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("pair", [("X2", "D2"), ("Z1", "D1"), ("X2", "D4")])
 def test_a_coupled_pair_idles_with_its_dispersive_zz(target, pair):
     index = {q.label: i for i, q in target.qubits.items()}

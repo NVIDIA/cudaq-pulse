@@ -55,6 +55,7 @@ def _device(target):
     return dev, dev.qudit_handles[0]
 
 
+@pytest.mark.slow
 def test_the_pi_train_corrects_a_drive_amplitude_error():
     target = transmon_17q()
     dev, q = _device(target)
@@ -70,6 +71,7 @@ def test_the_pi_train_corrects_a_drive_amplitude_error():
         assert relative_sigma < 0.01
 
 
+@pytest.mark.slow
 def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
     base = transmon_17q()
     qubit = base.qubits[0]

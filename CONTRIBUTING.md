@@ -86,8 +86,10 @@ lit -sv build/dev/test/Dialect/Pulse        # one lit directory
 The markers are `gpu` (needs a GPU runtime; selecting one without a GPU
 fails instead of skipping), `physics` (everything in `tests/physics`),
 `nightly` (slow physics checks, skipped without `--run-nightly`),
-`benchmark` (timing guards, skipped without `--run-benchmarks`) and
-`scaling` (benchmarks that compare two sizes in one run). `tests/conftest.py`
+`benchmark` (timing guards, skipped without `--run-benchmarks`),
+`scaling` (benchmarks that compare two sizes in one run) and `slow` (tests
+that spend seconds in native code or child processes, which the sanitizer job
+leaves out). `tests/conftest.py`
 sets `CUDAQ_PULSE_TARGET=ladder:8192` for the whole session. Tests run with
 the default unroll threshold; a test of a rolled loop of a few iterations
 passes `unroll_threshold=` to `pulse.compile` or `@pulse.kernel`.
@@ -156,12 +158,13 @@ the Python suite; the thread build runs `check-pulse-runtime`, whose GPU
 runtime host test evolves runs concurrently. Under address and undefined
 behavior, `check-pulse-mlir` and `check-pulse-runtime` block a merge. The
 Python suite there and the thread build are informational until the MLIR
-toolchain is built with the sanitizers too. For the Python suite, preload the
-runtimes into the uninstrumented interpreter:
+toolchain is built with the sanitizers too; it leaves out the tests marked
+`slow` and stops after 40 minutes. For the Python suite, preload the runtimes
+into the uninstrumented interpreter:
 
 ```bash
 LD_PRELOAD="$(gcc -print-file-name=libasan.so):$(gcc -print-file-name=libubsan.so)" \
-ASAN_OPTIONS=detect_leaks=0 PYTHONPATH=build/san/python python -m pytest tests -m "not gpu"
+ASAN_OPTIONS=detect_leaks=0 PYTHONPATH=build/san/python python -m pytest tests -m "not gpu and not slow"
 ```
 
 ## Benchmarks

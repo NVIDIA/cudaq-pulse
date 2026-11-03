@@ -13,6 +13,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
+
 _TESTS = Path(__file__).resolve().parent
 
 
@@ -26,6 +28,7 @@ def test_every_registered_marker_is_used():
     assert registered <= used
 
 
+@pytest.mark.slow
 def test_the_nightly_physics_selection_runs_every_physics_test():
     def collected(*args):
         out = subprocess.run(

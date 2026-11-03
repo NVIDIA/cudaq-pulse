@@ -242,6 +242,7 @@ def test_kept_steps_hold_no_target_and_go_with_it(steps):
     assert not ids & simulate_module._WATCHED.keys()
 
 
+@pytest.mark.slow
 def test_kept_steps_stay_few_over_many_steps_and_targets():
     lowered = on(_target(), _flip, Q[0])
     for i in range(2 * simulate_module._MAX_STEPS):

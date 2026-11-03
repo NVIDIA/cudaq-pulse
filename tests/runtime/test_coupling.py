@@ -141,6 +141,7 @@ def test_detuned_pair_follows_the_generalized_rabi_formula(levels):
     np.testing.assert_allclose(swapped, expected, atol=1e-7)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("levels", [2, 3])
 def test_transmons_detuned_by_gigahertz_stay_put(levels):
     # A data qubit and an ancilla of a surface-code device: 2 GHz apart,
@@ -155,6 +156,7 @@ def test_two_level_exchange_has_no_zz():
     assert abs(zeta) < 1.0
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "f0, f1, g_hz, t_ns, dt_ns",
     [
@@ -218,6 +220,7 @@ def test_a_kind_of_coupling_the_simulator_does_not_model_is_refused():
         pulse.simulate(_lowered(_kinded_pair("dipolar")))
 
 
+@pytest.mark.slow
 def test_an_exchange_kind_is_the_plain_coupling():
     plain = _pair(5.0e9, 5.5e9, g_hz=1.0e5)
     kinded = _kinded_pair("exchange")

@@ -227,6 +227,7 @@ def test_a_program_without_delays_is_traced_as_before():
     assert not _retimed(pulse.compile(kernel, machine=machine).lower(Q[0], Q[1]))
 
 
+@pytest.mark.slow
 def test_new_delays_schedule_the_matrix_again_to_the_same_bytes():
     from tests.classical import _schedule_matrix as matrix
 

@@ -341,6 +341,7 @@ def _many(n, links):
     return k
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("links", [1, 4])
 def test_very_many_calls_schedule_in_linear_time(links):
     # The Python work is counted, the same at any load. The time, which also

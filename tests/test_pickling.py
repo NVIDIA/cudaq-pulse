@@ -831,6 +831,7 @@ print(json.dumps([_per_controller(program) for program in programs]))
 """
 
 
+@pytest.mark.slow
 def test_another_process_exports_each_controllers_program_compiled_here():
     programs = list(_multi_controller_programs().values())
     env = dict(os.environ, PYTHONPATH=os.pathsep.join(sys.path))
