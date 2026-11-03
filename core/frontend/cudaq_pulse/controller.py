@@ -98,6 +98,9 @@ if TYPE_CHECKING:
     from ._controller_cost import usage as usage
     from ._system import Controller, ControlSystem
     from .compiler import Lowered
+
+    # The real and the imaginary parts of a waveform's samples.
+    _Samples = tuple[list[float], list[float]]
 else:
     from ._errors import _dataclass_when_used
 
@@ -819,73 +822,80 @@ def sample_waveform(
     evaluate: a ``pulse.custom`` op of hand-written IR, whose samples the
     runtime computes, or one whose parameters are not numbers.
     """
-    return _sample(node, duration_cycles, _exact(samples_per_cycle))
-
-
-def _sample(node: Mapping[str, Any], duration_cycles: int, ratio: Fraction | int) -> np.ndarray:
     import numpy as np
 
-    per, over = ratio.numerator, ratio.denominator
-    if over == 1:
-        count = int(duration_cycles) * per
-        t = np.arange(count, dtype=float) / per
-    else:
-        if int(duration_cycles) * per % over:
-            raise InvalidValueError(
-                f"{duration_cycles} cycles at {per / over:g} samples per cycle is "
-                f"{int(duration_cycles) * per / over:g} samples, not a whole number"
-            )
-        count = int(duration_cycles) * per // over
-        t = np.arange(count, dtype=float) / (per / over)
+    real, imag = _sample(node, duration_cycles, _exact(samples_per_cycle))
+    samples = np.empty(len(real), complex)
+    samples.real = real
+    samples.imag = imag
+    return samples
 
-    def evaluate(node: Mapping[str, Any]) -> Any:
+
+def _sample(node: Mapping[str, Any], duration_cycles: int, ratio: Fraction | int) -> _Samples:
+    """``sample_waveform``'s samples at *ratio* samples per cycle, as the
+    lists of floats the export writes: the simulator's own envelopes,
+    sampled natively, without NumPy."""
+    # Absolute, so that the import costs no relative name's resolution.
+    from cudaq_pulse._native._cudaq_pulse_native import sample_envelope
+
+    # The kinds of the simulator's waveform callbacks (WaveformCallback.h).
+    kinds = {
+        "gaussian": 2,
+        "drag": 3,
+        "cosine": 4,
+        "tanh_ramp": 5,
+        "gaussian_square": 6,
+        "custom_samples": 7,
+    }
+    per, over = ratio.numerator, ratio.denominator
+    if int(duration_cycles) * per % over:
+        raise InvalidValueError(
+            f"{duration_cycles} cycles at {per / over:g} samples per cycle is "
+            f"{int(duration_cycles) * per / over:g} samples, not a whole number"
+        )
+    count = int(duration_cycles) * per // over
+    rate = per if over == 1 else per / over
+
+    def evaluate(node: Mapping[str, Any]) -> _Samples:
         shape = node["shape"]
         children = [evaluate(child) for child in node.get("of", ())]
         params = node.get("params", {})
-        if shape == "scale":
-            return children[0] * params["factor"]
+        if shape == "scale" and isinstance(params["factor"], (int, float)):
+            (re, im), factor = children[0], params["factor"]
+            return [x * factor for x in re], [y * factor for y in im]
         if shape == "neg":
-            return -children[0]
-        if shape == "add":
-            return children[0] + children[1]
-        if shape == "sub":
-            return children[0] - children[1]
+            re, im = children[0]
+            return [-x for x in re], [-y for y in im]
+        if shape in ("add", "sub"):
+            (are, aim), (bre, bim) = children
+            sign = 1.0 if shape == "add" else -1.0
+            return [x + sign * y for x, y in zip(are, bre, strict=True)], [
+                x + sign * y for x, y in zip(aim, bim, strict=True)
+            ]
         if shape == "mul":
-            return children[0] * children[1]
+            (are, aim), (bre, bim) = children
+            return (
+                [ar * br - ai * bi for ar, ai, br, bi in zip(are, aim, bre, bim, strict=True)],
+                [ar * bi + ai * br for ar, ai, br, bi in zip(are, aim, bre, bim, strict=True)],
+            )
+        # The callback's parameters: start, duration, amplitude (real and
+        # imaginary), sigma, beta, risefall, then the phase, quadrature and
+        # rotation an envelope leaves at 0, then any samples.
         if shape == "custom_samples":
-            values = np.asarray(node["samples"], dtype=float)
-            if not len(values):
-                return np.zeros(count, complex)
-            index = (t * len(values) / max(duration_cycles, 1)).astype(int)
-            return values[np.minimum(index, len(values) - 1)].astype(complex)
+            held = (0.0, max(duration_cycles, 1), *[0.0] * 8, *node["samples"])
+            return sample_envelope(kinds[shape], held, count, rate)
         if shape not in _AMPLITUDES or any(
             not isinstance(v, (int, float)) for v in params.values()
         ):
             raise ValueError(f"cannot sample a {shape!r} waveform without numeric parameters")
-        d = params["duration"]
-        a = params["amplitude"]
-        centered = t - d / 2.0
         if shape == "square":
-            return np.full(count, complex(a, params["amplitude_imag"]))
-        if shape == "gaussian":
-            return (a * np.exp(-0.5 * centered**2 / params["sigma"] ** 2)).astype(complex)
-        if shape == "drag":
-            sigma = params["sigma"]
-            g = a * np.exp(-0.5 * centered**2 / sigma**2)
-            return g - 1j * params["beta"] * centered * g / sigma**2
-        if shape == "cosine":
-            return (a * 0.5 * (1.0 - np.cos(2.0 * math.pi * t / d))).astype(complex)
-        if shape == "tanh_ramp":
-            return (a * 0.5 * (1.0 + np.tanh((t - d / 2.0) / params["sigma"]))).astype(complex)
-        sigma, edge = params["sigma"], params["risefall"]
-        out = np.full(count, complex(a))
-        rise = t < edge
-        fall = t >= d - edge
-        out[rise] = a * np.exp(-0.5 * (t[rise] - edge) ** 2 / sigma**2)
-        out[fall] = a * np.exp(-0.5 * (t[fall] - (d - edge)) ** 2 / sigma**2)
-        return out
+            return [float(params["amplitude"])] * count, [float(params["amplitude_imag"])] * count
+        get = params.get
+        shaped = (get("sigma", 0.0), get("beta", 0.0), get("risefall", 0.0))
+        envelope = (0.0, get("duration"), get("amplitude"), 0.0, *shaped, 0.0, 0.0, 0.0)
+        return sample_envelope(kinds[shape], envelope, count, rate)
 
-    return np.asarray(evaluate(node), dtype=complex)
+    return evaluate(node)
 
 
 # ── Export ───────────────────────────────────────────────────────────────────
@@ -1701,11 +1711,11 @@ def _add_samples(
         key = (id(tree), duration)
         if key not in sampled:
             try:
-                samples = _sample(tree, duration, ratio)
+                real, imag = _sample(tree, duration, ratio)
             except ValueError as e:
                 where = event.get("index", "of waveform")
                 raise ValueError(f"event {where} ({event['kind']}): {e}") from None
-            sampled[key] = {"re": samples.real.tolist(), "im": samples.imag.tolist()}
+            sampled[key] = {"re": real, "im": imag}
         if waveforms is None:
             event["samples"] = sampled[key]
         else:

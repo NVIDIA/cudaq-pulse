@@ -101,6 +101,22 @@ def test_exports_load_no_heavy_module(tmp_path):
     assert _loaded(code, tmp_path) == []
 
 
+def test_sampled_exports_load_no_heavy_module(tmp_path):
+    # The export samples envelopes natively; only sample_waveform, which
+    # returns an array, loads numpy.
+    code = (
+        _PROGRAM
+        + "rate = 2 * dev.clock_ghz\n"
+        + "low.export_controller(sample_rate_ghz=rate)\n"
+        + "low.export_controller(sample_rate_ghz=rate, version=2)\n"
+    )
+    assert _loaded(code, tmp_path) == []
+    sample = code + "from cudaq_pulse.controller import sample_waveform\n"
+    sample += "sample_waveform({'shape': 'neg', 'of': [{'shape': 'custom_samples',"
+    sample += " 'samples': [0.5]}]}, 4)\n"
+    assert _loaded(sample, tmp_path, ("numpy",)) == ["numpy"]
+
+
 def test_a_device_with_a_control_system_loads_no_heavy_module(tmp_path):
     code = (
         "import sys\nimport cudaq_pulse as p\n"

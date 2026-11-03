@@ -30,6 +30,71 @@ namespace cudaq_pulse {
 constexpr int32_t kTrainFlag = 0x100;
 constexpr size_t kWaveformHeader = 10;
 
+/// The complex envelope at `localTime` from the start of a pulse of `kind`
+/// (without kTrainFlag), whose samples, if any, are p[samples, size); zero
+/// outside its duration. Returns nonzero for an unknown kind.
+inline int32_t evaluateEnvelope(int32_t kind, const double *p, size_t samples,
+                                size_t size, double localTime, double &real,
+                                double &imaginary) {
+  real = 0.0;
+  imaginary = 0.0;
+  const double duration = p[1];
+  if (!(localTime >= 0.0 && localTime < duration && duration > 0.0))
+    return 0;
+  const double centered = localTime - duration / 2.0;
+  switch (kind) {
+  case 1: // square
+    real = p[2];
+    imaginary = p[3];
+    break;
+  case 2: { // Gaussian
+    const double gaussian =
+        std::exp(-0.5 * centered * centered / (p[4] * p[4]));
+    real = p[2] * gaussian;
+    break;
+  }
+  case 3: { // DRAG: Gaussian plus beta times its derivative.
+    const double gaussian =
+        std::exp(-0.5 * centered * centered / (p[4] * p[4]));
+    real = p[2] * gaussian;
+    imaginary = -p[5] * centered * real / (p[4] * p[4]);
+    break;
+  }
+  case 4: // raised cosine
+    real = p[2] * 0.5 * (1.0 - std::cos(2.0 * M_PI * localTime / duration));
+    break;
+  case 5: // smooth tanh ramp from zero to the requested amplitude
+    real = p[2] * 0.5 * (1.0 + std::tanh((localTime - duration / 2.0) / p[4]));
+    break;
+  case 6: { // Gaussian-square
+    const double edge = p[6];
+    if (localTime < edge) {
+      const double x = localTime - edge;
+      real = p[2] * std::exp(-0.5 * x * x / (p[4] * p[4]));
+    } else if (localTime >= duration - edge) {
+      const double x = localTime - (duration - edge);
+      real = p[2] * std::exp(-0.5 * x * x / (p[4] * p[4]));
+    } else {
+      real = p[2];
+    }
+    break;
+  }
+  case 7: { // custom samples, held piecewise constant over the duration
+    const size_t sampleCount = size - samples;
+    if (sampleCount > 0) {
+      const auto index =
+          std::min(sampleCount - 1,
+                   static_cast<size_t>(localTime * sampleCount / duration));
+      real = p[samples + index];
+    }
+    break;
+  }
+  default:
+    return 3;
+  }
+  return 0;
+}
+
 /// The X or Y coefficient at `time`; returns nonzero on bad parameters.
 inline int32_t evaluateWaveform(int32_t kind, const double *p, size_t size,
                                 double time, double &value) {
@@ -58,63 +123,11 @@ inline int32_t evaluateWaveform(int32_t kind, const double *p, size_t size,
     }
     kind &= ~kTrainFlag;
   }
-  const double duration = p[1];
   double real = 0.0;
   double imaginary = 0.0;
-  if (localTime >= 0.0 && localTime < duration && duration > 0.0) {
-    const double centered = localTime - duration / 2.0;
-    switch (kind) {
-    case 1: // square
-      real = p[2];
-      imaginary = p[3];
-      break;
-    case 2: { // Gaussian
-      const double gaussian =
-          std::exp(-0.5 * centered * centered / (p[4] * p[4]));
-      real = p[2] * gaussian;
-      break;
-    }
-    case 3: { // DRAG: Gaussian plus beta times its derivative.
-      const double gaussian =
-          std::exp(-0.5 * centered * centered / (p[4] * p[4]));
-      real = p[2] * gaussian;
-      imaginary = -p[5] * centered * real / (p[4] * p[4]);
-      break;
-    }
-    case 4: // raised cosine
-      real = p[2] * 0.5 * (1.0 - std::cos(2.0 * M_PI * localTime / duration));
-      break;
-    case 5: // smooth tanh ramp from zero to the requested amplitude
-      real =
-          p[2] * 0.5 * (1.0 + std::tanh((localTime - duration / 2.0) / p[4]));
-      break;
-    case 6: { // Gaussian-square
-      const double edge = p[6];
-      if (localTime < edge) {
-        const double x = localTime - edge;
-        real = p[2] * std::exp(-0.5 * x * x / (p[4] * p[4]));
-      } else if (localTime >= duration - edge) {
-        const double x = localTime - (duration - edge);
-        real = p[2] * std::exp(-0.5 * x * x / (p[4] * p[4]));
-      } else {
-        real = p[2];
-      }
-      break;
-    }
-    case 7: { // custom samples, held piecewise constant over the duration
-      const size_t sampleCount = size - samples;
-      if (sampleCount > 0) {
-        const auto index =
-            std::min(sampleCount - 1,
-                     static_cast<size_t>(localTime * sampleCount / duration));
-        real = p[samples + index];
-      }
-      break;
-    }
-    default:
-      return 3;
-    }
-  }
+  if (int32_t status =
+          evaluateEnvelope(kind, p, samples, size, localTime, real, imaginary))
+    return status;
 
   const double angle = phase + p[9] * localTime;
   const double cosine = std::cos(angle);

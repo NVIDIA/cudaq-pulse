@@ -6091,6 +6091,31 @@ NB_MODULE(_cudaq_pulse_native, m) {
       nb::arg("kind"), nb::arg("params"), nb::arg("times"));
 
   m.def(
+      "sample_envelope",
+      [](int32_t kind, const std::vector<double> &params, size_t count,
+         double rate) {
+        if (params.size() < cudaq_pulse::kWaveformHeader)
+          throw std::invalid_argument("too few envelope parameters");
+        std::pair<std::vector<double>, std::vector<double>> parts;
+        auto &[real, imaginary] = parts;
+        real.resize(count);
+        imaginary.resize(count);
+        for (size_t k = 0; k < count; ++k)
+          if (cudaq_pulse::evaluateEnvelope(
+                  kind, params.data(), cudaq_pulse::kWaveformHeader,
+                  params.size(), static_cast<double>(k) / rate, real[k],
+                  imaginary[k]))
+            throw std::invalid_argument("unknown envelope kind");
+        return parts;
+      },
+      nb::call_guard<nb::gil_scoped_release>(),
+      "The real and imaginary parts of an envelope (a callback's kind and "
+      "parameters) at count times k / rate from its start",
+      nb::arg("kind"), nb::arg("params"), nb::arg("count"), nb::arg("rate"),
+      nb::sig("def sample_envelope(kind: int, params: Sequence[float], count: "
+              "int, rate: float) -> tuple[list[float], list[float]]"));
+
+  m.def(
       "identity_keys",
       [](nb::dict mapping, nb::handle first, nb::handle second) {
         PyObject *key = nullptr;
