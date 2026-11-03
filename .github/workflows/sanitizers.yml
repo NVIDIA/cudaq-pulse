@@ -88,13 +88,15 @@ jobs:
         run: uv run --no-sync cmake --build build/san --target check-pulse-mlir
 
       # The interpreter is not instrumented, so the sanitizer runtimes are
-      # preloaded for the extension module. Output is captured at the Python
-      # level only, so a sanitizer or LLVM report that aborts the process
-      # reaches the log. Tests marked slow, which spend seconds in native code
-      # each and run in the other jobs, are left out: under the sanitizers one
-      # took over an hour. The suite is stopped after 40 minutes as a failure
-      # of this step, which does not fail the job, so it can never run into
-      # the job's limit and cancel it.
+      # preloaded for the extension module; child interpreters and
+      # cudaq-pulse-opt inherit them, while the tests run other tools, such
+      # as pyright's node, without them (tool_env in tests/_tools.py). Output
+      # is captured at the Python level only, so a sanitizer or LLVM report
+      # that aborts the process reaches the log. Tests marked slow, which
+      # spend seconds in native code each and run in the other jobs, are left
+      # out: under the sanitizers one took over an hour. The suite is stopped
+      # after 40 minutes as a failure of this step, which does not fail the
+      # job, so it can never run into the job's limit and cancel it.
       - name: Python suite
         if: matrix.sanitizers != 'thread'
         continue-on-error: true

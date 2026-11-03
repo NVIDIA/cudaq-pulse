@@ -28,7 +28,7 @@ import cudaq_pulse
 import pytest
 from cudaq_pulse import ops
 
-from tests._tools import missing
+from tests._tools import missing, tool_env
 
 _ROOT = Path(__file__).resolve().parents[2]
 _EXAMPLES = [
@@ -112,7 +112,7 @@ def pyright(
     run = subprocess.run(
         [exe, "-p", str(config), "--pythonpath", sys.executable, "--outputjson", *map(str, files)],
         cwd=work,
-        env=_env(),
+        env=tool_env(_env()),
         capture_output=True,
         text=True,
         timeout=600,

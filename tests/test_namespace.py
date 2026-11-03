@@ -14,6 +14,8 @@ import sys
 import cudaq_pulse as pulse
 import pytest
 
+from tests._tools import tool_env
+
 TOP_LEVEL = {
     "kernel",
     "Kernel",
@@ -231,7 +233,10 @@ def test_tracked_files_have_no_neutral_atom_remnants():
     root = Path(__file__).resolve().parents[1]
     try:
         listed = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=True
+            ["git", "-C", str(root), "ls-files", "-z"],
+            env=tool_env(),
+            capture_output=True,
+            check=True,
         ).stdout
     except (OSError, subprocess.CalledProcessError):
         pytest.skip("needs a git checkout")

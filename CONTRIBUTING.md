@@ -160,7 +160,9 @@ behavior, `check-pulse-mlir` and `check-pulse-runtime` block a merge. The
 Python suite there and the thread build are informational until the MLIR
 toolchain is built with the sanitizers too; it leaves out the tests marked
 `slow` and stops after 40 minutes. For the Python suite, preload the runtimes
-into the uninstrumented interpreter:
+into the uninstrumented interpreter; tests that run a tool other than Python
+or cudaq-pulse-opt (pyright, git, a C compiler) remove them from its
+environment with `tool_env` (`tests/_tools.py`):
 
 ```bash
 LD_PRELOAD="$(gcc -print-file-name=libasan.so):$(gcc -print-file-name=libubsan.so)" \

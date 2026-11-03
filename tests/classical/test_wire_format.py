@@ -37,7 +37,7 @@ from cudaq_pulse.classical import (
     wire,
 )
 
-from tests._tools import c_compiler
+from tests._tools import c_compiler, tool_env
 
 
 def _schema_function(name, args=(), results=(), body=None):
@@ -205,7 +205,9 @@ def handler_library(tmp_path_factory):
     source = directory / "parity.c"
     source.write_text(_C_HANDLER)
     library = directory / "libparity.so"
-    subprocess.run([compiler, "-shared", "-fPIC", "-o", str(library), str(source)], check=True)
+    subprocess.run(
+        [compiler, "-shared", "-fPIC", "-o", str(library), str(source)], env=tool_env(), check=True
+    )
     return str(library)
 
 
