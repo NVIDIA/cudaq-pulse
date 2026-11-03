@@ -17,10 +17,11 @@ what a CUDA-Q Realtime dispatcher's function table holds.
 without physics: measurement outcomes come from a source, each call is sent
 as a real request (``wire``) over a channel to a service, and the answer
 comes back after the modelled transport delay plus the service's measured
-time. An answer later than its budget takes the timeout arm of a wait with a
-timeout, and is recorded as late otherwise. Answers are bound to the shot as
-in simulation, so variable waits get their real lengths and later epochs
-shift accordingly.
+time. Its budget is what the compiled program allows: it is in time if it
+arrives the link's feedback time before it is due. A late answer takes the
+timeout arm of a wait with a timeout, and is recorded as late otherwise.
+Answers are bound to the shot as in simulation, so variable waits get their
+real lengths and later epochs shift accordingly.
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ from .._errors import (
 )
 from ..compiler import _dispatch_keys
 from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
-from . import ClassicalFunction, Link, _handlers_for, wire
+from . import ClassicalFunction, _handlers_for, wire
 
 if TYPE_CHECKING:
     import numpy as np
@@ -272,7 +273,11 @@ class UdpChannel:
 
 @dataclass(frozen=True)
 class CallTrace:
-    """One call in an emulated shot. Times in ns of the shot's timeline."""
+    """One call in an emulated shot. Times in ns of the shot's timeline.
+
+    ``budget_ns`` is how long after ``submit_ns`` the answer may arrive: until
+    it is due, less the link's feedback time. ``in_time`` is whether
+    ``latency_ns`` is within it."""
 
     function: str
     submit_ns: float
@@ -301,12 +306,6 @@ class EmulationResult:
     def calls_per_second(self) -> float:
         n = sum(len(shot) for shot in self.calls)
         return n / self.wall_s if self.wall_s > 0 else math.inf
-
-
-def _budget_ns(function: ClassicalFunction[..., Any], timeout_ns: float, link: Link) -> float:
-    limit = timeout_ns if timeout_ns >= 0 else function.timeout_ns
-    base = function.max_latency_ns if limit is None else limit
-    return base + link.feedback_ns
 
 
 def emulate(
@@ -345,6 +344,7 @@ def emulate(
     machine = lowered.options.machine
     schedule_args = lowered.options.schedule_args()
     base = lowered._concrete().simulation_module(*schedule_args)
+    due_ns = base.call_due_ns()
     clock = lowered.target.clock_ghz
     iq_model = (
         IQModel(lowered.target.target, lowered.qudits, decay=False)
@@ -388,6 +388,10 @@ def emulate(
             if call is not None and call_at < measure_at - 1e-9:
                 index, start, callee, arguments, answered, timeout = call
                 fn = by_name[callee]
+                link = machine.link(fn.link)
+                # The answer is in time if it arrives the link's feedback
+                # time before it is due, so the pulses that use it can.
+                budget = due_ns[index] - link.feedback_ns
                 known = {key: k for key, k in path}
                 point = None
                 if iq_model is not None and takes_iq(fn):
@@ -405,7 +409,6 @@ def emulate(
                 if fn.uniform is not None:
                     # An on-device source: the controller answers, not a link.
                     value = int(rng.integers(fn.uniform))
-                    budget = _budget_ns(fn, timeout, machine.link(fn.link))
                     traces.append(
                         CallTrace(callee, start, fn.nominal_latency_ns, budget, True, (), value)
                     )
@@ -416,7 +419,6 @@ def emulate(
                 status, answered_id, answer = wire.decode_answer(fn, answer_bytes)
                 if status != 0:
                     raise wire.call_failed(callee, answered_id, status)
-                link = machine.link(fn.link)
                 path_transport = transport_of(machine.link_id(fn.link))
                 if answered_id != request_id:
                     from .._errors import ExecutionError
@@ -433,7 +435,6 @@ def emulate(
                 )
                 if service_time == "measured":
                     latency += service_ns
-                budget = _budget_ns(fn, timeout, link)
                 in_time = latency <= budget
                 traces.append(CallTrace(callee, start, latency, budget, in_time, inputs, answer))
                 if not answered:

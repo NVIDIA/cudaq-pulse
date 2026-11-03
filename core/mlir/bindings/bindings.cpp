@@ -3372,6 +3372,21 @@ public:
     return next;
   }
 
+  /// Per call, by the submit index `next_call` gives, the ns from its start
+  /// until its answer is due.
+  std::vector<double> call_due_ns() {
+    std::lock_guard<std::recursive_mutex> guard(*lock_);
+    double clockGHz = clock();
+    std::vector<double> due;
+    module_->walk([&](classical::SubmitOp submit) {
+      mlir::Operation *op = submit.getOperation();
+      int64_t cycles = pulse::scheduledDuration(op).value_or(1) +
+                       classical::intAttr(op, "classical.budget_cycles");
+      due.push_back(static_cast<double>(cycles) / clockGHz);
+    });
+    return due;
+  }
+
   /// This module with the answer `values` bound to execution `index` of a
   /// call (an empty `values` for a call whose answer is not taken), folded
   /// and scheduled again with `policy`.
@@ -6277,6 +6292,9 @@ NB_MODULE(_cudaq_pulse_native, m) {
            "This module with loops holding calls unrolled, for simulation")
       .def("next_call", &PulseModule::next_call, nb::arg("path"),
            "The first call on a path whose answer is not bound yet")
+      .def("call_due_ns", &PulseModule::call_due_ns,
+           "Per call, by its submit index, the ns from its start until its "
+           "answer is due")
       .def("bind_call", &PulseModule::bind_call,
            "This module with one call's answer bound, scheduled again")
       .def("placeholders", &PulseModule::placeholders,

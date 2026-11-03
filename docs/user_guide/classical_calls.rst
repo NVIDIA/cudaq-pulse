@@ -420,7 +420,9 @@ function's dispatch key, link, payload sizes, latency and slots).
 virtual time without physics. Outcomes come from a source you give; each
 call goes out as real wire bytes, in process or over UDP to a server from
 ``serve_udp``; and its answer arrives after a modelled transport delay in
-each direction plus the service's measured time. A late answer takes the
+each direction plus the service's measured time. It is in time if it arrives
+by the time the compiled program allows: the link's feedback time before it
+is due (``classical_report()``'s ``due_cycles``). A late answer takes the
 timeout arm.
 
 .. code-block:: python

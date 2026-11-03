@@ -109,7 +109,26 @@ def test_late_answers_take_the_timeout_arm_at_the_modelled_rate():
         expected, abs=4 * math.sqrt(expected * (1 - expected) / 4000)
     )
     assert all(len(shot) == 1 for shot in result.calls)
-    assert all(c.budget_ns == 500 for shot in result.calls for c in shot)
+    # The timeout, and the cycle the request takes on the link.
+    (call,) = low.classical_report()
+    due_ns = (call.due_cycles - call.submit_cycles) / low.target.clock_ghz
+    assert due_ns == 500 + 1 / low.target.clock_ghz
+    assert all(c.budget_ns == due_ns for shot in result.calls for c in shot)
+
+
+@pytest.mark.parametrize("arrival_ns", [602, 603])
+def test_an_answer_is_in_time_when_the_compiled_program_can_use_it(arrival_ns):
+    # The request holds the link 100 + 25 / 10 ns, then the 500 ns timeout and
+    # the feedback: due 652.5 ns after the submission, usable if it arrives by 602.5.
+    machine = MachineModel(links={0: Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50)})
+    low = pulse.compile(feedback, machine=machine).lower(Q[0])
+    (call,) = low.classical_report()
+    assert (call.due_cycles - call.submit_cycles) / low.target.clock_ghz == 652.5
+    transport = emulation.Transport(fixed_ns=arrival_ns / 2)
+    result = emulation.emulate(low, shots=4, transport=transport, service_time="none", seed=1)
+    for (trace,) in result.calls:
+        assert trace.latency_ns == arrival_ns and trace.budget_ns == 602.5
+        assert trace.in_time is (arrival_ns <= 602.5)
 
 
 def test_udp_gives_the_same_answers_as_in_process():
