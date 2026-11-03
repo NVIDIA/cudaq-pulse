@@ -77,6 +77,24 @@ def across(q, r):
         drive(b, square(5, 0.1))
         sync(a, b)
 
+@pulse.kernel
+def once(q):
+    drive(get_drive_line(q), square(8, 0.1))
+
+@pulse.kernel
+def three(q):
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    for _ in range(3):
+        drive(d, square(8, 0.1))
+    for _ in range(TRIPS):
+        once(q)
+        wait(d, 4)
+    for _ in range(TRIPS):
+        sync(d, r)
+        readout(r, square(40, 0.05))
+        sync(r, d)
+
 options = {{"machine": MachineModel(controller=ControllerLimits({limits}))}}
 handles = (Q[0],)
 {system}
@@ -149,6 +167,10 @@ def test_a_rolled_loop_of_a_few_iterations_compiles_under_a_controller_in_a_chil
 
 def test_a_rolled_loop_of_10_15_iterations_is_checked_in_bounded_time_and_memory():
     assert _in_a_child("drives", 10**15) == {"ops": 5}
+
+
+def test_the_second_and_third_loops_of_10_15_iterations_stay_rolled_in_a_child():
+    assert _in_a_child("three", 10**15) == _in_a_child("three", 100)
 
 
 def test_a_violation_in_every_iteration_of_10_15_is_counted_not_listed():
