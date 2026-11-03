@@ -93,7 +93,6 @@ def every_outcome():
 def compile_branch(kernel: pulse.Kernel[...], qudits: pulse.Register, trained: tuple[int, ...]):
     """The sweep for one outcome: each point bound and exported for the controller."""
     program = pulse.compile(kernel, device=qudits[0].device).lower(qudits, trained, 1.0).generic
-    assert program is not None
     sweep = []
     for scale in scales:
         bound = program.bind([scale])

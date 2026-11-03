@@ -240,7 +240,6 @@ if __name__ == "__main__":
     started = time.perf_counter()
     compiled = pulse.compile(pi_train, device=device)
     program = compiled.lower(device.qudit_handles[0], repetitions, pi_amplitude, 0.0).generic
-    assert program is not None
     print(
         f"  compiled in {1e3 * (time.perf_counter() - started):.2f} ms "
         f"(the first compile in a process); float parameters {program.parameters}"
