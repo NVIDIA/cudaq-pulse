@@ -16,6 +16,7 @@ import re
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
+from cudaq_pulse.classical import emulation
 from cudaq_pulse.targets import Qubit, TargetDescription
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse at 2 GHz
@@ -383,6 +384,37 @@ def test_calls_in_a_rolled_loop_are_bound_per_iteration():
     result = pulse.simulate(pulse.compile(k, device=dev).lower(dev.qudit_handles[0]), levels=2)
     assert result.branches[0].answers("counter") == [1.0, 2.0, 3.0, 4.0]
     assert result.density_matrix[1, 1].real == pytest.approx(1.0, abs=1e-6)
+
+
+def test_nan_in_classical_data_passes_through_as_it_is():
+    @pulse.classical(max_latency_ns=0)
+    def shift(
+        state: pulse.Length[list[float], 2], x: float
+    ) -> tuple[pulse.Length[list[float], 2], float]:
+        return [state[1], math.nan], x
+
+    @pulse.kernel
+    def k(q):
+        d = get_drive_line(q)
+        state = [math.nan, 1.0]
+        x = math.nan
+        for _ in range(2):
+            state, x = shift.submit(state, x).result()
+        drive(d, square(40, PI_AMP))
+
+    def marked(values):
+        return [["nan" if math.isnan(v) else v for v in (*s, x)] for s, x in values]
+
+    dev = _device()
+    lowered = pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
+    inputs = [["nan", 1.0, "nan"], [1.0, "nan", "nan"]]
+    answers = [[1.0, "nan", "nan"], ["nan", "nan", "nan"]]
+    (branch,) = pulse.simulate(lowered, levels=2).branches
+    assert marked(c.inputs for c in branch.calls) == inputs
+    assert marked(c.answer for c in branch.calls) == answers
+    (calls,) = emulation.emulate(lowered, seed=1).calls
+    assert marked(c.inputs for c in calls) == inputs
+    assert marked(c.answer for c in calls) == answers
 
 
 @pulse.kernel

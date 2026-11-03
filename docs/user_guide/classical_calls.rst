@@ -58,7 +58,10 @@ A parameter is one of:
 
 A result is ``float``, ``int``, ``bool``, ``pulse.Bits``, ``list[float]``,
 ``list[int]``, a tuple of them, or ``None``. A ``bool`` or ``pulse.Bits``
-result gives values a branch can test.
+result gives values a branch can test. NaN values in classical data pass
+through as they are and are not rejected: a ``float`` argument or answer may
+be NaN, as an estimator's state is before it has a cost (see "Calibrating
+while the QPU runs").
 
 **List lengths.** A list parameter takes its length from the call. A
 function called with lists of two lengths has two *versions*, each with its
