@@ -71,6 +71,9 @@ std::unique_ptr<mlir::Pass> createPulseScheduleRcpPass(int64_t maxDrives,
 std::unique_ptr<mlir::Pass> createPulseScheduleRcpOptionsPass();
 std::unique_ptr<mlir::Pass> createPulseInlineScheduleBlocksPass();
 std::unique_ptr<mlir::Pass> createPulseClassicalCheckPass();
+/// pulse-classical-check with its options, for cudaq-pulse-opt; the
+/// extension creates the pass above.
+std::unique_ptr<mlir::Pass> createPulseClassicalCheckOptionsPass();
 /// pulse-frame-changes: place the frame changes of a scheduled program on
 /// their tones' timelines and mark those no pulse plays with.
 std::unique_ptr<mlir::Pass> createPulseFrameChangesPass();
@@ -110,7 +113,7 @@ inline void registerPulsePasses() {
   mlir::registerPass(createPulseScheduleAsapPass);
   mlir::registerPass(createPulseScheduleAlapPass);
   mlir::registerPass(createPulseInlineScheduleBlocksPass);
-  mlir::registerPass(createPulseClassicalCheckPass);
+  mlir::registerPass(createPulseClassicalCheckOptionsPass);
   mlir::registerPass(createPulseFrameChangesPass);
   mlir::registerPass(createPulseUnrollClassicalLoopsPass);
   mlir::registerPass([] { return createPulseLowerSelectsPass(); });

@@ -641,10 +641,9 @@ def test_random_loops_carrying_unread_measurements_past_blocking_calls_play_as_u
 
 
 # The child's limits, far past what lowering every kernel below at 10**6
-# trips under every policy takes: about 0.4 s and 300 MB each, nearly all of
-# both in checking the calls' slots and deadlines, which grows with the trips.
+# trips under every policy takes: under 20 ms each and about 50 MB in all.
 CPU_S = 30
-RSS_MB = 700
+RSS_MB = 150
 
 _CHILD = """
 import json, os, resource, signal, sys, threading, time
@@ -716,4 +715,4 @@ def test_a_loop_of_10_6_iterations_branching_on_answers_lowers_in_bounded_time_a
         step = small[key, more] - small[key, fewer]
         expected = small[key, fewer] + (many - fewer) // (more - fewer) * step
         assert Fraction(duration) == expected, key
-        assert spent < 1.0, key
+        assert spent < 0.25, key

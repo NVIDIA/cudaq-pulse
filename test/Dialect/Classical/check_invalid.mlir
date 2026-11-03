@@ -7,10 +7,12 @@
 // ============================================================================ //
 
 // RUN: cudaq-pulse-opt %s --split-input-file --pulse-classical-check --verify-diagnostics
+// RUN: cudaq-pulse-opt %s --split-input-file --pulse-classical-check=summarize-trips=0 --verify-diagnostics
 
 // One case per diagnostic of pulse-classical-check. The schedules are written
 // by hand so that each breaks exactly one rule; the scheduler never produces
-// them.
+// them. Long loops are checked from one copy of their body, or with
+// summarize-trips=0 iteration by iteration, with the same diagnostics.
 
 module attributes {pulse.clock_ghz = 1.0 : f64,
                    classical.links = {"0" = {slot_bytes = 32 : i64}}} {
@@ -239,6 +241,58 @@ module attributes {pulse.clock_ghz = 1.0 : f64} {
     %l = classical.get_link {device = 0 : i64} : !classical.link
     // expected-error @+1 {{'f' has reaction_deadline_ns, but a measurement it carries comes out of a branch or a loop iteration, so its readout is not known; read it out where the request is made, or drop reaction_deadline_ns}}
     %l1, %h = classical.submit %l, @f(%m) {start_cycles = 100 : i64, duration_cycles = 1 : i64} : (!pulse.measurement) -> (!classical.link, !classical.future)
+    return
+  }
+}
+
+// -----
+
+// S8 in a long loop: two requests start every 40 cycles, each in flight for
+// 101, and the one before the loop is still in flight over the first three
+// iterations.
+module attributes {pulse.clock_ghz = 1.0 : f64,
+                   classical.links = {"0" = {max_in_flight = 3 : i64}}} {
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = [], results = [], latency_min_ns = 0.0,
+      latency_nominal_ns = 50.0, latency_max_ns = 100.0, mode = "bounded",
+      submit = "eager"}
+  func.func @streaming() {
+    %l0 = classical.get_link {device = 0 : i64} : !classical.link
+    // expected-error @+1 {{link 0 holds 7 requests at once at 82, more than its 3 slots}}
+    %l1, %a = classical.submit %l0, @f() {start_cycles = 0 : i64, duration_cycles = 1 : i64} : () -> (!classical.link, !classical.future)
+    %lb = arith.constant 0 : index
+    %ub = arith.constant 1000 : index
+    %step = arith.constant 1 : index
+    %ln = scf.for %i = %lb to %ub step %step iter_args(%l = %l1) -> (!classical.link) {
+      %l2, %h = classical.submit %l, @f() {start_cycles = 1 : i64, duration_cycles = 1 : i64, period_cycles = array<i64: 40>} : () -> (!classical.link, !classical.future)
+      %l3, %g = classical.submit %l2, @f() {start_cycles = 2 : i64, duration_cycles = 1 : i64, period_cycles = array<i64: 40>} : () -> (!classical.link, !classical.future)
+      scf.yield %l3 : !classical.link
+    }
+    return
+  }
+}
+
+// -----
+
+// S9 in a long loop: the second request of each iteration starts 2 cycles
+// after the first is sent in iteration 0 and 1 cycle earlier each
+// iteration, so from iteration 3 on before it is sent.
+module attributes {pulse.clock_ghz = 1.0 : f64} {
+  classical.callable @f {function_id = 3809224601 : i64, device = 0 : i64,
+      args = [], results = [], latency_min_ns = 0.0,
+      latency_nominal_ns = 1.0, latency_max_ns = 1.0, mode = "bounded",
+      submit = "eager"}
+  func.func @drifting_order() {
+    %l0 = classical.get_link {device = 0 : i64} : !classical.link
+    %lb = arith.constant 0 : index
+    %ub = arith.constant 1000 : index
+    %step = arith.constant 1 : index
+    %ln = scf.for %i = %lb to %ub step %step iter_args(%l = %l0) -> (!classical.link) {
+      %l1, %h = classical.submit %l, @f() {start_cycles = 0 : i64, duration_cycles = 2 : i64, period_cycles = array<i64: 100>} : () -> (!classical.link, !classical.future)
+      // expected-error @+1 {{submission on link 0 starts at 301, before the one before it in program order ends at 302}}
+      %l2, %g = classical.submit %l1, @f() {start_cycles = 4 : i64, duration_cycles = 2 : i64, period_cycles = array<i64: 99>} : () -> (!classical.link, !classical.future)
+      scf.yield %l2 : !classical.link
+    }
     return
   }
 }
