@@ -1038,6 +1038,65 @@ def _held(n: int) -> dict[str, Any]:
     }
 
 
+@pulse.classical(max_latency_ns=150, submit="lazy")
+def tune_lazy(bits: pulse.Bits) -> float:
+    return 0.1 * bits[0]
+
+
+def _bound_late(n: int, tail: int) -> dict[str, Any]:
+    """Loops whose readouts are first held back by a line synced to them,
+    which ends early before a long drive after the loop, until what their
+    measurement or answer decides, a slower drive, catches up a few
+    iterations back: a hold that binds only then."""
+
+    def body(decide_with: str) -> str:
+        return "\n".join(
+            [
+                "def k(q, r, t):",
+                "    d = get_drive_line(q)",
+                "    e = get_drive_line(t)",
+                "    ro = get_readout_line(q)",
+                f"    for _ in range({n}):",
+                "        m = readout(ro, square(20, 0.05))",
+                "        sync(ro, e)",
+                "        drive(e, square(10, 0.1))",
+                *(f"        {line}" for line in decide_with.splitlines()),
+                f"    drive(e, square({tail}, 0.1))",
+            ]
+        )
+
+    shapes = {
+        "measured": "if m:\n    drive(d, square(300, 0.3))",
+        "lazy": "if decide_lazy.submit([m]).result()[0]:\n    drive(d, square(300, 0.3))",
+        "lazy_value": "amp = tune_lazy.submit([m]).result()\ndrive(d, square(300, amp))",
+        "linked": (
+            "f = decide_lazy.submit([m]).result()\n"
+            "amp, unused = tune.submit([m]).result()\n"
+            "drive(d, square(300, amp))\n"
+            "if f[0]:\n    drive(d, square(5, 0.3))"
+        ),
+    }
+    kernels = {}
+    for name, decide_with in shapes.items():
+        namespace: dict[str, Any] = dict(_STATEFUL, tune=tune, tune_lazy=tune_lazy)
+        exec(compile(body(decide_with), f"<{name}>", "exec"), namespace)  # noqa: S102 - generated kernels
+        kernels[name] = pulse.kernel(namespace["k"])
+    return kernels
+
+
+@pytest.mark.parametrize("schedule", POLICIES)
+def test_a_hold_that_binds_a_few_iterations_back_plays_every_event_as_unrolled(schedule):
+    differ = [
+        (name, trips, tail, machine)
+        for machine, options in _machines().items()
+        for tail in (1000, 3000)
+        for trips in (5, 20, 70, 130)
+        for name, kernel in _bound_late(trips, tail).items()
+        if not _same_as_unrolled(kernel, schedule, options)
+    ]
+    assert differ == []
+
+
 @pytest.mark.parametrize("schedule", POLICIES)
 def test_loops_whose_answers_slack_changes_play_every_event_as_unrolled(schedule):
     differ = [
