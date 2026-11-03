@@ -5795,14 +5795,23 @@ public:
         break;
       }
       case kOpClassicalCompare: {
-        // [result id, predicate (eq ne lt le gt ge), type (0 i64, 1 f64),
-        //  lhs, rhs]
+        // [result id, predicate (eq ne lt le gt ge, and or of two i1),
+        //  type (0 i64, 1 f64), lhs, rhs]
         requirePayload(5);
-        if (p[1] < 0 || p[1] > 5 || p[2] < 0 || p[2] > 1)
+        if (p[1] < 0 || p[1] > 7 || p[2] < 0 || p[2] > 1 ||
+            (p[1] > 5 && p[2] != 0))
           throw std::invalid_argument("packed: malformed classical compare");
         mlir::Value lhs = look(p[3]), rhs = look(p[4]);
         mlir::Value result;
-        if (p[2] == 1) {
+        if (p[1] > 5) {
+          if (!lhs.getType().isInteger(1) || !rhs.getType().isInteger(1))
+            throw std::invalid_argument(
+                "packed: and/or of values that are not i1");
+          if (p[1] == 6)
+            result = mlir::arith::AndIOp::create(*builder_, loc, lhs, rhs);
+          else
+            result = mlir::arith::OrIOp::create(*builder_, loc, lhs, rhs);
+        } else if (p[2] == 1) {
           static const mlir::arith::CmpFPredicate fp[] = {
               mlir::arith::CmpFPredicate::OEQ, mlir::arith::CmpFPredicate::UNE,
               mlir::arith::CmpFPredicate::OLT, mlir::arith::CmpFPredicate::OLE,

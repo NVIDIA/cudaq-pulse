@@ -37,6 +37,7 @@ from .ir_builder import (
     CompilationError,
     IRValue,
     UndecidableComparison,
+    _UndecidableComparisons,
     contains_answer,
     is_symbolic,
 )
@@ -408,6 +409,119 @@ def take(builder: Any, future: Future, args: Sequence[Any], kwargs: dict[str, An
     return result
 
 
+class _NotMeasurement(_UndecidableComparisons):
+    """``not value`` for a measurement result, or for the ``i1`` IR value
+    a condition on answers is tested as, pending use as a condition."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: Any):
+        self.value = value
+
+    def __bool__(self) -> bool:
+        raise CompilationError(
+            f"cannot decide {self!r} at trace time: it is known only when the program runs; "
+            "use it directly as an if condition"
+        )
+
+    def __eq__(self, other: object) -> UndecidableComparison:  # type: ignore[override]
+        return UndecidableComparison(_negated(self), "==", other)
+
+    def __ne__(self, other: object) -> UndecidableComparison:  # type: ignore[override]
+        return UndecidableComparison(_negated(self), "!=", other)
+
+    def __repr__(self) -> str:
+        return f"(not {self.value!r})"
+
+
+def _negated(value: _NotMeasurement) -> Any:
+    """``not`` of a condition on answers as the comparison it is; a
+    measurement's stays itself."""
+    inner = value.value
+    if _answer_bit(inner):
+        # The IR value carries no regions to check its uses against, so () checks none.
+        return UndecidableComparison(AnswerValue(inner.vid, "i1", ()), "==", False)
+    return value
+
+
+def _answer_bit(value: Any) -> bool:
+    """Whether *value* is the ``i1`` a condition on answers is tested as."""
+    return value.__class__ is IRValue and value.vtype == "i1"
+
+
+def _constant_bool(value: Any) -> Any:
+    """*value* if it is a bool (Python's or NumPy's) or the int 0 or 1, which
+    ``&``, ``|`` and ``^`` treat as one; else None."""
+    cls = value.__class__
+    if cls is bool or (cls is int and (value == 0 or value == 1)):
+        return value
+    if cls.__name__ == "bool" and cls.__module__ == "numpy":
+        return bool(value)
+    return None
+
+
+def measured(value: Any) -> bool:
+    """Whether the bool *value* is computed from a measurement result."""
+    cls = value.__class__
+    if cls is IRValue:
+        return bool(value.vtype == "measurement")
+    if cls is _NotMeasurement:
+        return measured(value.value)
+    if cls is UndecidableComparison:
+        return measured(value.lhs) or measured(value.rhs)
+    return False
+
+
+def is_condition(value: Any) -> bool:
+    """Whether *value* is a bool known only when the program runs that is
+    computed from answers or float arguments: a comparison, an answer bit,
+    or ``not`` of one."""
+    cls = value.__class__
+    if cls is UndecidableComparison:
+        return not measured(value)
+    if cls is AnswerValue:
+        return bool(value.dtype == "i1")
+    return cls is _NotMeasurement and _answer_bit(value.value)
+
+
+_LOGIC_WORDS = {"&": "and", "|": "or"}
+
+
+def bit_logic(symbol: str, lhs: Any, rhs: Any) -> Any:
+    """``lhs & rhs``, ``lhs | rhs`` or ``lhs ^ rhs``, as Python computes them
+    on bools, where one is known only when the program runs: the value
+    when the other operand decides it, else a condition traced as ``and``,
+    ``or`` or ``!=``. Measurement results and numbers raise."""
+    word = _LOGIC_WORDS.get(symbol)
+    for a, b in ((lhs, rhs), (rhs, lhs)):
+        constant = _constant_bool(a)
+        if constant is not None and is_condition(b):
+            if word is None:
+                return UndecidableComparison(b, "!=", constant)
+            # True | b and False & b are the constant; True & b and False | b are b.
+            return constant if constant == (word == "or") else b
+    if not (is_condition(lhs) and is_condition(rhs)):
+        if measured(lhs) or measured(rhs):
+            fix = (
+                "branch on a measurement result with `if result:` or `if not result:`, "
+                "combining results with `and`, `or` and `not` in the if condition"
+            )
+        else:
+            fix = (
+                f"`{symbol}` combines only conditions (comparisons and answer bits) and "
+                "True or False; bitwise operations on numbers known only when the program "
+                "runs are not supported"
+            )
+        raise CompilationError(
+            f"cannot trace {lhs!r} {symbol} {rhs!r}: it is known only when the program runs; " + fix
+        )
+    if lhs.__class__ is _NotMeasurement:
+        lhs = _negated(lhs)
+    if rhs.__class__ is _NotMeasurement:
+        rhs = _negated(rhs)
+    return UndecidableComparison(lhs, word or "!=", rhs)
+
+
 def is_answer_condition(value: Any) -> bool:
     """Whether *value* is a branch condition computed from an answer."""
     return isinstance(value, (AnswerValue, UndecidableComparison)) and contains_answer(value)
@@ -428,24 +542,34 @@ def condition(builder: Any, value: Any) -> IRValue:
                 # classical_compare rejects an answer bit before it records anything.
                 if value.lhs.dtype != "i1":
                     raise
-        lhs, rhs = value.lhs, value.rhs
-        if _is_bit(lhs) or _is_bit(rhs):
-            return IRValue(_compare_bits(builder, value.op, lhs, rhs), "i1")
+        lhs, rhs, op = value.lhs, value.rhs, value.op
+        if measured(value):
+            raise CompilationError(_MEASURED_MESSAGE.format(value))
+        if op == "and" or op == "or":
+            a = condition(builder, lhs).vid
+            return IRValue(builder.compare_bits(op, a, condition(builder, rhs).vid), "i1")
+        if is_condition(lhs) or is_condition(rhs):
+            return IRValue(_compare_bits(builder, op, lhs, rhs), "i1")
+        if lhs is None or rhs is None:
+            # An answer is a number, never None.
+            return IRValue(builder.bit_constant(op == "!="), "i1")
         if isinstance(lhs, IRValue) or isinstance(rhs, IRValue):
-            raise CompilationError("an answer cannot be compared with a measurement result")
-        return IRValue(builder.classical_compare(value.op, lhs, rhs), "i1")
+            raise CompilationError(f"cannot compare {value!r}: a pulse value is not a number")
+        return IRValue(builder.classical_compare(op, lhs, rhs), "i1")
+    if value.__class__ is _NotMeasurement and _answer_bit(value.value):
+        bit = value.value.vid
+        return IRValue(builder.compare_bits("==", bit, builder.bit_constant(False)), "i1")
     raise CompilationError(f"cannot branch on {value!r}")
 
 
 _NUMBERS = frozenset({int, float, bool})
 
-
-def _is_bit(value: Any) -> bool:
-    """Whether *value* is a bool known only when the program runs: a
-    comparison, or an answer bit."""
-    return isinstance(value, UndecidableComparison) or (
-        isinstance(value, AnswerValue) and value.dtype == "i1"
-    )
+_MEASURED_MESSAGE = (
+    "cannot trace {0!r}: a measurement result is known only when the program runs, and "
+    "a comparison of it is not traced; branch on it directly with `if result:` or "
+    "`if not result:`, and combine results and answers with `and`, `or` and `not` in "
+    "the if condition"
+)
 
 
 def _compare_bits(builder: PackedIRBuilder, op: str, lhs: Any, rhs: Any) -> int:
@@ -459,13 +583,18 @@ def _compare_bits(builder: PackedIRBuilder, op: str, lhs: Any, rhs: Any) -> int:
             "and, or, not"
         )
     for constant, bit in ((lhs, rhs), (rhs, lhs)):
-        if _is_bit(constant):
+        if is_condition(constant):
             continue
+        if constant is None:
+            return builder.bit_constant(op == "!=")
         if not isinstance(constant, numbers.Real):
-            raise CompilationError(
-                f"cannot compare the condition {bit!r} with {constant!r}; a condition known "
-                "only when the program runs compares with another such condition, True or False"
-            )
+            given, constant = constant, _constant_bool(constant)
+            if constant is None:
+                raise CompilationError(
+                    f"cannot compare the condition {bit!r} with {given!r}; a condition "
+                    "known only when the program runs compares with another such condition, "
+                    "True or False"
+                )
         if constant != 0 and constant != 1:
             return builder.bit_constant(op == "!=")
         vid = condition(builder, bit).vid

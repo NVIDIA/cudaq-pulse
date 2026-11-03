@@ -88,7 +88,8 @@ _VARIABLE_WAIT = 40
 _SELECT = 41
 _MAX_CYCLES = 42
 _LATENCY_MODE = {"bounded": 0, "timeout": 1, "blocking": 2}
-_COMPARE = {"==": 0, "!=": 1, "<": 2, "<=": 3, ">": 4, ">=": 5}
+# "and" and "or" take two i1 values only (compare_bits).
+_COMPARE = {"==": 0, "!=": 1, "<": 2, "<=": 3, ">": 4, ">=": 5, "and": 6, "or": 7}
 
 _DURATION_FROM_ANSWER = (
     "a duration cannot depend on the answer of a classical call: the answer "
@@ -1111,7 +1112,8 @@ class PackedIRBuilder:
         return result
 
     def compare_bits(self, predicate: str, lhs: int, rhs: int) -> int:
-        """Record ``==`` or ``!=`` of the i1 values *lhs* and *rhs*; returns the i1 id."""
+        """Record ``==``, ``!=``, ``and`` or ``or`` of the i1 values *lhs* and
+        *rhs*; returns the i1 id."""
         result = self._next_id
         self._next_id += 1
         self._record(_CLASSICAL_COMPARE, [result, _COMPARE[predicate], 0, lhs, rhs])

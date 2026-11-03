@@ -50,7 +50,8 @@ def parameter_names(value: Any) -> tuple[str, ...]:
 
 
 class _UndecidableComparisons:
-    """Comparison operators that defer to ``UndecidableComparison``."""
+    """Comparison operators that defer to ``UndecidableComparison``, and the
+    bool operators ``&``, ``|`` and ``^`` that ``bit_logic`` traces."""
 
     __slots__ = ()
     __hash__ = object.__hash__
@@ -73,6 +74,26 @@ class _UndecidableComparisons:
     def __ge__(self, other: Any) -> UndecidableComparison:
         return UndecidableComparison(self, ">=", other)
 
+    # On bools &, | and ^ commute, so each is its own reflection.
+    def __and__(self, other: Any) -> Any:
+        from ._classical import bit_logic
+
+        return bit_logic("&", self, other)
+
+    def __or__(self, other: Any) -> Any:
+        from ._classical import bit_logic
+
+        return bit_logic("|", self, other)
+
+    def __xor__(self, other: Any) -> Any:
+        from ._classical import bit_logic
+
+        return bit_logic("^", self, other)
+
+    __rand__ = __and__
+    __ror__ = __or__
+    __rxor__ = __xor__
+
 
 class UndecidableComparison(_UndecidableComparisons):
     """A comparison whose outcome is only known when the program runs.
@@ -80,7 +101,8 @@ class UndecidableComparison(_UndecidableComparisons):
     Comparing a symbolic parameter or an IR value builds one of these
     instead of falling back to object identity, and so does comparing one
     of these; using it as a condition raises, so a kernel never silently
-    takes one branch.
+    takes one branch. ``op`` is a comparison, or ``"and"`` or ``"or"`` of
+    two such bools (see ``bit_logic``).
     """
 
     __slots__ = ("lhs", "op", "rhs")
@@ -91,8 +113,9 @@ class UndecidableComparison(_UndecidableComparisons):
         self.rhs = rhs
 
     def __bool__(self) -> bool:
-        operands = (self.lhs, self.rhs)
-        if any(isinstance(v, IRValue) for v in operands):
+        from ._classical import measured
+
+        if self.lhs.__class__ is IRValue or self.rhs.__class__ is IRValue or measured(self):
             raise CompilationError(
                 f"cannot compare a runtime IR value at trace time ({self.lhs!r} {self.op} "
                 f"{self.rhs!r}); branch on a measurement result directly with "
@@ -110,31 +133,6 @@ class UndecidableComparison(_UndecidableComparisons):
             names,
             f"the comparison {self.op}",
         )
-
-    # On bools, ``^`` is ``!=``.
-    def __xor__(self, other: Any) -> UndecidableComparison:
-        return UndecidableComparison(self, "!=", other)
-
-    __rxor__ = __xor__
-
-    def _both(self, op: str, other: Any) -> NoReturn:
-        word = "and" if op == "&" else "or"
-        raise CompilationError(
-            f"cannot trace {self!r} {op} {other!r}: it is known only when the program runs; "
-            f"combine conditions with `{word}` in an if condition instead"
-        )
-
-    def __and__(self, other: Any) -> NoReturn:
-        self._both("&", other)
-
-    def __rand__(self, other: Any) -> NoReturn:
-        self._both("&", other)
-
-    def __or__(self, other: Any) -> NoReturn:
-        self._both("|", other)
-
-    def __ror__(self, other: Any) -> NoReturn:
-        self._both("|", other)
 
     def __repr__(self) -> str:
         return f"({self.lhs!r} {self.op} {self.rhs!r})"

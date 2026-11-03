@@ -66,6 +66,7 @@ from ._bytecode_normalize import (
     UNPACK_SEQUENCE,
     decode,
 )
+from ._classical import _NotMeasurement, measured
 from ._schedule_blocks import block_budget
 from ._unroll import resolve_unroll_threshold
 from .ir_builder import (
@@ -82,7 +83,6 @@ from .ir_builder import (
     Selection,
     SymbolicValueError,
     UndecidableComparison,
-    _UndecidableComparisons,
     contains_answer,
     is_symbolic,
     parameter_names,
@@ -319,24 +319,6 @@ def _truth(value: StackVal) -> bool:
     return bool(value)
 
 
-class _NotMeasurement(_UndecidableComparisons):
-    """``not result`` for a measurement result, pending use as a condition."""
-
-    __slots__ = ("value",)
-
-    def __init__(self, value: IRValue):
-        self.value = value
-
-    def __bool__(self) -> bool:
-        raise CompilationError(
-            f"cannot decide {self!r} at trace time: it is known only when the program runs; "
-            "use it directly as an if condition"
-        )
-
-    def __repr__(self) -> str:
-        return f"(not {self.value!r})"
-
-
 def _runtime_bit(value: Any) -> bool:
     """Whether *value* is a bool known only when the program runs."""
     cls = value.__class__
@@ -362,9 +344,14 @@ def _identity_error(left: Any, right: Any) -> CompilationError:
     """The error for ``left is right``, which ``_identity_unknown`` holds
     depends on the program's run; a kernel specializes on the float
     arguments of one that depends on nothing else."""
+    if measured(left) or measured(right):
+        fix = "branch on a measurement result directly with `if result:` or `if not result:`"
+    else:
+        fix = "compare values with == or !="
     message = (
         f"cannot decide {left!r} is {right!r} at trace time: it is known only when the "
-        "program runs; compare values with == or !="
+        f"program runs; {fix} (a match statement's `case True:` and `case False:` are "
+        "such identity tests: use an if statement instead)"
     )
 
     def run_time(value: Any) -> bool:
@@ -612,6 +599,8 @@ _CHOICE_COMPARE: dict[str, Callable[[Any, Any], Any]] = {
     "<=": operator.le,
     ">": operator.gt,
     ">=": operator.ge,
+    "and": operator.and_,
+    "or": operator.or_,
 }
 
 
