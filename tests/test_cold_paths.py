@@ -207,7 +207,15 @@ def test_a_name_with_no_close_match_loads_no_difflib(tmp_path):
 
 
 def test_the_doctor_loads_json_only_to_write_json(tmp_path):
-    code = "import io, sys\nimport cudaq_pulse.doctor as d\nd.main([], out=io.StringIO())\n"
+    # importlib.metadata, which reads the package's version and wheel tags,
+    # imports json itself on Python 3.13 and 3.14. Loaded first, with json
+    # then dropped from sys.modules, any later import of json is the doctor's.
+    code = (
+        "import io, sys\nimport importlib.metadata\n"
+        "for m in [m for m in sys.modules if m == 'json' or m.startswith('json.')]:\n"
+        "    del sys.modules[m]\n"
+        "import cudaq_pulse.doctor as d\nd.main([], out=io.StringIO())\n"
+    )
     assert _loaded(code, tmp_path, ("json",)) == []
     report = code.replace("[]", f"['--system', {str(tmp_path / 'none.json')!r}, '--json']")
     assert _loaded(report, tmp_path, ("json",)) == ["json"]
