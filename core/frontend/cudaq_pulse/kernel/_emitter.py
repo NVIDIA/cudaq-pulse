@@ -85,7 +85,6 @@ from .ir_builder import (
     _UndecidableComparisons,
     contains_answer,
     is_symbolic,
-    parameter_names,
 )
 from .packed_ir_builder import MAX_CUSTOM_SAMPLES
 
@@ -366,33 +365,6 @@ _NUMBERS = (bool, int, float)
 
 # The containers `in` looks a value up in by its hash.
 _HASHED: frozenset[type] = frozenset({dict, set, frozenset, type({}.keys())})
-
-
-def _identity_error(left: Any, right: Any) -> CompilationError:
-    """The error for ``left is right``, which ``_identity_unknown`` holds
-    depends on the program's run; a kernel specializes on the float
-    arguments of one that depends on nothing else."""
-    from ._conditions import measured
-
-    if measured(left) or measured(right):
-        fix = "branch on a measurement result directly with `if result:` or `if not result:`"
-    else:
-        fix = "compare values with == or !="
-    message = (
-        f"cannot decide {left!r} is {right!r} at trace time: it is known only when the "
-        f"program runs; {fix} (a match statement's `case True:` and `case False:` are "
-        "such identity tests: use an if statement instead)"
-    )
-
-    def run_time(value: Any) -> bool:
-        if value.__class__ is UndecidableComparison:
-            return run_time(value.lhs) or run_time(value.rhs)
-        return isinstance(value, (IRValue, _NotMeasurement)) or contains_answer(value)
-
-    names = parameter_names(left) + parameter_names(right)
-    if not names or run_time(left) or run_time(right):
-        return CompilationError(message)
-    return SymbolicValueError(message, tuple(dict.fromkeys(names)), "the identity test is")
 
 
 # ── Values a measurement-conditioned if chose ───────────────────────────
@@ -1905,8 +1877,11 @@ class PulseIREmitter:
                     right = pop()
                     left = pop()
                     if left is not None and right is not None and _identity_unknown(left, right):
-                        raise _identity_error(left, right)
-                    push((left is right) != arg)
+                        from ._conditions import identity
+
+                        push(identity(left, right) != arg)
+                    else:
+                        push((left is right) != arg)
 
                 elif op is _contains:
                     right = pop()

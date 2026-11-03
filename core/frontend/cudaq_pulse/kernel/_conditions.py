@@ -24,7 +24,9 @@ from .ir_builder import (
     ParameterExpression,
     SymbolicValueError,
     UndecidableComparison,
+    contains_answer,
     is_symbolic,
+    parameter_names,
 )
 
 if TYPE_CHECKING:
@@ -316,3 +318,43 @@ def filtered(emitter: PulseIREmitter, containers: list[tuple[Any, Any]]) -> bool
         for obj, copy in containers
         if obj is yielded or any(obj is v for v in emitter.stack)
     )
+
+
+def identity(left: Any, right: Any) -> Any:
+    """``left is right``, which ``_identity_unknown`` holds depends on the
+    program's run: ``left == right`` where both are bools, a condition on
+    answers and True or False or another such condition, as Python has one
+    True and one False; anything else raises."""
+    if not (measured(left) or measured(right)) and _bool(left) and _bool(right):
+        if left.__class__ is _NotMeasurement:
+            left = negated(left)
+        return UndecidableComparison(left, "==", right)
+    raise identity_error(left, right)
+
+
+def _bool(value: Any) -> bool:
+    return value is True or value is False or is_condition(value)
+
+
+def identity_error(left: Any, right: Any) -> CompilationError:
+    """The error for ``left is right``, which ``_identity_unknown`` holds
+    depends on the program's run; a kernel specializes on the float
+    arguments of one that depends on nothing else."""
+    if measured(left) or measured(right):
+        fix = "branch on a measurement result directly with `if result:` or `if not result:`"
+    else:
+        fix = "compare values with == or !="
+    message = (
+        f"cannot decide {left!r} is {right!r} at trace time: it is known only when the "
+        f"program runs; {fix}"
+    )
+
+    def run_time(value: Any) -> bool:
+        if value.__class__ is UndecidableComparison:
+            return run_time(value.lhs) or run_time(value.rhs)
+        return isinstance(value, (IRValue, _NotMeasurement)) or contains_answer(value)
+
+    names = parameter_names(left) + parameter_names(right)
+    if not names or run_time(left) or run_time(right):
+        return CompilationError(message)
+    return SymbolicValueError(message, tuple(dict.fromkeys(names)), "the identity test is")

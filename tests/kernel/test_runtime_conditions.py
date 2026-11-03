@@ -8,8 +8,8 @@
 """Conditions built from values known only when the program runs.
 
 Comparing such conditions with each other or with True and False, ``^``,
-``&``, ``|``, ``bool()``, ``not`` and ``in`` are tested at run time; what
-cannot be (``is``, ordering them, combining a measurement result with
+``&``, ``|``, ``is``, ``bool()``, ``not`` and ``in`` are tested at run time;
+what cannot be (``is`` of a number, ordering them, combining a measurement result with
 ``^``, ``&``, ``|`` or ``==``, hashing an answer) raises at the user's line.
 None of them is decided while tracing.
 """
@@ -172,6 +172,15 @@ _SIMULATED = [
     "all([True, b, n < 7])",
     "any([False, 0, n > 3])",
     "all([n > 3, 0])",
+    "(n > 3) is True",
+    "(n > 3) is False",
+    "(n > 3) is not False",
+    "True is (n > 3)",
+    "b is True",
+    "b is not True",
+    "(not b) is True",
+    "(n > 3) is (x > 0.1)",
+    "(n > 3) is not b",
 ]
 
 
@@ -248,9 +257,7 @@ def test_float_arguments_in_compared_conditions_specialize(condition):
 @pytest.mark.parametrize(
     ("condition", "message"),
     [
-        ("(n > 3) is (x > 0.1)", "is known only when the program runs"),
-        ("(n > 3) is True", "compare values with == or !="),
-        ("(n > 3) is not False", "compare values with == or !="),
+        ("(n > 3) is 1", "compare values with == or !="),
         ("m is True", "branch on a measurement result directly"),
         ("(not m) is False", "branch on a measurement result directly"),
         ("n is 5", "compare values with == or !="),
@@ -353,6 +360,31 @@ def test_a_value_that_cannot_be_chosen_raises(prelude, message):
     kernel = _kernel("c", prelude=prelude)
     with pytest.raises(CompilationError, match=re.escape(message)):
         pulse.compile(kernel).lower(Q[0])
+
+
+@pytest.mark.parametrize(
+    ("subject", "cases", "expected"),
+    [
+        ("n > 3", ("True",), "n > 3"),
+        ("b", ("False",), "not b"),
+        ("x > 0.1", ("False", "True"), "not (x > 0.1)"),
+    ],
+)
+def test_a_match_on_a_condition_with_bool_cases_takes_the_case_python_would(
+    subject, cases, expected
+):
+    """`case True:` and `case False:` test identity, which on bools is ==;
+    the first case drives a pi pulse, a second waits."""
+    bodies = ("drive(d, square(40, PI_AMP))", "wait(d, 40)")
+    pairs = zip(cases, bodies, strict=False)
+    arms = "".join(f"        case {case}:\n            {body}\n" for case, body in pairs)
+    prelude = f"    match {subject}:\n{arms}"
+    for n, x, b in itertools.product((0, 5, 9), (0.05, 0.5), (0, 1)):
+        source = _kernel("False", _answers(n, x, b), prelude=prelude)
+        kernel = pulse.compile(source, device=_DEVICE)
+        result = pulse.simulate(kernel.lower(_DEVICE.qudit_handles[0]), levels=2)
+        taken = bool(eval(expected, {}, {"n": n, "x": x, "b": bool(b)}))  # noqa: S307
+        assert result.level_population(1) == pytest.approx(float(taken), abs=1e-3), (n, x, b)
 
 
 @pytest.mark.parametrize(
