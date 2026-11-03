@@ -17,13 +17,19 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import shutil
+from collections.abc import Mapping
 from types import ModuleType
 from typing import NoReturn
 
 import pytest
 
 OPTIONAL_TOOLS_VAR = "CUDAQ_PULSE_OPTIONAL_TOOLS"
+_PRELOAD_VARS = ("LD_PRELOAD", "DYLD_INSERT_LIBRARIES")
+# GCC's libasan.so.8 and clang's libclang_rt.asan_osx_dynamic.dylib, and the
+# other sanitizers' runtimes.
+_SANITIZER_RUNTIME = re.compile(r"lib(?:clang_rt\.)?(?:a|hwa|l|m|t|ub)san[._]")
 
 
 def in_ci() -> bool:
@@ -59,3 +65,28 @@ def c_compiler() -> str:
     if compiler is None:
         missing("cc", "no C compiler (cc, clang or gcc) on PATH")
     return compiler
+
+
+def tool_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """*env* (``os.environ`` by default) without preloaded sanitizer runtimes.
+
+    For a child that runs none of our code, such as pyright's node, git or a
+    C compiler. The sanitizer job preloads the runtimes into the
+    uninstrumented interpreter for the extension module, and every child
+    inherits them; node fails under them. Child interpreters and
+    cudaq-pulse-opt keep them. Other preloaded libraries, and the
+    ``*SAN_OPTIONS`` variables, which do nothing without a runtime, are kept.
+    """
+    result = dict(os.environ if env is None else env)
+    for var in _PRELOAD_VARS:
+        if var in result:
+            kept = [
+                lib
+                for lib in re.split(r"[:\s]+", result[var])
+                if lib and not _SANITIZER_RUNTIME.match(os.path.basename(lib))
+            ]
+            if kept:
+                result[var] = ":".join(kept)
+            else:
+                del result[var]
+    return result

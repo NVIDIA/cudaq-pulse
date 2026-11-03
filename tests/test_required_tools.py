@@ -5,9 +5,12 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""A missing tool skips its tests locally and fails them in CI."""
+"""A missing tool skips its tests locally and fails them in CI; a tool runs
+without preloaded sanitizer runtimes."""
 
 from __future__ import annotations
+
+import os
 
 import pytest
 
@@ -59,3 +62,24 @@ def test_a_missing_c_compiler_fails_in_ci(ci):
     ci.setattr(_tools.shutil, "which", lambda name: None)
     with pytest.raises(pytest.fail.Exception, match="no C compiler"):
         _tools.c_compiler()
+
+
+def test_a_tool_runs_without_the_sanitizer_runtimes_and_keeps_the_rest():
+    env = {
+        "LD_PRELOAD": "/gcc/libasan.so.8:/opt/libjemalloc.so.2 /gcc/libubsan.so.1:/gcc/libtsan.so",
+        "DYLD_INSERT_LIBRARIES": "/clang/libclang_rt.asan_osx_dynamic.dylib",
+        "ASAN_OPTIONS": "detect_leaks=0",
+        "PATH": "/bin",
+    }
+    assert _tools.tool_env(env) == {
+        "LD_PRELOAD": "/opt/libjemalloc.so.2",
+        "ASAN_OPTIONS": "detect_leaks=0",
+        "PATH": "/bin",
+    }
+    assert env["DYLD_INSERT_LIBRARIES"].endswith("asan_osx_dynamic.dylib")
+
+
+def test_a_tool_env_defaults_to_this_process_environment(monkeypatch):
+    monkeypatch.setenv("LD_PRELOAD", "/gcc/libasan.so.8")
+    env = _tools.tool_env()
+    assert "LD_PRELOAD" not in env and env["PATH"] == os.environ["PATH"]
