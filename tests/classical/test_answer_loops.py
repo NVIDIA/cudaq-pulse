@@ -980,13 +980,71 @@ def _linked(n: int) -> dict[str, Any]:
     return {"lazy": lazy, "lazy_fast": lazy_fast, "lazy_gap": lazy_gap}
 
 
+def _held(n: int) -> dict[str, Any]:
+    """Loops where what is decided does hold its condition's readouts back:
+    a branch on a measurement, lazy requests on their own or with an eager
+    one sent well after them, each deciding a drive slower than the
+    readouts."""
+
+    @pulse.kernel
+    def measured(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        for _ in range(n):
+            m = readout(ro, square(20, 0.05))
+            if m:
+                drive(d, square(300, 0.3))
+
+    @pulse.kernel
+    def lazy_alone(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        for _ in range(n):
+            m = readout(ro, square(20, 0.05))
+            if decide_lazy.submit([m]).result()[0]:
+                drive(d, square(300, 0.3))
+
+    @pulse.kernel
+    def lazy_valued(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        for _ in range(n):
+            m = readout(ro, square(20, 0.05))
+            f = decide_lazy.submit([m]).result()
+            amp, _ = tune.submit([m]).result()
+            drive(d, square(300, amp))
+            if f[0]:
+                drive(d, square(5, 0.3))
+
+    @pulse.kernel
+    def eager_later(q, r, t):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        so = get_readout_line(r)
+        for _ in range(n):
+            m = readout(ro, square(20, 0.05))
+            f = decide_lazy.submit([m]).result()
+            m2 = readout(so, square(150, 0.05))
+            amp, _ = tune.submit([m2]).result()
+            drive(d, square(400, amp))
+            if f[0]:
+                drive(d, square(5, 0.3))
+
+    return {
+        "measured": measured,
+        "lazy_alone": lazy_alone,
+        "lazy_valued": lazy_valued,
+        "eager_later": eager_later,
+    }
+
+
 @pytest.mark.parametrize("schedule", POLICIES)
 def test_loops_whose_answers_slack_changes_play_every_event_as_unrolled(schedule):
     differ = [
         (name, trips, machine)
         for machine, options in _machines().items()
         for trips in (1, 2, 5, 64, 130, 1001)
-        for name, kernel in {**_slack(trips), **_linked(trips)}.items()
+        for name, kernel in {**_slack(trips), **_linked(trips), **_held(trips)}.items()
         if not _same_as_unrolled(kernel, schedule, options)
     ]
     assert differ == []

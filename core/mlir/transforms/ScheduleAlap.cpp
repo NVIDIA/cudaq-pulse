@@ -651,12 +651,6 @@ struct Extrapolation {
 /// request, `ofArgBackward` each carried value's group backward, and
 /// `mixedWaits` whether some wait's answer decides several groups or some
 /// link is due by several.
-///
-/// Of `branches`, `eagerBranches` relate their groups only through the
-/// answers of eager requests: backward nothing in the condition's group is
-/// held back by what they decide (a request keeps its forward time), and
-/// without resources no wait is placed before its forward time, so no
-/// answer is taken early however the groups move.
 struct LoopGroups {
   unsigned count = 0;
   /// Where a link is due by several groups (so `mixedWaits`), the groups
@@ -674,7 +668,7 @@ struct LoopGroups {
   /// lanes under resources.
   llvm::SmallBitVector driveGroups, readoutGroups;
   llvm::SmallVector<mlir::Value> outside;
-  llvm::SmallVector<std::pair<unsigned, unsigned>> branches, eagerBranches;
+  llvm::SmallVector<std::pair<unsigned, unsigned>> branches;
   /// Of `linkBound`'s branches, each lazy request and the eager one after
   /// it on the link: forward right after it, the eager one bounds it
   /// backward too (its answer's due time is never before its forward
@@ -798,13 +792,12 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
   };
   // The ops that relate the values they read: timed ops and syncs.
   llvm::SmallVector<std::pair<mlir::Operation *, llvm::SmallBitVector>> related;
-  // What each branch's condition and what it decides read, and whether
-  // the one holds back the other only through eager requests' answers.
+  // What each branch's condition and what it decides read, whether the
+  // one holds back the other only through answers, and the lazy requests
+  // among those.
   struct Decides {
     llvm::SmallBitVector condition, decided;
-    // Only through answers, all of eager requests; and the lazy requests
-    // among them (none when not only through answers).
-    bool eager, answers;
+    bool answers;
     llvm::SmallVector<mlir::Operation *, 2> lazy;
   };
   llvm::SmallVector<Decides> decides;
@@ -923,9 +916,8 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
               llvm::DenseSet<mlir::Value> read;
               bool answers = ambient.none() && !waits.empty() &&
                              !readsMeasurement(branch.getCondition(), read);
-              bool eager = answers && llvm::all_of(waits, eagerAnswer);
-              decides.push_back({condition, std::move(decided), eager, answers,
-                                 lazyOf(waits)});
+              decides.push_back(
+                  {condition, std::move(decided), answers, lazyOf(waits)});
             }
             continue;
           }
@@ -958,8 +950,8 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
           }
           if (bits.any())
             for (mlir::Operation *wait : from) {
-              decides.push_back({callOf.lookup(wait), bits, eagerAnswer(wait),
-                                 true, lazyOf(wait)});
+              decides.push_back(
+                  {callOf.lookup(wait), bits, true, lazyOf(wait)});
               auto [it, inserted] = waitDecides.try_emplace(wait, n);
               it->second |= bits;
             }
@@ -1006,8 +998,7 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
     if (isTimedOp(op))
       groups->ofOp[op] =
           index.lookup(find(static_cast<unsigned>(bits.find_first())));
-  llvm::SmallVector<std::pair<unsigned, unsigned>> checked;
-  for (auto &[condition, decided, eager, answers, lazy] : decides)
+  for (auto &[condition, decided, answers, lazy] : decides)
     for (unsigned c : condition.set_bits())
       for (unsigned d : decided.set_bits()) {
         std::pair<unsigned, unsigned> branch{index.lookup(find(c)),
@@ -1016,8 +1007,6 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
           continue;
         if (!llvm::is_contained(groups->branches, branch))
           groups->branches.push_back(branch);
-        if (!eager && !llvm::is_contained(checked, branch))
-          checked.push_back(branch);
         if (!answers && !llvm::is_contained(groups->strictBranches, branch))
           groups->strictBranches.push_back(branch);
         auto it = llvm::find_if(groups->lazyBranches, [&](const auto &entry) {
@@ -1029,9 +1018,6 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
           if (!llvm::is_contained(it->second, submit))
             it->second.push_back(submit);
       }
-  for (auto branch : groups->branches)
-    if (!llvm::is_contained(checked, branch))
-      groups->eagerBranches.push_back(branch);
   groups->driveGroups.resize(groups->count);
   groups->readoutGroups.resize(groups->count);
   for (auto [op, group] : groups->ofOp) {
@@ -1079,7 +1065,6 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
           if (eager != *group) {
             if (!llvm::is_contained(into.branches, held))
               into.branches.push_back(held);
-            llvm::erase(into.eagerBranches, held);
             into.linkPairs.push_back({held, op, next});
             auto it = llvm::find_if(into.lazyBranches, [&](const auto &entry) {
               return entry.first == held;
@@ -1752,11 +1737,15 @@ private:
     return moves;
   }
 
-  /// Whether `branch` relates its groups only through answers, and each
-  /// lazy request among them started right before the eager one after it
-  /// on its link in this iteration forward (see LoopGroups::linkPairs).
-  bool linkPairsHold(const LoopGroups &groups,
-                     std::pair<unsigned, unsigned> branch) const {
+  /// Whether, backward without resources, `branch` holds nothing in its
+  /// condition's group back: it relates the groups only through answers
+  /// (no branch on a measurement), and each lazy request among them ended
+  /// forward, in this iteration, right where the eager one after it on its
+  /// link starts (see LoopGroups::linkPairs). An eager request keeps its
+  /// forward time, and so does such a lazy one, which it bounds; no wait is
+  /// placed before its forward time, after its answer is due.
+  bool answersHoldNothing(const LoopGroups &groups,
+                          std::pair<unsigned, unsigned> branch) const {
     if (llvm::is_contained(groups.strictBranches, branch))
       return false;
     auto it = llvm::find_if(groups.lazyBranches, [&](const auto &entry) {
@@ -1785,12 +1774,8 @@ private:
       return false;
     bool ahead = false;
     for (auto [condition, decided] : groups.branches) {
-      if (sign < 0 && !resources.enabled &&
-          llvm::is_contained(groups.eagerBranches,
-                             std::pair(condition, decided)))
-        continue;
       if (sign < 0 && !resources.enabled && !lanesBound &&
-          linkPairsHold(groups, std::pair(condition, decided)))
+          answersHoldNothing(groups, std::pair(condition, decided)))
         continue;
       auto [holding, held] = sign > 0 ? std::pair(condition, decided)
                                       : std::pair(decided, condition);
