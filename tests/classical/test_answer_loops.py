@@ -1138,6 +1138,11 @@ def ask_lazy(bits: pulse.Bits) -> pulse.Bits:
     return [bits[0]]
 
 
+@pulse.classical(max_latency_ns=60, submit="lazy")
+def ask_soon(bits: pulse.Bits) -> pulse.Bits:
+    return [bits[0]]
+
+
 # Loop bodies sharing one link. A request holds its slot until its answer
 # is due, whether or not it is awaited: the requests nobody awaits are still
 # in flight when the next loop starts.
@@ -1165,6 +1170,11 @@ _ON_ONE_LINK = {
         "if ask_lazy.submit([m]).result()[0]:",
         "    drive(d, square(6, 0.1))",
     ],
+    "soon": [
+        "m = readout(ro, square(30, 0.05))",
+        "if ask_soon.submit([m]).result()[0]:",
+        "    drive(d, square(6, 0.1))",
+    ],
     "drives": ["drive(d, square(8, 0.1))"],
 }
 
@@ -1175,7 +1185,7 @@ def _one_after_another(n: int, *bodies: str) -> Any:
     for index, body in enumerate(bodies):
         lines.append(f"    for i{index} in range({n}):")
         lines += [f"        {line}" for line in _ON_ONE_LINK[body]]
-    namespace: dict[str, Any] = {"ask": ask, "ask_lazy": ask_lazy}
+    namespace: dict[str, Any] = {"ask": ask, "ask_lazy": ask_lazy, "ask_soon": ask_soon}
     exec(compile("\n".join(lines), "<loops>", "exec"), namespace)  # noqa: S102 - generated kernels
     return pulse.kernel(namespace["k"])
 
@@ -1206,6 +1216,42 @@ def _most_in_flight(lowered: Any) -> int:
             if e.kind == "submit"
         ]
     )
+
+
+def _most_in_flight_written_out(lowered: Any) -> int:
+    """_most_in_flight for a program without loops, each request by its
+    own budget."""
+    program = lowered.mlir()
+    assert "scf.for" not in program
+    spans = []
+    for line in program.splitlines():
+        if "classical.submit" in line:
+            found = dict(re.findall(r"(budget_cycles|duration_cycles|start_cycles) = (\d+)", line))
+            start = int(found["start_cycles"])
+            spans.append(
+                (start, start + int(found["duration_cycles"]) + int(found["budget_cycles"]))
+            )
+    return _most_at_once(spans)
+
+
+# Under alap a lazy request is placed before the eager requests ahead of it,
+# which keep their forward starts: where it took the slot one of those still
+# holds, alap keeps the forward schedule.
+@pytest.mark.parametrize("schedule", ("alap", "alap_rcp"))
+def test_eager_requests_before_lazy_ones_keep_within_the_slots_under_alap(schedule):
+    over = []
+    for slots in (2, 4, 6):
+        for bodies in (("unawaited", "soon"), ("answer", "soon"), ("nested", "soon")):
+            lowered = pulse.compile(
+                _one_after_another(5, *bodies),
+                schedule=schedule,
+                unroll_threshold=10**6,
+                machine=_link_slots(slots),
+                passes=(),
+            ).lower(Q[0])
+            if _most_in_flight_written_out(lowered) > slots:
+                over.append((bodies, slots))
+    assert over == []
 
 
 _LOOPS_ON_ONE_LINK = (
@@ -1253,6 +1299,69 @@ def test_loops_one_after_another_on_a_link_play_as_unrolled_within_its_slots(sch
                     over.append((bodies, trips, slots))
     assert differ == []
     assert over == []
+
+
+def _link_events(bodies: tuple[str, ...], schedule: str, slots: int) -> Any:
+    lowered = pulse.compile(
+        _one_after_another(5, *bodies),
+        schedule=schedule,
+        unroll_threshold=0,
+        machine=_link_slots(slots),
+        passes=(),
+    ).lower(Q[0])
+    return sorted((e.kind, e.line, e.start_cycles, e.duration_cycles) for e in lowered.schedule)
+
+
+# Under alap a request kept at its forward start needs a slot no later
+# request took; the last requests, in flight past the end of the program,
+# take none, and alap still places what comes before them late.
+@pytest.mark.parametrize("slots", (1, 4, 6))
+def test_requests_in_flight_past_the_end_leave_alap_its_schedule(slots):
+    same = [
+        bodies
+        for bodies in (("unawaited",), ("drives", "unawaited"), ("answer", "spaced"))
+        if _link_events(bodies, "alap", slots) == _link_events(bodies, "asap", slots)
+    ]
+    assert same == []
+
+
+def _two_calls_a_round(n: int) -> Any:
+    @pulse.kernel
+    def rounds(q, r):
+        a = get_drive_line(q)
+        b = get_drive_line(r)
+        p = get_readout_line(q)
+        for _ in range(n):
+            m = readout(p, square(19, 0.05))
+            f = decide.submit([m]).result()
+            shift, unused = tune.submit([m]).result()
+            if f[0]:
+                drive(b, square(22, 0.2))
+            shift_phase(a.tone, shift)
+
+    return rounds
+
+
+# Slots handed out in reverse program order to requests holding theirs for
+# different times (two calls of different latencies a round) can run out
+# where the requests fit: alap keeps its schedule unless they do not.
+@pytest.mark.parametrize("unroll_threshold", (0, 10**6))
+def test_calls_holding_slots_for_different_times_leave_alap_its_schedule(unroll_threshold):
+    events = {
+        schedule: sorted(
+            (e.kind, e.line, e.start_cycles, e.duration_cycles)
+            for e in pulse.compile(
+                _two_calls_a_round(37),
+                schedule=schedule,
+                unroll_threshold=unroll_threshold,
+                passes=(),
+            )
+            .lower(Q[0], Q[1])
+            .schedule
+        )
+        for schedule in ("alap", "asap")
+    }
+    assert events["alap"] != events["asap"]
 
 
 def _link_size(n: int, bodies: tuple[str, ...], schedule: str, slots: int) -> int:

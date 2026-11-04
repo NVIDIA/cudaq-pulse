@@ -1196,6 +1196,56 @@ public:
   bool skippedNegative = false;
   /// The backward pass takes an answer before it is due.
   bool answeredEarly = false;
+  /// The backward pass keeps a request at its forward start where its link
+  /// has no slot free for it, as slots handed out in reverse program order
+  /// tell: requests holding theirs for different times may still fit
+  /// (heldTooMany).
+  bool slotsOverrun = false;
+
+  /// Whether the requests the pass placed, as sampled, hold more of a
+  /// link's slots at once than it has: those of the iterations it did not
+  /// simulate held more.
+  bool heldTooMany() {
+    // Per link, its slots and when each request takes (+1) and frees (-1)
+    // one.
+    std::map<LinkKey,
+             std::pair<int64_t, llvm::SmallVector<std::pair<int64_t, int>>>>
+        spans;
+    auto hold = [&](mlir::Operation *submit, int64_t start, int64_t busy) {
+      auto &[slots, found] = spans[linkOf(submit)];
+      slots = classical::intAttr(submit, "classical.max_in_flight", 64);
+      found.push_back({start, 1});
+      found.push_back({start + busy, -1});
+    };
+    forEachScheduled(*region, [&](mlir::Operation *op) {
+      auto it = samples.find(op);
+      if (it == samples.end())
+        return;
+      auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op);
+      if (!block && !mlir::isa<classical::SubmitOp>(op))
+        return;
+      for (const Sample &sample : it->second) {
+        if (!block) {
+          hold(op, sample.start, durationOf(op) + budgetOf(op));
+          continue;
+        }
+        for (const BlockRequest &request : requestsOf(block, false))
+          hold(request.op, sample.start + request.start, request.busy);
+      }
+    });
+    for (auto &[key, entry] : spans) {
+      auto &[slots, found] = entry;
+      // A slot freed at a time is free for a request starting then.
+      llvm::sort(found);
+      int64_t held = 0;
+      for (auto [at, step] : found) {
+        held += step;
+        if (held > slots)
+          return true;
+      }
+    }
+    return false;
+  }
 
   /// Whether a loop whose iterations repeat only every few of them stops
   /// the pass, to be run that many iterations at a time (`regroup`).
@@ -2159,9 +2209,16 @@ private:
     LinkSlots &slots = slotsOf(submit);
     auto &heap = slots.free;
     std::pop_heap(heap.begin(), heap.end());
-    if (!pinned && heap.back() - busy < start) {
-      start = heap.back() - busy;
-      lanesBound = true;
+    if (heap.back() - busy < start) {
+      // A slot no later request took is free however long this one holds
+      // it, past the end of the program too.
+      if (pinned) {
+        if (heap.back() < laneReset)
+          slotsOverrun = true;
+      } else {
+        start = heap.back() - busy;
+        lanesBound = true;
+      }
     }
     heap.back() = start;
     std::push_heap(heap.begin(), heap.end());
@@ -4317,9 +4374,11 @@ scheduleRounds(mlir::Region &region, mlir::Operation *root, Resources resources,
       if (regrouped())
         continue;
       // Handing out resources in reverse program order can need time before
-      // zero, or take an answer before it is due; the forward resource
-      // schedule is always feasible.
+      // zero, take an answer before it is due, or leave a request kept at
+      // its forward start no slot; the forward resource schedule is always
+      // feasible.
       bool feasible = !scheduler.skippedNegative && !scheduler.answeredEarly &&
+                      !(scheduler.slotsOverrun && scheduler.heldTooMany()) &&
                       llvm::all_of(scheduler.samples, [](const auto &entry) {
                         return llvm::all_of(entry.second, [](const Sample &s) {
                           return s.start >= 0;
