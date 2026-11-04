@@ -152,7 +152,10 @@ A frame update has ``op`` and ``value``, as in ``frame_updates``, its
 ``start_cycles`` (its place) and a ``duration_cycles`` of 0, and the tone's
 ``frequency_hz`` and ``phase_rad`` with the change applied; on a tone whose
 frame depends on run time, ``tone`` and the ``frame_updates`` it applies,
-as a drive has. Its ``line`` is its tone's, else the line the tone last
+as a drive has. A controller tracking that frame applies the event's
+``frame_updates``, each ``id`` once, as it does a drive's; the last of them
+is the event's own change, which its ``op`` and ``value`` restate, so it is
+not applied again. Its ``line`` is its tone's, else the line the tone last
 played on, else ``null``. A controller whose frames persist from one shot to the next
 declares ``ControllerLimits(persistent_frames=True)``; such changes then
 have no event, and the program's ``frame_state`` (after ``events``) gives
