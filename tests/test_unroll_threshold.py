@@ -13,13 +13,18 @@ import numpy as np
 import pytest
 from cudaq_pulse.kernel._unroll import DEFAULT_UNROLL_THRESHOLD
 from cudaq_pulse.kernel.bytecode_bridge import compile_kernel_bytecode
-from cudaq_pulse.targets import Coupling, Qubit, TargetDescription
+from cudaq_pulse.targets import Coupling, MicrowaveDrive, Qubit, TargetDescription
 
 TARGET = TargetDescription(
     name="unroll-pair",
     qubits={
         i: Qubit(
-            i, 5.0e9 + 0.2e9 * i, -300e6, 0.0, 0.0, drive_params={"amplitude_scale_rad_per_ns": 1.0}
+            i,
+            5.0e9 + 0.2e9 * i,
+            -300e6,
+            0.0,
+            0.0,
+            drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0),
         )
         for i in range(2)
     },

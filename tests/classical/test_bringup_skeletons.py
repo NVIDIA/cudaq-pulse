@@ -29,7 +29,7 @@ from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.runtime._calls import IQModel
 from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck, TelegraphT1
-from cudaq_pulse.targets import transmon_17q, transmon_generic
+from cudaq_pulse.targets import DispersiveReadout, transmon_17q, transmon_generic
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse (unit drive scale)
 CLOCK = 2.0  # GHz on both targets
@@ -42,14 +42,14 @@ def _generic():
     target = transmon_generic(1)
     qubit = dataclasses.replace(
         target.qubits[0],
-        readout_params={
-            "ro_freq": 7.0e9,
-            "chi_hz": -1.5e6,
-            "kappa_eff_hz": 4e6,
-            "ro_integration": 400.0,
-            "error_0to1": 0.01,
-            "error_1to0": 0.03,
-        },
+        readout=DispersiveReadout(
+            frequency_hz=7.0e9,
+            dispersive_shift_hz=-1.5e6,
+            linewidth_hz=4e6,
+            integration_ns=400.0,
+            error_0to1=0.01,
+            error_1to0=0.03,
+        ),
     )
     return dataclasses.replace(target, qubits={0: qubit})
 
@@ -299,12 +299,12 @@ def test_k14_nelder_mead_optimizes_readout_frequency_and_amplitude(target):
     # The cost of a readout setting: minus the separation of the |0> and |1>
     # points, plus a penalty on photons (amplitude squared).
     model = IQModel(target, (0,), decay=False)
-    ro_freq = target.qubits[0].readout_params["ro_freq"]
-    tau = target.qubits[0].readout_params["ro_integration"]
+    resonator = target.qubits[0].readout.frequency_hz
+    tau = target.qubits[0].readout.integration_ns
 
     def cost(point):
         offset_mhz, amplitude = point
-        f = ro_freq + offset_mhz * 1e6
+        f = resonator + offset_mhz * 1e6
         c0, c1 = (model.center(0, k, f, amplitude, tau) for k in (0, 1))
         return -abs(c1 - c0) + 2.0 * amplitude * amplitude
 
@@ -450,7 +450,7 @@ def test_k17_latency_within_depletion_is_hidden(target):
             **target.qubits,
             0: dataclasses.replace(
                 target.qubits[0],
-                readout_params={**target.qubits[0].readout_params, "depletion_ns": 250.0},
+                readout=target.qubits[0].readout.replace(depletion_ns=250.0),
             ),
         },
     )
@@ -477,13 +477,13 @@ def test_k17_latency_within_depletion_is_hidden(target):
 
 
 def test_k18_readout_models_on_the_target(target):
-    params = dict(target.qubits[0].readout_params)
-    params.setdefault("error_0to1", 0.02)
-    params.setdefault("error_1to0", 0.05)
-    params["ro_dur"] = 400.0
+    given = target.qubits[0].readout
+    params = given.replace(
+        error_0to1=given.error_0to1 or 0.02, error_1to0=given.error_1to0 or 0.05, duration_ns=400.0
+    )
     modelled = dataclasses.replace(
         target,
-        qubits={**target.qubits, 0: dataclasses.replace(target.qubits[0], readout_params=params)},
+        qubits={**target.qubits, 0: dataclasses.replace(target.qubits[0], readout=params)},
     )
     dev = _device(modelled)
 
@@ -504,12 +504,12 @@ def test_k18_readout_models_on_the_target(target):
     # it decayed before the readout); decay during the window adds more.
     p1 = ideal.get((1,), 0.0)
     assert reported_zero(model) == pytest.approx(
-        (1 - p1) * (1 - params["error_0to1"]) + p1 * params["error_1to0"], abs=1e-6
+        (1 - p1) * (1 - params.error_0to1) + p1 * params.error_1to0, abs=1e-6
     )
     assert reported_zero(decay) > reported_zero(model)
     # The dispersive IQ model separates the states on this target.
     iq = IQModel(modelled, (0,), decay=False)
-    c0, c1 = (iq.center(0, k, params.get("ro_freq", math.nan), 1.0, 400.0) for k in (0, 1))
+    c0, c1 = (iq.center(0, k, params.frequency_hz, 1.0, 400.0) for k in (0, 1))
     assert abs(c1 - c0) > 1.0
     assert iq.depletion_ns(0) > 0
 

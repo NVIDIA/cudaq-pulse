@@ -91,7 +91,7 @@ def _att_target():
         t1_us=160.0,
         t2_star_us=100.0,
         thermal_population=0.0,
-        readout_params={**qubit.readout_params, "error_1to0": 0.11, "error_0to1": 0.14},
+        readout=qubit.readout.replace(error_1to0=0.11, error_0to1=0.14),
     )
     return dataclasses.replace(base, qubits={**base.qubits, 0: att})
 

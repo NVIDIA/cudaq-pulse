@@ -1652,8 +1652,8 @@ _QUDIT_FIELDS = (
     "t1_us",
     "t2_star_us",
     "label",
-    "drive_params",
-    "readout_params",
+    "drive",
+    "readout",
     "t2_echo_us",
     "thermal_population",
 )
@@ -1715,6 +1715,29 @@ def _plain(value: Any) -> Any:
     return value
 
 
+def _component_kinds() -> dict[str, dict[str, type[Any]]]:
+    """The modality components of a qudit a system file holds, by the member
+    they set and the kind it writes."""
+    from .targets.base import DispersiveReadout, MicrowaveDrive
+
+    return {"drive": {"microwave": MicrowaveDrive}, "readout": {"dispersive": DispersiveReadout}}
+
+
+def _component_data(member: str, component: Any) -> dict[str, Any] | None:
+    if component is None:
+        return None
+    kinds = _component_kinds()[member]
+    kind = next((k for k, cls in kinds.items() if type(component) is cls), None)
+    if kind is None:
+        from ._errors import UnsupportedError
+
+        raise UnsupportedError(
+            f"a system file holds a qudit's {member} as one of {', '.join(kinds)}; "
+            f"got a {type(component).__name__}"
+        )
+    return {"kind": kind, **dict(zip(component._fields, component._values, strict=True))}
+
+
 def _model_kinds() -> dict[str, type]:
     """The simulation models a system file holds, by the kind it writes."""
     from .targets.models import SimulationModel, TransmonModel
@@ -1745,7 +1768,11 @@ def _quantum_data(target: TargetDescription) -> dict[str, Any]:
         "attribution": target.attribution,
         "clock_ghz": target.clock_ghz,
         "qudits": [
-            {key: _plain(getattr(q, key)) for key in _QUDIT_FIELDS}
+            {
+                key: _component_data(key, value) if key in ("drive", "readout") else _plain(value)
+                for key in _QUDIT_FIELDS
+                for value in (getattr(q, key),)
+            }
             for q in sorted(target.qubits.values(), key=lambda q: q.index)
         ],
         "couplings": [
@@ -1847,6 +1874,27 @@ class _Reader:
                 )
         return data
 
+    def component(self, data: Any, path: str, member: str) -> Any:
+        """A qudit's *member* (``drive`` or ``readout``): the component of the
+        kind *data* names, with its fields."""
+        kinds = _component_kinds()[member]
+        if not isinstance(data, Mapping):
+            self.problem(path, f"must be a mapping, got {type(data).__name__}", data)
+            return None
+        kind = data.get("kind")
+        made = kinds.get(kind) if isinstance(kind, str) else None
+        if made is None:
+            self.problem(
+                f"{path}.kind",
+                f"is not a {member} kind" if "kind" in data else "is missing",
+                kind if "kind" in data else Problem.UNSET,
+                fix=f"the kinds are {', '.join(kinds)}",
+            )
+            return None
+        known = made._fields
+        self.mapping(data, path, ("kind", *known))
+        return self.build(path, made, **{k: data[k] for k in known if k in data})
+
     def build[T](self, path: str, make: Callable[..., T], **kwargs: Any) -> T | None:
         try:
             return make(**kwargs)
@@ -1864,6 +1912,12 @@ class _Reader:
         for i, item in enumerate(system.get("qudits", ())):
             entry = self.mapping(item, f"{path}.qudits[{i}]", _QUDIT_FIELDS)
             if entry is not None:
+                entry = {
+                    key: self.component(value, f"{path}.qudits[{i}].{key}", key)
+                    if key in ("drive", "readout") and value is not None
+                    else value
+                    for key, value in entry.items()
+                }
                 qudit = self.build(f"{path}.qudits[{i}]", Qubit, **entry)
                 if qudit is not None:
                     qudits[qudit.index] = qudit

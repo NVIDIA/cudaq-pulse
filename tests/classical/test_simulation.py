@@ -17,12 +17,12 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.classical import emulation
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import DispersiveReadout, Qubit, TargetDescription
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse at 2 GHz
 
 
-def _device(t1_us=0.0, n=1, readout_params=None):
+def _device(t1_us=0.0, n=1, readout=None):
     qubits = {
         i: Qubit(
             index=i,
@@ -30,7 +30,7 @@ def _device(t1_us=0.0, n=1, readout_params=None):
             anharmonicity_hz=-2e8,
             t1_us=t1_us,
             t2_star_us=0.0,
-            readout_params=readout_params or {},
+            readout=readout,
         )
         for i in range(n)
     }
@@ -273,7 +273,7 @@ def test_readout_errors_are_reported_and_seen_by_calls():
         seen.append(bits[0])
         return [bits[0]]
 
-    dev = _device(readout_params={"error_1to0": 0.1, "error_0to1": 0.05})
+    dev = _device(readout=DispersiveReadout(error_1to0=0.1, error_0to1=0.05))
     q = dev.qudit_handles[0]
     low = pulse.compile(decoded_reset, device=dev).lower(q)
     result = pulse.simulate(
@@ -288,7 +288,7 @@ def test_readout_errors_are_reported_and_seen_by_calls():
 
 
 def test_decay_during_readout_adds_to_the_one_to_zero_error():
-    dev = _device(t1_us=10.0, readout_params={"error_1to0": 0.0, "ro_dur": 500.0})
+    dev = _device(t1_us=10.0, readout=DispersiveReadout(duration_ns=500.0))
     q = dev.qudit_handles[0]
 
     @pulse.kernel
@@ -498,7 +498,7 @@ def test_gpu_simulation_of_calls_matches_the_cpu(case):
 
 
 def test_calls_on_a_high_index_qudit_use_its_mode():
-    dev = _device(n=3, readout_params={"error_1to0": 0.1})
+    dev = _device(n=3, readout=DispersiveReadout(error_1to0=0.1))
     q = dev.qudit_handles[2]
     a = pulse.simulate(
         pulse.compile(active_reset, device=dev).lower(q), initial_state=PLUS, levels=2

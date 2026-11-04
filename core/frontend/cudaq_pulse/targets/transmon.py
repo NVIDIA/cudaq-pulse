@@ -20,7 +20,7 @@ from typing import Any
 
 from .._errors import InvalidValueError
 from . import _transmon_17q as _k
-from .base import Coupling, Qubit, TargetDescription
+from .base import Coupling, DispersiveReadout, MicrowaveDrive, Qubit, TargetDescription
 
 
 def transmon_17q(calibration: Any = "transmon_17q") -> TargetDescription:
@@ -95,6 +95,7 @@ def _published_17q() -> TargetDescription:
 
 def _build_published_17q() -> TargetDescription:
     qubits = {}
+    drive = MicrowaveDrive(x_duration_ns=_k.DRIVE_DURATION_NS, x_sigma_ns=_k.DRIVE_SIGMA_NS)
     for index, q in enumerate(_k.QUBITS):
         qubits[index] = Qubit(
             index=index,
@@ -105,18 +106,15 @@ def _build_published_17q() -> TargetDescription:
             t2_echo_us=q.t2_echo_us,
             thermal_population=q.thermal_population,
             label=q.label,
-            drive_params={"x_dur": _k.DRIVE_DURATION_NS, "x_sigma": _k.DRIVE_SIGMA_NS},
-            readout_params={
-                "ro_freq": q.readout_frequency_hz,
-                "ro_dur": _k.READOUT_DURATION_NS[q.label[0]],
-                "ro_sigma": _k.READOUT_SIGMA_NS,
-                "ro_integration": _k.READOUT_INTEGRATION_NS,
-                "ro_qubit_freq": q.readout_qubit_frequency_hz,
-                "chi_hz": q.dispersive_shift_hz,
-                "ro_chi_hz": q.readout_dispersive_shift_hz,
-                "kappa_eff_hz": q.kappa_eff_hz,
-                "resonator_coupling_hz": q.resonator_coupling_hz,
-            },
+            drive=drive,
+            readout=DispersiveReadout(
+                frequency_hz=q.readout_frequency_hz,
+                dispersive_shift_hz=q.dispersive_shift_hz,
+                linewidth_hz=q.kappa_eff_hz,
+                duration_ns=_k.READOUT_DURATION_NS[q.label[0]],
+                integration_ns=_k.READOUT_INTEGRATION_NS,
+                sigma_ns=_k.READOUT_SIGMA_NS,
+            ),
         )
     couplings = [
         Coupling(

@@ -24,7 +24,14 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline, evaluate_callback
-from cudaq_pulse.targets import Coupling, CrosstalkEntry, Qubit, SimulationModel, TargetDescription
+from cudaq_pulse.targets import (
+    Coupling,
+    CrosstalkEntry,
+    MicrowaveDrive,
+    Qubit,
+    SimulationModel,
+    TargetDescription,
+)
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -36,7 +43,7 @@ def _pair(f0, f1, *, g_hz=0.0, zz_hz=0.0, alphas=(-200.0e6, -180.0e6)):
     return TargetDescription(
         name="coupled-pair",
         qubits={
-            q: Qubit(q, f, a, 0.0, 0.0, drive_params={"amplitude_scale_rad_per_ns": 1.0})
+            q: Qubit(q, f, a, 0.0, 0.0, drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0))
             for q, (f, a) in enumerate(zip((f0, f1), alphas, strict=True))
         },
         couplings=[Coupling(0, 1, coupling_strength_hz=g_hz)] if g_hz else [],

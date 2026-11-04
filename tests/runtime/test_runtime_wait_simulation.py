@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 from cudaq_pulse.runtime import _jit as jit
 from cudaq_pulse.runtime import simulate as simulate_module
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import MicrowaveDrive, Qubit, TargetDescription
 
 from tests.runtime.test_gpu_backend_logic import _CpuStandIn
 
@@ -46,7 +46,7 @@ _TARGET = TargetDescription(
             t1_us=_T1_US,
             t2_star_us=0.1,
             t2_echo_us=0.15,
-            drive_params={"amplitude_scale_rad_per_ns": 1.0},
+            drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0),
         )
     },
 )

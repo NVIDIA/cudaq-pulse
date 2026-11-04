@@ -285,8 +285,8 @@ def simulate(
         branches or wait lengths take effect exactly.
     readout:
         ``"ideal"`` (the default) reports the measured level. ``"model"``
-        reports through each qubit's assignment errors (``readout_params``
-        ``error_1to0`` and ``error_0to1``) and ``"model_with_decay"`` adds
+        reports through each qubit's assignment errors (its
+        ``DispersiveReadout``'s ``error_1to0`` and ``error_0to1``) and ``"model_with_decay"`` adds
         relaxation during the readout window; branches and calls see the
         reported outcome, and the state is projected on the true one. A
         call that takes IQ points (``complex`` or ``list[complex]``) gets

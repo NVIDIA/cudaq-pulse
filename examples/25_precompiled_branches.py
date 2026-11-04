@@ -44,7 +44,7 @@ import time
 
 import cudaq_pulse as pulse
 import numpy as np
-from cudaq_pulse.targets import transmon_17q
+from cudaq_pulse.targets import MicrowaveDrive, transmon_17q
 
 target = transmon_17q()
 qudit_indices = (0, 1, 2, 3)
@@ -108,8 +108,10 @@ def drifted(factors):
     qubits = dict(target.qubits)
     for q, factor in zip(qudit_indices, factors, strict=True):
         strength = target.drive_amplitude_scale(q) * factor
-        drive_params = {**qubits[q].drive_params, "amplitude_scale_rad_per_ns": strength}
-        qubits[q] = dataclasses.replace(qubits[q], drive_params=drive_params)
+        given = qubits[q].drive
+        assert isinstance(given, MicrowaveDrive)
+        stronger = given.replace(amplitude_scale_rad_per_ns=strength)
+        qubits[q] = dataclasses.replace(qubits[q], drive=stronger)
     return dataclasses.replace(target, qubits=qubits)
 
 

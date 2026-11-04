@@ -19,6 +19,31 @@ A target describes a device's qudits, couplings and decoherence; a device
    :members:
    :undoc-members:
 
+Drive and readout
+-----------------
+
+A qudit's ``drive`` and ``readout`` are components of their modality: a
+``MicrowaveDrive`` and a ``DispersiveReadout`` for a transmon. They are
+read-only values; ``component.replace(field=value)`` makes a changed copy.
+Simulation picks its model by the component's type and refuses one it has no
+model for. In a system file each is a mapping with its ``kind``
+(``"microwave"``, ``"dispersive"``) and its fields.
+
+.. autoclass:: cudaq_pulse.targets.Drive
+   :members:
+
+.. autoclass:: cudaq_pulse.targets.MicrowaveDrive
+   :members:
+
+.. autoclass:: cudaq_pulse.targets.Readout
+   :members:
+
+.. autoclass:: cudaq_pulse.targets.DispersiveReadout
+   :members:
+
+Couplings
+---------
+
 .. autoclass:: cudaq_pulse.targets.Coupling
    :members:
    :undoc-members:

@@ -32,9 +32,7 @@ from tests.runtime._lowering import on
 def _target(alpha_hz=-200.0e6, couplings=()):
     return TargetDescription(
         name="step-cache",
-        qubits={
-            q: Qubit(q, 5.0e9 + 2.0e9 * q, alpha_hz, 0.0, 0.0, drive_params={}) for q in range(2)
-        },
+        qubits={q: Qubit(q, 5.0e9 + 2.0e9 * q, alpha_hz, 0.0, 0.0) for q in range(2)},
         couplings=list(couplings),
     )
 

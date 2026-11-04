@@ -451,15 +451,13 @@ def chain_plant(target, t1_us=18.3, offset_hz=60e3, amplitude_scale=1.015):
     """Qubit 0 of *target* as the chain's device: its T1, a detuning from
     the drive, a drive-amplitude error and small readout errors."""
     qubit = target.qubits[0]
-    drive = dict(qubit.drive_params)
-    drive["amplitude_scale_rad_per_ns"] = target.drive_amplitude_scale(0) * amplitude_scale
-    readout_params = {**qubit.readout_params, "error_1to0": 0.03, "error_0to1": 0.02}
+    scale = target.drive_amplitude_scale(0) * amplitude_scale
     plant = dataclasses.replace(
         qubit,
         t1_us=t1_us,
         frequency_hz=qubit.frequency_hz + offset_hz,
-        drive_params=drive,
-        readout_params=readout_params,
+        drive=qubit.drive.replace(amplitude_scale_rad_per_ns=scale),
+        readout=qubit.readout.replace(error_1to0=0.03, error_0to1=0.02),
     )
     return dataclasses.replace(target, qubits={**target.qubits, 0: plant})
 
@@ -468,14 +466,13 @@ def search_plant(target, offset_hz):
     """A device like the binary-search paper's: T2* 12 us, T1 80 us, and
     readout errors that give its fringe contrast of 0.6 between shots."""
     qubit = target.qubits[0]
-    readout_params = {**qubit.readout_params, "error_1to0": 0.115, "error_0to1": 0.105}
     plant = dataclasses.replace(
         qubit,
         t1_us=80.0,
         t2_star_us=12.0,
         thermal_population=0.0,
         frequency_hz=qubit.frequency_hz + offset_hz,
-        readout_params=readout_params,
+        readout=qubit.readout.replace(error_1to0=0.115, error_0to1=0.105),
     )
     return dataclasses.replace(target, qubits={**target.qubits, 0: plant})
 

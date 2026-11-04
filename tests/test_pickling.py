@@ -30,7 +30,7 @@ from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, ControllerLimits
 from cudaq_pulse.kernel import _kernel
 from cudaq_pulse.kernel.ir_builder import SymbolicValueError
-from cudaq_pulse.targets import Coupling, Qubit, TargetDescription, calibration
+from cudaq_pulse.targets import Coupling, MicrowaveDrive, Qubit, TargetDescription, calibration
 from cudaq_pulse.targets._registry import make_target
 from cudaq_pulse.targets.calibration import Calibration
 
@@ -149,14 +149,15 @@ def _views(program):
 
 
 def test_targets_and_their_parts_unpickle_equal_with_equal_hashes():
-    qubit = Qubit(3, 5.1e9, -300e6, 50.0, 30.0, label="D3", drive_params={"x_amp": 0.2})
+    qubit = Qubit(3, 5.1e9, -300e6, 50.0, 30.0, label="D3", drive=MicrowaveDrive(x_amplitude=0.2))
     coupling = Coupling(3, 4, 5e6, gate_type="cz", gate_params={"theta": 0.1})
     shipped = _SHIPPED_DEVICE.target
     for value in (qubit, coupling, LADDER.target, shipped):
         back = _round_trip(value)
         assert back == value and hash(back) == hash(value)
     back = _round_trip(shipped)
-    assert back.qubits[0].drive_params == shipped.qubits[0].drive_params
+    assert back.qubits[0].drive == shipped.qubits[0].drive
+    assert back.qubits[0].readout == shipped.qubits[0].readout
     assert back.couplings == shipped.couplings and back.crosstalk == shipped.crosstalk
 
 

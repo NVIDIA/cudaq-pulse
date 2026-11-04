@@ -21,14 +21,15 @@ import shutil
 import subprocess
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import transmon_17q
+from cudaq_pulse.targets import MicrowaveDrive, transmon_17q
 
 target = transmon_17q()
 dev = pulse.device("transmon_17q")
 qubit_idx = 4  # D5 -- central data qubit
 
 qubit_d5 = target.qubits[qubit_idx]
-drive_params = target.get_drive_params(qubit_idx)
+microwave = qubit_d5.drive
+assert isinstance(microwave, MicrowaveDrive)
 clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
 
 print(f"Target: {target.name} ({target.n_qubits} qubits)")
@@ -39,8 +40,9 @@ print(f"  T1 = {qubit_d5.t1_us:.1f} us, T2* = {qubit_d5.t2_star_us:.1f} us")
 
 # The target gives the pulse shape; with no published amplitude, amplitudes
 # are rates in rad/ns, and a pi pulse has area pi.
-duration_ns = drive_params["x_dur"]
-sigma_ns = drive_params["x_sigma"]
+duration_ns = microwave.x_duration_ns
+sigma_ns = microwave.x_sigma_ns
+assert duration_ns is not None and sigma_ns is not None
 area_ns = sigma_ns * math.sqrt(2 * math.pi) * math.erf(duration_ns / (2 * math.sqrt(2) * sigma_ns))
 pi_amplitude = math.pi / area_ns
 print(f"  DRAG pi pulse: {duration_ns:.0f} ns, sigma = {sigma_ns:.0f} ns, amp = {pi_amplitude:.4f}")

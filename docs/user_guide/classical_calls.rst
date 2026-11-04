@@ -323,8 +323,8 @@ is due (``due_cycles``) and taken, the first operation that uses it, its slack
 pulse) and, with ``deadline_ns``, how far inside its deadline it is.
 ``exposed_cycles`` is how long the first use waits for the answer beyond when it
 could start anyway: after its line is free and after the readout resonator
-has depleted (``Qubit.depletion_ns``, from ``readout_params["depletion_ns"]``
-or from ``kappa_eff_hz``). The rest of the budget, ``hidden_cycles``, overlaps
+has depleted (``Qubit.depletion_ns``, from its ``DispersiveReadout``'s
+``depletion_ns`` or ``linewidth_hz``). The rest of the budget, ``hidden_cycles``, overlaps
 work that had to happen anyway, so a latency within the depletion time costs
 nothing. The
 timeline (``Lowered.timeline()``) draws each link as a row of its own,

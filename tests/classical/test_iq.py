@@ -15,22 +15,27 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.runtime._calls import IQModel
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import DispersiveReadout, Qubit, TargetDescription
 
 PI_AMP = math.pi / 20
 PLUS = [2**-0.5, 2**-0.5]
 
 
 def _device(t1_us=0.0, **readout):
-    params = {"chi_hz": 1e6, "kappa_eff_hz": 2e6, "ro_photons": 4.0, "ro_efficiency": 0.5}
-    params.update(readout)
+    fields = {
+        "dispersive_shift_hz": 1e6,
+        "linewidth_hz": 2e6,
+        "photon_number": 4.0,
+        "efficiency": 0.5,
+    }
+    fields.update(readout)
     qubit = Qubit(
         index=0,
         frequency_hz=5e9,
         anharmonicity_hz=-2e8,
         t1_us=t1_us,
         t2_star_us=0.0,
-        readout_params=params,
+        readout=DispersiveReadout(**fields),
     )
     return pulse.device({"target": TargetDescription(name="sim", qubits={0: qubit})})
 
@@ -67,7 +72,7 @@ def _iq_reset(discriminate):
 
 
 def test_discrimination_errors_match_the_gaussian_overlap():
-    dev = _device(ro_photons=0.3)
+    dev = _device(photon_number=0.3)
     q = dev.qudit_handles[0]
     discriminate = _threshold(dev)
     shots = 4000
@@ -91,7 +96,7 @@ def test_discrimination_errors_match_the_gaussian_overlap():
 
 
 def test_iq_points_scale_with_the_readout_amplitude():
-    dev = _device(ro_amp=0.05)
+    dev = _device(amplitude=0.05)
     q = dev.qudit_handles[0]
     seen: dict[float, list] = {0.05: [], 0.1: []}
 
@@ -115,7 +120,7 @@ def test_iq_points_scale_with_the_readout_amplitude():
     mean_low = np.mean(seen[0.05])
     mean_high = np.mean(seen[0.1])
     assert abs(mean_high / mean_low) == pytest.approx(2.0, rel=0.1)
-    # Without ro_amp the reference is the amplitude played: 4 photons at any.
+    # Without an amplitude the reference is the amplitude played: 4 photons at any.
     free = IQModel(_device().target, (0,), decay=False)
     tau = 1000 / dev.clock_ghz
     assert abs(free.center(0, 0, math.nan, 0.1, tau)) == pytest.approx(
@@ -124,7 +129,7 @@ def test_iq_points_scale_with_the_readout_amplitude():
 
 
 def test_the_centers_follow_the_readout_frequency():
-    dev = _device(ro_freq=7e9)
+    dev = _device(frequency_hz=7e9)
     model = IQModel(dev.target, (0,), decay=False)
     tau = 500.0
     # On resonance with the resonator pulled by |1> (f_r + chi), |1> rings
@@ -138,7 +143,7 @@ def test_the_centers_follow_the_readout_frequency():
 
 def test_relaxation_during_the_window_pulls_one_toward_zero():
     t1_us = 1.0
-    dev = _device(t1_us=t1_us, ro_integration=500.0)
+    dev = _device(t1_us=t1_us, integration_ns=500.0)
     tau, t1 = 500.0, t1_us * 1e3
     model = IQModel(dev.target, (0,), decay=True)
     c0 = model.center(0, 0, math.nan, 0.05, tau)
@@ -163,7 +168,7 @@ def test_iq_calls_need_shots_and_are_seeded():
 
 
 def test_depletion_time_follows_kappa():
-    dev = _device(kappa_eff_hz=1e6)
+    dev = _device(linewidth_hz=1e6)
     model = IQModel(dev.target, (0,), decay=False)
     kappa = 2 * math.pi * 1e6 * 1e-9
     assert model.depletion_ns(0) == pytest.approx(math.log(100) / kappa)
@@ -190,9 +195,9 @@ def test_the_17_qubit_twin_separates_its_readout_states():
     q = dev.qudit_handles[0]
     target = dev.target
     model = IQModel(target, (0,), decay=False)
-    params = target.qubits[0].readout_params
-    tau = float(params["ro_integration"])
-    c0, c1 = (model.center(0, k, params["ro_freq"], 1.0, tau) for k in (0, 1))
+    given = target.qubits[0].readout
+    tau = float(given.integration_ns)
+    c0, c1 = (model.center(0, k, given.frequency_hz, 1.0, tau) for k in (0, 1))
     assert abs(c1 - c0) > 3  # a high-fidelity single-shot readout
 
     @pulse.classical(name="transmon_17q_iq", max_latency_ns=0)

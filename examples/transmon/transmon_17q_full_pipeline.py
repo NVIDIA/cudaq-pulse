@@ -25,7 +25,7 @@ import shutil
 import subprocess
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import transmon_17q
+from cudaq_pulse.targets import MicrowaveDrive, transmon_17q
 
 target = transmon_17q()
 dev = pulse.device("transmon_17q")
@@ -45,9 +45,11 @@ print(
 )
 
 # The published 40 ns, sigma = 10 ns pulse; amplitudes are rates in rad/ns.
-drive_params = target.get_drive_params(data)
+microwave = target.qubits[data].drive
+assert isinstance(microwave, MicrowaveDrive)
 clock_ghz = dev.clock_ghz  # the program clock the schedule counts cycles of
-duration_ns, sigma_ns = drive_params["x_dur"], drive_params["x_sigma"]
+duration_ns, sigma_ns = microwave.x_duration_ns, microwave.x_sigma_ns
+assert duration_ns is not None and sigma_ns is not None
 area_ns = sigma_ns * math.sqrt(2 * math.pi) * math.erf(duration_ns / (2 * math.sqrt(2) * sigma_ns))
 pi_amplitude = math.pi / area_ns
 cal = {

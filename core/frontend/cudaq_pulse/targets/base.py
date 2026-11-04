@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, overload
 
@@ -26,6 +26,7 @@ from .models import SimulationModel, TransmonModel
 
 if TYPE_CHECKING:
     from dataclasses import dataclass as _dataclass_when_used
+    from typing import ClassVar, Self
 else:
     from .._errors import _dataclass_when_used
 
@@ -40,9 +41,315 @@ if TYPE_CHECKING:
 _EMPTY = MappingProxyType({})
 
 
+class _Field(int):
+    """A field of a component, read from its ``_values`` at this index."""
+
+    __slots__ = ()
+
+    def __get__(self, component: Any, owner: Any = None) -> Any:
+        if component is None:
+            return self
+        return component._values[self]
+
+
+class _Component:
+    """A read-only value of named fields (``_fields``, the keywords of its
+    ``__init__``), held in ``_values`` and read through ``_Field``
+    descriptors, compared, hashed, pickled and printed by them.
+
+    A plain slotted class rather than a dataclass: the shipped target makes
+    one per qudit, and making a dataclass of this many fields costs as much
+    as the rest of the import.
+    """
+
+    __slots__ = ("_values",)
+    if TYPE_CHECKING:
+        _fields: ClassVar[tuple[str, ...]]
+        _values: tuple[Any, ...]
+    _fields = ()
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, _Component):
+            return NotImplemented
+        return type(other) is type(self) and other._values == self._values
+
+    def __hash__(self) -> int:
+        return hash((type(self).__name__, self._values))
+
+    def __repr__(self) -> str:
+        defaults = type(self).__init__.__kwdefaults__ or {}
+        given = ", ".join(
+            f"{name}={value!r}"
+            for name, value in zip(self._fields, self._values, strict=True)
+            if value != defaults.get(name)
+        )
+        return f"{type(self).__name__}({given})"
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        from .._pickling import rebuilt
+
+        return (rebuilt, (type(self), dict(zip(self._fields, self._values, strict=True))))
+
+    def replace(self, **changes: Any) -> Self:
+        """A copy with the fields *changes* names set to their values."""
+        values = dict(zip(self._fields, self._values, strict=True))
+        values.update(changes)
+        return type(self)(**values)
+
+    __replace__ = replace
+
+
+class Readout(_Component):
+    """How a qudit is read out: the base of the readout modalities, such as
+    ``DispersiveReadout``. Simulation and emulation pick a readout's model by
+    its type, and refuse a type they have no model for."""
+
+    __slots__ = ()
+
+    @property
+    def frequency_hz(self) -> float | None:
+        """The frequency its readout line plays at by default (``None``: the
+        qudit's 0-1 frequency)."""
+        return None
+
+    def _depletion_ns(self) -> float:
+        """How long after a readout the next one must wait."""
+        return 0.0
+
+
+class Drive(_Component):
+    """How a qudit is driven: the base of the drive modalities, such as
+    ``MicrowaveDrive``. Simulation picks a drive's model by its type, and
+    refuses a type it has no model for."""
+
+    __slots__ = ()
+
+
+class DispersiveReadout(Readout):
+    """A dispersive readout through a resonator. Every field may be left out.
+
+    ``frequency_hz`` is the resonator's frequency, where the readout line
+    plays by default. The readout model in simulation and emulation
+    (``IQModel``) pulls the resonator by ``(2k - 1) dispersive_shift_hz``
+    for level ``k``, with linewidth ``linewidth_hz`` (kappa / 2 pi), and
+    needs both. ``error_1to0`` and ``error_0to1`` are the probabilities of
+    reporting 0 for ``|1>`` and 1 for ``|0>``. The resonator empties in
+    ``depletion_ns`` (else ln(100) / kappa) at measurement efficiency
+    ``efficiency``.
+
+    The readout pulse the device is tuned for: of peak ``amplitude`` it
+    holds ``photon_number`` photons (with no ``amplitude``, any pulse does),
+    is integrated over ``integration_ns`` (else the readout's length), has
+    edges of width ``sigma_ns``, and, with relaxation during the readout,
+    a window of ``duration_ns``.
+    """
+
+    __slots__ = ()
+    _fields = (
+        "frequency_hz",
+        "dispersive_shift_hz",
+        "linewidth_hz",
+        "efficiency",
+        "error_1to0",
+        "error_0to1",
+        "depletion_ns",
+        "amplitude",
+        "duration_ns",
+        "sigma_ns",
+        "integration_ns",
+        "photon_number",
+    )
+
+    def __init__(
+        self,
+        *,
+        frequency_hz: float | None = None,
+        dispersive_shift_hz: float | None = None,
+        linewidth_hz: float | None = None,
+        efficiency: float = 0.5,
+        error_1to0: float = 0.0,
+        error_0to1: float = 0.0,
+        depletion_ns: float | None = None,
+        amplitude: float | None = None,
+        duration_ns: float | None = None,
+        sigma_ns: float | None = None,
+        integration_ns: float | None = None,
+        photon_number: float = 4.0,
+    ) -> None:
+        object.__setattr__(
+            self,
+            "_values",
+            (
+                frequency_hz,
+                dispersive_shift_hz,
+                linewidth_hz,
+                efficiency,
+                error_1to0,
+                error_0to1,
+                depletion_ns,
+                amplitude,
+                duration_ns,
+                sigma_ns,
+                integration_ns,
+                photon_number,
+            ),
+        )
+
+    if TYPE_CHECKING:
+
+        @property
+        def frequency_hz(self) -> float | None:
+            """The resonator's frequency, where the readout line plays by default."""
+            ...
+
+        @property
+        def dispersive_shift_hz(self) -> float | None:
+            """The dispersive shift chi / 2 pi."""
+            ...
+
+        @property
+        def linewidth_hz(self) -> float | None:
+            """The resonator's effective linewidth kappa / 2 pi."""
+            ...
+
+        @property
+        def efficiency(self) -> float:
+            """The measurement efficiency."""
+            ...
+
+        @property
+        def error_1to0(self) -> float:
+            """The probability that ``|1>`` is reported 0."""
+            ...
+
+        @property
+        def error_0to1(self) -> float:
+            """The probability that ``|0>`` is reported 1."""
+            ...
+
+        @property
+        def depletion_ns(self) -> float | None:
+            """The time the resonator takes to empty after a readout."""
+            ...
+
+        @property
+        def amplitude(self) -> float | None:
+            """The readout pulse's peak amplitude, at which it holds ``photon_number``."""
+            ...
+
+        @property
+        def duration_ns(self) -> float | None:
+            """The readout window, over which the qudit may relax."""
+            ...
+
+        @property
+        def sigma_ns(self) -> float | None:
+            """The width of the readout pulse's edges."""
+            ...
+
+        @property
+        def integration_ns(self) -> float | None:
+            """The time the readout signal is integrated over."""
+            ...
+
+        @property
+        def photon_number(self) -> float:
+            """The photons in the resonator at ``amplitude``."""
+            ...
+
+    else:
+        # In the order of _fields.
+        (
+            frequency_hz,
+            dispersive_shift_hz,
+            linewidth_hz,
+            efficiency,
+            error_1to0,
+            error_0to1,
+            depletion_ns,
+            amplitude,
+            duration_ns,
+            sigma_ns,
+            integration_ns,
+            photon_number,
+        ) = map(_Field, range(12))
+
+    def _depletion_ns(self) -> float:
+        depletion, linewidth = self._values[6], self._values[2]
+        if depletion is not None:
+            return float(depletion)
+        if linewidth:
+            return math.log(100.0) / (2 * math.pi * float(linewidth) * 1e-9)
+        return 0.0
+
+
+class MicrowaveDrive(Drive):
+    """A microwave drive. Every field may be left out.
+
+    The simulator turns a pulse's amplitude into a Rabi rate in rad/ns by
+    ``amplitude_scale_rad_per_ns``; without it, from the calibrated
+    Gaussian or DRAG pi pulse of peak ``x_amplitude``, length
+    ``x_duration_ns`` and width ``x_sigma_ns`` (all three given), so that
+    the pulse makes a pi rotation; else 1.0.
+    """
+
+    __slots__ = ()
+    _fields = ("amplitude_scale_rad_per_ns", "x_amplitude", "x_duration_ns", "x_sigma_ns")
+
+    def __init__(
+        self,
+        *,
+        amplitude_scale_rad_per_ns: float | None = None,
+        x_amplitude: float | None = None,
+        x_duration_ns: float | None = None,
+        x_sigma_ns: float | None = None,
+    ) -> None:
+        object.__setattr__(
+            self,
+            "_values",
+            (
+                amplitude_scale_rad_per_ns,
+                x_amplitude,
+                x_duration_ns,
+                x_sigma_ns,
+            ),
+        )
+
+    if TYPE_CHECKING:
+
+        @property
+        def amplitude_scale_rad_per_ns(self) -> float | None:
+            """The Rabi rate in rad/ns of a pulse of amplitude 1."""
+            ...
+
+        @property
+        def x_amplitude(self) -> float | None:
+            """The peak amplitude of the calibrated pi pulse."""
+            ...
+
+        @property
+        def x_duration_ns(self) -> float | None:
+            """The length of the calibrated pi pulse."""
+            ...
+
+        @property
+        def x_sigma_ns(self) -> float | None:
+            """The Gaussian width of the calibrated pi pulse."""
+            ...
+
+    else:
+        # In the order of _fields.
+        amplitude_scale_rad_per_ns, x_amplitude, x_duration_ns, x_sigma_ns = map(_Field, range(4))
+
+
 @dataclass(frozen=True)
 class Qubit:
-    """Single qubit in a target device."""
+    """Single qubit in a target device.
+
+    ``drive`` and ``readout`` say how it is driven and read out, each by
+    the component of its modality (``MicrowaveDrive``,
+    ``DispersiveReadout``), or ``None`` when not given.
+    """
 
     index: int
     frequency_hz: float
@@ -50,17 +357,13 @@ class Qubit:
     t1_us: float
     t2_star_us: float
     label: str = ""
-    drive_params: Mapping[str, float] = field(default_factory=dict)
-    readout_params: Mapping[str, float] = field(default_factory=dict)
+    drive: Drive | None = None
+    readout: Readout | None = None
     # Hahn-echo T2 (us), which the simulation dephases at on request, and
     # the excited-state population at equilibrium (a fraction), from which
     # it starts and towards which T1 relaxes.
     t2_echo_us: float | None = None
     thermal_population: float = 0.0
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "drive_params", MappingProxyType(dict(self.drive_params)))
-        object.__setattr__(self, "readout_params", MappingProxyType(dict(self.readout_params)))
 
     def __hash__(self) -> int:
         return hash((self.index, self.frequency_hz, self.label))
@@ -72,18 +375,13 @@ class Qubit:
 
     @property
     def depletion_ns(self) -> float:
-        """How long the readout resonator takes to empty after a readout.
-
-        ``readout_params["depletion_ns"]`` if given; else the time for its
-        photons to fall to 1% at the decay rate ``kappa_eff_hz``,
-        ln(100) / kappa; else 0.
+        """How long after a readout the next one must wait: for a
+        ``DispersiveReadout``, its ``depletion_ns`` if given, else the time
+        for its photons to fall to 1% at its ``linewidth_hz``, ln(100) / kappa;
+        else 0.
         """
-        if "depletion_ns" in self.readout_params:
-            return float(self.readout_params["depletion_ns"])
-        kappa_hz = self.readout_params.get("kappa_eff_hz")
-        if kappa_hz:
-            return math.log(100.0) / (2 * math.pi * float(kappa_hz) * 1e-9)
-        return 0.0
+        readout = self.readout
+        return 0.0 if readout is None else readout._depletion_ns()
 
 
 @dataclass(frozen=True)
@@ -330,23 +628,27 @@ class TargetDescription:
             g.setdefault(c.qubit_b, []).append(c.qubit_a)
         return g
 
-    def get_drive_params(self, qubit_index: int) -> dict[str, float]:
-        """Per-qubit drive parameters (amp, sigma, beta, etc.)."""
-        if qubit_index not in self.qubits:
-            raise NotFoundError(f"Qubit {qubit_index} not in target {self.name!r}")
-        return dict(self.qubits[qubit_index].drive_params)
-
     def drive_amplitude_scale(self, qubit_index: int) -> float:
         """Return the conversion from pulse amplitude to radians/ns.
 
-        Targets may provide ``amplitude_scale_rad_per_ns`` explicitly. For
-        transmon calibration records containing a Gaussian/DRAG pi pulse
-        (``x_amp``, ``x_dur``, and ``x_sigma``), the scale is inferred from
-        its truncated-Gaussian area. Targets without either representation use
-        1.0, meaning pulse amplitudes are already angular rates in rad/ns.
+        A ``MicrowaveDrive`` may give ``amplitude_scale_rad_per_ns``
+        explicitly; else, with a calibrated Gaussian/DRAG pi pulse
+        (``x_amplitude``, ``x_duration_ns`` and ``x_sigma_ns``), the scale is
+        inferred from its truncated-Gaussian area. A qudit with neither, or
+        no drive, uses 1.0: pulse amplitudes are already angular rates in
+        rad/ns. Another drive modality is ``UnsupportedError``.
         """
-        params = self.get_drive_params(qubit_index)
-        explicit = params.get("amplitude_scale_rad_per_ns")
+        if qubit_index not in self.qubits:
+            raise NotFoundError(f"Qubit {qubit_index} not in target {self.name!r}")
+        drive = self.qubits[qubit_index].drive
+        if drive is None:
+            return 1.0
+        if not isinstance(drive, MicrowaveDrive):
+            raise UnsupportedError(
+                f"no drive model for {type(drive).__name__} (qubit {qubit_index}); the "
+                "simulator models a MicrowaveDrive"
+            )
+        explicit = drive.amplitude_scale_rad_per_ns
         if explicit is not None:
             if explicit <= 0:
                 raise InvalidValueError(
@@ -354,9 +656,9 @@ class TargetDescription:
                 )
             return float(explicit)
 
-        amplitude = float(params.get("x_amp", 0.0))
-        duration = float(params.get("x_dur", 0.0))
-        sigma = float(params.get("x_sigma", 0.0))
+        amplitude = float(drive.x_amplitude or 0.0)
+        duration = float(drive.x_duration_ns or 0.0)
+        sigma = float(drive.x_sigma_ns or 0.0)
         if amplitude > 0.0 and duration > 0.0 and sigma > 0.0:
             area = (
                 sigma

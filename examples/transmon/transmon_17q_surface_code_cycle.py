@@ -26,7 +26,7 @@ cycle, is left out.
 import math
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import transmon_17q
+from cudaq_pulse.targets import MicrowaveDrive, transmon_17q
 
 target = transmon_17q()
 dev = pulse.device("transmon_17q")
@@ -49,8 +49,10 @@ for s in sorted(steps):
     print(f"CZ step {s}: " + ", ".join(f"{labels[a]}-{labels[d]}" for a, d in steps[s]))
 
 # The published 40 ns, sigma = 10 ns pulse; amplitudes are rates in rad/ns.
-drive_params = target.get_drive_params(0)
-duration_ns, sigma_ns = drive_params["x_dur"], drive_params["x_sigma"]
+microwave = target.qubits[0].drive
+assert isinstance(microwave, MicrowaveDrive)
+duration_ns, sigma_ns = microwave.x_duration_ns, microwave.x_sigma_ns
+assert duration_ns is not None and sigma_ns is not None
 area_ns = sigma_ns * math.sqrt(2 * math.pi) * math.erf(duration_ns / (2 * math.sqrt(2) * sigma_ns))
 pi_amplitude = math.pi / area_ns
 half_pi_amplitude = pi_amplitude / 2

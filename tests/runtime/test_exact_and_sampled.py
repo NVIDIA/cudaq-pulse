@@ -25,7 +25,7 @@ from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.runtime import _propagate
 from cudaq_pulse.runtime import simulate as simulate_module
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import MicrowaveDrive, Qubit, TargetDescription
 
 from tests._handles import Q
 from tests.runtime._lowering import on
@@ -43,7 +43,7 @@ def _target(t1_us=30.0, t2_us=20.0, thermal=0.02, offset_hz=0.0):
                 anharmonicity_hz=-200.0e6,
                 t1_us=t1_us,
                 t2_star_us=t2_us,
-                drive_params={"amplitude_scale_rad_per_ns": 1.0},
+                drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0),
                 thermal_population=thermal,
             )
         },

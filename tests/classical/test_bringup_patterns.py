@@ -17,7 +17,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.classical import emulation, random_index
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import DispersiveReadout, Qubit, TargetDescription
 
 PI_AMP = math.pi / 20
 
@@ -29,7 +29,7 @@ def _device(**readout):
         anharmonicity_hz=-2e8,
         t1_us=0.0,
         t2_star_us=0.0,
-        readout_params=readout,
+        readout=DispersiveReadout(**readout),
     )
     return pulse.device({"target": TargetDescription(name="sim", qubits={0: qubit})})
 
@@ -178,7 +178,7 @@ def test_depletion_defaults_from_kappa():
         anharmonicity_hz=-2e8,
         t1_us=0.0,
         t2_star_us=0.0,
-        readout_params={"kappa_eff_hz": 1e6},
+        readout=DispersiveReadout(linewidth_hz=1e6),
     )
     assert qubit.depletion_ns == pytest.approx(math.log(100) / (2 * math.pi * 1e-3))
     assert _device().target.qubits[0].depletion_ns == 0.0

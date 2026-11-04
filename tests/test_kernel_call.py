@@ -22,7 +22,7 @@ import cudaq_pulse as pulse
 import numpy as np
 import pytest
 from cudaq_pulse.kernel.ir_builder import CompilationError
-from cudaq_pulse.targets import Qubit, TargetDescription, TransmonModel
+from cudaq_pulse.targets import MicrowaveDrive, Qubit, TargetDescription, TransmonModel
 from cudaq_pulse.targets._registry import ENV_VAR
 
 from tests._handles import Q
@@ -40,7 +40,7 @@ def _device(n=4, **kwargs):
                 -300e6,
                 0.0,
                 0.0,
-                drive_params={"amplitude_scale_rad_per_ns": 1.0},
+                drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0),
             )
             for i in range(n)
         },

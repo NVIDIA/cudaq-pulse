@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 from cudaq_pulse.runtime import _jit as jit
 from cudaq_pulse.runtime import simulate as simulate_module
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import MicrowaveDrive, Qubit, TargetDescription
 
 from tests._handles import Q
 from tests.runtime._lowering import evolve, on
@@ -69,7 +69,7 @@ def _target(n, t1_us=0.0):
                 anharmonicity_hz=-200.0e6,
                 t1_us=t1_us,
                 t2_star_us=0.0,
-                drive_params={"amplitude_scale_rad_per_ns": 1.0},
+                drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0),
             )
             for q in range(n)
         },

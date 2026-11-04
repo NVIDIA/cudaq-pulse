@@ -30,7 +30,7 @@ import tracemalloc
 import warnings
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import Qubit, TargetDescription
+from cudaq_pulse.targets import MicrowaveDrive, Qubit, TargetDescription
 
 _TARGET = TargetDescription(
     name="wait-sweep",
@@ -41,7 +41,7 @@ _TARGET = TargetDescription(
             anharmonicity_hz=-200.0e6,
             t1_us=0.2,
             t2_star_us=0.1,
-            drive_params={"amplitude_scale_rad_per_ns": 1.0},
+            drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0),
         )
     },
 )

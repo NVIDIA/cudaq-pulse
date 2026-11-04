@@ -28,6 +28,7 @@ from cudaq_pulse.controller import (
     WaveformMemoryScope,
 )
 from cudaq_pulse.ops import Waveform
+from cudaq_pulse.targets import DispersiveReadout, MicrowaveDrive, Qubit, Readout
 
 wave = pulse.ops.gaussian(40, 0.1, 10.0)
 assert_type(wave, Waveform)
@@ -184,3 +185,12 @@ assert_type(qpu.control_system, pulse.ControlSystem | None)
 assert_type(qpu.as_dict(), dict[str, Any])
 pulse.compile(rabi, device=qpu, machine=control)
 pulse.controller(3)  # type: ignore[arg-type]
+
+readout = DispersiveReadout(frequency_hz=7.0e9, linewidth_hz=1.0e6)
+assert_type(readout.frequency_hz, float | None)
+assert_type(readout.photon_number, float)
+assert_type(readout.replace(linewidth_hz=2.0e6), DispersiveReadout)
+DispersiveReadout(7.0e9)  # type: ignore[call-arg]
+readout.linewidth_hz = 2.0e6  # type: ignore[misc]
+qudit = Qubit(0, 5.0e9, -2.0e8, 50.0, 30.0, drive=MicrowaveDrive(x_amplitude=0.2), readout=readout)
+assert_type(qudit.readout, Readout | None)

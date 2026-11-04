@@ -67,26 +67,39 @@ class _Leaf:
 class ReadoutModel:
     """Per-qudit assignment matrices: P(report r | true k).
 
-    For a qubit, ``readout_params`` of the target give
-    ``error_1to0`` (|1> reported 0) and ``error_0to1`` (|0> reported 1). With
-    ``decay=True`` relaxation during the readout window (``ro_dur`` ns, else
-    the readout pulse) adds 1 - exp(-t / (2 T1)) to the |1> -> 0 error.
-    Higher levels are reported as themselves.
+    For a qubit, its ``DispersiveReadout`` gives ``error_1to0`` (|1>
+    reported 0) and ``error_0to1`` (|0> reported 1); without a readout it
+    is ideal, and another readout is ``UnsupportedError``. With
+    ``decay=True`` relaxation during the readout window (``duration_ns``)
+    adds 1 - exp(-t / (2 T1)) to the |1> -> 0 error. Higher levels are
+    reported as themselves.
     """
 
     def __init__(
         self, target: Any, qudits: Sequence[int], dims: Sequence[int], decay: bool
     ) -> None:
+        from cudaq_pulse.targets.base import DispersiveReadout
+
         self.matrices: dict[int, np.ndarray] = {}
         for position, qudit in enumerate(qudits):
             q = target.qubits[qudit]
-            params = q.readout_params
+            r = q.readout
             d = dims[position]
             m = np.eye(d)
-            to0 = float(params.get("error_1to0", 0.0))
-            to1 = float(params.get("error_0to1", 0.0))
-            if decay and q.t1_us > 0 and "ro_dur" in params:
-                to0 = to0 + (1 - to0) * (1 - math.exp(-float(params["ro_dur"]) / (2e3 * q.t1_us)))
+            if r is None:
+                self.matrices[position] = m
+                continue
+            if not isinstance(r, DispersiveReadout):
+                from .._errors import UnsupportedError
+
+                raise UnsupportedError(
+                    f"no readout model for {type(r).__name__} (qudit {qudit}): reported "
+                    "outcomes come from a DispersiveReadout's errors"
+                )
+            to0, to1 = float(r.error_1to0), float(r.error_0to1)
+            window = r.duration_ns
+            if decay and q.t1_us > 0 and window is not None:
+                to0 = to0 + (1 - to0) * (1 - math.exp(-float(window) / (2e3 * q.t1_us)))
             if d >= 2:
                 m[0, 0], m[1, 0] = 1 - to1, to1
                 m[0, 1], m[1, 1] = to0, 1 - to0

@@ -136,50 +136,81 @@ def _answer_values(function: ClassicalFunction[..., Any], answer: Any) -> list[f
 
 
 class IQModel:
-    """Synthesized IQ points of readouts (dispersive readout, per qudit).
+    """Synthesized IQ points of readouts, from each qudit's
+    ``DispersiveReadout``, which must give its ``dispersive_shift_hz`` and
+    ``linewidth_hz``; a qudit without one, or with another readout, is
+    ``UnsupportedError``.
 
-    The resonator, at ``ro_freq`` (else at the readout tone, so the tone sits
-    midway between the pulled frequencies), is pulled by
-    ``chi_k = (2k - 1) chi`` for qudit level ``k`` (``chi_hz``, default
-    1 MHz). Driven at the readout tone's frequency ``f`` with field rate
-    ``epsilon`` it settles at
+    The resonator, at its ``frequency_hz`` (else at the readout tone, so the
+    tone sits midway between the pulled frequencies), is pulled by
+    ``chi_k = (2k - 1) chi`` for qudit level ``k`` (``dispersive_shift_hz``).
+    Driven at the readout tone's frequency ``f`` with field rate ``epsilon``
+    it settles at
 
         alpha_k = epsilon / (kappa / 2 - i 2 pi (f - f_r - chi_k)),
 
-    (``kappa_eff_hz``, default 2 MHz). ``epsilon`` scales with the readout
-    pulse's amplitude: at ``ro_amp`` (default: the amplitude played) driving
-    midway holds ``ro_photons`` photons (default 4). The integrated point
-    over ``ro_integration`` ns (else the readout's length) ``tau`` is
+    (``linewidth_hz``). ``epsilon`` scales with the readout pulse's
+    amplitude: at ``amplitude`` (default: the amplitude played) driving
+    midway holds ``photon_number`` photons. The integrated point over
+    ``integration_ns`` (else the readout's length) ``tau`` is
 
         sqrt(eta kappa tau) alpha_k + noise,
 
     with vacuum noise of variance 1/2 per quadrature and efficiency
-    ``ro_efficiency`` eta (default 0.5). With ``decay``, a qubit in ``|1>``
+    ``efficiency`` eta. With ``decay``, a qubit in ``|1>``
     that relaxes at a time ``t`` drawn from its T1 within the window
     integrates ``alpha_1`` for ``t`` and ``alpha_0`` after.
     """
 
     def __init__(self, target: Any, qudits: Sequence[int], decay: bool) -> None:
+        from cudaq_pulse.targets.base import DispersiveReadout
+
         self.decay = decay
         self._params: dict[int, dict[str, float]] = {}
+        nan = math.nan
         for qudit in qudits:
             q = target.qubits[qudit]
-            p = q.readout_params
+            r = q.readout
+            if not isinstance(r, DispersiveReadout):
+                from .._errors import UnsupportedError
+
+                problem = (
+                    f"qudit {qudit} has no readout"
+                    if r is None
+                    else f"no readout model for {type(r).__name__} (qudit {qudit})"
+                )
+                raise UnsupportedError(
+                    f"{problem}: IQ points are synthesized from a DispersiveReadout"
+                )
+            # DispersiveReadout._fields, in its order.
+            f_r, chi, linewidth, eta, _, _, depletion, amp, _, _, tau, photons = r._values
+            if chi is None or linewidth is None:
+                from .._errors import UnsupportedError
+
+                missing = [
+                    n
+                    for n, v in (("dispersive_shift_hz", chi), ("linewidth_hz", linewidth))
+                    if v is None
+                ]
+                raise UnsupportedError(
+                    f"the IQ points of qudit {qudit} need its DispersiveReadout's "
+                    f"{' and '.join(missing)}, which it does not give"
+                )
             self._params[qudit] = {
-                "chi": float(p.get("chi_hz", 1e6)),
-                "kappa": 2 * math.pi * float(p.get("kappa_eff_hz", 2e6)) * 1e-9,
-                "f_r": float(p.get("ro_freq", math.nan)),
-                "amp": float(p.get("ro_amp", math.nan)),
-                "photons": float(p.get("ro_photons", 4.0)),
-                "eta": float(p.get("ro_efficiency", 0.5)),
-                "tau": float(p.get("ro_integration", math.nan)),
+                "chi": float(chi),
+                "kappa": 2 * math.pi * float(linewidth) * 1e-9,
+                "f_r": nan if f_r is None else float(f_r),
+                "amp": nan if amp is None else float(amp),
+                "photons": float(photons),
+                "eta": float(eta),
+                "tau": nan if tau is None else float(tau),
                 "t1": float(q.t1_us) * 1e3,
-                "depletion": float(p.get("depletion_ns", math.nan)),
+                "depletion": nan if depletion is None else float(depletion),
             }
 
     def depletion_ns(self, qudit: int) -> float:
         """The time the resonator takes to empty to 1% of its photons
-        (``readout_params["depletion_ns"]`` if given)."""
+        (its ``depletion_ns`` if given)."""
         explicit = self._params[qudit].get("depletion")
         if explicit is not None and math.isfinite(explicit):
             return explicit

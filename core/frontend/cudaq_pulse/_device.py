@@ -106,8 +106,8 @@ def _fingerprint(target: TargetDescription, layout: tuple[int, ...], calibration
             q.t2_star_us,
             q.t2_echo_us,
             q.thermal_population,
-            sorted(q.drive_params.items()),
-            sorted(q.readout_params.items()),
+            None if (drive := q.drive) is None else (type(drive).__name__, drive._values),
+            None if (readout := q.readout) is None else (type(readout).__name__, readout._values),
         )
         for q in sorted(target.qubits.values(), key=lambda q: q.index)
     ]

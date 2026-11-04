@@ -8,7 +8,7 @@
 """Devices and runs in the reference conventions: amplitudes are Rabi rates."""
 
 import cudaq_pulse as pulse
-from cudaq_pulse.targets import Coupling, Qubit, TargetDescription
+from cudaq_pulse.targets import Coupling, MicrowaveDrive, Qubit, TargetDescription
 
 PASSES = (
     "verify",
@@ -39,7 +39,7 @@ def device(freqs_hz, alphas_hz, couplings=(), t1_us=0.0, t2_us=0.0, **qubit):
                 a,
                 t1_us,
                 t2_us,
-                drive_params={"amplitude_scale_rad_per_ns": 1.0},
+                drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0),
                 **qubit,
             )
             for i, (f, a) in enumerate(zip(freqs_hz, alphas_hz, strict=False))

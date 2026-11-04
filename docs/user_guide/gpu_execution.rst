@@ -169,7 +169,7 @@ To execute on a GPU (requires cuDensityMat runtime):
 
    import math
    import cudaq_pulse as pulse
-   from cudaq_pulse.targets import Qubit, TargetDescription
+   from cudaq_pulse.targets import MicrowaveDrive, Qubit, TargetDescription
 
    target = TargetDescription(
        name="one-qubit-demo",
@@ -180,7 +180,7 @@ To execute on a GPU (requires cuDensityMat runtime):
                anharmonicity_hz=-200.0e6,
                t1_us=50.0,
                t2_star_us=30.0,
-               drive_params={"amplitude_scale_rad_per_ns": 1.0},
+               drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0),
            )
        },
    )

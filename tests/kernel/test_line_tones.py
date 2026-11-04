@@ -15,7 +15,13 @@ from typing import ClassVar
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.targets import Qubit, SimulationModel, TargetDescription, TransmonModel
+from cudaq_pulse.targets import (
+    MicrowaveDrive,
+    Qubit,
+    SimulationModel,
+    TargetDescription,
+    TransmonModel,
+)
 
 from tests._handles import Q
 
@@ -232,7 +238,7 @@ def test_driving_the_second_transition_moves_the_qudit_to_level_two():
                 -200e6,
                 0.0,
                 0.0,
-                drive_params={"amplitude_scale_rad_per_ns": 1.0},
+                drive=MicrowaveDrive(amplitude_scale_rad_per_ns=1.0),
             )
         },
     )

@@ -130,16 +130,16 @@ class DriftingPlant:
 
     def target(self) -> Any:
         """The target description with the qubit's current true parameters."""
+        from ..targets.base import MicrowaveDrive
+
         base = self._target.qubits[self.qubit]
-        drive = dict(base.drive_params)
-        drive["amplitude_scale_rad_per_ns"] = (
-            self._target.drive_amplitude_scale(self.qubit) * self.state.amplitude_scale
-        )
+        scale = self._target.drive_amplitude_scale(self.qubit) * self.state.amplitude_scale
+        drive = base.drive if base.drive is not None else MicrowaveDrive()
         qubit = dataclasses.replace(
             base,
             t1_us=self.state.t1_us,
             frequency_hz=base.frequency_hz + self.state.frequency_offset_hz,
-            drive_params=drive,
+            drive=drive.replace(amplitude_scale_rad_per_ns=scale),
         )
         qubits = dict(self._target.qubits)
         qubits[self.qubit] = qubit
