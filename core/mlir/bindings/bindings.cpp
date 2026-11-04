@@ -678,6 +678,11 @@ struct ControllerEventWalk {
   /// The tones whose frame a controller tracks at run time: those with a
   /// frame change computed from a readout or an answer, or made in a branch.
   llvm::DenseSet<mlir::Operation *> tracked;
+  /// Whether to track them. A check reads none of their frame changes, and
+  /// listing them can take memory cubic in the program's length: a change
+  /// that a drive in one arm takes stays pending on the other arm's path,
+  /// gaining a condition at every later branch.
+  bool trackFrames = true;
   /// Whether any event can have something known only at run time: a tracked
   /// tone, a classical call, or a measurement used other than as a branch
   /// condition.
@@ -686,19 +691,20 @@ struct ControllerEventWalk {
   void scan(mlir::Operation *op) {
     if (mlir::isa<pulse::ShiftPhaseOp, pulse::SetPhaseOp,
                   pulse::ShiftFrequencyOp, pulse::SetFrequencyOp>(op)) {
-      if (fromRunTime(op->getOperand(1)) ||
-          op->getParentOfType<mlir::scf::IfOp>()) {
+      if (trackFrames && (fromRunTime(op->getOperand(1)) ||
+                          op->getParentOfType<mlir::scf::IfOp>())) {
         tracked.insert(toneRoots(op->getOperand(0)));
         detail = true;
       }
     } else if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
       // A virtual Z folded into a drive in an arm is a frame change there.
-      branch->walk([&](pulse::DriveOp drive) {
-        if (drive->hasAttr("frame_phase_offset")) {
-          tracked.insert(toneRoots(drive->getOperand(2)));
-          detail = true;
-        }
-      });
+      if (trackFrames)
+        branch->walk([&](pulse::DriveOp drive) {
+          if (drive->hasAttr("frame_phase_offset")) {
+            tracked.insert(toneRoots(drive->getOperand(2)));
+            detail = true;
+          }
+        });
     } else if (mlir::isa<classical::SubmitOp>(op)) {
       detail = true;
     } else if (mlir::isa<pulse::ReadoutOp>(op) && !detail) {
@@ -2577,10 +2583,11 @@ public:
   /// `amplitudes` the shapes with an overall amplitude and `epochs` each
   /// event's epoch (empty: all 0). A list `slots` gets each line's
   /// runtime-qudit slot (-1 for none). With a list `repeats`, for a check, a
-  /// long rolled loop whose iterations repeat has its events once, and
-  /// `repeats` gets each such loop's ControllerEventWalk::Repeat; with a list
-  /// `periods` too, its lines may repeat at periods of their own, and
-  /// `periods` gets them (ControllerEventWalk::linePeriods).
+  /// long rolled loop whose iterations repeat has its events once, no event
+  /// has a tone id or frame changes, and `repeats` gets each such loop's
+  /// ControllerEventWalk::Repeat; with a list `periods` too, its lines may
+  /// repeat at periods of their own, and `periods` gets them
+  /// (ControllerEventWalk::linePeriods).
   nb::tuple controller_events(nb::handle parameters, nb::handle amplitudes,
                               nb::list epochs, nb::object slots,
                               nb::object repeats, nb::object periods) {
@@ -2593,7 +2600,7 @@ public:
     {
       nb::gil_scoped_release release;
       walk = controllerWalk(lines, slots.is_none() ? nullptr : &found, once,
-                            once && !periods.is_none());
+                            once && !periods.is_none(), repeats.is_none());
     }
     lineSlots(found, slots);
     appendRepeats(*walk, repeats, periods);
@@ -2646,11 +2653,12 @@ public:
   std::unique_ptr<ControllerEventWalk>
   controllerWalk(std::vector<ControllerLine> &lines,
                  std::vector<int64_t> *slots, bool summarize = false,
-                 bool unsynced = false) {
+                 bool unsynced = false, bool trackFrames = true) {
     std::lock_guard<std::recursive_mutex> guard(*lock_);
     auto walk = std::make_unique<ControllerEventWalk>(clock());
     walk->summarize = summarize;
     walk->unsynced = unsynced;
+    walk->trackFrames = trackFrames;
     if (runTime_)
       controllerEvents<true>(*walk, lines, slots);
     else
@@ -2893,7 +2901,8 @@ public:
   /// rounded up in its cycles, is not its start plus its duration: (lines,
   /// events, off grid, ends). A list `repeats` (and `periods`) gets the
   /// repeats (and line periods) of a summarizing walk as controller_events()
-  /// gives them, in its cycles: of the loops whose every period is whole
+  /// gives them (and no event a tone id or frame changes), in its cycles: of
+  /// the loops whose every period is whole
   /// steps of its grid, so that each copy is on or off it as the first is;
   /// with a loop of another period, every iteration is played.
   nb::tuple controller_events_on(nb::handle parameters, nb::handle amplitudes,
@@ -2913,11 +2922,12 @@ public:
     {
       nb::gil_scoped_release release;
       walk = controllerWalk(lines, slots.is_none() ? nullptr : &found, once,
-                            once && !periods.is_none());
+                            once && !periods.is_none(), repeats.is_none());
       if (!ownRepeats(*walk, num, den, grid)) {
         lines.clear();
         found.clear();
-        walk = controllerWalk(lines, slots.is_none() ? nullptr : &found);
+        walk = controllerWalk(lines, slots.is_none() ? nullptr : &found, false,
+                              false, repeats.is_none());
       }
       ownEventCycles(*walk, num, den, grid, offGrid, ends);
     }

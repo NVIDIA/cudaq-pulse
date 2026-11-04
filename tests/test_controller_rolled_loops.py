@@ -95,6 +95,26 @@ def three(q):
         readout(r, square(40, 0.05))
         sync(r, d)
 
+@pulse.classical(max_latency_ns=200)
+def detuning() -> float:
+    return 0.0
+
+@pulse.kernel
+def retuned(q):
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    x = detuning.submit().result()
+    for _ in range(TRIPS):
+        if x > 0.0:
+            shift_frequency(d.tone, x)
+            drive(d, square(64, 0.01))
+            shift_frequency(d.tone, -x)
+        sync(d, r)
+        m = readout(r, square(40, 0.05))
+        sync(d, r)
+        if m:
+            drive(d, square(8, 0.1))
+
 options = {{"machine": MachineModel(controller=ControllerLimits({limits}))}}
 handles = (Q[0],)
 {system}
@@ -180,6 +200,17 @@ def test_a_violation_in_every_iteration_of_10_15_is_counted_not_listed():
     assert many["message"] == str(few["message"]).replace(
         "... and 10 more", f"... and {10**15 - 10} more"
     )
+
+
+def test_a_check_of_run_time_frame_changes_in_branches_takes_bounded_memory():
+    # Each shot leaves a frame change pending on the path its reset skips.
+    message = (
+        "the program exceeds the controller's limits:\n"
+        "  line 0: its waveforms take 72 samples; the controller's waveform memory holds 64"
+    )
+    for shots in (2, 400):
+        found = _in_a_child("retuned", shots, "waveform_samples=64")
+        assert found == {"count": 1, "message": message}
 
 
 def test_the_event_count_of_a_rolled_loop_is_its_trip_count_times_its_body():
