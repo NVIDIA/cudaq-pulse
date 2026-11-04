@@ -109,7 +109,6 @@ def test_the_loops_once_report_what_every_event_does(monkeypatch, trips, name, s
     assert _report(monkeypatch, lowered, listed=False) == every
 
 
-@pytest.mark.slow
 def test_a_call_before_a_loop_of_10_7_iterations_is_reported_without_them():
     lowered = pulse.compile(_kernels(10**7)["before"], machine=MACHINE, unroll_threshold=0)
     lowered = lowered.lower(Q[0], Q[1])
