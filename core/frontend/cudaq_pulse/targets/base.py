@@ -19,6 +19,8 @@ import math
 import numbers
 from collections.abc import Mapping, Sequence
 from dataclasses import FrozenInstanceError, dataclass, fields
+from itertools import chain
+from operator import attrgetter, eq, is_
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -562,7 +564,8 @@ class TargetDescription:
         object.__setattr__(self, "qubits", MappingProxyType(dict(self.qubits)))
         object.__setattr__(self, "couplings", tuple(self.couplings))
         object.__setattr__(self, "residual_zz", tuple(self.residual_zz))
-        problems = _system_problems(self)
+        # Every problem with the target's entries, each at its path in it.
+        problems = _entries_problems(self)
         if problems:
             raise DeviceDefinitionError(
                 f"{_count(len(problems), 'problem')} in the quantum system {self.name!r}",
@@ -825,21 +828,35 @@ def _unmeasured(
     )
 
 
-def _system_problems(target: TargetDescription) -> list[Problem]:
-    """Every problem with *target*'s couplings and residual ZZ entries, each at
-    its path in the target; run once, when the target is built."""
-    problems: list[Problem] = []
+# The couplings and residual ZZ entries last found to have no problem, and the
+# qudits of their system. A system made from that one with
+# dataclasses.replace, or with only its couplings' strengths changed (as a
+# calibration does), checks only what changed.
+_CHECKED: tuple[Sequence[Any], Sequence[Any], frozenset[int]] = ((), (), frozenset())
+
+
+def _entries_problems(target: TargetDescription) -> list[Problem]:
+    """Every problem with *target*'s couplings and residual ZZ entries."""
+    global _CHECKED
     known = target.qubits
-    groups: tuple[tuple[str, Any, Sequence[Any]], ...] = (
-        ("couplings", Coupling, target.couplings),
-        ("residual_zz", ResidualZZ, target.residual_zz),
+    couplings, residual_zz = target.couplings, target.residual_zz
+    checked_couplings, checked_residual_zz, checked_qudits = _CHECKED
+    if residual_zz is checked_residual_zz and known.keys() == checked_qudits:
+        if couplings is checked_couplings or _strengths_changed(couplings, checked_couplings):
+            return []
+    if (not couplings or _plain_entries(couplings, Coupling, known)) and (
+        not residual_zz or _plain_entries(residual_zz, ResidualZZ, known)
+    ):
+        _CHECKED = (couplings, residual_zz, frozenset(known))
+        return []
+    problems: list[Problem] = []
+    groups: tuple[tuple[str, Sequence[Any]], ...] = (
+        ("couplings", couplings),
+        ("residual_zz", residual_zz),
     )
-    for kind, cls, entries in groups:
+    for kind, entries in groups:
         pairs: dict[tuple[int, int], int] = {}
         for i, entry in enumerate(entries):
-            if entry.__class__ is cls and _plain_entry(entry, known, pairs):
-                pairs[_pair_key(entry.qudits)] = i
-                continue
             found, pair = _entry_problems(kind, i, entry, known, pairs)
             problems += found
             if pair is not None:
@@ -847,63 +864,78 @@ def _system_problems(target: TargetDescription) -> list[Problem]:
     return problems
 
 
+# What the checks read of every entry or gate at once.
+_QUDITS = attrgetter("qudits")
+_STRENGTH = attrgetter("strength_hz")
+_GATE = attrgetter("gate")
+_RATE = attrgetter("rate_hz")
+_GATE_FIELDS = attrgetter("name", "duration_ns", "buffer_ns", "interaction_frequency_hz")
+_NONE: type[None] = type(None)
+
+
+def _finite_floats(values: Sequence[Any], optional: bool = False) -> bool:
+    """Whether *values* are all finite floats (or None, if *optional*): their
+    sum is finite unless one is inf or NaN, or the floats overflow, which
+    then only takes the slower checks."""
+    types = set(map(type, values))
+    if not (types <= {float, _NONE} if optional else types <= {float}):
+        return False
+    total = sum(filter(None, values), 0.0)
+    return total - total == 0.0
+
+
+def _plain_entries(entries: Sequence[Any], cls: type, known: Mapping[int, Any]) -> bool:
+    """Whether *entries*, couplings or residual ZZ entries of a system with the
+    qudits *known*, have nothing to report; checked in C for every entry at
+    once, by class, so any other entry takes ``_entry_problems``."""
+    if set(map(type, entries)) != {cls}:
+        return False
+    qudits = list(map(_QUDITS, entries))
+    if set(map(type, qudits)) != {tuple} or set(map(len, qudits)) != {2}:
+        return False
+    flat = list(chain.from_iterable(qudits))
+    if set(map(type, flat)) != {int} or not known.keys() >= set(flat):
+        return False
+    if any(map(eq, flat[::2], flat[1::2])) or len(set(map(frozenset, qudits))) < len(qudits):
+        return False
+    if cls is ResidualZZ:
+        return _finite_floats(list(map(_RATE, entries)))
+    if not _finite_floats(list(map(_STRENGTH, entries)), optional=True):
+        return False
+    gates = list(filter(None, map(_GATE, entries)))
+    if not gates:
+        return True
+    if set(map(type, gates)) != {Gate}:
+        return False
+    names, durations, buffers, frequencies = zip(*map(_GATE_FIELDS, gates), strict=True)
+    if set(map(type, names)) != {str} or "" in names:
+        return False
+    given = [f for f in frequencies if f is not None]
+    return (
+        _finite_floats(durations)
+        and min(durations) >= 0.0
+        and _finite_floats(buffers, optional=True)
+        and min(filter(None, buffers), default=0.0) >= 0.0
+        and _finite_floats(given)
+        and min(given, default=1.0) > 0.0
+    )
+
+
+def _strengths_changed(couplings: Sequence[Any], checked: Sequence[Any]) -> bool:
+    """Whether *couplings* are the *checked* ones with only their strengths
+    changed, to strengths with nothing to report."""
+    return (
+        len(couplings) == len(checked)
+        and set(map(type, couplings)) <= {Coupling}
+        and all(map(is_, map(_QUDITS, couplings), map(_QUDITS, checked)))
+        and all(map(is_, map(_GATE, couplings), map(_GATE, checked)))
+        and _finite_floats(list(map(_STRENGTH, couplings)), optional=True)
+    )
+
+
 def _pair_key(qudits: tuple[int, ...]) -> tuple[int, int]:
     a, b = qudits
     return (a, b) if a < b else (b, a)
-
-
-def _plain_entry(entry: Any, known: Mapping[int, Any], pairs: Mapping[Any, int]) -> bool:
-    """Whether *entry*, a coupling or residual ZZ entry, has nothing to report:
-    float values (or a strength of None) and two distinct known qudits of a
-    new pair. Anything else goes to ``_entry_problems``, which says what."""
-    cls = entry.__class__
-    if cls is Coupling:
-        value = entry.strength_hz
-        if value is not None and not (value.__class__ is float and value - value == 0.0):
-            return False
-        gate = entry.gate
-        if gate is not None and not _plain_gate(gate):
-            return False
-    elif cls is ResidualZZ:
-        value = entry.rate_hz
-        # x - x is 0.0 for every finite float, and NaN for inf and NaN.
-        if not (value.__class__ is float and value - value == 0.0):
-            return False
-    else:
-        return False
-    qudits = entry.qudits
-    if qudits.__class__ is not tuple:
-        return False
-    try:
-        a, b = qudits
-    except ValueError:
-        return False
-    return (
-        a.__class__ is int
-        and b.__class__ is int
-        and a != b
-        and a in known
-        and b in known
-        and ((a, b) if a < b else (b, a)) not in pairs
-    )
-
-
-def _plain_gate(gate: Any) -> bool:
-    if gate.__class__ is not Gate:
-        return False
-    name, duration, buffer = gate.name, gate.duration_ns, gate.buffer_ns
-    frequency = gate.interaction_frequency_hz
-    if not (name.__class__ is str and name):
-        return False
-    if not (duration.__class__ is float and duration - duration == 0.0 and duration >= 0.0):
-        return False
-    if buffer is not None and not (
-        buffer.__class__ is float and buffer - buffer == 0.0 and buffer >= 0.0
-    ):
-        return False
-    return frequency is None or (
-        frequency.__class__ is float and frequency - frequency == 0.0 and frequency > 0.0
-    )
 
 
 def _finite(value: Any) -> bool:

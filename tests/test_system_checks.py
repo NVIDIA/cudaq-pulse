@@ -494,3 +494,62 @@ def test_a_value_problem_in_a_file_has_its_file_path_and_line(tmp_path):
     first = _line_of(lines, '"qudits"', after=_line_of(lines, '"couplings"'))
     assert problems[1].line == _line_of(lines, "9", after=_line_of(lines, '"qudits"', after=first))
     assert problems[2].line == _line_of(lines, '"rate_hz"')
+
+
+def test_a_gate_is_read_only_and_pickles_by_content():
+    import pickle
+
+    gate = Gate("cz", 98.0, 15.0, 4.4e9)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        gate.name = "cx"  # type: ignore[misc]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        del gate.buffer_ns  # type: ignore[misc]
+    assert repr(gate) == (
+        "Gate(name='cz', duration_ns=98.0, buffer_ns=15.0, interaction_frequency_hz=4400000000.0)"
+    )
+    back = pickle.loads(pickle.dumps(gate))
+    assert back == gate and hash(back) == hash(gate)
+    assert gate != Gate("cz", 98.0, 15.0) and gate != ("cz", 98.0, 15.0, 4.4e9)
+    assert Gate("cz", 98.0) == Gate("cz", 98.0, None, None)
+
+
+def test_a_system_made_from_a_checked_one_is_checked_for_what_changed():
+    checked = _system(
+        couplings=[Coupling((0, 1), 1.0e6, gate=Gate("cz", 98.0)), Coupling((1, 2), 2.0e6)],
+        residual_zz=[ResidualZZ((0, 2), 1.0e4)],
+    )
+    assert dataclasses.replace(checked, clock_ghz=1.0).couplings is checked.couplings
+    fewer = {i: q for i, q in checked.qubits.items() if i < 2}
+    with pytest.raises(DeviceDefinitionError, match=r"couplings\[1\].qudits\[1\]: 2 is not"):
+        dataclasses.replace(checked, qubits=fewer)
+    restrengthened = [Coupling(c.qudits, math.nan, c.gate) for c in checked.couplings]
+    problems = [str(p) for p in _problems_of(checked, restrengthened)]
+    assert [p.split(":")[0] for p in problems] == [
+        "couplings[0].strength_hz",
+        "couplings[1].strength_hz",
+    ]
+    regated = [Coupling(c.qudits, c.strength_hz, Gate("cz", -1.0)) for c in checked.couplings]
+    problems = [str(p) for p in _problems_of(checked, regated)]
+    assert [p.split(":")[0] for p in problems] == [
+        "couplings[0].gate.duration_ns",
+        "couplings[1].gate.duration_ns",
+    ]
+
+
+def _problems_of(target, couplings):
+    with pytest.raises(DeviceDefinitionError) as raised:
+        dataclasses.replace(target, couplings=couplings)
+    return raised.value.problems
+
+
+def test_values_that_are_not_floats_take_the_complete_checks():
+    target = _system(
+        couplings=[
+            Coupling((0, 1), 5, gate=Gate("cz", 98, buffer_ns=0, interaction_frequency_hz=4)),
+            Coupling((1, 2), 0.0, gate=Gate("cz", 0.0, buffer_ns=0.0)),
+        ],
+        residual_zz=[ResidualZZ((2, 0), 0)],
+    )
+    assert [c.strength_hz for c in target.couplings] == [5, 0.0]
+    with pytest.raises(DeviceDefinitionError, match="names the same pair of qudits"):
+        dataclasses.replace(target, couplings=[*target.couplings, Coupling((2, 1), 7)])

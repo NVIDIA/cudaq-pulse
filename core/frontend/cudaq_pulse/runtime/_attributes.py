@@ -11,10 +11,14 @@ from __future__ import annotations
 
 import math
 import struct
+from itertools import compress
+from operator import attrgetter
 from typing import Any
 
 from .._errors import InvalidValueError
 from ..targets.base import _unmeasured
+
+_QUDITS = attrgetter("qudits")
 
 _VALID_INTEGRATORS = frozenset(
     {
@@ -109,16 +113,17 @@ def _target_attributes(
         t2_us = qubit.t2_star_us if dephasing == "t2_star" else qubit.t2_echo_us
         if t2_us is None:
             raise InvalidValueError(f"qudit {qi} has no Hahn-echo T2 to dephase at")
-        t1_ns[qi] = max(0.0, float(qubit.t1_us)) * 1.0e3
-        t2_ns[qi] = max(0.0, float(t2_us)) * 1.0e3
-        thermal[qi] = float(qubit.thermal_population)
+        # _f64_literal makes each a float.
+        t1_ns[qi] = max(0.0, qubit.t1_us) * 1.0e3
+        t2_ns[qi] = max(0.0, t2_us) * 1.0e3
+        thermal[qi] = qubit.thermal_population
         drive_scales[qi] = target.drive_amplitude_scale(qi)
     attrs = [
         f"qop.n_qubits = {len(qubits)} : i64",
         f"pulse.modes = array<i64: {', '.join(map(str, qubits))}>",
         f'qop.integrator = "{integrator}"',
-        "pulse.t1_times = [" + ", ".join(_f64(v) for v in t1_ns) + "]",
-        "pulse.t2_times = [" + ", ".join(_f64(v) for v in t2_ns) + "]",
+        "pulse.t1_times = [" + ", ".join(map(_f64, t1_ns)) + "]",
+        "pulse.t2_times = [" + ", ".join(map(_f64, t2_ns)) + "]",
         f"pulse.drive_scale_rad_per_ns = {_f64_array(drive_scales)}",
     ]
     if any(thermal):
@@ -131,7 +136,8 @@ def _target_attributes(
         ("crosstalk", target.residual_zz, "rate_hz"),
     )
     for name, entries, strength in groups:
-        entries = [e for e in entries if (q := e.qudits)[0] in active and q[1] in active]
+        if entries:
+            entries = list(compress(entries, map(active.issuperset, map(_QUDITS, entries))))
         if entries:
             strengths = [getattr(e, strength) for e in entries]
             if None in strengths:
