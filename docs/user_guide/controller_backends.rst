@@ -37,7 +37,20 @@ checked against (``null`` without). ``events`` lists every drive, readout,
 wait, sync, classical call and frame update in program order, once per loop
 iteration and both arms of a branch. ``epochs``, ``calls``, ``links`` and
 ``manifest`` are those of ``Lowered.export_emulation()`` (see
-:doc:`classical_calls`). Each event has:
+:doc:`classical_calls`).
+
+A kernel with list or qudit parameters compiles once for every call, and
+its export says what each call binds: ``program_id`` is the same for every
+call of that compile, and ``symbols`` lists the call's values, each with
+its ``symbol``, ``kind`` and ``value``: a float parameter or element
+(``"float"``), a runtime qudit's slot (``"slot"``, ``s0``, the carrier
+bound), and the native frequencies of the slot's lines (``"frequency"``):
+``s0.f01``, its 0-1 frequency, for a drive line, and ``s0.f_ro``, the
+``frequency_hz`` of its readout (else the 0-1 frequency), for a readout
+line. Each event names in its ``symbols`` the slot of its line
+(``qudit``) and, by field (``frequency_hz``, ``phase_rad``,
+``waveform``), the symbols its value depends on; a tone on a slot's line
+depends on that line's native frequency. Each event has:
 
 ``index``, ``kind``
     Its position in ``events`` and one of ``"drive"``, ``"readout"``,

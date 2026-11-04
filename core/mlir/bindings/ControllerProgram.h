@@ -146,12 +146,13 @@ struct ControllerWalk {
 
   /// With `track`, the arguments of `main` each record's tone frequency,
   /// frame phase and waveform depend on, parallel to `result`. A qref
-  /// argument stands for its qudit's native frequency.
+  /// argument stands for its qudit's native frequency (see nativeOffset).
   bool track = false;
   using Dependencies = std::array<std::vector<int64_t>, 3>;
   std::vector<Dependencies> dependencies;
-  /// With `track`, parallel to `result`: the qref argument whose native
-  /// frequency a record's tone plays (its line was never retuned), or -1.
+  /// With `track`, parallel to `result`: the qref argument (see
+  /// nativeOffset) whose native frequency a record's tone plays (its line was
+  /// never retuned), or -1.
   std::vector<int64_t> natives;
   /// What a tone's frequency, the frequency of its frame (where it
   /// started) and its phase depend on.
@@ -194,10 +195,12 @@ struct ControllerWalk {
     auto [it, inserted] = frameDependencies.try_emplace(root);
     if (inserted && root) {
       if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(root) &&
-          !root->hasAttr("frequency_hz"))
+          !root->hasAttr("frequency_hz")) {
         argumentsOf(root->getOperand(0), it->second.frequency);
-      else if (root->getName().getStringRef() == "pulse.tone" &&
-               root->getNumOperands() == 2) {
+        for (int64_t &argument : it->second.frequency)
+          argument += nativeOffset(root);
+      } else if (root->getName().getStringRef() == "pulse.tone" &&
+                 root->getNumOperands() == 2) {
         argumentsOf(root->getOperand(0), it->second.frequency);
         argumentsOf(root->getOperand(1), it->second.phase);
       }
@@ -221,7 +224,7 @@ struct ControllerWalk {
         if (argument.getOwner()->isEntryBlock() &&
             mlir::isa_and_nonnull<mlir::func::FuncOp>(
                 argument.getOwner()->getParentOp()))
-          natives.back() = argument.getArgNumber();
+          natives.back() = argument.getArgNumber() + nativeOffset(root);
     found[0] = frame.frequency;
     found[1] = frame.phase;
     // A retuned tone gains phase at its detuning from the frame.

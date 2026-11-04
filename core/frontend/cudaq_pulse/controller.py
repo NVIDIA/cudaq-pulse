@@ -1209,8 +1209,8 @@ def export(
         if plan is None or len(plan[1]) != len(events):
             if slots is None:
                 slots = []
-                _walk(lowered, own=native, slots=slots)
-            plan = _export_plan(lowered, role, slots, events)
+                lines = _walk(lowered, own=native, slots=slots)[0]
+            plan = _export_plan(lowered, role, slots, lines, events)
         program["program_id"] = role.program_id
         program["symbols"] = _symbols(lowered, plan[0])
         for event, template in zip(events, plan[1], strict=True):
@@ -1327,7 +1327,7 @@ def _export_structured(
     if role is not None:
         assert slots is not None
         program["program_id"] = role.program_id
-        program["symbols"] = _symbols(lowered, _symbol_plan(role, slots))
+        program["symbols"] = _symbols(lowered, _symbol_plan(role, slots, program["lines"]))
         _structured_symbols(lowered, role, events, slots)
     program = {_SYSTEM_KEYS.get(k, k): v for k, v in program.items()}
     program["links"] = {
@@ -1803,8 +1803,8 @@ def _export_part(
     if role is not None:
         if plan is None or len(plan[1]) != len(events):
             slots: list[int] = []
-            _walk(lowered, slots=slots)
-            plan = _export_plan(lowered, role, slots, events)
+            walked = _walk(lowered, slots=slots)[0]
+            plan = _export_plan(lowered, role, slots, walked, events)
         for event, template in zip(events, plan[1], strict=True):
             if template is not None:
                 symbols = template[0].copy()
@@ -1863,16 +1863,16 @@ _ON_LINE = _PLAYED | {"wait", "frame_update"}
 
 
 # Where a symbol's value comes from in a call: its float arguments, the
-# carrier bound to a slot, or that carrier's native frequency.
-_ARGUMENT, _CARRIER, _NATIVE = range(3)
+# carrier bound to a slot, or that carrier's 0-1 or readout frequency.
+_ARGUMENT, _CARRIER, _NATIVE, _READOUT = range(4)
 
 
 def _symbols(
     lowered: Lowered, templates: list[tuple[dict[str, Any], int, int]]
 ) -> list[dict[str, Any]]:
     """Every symbol of a call's module, with its value in the call: its
-    float arguments, its slots (the carriers bound) and the native frequency
-    of each slot that gets a line."""
+    float arguments, its slots (the carriers bound) and the native
+    frequencies of each slot that gets a line."""
     arguments = lowered.arguments
     carriers = lowered.carriers
     found = []
@@ -1882,8 +1882,11 @@ def _symbols(
             entry["value"] = arguments[k]
         elif source == _CARRIER:
             entry["value"] = carriers[k]
-        else:
+        elif source == _NATIVE:
             entry["value"] = lowered.target.frequencies[carriers[k]]
+        else:
+            target = lowered.target
+            entry["value"] = (target._tables or target._frequency_tables())[1][carriers[k]]
         found.append(entry)
     return found
 
@@ -1896,11 +1899,15 @@ _ExportPlan = tuple[
 ]
 
 
-def _symbol_plan(role: Any, slots: Sequence[int]) -> list[tuple[dict[str, Any], int, int]]:
+def _symbol_plan(
+    role: Any, slots: Sequence[int], lines: Sequence[Mapping[str, Any]]
+) -> list[tuple[dict[str, Any], int, int]]:
     """Each symbol of a role without its value, and where the value comes
-    from (see ``_symbols``); a slot has a native frequency if one of the
-    lines of runtime-qudit *slots* is on it."""
-    lined = set(slots)
+    from (see ``_symbols``). By the runtime-qudit *slots* of *lines*, a slot
+    with a drive line has its 0-1 frequency (``s0.f01``), and one with a
+    readout line its readout frequency (``s0.f_ro``): the native frequency
+    of each such line's tone."""
+    lined = {(slot, line["role"]) for slot, line in zip(slots, lines, strict=True)}
     symbols: list[tuple[dict[str, Any], int, int]] = []
     argument = 0
     for name, kind, parameter, position in role.symbols:
@@ -1910,9 +1917,12 @@ def _symbol_plan(role: Any, slots: Sequence[int]) -> list[tuple[dict[str, Any], 
         if kind == "slot":
             slot = int(name[1:])
             symbols.append((entry, _CARRIER, slot))
-            if slot in lined:
+            if (slot, "drive") in lined:
                 native = {"symbol": f"{name}.f01", "kind": "frequency", "slot": name}
                 symbols.append((native, _NATIVE, slot))
+            if (slot, "readout") in lined:
+                native = {"symbol": f"{name}.f_ro", "kind": "frequency", "slot": name}
+                symbols.append((native, _READOUT, slot))
         else:
             symbols.append((entry, _ARGUMENT, argument))
             argument += 1
@@ -1924,6 +1934,7 @@ def _named_dependencies(role: Any, found: Sequence[Sequence[Any]]) -> list[dict[
     ``controller_dependencies``), as the names of their symbols by field."""
     names = [name for name, kind, _, _ in role.symbols if kind != "slot"]
     names += [f"s{k}.f01" for k in range(role.slots)]
+    names += [f"s{k}.f_ro" for k in range(role.slots)]
     return [
         {
             field: [names[a] for a in arguments]
@@ -1979,11 +1990,15 @@ def _structured_symbols(
 
 
 def _export_plan(
-    lowered: Lowered, role: Any, slots: Sequence[int], events: list[dict[str, Any]]
+    lowered: Lowered,
+    role: Any,
+    slots: Sequence[int],
+    lines: Sequence[Mapping[str, Any]],
+    events: list[dict[str, Any]],
 ) -> _ExportPlan:
     """What a role's exports share, built once per role from a call's
-    *events* and the runtime-qudit *slots* of its lines."""
-    symbols = _symbol_plan(role, slots)
+    *events*, its *lines* and their runtime-qudit *slots*."""
+    symbols = _symbol_plan(role, slots, lines)
     dependencies = role.dependencies
     if dependencies is None:
         with lowered._lock:

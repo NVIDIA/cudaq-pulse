@@ -455,6 +455,19 @@ static bool yieldsValue(mlir::Type type) {
       type);
 }
 
+/// The native frequency of a runtime qudit's line stands in the arguments
+/// of `main` a controller program depends on as its qudit's qref argument
+/// plus this: 0 for a drive line (the 0-1 frequency), the number of qref
+/// arguments for a readout line (the readout frequency).
+static int64_t nativeOffset(mlir::Operation *line) {
+  if (!mlir::isa<pulse::GetReadoutLineOp>(line))
+    return 0;
+  auto function = line->getParentOfType<mlir::func::FuncOp>();
+  return llvm::count_if(function.getArgumentTypes(), [](mlir::Type type) {
+    return mlir::isa<pulse::QrefType>(type);
+  });
+}
+
 /// The walk behind PulseModule::controller_events(), a check's walk of a
 /// module that computes nothing at run time (its events are those of
 /// ControllerWalk::Walk::Every): every timed op, sync and classical call once
@@ -510,12 +523,13 @@ struct ControllerEventWalk {
 
   /// With `track`, the arguments of `main` each event's tone frequency,
   /// frame phase and waveform depend on, parallel to `result`. A qref
-  /// argument stands for its qudit's native frequency.
+  /// argument stands for its qudit's native frequency (see nativeOffset).
   bool track;
   using Dependencies = std::array<std::vector<int64_t>, 3>;
   std::vector<Dependencies> dependencies;
-  /// With `track`, parallel to `result`: the qref argument whose native
-  /// frequency an event's tone plays (its line was never retuned), or -1.
+  /// With `track`, parallel to `result`: the qref argument (see
+  /// nativeOffset) whose native frequency an event's tone plays (its line was
+  /// never retuned), or -1.
   std::vector<int64_t> natives;
   /// What a tone's frequency, the frequency of its frame (where it
   /// started) and its phase depend on.
@@ -558,10 +572,12 @@ struct ControllerEventWalk {
     auto [it, inserted] = frameDependencies.try_emplace(root);
     if (inserted && root) {
       if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(root) &&
-          !root->hasAttr("frequency_hz"))
+          !root->hasAttr("frequency_hz")) {
         argumentsOf(root->getOperand(0), it->second.frequency);
-      else if (root->getName().getStringRef() == "pulse.tone" &&
-               root->getNumOperands() == 2) {
+        for (int64_t &argument : it->second.frequency)
+          argument += nativeOffset(root);
+      } else if (root->getName().getStringRef() == "pulse.tone" &&
+                 root->getNumOperands() == 2) {
         argumentsOf(root->getOperand(0), it->second.frequency);
         argumentsOf(root->getOperand(1), it->second.phase);
       }
@@ -1023,7 +1039,7 @@ struct ControllerEventWalk {
             if (argument.getOwner()->isEntryBlock() &&
                 mlir::isa_and_nonnull<mlir::func::FuncOp>(
                     argument.getOwner()->getParentOp()))
-              native = argument.getArgNumber();
+              native = argument.getArgNumber() + nativeOffset(root);
         found[0] = frame.frequency;
         found[1] = frame.phase;
         // A retuned tone gains phase at its detuning from the frame.
@@ -2541,13 +2557,14 @@ public:
   /// For each event of controller_program(), not rolled, in the same order,
   /// the arguments of `main` its tone frequency, frame phase and waveform
   /// are computed from; a qref argument stands for its qudit's native
-  /// frequency.
+  /// frequency (see nativeOffset).
   std::vector<ControllerWalk::Dependencies> controller_dependencies() {
     return std::move(trackedWalk()->dependencies);
   }
 
   /// For each event of controller_program(), not rolled, in the same order,
-  /// the qref argument of `main` whose native frequency its tone plays,
+  /// the qref argument of `main` (see nativeOffset) whose native frequency
+  /// its tone plays,
   /// because the tone is its line's and was never retuned; -1 for any other
   /// event.
   std::vector<int64_t> controller_native_tones() {

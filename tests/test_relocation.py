@@ -130,6 +130,33 @@ def test_program_id_is_stable_and_symbols_bind():
     assert retuned and all(e["symbols"]["qudit"] == "s0" for e in retuned)
 
 
+def test_a_readout_depends_on_the_slot_s_readout_frequency():
+    @pulse.kernel
+    def probe(q: Qudit, a: float):
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        drive(d, square(20, a))
+        sync(d, r)
+        readout(r, square(100, 0.05))
+        drive(d, square(20, a), tone=r.tone)
+
+    @pulse.kernel
+    def read_only(q: Qudit):
+        readout(get_readout_line(q), square(100, 0.05))
+
+    qubit = DEV.target.qubits[DEV.layout[9]]
+    for version in (1, 2):
+        export = probe.lower(H[9], 0.2).export_controller(version=version)
+        values = {s["symbol"]: s.get("value") for s in export["symbols"]}
+        assert values["s0.f01"] == qubit.frequency_hz
+        assert values["s0.f_ro"] == qubit.readout.frequency_hz
+        played = [e["symbols"]["frequency_hz"] for e in export["events"] if "symbols" in e]
+        # The drive, the readout, and the drive on the readout line's tone.
+        assert played == [["s0.f01"], ["s0.f_ro"], ["s0.f_ro"]]
+        symbols = read_only.lower(H[9]).export_controller(version=version)["symbols"]
+        assert [s["symbol"] for s in symbols] == ["s0", "s0.f_ro"]
+
+
 @pulse.kernel
 def looped_k(q: Qudit, a: float, step: float):
     d = get_drive_line(q)
