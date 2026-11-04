@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 from typing import Any
@@ -1125,3 +1126,160 @@ def _linked_tight(n: int) -> dict[str, Any]:
 
 def test_a_loop_of_10_6_iterations_with_lazy_requests_before_eager_ones_lowers_in_bounded_time():
     _lowers_as_extrapolated(_linked_tight)
+
+
+@pulse.classical(max_latency_ns=100)
+def ask(bits: pulse.Bits) -> pulse.Bits:
+    return [bits[0]]
+
+
+@pulse.classical(max_latency_ns=100, submit="lazy")
+def ask_lazy(bits: pulse.Bits) -> pulse.Bits:
+    return [bits[0]]
+
+
+# Loop bodies sharing one link. A request holds its slot until its answer
+# is due, whether or not it is awaited: the requests nobody awaits are still
+# in flight when the next loop starts.
+_ON_ONE_LINK = {
+    "answer": [
+        "sync(d, ro)",
+        "m = readout(ro, square(40, 0.05))",
+        "if ask.submit([m]).result()[0]:",
+        "    drive(d, square(16, 0.1))",
+    ],
+    "unawaited": [
+        "m = readout(ro, square(40, 0.05))",
+        "ask.submit([m])",
+        "drive(d, square(4, 0.1))",
+    ],
+    "spaced": ["m = readout(ro, square(60, 0.05))", "ask.submit([m])"],
+    "nested": [
+        "for _ in range(3):",
+        "    m = readout(ro, square(60, 0.05))",
+        "    ask.submit([m])",
+        "drive(d, square(40, 0.1))",
+    ],
+    "lazy": [
+        "m = readout(ro, square(30, 0.05))",
+        "if ask_lazy.submit([m]).result()[0]:",
+        "    drive(d, square(6, 0.1))",
+    ],
+    "drives": ["drive(d, square(8, 0.1))"],
+}
+
+
+def _one_after_another(n: int, *bodies: str) -> Any:
+    """A kernel running a loop of *n* trips of each of *bodies* in turn."""
+    lines = ["def k(q):", "    d = get_drive_line(q)", "    ro = get_readout_line(q)"]
+    for index, body in enumerate(bodies):
+        lines.append(f"    for i{index} in range({n}):")
+        lines += [f"        {line}" for line in _ON_ONE_LINK[body]]
+    namespace: dict[str, Any] = {"ask": ask, "ask_lazy": ask_lazy}
+    exec(compile("\n".join(lines), "<loops>", "exec"), namespace)  # noqa: S102 - generated kernels
+    return pulse.kernel(namespace["k"])
+
+
+def _link_slots(slots: int) -> MachineModel:
+    return MachineModel(links={0: Link(fixed_ns=4, max_in_flight=slots)})
+
+
+def _most_at_once(spans: list[tuple[int, int]]) -> int:
+    edges = sorted(edge for start, end in spans for edge in ((start, 1), (end, -1)))
+    held = most = 0
+    for _, step in edges:  # a slot freed at a time is free for one taken then
+        held += step
+        most = max(most, held)
+    return most
+
+
+def _most_in_flight(lowered: Any) -> int:
+    """The most requests in flight at once in *lowered*'s schedule, each from
+    its submission until its answer is due, for calls of one budget."""
+    budgets = set(map(int, re.findall(r"classical\.budget_cycles = (\d+)", lowered.mlir())))
+    assert len(budgets) == 1
+    budget = budgets.pop()
+    return _most_at_once(
+        [
+            (e.start_cycles, e.start_cycles + e.duration_cycles + budget)
+            for e in lowered.schedule
+            if e.kind == "submit"
+        ]
+    )
+
+
+_LOOPS_ON_ONE_LINK = (
+    ("answer", "unawaited"),
+    ("drives", "answer", "unawaited"),
+    ("answer", "spaced"),
+    ("answer", "nested"),
+    ("lazy", "unawaited"),
+    ("lazy", "spaced"),
+    ("unawaited", "lazy"),
+    ("answer", "lazy"),
+)
+
+
+# A loop whose rest the scheduler extrapolates leaves the link's slots as
+# its last iteration would: the next loop's first requests wait for the ones
+# still in flight, as written out.
+@pytest.mark.parametrize("schedule", POLICIES)
+def test_loops_one_after_another_on_a_link_play_as_unrolled_within_its_slots(schedule):
+    differ, over = [], []
+    for slots in (1, 2, 4, 6):
+        machine = _link_slots(slots)
+        for trips in (5, 20, 65):
+            for bodies in _LOOPS_ON_ONE_LINK:
+                kernel = _one_after_another(trips, *bodies)
+                lowered = [
+                    pulse.compile(
+                        kernel,
+                        schedule=schedule,
+                        unroll_threshold=unroll,
+                        machine=machine,
+                        passes=(),
+                    ).lower(Q[0])
+                    for unroll in (0, 10**6)
+                ]
+                rolled, unrolled = (
+                    sorted(
+                        (e.kind, e.line, e.start_cycles, e.duration_cycles) for e in low.schedule
+                    )
+                    for low in lowered
+                )
+                if rolled != unrolled:
+                    differ.append((bodies, trips, slots))
+                if _most_in_flight(lowered[0]) > slots:
+                    over.append((bodies, trips, slots))
+    assert differ == []
+    assert over == []
+
+
+def _link_size(n: int, bodies: tuple[str, ...], schedule: str, slots: int) -> int:
+    lowered = pulse.compile(
+        _one_after_another(n, *bodies),
+        schedule=schedule,
+        unroll_threshold=0,
+        machine=_link_slots(slots),
+        passes=(),
+    ).lower(Q[0])
+    return lowered.mlir("pulse").count("start_cycles")
+
+
+# On one slot each loop's first request waits for the last of the loop
+# before it, and then each for the one before it: the loops stay rolled
+# however many trips they run.
+@pytest.mark.parametrize("schedule", POLICIES)
+def test_a_loop_waiting_for_the_slots_of_the_loop_before_stays_rolled(schedule):
+    grow = [
+        bodies
+        for bodies in (
+            ("answer", "unawaited"),
+            ("answer", "spaced"),
+            ("answer", "nested"),
+            ("answer", "lazy"),
+            ("drives", "answer", "unawaited"),
+        )
+        if _link_size(300, bodies, schedule, 1) != _link_size(1140, bodies, schedule, 1)
+    ]
+    assert grow == []

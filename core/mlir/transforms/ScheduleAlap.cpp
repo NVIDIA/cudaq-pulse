@@ -1622,6 +1622,27 @@ private:
     return ok;
   }
 
+  /// The shift of the groups of a loop's submissions `ops`, the way the pass
+  /// runs, each that of the op of the body it is in; none when they differ.
+  static std::optional<int64_t>
+  requestsShift(mlir::scf::ForOp loop, const LoopGroups &groups,
+                const GroupShifts &shifts,
+                llvm::ArrayRef<mlir::Operation *> ops, bool backward) {
+    std::optional<int64_t> shift;
+    for (mlir::Operation *op : ops) {
+      mlir::Operation *timed = op;
+      while (timed != loop && !groups.ofOp.contains(timed))
+        timed = timed->getParentOp();
+      if (timed == loop)
+        return std::nullopt;
+      int64_t moved = shifts[groups.groupOf(timed, backward)].value_or(0);
+      if (shift && *shift != moved)
+        return std::nullopt;
+      shift = moved;
+    }
+    return shift;
+  }
+
   /// Under resources, whether an iteration of a loop whose groups moved by
   /// `shifts` moved its lanes from `before` by as much: each kind's by the
   /// one shift of the groups its ops are in. True without resources.
@@ -1949,17 +1970,139 @@ private:
     return time;
   }
 
-  /// The request slots of the link a submission uses: a heap of the times
-  /// they become free (forward, min-heap) or must be free from (backward,
-  /// max-heap). A link's slots bound every policy: they are hardware.
-  llvm::SmallVector<int64_t> &lanesOf(mlir::Operation *submit) {
+  /// A link's request slots: a heap of the times they become free (forward,
+  /// min-heap) or must be free from (backward, max-heap). A link's slots
+  /// bound every policy: they are hardware. Also the start of the request
+  /// placed on it last in the pass's order, the latest forward and the
+  /// earliest backward: every request placed after it starts no earlier
+  /// (forward) or ends its submission by it (backward), so only the slots
+  /// held past it (heldPast) can delay one.
+  struct LinkSlots {
+    llvm::SmallVector<int64_t> free;
+    std::optional<int64_t> last;
+  };
+
+  LinkSlots &slotsOf(mlir::Operation *submit) {
     auto [it, inserted] = linkLanes.try_emplace(linkOf(submit));
     if (inserted)
-      it->second.assign(
+      it->second.free.assign(
           static_cast<size_t>(std::max<int64_t>(
               1, classical::intAttr(submit, "classical.max_in_flight", 64))),
           laneReset);
     return it->second;
+  }
+
+  llvm::SmallVector<int64_t> &lanesOf(mlir::Operation *submit) {
+    return slotsOf(submit).free;
+  }
+
+  /// The links a loop's requests use, each with its submissions.
+  using LoopLinks = llvm::SmallVector<
+      std::pair<LinkKey, llvm::SmallVector<mlir::Operation *, 2>>, 1>;
+
+  LoopLinks linksOf(mlir::scf::ForOp loop) {
+    LoopLinks links;
+    if (!classical)
+      return links;
+    loop.getBody()->walk([&](classical::SubmitOp submit) {
+      LinkKey key = linkOf(submit);
+      auto it = llvm::find_if(
+          links, [&](const auto &entry) { return entry.first == key; });
+      if (it == links.end())
+        it =
+            &links.emplace_back(key, llvm::SmallVector<mlir::Operation *, 2>{});
+      it->second.push_back(submit);
+    });
+    return links;
+  }
+
+  /// The largest budget of a request on a link, which bounds how long past
+  /// its submission one holds its slot.
+  int64_t linkBudget(const LinkKey &key) {
+    if (linkBudgets.empty())
+      region->walk([&](classical::SubmitOp submit) {
+        int64_t &most = linkBudgets[linkOf(submit)];
+        most = std::max(most, budgetOf(submit));
+      });
+    return linkBudgets.lookup(key);
+  }
+
+  /// Whether a slot free at (forward) or from (backward) `free` can delay a
+  /// request placed after the link's last: forward, one free past its
+  /// start; backward, one to be free before its start plus the largest
+  /// budget, where every request placed after it has its slot free again.
+  bool heldPast(int64_t free, const LinkSlots &slots, int64_t budget,
+                bool backward) const {
+    if (!slots.last)
+      return true;
+    return backward ? free < *slots.last + budget : free > *slots.last;
+  }
+
+  /// Per link of a loop, its last request and the slots held past it, in
+  /// order.
+  struct HeldSlots {
+    std::optional<int64_t> last;
+    llvm::SmallVector<int64_t, 4> held;
+  };
+
+  llvm::SmallVector<HeldSlots, 1> heldSlots(const LoopLinks &links,
+                                            bool backward) {
+    llvm::SmallVector<HeldSlots, 1> state(links.size());
+    for (auto [link, slots] : llvm::zip(links, state)) {
+      auto it = linkLanes.find(link.first);
+      if (it == linkLanes.end())
+        continue;
+      int64_t budget = backward ? linkBudget(link.first) : 0;
+      slots.last = it->second.last;
+      for (int64_t free : it->second.free)
+        if (heldPast(free, it->second, budget, backward))
+          slots.held.push_back(free);
+      llvm::sort(slots.held);
+    }
+    return state;
+  }
+
+  /// Whether an iteration moved each link's last request and held slots
+  /// from `before` by the shift its requests move by (`shiftOf`; none when
+  /// they move by several), so that the iterations after it hold the slots
+  /// as it did, moved as they are.
+  bool slotsMoved(const LoopLinks &links, llvm::ArrayRef<HeldSlots> before,
+                  bool backward,
+                  llvm::function_ref<
+                      std::optional<int64_t>(llvm::ArrayRef<mlir::Operation *>)>
+                      shiftOf) {
+    if (before.size() != links.size())
+      return false;
+    auto now = heldSlots(links, backward);
+    for (auto [link, was, is] : llvm::zip(links, before, now)) {
+      std::optional<int64_t> shift = shiftOf(link.second);
+      if (!shift || !was.last || !is.last || *is.last != *was.last + *shift ||
+          is.held.size() != was.held.size())
+        return false;
+      for (auto [x, y] : llvm::zip(was.held, is.held))
+        if (y != x + *shift)
+          return false;
+    }
+    return true;
+  }
+
+  /// Move each link's last request and held slots by `distanceOf` its
+  /// requests, as the iterations not simulated do (see slotsMoved).
+  void moveSlots(const LoopLinks &links, bool backward,
+                 llvm::function_ref<int64_t(llvm::ArrayRef<mlir::Operation *>)>
+                     distanceOf) {
+    for (const auto &[key, ops] : links) {
+      auto it = linkLanes.find(key);
+      if (it == linkLanes.end() || !it->second.last)
+        continue;
+      int64_t distance = distanceOf(ops);
+      int64_t budget = backward ? linkBudget(key) : 0;
+      // Only held slots move, the way the heap orders them: it stays one.
+      for (int64_t &free : it->second.free)
+        if (heldPast(free, it->second, budget, backward))
+          free += distance;
+      *it->second.last += distance;
+    }
   }
 
   /// Whether a loop whose iterations shift by `period` keeps every link's
@@ -1995,7 +2138,8 @@ private:
   /// Take the earliest free slot of a link for a request starting no earlier
   /// than `start`; it is busy until the answer is due.
   int64_t takeSlot(mlir::Operation *submit, int64_t start, int64_t busy) {
-    auto &heap = lanesOf(submit);
+    LinkSlots &slots = slotsOf(submit);
+    auto &heap = slots.free;
     auto later = std::greater<int64_t>();
     std::pop_heap(heap.begin(), heap.end(), later);
     if (heap.back() > start) {
@@ -2004,6 +2148,7 @@ private:
     }
     heap.back() = start + busy;
     std::push_heap(heap.begin(), heap.end(), later);
+    slots.last = std::max(slots.last.value_or(start), start);
     return start;
   }
 
@@ -2011,7 +2156,8 @@ private:
   /// bound may start, for one that is busy for `busy`.
   int64_t takeSlotBackward(mlir::Operation *submit, int64_t start, int64_t busy,
                            bool pinned) {
-    auto &heap = lanesOf(submit);
+    LinkSlots &slots = slotsOf(submit);
+    auto &heap = slots.free;
     std::pop_heap(heap.begin(), heap.end());
     if (!pinned && heap.back() - busy < start) {
       start = heap.back() - busy;
@@ -2019,6 +2165,7 @@ private:
     }
     heap.back() = start;
     std::push_heap(heap.begin(), heap.end());
+    slots.last = std::min(slots.last.value_or(start), start);
     return start;
   }
 
@@ -2109,7 +2256,13 @@ private:
       }
       if (shift <= 0) {
         for (auto &[key, heap] : trial)
-          linkLanes[key] = std::move(heap);
+          linkLanes[key].free = std::move(heap);
+        for (const BlockRequest &request : requests) {
+          std::optional<int64_t> &last = linkLanes[linkOf(request.op)].last;
+          int64_t at = start + request.start;
+          last = backward ? std::min(last.value_or(at), at)
+                          : std::max(last.value_or(at), at);
+        }
         return start;
       }
       start += backward ? -shift : shift;
@@ -2361,8 +2514,14 @@ private:
     // (a loop without is summarized by the controller check as it is).
     bool regroupLanes = resources.enabled && mayRegroup && holdsCalls(loop);
     llvm::SmallVector<LaneState, 0> laneHistory;
+    LoopLinks links = linksOf(loop);
     for (int64_t k = 0; k < count; ++k) {
       iteration.back() = k;
+      // Slots held past an iteration's last request may delay the next
+      // ones: their iterations repeat only if the iteration moved them too.
+      llvm::SmallVector<HeldSlots, 1> slotsBefore;
+      if (!links.empty() && !lanesBound)
+        slotsBefore = heldSlots(links, false);
       int64_t savedEnd = iterationEnd;
       iterationEnd = 0;
       auto savedEnds = iterationEnds;
@@ -2398,7 +2557,9 @@ private:
           !lanesBound && repeated && shift >= 0 &&
           (!Gridded || shift % grid.lcm() == 0) &&
           slotsHoldSteadyState(loop, shift) &&
-          (!resources.enabled || lanesSteady(lanesBefore, shift, laneTries));
+          (!resources.enabled || lanesSteady(lanesBefore, shift, laneTries)) &&
+          slotsMoved(links, slotsBefore, false,
+                     [&](llvm::ArrayRef<mlir::Operation *>) { return shift; });
       bool bounded = true;
       for (auto [before, after, kind, bound] :
            llvm::zip(carried, next, kinds, outsideOf))
@@ -2420,7 +2581,12 @@ private:
       bool mixed = nowGroups && bounded && lastGroups == nowGroups &&
                    groupsSteady(*groups, *nowGroups, 1) &&
                    slotsHoldGroups(loop, *groups, *nowGroups, 1) &&
-                   groupLanesMoved(groupLanes, *groups, *nowGroups);
+                   groupLanesMoved(groupLanes, *groups, *nowGroups) &&
+                   slotsMoved(links, slotsBefore, false,
+                              [&](llvm::ArrayRef<mlir::Operation *> ops) {
+                                return requestsShift(loop, *groups, *nowGroups,
+                                                     ops, false);
+                              });
       bool groupsRepeated = nowGroups && lastGroups == nowGroups;
       lastGroups = std::move(nowGroups);
       llvm::SmallVector<int64_t> previous = std::move(carried);
@@ -2430,6 +2596,10 @@ private:
         if (distances && extrapolateGroups(carried, previous, kinds, *groups,
                                            false, *distances)) {
           moveGroupLanes(groupLanes, *groups, *distances);
+          moveSlots(links, false, [&](llvm::ArrayRef<mlir::Operation *> ops) {
+            return *requestsShift(loop, *groups, *lastGroups, ops, false) *
+                   (count - 1 - k);
+          });
           // Each line ends its last iteration where it is carried to, and
           // each wait in the body where its group moves it.
           for (auto [init, time, group] :
@@ -2457,6 +2627,8 @@ private:
         int64_t remaining = count - 1 - k;
         int64_t distance = remaining * shift;
         extrapolate(carried, previous, kinds, distance);
+        moveSlots(links, false,
+                  [&](llvm::ArrayRef<mlir::Operation *>) { return distance; });
         // What the iterations not simulated move: the ends and run-time
         // waits of the timelines the body plays on, and their links.
         if (!isolated()) {
@@ -2982,8 +3154,12 @@ private:
     // (a loop without is summarized by the controller check as it is).
     bool regroupLanes = resources.enabled && mayRegroup && holdsCalls(loop);
     llvm::SmallVector<LaneState, 0> laneHistory;
+    LoopLinks links = linksOf(loop);
     for (int64_t k = count - 1; k >= 0; --k) {
       iteration.back() = k;
+      llvm::SmallVector<HeldSlots, 1> slotsBefore;
+      if (!links.empty() && !lanesBound)
+        slotsBefore = heldSlots(links, true);
       for (mlir::Value value : bodyValues)
         lateAt.erase(value);
       for (mlir::Value arg : args)
@@ -3030,7 +3206,9 @@ private:
           !lanesBound && repeated && shift <= 0 &&
           (!Gridded || shift % grid.lcm() == 0) &&
           slotsHoldSteadyState(loop, -shift) &&
-          (!resources.enabled || lanesSteady(lanesBefore, shift, laneTries));
+          (!resources.enabled || lanesSteady(lanesBefore, shift, laneTries)) &&
+          slotsMoved(links, slotsBefore, true,
+                     [&](llvm::ArrayRef<mlir::Operation *>) { return shift; });
       lastShift = shifted ? std::optional<int64_t>(shift) : std::nullopt;
       // Lines that move by periods of their own repeat too, group by group.
       std::optional<GroupShifts> nowGroups;
@@ -3055,7 +3233,12 @@ private:
           if (shift.value_or(0) != 0 && earliest == kNever)
             mixed = false;
       mixed = mixed && slotsHoldGroups(loop, *groups, *nowGroups, -1) &&
-              groupLanesMoved(groupLanes, *groups, *nowGroups);
+              groupLanesMoved(groupLanes, *groups, *nowGroups) &&
+              slotsMoved(links, slotsBefore, true,
+                         [&](llvm::ArrayRef<mlir::Operation *> ops) {
+                           return requestsShift(loop, *groups, *nowGroups, ops,
+                                                true);
+                         });
       if (mixed && k > 0 && !pinned.empty()) {
         const GroupShifts &shifts = *nowGroups;
         int64_t head = pinnedHead(loop, k, [&](mlir::Operation *op) {
@@ -3079,10 +3262,15 @@ private:
         // iteration's branches, the first iteration's the earliest: skip to
         // it and simulate it.
         bool first = !groups->outside.empty();
-        auto distances = groupDistances(*lastGroups, first ? k - 1 : k);
+        int64_t copies = first ? k - 1 : k;
+        auto distances = groupDistances(*lastGroups, copies);
         if (distances && extrapolateGroups(carried, previous, kinds, *groups,
                                            true, *distances)) {
           moveGroupLanes(groupLanes, *groups, *distances);
+          moveSlots(links, true, [&](llvm::ArrayRef<mlir::Operation *> ops) {
+            return *requestsShift(loop, *groups, *lastGroups, ops, true) *
+                   copies;
+          });
           // The iterations not simulated start their ops earlier, by
           // their group's distance in the first, and so the arm it is in.
           for (auto [earliest, distance] :
@@ -3119,6 +3307,8 @@ private:
              llvm::zip(armStarts, iterationArmStarts))
           lowerArmStart(start, inIteration, distance);
         extrapolate(carried, previous, kinds, distance);
+        moveSlots(links, true,
+                  [&](llvm::ArrayRef<mlir::Operation *>) { return distance; });
         for (auto [now, before] : llvm::zip(ceilings, ceilingsBefore))
           if (now != before)
             now += distance;
@@ -3288,9 +3478,9 @@ private:
   /// For submissions with their own order (`ownOrder`), when their link is
   /// free (forward) or must be free from (backward), in that order.
   std::map<LinkKey, int64_t> linkReady, linkLate;
-  /// Request slots per link and timeline, each the time it is free
-  /// (forward) or must be free from (backward).
-  llvm::DenseMap<LinkKey, llvm::SmallVector<int64_t>> linkLanes;
+  /// Request slots per link and timeline.
+  llvm::DenseMap<LinkKey, LinkSlots> linkLanes;
+  llvm::DenseMap<LinkKey, int64_t> linkBudgets;
   int64_t laneReset = 0;
   /// A link's slots delayed a request: loop iterations may differ, so they
   /// are all simulated.
