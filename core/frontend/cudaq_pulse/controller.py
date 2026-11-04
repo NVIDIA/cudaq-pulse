@@ -1289,7 +1289,10 @@ def _export_structured(
     waveforms = _Waveforms()
     limits = lowered.options.machine.controller
     clocks = (lowered._generic or lowered).clocks
-    if not _one_clock(clocks) or (lowered._generic or lowered).fine_delays is not None:
+    on_program_clock = clocks is None or (
+        clocks.owners is None and clocks.controllers[0].ratio == 1
+    )
+    if not on_program_clock or (lowered._generic or lowered).fine_delays is not None:
         raise UnsupportedError(
             "format /2 is written for a controller on the program clock, without line "
             "delays; export version 1 for this machine"
@@ -1333,6 +1336,8 @@ def _export_structured(
         {"line": index, "role": role, "qudits": [qudit]}
         for index, (role, qudit) in enumerate(raw_lines)
     ]
+    if clocks is not None and clocks.controllers[0].grid > 1 and _computes_at_run_time(lowered):
+        _on_timesteps(clocks.controllers[0], program["lines"], events)
     program["waveforms"] = waveforms.identified()
     if sample_rate_ghz is not None:
         program["samples"] = samples_of
@@ -1367,6 +1372,22 @@ def _export_structured(
     program["programs"] = {}
     program["bindings"] = {}
     return program
+
+
+def _on_timesteps(
+    own: _clocks.ControllerClock, lines: Sequence[Mapping[str, Any]], events: list[dict[str, Any]]
+) -> None:
+    """Give each wait of format /2 *events*, in loops too, whose length is
+    computed at run time the length format /1 gives it on *own*'s
+    timesteps, in place; the check at export has found any it can decide
+    is off them."""
+    from . import _clocks
+
+    for event in events:
+        if event["kind"] == "loop":
+            _on_timesteps(own, lines, event["body"])
+        elif event["kind"] == "wait" and "length" in event:
+            _clocks.own_run_time(own, lines[event["line"]], event, False)
 
 
 def _structured_controller(limits: ControllerLimits) -> dict[str, Any]:

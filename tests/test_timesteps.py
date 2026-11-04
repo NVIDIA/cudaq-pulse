@@ -16,7 +16,7 @@ from fractions import Fraction
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import _clocks, _waits
+from cudaq_pulse import _clocks, _waits, controller
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, ControllerLimits, check
 
@@ -99,6 +99,58 @@ def test_on_the_program_clock_the_export_keeps_its_clock():
     assert "program_clock_ghz" not in program
     starts = [e["start_cycles"] for e in program["events"] if e["kind"] in TIMED]
     assert starts and all(s % 4 == 0 for s in starts)
+
+
+@pulse.classical(max_latency_ns=200)
+def _pause() -> int:
+    return 8
+
+
+@pulse.kernel
+def paced(q):
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    t = _pause.submit().result()
+    for _ in range(3):
+        drive(d, square(16, 0.1))
+        wait(d, t, bounds=(4, 64))
+    sync(d, r)
+    if readout(r, square(20, 0.05)):
+        drive(d, square(8, 0.1))
+
+
+@pulse.kernel
+def rolled(q):
+    d = get_drive_line(q)
+    for _ in range(100):
+        drive(d, gaussian(16, 0.1, 4.0))
+        wait(d, 4)
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [ControllerLimits(cycles_per_timestep=2), ControllerLimits(sample_rate_ghz=1.0)],
+)
+@pytest.mark.parametrize("kernel", [paced, rolled])
+def test_format_2_on_the_program_clock_in_timesteps_unrolls_to_format_1(kernel, limits):
+    lowered = pulse.compile(kernel, machine=MachineModel(controller=limits)).lower(Q[0])
+    flat = lowered.export_controller(version=1)
+    structured = lowered.export_controller(version=2)
+    assert structured["clock_ghz"] == flat["clock_ghz"] == lowered.target.clock_ghz
+    assert controller.unroll(structured)["events"] == flat["events"]
+    if kernel is rolled:
+        assert [e["kind"] for e in structured["events"]] == ["loop"]
+    else:
+        waits = [e for e in structured["events"] if e["kind"] == "wait" and "length" in e]
+        assert len(waits) == 3 and all(w["length"]["timestep"] == 2 for w in waits)
+
+
+def test_format_2_refuses_a_controller_on_its_own_clock():
+    machine = MachineModel(controller=ControllerLimits(clock_ghz=1.0))
+    lowered = pulse.compile(paced, machine=machine).lower(Q[0])
+    assert lowered.export_controller(version=1)["clock_ghz"] == 1.0
+    with pytest.raises(pulse.UnsupportedError, match="export version 1 for this machine"):
+        lowered.export_controller(version=2)
 
 
 def test_one_cycle_per_timestep_changes_nothing():
