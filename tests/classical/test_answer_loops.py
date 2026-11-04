@@ -1179,11 +1179,12 @@ _ON_ONE_LINK = {
 }
 
 
-def _one_after_another(n: int, *bodies: str) -> Any:
-    """A kernel running a loop of *n* trips of each of *bodies* in turn."""
+def _one_after_another(n: int, *bodies: str, name: str | None = None) -> Any:
+    """A kernel running a loop of *n* trips of each of *bodies* in turn, each
+    over a name of its own, or all over *name*."""
     lines = ["def k(q):", "    d = get_drive_line(q)", "    ro = get_readout_line(q)"]
     for index, body in enumerate(bodies):
-        lines.append(f"    for i{index} in range({n}):")
+        lines.append(f"    for {name or f'i{index}'} in range({n}):")
         lines += [f"        {line}" for line in _ON_ONE_LINK[body]]
     namespace: dict[str, Any] = {"ask": ask, "ask_lazy": ask_lazy, "ask_soon": ask_soon}
     exec(compile("\n".join(lines), "<loops>", "exec"), namespace)  # noqa: S102 - generated kernels
@@ -1268,15 +1269,17 @@ _LOOPS_ON_ONE_LINK = (
 
 # A loop whose rest the scheduler extrapolates leaves the link's slots as
 # its last iteration would: the next loop's first requests wait for the ones
-# still in flight, as written out.
+# still in flight, as written out. Loops over one name too, as `for _ in`
+# loops one after another are written.
+@pytest.mark.parametrize("name", (None, "_"), ids=("own_names", "one_name"))
 @pytest.mark.parametrize("schedule", POLICIES)
-def test_loops_one_after_another_on_a_link_play_as_unrolled_within_its_slots(schedule):
+def test_loops_one_after_another_on_a_link_play_as_unrolled_within_its_slots(schedule, name):
     differ, over = [], []
     for slots in (1, 2, 4, 6):
         machine = _link_slots(slots)
         for trips in (5, 20, 65):
             for bodies in _LOOPS_ON_ONE_LINK:
-                kernel = _one_after_another(trips, *bodies)
+                kernel = _one_after_another(trips, *bodies, name=name)
                 lowered = [
                     pulse.compile(
                         kernel,
