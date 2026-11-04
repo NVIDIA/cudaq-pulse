@@ -571,6 +571,30 @@ def test_waveforms_of_float_widths_take_memory_by_their_values():
         compiled.lower(Q[0], 10.0, 12.0)
 
 
+@pulse.classical(max_latency_ns=200)
+def _delay_for(x: float) -> int:
+    return 8
+
+
+@pulse.kernel
+def delayed(q, x: float):
+    d = get_drive_line(q)
+    t = _delay_for.submit(x).result()
+    drive(d, square(16, 0.1))
+    wait(d, t, bounds=(4, 64))
+
+
+@pytest.mark.parametrize(
+    ("limits", "version"),
+    [({"max_amplitude": 1.0}, 2), ({"cycles_per_timestep": 2}, 1), ({"sample_rate_ghz": 1.0}, 1)],
+)
+def test_a_float_parameter_a_call_is_given_is_checked_at_its_value(limits, version):
+    machine = MachineModel(controller=ControllerLimits(**limits))
+    lowered = pulse.compile(delayed, machine=machine).lower(Q[0], 0.25)
+    submitted = lowered.export_controller(version=version)["events"][0]
+    assert submitted["operands"] == [{"const": 0.25}]
+
+
 def test_a_call_is_checked_once_per_distinct_values(monkeypatch):
     checked = []
     check_call = controller_module._call_violations

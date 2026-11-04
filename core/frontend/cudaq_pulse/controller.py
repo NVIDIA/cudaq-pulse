@@ -972,7 +972,8 @@ def _walk(
 ]:
     """The lines, events, and frame changes no event takes of *lowered*, at
     the values of its call; without *values*, a module with float parameters
-    has ``None`` where they reach.
+    has ``None`` where they reach, and ``{"unknown": ...}`` for a value it
+    computes at run time that the export has no term for.
 
     The lines are the dictionaries of format /1. With *summary*, (repeats,
     periods), for a check, the events are those the check walk gives: in a
