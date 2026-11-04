@@ -192,7 +192,8 @@ _NO_RETURN = object()
 
 
 def _return_spec(value: Any, readouts: dict[int, int], name: str) -> Any:
-    """What a call returns, from the value the trace returned."""
+    """What a call returns, from the value the trace returned: for a value
+    only the running program knows, the error calling the kernel raises."""
     if isinstance(value, IRValue):
         if value.vtype == "measurement":
             ordinal = readouts.get(value.vid)
@@ -207,12 +208,23 @@ def _return_spec(value: Any, readouts: dict[int, int], name: str) -> Any:
             "measurements or values known at compile time"
         )
     if is_symbolic(value):
+        from .ir_builder import contains_answer
+
+        if contains_answer(value):
+            return CompilationError(
+                f"{name}() returns the answer of a classical call, which only the "
+                "running program has; called from Python, a kernel returns "
+                "measurements or values known at compile time"
+            )
         raise CompilationError(
             f"{name}() returns a value computed from a float parameter, which is "
             "only known when the kernel runs"
         )
     if type(value) in (tuple, list):
         items = tuple(_return_spec(v, readouts, name) for v in value)
+        for item in items:
+            if isinstance(item, CompilationError):
+                return item
         if any(isinstance(i, (_Measured, _Sequence)) for i in items):
             return _Sequence(type(value), items)
     return value
@@ -229,8 +241,12 @@ def _materialize(spec: Any, outcome: Callable[[int], int]) -> Any:
         return outcome(spec.readout)
     if isinstance(spec, _Sequence):
         return spec.kind(_materialize(i, outcome) for i in spec.items)
+    if isinstance(spec, (int, float, complex, str, type(None))):
+        return spec
+    if isinstance(spec, CompilationError):
+        raise CompilationError(*spec.args)
     # Each call returns its own copy of a container built by the kernel.
-    return spec if isinstance(spec, (int, float, complex, str, type(None))) else copy.deepcopy(spec)
+    return copy.deepcopy(spec)
 
 
 def _execute(lowered: Lowered, returns: Any) -> Any:

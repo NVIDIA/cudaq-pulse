@@ -509,6 +509,34 @@ def test_returning_a_value_of_a_float_parameter_is_an_error():
         echo.lower(_device().qudit_handles[0], 0.1)
 
 
+@pulse.classical(max_latency_ns=200)
+def _doubled(x: float) -> float:
+    return 2 * x
+
+
+@pulse.kernel
+def asks(q, amp: float):
+    d = get_drive_line(q)
+    drive(d, square(16, amp))
+    return _doubled.submit(amp).result()
+
+
+@pulse.kernel
+def asks_and_reads(q, amp: float):
+    r = get_readout_line(q)
+    m = readout(r, square(20, 0.05))
+    return m, _doubled.submit(amp).result()
+
+
+@pytest.mark.parametrize("kernel", [asks, asks_and_reads])
+def test_a_kernel_that_returns_an_answer_compiles_and_only_its_call_fails(kernel):
+    q = _device().qudit_handles[0]
+    submitted = kernel.lower(q, 0.1).export_controller()["events"]
+    assert [e["operands"] for e in submitted if e["kind"] == "submit"] == [[{"const": 0.1}]]
+    with pytest.raises(CompilationError, match="returns the answer of a classical call"):
+        kernel(q, 0.1)
+
+
 # ── Launcher ─────────────────────────────────────────────────────────────
 
 
