@@ -223,7 +223,18 @@ private:
   }
 
   /// When `tone` is free, as a pattern over the loops around its block.
+  /// Each value's is found once: changes are placed in program order and a
+  /// tone is free at what comes before it, so it does not change after.
+  /// Else each change after a run of branches would look through them all.
   std::optional<Time> freeAt(mlir::Value tone) {
+    if (auto found = free.find(tone); found != free.end())
+      return found->second;
+    std::optional<Time> time = findFree(tone);
+    free.try_emplace(tone, time);
+    return time;
+  }
+
+  std::optional<Time> findFree(mlir::Value tone) {
     if (auto argument = mlir::dyn_cast<mlir::BlockArgument>(tone)) {
       auto loop = mlir::dyn_cast_or_null<mlir::scf::ForOp>(
           argument.getOwner()->getParentOp());
@@ -315,6 +326,7 @@ private:
   mlir::MLIRContext *context;
   const Names &names;
   llvm::DenseMap<mlir::Operation *, std::optional<Time>> firsts;
+  llvm::DenseMap<mlir::Value, std::optional<Time>> free;
 };
 
 /// The tone values a drive or readout plays with, later on some path: the

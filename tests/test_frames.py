@@ -24,6 +24,8 @@ from cudaq_pulse.compiler import DEFAULT_PASSES, MachineModel, Pass
 from cudaq_pulse.controller import ControllerLimits, unroll
 from cudaq_pulse.targets import Qubit, TargetDescription
 
+from tests._work import python_work
+
 _FREQUENCY_HZ = 5.0e9
 _CLOCK_GHZ = 2.0
 _TARGET = TargetDescription(
@@ -559,3 +561,38 @@ def test_keeping_frame_changes_moves_and_lengthens_nothing(name, kernel, device,
         )
         for update in _updates(unroll(exported)["events"]):
             assert update["duration_cycles"] == 0 and 0 <= update["start_cycles"] <= end
+
+
+def _branches(n):
+    @pulse.kernel(unroll_threshold=10**9)
+    def branches(q):
+        d = get_drive_line(q)
+        r = get_readout_line(q)
+        m = readout(r, square(40, 0.05))
+        sync(d, r)
+        for _ in range(n):
+            if m:
+                shift_frequency(d.tone, 1.0e6)
+                drive(d, square(8, 0.1))
+
+    return branches
+
+
+@pytest.mark.slow
+def test_a_run_of_branches_places_its_frame_changes_in_linear_time():
+    # Each branch passes its tone through the arm that does not play, so a
+    # change is free where the branches before it, all of them, leave its
+    # tone. The Python work is counted; the schedule, native, is the best of
+    # five times.
+    work, timings = {}, {}
+    for n in (1000, 4000):
+        kernel = _branches(n)
+
+        def run(kernel=kernel):
+            return pulse.compile(kernel).lower(Q[0])
+
+        work[n] = python_work(run)
+        timings[n] = min(run().metrics.schedule_ms for _ in range(5))
+    # 4x the branches in well under 16x the time (quadratic would be 16x).
+    assert all(work[4000][count] <= 4 * work[1000][count] for count in work[1000]), work
+    assert timings[4000] < 8 * timings[1000], timings
