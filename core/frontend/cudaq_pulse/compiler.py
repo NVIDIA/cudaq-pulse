@@ -223,7 +223,10 @@ class _Links(dict[int, "Link"]):
     __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = _readonly  # type: ignore[assignment]
 
 
+# Defaults of the mapping fields, read-only: __post_init__ replaces whatever
+# a field is given.
 _NO_DELAYS: Mapping[tuple[str, int], float] = MappingProxyType({})
+_NO_LINKS: Mapping[int | str, Link] = MappingProxyType({})
 
 
 @dataclass(frozen=True)
@@ -259,10 +262,10 @@ class MachineModel:
     max_concurrent_readouts: int = 2
     readout_latency_cycles: int = 0
     line_switch_penalty_cycles: int = 0
-    links: Mapping[int | str, Link] = field(default_factory=dict)
+    links: Mapping[int | str, Link] = _NO_LINKS
     controller: ControllerLimits | None = None
     reference_clock_ghz: float | None = None
-    line_delays_ns: Mapping[tuple[str, int], float | Time] = field(default_factory=dict)
+    line_delays_ns: Mapping[tuple[str, int], float | Time] = _NO_DELAYS
     link_names: Mapping[str, int] = field(init=False, repr=False, compare=False)
     # The ControlSystem this model was made from, whose wiring and
     # capabilities every program is checked against.

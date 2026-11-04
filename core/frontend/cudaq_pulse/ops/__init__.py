@@ -312,12 +312,7 @@ def square(duration: Numeric, amplitude: Numeric | complex | Sequence[float]) ->
     return _require_context("square")
 
 
-def drag(
-    duration: Numeric,
-    amplitude: Numeric,
-    sigma: Numeric,
-    beta: Numeric,
-) -> Waveform:
+def drag(duration: Numeric, amplitude: Numeric, sigma: Numeric, beta: Numeric) -> Waveform:
     """Create a DRAG (Derivative Removal by Adiabatic Gate) waveform.
 
     The envelope is ``G(t) + i beta dG/dt`` with ``G`` the Gaussian (Motzoi

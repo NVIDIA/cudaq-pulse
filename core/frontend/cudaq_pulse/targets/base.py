@@ -33,6 +33,11 @@ _TRANSMON = TransmonModel()
 
 _SECONDS_PER_NANOSECOND = 1.0e-9
 _NANOSECONDS_PER_MICROSECOND = 1.0e3
+# The default of the mapping fields: __post_init__ keeps a read-only copy of
+# whatever a field is given, so every instance may share it.
+if TYPE_CHECKING:
+    _EMPTY: Mapping[Any, Any]
+_EMPTY = MappingProxyType({})
 
 
 @dataclass(frozen=True)
@@ -102,7 +107,7 @@ class Coupling:
     gate_duration_ns: float | None = None
     gate_buffer_ns: float | None = None
     gate_fidelity: float | None = None
-    gate_params: Mapping[str, float] = field(default_factory=dict)
+    gate_params: Mapping[str, float] = _EMPTY
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "gate_params", MappingProxyType(dict(self.gate_params)))
@@ -200,7 +205,7 @@ class TargetDescription:
     """
 
     name: str
-    qubits: Mapping[int, Qubit] = field(default_factory=dict)
+    qubits: Mapping[int, Qubit] = _EMPTY
     couplings: Sequence[Coupling] = ()
     crosstalk: Sequence[CrosstalkEntry] = ()
     model: SimulationModel | type[SimulationModel] | None = _TRANSMON
