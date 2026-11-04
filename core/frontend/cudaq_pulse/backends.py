@@ -206,7 +206,8 @@ def validate(
     name of one) and report what it does wrong.
 
     The corpus has a program for each kind of event (``cudaq_pulse.Event``),
-    one with a branch and one with values known only at run time, compiled
+    one with a branch and two with values known only at run time (one a
+    frequency change made ahead of the pulse that takes it), compiled
     for *controller* (by default the backend's machine model's), in each
     format the backend reads. Each must be emitted or refused with
     ``IncompatibleBackendError``; a program

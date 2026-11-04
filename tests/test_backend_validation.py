@@ -86,7 +86,22 @@ def test_a_conforming_backend_passes_in_every_format_it_reads(ideal):
     lines = str(report).splitlines()
     assert "PASS play (/1)" in lines and "PASS loop (/2)" in lines
     assert "PASS unsupported_event" in lines and "PASS newer_format" in lines
-    assert lines[-1] == "backend 'toy': 22 passed"
+    assert lines[-1] == "backend 'toy': 24 passed"
+
+
+def test_the_corpus_tells_where_a_run_time_frequency_change_is_made():
+    dev = _validation._device(MachineModel())
+    compiled = pulse.compile(_validation._corpus()["runtime_frequency"], device=dev)
+    lowered = compiled.lower(*dev.qudit_handles[:2])
+    events = lowered.export_controller()["events"]
+    first, second = (e for e in events if e["kind"] == "drive")
+    [change] = second["frame_updates"]
+    # An emulator that took the change at the second pulse would miss the
+    # phase the frame gains between them.
+    assert change["op"] == "shift_frequency"
+    assert change["start_cycles"] == first["end_cycles"] == second["start_cycles"] - 200
+    (p,) = _validation._simulated(lowered)
+    assert p < 0.1
 
 
 def test_a_backend_that_accepts_what_it_cannot_read_fails(monkeypatch):

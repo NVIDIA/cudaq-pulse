@@ -497,6 +497,10 @@ def off_grid(
             end = event["end_cycles"]
             if end is not None:
                 event["end_cycles"] = -((-end * a) // b)
+            for update in event.get("frame_updates", ()):
+                made = update["start_cycles"]
+                if made is not None:
+                    update["start_cycles"] = -((-made * a) // b)
             tree = event.get("waveform") if waveforms else None
             if tree is not None:
                 _scale(tree, a / b, scaled)

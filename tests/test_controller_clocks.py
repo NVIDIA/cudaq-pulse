@@ -594,6 +594,16 @@ def test_a_run_time_wait_is_exported_in_its_controllers_cycles():
     assert wait["length"]["op"] == "controller_cycles" and wait["length"]["den"] == 4
 
 
+def test_a_run_time_frame_change_is_placed_in_its_controllers_cycles():
+    from tests.test_controller import retuned_by_answer, retuned_by_answer_changes
+
+    qpu = _mixed(links={"default": Link(fixed_ns=10)})
+    lowered = pulse.compile(retuned_by_answer, device=qpu).lower(qpu.qudits[2])
+    program = lowered.export_controller()
+    assert program["clock_ghz"] == 0.5
+    assert len(retuned_by_answer_changes(program["events"])) == 6
+
+
 def test_each_controller_exports_the_reference_clock():
     qpu = _mixed(reference_clock_ghz=0.25)
     lowered = pulse.compile(mixed, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])

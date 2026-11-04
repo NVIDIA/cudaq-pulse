@@ -2853,9 +2853,11 @@ public:
       nb::gil_scoped_release release;
       walkController(walk, lines, &waveforms,
                      slots.is_none() ? nullptr : &found);
-      if (own)
+      if (own) {
         offGrid = ownCycles(walk.result, std::get<0>(*own), std::get<1>(*own),
                             std::get<2>(*own));
+        ownFrameUpdateCycles(walk, std::get<0>(*own), std::get<1>(*own));
+      }
     }
     if (!slots.is_none()) {
       auto out = nb::borrow<nb::list>(slots);

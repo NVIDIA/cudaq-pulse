@@ -617,13 +617,14 @@ def test_an_amplitude_and_a_phase_from_an_answer_are_exported_with_their_source(
     # The phase shift comes after the last drive on its tone: it is kept, as
     # a frame update of its own where the drive ends.
     phase = {"answer": answer, "result": 2}
-    update = {"id": 0, "op": "shift_phase", "value": phase}
+    end = play["start_cycles"] + play["duration_cycles"]
+    update = {"id": 0, "op": "shift_phase", "start_cycles": end, "value": phase}
     assert (play["tone"], play["frame_updates"]) == (0, [])
     [kept] = (e for e in structured["events"] if e["kind"] == "frame_update")
     assert kept == {
         "kind": "frame_update",
         "line": 0,
-        "start_cycles": play["start_cycles"] + play["duration_cycles"],
+        "start_cycles": end,
         "duration_cycles": 0,
         "op": "shift_phase",
         "value": phase,
@@ -647,7 +648,8 @@ def test_an_amplitude_and_a_phase_from_an_answer_are_exported_with_their_source(
     assert (play["tone"], play["frame_updates"]) == (0, [])
     phase = {"answer": answer, "result": 2}
     drive_frame, readout_frame = structured["frame_state"]
-    update = {"id": 0, "op": "shift_phase", "value": phase}
+    end = play["start_cycles"] + play["duration_cycles"]
+    update = {"id": 0, "op": "shift_phase", "start_cycles": end, "value": phase}
     assert drive_frame == {"line": 0, "tone": 0, "frame_updates": [update]}
     assert readout_frame == {"line": 1, "frequency_hz": 5.0e9, "phase_rad": 0.0}
     flat = lowered.export_controller()

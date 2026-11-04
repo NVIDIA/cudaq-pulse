@@ -554,8 +554,9 @@ behavior may change in any 0.x release.
   waveform parameter (`runtime`, including a value a measurement selects),
   a variable wait's length and bounds, a submission's operands, and, on a
   tone whose frame depends on run time, the frame changes since its
-  previous drive (`tone`, `frame_updates`), so a backend can compute them
-  where the answer arrives. A program that
+  previous drive (`tone`, `frame_updates`), each with where it is made
+  (`start_cycles`), so a backend can compute them where the answer arrives
+  and the phase the frame gains from there. A program that
   computes nothing at run time exports exactly as before. Within a version,
   keys and event kinds are only added. `MachineModel(controller=
   ControllerLimits(...))` states what a controller can play (clock, issue

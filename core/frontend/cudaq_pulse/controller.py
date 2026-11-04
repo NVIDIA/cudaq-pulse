@@ -1541,8 +1541,11 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
             return {**expression, "of": [resolve(e) for e in expression["of"]]}
         return dict(expression)
 
-    def frame_updates(updates: Sequence[Mapping[str, Any]], branch: Any) -> list[dict[str, Any]]:
-        """Frame changes with their /2 places as /1 indices."""
+    def frame_updates(
+        updates: Sequence[Mapping[str, Any]], branch: Any, shift: int = 0
+    ) -> list[dict[str, Any]]:
+        """Frame changes with their /2 places as /1 indices, made *shift*
+        cycles after their place in the loops' first iterations."""
         return [
             {
                 **({"tone": update["tone"]} if "tone" in update else {}),
@@ -1559,6 +1562,9 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
                 ],
                 "id": update["id"],
                 "op": update["op"],
+                "start_cycles": (
+                    None if update["start_cycles"] is None else update["start_cycles"] + shift
+                ),
                 "value": resolve(update["value"]),
             }
             for update in updates
@@ -1664,7 +1670,7 @@ def unroll(program: Mapping[str, Any]) -> dict[str, Any]:
                     event["timeout_ns"] = item.get("timeout_ns")
             if "tone" in item:
                 event["tone"] = item["tone"]
-                event["frame_updates"] = frame_updates(item["frame_updates"], branch)
+                event["frame_updates"] = frame_updates(item["frame_updates"], branch, shift)
                 if "phase_offset_rad" in item:
                     event["phase_offset_rad"] = item["phase_offset_rad"]
             if "length" in item:

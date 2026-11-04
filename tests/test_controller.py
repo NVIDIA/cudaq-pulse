@@ -795,15 +795,19 @@ def test_values_from_answers_are_exported_as_expressions():
     }
     [shift] = first["frame_updates"]
     [phase] = second["frame_updates"]
+    # Each change is where its tone is free: the shot's start, then the end
+    # of the drive before it.
     assert shift == {
         "id": shift["id"],
         "op": "shift_frequency",
+        "start_cycles": 0,
         "value": {"answer": answer, "result": 1},
         "conditions": [],
     }
     assert phase == {
         "id": phase["id"],
         "op": "shift_phase",
+        "start_cycles": first["end_cycles"],
         "value": {"answer": answer, "result": 0},
         "conditions": [],
     }
@@ -824,6 +828,63 @@ def test_values_from_answers_are_exported_as_expressions():
     submit = next(e for e in events if e["kind"] == "submit")
     assert submit["operands"] == [{"readout": readout["index"]}]
     assert json.loads(json.dumps(events)) == events
+
+
+@pulse.classical(max_latency_ns=200)
+def detuning() -> float:
+    return 0.0
+
+
+@pulse.kernel
+def retuned_by_answer(q):
+    d = get_drive_line(q)
+    x = detuning.submit().result()
+    for _ in range(3):
+        shift_frequency(d.tone, x)
+        drive(d, square(16, 0.1))
+        wait(d, 8)
+        shift_frequency(d.tone, -x)
+
+
+def retuned_by_answer_changes(events):
+    """The places of the frame changes of `retuned_by_answer`'s export, checked
+    against its drives: each drive takes the change after the drive before
+    it, at that drive's end, and its own, at its start (a change before the
+    first pulse of an iteration on a tone the iteration before played is
+    placed at the pulse); the last change is a frame update where the last
+    drive ends. Returns every change's (id, start_cycles)."""
+    drives = [e for e in events if e["kind"] == "drive"]
+    [kept] = (e for e in events if e["kind"] == "frame_update")
+    assert len(drives) == 3
+    places = []
+    for k, drive in enumerate(drives):
+        made = [u["start_cycles"] for u in drive["frame_updates"]]
+        expected = [drive["start_cycles"]]
+        if k:
+            expected.insert(0, drives[k - 1]["end_cycles"])
+        assert made == expected
+        places += [(u["id"], u["start_cycles"]) for u in drive["frame_updates"]]
+    [last] = kept["frame_updates"]
+    assert last["start_cycles"] == kept["start_cycles"] == drives[-1]["end_cycles"]
+    return [*places, (last["id"], last["start_cycles"])]
+
+
+def test_each_run_time_frame_change_is_exported_with_where_it_is_made():
+    lowered = pulse.compile(retuned_by_answer).lower(Q[0])
+    flat = lowered.export_controller()
+    places = retuned_by_answer_changes(flat["events"])
+    assert [i for i, _ in places] == list(range(6))
+    # Format /2 places them as it places its events.
+    structured = lowered.export_controller(version=2)
+    assert retuned_by_answer_changes(controller_module.unroll(structured)["events"]) == places
+
+
+def test_a_frame_changes_place_is_in_its_controllers_own_cycles():
+    program = pulse.compile(retuned_by_answer).lower(Q[0]).export_controller()
+    places = retuned_by_answer_changes(program["events"])
+    slow = MachineModel(controller=ControllerLimits(clock_ghz=program["clock_ghz"] / 2))
+    own = pulse.compile(retuned_by_answer, machine=slow).lower(Q[0]).export_controller()
+    assert retuned_by_answer_changes(own["events"]) == [(i, -(-start // 2)) for i, start in places]
 
 
 @pulse.classical(max_latency_ns=200)

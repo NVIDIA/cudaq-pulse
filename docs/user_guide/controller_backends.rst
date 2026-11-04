@@ -108,8 +108,11 @@ Drives and readouts also have:
     the frame changes on that tone since its previous drive or readout, in
     program order: each with ``id``, ``op`` (``"shift_phase"``,
     ``"set_phase"``, ``"shift_frequency"`` or ``"set_frequency"``),
-    ``value`` (a number, or an expression) and ``conditions``, the branch
-    arms it is on the path of. One change pending before a branch whose arm
+    ``value`` (a number, or an expression), ``start_cycles``, where it is
+    made on the tone's timeline (see below), from which the frame gains
+    phase at its new frequency even where the value is known only later,
+    and ``conditions``, the branch arms it is on the path of. One change
+    pending before a branch whose arm
     plays on the tone is listed again, with the other arm's condition, at
     the next drive after the branch; the same ``id`` names it both times.
     A controller tracks such a tone's frame itself, applying these instead
@@ -366,7 +369,8 @@ Values known at run time
     ``operands`` on a call; an expression's ``readout`` and ``answer`` are
     places, like other references, and resolve to the latest execution of
     that place before the event, so a rolled body refers to its own
-    events. A waveform parameter known only at run time is its expression
+    events, and a frame change's ``start_cycles`` is given as an event's
+    is. A waveform parameter known only at run time is its expression
     in the entry of the program's ``waveforms`` the event plays, where
     ``/1`` has ``null`` and the node's ``runtime``. The program's
     ``frame_state`` is as in ``/1``. A loop whose body changes or plays a tone whose frame

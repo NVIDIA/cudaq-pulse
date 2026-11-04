@@ -453,6 +453,8 @@ struct ControllerWalk {
     llvm::StringRef op;
     int32_t value; // an expression
     std::vector<Condition> conditions;
+    // Where it is made: its scheduled start, at the walk's iteration.
+    std::optional<int64_t> start;
   };
   // Each tracked tone's id, in the order tones are first played, and the
   // frame changes on it since its latest drive or readout.
@@ -1049,8 +1051,12 @@ struct ControllerWalk {
                                 : add(Expression::Number, constant);
   }
 
-  void frameUpdate(mlir::Operation *root, llvm::StringRef op, int32_t value) {
-    pending[root].push_back({nextUpdate++, op, value, branches});
+  /// A change on tracked tone `root`, made where `at` (a frame change, or a
+  /// drive that folds one in) is scheduled.
+  void frameUpdate(mlir::Operation *root, llvm::StringRef op, int32_t value,
+                   mlir::Operation *at) {
+    pending[root].push_back({nextUpdate++, op, value, branches,
+                             pulse::scheduledStart(at, iteration)});
   }
 
   // The run-time work of the walk stays out of line, so that the per-op
@@ -1061,7 +1067,7 @@ struct ControllerWalk {
                                            llvm::StringRef name) {
     if (mlir::Operation *root = toneRoots(op->getOperand(0));
         tracked.contains(root))
-      frameUpdate(root, name, frameValue(op->getOperand(1)));
+      frameUpdate(root, name, frameValue(op->getOperand(1)), op);
   }
 
   // The frame changes pending before each open branch, and after its then
@@ -1204,7 +1210,7 @@ struct ControllerWalk {
         if (auto shift =
                 op->getAttrOfType<mlir::FloatAttr>("frame_phase_offset"))
           frameUpdate(root, "shift_phase",
-                      add(Expression::Number, shift.getValueAsDouble()));
+                      add(Expression::Number, shift.getValueAsDouble()), op);
         if (auto own = op->getAttrOfType<mlir::FloatAttr>("phase_offset"))
           next.offset = own.getValueAsDouble();
       }
@@ -2241,6 +2247,23 @@ ownCycles(std::vector<ControllerRecord> &records, int64_t num, int64_t den,
   return offGrid;
 }
 
+/// The starts of the frame changes a walk lists on tracked tones, taken or
+/// pending, converted as ownCycles converts its records' starts.
+inline void ownFrameUpdateCycles(ControllerWalk &walk, int64_t num,
+                                 int64_t den) {
+  if (num == den)
+    return;
+  auto own = [&](std::vector<ControllerWalk::FrameUpdate> &updates) {
+    for (ControllerWalk::FrameUpdate &update : updates)
+      if (update.start)
+        *update.start = (*update.start * num + den - 1) / den;
+  };
+  for (ControllerWalk::Known &known : walk.known)
+    own(known.updates);
+  for (auto &entry : walk.pending)
+    own(entry.second);
+}
+
 // ── Limit checks ──────────────────────────────────────────────────────────
 
 /// What `ControllerLimits` checks on the schedule; -1 for a limit not set.
@@ -3273,6 +3296,7 @@ private:
         put(item, key.conditions, conditions);
       put(item, key.id, integer(static_cast<int64_t>(update.seq)));
       put(item, key.op, text(update.op));
+      put(item, key.start, optional(update.start));
       put(item, key.value, expression(update.value));
       set(out, i, std::move(item));
     }

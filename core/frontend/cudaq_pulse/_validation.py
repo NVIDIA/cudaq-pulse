@@ -63,8 +63,9 @@ _QUDITS = 2
 
 
 def _build() -> dict[str, Kernel[[Qudit, Qudit]]]:
-    """One program per kind of event, named for it, one with a branch and
-    one whose amplitude and phase come from an answer."""
+    """One program per kind of event, named for it, one with a branch, one
+    whose amplitude and phase come from an answer and one whose frequency
+    does, changed ahead of the pulse that takes it."""
 
     @pulse.classical(max_latency_ns=200, name="echo")
     def echo(bits: pulse.Bits) -> pulse.Bits:
@@ -73,6 +74,10 @@ def _build() -> dict[str, Kernel[[Qudit, Qudit]]]:
     @pulse.classical(max_latency_ns=200, name="gain")
     def gain(bits: pulse.Bits) -> float:
         return 0.1 + 0.2 * bits[0]
+
+    @pulse.classical(max_latency_ns=200, name="retune")
+    def retune() -> tuple[float, float]:
+        return 2.5e6, 2.0
 
     @pulse.kernel
     def plays(q: Qudit, r: Qudit) -> None:
@@ -156,6 +161,22 @@ def _build() -> dict[str, Kernel[[Qudit, Qudit]]]:
         drive(d, square(16, amp))
 
     @pulse.kernel
+    def runtime_frequency(q: Qudit, r: Qudit) -> None:
+        # The detuning is made where the first pulse ends, 200 cycles before
+        # the pulse that takes it (its frame update's start_cycles): over
+        # them the frame gains half a turn, so the two pulses undo each
+        # other, where applied at the second pulse they add up.
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        detuning, amplitude = retune.submit().result()
+        drive(d, gaussian(32, 2.0, 8.0))
+        shift_frequency(d.tone, detuning)
+        wait(d, 200)
+        drive(d, gaussian(32, amplitude, 8.0))
+        sync(d, ro)
+        readout(ro, square(80, 0.05))
+
+    @pulse.kernel
     def frame_updates(q: Qudit, r: Qudit) -> None:
         d = get_drive_line(q)
         drive(d, gaussian(32, 0.4, 8.0))
@@ -173,6 +194,7 @@ def _build() -> dict[str, Kernel[[Qudit, Qudit]]]:
         Event.FRAME_UPDATE: frame_updates,
         "branch": branches,
         "runtime": runtime,
+        "runtime_frequency": runtime_frequency,
     }
 
 
