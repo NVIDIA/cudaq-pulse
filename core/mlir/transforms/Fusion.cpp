@@ -146,8 +146,8 @@ struct FuseAdjacentSquareDrives
         firstDrive.getUpdatedTone().getType(), firstDrive.getLine(),
         fusedWf.getResult(), firstDrive.getTone());
 
-    for (llvm::StringRef name :
-         {"start_cycles", "frame_phase_offset", "phase_offset"})
+    for (llvm::StringRef name : {"start_cycles", "period_cycles",
+                                 "frame_phase_offset", "phase_offset"})
       if (auto a = firstDrive->getAttr(name))
         fusedDrive->setAttr(name, a);
     fusedDrive->setAttr("duration_cycles",
