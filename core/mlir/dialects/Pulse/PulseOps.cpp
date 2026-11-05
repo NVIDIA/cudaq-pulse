@@ -78,6 +78,13 @@ static LogicalResult verifySigma(Operation *op, Value sigma) {
 
 LogicalResult ToneOp::verify() { return success(); }
 
+LogicalResult QvecAllocOp::verify() {
+  if (getSize() != static_cast<int64_t>(getQrefs().size()))
+    return emitOpError("allocates ") << getSize() << " qudits, but returns "
+                                     << getQrefs().size() << " references";
+  return success();
+}
+
 LogicalResult SquarePulseOp::verify() {
   if (auto dur = getConstantI64(getDuration())) {
     if (*dur <= 0)

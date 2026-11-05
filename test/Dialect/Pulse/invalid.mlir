@@ -234,6 +234,21 @@ func.func @custom_samples_longer_than_an_i64() {
 
 // -----
 
+func.func @qvec_of_fewer_results_than_qudits() {
+  // expected-error @+1 {{'pulse.qvec_alloc' op allocates 3 qudits, but returns 1 references}}
+  %q = pulse.qvec_alloc 3 : !pulse.qref
+  return
+}
+
+// -----
+
+func.func @qvec_of_three_qudits() {
+  %q:3 = pulse.qvec_alloc 3 : !pulse.qref, !pulse.qref, !pulse.qref
+  return
+}
+
+// -----
+
 func.func @wait_that_changes_the_line_kind(%line: !pulse.drive_line, %dur: !pulse.duration) {
   // expected-error @+1 {{'pulse.wait' op failed to verify that all of {line, updated_line} have same type}}
   %r = pulse.wait %line, %dur : (!pulse.drive_line, !pulse.duration) -> !pulse.readout_line

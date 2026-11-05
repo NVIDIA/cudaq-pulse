@@ -44,6 +44,7 @@ def QvecAllocOp : PulseOp<"qvec_alloc", [Pure]> {
   let arguments = (ins I64Attr:$size);
   let results = (outs Variadic<QrefType>:$qrefs);
   let assemblyFormat = "$size attr-dict `:` type($qrefs)";
+  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//
