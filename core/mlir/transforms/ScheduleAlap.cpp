@@ -1079,7 +1079,8 @@ static std::shared_ptr<const LoopGroups> loopGroups(mlir::scf::ForOp loop) {
       if (group)
         into.ofWaitBackward[op] = *group;
       unsigned own = group.value_or(into.ofOp.lookup(op));
-      for (unsigned i : rootsOf(submit.getLink()).set_bits()) {
+      llvm::SmallBitVector roots = rootsOf(submit.getLink());
+      for (unsigned i : roots.set_bits()) {
         if (!mlir::isa<classical::LinkType>(
                 loop.getRegionIterArgs()[i].getType()))
           continue;
