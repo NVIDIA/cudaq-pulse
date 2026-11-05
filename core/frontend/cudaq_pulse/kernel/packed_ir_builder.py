@@ -382,7 +382,8 @@ class PackedIRBuilder:
         self.schedule_blocks = not flatten_schedules
         self.schedule_block_count = 0
         self.clock_ghz = clock_ghz
-        self._freq_hz = qubit_freq_hz or {}
+        # For get_freq_array; compile() records the device's tables instead.
+        self._freq_hz = qubit_freq_hz
         # Repeating one zero is twice as fast as converting a zeroed bytes.
         self._buf = array("q", _ZERO) * 8192
         # Where _ensure next grows the buffer: its end, or sooner when
@@ -390,7 +391,9 @@ class PackedIRBuilder:
         self._cap = len(self._buf)
         self._cur = 0
         self._next_id = 0
-        self._next_qubit = 0
+        # One past the highest qudit index allocated (runtime qudits are
+        # negative), the qudits the module records.
+        self.n_qubits = 0
         self._op_count = 0
         self._qref_to_qubit: dict[int, int] = {}
         self._line_qubit: dict[int, int] = {}  # line vid → qudit
@@ -522,10 +525,10 @@ class PackedIRBuilder:
 
         # --- Qubit alloc (not encoded, just tracked) ---
         if kind in ("pulse.qudit_arg", "pulse.qudit_alloc"):
-            idx = a.get("index", self._next_qubit)
+            idx = a.get("index", self.n_qubits)
             for r in results:
                 self._qref_to_qubit[r.vid] = idx
-            self._next_qubit = max(self._next_qubit, idx + 1)
+            self.n_qubits = max(self.n_qubits, idx + 1)
             return results
 
         # Like PythonIRBuilder.op_count(), count pulse-program ops but not qudit binding.
@@ -1131,7 +1134,7 @@ class PackedIRBuilder:
         return (
             self._cur,
             self._next_id,
-            self._next_qubit,
+            self.n_qubits,
             self._op_count,
             [dict(region) for region in self._regions],
             self._n_readouts,
@@ -1147,7 +1150,7 @@ class PackedIRBuilder:
         (
             self._cur,
             self._next_id,
-            self._next_qubit,
+            self.n_qubits,
             self._op_count,
             regions,
             self._n_readouts,
@@ -1536,18 +1539,14 @@ class PackedIRBuilder:
 
     def get_freq_array(self) -> array[float]:
         """Return qubit frequencies as float64 values indexed by qubit."""
-        n = self._next_qubit
-        freq = self._freq_hz
+        n = self.n_qubits
+        freq = self._freq_hz or {}
         arr = array("d", bytes(8 * n))
         # The program's qudits, not all of the target's.
         for q in range(n):
             if q in freq:
                 arr[q] = freq[q]
         return arr
-
-    @property
-    def n_qubits(self) -> int:
-        return self._next_qubit
 
     @property
     def qubits(self) -> tuple[int, ...]:
