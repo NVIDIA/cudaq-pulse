@@ -31,7 +31,7 @@ func.func @unknown_policy(%d0: !d) {
 func.func @captured_line(%d0: !d, %t0: !t, %x: !w) {
   %t1 = pulse.schedule_block "asap" (%t0) : (!t) -> (!t) {
   ^bb0(%t: !t):
-    // expected-error @+1 {{uses a line, tone or measurement from outside its pulse.schedule_block}}
+    // expected-error @+1 {{uses a line, tone, measurement or link from outside its pulse.schedule_block}}
     %d1, %t2 = pulse.drive %d0, %x, %t : !d, !w, !t -> !d, !t
     pulse.yield %t2 : !t
   }
@@ -80,6 +80,30 @@ func.func @captured_waveform(%d0: !d, %t0: !t, %x: !w) {
   ^bb0(%d: !d, %t: !t):
     %d2, %t2 = pulse.drive %d, %x, %t : !d, !w, !t -> !d, !t
     pulse.yield %d2, %t2 : !d, !t
+  }
+  return
+}
+
+// -----
+
+// A classical link is timed like a line, so it crosses the boundary only as
+// an operand too.
+func.func @captured_link(%l: !classical.link, %d: !pulse.drive_line) -> (!pulse.drive_line, !classical.link) {
+  %d1, %l1 = pulse.schedule_block "asap" (%d) : (!pulse.drive_line) -> (!pulse.drive_line, !classical.link) {
+  ^bb0(%d_in: !pulse.drive_line):
+    // expected-error @+1 {{uses a line, tone, measurement or link from outside its pulse.schedule_block; pass it as an operand}}
+    pulse.yield %d_in, %l : !pulse.drive_line, !classical.link
+  }
+  return %d1, %l1 : !pulse.drive_line, !classical.link
+}
+
+// -----
+
+func.func @block_without_a_yield(%d: !pulse.drive_line) {
+  // expected-error @+1 {{'pulse.schedule_block' op body must end in pulse.yield}}
+  %d1 = pulse.schedule_block "asap" (%d) : (!pulse.drive_line) -> (!pulse.drive_line) {
+  ^bb0(%d_in: !pulse.drive_line):
+    llvm.unreachable
   }
   return
 }

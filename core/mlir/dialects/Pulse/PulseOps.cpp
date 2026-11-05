@@ -315,8 +315,11 @@ LogicalResult PulseMulOp::verify() {
 
 LogicalResult YieldOp::verify() { return success(); }
 
+/// The types AnyTimedType admits: lines, tones, measurements, and the
+/// classical dialect's links and call handles.
 static bool isTimedValueType(Type type) {
-  return isa<DriveLineType, ReadoutLineType, ToneType, MeasurementType>(type);
+  return isa<DriveLineType, ReadoutLineType, ToneType, MeasurementType>(type) ||
+         type.getDialect().getNamespace() == "classical";
 }
 
 LogicalResult ScheduleBlockOp::verify() {
@@ -344,8 +347,8 @@ LogicalResult ScheduleBlockOp::verifyRegions() {
         continue;
       if (region == &getBody())
         continue;
-      inner->emitOpError("uses a line, tone or measurement from outside its "
-                         "pulse.schedule_block; pass it as an operand");
+      inner->emitOpError("uses a line, tone, measurement or link from outside "
+                         "its pulse.schedule_block; pass it as an operand");
       return WalkResult::interrupt();
     }
     return WalkResult::advance();
