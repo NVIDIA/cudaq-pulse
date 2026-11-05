@@ -17,8 +17,6 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
-#include <cmath>
-
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"
 #include "cudaq-pulse/Dialect/Pulse/PulseEnums.h.inc"
 
@@ -33,124 +31,18 @@ using namespace mlir;
 namespace pulse {
 
 // ===----------------------------------------------------------------------===//
-// SSA value helpers for tracing through arith.constant defining ops.
-// Returns std::nullopt when the value is a block argument (parametric).
+// Verifiers check an op on its own: its types and its attributes. A check of
+// a value, a duration, sigma or measurement that another op computes, looks
+// across ops and is in the pulse-verify pass (transforms/PulseVerify.cpp),
+// with the module-wide checks (linearity, monotone time, measurement
+// causality): folding may turn such a value into a constant, and must not
+// turn an op that verified into one that does not.
 // ===----------------------------------------------------------------------===//
-
-static std::optional<int64_t> getConstantI64(Value v) {
-  if (auto cst = v.getDefiningOp<arith::ConstantIntOp>())
-    return cst.value();
-  if (auto cst = v.getDefiningOp<arith::ConstantOp>()) {
-    if (auto ia = dyn_cast<IntegerAttr>(cst.getValue()))
-      return ia.getInt();
-  }
-  return std::nullopt;
-}
-
-static std::optional<double> getConstantF64(Value v) {
-  if (auto cst = v.getDefiningOp<arith::ConstantFloatOp>())
-    return cst.value().convertToDouble();
-  if (auto cst = v.getDefiningOp<arith::ConstantOp>()) {
-    if (auto fa = dyn_cast<FloatAttr>(cst.getValue()))
-      return fa.getValueAsDouble();
-  }
-  return std::nullopt;
-}
-
-/// A constant sigma must be a positive, finite number (NaN compares false
-/// with everything, so `sigma <= 0` would pass it).
-static LogicalResult verifySigma(Operation *op, Value sigma) {
-  auto value = getConstantF64(sigma);
-  if (value && (!(*value > 0.0) || !std::isfinite(*value)))
-    return op->emitOpError("sigma must be positive and finite, got ") << *value;
-  return success();
-}
-
-// ===----------------------------------------------------------------------===//
-// Verifiers — semantic checks of each op. Module-wide checks (linearity,
-// monotone time, measurement causality) are the pulse-verify pass
-// (transforms/PulseVerify.cpp).
-//
-// Values that trace to arith.constant are checked for constraints.
-// Block arguments (parametric values) skip runtime checks — they are
-// verified at evaluation time when concrete values are substituted.
-// ===----------------------------------------------------------------------===//
-
-LogicalResult ToneOp::verify() { return success(); }
 
 LogicalResult QvecAllocOp::verify() {
   if (getSize() != static_cast<int64_t>(getQrefs().size()))
     return emitOpError("allocates ") << getSize() << " qudits, but returns "
                                      << getQrefs().size() << " references";
-  return success();
-}
-
-LogicalResult SquarePulseOp::verify() {
-  if (auto dur = getConstantI64(getDuration())) {
-    if (*dur <= 0)
-      return emitOpError("duration must be positive, got ") << *dur;
-  }
-  return success();
-}
-
-LogicalResult GaussianPulseOp::verify() {
-  if (auto dur = getConstantI64(getDuration())) {
-    if (*dur <= 0)
-      return emitOpError("duration must be positive, got ") << *dur;
-  }
-  if (failed(verifySigma(*this, getSigma())))
-    return failure();
-  return success();
-}
-
-LogicalResult GaussianSquarePulseOp::verify() {
-  auto dur = getConstantI64(getDuration());
-  auto rf = getConstantI64(getRisefall());
-  if (dur && *dur <= 0)
-    return emitOpError("duration must be positive, got ") << *dur;
-  if (failed(verifySigma(*this, getSigma())))
-    return failure();
-  if (rf && *rf <= 0)
-    return emitOpError("risefall must be positive, got ") << *rf;
-  if (dur && rf && *rf > *dur / 2)
-    return emitOpError("risefall (")
-           << *rf << ") exceeds half the duration (" << *dur << ")";
-  return success();
-}
-
-LogicalResult DRAGPulseOp::verify() {
-  if (auto dur = getConstantI64(getDuration())) {
-    if (*dur <= 0)
-      return emitOpError("duration must be positive, got ") << *dur;
-  }
-  if (failed(verifySigma(*this, getSigma())))
-    return failure();
-  return success();
-}
-
-LogicalResult CosinePulseOp::verify() {
-  if (auto dur = getConstantI64(getDuration())) {
-    if (*dur <= 0)
-      return emitOpError("duration must be positive, got ") << *dur;
-  }
-  return success();
-}
-
-LogicalResult TanhRampOp::verify() {
-  if (auto dur = getConstantI64(getDuration())) {
-    if (*dur <= 0)
-      return emitOpError("duration must be positive, got ") << *dur;
-  }
-  if (failed(verifySigma(*this, getSigma())))
-    return failure();
-  return success();
-}
-
-LogicalResult CustomOp::verify() {
-  if (auto dur = getConstantI64(getDuration())) {
-    if (*dur <= 0)
-      return emitOpError("duration must be positive, got ") << *dur;
-  }
   return success();
 }
 
@@ -200,13 +92,6 @@ LogicalResult WaitOp::verify() {
     return emitOpError("pulse.max_cycles (")
            << highest.getInt() << ") is below pulse.min_cycles ("
            << lowest.getInt() << ")";
-  if (auto conversion = getDuration().getDefiningOp<DurationFromIntOp>())
-    if (auto cycles = getConstantI64(conversion.getCycles()))
-      if (*cycles < lowest.getInt() || (highest && *cycles > highest.getInt()))
-        return emitOpError("a pulse.variable_wait wait of ")
-               << *cycles << " cycles is outside its bounds ["
-               << lowest.getInt() << ", "
-               << (highest ? std::to_string(highest.getInt()) : "none") << "]";
   return success();
 }
 
@@ -225,24 +110,6 @@ LogicalResult SyncOp::verify() {
       return emitOpError("line ")
              << index << " is a " << line << ", but its result is a " << synced;
   return success();
-}
-
-/// A measurement record comes from a readout, or is carried into a region
-/// (block argument) or out of one (region-op result).
-static LogicalResult verifyMeasurementSource(Operation *op, Value measurement) {
-  Operation *def = measurement.getDefiningOp();
-  if (!def || isa<ReadoutOp>(def) || def->getNumRegions() > 0)
-    return success();
-  return op->emitOpError("measurement must be produced by pulse.readout, got ")
-         << def->getName();
-}
-
-LogicalResult OutcomeOp::verify() {
-  return verifyMeasurementSource(*this, getMeasurement());
-}
-
-LogicalResult IsSetOp::verify() {
-  return verifyMeasurementSource(*this, getMeasurement());
 }
 
 namespace {
@@ -276,51 +143,6 @@ void IsSetOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                           MLIRContext *ctx) {
   patterns.add<OutcomeNonzeroToIsSet>(ctx);
 }
-
-/// The duration of a waveform in clock cycles, when it is a constant.
-static std::optional<int64_t> waveformDuration(Value waveform) {
-  Operation *definition = waveform.getDefiningOp();
-  if (!definition)
-    return std::nullopt;
-  return TypeSwitch<Operation *, std::optional<int64_t>>(definition)
-      .Case<GaussianPulseOp, SquarePulseOp, DRAGPulseOp, CosinePulseOp,
-            TanhRampOp, GaussianSquarePulseOp, CustomOp>(
-          [](auto op) { return getConstantI64(op.getDuration()); })
-      .Case([](CustomSamplesOp op) {
-        return std::optional<int64_t>(op.getDurationCycles());
-      })
-      .Case<PulseAddOp, PulseSubOp, PulseMulOp>(
-          [](auto op) { return waveformDuration(op.getLhs()); })
-      .Case<PulseScaleOp, PulseNegOp>(
-          [](auto op) { return waveformDuration(op.getPulse()); })
-      .Default([](Operation *) { return std::nullopt; });
-}
-
-/// Waveform arithmetic is element-wise, so both operands must have the same
-/// duration; otherwise one would be silently truncated.
-static LogicalResult verifyEqualDurations(Operation *op, Value lhs, Value rhs) {
-  auto left = waveformDuration(lhs);
-  auto right = waveformDuration(rhs);
-  if (left && right && *left != *right)
-    return op->emitOpError("operands have durations ")
-           << *left << " and " << *right
-           << "; waveform arithmetic needs equal durations";
-  return success();
-}
-
-LogicalResult PulseAddOp::verify() {
-  return verifyEqualDurations(*this, getLhs(), getRhs());
-}
-
-LogicalResult PulseSubOp::verify() {
-  return verifyEqualDurations(*this, getLhs(), getRhs());
-}
-
-LogicalResult PulseMulOp::verify() {
-  return verifyEqualDurations(*this, getLhs(), getRhs());
-}
-
-LogicalResult YieldOp::verify() { return success(); }
 
 /// The types AnyTimedType admits: lines, tones, measurements, and the
 /// classical dialect's links and call handles.

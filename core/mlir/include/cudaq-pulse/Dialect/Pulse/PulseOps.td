@@ -93,7 +93,6 @@ def ToneOp : PulseOp<"tone", [Pure]> {
   );
   let results = (outs ToneType:$tone);
   let assemblyFormat = "$frequency_hz `,` $phase_rad attr-dict `:` qualified(type($frequency_hz)) `,` qualified(type($phase_rad)) `->` qualified(type($tone))";
-  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -114,7 +113,6 @@ def SquarePulseOp : PulseOp<"square", [Pure]> {
   );
   let results = (outs WaveformType:$pulse);
   let assemblyFormat = "$duration `,` $amp_real `,` $amp_imag attr-dict `:` type($duration) `,` type($amp_real) `,` type($amp_imag) `->` type($pulse)";
-  let hasVerifier = 1;
 }
 
 def GaussianPulseOp : PulseOp<"gaussian", [Pure]> {
@@ -131,7 +129,6 @@ def GaussianPulseOp : PulseOp<"gaussian", [Pure]> {
   );
   let results = (outs WaveformType:$pulse);
   let assemblyFormat = "$duration `,` $amplitude `,` $sigma attr-dict `:` type($duration) `,` type($amplitude) `,` type($sigma) `->` type($pulse)";
-  let hasVerifier = 1;
 }
 
 def GaussianSquarePulseOp : PulseOp<"gaussian_square", [Pure]> {
@@ -148,7 +145,6 @@ def GaussianSquarePulseOp : PulseOp<"gaussian_square", [Pure]> {
   );
   let results = (outs WaveformType:$pulse);
   let assemblyFormat = "$duration `,` $amplitude `,` $sigma `,` $risefall attr-dict `:` type($duration) `,` type($amplitude) `,` type($sigma) `,` type($risefall) `->` type($pulse)";
-  let hasVerifier = 1;
 }
 
 def DRAGPulseOp : PulseOp<"drag", [Pure]> {
@@ -169,7 +165,6 @@ def DRAGPulseOp : PulseOp<"drag", [Pure]> {
   );
   let results = (outs WaveformType:$pulse);
   let assemblyFormat = "$duration `,` $amplitude `,` $sigma `,` $beta attr-dict `:` type($duration) `,` type($amplitude) `,` type($sigma) `,` type($beta) `->` type($pulse)";
-  let hasVerifier = 1;
 }
 
 def CosinePulseOp : PulseOp<"cosine", [Pure]> {
@@ -184,7 +179,6 @@ def CosinePulseOp : PulseOp<"cosine", [Pure]> {
   );
   let results = (outs WaveformType:$pulse);
   let assemblyFormat = "$duration `,` $amplitude attr-dict `:` type($duration) `,` type($amplitude) `->` type($pulse)";
-  let hasVerifier = 1;
 }
 
 def TanhRampOp : PulseOp<"tanh_ramp", [Pure]> {
@@ -200,7 +194,6 @@ def TanhRampOp : PulseOp<"tanh_ramp", [Pure]> {
   );
   let results = (outs WaveformType:$pulse);
   let assemblyFormat = "$duration `,` $amplitude `,` $sigma attr-dict `:` type($duration) `,` type($amplitude) `,` type($sigma) `->` type($pulse)";
-  let hasVerifier = 1;
 }
 
 def CustomOp : PulseOp<"custom", [Pure]> {
@@ -216,7 +209,6 @@ def CustomOp : PulseOp<"custom", [Pure]> {
   );
   let results = (outs WaveformType:$pulse);
   let assemblyFormat = "$callee `,` $duration attr-dict `:` type($duration) `->` type($pulse)";
-  let hasVerifier = 1;
 }
 
 def CustomSamplesOp : PulseOp<"custom_samples", [Pure]> {
@@ -318,7 +310,6 @@ def OutcomeOp : PulseOp<"outcome", [Pure]> {
   let assemblyFormat = [{
     $measurement attr-dict `:` qualified(type($measurement)) `->` type($level)
   }];
-  let hasVerifier = 1;
 }
 
 def IsSetOp : PulseOp<"is_set", [Pure]> {
@@ -344,7 +335,6 @@ def IsSetOp : PulseOp<"is_set", [Pure]> {
   let assemblyFormat = [{
     $measurement attr-dict `:` qualified(type($measurement)) `->` type($condition)
   }];
-  let hasVerifier = 1;
   let hasCanonicalizer = 1;
 }
 
@@ -516,7 +506,6 @@ def PulseAddOp : PulseOp<"add", [Pure, Commutative]> {
   let results = (outs WaveformType:$result);
   let assemblyFormat = "$lhs `,` $rhs attr-dict `:` qualified(type($result))";
   let hasFolder = 1;
-  let hasVerifier = 1;
 }
 
 def PulseSubOp : PulseOp<"sub", [Pure]> {
@@ -529,7 +518,6 @@ def PulseSubOp : PulseOp<"sub", [Pure]> {
   let results = (outs WaveformType:$result);
   let assemblyFormat = "$lhs `,` $rhs attr-dict `:` qualified(type($result))";
   let hasFolder = 1;
-  let hasVerifier = 1;
 }
 
 def PulseMulOp : PulseOp<"mul", [Pure, Commutative]> {
@@ -543,7 +531,6 @@ def PulseMulOp : PulseOp<"mul", [Pure, Commutative]> {
   let results = (outs WaveformType:$result);
   let assemblyFormat = "$lhs `,` $rhs attr-dict `:` qualified(type($result))";
   let hasFolder = 1;
-  let hasVerifier = 1;
 }
 
 def PulseScaleOp : PulseOp<"scale", [Pure]> {
@@ -584,7 +571,6 @@ def YieldOp : PulseOp<"yield", [Pure, Terminator, ReturnLike]> {
   }];
   let arguments = (ins Variadic<AnyTimedType>:$values);
   let assemblyFormat = "attr-dict ($values^ `:` type($values))?";
-  let hasVerifier = 1;
 }
 
 def ScheduleBlockOp : PulseOp<"schedule_block", [

@@ -6,7 +6,7 @@
 // the terms of the Apache License 2.0 which accompanies this distribution.     //
 // ============================================================================ //
 
-// RUN: cudaq-pulse-opt %s --split-input-file --verify-diagnostics
+// RUN: cudaq-pulse-opt %s --split-input-file --pulse-verify --verify-diagnostics
 
 // The bounds of a variable wait (pulse.variable_wait, pulse.min_cycles, pulse.max_cycles).
 

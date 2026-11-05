@@ -12,11 +12,13 @@
 // control flow: the arms of an `scf.if` are alternative paths, and an
 // `scf.for` body runs once per iteration.
 
+#include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
 
@@ -41,19 +43,10 @@
 #include "cudaq-pulse/Analysis/Timing.h"
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 
 namespace {
-
-static std::optional<int64_t> traceConstantI64(mlir::Value v) {
-  if (auto cst = v.getDefiningOp<mlir::arith::ConstantIntOp>())
-    return cst.value();
-  if (auto cst = v.getDefiningOp<mlir::arith::ConstantOp>()) {
-    if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(cst.getValue()))
-      return ia.getInt();
-  }
-  return std::nullopt;
-}
 
 static bool isTimedOp(mlir::Operation *op) {
   return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op);
@@ -271,6 +264,195 @@ private:
   int64_t measured = std::numeric_limits<int64_t>::min();
 };
 
+/// What an op verifier cannot check without looking at the ops that compute
+/// its operands. A duration, sigma or risefall is checked once it is a
+/// constant (or arithmetic on constants: folding must not make valid IR
+/// invalid); one computed from the function's arguments is checked when they
+/// are bound.
+class WaveformCheck {
+public:
+  bool hadError = false;
+
+  void visit(mlir::Operation *op) {
+    llvm::TypeSwitch<mlir::Operation *>(op)
+        .Case<pulse::SquarePulseOp, pulse::CosinePulseOp, pulse::CustomOp>(
+            [&](auto op) { checkDuration(op, op.getDuration()); })
+        .Case<pulse::GaussianPulseOp, pulse::DRAGPulseOp, pulse::TanhRampOp>(
+            [&](auto op) {
+              checkDuration(op, op.getDuration());
+              checkSigma(op, op.getSigma());
+            })
+        .Case([&](pulse::GaussianSquarePulseOp op) {
+          checkDuration(op, op.getDuration());
+          checkSigma(op, op.getSigma());
+          checkRisefall(op);
+        })
+        .Case<pulse::PulseAddOp, pulse::PulseSubOp, pulse::PulseMulOp>(
+            [&](auto op) { checkEqualLengths(op, op.getLhs(), op.getRhs()); })
+        .Case<pulse::OutcomeOp, pulse::IsSetOp>(
+            [&](auto op) { checkMeasurement(op, op.getMeasurement()); })
+        .Case([&](pulse::WaitOp op) { checkBounds(op); });
+  }
+
+private:
+  void checkDuration(mlir::Operation *op, mlir::Value duration) {
+    auto cycles = pulse::constantInteger(duration);
+    if (cycles && *cycles <= 0) {
+      op->emitOpError("duration must be positive, got ") << *cycles;
+      hadError = true;
+    }
+  }
+
+  /// NaN compares false with everything, so `sigma <= 0` would pass it.
+  void checkSigma(mlir::Operation *op, mlir::Value sigma) {
+    llvm::APFloat value(0.0);
+    if (!mlir::matchPattern(sigma, mlir::m_ConstantFloat(&value)))
+      return;
+    double number = value.convertToDouble();
+    if (!(number > 0.0) || !std::isfinite(number)) {
+      op->emitOpError("sigma must be positive and finite, got ") << number;
+      hadError = true;
+    }
+  }
+
+  void checkRisefall(pulse::GaussianSquarePulseOp op) {
+    auto risefall = pulse::constantInteger(op.getRisefall());
+    if (!risefall)
+      return;
+    if (*risefall <= 0) {
+      op.emitOpError("risefall must be positive, got ") << *risefall;
+      hadError = true;
+      return;
+    }
+    auto duration = pulse::constantInteger(op.getDuration());
+    if (duration && *duration > 0 && *risefall > *duration / 2) {
+      op.emitOpError("risefall (")
+          << *risefall << ") exceeds half the duration (" << *duration << ")";
+      hadError = true;
+    }
+  }
+
+  /// Waveform arithmetic is element-wise, so both operands must have the
+  /// same length; otherwise one would be silently truncated.
+  void checkEqualLengths(mlir::Operation *op, mlir::Value lhs,
+                         mlir::Value rhs) {
+    auto left = lengthOf(lhs);
+    auto right = lengthOf(rhs);
+    if (left && right && *left != *right) {
+      op->emitOpError("operands have durations ")
+          << *left << " and " << *right
+          << "; waveform arithmetic needs equal durations";
+      hadError = true;
+    }
+  }
+
+  /// The length of `waveform` in cycles, if known: from either operand of
+  /// waveform arithmetic. Each value is computed once.
+  std::optional<int64_t> lengthOf(mlir::Value waveform) {
+    auto known = lengths.find(waveform);
+    if (known != lengths.end())
+      return known->second;
+    std::optional<int64_t> length;
+    mlir::Operation *def = waveform.getDefiningOp();
+    if (mlir::isa_and_nonnull<pulse::PulseAddOp, pulse::PulseSubOp,
+                              pulse::PulseMulOp>(def)) {
+      length = lengthOf(def->getOperand(0));
+      if (!length)
+        length = lengthOf(def->getOperand(1));
+    } else if (mlir::isa_and_nonnull<pulse::PulseScaleOp, pulse::PulseNegOp>(
+                   def)) {
+      length = lengthOf(def->getOperand(0));
+    } else {
+      length = pulse::waveformCycles(waveform);
+    }
+    lengths[waveform] = length;
+    return length;
+  }
+
+  /// A measurement comes from a readout on every path: through either arm
+  /// of an scf.if, a loop's initial and yielded value (only the yielded one
+  /// for the result of a loop that runs), a schedule block's operand and
+  /// yielded value. A function argument is the caller's.
+  void checkMeasurement(mlir::Operation *op, mlir::Value measurement) {
+    if (mlir::Operation *wrong = sourceOtherThanReadout(measurement)) {
+      op->emitOpError("measurement must be produced by pulse.readout, got ")
+          << wrong->getName();
+      hadError = true;
+    }
+  }
+
+  /// An op that is not a readout and that `measurement` may come from, or
+  /// null. Each value is followed once; a loop's carried value is assumed
+  /// to come from a readout while it is being followed.
+  mlir::Operation *sourceOtherThanReadout(mlir::Value measurement) {
+    auto [it, inserted] = sources.try_emplace(measurement, nullptr);
+    if (!inserted)
+      return it->second;
+    auto follow = [&](mlir::Value a, mlir::Value b = {}) -> mlir::Operation * {
+      if (mlir::Operation *wrong = sourceOtherThanReadout(a))
+        return wrong;
+      return b ? sourceOtherThanReadout(b) : nullptr;
+    };
+    mlir::Operation *wrong = nullptr;
+    if (auto argument = mlir::dyn_cast<mlir::BlockArgument>(measurement)) {
+      mlir::Operation *parent = argument.getOwner()->getParentOp();
+      unsigned index = argument.getArgNumber();
+      if (auto loop = mlir::dyn_cast_or_null<mlir::scf::ForOp>(parent)) {
+        if (index > 0)
+          wrong =
+              follow(loop.getInitArgs()[index - 1],
+                     loop.getBody()->getTerminator()->getOperand(index - 1));
+      } else if (auto block =
+                     mlir::dyn_cast_or_null<pulse::ScheduleBlockOp>(parent)) {
+        wrong = follow(block.getInputs()[index]);
+      }
+    } else {
+      auto result = mlir::cast<mlir::OpResult>(measurement);
+      mlir::Operation *def = result.getOwner();
+      unsigned index = result.getResultNumber();
+      if (auto branch = mlir::dyn_cast<mlir::scf::IfOp>(def))
+        wrong = follow(branch.thenYield().getOperand(index),
+                       branch.elseYield().getOperand(index));
+      else if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(def)) {
+        // After an iteration, the result is what the last one yielded.
+        mlir::Value yielded =
+            loop.getBody()->getTerminator()->getOperand(index);
+        auto trips = pulse::constantTripCount(loop);
+        wrong = trips && *trips > 0
+                    ? follow(yielded)
+                    : follow(loop.getInitArgs()[index], yielded);
+      } else if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(def))
+        wrong =
+            follow(block.getBody().front().getTerminator()->getOperand(index));
+      else if (!mlir::isa<pulse::ReadoutOp>(def))
+        wrong = def;
+    }
+    sources[measurement] = wrong;
+    return wrong;
+  }
+
+  /// A variable wait whose length is a constant must be within its bounds.
+  void checkBounds(pulse::WaitOp wait) {
+    auto lowest = wait->getAttrOfType<mlir::IntegerAttr>("pulse.min_cycles");
+    auto conversion =
+        wait.getDuration().getDefiningOp<pulse::DurationFromIntOp>();
+    if (!lowest || !wait->hasAttr("pulse.variable_wait") || !conversion)
+      return;
+    auto highest = wait->getAttrOfType<mlir::IntegerAttr>("pulse.max_cycles");
+    auto cycles = pulse::constantInteger(conversion.getCycles());
+    if (!cycles || (*cycles >= lowest.getInt() &&
+                    (!highest || *cycles <= highest.getInt())))
+      return;
+    wait.emitOpError("a pulse.variable_wait wait of ")
+        << *cycles << " cycles is outside its bounds [" << lowest.getInt()
+        << ", " << (highest ? std::to_string(highest.getInt()) : "none") << "]";
+    hadError = true;
+  }
+
+  llvm::DenseMap<mlir::Value, std::optional<int64_t>> lengths;
+  llvm::DenseMap<mlir::Value, mlir::Operation *> sources;
+};
+
 struct PulseVerifyPass
     : public mlir::PassWrapper<PulseVerifyPass,
                                mlir::OperationPass<mlir::ModuleOp>> {
@@ -469,23 +651,11 @@ struct PulseVerifyPass
       }
     });
 
-    // Check 2: Waveform validity -- trace SSA duration to constant, skip
-    // parametric (block arg) values which are checked at evaluation time.
-    auto checkDuration = [&](mlir::Operation *op, mlir::Value durVal) {
-      if (auto dur = traceConstantI64(durVal)) {
-        if (*dur <= 0) {
-          op->emitError("waveform duration must be positive, got ") << *dur;
-          hadError = true;
-        }
-      }
-    };
-    module.walk([&](pulse::GaussianPulseOp op) {
-      checkDuration(op, op.getDuration());
-    });
-    module.walk(
-        [&](pulse::SquarePulseOp op) { checkDuration(op, op.getDuration()); });
-    module.walk(
-        [&](pulse::DRAGPulseOp op) { checkDuration(op, op.getDuration()); });
+    // Check 2: the values of waveforms, and of the waits and measurements
+    // that use them.
+    WaveformCheck waveforms;
+    module.walk([&](mlir::Operation *op) { waveforms.visit(op); });
+    hadError |= waveforms.hadError;
     // A wait whose length is not a constant is scheduled at a placeholder
     // length until its arguments are bound; only a variable wait, which
     // carries its bounds, may be.
@@ -493,7 +663,7 @@ struct PulseVerifyPass
       auto conversion =
           op.getDuration().getDefiningOp<pulse::DurationFromIntOp>();
       if (op->hasAttr("pulse.variable_wait") ||
-          (conversion && traceConstantI64(conversion.getCycles())))
+          (conversion && pulse::constantInteger(conversion.getCycles())))
         return;
       op.emitError(
           "a wait whose length is not a constant must be marked "
