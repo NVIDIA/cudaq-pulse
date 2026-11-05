@@ -113,6 +113,27 @@ def test_a_module_records_0_hz_for_a_qudit_its_target_lacks():
         assert "pulse.qubit_freq_hz = array<f64: 5.000000e+09, 0.000000e+00, 5.200000e+09>" in mlir
 
 
+def test_a_qudit_the_target_lacks_is_refused_however_its_tables_were_made():
+    # Handles of another device reach build() as the qudits it lacks: one
+    # in its gap, one past its last, before and after programs on the
+    # qudits it defines made its tables.
+    from cudaq_pulse.compiler import CompileOptions, build
+
+    options = CompileOptions.make()
+    dense = pulse.device({"target": pulse.device("transmon_17q").target})
+    for dev, lacking in ((_sparse_device(), (1, 5)), (dense, (17, 30))):
+        kernel = pulse.kernel(_drive_one.__wrapped__)
+        handles = dev.qudit_handles
+        for handle in (None, handles[0], handles[len(handles) - 1]):
+            if handle is not None:
+                kernel.lower(handle)
+            for index in lacking:
+                with pytest.raises(pulse.CompilationError, match=f"uses qudit {index}, which"):
+                    build(_drive_one.__wrapped__, [Q[index]], (), dev, options)
+        last = handles[len(handles) - 1].index
+        build(_drive_one.__wrapped__, [Q[last]], (), dev, options)
+
+
 def test_compile_folds_phases():
 
     @pulse.kernel

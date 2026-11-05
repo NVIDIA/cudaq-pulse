@@ -1166,24 +1166,26 @@ def build(
         raise error
     check_root_schedule(options.schedule, builder)
     qudits = builder.qubits
-    missing = [q for q in qudits if q not in target.frequencies]
-    if missing:
-        # Runtime qudit k is qudit -1 - k, of no target.
-        missing = [q for q in missing if q >= 0]
-        if missing:
-            defined = sorted(target.frequencies)
-            span = f"{defined[0]}..{defined[-1]}" if defined else "none"
-            raise CompilationError(
-                f"{name}() uses qudit {', '.join(map(str, missing))}, which target "
-                f"{target.name!r} does not define (it defines qudits {span})"
-            )
-    buf: Any = builder.get_buffer()
     # The device's tables, of which the module records qudits 0 to
-    # qudit_count - 1.
+    # qudit_count - 1: when the target defines all of those, it defines every
+    # qudit of the program, else they are checked.
     qudit_count = builder.n_qubits
     carrier_count, freq, readout_freqs = target._tables
     if carrier_count < qudit_count:
-        _, freq, readout_freqs = target._frequency_tables(qudit_count)
+        carrier_count, freq, readout_freqs = target._frequency_tables(qudit_count)
+        if carrier_count < qudit_count:
+            missing = [q for q in qudits if q not in target.frequencies]
+            if missing:
+                # Runtime qudit k is qudit -1 - k, of no target.
+                missing = [q for q in missing if q >= 0]
+                if missing:
+                    defined = sorted(target.frequencies)
+                    span = f"{defined[0]}..{defined[-1]}" if defined else "none"
+                    raise CompilationError(
+                        f"{name}() uses qudit {', '.join(map(str, missing))}, which target "
+                        f"{target.name!r} does not define (it defines qudits {span})"
+                    )
+    buf: Any = builder.get_buffer()
     routes = builder.routes
     links = [link for link, _, _ in routes] if routes else []
     metrics.trace_ms = (time.perf_counter() - t0) * 1000
