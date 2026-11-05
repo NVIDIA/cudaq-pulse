@@ -31,6 +31,7 @@ import pytest
 from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
 
+from tests import _child
 from tests._handles import Q
 
 POLICIES = ("asap", "alap", "rcp", "alap_rcp")
@@ -676,16 +677,7 @@ CPU_S = 30
 RSS_MB = 150
 
 _CHILD = """
-import json, os, resource, signal, sys, threading, time
-signal.alarm({wall})
-resource.setrlimit(resource.RLIMIT_CPU, ({cpu}, {cpu}))
-_scale = 1 if sys.platform == "darwin" else 1024
-def _watch():
-    while True:
-        if resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * _scale > {mb} << 20:
-            os._exit(3)
-        time.sleep(0.005)
-threading.Thread(target=_watch, daemon=True).start()
+import json, time
 
 import cudaq_pulse as pulse
 from tests._handles import Q
@@ -710,10 +702,7 @@ def _in_a_child(
     """The duration of every kernel *factory* (in *module*) makes of *trips*
     iterations under *policies*, and the CPU time its lowering took, in a
     child process that is stopped past CPU_S seconds or RSS_MB MB."""
-    code = _CHILD.format(
-        wall=2 * CPU_S,
-        cpu=CPU_S,
-        mb=RSS_MB,
+    code = _child.limits(CPU_S, RSS_MB) + _CHILD.format(
         trips=trips,
         factory=factory,
         module=module,

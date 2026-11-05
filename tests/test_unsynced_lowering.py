@@ -32,6 +32,7 @@ import pytest
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError
 
+from tests import _child
 from tests._handles import Q
 
 # The child's limits: lowering and checking every kernel below at 10**15
@@ -594,16 +595,7 @@ def test_a_measurement_before_a_loop_ends_before_its_first_iteration_tests_it(tr
 
 
 _CHILD = """
-import json, os, resource, signal, sys, threading, time
-signal.alarm({wall})
-resource.setrlimit(resource.RLIMIT_CPU, ({cpu}, {cpu}))
-_scale = 1 if sys.platform == "darwin" else 1024
-def _watch():
-    while True:
-        if resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * _scale > {mb} << 20:
-            os._exit(3)
-        time.sleep(0.005)
-threading.Thread(target=_watch, daemon=True).start()
+import json, time
 
 import cudaq_pulse as pulse
 from cudaq_pulse.controller import ControllerLimits, check
@@ -626,7 +618,7 @@ def _in_a_child(trips: int) -> dict[str, list[Any]]:
     """The duration and limit violations of every kernel of *trips*
     iterations, lowered in a child process that is stopped past CPU_S
     seconds or RSS_MB MB."""
-    code = _CHILD.format(wall=2 * CPU_S, cpu=CPU_S, mb=RSS_MB, trips=trips)
+    code = _child.limits(CPU_S, RSS_MB) + _CHILD.format(trips=trips)
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p))
     out = subprocess.run(

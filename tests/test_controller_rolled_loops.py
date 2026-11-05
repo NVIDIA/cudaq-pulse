@@ -31,36 +31,13 @@ from cudaq_pulse import controller
 from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, ControllerLimits, check
 
+from tests import _child
 from tests._handles import Q, ladder_target
 
 # The child's limits: a check of one body takes well under a second and a
 # few hundred MB.
 CPU_S = 30
 RSS_MB = 600
-
-# Linux's ru_maxrss carries the parent's peak across fork and exec, which a
-# long test run takes past RSS_MB; VmHWM is this process's own.
-_LIMITS = """
-import os, resource, signal, sys, threading, time
-signal.alarm({wall})
-resource.setrlimit(resource.RLIMIT_CPU, ({cpu}, {cpu}))
-def _peak():
-    if sys.platform == "darwin":
-        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    with open("/proc/self/status") as status:
-        for line in status:
-            if line.startswith("VmHWM:"):
-                return int(line.split()[1]) << 10
-    raise RuntimeError("no VmHWM in /proc/self/status")
-def _watch():
-    while True:
-        if (peak := _peak()) > {mb} << 20:
-            os.write(2, f"peak RSS {{peak >> 20}} MB, past {mb} MB\\n".encode())
-            os._exit(3)
-        time.sleep(0.005)
-_peak()
-threading.Thread(target=_watch, daemon=True).start()
-"""
 
 _KERNELS = """
 import json
@@ -116,7 +93,7 @@ def _in_a_child(kernel: str, trips: int, limits: str = "", system: str = "") -> 
     """What compiling *kernel* of *trips* iterations under *limits* gives, in
     a child process that is stopped past CPU_S seconds or RSS_MB MB; with
     *system*, code that sets the compile's ``options`` and ``handles``."""
-    code = _LIMITS.format(wall=2 * CPU_S, cpu=CPU_S, mb=RSS_MB) + _KERNELS.format(
+    code = _child.limits(CPU_S, RSS_MB) + _KERNELS.format(
         trips=trips, limits=limits, kernel=kernel, system=system
     )
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
