@@ -2863,7 +2863,9 @@ public:
   /// two iterations and its last. `memory` is (samples, granule, shared,
   /// scaling, synthesized shapes, hold). With `resolve`, a value not known
   /// counts only where every value exceeds the limit, and the second result
-  /// says whether some value might; else it is false.
+  /// says whether some value might; else it is false. A long loop whose
+  /// iterations repeat out of step is left to the summarizing walk
+  /// (ControllerWalk::declined): the messages are then one saying so.
   std::pair<std::vector<std::string>, bool> controller_check(
       int64_t issue, int64_t gap, int64_t samplesNum, int64_t samplesDen,
       const std::tuple<int64_t, int64_t, bool, bool, std::vector<std::string>,
@@ -2875,6 +2877,10 @@ public:
     ControllerWalk walk(clock(), ControllerWalk::Walk::Sampled);
     std::vector<ControllerLine> lines;
     walkController(walk, lines, nullptr);
+    if (walk.declined)
+      return {{"a long loop whose iterations repeat out of step is checked "
+               "from its summarizing walk"},
+              false};
     ControllerLimitSpec limits;
     limits.issue = issue;
     limits.gap = gap;

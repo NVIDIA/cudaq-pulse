@@ -141,6 +141,12 @@ struct ControllerWalk {
 
   double clockGHz;
   Walk walk;
+  /// Sampled: a loop of more than this many trips whose iterations play
+  /// the same but not one period apart (repeatsOutOfStep), in a module that
+  /// computes nothing at run time, is not walked (`declined`): the check's
+  /// summarizing walk keeps it rolled from this many trips on.
+  static constexpr int64_t kDeclineAfter = 64;
+  bool declined = false;
   llvm::DenseMap<mlir::Operation *, int64_t> lineIndex;
   std::vector<ControllerRecord> result;
 
@@ -1832,6 +1838,29 @@ struct ControllerWalk {
   /// The period by which records [b, e) follow records [a, b), or none when
   /// they do not match one to one, move by different amounts, or (with
   /// `apart`) one iteration overlaps the next.
+  /// Whether record `y` of an iteration starting at `b` plays what record
+  /// `x` of the one before, starting at `a`, does, at any time.
+  bool sameShape(const ControllerRecord &x, const ControllerRecord &y, size_t a,
+                 size_t b) const {
+    return std::strcmp(x.kind, y.kind) == 0 && x.op == y.op &&
+           x.start.has_value() == y.start.has_value() && x.trips == y.trips &&
+           x.first == y.first && x.size == y.size &&
+           x.phaseSteps.size() == y.phaseSteps.size() &&
+           sameKnown(x, y, static_cast<int64_t>(a), static_cast<int64_t>(b));
+  }
+
+  /// Whether the iterations [a, b) and [b, e) play the same, only not one
+  /// period apart: their ops move by different periods, or an iteration
+  /// overlaps the next (see periodOf).
+  bool repeatsOutOfStep(size_t a, size_t b, size_t e) const {
+    if (b - a != e - b)
+      return false;
+    for (size_t i = 0; i < b - a; ++i)
+      if (!sameShape(result[a + i], result[b + i], a, b))
+        return false;
+    return true;
+  }
+
   std::optional<int64_t> periodOf(size_t a, size_t b, size_t e, bool apart) {
     if (b - a != e - b)
       return std::nullopt;
@@ -1839,11 +1868,7 @@ struct ControllerWalk {
     std::optional<int64_t> earliest, latestEnd;
     for (size_t i = 0; i < b - a; ++i) {
       const ControllerRecord &x = result[a + i], &y = result[b + i];
-      if (std::strcmp(x.kind, y.kind) != 0 || x.op != y.op ||
-          x.start.has_value() != y.start.has_value() || x.trips != y.trips ||
-          x.first != y.first || x.size != y.size ||
-          x.phaseSteps.size() != y.phaseSteps.size() ||
-          !sameKnown(x, y, static_cast<int64_t>(a), static_cast<int64_t>(b)))
+      if (!sameShape(x, y, a, b))
         return std::nullopt;
       if (!x.start)
         continue;
@@ -1897,10 +1922,16 @@ struct ControllerWalk {
     block(*loop.getBody());
     sampling.pop_back();
     size_t e = result.size();
-    if (!sameFrequencies(after, frames) || !periodOf(a, b, e, true) ||
-        refersBack(a, b, e)) {
+    bool same = sameFrequencies(after, frames) && !refersBack(a, b, e);
+    if (!same || !periodOf(a, b, e, true)) {
+      bool outOfStep = same && !runTime && trips > kDeclineAfter &&
+                       repeatsOutOfStep(a, b, e);
       iteration.pop_back();
       restore(entry);
+      if (outOfStep) {
+        declined = true;
+        return;
+      }
       return everyIteration(loop, trips);
     }
     for (size_t i = b; i < e; ++i)

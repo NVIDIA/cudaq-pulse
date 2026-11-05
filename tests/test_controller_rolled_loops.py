@@ -382,6 +382,27 @@ def _unsynced(n: int) -> dict[str, Any]:
     }
 
 
+_LEFT_TO_THE_WALK = (
+    "a long loop whose iterations repeat out of step is checked from its summarizing walk"
+)
+
+
+# The native check walks a loop that does not repeat one period apart at
+# every iteration; one of more trips than the summarizing walk keeps rolled
+# it leaves to that walk.
+@pytest.mark.parametrize("schedule", ["asap"])
+def test_the_native_check_leaves_a_long_loop_out_of_step_to_the_summarizing_walk(schedule):
+    limits = ControllerLimits(issue_cycles=4, max_amplitude=0.05)
+    left = []
+    for trips in (64, 200):
+        program = pulse.compile(
+            _unsynced(trips)["two_lines"], schedule=schedule, unroll_threshold=0
+        )
+        found = controller._native_check(program.lower(Q[0], Q[1]), limits)
+        left.append(found == [_LEFT_TO_THE_WALK])
+    assert left == [False, True]
+
+
 @pytest.mark.parametrize("trips", [65, 100])
 @pytest.mark.parametrize(
     "name",

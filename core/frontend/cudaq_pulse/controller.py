@@ -2082,7 +2082,8 @@ def _native_check(
         )
     if maybe and unresolved is not None:
         unresolved.append("tone frequencies or waveform memory")
-    if limits.max_amplitude is not None:
+    # Any found sends the check to its walk, which counts the amplitudes too.
+    if limits.max_amplitude is not None and not found:
         found.extend(_amplitude_violations(lowered, module, limits.max_amplitude, unresolved))
     return found
 
