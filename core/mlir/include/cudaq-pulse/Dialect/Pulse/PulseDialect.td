@@ -48,8 +48,10 @@ def PulseDialect : Dialect {
   }];
   let cppNamespace = "::pulse";
   let useDefaultTypePrinterParser = 1;
+  let useDefaultAttributePrinterParser = 1;
   let extraClassDeclaration = [{
     void registerTypes();
+    void registerAttributes();
   }];
 }
 

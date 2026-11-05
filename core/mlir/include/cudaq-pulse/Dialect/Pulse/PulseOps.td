@@ -10,6 +10,7 @@
 #define CUDAQ_PULSE_DIALECT_PULSE_OPS
 
 include "cudaq-pulse/Dialect/Pulse/PulseDialect.td"
+include "cudaq-pulse/Dialect/Pulse/PulseAttrs.td"
 include "cudaq-pulse/Dialect/Pulse/PulseTypes.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"

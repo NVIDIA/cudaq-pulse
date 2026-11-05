@@ -168,6 +168,21 @@ def test_the_hamiltonian_terms_name_the_rotating_wave_exchange():
     assert coupling["coefficient"] == pytest.approx(2e-3 * math.pi)
 
 
+def test_residual_zz_is_a_static_zz_term():
+    from cudaq_pulse.runtime._attributes import _target_attributes
+
+    system = _system(residual_zz=[ResidualZZ((2, 0), -4.5e4), ResidualZZ((1, 2), 1.0e3)])
+    (term, _) = (t for t in system.hamiltonian_terms() if t["kind"] == "static_zz")
+    assert term["qubit_indices"] == (2, 0)
+    assert term["coefficient"] == pytest.approx(-9e-5 * math.pi)
+    attrs = _target_attributes(system, (0, 2), integrator="rk4")
+    assert "crosstalk" not in attrs
+    assert attrs.endswith(
+        "pulse.static_terms = [#pulse.static_term<zz, qudits = [2, 0], "
+        "rate_hz = -4.50000000000000000e+04>]"
+    )
+
+
 def test_a_gate_belongs_to_its_coupling_and_is_read_only():
     gate = Gate("cz", 98.0, buffer_ns=15.0, interaction_frequency_hz=4.4e9)
     coupling = Coupling([3, 1], 5.0e6, gate=gate)

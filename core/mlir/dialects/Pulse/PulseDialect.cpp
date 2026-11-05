@@ -33,6 +33,7 @@ using namespace mlir;
 namespace pulse {
 
 void PulseDialect::initialize() {
+  registerAttributes();
   addTypes<
 #define GET_TYPEDEF_LIST
 #include "cudaq-pulse/Dialect/Pulse/PulseTypes.cpp.inc"

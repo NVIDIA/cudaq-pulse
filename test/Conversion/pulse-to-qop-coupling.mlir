@@ -9,7 +9,7 @@
 // Each qudit has its own rotating frame, so an exchange coupling between
 // qudits at 5.0 and 5.1 GHz turns at their difference: four products whose
 // callbacks are cos and sin of (-2 pi 0.1 GHz) t with amplitude g. Between
-// resonant qudits it is static. A crosstalk ZZ rate is a cross-Kerr n n term.
+// resonant qudits it is static. A static zz term is a cross-Kerr n n term.
 // RUN: cudaq-pulse-opt --split-input-file --pulse-to-qop %s | FileCheck %s
 // RUN: cudaq-pulse-opt --split-input-file --pulse-to-qop --qop-to-cudm %s | FileCheck %s --check-prefix=CUDM
 
@@ -32,7 +32,7 @@
 // CUDM-LABEL: module
 // CUDM-COUNT-4: cudm.append_elementary_product {{.*}} cudm.callback_kind = 1 : i32{{.*}} modes_acted_on = array<i32: 0, 1>
 // CUDM: cudm.append_elementary_product {{.*}} coeff_real = 6.283185307179587E-5 : f64, duality = array<i32: 0, 0>, modes_acted_on = array<i32: 0, 1>
-module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.coupling_pairs = array<i64: 0, 1>, pulse.coupling_strength_hz = array<f64: 5.000000e+06>, pulse.crosstalk_pairs = array<i64: 0, 1>, pulse.crosstalk_strength_hz = array<f64: 1.000000e+04>} {
+module attributes {pulse.clock_ghz = 1.000000e+00 : f64, pulse.coupling_pairs = array<i64: 0, 1>, pulse.coupling_strength_hz = array<f64: 5.000000e+06>, pulse.static_terms = [#pulse.static_term<zz, qudits = [0, 1], rate_hz = 1.000000e+04>]} {
   func.func @main() {
     %q0 = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
     %q1 = pulse.qudit_alloc {qubit = 1 : i64} : !pulse.qref

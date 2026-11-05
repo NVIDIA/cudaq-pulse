@@ -18,6 +18,12 @@ mlir_tablegen(PulseTypes.cpp.inc -gen-typedef-defs)
 mlir_tablegen(PulseEnums.h.inc -gen-enum-decls)
 mlir_tablegen(PulseEnums.cpp.inc -gen-enum-defs)
 
+set(LLVM_TARGET_DEFINITIONS PulseAttrs.td)
+mlir_tablegen(PulseAttrs.h.inc -gen-attrdef-decls)
+mlir_tablegen(PulseAttrs.cpp.inc -gen-attrdef-defs)
+mlir_tablegen(PulseAttrEnums.h.inc -gen-enum-decls)
+mlir_tablegen(PulseAttrEnums.cpp.inc -gen-enum-defs)
+
 add_public_tablegen_target(CudaqPulsePulseIncGen)
 
 # The dialect reference page, built for the documentation (pulse-docs).

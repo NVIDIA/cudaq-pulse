@@ -34,8 +34,11 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
+#include "cudaq-pulse/Dialect/Pulse/PulseAttrEnums.h.inc"
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"
 #include "cudaq-pulse/Dialect/Pulse/PulseEnums.h.inc"
+#define GET_ATTRDEF_CLASSES
+#include "cudaq-pulse/Dialect/Pulse/PulseAttrs.h.inc"
 #define GET_TYPEDEF_CLASSES
 #include "cudaq-pulse/Dialect/Pulse/PulseTypes.h.inc"
 #define GET_OP_CLASSES
@@ -909,17 +912,46 @@ struct PulseToQOpPass
             ops.timed(factors, name + "_" + std::to_string(index),
                       rotating(amplitudes[index], index / 2)));
     };
-    // Residual ZZ of rate zeta, E11 - E10 - E01 + E00 = zeta, as the
-    // cross-Kerr term zeta n_a n_b, which leaves the frequencies with the
-    // other qudit in |0> unchanged.
-    auto crossKerr = [&](int64_t a, int64_t b, double zeta) {
-      allProducts.push_back(ops.product({{a, "number"}, {b, "number"}}, zeta));
-    };
     if (failed(appendInteractions("pulse.coupling_pairs",
-                                  "pulse.coupling_strength_hz", exchange)) ||
-        failed(appendInteractions("pulse.crosstalk_pairs",
-                                  "pulse.crosstalk_strength_hz", crossKerr)))
+                                  "pulse.coupling_strength_hz", exchange)))
       return signalPassFailure();
+
+    // The static terms (pulse.static_terms), each between simulated qudits.
+    // A zz term of rate zeta, E11 - E10 - E01 + E00 = zeta, is zeta n_a n_b,
+    // which leaves the frequencies with the other qudit in |0> unchanged.
+    if (Attribute listed = module->getAttr("pulse.static_terms")) {
+      auto terms = dyn_cast<ArrayAttr>(listed);
+      if (!terms) {
+        module.emitError("pulse.static_terms must be a list of "
+                         "#pulse.static_term");
+        return signalPassFailure();
+      }
+      for (Attribute entry : terms) {
+        auto term = dyn_cast<pulse::StaticTermAttr>(entry);
+        if (!term) {
+          module.emitError("pulse.static_terms holds ")
+              << entry << ", not a #pulse.static_term";
+          return signalPassFailure();
+        }
+        ArrayRef<int64_t> qudits = term.getQudits();
+        if (!llvm::all_of(
+                qudits, [&](int64_t q) { return qubitFreqHz.count(q) != 0; })) {
+          module.emitError("static term ")
+              << term << " names a qudit the program does not use";
+          return signalPassFailure();
+        }
+        if (!llvm::all_of(qudits, [&](int64_t q) { return ops.simulated(q); }))
+          continue;
+        const double rate =
+            term.getRateHz().convertToDouble() * 2.0 * M_PI * 1.0e-9;
+        switch (term.getKind()) {
+        case pulse::StaticTermKind::ZZ:
+          allProducts.push_back(ops.product(
+              {{qudits[0], "number"}, {qudits[1], "number"}}, rate));
+          break;
+        }
+      }
+    }
 
     // A multilevel transmon's anharmonicity, (alpha / 2) n (n - 1).
     if (auto anharmonicity =

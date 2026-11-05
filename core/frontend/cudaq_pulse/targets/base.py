@@ -705,7 +705,7 @@ class TargetDescription:
         coupling is the operator of the system's model (``coupling_exchange``,
         g (sigma+_a sigma-_b + sigma-_a sigma+_b) for ``TransmonModel``: the
         exchange in the rotating-wave approximation, as the simulator lowers
-        it), and a ``residual_zz`` entry's ``crosstalk_zz`` is zeta n_a n_b.
+        it), and a ``residual_zz`` entry's ``static_zz`` is zeta n_a n_b.
         A coupling whose strength
         is not measured yet (``None``) is an ``InvalidValueError`` naming it,
         and couplings of a model that gives them no operator an
@@ -755,7 +755,7 @@ class TargetDescription:
             zz = xt.rate_hz * 2.0 * math.pi * _SECONDS_PER_NANOSECOND
             terms.append(
                 {
-                    "kind": "crosstalk_zz",
+                    "kind": "static_zz",
                     "qubit_indices": xt.qudits,
                     "coefficient": complex(zz, 0),
                     "time_dependent": False,

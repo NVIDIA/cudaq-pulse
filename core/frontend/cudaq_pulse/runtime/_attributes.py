@@ -131,27 +131,33 @@ def _target_attributes(
     active = set(qubits)
     # pulse.coupling_* is the exchange, the operator of the couplings of the
     # one model that simulates (targets.base._COUPLING_OPERATORS).
-    groups = (
-        ("coupling", target.couplings, "strength_hz"),
-        ("crosstalk", target.residual_zz, "rate_hz"),
-    )
-    for name, entries, strength in groups:
-        if entries:
-            entries = list(compress(entries, map(active.issuperset, map(_QUDITS, entries))))
-        if entries:
-            strengths = [getattr(e, strength) for e in entries]
-            if None in strengths:
-                raise _unmeasured(
-                    target,
-                    [
-                        i
-                        for i, c in enumerate(target.couplings)
-                        if c.strength_hz is None and active.issuperset(c.qudits)
-                    ],
-                    "simulating needs the strength of every coupling of the program's qudits",
-                    "give the strength in Hz, or leave those qudits out of the program",
-                )
-            pairs = ", ".join(f"{e.qudits[0]}, {e.qudits[1]}" for e in entries)
-            attrs.append(f"pulse.{name}_pairs = array<i64: {pairs}>")
-            attrs.append(f"pulse.{name}_strength_hz = " + _f64_array(strengths))
+    couplings = target.couplings
+    if couplings:
+        couplings = list(compress(couplings, map(active.issuperset, map(_QUDITS, couplings))))
+    if couplings:
+        strengths = [c.strength_hz for c in couplings]
+        if None in strengths:
+            raise _unmeasured(
+                target,
+                [
+                    i
+                    for i, c in enumerate(target.couplings)
+                    if c.strength_hz is None and active.issuperset(c.qudits)
+                ],
+                "simulating needs the strength of every coupling of the program's qudits",
+                "give the strength in Hz, or leave those qudits out of the program",
+            )
+        pairs = ", ".join(f"{c.qudits[0]}, {c.qudits[1]}" for c in couplings)
+        attrs.append(f"pulse.coupling_pairs = array<i64: {pairs}>")
+        attrs.append("pulse.coupling_strength_hz = " + _f64_array(strengths))
+    residual = target.residual_zz
+    if residual:
+        residual = list(compress(residual, map(active.issuperset, map(_QUDITS, residual))))
+    if residual:
+        terms = ", ".join(
+            f"#pulse.static_term<zz, qudits = [{x.qudits[0]}, {x.qudits[1]}], "
+            f"rate_hz = {_f64_literal(x.rate_hz)}>"
+            for x in residual
+        )
+        attrs.append(f"pulse.static_terms = [{terms}]")
     return ", ".join(attrs)

@@ -437,7 +437,10 @@ behavior may change in any 0.x release.
   published CZ values, and `cudaq_pulse.targets.transmon.CZ_LAYERS` the
   (auxiliary, data) pairs of each of its CZ time steps. A target's
   `residual_zz` lists `ResidualZZ(qudits, rate_hz)` entries, a static ZZ
-  rate beyond what the couplings produce. Couplings and residual ZZ entries
+  rate beyond what the couplings produce; the simulator's module carries
+  them as typed `pulse.static_terms`
+  (`#pulse.static_term<zz, qudits = [a, b], rate_hz = ...>`, checked when
+  parsed), and their Hamiltonian term is `static_zz`. Couplings and residual ZZ entries
   are checked when the system is built, all of them at once: each is
   between two distinct qudits of the system (three or more are refused in
   this release), one per pair in either order, with finite strengths and
