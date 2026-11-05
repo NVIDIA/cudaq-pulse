@@ -572,22 +572,8 @@ def PulseNegOp : PulseOp<"neg", [Pure]> {
 }
 
 //===----------------------------------------------------------------------===//
-// Schedule and atomic region
+// Schedule region
 //===----------------------------------------------------------------------===//
-
-def AtomicOp : PulseOp<"atomic", [RecursiveMemoryEffects, NoTerminator]> {
-  let summary = "Atomic pulse scheduling region";
-  let description = [{
-    A region whose ops on the given lines are scheduled as one unit. It
-    takes the lines it uses and returns them updated, one result per
-    operand.
-  }];
-  let arguments = (ins Variadic<AnyLineType>:$lines);
-  let results = (outs Variadic<AnyLineType>:$updated_lines);
-  let regions = (region SizedRegion<1>:$body);
-  let assemblyFormat = "$lines attr-dict `:` functional-type($lines, $updated_lines) $body";
-  let hasVerifier = 1;
-}
 
 def YieldOp : PulseOp<"yield", [Pure, Terminator, ReturnLike]> {
   let summary = "Yield from a pulse region";

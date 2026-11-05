@@ -220,13 +220,3 @@ func.func @outcome_not_from_a_readout(%b: i1) -> i64 {
   %k = pulse.outcome %m : !pulse.measurement -> i64
   return %k : i64
 }
-
-// -----
-
-func.func @atomic_that_drops_a_line(%a: !pulse.drive_line, %b: !pulse.drive_line) {
-  // expected-error @+1 {{'pulse.atomic' op number of input lines (2) must match number of output lines (1)}}
-  %r = pulse.atomic %a, %b : (!pulse.drive_line, !pulse.drive_line) -> !pulse.drive_line {
-    %c = arith.constant 0 : i64
-  }
-  return
-}

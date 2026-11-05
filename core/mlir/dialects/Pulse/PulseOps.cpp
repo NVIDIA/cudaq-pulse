@@ -305,15 +305,6 @@ LogicalResult PulseMulOp::verify() {
   return verifyEqualDurations(*this, getLhs(), getRhs());
 }
 
-LogicalResult AtomicOp::verify() {
-  // The body must receive the same number of lines as produced
-  if (getLines().size() != getUpdatedLines().size())
-    return emitOpError("number of input lines (")
-           << getLines().size() << ") must match number of output lines ("
-           << getUpdatedLines().size() << ")";
-  return success();
-}
-
 LogicalResult YieldOp::verify() { return success(); }
 
 static bool isTimedValueType(Type type) {
