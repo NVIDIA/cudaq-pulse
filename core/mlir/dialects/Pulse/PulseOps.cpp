@@ -17,6 +17,8 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
+#include <cmath>
+
 #include "cudaq-pulse/Dialect/Pulse/PulseDialect.h.inc"
 #include "cudaq-pulse/Dialect/Pulse/PulseEnums.h.inc"
 
@@ -55,6 +57,15 @@ static std::optional<double> getConstantF64(Value v) {
   return std::nullopt;
 }
 
+/// A constant sigma must be a positive, finite number (NaN compares false
+/// with everything, so `sigma <= 0` would pass it).
+static LogicalResult verifySigma(Operation *op, Value sigma) {
+  auto value = getConstantF64(sigma);
+  if (value && (!(*value > 0.0) || !std::isfinite(*value)))
+    return op->emitOpError("sigma must be positive and finite, got ") << *value;
+  return success();
+}
+
 // ===----------------------------------------------------------------------===//
 // Verifiers — semantic checks of each op. Module-wide checks (linearity,
 // monotone time, measurement causality) are the pulse-verify pass
@@ -80,10 +91,8 @@ LogicalResult GaussianPulseOp::verify() {
     if (*dur <= 0)
       return emitOpError("duration must be positive, got ") << *dur;
   }
-  if (auto sig = getConstantF64(getSigma())) {
-    if (*sig <= 0.0)
-      return emitOpError("sigma must be positive");
-  }
+  if (failed(verifySigma(*this, getSigma())))
+    return failure();
   return success();
 }
 
@@ -92,15 +101,13 @@ LogicalResult GaussianSquarePulseOp::verify() {
   auto rf = getConstantI64(getRisefall());
   if (dur && *dur <= 0)
     return emitOpError("duration must be positive, got ") << *dur;
-  if (auto sig = getConstantF64(getSigma())) {
-    if (*sig <= 0.0)
-      return emitOpError("sigma must be positive");
-  }
+  if (failed(verifySigma(*this, getSigma())))
+    return failure();
   if (rf && *rf <= 0)
     return emitOpError("risefall must be positive, got ") << *rf;
-  if (dur && rf && 2 * (*rf) > *dur)
-    return emitOpError("2*risefall (")
-           << 2 * (*rf) << ") exceeds duration (" << *dur << ")";
+  if (dur && rf && *rf > *dur / 2)
+    return emitOpError("risefall (")
+           << *rf << ") exceeds half the duration (" << *dur << ")";
   return success();
 }
 
@@ -109,10 +116,8 @@ LogicalResult DRAGPulseOp::verify() {
     if (*dur <= 0)
       return emitOpError("duration must be positive, got ") << *dur;
   }
-  if (auto sig = getConstantF64(getSigma())) {
-    if (*sig <= 0.0)
-      return emitOpError("sigma must be positive");
-  }
+  if (failed(verifySigma(*this, getSigma())))
+    return failure();
   return success();
 }
 
@@ -129,10 +134,8 @@ LogicalResult TanhRampOp::verify() {
     if (*dur <= 0)
       return emitOpError("duration must be positive, got ") << *dur;
   }
-  if (auto sig = getConstantF64(getSigma())) {
-    if (*sig <= 0.0)
-      return emitOpError("sigma must be positive");
-  }
+  if (failed(verifySigma(*this, getSigma())))
+    return failure();
   return success();
 }
 
@@ -152,7 +155,12 @@ LogicalResult CustomSamplesOp::verify() {
       return emitOpError("rate must be two positive integers, n samples every "
                          "d cycles");
     auto count = static_cast<int64_t>(getSamples().size());
-    if (count * (*rate)[1] % (*rate)[0])
+    int64_t span;
+    if (__builtin_mul_overflow(count, (*rate)[1], &span))
+      return emitOpError() << count << " samples at " << (*rate)[0] << " every "
+                           << (*rate)[1]
+                           << " cycles last more cycles than an i64 holds";
+    if (span % (*rate)[0])
       return emitOpError() << count << " samples at " << (*rate)[0] << " every "
                            << (*rate)[1]
                            << " cycles do not last a whole number of cycles";

@@ -94,8 +94,44 @@ func.func @gaussian_square_edges_longer_than_the_pulse() {
   %a = arith.constant 0.1 : f64
   %s = arith.constant 2.0 : f64
   %r = arith.constant 21 : i64
-  // expected-error @+1 {{'pulse.gaussian_square' op 2*risefall (42) exceeds duration (40)}}
+  // expected-error @+1 {{'pulse.gaussian_square' op risefall (21) exceeds half the duration (40)}}
   %w = pulse.gaussian_square %d, %a, %s, %r : i64, f64, f64, i64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+// 2 * risefall would overflow an i64.
+func.func @gaussian_square_of_huge_risefall() {
+  %d = arith.constant 100 : i64
+  %a = arith.constant 0.5 : f64
+  %s = arith.constant 2.0 : f64
+  %r = arith.constant 4611686018427387904 : i64
+  // expected-error @+1 {{'pulse.gaussian_square' op risefall (4611686018427387904) exceeds half the duration (100)}}
+  %w = pulse.gaussian_square %d, %a, %s, %r : i64, f64, f64, i64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @gaussian_of_nan_sigma() {
+  %d = arith.constant 40 : i64
+  %a = arith.constant 0.1 : f64
+  %s = arith.constant 0x7FF8000000000000 : f64
+  // expected-error @+1 {{'pulse.gaussian' op sigma must be positive and finite, got nan}}
+  %w = pulse.gaussian %d, %a, %s : i64, f64, f64 -> !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @drag_of_infinite_sigma() {
+  %d = arith.constant 40 : i64
+  %a = arith.constant 0.1 : f64
+  %s = arith.constant 0x7FF0000000000000 : f64
+  %b = arith.constant 0.5 : f64
+  // expected-error @+1 {{'pulse.drag' op sigma must be positive and finite}}
+  %w = pulse.drag %d, %a, %s, %b : i64, f64, f64, f64 -> !pulse.waveform
   return
 }
 
@@ -185,6 +221,14 @@ func.func @custom_samples_bad_rate() {
 func.func @custom_samples_partial_cycle() {
   // expected-error @+1 {{'pulse.custom_samples' op 3 samples at 2 every 1 cycles do not last a whole number of cycles}}
   %w = pulse.custom_samples [0.1, 0.2, 0.3] {rate = array<i64: 2, 1>} : !pulse.waveform
+  return
+}
+
+// -----
+
+func.func @custom_samples_longer_than_an_i64() {
+  // expected-error @+1 {{'pulse.custom_samples' op 3 samples at 1 every 4611686018427387904 cycles last more cycles than an i64 holds}}
+  %w = pulse.custom_samples [0.1, 0.2, 0.3] {rate = array<i64: 1, 4611686018427387904>} : !pulse.waveform
   return
 }
 
