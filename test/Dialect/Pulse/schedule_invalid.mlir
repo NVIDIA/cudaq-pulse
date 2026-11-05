@@ -93,3 +93,22 @@ func.func @loop_of_argument_trips(%n: index, %d0: !pulse.drive_line, %t0: !pulse
   }
   return
 }
+
+// -----
+
+// A qudit has one drive line however often it is acquired, so the two
+// versions below would give one line two timelines.
+func.func @drive_line_acquired_twice() {
+  %c40 = arith.constant 40 : i64
+  %am = arith.constant 0.1 : f64
+  %z = arith.constant 0.0 : f64
+  %x = pulse.square %c40, %am, %z : i64, f64, f64 -> !pulse.waveform
+  %q = pulse.qudit_alloc {qubit = 0 : i64} : !pulse.qref
+  // expected-note @+1 {{acquired first here}}
+  %a, %ta = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  // expected-error @+1 {{this qudit's drive line is already acquired; use the line acquired first}}
+  %b, %tb = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %a1, %ta1 = pulse.drive %a, %x, %ta : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+  %b1, %tb1 = pulse.drive %b, %x, %tb : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+  return
+}

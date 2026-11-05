@@ -77,23 +77,59 @@ inline mlir::Value linearPredecessor(mlir::Value value) {
   return {};
 }
 
-/// The `pulse.get_drive_line` / `pulse.get_readout_line` op whose line or
-/// tone `value` is a version of (or the `classical.get_link` of a link), or
-/// null.
-inline mlir::Operation *traceAllocation(mlir::Value value) {
-  while (value) {
-    if (mlir::Operation *def = value.getDefiningOp())
-      if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(def) ||
-          def->getName().getStringRef() == "classical.get_link")
-        return def;
-    value = linearPredecessor(value);
+/// Whether `a` and `b` lie in different arms of some `scf.if`, so at most
+/// one of them runs.
+inline bool mutuallyExclusive(mlir::Operation *a, mlir::Operation *b) {
+  llvm::DenseMap<mlir::Operation *, mlir::Region *> armsOfA;
+  for (mlir::Region *region = a->getParentRegion(); region;
+       region = region->getParentOp()->getParentRegion())
+    if (mlir::isa<mlir::scf::IfOp>(region->getParentOp()))
+      armsOfA[region->getParentOp()] = region;
+  for (mlir::Region *region = b->getParentRegion(); region;
+       region = region->getParentOp()->getParentRegion()) {
+    auto it = armsOfA.find(region->getParentOp());
+    if (it != armsOfA.end() && it->second != region)
+      return true;
   }
-  return nullptr;
+  return false;
 }
 
-/// `traceAllocation` for walks that trace every op of a program: each value
-/// is traced once, so a line of n ops costs O(n) rather than O(n^2). The IR
-/// must not change while a tracer is in use.
+/// A qudit has one drive and one readout line, so acquiring one where an
+/// earlier acquisition of it may also have run would make two versions of
+/// the same line, with two timelines. Visit the acquisitions in program
+/// order.
+class AcquisitionCheck {
+public:
+  mlir::LogicalResult visit(mlir::Operation *acquisition) {
+    auto &earlier = acquired[{acquisition->getOperand(0).getAsOpaquePointer(),
+                              acquisition->getName().getAsOpaquePointer()}];
+    for (mlir::Operation *first : earlier)
+      if (!mutuallyExclusive(first, acquisition)) {
+        mlir::InFlightDiagnostic diagnostic = acquisition->emitError();
+        diagnostic << "this qudit's "
+                   << (mlir::isa<GetDriveLineOp>(acquisition) ? "drive"
+                                                              : "readout")
+                   << " line is already acquired; use the line acquired first";
+        diagnostic.attachNote(first->getLoc()) << "acquired first here";
+        return mlir::failure();
+      }
+    earlier.push_back(acquisition);
+    return mlir::success();
+  }
+
+private:
+  llvm::DenseMap<std::pair<void *, void *>,
+                 llvm::SmallVector<mlir::Operation *, 1>>
+      acquired;
+};
+
+/// The physical line (or link) a line, tone or link value is a version of:
+/// the `pulse.get_drive_line` / `pulse.get_readout_line` op it comes from (or
+/// the `classical.get_link` of a link), or null. A qudit has one drive and
+/// one readout line, so every retrieval of the same kind on one qref stands
+/// for the first this tracer met. Each value is traced once, so a line of n
+/// ops costs O(n) rather than O(n^2). The IR must not change while a tracer
+/// is in use.
 class AllocationTracer {
 public:
   mlir::Operation *operator()(mlir::Value value) {
@@ -106,12 +142,20 @@ public:
         break;
       }
       chain.push_back(value);
-      if (mlir::Operation *def = value.getDefiningOp())
-        if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(def) ||
-            def->getName().getStringRef() == "classical.get_link") {
+      if (mlir::Operation *def = value.getDefiningOp()) {
+        if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(def)) {
+          found = lines
+                      .try_emplace({def->getOperand(0).getAsOpaquePointer(),
+                                    def->getName().getAsOpaquePointer()},
+                                   def)
+                      .first->second;
+          break;
+        }
+        if (def->getName().getStringRef() == "classical.get_link") {
           found = def;
           break;
         }
+      }
       value = linearPredecessor(value);
     }
     for (mlir::Value traced : chain)
@@ -121,6 +165,8 @@ public:
 
 private:
   llvm::DenseMap<mlir::Value, mlir::Operation *> memo;
+  /// (qref, retrieval op name) to the retrieval that stands for the line.
+  llvm::DenseMap<std::pair<void *, void *>, mlir::Operation *> lines;
 };
 
 } // namespace pulse

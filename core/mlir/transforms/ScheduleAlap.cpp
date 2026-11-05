@@ -179,7 +179,7 @@ static BlockShape shapeOf(pulse::ScheduleBlockOp block) {
   return shape;
 }
 
-/// The cycles `op` takes. Scheduling checks first (checkDurations) that
+/// The cycles `op` takes. Scheduling checks first (checkPlaceable) that
 /// every pulse and wait has a known length.
 static int64_t durationOf(mlir::Operation *op) {
   if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op))
@@ -209,10 +209,11 @@ static int64_t durationOf(mlir::Operation *op) {
   return getWaitDuration(mlir::cast<pulse::WaitOp>(op)).value_or(0);
 }
 
-/// Every pulse and wait of `function` must have a known, valid length: the
-/// schedule places each for the cycles it takes, so an unknown length is an
-/// error rather than a placement that assumes some length.
-static mlir::LogicalResult checkDurations(mlir::func::FuncOp function) {
+/// Whether every op of `function` can be placed: each pulse and wait needs a
+/// known, valid length (the schedule places it for the cycles it takes, so an
+/// unknown length is an error rather than a placement that assumes some
+/// length), and each line one timeline (AcquisitionCheck).
+static mlir::LogicalResult checkPlaceable(mlir::func::FuncOp function) {
   auto checkPulse = [](mlir::Operation *op,
                        mlir::Value waveform) -> mlir::LogicalResult {
     std::optional<int64_t> cycles = getWaveformDuration(waveform);
@@ -237,6 +238,7 @@ static mlir::LogicalResult checkDurations(mlir::func::FuncOp function) {
       return wait.emitError("a wait cannot last ") << *cycles << " cycles";
     return mlir::success();
   };
+  pulse::AcquisitionCheck acquisitions;
   mlir::WalkResult walk = function.walk([&](mlir::Operation *op) {
     mlir::LogicalResult checked = mlir::success();
     if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op))
@@ -245,6 +247,8 @@ static mlir::LogicalResult checkDurations(mlir::func::FuncOp function) {
       checked = checkPulse(op, readout.getPulse());
     else if (auto wait = mlir::dyn_cast<pulse::WaitOp>(op))
       checked = checkWait(wait);
+    else if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+      checked = acquisitions.visit(op);
     return mlir::failed(checked) ? mlir::WalkResult::interrupt()
                                  : mlir::WalkResult::advance();
   });
@@ -4571,7 +4575,7 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
           "kernels with their own schedule yet; drop schedule= from the "
           "called kernels, or flatten them with flatten_schedules=True");
   }
-  if (mlir::failed(checkDurations(function)))
+  if (mlir::failed(checkPlaceable(function)))
     return mlir::failure();
   mlir::FailureOr<bool> annotated = classical::annotateClassicalCalls(function);
   if (mlir::failed(annotated))

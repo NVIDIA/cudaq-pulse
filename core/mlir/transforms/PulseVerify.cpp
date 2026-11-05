@@ -54,23 +54,6 @@ static std::optional<int64_t> traceConstantI64(mlir::Value v) {
   return std::nullopt;
 }
 
-/// Whether `a` and `b` lie in different arms of some `scf.if`, so at most
-/// one of them runs.
-static bool mutuallyExclusive(mlir::Operation *a, mlir::Operation *b) {
-  llvm::DenseMap<mlir::Operation *, mlir::Region *> armsOfA;
-  for (mlir::Region *region = a->getParentRegion(); region;
-       region = region->getParentOp()->getParentRegion())
-    if (mlir::isa<mlir::scf::IfOp>(region->getParentOp()))
-      armsOfA[region->getParentOp()] = region;
-  for (mlir::Region *region = b->getParentRegion(); region;
-       region = region->getParentOp()->getParentRegion()) {
-    auto it = armsOfA.find(region->getParentOp());
-    if (it != armsOfA.end() && it->second != region)
-      return true;
-  }
-  return false;
-}
-
 static bool isTimedOp(mlir::Operation *op) {
   return mlir::isa<pulse::DriveOp, pulse::ReadoutOp, pulse::WaitOp>(op);
 }
@@ -280,7 +263,7 @@ struct PulseVerifyPass
         users.push_back(use.getOwner());
       for (size_t i = 0; i < users.size(); ++i)
         for (size_t j = i + 1; j < users.size(); ++j)
-          if (!mutuallyExclusive(users[i], users[j])) {
+          if (!pulse::mutuallyExclusive(users[i], users[j])) {
             where->emitError("linear pulse value is consumed more than once "
                              "on one path");
             hadError = true;
@@ -309,13 +292,17 @@ struct PulseVerifyPass
     });
     // Timing and lowering identify a line by the op that acquires it, so an
     // acquisition in a loop body cannot stand for a new line per iteration.
+    pulse::AcquisitionCheck acquisitions;
     module.walk([&](mlir::Operation *op) {
-      if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op) ||
-          !op->getParentOfType<mlir::scf::ForOp>())
+      if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
         return;
-      op->emitError("a line cannot be acquired inside an scf.for; acquire it "
-                    "before the loop and carry it through iter_args");
-      hadError = true;
+      if (op->getParentOfType<mlir::scf::ForOp>()) {
+        op->emitError("a line cannot be acquired inside an scf.for; acquire "
+                      "it before the loop and carry it through iter_args");
+        hadError = true;
+      }
+      if (mlir::failed(acquisitions.visit(op)))
+        hadError = true;
     });
 
     // Check 1b: classical calls. A line-like link cannot be acquired in a
