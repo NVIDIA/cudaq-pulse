@@ -191,7 +191,7 @@ func.func @custom_samples_partial_cycle() {
 // -----
 
 func.func @wait_that_changes_the_line_kind(%line: !pulse.drive_line, %dur: !pulse.duration) {
-  // expected-error @+1 {{'pulse.wait' op input and output line types must match}}
+  // expected-error @+1 {{'pulse.wait' op failed to verify that all of {line, updated_line} have same type}}
   %r = pulse.wait %line, %dur : (!pulse.drive_line, !pulse.duration) -> !pulse.readout_line
   return
 }
@@ -209,6 +209,23 @@ func.func @sync_of_one_line(%line: !pulse.drive_line) {
 func.func @sync_that_drops_a_line(%a: !pulse.drive_line, %b: !pulse.readout_line) {
   // expected-error @+1 {{'pulse.sync' op number of input lines (2) must match number of output lines (1)}}
   %s = pulse.sync %a, %b : !pulse.drive_line, !pulse.readout_line -> !pulse.drive_line
+  return
+}
+
+// -----
+
+// Each result is its line, of the same kind.
+func.func @sync_that_swaps_its_lines(%a: !pulse.drive_line, %b: !pulse.readout_line) {
+  // expected-error @+1 {{'pulse.sync' op line 0 is a '!pulse.drive_line', but its result is a '!pulse.readout_line'}}
+  %s:2 = pulse.sync %a, %b : !pulse.drive_line, !pulse.readout_line -> !pulse.readout_line, !pulse.drive_line
+  return
+}
+
+// -----
+
+// A sync may join lines of both kinds.
+func.func @sync_of_a_drive_and_a_readout_line(%a: !pulse.drive_line, %b: !pulse.readout_line) {
+  %s:2 = pulse.sync %a, %b : !pulse.drive_line, !pulse.readout_line -> !pulse.drive_line, !pulse.readout_line
   return
 }
 

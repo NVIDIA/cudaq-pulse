@@ -168,11 +168,6 @@ int64_t CustomSamplesOp::getDurationCycles() {
 }
 
 LogicalResult WaitOp::verify() {
-  // Input and output line types must agree (drive stays drive, readout stays
-  // readout) — the type system already enforces AnyLineType but we verify
-  // the specific subtype matches.
-  if (getLine().getType() != getUpdatedLine().getType())
-    return emitOpError("input and output line types must match");
   auto lowest = (*this)->getAttrOfType<IntegerAttr>("pulse.min_cycles");
   auto highest = (*this)->getAttrOfType<IntegerAttr>("pulse.max_cycles");
   if (!(*this)->hasAttr("pulse.variable_wait")) {
@@ -209,6 +204,11 @@ LogicalResult SyncOp::verify() {
     return emitOpError("number of input lines (")
            << getLines().size() << ") must match number of output lines ("
            << getSyncedLines().size() << ")";
+  for (auto [index, line, synced] :
+       llvm::enumerate(getLines().getTypes(), getSyncedLines().getTypes()))
+    if (line != synced)
+      return emitOpError("line ")
+             << index << " is a " << line << ", but its result is a " << synced;
   return success();
 }
 

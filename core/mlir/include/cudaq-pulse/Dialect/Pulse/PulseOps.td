@@ -351,7 +351,7 @@ def IsSetOp : PulseOp<"is_set", [Pure]> {
 // Timing operations
 //===----------------------------------------------------------------------===//
 
-def WaitOp : PulseOp<"wait", []> {
+def WaitOp : PulseOp<"wait", [AllTypesMatch<["line", "updated_line"]>]> {
   let summary = "Idle a line for a specified duration";
   let description = [{
     Idles a drive or readout line for `duration` and returns the updated
