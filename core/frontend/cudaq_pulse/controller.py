@@ -962,8 +962,7 @@ def _walk(
     own: _clocks.ControllerClock | None = None,
     waveforms: bool = True,
     slots: list[int] | None = None,
-    repeats: list[tuple[int, ...]] | None = None,
-    periods: list[tuple[int, int, int]] | None = None,
+    summary: tuple[list[tuple[int, ...]], list[tuple[int, int, int]] | None] | None = None,
 ) -> tuple[
     list[Any],
     list[dict[str, Any]],
@@ -975,14 +974,14 @@ def _walk(
     the values of its call; without *values*, a module with float parameters
     has ``None`` where they reach.
 
-    The lines are the dictionaries of format /1. With *repeats*, for a
-    check, the events are those the check walk gives: in a module that
-    computes nothing at run time, a long rolled loop whose iterations repeat
-    has its events once, and *repeats* gets its copies (``_loops``); with
-    *periods* too, a loop whose lines move by different periods as well,
-    and *periods* gets their (repeat, line, period). With *own* too, only
-    loops whose periods are whole timesteps of its grid, their periods in
-    its cycles.
+    The lines are the dictionaries of format /1. With *summary*, (repeats,
+    periods), for a check, the events are those the check walk gives: in a
+    module that computes nothing at run time, a long rolled loop whose
+    iterations repeat has its events once, and the list *repeats* gets its
+    copies (``_loops``); with a list *periods* too, a loop whose lines move
+    by different periods as well, and *periods* gets their (repeat, line,
+    period). With *own* too, only loops whose periods are whole timesteps of
+    its grid, their periods in its cycles.
 
     With *own*, the events' times are in that controller's cycles (their
     waveforms' too, with *waveforms*), what they compute at run time too
@@ -1005,7 +1004,8 @@ def _walk(
     problems: list[str] = []
     # What the summarizing walk computes at run time is in MLIR's ops, not
     # the export's vocabulary a controller's own cycles are converted in.
-    if repeats is not None and (own is None or not _computes_at_run_time(lowered)):
+    if summary is not None and (own is None or not _computes_at_run_time(lowered)):
+        repeats, periods = summary
         epochs = lowered._event_epochs(syncs=True)
         with lowered._lock:
             if own is None:
@@ -2155,8 +2155,7 @@ def _limit_violations(
             unresolved is None,
             _native_clock(clocks),
             False,
-            repeats=repeats,
-            periods=periods,
+            summary=(repeats, periods),
         )
         if not repeats:
             break
@@ -2558,8 +2557,7 @@ def _compile_check(
             values=False,
             own=_native_clock(clocks),
             waveforms=False,
-            repeats=repeats,
-            periods=periods,
+            summary=None if repeats is None else (repeats, periods),
         )
         if not repeats:
             break
@@ -2614,7 +2612,9 @@ def _call_violations(lowered: Lowered) -> Sequence[str]:
         # Summarized while the system's controllers line up, else every iteration.
         while True:
             lines, events, _, off, problems = _walk(
-                lowered, own=_native_clock(clocks), repeats=repeats
+                lowered,
+                own=_native_clock(clocks),
+                summary=None if repeats is None else (repeats, None),
             )
             if not repeats:
                 break

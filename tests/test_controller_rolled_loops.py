@@ -279,7 +279,7 @@ def test_a_long_rolled_loop_reports_what_every_iteration_played_does(
     lowered = pulse.compile(_loops(trips)[name], schedule=schedule, unroll_threshold=0)
     lowered = lowered.lower(Q[0], Q[1]) if name in ("branches", "before") else lowered.lower(Q[0])
     repeats: list[Any] = []
-    controller._walk(lowered, values=False, repeats=repeats)
+    controller._walk(lowered, values=False, summary=(repeats, None))
     assert repeats, "the native walk summarized the loop"
     for limits in LIMITS:
         found = check(lowered, limits)
@@ -451,7 +451,7 @@ def test_a_loop_whose_lines_move_by_different_periods_reports_what_every_iterati
     lowered = lowered.lower(Q[0], Q[1])
     repeats: list[Any] = []
     periods: list[Any] = []
-    lines, events, *_ = controller._walk(lowered, values=False, repeats=repeats, periods=periods)
+    lines, events, *_ = controller._walk(lowered, values=False, summary=(repeats, periods))
     if repeats:
         rest = len(events) - max(r[1] for r in repeats)
         full = controller._walk(lowered, values=False)[1]
@@ -586,7 +586,9 @@ def test_a_check_on_a_controllers_own_clock_converts_what_runs_at_run_time_as_it
     limits = dataclasses.replace(ControllerLimits(), **OWN_CLOCKS[clock])
     lowered = _on(_delayed_at_run_time, "asap", limits)
     own = controller._native_clock(lowered.clocks)
-    checked = controller._walk(lowered, values=False, own=own, waveforms=False, repeats=[])[1]
+    checked = controller._walk(lowered, values=False, own=own, waveforms=False, summary=([], None))[
+        1
+    ]
     exported = controller._walk(lowered, values=False, own=own, waveforms=False)[1]
     lengths = [
         [e["length"] for e in events if e["kind"] == "wait"] for events in (checked, exported)
@@ -615,9 +617,9 @@ def test_a_long_rolled_loop_compiled_for_a_controllers_own_clock_is_summarized_a
     own = controller._native_clock(lowered.clocks)
     repeats: list[Any] = []
     periods: list[Any] = []
-    controller._walk(lowered, values=False, own=own, repeats=repeats, periods=periods)
+    controller._walk(lowered, values=False, own=own, summary=(repeats, periods))
     program: list[Any] = []
-    controller._walk(lowered, values=False, repeats=program, periods=[])
+    controller._walk(lowered, values=False, summary=(program, []))
     # The lanes of two lines' alternate drives under rcp never repeat.
     assert program or (name, schedule) == ("two_lines", "rcp")
     assert len(repeats) == len(program), "summarized in the controller's cycles as in the program's"
@@ -701,7 +703,7 @@ def test_a_long_rolled_loop_of_runtime_qudits_is_summarized_and_checked_as_every
     generic = generic._generic or generic
     assert generic._role.slots
     program: list[Any] = []
-    controller._walk(generic, values=False, repeats=program, periods=[])
+    controller._walk(generic, values=False, summary=(program, []))
     assert program or (name, schedule) == ("two_lines", "rcp")
     walk = controller._walk
 
