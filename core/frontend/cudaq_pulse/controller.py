@@ -999,29 +999,35 @@ def _walk(
     module = lowered._concrete()
     off_grid: Sequence[tuple[int, int, int]] = ()
     problems: list[str] = []
-    epochs = None if repeats is None or own is not None else lowered._event_epochs(syncs=True)
-    with lowered._lock:
-        if own is None:
-            if epochs is not None:
-                assert repeats is not None
-                lines, events, found = module.controller_events(
-                    _PARAMETERS, _AMPLITUDES, epochs, slots, True
-                )
-                repeats += found
-                frame_state = []
-            else:
-                lines, events, frame_state = module.controller_program(
-                    _PARAMETERS, _AMPLITUDES, lowered.classical != (), slots=slots
-                )
-        else:
-            ratio = own.ratio
-            lines, events, frame_state, off_grid = module.controller_program(
-                _PARAMETERS,
-                _AMPLITUDES,
-                lowered.classical != (),
-                own=(ratio.numerator, ratio.denominator, own.grid),
-                slots=slots,
+    if repeats is not None and own is None:
+        epochs = lowered._event_epochs(syncs=True)
+        with lowered._lock:
+            lines, events, found = module.controller_events(
+                _PARAMETERS, _AMPLITUDES, epochs, slots, True
             )
+        repeats += found
+        frame_state = []
+    else:
+        # A check (without *values*) needs no value the export cannot name.
+        with lowered._lock:
+            if own is None:
+                lines, events, frame_state = module.controller_program(
+                    _PARAMETERS,
+                    _AMPLITUDES,
+                    lowered.classical != (),
+                    slots=slots,
+                    exportable=values,
+                )
+            else:
+                ratio = own.ratio
+                lines, events, frame_state, off_grid = module.controller_program(
+                    _PARAMETERS,
+                    _AMPLITUDES,
+                    lowered.classical != (),
+                    own=(ratio.numerator, ratio.denominator, own.grid),
+                    slots=slots,
+                    exportable=values,
+                )
     if own is not None:
         from . import _clocks
 
@@ -2347,7 +2353,7 @@ def _amplitude_violations(
     table = _Waveforms()
     with lowered._lock:
         lines, events, _ = module.controller_program(
-            _PARAMETERS, _AMPLITUDES, lowered.classical != (), True, table
+            _PARAMETERS, _AMPLITUDES, lowered.classical != (), True, table, exportable=False
         )
     peaks: dict[int, float | None] = {}
     by_line: dict[int, list[str]] = {}

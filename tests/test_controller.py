@@ -444,6 +444,42 @@ def test_only_the_controller_limits_the_amplitude():
             ControllerLimits(max_amplitude=wrong)  # type: ignore[arg-type]
 
 
+def _after_a_loop(n: int) -> pulse.Kernel:
+    @pulse.kernel
+    def after(q, r):
+        line = get_drive_line(q)
+        probe = get_readout_line(r)
+        for _ in range(n):
+            m = readout(probe, square(40, 0.05))
+            drive(line, square(8, 0.1))
+        if m:
+            drive(line, square(8, 0.1))
+
+    return after
+
+
+# The branch after the loop tests the readout of its last iteration, a value
+# the export's vocabulary has no term for: checking the limits needs none.
+@pytest.mark.parametrize(
+    "limits",
+    [
+        ControllerLimits(max_amplitude=0.05),
+        ControllerLimits(cycles_per_timestep=4, max_amplitude=0.05),
+        ControllerLimits(clock_ghz=1.0, max_amplitude=0.05),
+    ],
+    ids=["program_clock", "timesteps", "own_clock"],
+)
+def test_a_branch_on_a_readout_carried_out_of_a_loop_is_checked_as_written_out(limits):
+    rolled = pulse.compile(_after_a_loop(65), unroll_threshold=0, passes=()).lower(Q[0], Q[1])
+    unrolled = pulse.compile(_after_a_loop(65), unroll_threshold=10**6, passes=()).lower(Q[0], Q[1])
+    found = check(rolled, limits)
+    assert len(found) == 66
+    assert found == check(unrolled, limits)
+    # An export still has to name it.
+    with pytest.raises(pulse.UnsupportedError, match="'scf.for'"):
+        rolled.export_controller()
+
+
 def test_a_limit_error_lists_ten_violations_and_counts_the_rest():
     error = ControllerLimitError([f"violation {k}" for k in range(13)])
     assert "violation 9" in str(error) and "violation 10" not in str(error)

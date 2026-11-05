@@ -2648,12 +2648,14 @@ public:
   /// cycles (see ownCycles; what an event computes at run time stays in
   /// program cycles, for the caller to convert), and fourth, the drives,
   /// readouts and waits off its grid of `grid` program cycles. A list
-  /// `slots` gets each line's runtime-qudit slot (-1 for none).
+  /// `slots` gets each line's runtime-qudit slot (-1 for none). Without
+  /// `exportable`, for a check, a value the export's vocabulary has no term
+  /// for is {"unknown": what it is computed from} rather than an error.
   nb::tuple
   controller_program(nb::handle parameters, nb::handle amplitudes, bool epochs,
                      bool rolled, nb::object waveform,
                      std::optional<std::tuple<int64_t, int64_t, int64_t>> own,
-                     nb::object slots) {
+                     nb::object slots, bool exportable) {
     if (own && (rolled || std::get<0>(*own) < 1 || std::get<1>(*own) < 1 ||
                 std::get<2>(*own) < 1))
       throw std::invalid_argument("controller_program: a controller's ratio "
@@ -2706,7 +2708,7 @@ public:
       finals = walk.finalFrames(static_cast<double>(end) / walk.clockGHz);
     }
     ControllerEvents program(walk, waveforms, std::move(waveform), parameters,
-                             amplitudes, rolled);
+                             amplitudes, rolled, exportable);
     nb::list events = program.build();
     if (own)
       return nb::make_tuple(roles, events, program.frameState(finals),
@@ -5954,6 +5956,7 @@ NB_MODULE(_cudaq_pulse_native, m) {
            nb::arg("parameters"), nb::arg("amplitudes"), nb::arg("epochs"),
            nb::arg("rolled") = false, nb::arg("waveform").none() = nb::none(),
            nb::arg("own") = nb::none(), nb::arg("slots").none() = nb::none(),
+           nb::arg("exportable") = true,
            "The lines and the events of the program, for a controller; a "
            "list `slots` gets each line's runtime-qudit slot")
       .def("controller_check", &PulseModule::controller_check,

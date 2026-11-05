@@ -2575,10 +2575,11 @@ public:
   /// `waveform` returns (index into the program's waveforms, None).
   ControllerEvents(const ControllerWalk &walk,
                    const ControllerWaveforms &waveforms, nb::object waveform,
-                   nb::handle parameters, nb::handle amplitudes, bool compact)
+                   nb::handle parameters, nb::handle amplitudes, bool compact,
+                   bool exportable = true)
       : records(walk.result), walk(walk), waveforms(waveforms),
-        waveform(std::move(waveform)), compact(compact), key(keys()),
-        shapes(shapesOf(parameters, amplitudes)),
+        waveform(std::move(waveform)), compact(compact), exportable(exportable),
+        key(keys()), shapes(shapesOf(parameters, amplitudes)),
         made(waveforms.distinct.size()) {}
 
   nb::list build() {
@@ -2656,8 +2657,9 @@ private:
              *test = intern("test"), *timeout = intern("timeout_ns"),
              *tone = intern("tone"), *tones = intern("tones"),
              *trips = intern("trips"), *type = intern("type"),
-             *value = intern("value"), *values = intern("values"),
-             *wait = intern("wait"), *waveform = intern("waveform");
+             *unknown = intern("unknown"), *value = intern("value"),
+             *values = intern("values"), *wait = intern("wait"),
+             *waveform = intern("waveform");
     std::array<PyObject *, Expression::Terms> terms;
     std::array<PyObject *, Expression::Types> types;
 
@@ -2739,6 +2741,10 @@ private:
   const ControllerWaveforms &waveforms;
   nb::object waveform;
   bool compact;
+  /// Whether a value the export's vocabulary has no term for is an error
+  /// (an export), or written as {"unknown": what it is computed from} (a
+  /// check, which never computes it).
+  bool exportable;
   const Keys &key;
   std::shared_ptr<const Shapes> shapes;
   std::vector<std::optional<std::pair<nb::object, nb::object>>> made;
@@ -3094,8 +3100,13 @@ private:
     const Expression &e = walk.expressions[index];
     if (e.kind == Expression::Number)
       return textNumber(e.number);
-    if (e.kind == Expression::Unknown)
-      unexportable(e.name);
+    if (e.kind == Expression::Unknown) {
+      if (exportable)
+        unexportable(e.name);
+      nb::dict out;
+      put(out, key.unknown, text(e.name));
+      return out;
+    }
     nb::dict out;
     switch (e.kind) {
     case Expression::Constant:
