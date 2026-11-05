@@ -69,3 +69,95 @@ func.func @overlap_across_acquisitions() {
   %b1, %tb1 = pulse.drive %b, %x, %tb {duration_cycles = 40 : i64, start_cycles = 0 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   return
 }
+
+// -----
+
+// An op in a loop is reported once, not once per iteration checked.
+func.func @loop_op_without_its_period() {
+  %c40 = arith.constant 40 : i64
+  %am = arith.constant 0.1 : f64
+  %z = arith.constant 0.0 : f64
+  %x = pulse.square %c40, %am, %z : i64, f64, f64 -> !pulse.waveform
+  %q = pulse.qudit_alloc : !pulse.qref
+  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %lb = arith.constant 0 : index
+  %ub = arith.constant 8 : index
+  %step = arith.constant 1 : index
+  %dn, %tn = scf.for %i = %lb to %ub step %step iter_args(%di = %d, %ti = %t) -> (!pulse.drive_line, !pulse.tone) {
+    // expected-error @+1 {{scheduled operation needs one period_cycles entry per enclosing scf.for}}
+    %d1, %t1 = pulse.drive %di, %x, %ti {duration_cycles = 40 : i64, start_cycles = 0 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+    scf.yield %d1, %t1 : !pulse.drive_line, !pulse.tone
+  }
+  return
+}
+
+// -----
+
+func.func @loop_op_before_time_zero() {
+  %c40 = arith.constant 40 : i64
+  %am = arith.constant 0.1 : f64
+  %z = arith.constant 0.0 : f64
+  %x = pulse.square %c40, %am, %z : i64, f64, f64 -> !pulse.waveform
+  %q = pulse.qudit_alloc : !pulse.qref
+  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %lb = arith.constant 0 : index
+  %ub = arith.constant 8 : index
+  %step = arith.constant 1 : index
+  %dn, %tn = scf.for %i = %lb to %ub step %step iter_args(%di = %d, %ti = %t) -> (!pulse.drive_line, !pulse.tone) {
+    // expected-error @+1 {{operation is scheduled before time zero: start -1000}}
+    %d1, %t1 = pulse.drive %di, %x, %ti {duration_cycles = 40 : i64, period_cycles = array<i64: 40>, start_cycles = -1000 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+    scf.yield %d1, %t1 : !pulse.drive_line, !pulse.tone
+  }
+  return
+}
+
+// -----
+
+func.func @loop_op_with_a_negative_period() {
+  %c40 = arith.constant 40 : i64
+  %am = arith.constant 0.1 : f64
+  %z = arith.constant 0.0 : f64
+  %x = pulse.square %c40, %am, %z : i64, f64, f64 -> !pulse.waveform
+  %q = pulse.qudit_alloc : !pulse.qref
+  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %lb = arith.constant 0 : index
+  %ub = arith.constant 8 : index
+  %step = arith.constant 1 : index
+  %dn, %tn = scf.for %i = %lb to %ub step %step iter_args(%di = %d, %ti = %t) -> (!pulse.drive_line, !pulse.tone) {
+    // expected-error @+1 {{period_cycles must not be negative}}
+    %d1, %t1 = pulse.drive %di, %x, %ti {duration_cycles = 40 : i64, period_cycles = array<i64: -40>, start_cycles = 1000 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+    scf.yield %d1, %t1 : !pulse.drive_line, !pulse.tone
+  }
+  return
+}
+
+// -----
+
+func.func @scheduled_loop_of_argument_trips(%n: index) {
+  %c40 = arith.constant 40 : i64
+  %am = arith.constant 0.1 : f64
+  %z = arith.constant 0.0 : f64
+  %x = pulse.square %c40, %am, %z : i64, f64, f64 -> !pulse.waveform
+  %q = pulse.qudit_alloc : !pulse.qref
+  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %lb = arith.constant 0 : index
+  %step = arith.constant 1 : index
+  %dn, %tn = scf.for %i = %lb to %n step %step iter_args(%di = %d, %ti = %t) -> (!pulse.drive_line, !pulse.tone) {
+    // expected-error @+1 {{a scheduled loop needs constant bounds}}
+    %d1, %t1 = pulse.drive %di, %x, %ti {duration_cycles = 40 : i64, period_cycles = array<i64: 40>, start_cycles = 0 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+    scf.yield %d1, %t1 : !pulse.drive_line, !pulse.tone
+  }
+  return
+}
+
+// -----
+
+func.func @scheduled_drive_on_an_argument_line(%d: !pulse.drive_line, %t: !pulse.tone) {
+  %c40 = arith.constant 40 : i64
+  %am = arith.constant 0.1 : f64
+  %z = arith.constant 0.0 : f64
+  %x = pulse.square %c40, %am, %z : i64, f64, f64 -> !pulse.waveform
+  // expected-error @+1 {{cannot trace timed operation to a physical line}}
+  %d1, %t1 = pulse.drive %d, %x, %t {duration_cycles = 40 : i64, start_cycles = 0 : i64} : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+  return
+}

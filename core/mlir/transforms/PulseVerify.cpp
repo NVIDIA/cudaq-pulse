@@ -76,7 +76,8 @@ static void conditionMeasurements(mlir::Value value,
 
 /// Checks the schedule attributes of one function, walking the program in
 /// execution order. Loops are checked on their first two iterations and
-/// their last: with one period per line, those bound every iteration.
+/// their last: with one period per line, those bound every iteration. An op
+/// is reported once, at the first iteration it is wrong in.
 class TimingChecker {
   pulse::AllocationTracer trace;
 
@@ -89,9 +90,15 @@ public:
   }
 
 private:
-  void error(mlir::Operation *op, const llvm::Twine &message) {
-    op->emitError(message);
+  /// Whether to report a fault of `op`: not if it has been reported.
+  bool report(mlir::Operation *op) {
     hadError = true;
+    return reported.insert(op).second;
+  }
+
+  void error(mlir::Operation *op, const llvm::Twine &message) {
+    if (report(op))
+      op->emitError(message);
   }
 
   void checkOp(mlir::Operation *op) {
@@ -118,28 +125,22 @@ private:
             "scf.for");
       return;
     }
-    if (*start < 0) {
+    if (*start < 0 && report(op))
       op->emitError("operation is scheduled before time zero: start ")
           << *start;
-      hadError = true;
-    }
     mlir::Operation *physicalLine = trace(op->getOperand(0));
     if (!physicalLine) {
       error(op, "cannot trace timed operation to a physical line");
       return;
     }
-    if (*start < measured) {
+    if (*start < measured && report(op))
       op->emitError("operation in a measurement-conditioned branch starts at ")
           << *start << ", before its measurement completes at " << measured;
-      hadError = true;
-    }
     auto it = lastEnd.find(physicalLine);
-    if (it != lastEnd.end() && *start < it->second) {
+    if (it != lastEnd.end() && *start < it->second && report(op))
       op->emitError("operation overlaps or precedes its physical-line "
                     "predecessor: start ")
           << *start << " < prior end " << it->second;
-      hadError = true;
-    }
     lastEnd[physicalLine] =
         std::max(lastEnd.lookup(physicalLine), *start + *duration);
   }
@@ -215,6 +216,7 @@ private:
   }
 
   llvm::DenseMap<mlir::Operation *, int64_t> lastEnd;
+  llvm::DenseSet<mlir::Operation *> reported;
   llvm::SmallVector<int64_t, 2> iteration;
   int64_t measured = std::numeric_limits<int64_t>::min();
 };
