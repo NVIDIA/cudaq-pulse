@@ -98,10 +98,12 @@ static std::optional<int64_t> traceConstantI64(mlir::Value value) {
   return std::nullopt;
 }
 
-static int64_t getWaveformDuration(mlir::Value waveform) {
+/// The length of a waveform in cycles, when it is a constant: none for a
+/// waveform that is an argument, or whose duration is computed from one.
+static std::optional<int64_t> getWaveformDuration(mlir::Value waveform) {
   auto *definition = waveform.getDefiningOp();
   if (!definition)
-    return 0;
+    return std::nullopt;
 
   mlir::Value duration;
   if (auto op = mlir::dyn_cast<pulse::GaussianPulseOp>(definition))
@@ -131,21 +133,21 @@ static int64_t getWaveformDuration(mlir::Value waveform) {
   else if (auto op = mlir::dyn_cast<pulse::PulseNegOp>(definition))
     return getWaveformDuration(op.getPulse());
   else
-    return 0;
+    return std::nullopt;
 
-  return traceConstantI64(duration).value_or(0);
+  return pulse::constantInteger(duration);
 }
 
-/// A variable wait whose length is not bound yet is scheduled at its lowest
-/// length.
-static int64_t getWaitDuration(pulse::WaitOp wait) {
+/// The length of a wait in cycles: its constant length, or a variable
+/// wait's lowest one while its length is not bound. None otherwise.
+static std::optional<int64_t> getWaitDuration(pulse::WaitOp wait) {
   if (auto conversion =
           wait.getDuration().getDefiningOp<pulse::DurationFromIntOp>())
-    if (auto cycles = traceConstantI64(conversion.getCycles()))
+    if (auto cycles = pulse::constantInteger(conversion.getCycles()))
       return *cycles;
   if (auto lowest = wait->getAttrOfType<mlir::IntegerAttr>("pulse.min_cycles"))
     return lowest.getInt();
-  return 0;
+  return std::nullopt;
 }
 
 static bool isTimedOp(mlir::Operation *op) {
@@ -177,13 +179,15 @@ static BlockShape shapeOf(pulse::ScheduleBlockOp block) {
   return shape;
 }
 
+/// The cycles `op` takes. Scheduling checks first (checkDurations) that
+/// every pulse and wait has a known length.
 static int64_t durationOf(mlir::Operation *op) {
   if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op))
     return shapeOf(block).length;
   if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op))
-    return getWaveformDuration(drive.getPulse());
+    return getWaveformDuration(drive.getPulse()).value_or(0);
   if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
-    return getWaveformDuration(readout.getPulse());
+    return getWaveformDuration(readout.getPulse()).value_or(0);
   if (mlir::isa<classical::SubmitOp>(op))
     return classical::intAttr(op, "classical.submit_cycles", 1);
   if (mlir::isa<classical::WaitOp>(op))
@@ -202,7 +206,49 @@ static int64_t durationOf(mlir::Operation *op) {
       length = std::min(length, highest.getInt());
     return length;
   }
-  return getWaitDuration(mlir::cast<pulse::WaitOp>(op));
+  return getWaitDuration(mlir::cast<pulse::WaitOp>(op)).value_or(0);
+}
+
+/// Every pulse and wait of `function` must have a known, valid length: the
+/// schedule places each for the cycles it takes, so an unknown length is an
+/// error rather than a placement that assumes some length.
+static mlir::LogicalResult checkDurations(mlir::func::FuncOp function) {
+  auto checkPulse = [](mlir::Operation *op,
+                       mlir::Value waveform) -> mlir::LogicalResult {
+    std::optional<int64_t> cycles = getWaveformDuration(waveform);
+    if (!cycles)
+      return op->emitError("cannot determine the duration of this pulse; "
+                           "specialize the waveform to a constant duration "
+                           "first");
+    if (*cycles <= 0)
+      return op->emitError("a pulse must last at least one cycle, got ")
+             << *cycles;
+    return mlir::success();
+  };
+  auto checkWait = [](pulse::WaitOp wait) -> mlir::LogicalResult {
+    if (wait->hasAttr("classical.variable"))
+      return mlir::success();
+    std::optional<int64_t> cycles = getWaitDuration(wait);
+    if (!cycles)
+      return wait.emitError("cannot determine the length of this wait; give "
+                            "it a constant length, or make it a "
+                            "pulse.variable_wait with its bounds");
+    if (*cycles < 0)
+      return wait.emitError("a wait cannot last ") << *cycles << " cycles";
+    return mlir::success();
+  };
+  mlir::WalkResult walk = function.walk([&](mlir::Operation *op) {
+    mlir::LogicalResult checked = mlir::success();
+    if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op))
+      checked = checkPulse(op, drive.getPulse());
+    else if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
+      checked = checkPulse(op, readout.getPulse());
+    else if (auto wait = mlir::dyn_cast<pulse::WaitOp>(op))
+      checked = checkWait(wait);
+    return mlir::failed(checked) ? mlir::WalkResult::interrupt()
+                                 : mlir::WalkResult::advance();
+  });
+  return mlir::failure(walk.wasInterrupted());
 }
 
 /// From the end of a submission until its future is available.
@@ -4525,6 +4571,8 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
           "kernels with their own schedule yet; drop schedule= from the "
           "called kernels, or flatten them with flatten_schedules=True");
   }
+  if (mlir::failed(checkDurations(function)))
+    return mlir::failure();
   mlir::FailureOr<bool> annotated = classical::annotateClassicalCalls(function);
   if (mlir::failed(annotated))
     return mlir::failure();

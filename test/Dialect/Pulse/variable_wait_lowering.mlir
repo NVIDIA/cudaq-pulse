@@ -6,8 +6,8 @@
 // the terms of the Apache License 2.0 which accompanies this distribution.     //
 // ============================================================================ //
 
-// RUN: not cudaq-pulse-opt --pulse-verify %s 2>&1 | FileCheck %s --check-prefix=UNMARKED
-// RUN: not cudaq-pulse-opt --pulse-schedule-alap --pulse-to-qop %s 2>&1 | FileCheck %s --check-prefix=UNBOUND
+// RUN: not cudaq-pulse-opt --split-input-file --pulse-verify %s 2>&1 | FileCheck %s --check-prefix=UNMARKED
+// RUN: not cudaq-pulse-opt --split-input-file --pulse-schedule-alap --pulse-to-qop %s 2>&1 | FileCheck %s --check-prefix=UNBOUND
 
 // A wait whose length is not a constant must be a variable wait, and a
 // variable wait is lowered only once its arguments are bound: unbound, it
@@ -25,6 +25,8 @@ func.func @unmarked(%tau: f64) {
   %d1 = pulse.wait %d0, %len : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
   return
 }
+
+// -----
 
 func.func @main(%tau: f64) {
   %q = pulse.qudit_alloc : !pulse.qref

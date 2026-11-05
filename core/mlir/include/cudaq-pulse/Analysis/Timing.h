@@ -31,6 +31,41 @@ inline std::optional<int64_t> constantIndex(mlir::Value value) {
   return std::nullopt;
 }
 
+/// The integer `value` when it is a constant, or integer arithmetic on
+/// constants not folded yet (as lowering a select leaves it in each arm):
+/// what folding it would give.
+inline std::optional<int64_t> constantInteger(mlir::Value value) {
+  mlir::Operation *op = value.getDefiningOp();
+  if (!op)
+    return std::nullopt;
+  if (auto constant = mlir::dyn_cast<mlir::arith::ConstantOp>(op)) {
+    if (auto attr = mlir::dyn_cast<mlir::IntegerAttr>(constant.getValue()))
+      return attr.getInt();
+    return std::nullopt;
+  }
+  if (!mlir::isa<mlir::arith::ArithDialect>(op->getDialect()) ||
+      op->getNumResults() != 1 || op->getNumRegions() != 0)
+    return std::nullopt;
+  llvm::SmallVector<mlir::Attribute, 2> operands;
+  for (mlir::Value operand : op->getOperands()) {
+    if (!mlir::isa<mlir::IntegerType, mlir::IndexType>(operand.getType()))
+      return std::nullopt;
+    std::optional<int64_t> known = constantInteger(operand);
+    if (!known)
+      return std::nullopt;
+    operands.push_back(mlir::IntegerAttr::get(operand.getType(), *known));
+  }
+  llvm::SmallVector<mlir::OpFoldResult, 1> folded;
+  if (mlir::failed(op->fold(operands, folded)) || folded.size() != 1)
+    return std::nullopt;
+  if (auto same = mlir::dyn_cast<mlir::Value>(folded.front()))
+    return same == value ? std::nullopt : constantInteger(same);
+  if (auto attr = mlir::dyn_cast<mlir::IntegerAttr>(
+          mlir::cast<mlir::Attribute>(folded.front())))
+    return attr.getInt();
+  return std::nullopt;
+}
+
 /// The number of iterations of `loop`, if its bounds are constants.
 inline std::optional<int64_t> constantTripCount(mlir::scf::ForOp loop) {
   auto lb = constantIndex(loop.getLowerBound());

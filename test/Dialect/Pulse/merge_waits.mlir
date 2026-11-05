@@ -50,7 +50,7 @@ func.func @apart(%len: i64) {
   %w100 = pulse.duration_from_int %c100 : (i64) -> !pulse.duration
   %wlen = pulse.duration_from_int %len : (i64) -> !pulse.duration
   %d1 = pulse.wait %d0, %w100 : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
-  %d2 = pulse.wait %d1, %wlen : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
+  %d2 = pulse.wait %d1, %wlen {pulse.variable_wait, pulse.min_cycles = 0 : i64} : (!pulse.drive_line, !pulse.duration) -> !pulse.drive_line
   %c40 = arith.constant 40 : i64
   %a = arith.constant 1.000000e-01 : f64
   %z = arith.constant 0.000000e+00 : f64

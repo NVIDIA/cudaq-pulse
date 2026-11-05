@@ -98,6 +98,12 @@ func.func @phase() {
 // CHECK: arith.addi
 // CHECK: pulse.square
 // CHECK: pulse.drive %
+// Each arm's duration is arithmetic on constants until it is folded; the
+// schedule plays each pulse for that many cycles.
+// TIME-LABEL: func.func @duration
+// TIME: pulse.readout {{.*}}start_cycles = 0
+// TIME: pulse.drive {{.*}}duration_cycles = 88 : i64, start_cycles = 100
+// TIME: pulse.drive {{.*}}duration_cycles = 48 : i64
 func.func @duration() {
   %q = pulse.qudit_alloc : !pulse.qref
   %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
@@ -157,7 +163,11 @@ func.func @elif() {
 // CHECK-LABEL: func.func @none
 // CHECK-NOT: pulse.selected_values
 // CHECK: pulse.drive %
-func.func @none(%x: !pulse.waveform) {
+func.func @none() {
+  %c40 = arith.constant 40 : i64
+  %amp = arith.constant 0.1 : f64
+  %zero = arith.constant 0.0 : f64
+  %x = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !pulse.waveform
   %q = pulse.qudit_alloc : !pulse.qref
   %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
   %d1, %t1 = pulse.drive %d, %x, %t : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
