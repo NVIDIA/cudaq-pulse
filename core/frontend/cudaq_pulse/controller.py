@@ -1886,7 +1886,8 @@ def _symbols(
             entry["value"] = lowered.target.frequencies[carriers[k]]
         else:
             target = lowered.target
-            entry["value"] = (target._tables or target._frequency_tables())[1][carriers[k]]
+            carrier = carriers[k]
+            entry["value"] = target._frequency_tables(carrier + 1)[2][carrier]
         found.append(entry)
     return found
 

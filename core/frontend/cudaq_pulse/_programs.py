@@ -62,12 +62,12 @@ def _concrete_general(self: Lowered) -> Any:
         with self._lock:
             if self.carriers:
                 target = self.target
-                frequencies, readouts = target._tables or target._frequency_tables()
+                _, frequencies, readouts = target._frequency_tables(max(self.carriers) + 1)
                 module = self._module.specialize_placed(
                     list(arguments),
                     [],
                     *args,
-                    list(self.carriers),
+                    self.carriers,
                     frequencies,
                     target.fingerprint,
                     readouts,
@@ -218,8 +218,8 @@ def _placement(view: Lowered) -> Any:
     if module is None:
         with view._lock:
             target = view.target
-            frequencies, readouts = target._tables or target._frequency_tables()
-            module = view._module.place_carriers(list(view.carriers), frequencies, readouts)
+            _, frequencies, readouts = target._frequency_tables(max(view.carriers) + 1)
+            module = view._module.place_carriers(view.carriers, frequencies, readouts)
         if len(role.modules) >= _PLACED_MODULES:
             role.modules.clear()
         role.modules[key] = module

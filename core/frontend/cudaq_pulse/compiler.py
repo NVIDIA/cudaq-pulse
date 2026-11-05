@@ -1178,10 +1178,12 @@ def build(
                 f"{target.name!r} does not define (it defines qudits {span})"
             )
     buf: Any = builder.get_buffer()
-    # The device's tables, of which the module records its qudits'.
-    freq: Any
-    readout_freqs: Any
-    freq, readout_freqs = target._tables or target._frequency_tables()
+    # The device's tables, of which the module records qudits 0 to
+    # qudit_count - 1.
+    qudit_count = builder.n_qubits
+    carrier_count, freq, readout_freqs = target._tables
+    if carrier_count < qudit_count:
+        _, freq, readout_freqs = target._frequency_tables(qudit_count)
     routes = builder.routes
     links = [link for link, _, _ in routes] if routes else []
     metrics.trace_ms = (time.perf_counter() - t0) * 1000
@@ -1193,7 +1195,7 @@ def build(
             module = PulseModuleBuilder().build_from_packed(
                 buf,
                 target.clock_ghz,
-                builder.n_qubits,
+                qudit_count,
                 freq,
                 list(parameters),
                 ["f64"] * len(parameters),
@@ -1205,7 +1207,7 @@ def build(
             module = PulseModuleBuilder().build_from_packed(
                 buf,
                 target.clock_ghz,
-                builder.n_qubits,
+                qudit_count,
                 freq,
                 list(parameters),
                 ["f64"] * len(parameters),
@@ -1216,7 +1218,7 @@ def build(
             module = PulseModuleBuilder().build_from_packed(
                 buf,
                 target.clock_ghz,
-                builder.n_qubits,
+                qudit_count,
                 freq,
                 name=name,
                 readout_freqs=readout_freqs,

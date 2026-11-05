@@ -214,6 +214,25 @@ def test_a_readout_line_without_a_readout_frequency_plays_at_the_qudit_s():
         assert _readout_frequencies(kernel.lower(q, 1e6)) == [5.0e9, 5.0e9 + 1e6]
 
 
+def test_the_frequency_tables_hold_the_program_s_qudits_not_the_device_s():
+    # The first compile on a device tabulates qudits 0 to the program's
+    # highest; a later program on a higher qudit, static or runtime, extends
+    # the tables, and one on a lower qudit reads them. New kernels, on a
+    # device of its own: no compile is shared with another test.
+    dev = pulse.device({"target": pulse.device("transmon_17q").target})
+    static, runtime = (pulse.kernel(k.__wrapped__) for k in (read_static, read_runtime))
+    resonator = {i: dev.target.qubits[i].readout.frequency_hz for i in (0, 4, 9)}
+    for kernel, index, count in (
+        (static, 0, 1),
+        (runtime, 4, 5),
+        (static, 9, 10),
+        (runtime, 0, 10),
+    ):
+        lowered = kernel.lower(dev.qudit_handles[index], 1e6)
+        assert _readout_frequencies(lowered) == [resonator[index], resonator[index] + 1e6]
+        assert dev._tables[0] == count
+
+
 def test_the_tones_of_a_line_are_read_only():
     @pulse.kernel
     def assign(q):

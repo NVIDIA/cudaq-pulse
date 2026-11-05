@@ -94,6 +94,25 @@ def test_compile_single_qubit():
     assert "pulse.drive" in ck.mlir()
 
 
+def _sparse_device():
+    from cudaq_pulse.targets import Qubit, TargetDescription
+
+    qubits = {i: Qubit(i, 5.0e9 + 1e8 * i, -300e6, 50.0, 30.0) for i in (0, 2)}
+    return pulse.device({"target": TargetDescription(name="sparse", qubits=qubits)})
+
+
+@pulse.kernel
+def _drive_one(q):
+    drive(get_drive_line(q), square(40, 0.1))
+
+
+def test_a_module_records_0_hz_for_a_qudit_its_target_lacks():
+    dev = _sparse_device()
+    for _ in range(2):
+        mlir = _drive_one.lower(dev.qudit_handles[1]).mlir()
+        assert "pulse.qubit_freq_hz = array<f64: 5.000000e+09, 0.000000e+00, 5.200000e+09>" in mlir
+
+
 def test_compile_folds_phases():
 
     @pulse.kernel

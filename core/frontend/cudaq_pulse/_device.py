@@ -360,8 +360,10 @@ class Device:
         )
         self.qudit_handles = _Handles(tuple(Qudit(self, p, i) for i, p in enumerate(layout)))
         self._arrays: tuple[Any, Any] | None = None
-        # The frequency tables a compiled module records (_frequency_tables).
-        self._tables: tuple[array[float], array[float]] | None = None
+        # The frequency tables a compiled module records, as
+        # _frequency_tables returns them: (count, 0-1 frequencies, readout
+        # tones); none before the first compile.
+        self._tables: tuple[int, Any, Any] = (-1, None, None)
 
     def _frequency_arrays(self) -> tuple[Any, Any]:
         if self._arrays is None:
@@ -393,44 +395,59 @@ class Device:
             return default, {}
         qubit = target.qubits[index]
         if readout:
-            return default, {default: (self._tables or self._frequency_tables())[1][index]}
+            return default, {default: self._frequency_tables(index + 1)[2][index]}
         return default, model.transitions_hz(qubit, model.levels_of(index))
 
-    def _frequency_tables(self) -> tuple[array[float], array[float]]:
-        """The 0-1 frequency of every carrier, and the tone of every
-        carrier's readout line (its readout's ``frequency_hz``, else its 0-1
-        frequency), by carrier index (0 where the target has none), as a
-        compiled module records them; made once (``_tables``)."""
+    def _frequency_tables(self, count: int) -> tuple[int, array[float], array[float]]:
+        """The 0-1 frequency of carriers 0 to *count* - 1 (or more), and the
+        tone of each one's readout line (its readout's ``frequency_hz``, else
+        its 0-1 frequency), by carrier index, as a compiled module records
+        them, after how many carriers from 0 on the target defines: *count*
+        or more, else the first it lacks (0 Hz in the tables, which then end
+        at its last carrier). Kept (``_tables``) until a caller needs more
+        carriers: a compile makes them for its program's qudits only, not
+        for the whole device."""
+        if self._tables[0] >= count:
+            return self._tables
         from array import array
-        from operator import attrgetter
 
         frequencies, qubits = self.frequencies, self.target.qubits
-        size = max(frequencies, default=-1) + 1
-        if len(frequencies) == size:
-            # Carriers 0 to size - 1, in order, read in C.
-            carriers: Sequence[int] = range(size)
+        carriers: Sequence[int] = range(count)
+        try:
             table = array("d", map(frequencies.__getitem__, carriers))
-        else:
-            carriers = sorted(frequencies)
+        except KeyError:
+            size = min(count, max(frequencies, default=-1) + 1)
+            made = self._tables[1]
+            if made is not None and len(made) >= size:
+                return self._tables
+            carriers = [carrier for carrier in sorted(frequencies) if carrier < size]
             table = array("d", bytes(8 * size))
             for carrier in carriers:
                 table[carrier] = frequencies[carrier]
-        components = list(map(attrgetter("readout"), map(qubits.__getitem__, carriers)))
-        if not any(components):
-            readouts = array("d", table)
+            # The first carrier the target lacks.
+            count = next((i for i, carrier in enumerate(carriers) if i != carrier), len(carriers))
+        for carrier in carriers:
+            if qubits[carrier].readout is not None:
+                break
         else:
-            try:
-                given = list(map(attrgetter("frequency_hz"), components))
-            except AttributeError:
-                given = [None if r is None else r.frequency_hz for r in components]
-            if len(given) == size and None not in given:
-                readouts = array("d", given)
-            else:
-                readouts = array("d", table)
-                for carrier, frequency in zip(carriers, given, strict=True):
-                    if frequency is not None:
-                        readouts[carrier] = frequency
-        self._tables = (table, readouts)
+            # Without a readout, a readout line plays at the 0-1 frequency.
+            self._tables = (count, table, table)
+            return self._tables
+        from operator import attrgetter
+
+        components = list(map(attrgetter("readout"), map(qubits.__getitem__, carriers)))
+        try:
+            given = list(map(attrgetter("frequency_hz"), components))
+        except AttributeError:
+            given = [None if r is None else r.frequency_hz for r in components]
+        if len(given) == len(table) and None not in given:
+            readouts = array("d", given)
+        else:
+            readouts = array("d", table)
+            for carrier, frequency in zip(carriers, given, strict=True):
+                if frequency is not None:
+                    readouts[carrier] = frequency
+        self._tables = (count, table, readouts)
         return self._tables
 
     @property
