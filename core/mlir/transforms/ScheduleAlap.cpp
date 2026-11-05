@@ -78,6 +78,7 @@
 #include "cudaq-pulse/Analysis/Affine.h"
 #include "cudaq-pulse/Analysis/ClassicalTiming.h"
 #include "cudaq-pulse/Analysis/Controllers.h"
+#include "cudaq-pulse/Analysis/Durations.h"
 #include "cudaq-pulse/Analysis/LineDelay.h"
 #include "cudaq-pulse/Analysis/LineGrid.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
@@ -95,58 +96,6 @@ static std::optional<int64_t> traceConstantI64(mlir::Value value) {
   if (auto constant = value.getDefiningOp<mlir::arith::ConstantOp>())
     if (auto attr = mlir::dyn_cast<mlir::IntegerAttr>(constant.getValue()))
       return attr.getInt();
-  return std::nullopt;
-}
-
-/// The length of a waveform in cycles, when it is a constant: none for a
-/// waveform that is an argument, or whose duration is computed from one.
-static std::optional<int64_t> getWaveformDuration(mlir::Value waveform) {
-  auto *definition = waveform.getDefiningOp();
-  if (!definition)
-    return std::nullopt;
-
-  mlir::Value duration;
-  if (auto op = mlir::dyn_cast<pulse::GaussianPulseOp>(definition))
-    duration = op.getDuration();
-  else if (auto op = mlir::dyn_cast<pulse::SquarePulseOp>(definition))
-    duration = op.getDuration();
-  else if (auto op = mlir::dyn_cast<pulse::DRAGPulseOp>(definition))
-    duration = op.getDuration();
-  else if (auto op = mlir::dyn_cast<pulse::CosinePulseOp>(definition))
-    duration = op.getDuration();
-  else if (auto op = mlir::dyn_cast<pulse::TanhRampOp>(definition))
-    duration = op.getDuration();
-  else if (auto op = mlir::dyn_cast<pulse::GaussianSquarePulseOp>(definition))
-    duration = op.getDuration();
-  else if (auto op = mlir::dyn_cast<pulse::CustomOp>(definition))
-    duration = op.getDuration();
-  else if (auto op = mlir::dyn_cast<pulse::CustomSamplesOp>(definition))
-    return op.getDurationCycles();
-  else if (auto op = mlir::dyn_cast<pulse::PulseAddOp>(definition))
-    return getWaveformDuration(op.getLhs());
-  else if (auto op = mlir::dyn_cast<pulse::PulseSubOp>(definition))
-    return getWaveformDuration(op.getLhs());
-  else if (auto op = mlir::dyn_cast<pulse::PulseMulOp>(definition))
-    return getWaveformDuration(op.getLhs());
-  else if (auto op = mlir::dyn_cast<pulse::PulseScaleOp>(definition))
-    return getWaveformDuration(op.getPulse());
-  else if (auto op = mlir::dyn_cast<pulse::PulseNegOp>(definition))
-    return getWaveformDuration(op.getPulse());
-  else
-    return std::nullopt;
-
-  return pulse::constantInteger(duration);
-}
-
-/// The length of a wait in cycles: its constant length, or a variable
-/// wait's lowest one while its length is not bound. None otherwise.
-static std::optional<int64_t> getWaitDuration(pulse::WaitOp wait) {
-  if (auto conversion =
-          wait.getDuration().getDefiningOp<pulse::DurationFromIntOp>())
-    if (auto cycles = pulse::constantInteger(conversion.getCycles()))
-      return *cycles;
-  if (auto lowest = wait->getAttrOfType<mlir::IntegerAttr>("pulse.min_cycles"))
-    return lowest.getInt();
   return std::nullopt;
 }
 
@@ -185,9 +134,9 @@ static int64_t durationOf(mlir::Operation *op) {
   if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op))
     return shapeOf(block).length;
   if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op))
-    return getWaveformDuration(drive.getPulse()).value_or(0);
+    return pulse::waveformCycles(drive.getPulse()).value_or(0);
   if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
-    return getWaveformDuration(readout.getPulse()).value_or(0);
+    return pulse::waveformCycles(readout.getPulse()).value_or(0);
   if (mlir::isa<classical::SubmitOp>(op))
     return classical::intAttr(op, "classical.submit_cycles", 1);
   if (mlir::isa<classical::WaitOp>(op))
@@ -206,7 +155,7 @@ static int64_t durationOf(mlir::Operation *op) {
       length = std::min(length, highest.getInt());
     return length;
   }
-  return getWaitDuration(mlir::cast<pulse::WaitOp>(op)).value_or(0);
+  return pulse::waitCycles(mlir::cast<pulse::WaitOp>(op)).value_or(0);
 }
 
 /// Whether every op of `function` can be placed: each pulse and wait needs a
@@ -216,7 +165,7 @@ static int64_t durationOf(mlir::Operation *op) {
 static mlir::LogicalResult checkPlaceable(mlir::func::FuncOp function) {
   auto checkPulse = [](mlir::Operation *op,
                        mlir::Value waveform) -> mlir::LogicalResult {
-    std::optional<int64_t> cycles = getWaveformDuration(waveform);
+    std::optional<int64_t> cycles = pulse::waveformCycles(waveform);
     if (!cycles)
       return op->emitError("cannot determine the duration of this pulse; "
                            "specialize the waveform to a constant duration "
@@ -229,7 +178,7 @@ static mlir::LogicalResult checkPlaceable(mlir::func::FuncOp function) {
   auto checkWait = [](pulse::WaitOp wait) -> mlir::LogicalResult {
     if (wait->hasAttr("classical.variable"))
       return mlir::success();
-    std::optional<int64_t> cycles = getWaitDuration(wait);
+    std::optional<int64_t> cycles = pulse::waitCycles(wait);
     if (!cycles)
       return wait.emitError("cannot determine the length of this wait; give "
                             "it a constant length, or make it a "

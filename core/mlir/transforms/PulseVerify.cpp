@@ -36,6 +36,7 @@
 #include "cudaq-pulse/Dialect/Classical/ClassicalOps.h.inc"
 
 #include "cudaq-pulse/Analysis/ClassicalTiming.h"
+#include "cudaq-pulse/Analysis/Durations.h"
 #include "cudaq-pulse/Analysis/LineTrace.h"
 #include "cudaq-pulse/Analysis/Timing.h"
 
@@ -89,6 +90,18 @@ public:
       checkOp(&op);
   }
 
+  /// A function is scheduled as a whole or not at all: once any of its
+  /// timed ops has a schedule, every one that runs needs one.
+  void checkFunction(mlir::func::FuncOp function) {
+    checkBlock(function.getBody().front());
+    if (scheduled && unscheduled && report(unscheduled))
+      unscheduled
+              ->emitError("operation is not scheduled, but other "
+                          "operations of its function are")
+              .attachNote(scheduled->getLoc())
+          << "scheduled here";
+  }
+
 private:
   /// Whether to report a fault of `op`: not if it has been reported.
   bool report(mlir::Operation *op) {
@@ -116,8 +129,26 @@ private:
   void checkTimed(mlir::Operation *op) {
     auto start = pulse::scheduledStart(op, iteration);
     auto duration = pulse::scheduledDuration(op);
-    if (!start || !duration)
+    if (!start && !duration) {
+      if (!unscheduled)
+        unscheduled = op;
       return;
+    }
+    if (!scheduled)
+      scheduled = op;
+    if (!start)
+      return error(op, "a scheduled operation needs start_cycles");
+    if (!duration)
+      return error(op, "a scheduled operation needs duration_cycles");
+    if (!op->hasAttr("classical.variable")) {
+      std::optional<int64_t> cycles = cyclesOf(op);
+      if (!cycles)
+        return error(op, "a scheduled operation needs a known length");
+      if (*cycles != *duration && report(op))
+        op->emitError("duration_cycles is ")
+            << *duration << ", but the operation takes " << *cycles
+            << " cycles";
+    }
     auto periods = op->getAttrOfType<mlir::DenseI64ArrayAttr>("period_cycles");
     if (static_cast<size_t>(periods ? periods.size() : 0) != iteration.size()) {
       error(op,
@@ -155,7 +186,9 @@ private:
         }
       return;
     }
-    checkPeriods(loop);
+    // Checking iterations relies on one period per line.
+    if (!checkPeriods(loop))
+      return;
     iteration.push_back(0);
     for (int64_t k = 0; k < *trips; ++k) {
       if (k == 2 && *trips > 3)
@@ -168,8 +201,9 @@ private:
 
   /// Within one iteration of `loop`, every op on a physical line must move
   /// by the same non-negative period from one iteration to the next.
-  void checkPeriods(mlir::scf::ForOp loop) {
+  bool checkPeriods(mlir::scf::ForOp loop) {
     size_t level = iteration.size();
+    bool ok = true;
     llvm::DenseMap<mlir::Operation *, int64_t> periodOf;
     loop.getBody()->walk([&](mlir::Operation *op) {
       if (!isTimedOp(op))
@@ -179,13 +213,18 @@ private:
       if (!periods || periods.size() <= level)
         return;
       int64_t period = periods[level];
-      if (period < 0)
+      if (period < 0) {
+        ok = false;
         return error(op, "period_cycles must not be negative");
+      }
       mlir::Operation *line = trace(op->getOperand(0));
       auto [it, inserted] = periodOf.try_emplace(line, period);
-      if (!inserted && it->second != period)
+      if (!inserted && it->second != period) {
+        ok = false;
         error(op, "operations on one line in a loop must share its period");
+      }
     });
+    return ok;
   }
 
   void checkIf(mlir::scf::IfOp branch) {
@@ -215,8 +254,19 @@ private:
     measured = savedMeasured;
   }
 
+  /// The cycles a drive, readout or wait takes, as the scheduler places it.
+  static std::optional<int64_t> cyclesOf(mlir::Operation *op) {
+    if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op))
+      return pulse::waveformCycles(drive.getPulse());
+    if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
+      return pulse::waveformCycles(readout.getPulse());
+    return pulse::waitCycles(mlir::cast<pulse::WaitOp>(op));
+  }
+
   llvm::DenseMap<mlir::Operation *, int64_t> lastEnd;
   llvm::DenseSet<mlir::Operation *> reported;
+  /// The first timed op with a schedule and the first without, if any.
+  mlir::Operation *scheduled = nullptr, *unscheduled = nullptr;
   llvm::SmallVector<int64_t, 2> iteration;
   int64_t measured = std::numeric_limits<int64_t>::min();
 };
@@ -459,7 +509,7 @@ struct PulseVerifyPass
       if (funcOp.isExternal())
         return;
       TimingChecker checker;
-      checker.checkBlock(funcOp.getBody().front());
+      checker.checkFunction(funcOp);
       hadError |= checker.hadError;
     });
 
