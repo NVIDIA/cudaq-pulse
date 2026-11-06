@@ -158,13 +158,14 @@ static int64_t durationOf(mlir::Operation *op) {
   return pulse::waitCycles(mlir::cast<pulse::WaitOp>(op)).value_or(0);
 }
 
-/// Whether every op of `function` can be placed: each pulse and wait needs a
-/// known, valid length (the schedule places it for the cycles it takes, so an
-/// unknown length is an error rather than a placement that assumes some
-/// length), and each line one timeline (AcquisitionCheck).
-static mlir::LogicalResult checkPlaceable(mlir::func::FuncOp function) {
-  auto checkPulse = [](mlir::Operation *op,
-                       mlir::Value waveform) -> mlir::LogicalResult {
+/// Whether `op` can be placed: a pulse or wait needs a known, valid length
+/// (the schedule places it for the cycles it takes, so an unknown length is
+/// an error rather than a placement that assumes some length), and a line
+/// one timeline (checkOneAcquisition).
+static mlir::LogicalResult checkPlaceable(mlir::Operation *op) {
+  if (!mlir::isa_and_nonnull<pulse::PulseDialect>(op->getDialect()))
+    return mlir::success();
+  auto checkPulse = [&](mlir::Value waveform) -> mlir::LogicalResult {
     std::optional<int64_t> cycles = pulse::waveformCycles(waveform);
     if (!cycles)
       return op->emitError("cannot determine the duration of this pulse; "
@@ -175,9 +176,13 @@ static mlir::LogicalResult checkPlaceable(mlir::func::FuncOp function) {
              << *cycles;
     return mlir::success();
   };
-  auto checkWait = [](pulse::WaitOp wait) -> mlir::LogicalResult {
-    if (wait->hasAttr("classical.variable"))
-      return mlir::success();
+  if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op))
+    return checkPulse(drive.getPulse());
+  if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
+    return checkPulse(readout.getPulse());
+  if (auto wait = mlir::dyn_cast<pulse::WaitOp>(op)) {
+    // A wait a classical answer gives the length of is a variable wait,
+    // placed from its lowest length.
     std::optional<int64_t> cycles = pulse::waitCycles(wait);
     if (!cycles)
       return wait.emitError("cannot determine the length of this wait; give "
@@ -186,22 +191,10 @@ static mlir::LogicalResult checkPlaceable(mlir::func::FuncOp function) {
     if (*cycles < 0)
       return wait.emitError("a wait cannot last ") << *cycles << " cycles";
     return mlir::success();
-  };
-  pulse::AcquisitionCheck acquisitions;
-  mlir::WalkResult walk = function.walk([&](mlir::Operation *op) {
-    mlir::LogicalResult checked = mlir::success();
-    if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op))
-      checked = checkPulse(op, drive.getPulse());
-    else if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
-      checked = checkPulse(op, readout.getPulse());
-    else if (auto wait = mlir::dyn_cast<pulse::WaitOp>(op))
-      checked = checkWait(wait);
-    else if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
-      checked = acquisitions.visit(op);
-    return mlir::failed(checked) ? mlir::WalkResult::interrupt()
-                                 : mlir::WalkResult::advance();
-  });
-  return mlir::failure(walk.wasInterrupted());
+  }
+  if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
+    return pulse::checkOneAcquisition(op);
+  return mlir::success();
 }
 
 /// From the end of a submission until its future is available.
@@ -3939,6 +3932,25 @@ static std::optional<NotAffine> periodMismatch(mlir::Region &region,
 
 // ── Schedule blocks ──────────────────────────────────────────────────────
 
+/// The schedule blocks in `region` that no other block in it encloses, once
+/// every other op in it, outside those blocks, can be placed.
+static mlir::FailureOr<llvm::SmallVector<pulse::ScheduleBlockOp>>
+placeableBlocks(mlir::Region &region) {
+  llvm::SmallVector<pulse::ScheduleBlockOp> blocks;
+  mlir::WalkResult walk =
+      region.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation *op) {
+        if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op)) {
+          blocks.push_back(block);
+          return mlir::WalkResult::skip();
+        }
+        return mlir::failed(checkPlaceable(op)) ? mlir::WalkResult::interrupt()
+                                                : mlir::WalkResult::advance();
+      });
+  if (walk.wasInterrupted())
+    return mlir::failure();
+  return blocks;
+}
+
 /// The schedule blocks in `region` that no other block in it encloses.
 static llvm::SmallVector<pulse::ScheduleBlockOp>
 outermostBlocks(mlir::Region &region) {
@@ -4487,7 +4499,10 @@ scheduleRegion(mlir::Region &region, mlir::Operation *root, Resources resources,
                bool isAlap, bool classical, const Timelines &timelines,
                const pulse::LineGrid &grid,
                const pulse::Controllers &controllers) {
-  for (pulse::ScheduleBlockOp block : outermostBlocks(region)) {
+  auto blocks = placeableBlocks(region);
+  if (mlir::failed(blocks))
+    return mlir::failure();
+  for (pulse::ScheduleBlockOp block : *blocks) {
     if (mlir::failed(scheduleRegion(block.getBody(), block, Resources{},
                                     block.getPolicy() == "alap", classical,
                                     timelines, grid, controllers)))
@@ -4524,8 +4539,6 @@ static mlir::LogicalResult schedule(mlir::func::FuncOp function,
           "kernels with their own schedule yet; drop schedule= from the "
           "called kernels, or flatten them with flatten_schedules=True");
   }
-  if (mlir::failed(checkPlaceable(function)))
-    return mlir::failure();
   mlir::FailureOr<bool> annotated = classical::annotateClassicalCalls(function);
   if (mlir::failed(annotated))
     return mlir::failure();

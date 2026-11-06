@@ -27,11 +27,6 @@ inline std::optional<int64_t> waveformCycles(mlir::Value waveform) {
   mlir::Operation *definition = waveform.getDefiningOp();
   if (!definition)
     return std::nullopt;
-  if (auto op = mlir::dyn_cast<CustomSamplesOp>(definition))
-    return op.getDurationCycles();
-  if (mlir::isa<PulseAddOp, PulseSubOp, PulseMulOp, PulseScaleOp, PulseNegOp>(
-          definition))
-    return waveformCycles(definition->getOperand(0));
   mlir::Value duration;
   if (auto op = mlir::dyn_cast<GaussianPulseOp>(definition))
     duration = op.getDuration();
@@ -47,6 +42,11 @@ inline std::optional<int64_t> waveformCycles(mlir::Value waveform) {
     duration = op.getDuration();
   else if (auto op = mlir::dyn_cast<CustomOp>(definition))
     duration = op.getDuration();
+  else if (auto op = mlir::dyn_cast<CustomSamplesOp>(definition))
+    return op.getDurationCycles();
+  else if (mlir::isa<PulseAddOp, PulseSubOp, PulseMulOp, PulseScaleOp,
+                     PulseNegOp>(definition))
+    return waveformCycles(definition->getOperand(0));
   else
     return std::nullopt;
   return constantInteger(duration);

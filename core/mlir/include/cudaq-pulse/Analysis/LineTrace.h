@@ -94,40 +94,40 @@ inline bool mutuallyExclusive(mlir::Operation *a, mlir::Operation *b) {
   return false;
 }
 
+/// Whether `a` runs before `b` in program order, both in one function: `a`
+/// or the op holding it comes before `b` or the op holding it in a block they
+/// share (an op runs before the ops of its regions).
+inline bool runsBefore(mlir::Operation *a, mlir::Operation *b) {
+  for (mlir::Operation *outer = a; outer; outer = outer->getParentOp())
+    if (mlir::Operation *other = outer->getBlock()->findAncestorOpInBlock(*b))
+      return outer == other || outer->isBeforeInBlock(other);
+  return false;
+}
+
 /// A qudit has one drive and one readout line, so acquiring one where an
 /// earlier acquisition of it may also have run would make two versions of
-/// the same line, with two timelines. Visit the acquisitions in program
-/// order.
-class AcquisitionCheck {
-public:
-  mlir::LogicalResult visit(mlir::Operation *acquisition) {
-    auto &earlier = acquired[{acquisition->getOperand(0).getAsOpaquePointer(),
-                              acquisition->getName().getAsOpaquePointer()}];
-    for (mlir::Operation *first : earlier)
-      if (!mutuallyExclusive(first, acquisition)) {
-        mlir::InFlightDiagnostic diagnostic = acquisition->emitError();
-        diagnostic << "this qudit's "
-                   << (mlir::isa<GetDriveLineOp>(acquisition) ? "drive"
-                                                              : "readout")
-                   << " line is already acquired; use the line acquired first";
-        diagnostic.attachNote(first->getLoc()) << "acquired first here";
-        return mlir::failure();
-      }
-    earlier.push_back(acquisition);
-    return mlir::success();
+/// the same line, with two timelines.
+inline mlir::LogicalResult checkOneAcquisition(mlir::Operation *acquisition) {
+  for (mlir::Operation *first : acquisition->getOperand(0).getUsers()) {
+    if (first == acquisition || first->getName() != acquisition->getName() ||
+        !runsBefore(first, acquisition) ||
+        mutuallyExclusive(first, acquisition))
+      continue;
+    mlir::InFlightDiagnostic diagnostic = acquisition->emitError();
+    diagnostic << "this qudit's "
+               << (mlir::isa<GetDriveLineOp>(acquisition) ? "drive" : "readout")
+               << " line is already acquired; use the line acquired first";
+    diagnostic.attachNote(first->getLoc()) << "acquired first here";
+    return mlir::failure();
   }
-
-private:
-  llvm::DenseMap<std::pair<void *, void *>,
-                 llvm::SmallVector<mlir::Operation *, 1>>
-      acquired;
-};
+  return mlir::success();
+}
 
 /// The physical line (or link) a line, tone or link value is a version of:
 /// the `pulse.get_drive_line` / `pulse.get_readout_line` op it comes from (or
 /// the `classical.get_link` of a link), or null. A qudit has one drive and
-/// one readout line, so every retrieval of the same kind on one qref stands
-/// for the first this tracer met. Each value is traced once, so a line of n
+/// one readout line, so every acquisition of the same kind on one qref stands
+/// for the first made. Each value is traced once, so a line of n
 /// ops costs O(n) rather than O(n^2). The IR must not change while a tracer
 /// is in use.
 class AllocationTracer {
@@ -144,11 +144,7 @@ public:
       chain.push_back(value);
       if (mlir::Operation *def = value.getDefiningOp()) {
         if (mlir::isa<GetDriveLineOp, GetReadoutLineOp>(def)) {
-          found = lines
-                      .try_emplace({def->getOperand(0).getAsOpaquePointer(),
-                                    def->getName().getAsOpaquePointer()},
-                                   def)
-                      .first->second;
+          found = firstAcquisition(def);
           break;
         }
         if (def->getName().getStringRef() == "classical.get_link") {
@@ -164,9 +160,17 @@ public:
   }
 
 private:
+  /// Of the acquisitions like `acquisition` on its qref, the first made (a
+  /// use list runs from its newest use).
+  static mlir::Operation *firstAcquisition(mlir::Operation *acquisition) {
+    mlir::Operation *first = acquisition;
+    for (mlir::Operation *user : acquisition->getOperand(0).getUsers())
+      if (user->getName() == acquisition->getName())
+        first = user;
+    return first;
+  }
+
   llvm::DenseMap<mlir::Value, mlir::Operation *> memo;
-  /// (qref, retrieval op name) to the retrieval that stands for the line.
-  llvm::DenseMap<std::pair<void *, void *>, mlir::Operation *> lines;
 };
 
 } // namespace pulse

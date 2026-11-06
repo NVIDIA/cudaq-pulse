@@ -18,7 +18,6 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
-#include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
 
@@ -274,6 +273,19 @@ public:
   bool hadError = false;
 
   void visit(mlir::Operation *op) {
+    if (op->getNumResults() == 1 &&
+        mlir::isa<pulse::WaveformType>(op->getResult(0).getType()))
+      return visitWaveform(op);
+    if (auto outcome = mlir::dyn_cast<pulse::OutcomeOp>(op))
+      return checkMeasurement(op, outcome.getMeasurement());
+    if (auto isSet = mlir::dyn_cast<pulse::IsSetOp>(op))
+      return checkMeasurement(op, isSet.getMeasurement());
+    if (auto wait = mlir::dyn_cast<pulse::WaitOp>(op))
+      return checkBounds(wait);
+  }
+
+private:
+  void visitWaveform(mlir::Operation *op) {
     llvm::TypeSwitch<mlir::Operation *>(op)
         .Case<pulse::SquarePulseOp, pulse::CosinePulseOp, pulse::CustomOp>(
             [&](auto op) { checkDuration(op, op.getDuration()); })
@@ -288,13 +300,9 @@ public:
           checkRisefall(op);
         })
         .Case<pulse::PulseAddOp, pulse::PulseSubOp, pulse::PulseMulOp>(
-            [&](auto op) { checkEqualLengths(op, op.getLhs(), op.getRhs()); })
-        .Case<pulse::OutcomeOp, pulse::IsSetOp>(
-            [&](auto op) { checkMeasurement(op, op.getMeasurement()); })
-        .Case([&](pulse::WaitOp op) { checkBounds(op); });
+            [&](auto op) { checkEqualLengths(op, op.getLhs(), op.getRhs()); });
   }
 
-private:
   void checkDuration(mlir::Operation *op, mlir::Value duration) {
     auto cycles = pulse::constantInteger(duration);
     if (cycles && *cycles <= 0) {
@@ -305,10 +313,12 @@ private:
 
   /// NaN compares false with everything, so `sigma <= 0` would pass it.
   void checkSigma(mlir::Operation *op, mlir::Value sigma) {
-    llvm::APFloat value(0.0);
-    if (!mlir::matchPattern(sigma, mlir::m_ConstantFloat(&value)))
+    auto constant = sigma.getDefiningOp<mlir::arith::ConstantOp>();
+    auto value = constant ? mlir::dyn_cast<mlir::FloatAttr>(constant.getValue())
+                          : nullptr;
+    if (!value)
       return;
-    double number = value.convertToDouble();
+    double number = value.getValueAsDouble();
     if (!(number > 0.0) || !std::isfinite(number)) {
       op->emitOpError("sigma must be positive and finite, got ") << number;
       hadError = true;
@@ -374,6 +384,8 @@ private:
   /// for the result of a loop that runs), a schedule block's operand and
   /// yielded value. A function argument is the caller's.
   void checkMeasurement(mlir::Operation *op, mlir::Value measurement) {
+    if (measurement.getDefiningOp<pulse::ReadoutOp>())
+      return;
     if (mlir::Operation *wrong = sourceOtherThanReadout(measurement)) {
       op->emitOpError("measurement must be produced by pulse.readout, got ")
           << wrong->getName();
@@ -526,7 +538,6 @@ struct PulseVerifyPass
     });
     // Timing and lowering identify a line by the op that acquires it, so an
     // acquisition in a loop body cannot stand for a new line per iteration.
-    pulse::AcquisitionCheck acquisitions;
     module.walk([&](mlir::Operation *op) {
       if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
         return;
@@ -535,7 +546,7 @@ struct PulseVerifyPass
                       "it before the loop and carry it through iter_args");
         hadError = true;
       }
-      if (mlir::failed(acquisitions.visit(op)))
+      if (mlir::failed(pulse::checkOneAcquisition(op)))
         hadError = true;
     });
 
