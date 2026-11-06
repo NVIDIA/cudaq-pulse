@@ -280,10 +280,14 @@ static mlir::Value toneResult(mlir::Operation *op) {
 /// not followed: the calls before a call on its link end before it starts,
 /// and each starts after the measurements it sends, as
 /// pulse-classical-check checks (S10, S11), so theirs are ready before
-/// its own.
+/// its own. Without `throughAnswers`, neither is an answer: a call starts
+/// after what it sends (S10) and its answer is due later still, before any
+/// op of a branch on it starts (S12), so a branch on an answer is bounded
+/// by the answer alone.
 static void conditionMeasurements(mlir::Value value,
                                   llvm::SmallVectorImpl<mlir::Value> &found,
-                                  llvm::DenseSet<mlir::Value> &seen) {
+                                  llvm::DenseSet<mlir::Value> &seen,
+                                  bool throughAnswers) {
   if (mlir::isa<classical::LinkType>(value.getType()) ||
       !seen.insert(value).second)
     return;
@@ -291,15 +295,18 @@ static void conditionMeasurements(mlir::Value value,
     found.push_back(value);
     return;
   }
-  if (mlir::Operation *def = value.getDefiningOp())
-    for (mlir::Value operand : def->getOperands())
-      conditionMeasurements(operand, found, seen);
+  mlir::Operation *def = value.getDefiningOp();
+  if (!def || (!throughAnswers && mlir::isa<classical::WaitOp>(def)))
+    return;
+  for (mlir::Value operand : def->getOperands())
+    conditionMeasurements(operand, found, seen, throughAnswers);
 }
 
-static llvm::SmallVector<mlir::Value> conditionMeasurements(mlir::Value cond) {
+static llvm::SmallVector<mlir::Value>
+conditionMeasurements(mlir::Value cond, bool throughAnswers = true) {
   llvm::SmallVector<mlir::Value> found;
   llvm::DenseSet<mlir::Value> seen;
-  conditionMeasurements(cond, found, seen);
+  conditionMeasurements(cond, found, seen, throughAnswers);
   return found;
 }
 
@@ -2772,8 +2779,10 @@ private:
   mlir::LogicalResult forwardIf(mlir::scf::IfOp branch) {
     int64_t savedFloor = floor;
     auto savedArmFloors = armFloors;
+    // On several controllers each outcome reaches each controller apart,
+    // so the measurements an answer comes from bound the arm too.
     for (mlir::Value measurement :
-         conditionMeasurements(branch.getCondition())) {
+         conditionMeasurements(branch.getCondition(), several())) {
       floor = std::max(floor, ready(measurement));
       // Each controller's ops wait until the outcome reaches it.
       if (several()) {
@@ -3522,7 +3531,7 @@ private:
       }
     } else if (armStart != kNever) {
       for (mlir::Value measurement :
-           conditionMeasurements(branch.getCondition()))
+           conditionMeasurements(branch.getCondition(), false))
         bound(measurement, armStart);
       if (classical)
         bound(branch.getCondition(), armStart);
@@ -3533,7 +3542,7 @@ private:
         needed = std::min(needed, late(result));
       if (needed != kNever) {
         for (mlir::Value measurement :
-             conditionMeasurements(branch.getCondition()))
+             conditionMeasurements(branch.getCondition(), several()))
           bound(measurement, several() ? needed - controllers.extra(
                                                       readerOf(measurement), -1)
                                        : needed);

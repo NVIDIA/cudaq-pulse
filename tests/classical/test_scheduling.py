@@ -393,6 +393,49 @@ def test_very_many_calls_schedule_in_linear_time(links):
     assert timings[2000] < 8 * timings[500], timings
 
 
+@pulse.classical(max_latency_ns=200)
+def first_guess() -> tuple[float, float]:
+    return 0.0, 0.0
+
+
+@pulse.classical(max_latency_ns=200)
+def next_guess(bits: pulse.Bits) -> tuple[float, float]:
+    return 0.0, 0.0
+
+
+def _shots(n):
+    @pulse.kernel
+    def search(q):
+        d = get_drive_line(q)
+        ro = get_readout_line(q)
+        x, done = first_guess.submit().result()
+        for _ in range(2):
+            bits = []
+            for _ in range(n):
+                if done < 0.5:
+                    shift_frequency(d.tone, x)
+                    drive(d, square(64, 0.01))
+                    shift_frequency(d.tone, -x)
+                sync(d, ro)
+                bits.append(readout(ro, square(40, 0.05)))
+                sync(d, ro)
+            x, done = next_guess.submit(bits).result()
+
+    return search
+
+
+@pytest.mark.slow
+def test_shots_that_branch_on_one_answer_schedule_in_linear_time():
+    # Every shot of a round branches on the answer the round before sent its
+    # measurements to; the time, native, is the best of five.
+    timings = {}
+    for n in (100, 1600):
+        program = pulse.compile(_shots(n))
+        timings[n] = min(program.lower(Q[0]).metrics.schedule_ms for _ in range(5))
+    # 16x the shots in well under 256x the time (quadratic would be 256x).
+    assert timings[1600] < 48 * timings[100], timings
+
+
 @pulse.classical(max_latency_ns=60, link="decoder", submit="lazy")
 def record_syndrome(bits: pulse.Bits) -> pulse.Bits:
     return bits

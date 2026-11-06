@@ -52,7 +52,8 @@ static bool isTimedOp(mlir::Operation *op) {
 }
 
 /// The measurement results a branch condition is computed from, not
-/// through a link (see the scheduler's conditionMeasurements).
+/// through a link or an answer (see the scheduler's conditionMeasurements):
+/// pulse-classical-check checks a branch on an answer.
 static void conditionMeasurements(mlir::Value value,
                                   llvm::SmallVectorImpl<mlir::Value> &found,
                                   llvm::DenseSet<mlir::Value> &seen) {
@@ -63,9 +64,11 @@ static void conditionMeasurements(mlir::Value value,
     found.push_back(value);
     return;
   }
-  if (mlir::Operation *def = value.getDefiningOp())
-    for (mlir::Value operand : def->getOperands())
-      conditionMeasurements(operand, found, seen);
+  mlir::Operation *def = value.getDefiningOp();
+  if (!def || mlir::isa<classical::WaitOp>(def))
+    return;
+  for (mlir::Value operand : def->getOperands())
+    conditionMeasurements(operand, found, seen);
 }
 
 /// Checks the schedule attributes of one function, walking the program in
