@@ -39,7 +39,7 @@ import operator
 import sys
 import types
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from .._errors import NotFoundError, PulseError
 from ..classical import ClassicalFunction
@@ -1148,7 +1148,16 @@ class _Lines:
     transition.
     """
 
-    __slots__ = ("held", "shared", "log")
+    # ``watched``, set only while a measurement-conditioned arm is traced:
+    # for each arm around the trace, its record of changed containers and
+    # the containers it copies when they first change. ``plain``, set by the
+    # first such if: id -> (list, length) for lists whose first `length`
+    # entries hold no line or tone. Both are read with getattr.
+    __slots__ = ("held", "shared", "log", "watched", "plain")
+
+    if TYPE_CHECKING:
+        watched: tuple[tuple[dict[int, tuple[Any, Any]], tuple[Any, ...]], ...]
+        plain: dict[int, tuple[list[Any], int]]
 
     def __init__(self) -> None:
         self.held: dict[tuple[Any, ...], _Held] = {}
@@ -1466,18 +1475,21 @@ class PulseIREmitter:
         "_dict_items",
     )
 
-    _can_roll: bool
-    _dict_items: dict[tuple[int, Any], tuple[dict[Any, Any], Any, Any]] | None
-    _slots: dict[int, tuple[list[Any], int, IRValue]]
-    _durations: dict[int, int]
-    _mutated: dict[int, tuple[Any, Any]] | None
-    _depth: int
-    _acquired: list[int]
-    _lines: _Lines
-    _unroll: int
-    # Names a measurement-conditioned if bound in one arm only, with the
-    # branch instruction; set by the first such if.
-    _one_arm: dict[str, tuple[bc.DecodedCode, int]]
+    # The slots' types, for type checkers: annotations in the class body
+    # would cost every process's first trace.
+    if TYPE_CHECKING:
+        _can_roll: bool
+        _dict_items: dict[tuple[int, Any], tuple[dict[Any, Any], Any, Any]] | None
+        _slots: dict[int, tuple[list[Any], int, IRValue]]
+        _durations: dict[int, int]
+        _mutated: dict[int, tuple[Any, Any]] | None
+        _depth: int
+        _acquired: list[int]
+        _lines: _Lines
+        _unroll: int
+        # Names a measurement-conditioned if bound in one arm only, with the
+        # branch instruction; set by the first such if.
+        _one_arm: dict[str, tuple[bc.DecodedCode, int]]
 
     def __init__(
         self,
@@ -2122,11 +2134,50 @@ class PulseIREmitter:
         stack = self.stack
         saved_stack = list(stack)
         saved_locals = dict(self.locals)
-        containers = [
-            (v, list(v) if isinstance(v, list) else dict(v))
-            for v in saved_locals.values()
-            if isinstance(v, (list, dict))
-        ]
+        # A list or dict is copied when an arm first changes it
+        # (_note_mutation), with its length: a growing list of outcomes is
+        # not copied at every branch. A list holding lines or tones, whose
+        # slots the trace rebinds, and a subclass, are copied now, and the
+        # list's slots tracked again after the first arm.
+        containers: list[Any] = [v for v in saved_locals.values() if isinstance(v, (list, dict))]
+        lazy: list[tuple[Any, int]] = []
+        if containers:
+            found = containers
+            containers = []
+            rebound = {id(slot[0]) for slot in self._slots.values()}
+            # id -> (list, n): the list's first n entries hold no line or
+            # tone, looked at once each while they stay in it, unless a call
+            # the trace does not follow ran. A line or tone a traced change
+            # puts in a list has its slot tracked (rebound).
+            plain = getattr(self._lines, "plain", None)
+            if plain is None:
+                plain = self._lines.plain = {}
+            # What a generator yields is added to without a note.
+            yielded: Any = saved_locals.get(".yielded")
+            for v in found:
+                if v is yielded:
+                    containers.append((v, list(v)))
+                    continue
+                if v.__class__ is dict:
+                    lazy.append((v, len(v)))
+                    continue
+                if v.__class__ is list and id(v) not in rebound:
+                    seen = plain.get(id(v))
+                    i = 0 if seen is None or seen[0] is not v else seen[1]
+                    n = len(v)
+                    if i > n:
+                        i = 0
+                    while i < n:
+                        x = v[i]
+                        if x.__class__ is IRValue and x.vtype in LINEAR_TYPES:
+                            break
+                        i += 1
+                    else:
+                        plain[id(v)] = (v, n)
+                        lazy.append((v, n))
+                        continue
+                    plain.pop(id(v), None)
+                containers.append((v, list(v) if isinstance(v, list) else dict(v)))
 
         # Each channel value entering the branch, as (cell, value).
         held = self._lines.held
@@ -2135,7 +2186,9 @@ class PulseIREmitter:
 
         first = builder._next_id  # the first id made in the if
         builder.emit("scf.if", (value,), ())
-        then_locals, then_slots = self._trace_arm(view, index, join, then_start, containers)
+        then_locals, then_slots, then_copies = self._trace_arm(
+            view, index, join, then_start, (containers, lazy)
+        )
         then_stack = list(stack)
         then_held = [cell.value for cell, _ in entering]
         stack[:] = saved_stack
@@ -2143,10 +2196,15 @@ class PulseIREmitter:
         self.locals.update(saved_locals)
         for obj, copy in containers:
             self._restore_container(obj, copy)
+        if then_copies:
+            for obj, copy in then_copies:
+                self._restore_container(obj, copy)
         _restore_channels(held, n_held, entering)
         else_index = builder.mark()
         builder.emit("scf.else", (), ())
-        else_locals, else_slots = self._trace_arm(view, index, join, else_start, containers)
+        else_locals, else_slots, else_copies = self._trace_arm(
+            view, index, join, else_start, (containers, lazy)
+        )
         # Names, and stack slots (ints), the arms leave different numbers,
         # waveforms or conditions on.
         chosen: list[tuple[str | int, Any, Any]] = []
@@ -2206,13 +2264,16 @@ class PulseIREmitter:
         # holds the values a name or channel carries takes its result, so
         # that each arm yields a value once.
         listed: list[tuple[Any, int, IRValue, IRValue, IRValue | None]] = []
-        originals = {id(obj): copy for obj, copy in containers}
-        keys: dict[tuple[int, int], list[Any]] = {}
-        for obj, i, _ in then_slots + else_slots:
-            keys[(id(obj), i)] = obj
-        then_new = {(id(obj), i): new for obj, i, new in then_slots}
-        else_new = {(id(obj), i): new for obj, i, new in else_slots}
-        if keys:
+        if then_slots or else_slots:
+            originals = {id(obj): copy for obj, copy in containers}
+            if lazy:
+                for obj, copy in then_copies + else_copies:
+                    originals[id(obj)] = copy
+            keys: dict[tuple[int, int], list[Any]] = {}
+            for obj, i, _ in then_slots + else_slots:
+                keys[(id(obj), i)] = obj
+            then_new = {(id(obj), i): new for obj, i, new in then_slots}
+            else_new = {(id(obj), i): new for obj, i, new in else_slots}
             carrying = {(id(a), id(b)) for _, a, b in results}
             carrying.update((id(a), id(b)) for _, _, a, b in slot_results)
             for key, obj in keys.items():
@@ -2382,9 +2443,13 @@ class PulseIREmitter:
         branch: int,
         join: int,
         start: int,
-        containers: list[tuple[Any, Any]],
-    ) -> tuple[dict[str, StackVal], list[tuple[list[Any], int, IRValue]]]:
-        """Trace one arm until it reaches *join*; return its locals and rebound slots."""
+        snapshot: tuple[list[tuple[Any, Any]], list[tuple[Any, int]]],
+    ) -> tuple[dict[str, StackVal], list[tuple[list[Any], int, IRValue]], list[tuple[Any, Any]]]:
+        """Trace one arm until it reaches *join*; return its locals, rebound
+        slots and the contents before it of the containers it changed. Of the
+        *snapshot* of containers the arm starts with, the first are copied and
+        the others (each with its length) are copied when first changed."""
+        containers, lazy = snapshot
         returns = join >= len(view.instrs)
         # An arm may only move forward from the branch, except that a join at
         # an enclosing loop header (both arms continue) ends the arm.
@@ -2400,6 +2465,10 @@ class PulseIREmitter:
         outer = self._mutated
         mutated: dict[int, tuple[Any, Any]] = {}
         self._mutated = mutated
+        if lazy:
+            lines = self._lines
+            around = getattr(lines, "watched", ())
+            lines.watched = ((mutated, tuple(obj for obj, _ in lazy)), *around)
         try:
             outcome = self._loop(view, start, branch, len(view.instrs), header)
         except _NotRollableError:
@@ -2408,6 +2477,8 @@ class PulseIREmitter:
             raise rejoin_error(view, branch) from None
         finally:
             self._mutated = outer
+            if lazy:
+                lines.watched = around
             if outer is not None:
                 for key, entry in mutated.items():
                     outer.setdefault(key, entry)
@@ -2420,8 +2491,38 @@ class PulseIREmitter:
             from ._conditions import rejoin_error
 
             raise rejoin_error(view, branch)
-        slots = _slot_changes(containers)
-        if slots is None or not _only_containers(mutated, containers):
+        copies: list[tuple[Any, Any]] = []
+        slots: list[tuple[list[Any], int, IRValue]] | None
+        if lazy:
+            slots = None
+            for obj, length in lazy:
+                noted = mutated.get(id(obj))
+                if noted is not None and noted[1] is not None:
+                    copies.append(noted)
+                elif len(obj) != length:
+                    break
+            else:
+                slots = _slot_changes(containers + copies)
+        elif containers:
+            slots = _slot_changes(containers)
+        else:
+            slots = []
+        if slots is not None and mutated:
+            # Any other container the arm changed was made in it; one a call
+            # the trace does not follow may have changed must be as it was.
+            known = {id(obj) for obj, _ in containers}
+            known.update(id(obj) for obj, _ in lazy)
+            for key, (obj, copy) in mutated.items():
+                if (
+                    copy is not None
+                    and key not in known
+                    and not (
+                        obj == copy if obj.__class__ is set else _container_unchanged(obj, copy)
+                    )
+                ):
+                    slots = None
+                    break
+        if slots is None:
             from ._conditions import filtered
 
             if header >= 0 and filtered(self, containers):
@@ -2435,7 +2536,7 @@ class PulseIREmitter:
                 "a measurement-conditioned branch may only change list entries that "
                 "hold lines or tones"
             )
-        return dict(self.locals), slots
+        return dict(self.locals), slots, copies
 
     @staticmethod
     def _jump(target: int, lo: int, hi: int, header: int) -> int:
@@ -3002,8 +3103,22 @@ class PulseIREmitter:
                 except AttributeError:
                     pass
             owner = getattr(callable_val, "__self__", None)
-            if owner.__class__ in _CONTAINERS and fname not in _READ_METHODS:
-                self._note_mutation(owner)
+            if self._mutated is not None:
+                if owner.__class__ in _CONTAINERS:
+                    if fname not in _READ_METHODS:
+                        self._note_mutation(owner)
+                else:
+                    # A call the trace does not follow may change any
+                    # container an arm around it copies only when it first
+                    # changes, and the lists known to hold no line or tone.
+                    lines = self._lines
+                    for mutated, watched in getattr(lines, "watched", ()):
+                        for obj in watched:
+                            if id(obj) not in mutated:
+                                mutated[id(obj)] = (obj, obj.copy())
+                    plain = getattr(lines, "plain", None)
+                    if plain:
+                        plain.clear()
             try:
                 result = callable_val(*call_args, **(kwargs or {}))
             except _EVALUATION_ERRORS as e:

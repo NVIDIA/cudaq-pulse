@@ -9,12 +9,15 @@
 
 from __future__ import annotations
 
+import random
+
 import cudaq_pulse as pulse
 import pytest
 from cudaq_pulse.kernel.ir_builder import CompilationError, Parameter
 
 from tests._handles import Q
 from tests._ir import python_ir
+from tests._work import python_work
 from tests.kernel.ir_corpus import active_reset, feedback_in_loop, negated_feedback
 
 _FREQ = {0: 5.0e9, 1: 5.1e9}
@@ -339,3 +342,103 @@ def test_nested_feedback_ending_an_unrolled_loop_body():
 
     events = k.lower(Q[0]).schedule
     assert [e.kind for e in events] == ["readout", "drive", "drive"]
+
+
+def _rounds(n):
+    @pulse.kernel(unroll_threshold=10**9)
+    def rounds(q):
+        d = get_drive_line(q)  # noqa: F821
+        r = get_readout_line(q)  # noqa: F821
+        outcomes = []
+        for _ in range(n):
+            m = readout(r, square(40, 0.05))  # noqa: F821
+            sync(d, r)  # noqa: F821
+            if m:
+                drive(d, square(16, 0.1))  # noqa: F821
+            outcomes.append(m)
+
+    return rounds
+
+
+@pytest.mark.slow
+def test_branches_beside_a_growing_list_of_outcomes_trace_in_linear_work():
+    # An arm that leaves a list as it was costs nothing for its length.
+    work = {n: python_work(lambda n=n: pulse.compile(_rounds(n)).lower(Q[0])) for n in (50, 200)}
+    assert all(work[200][count] <= 4 * work[50][count] for count in work[50]), work
+
+
+def _beside_a_list(condition, listed, change=""):
+    source = (
+        "def k(q):\n"
+        "    d = get_drive_line(q)\n"
+        "    r = get_readout_line(q)\n"
+        "    n = get_n.submit().result()\n"
+        "    outcomes = [0.5]\n"
+        "    for _ in range(3):\n"
+        "        m = readout(r, square(40, 0.05))\n"
+        "        m2 = readout(r, square(40, 0.05))\n"
+        "        sync(d, r)\n"
+        f"        if {condition}:\n"
+        f"            drive(d, square(16, 0.1)){change}\n"
+        "        drive(d, square(8, 0.2 if n > 3 else 0.1))\n"
+        + ("        outcomes.append(m)\n" if listed else "")
+    )
+    scope = vars(pulse) | {"get_n": pulse.classical(_get_n, max_latency_ns=0)}
+    namespace: dict = {}
+    exec(compile(source, "<beside>", "exec"), scope, namespace)
+    return pulse.kernel(unroll_threshold=10**9)(namespace["k"])
+
+
+_CONDITIONS = [
+    "m and not m2",
+    "(n > 3) & (n < 9)",
+    "(n > 3) | (n < 1)",
+    "n in (1, 5)",
+    "(n > 3) is True",
+    "any([n > 3, n < 1])",
+    "all([n > 1, n < 9])",
+]
+
+
+@pytest.mark.parametrize("condition", _CONDITIONS)
+def test_runtime_conditions_beside_a_growing_list_trace_as_without_it(condition):
+    # The list is copied only if an arm changes it: these arms do not.
+    listed = pulse.compile(_beside_a_list(condition, True)).lower(Q[0]).schedule
+    assert listed == pulse.compile(_beside_a_list(condition, False)).lower(Q[0]).schedule
+
+
+@pytest.mark.parametrize("condition", ["m and m2", "(n > 3) & (n < 9)", "any([n > 3, n < 1])"])
+def test_an_arm_on_a_combined_condition_that_changes_a_list_entry_is_rejected(condition):
+    kernel = _beside_a_list(condition, True, change="; outcomes[0] = 0.25")
+    with pytest.raises(CompilationError, match="may only change list entries that hold lines"):
+        pulse.compile(kernel).lower(Q[0])
+
+
+def test_an_arm_that_changes_a_list_entry_is_rejected():
+    @pulse.kernel
+    def changes(q):
+        d = get_drive_line(q)  # noqa: F821
+        r = get_readout_line(q)  # noqa: F821
+        values = [1.0, 2.0]
+        if readout(r, square(40, 0.05)):  # noqa: F821
+            values[0] = 3.0
+            drive(d, square(16, 0.1))  # noqa: F821
+
+    with pytest.raises(CompilationError, match="may only change list entries that hold lines"):
+        pulse.compile(changes).lower(Q[0])
+
+
+def test_an_arm_whose_plain_python_call_reorders_a_list_is_rejected():
+    rng = random.Random(0)
+
+    @pulse.kernel
+    def shuffles(q):
+        d = get_drive_line(q)  # noqa: F821
+        r = get_readout_line(q)  # noqa: F821
+        values = [1.0, 2.0, 3.0, 4.0]
+        if readout(r, square(40, 0.05)):  # noqa: F821
+            rng.shuffle(values)
+            drive(d, square(16, 0.1))  # noqa: F821
+
+    with pytest.raises(CompilationError, match="may only change list entries that hold lines"):
+        pulse.compile(shuffles).lower(Q[0])
