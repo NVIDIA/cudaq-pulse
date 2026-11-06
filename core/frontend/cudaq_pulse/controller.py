@@ -966,11 +966,11 @@ def _walk(
 ) -> tuple[
     list[Any],
     list[dict[str, Any]],
-    list[dict[str, Any]],
+    dict[str, Any],
     Sequence[tuple[int, int, int]],
     list[str],
 ]:
-    """The lines, events, and frame changes no event takes of *lowered*, at
+    """The lines, events, and frames of *lowered* (``_with_frames``), at
     the values of its call; without *values*, a module with float parameters
     has ``None`` where they reach, and ``{"unknown": ...}`` for a value it
     computes at run time that the export has no term for.
@@ -1028,12 +1028,12 @@ def _walk(
                 )
                 for index, end in ends:
                     events[index]["end_cycles"] = end
-        frame_state = []
+        frames: dict[str, Any] = {}
     else:
         # A check (without *values*) needs no value the export cannot name.
         with lowered._lock:
             if own is None:
-                lines, events, frame_state = module.controller_program(
+                lines, events, frames = module.controller_program(
                     _PARAMETERS,
                     _AMPLITUDES,
                     lowered.classical != (),
@@ -1042,7 +1042,7 @@ def _walk(
                 )
             else:
                 ratio = own.ratio
-                lines, events, frame_state, off_grid = module.controller_program(
+                lines, events, frames, off_grid = module.controller_program(
                     _PARAMETERS,
                     _AMPLITUDES,
                     lowered.classical != (),
@@ -1073,12 +1073,12 @@ def _walk(
     if fine is not None:
         for line in lines:
             line["fine_delay_ns"] = fine.get((line["role"], line["qudit"]), 0.0)
-    return lines, events, frame_state, off_grid, problems
+    return lines, events, frames, off_grid, problems
 
 
 def _walk_structured(
     lowered: Lowered, table: _Waveforms, slots: list[int] | None = None
-) -> tuple[list[Any], list[dict[str, Any]], list[dict[str, Any]], tuple[()], list[str]]:
+) -> tuple[list[Any], list[dict[str, Any]], dict[str, Any], tuple[()], list[str]]:
     """``_walk`` for format /2, on the program clock: the lines as (role,
     qudit), loops whose iterations repeat stay loops, and events give their
     waveform's index in *table*. *slots* gets each line's runtime-qudit
@@ -1092,7 +1092,7 @@ def _walk_structured(
         raise InvalidValueError("the module has runtime qudits; lower it with handles first")
     module = lowered._concrete()
     with lowered._lock:
-        lines, events, frame_state = module.controller_program(
+        lines, events, frames = module.controller_program(
             _PARAMETERS,
             _AMPLITUDES,
             lowered.classical != (),
@@ -1102,7 +1102,7 @@ def _walk_structured(
         )
     if any("runtime" in event for event in _played(events)):
         table.inline(events)
-    return lines, events, frame_state, (), []
+    return lines, events, frames, (), []
 
 
 def _computes_at_run_time(lowered: Lowered) -> bool:
@@ -1199,7 +1199,7 @@ def export(
     clocks = (lowered._generic or lowered).clocks
     native = None if clocks is None else _native_clock(clocks)
     # In the controller's own cycles from here on.
-    lines, events, frame_state, off, problems = _walk(lowered, True, native, True, slots)
+    lines, events, frames, off, problems = _walk(lowered, True, native, True, slots)
     if system is not None:
         violations = system._violations(
             lowered, lines, events, clocks, off, problems, True, None, None
@@ -1207,7 +1207,7 @@ def export(
         if violations:
             raise _limit_error(lowered, violations)
     elif limits is not None:
-        _check_at_export(lowered, limits, clocks, (lines, events, frame_state, off, problems))
+        _check_at_export(lowered, limits, clocks, (lines, events, frames, off, problems))
     if clocks is None:
         clock = lowered.target.clock_ghz
     else:
@@ -1233,8 +1233,6 @@ def export(
         "manifest": base["manifest"],
         "limits": None if limits is None else limits.as_dict(),
     }
-    if frame_state:
-        program = _after_events(program, "frame_state", frame_state)
     if role is not None:
         if plan is None or len(plan[1]) != len(events):
             if slots is None:
@@ -1249,14 +1247,66 @@ def export(
                 for key in template[1]:
                     symbols[key] = symbols[key][:]
                 event["symbols"] = symbols
+    if frames:
+        program = _with_frames(program, frames, _slot_names(events, role))
     return program
 
 
-def _after_events(program: dict[str, Any], key: str, value: Any) -> dict[str, Any]:
-    """*program* with *key* inserted right after its ``events``."""
+def _with_frames(
+    program: dict[str, Any], frames: Mapping[str, Any], slots: Mapping[int, str]
+) -> dict[str, Any]:
+    """*program* with what the native *frames* hold right after its
+    ``events``: its ``frame_state``, then its ``runtime_tones``, of the tones
+    on its ``lines`` (``_runtime_tones``; *slots* names a runtime qudit's)."""
+    added = []
+    if "frame_state" in frames:
+        added.append(("frame_state", frames["frame_state"]))
+    if "runtime_tones" in frames:
+        table = _runtime_tones(frames["runtime_tones"], program["lines"], slots)
+        if table:
+            added.append(("runtime_tones", table))
     items = list(program.items())
     at = list(program).index("events") + 1
-    return dict([*items[:at], (key, value), *items[at:]])
+    return dict([*items[:at], *added, *items[at:]])
+
+
+def _runtime_tones(
+    found: Sequence[tuple[int, float | None, float | None]],
+    lines: Sequence[Mapping[str, Any]],
+    slots: Mapping[int, str],
+) -> dict[str, dict[str, Any]]:
+    """The ``runtime_tones`` of an export: each tone tracked at run time
+    that *found* gives, on one of *lines* or on none, by its id, with its
+    line and the frame every shot starts it in. On the line of a runtime
+    qudit (its slot in *slots*, by line) the tone is the line's own, and its
+    reset frequency is the symbol of the slot's native frequency."""
+    roles = {line["line"]: line["role"] for line in lines}
+    table = {}
+    for tone, (line, frequency, phase) in enumerate(found):
+        if line >= 0 and line not in roles:
+            continue
+        entry: dict[str, Any] = {
+            "line": None if line < 0 else line,
+            "reset_frequency_hz": frequency,
+            "reset_phase": phase,
+        }
+        slot = slots.get(line)
+        if slot is not None:
+            native = "f01" if roles[line] == "drive" else "f_ro"
+            entry["symbols"] = {"qudit": slot, "reset_frequency_hz": [f"{slot}.{native}"]}
+        table[str(tone)] = entry
+    return table
+
+
+def _slot_names(events: Sequence[Mapping[str, Any]], role: Any) -> dict[int, str]:
+    """The slot of each runtime qudit's line, as format /1 *events* name it."""
+    if role is None:
+        return {}
+    return {
+        event["line"]: event["symbols"]["qudit"]
+        for event in events
+        if "qudit" in event.get("symbols", ())
+    }
 
 
 def _check_at_export(
@@ -1298,7 +1348,7 @@ def _export_structured(
             "delays; export version 1 for this machine"
         )
     slots: list[int] | None = None if role is None else []
-    raw_lines, events, frame_state, _, _ = _walk_structured(lowered, waveforms, slots)
+    raw_lines, events, frames, _, _ = _walk_structured(lowered, waveforms, slots)
     if limits is not None:
         _check_at_export(lowered, limits, clocks, None)
     own = None if clocks is None else clocks.controllers[0]
@@ -1352,8 +1402,9 @@ def _export_structured(
             )
         }
     program["events"] = events
-    if frame_state:
-        program["frame_state"] = frame_state
+    if frames:
+        names = {} if slots is None else {i: f"s{k}" for i, k in enumerate(slots) if k >= 0}
+        program = _with_frames(program, frames, names)
     program["epochs"] = base["epochs"]
     program["calls"] = base["calls"]
     program["links"] = base["links"]
@@ -1796,15 +1847,23 @@ def _controller_index(controller: Any, count: int) -> int:
 
 def _part(
     lowered: Lowered, controller: int | None
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[int | None], list[list[int]], int]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[int | None],
+    list[list[int]],
+    int,
+    dict[str, Any],
+]:
     """Of a program on a control system of several controllers: its lines
     and events in program cycles, each line's controller, the controllers
     taking part in each event, and the controller whose program is wanted:
     *controller*, else the only one the program uses (``ValueError`` when it
-    uses more). A controller the program does not use gets an empty part."""
+    uses more), and the program's frames (``_walk``). A controller the
+    program does not use gets an empty part."""
     system = lowered.options.machine._system
     assert system is not None
-    lines, events, _, _, _ = _walk(lowered, slots=None)
+    lines, events, frames, _, _ = _walk(lowered, slots=None)
     owners, _ = system._owners(lines)
     parts = system._parts(events, owners)
     count = len(system.controllers)
@@ -1829,7 +1888,7 @@ def _part(
                     "program"
                 )
         index = used[0] if used else 0
-    return lines, events, owners, parts, index
+    return lines, events, owners, parts, index, frames
 
 
 def _export_part(
@@ -1849,7 +1908,7 @@ def _export_part(
     system = machine._system
     assert system is not None
     clocks = (lowered._generic or lowered).clocks
-    lines, events, owners, parts, index = _part(lowered, controller)
+    lines, events, owners, parts, index, frames = _part(lowered, controller)
     # The checks count each controller's events in its cycles, in place.
     checked = events if clocks is None else copy.deepcopy(events)
     violations = system._violations(lowered, lines, checked, clocks, (), (), True, None, None)
@@ -1911,6 +1970,11 @@ def _export_part(
         assert plan is not None
         exported["program_id"] = role.program_id
         exported["symbols"] = _symbols(lowered, plan[0])
+    if "runtime_tones" in frames:
+        # A controller's part has the run-time tones of its lines, and no
+        # frame_state.
+        tones = {"runtime_tones": frames["runtime_tones"]}
+        exported = _with_frames(exported, tones, _slot_names(events, role))
     return exported
 
 

@@ -556,7 +556,8 @@ behavior may change in any 0.x release.
   tone whose frame depends on run time, the frame changes since its
   previous drive (`tone`, `frame_updates`), each with where it is made
   (`start_cycles`), so a backend can compute them where the answer arrives
-  and the phase the frame gains from there. A program that
+  and the phase the frame gains from there, and each such tone's line and
+  the frame every shot starts it in (`runtime_tones`). A program that
   computes nothing at run time exports exactly as before. Within a version,
   keys and event kinds are only added. `MachineModel(controller=
   ControllerLimits(...))` states what a controller can play (clock, issue

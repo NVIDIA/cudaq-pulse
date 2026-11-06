@@ -2817,8 +2817,11 @@ public:
   /// `parameters`, and the amplitude is that of the shapes in `amplitudes`.
   /// What is known only at run time is an expression over readouts, answers
   /// and constants (see ControllerWalk), its operands named by `parameters`.
-  /// Third, with frames that persist from shot to shot, the frame each tone
-  /// ends the shot in, else an empty list.
+  /// Third, a dict, empty unless the program has either of: with frames that
+  /// persist from shot to shot, "frame_state", the frame each tone ends the
+  /// shot in; and "runtime_tones", each tone tracked at run time, by id, as
+  /// (line, reset frequency, reset phase), -1 and None where not known
+  /// (ControllerWalk::RuntimeTone).
   ///
   /// With `own`, (num, den, grid) and not `rolled`: the times in the cycles
   /// of a controller counting `num` of its cycles every `den` program
@@ -2889,10 +2892,22 @@ public:
     ControllerEvents program(walk, waveforms, std::move(waveform), parameters,
                              amplitudes, rolled, exportable);
     nb::list events = program.build();
+    nb::dict frames;
+    if (!finals.empty())
+      frames["frame_state"] = program.frameState(finals);
+    if (!walk.toneIds.empty()) {
+      auto number = [](double x) -> nb::object {
+        return std::isnan(x) ? nb::none() : nb::cast(x);
+      };
+      nb::list tones;
+      for (const ControllerWalk::RuntimeTone &tone : walk.runtimeTones())
+        tones.append(nb::make_tuple(tone.line, number(tone.frequencyHz),
+                                    number(tone.phase)));
+      frames["runtime_tones"] = tones;
+    }
     if (own)
-      return nb::make_tuple(roles, events, program.frameState(finals),
-                            nb::cast(offGrid));
-    return nb::make_tuple(roles, events, program.frameState(finals));
+      return nb::make_tuple(roles, events, frames, nb::cast(offGrid));
+    return nb::make_tuple(roles, events, frames);
   }
 
   /// `controller_events()` for a controller counting `num` of its cycles

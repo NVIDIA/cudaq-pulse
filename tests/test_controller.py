@@ -887,6 +887,88 @@ def test_a_frame_changes_place_is_in_its_controllers_own_cycles():
     assert retuned_by_answer_changes(own["events"]) == [(i, -(-start // 2)) for i, start in places]
 
 
+@pulse.kernel
+def retuned_tones(q):
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    upper = d.tones[(1, 2)]
+    x = detuning.submit().result()
+    shift_frequency(d.tone, x)
+    drive(d, square(16, 0.1))
+    m = readout(r, square(40, 0.05))
+    if m:
+        shift_phase(upper, 0.25)
+    drive(d, square(16, 0.1), tone=upper)
+    readout(r, square(40, 0.05))
+
+
+@pulse.kernel
+def fixed_tones(q):
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    drive(d, square(16, 0.1))
+    readout(r, square(40, 0.05))
+    drive(d, square(16, 0.1), tone=d.tones[(1, 2)])
+
+
+def test_each_tone_tracked_at_run_time_is_exported_with_its_reset_frame():
+    lowered = pulse.compile(retuned_tones).lower(Q[0])
+    flat = lowered.export_controller()
+    # The frames the tones start in, from a program that changes none.
+    fixed = pulse.compile(fixed_tones).lower(Q[0]).export_controller()
+    assert "runtime_tones" not in fixed
+    assert "runtime_tones" not in pulse.compile(fixed_tones).lower(Q[0]).export_controller(
+        version=2
+    )
+    drive_hz, _, upper_hz = (e["frequency_hz"] for e in fixed["events"])
+    assert flat["runtime_tones"] == {
+        "0": {"line": 0, "reset_frequency_hz": drive_hz, "reset_phase": 0.0},
+        "1": {"line": 0, "reset_frequency_hz": upper_hz, "reset_phase": 0.0},
+    }
+    assert upper_hz != drive_hz
+    played = [e for e in flat["events"] if e["kind"] == "drive"]
+    assert [(e["tone"], e["line"]) for e in played] == [(0, 0), (1, 0)]
+    assert list(flat)[list(flat).index("events") + 1] == "runtime_tones"
+    persistent = MachineModel(controller=ControllerLimits(persistent_frames=True))
+    kept = pulse.compile(retuned_tones, machine=persistent).lower(Q[0]).export_controller()
+    keys = list(kept)
+    assert keys[keys.index("events") + 1 :][:2] == ["frame_state", "runtime_tones"]
+    assert kept["runtime_tones"] == flat["runtime_tones"]
+    assert json.loads(json.dumps(flat["runtime_tones"])) == flat["runtime_tones"]
+    structured = lowered.export_controller(version=2)
+    assert structured["runtime_tones"] == flat["runtime_tones"]
+    assert controller_module.unroll(structured)["runtime_tones"] == flat["runtime_tones"]
+
+
+@pulse.kernel
+def retuned_slot(q: pulse.Qudit):
+    d = get_drive_line(q)
+    r = get_readout_line(q)
+    m = readout(r, square(40, 0.05))
+    if m:
+        shift_phase(d.tone, 0.25)
+        shift_phase(r.tone, 0.5)
+    drive(d, square(16, 0.1))
+    readout(r, square(40, 0.05))
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_a_runtime_qudits_tones_reset_to_the_symbols_of_its_native_frequencies(version):
+    compiled = pulse.compile(retuned_slot)
+    for qudit in (Q[1], Q[2]):
+        program = compiled.lower(qudit).export_controller(version=version)
+        values = {s["symbol"]: s.get("value") for s in program["symbols"]}
+        roles = {line["line"]: line["role"] for line in program["lines"]}
+        native = {"drive": "s0.f01", "readout": "s0.f_ro"}
+        tones = program["runtime_tones"]
+        assert sorted(roles[t["line"]] for t in tones.values()) == ["drive", "readout"]
+        for tone in tones.values():
+            symbol = native[roles[tone["line"]]]
+            assert tone["symbols"] == {"qudit": "s0", "reset_frequency_hz": [symbol]}
+            assert tone["reset_frequency_hz"] == values[symbol]
+            assert tone["reset_phase"] == 0.0
+
+
 @pulse.classical(max_latency_ns=200)
 def scaled(bits: pulse.Bits, value: float) -> float:
     return value * (bits[0] + bits[1])

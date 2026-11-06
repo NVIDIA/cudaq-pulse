@@ -512,6 +512,33 @@ def test_each_controller_exports_its_part_of_the_program_in_its_own_cycles():
         lowered.export_controller(controller="1")  # type: ignore[arg-type]
 
 
+@pulse.kernel
+def mixed_retuned(a, b):
+    da = get_drive_line(a)
+    db = get_drive_line(b)
+    ra = get_readout_line(a)
+    m = readout(ra, square(pulse.round_duration(ra, 99), 0.05))
+    if m:
+        shift_phase(da.tone, 0.25)
+    drive(da, gaussian(40, 0.1, 10.0))
+    drive(db, square(pulse.round_duration(db, 15), 0.1))
+
+
+def test_each_controller_exports_the_run_time_tones_of_its_own_lines():
+    qpu = _mixed()
+    lowered = pulse.compile(mixed_retuned, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
+    first, second = (lowered.export_controller(controller=index) for index in (0, 1))
+    [drive] = [e for e in first["events"] if e["kind"] == "drive"]
+    assert first["runtime_tones"] == {
+        str(drive["tone"]): {
+            "line": drive["line"],
+            "reset_frequency_hz": qpu.target.frequencies[0],
+            "reset_phase": 0.0,
+        }
+    }
+    assert "runtime_tones" not in second
+
+
 def test_a_program_on_one_controller_exports_without_naming_it():
     qpu = _mixed(links=LINKS)
     lowered = pulse.compile(with_a_call, device=qpu).lower(qpu.qudits[2])

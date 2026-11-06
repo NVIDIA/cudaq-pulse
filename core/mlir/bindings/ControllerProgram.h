@@ -523,6 +523,34 @@ struct ControllerWalk {
     return out;
   }
 
+  /// A tone tracked at run time: the line it is on (a line's own tone's
+  /// line, else the first it plays on, else -1) and the frame every shot
+  /// starts it in, its frequency and phase (NaN where not known here: a
+  /// runtime qudit's carrier frequency).
+  struct RuntimeTone {
+    int64_t line = -1;
+    double frequencyHz = kUnknown, phase = kUnknown;
+  };
+
+  /// Each tracked tone with an id, by id.
+  std::vector<RuntimeTone> runtimeTones() const {
+    std::vector<RuntimeTone> out(toneIds.size());
+    for (auto &[root, id] : toneIds) {
+      RuntimeTone &tone = out[id];
+      Frame reset = initialFrame(root);
+      tone.frequencyHz = reset.frequencyHz;
+      tone.phase = reset.phase;
+      if (mlir::isa_and_nonnull<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(
+              root))
+        tone.line = lineOf(root);
+    }
+    for (const ControllerRecord &r : result)
+      if (r.known >= 0 && r.line >= 0)
+        if (int64_t id = known[r.known].tone; id >= 0 && out[id].line < 0)
+          out[id].line = r.line;
+    return out;
+  }
+
   /// On a tracked tone (`tone` at least 0), the frame changes since its
   /// latest drive or readout and its own phase offset; the waveform
   /// operands computed from a readout or an answer, as (node, operand

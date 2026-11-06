@@ -119,6 +119,16 @@ Drives and readouts also have:
     of reading ``frequency_hz`` and ``phase_rad``, each ``id`` once. A drive
     whose own phase offset does not change the frame has ``phase_offset_rad``.
 
+A program with such tones has ``runtime_tones`` (after ``events`` and
+``frame_state``): by each
+tone's id, as a string, its ``line`` (a line's own tone's line, else the line
+it first plays on) and the frame every shot starts it in,
+``reset_frequency_hz`` and ``reset_phase`` (in radians), to which a
+controller tracking the tone applies its ``frame_updates``. On the line of a
+runtime qudit, the entry's ``symbols`` name the symbol its reset frequency
+is, ``s0.f01`` on a drive line and ``s0.f_ro`` on a readout line. A
+program without such tones has no ``runtime_tones``.
+
 Every shot starts from the reset frame: each tone at its own frequency, with
 phase 0. A frame change (``shift_phase``, ``set_phase``, ``shift_frequency``,
 ``set_frequency``) is a point on the timeline: in the scheduled IR it has
@@ -376,7 +386,7 @@ Values known at run time
     is. A waveform parameter known only at run time is its expression
     in the entry of the program's ``waveforms`` the event plays, where
     ``/1`` has ``null`` and the node's ``runtime``. The program's
-    ``frame_state`` is as in ``/1``. A loop whose body changes or plays a tone whose frame
+    ``runtime_tones`` and ``frame_state`` are as in ``/1``. A loop whose body changes or plays a tone whose frame
     is tracked at run time is exported once per iteration, so that each
     frame change keeps its own ``id``; a loop whose run-time values repeat
     with its iterations stays one loop.

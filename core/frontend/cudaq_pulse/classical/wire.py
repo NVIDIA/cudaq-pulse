@@ -389,7 +389,7 @@ def _export_part(lowered: Any, controller: int | None) -> dict[str, Any]:
     one (as ``cudaq_pulse.controller.export`` chooses it), in its cycles."""
     from ..controller import _part
 
-    _, events, _, parts, index = _part(lowered, controller)
+    _, events, _, parts, index, _ = _part(lowered, controller)
     functions = frozenset(
         event["function"]
         for event, part in zip(events, parts, strict=True)
