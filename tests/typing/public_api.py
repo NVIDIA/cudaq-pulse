@@ -168,7 +168,7 @@ pulse.classical.external(max_latency_ns=1, args=())  # type: ignore[call-arg]  #
 # pulse.controller is a module and the loader of controller descriptions.
 box = pulse.controller("reference.controller", drive_lines=[0, 1])
 assert_type(box, pulse.Controller)
-assert_type(pulse.controller.ControllerLimits(issue_cycles=2), ControllerLimits)
+assert_type(pulse.controller.ControllerLimits(instruction_cycles=2), ControllerLimits)
 assert_type(pulse.controller.FORMAT, str)
 assert_type(pulse.controller.EXPRESSION_TERMS, frozenset[str])
 assert_type(pulse.controller.evaluate_expression({"const": 1.0}), float | int | bool)

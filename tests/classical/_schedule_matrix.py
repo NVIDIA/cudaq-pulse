@@ -709,7 +709,7 @@ def check_export(case: Case, low: Any, again: Any) -> None:
 
     assert export_text(low) == export_text(again)
     assert check(low, ControllerLimits(clock_ghz=CLOCK)) == []
-    no_timeouts = check(low, ControllerLimits(answer_timeouts=False))
+    no_timeouts = check(low, ControllerLimits(supports_timeouts=False))
     if case.take == "timeout":
         assert no_timeouts
         assert all("take it with result() (no timeout)" in v for v in no_timeouts)

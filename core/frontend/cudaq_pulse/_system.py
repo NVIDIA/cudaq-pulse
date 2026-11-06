@@ -80,7 +80,7 @@ class Capability(enum.StrEnum):
     to another controller, which branches on it; ``loop``: run a rolled
     loop itself, holding its body once. A controller without ``loop`` plays
     a rolled loop unrolled, so each iteration counts against its
-    ``max_events``. Unrolling does not change its waveform memory: a
+    ``max_pulses``. Unrolling does not change its waveform memory: a
     waveform is stored once per shape however often it plays, so only the
     pulse count goes up.
     """
@@ -1539,7 +1539,7 @@ def _placement(system: ControlSystem) -> dict[int, dict[int, int]]:
 
 
 def _wiring_problems(system: ControlSystem, target: TargetDescription) -> list[Problem]:
-    """The lines and acquirers of *system* that name carriers *target* lacks."""
+    """The lines and detectors of *system* that name carriers *target* lacks."""
     carriers = set(target.qubits)
     problems: list[Problem] = []
     for index, controller in enumerate(system.controllers):
@@ -1555,12 +1555,12 @@ def _wiring_problems(system: ControlSystem, target: TargetDescription) -> list[P
                             fix=f"it has qudits {_ranges(sorted(carriers))}",
                         )
                     )
-        for carrier in controller.acquirers:
+        for carrier in controller.detectors:
             if carrier not in carriers:
                 problems.append(
                     Problem(
                         f"qudit {carrier} is not in the quantum system",
-                        path=f"{path}.acquirers",
+                        path=f"{path}.detectors",
                         value=carrier,
                         fix=f"it has qudits {_ranges(sorted(carriers))}",
                     )
@@ -1586,7 +1586,7 @@ _DESCRIPTIONS = os.path.join(os.path.dirname(os.path.realpath(__file__)), "contr
 _WIRING = (
     "drive_lines",
     "readout_lines",
-    "acquirers",
+    "detectors",
     "peer_latency_cycles",
     "clock_skew_cycles",
     "alignment_tolerance_cycles",
@@ -1698,7 +1698,7 @@ def load_controller(description: str | os.PathLike[str], /, **wiring: Any) -> Co
 
     *description* is the name of an installed description or the path of a
     TOML file. Each file is parsed once. *wiring* sets any field of
-    ``Controller``: its lines, acquirers and peers, and overrides of the
+    ``Controller``: its lines, detectors and peers, and overrides of the
     description's values.
     """
     if isinstance(description, str) and not description.endswith(".toml"):
@@ -2134,7 +2134,7 @@ class _Reader:
         if entry is None:
             return None
         given = {k: v for k, v in entry.items() if k in known}
-        for name in ("acquirers", "peer_latency_cycles"):
+        for name in ("detectors", "peer_latency_cycles"):
             value = given.get(name)
             if isinstance(value, Mapping):
                 try:

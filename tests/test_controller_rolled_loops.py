@@ -160,7 +160,9 @@ def close(q):
 def test_a_rolled_loop_reports_each_iteration_as_it_does_now():
     lowered = pulse.compile(close).lower(Q[0])
     assert lowered.metrics.op_count == 7
-    limits = ControllerLimits(issue_cycles=4, min_wait_cycles=4, max_amplitude=0.05, max_events=7)
+    limits = ControllerLimits(
+        instruction_cycles=4, min_idle_cycles=4, max_amplitude=0.05, max_pulses=7
+    )
     over = (
         "peaks at amplitude 0.1; the controller plays at most 0.05 (ControllerLimits.max_amplitude)"
     )
@@ -194,8 +196,8 @@ def test_the_second_and_third_loops_of_10_15_iterations_stay_rolled_in_a_child()
 
 
 def test_a_violation_in_every_iteration_of_10_15_is_counted_not_listed():
-    few = _in_a_child("close", 20, "issue_cycles=4, min_wait_cycles=4")
-    many = _in_a_child("close", 10**15, "issue_cycles=4, min_wait_cycles=4")
+    few = _in_a_child("close", 20, "instruction_cycles=4, min_idle_cycles=4")
+    many = _in_a_child("close", 10**15, "instruction_cycles=4, min_idle_cycles=4")
     assert many["count"] == 10**15
     assert many["message"] == str(few["message"]).replace(
         "... and 10 more", f"... and {10**15 - 10} more"
@@ -209,12 +211,12 @@ def test_a_check_of_run_time_frame_changes_in_branches_takes_bounded_memory():
         "  line 0: its waveforms take 72 samples; the controller's waveform memory holds 64"
     )
     for shots in (2, 400):
-        found = _in_a_child("retuned", shots, "waveform_samples=64")
+        found = _in_a_child("retuned", shots, "waveform_memory_samples=64")
         assert found == {"count": 1, "message": message}
 
 
 def test_the_event_count_of_a_rolled_loop_is_its_trip_count_times_its_body():
-    found = _in_a_child("drives", 10**15 + 1, "max_events=10**15")
+    found = _in_a_child("drives", 10**15 + 1, "max_pulses=10**15")
     assert found["count"] == 1
     assert found["message"] == (
         "the program exceeds the controller's limits:\n  1000000000000001 drives and readouts; "
@@ -284,19 +286,19 @@ def _loops(n: int) -> dict[str, Any]:
 
 
 LIMITS = [
-    ControllerLimits(issue_cycles=4, min_wait_cycles=4, max_amplitude=0.05, max_events=7),
+    ControllerLimits(instruction_cycles=4, min_idle_cycles=4, max_amplitude=0.05, max_pulses=7),
     ControllerLimits(
-        issue_cycles=2,
-        acquirers={0: 0, 1: 0},
-        acquirer_hold_cycles=30,
-        tones_per_line=1,
-        waveform_samples=50,
+        instruction_cycles=2,
+        detectors={0: 0, 1: 0},
+        detector_recovery_cycles=30,
+        max_tones_per_line=1,
+        waveform_memory_samples=50,
         feedback_latency_cycles=60,
     ),
-    ControllerLimits(feedback_latency_cycles=500, max_events=10),
-    ControllerLimits(issue_cycles=2, waveform_samples=10, waveform_memory="shared"),
+    ControllerLimits(feedback_latency_cycles=500, max_pulses=10),
+    ControllerLimits(instruction_cycles=2, waveform_memory_samples=10, waveform_memory="shared"),
     # A float's amplitude is checked when it is called with one.
-    ControllerLimits(issue_cycles=4, min_wait_cycles=4, max_amplitude=0.05),
+    ControllerLimits(instruction_cycles=4, min_idle_cycles=4, max_amplitude=0.05),
 ]
 
 
@@ -445,7 +447,7 @@ _LEFT_TO_THE_WALK = (
 # (rcp peels a few first) it leaves to that walk.
 @pytest.mark.parametrize("schedule", ["asap", "rcp"])
 def test_the_native_check_leaves_a_long_loop_out_of_step_to_the_summarizing_walk(schedule):
-    limits = ControllerLimits(issue_cycles=4, max_amplitude=0.05)
+    limits = ControllerLimits(instruction_cycles=4, max_amplitude=0.05)
     left = []
     for trips in (64, 200):
         program = pulse.compile(
@@ -668,8 +670,8 @@ def test_a_long_rolled_loop_compiled_for_a_controllers_own_clock_is_summarized_a
 
 def test_a_rolled_loop_of_10_15_iterations_on_a_controllers_own_clock_is_checked_in_bounds():
     for clock in ("cycles_per_timestep=4", "clock_ghz=1.0"):
-        few = _in_a_child("close", 20, f"issue_cycles=4, min_wait_cycles=4, {clock}")
-        many = _in_a_child("close", 10**15, f"issue_cycles=4, min_wait_cycles=4, {clock}")
+        few = _in_a_child("close", 20, f"instruction_cycles=4, min_idle_cycles=4, {clock}")
+        many = _in_a_child("close", 10**15, f"instruction_cycles=4, min_idle_cycles=4, {clock}")
         each = int(str(few["count"])) // 20
         assert each and many["count"] == each * 10**15
         assert many["message"] == str(few["message"]).replace(
@@ -741,7 +743,7 @@ def test_a_long_rolled_loop_of_runtime_qudits_is_summarized_and_checked_as_every
         return walk(*args, **kwargs)
 
     # A runtime qudit's own frequency is one tone wherever it plays.
-    tones = [ControllerLimits(tones_per_line=1), ControllerLimits(tones_per_line=2)]
+    tones = [ControllerLimits(max_tones_per_line=1), ControllerLimits(max_tones_per_line=2)]
     for limits in [*LIMITS, *tones]:
         if clock is not None:
             limits = dataclasses.replace(limits, **OWN_CLOCKS[clock])
@@ -755,7 +757,10 @@ def test_a_long_rolled_loop_of_runtime_qudits_is_summarized_and_checked_as_every
 
 
 def test_a_rolled_loop_of_10_15_iterations_of_a_runtime_qudit_is_checked_in_bounds():
-    for limits in ("issue_cycles=4, min_wait_cycles=4", "tones_per_line=1, max_amplitude=0.05"):
+    for limits in (
+        "instruction_cycles=4, min_idle_cycles=4",
+        "max_tones_per_line=1, max_amplitude=0.05",
+    ):
         few = _in_a_child("runtime", 20, limits)
         many = _in_a_child("runtime", 10**15, limits)
         each = int(str(few["count"])) // 20
@@ -795,24 +800,24 @@ def _systems() -> dict[str, Any]:
         )
 
     one = pulse.Controller(
-        drive_lines=range(4), readout_lines=range(4), issue_cycles=4, min_wait_cycles=4
+        drive_lines=range(4), readout_lines=range(4), instruction_cycles=4, min_idle_cycles=4
     )
     return {
         "one": pulse.ControlSystem(controllers=[one]),
-        "unshared": two(issue_cycles=2),
-        "delayed": two(1.0, {("drive", 2): 3.0}, cores=True, issue_cycles=2),
-        "skewed": two(1.0, skew=1, issue_cycles=2),
-        "shared": two(1.0, issue_cycles=2, feedback_latency_cycles=60, peer_latency_cycles=8),
-        "counted": two(1.0, max_events=10, tones_per_line=1, waveform_samples=50),
-        "unrolled": two(1.0, supports=[c for c in _CAPABILITIES if c != "loop"], max_events=10),
+        "unshared": two(instruction_cycles=2),
+        "delayed": two(1.0, {("drive", 2): 3.0}, cores=True, instruction_cycles=2),
+        "skewed": two(1.0, skew=1, instruction_cycles=2),
+        "shared": two(1.0, instruction_cycles=2, feedback_latency_cycles=60, peer_latency_cycles=8),
+        "counted": two(1.0, max_pulses=10, max_tones_per_line=1, waveform_memory_samples=50),
+        "unrolled": two(1.0, supports=[c for c in _CAPABILITIES if c != "loop"], max_pulses=10),
         "unforwarded": two(1.0, supports=[c for c in _CAPABILITIES if c != "forward_outcome"]),
         "gridded": two(1.0, cycles_per_timestep=4, max_amplitude=0.05),
-        "processed": two(1.0, cores=True, issue_cycles=2),
+        "processed": two(1.0, cores=True, instruction_cycles=2),
         "clocked": pulse.ControlSystem(
             controllers=[
                 pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], clock_ghz=1.0),
                 pulse.Controller(
-                    drive_lines=[2, 3], readout_lines=[2, 3], clock_ghz=0.5, issue_cycles=2
+                    drive_lines=[2, 3], readout_lines=[2, 3], clock_ghz=0.5, instruction_cycles=2
                 ),
             ],
             reference_clock_ghz=0.5,
@@ -957,8 +962,8 @@ def test_a_rolled_loop_of_10_15_iterations_across_controllers_is_checked_in_boun
     system = (
         "from tests._handles import ladder_target\n"
         "def _controller(lines):\n"
-        "    return pulse.Controller(drive_lines=lines, readout_lines=lines, issue_cycles=4,"
-        " min_wait_cycles=4)\n"
+        "    return pulse.Controller(drive_lines=lines, readout_lines=lines, instruction_cycles=4,"
+        " min_idle_cycles=4)\n"
         "qpu = pulse.device({'target': ladder_target(4), 'control_system': pulse.ControlSystem("
         "controllers=[_controller([0, 1]), _controller([2, 3])], reference_clock_ghz=1.0)})\n"
         "options = {'device': qpu}\n"

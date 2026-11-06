@@ -344,15 +344,15 @@ def _limits(
     played = sum(
         1 for events in emitted.values() for e in events if e[0] in (Event.PLAY, Event.ACQUIRE)
     )
-    if limits.max_events is not None and played > limits.max_events:
-        return f"emitted {played} pulses; the controller plays at most {limits.max_events}"
+    if limits.max_pulses is not None and played > limits.max_pulses:
+        return f"emitted {played} pulses; the controller plays at most {limits.max_pulses}"
     for line, events in emitted.items():
         starts = sorted(e[1] for e in events if e[0] in (Event.PLAY, Event.ACQUIRE))
         for a, b in zip(starts, starts[1:], strict=False):
-            if b - a < limits.issue_cycles:
+            if b - a < limits.instruction_cycles:
                 return (
                     f"line {line}: two pulses start {b - a} cycles apart; the controller "
-                    f"issues one per {limits.issue_cycles}"
+                    f"issues one per {limits.instruction_cycles}"
                 )
     return None
 

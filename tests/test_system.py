@@ -125,13 +125,13 @@ def test_a_control_system_reports_every_wiring_problem_at_once():
 
 
 def test_wiring_names_carriers_of_the_quantum_system():
-    box = pulse.Controller(drive_lines=[0, 40], readout_lines=[41], acquirers={42: 0})
+    box = pulse.Controller(drive_lines=[0, 40], readout_lines=[41], detectors={42: 0})
     with pytest.raises(DeviceDefinitionError) as raised:
         _qpu(box)
     assert [p.path for p in raised.value.problems] == [
         "control_system.controllers[0].drive_lines[1]",
         "control_system.controllers[0].readout_lines[0]",
-        "control_system.controllers[0].acquirers",
+        "control_system.controllers[0].detectors",
     ]
     assert "it has qudits 0..16" in str(raised.value)
     assert isinstance(raised.value, ValueError)
@@ -181,14 +181,14 @@ def test_rcp_waits_the_feedback_latency_of_the_controllers():
 
 
 def test_compile_uses_the_device_control_system():
-    box = pulse.Controller(drive_lines=range(4), readout_lines=range(4), max_events=1)
+    box = pulse.Controller(drive_lines=range(4), readout_lines=range(4), max_pulses=1)
     qpu = _qpu(box)
     with pytest.raises(ControllerLimitError, match="at most 1"):
         pulse.compile(drive_and_branch, device=qpu)(qpu.qudits[0], qpu.qudits[1])
     # As with the same limits given to a machine model.
     with pytest.raises(ControllerLimitError, match="at most 1"):
         pulse.compile(
-            drive_and_branch, machine=MachineModel(controller=ControllerLimits(max_events=1))
+            drive_and_branch, machine=MachineModel(controller=ControllerLimits(max_pulses=1))
         ).lower(qpu.qudits[0], qpu.qudits[1])
     with pytest.raises(TypeError, match="MachineModel or a ControlSystem"):
         pulse.compile(drive_and_branch, machine=box)
@@ -204,13 +204,13 @@ def test_a_line_on_no_controller_does_not_compile():
 
 
 def test_each_controller_is_held_to_its_own_limits():
-    a, b = _two_boxes(max_events=0 + 1)
+    a, b = _two_boxes(max_pulses=0 + 1)
     qpu = _qpu(a, b)
     compiled = pulse.compile(drive_and_branch, schedule="rcp", device=qpu)
     # Two events on box.a, one on box.b.
     compiled.lower(qpu.qudits[0], qpu.qudits[2])
     a, b = _two_boxes()
-    a = pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], model="box.a", max_events=1)
+    a = pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], model="box.a", max_pulses=1)
     qpu = _qpu(a, b)
     with pytest.raises(ControllerLimitError, match=r"controllers\[0\] \(box.a\): 2 drives"):
         pulse.compile(drive_and_branch, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
@@ -490,8 +490,8 @@ def two_loops(q: pulse.Qudit, r: pulse.Qudit):
 
 def test_a_controller_without_loop_gets_its_loops_unrolled_for_it_only():
     no_loop = [c for c in pulse.Capability if c != "loop"]
-    a, b = _two_boxes(max_events=4)
-    a = pulse.Controller(drive_lines=[0, 1], model="box.a", max_events=4, supports=no_loop)
+    a, b = _two_boxes(max_pulses=4)
+    a = pulse.Controller(drive_lines=[0, 1], model="box.a", max_pulses=4, supports=no_loop)
     qpu = _qpu(a, b)
     assert "scf.for" in two_loops.lower(qpu.qudits[0], qpu.qudits[2]).mlir()
     # Without loop, box.a plays all 60 drives of its loop, naming it; box.b
@@ -504,16 +504,16 @@ def test_a_controller_without_loop_gets_its_loops_unrolled_for_it_only():
     assert "box.b" not in text
     # Unrolling adds pulses, not waveforms: memory for one shape fits either way.
     for supports in (None, no_loop):
-        held = pulse.Controller(drive_lines=[0, 1], waveform_samples=20, supports=supports)
+        held = pulse.Controller(drive_lines=[0, 1], waveform_memory_samples=20, supports=supports)
         qpu = _qpu(held, b)
         pulse.compile(two_loops, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
-    # With loop, a body over max_events is counted once and still fails.
-    small = pulse.Controller(drive_lines=[0, 1], model="box.a", max_events=1)
+    # With loop, a body over max_pulses is counted once and still fails.
+    small = pulse.Controller(drive_lines=[0, 1], model="box.a", max_pulses=1)
     qpu = _qpu(small, b)
     with pytest.raises(ControllerLimitError, match="body counted once; the controller holds"):
         pulse.compile(two_loops, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
     # A plain ControllerLimits counts every iteration of both loops, as before.
-    machine = MachineModel(controller=ControllerLimits(max_events=60))
+    machine = MachineModel(controller=ControllerLimits(max_pulses=60))
     with pytest.raises(ControllerLimitError) as raised:
         pulse.compile(two_loops, machine=machine).lower(*qpu.qudits[:2])
     text = str(raised.value)
@@ -674,19 +674,19 @@ def test_a_system_file_reports_every_problem_with_its_line(tmp_path):
     qpu = _qpu(*_two_boxes())
     data = qpu.as_dict()
     data["control_system"]["controllers"][1]["drive_lines"] = [2, 30]
-    data["control_system"]["controllers"][0]["issue_cycle"] = 2
+    data["control_system"]["controllers"][0]["instruction_cycle"] = 2
     path = tmp_path / "qpu.json"
     path.write_text(json.dumps(data, indent=2))
     with pytest.raises(DeviceDefinitionError) as raised:
         pulse.device(path)
     unknown, wiring = raised.value.problems
-    assert unknown.path == "control_system.controllers[0].issue_cycle"
-    assert "did you mean 'issue_cycles'?" in str(raised.value)
+    assert unknown.path == "control_system.controllers[0].instruction_cycle"
+    assert "did you mean 'instruction_cycles'?" in str(raised.value)
     assert wiring.path == "control_system.controllers[1].drive_lines[1]" and wiring.value == 30
     text = path.read_text().splitlines()
     assert unknown.file == wiring.file == str(path)
     assert text[wiring.line - 1].strip().startswith("30")
-    assert '"issue_cycle"' in text[unknown.line - 1]
+    assert '"instruction_cycle"' in text[unknown.line - 1]
     assert str(raised.value).splitlines()[1].strip().startswith(f"{path}:{unknown.line}:")
 
 
@@ -728,16 +728,19 @@ def test_every_installed_description_loads_and_compiles(name):
 
 def test_a_description_file_reports_every_problem_with_its_line(tmp_path):
     path = tmp_path / "box.toml"
-    path.write_text('model = "lab.box"\nissue_cycle = 2\ndrive_lines = [0]\n')
+    path.write_text('model = "lab.box"\ninstruction_cycle = 2\ndrive_lines = [0]\n')
     with pytest.raises(DeviceDefinitionError) as raised:
         pulse.controller(path)
     problems = {p.path: p for p in raised.value.problems}
-    assert problems["issue_cycle"].line == 2 and "issue_cycles" in problems["issue_cycle"].fix
+    assert (
+        problems["instruction_cycle"].line == 2
+        and "instruction_cycles" in problems["instruction_cycle"].fix
+    )
     assert problems["drive_lines"].line == 3 and "installation" in problems["drive_lines"].message
     assert any("no version" in p.message for p in raised.value.problems)
-    path.write_text('model = "lab.box"\nversion = "2"\nissue_cycles = 3\n')
+    path.write_text('model = "lab.box"\nversion = "2"\ninstruction_cycles = 3\n')
     box = pulse.controller(path, drive_lines=[0])
-    assert box.issue_cycles == 3 and box.model == "lab.box"
+    assert box.instruction_cycles == 3 and box.model == "lab.box"
 
 
 def test_a_system_file_from_another_description_version_is_noticed_once():

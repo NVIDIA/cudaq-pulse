@@ -315,7 +315,9 @@ def two_amplitudes(q, a: float, b: float):
 
 def test_waveforms_of_one_shape_at_float_amplitudes_share_waveform_memory():
     machine = MachineModel(
-        controller=ControllerLimits(waveform_samples=60, sample_rate_ghz=pulse.device().clock_ghz)
+        controller=ControllerLimits(
+            waveform_memory_samples=60, sample_rate_ghz=pulse.device().clock_ghz
+        )
     )
     lowered = pulse.compile(two_amplitudes, machine=machine).lower(Q[0], 0.5, 0.25)
     assert check(lowered.generic) == []
@@ -337,13 +339,13 @@ def close_drives(q, r):
     drive(d, gaussian(8, 0.1, 2.0))
 
 
-def test_limits_report_issue_spacing_acquirers_and_feedback():
-    limits = ControllerLimits(issue_cycles=4, min_wait_cycles=4)
+def test_limits_report_instruction_spacing_detectors_and_feedback():
+    limits = ControllerLimits(instruction_cycles=4, min_idle_cycles=4)
     found = check(pulse.compile(close_drives).lower(Q[0], Q[1]), limits)
     assert len(found) == 1 and "starts 5 cycles after" in found[0]
-    limits = ControllerLimits(acquirers={0: 0, 1: 0}, acquirer_hold_cycles=30)
+    limits = ControllerLimits(detectors={0: 0, 1: 0}, detector_recovery_cycles=30)
     found = check(pulse.compile(two_readouts, schedule="asap").lower(Q[0], Q[1]), limits)
-    assert len(found) == 1 and "acquirer 0" in found[0]
+    assert len(found) == 1 and "detector 0" in found[0]
     # Serialized by the scheduler, the readouts fit.
     machine = MachineModel(max_concurrent_readouts=1, line_switch_penalty_cycles=30)
     lowered = pulse.compile(two_readouts, schedule="rcp", machine=machine).lower(Q[0], Q[1])
@@ -364,15 +366,15 @@ def test_limits_report_clock_tones_memory_and_size():
     assert check(lowered, ControllerLimits(clock_ghz=clock / 2)) == []
     found = check(lowered, ControllerLimits(clock_ghz=clock / 8))
     assert len(found) == 3 and all("moves in timesteps of 8 cycles" in f for f in found)
-    assert check(lowered, ControllerLimits(tones_per_line=1)) == []
+    assert check(lowered, ControllerLimits(max_tones_per_line=1)) == []
     # Line 0 plays two shapes of 16 cycles, the readout line one of 100,
     # line 2 two of 20.
-    found = check(lowered, ControllerLimits(sample_rate_ghz=4.0, waveform_samples=64))
+    found = check(lowered, ControllerLimits(sample_rate_ghz=4.0, waveform_memory_samples=64))
     assert [f.split(":")[0] for f in found] == ["line 1", "line 2"]
-    found = check(lowered, ControllerLimits(max_events=4))
+    found = check(lowered, ControllerLimits(max_pulses=4))
     assert "5 drives and readouts" in found[0] and "at most 4" in found[0]
     # Both arms of a branch play on one line at one time without conflict.
-    assert check(lowered, ControllerLimits(issue_cycles=4)) == []
+    assert check(lowered, ControllerLimits(instruction_cycles=4)) == []
 
 
 def test_a_sample_rate_sets_the_samples_a_waveform_takes():
@@ -380,11 +382,13 @@ def test_a_sample_rate_sets_the_samples_a_waveform_takes():
     clock = lowered.target.clock_ghz
     # At one and a half samples per cycle, the readout's 100 cycles take 150
     # samples and line 2's two shapes of 20 cycles 30 each.
-    found = check(lowered, ControllerLimits(sample_rate_ghz=1.5 * clock, waveform_samples=60))
+    found = check(
+        lowered, ControllerLimits(sample_rate_ghz=1.5 * clock, waveform_memory_samples=60)
+    )
     assert [f.split(":")[0] for f in found] == ["line 1"]
     assert "150 samples" in found[0]
     with pytest.raises(ValueError, match="no whole-cycle ratio"):
-        check(lowered, ControllerLimits(sample_rate_ghz=clock / 10_007, waveform_samples=60))
+        check(lowered, ControllerLimits(sample_rate_ghz=clock / 10_007, waveform_memory_samples=60))
 
 
 @pytest.mark.parametrize("rate", [0, -1.0, float("inf"), float("nan"), True, "2"])
@@ -399,13 +403,13 @@ def test_samples_per_cycles_is_no_longer_a_limit():
 
 
 def test_limits_on_the_machine_model_fail_the_compilation():
-    machine = MachineModel(controller=ControllerLimits(issue_cycles=4, min_wait_cycles=4))
+    machine = MachineModel(controller=ControllerLimits(instruction_cycles=4, min_idle_cycles=4))
     with pytest.raises(ControllerLimitError, match="starts 5 cycles after") as caught:
         pulse.compile(close_drives, machine=machine).lower(Q[0], Q[1])
     assert len(caught.value.violations) == 1
     assert isinstance(caught.value, pulse.CompilationError)
     with pytest.raises(TypeError, match="ControllerLimits"):
-        MachineModel(controller={"issue_cycles": 4})  # type: ignore[arg-type]
+        MachineModel(controller={"instruction_cycles": 4})  # type: ignore[arg-type]
 
 
 @pulse.kernel
@@ -487,22 +491,22 @@ def test_a_limit_error_lists_ten_violations_and_counts_the_rest():
 
 
 def test_limits_are_part_of_the_machine_model_identity():
-    a = MachineModel(controller=ControllerLimits(issue_cycles=4, acquirers={0: 0}))
-    b = MachineModel(controller=ControllerLimits(issue_cycles=4, acquirers={0: 0}))
-    c = MachineModel(controller=ControllerLimits(issue_cycles=2))
+    a = MachineModel(controller=ControllerLimits(instruction_cycles=4, detectors={0: 0}))
+    b = MachineModel(controller=ControllerLimits(instruction_cycles=4, detectors={0: 0}))
+    c = MachineModel(controller=ControllerLimits(instruction_cycles=2))
     assert a == b and hash(a) == hash(b)
     assert a != c and a != MachineModel()
-    assert ControllerLimits(acquirers={0: 0, 1: 0}).as_dict()["acquirers"] == {"0": 0, "1": 0}
-    with pytest.raises(ValueError, match="issue_cycles"):
-        ControllerLimits(issue_cycles=0)
+    assert ControllerLimits(detectors={0: 0, 1: 0}).as_dict()["detectors"] == {"0": 0, "1": 0}
+    with pytest.raises(ValueError, match="instruction_cycles"):
+        ControllerLimits(instruction_cycles=0)
     with pytest.raises(ValueError, match="cannot be negative"):
-        ControllerLimits(acquirer_hold_cycles=-1)
+        ControllerLimits(detector_recovery_cycles=-1)
     with pytest.raises(ValueError, match="positive or None"):
-        ControllerLimits(waveform_samples=0)
+        ControllerLimits(waveform_memory_samples=0)
 
 
 def test_the_limits_travel_with_the_program():
-    limits = ControllerLimits(issue_cycles=1, tones_per_line=2)
+    limits = ControllerLimits(instruction_cycles=1, max_tones_per_line=2)
     program = _program(machine=MachineModel(controller=limits))
     assert program["limits"] == limits.as_dict()
     assert _program()["limits"] is None
@@ -527,7 +531,7 @@ def test_float_arguments_are_exported_at_their_values():
 
 
 def test_a_kernel_with_float_parameters_is_checked_when_compiled():
-    machine = MachineModel(controller=ControllerLimits(issue_cycles=4, min_wait_cycles=40))
+    machine = MachineModel(controller=ControllerLimits(instruction_cycles=4, min_idle_cycles=40))
     with pytest.raises(ControllerLimitError, match="starts 16 cycles after"):
         pulse.compile(ramsey, machine=machine).lower(Q[0], 0.75)
 
@@ -541,14 +545,14 @@ def retuned(q, shift: float):
 
 
 def test_a_float_tone_shift_beyond_the_limit_fails_at_the_call_not_at_export():
-    machine = MachineModel(controller=ControllerLimits(tones_per_line=1))
+    machine = MachineModel(controller=ControllerLimits(max_tones_per_line=1))
     compiled = pulse.compile(retuned, machine=machine)
     with pytest.raises(ControllerLimitError, match="2 tone frequencies"):
         compiled.lower(Q[0], 50e6)
     # No shift plays one tone, which fits.
     assert len(compiled.lower(Q[0], 0.0).export_controller()["events"]) == 2
     # Two tones fit a line that plays two.
-    two = MachineModel(controller=ControllerLimits(tones_per_line=2))
+    two = MachineModel(controller=ControllerLimits(max_tones_per_line=2))
     lowered = pulse.compile(retuned, machine=two).lower(Q[0], 50e6)
     assert len(lowered.export_controller()["events"]) == 2
 
@@ -562,7 +566,9 @@ def two_widths(q, a: float, b: float):
 
 def test_waveforms_of_float_widths_take_memory_by_their_values():
     machine = MachineModel(
-        controller=ControllerLimits(waveform_samples=60, sample_rate_ghz=pulse.device().clock_ghz)
+        controller=ControllerLimits(
+            waveform_memory_samples=60, sample_rate_ghz=pulse.device().clock_ghz
+        )
     )
     compiled = pulse.compile(two_widths, machine=machine)
     # One width is one shape, stored once: it fits.
@@ -604,7 +610,7 @@ def test_a_call_is_checked_once_per_distinct_values(monkeypatch):
         return check_call(view)
 
     monkeypatch.setattr(controller_module, "_call_violations", counted)
-    machine = MachineModel(controller=ControllerLimits(tones_per_line=1))
+    machine = MachineModel(controller=ControllerLimits(max_tones_per_line=1))
     compiled = pulse.compile(retuned, machine=machine)
     for shift in (0.0, 0.0, 0.0, -0.0):
         compiled.lower(Q[0], shift)
@@ -616,7 +622,7 @@ def test_a_call_is_checked_once_per_distinct_values(monkeypatch):
 
 
 def test_a_checked_call_names_a_value_that_is_not_a_finite_number():
-    machine = MachineModel(controller=ControllerLimits(tones_per_line=1))
+    machine = MachineModel(controller=ControllerLimits(max_tones_per_line=1))
     compiled = pulse.compile(retuned, machine=machine)
     with pytest.raises(pulse.InvalidValueError, match="argument 'shift' is nan"):
         compiled.lower(Q[0], float("nan"))
@@ -638,7 +644,7 @@ def waited(q, tau: float):
 
 
 def test_a_float_wait_length_is_checked_against_the_limits_at_the_call():
-    machine = MachineModel(controller=ControllerLimits(issue_cycles=4, min_wait_cycles=40))
+    machine = MachineModel(controller=ControllerLimits(instruction_cycles=4, min_idle_cycles=40))
     compiled = pulse.compile(waited, machine=machine)
     with pytest.raises(ControllerLimitError, match="starts 20 cycles after"):
         compiled.lower(Q[0], 4.0)
@@ -662,7 +668,7 @@ def test_a_call_that_lowers_exports(shift, widths, tones, samples):
         shift_frequency(d.tone, 25e6)
         drive(d, gaussian(40, 0.5, 10.0))
 
-    limits = ControllerLimits(tones_per_line=tones, waveform_samples=samples)
+    limits = ControllerLimits(max_tones_per_line=tones, waveform_memory_samples=samples)
     # The call fails exactly when its program, compiled free, exceeds them.
     expected = check(pulse.compile(program).lower(Q[0], shift, *widths), limits)
     compiled = pulse.compile(program, machine=MachineModel(controller=limits))
@@ -751,8 +757,8 @@ def test_events_after_a_variable_wait_are_in_its_epoch():
     assert len(program["epochs"]) == 2
 
 
-def test_a_controller_without_answer_timeouts_rejects_a_timed_wait():
-    limits = ControllerLimits(answer_timeouts=False)
+def test_a_controller_without_timeouts_rejects_a_timed_wait():
+    limits = ControllerLimits(supports_timeouts=False)
     assert check(pulse.compile(decoded).lower(Q[0]), limits) == []
     lowered = pulse.compile(timed_out).lower(Q[0])
     answer = next(e for e in lowered.export_controller()["events"] if e["kind"] == "answer")

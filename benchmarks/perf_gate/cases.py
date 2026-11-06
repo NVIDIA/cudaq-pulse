@@ -212,10 +212,10 @@ def _surface(d: int) -> tuple[Any, int]:
 def _feedback_program(n: int) -> Any:
     # tests/test_perf_guard.py: the export scaling guard's program.
     limits = ControllerLimits(
-        issue_cycles=2,
-        acquirers={0: 0},
-        tones_per_line=2,
-        waveform_samples=10**9,
+        instruction_cycles=2,
+        detectors={0: 0},
+        max_tones_per_line=2,
+        waveform_memory_samples=10**9,
         feedback_latency_cycles=1,
     )
     machine = MachineModel(readout_latency_cycles=1, controller=limits)

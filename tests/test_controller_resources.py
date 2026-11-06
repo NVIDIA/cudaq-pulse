@@ -338,5 +338,5 @@ def test_without_compute_limits_bodies_are_not_read(monkeypatch):
         raise AssertionError("a body was read")
 
     monkeypatch.setattr(_controller_cost, "analyze_callable", fail)
-    _lower(_machine(max_events=10_000))
+    _lower(_machine(max_pulses=10_000))
     _lower(_machine())

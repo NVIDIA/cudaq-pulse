@@ -137,13 +137,13 @@ def test_a_wrong_number_of_programs_fails(ideal, monkeypatch):
 def test_a_program_beyond_the_declared_controller_is_skipped(ideal, monkeypatch):
     backend = ToyBackend()
     monkeypatch.setattr(backend, "machine_model", lambda: MachineModel())
-    report = backends.validate(backend, controller=ControllerLimits(clock_ghz=1.0, max_events=2))
+    report = backends.validate(backend, controller=ControllerLimits(clock_ghz=1.0, max_pulses=2))
     assert "SKIP play: exceeds the controller's limits" in str(report)
     assert report.ok
 
 
 def test_emitted_pulses_must_respect_the_declared_limits():
-    limits = ControllerLimits(issue_cycles=4, max_events=2)
+    limits = ControllerLimits(instruction_cycles=4, max_pulses=2)
     close = {0: [("play", 0, 16), ("play", 2, 16)]}
     assert _validation._limits(limits, close) == (
         "line 0: two pulses start 2 cycles apart; the controller issues one per 4"

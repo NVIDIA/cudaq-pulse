@@ -63,7 +63,7 @@ behavior may change in any 0.x release.
   the system: a line on no controller, each controller's own limits, a
   capability (`pulse.Capability`) a controller lacks, and a call over a link
   that does not reach its controllers fail to compile. A controller that
-  supports `loop` holds a rolled loop's body once against `max_events`; one
+  supports `loop` holds a rolled loop's body once against `max_pulses`; one
   that does not plays it unrolled, and its limit error names the loop; unrolling adds pulses,
   not waveform memory, which holds each shape once. `rcp` keeps a branch
   on a readout the `feedback_latency_cycles` of the controllers that read out.
@@ -562,7 +562,7 @@ behavior may change in any 0.x release.
   keys and event kinds are only added. `MachineModel(controller=
   ControllerLimits(...))` states what a controller can play (clock, issue
   spacing, waveform memory at its `sample_rate_ghz`, tones, the largest
-  amplitude, readout acquirers, feedback latency, answer timeouts, program
+  amplitude, readout detectors, feedback latency, answer timeouts, program
   size; the compiler itself limits no amplitude) and makes compilation fail with
   `ControllerLimitError` when a program exceeds it, parametric kernels
   included: a limit that only some values of a float parameter exceed, such
@@ -619,7 +619,7 @@ behavior may change in any 0.x release.
   fails it when a call's answer is due later than that after the end of
   the readouts its request carries, in any iteration. Waits whose length
   is known only at run time count at their highest length.
-- **Waveform memory.** `ControllerLimits(waveform_samples=65536,
+- **Waveform memory.** `ControllerLimits(waveform_memory_samples=65536,
   waveform_memory="shared")` describes a controller's waveform memory in
   plain values, the same in Python and in a TOML description: its size in
   samples, and whether each line has one (`"per_line"`, the default) or one
@@ -628,9 +628,9 @@ behavior may change in any 0.x release.
   each waveform has an `id` from its content and a `shape_id` equal for
   waveforms that differ only in amplitude and phase, and `parameters` says
   what each `float` parameter reaches, so a planner can tell which values
-  change only amplitudes. The controller and its links are written in /2
-  under their new names (`instruction_cycles`, `detectors`, `send_ns`,
-  `slots`, ...), what it computes as a list of `processors`, and the
+  change only amplitudes. The links are written in /2 under their new
+  names (`send_ns`, `slots`, ...), what the controller computes as a list
+  of `processors`, and the
   quantum system's name as `quantum_system`. Two waveforms of
   one shape at `float` amplitudes share memory, and a limit that only some
   `float` values exceed is checked when a call supplies them.

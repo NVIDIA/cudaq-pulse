@@ -530,7 +530,7 @@ def swept(q, amp: float):
 _PERSISTENT = MachineModel(
     controller=ControllerLimits(
         persistent_frames=True,
-        waveform_samples=4096,
+        waveform_memory_samples=4096,
         waveform_memory="shared",
     )
 )
@@ -880,7 +880,7 @@ def _raised(make):
 
 
 def _limit_error():
-    machine = MachineModel(controller=ControllerLimits(issue_cycles=4, min_wait_cycles=40))
+    machine = MachineModel(controller=ControllerLimits(instruction_cycles=4, min_idle_cycles=40))
     return _raised(lambda: pulse.compile(ramsey, machine=machine).lower(Q[0], 0.75))
 
 

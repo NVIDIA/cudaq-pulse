@@ -311,14 +311,14 @@ def _two_readouts(a: Qudit, b: Qudit):
     readout(lb, square(20, 0.05))
 
 
-def test_acquirer_limits_are_checked_per_call():
+def test_detector_limits_are_checked_per_call():
     c = DEV.layout
-    limits = ControllerLimits(acquirers={c[0]: 0, c[1]: 0, c[2]: 1}, acquirer_hold_cycles=30)
+    limits = ControllerLimits(detectors={c[0]: 0, c[1]: 0, c[2]: 1}, detector_recovery_cycles=30)
     compiled = pulse.compile(_two_readouts, schedule="asap")
     shared = compiled.lower(H[0], H[1])
     apart = compiled.lower(H[0], H[2])
     assert compiled.cache_info().compiled == 1
-    assert any("acquirer 0" in v for v in check(shared, limits))
+    assert any("detector 0" in v for v in check(shared, limits))
     assert check(apart, limits) == []
 
 
@@ -373,7 +373,7 @@ def test_reading_a_register_element_attribute_names_the_list_rewrite():
 
 
 def test_a_runtime_qudit_frequency_is_one_tone_until_its_line_is_retuned():
-    machine = pulse.compiler.MachineModel(controller=ControllerLimits(tones_per_line=1))
+    machine = pulse.compiler.MachineModel(controller=ControllerLimits(max_tones_per_line=1))
 
     @pulse.kernel
     def native(q: Qudit):

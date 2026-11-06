@@ -224,7 +224,7 @@ def test_custom_is_sampled_at_a_fractional_rate():
 
 def test_waveform_memory_counts_samples_at_the_rate():
     lowered = pulse.compile(shaped, machine=MachineModel(controller=AWG)).lower(Q[0])
-    limits = dataclasses.replace(AWG, waveform_samples=20)
+    limits = dataclasses.replace(AWG, waveform_memory_samples=20)
     (found,) = check(lowered, limits)
     assert "its waveforms take 24 samples" in found
 

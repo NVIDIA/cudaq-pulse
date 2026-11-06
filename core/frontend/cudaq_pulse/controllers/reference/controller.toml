@@ -3,7 +3,7 @@
 # loose enough for every shipped example to fit.
 #
 # A description states what one model of controller can do. The lines it
-# plays and its acquirers are the installation's, given when it is loaded:
+# plays and its detectors are the installation's, given when it is loaded:
 #
 #     pulse.controller("reference.controller", drive_lines=[0, 1], readout_lines=[0, 1])
 #
@@ -18,13 +18,13 @@ model = "reference.controller"
 version = "1"
 owner = "cudaq-pulse maintainers"
 
-issue_cycles = 1
-min_wait_cycles = 0
-waveform_samples = 1048576
-tones_per_line = 16
-acquirer_hold_cycles = 0
+instruction_cycles = 1
+min_idle_cycles = 0
+waveform_memory_samples = 1048576
+max_tones_per_line = 16
+detector_recovery_cycles = 0
 feedback_latency_cycles = 0
-answer_timeouts = true
+supports_timeouts = true
 supports = [
     "play",
     "acquire",

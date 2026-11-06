@@ -2312,8 +2312,8 @@ struct ControllerLimitSpec {
   bool hold = false;
   int64_t tonesPerLine = -1;
   int64_t maxEvents = -1;
-  std::map<int64_t, int64_t> acquirers;
-  int64_t acquirerHold = 0;
+  std::map<int64_t, int64_t> detectors;
+  int64_t detectorRecovery = 0;
   int64_t feedbackLatency = 0;
   bool answerTimeouts = true;
   std::set<std::string> timeoutFunctions;
@@ -2580,25 +2580,25 @@ checkControllerLimits(const std::vector<ControllerRecord> &records,
         *unresolved = true;
     }
   }
-  if (!limits.acquirers.empty()) {
-    std::map<int64_t, std::vector<size_t>> byAcquirer;
+  if (!limits.detectors.empty()) {
+    std::map<int64_t, std::vector<size_t>> byDetector;
     for (size_t i : timed) {
       const ControllerRecord &r = records[i];
-      auto acquirer = limits.acquirers.find(r.qudit);
+      auto detector = limits.detectors.find(r.qudit);
       if (std::strcmp(r.kind, "readout") == 0 &&
-          acquirer != limits.acquirers.end())
-        byAcquirer[acquirer->second].push_back(i);
+          detector != limits.detectors.end())
+        byDetector[detector->second].push_back(i);
     }
-    for (auto &[acquirer, items] : byAcquirer)
+    for (auto &[detector, items] : byDetector)
       for (auto [p, q] : pairs(items)) {
         const ControllerRecord &previous = records[p], &event = records[q];
-        int64_t free = *previous.stop() + limits.acquirerHold;
+        int64_t free = *previous.stop() + limits.detectorRecovery;
         if (*event.start < free)
           found.push_back(
-              "acquirer " + std::to_string(acquirer) +
+              "detector " + std::to_string(detector) +
               ": the readout of qudit " + std::to_string(event.qudit) + " at " +
               std::to_string(*event.start) +
-              " starts before the acquirer is free at " + std::to_string(free) +
+              " starts before the detector is free at " + std::to_string(free) +
               " (the readout of qudit " + std::to_string(previous.qudit) +
               " at " + std::to_string(*previous.start) + ")" + times(event));
       }

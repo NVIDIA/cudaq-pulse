@@ -407,7 +407,7 @@ _At = tuple[int, int, tuple[Any, ...]]
 
 
 class _Pairs:
-    """Each event of a line or acquirer with the latest earlier one it can
+    """Each event of a line or detector with the latest earlier one it can
     follow on one path (``controller._pairs``), a loop's copies alike."""
 
     def __init__(
@@ -652,7 +652,7 @@ def parts(
     timed = _keep(
         tree, lambda i: events[i]["kind"] in _PLAYED and events[i]["end_cycles"] is not None
     )
-    most = limits.max_events
+    most = limits.max_pulses
     if most is not None:
         total = _count(timed)
         if limits._runs_loops:
@@ -674,7 +674,7 @@ def parts(
                     ". It does not support 'loop', so rolled loops are unrolled for it: " + grown
                 )
             found.append(text)
-    issue, gap = limits.issue_cycles, limits.issue_cycles + limits.min_wait_cycles
+    issue, gap = limits.instruction_cycles, limits.instruction_cycles + limits.min_idle_cycles
     num, den = _samples_per_own_cycle(limits, lowered.target.clock_ghz)
     on_lines = sorted({events[i]["line"] for i in _events_of(timed)})
     shared = limits.waveform_memory is WaveformMemoryScope.SHARED
@@ -702,16 +702,16 @@ def parts(
             _Pairs(events, spacing, budget, (line,)).walk([(n, 0, ()) for n in items], None)[0]
         )
         templates = list(_events_of(items))
-        if limits.tones_per_line is not None:
+        if limits.max_tones_per_line is not None:
             tones = {
                 events[i]["frequency_hz"]
                 for i in templates
                 if events[i].get("frequency_hz") is not None
             }
-            if len(tones) > limits.tones_per_line:
+            if len(tones) > limits.max_tones_per_line:
                 found.append(
                     f"line {line}: {len(tones)} tone frequencies; the controller holds "
-                    f"{limits.tones_per_line} per line"
+                    f"{limits.max_tones_per_line} per line"
                 )
             elif unresolved is not None:
                 unknown = _keep(items, lambda i: events[i].get("frequency_hz") is None)
@@ -720,11 +720,11 @@ def parts(
                 else:
                     count = len({natives[i] for i in _events_of(unknown) if natives[i] >= 0})
                     count += _count(_keep(unknown, lambda i: natives[i] < 0))
-                if len(tones) + count > limits.tones_per_line:
+                if len(tones) + count > limits.max_tones_per_line:
                     unresolved.append(f"line {line}: tone frequencies")
         if limits.max_amplitude is not None:
             found.extend(_amplitudes(lines[line], items, events, limits.max_amplitude, unresolved))
-        if limits.waveform_samples is not None:
+        if limits.waveform_memory_samples is not None:
             shapes = stored if shared else {}
             unknown_samples = 0
             each = 0
@@ -741,28 +741,28 @@ def parts(
                     else:
                         each += copies * samples
             used = sum(shapes.values()) + each
-            if not shared and used > limits.waveform_samples:
+            if not shared and used > limits.waveform_memory_samples:
                 found.append(
                     f"line {line}: its waveforms take {used} samples; the controller's "
-                    f"waveform memory holds {limits.waveform_samples}"
+                    f"waveform memory holds {limits.waveform_memory_samples}"
                 )
             elif not shared and unresolved is not None:
-                if used + unknown_samples > limits.waveform_samples:
+                if used + unknown_samples > limits.waveform_memory_samples:
                     unresolved.append(f"line {line}: waveform memory")
             stored_each += each
             unknown_stored += unknown_samples
-    if shared and limits.waveform_samples is not None:
+    if shared and limits.waveform_memory_samples is not None:
         used = sum(stored.values()) + stored_each
-        if used > limits.waveform_samples:
+        if used > limits.waveform_memory_samples:
             found.append(
                 f"its waveforms take {used} samples; the controller's shared waveform "
-                f"memory holds {limits.waveform_samples}"
+                f"memory holds {limits.waveform_memory_samples}"
             )
-        elif unresolved is not None and used + unknown_stored > limits.waveform_samples:
+        elif unresolved is not None and used + unknown_stored > limits.waveform_memory_samples:
             unresolved.append("waveform memory")
-    if limits.acquirers:
-        acquirers = limits.acquirers
-        hold = limits.acquirer_hold_cycles
+    if limits.detectors:
+        detectors = limits.detectors
+        hold = limits.detector_recovery_cycles
 
         def acquired(
             previous: Mapping[str, Any], dp: int, event: Mapping[str, Any], de: int
@@ -771,9 +771,9 @@ def parts(
             if event["start_cycles"] + de >= free:
                 return None
             return _Text(
-                f"acquirer {acquirers[event['qudit']]}: the readout of qudit {event['qudit']} at ",
+                f"detector {detectors[event['qudit']]}: the readout of qudit {event['qudit']} at ",
                 event["start_cycles"] + de,
-                " starts before the acquirer is free at ",
+                " starts before the detector is free at ",
                 free,
                 f" (the readout of qudit {previous['qudit']} at ",
                 previous["start_cycles"] + dp,
@@ -781,10 +781,10 @@ def parts(
             )
 
         readouts = _keep(
-            timed, lambda i: events[i]["kind"] == "readout" and events[i]["qudit"] in acquirers
+            timed, lambda i: events[i]["kind"] == "readout" and events[i]["qudit"] in detectors
         )
-        for acquirer in sorted({acquirers[events[i]["qudit"]] for i in _events_of(readouts)}):
-            items = _keep(readouts, lambda i: acquirers[events[i]["qudit"]] == acquirer)  # noqa: B023
+        for detector in sorted({detectors[events[i]["qudit"]] for i in _events_of(readouts)}):
+            items = _keep(readouts, lambda i: detectors[events[i]["qudit"]] == detector)  # noqa: B023
             joint = {events[i]["line"] for i in _events_of(items)}
             found.extend(
                 _Pairs(events, acquired, budget, joint).walk([(n, 0, ()) for n in items], None)[0]
@@ -793,7 +793,7 @@ def parts(
         found.extend(
             _Feedback(events, chains, limits.feedback_latency_cycles, budget).walk(timed, {})
         )
-    if not limits.answer_timeouts:
+    if not limits.supports_timeouts:
         functions = {fn.name: fn for fn in lowered.classical}
 
         def timeout(i: int) -> _Text | None:
@@ -1072,7 +1072,7 @@ def summarized_check(
     with fewer summarized."""
     machine = lowered.options.machine
     natives = None
-    if slots and limits is not None and limits.tones_per_line is not None:
+    if slots and limits is not None and limits.max_tones_per_line is not None:
         with lowered._lock:
             natives, again, moved = lowered._module.controller_native_tones(
                 True, periods is not None
@@ -1108,8 +1108,8 @@ def summarized_check(
             )
         except UnsyncedError:
             return None
-    if slots and limits is not None and limits.acquirers:
+    if slots and limits is not None and limits.detectors:
         assert pending is not None
         # Acquirers are given per carrier, which each call binds.
-        pending.append("acquirers")
+        pending.append("detectors")
     return found, not pending

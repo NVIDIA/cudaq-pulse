@@ -137,20 +137,8 @@ FORMAT = "cudaq-pulse.controller/1"
 _STRUCTURED = "cudaq-pulse.controller/2"
 # Every format this cudaq-pulse writes.
 _FORMATS = (FORMAT, _STRUCTURED)
-# The names format /2 gives a controller's and a link's fields where they
-# differ from the /1 names; unroll() turns them back.
-_CONTROLLER_KEYS: Mapping[str, str] = MappingProxyType(
-    {
-        "issue_cycles": "instruction_cycles",
-        "min_wait_cycles": "min_idle_cycles",
-        "acquirers": "detectors",
-        "acquirer_hold_cycles": "detector_recovery_cycles",
-        "waveform_samples": "waveform_memory_samples",
-        "tones_per_line": "max_tones_per_line",
-        "max_events": "max_pulses",
-        "answer_timeouts": "supports_timeouts",
-    }
-)
+# The names format /2 gives a link's fields where they differ from the /1
+# names; unroll() turns them back.
 _LINK_KEYS: Mapping[str, str] = MappingProxyType(
     {
         "fixed_ns": "send_ns",
@@ -343,37 +331,37 @@ class ControllerLimits:
     every this many of its own cycles; every operation on its lines must
     start and last whole timesteps (see "Clocks" in the controller backends
     guide; ``pulse.round_duration`` rounds a length to them).
-    ``issue_cycles`` and ``min_wait_cycles``: two operations on one line start
-    exactly ``issue_cycles`` apart, or at least ``issue_cycles + min_wait_cycles``
-    apart, because the controller issues one instruction per ``issue_cycles``
-    and idles no less than ``min_wait_cycles``.
+    ``instruction_cycles`` and ``min_idle_cycles``: two operations on one line start
+    exactly ``instruction_cycles`` apart, or at least ``instruction_cycles + min_idle_cycles``
+    apart, because the controller issues one instruction per ``instruction_cycles``
+    and idles no less than ``min_idle_cycles``.
     ``sample_rate_ghz``: the rate its lines play samples at (``None``: one
     per cycle of its clock). Its ratio to the clock may be a fraction, and
     every operation on its lines must start and last a whole number of
     samples, which the timestep includes: at 2.4 GHz on a 1 GHz clock, whole
     multiples of 5 cycles. A length off them is a compile error, never
     rounded.
-    ``waveform_samples``: a waveform memory holds this many samples, at
+    ``waveform_memory_samples``: a waveform memory holds this many samples, at
     ``sample_rate_ghz``; waveforms of one shape at different amplitudes
     share it (``shape_key``).
     ``waveform_memory``: ``"per_line"`` (each line has a memory of
-    ``waveform_samples``) or ``"shared"`` (one memory serves every line);
+    ``waveform_memory_samples``) or ``"shared"`` (one memory serves every line);
     see ``WaveformMemoryScope``.
-    ``tones_per_line``: distinct tone frequencies one line plays.
+    ``max_tones_per_line``: distinct tone frequencies one line plays.
     ``max_amplitude``: the largest magnitude of a sample its lines play
     (``None``: no limit). The compiler sets no amplitude limit of its own;
     a drive or readout whose envelope peaks above this one is a violation
     naming its line. Exports list it among the limits only when it is set.
-    ``acquirers`` and ``acquirer_hold_cycles``: the acquirer reading each
-    qudit; readouts on one acquirer are serialized, each holding it for its
-    duration plus ``acquirer_hold_cycles``.
+    ``detectors`` and ``detector_recovery_cycles``: the detector reading each
+    qudit; readouts on one detector are serialized, each holding it for its
+    duration plus ``detector_recovery_cycles``.
     ``feedback_latency_cycles``: the least time from the end of a readout to
     the start of an operation in a branch on its outcome.
-    ``answer_timeouts``: whether the controller can stop waiting for an
+    ``supports_timeouts``: whether the controller can stop waiting for an
     answer after a timeout (``result(timeout=...)``, ``latency_mode=
     "timeout"``); without, only waits that block or are budgeted are
     allowed.
-    ``max_events``: the drives and readouts of one program.
+    ``max_pulses``: the drives and readouts of one program.
     ``max_instructions``: the operations one program may hold, as the
     kernel traces them (``None``: no limit). An unrolled loop holds its
     body once per iteration, a rolled one once; tracing stops when the
@@ -416,19 +404,19 @@ class ControllerLimits:
 
     clock_ghz: float | None = None
     cycles_per_timestep: int = 1
-    issue_cycles: int = 1
-    min_wait_cycles: int = 0
+    instruction_cycles: int = 1
+    min_idle_cycles: int = 0
     sample_rate_ghz: float | None = None
-    waveform_samples: int | None = None
-    tones_per_line: int | None = None
+    waveform_memory_samples: int | None = None
+    max_tones_per_line: int | None = None
     max_amplitude: float | None = None
-    acquirers: Mapping[int, int] = field(default_factory=dict)
-    acquirer_hold_cycles: int = 0
+    detectors: Mapping[int, int] = field(default_factory=dict)
+    detector_recovery_cycles: int = 0
     feedback_latency_cycles: int = 0
-    max_events: int | None = None
+    max_pulses: int | None = None
     max_fine_delay_ns: float | Time = 0.0
     alignment_tolerance_cycles: float = 0.0
-    answer_timeouts: bool = True
+    supports_timeouts: bool = True
     compute_links: tuple[int | str, ...] = ("controller",)
     op_cycles: Mapping[str, int] = field(default_factory=dict)
     compute_clock_ghz: float | None = None
@@ -462,9 +450,9 @@ class ControllerLimits:
             raise InvalidValueError(
                 f"ControllerLimits.cycles_per_timestep must be an int of at least 1, got {steps!r}"
             )
-        if self.issue_cycles < 1:
-            raise ValueError("ControllerLimits.issue_cycles must be at least 1")
-        for name in ("min_wait_cycles", "acquirer_hold_cycles", "feedback_latency_cycles"):
+        if self.instruction_cycles < 1:
+            raise ValueError("ControllerLimits.instruction_cycles must be at least 1")
+        for name in ("min_idle_cycles", "detector_recovery_cycles", "feedback_latency_cycles"):
             if getattr(self, name) < 0:
                 raise ValueError(f"ControllerLimits.{name} cannot be negative")
         object.__setattr__(self, "max_fine_delay_ns", as_nanoseconds(self.max_fine_delay_ns))
@@ -496,9 +484,9 @@ class ControllerLimits:
                 f"ControllerLimits.sample_rate_ghz must be a positive number or None, got {rate!r}"
             )
         for name in (
-            "waveform_samples",
-            "tones_per_line",
-            "max_events",
+            "waveform_memory_samples",
+            "max_tones_per_line",
+            "max_pulses",
             "max_ops",
             "state_bytes",
             "max_calls_per_shot",
@@ -524,7 +512,7 @@ class ControllerLimits:
             )
         if any(int(v) < 0 for v in self.op_cycles.values()):
             raise ValueError("ControllerLimits.op_cycles cannot be negative")
-        object.__setattr__(self, "acquirers", MappingProxyType(dict(self.acquirers)))
+        object.__setattr__(self, "detectors", MappingProxyType(dict(self.detectors)))
         object.__setattr__(
             self, "op_cycles", MappingProxyType({k: int(v) for k, v in self.op_cycles.items()})
         )
@@ -545,7 +533,7 @@ class ControllerLimits:
 
     @property
     def _runs_loops(self) -> bool:
-        """Whether a rolled loop's body counts once against ``max_events``."""
+        """Whether a rolled loop's body counts once against ``max_pulses``."""
         return False
 
     @property
@@ -563,7 +551,7 @@ class ControllerLimits:
     def as_dict(self) -> dict[str, Any]:
         """The limits as JSON-serializable data."""
         data = {f.name: getattr(self, f.name) for f in fields(self)}
-        data["acquirers"] = {str(k): v for k, v in sorted(self.acquirers.items())}
+        data["detectors"] = {str(k): v for k, v in sorted(self.detectors.items())}
         data["op_cycles"] = dict(sorted(self.op_cycles.items()))
         data["compute_links"] = list(self.compute_links)
         for name in ("max_amplitude", "max_instructions", "max_program_duration"):
@@ -1442,9 +1430,9 @@ def _on_timesteps(
 
 
 def _structured_controller(limits: ControllerLimits) -> dict[str, Any]:
-    """The controller's fields under their format /2 names."""
+    """The controller's fields as format /2 writes them."""
     data = limits.as_dict()
-    out = {_CONTROLLER_KEYS.get(k, k): v for k, v in data.items() if k not in _COMPUTE_KEYS}
+    out = {k: v for k, v in data.items() if k not in _COMPUTE_KEYS}
     processor = {
         new: list(_PROCESSOR_DEFAULTS[new])
         if new == "unsupported"
@@ -1462,7 +1450,7 @@ _OPTIONAL_KEYS = frozenset({"max_amplitude", "waveform_memory", "persistent_fram
 
 
 def _flat_controller(data: Mapping[str, Any]) -> dict[str, Any]:
-    """A format /2 controller under its /1 names, in /1 order."""
+    """A format /2 controller as format /1 writes it, in /1 order."""
     processors = data["processors"]
     if len(processors) > 1:
         raise InvalidValueError("format /1 has at most one processor per controller")
@@ -1471,11 +1459,9 @@ def _flat_controller(data: Mapping[str, Any]) -> dict[str, Any]:
     else:
         compute = ControllerLimits().as_dict()
     return {
-        f.name: compute[f.name]
-        if f.name in _COMPUTE_KEYS
-        else data[_CONTROLLER_KEYS.get(f.name, f.name)]
+        f.name: compute[f.name] if f.name in _COMPUTE_KEYS else data[f.name]
         for f in fields(ControllerLimits)
-        if f.name in _COMPUTE_KEYS or _CONTROLLER_KEYS.get(f.name, f.name) in data
+        if f.name in _COMPUTE_KEYS or f.name in data
     }
 
 
@@ -2149,14 +2135,14 @@ def _export_plan(
 def _memory(limits: ControllerLimits) -> tuple[int, int, bool, bool, list[str], bool]:
     """The waveform memory of *limits* as the native check takes it:
     (samples, granule, shared, scaling, synthesized shapes, hold)."""
-    samples = -1 if limits.waveform_samples is None else limits.waveform_samples
+    samples = -1 if limits.waveform_memory_samples is None else limits.waveform_memory_samples
     shared = limits.waveform_memory is WaveformMemoryScope.SHARED
     return samples, 1, shared, True, [], False
 
 
 def _checks_natively(limits: ControllerLimits, clocks: _clocks.ClockPlan | None) -> bool:
     """Whether the native check counts every limit of *limits* on *clocks*."""
-    return _one_clock(clocks) and not (limits.max_events is not None and limits._runs_loops)
+    return _one_clock(clocks) and not (limits.max_pulses is not None and limits._runs_loops)
 
 
 def _native_check(
@@ -2173,17 +2159,17 @@ def _native_check(
     found: list[str]
     with lowered._lock:
         found, maybe = module.controller_check(
-            limits.issue_cycles,
-            limits.issue_cycles + limits.min_wait_cycles,
+            limits.instruction_cycles,
+            limits.instruction_cycles + limits.min_idle_cycles,
             num,
             den,
             _memory(limits),
-            -1 if limits.tones_per_line is None else limits.tones_per_line,
-            -1 if limits.max_events is None else limits.max_events,
-            dict(limits.acquirers),
-            limits.acquirer_hold_cycles,
+            -1 if limits.max_tones_per_line is None else limits.max_tones_per_line,
+            -1 if limits.max_pulses is None else limits.max_pulses,
+            dict(limits.detectors),
+            limits.detector_recovery_cycles,
             limits.feedback_latency_cycles,
-            limits.answer_timeouts,
+            limits.supports_timeouts,
             [fn.name for fn in lowered.classical if fn.latency_mode == "timeout"],
             unresolved is not None,
         )
@@ -2328,12 +2314,12 @@ def _violations(
     timed: list[Mapping[str, Any]] = [
         e for e in events if e["kind"] in _PLAYED and e["end_cycles"] is not None
     ]
-    if limits.max_events is not None and len(timed) > limits.max_events:
-        found.extend(_event_count(timed, limits.max_events, limits._runs_loops))
+    if limits.max_pulses is not None and len(timed) > limits.max_pulses:
+        found.extend(_event_count(timed, limits.max_pulses, limits._runs_loops))
     by_line: dict[int, list[Mapping[str, Any]]] = {}
     for event in timed:
         by_line.setdefault(event["line"], []).append(event)
-    issue, gap = limits.issue_cycles, limits.issue_cycles + limits.min_wait_cycles
+    issue, gap = limits.instruction_cycles, limits.instruction_cycles + limits.min_idle_cycles
     num, den = _samples_per_own_cycle(limits, lowered.target.clock_ghz)
     shared = limits.waveform_memory is WaveformMemoryScope.SHARED
     stored: dict[Any, int] = {}
@@ -2348,12 +2334,12 @@ def _violations(
                     f"{previous['start_cycles']}; the controller "
                     f"needs exactly {issue} or at least {gap}"
                 )
-        if limits.tones_per_line is not None:
+        if limits.max_tones_per_line is not None:
             tones = {e["frequency_hz"] for e in items if e.get("frequency_hz") is not None}
-            if len(tones) > limits.tones_per_line:
+            if len(tones) > limits.max_tones_per_line:
                 found.append(
                     f"line {line}: {len(tones)} tone frequencies; the controller holds "
-                    f"{limits.tones_per_line} per line"
+                    f"{limits.max_tones_per_line} per line"
                 )
             elif unresolved is not None:
                 unknown = [e for e in items if e.get("frequency_hz") is None]
@@ -2364,11 +2350,11 @@ def _violations(
                     # often it plays: an upper bound for every placement.
                     keys = [natives[e["index"]] for e in unknown]
                     count = len({k for k in keys if k >= 0}) + keys.count(-1)
-                if len(tones) + count > limits.tones_per_line:
+                if len(tones) + count > limits.max_tones_per_line:
                     unresolved.append(f"line {line}: tone frequencies")
         if limits.max_amplitude is not None:
             found.extend(_over_amplitude(lines[line], items, limits.max_amplitude, unresolved))
-        if limits.waveform_samples is not None:
+        if limits.waveform_memory_samples is not None:
             shapes = stored if shared else {}
             unknown_samples = 0
             for e in items:
@@ -2381,36 +2367,36 @@ def _violations(
                 else:
                     shapes[("event", e["index"])] = samples
             used = sum(shapes.values())
-            if not shared and used > limits.waveform_samples:
+            if not shared and used > limits.waveform_memory_samples:
                 found.append(
                     f"line {line}: its waveforms take {used} samples; the controller's "
-                    f"waveform memory holds {limits.waveform_samples}"
+                    f"waveform memory holds {limits.waveform_memory_samples}"
                 )
             elif not shared and unresolved is not None:
-                if used + unknown_samples > limits.waveform_samples:
+                if used + unknown_samples > limits.waveform_memory_samples:
                     unresolved.append(f"line {line}: waveform memory")
             unknown_stored += unknown_samples
-    if shared and limits.waveform_samples is not None:
+    if shared and limits.waveform_memory_samples is not None:
         used = sum(stored.values())
-        if used > limits.waveform_samples:
+        if used > limits.waveform_memory_samples:
             found.append(
                 f"its waveforms take {used} samples; the controller's shared waveform "
-                f"memory holds {limits.waveform_samples}"
+                f"memory holds {limits.waveform_memory_samples}"
             )
-        elif unresolved is not None and used + unknown_stored > limits.waveform_samples:
+        elif unresolved is not None and used + unknown_stored > limits.waveform_memory_samples:
             unresolved.append("waveform memory")
-    if limits.acquirers:
+    if limits.detectors:
         by_acquirer: dict[int, list[Mapping[str, Any]]] = {}
         for event in timed:
-            if event["kind"] == "readout" and event["qudit"] in limits.acquirers:
-                by_acquirer.setdefault(limits.acquirers[event["qudit"]], []).append(event)
-        for acquirer, items in sorted(by_acquirer.items()):
+            if event["kind"] == "readout" and event["qudit"] in limits.detectors:
+                by_acquirer.setdefault(limits.detectors[event["qudit"]], []).append(event)
+        for detector, items in sorted(by_acquirer.items()):
             for previous, event in _pairs(items):
-                free = previous["end_cycles"] + limits.acquirer_hold_cycles
+                free = previous["end_cycles"] + limits.detector_recovery_cycles
                 if event["start_cycles"] < free:
                     found.append(
-                        f"acquirer {acquirer}: the readout of qudit {event['qudit']} at "
-                        f"{event['start_cycles']} starts before the acquirer is free at {free} "
+                        f"detector {detector}: the readout of qudit {event['qudit']} at "
+                        f"{event['start_cycles']} starts before the detector is free at {free} "
                         f"(the readout of qudit {previous['qudit']} at {previous['start_cycles']})"
                     )
     if limits.feedback_latency_cycles:
@@ -2429,7 +2415,7 @@ def _violations(
                             f"latency (start at {ready} or later; schedule with rcp and "
                             "readout_latency_cycles >= feedback_latency_cycles)"
                         )
-    if not limits.answer_timeouts:
+    if not limits.supports_timeouts:
         functions = {fn.name: fn for fn in lowered.classical}
         for event in events:
             if event["kind"] != "answer":
@@ -2555,7 +2541,7 @@ def _samples_per_own_cycle(limits: ControllerLimits, program_ghz: float) -> tupl
 
 
 def _event_count(timed: Sequence[Mapping[str, Any]], most: int, runs_loops: bool) -> list[str]:
-    """The violation of ``max_events`` (*most*) by *timed*, which exceeds it
+    """The violation of ``max_pulses`` (*most*) by *timed*, which exceeds it
     unrolled; a controller that *runs_loops* holds a rolled body once."""
     if runs_loops:
         held = sum(1 for e in timed if not any(e["iteration"]))
@@ -2667,7 +2653,7 @@ def _compile_check(
         return [], False
     unresolved: list[str] | None = [] if lowered.parameters or slots else None
     natives = None
-    if slots and limits is not None and limits.tones_per_line is not None:
+    if slots and limits is not None and limits.max_tones_per_line is not None:
         with lowered._lock:
             natives = lowered._module.controller_native_tones()
     if system is None:
@@ -2679,10 +2665,10 @@ def _compile_check(
         found = system._violations(
             lowered, lines, events, clocks, off, problems, False, unresolved, natives
         )
-    if slots and limits is not None and limits.acquirers:
+    if slots and limits is not None and limits.detectors:
         assert unresolved is not None
         # Acquirers are given per carrier, which each call binds.
-        unresolved.append("acquirers")
+        unresolved.append("detectors")
     if limits is not None and limits is not machine.controller:
         found.extend(_sample_rate_violations(lowered, limits, clocks, events))
     return found, not unresolved

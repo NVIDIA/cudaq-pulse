@@ -315,7 +315,7 @@ else:
 first = pickle.loads(pickled)
 out.append(outcome(lambda: (repr(first), hash(first), first == first, pickle.dumps(first))))
 out.append(outcome(lambda: dataclasses.fields(ResidualZZ)))
-out.append(outcome(lambda: c.ControllerLimits.acquirers))
+out.append(outcome(lambda: c.ControllerLimits.detectors))
 out.append(outcome(lambda: c.ControllerLimits.compute_links))
 out.append(outcome(lambda: inspect.signature(c.FunctionUsage)))
 
@@ -351,7 +351,7 @@ def describe(cls):
     return rows
 
 
-samples = {c.ControllerLimits: c.ControllerLimits(issue_cycles=2, acquirers={0: 1})}
+samples = {c.ControllerLimits: c.ControllerLimits(instruction_cycles=2, detectors={0: 1})}
 for cls in classes + [Sub, Plain]:
     out.append(describe(cls))
     obj = samples.get(cls) or cls(*range(len(dataclasses.fields(cls))))

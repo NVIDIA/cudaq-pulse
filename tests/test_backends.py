@@ -84,11 +84,11 @@ def test_an_installed_backend_compiles_emits_and_runs(installed):
 def test_the_backends_limits_reject_what_its_controller_cannot_play(installed):
     dev = _device()
     machine = backends.get("dummy").machine_model()
-    with pytest.raises(ControllerLimitError, match="acquirer 0"):
+    with pytest.raises(ControllerLimitError, match="detector 0"):
         pulse.compile(two_readouts, device=dev, schedule="asap", machine=machine).lower(
             dev.qudit_handles[0], dev.qudit_handles[1]
         )
-    # Serialized by the scheduler, with the acquirer's hold time between them.
+    # Serialized by the scheduler, with the detector's hold time between them.
     machine = dataclasses.replace(machine, line_switch_penalty_cycles=10)
     pulse.compile(two_readouts, device=dev, schedule="rcp", machine=machine).lower(
         dev.qudit_handles[0], dev.qudit_handles[1]

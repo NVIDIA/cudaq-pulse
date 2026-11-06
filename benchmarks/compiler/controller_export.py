@@ -48,11 +48,11 @@ dev = pulse.device({"target": target})
 readers = lines // 2
 limits = ControllerLimits(
     clock_ghz=1.0,
-    waveform_samples=1 << 20,
-    tones_per_line=4,
-    acquirers={q: q for q in range(readers)},
-    acquirer_hold_cycles=4,
-    max_events=10**8,
+    waveform_memory_samples=1 << 20,
+    max_tones_per_line=4,
+    detectors={q: q for q in range(readers)},
+    detector_recovery_cycles=4,
+    max_pulses=10**8,
 )
 machine = MachineModel(controller=limits)
 

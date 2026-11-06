@@ -798,7 +798,7 @@ def test_check_against_another_rate_reports_the_sample_arrays():
     assert found == [
         "line 0: the drive at 0 plays samples made for 2 GHz, and the controller's lines play 1 GHz"
     ]
-    assert check(lowered, ControllerLimits(issue_cycles=2)) == []
+    assert check(lowered, ControllerLimits(instruction_cycles=2)) == []
 
 
 # ── Simulation ───────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@
 entry point ``dummy = dummy_controller:DummyBackend``.
 
 Its controller runs at 1 GHz, issues one instruction every 2 cycles and has
-one acquirer per pair of qudits. Its program is one tuple per drive and
+one detector per pair of qudits. Its program is one tuple per drive and
 readout, ``(start, line, kind, shape)``; running it returns them in time
 order with an outcome of 0 for each readout of each shot.
 """
@@ -32,10 +32,10 @@ class DummyBackend:
     def machine_model(self) -> MachineModel:
         limits = ControllerLimits(
             clock_ghz=1.0,
-            issue_cycles=2,
-            min_wait_cycles=2,
-            acquirers={q: q // 2 for q in range(8)},
-            acquirer_hold_cycles=10,
+            instruction_cycles=2,
+            min_idle_cycles=2,
+            detectors={q: q // 2 for q in range(8)},
+            detector_recovery_cycles=10,
         )
         return MachineModel(max_concurrent_readouts=1, controller=limits)
 

@@ -391,13 +391,13 @@ def test_the_structured_format_is_refused_by_an_unknown_version():
 # Built per test, so that a limit the controller no longer takes fails its
 # own cases only.
 _LIMITS = {
-    "issue": lambda: ControllerLimits(issue_cycles=3, min_wait_cycles=5),
-    "tones": lambda: ControllerLimits(tones_per_line=1),
-    "waveform_samples": lambda: _sampled(2, waveform_samples=60),
-    "shared_memory": lambda: _sampled(2, waveform_samples=60, waveform_memory="shared"),
-    "acquirers": lambda: ControllerLimits(acquirers={0: 0, 1: 0}, acquirer_hold_cycles=500),
+    "issue": lambda: ControllerLimits(instruction_cycles=3, min_idle_cycles=5),
+    "tones": lambda: ControllerLimits(max_tones_per_line=1),
+    "waveform_memory_samples": lambda: _sampled(2, waveform_memory_samples=60),
+    "shared_memory": lambda: _sampled(2, waveform_memory_samples=60, waveform_memory="shared"),
+    "detectors": lambda: ControllerLimits(detectors={0: 0, 1: 0}, detector_recovery_cycles=500),
     "feedback": lambda: ControllerLimits(feedback_latency_cycles=50),
-    "max_events": lambda: ControllerLimits(max_events=7),
+    "max_pulses": lambda: ControllerLimits(max_pulses=7),
 }
 
 
@@ -423,7 +423,7 @@ def test_a_violation_in_every_iteration_is_reported_for_each_iteration():
             drive(d, square(8, 0.2))
             wait(d, 20)
 
-    limits = ControllerLimits(issue_cycles=3, min_wait_cycles=6, max_events=10)
+    limits = ControllerLimits(instruction_cycles=3, min_idle_cycles=6, max_pulses=10)
     lowered = pulse.compile(pairs, unroll_threshold=0).lower(Q[0])
     unrolled = pulse.compile(pairs, unroll_threshold=10**6).lower(Q[0])
     found, every = check(lowered, limits), check(unrolled, limits)
@@ -439,7 +439,7 @@ def test_a_violation_in_every_iteration_is_reported_for_each_iteration():
         "line 0: drive at 35972 starts 8 cycles after the drive at 35964; the controller "
         "needs exactly 3 or at least 9"
     )
-    machine = MachineModel(controller=ControllerLimits(issue_cycles=3, min_wait_cycles=6))
+    machine = MachineModel(controller=ControllerLimits(instruction_cycles=3, min_idle_cycles=6))
     spaced = check(unrolled, machine.controller)
     assert len(spaced) == 1000
     with pytest.raises(ControllerLimitError) as error:

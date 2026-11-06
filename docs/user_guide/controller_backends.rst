@@ -330,15 +330,8 @@ length; for one on its own clock, or with line delays, export
     reaches only amplitudes and phases leaves every ``shape_id`` the same
     for every value. Omitted without parameters.
 ``controller``
-    In place of ``limits``: the controller, with the fields
-    ``instruction_cycles``, ``min_idle_cycles``, ``detectors``,
-    ``detector_recovery_cycles``,
-    ``waveform_memory_samples``, ``max_tones_per_line``, ``max_pulses`` and
-    ``supports_timeouts`` for ``ControllerLimits.issue_cycles``,
-    ``min_wait_cycles``, ``acquirers``, ``acquirer_hold_cycles``,
-    ``waveform_samples``, ``tones_per_line``,
-    ``max_events`` and ``answer_timeouts``; the others keep their names.
-    What it computes is in ``processors``, empty when no compute limit is
+    In place of ``limits``: the controller, its fields under the names
+    ``limits`` gives them. What it computes is in ``processors``, empty when no compute limit is
     set, else one processor with ``links``, ``clock_ghz``,
     ``cycles_per_op`` (the cost of each class of operation it computes),
     ``unsupported`` (the classes it cannot compute, by name; empty, and
@@ -603,7 +596,7 @@ Waveform memory
 
 Two plain values of ``ControllerLimits`` describe the memory a controller
 plays waveforms from, the same in Python and in a controller description
-in TOML (``waveform_samples = 65536``, ``waveform_memory = "shared"``):
+in TOML (``waveform_memory_samples = 65536``, ``waveform_memory = "shared"``):
 
 .. code-block:: python
 
@@ -611,7 +604,7 @@ in TOML (``waveform_samples = 65536``, ``waveform_memory = "shared"``):
 
    limits = ControllerLimits(
        sample_rate_ghz=2.0,
-       waveform_samples=65536,     # what one memory holds, in samples
+       waveform_memory_samples=65536,     # what one memory holds, in samples
        waveform_memory="shared",   # one memory for every line; "per_line" by default
    )
 
@@ -630,7 +623,7 @@ Controller limits
 ``ControllerLimits`` states what a controller can play, in its own clock
 cycles: its clock, how
 closely two operations on one line can follow each other, its waveform
-memory and tones per line, which acquirer reads each qudit and how long a
+memory and tones per line, which detector reads each qudit and how long a
 readout holds it, the least feedback latency from a readout to an operation
 that branches on it, whether it can stop waiting for an answer after a
 timeout, and the most drives and readouts in one program. Given
@@ -681,7 +674,7 @@ This one emits one line of text per drive and readout:
        formats = (FORMAT,)
 
        def machine_model(self) -> MachineModel:
-           limits = ControllerLimits(clock_ghz=1.0, issue_cycles=2, min_wait_cycles=2)
+           limits = ControllerLimits(clock_ghz=1.0, instruction_cycles=2, min_idle_cycles=2)
            return MachineModel(controller=limits)
 
        def emit(self, program: Mapping[str, Any]) -> list[str]:

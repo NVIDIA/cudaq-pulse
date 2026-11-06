@@ -337,7 +337,7 @@ def test_a_call_over_a_processor_limit_carries_the_report_of_its_values():
     (exceeded,) = raised.value.usage.exceeded
     assert (exceeded.where, exceeded.limit, exceeded.over) == ("_parity", "max_ops_per_function", 2)
     # Limits of a system without processors have no usage report.
-    box = pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], max_events=1)
+    box = pulse.Controller(drive_lines=[0, 1], readout_lines=[0, 1], max_pulses=1)
     plain = pulse.device(
         {
             "quantum_system": TRANSMON_17Q,

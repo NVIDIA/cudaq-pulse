@@ -8,7 +8,7 @@
 """A toy controller backend: the smallest thing ``cudaq_pulse.backends`` loads.
 
 The toy controller runs at 1 GHz, issues one instruction every 2 cycles,
-idles no less than 2 cycles and has one readout acquirer per pair of
+idles no less than 2 cycles and has one readout detector per pair of
 qudits. Its program is text, one instruction per drive or readout:
 ``<line> <start> <kind> <shape> <amplitude> <frequency>``; running it
 replays the instructions in time order and returns them with the outcome
@@ -45,11 +45,11 @@ class ToyBackend:
     def machine_model(self) -> MachineModel:
         limits = ControllerLimits(
             clock_ghz=1.0,
-            issue_cycles=2,
-            min_wait_cycles=2,
-            acquirers={q: q // 2 for q in range(self.qudits)},
-            acquirer_hold_cycles=10,
-            answer_timeouts=False,
+            instruction_cycles=2,
+            min_idle_cycles=2,
+            detectors={q: q // 2 for q in range(self.qudits)},
+            detector_recovery_cycles=10,
+            supports_timeouts=False,
         )
         return MachineModel(max_concurrent_readouts=1, controller=limits)
 
