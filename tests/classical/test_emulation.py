@@ -148,7 +148,9 @@ class _Status:
 
 
 def _decoded(timeout):
-    decoder = qec.Decoder(0, syndromes=1, corrections=1, max_latency_ns=300, decode=lambda b: [1])
+    decoder = qec.Decoder(
+        0, syndrome_count=1, correction_count=1, max_latency_ns=300, decode=lambda b: [1]
+    )
 
     @pulse.kernel
     def k(q):

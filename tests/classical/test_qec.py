@@ -25,7 +25,7 @@ CUDAQX = FIXTURE["cudaqx_decoder"]
 
 
 def _decoder(decode=None):
-    return qec.Decoder(3, syndromes=12, corrections=2, max_latency_ns=500, decode=decode)
+    return qec.Decoder(3, syndrome_count=12, correction_count=2, max_latency_ns=500, decode=decode)
 
 
 def _key(request):
@@ -49,10 +49,14 @@ def test_calls_carry_the_cudaqx_ids_and_payloads():
 
 
 def _two_decoders():
-    small = qec.Decoder(0, syndromes=1, corrections=1, max_latency_ns=100, decode=lambda b: [b[0]])
-    same = qec.Decoder(1, syndromes=1, corrections=1, max_latency_ns=100, decode=lambda b: [0])
+    small = qec.Decoder(
+        0, syndrome_count=1, correction_count=1, max_latency_ns=100, decode=lambda b: [b[0]]
+    )
+    same = qec.Decoder(
+        1, syndrome_count=1, correction_count=1, max_latency_ns=100, decode=lambda b: [0]
+    )
     large = qec.Decoder(
-        2, syndromes=2, corrections=1, max_latency_ns=100, decode=lambda b: [b[0] ^ b[1]]
+        2, syndrome_count=2, correction_count=1, max_latency_ns=100, decode=lambda b: [b[0] ^ b[1]]
     )
     return small, same, large
 
@@ -65,7 +69,7 @@ def test_decoders_share_the_cudaqx_keys_in_one_program():
         r = get_readout_line(q)
         m = readout(r, square(100, 0.05))
         for decoder in decoders:
-            qec.enqueue_syndromes(decoder, [m] * decoder.syndromes)
+            qec.enqueue_syndromes(decoder, [m] * decoder.syndrome_count)
             qec.get_corrections(decoder).result()
 
     dev = _device()
@@ -87,7 +91,9 @@ def test_a_udp_server_tells_decoders_that_share_a_key_apart():
     try:
         for d in decoders:
             fn = d.enqueue_function
-            request = wire.encode_request(fn, (d.decoder_id, 0, 0, d.syndromes, [1] * d.syndromes))
+            request = wire.encode_request(
+                fn, (d.decoder_id, 0, 0, d.syndrome_count, [1] * d.syndrome_count)
+            )
             answer, _ = channel.call(fn, request)
             assert wire.decode_answer(fn, answer)[0] == 0
             fn = d.corrections_function
@@ -101,7 +107,11 @@ def test_a_udp_server_tells_decoders_that_share_a_key_apart():
 
 def test_each_path_keeps_its_own_decoder_state():
     decoder = qec.Decoder(
-        0, syndromes=1, corrections=1, max_latency_ns=100, decode=lambda bits: [sum(bits) % 2]
+        0,
+        syndrome_count=1,
+        correction_count=1,
+        max_latency_ns=100,
+        decode=lambda bits: [sum(bits) % 2],
     )
 
     @pulse.kernel
@@ -137,7 +147,11 @@ def test_each_path_keeps_its_own_decoder_state():
 
 def _parity_decoder():
     return qec.Decoder(
-        0, syndromes=2, corrections=1, max_latency_ns=100, decode=lambda bits: [sum(bits) % 2]
+        0,
+        syndrome_count=2,
+        correction_count=1,
+        max_latency_ns=100,
+        decode=lambda bits: [sum(bits) % 2],
     )
 
 
@@ -235,7 +249,11 @@ def test_a_get_with_nothing_enqueued_is_late():
 
 def test_a_get_decodes_what_was_enqueued_since_the_last_decode():
     decoder = qec.Decoder(
-        0, syndromes=1, corrections=1, max_latency_ns=100, decode=lambda bits: [len(bits) % 2]
+        0,
+        syndrome_count=1,
+        correction_count=1,
+        max_latency_ns=100,
+        decode=lambda bits: [len(bits) % 2],
     )
 
     @pulse.kernel
@@ -256,7 +274,9 @@ def test_a_get_decodes_what_was_enqueued_since_the_last_decode():
 
 
 def test_late_fraction_counts_the_answers_the_program_waits_on():
-    decoder = qec.Decoder(0, syndromes=1, corrections=1, max_latency_ns=2000, decode=lambda b: b)
+    decoder = qec.Decoder(
+        0, syndrome_count=1, correction_count=1, max_latency_ns=2000, decode=lambda b: b
+    )
 
     @pulse.kernel
     def k(q):
@@ -279,11 +299,74 @@ def test_late_fraction_counts_the_answers_the_program_waits_on():
     assert run.late_fraction == 1.0
 
 
+LATENCIES = {"min_latency_ns": 1000, "nominal_latency_ns": 2000, "max_latency_ns": 5000}
+latency_decoder = qec.Decoder(
+    0, syndrome_count=1, correction_count=1, timeout_ns=3000, decode=lambda b: b, **LATENCIES
+)
+
+
+@pulse.classical.external(latency_mode="timeout", timeout_ns=3000, **LATENCIES)
+def plain_decode(syndrome: pulse.Length[pulse.Bits, 1]) -> pulse.Length[pulse.Bits, 1]:
+    return pulse.Bits()
+
+
+@pulse.kernel
+def with_decoder(q):
+    d, r = get_drive_line(q), get_readout_line(q)
+    m = readout(r, square(100, 0.05))
+    qec.enqueue_syndromes(latency_decoder, [m])
+    ok, fix = qec.get_corrections(latency_decoder).result()
+    if ok:
+        if fix[0]:
+            drive(d, square(40, PI_AMP))
+
+
+@pulse.kernel
+def with_function(q):
+    d, r = get_drive_line(q), get_readout_line(q)
+    m = readout(r, square(100, 0.05))
+    ok, fix = plain_decode.submit([m]).result()
+    if ok:
+        if fix[0]:
+            drive(d, square(40, PI_AMP))
+
+
+def test_a_decoder_s_latencies_work_as_a_classical_function_s():
+    dev = _device()
+    lows = [
+        pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
+        for k in (with_decoder, with_function)
+    ]
+    handlers = {"plain_decode": lambda s: s}
+    (*_, by_decoder), (by_function,) = (low.classical_report() for low in lows)
+    assert (
+        by_decoder.due_cycles - by_decoder.submit_cycles
+        == by_function.due_cycles - by_function.submit_cycles
+    )
+    for branching in (False, True):
+        in_time = [
+            sum(
+                b.probability
+                for b in pulse.simulate(
+                    low, levels=2, handlers=handlers, latency_branching=branching
+                ).branches
+                if b.calls[-1].in_time
+            )
+            for low in lows
+        ]
+        # P(latency <= 3000) over a triangle on [1000, 5000] with its mode at 2000.
+        expected = 1 - 2000**2 / (4000 * 3000) if branching else 1.0
+        assert in_time == pytest.approx([expected, expected])
+    kw = {"shots": 2, "seed": 1, "service_time": "none", "handlers": handlers}
+    budgets = [emulation.emulate(low, **kw).calls[0][-1].budget_ns for low in lows]
+    assert budgets[0] == budgets[1] > 3000
+
+
 def test_a_decoder_without_decode_needs_handlers():
     decoder = _decoder()
     with pytest.raises(TypeError, match="has no body to run here. Give it a handler"):
         decoder.corrections_function(3, 2, 0)
-    handlers = qec.Decoder(3, syndromes=12, corrections=2, max_latency_ns=500).handlers()
+    handlers = qec.Decoder(3, syndrome_count=12, correction_count=2, max_latency_ns=500).handlers()
     assert set(handlers) == {
         decoder.enqueue_function.name,
         decoder.corrections_function.name,

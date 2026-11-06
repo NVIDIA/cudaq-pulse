@@ -678,7 +678,9 @@ def test_a_call_that_lowers_exports(shift, widths, tones, samples):
 
 # ── Classical calls ──────────────────────────────────────────────────────────
 
-decoder = qec.Decoder(0, syndromes=1, corrections=1, max_latency_ns=400, decode=lambda b: [b[0]])
+decoder = qec.Decoder(
+    0, syndrome_count=1, correction_count=1, max_latency_ns=400, decode=lambda b: [b[0]]
+)
 
 
 @pulse.classical(max_latency_ns=400)

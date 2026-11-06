@@ -31,7 +31,7 @@ gives and answers NOT_READY before it::
 
     from cudaq_pulse.classical import qec
 
-    decoder = qec.Decoder(0, syndromes=2, corrections=1, max_latency_ns=2000,
+    decoder = qec.Decoder(0, syndrome_count=2, correction_count=1, max_latency_ns=2000,
                           decode=lambda bits: [bits[0] ^ bits[1]])
 
     @pulse.kernel
@@ -46,10 +46,13 @@ gives and answers NOT_READY before it::
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .._errors import InvalidTypeError, InvalidValueError
 from . import ClassicalFunction, _Bits, _Byte, _Integer, _NotReadyError, function_id
+
+if TYPE_CHECKING:
+    from .._units import Time
 
 __all__ = [
     "Decoder",
@@ -67,32 +70,43 @@ RESET_DECODER_ID = function_id("reset_decoder")
 class Decoder:
     """One real-time decoder: its id and the sizes of its messages.
 
-    ``syndromes`` is the number of syndrome bits a round enqueues and
-    ``corrections`` the number of correction bits ``get_corrections``
+    ``syndrome_count`` is the number of syndrome bits a round enqueues and
+    ``correction_count`` the number of correction bits ``get_corrections``
     returns. ``decode`` maps the syndrome bits of one volume, in the order
     they were enqueued, to the correction bits; it is the decoder simulation
     and emulation run.
+
+    The latencies are those of ``get_corrections``, as for
+    ``@pulse.classical``: ``min_latency_ns``, ``nominal_latency_ns`` (the
+    maximum unless given) and ``max_latency_ns`` give the latency model
+    simulation draws from, and the compiled program waits for the maximum.
+    With ``timeout_ns``, every ``get_corrections(decoder).result()`` waits
+    that long and gives ``(in_time, corrections)``. ``enqueue_latency_ns``
+    is the budget of ``enqueue_syndromes`` and ``reset_decoder``.
     """
 
     def __init__(
         self,
         decoder_id: int,
         *,
-        syndromes: int,
-        corrections: int,
-        max_latency_ns: float,
-        enqueue_latency_ns: float = 0.0,
-        link: int = 0,
+        syndrome_count: int,
+        correction_count: int,
+        max_latency_ns: float | Time,
+        min_latency_ns: float | Time = 0.0,
+        nominal_latency_ns: float | Time | None = None,
+        timeout_ns: float | Time | None = None,
+        enqueue_latency_ns: float | Time = 0.0,
+        link: int | str = 0,
         decode: Callable[[list[int]], Sequence[int]] | None = None,
     ) -> None:
         self.decoder_id = decoder_id
-        self.syndromes = syndromes
-        self.corrections = corrections
+        self.syndrome_count = syndrome_count
+        self.correction_count = correction_count
         self.decode = decode
-        suffix = f"{decoder_id}_{syndromes}_{corrections}"
+        suffix = f"{decoder_id}_{syndrome_count}_{correction_count}"
         self.enqueue_function = ClassicalFunction._declared(
             None,
-            (_Integer(), _Integer(), _Integer(), _Integer(), _Bits(syndromes)),
+            (_Integer(), _Integer(), _Integer(), _Integer(), _Bits(syndrome_count)),
             (),
             name=f"enqueue_syndromes_{suffix}",
             max_latency_ns=enqueue_latency_ns,
@@ -103,9 +117,13 @@ class Decoder:
         self.corrections_function = ClassicalFunction._declared(
             None,
             (_Integer(), _Integer(), _Byte()),
-            (_Bits(corrections),),
+            (_Bits(correction_count),),
             name=f"get_corrections_{suffix}",
             max_latency_ns=max_latency_ns,
+            min_latency_ns=min_latency_ns,
+            nominal_latency_ns=nominal_latency_ns,
+            latency_mode="bounded" if timeout_ns is None else "timeout",
+            timeout_ns=timeout_ns,
             link=link,
             _dispatch_key=GET_CORRECTIONS_ID,
             _key_route=decoder_id,
@@ -142,15 +160,15 @@ class Decoder:
         enqueue_name = self.enqueue_function.name
         get_name = self.corrections_function.name
         reset_name = self.reset_function.name
-        corrections = self.corrections
+        correction_count = self.correction_count
 
         def decoded(bits: list[int]) -> list[int]:
             if decode is None:
                 raise InvalidTypeError("this Decoder has no decode function to simulate it with")
             answer = list(decode(bits))
-            if len(answer) != corrections:
+            if len(answer) != correction_count:
                 raise InvalidValueError(
-                    f"decode returned {len(answer)} bits, expected {corrections}"
+                    f"decode returned {len(answer)} bits, expected {correction_count}"
                 )
             return answer
 
@@ -240,7 +258,7 @@ def enqueue_syndromes(
 ) -> Any:
     """Send one round of syndrome measurements to *decoder* (in a kernel)."""
     return decoder.enqueue_function.submit(
-        decoder.decoder_id, round, mapping, decoder.syndromes, syndromes
+        decoder.decoder_id, round, mapping, decoder.syndrome_count, syndromes
     )
 
 
@@ -254,7 +272,9 @@ def enqueue_syndromes_mapped(
 
 def get_corrections(decoder: Decoder, reset: bool = False) -> Any:
     """Ask *decoder* for its corrections; take them with ``.result()``."""
-    return decoder.corrections_function.submit(decoder.decoder_id, decoder.corrections, int(reset))
+    return decoder.corrections_function.submit(
+        decoder.decoder_id, decoder.correction_count, int(reset)
+    )
 
 
 def reset_decoder(decoder: Decoder) -> Any:

@@ -410,7 +410,9 @@ unchanged. Its Python ``decode`` function runs with the state such a server
 keeps: a get decodes what was enqueued since the last decode or reset, and
 with nothing to decode answers NOT_READY, which a wait with a timeout takes
 as late. Each path keeps its own state in simulation, as does each shot in
-emulation; ``serve_udp`` keeps one per decoder.
+emulation; ``serve_udp`` keeps one per decoder. Its ``min_latency_ns``,
+``nominal_latency_ns``, ``max_latency_ns`` and ``timeout_ns`` are those of
+``get_corrections``, and work as a classical function's do.
 
 Emulation
 ---------
