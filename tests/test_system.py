@@ -16,6 +16,7 @@ import warnings
 
 import cudaq_pulse as pulse
 import pytest
+from cudaq_pulse import Controller
 from cudaq_pulse._errors import (
     DeviceDefinitionError,
     InvalidValueError,
@@ -25,7 +26,7 @@ from cudaq_pulse._errors import (
 from cudaq_pulse._system import installed_descriptions
 from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import ControllerLimitError, ControllerLimits
+from cudaq_pulse.controller import ControllerLimitError
 from cudaq_pulse.targets.base import (
     Coupling,
     DispersiveReadout,
@@ -100,7 +101,7 @@ def test_a_controller_checks_its_wiring_fields():
     assert not box.supports_capability(pulse.Capability.BRANCH)
     assert pulse.Controller().supports_capability(pulse.Capability.BRANCH)
     assert hash(box) == hash(pulse.Controller(drive_lines=[0, 1, 2], supports=["play", "sync"]))
-    assert isinstance(box, ControllerLimits)
+    assert isinstance(box, Controller)
 
 
 def test_a_control_system_reports_every_wiring_problem_at_once():
@@ -118,8 +119,8 @@ def test_a_control_system_reports_every_wiring_problem_at_once():
         "links.feedback.controllers[0]",
     ]
     assert "also on controllers[0]" in str(raised.value)
-    with pytest.raises(TypeError, match="make it a pulse.Controller"):
-        pulse.ControlSystem(controllers=[ControllerLimits()])
+    with pytest.raises(TypeError, match="is not a pulse.Controller"):
+        pulse.ControlSystem(controllers=[pulse.Processor()])
     with pytest.raises(ValueError, match="keyed by name"):
         pulse.ControlSystem(controllers=[a], links={0: pulse.Link()})
 
@@ -188,7 +189,7 @@ def test_compile_uses_the_device_control_system():
     # As with the same limits given to a machine model.
     with pytest.raises(ControllerLimitError, match="at most 1"):
         pulse.compile(
-            drive_and_branch, machine=MachineModel(controller=ControllerLimits(max_pulses=1))
+            drive_and_branch, machine=MachineModel(controller=Controller(max_pulses=1))
         ).lower(qpu.qudits[0], qpu.qudits[1])
     with pytest.raises(TypeError, match="MachineModel or a ControlSystem"):
         pulse.compile(drive_and_branch, machine=box)
@@ -222,7 +223,7 @@ def test_one_controller_on_its_own_clock_is_timed_as_on_a_machine_model():
     assert _qpu(box).clock_ghz == 1.0
     qpu = _qpu(box, clock_ghz=2.0)
     by_system = pulse.compile(drive_and_branch, device=qpu).lower(qpu.qudits[0], qpu.qudits[1])
-    machine = MachineModel(controller=ControllerLimits(clock_ghz=1.0))
+    machine = MachineModel(controller=Controller(clock_ghz=1.0))
     by_model = pulse.compile(drive_and_branch, machine=machine).lower(qpu.qudits[0], qpu.qudits[1])
     system, model = by_system.export_controller(), by_model.export_controller()
     assert system["clock_ghz"] == 1.0 and system["program_clock_ghz"] == qpu.clock_ghz
@@ -512,8 +513,8 @@ def test_a_controller_without_loop_gets_its_loops_unrolled_for_it_only():
     qpu = _qpu(small, b)
     with pytest.raises(ControllerLimitError, match="body counted once; the controller holds"):
         pulse.compile(two_loops, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
-    # A plain ControllerLimits counts every iteration of both loops, as before.
-    machine = MachineModel(controller=ControllerLimits(max_pulses=60))
+    # A controller without loop counts every iteration of both loops.
+    machine = MachineModel(controller=Controller(max_pulses=60, supports=no_loop))
     with pytest.raises(ControllerLimitError) as raised:
         pulse.compile(two_loops, machine=machine).lower(*qpu.qudits[:2])
     text = str(raised.value)

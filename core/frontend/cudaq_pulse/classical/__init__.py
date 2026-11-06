@@ -48,9 +48,9 @@ reference implementation, directly.
 
 The body is what simulation runs. On hardware the service registered under
 the function's dispatch key answers instead: the 32-bit FNV-1a hash of its
-compiled name, as CUDA-Q Realtime uses, unless the controller's firmware
-fixes it (its ``dispatch_keys``). ``call.dispatch_key`` and the call
-manifest give each one.
+compiled name, as CUDA-Q Realtime uses, unless the firmware of the
+processor that runs it fixes it (its ``dispatch_keys``).
+``call.dispatch_key`` and the call manifest give each one.
 """
 
 from __future__ import annotations

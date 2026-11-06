@@ -24,10 +24,10 @@ import sys
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse import _pickling, _source_stamp
+from cudaq_pulse import Controller, _pickling, _source_stamp
 from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import ControllerLimitError, ControllerLimits
+from cudaq_pulse.controller import ControllerLimitError
 from cudaq_pulse.kernel import _kernel
 from cudaq_pulse.kernel.ir_builder import SymbolicValueError
 from cudaq_pulse.targets import (
@@ -115,7 +115,7 @@ def idle(tau: float):
 
 
 _SHIPPED_DEVICE = pulse.device(_SHIPPED_TARGET)
-_SLOW_CONTROLLER = MachineModel(controller=ControllerLimits(clock_ghz=1.0))
+_SLOW_CONTROLLER = MachineModel(controller=Controller(clock_ghz=1.0))
 _DELAYED = MachineModel(line_delays_ns={("drive", 0): 1.5})
 
 
@@ -528,13 +528,13 @@ def swept(q, amp: float):
 
 
 _PERSISTENT = MachineModel(
-    controller=ControllerLimits(
+    controller=Controller(
         persistent_frames=True,
         waveform_memory_samples=4096,
         waveform_memory="shared",
     )
 )
-_AMPLITUDE_LIMIT = MachineModel(controller=ControllerLimits(max_amplitude=0.6))
+_AMPLITUDE_LIMIT = MachineModel(controller=Controller(max_amplitude=0.6))
 
 
 def _exported():
@@ -589,7 +589,7 @@ def test_an_unpickled_module_checks_each_calls_values_against_the_controller(mon
     assert back.bind([0.3]).export_controller() == generic.bind([0.3]).export_controller()
     with pytest.raises(ControllerLimitError, match=r"peaks at amplitude 0\.9; .* at most 0\.6"):
         back.bind([0.9])
-    with pytest.raises(ControllerLimitError, match="ControllerLimits.max_amplitude"):
+    with pytest.raises(ControllerLimitError, match="Controller.max_amplitude"):
         back._with_values([0.9])
 
 
@@ -880,7 +880,7 @@ def _raised(make):
 
 
 def _limit_error():
-    machine = MachineModel(controller=ControllerLimits(instruction_cycles=4, min_idle_cycles=40))
+    machine = MachineModel(controller=Controller(instruction_cycles=4, min_idle_cycles=40))
     return _raised(lambda: pulse.compile(ramsey, machine=machine).lower(Q[0], 0.75))
 
 

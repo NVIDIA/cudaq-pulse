@@ -19,8 +19,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from cudaq_pulse import Controller
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import FORMAT, ControllerLimits
+from cudaq_pulse.controller import FORMAT
 
 LOADED = True
 
@@ -30,7 +31,7 @@ class DummyBackend:
     formats = (FORMAT,)
 
     def machine_model(self) -> MachineModel:
-        limits = ControllerLimits(
+        limits = Controller(
             clock_ghz=1.0,
             instruction_cycles=2,
             min_idle_cycles=2,

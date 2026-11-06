@@ -149,7 +149,7 @@
       }
     },
     "export_controller": {
-      "export_bytes": 87104,
+      "export_bytes": 87068,
       "instructions": 4805096,
       "estimated_cycles": 7379290,
       "python_work": {
@@ -159,7 +159,7 @@
       }
     },
     "export_controller_sampled": {
-      "export_bytes": 49239,
+      "export_bytes": 49203,
       "instructions": 1539088,
       "estimated_cycles": 2410081,
       "python_work": {

@@ -41,7 +41,7 @@ class ClassicalCall:
     lengths come from its calls, else the same name. ``dispatch_key`` is the
     key its requests carry: the hash of ``compiled_name``
     (``classical.function_id``), or the key its controller's firmware fixes
-    (the controller's ``dispatch_keys``).
+    (the ``dispatch_keys`` of the processor that runs it).
 
     ``exposed_cycles`` is how long the first use waits for the answer beyond
     when it could start without the call: after its line is free and after

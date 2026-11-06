@@ -24,14 +24,12 @@ from typing import TYPE_CHECKING, Any, overload
 
 from .controller import (
     _PLAYED,
-    ControllerLimits,
     WaveformMemoryScope,
     _exclusive,
     _native_clock,
     _peak_amplitude,
     _sample_rates,
     _samples_per_own_cycle,
-    resources,
     shape_key,
 )
 
@@ -39,7 +37,7 @@ if TYPE_CHECKING:
     from fractions import Fraction
 
     from ._clocks import ClockPlan, ControllerClock
-    from ._system import ControlSystem
+    from ._system import Controller, ControlSystem
     from .compiler import Lowered
 
 # Up to this many violations are a list, as without summarized loops.
@@ -556,7 +554,7 @@ def violations(
     lowered: Lowered,
     events: Sequence[Mapping[str, Any]],
     repeats: Sequence[Sequence[int]],
-    limits: ControllerLimits,
+    limits: Controller,
     lines: Sequence[Mapping[str, Any]],
     unresolved: list[str] | None,
     sample_rate: tuple[float, float] | None = None,
@@ -625,7 +623,7 @@ def parts(
     lowered: Lowered,
     events: Sequence[Mapping[str, Any]],
     repeats: Sequence[Sequence[int]],
-    limits: ControllerLimits,
+    limits: Controller,
     lines: Sequence[Mapping[str, Any]],
     unresolved: list[str] | None,
     sample_rate: tuple[float, float] | None = None,
@@ -811,8 +809,6 @@ def parts(
             )
 
         found.extend(_each_event(tree, timeout))
-    if limits.computes:
-        found.extend(resources(lowered, limits).violations)
     if sample_rate is not None:
         from .controller import _has_samples
 
@@ -902,7 +898,7 @@ def _amplitudes(
             f"{event['kind']} at ",
             event["start_cycles"],
             f" peaks at amplitude {peak:.6g}; the controller plays at most {most:g} "
-            "(ControllerLimits.max_amplitude)",
+            "(Controller.max_amplitude)",
         )
 
     return _each_event(items, over, (line["line"],))
@@ -910,7 +906,7 @@ def _amplitudes(
 
 class _Feedback:
     """The events that start before the readouts they depend on are ready
-    (``ControllerLimits.feedback_latency_cycles``). A copy of a loop depends
+    (``Controller.feedback_latency_cycles``). A copy of a loop depends
     on the copies of the readouts in it, or in the copy before it, as the
     first copy does; on a readout before the loop only a few first copies
     can be too early, and those are checked one by one."""
@@ -1057,7 +1053,7 @@ def loops_of(
 
 def summarized_check(
     lowered: Lowered,
-    limits: ControllerLimits | None,
+    limits: Controller | None,
     system: ControlSystem | None,
     clocks: ClockPlan | None,
     slots: bool,

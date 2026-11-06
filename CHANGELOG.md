@@ -125,9 +125,7 @@ behavior may change in any 0.x release.
   processor operation too: its cost is a rolled loop's counter and jump per
   iteration, and a processor without it runs loops unrolled, so their size
   counts unrolled. `dispatch_keys={"name": key}` gives the functions a
-  processor runs fixed dispatch keys; a controller that computes with its
-  own fields states them as `Controller(dispatch_keys=...)` (a
-  `[dispatch_keys]` table in its description). `lowered.controller_usage` reports
+  processor runs fixed dispatch keys. `lowered.controller_usage` reports
   each processor's functions and totals against its limits
   (`.within_limits`; `print` it for a table). A program over them does not
   compile: its `ControllerLimitError` carries the report as `usage`, every
@@ -144,7 +142,7 @@ behavior may change in any 0.x release.
   another version of an installed description is noticed once
   (`UpgradeNotice`). `python -m cudaq_pulse.doctor --system FILE` checks a
   system file and whether its controllers' backends are installed.
-- **A bound on how long a program runs.** `ControllerLimits` takes
+- **A bound on how long a program runs.** `Controller` takes
   `max_program_duration`, a time or a number of ns, the longest program the
   controller runs. Building the module sums the program op after op, every
   iteration of its loops, and a program longer than it, or than 2**60
@@ -227,11 +225,8 @@ behavior may change in any 0.x release.
   body; an expression of constants folds, and dividing by a constant is a
   multiply), state in bytes, compute time against `max_latency_ns`, and calls,
   slots and buffer bytes per shot, and whether its body is in controller
-  form (fixed-size state, bounded loops, no allocation or exceptions).
-  `ControllerLimits` gains `op_cycles`, `compute_clock_ghz`, `max_ops`,
-  `state_bytes`, `max_calls_per_shot`, `buffer_bytes`, `controller_form`
-  and `compute_links`; compiling fails with `ControllerLimitError` when a
-  program exceeds them.
+  form (fixed-size state, bounded loops, no allocation or exceptions), its
+  compute time on the `Processor` that runs it.
 - **Faster simulation of long programs.** Idle waits and square pulses in
   their frame are propagated exactly, at a cost independent of their
   length, and driven stretches on registers of up to four levels by RK4
@@ -500,7 +495,7 @@ behavior may change in any 0.x release.
   report row names the function (`call.function`, `"flip"`), its version
   (`call.compiled_name`, `"flip__3"`) and the key its requests are
   dispatched by (`call.dispatch_key`: the FNV-1a hash of the compiled name,
-  or the key a controller's `dispatch_keys` fixes; the call manifest's
+  or the key a processor's `dispatch_keys` fixes; the call manifest's
   `"dispatch_key"`). Two names that hash to one key on one link are a
   compile error. An external function's stub is a
   declaration whose body is a placeholder for its result (`return float()`,
@@ -560,7 +555,7 @@ behavior may change in any 0.x release.
   the frame every shot starts it in (`runtime_tones`). A program that
   computes nothing at run time exports exactly as before. Within a version,
   keys and event kinds are only added. `MachineModel(controller=
-  ControllerLimits(...))` states what a controller can play (clock, issue
+  Controller(...))` states what a controller can play (clock, issue
   spacing, waveform memory at its `sample_rate_ghz`, tones, the largest
   amplitude, readout detectors, feedback latency, answer timeouts, program
   size; the compiler itself limits no amplitude) and makes compilation fail with
@@ -607,7 +602,7 @@ behavior may change in any 0.x release.
   last iteration follows the loop; one made before a branch that only one
   arm takes starts the other arm. A loop kept rolled stays rolled, and no
   event, loop or program starts or lasts otherwise for a change.
-  `ControllerLimits(persistent_frames=True)` declares a controller whose
+  `Controller(persistent_frames=True)` declares a controller whose
   frames persist from shot to shot: such changes then have no event, and
   the export's `frame_state` gives the frame each tone ends the shot in.
   Programs without such changes export as before.
@@ -619,7 +614,7 @@ behavior may change in any 0.x release.
   fails it when a call's answer is due later than that after the end of
   the readouts its request carries, in any iteration. Waits whose length
   is known only at run time count at their highest length.
-- **Waveform memory.** `ControllerLimits(waveform_memory_samples=65536,
+- **Waveform memory.** `Controller(waveform_memory_samples=65536,
   waveform_memory="shared")` describes a controller's waveform memory in
   plain values, the same in Python and in a TOML description: its size in
   samples, and whether each line has one (`"per_line"`, the default) or one
@@ -728,7 +723,7 @@ behavior may change in any 0.x release.
   the kernel is compiled for. A `range()` loop runs at most 2**63 - 1
   times; a longer one is a `CompilationError` at its line, not an
   `OverflowError`. A controller holds at most
-  `ControllerLimits.max_instructions` operations (unset: no limit); a loop
+  `Controller.max_instructions` operations (unset: no limit); a loop
   that unrolls past them stops tracing as soon as the program does, with a
   `CompilationError` at the loop's line naming the loop, about how many
   operations it unrolls to and the limit. `simulate(shots=...)` and `emulate(shots=...)`

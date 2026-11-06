@@ -37,8 +37,8 @@ from pathlib import Path
 
 import cudaq_pulse as pulse
 import pytest
+from cudaq_pulse import Controller
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import ControllerLimits
 from cudaq_pulse.kernel._emitter import PulseIREmitter
 from cudaq_pulse.kernel._unroll import DEFAULT_UNROLL_THRESHOLD
 from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder
@@ -360,7 +360,7 @@ def test_the_events_of_a_long_line_are_listed_in_linear_time():
 
 @pytest.mark.scaling
 def test_a_long_program_is_exported_and_checked_in_linear_time():
-    limits = ControllerLimits(
+    limits = Controller(
         instruction_cycles=2,
         detectors={0: 0},
         max_tones_per_line=2,
@@ -425,7 +425,7 @@ def _sweep(compiled, sweep: list[float], monkeypatch) -> None:
 
 @pytest.mark.scaling
 def test_a_rolled_loop_is_checked_and_exported_rolled_in_constant_time():
-    limits = ControllerLimits(
+    limits = Controller(
         instruction_cycles=2, detectors={0: 0}, max_tones_per_line=2, waveform_memory_samples=10**9
     )
     machine = MachineModel(controller=limits)
@@ -484,7 +484,7 @@ def test_duration_budgets_of_a_rolled_loop_are_checked_in_constant_time():
 def test_a_waveform_memory_of_a_rolled_loop_is_checked_in_constant_time():
     from cudaq_pulse.controller import check
 
-    limits = ControllerLimits(waveform_memory_samples=4096, waveform_memory="shared")
+    limits = Controller(waveform_memory_samples=4096, waveform_memory="shared")
 
     def program(n: int):
         @pulse.kernel

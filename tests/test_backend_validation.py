@@ -17,9 +17,9 @@ from typing import Any
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import _validation, backends
+from cudaq_pulse import Controller, _validation, backends
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import _EVENT_KINDS, _FORMATS, ControllerLimits, unroll
+from cudaq_pulse.controller import _EVENT_KINDS, _FORMATS, unroll
 
 _PLUGINS = Path(__file__).resolve().parent / "plugins"
 _KNOWN = _EVENT_KINDS | {"drive", "readout", "submit"}
@@ -32,8 +32,8 @@ class ToyBackend:
     name = "toy"
     formats = _FORMATS
 
-    def __init__(self, limits: ControllerLimits | None = None, shift: int = 0) -> None:
-        self.limits = limits or ControllerLimits(clock_ghz=1.0)
+    def __init__(self, limits: Controller | None = None, shift: int = 0) -> None:
+        self.limits = limits or Controller(clock_ghz=1.0)
         self.shift = shift
 
     def machine_model(self) -> MachineModel:
@@ -137,19 +137,24 @@ def test_a_wrong_number_of_programs_fails(ideal, monkeypatch):
 def test_a_program_beyond_the_declared_controller_is_skipped(ideal, monkeypatch):
     backend = ToyBackend()
     monkeypatch.setattr(backend, "machine_model", lambda: MachineModel())
-    report = backends.validate(backend, controller=ControllerLimits(clock_ghz=1.0, max_pulses=2))
+    no_loop = [c for c in pulse.Capability if c is not pulse.Capability.LOOP]
+    limits = Controller(clock_ghz=1.0, max_pulses=2, supports=no_loop)
+    report = backends.validate(backend, controller=limits)
     assert "SKIP play: exceeds the controller's limits" in str(report)
     assert report.ok
 
 
 def test_emitted_pulses_must_respect_the_declared_limits():
-    limits = ControllerLimits(instruction_cycles=4, max_pulses=2)
+    limits = Controller(instruction_cycles=4, max_pulses=2)
     close = {0: [("play", 0, 16), ("play", 2, 16)]}
     assert _validation._limits(limits, close) == (
         "line 0: two pulses start 2 cycles apart; the controller issues one per 4"
     )
     many = {0: [("play", 0, 4), ("play", 8, 4)], 1: [("acquire", 0, 4)]}
-    assert _validation._limits(limits, many) == ("emitted 3 pulses; the controller plays at most 2")
+    assert _validation._limits(limits, many) is None
+    no_loop = [c for c in pulse.Capability if c is not pulse.Capability.LOOP]
+    unrolled = Controller(instruction_cycles=4, max_pulses=2, supports=no_loop)
+    assert _validation._limits(unrolled, many) == "emitted 3 pulses; the controller plays at most 2"
     assert _validation._limits(None, many) is None
 
 
@@ -190,7 +195,7 @@ def test_validate_checks_its_arguments():
 
 def test_only_controllers_that_opt_in_are_validated(ideal):
     found = {"toy": ToyBackend()}
-    limits = ControllerLimits(clock_ghz=1.0)
+    limits = Controller(clock_ghz=1.0)
     reports = _validation.opted_in(
         [("vendor/a", {"backend": "toy"}, limits), ("vendor/b", {}, limits)], found.__getitem__
     )

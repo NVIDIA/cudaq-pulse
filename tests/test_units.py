@@ -17,9 +17,9 @@ from fractions import Fraction
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
+from cudaq_pulse import Controller
 from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import ControllerLimits
 
 from tests._handles import Q
 
@@ -351,7 +351,7 @@ def test_round_duration_rounds_a_time_onto_the_grid():
         d = get_drive_line(q)
         drive(d, square(pulse.round_duration(d, 10.3 * ns), 0.1))
 
-    machine = MachineModel(controller=ControllerLimits(clock_ghz=0.5))
+    machine = MachineModel(controller=Controller(clock_ghz=0.5))
     assert [e[2] for e in _events(k.lower(Q[0]))] == [21]
     assert [e[2] for e in _events(pulse.compile(k, machine=machine).lower(Q[0]))] == [24]
 
@@ -593,8 +593,8 @@ def test_a_machine_takes_its_link_and_line_times_as_times():
     link = Link(fixed_ns=0.1 * us, feedback_ns=20 * ns)
     assert link == Link(fixed_ns=100, feedback_ns=20)
     assert link.fixed_ns.__class__ is float and link.feedback_ns.__class__ is float
-    limits = ControllerLimits(max_fine_delay_ns=2 * ns)
-    assert limits == ControllerLimits(max_fine_delay_ns=2.0)
+    limits = Controller(max_fine_delay_ns=2 * ns)
+    assert limits == Controller(max_fine_delay_ns=2.0)
     machine = MachineModel(line_delays_ns={("drive", 0): 3 * ns}, controller=limits)
     assert machine.line_delays_ns == {("drive", 0): 3.0}
     with pytest.raises(pulse.InvalidValueError, match="cannot be negative"):

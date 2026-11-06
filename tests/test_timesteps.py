@@ -16,9 +16,9 @@ from fractions import Fraction
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import _clocks, _waits, controller
+from cudaq_pulse import Controller, _clocks, _waits, controller
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import ControllerLimitError, ControllerLimits, check
+from cudaq_pulse.controller import ControllerLimitError, check
 
 from tests._handles import Q
 
@@ -27,7 +27,7 @@ TIMED = ("drive", "readout", "wait")
 
 
 def _steps(cycles_per_timestep: int, **kwargs) -> MachineModel:
-    limits = ControllerLimits(cycles_per_timestep=cycles_per_timestep, **kwargs)
+    limits = Controller(cycles_per_timestep=cycles_per_timestep, **kwargs)
     return MachineModel(controller=limits)
 
 
@@ -80,7 +80,7 @@ def test_a_timestep_is_whole_program_cycles_of_whole_steps():
 
 
 def test_the_export_counts_whole_steps_of_the_controllers_own_cycles():
-    limits = ControllerLimits(clock_ghz=1.0, cycles_per_timestep=2)
+    limits = Controller(clock_ghz=1.0, cycles_per_timestep=2)
     machine = MachineModel(controller=limits)
     lowered = pulse.compile(stepped, schedule="asap", machine=machine).lower(Q[0], Q[1])
     timed = [e for e in lowered.schedule if e.kind in TIMED]
@@ -129,7 +129,7 @@ def rolled(q):
 
 @pytest.mark.parametrize(
     "limits",
-    [ControllerLimits(cycles_per_timestep=2), ControllerLimits(sample_rate_ghz=1.0)],
+    [Controller(cycles_per_timestep=2), Controller(sample_rate_ghz=1.0)],
 )
 @pytest.mark.parametrize("kernel", [paced, rolled])
 def test_format_2_on_the_program_clock_in_timesteps_unrolls_to_format_1(kernel, limits):
@@ -146,7 +146,7 @@ def test_format_2_on_the_program_clock_in_timesteps_unrolls_to_format_1(kernel, 
 
 
 def test_format_2_refuses_a_controller_on_its_own_clock():
-    machine = MachineModel(controller=ControllerLimits(clock_ghz=1.0))
+    machine = MachineModel(controller=Controller(clock_ghz=1.0))
     lowered = pulse.compile(paced, machine=machine).lower(Q[0])
     assert lowered.export_controller(version=1)["clock_ghz"] == 1.0
     with pytest.raises(pulse.UnsupportedError, match="export version 1 for this machine"):
@@ -157,8 +157,8 @@ def test_one_cycle_per_timestep_changes_nothing():
     plain = pulse.compile(stepped).lower(Q[0], Q[1])
     one = pulse.compile(stepped, machine=_steps(1)).lower(Q[0], Q[1])
     assert one.mlir() == plain.mlir()
-    assert _clocks.plan(ControllerLimits(), 2.0) is None
-    assert _clocks.plan(ControllerLimits(cycles_per_timestep=4), 2.0) is not None
+    assert _clocks.plan(Controller(), 2.0) is None
+    assert _clocks.plan(Controller(cycles_per_timestep=4), 2.0) is not None
 
 
 def test_a_line_delay_moves_a_line_by_whole_timesteps():
@@ -171,7 +171,7 @@ def test_a_line_delay_moves_a_line_by_whole_timesteps():
     lines = {(x["role"], x["qudit"]): x for x in lowered.export_controller()["lines"]}
     assert lines[("drive", 0)]["fine_delay_ns"] == pytest.approx(1.0)
     # Without fine delay, the 1 ns left over is 2 cycles past a timestep.
-    exact = MachineModel(controller=ControllerLimits(cycles_per_timestep=4))
+    exact = MachineModel(controller=Controller(cycles_per_timestep=4))
     exact = MachineModel(controller=exact.controller, line_delays_ns={("drive", 0): 3.0})
     with pytest.raises(
         pulse.CompilationError, match="its 2 ns timesteps, and the controller has no"
@@ -182,14 +182,14 @@ def test_a_line_delay_moves_a_line_by_whole_timesteps():
 @pytest.mark.parametrize("bad", [0, -2, 2.0, True])
 def test_cycles_per_timestep_is_a_positive_int(bad):
     with pytest.raises(ValueError, match="cycles_per_timestep"):
-        ControllerLimits(cycles_per_timestep=bad)
+        Controller(cycles_per_timestep=bad)
 
 
 # ── Sample rates ─────────────────────────────────────────────────────────────
 
 # 2.4 GHz samples on a 1 GHz controller of the 2 GHz program clock: 12
 # samples every 5 of its cycles, 10 program cycles.
-AWG = ControllerLimits(clock_ghz=1.0, sample_rate_ghz=2.4)
+AWG = Controller(clock_ghz=1.0, sample_rate_ghz=2.4)
 
 
 def ramp(t):
@@ -246,20 +246,18 @@ def test_only_a_timestep_grid_checks_variable_waits_against_it():
 
 
 def test_a_whole_sample_rate_on_the_clock_changes_nothing():
-    assert _clocks.plan(ControllerLimits(sample_rate_ghz=4.0), 2.0) is None
+    assert _clocks.plan(Controller(sample_rate_ghz=4.0), 2.0) is None
     plain = pulse.compile(stepped).lower(Q[0], Q[1])
-    two = pulse.compile(
-        stepped, machine=MachineModel(controller=ControllerLimits(sample_rate_ghz=4.0))
-    )
+    two = pulse.compile(stepped, machine=MachineModel(controller=Controller(sample_rate_ghz=4.0)))
     assert two.lower(Q[0], Q[1]).mlir() == plain.mlir()
 
 
 @pytest.mark.parametrize("bad", [0, -1.0, True, "2.4", float("nan")])
 def test_sample_rate_ghz_is_a_positive_number(bad):
     with pytest.raises(ValueError, match="sample_rate_ghz"):
-        ControllerLimits(sample_rate_ghz=bad)
+        Controller(sample_rate_ghz=bad)
 
 
 def test_a_sample_rate_without_a_whole_cycle_ratio_is_an_error():
     with pytest.raises(ValueError, match="sample rate has no whole-cycle ratio"):
-        _clocks.plan(ControllerLimits(sample_rate_ghz=math.pi), 2.0)
+        _clocks.plan(Controller(sample_rate_ghz=math.pi), 2.0)

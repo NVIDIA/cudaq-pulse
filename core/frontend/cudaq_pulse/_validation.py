@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 import cudaq_pulse as pulse
 
 from ._device import Qudit
+from ._system import Controller
 from .backends import Backend, IncompatibleBackendError
 from .compiler import MachineModel
 from .controller import (
@@ -30,7 +31,6 @@ from .controller import (
     _KINDS,
     FORMAT,
     ControllerLimitError,
-    ControllerLimits,
     Event,
     unroll,
 )
@@ -268,7 +268,7 @@ class _Report:
 # ── Checks ───────────────────────────────────────────────────────────────────
 
 
-def _machine(backend: Backend, controller: ControllerLimits | None) -> MachineModel:
+def _machine(backend: Backend, controller: Controller | None) -> MachineModel:
     machine = backend.machine_model()
     if controller is not None:
         machine = dataclasses.replace(machine, controller=controller)
@@ -335,16 +335,16 @@ def _timing(
     return None
 
 
-def _limits(
-    limits: ControllerLimits | None, emitted: Mapping[Any, list[tuple[Any, ...]]]
-) -> str | None:
+def _limits(limits: Controller | None, emitted: Mapping[Any, list[tuple[Any, ...]]]) -> str | None:
     """The first declared limit the emitted events exceed, or None."""
     if limits is None:
         return None
     played = sum(
         1 for events in emitted.values() for e in events if e[0] in (Event.PLAY, Event.ACQUIRE)
     )
-    if limits.max_pulses is not None and played > limits.max_pulses:
+    # A controller that runs loops holds a rolled body once, and emits it
+    # once per iteration.
+    if limits.max_pulses is not None and not limits._runs_loops and played > limits.max_pulses:
         return f"emitted {played} pulses; the controller plays at most {limits.max_pulses}"
     for line, events in emitted.items():
         starts = sorted(e[1] for e in events if e[0] in (Event.PLAY, Event.ACQUIRE))
@@ -396,7 +396,7 @@ def _emit(
     name: str,
     program: dict[str, Any],
     lowered: Lowered,
-    limits: ControllerLimits | None,
+    limits: Controller | None,
     shots: int,
     tolerance: float,
 ) -> bool:
@@ -438,7 +438,7 @@ def _emit(
 
 def validate(
     backend: Backend,
-    controller: ControllerLimits | None = None,
+    controller: Controller | None = None,
     shots: int = 1000,
     tolerance: float = 0.05,
 ) -> _Report:
@@ -490,7 +490,7 @@ def validate(
 
 
 def opted_in(
-    descriptions: Iterable[tuple[str, Mapping[str, Any], ControllerLimits]],
+    descriptions: Iterable[tuple[str, Mapping[str, Any], Controller]],
     get: Callable[[str], Backend],
     shots: int = 1000,
     tolerance: float = 0.05,

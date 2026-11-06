@@ -18,17 +18,11 @@ import warnings
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import _validation
+from cudaq_pulse import Controller, _validation
 from cudaq_pulse._errors import ExecutionError, InvalidValueError, UnsupportedError
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import (
-    EXPRESSION_TERMS,
-    FORMAT,
-    ControllerLimits,
-    evaluate_expression,
-    unroll,
-)
+from cudaq_pulse.controller import EXPRESSION_TERMS, FORMAT, evaluate_expression, unroll
 
 from tests._handles import Q
 from tests.kernel.test_runtime_conditions import _kernel as _traced
@@ -176,7 +170,7 @@ def test_a_readout_is_set_when_it_observed_any_level_but_0():
 
 
 def test_a_controller_clock_clamps_and_converts_a_run_time_length():
-    machine = MachineModel(controller=ControllerLimits(clock_ghz=2.0, cycles_per_timestep=4))
+    machine = MachineModel(controller=Controller(clock_ghz=2.0, cycles_per_timestep=4))
     body = ["wait(d, n * 4, bounds=(8, 400))"]
     program = pulse.compile(_kernel(body), machine=machine).lower(Q[0]).export_controller()
     expression = _value(program)
@@ -605,7 +599,7 @@ def test_no_export_of_the_corpus_names_an_operation_of_the_compiler(version):
         lowered = pulse.compile(kernel, device=dev).lower(*dev.qudit_handles[:2])
         _no_dialect(lowered.export_controller(version=version))
     # Format /2 is for controllers on the program clock.
-    clock = ControllerLimits(clock_ghz=2.0, cycles_per_timestep=4) if version == 1 else None
+    clock = Controller(clock_ghz=2.0, cycles_per_timestep=4) if version == 1 else None
     machine = MachineModel(controller=clock)
     for body in (
         *_PHASES.values(),

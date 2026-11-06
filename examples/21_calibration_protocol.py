@@ -52,7 +52,7 @@ Then the frequency binary search of
 
 which narrows a detuning shot by shot without resetting the qubit, and the
 resource report: what each estimator costs the controller, checked against
-a declared ``ControllerLimits``.
+a declared ``Controller``.
 
 Compile with ALAP scheduling (the default): the pulse before each variable
 wait then ends where the wait starts, so the qubit decays for exactly the
@@ -74,7 +74,6 @@ import cudaq_pulse as pulse
 from cudaq_pulse import controller
 from cudaq_pulse.classical import Link
 from cudaq_pulse.classical import calibration as cal
-from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.targets import transmon_17q
 
 clock_ghz = 2.0  # the program clock: the estimators count waits and T1 in its cycles
@@ -105,17 +104,20 @@ wait_range_cycles = (
     in_cycles(1 * pulse.ms),
 )  # every variable wait, in cycles: 16 ns to 1 ms
 
-# A generic controller: 4 ns per cycle, with these cycles per operation.
-controller_limits = controller.ControllerLimits(
-    op_cycles={"div": 8, "sqrt": 8, "exp": 12, "log": 12, "trig": 12, "popcount": 1},
-    compute_clock_ghz=0.25,
-    controller_form=True,
-    max_ops=256,
-    state_bytes=512,
+# A generic controller whose processor runs the estimators: 4 ns per cycle,
+# with these cycles per operation, up to one call per slot of its link at once.
+processor = pulse.Processor(
+    links=["controller"],
+    cycles_per_op={"div": 8, "sqrt": 8, "exp": 12, "log": 12, "trig": 12, "popcount": 1},
+    clock_ghz=0.25,
+    max_concurrent_calls=4,
+    fixed_cost_only=True,
+    max_ops_per_function=256,
+    max_state_bytes_per_function=512,
 )
-machine = MachineModel(
-    links={"controller": Link(fixed_ns=4, feedback_ns=8, max_in_flight=4)},
-    controller=controller_limits,
+links = {"controller": Link(fixed_ns=4, feedback_ns=8, max_in_flight=4)}
+control_system = pulse.ControlSystem(
+    controllers=[pulse.Controller(processors=[processor])], links=links
 )
 
 
@@ -503,7 +505,7 @@ if __name__ == "__main__":
 
     print("=== 1. The calibration chain, on the controller ===")
     start = time.perf_counter()
-    compiled = pulse.compile(calibration_chain, device=dev, machine=machine)
+    compiled = pulse.compile(calibration_chain, device=dev, machine=control_system)
     lowered = compiled.lower(q, 20_000.0 * clock_ghz)
     compile_s = time.perf_counter() - start
     end_cycles = max(
@@ -532,7 +534,7 @@ if __name__ == "__main__":
 
     print("\n=== 2. Frequency binary search, 15 shots, no reset ===")
     rounds = 15
-    lowered = pulse.compile(binary_search, device=dev, machine=machine).lower(q, rounds)
+    lowered = pulse.compile(binary_search, device=dev, machine=control_system).lower(q, rounds)
     errors, sigmas = [], []
     for seed in range(4):
         offset = (seed - 1.5) * 300e3
@@ -558,9 +560,15 @@ if __name__ == "__main__":
     lowered = compiled.lower(q, 20_000.0 * clock_ghz)
     report = controller.resources(lowered)
     print(report)
-    over = dataclasses.replace(
-        controller_limits, op_cycles={**controller_limits.op_cycles, "exp": 400}
+    slow = dataclasses.replace(processor, cycles_per_op={**processor.cycles_per_op, "exp": 400})
+    slow_system = pulse.ControlSystem(
+        controllers=[pulse.Controller(processors=[slow])], links=links
     )
     print("  with exp at 400 cycles:")
-    for violation in controller.resources(lowered, over).violations:
-        print(f"    {violation}")
+    try:
+        pulse.compile(calibration_chain, device=dev, machine=slow_system).lower(
+            q, 20_000.0 * clock_ghz
+        )
+    except controller.ControllerLimitError as error:
+        for violation in error.violations:
+            print(f"    {violation}")

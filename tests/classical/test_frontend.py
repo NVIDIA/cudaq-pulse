@@ -668,9 +668,10 @@ def test_several_results_come_back_as_a_tuple():
 
 
 def _fixed_machine(**keys):
-    return MachineModel(
+    cores = pulse.Processor(links=["controller"], dispatch_keys=keys)
+    return pulse.ControlSystem(
+        controllers=[pulse.Controller(model="vendor.fpga", processors=[cores])],
         links={"controller": Link(), "gpu": Link()},
-        controller=pulse.Controller(dispatch_keys=keys, model="vendor.fpga"),
     )
 
 
@@ -709,27 +710,13 @@ def test_a_call_is_dispatched_by_the_hash_of_its_compiled_name():
     assert "function_id" not in entry and "dispatch_key" not in low.export_emulation()["calls"][0]
 
 
-def test_a_controller_fixes_the_keys_of_the_functions_it_runs():
-    table = _one("table")
-    gpu = _one("decode", link="gpu")
-    low = _program(table, gpu, machine=_fixed_machine(table=3, vote=4))
-    assert [(c.compiled_name, c.dispatch_key) for c in low.classical_report()] == [
-        ("table", 3),
-        ("decode", classical.function_id("decode")),
-    ]
-    entries = {e["name"]: e for e in low.export_emulation()["manifest"]["functions"]}
-    assert entries["table"]["dispatch_key_fixed_by"] == "controllers[0] (vendor.fpga)"
-    assert "dispatch_key_fixed_by" not in entries["decode"]
-    assert "function_id_override" in low.mlir()
-
-
-def test_a_function_on_a_controller_that_fixes_keys_must_be_listed():
+def test_a_function_on_a_processor_that_fixes_keys_must_be_listed():
     with pytest.raises(pulse.CompilationError) as error:
         _program(_one("decode_patch"), machine=_fixed_machine(decode_pach=1, table=3))
     assert str(error.value) == (
-        "decode_patch runs on controllers[0] (vendor.fpga), whose dispatch_keys have no"
-        " 'decode_patch' (did you mean 'decode_pach'?); its firmware answers decode_pach, table."
-        " Add it to the controller's dispatch_keys, or call it on another link"
+        "decode_patch runs on controllers[0] (vendor.fpga).processors[0], whose dispatch_keys"
+        " have no 'decode_patch' (did you mean 'decode_pach'?); its firmware answers"
+        " decode_pach, table. Add it to the processor's dispatch_keys, or call it on another link"
     )
 
 
@@ -757,7 +744,7 @@ def test_the_reserved_keys_are_the_keys_of_the_decoder_protocol():
     }
 
 
-def test_a_template_on_a_controller_that_fixes_keys_needs_a_length():
+def test_a_template_on_a_processor_that_fixes_keys_needs_a_length():
     @pulse.classical(max_latency_ns=10, link="controller")
     def table(o: pulse.Bits) -> bool:
         return bool(o[0])
@@ -786,21 +773,19 @@ def test_a_processor_fixes_the_keys_of_the_functions_it_runs():
 
 
 def test_two_controllers_on_one_link_agree_on_its_keys():
-    first = pulse.Controller(drive_lines=[0], model="vendor.fpga", dispatch_keys={"a": 3})
+    def box(lines, keys, **fields):
+        cores = pulse.Processor(links=["controller"], dispatch_keys=keys)
+        return pulse.Controller(drive_lines=lines, processors=[cores], **fields)
+
+    first = box([0], {"a": 3}, model="vendor.fpga")
+    served = "controllers[0] (vendor.fpga).processors[0] also serves link 'controller'"
     for keys, message in (
-        (
-            {"a": 4},
-            "gives a 4, but controllers[0] (vendor.fpga) also serves link 'controller'"
-            " and gives it 3",
-        ),
-        (
-            {"b": 3},
-            "gives b 3, but controllers[0] (vendor.fpga) also serves link 'controller'"
-            " and gives that key to a",
-        ),
+        ({"a": 4}, f"gives a 4, but {served} and gives it 3"),
+        ({"b": 3}, f"gives b 3, but {served} and gives that key to a"),
     ):
-        second = pulse.Controller(drive_lines=[1], dispatch_keys=keys)
-        system = pulse.ControlSystem(controllers=[first, second], links={"controller": Link()})
+        second = box([1], keys)
+        links = {"controller": Link(per_controller=True)}
+        system = pulse.ControlSystem(controllers=[first, second], links=links)
         with pytest.raises(pulse.CompilationError, match=re.escape(message)):
             _dispatch_tables(system._machine)
 

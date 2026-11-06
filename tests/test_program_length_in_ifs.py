@@ -17,15 +17,14 @@ import re
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import CompilationError
+from cudaq_pulse import CompilationError, Controller
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import ControllerLimits
 
 from tests._handles import Q
 
 # 5000 ns on the 2 GHz clock of Q's device: 10,000 cycles.
-MACHINE = MachineModel(controller=ControllerLimits(max_program_duration=5_000))
-LIMIT = r"ControllerLimits\.max_program_duration"
+MACHINE = MachineModel(controller=Controller(max_program_duration=5_000))
+LIMIT = r"Controller\.max_program_duration"
 BOUNDS = (4, 10**6)
 LENGTHS = [4.0, 1999.5, 3000.0, 4400.4, 6000.0, 7600.0, 9700.0, 12_000.0]
 SHAPES = ["longer other arm", "both arms", "no else", "nested in a loop", "loop in an arm"]

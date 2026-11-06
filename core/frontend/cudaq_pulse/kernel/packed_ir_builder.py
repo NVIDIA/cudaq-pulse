@@ -170,7 +170,7 @@ def _fixed_key(function: Any, table: dict[str, tuple[int, str]]) -> tuple[int, s
         hint = f" (did you mean {close!r}?)" if close else ""
         raise CompilationError(
             f"{name} runs on {table[served[0]][1]}, whose dispatch_keys have no {name!r}{hint};"
-            f" its firmware answers {', '.join(served)}. Add it to the controller's"
+            f" its firmware answers {', '.join(served)}. Add it to the processor's"
             " dispatch_keys, or call it on another link"
         )
     key, label = found
@@ -420,7 +420,7 @@ class PackedIRBuilder:
         self.dict_whole: set[int] = set()
         # The compilation's loop-unroll threshold; None for the default.
         self.unroll_threshold: int | None = None
-        # The controller's ControllerLimits.max_instructions; set it with
+        # The controller's Controller.max_instructions; set it with
         # limit_instructions().
         self.max_instructions: int | None = None
         # Unrolled loop id -> (iterations done, op count) at the last check.

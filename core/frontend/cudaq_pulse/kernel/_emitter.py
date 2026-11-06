@@ -958,7 +958,7 @@ def instruction_limit_error(
     """The error for a program grown to *op_count* ops, past the
     controller's *limit*, noted at the ``for`` line of the widest loop
     being unrolled."""
-    holds = f"more than the {limit:,} the controller holds (ControllerLimits.max_instructions)"
+    holds = f"more than the {limit:,} the controller holds (Controller.max_instructions)"
     loops = _unrolled_loops()
     if not loops:
         return CompilationError(f"the program holds {op_count:,} operations, {holds}")

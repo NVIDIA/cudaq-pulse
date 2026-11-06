@@ -22,9 +22,9 @@ import warnings
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import _validation
+from cudaq_pulse import Controller, _validation
 from cudaq_pulse.compiler import DEFAULT_PASSES, MachineModel, Pass
-from cudaq_pulse.controller import ControllerLimits, unroll
+from cudaq_pulse.controller import unroll
 from cudaq_pulse.targets import Qubit, TargetDescription
 
 from tests import _child
@@ -39,7 +39,7 @@ _TARGET = TargetDescription(
 )
 _DEV = pulse.device({"target": _TARGET})
 Q = _DEV.qudit_handles
-_PERSISTENT = MachineModel(controller=ControllerLimits(persistent_frames=True))
+_PERSISTENT = MachineModel(controller=Controller(persistent_frames=True))
 
 
 @pulse.kernel
@@ -472,10 +472,10 @@ def test_frames_that_persist_keep_the_last_changes_and_export_the_final_frame():
 
 
 def test_persistent_frames_is_exported_only_when_declared():
-    assert "persistent_frames" not in ControllerLimits().as_dict()
-    assert ControllerLimits(persistent_frames=True).as_dict()["persistent_frames"] is True
+    assert "persistent_frames" not in Controller().as_dict()
+    assert Controller(persistent_frames=True).as_dict()["persistent_frames"] is True
     with pytest.raises(pulse.InvalidValueError, match="persistent_frames must be a bool"):
-        ControllerLimits(persistent_frames=1)
+        Controller(persistent_frames=1)
 
 
 _FRAME_CHANGES = ("shift_phase", "set_phase", "shift_frequency", "set_frequency")

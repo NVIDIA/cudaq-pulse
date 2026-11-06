@@ -44,10 +44,10 @@ if TYPE_CHECKING:
     from ._classical_report import ClassicalCall as ClassicalCall
     from ._device import Device
     from ._programs import _Role
-    from ._system import ControlSystem
+    from ._system import Controller, ControlSystem
     from ._waits import _WaitLengths
     from .classical import Link
-    from .controller import ControllerLimits, UsageReport
+    from .controller import UsageReport
     from .kernel._kernel import CompiledKernel, Kernel
 
 __all__ = [
@@ -243,7 +243,7 @@ class MachineModel:
     latencies apply to every schedule, because they are hardware. A link id
     a program uses that is not listed gets ``Link()``; an unknown name is an
     error. ``controller`` gives the limits of the controller the program is
-    for (``cudaq_pulse.controller.ControllerLimits``); every scheduled
+    for (``cudaq_pulse.Controller``); every scheduled
     program is checked against them. ``reference_clock_ghz`` is a clock the
     controllers share, if they do: each controller's clock must be a whole
     multiple of it, and without it each controller's start is known only to
@@ -253,9 +253,9 @@ class MachineModel:
     later than scheduled. Whole steps of the line's grid move its
     operations, which are then checked like any others; the rest is the
     line's ``fine_delay_ns`` in the controller's program, which its
-    controller must be able to add (``ControllerLimits.max_fine_delay_ns``)
+    controller must be able to add (``Controller.max_fine_delay_ns``)
     or tolerate
-    (``ControllerLimits.alignment_tolerance_cycles``).
+    (``Controller.alignment_tolerance_cycles``).
     """
 
     max_concurrent_drives: int = 4
@@ -263,7 +263,7 @@ class MachineModel:
     readout_latency_cycles: int = 0
     line_switch_penalty_cycles: int = 0
     links: Mapping[int | str, Link] = _NO_LINKS
-    controller: ControllerLimits | None = None
+    controller: Controller | None = None
     reference_clock_ghz: float | None = None
     line_delays_ns: Mapping[tuple[str, int], float | Time] = _NO_DELAYS
     link_names: Mapping[str, int] = field(init=False, repr=False, compare=False)
@@ -274,11 +274,11 @@ class MachineModel:
 
     def __post_init__(self) -> None:
         if self.controller is not None:
-            from .controller import ControllerLimits
+            from ._system import Controller
 
-            if not isinstance(self.controller, ControllerLimits):
+            if not isinstance(self.controller, Controller):
                 raise TypeError(
-                    f"MachineModel.controller must be a ControllerLimits, got {self.controller!r}"
+                    f"MachineModel.controller must be a Controller, got {self.controller!r}"
                 )
         if self.reference_clock_ghz is not None and not self.reference_clock_ghz > 0:
             raise InvalidValueError(
@@ -1523,8 +1523,7 @@ def _routes(lowered: Lowered) -> Sequence[tuple[int, int, str | None]]:
 
 def _dispatch_tables(machine: MachineModel) -> dict[int, dict[str, tuple[int, str]]]:
     """Per link id, the keys fixed on it (by function name), each with what
-    fixes them: a processor's ``dispatch_keys`` on its ``links``, or, for a
-    controller without processors, its own on its ``compute_links``."""
+    fixes them: a processor's ``dispatch_keys`` on its ``links``."""
     system = machine._system
     if system is not None and machine.controller is None:
         controllers: Sequence[Any] = system.controllers
@@ -1532,25 +1531,16 @@ def _dispatch_tables(machine: MachineModel) -> dict[int, dict[str, tuple[int, st
         controllers = () if machine.controller is None else (machine.controller,)
     tables: dict[int, dict[str, tuple[int, str]]] = {}
     for position, controller in enumerate(controllers):
-        model = getattr(controller, "model", None)
-        label = f"controllers[{position}]" + (f" ({model})" if model else "")
-        processors = getattr(controller, "processors", ())
-        if processors:
-            sources = [
-                (f"{label}.processors[{index}]", processor.links, processor.dispatch_keys)
-                for index, processor in enumerate(processors)
-            ]
-        else:
-            sources = [
-                (
-                    label,
-                    getattr(controller, "compute_links", ("controller",)),
-                    getattr(controller, "dispatch_keys", None),
+        label = f"controllers[{position}]" + (f" ({controller.model})" if controller.model else "")
+        for index, processor in enumerate(controller.processors):
+            if processor.dispatch_keys:
+                _fix_keys(
+                    machine,
+                    tables,
+                    f"{label}.processors[{index}]",
+                    processor.links,
+                    processor.dispatch_keys,
                 )
-            ]
-        for owner, links, given in sources:
-            if given:
-                _fix_keys(machine, tables, owner, links, given)
     return tables
 
 
@@ -1573,14 +1563,14 @@ def _fix_keys(
                 raise CompilationError(
                     f"{label}.dispatch_keys gives {name} {key}, but {known[1]} also serves"
                     f" link {link!r} and gives it {known[0]}; give {name} one key, or put"
-                    " the controllers on different compute links"
+                    " the processors on different links"
                 )
             owner = taken.get(key, name)
             if owner != name:
                 raise CompilationError(
                     f"{label}.dispatch_keys gives {name} {key}, but {table[owner][1]} also"
                     f" serves link {link!r} and gives that key to {owner}; give each"
-                    " function its own key, or put the controllers on different compute links"
+                    " function its own key, or put the processors on different links"
                 )
             table[name] = (key, label)
 

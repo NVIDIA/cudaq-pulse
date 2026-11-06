@@ -15,16 +15,10 @@ import warnings
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import backends
+from cudaq_pulse import Controller, backends
 from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import (
-    FORMAT,
-    ControllerLimitError,
-    ControllerLimits,
-    check,
-    unroll,
-)
+from cudaq_pulse.controller import FORMAT, ControllerLimitError, check, unroll
 from cudaq_pulse.targets import Qubit, TargetDescription
 
 from tests.test_controller import answered, chained, chosen_by_readout, frame_in_arms, settings
@@ -48,7 +42,7 @@ _MACHINE = MachineModel(links={"ctl": Link(fixed_ns=4, feedback_ns=8)})
 
 def _sampled(per_cycle, **limits):
     """Limits of a controller whose lines play *per_cycle* samples per cycle."""
-    return ControllerLimits(sample_rate_ghz=per_cycle * _TARGET.clock_ghz, **limits)
+    return Controller(sample_rate_ghz=per_cycle * _TARGET.clock_ghz, **limits)
 
 
 def _rounds(n):
@@ -388,16 +382,18 @@ def test_the_structured_format_is_refused_by_an_unknown_version():
 # ── Limit checks on rolled loops ────────────────────────────────────────
 
 
+# What a controller that plays rolled loops unrolled supports.
+_NO_LOOP = [c for c in pulse.Capability if c is not pulse.Capability.LOOP]
 # Built per test, so that a limit the controller no longer takes fails its
 # own cases only.
 _LIMITS = {
-    "issue": lambda: ControllerLimits(instruction_cycles=3, min_idle_cycles=5),
-    "tones": lambda: ControllerLimits(max_tones_per_line=1),
+    "issue": lambda: Controller(instruction_cycles=3, min_idle_cycles=5),
+    "tones": lambda: Controller(max_tones_per_line=1),
     "waveform_memory_samples": lambda: _sampled(2, waveform_memory_samples=60),
     "shared_memory": lambda: _sampled(2, waveform_memory_samples=60, waveform_memory="shared"),
-    "detectors": lambda: ControllerLimits(detectors={0: 0, 1: 0}, detector_recovery_cycles=500),
-    "feedback": lambda: ControllerLimits(feedback_latency_cycles=50),
-    "max_pulses": lambda: ControllerLimits(max_pulses=7),
+    "detectors": lambda: Controller(detectors={0: 0, 1: 0}, detector_recovery_cycles=500),
+    "feedback": lambda: Controller(feedback_latency_cycles=50),
+    "max_pulses": lambda: Controller(max_pulses=7, supports=_NO_LOOP),
 }
 
 
@@ -423,7 +419,7 @@ def test_a_violation_in_every_iteration_is_reported_for_each_iteration():
             drive(d, square(8, 0.2))
             wait(d, 20)
 
-    limits = ControllerLimits(instruction_cycles=3, min_idle_cycles=6, max_pulses=10)
+    limits = Controller(instruction_cycles=3, min_idle_cycles=6, max_pulses=10, supports=_NO_LOOP)
     lowered = pulse.compile(pairs, unroll_threshold=0).lower(Q[0])
     unrolled = pulse.compile(pairs, unroll_threshold=10**6).lower(Q[0])
     found, every = check(lowered, limits), check(unrolled, limits)
@@ -439,7 +435,7 @@ def test_a_violation_in_every_iteration_is_reported_for_each_iteration():
         "line 0: drive at 35972 starts 8 cycles after the drive at 35964; the controller "
         "needs exactly 3 or at least 9"
     )
-    machine = MachineModel(controller=ControllerLimits(instruction_cycles=3, min_idle_cycles=6))
+    machine = MachineModel(controller=Controller(instruction_cycles=3, min_idle_cycles=6))
     spaced = check(unrolled, machine.controller)
     assert len(spaced) == 1000
     with pytest.raises(ControllerLimitError) as error:
@@ -641,7 +637,7 @@ def test_an_amplitude_and_a_phase_from_an_answer_are_exported_with_their_source(
     ]
 
     # Frames that persist keep it, as the frame the tone ends the shot in.
-    persistent = MachineModel(controller=ControllerLimits(persistent_frames=True))
+    persistent = MachineModel(controller=Controller(persistent_frames=True))
     lowered = pulse.compile(_answer_amplitude, unroll_threshold=0, machine=persistent).lower(Q[0])
     structured = lowered.export_controller(version=2)
     [play] = (e for e in structured["events"] if e["kind"] == "play")
@@ -711,13 +707,13 @@ def test_an_amplitude_over_the_limit_in_a_rolled_loop_is_reported_for_each_itera
 
     lowered = pulse.compile(strong, unroll_threshold=0).lower(Q[0])
     unrolled = pulse.compile(strong, unroll_threshold=10**6).lower(Q[0])
-    limits = ControllerLimits(max_amplitude=0.5)
+    limits = Controller(max_amplitude=0.5)
     found = check(lowered, limits)
     assert list(found) == list(check(unrolled, limits))
     assert len(found) == 1000
     assert found[0] == (
         "line 0 (drive of qudit 0): the drive at 0 peaks at amplitude 0.9; the controller "
-        "plays at most 0.5 (ControllerLimits.max_amplitude)"
+        "plays at most 0.5 (Controller.max_amplitude)"
     )
     assert found[-1] == found[0].replace("at 0 peaks", "at 31968 peaks")
-    assert check(lowered, ControllerLimits(max_amplitude=1.0)) == []
+    assert check(lowered, Controller(max_amplitude=1.0)) == []

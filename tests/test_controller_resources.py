@@ -14,17 +14,11 @@ import re
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import _controller_cost
+from cudaq_pulse import Controller, Processor, _controller_cost
 from cudaq_pulse.classical import Link
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import (
-    OP_CLASSES,
-    ControllerLimitError,
-    ControllerLimits,
-    analyze,
-    resources,
-)
+from cudaq_pulse.controller import OP_CLASSES, ControllerLimitError, analyze, resources
 
 from tests._handles import Q
 
@@ -228,25 +222,24 @@ def test_the_protocol_estimators_are_in_controller_form():
 
 
 def test_compute_time_follows_the_cycle_costs():
-    limits = ControllerLimits(op_cycles=_CYCLES, compute_clock_ghz=0.5)
-    row = analyze(_arithmetic, limits)
-    # mul 1 + add 2 at one cycle, div 8, sqrt 8: 19 cycles at 2 ns.
-    assert row.compute_cycles == 19 and row.compute_ns == pytest.approx(38.0)
-    assert row.margin_ns == pytest.approx(100.0 - 38.0)
+    row = analyze(_arithmetic)
+    # On no processor; mul 1 + add 2 at one cycle, div 8, sqrt 8: 19 cycles.
+    assert row.compute_cycles is None and row.compute_ns is None and row.margin_ns is None
+    assert row.cost.processor_cycles(_CYCLES, True) == 19
     assert row.state_bytes == 3 * 8 + 8  # three arguments, one result
     assert row.request_bytes == 24 + 24 and row.answer_bytes == 24 + 8
 
 
 def test_unknown_operation_classes_are_rejected():
-    with pytest.raises(ValueError, match="unknown classes"):
-        ControllerLimits(op_cycles={"fma": 1})
+    with pytest.raises(ValueError, match="unknown operation 'fma'"):
+        Processor(cycles_per_op={"fma": 1})
     assert set(OP_CLASSES) >= set(_CYCLES)
-    a = ControllerLimits(op_cycles={"div": 8})
-    assert a == ControllerLimits(op_cycles={"div": 8}) and hash(a) == hash(
-        ControllerLimits(op_cycles={"div": 8})
+    a = Processor(cycles_per_op={"div": 8})
+    assert a == Processor(cycles_per_op={"div": 8}) and hash(a) == hash(
+        Processor(cycles_per_op={"div": 8})
     )
-    assert a != ControllerLimits(op_cycles={"div": 9})
-    assert a.as_dict()["op_cycles"] == {"div": 8}
+    assert a != Processor(cycles_per_op={"div": 9})
+    assert a.as_dict()["cycles_per_op"] == {"div": 8}
 
 
 @pulse.classical(max_latency_ns=40, link="controller")
@@ -277,11 +270,12 @@ def _rounds(q, n: int):
         drive(d, square(40, y * 0.0))
 
 
-def _machine(**limits):
-    return MachineModel(
-        links={"controller": Link(fixed_ns=4, feedback_ns=8), "gpu": Link(fixed_ns=500)},
-        controller=ControllerLimits(**limits) if limits else None,
-    )
+def _machine(processor=None, **limits):
+    links = {"controller": Link(fixed_ns=4, feedback_ns=8), "gpu": Link(fixed_ns=500)}
+    if processor is not None:
+        controller = Controller(processors=[Processor(**processor)], **limits)
+        return pulse.ControlSystem(controllers=[controller], links=links)
+    return MachineModel(links=links, controller=Controller(**limits) if limits else None)
 
 
 def _lower(machine, n=3):
@@ -291,46 +285,50 @@ def _lower(machine, n=3):
 def test_a_function_that_computes_past_its_budget_fails_to_compile():
     # exp at 12 cycles, a multiply, a load and an add, at 4 ns per cycle.
     with pytest.raises(ControllerLimitError, match="_update__1 computes for about 60 ns"):
-        _lower(_machine(op_cycles=_CYCLES, compute_clock_ghz=0.25))
-    _lower(_machine(op_cycles=_CYCLES, compute_clock_ghz=1.0))
+        _lower(_machine({"cycles_per_op": _CYCLES, "clock_ghz": 0.25}))
+    _lower(_machine({"cycles_per_op": _CYCLES, "clock_ghz": 1.0}))
 
 
-def test_only_functions_on_the_controller_links_are_checked():
+def test_only_functions_on_a_processor_are_checked():
     # _remote's while loop runs on the GPU link: reported, not checked.
-    report = resources(_lower(_machine(controller_form=True)))
+    report = resources(_lower(_machine({"fixed_cost_only": True})))
     remote = next(row for row in report.functions if row.compiled_name == "_remote__1")
     assert remote.function == "_remote"
     assert not remote.on_controller and not remote.cost.in_controller_form
+    assert remote.compute_ns is None
     assert report.violations == ()
-    with pytest.raises(ControllerLimitError, match="_remote__1 is not in controller form"):
-        _lower(_machine(controller_form=True, compute_links=("controller", "gpu")))
+    with pytest.raises(ControllerLimitError, match="_remote__1 is not fixed-cost"):
+        _lower(_machine({"fixed_cost_only": True, "links": ("controller", "gpu")}))
 
 
 def test_per_shot_limits_count_calls_and_bytes():
     lowered = _lower(_machine(), n=5)
-    report = resources(lowered, ControllerLimits())
+    report = resources(lowered)
     update = next(row for row in report.functions if row.compiled_name == "_update__1")
     assert update.calls_per_shot == 5 and report.calls_per_shot == 10
     per_call = update.request_bytes + update.answer_bytes  # 24 + 9, 24 + 8
     assert per_call == 65
-    with pytest.raises(ControllerLimitError, match="makes 5 calls to the controller; it takes 4"):
-        _lower(_machine(max_calls_per_shot=4), n=5)
+    with pytest.raises(ControllerLimitError, match="makes 5 calls to it; it takes 4"):
+        _lower(_machine({"max_calls_per_shot": 4}), n=5)
     with pytest.raises(ControllerLimitError, match=f"take {5 * per_call} bytes"):
-        _lower(_machine(buffer_bytes=5 * per_call - 1), n=5)
+        _lower(_machine({"max_bytes_per_shot": 5 * per_call - 1}), n=5)
     with pytest.raises(ControllerLimitError, match="bytes of state"):
-        _lower(_machine(state_bytes=16))
+        _lower(_machine({"max_state_bytes_per_function": 16}))
     with pytest.raises(ControllerLimitError, match="holds 4 operations"):
-        _lower(_machine(max_ops=3))
+        _lower(_machine({"max_ops_per_function": 3}))
 
 
 def test_the_report_is_a_table_of_functions_and_links():
-    report = resources(_lower(_machine(op_cycles=_CYCLES, compute_clock_ghz=1.0)))
+    report = resources(_lower(_machine({"cycles_per_op": _CYCLES, "clock_ghz": 1.0})))
     text = str(report)
     assert "_update" in text and "_remote" in text and "controller" in text
     assert "Links, per shot" in text and "Per shot: 6 calls" in text
     controller_link = next(u for u in report.links if u.link == "controller")
     assert controller_link.calls_per_shot == 3
     assert 1 <= controller_link.peak_in_flight <= controller_link.max_in_flight
+    update = next(row for row in report.functions if row.compiled_name == "_update__1")
+    # exp 12, a multiply, a load and an add, at 1 ns per cycle.
+    assert update.on_controller and update.compute_ns == pytest.approx(15.0)
 
 
 def test_without_compute_limits_bodies_are_not_read(monkeypatch):

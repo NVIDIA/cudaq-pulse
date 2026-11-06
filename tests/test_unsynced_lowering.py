@@ -598,11 +598,12 @@ _CHILD = """
 import json, time
 
 import cudaq_pulse as pulse
-from cudaq_pulse.controller import ControllerLimits, check
+from cudaq_pulse.controller import check
+from cudaq_pulse import Controller
 from tests._handles import Q
 from tests.test_unsynced_lowering import AT_SCALE, _kernels
 
-limits = ControllerLimits(instruction_cycles=4, min_idle_cycles=4, max_amplitude=0.05, max_pulses=7)
+limits = Controller(instruction_cycles=4, min_idle_cycles=4, max_amplitude=0.05, max_pulses=7)
 out = {{}}
 kernels = _kernels({trips})
 for name, schedule in AT_SCALE:
@@ -636,11 +637,10 @@ def _in_a_child(trips: int) -> dict[str, list[Any]]:
 
 @pytest.mark.parametrize("many", [10**9, 10**15])
 def test_a_loop_of_10_9_or_10_15_iterations_lowers_and_checks_in_bounded_time_and_memory(many):
-    from cudaq_pulse.controller import ControllerLimits, check
+    from cudaq_pulse import Controller
+    from cudaq_pulse.controller import check
 
-    limits = ControllerLimits(
-        instruction_cycles=4, min_idle_cycles=4, max_amplitude=0.05, max_pulses=7
-    )
+    limits = Controller(instruction_cycles=4, min_idle_cycles=4, max_amplitude=0.05, max_pulses=7)
     found = _in_a_child(many)
     # Past its first iterations each loop adds the same to both.
     small: dict[tuple[str, int], tuple[Fraction, int]] = {}

@@ -50,9 +50,9 @@ from ._errors import InvalidValueError, NotFoundError, PulseError
 if TYPE_CHECKING:
     from importlib.metadata import EntryPoint
 
+    from ._system import Controller
     from ._validation import _Report
     from .compiler import MachineModel
-    from .controller import ControllerLimits
 
 __all__ = [
     "GROUP",
@@ -197,7 +197,7 @@ def get(name: str) -> Backend:
 
 def validate(
     backend: Backend | str,
-    controller: ControllerLimits | None = None,
+    controller: Controller | None = None,
     *,
     shots: int = 1000,
     tolerance: float = 0.05,

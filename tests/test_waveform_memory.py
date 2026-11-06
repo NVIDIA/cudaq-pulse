@@ -6,7 +6,7 @@
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
 """Waveform ids and parameter roles in format /2, and the waveform memory
-model of ``ControllerLimits``."""
+model of ``Controller``."""
 
 from __future__ import annotations
 
@@ -15,15 +15,10 @@ import tomllib
 
 import cudaq_pulse as pulse
 import pytest
+from cudaq_pulse import Controller, Processor
 from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import (
-    ControllerLimitError,
-    ControllerLimits,
-    WaveformMemoryScope,
-    check,
-    unroll,
-)
+from cudaq_pulse.controller import ControllerLimitError, WaveformMemoryScope, check, unroll
 
 from tests._handles import Q
 
@@ -124,32 +119,30 @@ def test_a_program_without_float_parameters_lists_none():
 def test_waveform_samples_is_the_memory_of_each_line():
     lowered = pulse.compile(tuned).lower(Q[0], 0.25, 0.1, 0.0)
     # gaussian, drag and square: 40 + 40 + 16 samples.
-    assert check(lowered, ControllerLimits(waveform_memory_samples=96)) == []
-    assert check(lowered, ControllerLimits(waveform_memory_samples=95)) == [
+    assert check(lowered, Controller(waveform_memory_samples=96)) == []
+    assert check(lowered, Controller(waveform_memory_samples=95)) == [
         "line 0: its waveforms take 96 samples; the controller's waveform memory holds 95"
     ]
-    per_line = ControllerLimits(waveform_memory_samples=95, waveform_memory="per_line")
-    assert per_line == ControllerLimits(waveform_memory_samples=95)
-    assert check(lowered, per_line) == check(lowered, ControllerLimits(waveform_memory_samples=95))
+    per_line = Controller(waveform_memory_samples=95, waveform_memory="per_line")
+    assert per_line == Controller(waveform_memory_samples=95)
+    assert check(lowered, per_line) == check(lowered, Controller(waveform_memory_samples=95))
 
 
 def test_a_shared_memory_holds_the_waveforms_of_every_line_once():
     lowered = pulse.compile(two_lines).lower(Q[0], Q[1])
     # A gaussian at two amplitudes is one shape: 40 + 16 samples over both lines.
-    assert (
-        check(lowered, ControllerLimits(waveform_memory_samples=56, waveform_memory="shared")) == []
-    )
-    assert check(
-        lowered, ControllerLimits(waveform_memory_samples=55, waveform_memory="shared")
-    ) == ["its waveforms take 56 samples; the controller's shared waveform memory holds 55"]
+    assert check(lowered, Controller(waveform_memory_samples=56, waveform_memory="shared")) == []
+    assert check(lowered, Controller(waveform_memory_samples=55, waveform_memory="shared")) == [
+        "its waveforms take 56 samples; the controller's shared waveform memory holds 55"
+    ]
     # Per line, the second line alone takes 56.
-    assert check(lowered, ControllerLimits(waveform_memory_samples=55)) == [
+    assert check(lowered, Controller(waveform_memory_samples=55)) == [
         "line 1: its waveforms take 56 samples; the controller's waveform memory holds 55"
     ]
 
 
 def test_the_memory_reaches_the_export_only_when_shared():
-    shared = ControllerLimits(waveform_memory_samples=4096, waveform_memory="shared")
+    shared = Controller(waveform_memory_samples=4096, waveform_memory="shared")
     lowered = pulse.compile(two_lines, machine=MachineModel(controller=shared)).lower(Q[0], Q[1])
     program = lowered.export_controller(version=2)
     assert program["controller"]["waveform_memory_samples"] == 4096
@@ -157,7 +150,7 @@ def test_the_memory_reaches_the_export_only_when_shared():
     assert lowered.export_controller()["limits"]["waveform_memory"] == "shared"
     assert unroll(program)["limits"] == shared.as_dict()
     json.dumps(program)
-    per_line = ControllerLimits(waveform_memory_samples=4096)
+    per_line = Controller(waveform_memory_samples=4096)
     assert "waveform_memory" not in per_line.as_dict()
     plain = pulse.compile(two_lines, machine=MachineModel(controller=per_line)).lower(Q[0], Q[1])
     assert "waveform_memory" not in plain.export_controller(version=2)["controller"]
@@ -165,20 +158,18 @@ def test_the_memory_reaches_the_export_only_when_shared():
 
 
 def test_the_memory_takes_its_strings_or_its_members():
-    by_string = ControllerLimits(waveform_memory_samples=8, waveform_memory="shared")
-    by_member = ControllerLimits(
-        waveform_memory_samples=8, waveform_memory=WaveformMemoryScope.SHARED
-    )
+    by_string = Controller(waveform_memory_samples=8, waveform_memory="shared")
+    by_member = Controller(waveform_memory_samples=8, waveform_memory=WaveformMemoryScope.SHARED)
     assert by_string == by_member and hash(by_string) == hash(by_member)
     assert by_string.waveform_memory is WaveformMemoryScope.SHARED
-    assert ControllerLimits().waveform_memory == "per_line"
+    assert Controller().waveform_memory == "per_line"
     with pytest.raises(pulse.InvalidValueError, match="'per_line' or 'shared', got 'global'"):
-        ControllerLimits(waveform_memory="global")
+        Controller(waveform_memory="global")
 
 
 def test_a_controller_description_in_toml_gives_the_same_limits():
     description = tomllib.loads('waveform_memory_samples = 65536\nwaveform_memory = "shared"\n')
-    assert ControllerLimits(**description) == ControllerLimits(
+    assert Controller(**description) == Controller(
         waveform_memory_samples=65536, waveform_memory="shared"
     )
 
@@ -198,8 +189,10 @@ def test_the_structured_format_writes_the_controller_and_names_its_links_anew():
         if bit:
             drive(d, square(16, 0.1))
 
-    limits = ControllerLimits(
-        instruction_cycles=1, waveform_memory_samples=4096, max_ops=64, compute_links=("ctl",)
+    limits = Controller(
+        instruction_cycles=1,
+        waveform_memory_samples=4096,
+        processors=[Processor(links=("ctl",), max_ops_per_function=64)],
     )
     links = {"ctl": Link(fixed_ns=4, bytes_per_ns=2.0, feedback_ns=8, max_in_flight=4)}
     machine = MachineModel(controller=limits, links=links)
@@ -213,21 +206,9 @@ def test_the_structured_format_writes_the_controller_and_names_its_links_anew():
         controller
     )
     assert {"max_tones_per_line", "max_pulses", "supports_timeouts"} < set(controller)
-    assert not {"max_ops", "op_cycles"} & set(controller)
     (processor,) = controller["processors"]
-    assert list(processor) == [
-        "links",
-        "clock_ghz",
-        "cycles_per_op",
-        "unsupported",
-        "max_concurrent_calls",
-        "fixed_cost_only",
-        "max_ops",
-        "max_state_bytes",
-        "max_calls_per_shot",
-        "max_bytes_per_shot",
-    ]
-    assert processor["links"] == ["ctl"] and processor["max_ops"] == 64
+    assert processor == limits.processors[0].as_dict()
+    assert processor["links"] == ["ctl"] and processor["max_ops_per_function"] == 64
     assert processor["fixed_cost_only"] is False
     assert processor["max_concurrent_calls"] == 1
     assert processor["unsupported"] == []
@@ -241,11 +222,11 @@ def test_the_structured_format_writes_the_controller_and_names_its_links_anew():
     assert back["limits"] == flat["limits"] and list(back["limits"]) == list(flat["limits"])
     assert back["links"] == flat["links"]
     assert back["target"] == flat["target"] and list(back) == list(flat)
-    # Without compute limits, the controller has no processor.
-    plain = MachineModel(controller=ControllerLimits(), links=links)
+    # A controller without processors lists none.
+    plain = MachineModel(controller=Controller(), links=links)
     program = pulse.compile(feedback, machine=plain).lower(Q[0]).export_controller(version=2)
     assert program["controller"]["processors"] == []
-    assert unroll(program)["limits"] == ControllerLimits().as_dict()
+    assert unroll(program)["limits"] == Controller().as_dict()
 
 
 def test_values_no_limit_depends_on_are_bound_without_a_check(monkeypatch):
@@ -259,9 +240,7 @@ def test_values_no_limit_depends_on_are_bound_without_a_check(monkeypatch):
         return original(view)
 
     monkeypatch.setattr(controller, "_call_violations", counting)
-    machine = MachineModel(
-        controller=ControllerLimits(waveform_memory_samples=16, max_tones_per_line=1)
-    )
+    machine = MachineModel(controller=Controller(waveform_memory_samples=16, max_tones_per_line=1))
 
     @pulse.kernel
     def sweep(q, amp: float):

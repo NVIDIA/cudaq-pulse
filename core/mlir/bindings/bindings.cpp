@@ -4955,7 +4955,7 @@ public:
           controllerLimit
               ? "the program lasts more than " + std::to_string(maxCycles) +
                     " cycles, the longest program of the controller "
-                    "(ControllerLimits.max_program_duration)"
+                    "(Controller.max_program_duration)"
               : std::string("the program lasts more than 2**60 cycles, more "
                             "than a schedule counts"),
           word);

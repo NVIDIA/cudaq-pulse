@@ -201,14 +201,14 @@ crossover; ``benchmarks/compiler/unroll_threshold.py`` repeats the measurement.
 
 **Unrolled size.** An unrolled loop holds its body once per iteration, so
 its size has no limit of its own. A controller given
-``ControllerLimits(max_instructions=n)`` holds at most ``n`` operations as
+``Controller(max_instructions=n)`` holds at most ``n`` operations as
 the kernel traces them: tracing stops as soon as the program grows past
 them, with a ``CompilationError`` at the line of the loop that unrolled it,
 naming the loop, about how many operations it unrolls to and the limit. A
 rolled loop holds its body once.
 
 **Program length.** A program runs at most its controller's
-``ControllerLimits(max_program_duration=...)``, a time or a number of ns,
+``Controller(max_program_duration=...)``, a time or a number of ns,
 and at most 2**60 clock cycles without one. Building the module sums the
 program op after op, every iteration of its loops (the longer arm of an
 ``if``), and a program longer than that is a ``CompilationError`` at the

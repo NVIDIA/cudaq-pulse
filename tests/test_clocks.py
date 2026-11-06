@@ -19,10 +19,10 @@ from fractions import Fraction
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse import _clocks
+from cudaq_pulse import Controller, _clocks
 from cudaq_pulse.classical import Link
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import ControllerLimitError, ControllerLimits, check, sample_waveform
+from cudaq_pulse.controller import ControllerLimitError, check, sample_waveform
 
 from tests._handles import LADDER, Q, ladder_target
 
@@ -30,7 +30,7 @@ SCHEDULES = ("asap", "alap", "rcp", "alap_rcp")
 
 
 def _machine(clock_ghz: float, **kwargs):
-    return MachineModel(controller=ControllerLimits(clock_ghz=clock_ghz), **kwargs)
+    return MachineModel(controller=Controller(clock_ghz=clock_ghz), **kwargs)
 
 
 # ── The program clock ────────────────────────────────────────────────────────
@@ -285,14 +285,14 @@ def test_a_length_off_the_grid_fails_to_compile_naming_the_line_and_the_fix():
 
 def test_check_against_a_slower_controller_reports_what_is_off_its_grid():
     lowered = pulse.compile(off_grid).lower(Q[0])
-    found = check(lowered, ControllerLimits(clock_ghz=1.0))
+    found = check(lowered, Controller(clock_ghz=1.0))
     assert len(found) == 2 and all("moves in timesteps of 2 cycles" in f for f in found)
     assert "(the wait at cycle 41;" in found[1]
     assert (
         "the wait starts at cycle 41, which isn't a whole number of timesteps "
         "(the nearest starts are 40 and 42)"
     ) in found[1]
-    assert check(lowered, ControllerLimits(clock_ghz=4.0)) == []
+    assert check(lowered, Controller(clock_ghz=4.0)) == []
 
 
 @pulse.kernel
@@ -422,7 +422,7 @@ def test_every_time_in_the_exports_is_converted():
             for value in data:
                 walk(value)
 
-    machine = dataclasses.replace(matrix.MACHINE, controller=ControllerLimits(clock_ghz=1.0))
+    machine = dataclasses.replace(matrix.MACHINE, controller=Controller(clock_ghz=1.0))
     for case in matrix.all_cases()[::7]:
         if matrix.expected_error(case) is not None:
             continue
@@ -540,7 +540,7 @@ def test_what_a_program_computes_at_run_time_is_in_the_controllers_cycles():
 def test_a_clock_that_only_steps_checks_a_run_time_length_on_its_timesteps():
     # The ratio is 1, so only the timestep check is added; times keep their
     # values.
-    machine = MachineModel(controller=ControllerLimits(clock_ghz=2.0, cycles_per_timestep=4))
+    machine = MachineModel(controller=Controller(clock_ghz=2.0, cycles_per_timestep=4))
     program = pulse.compile(timed_at_run_time, machine=machine).lower(Q[0]).export_controller()
     wait = next(e for e in program["events"] if e["kind"] == "wait")
     assert wait["length"]["op"] == "controller_cycles"
@@ -608,7 +608,7 @@ def test_a_run_time_violation_fails_the_export_and_the_check(monkeypatch):
     monkeypatch.setattr(_clocks, "own_run_time", lambda *args: ["not convertible"])
     with pytest.raises(ControllerLimitError, match="not convertible"):
         lowered.export_controller()
-    assert "not convertible" in check(lowered, ControllerLimits(clock_ghz=1.0))
+    assert "not convertible" in check(lowered, Controller(clock_ghz=1.0))
 
 
 def test_lines_on_several_controllers_convert_what_they_compute_at_run_time():
@@ -657,7 +657,7 @@ def test_a_reference_clock_divides_every_controller_clock_and_is_exported():
     machine = _machine(0.5, reference_clock_ghz=0.25)
     program = pulse.compile(mixed, machine=machine).lower(Q[0], Q[1]).export_controller()
     assert program["reference_clock_ghz"] == 0.25
-    machine = MachineModel(controller=ControllerLimits(), reference_clock_ghz=0.5)
+    machine = MachineModel(controller=Controller(), reference_clock_ghz=0.5)
     program = pulse.compile(mixed, machine=machine).lower(Q[0], Q[1]).export_controller()
     assert program["reference_clock_ghz"] == 0.5 and "program_clock_ghz" not in program
     with pytest.raises(ValueError, match="not a whole multiple of the 0.3 GHz reference"):
@@ -719,7 +719,7 @@ def test_custom_samples_the_envelope_at_the_lines_rate():
     assert drive["duration_cycles"] == 4
     assert drive["waveform"]["samples"] == pytest.approx([ramp(t) for t in (1, 3, 5, 7)])
     # ...and two per cycle on a controller that plays two.
-    machine = MachineModel(controller=ControllerLimits(sample_rate_ghz=4.0))
+    machine = MachineModel(controller=Controller(sample_rate_ghz=4.0))
     drive = _played(pulse.compile(shaped, machine=machine).lower(Q[0]))
     assert drive["duration_cycles"] == 8
     expected = [ramp((k + 0.5) / 2) for k in range(16)]
@@ -779,7 +779,7 @@ def test_sample_arrays_play_only_at_the_rate_they_were_made_for():
         "that play 1 GHz (one sample every 2 clock cycles)"
     )
     assert "pass sample_rate_ghz=1" in message and "custom(duration, f)" in message
-    machine = MachineModel(controller=ControllerLimits(sample_rate_ghz=4.0))
+    machine = MachineModel(controller=Controller(sample_rate_ghz=4.0))
     with pytest.raises(pulse.CompilationError, match="lines that play 4 GHz"):
         pulse.compile(at_program_rate, machine=machine).lower(Q[0])
     # Made for the line's rate, they last their samples at it.
@@ -794,11 +794,11 @@ def test_sample_arrays_play_only_at_the_rate_they_were_made_for():
 
 def test_check_against_another_rate_reports_the_sample_arrays():
     lowered = pulse.compile(at_program_rate).lower(Q[0])
-    found = check(lowered, ControllerLimits(clock_ghz=1.0))
+    found = check(lowered, Controller(clock_ghz=1.0))
     assert found == [
         "line 0: the drive at 0 plays samples made for 2 GHz, and the controller's lines play 1 GHz"
     ]
-    assert check(lowered, ControllerLimits(instruction_cycles=2)) == []
+    assert check(lowered, Controller(instruction_cycles=2)) == []
 
 
 # ── Simulation ───────────────────────────────────────────────────────────────

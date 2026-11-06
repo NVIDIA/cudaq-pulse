@@ -27,9 +27,9 @@ from typing import Any
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import controller
+from cudaq_pulse import Controller, controller
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import ControllerLimitError, ControllerLimits, check
+from cudaq_pulse.controller import ControllerLimitError, check
 
 from tests import _child
 from tests._handles import Q, ladder_target
@@ -38,15 +38,19 @@ from tests._handles import Q, ladder_target
 # few hundred MB.
 CPU_S = 30
 RSS_MB = 600
+# What a controller that plays rolled loops unrolled supports.
+_NO_LOOP = [c for c in pulse.Capability if c is not pulse.Capability.LOOP]
 
 _KERNELS = """
 import json
 import cudaq_pulse as pulse
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import ControllerLimitError, ControllerLimits
+from cudaq_pulse.controller import ControllerLimitError
+from cudaq_pulse import Controller
 from tests._handles import Q
 
 TRIPS = {trips}
+NO_LOOP = [c for c in pulse.Capability if c is not pulse.Capability.LOOP]
 
 @pulse.kernel
 def drives(q):
@@ -115,7 +119,7 @@ def retuned(q):
         if m:
             drive(d, square(8, 0.1))
 
-options = {{"machine": MachineModel(controller=ControllerLimits({limits}))}}
+options = {{"machine": MachineModel(controller=Controller({limits}))}}
 handles = (Q[0],)
 {system}
 try:
@@ -160,12 +164,10 @@ def close(q):
 def test_a_rolled_loop_reports_each_iteration_as_it_does_now():
     lowered = pulse.compile(close).lower(Q[0])
     assert lowered.metrics.op_count == 7
-    limits = ControllerLimits(
-        instruction_cycles=4, min_idle_cycles=4, max_amplitude=0.05, max_pulses=7
+    limits = Controller(
+        instruction_cycles=4, min_idle_cycles=4, max_amplitude=0.05, max_pulses=7, supports=_NO_LOOP
     )
-    over = (
-        "peaks at amplitude 0.1; the controller plays at most 0.05 (ControllerLimits.max_amplitude)"
-    )
+    over = "peaks at amplitude 0.1; the controller plays at most 0.05 (Controller.max_amplitude)"
     assert check(lowered, limits) == [
         "6000 drives and readouts; the controller plays at most 7. It does not support "
         "'loop', so rolled loops are unrolled for it: the loop of 3000 iterations from "
@@ -216,7 +218,7 @@ def test_a_check_of_run_time_frame_changes_in_branches_takes_bounded_memory():
 
 
 def test_the_event_count_of_a_rolled_loop_is_its_trip_count_times_its_body():
-    found = _in_a_child("drives", 10**15 + 1, "max_pulses=10**15")
+    found = _in_a_child("drives", 10**15 + 1, "max_pulses=10**15, supports=NO_LOOP")
     assert found["count"] == 1
     assert found["message"] == (
         "the program exceeds the controller's limits:\n  1000000000000001 drives and readouts; "
@@ -286,8 +288,10 @@ def _loops(n: int) -> dict[str, Any]:
 
 
 LIMITS = [
-    ControllerLimits(instruction_cycles=4, min_idle_cycles=4, max_amplitude=0.05, max_pulses=7),
-    ControllerLimits(
+    Controller(
+        instruction_cycles=4, min_idle_cycles=4, max_amplitude=0.05, max_pulses=7, supports=_NO_LOOP
+    ),
+    Controller(
         instruction_cycles=2,
         detectors={0: 0, 1: 0},
         detector_recovery_cycles=30,
@@ -295,10 +299,10 @@ LIMITS = [
         waveform_memory_samples=50,
         feedback_latency_cycles=60,
     ),
-    ControllerLimits(feedback_latency_cycles=500, max_pulses=10),
-    ControllerLimits(instruction_cycles=2, waveform_memory_samples=10, waveform_memory="shared"),
+    Controller(feedback_latency_cycles=500, max_pulses=10, supports=_NO_LOOP),
+    Controller(instruction_cycles=2, waveform_memory_samples=10, waveform_memory="shared"),
     # A float's amplitude is checked when it is called with one.
-    ControllerLimits(instruction_cycles=4, min_idle_cycles=4, max_amplitude=0.05),
+    Controller(instruction_cycles=4, min_idle_cycles=4, max_amplitude=0.05),
 ]
 
 
@@ -447,7 +451,7 @@ _LEFT_TO_THE_WALK = (
 # (rcp peels a few first) it leaves to that walk.
 @pytest.mark.parametrize("schedule", ["asap", "rcp"])
 def test_the_native_check_leaves_a_long_loop_out_of_step_to_the_summarizing_walk(schedule):
-    limits = ControllerLimits(instruction_cycles=4, max_amplitude=0.05)
+    limits = Controller(instruction_cycles=4, max_amplitude=0.05)
     left = []
     for trips in (64, 200):
         program = pulse.compile(
@@ -615,7 +619,7 @@ def _delayed_at_run_time(q):
 # export does.
 @pytest.mark.parametrize("clock", range(len(OWN_CLOCKS)))
 def test_a_check_on_a_controllers_own_clock_converts_what_runs_at_run_time_as_its_export(clock):
-    limits = dataclasses.replace(ControllerLimits(), **OWN_CLOCKS[clock])
+    limits = dataclasses.replace(Controller(), **OWN_CLOCKS[clock])
     lowered = _on(_delayed_at_run_time, "asap", limits)
     own = controller._native_clock(lowered.clocks)
     checked = controller._walk(lowered, values=False, own=own, waveforms=False, summary=([], None))[
@@ -645,7 +649,7 @@ def test_a_long_rolled_loop_compiled_for_a_controllers_own_clock_is_summarized_a
     monkeypatch, clock, trips, name, schedule
 ):
     kernel = _on_grid(trips)[name]
-    lowered = _on(kernel, schedule, dataclasses.replace(ControllerLimits(), **OWN_CLOCKS[clock]))
+    lowered = _on(kernel, schedule, dataclasses.replace(Controller(), **OWN_CLOCKS[clock]))
     own = controller._native_clock(lowered.clocks)
     repeats: list[Any] = []
     periods: list[Any] = []
@@ -743,7 +747,7 @@ def test_a_long_rolled_loop_of_runtime_qudits_is_summarized_and_checked_as_every
         return walk(*args, **kwargs)
 
     # A runtime qudit's own frequency is one tone wherever it plays.
-    tones = [ControllerLimits(max_tones_per_line=1), ControllerLimits(max_tones_per_line=2)]
+    tones = [Controller(max_tones_per_line=1), Controller(max_tones_per_line=2)]
     for limits in [*LIMITS, *tones]:
         if clock is not None:
             limits = dataclasses.replace(limits, **OWN_CLOCKS[clock])

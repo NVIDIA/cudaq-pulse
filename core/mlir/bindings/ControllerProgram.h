@@ -2294,7 +2294,7 @@ inline void ownFrameUpdateCycles(ControllerWalk &walk, int64_t num,
 
 // ── Limit checks ──────────────────────────────────────────────────────────
 
-/// What `ControllerLimits` checks on the schedule; -1 for a limit not set.
+/// What a `Controller` checks on the schedule; -1 for a limit not set.
 struct ControllerLimitSpec {
   int64_t issue = 1;
   int64_t gap = 1;

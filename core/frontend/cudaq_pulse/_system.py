@@ -7,11 +7,11 @@
 # ============================================================================ #
 """The control system of a QPU: its controllers, their wiring and links.
 
-A ``Controller`` is one box: what it can play and compute (the fields of
-``ControllerLimits``), the lines it drives and reads out (``drive_lines``,
-``readout_lines``: carrier indices of the quantum system), its latency to
-its peers, what it supports (``Capability``) and the backend that lowers its
-programs. A ``ControlSystem`` is the controllers of one QPU, the links to
+A ``Controller`` is one box: what it can play, the lines it drives and
+reads out (``drive_lines``, ``readout_lines``: carrier indices of the
+quantum system), its latency to its peers, what it supports
+(``Capability``), what it computes (``Processor``) and the backend that
+lowers its programs. A ``ControlSystem`` is the controllers of one QPU, the links to
 the classical devices beside them (by name) and the limits that apply to
 all of them::
 
@@ -53,9 +53,9 @@ from ._errors import (
     _count,
     _ranges,
 )
-from ._units import Time
+from ._units import Time, as_nanoseconds
 from .classical import Link
-from .controller import OP_CLASSES, ControllerLimits
+from .controller import OP_CLASSES, WaveformMemoryScope
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -326,10 +326,75 @@ class Processor:
 
 
 @dataclass(frozen=True)
-class Controller(ControllerLimits):
-    """One controller of a ``ControlSystem``: its limits and its wiring.
+class Controller:
+    """One controller: what it can play, its wiring and its processors;
+    every limit is in its own clock cycles.
 
-    The fields of ``ControllerLimits`` state what it can play and compute.
+    ``clock_ghz``: the controller's clock (``None``: the program clock,
+    ``Device.clock_ghz``). It must be a whole-cycle ratio of the program
+    clock; its program counts its own cycles.
+    ``cycles_per_timestep``: the controller starts and times operations only
+    every this many of its own cycles; every operation on its lines must
+    start and last whole timesteps (see "Clocks" in the controller backends
+    guide; ``pulse.round_duration`` rounds a length to them).
+    ``instruction_cycles`` and ``min_idle_cycles``: two operations on one
+    line start exactly ``instruction_cycles`` apart, or at least
+    ``instruction_cycles + min_idle_cycles`` apart, because the controller
+    issues one instruction per ``instruction_cycles`` and idles no less than
+    ``min_idle_cycles``.
+    ``sample_rate_ghz``: the rate its lines play samples at (``None``: one
+    per cycle of its clock). Its ratio to the clock may be a fraction, and
+    every operation on its lines must start and last a whole number of
+    samples, which the timestep includes: at 2.4 GHz on a 1 GHz clock, whole
+    multiples of 5 cycles. A length off them is a compile error, never
+    rounded.
+    ``waveform_memory_samples``: a waveform memory holds this many samples,
+    at ``sample_rate_ghz``; waveforms of one shape at different amplitudes
+    share it (``shape_key``).
+    ``waveform_memory``: ``"per_line"`` (each line has a memory of
+    ``waveform_memory_samples``) or ``"shared"`` (one memory serves every
+    line); see ``WaveformMemoryScope``.
+    ``max_tones_per_line``: distinct tone frequencies one line plays.
+    ``max_amplitude``: the largest magnitude of a sample its lines play
+    (``None``: no limit). The compiler sets no amplitude limit of its own;
+    a drive or readout whose envelope peaks above this one is a violation
+    naming its line. Exports list it among the limits only when it is set.
+    ``detectors`` and ``detector_recovery_cycles``: the detector reading
+    each qudit; readouts on one detector are serialized, each holding it
+    for its duration plus ``detector_recovery_cycles``.
+    ``feedback_latency_cycles``: the least time from the end of a readout to
+    the start of an operation in a branch on its outcome.
+    ``supports_timeouts``: whether the controller can stop waiting for an
+    answer after a timeout (``result(timeout=...)``, ``latency_mode=
+    "timeout"``); without, only waits that block or are budgeted are
+    allowed.
+    ``max_pulses``: the drives and readouts of one program; a controller
+    that supports ``"loop"`` holds a rolled loop's body once.
+    ``max_instructions``: the operations one program may hold, as the
+    kernel traces them (``None``: no limit). An unrolled loop holds its
+    body once per iteration, a rolled one once; tracing stops when the
+    program grows past the limit, and the error names the loop that
+    unrolled it. Exports list it among the limits only when it is set.
+    ``max_program_duration``: the longest program the controller runs, a
+    time or a number of ns (``None``: no limit); the compiler sums the
+    program op after op, every iteration of its loops, and a program longer
+    than that is a compile error at the op or loop that passes it (a wait
+    whose length floats set, at the call). Without it, a program may last
+    up to 2**60 cycles. Exports list it only when it is set.
+    ``max_fine_delay_ns``: the longest delay, below one grid step, each line
+    can add to its output (0: none), a time or a number of ns; it plays the
+    part of a calibrated line delay (``ControlSystem.line_delays_ns``) that
+    whole grid steps cannot.
+    ``alignment_tolerance_cycles``: how far its pulses may land from where
+    they are meant to be on other controllers, and, without fine delay, how
+    far a line's delay may be from a whole number of grid steps (the
+    compiler rounds it to the nearest one).
+    ``persistent_frames``: whether the frame of each tone, its frequency and
+    phase, persists from one shot to the next. Without, every shot starts
+    from the reset frame, and the export gives a frame change no later
+    operation uses on some path as a frame update of its own; with, it
+    exports instead the frame each tone ends the shot in (``frame_state``).
+
     ``drive_lines`` and ``readout_lines`` are the carriers whose drive and
     readout lines it plays (carrier indices of the quantum system); the only
     controller of a system that lists none plays every line.
@@ -337,37 +402,113 @@ class Controller(ControllerLimits):
     takes to reach another controller, in this controller's own cycles: one
     number for every receiver, or a mapping from the receiving controller's
     index in the system (a receiver it does not list: 0).
-    ``clock_skew_cycles`` bounds how far its clock is from the system's, and
-    ``alignment_tolerance_cycles`` how far its pulses
-    may land from where they are meant to be on other controllers.
+    ``clock_skew_cycles`` bounds how far its clock is from the system's.
     ``supports`` lists its capabilities (``None``: everything); a program
     that needs one it lacks fails to compile. ``backend`` is the controller
     backend that lowers its programs, by entry-point name. ``model`` and
     ``version`` identify the description it was made from. ``processors``
-    are its classical processors (``Processor``); a controller with
-    processors states what it computes on them, not with the compute fields
-    of ``ControllerLimits``. ``dispatch_keys``: for a controller that
-    computes with those fields, the dispatch key of each function on its
-    ``compute_links``, by function name, when it fixes them (a processor
-    states its own).
+    are its classical processors (``Processor``): the classical functions
+    it computes itself, and their limits.
     """
 
+    clock_ghz: float | None = None
+    cycles_per_timestep: int = 1
+    instruction_cycles: int = 1
+    min_idle_cycles: int = 0
+    sample_rate_ghz: float | None = None
+    waveform_memory_samples: int | None = None
+    max_tones_per_line: int | None = None
+    max_amplitude: float | None = None
+    detectors: Mapping[int, int] = field(default_factory=dict)
+    detector_recovery_cycles: int = 0
+    feedback_latency_cycles: int = 0
+    max_pulses: int | None = None
+    max_fine_delay_ns: float | Time = 0.0
+    alignment_tolerance_cycles: float = 0
+    supports_timeouts: bool = True
+    max_instructions: int | None = None
+    max_program_duration: float | Time | None = None
+    waveform_memory: WaveformMemoryScope | str = WaveformMemoryScope.PER_LINE
+    persistent_frames: bool = False
     drive_lines: Sequence[int] = ()
     readout_lines: Sequence[int] = ()
     peer_latency_cycles: int | Mapping[int, int] = 0
     clock_skew_cycles: int = 0
-    alignment_tolerance_cycles: int = 0
     supports: Sequence[Capability | str] | None = None
     backend: str | None = None
     model: str | None = None
     version: str | None = None
     processors: Sequence[Processor] = ()
-    dispatch_keys: Mapping[str, int] = field(default_factory=dict)
-
-    __hash__ = ControllerLimits.__hash__
 
     def __post_init__(self) -> None:
-        super().__post_init__()
+        if not isinstance(self.persistent_frames, bool):
+            raise InvalidValueError(
+                f"Controller.persistent_frames must be a bool, got {self.persistent_frames!r}"
+            )
+        if self.clock_ghz is not None and not self.clock_ghz > 0:
+            raise InvalidValueError(f"Controller.clock_ghz must be positive, got {self.clock_ghz}")
+        try:
+            scope = WaveformMemoryScope(self.waveform_memory)
+        except ValueError:
+            raise InvalidValueError(
+                "Controller.waveform_memory must be 'per_line' or 'shared', "
+                f"got {self.waveform_memory!r}"
+            ) from None
+        object.__setattr__(self, "waveform_memory", scope)
+        steps = self.cycles_per_timestep
+        if isinstance(steps, bool) or not isinstance(steps, int) or steps < 1:
+            raise InvalidValueError(
+                f"Controller.cycles_per_timestep must be an int of at least 1, got {steps!r}"
+            )
+        if self.instruction_cycles < 1:
+            raise InvalidValueError("Controller.instruction_cycles must be at least 1")
+        for name in ("min_idle_cycles", "detector_recovery_cycles", "feedback_latency_cycles"):
+            if getattr(self, name) < 0:
+                raise InvalidValueError(f"Controller.{name} cannot be negative")
+        object.__setattr__(self, "max_fine_delay_ns", as_nanoseconds(self.max_fine_delay_ns))
+        if self.max_program_duration is not None:
+            object.__setattr__(
+                self, "max_program_duration", _longest_program(self.max_program_duration)
+            )
+        for name in ("max_fine_delay_ns", "alignment_tolerance_cycles"):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+            ):
+                raise InvalidValueError(f"Controller.{name} must be a finite number >= 0")
+        peak = self.max_amplitude
+        if peak is not None and (
+            isinstance(peak, bool)
+            or not isinstance(peak, (int, float))
+            or not math.isfinite(peak)
+            or not peak > 0
+        ):
+            raise InvalidValueError(
+                f"Controller.max_amplitude must be a positive number or None, got {peak!r}"
+            )
+        rate = self.sample_rate_ghz
+        if rate is not None and (
+            isinstance(rate, bool)
+            or not isinstance(rate, (int, float))
+            or not math.isfinite(rate)
+            or not rate > 0
+        ):
+            raise InvalidValueError(
+                f"Controller.sample_rate_ghz must be a positive number or None, got {rate!r}"
+            )
+        for name in ("waveform_memory_samples", "max_tones_per_line", "max_pulses"):
+            value = getattr(self, name)
+            if value is not None and value < 1:
+                raise InvalidValueError(f"Controller.{name} must be positive or None")
+        size = self.max_instructions
+        if size is not None and (isinstance(size, bool) or not isinstance(size, int) or size < 1):
+            raise InvalidValueError(
+                f"Controller.max_instructions must be a positive int or None, got {size!r}"
+            )
+        object.__setattr__(self, "detectors", MappingProxyType(dict(self.detectors)))
         object.__setattr__(self, "drive_lines", _lines(self.drive_lines, "drive_lines"))
         object.__setattr__(self, "readout_lines", _lines(self.readout_lines, "readout_lines"))
         peers = self.peer_latency_cycles
@@ -385,7 +526,6 @@ class Controller(ControllerLimits):
         else:
             _cycles(peers, "peer_latency_cycles")
         _cycles(self.clock_skew_cycles, "clock_skew_cycles")
-        _cycles(self.alignment_tolerance_cycles, "alignment_tolerance_cycles")
         if self.supports is not None:
             if isinstance(self.supports, str):
                 raise InvalidTypeError(
@@ -426,21 +566,36 @@ class Controller(ControllerLimits):
                     f"Controller.processors[{index}] is not a pulse.Processor: {item!r}"
                 )
             processors.append(item)
-        keys = _dispatch_keys(self.dispatch_keys, "Controller")
-        if processors and (self.computes or self.compute_links != ("controller",) or keys):
-            raise InvalidValueError(
-                "a Controller with processors states what it computes on them; move its "
-                "compute_links, op_cycles, compute_clock_ghz, max_ops, state_bytes, "
-                "max_calls_per_shot, buffer_bytes, controller_form and dispatch_keys to a "
-                "pulse.Processor"
-            )
         object.__setattr__(self, "processors", tuple(processors))
-        object.__setattr__(self, "dispatch_keys", keys)
+
+    def __hash__(self) -> int:
+        return hash(
+            tuple(
+                tuple(sorted(value.items())) if isinstance(value, Mapping) else value
+                for value in (getattr(self, f.name) for f in fields(self))
+            )
+        )
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        from ._pickling import frozen_reduce
+
+        return frozen_reduce(self)
 
     def as_dict(self) -> dict[str, Any]:
         """The controller as JSON-serializable data, which ``Controller(**data)``
         reads back after ``_controller_fields``."""
-        data = super().as_dict()
+        data = {f.name: getattr(self, f.name) for f in fields(self)}
+        data["detectors"] = {str(k): v for k, v in sorted(self.detectors.items())}
+        for name in ("max_amplitude", "max_instructions", "max_program_duration"):
+            if data[name] is None:
+                del data[name]
+        # Memory per line exports as it did before the key existed.
+        if self.waveform_memory is WaveformMemoryScope.PER_LINE:
+            del data["waveform_memory"]
+        else:
+            data["waveform_memory"] = str(self.waveform_memory)
+        if not self.persistent_frames:
+            del data["persistent_frames"]
         data["drive_lines"] = list(self.drive_lines)
         data["readout_lines"] = list(self.readout_lines)
         peers = self.peer_latency_cycles
@@ -452,10 +607,6 @@ class Controller(ControllerLimits):
             data["processors"] = [p.as_dict() for p in self.processors]
         else:
             del data["processors"]
-        if self.dispatch_keys:
-            data["dispatch_keys"] = dict(self.dispatch_keys)
-        else:
-            del data["dispatch_keys"]
         return data
 
     def supports_capability(self, capability: Capability) -> bool:
@@ -464,7 +615,20 @@ class Controller(ControllerLimits):
 
     @property
     def _runs_loops(self) -> bool:
+        """Whether a rolled loop's body counts once against ``max_pulses``."""
         return self.supports is None or Capability.LOOP in self.supports
+
+
+def _longest_program(value: Any) -> float:
+    """``Controller.max_program_duration`` in ns."""
+    if not isinstance(value, bool) and isinstance(value, (int, float)):
+        ns = float(as_nanoseconds(value))
+        if math.isfinite(ns) and ns > 0:
+            return ns
+    raise InvalidValueError(
+        "Controller.max_program_duration must be a positive time or number of "
+        f"nanoseconds, or None; got {value!r}"
+    )
 
 
 def _known(owners: Iterable[int | None]) -> list[int]:
@@ -566,14 +730,8 @@ class ControlSystem:
         controllers = tuple(self.controllers)
         for index, controller in enumerate(controllers):
             if not isinstance(controller, Controller):
-                fix = (
-                    "; make it a pulse.Controller with the same fields"
-                    if isinstance(controller, ControllerLimits)
-                    else ""
-                )
                 raise InvalidTypeError(
-                    f"ControlSystem.controllers[{index}] is not a pulse.Controller: "
-                    f"{controller!r}{fix}"
+                    f"ControlSystem.controllers[{index}] is not a pulse.Controller: {controller!r}"
                 )
         object.__setattr__(self, "controllers", controllers)
         if not isinstance(self.links, Mapping):
@@ -717,6 +875,19 @@ class ControlSystem:
                 delays.setdefault(role, {})[str(qudit)] = ns
             data["line_delays_ns"] = delays
         return data
+
+    @property
+    def _one_box(self) -> bool:
+        """Whether its programs are checked as of its one controller, with
+        its processors: the controller plays every line and supports
+        everything, and no link reaches only some controllers."""
+        return (
+            self._plays_everything
+            and self.controllers[0].supports is None
+            and not any(
+                link.controllers is not None or link.per_controller for link in self.links.values()
+            )
+        )
 
     def _clock_plan(self, program_ghz: float) -> _clocks.ClockPlan | None:
         """The clocks of a program at *program_ghz* on the controllers (of a
@@ -1681,8 +1852,6 @@ def _parse_description(path: str) -> Controller:
             problems=problems,
         )
     given = {k: v for k, v in data.items() if k in known}
-    if "compute_links" in given:
-        given["compute_links"] = tuple(given["compute_links"])
     try:
         return Controller(**given)
     except (TypeError, ValueError) as error:
@@ -2142,8 +2311,6 @@ class _Reader:
                 except ValueError:
                     self.problem(f"{path}.{name}", "is keyed by integers", value)
                     return None
-        if isinstance(given.get("compute_links"), list):
-            given["compute_links"] = tuple(given["compute_links"])
         controller: Controller | None = self.build(path, Controller, **given)
         if controller is not None:
             _notice_version(controller, path if self.file is None else f"{self.file}: {path}")

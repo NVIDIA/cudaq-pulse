@@ -17,9 +17,8 @@ import math
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import CompilationError
+from cudaq_pulse import CompilationError, Controller
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import ControllerLimits
 
 from tests._handles import Q
 
@@ -77,33 +76,33 @@ def test_waits_of_run_time_length_are_checked_when_bound():
 
 def test_a_program_past_the_controllers_longest_program_names_the_limit():
     # 5000 ns on the 2 GHz clock of Q's device: 10,000 cycles.
-    machine = MachineModel(controller=ControllerLimits(max_program_duration=5_000))
+    machine = MachineModel(controller=Controller(max_program_duration=5_000))
     assert pulse.compile(_waits(100, 100), machine=machine).lower(Q[0]) is not None
-    with pytest.raises(CompilationError, match=r"ControllerLimits\.max_program_duration"):
+    with pytest.raises(CompilationError, match=r"Controller\.max_program_duration"):
         pulse.compile(_waits(101, 100), machine=machine).lower(Q[0])
 
 
 def test_the_longest_program_may_be_a_time():
-    assert ControllerLimits(max_program_duration=10 * pulse.us).max_program_duration == 10_000
-    assert ControllerLimits(max_program_duration=1.5).max_program_duration == 1.5
-    machine = MachineModel(controller=ControllerLimits(max_program_duration=10 * pulse.us))
-    with pytest.raises(CompilationError, match=r"ControllerLimits\.max_program_duration"):
+    assert Controller(max_program_duration=10 * pulse.us).max_program_duration == 10_000
+    assert Controller(max_program_duration=1.5).max_program_duration == 1.5
+    machine = MachineModel(controller=Controller(max_program_duration=10 * pulse.us))
+    with pytest.raises(CompilationError, match=r"Controller\.max_program_duration"):
         pulse.compile(_waits(1000, 100), machine=machine).lower(Q[0])
 
 
 @pytest.mark.parametrize("wrong", [0, -1, True, math.nan, math.inf, "8"])
 def test_max_program_duration_is_positive_or_none(wrong):
     with pytest.raises(pulse.InvalidValueError, match="max_program_duration"):
-        ControllerLimits(max_program_duration=wrong)
+        Controller(max_program_duration=wrong)
 
 
 def test_a_long_rolled_loop_past_the_controllers_longest_program_fails_fast():
-    machine = MachineModel(controller=ControllerLimits(max_program_duration=10**6))
-    with pytest.raises(CompilationError, match=r"ControllerLimits\.max_program_duration"):
+    machine = MachineModel(controller=Controller(max_program_duration=10**6))
+    with pytest.raises(CompilationError, match=r"Controller\.max_program_duration"):
         pulse.compile(_waits(10**15, 4), machine=machine).lower(Q[0])
 
 
-_LONGEST = MachineModel(controller=ControllerLimits(max_program_duration=5_000))
+_LONGEST = MachineModel(controller=Controller(max_program_duration=5_000))
 # Loops stay rolled, so a wait in one is one wait run several times.
 _ROLLED = {"unroll_threshold": 0}
 
@@ -151,7 +150,7 @@ def test_a_call_fits_exactly_when_its_lengths_written_in_fit(trips, bounds):
             if fits:
                 assert compiled.lower(Q[0], x, y) is not None, (x, y)
             else:
-                with pytest.raises(ValueError, match=r"ControllerLimits\.max_program_duration"):
+                with pytest.raises(ValueError, match=r"Controller\.max_program_duration"):
                     compiled.lower(Q[0], x, y)
     assert outcomes == {True, False}
     waits = compiled.lower(Q[0], float(lowest), float(lowest)).generic.waits

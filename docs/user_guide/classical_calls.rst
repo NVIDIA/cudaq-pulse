@@ -609,8 +609,9 @@ function's body once and reports its operations by class on its longest
 path, how many it holds, its state in bytes, its compute time against its
 ``max_latency_ns``, and its calls, slots and bytes per shot. An expression
 of constants costs nothing, as it folds when the program compiles, and
-dividing by a constant counts as a multiply. The limits come
-from ``ControllerLimits``, for the functions on its ``compute_links``:
+dividing by a constant counts as a multiply. The costs and limits come
+from the ``Processor`` of a controller that runs the functions on its
+``links``:
 
 .. :spellcheck-disable:
 
@@ -619,15 +620,19 @@ from ``ControllerLimits``, for the functions on its ``compute_links``:
 
    from cudaq_pulse import controller
 
-   limits = controller.ControllerLimits(
-       op_cycles={"div": 8, "sqrt": 8, "exp": 12, "log": 12, "trig": 12},
-       compute_clock_ghz=0.25,       # 4 ns per cycle
-       controller_form=True,
-       max_ops=256,
-       state_bytes=512,
+   processor = pulse.Processor(
+       links=["controller"],
+       cycles_per_op={"div": 8, "sqrt": 8, "exp": 12, "log": 12, "trig": 12},
+       clock_ghz=0.25,       # 4 ns per cycle
+       fixed_cost_only=True,
+       max_ops_per_function=256,
+       max_state_bytes_per_function=512,
    )
-   machine = MachineModel(links={"controller": Link(fixed_ns=4)}, controller=limits)
-   lowered = pulse.compile(chain, device=dev, machine=machine).lower(q)
+   system = pulse.ControlSystem(
+       controllers=[pulse.Controller(processors=[processor])],
+       links={"controller": Link(fixed_ns=4)},
+   )
+   lowered = pulse.compile(chain, device=dev, machine=system).lower(q)
    print(controller.resources(lowered))
 
 .. :spellcheck-enable:
@@ -635,9 +640,10 @@ from ``ControllerLimits``, for the functions on its ``compute_links``:
 The report is a table: for the chain's adaptive T1 update, 47 operations
 (one ``exp``, one ``log``, eight divisions) and 0.5 us at these costs, called
 50 times per shot. A function that computes past its budget, holds too many
-operations or bytes, or (with ``controller_form=True``) uses a ``while``
+operations or bytes, or (with ``fixed_cost_only=True``) uses a ``while``
 loop, a list or an exception fails to compile with ``ControllerLimitError``
-naming it, the limit and the line. Without any of these limits, compiling
+naming it, the limit and the line (``Lowered.controller_usage`` reports what
+each processor holds against its limits). Without processors, compiling
 does not read function bodies.
 
 Running on hardware

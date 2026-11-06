@@ -16,8 +16,8 @@ import sys
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse import Device, Qudit, Register
-from cudaq_pulse.controller import ControllerLimitError, ControllerLimits, check
+from cudaq_pulse import Controller, Device, Qudit, Register
+from cudaq_pulse.controller import ControllerLimitError, check
 from cudaq_pulse.kernel.ir_builder import CompilationError
 from cudaq_pulse.ops import (
     drive,
@@ -313,7 +313,7 @@ def _two_readouts(a: Qudit, b: Qudit):
 
 def test_detector_limits_are_checked_per_call():
     c = DEV.layout
-    limits = ControllerLimits(detectors={c[0]: 0, c[1]: 0, c[2]: 1}, detector_recovery_cycles=30)
+    limits = Controller(detectors={c[0]: 0, c[1]: 0, c[2]: 1}, detector_recovery_cycles=30)
     compiled = pulse.compile(_two_readouts, schedule="asap")
     shared = compiled.lower(H[0], H[1])
     apart = compiled.lower(H[0], H[2])
@@ -373,7 +373,7 @@ def test_reading_a_register_element_attribute_names_the_list_rewrite():
 
 
 def test_a_runtime_qudit_frequency_is_one_tone_until_its_line_is_retuned():
-    machine = pulse.compiler.MachineModel(controller=ControllerLimits(max_tones_per_line=1))
+    machine = pulse.compiler.MachineModel(controller=Controller(max_tones_per_line=1))
 
     @pulse.kernel
     def native(q: Qudit):

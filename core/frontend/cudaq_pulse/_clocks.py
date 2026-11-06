@@ -40,9 +40,8 @@ from .ops import RoundDirection, round_duration
 if TYPE_CHECKING:
     from fractions import Fraction
 
-    from ._system import ControlSystem
+    from ._system import Controller, ControlSystem
     from ._units import Time
-    from .controller import ControllerLimits
 
 __all__ = ["RoundDirection", "round_duration"]
 
@@ -258,7 +257,7 @@ def _check_reference(reference_ghz: float, clocks: Mapping[str, float]) -> None:
 
 
 def plan(
-    limits: ControllerLimits | None, program_ghz: float, reference_clock_ghz: float | None = None
+    limits: Controller | None, program_ghz: float, reference_clock_ghz: float | None = None
 ) -> ClockPlan | None:
     """The clocks of a program for *limits*' controller, or ``None`` when every
     controller runs at the program clock and no reference clock is given."""
@@ -321,7 +320,7 @@ def _plan(
 
 
 def controllers_plan(
-    controllers: Sequence[ControllerLimits],
+    controllers: Sequence[Controller],
     names: Sequence[str],
     owners: Mapping[tuple[str, int], int],
     program_ghz: float,
@@ -345,7 +344,7 @@ def controllers_plan(
     return ClockPlan(program_ghz, clocks, reference_clock_ghz, MappingProxyType(dict(owners)))
 
 
-def sample_rate(limits: ControllerLimits, program_ghz: float) -> tuple[int, int] | None:
+def sample_rate(limits: Controller, program_ghz: float) -> tuple[int, int] | None:
     """The samples a line of *limits*' controller plays per program cycle, as
     ``(n, d)``: ``n`` every ``d`` cycles; ``None`` when it is one."""
     if limits.sample_rate_ghz is not None:
@@ -383,11 +382,11 @@ def made_for(sample_rate_ghz: Any, program_ghz: float) -> tuple[int, int]:
 
 def line_delays(
     delays: Mapping[tuple[str, int], float],
-    limits: ControllerLimits | None,
+    limits: Controller | None,
     plan: ClockPlan | None,
     program_ghz: float,
     n_qudits: int,
-    controllers: Sequence[ControllerLimits] | None = None,
+    controllers: Sequence[Controller] | None = None,
     owners: Mapping[tuple[str, int], int] | None = None,
 ) -> tuple[str | None, dict[tuple[str, int], float]]:
     """The ``pulse.line_delays`` attribute that moves each delayed line by

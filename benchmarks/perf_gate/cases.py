@@ -49,8 +49,8 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import cudaq_pulse as pulse  # noqa: E402
+from cudaq_pulse import Controller  # noqa: E402
 from cudaq_pulse.compiler import MachineModel  # noqa: E402
-from cudaq_pulse.controller import ControllerLimits  # noqa: E402
 from cudaq_pulse.kernel import packed_ir_builder  # noqa: E402
 from cudaq_pulse.targets import Qubit, TargetDescription  # noqa: E402
 
@@ -211,7 +211,7 @@ def _surface(d: int) -> tuple[Any, int]:
 
 def _feedback_program(n: int) -> Any:
     # tests/test_perf_guard.py: the export scaling guard's program.
-    limits = ControllerLimits(
+    limits = Controller(
         instruction_cycles=2,
         detectors={0: 0},
         max_tones_per_line=2,

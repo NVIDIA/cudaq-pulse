@@ -287,8 +287,8 @@ import cudaq_pulse.controller as c
 from cudaq_pulse import Problem
 from cudaq_pulse.targets import ResidualZZ
 
-classes = [ResidualZZ, c.ControllerLimits, c.FunctionUsage, c.ProcessorUsage,
-           c.ControllerUsage, c.LimitExceeded, c.UsageReport, Problem]
+classes = [ResidualZZ, c.FunctionUsage, c.ProcessorUsage, c.ControllerUsage, c.LimitExceeded,
+           c.UsageReport, Problem]
 made = [type(vars(cls)["__dataclass_fields__"]) is dict for cls in classes]
 assert made == [sys.argv[1] == "eager"] * len(classes), made
 out = []
@@ -315,8 +315,7 @@ else:
 first = pickle.loads(pickled)
 out.append(outcome(lambda: (repr(first), hash(first), first == first, pickle.dumps(first))))
 out.append(outcome(lambda: dataclasses.fields(ResidualZZ)))
-out.append(outcome(lambda: c.ControllerLimits.detectors))
-out.append(outcome(lambda: c.ControllerLimits.compute_links))
+out.append(outcome(lambda: c.LimitExceeded.over))
 out.append(outcome(lambda: inspect.signature(c.FunctionUsage)))
 
 
@@ -351,10 +350,9 @@ def describe(cls):
     return rows
 
 
-samples = {c.ControllerLimits: c.ControllerLimits(instruction_cycles=2, detectors={0: 1})}
 for cls in classes + [Sub, Plain]:
     out.append(describe(cls))
-    obj = samples.get(cls) or cls(*range(len(dataclasses.fields(cls))))
+    obj = cls(*range(len(dataclasses.fields(cls))))
     out.append([outcome(lambda: repr(obj)), outcome(lambda: hash(obj)),
                 outcome(lambda: obj == copy.copy(obj)),
                 outcome(lambda: obj == dataclasses.replace(obj)),
@@ -409,7 +407,6 @@ def test_a_dataclass_made_when_used_has_every_name_a_dataclass_sets():
 
 def test_classes_most_programs_never_use_are_made_when_used():
     usage = [
-        "ControllerLimits",
         "ControllerUsage",
         "FunctionUsage",
         "LimitExceeded",

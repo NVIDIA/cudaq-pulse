@@ -33,24 +33,26 @@ the structured format ``cudaq-pulse.controller/2``: loops whose iterations
 repeat stay loops, each distinct waveform is listed once, and what follows
 from the rest is left out; ``unroll`` turns it into format /1.
 
-``ControllerLimits`` states what a controller can play. Given to the
-machine model, ``MachineModel(controller=ControllerLimits(...))``, it makes
+A ``Controller`` states what a controller can play. Given to ``compile()``
+with the rest of its control system (``ControlSystem``), it makes
 ``compile()`` check every scheduled program against it and raise
 ``ControllerLimitError`` naming each violated limit, so that a program the
 controller cannot play fails at compile time. ``check`` returns the
 violations without raising.
 
-The limits also state what the controller can compute, for the classical
-functions it runs itself (those on its ``compute_links``): the cycles each
-class of operation takes, how many operations a function may hold, how many
-bytes of state, and how many calls and bytes of requests and answers one
-shot may use. ``resources`` reports, for every classical function of a
-program, an estimate of its operations by class (read from its body), its
-state in bytes, its compute time against its ``max_latency_ns`` and its
-calls, slots and buffer bytes per shot, and whether its body is in
-*controller form*: a fixed number of scalars of state, loops of a trip count
-known when the program compiles, no ``while``, recursion, allocation or
-exceptions. ``analyze`` does the same for one function on its own.
+What a controller computes, for the classical functions it runs itself,
+its ``Processor`` states: the cycles each class of operation takes, how
+many operations and bytes of state a function may hold, and how many calls
+and bytes of requests and answers one shot may use. ``usage`` reports, for
+every classical function of a program, what it holds on the processor that
+runs it and the limits it exceeds. ``resources`` reports, for every
+classical function, an estimate of its operations by class (read from its
+body), its state in bytes, its compute time on its processor against its
+``max_latency_ns``, its calls, slots and buffer bytes per shot, and
+whether its body is in *controller form*: a fixed number of scalars of
+state, loops of a trip count known when the program compiles, no
+``while``, recursion, allocation or exceptions. ``analyze`` does the same
+for one function on its own, without a processor.
 """
 
 from __future__ import annotations
@@ -61,13 +63,11 @@ import os
 import sys
 import types
 from collections.abc import Mapping, Sequence
-from dataclasses import field, fields
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ._errors import ExecutionError, InvalidTypeError, InvalidValueError, UnsupportedError
-from ._units import Time, as_nanoseconds
 from .kernel.ir_builder import CompilationError
 
 try:
@@ -77,7 +77,6 @@ except ImportError:  # pragma: no cover - CPython builds without the _blake2 mod
     from hashlib import blake2b as _blake2b
 
 if TYPE_CHECKING:
-    from dataclasses import dataclass as _dataclass_when_used
     from fractions import Fraction
 
     import numpy as np
@@ -101,15 +100,12 @@ if TYPE_CHECKING:
 
     # The real and the imaginary parts of a waveform's samples.
     _Samples = tuple[list[float], list[float]]
-else:
-    from ._errors import _dataclass_when_used
 
 __all__ = [
     "EXPRESSION_TERMS",
     "FORMAT",
     "OP_CLASSES",
     "ControllerLimitError",
-    "ControllerLimits",
     "ControllerUsage",
     "Event",
     "FunctionCost",
@@ -146,27 +142,6 @@ _LINK_KEYS: Mapping[str, str] = MappingProxyType(
         "feedback_ns": "answer_delay_ns",
         "max_in_flight": "slots",
     }
-)
-# What a controller computes is one processor in format /2 (none when no
-# compute limit is set): each /2 field, in order, with the /1 field it
-# comes from (None: one /1 does not have).
-_PROCESSOR_KEYS: tuple[tuple[str, str | None], ...] = (
-    ("links", "compute_links"),
-    ("clock_ghz", "compute_clock_ghz"),
-    ("cycles_per_op", "op_cycles"),
-    ("unsupported", None),
-    ("max_concurrent_calls", None),
-    ("fixed_cost_only", "controller_form"),
-    ("max_ops", "max_ops"),
-    ("max_state_bytes", "state_bytes"),
-    ("max_calls_per_shot", "max_calls_per_shot"),
-    ("max_bytes_per_shot", "buffer_bytes"),
-)
-_COMPUTE_KEYS = frozenset(old for _, old in _PROCESSOR_KEYS if old is not None)
-# The /2 processor fields ControllerLimits cannot set: the calls it computes
-# at once, and the operations it cannot compute (named, not costed).
-_PROCESSOR_DEFAULTS: Mapping[str, Any] = MappingProxyType(
-    {"unsupported": (), "max_concurrent_calls": 1}
 )
 # The /2 name of the /1 key naming the quantum system.
 _SYSTEM_KEYS: Mapping[str, str] = MappingProxyType({"target": "quantum_system"})
@@ -311,272 +286,13 @@ def _limit_error(lowered: Lowered, violations: Sequence[str]) -> ControllerLimit
 
 class WaveformMemoryScope(StrEnum):
     """Which lines one waveform memory of a controller serves
-    (``ControllerLimits.waveform_memory``); the strings ``"per_line"`` and
+    (``Controller.waveform_memory``); the strings ``"per_line"`` and
     ``"shared"`` mean the same."""
 
     #: Each line has a memory of its own.
     PER_LINE = "per_line"
     #: One memory serves every line, and holds a waveform they share once.
     SHARED = "shared"
-
-
-@_dataclass_when_used(frozen=True)
-class ControllerLimits:
-    """What a controller can play; every limit is in its own clock cycles.
-
-    ``clock_ghz``: the controller's clock (``None``: the program clock,
-    ``Device.clock_ghz``). It must be a whole-cycle ratio of the program
-    clock; its program counts its own cycles.
-    ``cycles_per_timestep``: the controller starts and times operations only
-    every this many of its own cycles; every operation on its lines must
-    start and last whole timesteps (see "Clocks" in the controller backends
-    guide; ``pulse.round_duration`` rounds a length to them).
-    ``instruction_cycles`` and ``min_idle_cycles``: two operations on one line start
-    exactly ``instruction_cycles`` apart, or at least ``instruction_cycles + min_idle_cycles``
-    apart, because the controller issues one instruction per ``instruction_cycles``
-    and idles no less than ``min_idle_cycles``.
-    ``sample_rate_ghz``: the rate its lines play samples at (``None``: one
-    per cycle of its clock). Its ratio to the clock may be a fraction, and
-    every operation on its lines must start and last a whole number of
-    samples, which the timestep includes: at 2.4 GHz on a 1 GHz clock, whole
-    multiples of 5 cycles. A length off them is a compile error, never
-    rounded.
-    ``waveform_memory_samples``: a waveform memory holds this many samples, at
-    ``sample_rate_ghz``; waveforms of one shape at different amplitudes
-    share it (``shape_key``).
-    ``waveform_memory``: ``"per_line"`` (each line has a memory of
-    ``waveform_memory_samples``) or ``"shared"`` (one memory serves every line);
-    see ``WaveformMemoryScope``.
-    ``max_tones_per_line``: distinct tone frequencies one line plays.
-    ``max_amplitude``: the largest magnitude of a sample its lines play
-    (``None``: no limit). The compiler sets no amplitude limit of its own;
-    a drive or readout whose envelope peaks above this one is a violation
-    naming its line. Exports list it among the limits only when it is set.
-    ``detectors`` and ``detector_recovery_cycles``: the detector reading each
-    qudit; readouts on one detector are serialized, each holding it for its
-    duration plus ``detector_recovery_cycles``.
-    ``feedback_latency_cycles``: the least time from the end of a readout to
-    the start of an operation in a branch on its outcome.
-    ``supports_timeouts``: whether the controller can stop waiting for an
-    answer after a timeout (``result(timeout=...)``, ``latency_mode=
-    "timeout"``); without, only waits that block or are budgeted are
-    allowed.
-    ``max_pulses``: the drives and readouts of one program.
-    ``max_instructions``: the operations one program may hold, as the
-    kernel traces them (``None``: no limit). An unrolled loop holds its
-    body once per iteration, a rolled one once; tracing stops when the
-    program grows past the limit, and the error names the loop that
-    unrolled it. Exports list it among the limits only when it is set.
-    ``max_program_duration``: the longest program the controller runs, a
-    time or a number of ns (``None``: no limit); the compiler sums the
-    program op after op, every iteration of its loops, and a program longer
-    than that is a compile error at the op or loop that passes it (a wait
-    whose length floats set, at the call). Without it, a program may last
-    up to 2**60 cycles. Exports list it only when it is set.
-    ``max_fine_delay_ns``: the longest delay, below one grid step, each line
-    can add to its output (0: none), a time or a number of ns; it plays the
-    part of a calibrated line delay (``MachineModel.line_delays_ns``) that
-    whole grid steps cannot.
-    ``alignment_tolerance_cycles``: without fine delay, how far a line's
-    delay may be from a whole number of grid steps; the compiler rounds it
-    to the nearest one.
-    ``persistent_frames``: whether the frame of each tone, its frequency and
-    phase, persists from one shot to the next. Without, every shot starts
-    from the reset frame, and the export gives a frame change no later
-    operation uses on some path as a frame update of its own; with, it
-    exports instead the frame each tone ends the shot in (``frame_state``).
-
-    What it computes, for the classical functions on ``compute_links`` (link
-    names or ids; by default the link named ``"controller"``):
-    ``op_cycles``: clock cycles per operation of each class of
-    ``OP_CLASSES`` (``add``, ``mul``, ``div``, ``compare``, ``branch``,
-    ``load``, ``convert``, ``popcount``, ``sqrt``, ``exp``, ``log``,
-    ``trig``; a class not
-    given takes one cycle), at ``compute_clock_ghz`` (``None``: the program's
-    clock); with them, a function's longest path must fit its
-    ``max_latency_ns``. ``max_ops``: the operations one function may hold.
-    ``state_bytes``: the bytes of arguments, results and locals one function
-    may hold. ``max_calls_per_shot`` and ``buffer_bytes``: the calls, and
-    the bytes of requests and answers, one shot may make.
-    ``controller_form``: every such function's body must be in controller
-    form. Without any of these, compiling does not read function bodies.
-    """
-
-    clock_ghz: float | None = None
-    cycles_per_timestep: int = 1
-    instruction_cycles: int = 1
-    min_idle_cycles: int = 0
-    sample_rate_ghz: float | None = None
-    waveform_memory_samples: int | None = None
-    max_tones_per_line: int | None = None
-    max_amplitude: float | None = None
-    detectors: Mapping[int, int] = field(default_factory=dict)
-    detector_recovery_cycles: int = 0
-    feedback_latency_cycles: int = 0
-    max_pulses: int | None = None
-    max_fine_delay_ns: float | Time = 0.0
-    alignment_tolerance_cycles: float = 0.0
-    supports_timeouts: bool = True
-    compute_links: tuple[int | str, ...] = ("controller",)
-    op_cycles: Mapping[str, int] = field(default_factory=dict)
-    compute_clock_ghz: float | None = None
-    max_ops: int | None = None
-    state_bytes: int | None = None
-    max_calls_per_shot: int | None = None
-    buffer_bytes: int | None = None
-    controller_form: bool = False
-    max_instructions: int | None = None
-    max_program_duration: float | Time | None = None
-    waveform_memory: WaveformMemoryScope | str = WaveformMemoryScope.PER_LINE
-    persistent_frames: bool = False
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.persistent_frames, bool):
-            raise InvalidValueError(
-                f"ControllerLimits.persistent_frames must be a bool, got {self.persistent_frames!r}"
-            )
-        if self.clock_ghz is not None and not self.clock_ghz > 0:
-            raise ValueError(f"ControllerLimits.clock_ghz must be positive, got {self.clock_ghz}")
-        try:
-            scope = WaveformMemoryScope(self.waveform_memory)
-        except ValueError:
-            raise InvalidValueError(
-                "ControllerLimits.waveform_memory must be 'per_line' or 'shared', "
-                f"got {self.waveform_memory!r}"
-            ) from None
-        object.__setattr__(self, "waveform_memory", scope)
-        steps = self.cycles_per_timestep
-        if isinstance(steps, bool) or not isinstance(steps, int) or steps < 1:
-            raise InvalidValueError(
-                f"ControllerLimits.cycles_per_timestep must be an int of at least 1, got {steps!r}"
-            )
-        if self.instruction_cycles < 1:
-            raise ValueError("ControllerLimits.instruction_cycles must be at least 1")
-        for name in ("min_idle_cycles", "detector_recovery_cycles", "feedback_latency_cycles"):
-            if getattr(self, name) < 0:
-                raise ValueError(f"ControllerLimits.{name} cannot be negative")
-        object.__setattr__(self, "max_fine_delay_ns", as_nanoseconds(self.max_fine_delay_ns))
-        if self.max_program_duration is not None:
-            object.__setattr__(
-                self, "max_program_duration", _longest_program(self.max_program_duration)
-            )
-        for name in ("max_fine_delay_ns", "alignment_tolerance_cycles"):
-            if not math.isfinite(getattr(self, name)) or getattr(self, name) < 0:
-                raise InvalidValueError(f"ControllerLimits.{name} must be a finite number >= 0")
-        peak = self.max_amplitude
-        if peak is not None and (
-            isinstance(peak, bool)
-            or not isinstance(peak, (int, float))
-            or not math.isfinite(peak)
-            or not peak > 0
-        ):
-            raise InvalidValueError(
-                f"ControllerLimits.max_amplitude must be a positive number or None, got {peak!r}"
-            )
-        rate = self.sample_rate_ghz
-        if rate is not None and (
-            isinstance(rate, bool)
-            or not isinstance(rate, (int, float))
-            or not math.isfinite(rate)
-            or not rate > 0
-        ):
-            raise InvalidValueError(
-                f"ControllerLimits.sample_rate_ghz must be a positive number or None, got {rate!r}"
-            )
-        for name in (
-            "waveform_memory_samples",
-            "max_tones_per_line",
-            "max_pulses",
-            "max_ops",
-            "state_bytes",
-            "max_calls_per_shot",
-            "buffer_bytes",
-        ):
-            value = getattr(self, name)
-            if value is not None and value < 1:
-                raise ValueError(f"ControllerLimits.{name} must be positive or None")
-        size = self.max_instructions
-        if size is not None and (isinstance(size, bool) or not isinstance(size, int) or size < 1):
-            raise InvalidValueError(
-                f"ControllerLimits.max_instructions must be a positive int or None, got {size!r}"
-            )
-        if self.compute_clock_ghz is not None and not self.compute_clock_ghz > 0:
-            raise ValueError(
-                f"ControllerLimits.compute_clock_ghz must be positive, got {self.compute_clock_ghz}"
-            )
-        unknown = sorted(set(self.op_cycles) - set(OP_CLASSES))
-        if unknown:
-            raise ValueError(
-                f"ControllerLimits.op_cycles has unknown classes {unknown}; "
-                f"the classes are {', '.join(OP_CLASSES)}"
-            )
-        if any(int(v) < 0 for v in self.op_cycles.values()):
-            raise ValueError("ControllerLimits.op_cycles cannot be negative")
-        object.__setattr__(self, "detectors", MappingProxyType(dict(self.detectors)))
-        object.__setattr__(
-            self, "op_cycles", MappingProxyType({k: int(v) for k, v in self.op_cycles.items()})
-        )
-        object.__setattr__(self, "compute_links", tuple(self.compute_links))
-
-    def __hash__(self) -> int:
-        return hash(
-            tuple(
-                tuple(sorted(value.items())) if isinstance(value, Mapping) else value
-                for value in (getattr(self, f.name) for f in fields(self))
-            )
-        )
-
-    def __reduce__(self) -> tuple[Any, ...]:
-        from ._pickling import frozen_reduce
-
-        return frozen_reduce(self)
-
-    @property
-    def _runs_loops(self) -> bool:
-        """Whether a rolled loop's body counts once against ``max_pulses``."""
-        return False
-
-    @property
-    def computes(self) -> bool:
-        """Whether any limit on what the controller computes is set."""
-        return bool(
-            self.op_cycles
-            or self.controller_form
-            or self.max_ops is not None
-            or self.state_bytes is not None
-            or self.max_calls_per_shot is not None
-            or self.buffer_bytes is not None
-        )
-
-    def as_dict(self) -> dict[str, Any]:
-        """The limits as JSON-serializable data."""
-        data = {f.name: getattr(self, f.name) for f in fields(self)}
-        data["detectors"] = {str(k): v for k, v in sorted(self.detectors.items())}
-        data["op_cycles"] = dict(sorted(self.op_cycles.items()))
-        data["compute_links"] = list(self.compute_links)
-        for name in ("max_amplitude", "max_instructions", "max_program_duration"):
-            if data[name] is None:
-                del data[name]
-        # Memory per line exports as it did before the key existed.
-        if self.waveform_memory is WaveformMemoryScope.PER_LINE:
-            del data["waveform_memory"]
-        else:
-            data["waveform_memory"] = str(self.waveform_memory)
-        if not self.persistent_frames:
-            del data["persistent_frames"]
-        return data
-
-
-def _longest_program(value: Any) -> float:
-    """``ControllerLimits.max_program_duration`` in ns."""
-    if not isinstance(value, bool) and isinstance(value, (int, float)):
-        ns = float(as_nanoseconds(value))
-        if math.isfinite(ns) and ns > 0:
-            return ns
-    raise InvalidValueError(
-        "ControllerLimits.max_program_duration must be a positive time or number of "
-        f"nanoseconds, or None; got {value!r}"
-    )
 
 
 # ── Waveforms ────────────────────────────────────────────────────────────────
@@ -1188,7 +904,7 @@ def export(
     native = None if clocks is None else _native_clock(clocks)
     # In the controller's own cycles from here on.
     lines, events, frames, off, problems = _walk(lowered, True, native, True, slots)
-    if system is not None:
+    if system is not None and not system._one_box:
         violations = system._violations(
             lowered, lines, events, clocks, off, problems, True, None, None
         )
@@ -1299,7 +1015,7 @@ def _slot_names(events: Sequence[Mapping[str, Any]], role: Any) -> dict[int, str
 
 def _check_at_export(
     lowered: Lowered,
-    limits: ControllerLimits,
+    limits: Controller,
     clocks: Any,
     walked: tuple[Any, Any, Any, Any, Any] | None,
 ) -> None:
@@ -1429,40 +1145,18 @@ def _on_timesteps(
             _clocks.own_run_time(own, lines[event["line"]], event, False)
 
 
-def _structured_controller(limits: ControllerLimits) -> dict[str, Any]:
-    """The controller's fields as format /2 writes them."""
+def _structured_controller(limits: Controller) -> dict[str, Any]:
+    """The controller's fields as format /2 writes them, its ``processors``
+    always listed."""
     data = limits.as_dict()
-    out = {k: v for k, v in data.items() if k not in _COMPUTE_KEYS}
-    processor = {
-        new: list(_PROCESSOR_DEFAULTS[new])
-        if new == "unsupported"
-        else _PROCESSOR_DEFAULTS[new]
-        if old is None
-        else data[old]
-        for new, old in _PROCESSOR_KEYS
-    }
-    out["processors"] = [processor] if limits.computes else []
-    return out
-
-
-# The fields a controller exports only when they are set.
-_OPTIONAL_KEYS = frozenset({"max_amplitude", "waveform_memory", "persistent_frames"})
+    data.setdefault("processors", [])
+    return data
 
 
 def _flat_controller(data: Mapping[str, Any]) -> dict[str, Any]:
-    """A format /2 controller as format /1 writes it, in /1 order."""
-    processors = data["processors"]
-    if len(processors) > 1:
-        raise InvalidValueError("format /1 has at most one processor per controller")
-    if processors:
-        compute = {old: processors[0][new] for new, old in _PROCESSOR_KEYS if old is not None}
-    else:
-        compute = ControllerLimits().as_dict()
-    return {
-        f.name: compute[f.name] if f.name in _COMPUTE_KEYS else data[f.name]
-        for f in fields(ControllerLimits)
-        if f.name in _COMPUTE_KEYS or f.name in data
-    }
+    """A format /2 controller as format /1 writes it, its ``processors``
+    listed only when it has some."""
+    return {k: v for k, v in data.items() if k != "processors" or v}
 
 
 def _with_expressions(
@@ -2132,7 +1826,7 @@ def _export_plan(
 # ── Checks ───────────────────────────────────────────────────────────────────
 
 
-def _memory(limits: ControllerLimits) -> tuple[int, int, bool, bool, list[str], bool]:
+def _memory(limits: Controller) -> tuple[int, int, bool, bool, list[str], bool]:
     """The waveform memory of *limits* as the native check takes it:
     (samples, granule, shared, scaling, synthesized shapes, hold)."""
     samples = -1 if limits.waveform_memory_samples is None else limits.waveform_memory_samples
@@ -2140,13 +1834,13 @@ def _memory(limits: ControllerLimits) -> tuple[int, int, bool, bool, list[str], 
     return samples, 1, shared, True, [], False
 
 
-def _checks_natively(limits: ControllerLimits, clocks: _clocks.ClockPlan | None) -> bool:
+def _checks_natively(limits: Controller, clocks: _clocks.ClockPlan | None) -> bool:
     """Whether the native check counts every limit of *limits* on *clocks*."""
     return _one_clock(clocks) and not (limits.max_pulses is not None and limits._runs_loops)
 
 
 def _native_check(
-    lowered: Lowered, limits: ControllerLimits, unresolved: list[str] | None = None
+    lowered: Lowered, limits: Controller, unresolved: list[str] | None = None
 ) -> list[str]:
     """The limits *lowered* exceeds as the native check finds them: a loop
     whose iterations repeat is checked once, its first iterations and its
@@ -2182,17 +1876,12 @@ def _native_check(
 
 
 def _found_natively(
-    lowered: Lowered, limits: ControllerLimits, unresolved: list[str] | None = None
+    lowered: Lowered, limits: Controller, unresolved: list[str] | None = None
 ) -> bool:
     """Whether *lowered* exceeds a limit of *limits* (``_checks_natively``):
     a check then lists its violations, one per execution, from a walk."""
     if _native_check(lowered, limits, unresolved):
         return True
-    if limits.computes:
-        from ._controller_cost import resources
-
-        if resources(lowered, limits).violations:
-            return True
     return (
         limits is not lowered.options.machine.controller
         and _sample_rates(lowered, limits) is not None
@@ -2201,7 +1890,7 @@ def _found_natively(
 
 def _limit_violations(
     lowered: Lowered,
-    limits: ControllerLimits,
+    limits: Controller,
     clocks: _clocks.ClockPlan | None,
     walked: tuple[Any, Any, Any, Any, Any] | None = None,
     unresolved: list[str] | None = None,
@@ -2280,7 +1969,7 @@ def _pairs(
 def _violations(
     lowered: Lowered,
     events: Sequence[dict[str, Any]],
-    limits: ControllerLimits,
+    limits: Controller,
     lines: Sequence[Mapping[str, Any]],
     clocks: _clocks.ClockPlan | None,
     off: Sequence[tuple[int, int, int]] = (),
@@ -2427,10 +2116,6 @@ def _violations(
                     "the controller cannot stop waiting for an answer, so take it with "
                     "result() (no timeout)"
                 )
-    if limits.computes:
-        from ._controller_cost import resources
-
-        found.extend(resources(lowered, limits).violations)
     return found
 
 
@@ -2454,7 +2139,7 @@ def _over_amplitude(
             found.append(
                 f"line {line['line']} ({line['role']} of qudit {line['qudit']}): the "
                 f"{event['kind']} at {event['start_cycles']} peaks at amplitude {peak:.6g}; "
-                f"the controller plays at most {most:g} (ControllerLimits.max_amplitude)"
+                f"the controller plays at most {most:g} (Controller.max_amplitude)"
             )
     return found
 
@@ -2486,7 +2171,7 @@ def _amplitude_violations(
                 f"line {event['line']} ({role} of qudit {qudit}): the "
                 f"{_FLAT_KINDS.get(event['kind'], event['kind'])} at {event['start_cycles']} "
                 f"peaks at amplitude {peak:.6g}; the controller plays at most {most:g} "
-                "(ControllerLimits.max_amplitude)"
+                "(Controller.max_amplitude)"
             )
     return [message for _, messages in sorted(by_line.items()) for message in messages]
 
@@ -2531,7 +2216,7 @@ def _span(node: Mapping[str, Any]) -> float | None:
     return None
 
 
-def _samples_per_own_cycle(limits: ControllerLimits, program_ghz: float) -> tuple[int, int]:
+def _samples_per_own_cycle(limits: Controller, program_ghz: float) -> tuple[int, int]:
     """The controller's samples per cycle of its clock, as (num, den)."""
     if limits.sample_rate_ghz is None:
         return 1, 1
@@ -2581,7 +2266,7 @@ def _rolled_loops(timed: Sequence[Mapping[str, Any]]) -> list[tuple[int, int, in
     return [(trips, start, extra) for trips, start, extra in loops if extra]
 
 
-def check(lowered: Lowered, limits: ControllerLimits | None = None) -> Sequence[str]:
+def check(lowered: Lowered, limits: Controller | None = None) -> Sequence[str]:
     """The limits *lowered* exceeds, of *limits* or else its machine model's:
     a list, or past 10,000 violations in rolled loops a sequence that builds
     each one when read (``ControllerLimitError.violations``).
@@ -2597,11 +2282,22 @@ def check(lowered: Lowered, limits: ControllerLimits | None = None) -> Sequence[
 
 
 def _compile_check(
-    lowered: Lowered, limits: ControllerLimits | None, system: ControlSystem | None = None
+    lowered: Lowered, limits: Controller | None, system: ControlSystem | None = None
 ) -> tuple[Sequence[str], bool]:
     """The limits *lowered* exceeds whatever its float values, and whether
     that is exact: ``False`` when some values may exceed others. With
     *system*, of its controllers (*limits* is then its only one, or ``None``)."""
+    if system is not None and system._one_box:
+        found, exact = _compile_check(lowered, limits)
+        if not system._placement:
+            return found, exact
+        if lowered.parameters or (lowered._role is not None and lowered._role.slots > 0):
+            # When calls are due can depend on a call's values.
+            return found, False
+        from ._controller_cost import usage
+
+        extra = usage(lowered).violations
+        return ([*found, *extra] if extra else found), exact
     machine = lowered.options.machine
     if limits is machine.controller:
         clocks = (lowered._generic or lowered).clocks
@@ -2679,6 +2375,15 @@ def _call_violations(lowered: Lowered) -> Sequence[str]:
     machine = lowered.options.machine
     clocks = (lowered._generic or lowered).clocks
     system = machine._system
+    if system is not None and system._one_box:
+        assert machine.controller is not None
+        found = _limit_violations(lowered, machine.controller, clocks)
+        if not system._placement:
+            return found
+        from ._controller_cost import usage
+
+        extra = usage(lowered).violations
+        return [*found, *extra] if extra else found
     if system is not None:
         repeats: list[tuple[int, ...]] | None = []
         if not system._lines_up:
@@ -2712,7 +2417,7 @@ def _call_violations(lowered: Lowered) -> Sequence[str]:
 
 def _sample_rate_violations(
     lowered: Lowered,
-    limits: ControllerLimits,
+    limits: Controller,
     clocks: _clocks.ClockPlan | None,
     events: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[str]:
@@ -2733,7 +2438,7 @@ def _sample_rate_violations(
     ]
 
 
-def _sample_rates(lowered: Lowered, limits: ControllerLimits) -> tuple[float, float] | None:
+def _sample_rates(lowered: Lowered, limits: Controller) -> tuple[float, float] | None:
     """The rate, in GHz, the samples of *lowered* were made for and the one
     *limits*' lines play, when they differ."""
     from . import _clocks
@@ -2761,7 +2466,7 @@ def _has_samples(node: Mapping[str, Any] | None) -> bool:
 
 
 if TYPE_CHECKING:
-    _Limits = ControllerLimits
+    _Limits = Controller
     _Report = ResourceReport
     _Resources = FunctionResources
     _Usage = UsageReport
@@ -2775,7 +2480,6 @@ class ControllerNames(Protocol):
     FORMAT: str
     OP_CLASSES: tuple[str, ...]
     ControllerLimitError: type[ControllerLimitError]
-    ControllerLimits: type[ControllerLimits]
     Event: type[Event]
     FunctionCost: type[FunctionCost]
     FunctionResources: type[FunctionResources]
@@ -2788,7 +2492,7 @@ class ControllerNames(Protocol):
     UsageReport: type[UsageReport]
     WaveformMemoryScope: type[WaveformMemoryScope]
 
-    def analyze(self, function: Any, limits: _Limits | None = None) -> _Resources: ...
+    def analyze(self, function: Any) -> _Resources: ...
     def check(self, lowered: Lowered, limits: _Limits | None = None) -> Sequence[str]: ...
     def evaluate_expression(
         self,
@@ -2803,7 +2507,7 @@ class ControllerNames(Protocol):
         controller: int | None = None,
         version: int = 1,
     ) -> dict[str, Any]: ...
-    def resources(self, lowered: Lowered, limits: _Limits | None = None) -> _Report: ...
+    def resources(self, lowered: Lowered) -> _Report: ...
     def sample_waveform(
         self, node: Mapping[str, Any], duration_cycles: int, samples_per_cycle: float = 1
     ) -> np.ndarray: ...

@@ -21,8 +21,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from cudaq_pulse import Controller
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import FORMAT, ControllerLimits
+from cudaq_pulse.controller import FORMAT
 
 __all__ = ["ToyBackend", "ToyResult"]
 
@@ -43,7 +44,7 @@ class ToyBackend:
         self.qudits = qudits
 
     def machine_model(self) -> MachineModel:
-        limits = ControllerLimits(
+        limits = Controller(
             clock_ghz=1.0,
             instruction_cycles=2,
             min_idle_cycles=2,

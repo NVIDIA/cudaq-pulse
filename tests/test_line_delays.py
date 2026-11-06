@@ -14,8 +14,9 @@ import json
 
 import cudaq_pulse as pulse
 import pytest
+from cudaq_pulse import Controller
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import ControllerLimitError, ControllerLimits
+from cudaq_pulse.controller import ControllerLimitError
 
 from tests._handles import Q
 
@@ -78,7 +79,7 @@ def test_without_delays_nothing_changes():
     assert all("fine_delay_ns" not in line for line in lowered.export_controller()["lines"])
     # A delay of no whole cycle moves nothing and adds no attribute.
     machine = MachineModel(
-        controller=ControllerLimits(max_fine_delay_ns=0.5),
+        controller=Controller(max_fine_delay_ns=0.5),
         line_delays_ns={("drive", 0): 0.25},
     )
     lowered = pulse.compile(two_lines, machine=machine).lower(Q[0], Q[1])
@@ -89,7 +90,7 @@ def test_without_delays_nothing_changes():
 def test_the_rest_of_a_delay_is_the_lines_fine_delay():
     # A 1 GHz controller starts every 2 cycles of the 2 GHz program clock:
     # steps of 1 ns.
-    limits = ControllerLimits(clock_ghz=1.0, max_fine_delay_ns=1.0)
+    limits = Controller(clock_ghz=1.0, max_fine_delay_ns=1.0)
     machine = MachineModel(controller=limits, line_delays_ns={("drive", 1): 2.3})
     lowered = pulse.compile(two_lines, schedule="asap", machine=machine).lower(Q[0], Q[1])
     assert _starts(lowered) == [(0, 0), (1, 4), (0, 8)]
@@ -104,7 +105,7 @@ def test_the_rest_of_a_delay_is_the_lines_fine_delay():
 
 
 def test_a_rest_the_controller_cannot_add_fails_to_compile():
-    limits = ControllerLimits(clock_ghz=1.0)
+    limits = Controller(clock_ghz=1.0)
     machine = MachineModel(controller=limits, line_delays_ns={("drive", 1): 2.3})
     with pytest.raises(pulse.CompilationError) as caught:
         pulse.compile(two_lines, machine=machine).lower(Q[0], Q[1])
@@ -117,13 +118,13 @@ def test_a_rest_the_controller_cannot_add_fails_to_compile():
     assert "give it max_fine_delay_ns, raise its alignment_tolerance_cycles to 0.3" in message
     assert "calibrate the delay to 2 or 3 ns" in message
     # Within the tolerance, the delay rounds to the nearest step.
-    limits = ControllerLimits(clock_ghz=1.0, alignment_tolerance_cycles=0.3)
+    limits = Controller(clock_ghz=1.0, alignment_tolerance_cycles=0.3)
     machine = MachineModel(controller=limits, line_delays_ns={("drive", 1): 2.7})
     lowered = pulse.compile(two_lines, schedule="asap", machine=machine).lower(Q[0], Q[1])
     assert _starts(lowered) == [(0, 0), (1, 6), (0, 8)]
     assert _lines(lowered)[("drive", 1)]["fine_delay_ns"] == 0.0
     # Past the fine delay a controller has.
-    limits = ControllerLimits(clock_ghz=1.0, max_fine_delay_ns=0.25)
+    limits = Controller(clock_ghz=1.0, max_fine_delay_ns=0.25)
     machine = MachineModel(controller=limits, line_delays_ns={("drive", 1): 2.3})
     with pytest.raises(pulse.CompilationError, match="adds at most 0.25 ns of fine delay"):
         pulse.compile(two_lines, machine=machine).lower(Q[0], Q[1])
@@ -152,7 +153,7 @@ def test_delays_are_part_of_the_machine():
 
 
 def test_moved_lines_are_checked_like_any_others():
-    limits = ControllerLimits(feedback_latency_cycles=20)
+    limits = Controller(feedback_latency_cycles=20)
     machine = MachineModel(controller=limits, readout_latency_cycles=20)
     assert pulse.compile(feedback, schedule="rcp", machine=machine).lower(Q[0], Q[1])
     later = MachineModel(
@@ -189,7 +190,7 @@ def _retimed(lowered):
     return lowered.generic.metrics.trace_ms == 0.0
 
 
-MIXED = ControllerLimits(clock_ghz=1.0, max_fine_delay_ns=1.0)
+MIXED = Controller(clock_ghz=1.0, max_fine_delay_ns=1.0)
 # Traced with the first, then scheduled again with each of the others.
 DELAYS = (
     {("drive", 0): 1.0},

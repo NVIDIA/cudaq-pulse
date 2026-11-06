@@ -19,14 +19,10 @@ from typing import Any, assert_type
 import cudaq_pulse as pulse
 import cudaq_pulse.controller as controller_module
 import numpy as np
+from cudaq_pulse import Controller
 from cudaq_pulse.classical import Bits, ClassicalFunction, Pending
 from cudaq_pulse.compiler import CompileMetrics, ScheduledEvent
-from cudaq_pulse.controller import (
-    ControllerLimits,
-    ControllerModule,
-    ControllerNames,
-    WaveformMemoryScope,
-)
+from cudaq_pulse.controller import ControllerModule, ControllerNames, WaveformMemoryScope
 from cudaq_pulse.ops import Waveform
 from cudaq_pulse.targets import (
     Coupling,
@@ -168,7 +164,7 @@ pulse.classical.external(max_latency_ns=1, args=())  # type: ignore[call-arg]  #
 # pulse.controller is a module and the loader of controller descriptions.
 box = pulse.controller("reference.controller", drive_lines=[0, 1])
 assert_type(box, pulse.Controller)
-assert_type(pulse.controller.ControllerLimits(instruction_cycles=2), ControllerLimits)
+assert_type(pulse.Controller(instruction_cycles=2), Controller)
 assert_type(pulse.controller.FORMAT, str)
 assert_type(pulse.controller.EXPRESSION_TERMS, frozenset[str])
 assert_type(pulse.controller.evaluate_expression({"const": 1.0}), float | int | bool)

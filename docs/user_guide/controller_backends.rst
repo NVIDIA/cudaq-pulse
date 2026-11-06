@@ -167,7 +167,7 @@ as a drive has. A controller tracking that frame applies the event's
 is the event's own change, which its ``op`` and ``value`` restate, so it is
 not applied again. Its ``line`` is its tone's, else the line the tone last
 played on, else ``null``. A controller whose frames persist from one shot to the next
-declares ``ControllerLimits(persistent_frames=True)``; such changes then
+declares ``Controller(persistent_frames=True)``; such changes then
 have no event, and the program's ``frame_state`` (after ``events``) gives
 the frame each tone ends the shot in, by line: its ``line``, and its
 ``frequency_hz`` and ``phase_rad`` at the end of the shot, or, for a tone
@@ -331,17 +331,15 @@ length; for one on its own clock, or with line delays, export
     for every value. Omitted without parameters.
 ``controller``
     In place of ``limits``: the controller, its fields under the names
-    ``limits`` gives them. What it computes is in ``processors``, empty when no compute limit is
-    set, else one processor with ``links``, ``clock_ghz``,
+    ``limits`` gives them. What it computes is in ``processors``, always
+    listed (empty for a controller without processors), each one as
+    ``Processor.as_dict()`` gives it: ``links``, ``clock_ghz``,
     ``cycles_per_op`` (the cost of each class of operation it computes),
-    ``unsupported`` (the classes it cannot compute, by name; empty, and
-    ``max_concurrent_calls``, 1, as ``ControllerLimits`` has no field to
-    change them),
-    ``fixed_cost_only``, ``max_ops``, ``max_state_bytes``,
-    ``max_calls_per_shot`` and ``max_bytes_per_shot``, for
-    ``compute_links``, ``compute_clock_ghz``, ``op_cycles``,
-    ``controller_form``, ``max_ops``, ``state_bytes``,
-    ``max_calls_per_shot`` and ``buffer_bytes``.
+    ``unsupported`` (the classes it cannot compute, by name),
+    ``max_concurrent_calls``, ``max_ops_per_function``,
+    ``max_ops_total``, ``max_state_bytes_per_function``,
+    ``max_state_bytes_total``, ``max_calls_per_shot``,
+    ``max_bytes_per_shot``, ``fixed_cost_only`` and ``dispatch_keys``.
 ``quantum_system``
     In place of ``target``: the name of the quantum system the program is
     for.
@@ -413,10 +411,10 @@ A kernel counts time in cycles of the device's program clock,
 ``Device.clock_ghz`` (a device config's ``"clock_ghz"``, else the
 target's); a duration written as a time converts to them when the kernel
 compiles (see :ref:`durations`). A controller may run its own clock,
-``ControllerLimits.clock_ghz``, at a whole-cycle ratio of it; may start
-and time operations only every ``ControllerLimits.cycles_per_timestep`` of
+``Controller.clock_ghz``, at a whole-cycle ratio of it; may start
+and time operations only every ``Controller.cycles_per_timestep`` of
 its own cycles (default 1); and may play samples at
-``ControllerLimits.sample_rate_ghz`` (default one per cycle of its clock),
+``Controller.sample_rate_ghz`` (default one per cycle of its clock),
 at any ratio of whole numbers to its clock.
 
 .. _timestep:
@@ -573,13 +571,13 @@ Whole :ref:`timesteps <timestep>` of the line move its operations, which
 are then checked against the controller's limits like any others; the rest,
 less than one timestep, is the line's ``fine_delay_ns`` in the export, for
 a controller that can delay a line's output by less than that
-(``ControllerLimits.max_fine_delay_ns``). A controller without fine delay
+(``Controller.max_fine_delay_ns``). A controller without fine delay
 rounds the delay to the nearest timestep if that is within its
 ``alignment_tolerance_cycles``, and otherwise the program fails to compile
 with an error naming the line, the rest and the fixes::
 
     machine = MachineModel(
-        controller=ControllerLimits(clock_ghz=1.0, max_fine_delay_ns=1.0),
+        controller=pulse.Controller(clock_ghz=1.0, max_fine_delay_ns=1.0),
         line_delays_ns={("drive", 0): 2.3, ("readout", 0): 41.0},
     )
     # The drive line of qudit 0 moves 2 ns (4 cycles of a 2 GHz program
@@ -594,15 +592,15 @@ system lacks, is a ``DeviceDefinitionError``.
 Waveform memory
 ---------------
 
-Two plain values of ``ControllerLimits`` describe the memory a controller
+Two plain values of ``Controller`` describe the memory a controller
 plays waveforms from, the same in Python and in a controller description
 in TOML (``waveform_memory_samples = 65536``, ``waveform_memory = "shared"``):
 
 .. code-block:: python
 
-   from cudaq_pulse.controller import ControllerLimits
+   import cudaq_pulse as pulse
 
-   limits = ControllerLimits(
+   limits = pulse.Controller(
        sample_rate_ghz=2.0,
        waveform_memory_samples=65536,     # what one memory holds, in samples
        waveform_memory="shared",   # one memory for every line; "per_line" by default
@@ -620,7 +618,7 @@ roles of ``/2``; a memory per line leaves the key out.
 Controller limits
 -----------------
 
-``ControllerLimits`` states what a controller can play, in its own clock
+``Controller`` states what a controller can play, in its own clock
 cycles: its clock, how
 closely two operations on one line can follow each other, its waveform
 memory and tones per line, which detector reads each qudit and how long a
@@ -666,7 +664,8 @@ This one emits one line of text per drive and readout:
 
    from cudaq_pulse.backends import IncompatibleBackendError
    from cudaq_pulse.compiler import MachineModel
-   from cudaq_pulse.controller import FORMAT, ControllerLimits
+   from cudaq_pulse import Controller
+   from cudaq_pulse.controller import FORMAT
 
 
    class TextBackend:
@@ -674,7 +673,7 @@ This one emits one line of text per drive and readout:
        formats = (FORMAT,)
 
        def machine_model(self) -> MachineModel:
-           limits = ControllerLimits(clock_ghz=1.0, instruction_cycles=2, min_idle_cycles=2)
+           limits = Controller(clock_ghz=1.0, instruction_cycles=2, min_idle_cycles=2)
            return MachineModel(controller=limits)
 
        def emit(self, program: Mapping[str, Any]) -> list[str]:
@@ -761,10 +760,9 @@ controller's limits is skipped.
 
 .. code-block:: python
 
-   from cudaq_pulse import backends
-   from cudaq_pulse.controller import ControllerLimits
+   from cudaq_pulse import Controller, backends
 
-   report = backends.validate("text", controller=ControllerLimits(clock_ghz=1.0))
+   report = backends.validate("text", controller=Controller(clock_ghz=1.0))
    print(report)
    # PASS play
    # ...

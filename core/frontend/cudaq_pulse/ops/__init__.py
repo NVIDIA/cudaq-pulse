@@ -289,7 +289,7 @@ def gaussian(duration: Numeric, amplitude: Numeric, sigma: Numeric) -> Waveform:
         duration: Pulse duration: an int number of clock cycles, or a time
             (``20 * pulse.ns``).
         amplitude: Peak amplitude, with no limit but the controller's
-            (``ControllerLimits.max_amplitude``).
+            (``Controller.max_amplitude``).
         sigma: Standard deviation in clock cycles, or a time.
 
     Returns:
@@ -306,7 +306,7 @@ def square(duration: Numeric, amplitude: Numeric | complex | Sequence[float]) ->
             (``20 * pulse.ns``).
         amplitude: Constant amplitude: a real number, a complex number
             ``re + im*1j``, or ``[re, im]``, with no limit but the
-            controller's (``ControllerLimits.max_amplitude``).
+            controller's (``Controller.max_amplitude``).
 
     Returns:
         Waveform value.
@@ -326,7 +326,7 @@ def drag(duration: Numeric, amplitude: Numeric, sigma: Numeric, beta: Numeric) -
         duration: Pulse duration: an int number of clock cycles, or a time
             (``20 * pulse.ns``).
         amplitude: Peak amplitude, with no limit but the controller's
-            (``ControllerLimits.max_amplitude``).
+            (``Controller.max_amplitude``).
         sigma: Gaussian standard deviation in clock cycles, or a time.
         beta: DRAG coefficient in clock cycles, or a time.
 
@@ -343,7 +343,7 @@ def cosine(duration: Numeric, amplitude: Numeric) -> Waveform:
         duration: Pulse duration: an int number of clock cycles, or a time
             (``20 * pulse.ns``).
         amplitude: Peak amplitude, with no limit but the controller's
-            (``ControllerLimits.max_amplitude``).
+            (``Controller.max_amplitude``).
 
     Returns:
         Waveform value.
@@ -358,7 +358,7 @@ def tanh_ramp(duration: Numeric, amplitude: Numeric, sigma: Numeric) -> Waveform
         duration: Pulse duration: an int number of clock cycles, or a time
             (``20 * pulse.ns``).
         amplitude: Peak amplitude, with no limit but the controller's
-            (``ControllerLimits.max_amplitude``).
+            (``Controller.max_amplitude``).
         sigma: Rise/fall steepness in clock cycles, or a time.
 
     Returns:
@@ -381,7 +381,7 @@ def gaussian_square(
         duration: Total pulse duration: an int number of clock cycles, or
             a time (``20 * pulse.ns``).
         amplitude: Peak amplitude, with no limit but the controller's
-            (``ControllerLimits.max_amplitude``).
+            (``Controller.max_amplitude``).
         sigma: Gaussian edge standard deviation in clock cycles, or a time.
         width: Flat-top width: an int number of clock cycles, or a time.
 

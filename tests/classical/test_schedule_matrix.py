@@ -274,12 +274,11 @@ def test_a_latency_meets_its_deadline_or_names_the_fix(link, deadline, meets):
 
 
 def test_limits_without_timeouts_reject_a_timeout_and_name_the_fix():
-    from cudaq_pulse.controller import ControllerLimitError, ControllerLimits
+    from cudaq_pulse import Controller
+    from cudaq_pulse.controller import ControllerLimitError
 
     case = matrix.Case("asap", "alap", "future_in", take="timeout")
-    machine = MachineModel(
-        links=dict(matrix.LINKS), controller=ControllerLimits(supports_timeouts=False)
-    )
+    machine = MachineModel(links=dict(matrix.LINKS), controller=Controller(supports_timeouts=False))
     with pytest.raises(ControllerLimitError, match=re.escape("take it with result() (no timeout)")):
         matrix.lower_case(case, Q, machine=machine)
 

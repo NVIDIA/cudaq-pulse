@@ -35,7 +35,7 @@ _CHILD = r"""
 import inspect, json, resource, sys, time
 import cudaq_pulse as pulse
 from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse.controller import ControllerLimits
+from cudaq_pulse import Controller
 from cudaq_pulse.targets import Qubit, TargetDescription
 
 name, lines, rounds, trips = sys.argv[1], *map(int, sys.argv[2:5])
@@ -46,7 +46,7 @@ target = TargetDescription(
 )
 dev = pulse.device({"target": target})
 readers = lines // 2
-limits = ControllerLimits(
+limits = Controller(
     clock_ghz=1.0,
     waveform_memory_samples=1 << 20,
     max_tones_per_line=4,

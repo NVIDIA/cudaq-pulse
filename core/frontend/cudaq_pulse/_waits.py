@@ -206,7 +206,7 @@ class _WaitLengths:
                     raise ValueError(
                         f"{kernel}(): with these wait lengths the program lasts more than "
                         f"{most} cycles, the longest program of the controller "
-                        "(ControllerLimits.max_program_duration)"
+                        "(Controller.max_program_duration)"
                     )
                 raise ValueError(
                     f"{kernel}(): with these wait lengths the program lasts more than 2**60 "
