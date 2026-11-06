@@ -17,8 +17,8 @@ compiled name or the key its controller fixes. An external's stub
 is a declaration whose body is a placeholder for its result, not ``raise
 NotImplementedError``. This finds them in docs, examples, notebooks,
 docstrings, messages and tests. A
-line that must name an old spelling (the error that says it is gone, the
-test of that error, the changelog entry) carries ``remnant-ok``.
+line that must name an old spelling (a test that it is rejected, the
+changelog entry) carries ``remnant-ok``.
 
 Usage: python tools/check-classical-remnants.py [FILES...]   (default: git ls-files)
 """

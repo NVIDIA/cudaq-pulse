@@ -1302,8 +1302,6 @@ def function(implementation: Callable[..., Any] | None = None, /, **options: Any
     The hints are read when the function is first used (a program that
     calls it is compiled), and a mistake in them is raised there.
     """
-    if "args" in options or "results" in options or "id" in options:
-        _removed(options)
     if implementation is not None:
         return _declare(implementation, options)
 
@@ -1320,19 +1318,6 @@ def _declare(fn: Callable[..., Any], options: dict[str, Any]) -> ClassicalFuncti
             f" takes and returns; got {fn!r}"
         )
     return ClassicalFunction(fn, **options)
-
-
-def _removed(options: Mapping[str, Any]) -> typing.NoReturn:
-    if "id" in options:
-        raise InvalidTypeError(
-            "id= is gone: a function is dispatched by the hash of its compiled name"  # remnant-ok
-            " (call.dispatch_key and the call manifest give it); a controller whose firmware"
-            " fixes keys lists them by name in its dispatch_keys"
-        )
-    raise InvalidTypeError(
-        "args= and results= are gone: a classical function's type hints say what it"  # remnant-ok
-        " takes and returns, such as def decode(syndromes: pulse.Bits) -> bool"
-    )
 
 
 def external[**Q, T](
@@ -1361,8 +1346,6 @@ def external[**Q, T](
     It takes the keyword options of ``pulse.classical``. Simulating a program
     that calls it needs a handler for it.
     """
-    if "args" in options or "results" in options or "id" in options:
-        _removed(options)
 
     def decorate(stub: Callable[Q, T]) -> ClassicalFunction[Q, T]:
         if not isinstance(stub, types.FunctionType):

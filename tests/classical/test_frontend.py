@@ -132,7 +132,7 @@ def test_hints_map_to_wire_types():
         ({"deadline_ns": 0}, "deadline_ns must be positive"),
         ({"link": -1}, "link must be"),
         ({"link": True}, "link must be"),
-        ({"id": 0x51}, "id= is gone: a function is dispatched by the hash of its compiled name"),
+        ({"id": 0x51}, "unexpected keyword argument 'id'"),
         ({"name": "not valid"}, "identifier"),
     ],
 )
@@ -148,8 +148,12 @@ def test_declaration_errors(options, message):
 def test_declaring_takes_a_def_with_hints():
     with pytest.raises(TypeError, match="a function defined with def"):
         pulse.classical(lambda x: x, name="f", max_latency_ns=1)
-    with pytest.raises(TypeError, match="args= and results= are gone"):
-        pulse.classical(max_latency_ns=1, args=(), results=())  # remnant-ok
+
+    def f() -> None:
+        pass
+
+    with pytest.raises(TypeError, match="unexpected keyword argument 'args'"):
+        pulse.classical(f, max_latency_ns=1, args=(), results=())  # remnant-ok
 
 
 def _nine(
