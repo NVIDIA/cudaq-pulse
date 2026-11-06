@@ -98,11 +98,13 @@ bool isArithmetic(mlir::Operation *op) {
          op->getNumRegions() == 0 && mlir::isMemoryEffectFree(op);
 }
 
-/// An op that reading a selected value only computes from it.
+/// An op that reading a selected value only computes from it: one without
+/// effects, or that only allocates its result (a new tone).
 bool computesOnly(mlir::Operation *op) {
   return op->getNumRegions() == 0 &&
          !op->hasTrait<mlir::OpTrait::IsTerminator>() &&
-         mlir::isMemoryEffectFree(op);
+         (mlir::isMemoryEffectFree(op) ||
+          mlir::hasSingleEffect<mlir::MemoryEffects::Allocate>(op));
 }
 
 class Lowering {

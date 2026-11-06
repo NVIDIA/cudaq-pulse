@@ -173,3 +173,32 @@ func.func @none() {
   %d1, %t1 = pulse.drive %d, %x, %t : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   return
 }
+
+// A tone made from a selected frequency only computes from it: each arm
+// makes its tone and plays it.
+// CHECK-LABEL: func.func @selected_tone_frequency
+// ARMS: scf.if
+// ARMS-NEXT: = pulse.tone %
+// ARMS-NEXT: = pulse.drive %
+// ARMS: } else {
+// ARMS-NEXT: = pulse.tone %
+// ARMS-NEXT: = pulse.drive %
+func.func @selected_tone_frequency() {
+  %q = pulse.qudit_alloc : !pulse.qref
+  %d, %t = pulse.get_drive_line %q : (!pulse.qref) -> (!pulse.drive_line, !pulse.tone)
+  %r, %rt = pulse.get_readout_line %q : (!pulse.qref) -> (!pulse.readout_line, !pulse.tone)
+  %c40 = arith.constant 40 : i64
+  %c100 = arith.constant 100 : i64
+  %zero = arith.constant 0.0 : f64
+  %amp = arith.constant 0.1 : f64
+  %f0 = arith.constant 5.0e9 : f64
+  %f1 = arith.constant 5.1e9 : f64
+  %probe = pulse.square %c100, %amp, %zero : i64, f64, f64 -> !pulse.waveform
+  %wf = pulse.square %c40, %amp, %zero : i64, f64, f64 -> !pulse.waveform
+  %r1, %rt1, %m = pulse.readout %r, %probe, %rt, "iq" : !pulse.readout_line, !pulse.waveform, !pulse.tone -> !pulse.readout_line, !pulse.tone, !pulse.measurement
+  %bit = pulse.is_set %m : !pulse.measurement -> i1
+  %f = arith.select %bit, %f1, %f0 : f64
+  %tone = pulse.tone %f, %zero : f64, f64 -> !pulse.tone
+  %d1, %t1 = pulse.drive %d, %wf, %tone : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+  return
+}

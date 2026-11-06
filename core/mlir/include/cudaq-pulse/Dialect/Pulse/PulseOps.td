@@ -19,6 +19,11 @@ include "mlir/IR/OpBase.td"
 class PulseOp<string mnemonic, list<Trait> traits = []> :
     Op<PulseDialect, mnemonic, traits>;
 
+// Effects on lines and tones are on the values an op takes and returns
+// (PulseResources.h).
+def Pulse_LineResource : Resource<"::pulse::LineResource">;
+def Pulse_ToneResource : Resource<"::pulse::ToneResource">;
+
 //===----------------------------------------------------------------------===//
 // Qudit allocation
 //===----------------------------------------------------------------------===//
@@ -79,19 +84,23 @@ def GetReadoutLineOp : PulseOp<"get_readout_line", [Pure]> {
 // Tone operations
 //===----------------------------------------------------------------------===//
 
-def ToneOp : PulseOp<"tone", [Pure]> {
+def ToneOp : PulseOp<"tone"> {
   let summary = "Create a pulse tone with explicit frequency and phase";
   let description = [{
     A tone with an explicit carrier frequency (Hz) and frame phase
     (radians), rather than the native tone of a line. Tones are linear
     values: `pulse.drive`, `pulse.readout` and the phase and frequency
     ops return the updated tone.
+
+    Each `pulse.tone` is a new frame, even with the same frequency and
+    phase as another: it allocates its result, so it is not merged with
+    another one or moved out of a loop, and is removed only when unused.
   }];
   let arguments = (ins
     AnyFloat:$frequency_hz,
     AnyFloat:$phase_rad
   );
-  let results = (outs ToneType:$tone);
+  let results = (outs Res<ToneType, "", [MemAlloc<Pulse_ToneResource>]>:$tone);
   let assemblyFormat = "$frequency_hz `,` $phase_rad attr-dict `:` qualified(type($frequency_hz)) `,` qualified(type($phase_rad)) `->` qualified(type($tone))";
 }
 
