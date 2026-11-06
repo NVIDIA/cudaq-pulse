@@ -348,10 +348,27 @@ class EmulationResult:
     calls: list[list[CallTrace]] = field(default_factory=list)
     ends_ns: list[float] = field(default_factory=list)
     wall_s: float = 0.0
+    # (shot, call) of each call the program sends without waiting on its answer.
+    _sent: list[tuple[int, int]] = field(
+        default_factory=list, init=False, repr=False, compare=False
+    )
 
     @property
     def late_fraction(self) -> float:
-        traces = [c for shot in self.calls for c in shot]
+        """The fraction of the answers the program waits on that came late
+        (a decoder's NOT_READY included). A call it sends without taking an
+        answer, such as an enqueue of syndromes, counts in neither part, though
+        its trace says whether it came back in time."""
+        if self._sent:
+            sent = set(self._sent)
+            traces = [
+                c
+                for s, shot in enumerate(self.calls)
+                for k, c in enumerate(shot)
+                if (s, k) not in sent
+            ]
+        else:
+            traces = [c for shot in self.calls for c in shot]
         return sum(not c.in_time for c in traces) / len(traces) if traces else 0.0
 
     @property
@@ -506,6 +523,7 @@ def emulate(
                 in_time = ready and latency <= budget
                 traces.append(CallTrace(callee, start, latency, budget, in_time, inputs, answer))
                 if not answered:
+                    result._sent.append((len(result.calls), len(traces) - 1))
                     module = module.bind_call(index, [], *schedule_args)
                     continue
                 has_timeout = timeout >= 0 or fn.timeout_ns is not None

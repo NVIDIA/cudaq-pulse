@@ -255,6 +255,30 @@ def test_a_get_decodes_what_was_enqueued_since_the_last_decode():
         assert [c.answer for c in shot if c.function.startswith("get")] == [[1], [1]]
 
 
+def test_late_fraction_counts_the_answers_the_program_waits_on():
+    decoder = qec.Decoder(0, syndromes=1, corrections=1, max_latency_ns=2000, decode=lambda b: b)
+
+    @pulse.kernel
+    def k(q):
+        d, r = get_drive_line(q), get_readout_line(q)
+        qec.reset_decoder(decoder)
+        qec.enqueue_syndromes(decoder, [readout(r, square(100, 0.05))])
+        ok, fix = qec.get_corrections(decoder).result(timeout=2000 * pulse.ns)
+        if ok:
+            drive(d, square(40, PI_AMP))
+
+    dev = _device()
+    low = pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
+    kw = {"shots": 5, "seed": 1, "service_time": "none"}
+    run = emulation.emulate(low, transport=emulation.Transport(fixed_ns=500), **kw)
+    for reset, enqueue, get in run.calls:
+        # Sent without waiting: back after their budget, which counts for nothing.
+        assert not reset.in_time and not enqueue.in_time and get.in_time
+    assert run.late_fraction == 0.0
+    run = emulation.emulate(low, transport=emulation.Transport(fixed_ns=1500), **kw)
+    assert run.late_fraction == 1.0
+
+
 def test_a_decoder_without_decode_needs_handlers():
     decoder = _decoder()
     with pytest.raises(TypeError, match="has no body to run here. Give it a handler"):
