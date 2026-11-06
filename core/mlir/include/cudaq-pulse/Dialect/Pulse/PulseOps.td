@@ -394,7 +394,9 @@ def GetCurrentTimeOp : PulseOp<"get_current_time", [Pure]> {
   let summary = "Get the current time of a line as a timepoint";
   let description = [{
     The time a line has reached, as a `!pulse.timepoint`. The line is not
-    consumed.
+    consumed: a line may be read any number of times, and then played on,
+    and a read inside a loop of a line the loop does not carry reads the
+    same time every iteration.
   }];
   let arguments = (ins AnyLineType:$line);
   let results = (outs TimepointType:$time);

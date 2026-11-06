@@ -31,6 +31,12 @@ inline bool isLinearPulseType(mlir::Type type) {
          isClassicalType(type);
 }
 
+/// Whether `user` reads a line without consuming it, so the version it reads
+/// stays usable: pulse.get_current_time observes where a line's time stands.
+inline bool readsWithoutConsuming(mlir::Operation *user) {
+  return mlir::isa<GetCurrentTimeOp>(user);
+}
+
 /// The value `value` is the next version of, or null when `value` comes
 /// straight from an allocation (or from something this analysis does not
 /// model).

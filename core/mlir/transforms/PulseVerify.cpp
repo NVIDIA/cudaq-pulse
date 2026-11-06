@@ -500,13 +500,15 @@ struct PulseVerifyPass
     });
     // A line or tone is consumed at most once on every path: its uses must
     // lie in different arms of a conditional, and none inside a loop that
-    // does not carry it.
+    // does not carry it. A use that only reads it (a time read) consumes
+    // nothing.
     auto checkLinear = [&](mlir::Value value, mlir::Operation *where) {
       if (!pulse::isLinearPulseType(value.getType()))
         return;
       llvm::SmallVector<mlir::Operation *> users;
       for (mlir::OpOperand &use : value.getUses())
-        users.push_back(use.getOwner());
+        if (!pulse::readsWithoutConsuming(use.getOwner()))
+          users.push_back(use.getOwner());
       for (size_t i = 0; i < users.size(); ++i)
         for (size_t j = i + 1; j < users.size(); ++j)
           if (!pulse::mutuallyExclusive(users[i], users[j])) {

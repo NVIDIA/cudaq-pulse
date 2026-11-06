@@ -251,3 +251,40 @@ func.func @zero_trip_loop_in_a_scheduled_function() {
   }
   return
 }
+
+// -----
+
+// A time read does not consume its line: it may be read, read again and
+// then played on, and read in a loop that does not carry it.
+func.func @time_reads_then_a_drive(%d: !pulse.drive_line, %w: !pulse.waveform, %t: !pulse.tone) -> (i64, i64, !pulse.drive_line, !pulse.tone) {
+  %tp0 = pulse.get_current_time %d : !pulse.drive_line -> !pulse.timepoint
+  %n0 = pulse.timepoint_to_int %tp0 : !pulse.timepoint -> i64
+  %tp1 = pulse.get_current_time %d : !pulse.drive_line -> !pulse.timepoint
+  %n1 = pulse.timepoint_to_int %tp1 : !pulse.timepoint -> i64
+  %d1, %t1 = pulse.drive %d, %w, %t : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+  return %n0, %n1, %d1, %t1 : i64, i64, !pulse.drive_line, !pulse.tone
+}
+
+// -----
+
+func.func @time_read_in_a_loop(%d: !pulse.drive_line) -> !pulse.drive_line {
+  %lb = arith.constant 0 : index
+  %ub = arith.constant 4 : index
+  %step = arith.constant 1 : index
+  scf.for %i = %lb to %ub step %step {
+    %tp = pulse.get_current_time %d : !pulse.drive_line -> !pulse.timepoint
+  }
+  return %d : !pulse.drive_line
+}
+
+// -----
+
+// A drive still consumes it: two drives of one version are two uses (of an
+// argument, reported at its function).
+// expected-error @+1 {{linear pulse value is consumed more than once on one path}}
+func.func @time_read_and_two_drives(%d: !pulse.drive_line, %w: !pulse.waveform, %t: !pulse.tone, %u: !pulse.tone) -> (!pulse.timepoint, !pulse.drive_line, !pulse.drive_line) {
+  %tp = pulse.get_current_time %d : !pulse.drive_line -> !pulse.timepoint
+  %d1, %t1 = pulse.drive %d, %w, %t : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+  %d2, %t2 = pulse.drive %d, %w, %u : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
+  return %tp, %d1, %d2 : !pulse.timepoint, !pulse.drive_line, !pulse.drive_line
+}

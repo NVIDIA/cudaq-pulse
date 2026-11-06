@@ -42,3 +42,17 @@ func.func @two_equal_waveforms(%d0: !pulse.drive_line, %t0: !pulse.tone) -> (!pu
   %d2, %t2 = pulse.drive %d1, %w1, %t1 : !pulse.drive_line, !pulse.waveform, !pulse.tone -> !pulse.drive_line, !pulse.tone
   return %d2, %t2 : !pulse.drive_line, !pulse.tone
 }
+
+// -----
+
+// Two time reads of one version of a line are one value.
+// CHECK-LABEL: func.func @two_time_reads
+// CHECK-COUNT-1: pulse.get_current_time %
+// CHECK-NOT: pulse.get_current_time %
+func.func @two_time_reads(%d0: !pulse.drive_line) -> (i64, i64) {
+  %t0 = pulse.get_current_time %d0 : !pulse.drive_line -> !pulse.timepoint
+  %n0 = pulse.timepoint_to_int %t0 : !pulse.timepoint -> i64
+  %t1 = pulse.get_current_time %d0 : !pulse.drive_line -> !pulse.timepoint
+  %n1 = pulse.timepoint_to_int %t1 : !pulse.timepoint -> i64
+  return %n0, %n1 : i64, i64
+}
