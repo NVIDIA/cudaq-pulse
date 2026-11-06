@@ -639,18 +639,22 @@ def IQAcquireOp : PulseOp<"iq_acquire", []> {
   let summary = "Acquire raw IQ data from a readout line";
   let description = [{
     Plays `pulse` on a readout line at `tone` and returns the raw
-    demodulated IQ point instead of a discriminated measurement.
+    demodulated IQ point instead of a discriminated measurement. Like
+    `pulse.readout`, it returns the updated line and tone, so one tone can
+    be acquired with again.
   }];
   let arguments = (ins
     ReadoutLineType:$line,
     WaveformType:$pulse,
     ToneType:$tone
   );
-  let results = (outs ReadoutLineType:$updated_line, IQDataType:$iq_data);
+  let results = (outs ReadoutLineType:$updated_line, ToneType:$updated_tone,
+                      IQDataType:$iq_data);
   let assemblyFormat = [{
     $line `,` $pulse `,` $tone attr-dict `:` qualified(type($line))
     `,` qualified(type($pulse)) `,` qualified(type($tone))
-    `->` qualified(type($updated_line)) `,` qualified(type($iq_data))
+    `->` qualified(type($updated_line)) `,` qualified(type($updated_tone))
+    `,` qualified(type($iq_data))
   }];
 }
 
