@@ -165,7 +165,8 @@ expect_in() {
 }
 
 # The installed cudaq-pulse-opt verifies, schedules and lowers the kernel
-# smoke_compile.py wrote, and rejects invalid IR with its diagnostic.
+# smoke_compile.py wrote, and pulse-verify rejects invalid IR with its
+# diagnostic.
 opt_checks() {
   in_venv cudaq-pulse-opt --pulse-verify kernel.mlir -o verified.mlir
   expect_in verified.mlir "pulse.drive"
@@ -176,7 +177,7 @@ opt_checks() {
     --convert-arith-to-llvm --convert-func-to-llvm --reconcile-unrealized-casts \
     kernel.mlir -o lowered.mlir
   expect_in lowered.mlir "llvm.call @cudm_evolve"
-  if in_venv cudaq-pulse-opt invalid.mlir -o /dev/null 2>"${work}/invalid.err"; then
+  if in_venv cudaq-pulse-opt --pulse-verify invalid.mlir -o /dev/null 2>"${work}/invalid.err"; then
     echo "error: cudaq-pulse-opt accepted invalid.mlir" >&2
     exit 1
   fi

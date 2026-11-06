@@ -14,8 +14,7 @@ pass rejects them with a diagnostic per violation:
 
   - Linearity violations (a line consumed twice)
   - Backward time travel and overlap on one physical line
-  - Non-positive waveform durations (rejected by the op verifier as the
-    MLIR is parsed)
+  - Non-positive waveform durations
 
 The hand-written programs go through ``cudaq-pulse-opt``, the MLIR driver
 installed with the package.
@@ -79,8 +78,9 @@ def check(body: str) -> str:
     tool = shutil.which("cudaq-pulse-opt")
     if tool is None:
         raise SystemExit("cudaq-pulse-opt is not on PATH; it is installed with cudaq-pulse")
-    # Op verifiers run as the text is parsed; pulse-verify adds the checks
-    # that need the whole program.
+    # Op verifiers check each op on its own as the text is parsed;
+    # pulse-verify checks what needs more than one op, such as the value a
+    # waveform's duration has.
     result = subprocess.run(
         [tool, "--pulse-verify", "-o", "/dev/null"],
         input=text,
