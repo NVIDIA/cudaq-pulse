@@ -31,10 +31,6 @@ Functions and links
 .. autoclass:: cudaq_pulse.classical.Link
    :members:
 
-.. autoclass:: cudaq_pulse.compiler.MachineModel
-   :members: link_id, link_name, link
-   :no-index:
-
 Measurements and randomness
 ---------------------------
 

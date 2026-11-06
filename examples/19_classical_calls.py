@@ -40,8 +40,8 @@ import tempfile
 from pathlib import Path
 
 import cudaq_pulse as pulse
+from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link, emulation
-from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.targets import Qubit, TargetDescription
 
 # A 20 ns pi pulse: with H = amplitude * X / 2, this amplitude (rad/ns)
@@ -55,7 +55,7 @@ cal = {
 
 # Two links, by name: one to a GPU decoder, and the controller's own FPGA
 # logic. Functions name the link their requests travel on.
-machine = MachineModel(
+control_system = ControlSystem(
     links={
         "gpu": Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50),
         "controller": Link(fixed_ns=4, feedback_ns=8, max_in_flight=4),
@@ -197,7 +197,9 @@ if __name__ == "__main__":
     dt_ns = 0.25
 
     print("=== 1. Decoding with feed-forward ===")
-    decoded = pulse.compile(decoded_feed_forward, device=dev, machine=machine).lower(q)
+    decoded = pulse.compile(decoded_feed_forward, device=dev, control_system=control_system).lower(
+        q
+    )
     print_report(decoded)
     # Branch on whether the answer is in time, with the decoder's latency
     # model (triangular over 200-400 ns, mode 300 ns): P(L <= 350) = 0.875.
@@ -212,7 +214,7 @@ if __name__ == "__main__":
 
     print("\n=== 2. Adaptive T1 tracking (3 rounds, true T1 = 10 us) ===")
     rounds, alpha0, beta0, first_wait = 3, 1.0, 5000.0, 5 * pulse.us  # prior T1 = 5 us
-    tracker = pulse.compile(track_t1, device=dev, machine=machine).lower(
+    tracker = pulse.compile(track_t1, device=dev, control_system=control_system).lower(
         q, rounds, alpha0, beta0, first_wait
     )
     # The static schedule places each variable wait at its lower bound; every

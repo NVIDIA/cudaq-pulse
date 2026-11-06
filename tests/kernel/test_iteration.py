@@ -12,8 +12,7 @@ import re
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import Controller
-from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse import Controller, ControlSystem
 from cudaq_pulse.kernel import _emitter
 from cudaq_pulse.kernel.ir_builder import CompilationError
 
@@ -259,7 +258,7 @@ def test_the_longest_range_a_loop_can_run_counts_without_wrapping():
 
 
 def _holding(n):
-    return MachineModel(controller=Controller(max_instructions=n))
+    return ControlSystem(controllers=[Controller(max_instructions=n)])
 
 
 def _growing_waits(d, k):
@@ -275,7 +274,7 @@ def test_an_unrolled_range_past_the_instruction_memory_names_the_loop_and_its_si
             wait(d, 4 + 4 * (n % 2))
 
     with pytest.raises(CompilationError) as info:
-        pulse.compile(reads_index, machine=_holding(4096)).lower(Q[0])
+        pulse.compile(reads_index, control_system=_holding(4096)).lower(Q[0])
     assert str(info.value).startswith(
         "for loop over range(0, 1000000000000000) unrolls to about "
         "1,000,000,000,000,000 operations (1,000,000,000,000,000 iterations of about 1), "
@@ -293,7 +292,7 @@ def test_a_loop_over_an_iterable_past_the_instruction_memory_names_the_loop():
             wait(d, n)
 
     with pytest.raises(CompilationError) as info:
-        pulse.compile(over_list, machine=_holding(4096)).lower(Q[0])
+        pulse.compile(over_list, control_system=_holding(4096)).lower(Q[0])
     assert str(info.value).startswith("for loop over a Python iterable unrolls to about 40,0")
     assert "(20,000 iterations of about 2), more than the 4,096" in str(info.value)
     assert "for n in [4, 8] * 10**4:" in "\n".join(info.value.__notes__)
@@ -307,7 +306,7 @@ def test_the_instruction_limit_error_names_the_unrolled_loop_in_a_helper_and_its
             _growing_waits(d, 10**9)
 
     with pytest.raises(CompilationError, match=r"range\(0, 1000000000\) unrolls") as info:
-        pulse.compile(calls, machine=_holding(100)).lower(Q[0])
+        pulse.compile(calls, control_system=_holding(100)).lower(Q[0])
     note = "\n".join(info.value.__notes__)
     assert note.index("_growing_waits(d, 10**9)") < note.index("for n in range(k):")
 
@@ -330,10 +329,10 @@ def test_a_program_of_exactly_max_instructions_compiles_and_one_more_does_not(ca
             wait(d, 4)
 
     kernel = eleven_counted if carries_state else eleven
-    lowered = pulse.compile(kernel, machine=_holding(11), unroll_threshold=0).lower(Q[0])
+    lowered = pulse.compile(kernel, control_system=_holding(11), unroll_threshold=0).lower(Q[0])
     assert lowered.metrics.op_count == 11
     with pytest.raises(CompilationError, match=r"iterations of about 1\), more than the 10 "):
-        pulse.compile(kernel, machine=_holding(10), unroll_threshold=0).lower(Q[0])
+        pulse.compile(kernel, control_system=_holding(10), unroll_threshold=0).lower(Q[0])
 
 
 def test_a_rolled_loop_holds_its_body_once_against_the_instruction_memory():
@@ -345,7 +344,7 @@ def test_a_rolled_loop_holds_its_body_once_against_the_instruction_memory():
 
     ops = rolled.lower(Q[0]).metrics.op_count
     assert ops < 10
-    assert pulse.compile(rolled, machine=_holding(ops)).lower(Q[0]).metrics.op_count == ops
+    assert pulse.compile(rolled, control_system=_holding(ops)).lower(Q[0]).metrics.op_count == ops
 
 
 def test_a_program_past_the_instruction_memory_outside_any_loop_says_so():
@@ -357,7 +356,7 @@ def test_a_program_past_the_instruction_memory_outside_any_loop_says_so():
         wait(d, 12)
 
     with pytest.raises(CompilationError, match=r"^the program holds 3 operations, more than the 2"):
-        pulse.compile(straight, machine=_holding(2)).lower(Q[0])
+        pulse.compile(straight, control_system=_holding(2)).lower(Q[0])
 
 
 def test_without_an_instruction_memory_unrolling_has_no_size_limit():
@@ -368,8 +367,8 @@ def test_without_an_instruction_memory_unrolling_has_no_size_limit():
             wait(d, 4 + 4 * (n % 2))
 
     assert long.lower(Q[0]).metrics.op_count == 20_001
-    machine = MachineModel(controller=Controller())
-    assert pulse.compile(long, machine=machine).lower(Q[0]).metrics.op_count == 20_001
+    machine = ControlSystem(controllers=[Controller()])
+    assert pulse.compile(long, control_system=machine).lower(Q[0]).metrics.op_count == 20_001
 
 
 @pytest.mark.parametrize("wrong", [0, -1, True, 1.5, "8"])

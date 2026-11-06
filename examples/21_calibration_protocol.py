@@ -505,7 +505,7 @@ if __name__ == "__main__":
 
     print("=== 1. The calibration chain, on the controller ===")
     start = time.perf_counter()
-    compiled = pulse.compile(calibration_chain, device=dev, machine=control_system)
+    compiled = pulse.compile(calibration_chain, device=dev, control_system=control_system)
     lowered = compiled.lower(q, 20_000.0 * clock_ghz)
     compile_s = time.perf_counter() - start
     end_cycles = max(
@@ -534,7 +534,9 @@ if __name__ == "__main__":
 
     print("\n=== 2. Frequency binary search, 15 shots, no reset ===")
     rounds = 15
-    lowered = pulse.compile(binary_search, device=dev, machine=control_system).lower(q, rounds)
+    lowered = pulse.compile(binary_search, device=dev, control_system=control_system).lower(
+        q, rounds
+    )
     errors, sigmas = [], []
     for seed in range(4):
         offset = (seed - 1.5) * 300e3
@@ -566,7 +568,7 @@ if __name__ == "__main__":
     )
     print("  with exp at 400 cycles:")
     try:
-        pulse.compile(calibration_chain, device=dev, machine=slow_system).lower(
+        pulse.compile(calibration_chain, device=dev, control_system=slow_system).lower(
             q, 20_000.0 * clock_ghz
         )
     except controller.ControllerLimitError as error:

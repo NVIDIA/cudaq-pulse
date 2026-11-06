@@ -75,7 +75,7 @@ def test_an_installed_backend_compiles_emits_and_runs(installed):
     assert isinstance(backend, backends.Backend) and backend.name == "dummy"
     assert backends.get("dummy") is backend
     dev = _device()
-    compiled = pulse.compile(drive_and_measure, device=dev, machine=backend.machine_model())
+    compiled = pulse.compile(drive_and_measure, device=dev, control_system=backend.control_system())
     artifact = backend.emit(compiled.lower(dev.qudit_handles[0]).export_controller())
     assert artifact == [(0, 0, "drive", "gaussian"), (40, 1, "readout", "square")]
     assert backend.run(artifact, shots=3)["outcomes"] == [[0], [0], [0]]
@@ -83,14 +83,14 @@ def test_an_installed_backend_compiles_emits_and_runs(installed):
 
 def test_the_backends_limits_reject_what_its_controller_cannot_play(installed):
     dev = _device()
-    machine = backends.get("dummy").machine_model()
+    machine = backends.get("dummy").control_system()
     with pytest.raises(ControllerLimitError, match="detector 0"):
-        pulse.compile(two_readouts, device=dev, schedule="asap", machine=machine).lower(
+        pulse.compile(two_readouts, device=dev, schedule="asap", control_system=machine).lower(
             dev.qudit_handles[0], dev.qudit_handles[1]
         )
     # Serialized by the scheduler, with the detector's hold time between them.
     machine = dataclasses.replace(machine, line_switch_penalty_cycles=10)
-    pulse.compile(two_readouts, device=dev, schedule="rcp", machine=machine).lower(
+    pulse.compile(two_readouts, device=dev, schedule="rcp", control_system=machine).lower(
         dev.qudit_handles[0], dev.qudit_handles[1]
     )
 
@@ -105,8 +105,8 @@ def test_a_registered_backend_takes_precedence_and_can_be_removed(installed):
     class Other:
         name = "dummy"
 
-        def machine_model(self):
-            return pulse.compiler.MachineModel()
+        def control_system(self):
+            return pulse.ControlSystem()
 
         def emit(self, program):
             return "other"

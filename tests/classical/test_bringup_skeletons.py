@@ -23,17 +23,17 @@ import math
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
+from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link, random_index
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
-from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.runtime._calls import IQModel
 from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck, TelegraphT1
 from cudaq_pulse.targets import DispersiveReadout, transmon_17q, transmon_generic
 
 PI_AMP = math.pi / 20  # square(40, PI_AMP) is a pi pulse (unit drive scale)
 CLOCK = 2.0  # GHz on both targets
-MACHINE = MachineModel(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
+MACHINE = ControlSystem(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
 
 
 def _generic():
@@ -102,7 +102,9 @@ def adaptive_t1(q, rounds: int):
 
 def test_k11_adaptive_t1_tracks_its_posterior_per_path(target):
     dev = _device(target)
-    lowered = pulse.compile(adaptive_t1, device=dev, machine=MACHINE).lower(dev.qudit_handles[0], 2)
+    lowered = pulse.compile(adaptive_t1, device=dev, control_system=MACHINE).lower(
+        dev.qudit_handles[0], 2
+    )
     assert [e.opened_by for e in lowered.epochs()] == ["start", "wait", "wait"]
     result = pulse.simulate(lowered, dt_ns=4.0, levels=2)
     assert sum(branch.probability for branch in result.branches) == pytest.approx(1.0)
@@ -178,7 +180,7 @@ def test_k12_frequency_binary_search_follows_a_detuned_plant(target):
             ),
         },
     )
-    lowered = pulse.compile(binary_search, device=dev, machine=MACHINE).lower(
+    lowered = pulse.compile(binary_search, device=dev, control_system=MACHINE).lower(
         dev.qudit_handles[0], 1
     )
     result = pulse.simulate(lowered, plant=detuned, dt_ns=1.0, levels=2)
@@ -354,7 +356,7 @@ def golden_in_shot(q, iterations: int):
 
 def test_k14_golden_section_in_a_shot_uses_the_converged_pattern(target):
     dev = _device(target)
-    lowered = pulse.compile(golden_in_shot, device=dev, machine=MACHINE).lower(
+    lowered = pulse.compile(golden_in_shot, device=dev, control_system=MACHINE).lower(
         dev.qudit_handles[0], 4
     )
     assert len(lowered.classical_report()) == 4
@@ -388,7 +390,7 @@ def cadence_shot(q, amplitude: float):
 def test_k15_the_closed_loop_runs_ten_thousand_iterations_on_one_compile(target):
     dev = _device(target)
     q = dev.qudit_handles[0]
-    compiled = pulse.compile(cadence_shot, device=dev, machine=MACHINE)
+    compiled = pulse.compile(cadence_shot, device=dev, control_system=MACHINE)
     log = EstimateLog()
     for i in range(10_000):
         STORE.set("wait_cycles", 2000.0 + (i % 100) * 20.0, iteration=i)
@@ -553,7 +555,9 @@ def pauli_rb(q):
 
 def test_k19_pauli_benchmarking_returns_to_zero_unless_miscalibrated(target):
     dev = _device(target)
-    lowered = pulse.compile(pauli_rb, device=dev, machine=MACHINE).lower(dev.qudit_handles[0])
+    lowered = pulse.compile(pauli_rb, device=dev, control_system=MACHINE).lower(
+        dev.qudit_handles[0]
+    )
     ideal = pulse.simulate(lowered, initial_state=[1, 0], dt_ns=1.0, levels=2)
     assert len(ideal.branches) == 64  # every sequence of three Paulis
     # Each sequence and its recovery multiply to the identity.

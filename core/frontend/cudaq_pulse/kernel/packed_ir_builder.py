@@ -152,7 +152,7 @@ def _tables(machine: Any) -> dict[int, dict[str, tuple[int, str]]]:
 def _link_without_machine(link: Any) -> int:
     if isinstance(link, str):
         raise CompilationError(
-            f"link {link!r} is a name; compile with a MachineModel whose links name it"
+            f"link {link!r} is a name; compile with a pulse.ControlSystem whose links name it"
         )
     return int(link)
 
@@ -339,7 +339,7 @@ class PackedIRBuilder:
     # control system of several controllers. Waveforms are then sampled for
     # the line that plays them.
     sample_rate_of: Callable[[str, int], tuple[int, int] | None] | None = None
-    # The machine model, which names links and whose controllers may fix
+    # The control system's model, which names links and whose controllers may fix
     # dispatch keys; compile() sets it. None: links are ids.
     machine: Any = None
     # Per link id, the keys the machine's controllers fix, by function name,

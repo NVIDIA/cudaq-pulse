@@ -447,7 +447,6 @@ gives ``program_clock_ghz``, converts every time to the controller's cycles
 epochs) and scales each waveform's time parameters (``duration``,
 ``sigma``, ``beta``, ``risefall``) with them. A program for a controller at
 the program clock is unchanged. ``ControlSystem(reference_clock_ghz=...)``
-(or ``MachineModel(reference_clock_ghz=...)`` without a control system)
 states a clock the controllers share; every controller's clock must be a
 whole multiple of it, and the export gives it as ``reference_clock_ghz``.
 Without one, each controller's start is known only to within one of its own
@@ -564,8 +563,7 @@ Line delays
 
 Cables and electronics delay each line differently. The calibrated delays
 belong to the system, not to kernels: ``ControlSystem(line_delays_ns=...)``
-(or ``MachineModel(line_delays_ns=...)`` without a control system) gives
-them by line, ``("drive", qudit)`` or ``("readout", qudit)``, as times
+gives them by line, ``("drive", qudit)`` or ``("readout", qudit)``, as times
 (``2.3 * pulse.ns``) or numbers of ns, and every operation on a delayed line starts that much later than scheduled.
 Whole :ref:`timesteps <timestep>` of the line move its operations, which
 are then checked against the controller's limits like any others; the rest,
@@ -576,8 +574,8 @@ rounds the delay to the nearest timestep if that is within its
 ``alignment_tolerance_cycles``, and otherwise the program fails to compile
 with an error naming the line, the rest and the fixes::
 
-    machine = MachineModel(
-        controller=pulse.Controller(clock_ghz=1.0, max_fine_delay_ns=1.0),
+    control_system = pulse.ControlSystem(
+        controllers=[pulse.Controller(clock_ghz=1.0, max_fine_delay_ns=1.0)],
         line_delays_ns={("drive", 0): 2.3, ("readout", 0): 41.0},
     )
     # The drive line of qudit 0 moves 2 ns (4 cycles of a 2 GHz program
@@ -624,23 +622,25 @@ closely two operations on one line can follow each other, its waveform
 memory and tones per line, which detector reads each qudit and how long a
 readout holds it, the least feedback latency from a readout to an operation
 that branches on it, whether it can stop waiting for an answer after a
-timeout, and the most drives and readouts in one program. Given
-to the machine model as ``MachineModel(controller=...)``, they make every
-compilation check the scheduled program, so that a program the controller
+timeout, and the most drives and readouts in one program. Given to
+``pulse.compile(control_system=...)``, alone or in its ``ControlSystem``,
+it makes every compilation check the scheduled program, so that a program the controller
 cannot play fails at compile time with ``ControllerLimitError``, which lists
 each violated limit. A limit that only some values of a ``float``
 parameter exceed, such as the tones a frequency shift adds or the memory
 a waveform width takes, is checked when a call supplies the values, once
 per distinct values, so a call that compiles also exports.
 ``cudaq_pulse.controller.check(lowered, limits)`` returns the violations
-without raising. Without ``controller``, compiling checks nothing more.
+without raising. A control system without controllers checks nothing
+more.
 
 A minimal backend
 -----------------
 
 A backend is an object with a ``name`` and three methods, the
-``cudaq_pulse.backends.Backend`` protocol: ``machine_model()`` returns the
-machine model to compile for its controller, ``emit(program)`` takes an
+``cudaq_pulse.backends.Backend`` protocol: ``control_system()`` returns the
+control system to compile for (a ``ControlSystem``, or its one
+``Controller``), ``emit(program)`` takes an
 exported program and returns the controller's, and ``run(artifact,
 shots=...)`` runs it. ``formats``, if present, lists the export formats it
 reads. A program it cannot emit it refuses with
@@ -662,9 +662,8 @@ This one emits one line of text per drive and readout:
    from collections.abc import Mapping
    from typing import Any
 
-   from cudaq_pulse.backends import IncompatibleBackendError
-   from cudaq_pulse.compiler import MachineModel
    from cudaq_pulse import Controller
+   from cudaq_pulse.backends import IncompatibleBackendError
    from cudaq_pulse.controller import FORMAT
 
 
@@ -672,9 +671,8 @@ This one emits one line of text per drive and readout:
        name = "text"
        formats = (FORMAT,)
 
-       def machine_model(self) -> MachineModel:
-           limits = Controller(clock_ghz=1.0, instruction_cycles=2, min_idle_cycles=2)
-           return MachineModel(controller=limits)
+       def control_system(self) -> Controller:
+           return Controller(clock_ghz=1.0, instruction_cycles=2, min_idle_cycles=2)
 
        def emit(self, program: Mapping[str, Any]) -> list[str]:
            if program["format"] != FORMAT:
@@ -741,7 +739,7 @@ same name:
        readout(readout_line, square(cal["readout_duration"], 0.05))
 
 
-   compiled = pulse.compile(drive_and_measure, device=dev, machine=backend.machine_model())
+   compiled = pulse.compile(drive_and_measure, device=dev, control_system=backend.control_system())
    program = compiled.lower(dev.qudit_handles[0]).export_controller()
    print(backend.run(backend.emit(program), shots=1))
    # [['0 drive line 0 gaussian at 5e+09 Hz', '40 readout line 1 square at 5e+09 Hz']]
@@ -753,7 +751,7 @@ Validating a backend
 which ships with cudaq-pulse, through a backend: a program for each kind of
 event (``cudaq_pulse.Event``), one with a branch and one with values known
 only at run time, compiled for the controller (by default the backend's
-machine model's) and exported in each format the backend reads. Each must be emitted or refused with
+control system's) and exported in each format the backend reads. Each must be emitted or refused with
 ``IncompatibleBackendError``, and a program with an event kind no format
 has, or in a newer format, must be refused. A program that exceeds the
 controller's limits is skipped.
@@ -805,7 +803,7 @@ Cost
 
 Importing cudaq-pulse neither imports the backend modules nor looks for
 installed backends; that happens on the first call to ``backends``. A
-machine model without ``controller`` adds nothing to compilation. The
+control system without controllers adds nothing to compilation. The
 export and the limit checks are native. Exporting in ``/1`` takes time and
 memory linear in a program's executions; in ``/2``, and for the checks, a
 loop whose iterations repeat costs as much as its first two iterations and

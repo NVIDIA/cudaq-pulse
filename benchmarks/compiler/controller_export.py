@@ -34,8 +34,7 @@ import sys
 _CHILD = r"""
 import inspect, json, resource, sys, time
 import cudaq_pulse as pulse
-from cudaq_pulse.compiler import MachineModel
-from cudaq_pulse import Controller
+from cudaq_pulse import Controller, ControlSystem
 from cudaq_pulse.targets import Qubit, TargetDescription
 
 name, lines, rounds, trips = sys.argv[1], *map(int, sys.argv[2:5])
@@ -54,7 +53,7 @@ limits = Controller(
     detector_recovery_cycles=4,
     max_pulses=10**8,
 )
-machine = MachineModel(controller=limits)
+system = ControlSystem(controllers=[limits])
 
 
 @pulse.kernel
@@ -98,7 +97,7 @@ kernel = nest if name == "nest" else repeated
 threshold = 10**9 if name == "unrolled" else 0
 handles = dev.qudit_handles[0:lines]
 t0 = time.perf_counter()
-lowered = pulse.compile(kernel, machine=machine, unroll_threshold=threshold).lower(handles)
+lowered = pulse.compile(kernel, control_system=system, unroll_threshold=threshold).lower(handles)
 compile_s = time.perf_counter() - t0
 t0 = time.perf_counter()
 program = lowered.export_controller()

@@ -15,9 +15,8 @@ import tomllib
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import Controller, Processor
+from cudaq_pulse import Controller, ControlSystem, Processor
 from cudaq_pulse.classical import Link
-from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, WaveformMemoryScope, check, unroll
 
 from tests._handles import Q
@@ -143,7 +142,9 @@ def test_a_shared_memory_holds_the_waveforms_of_every_line_once():
 
 def test_the_memory_reaches_the_export_only_when_shared():
     shared = Controller(waveform_memory_samples=4096, waveform_memory="shared")
-    lowered = pulse.compile(two_lines, machine=MachineModel(controller=shared)).lower(Q[0], Q[1])
+    lowered = pulse.compile(two_lines, control_system=ControlSystem(controllers=[shared])).lower(
+        Q[0], Q[1]
+    )
     program = lowered.export_controller(version=2)
     assert program["controller"]["waveform_memory_samples"] == 4096
     assert program["controller"]["waveform_memory"] == "shared"
@@ -152,7 +153,9 @@ def test_the_memory_reaches_the_export_only_when_shared():
     json.dumps(program)
     per_line = Controller(waveform_memory_samples=4096)
     assert "waveform_memory" not in per_line.as_dict()
-    plain = pulse.compile(two_lines, machine=MachineModel(controller=per_line)).lower(Q[0], Q[1])
+    plain = pulse.compile(two_lines, control_system=ControlSystem(controllers=[per_line])).lower(
+        Q[0], Q[1]
+    )
     assert "waveform_memory" not in plain.export_controller(version=2)["controller"]
     assert unroll(plain.export_controller(version=2))["limits"] == per_line.as_dict()
 
@@ -195,8 +198,8 @@ def test_the_structured_format_writes_the_controller_and_names_its_links_anew():
         processors=[Processor(links=("ctl",), max_ops_per_function=64)],
     )
     links = {"ctl": Link(fixed_ns=4, bytes_per_ns=2.0, feedback_ns=8, max_in_flight=4)}
-    machine = MachineModel(controller=limits, links=links)
-    lowered = pulse.compile(feedback, machine=machine).lower(Q[0])
+    machine = ControlSystem(controllers=[limits], links=links)
+    lowered = pulse.compile(feedback, control_system=machine).lower(Q[0])
     program = lowered.export_controller(version=2)
     assert "limits" not in program
     controller = program["controller"]
@@ -223,8 +226,8 @@ def test_the_structured_format_writes_the_controller_and_names_its_links_anew():
     assert back["links"] == flat["links"]
     assert back["target"] == flat["target"] and list(back) == list(flat)
     # A controller without processors lists none.
-    plain = MachineModel(controller=Controller(), links=links)
-    program = pulse.compile(feedback, machine=plain).lower(Q[0]).export_controller(version=2)
+    plain = ControlSystem(controllers=[Controller()], links=links)
+    program = pulse.compile(feedback, control_system=plain).lower(Q[0]).export_controller(version=2)
     assert program["controller"]["processors"] == []
     assert unroll(program)["limits"] == Controller().as_dict()
 
@@ -240,7 +243,9 @@ def test_values_no_limit_depends_on_are_bound_without_a_check(monkeypatch):
         return original(view)
 
     monkeypatch.setattr(controller, "_call_violations", counting)
-    machine = MachineModel(controller=Controller(waveform_memory_samples=16, max_tones_per_line=1))
+    machine = ControlSystem(
+        controllers=[Controller(waveform_memory_samples=16, max_tones_per_line=1)]
+    )
 
     @pulse.kernel
     def sweep(q, amp: float):
@@ -250,7 +255,7 @@ def test_values_no_limit_depends_on_are_bound_without_a_check(monkeypatch):
             drive(line, gaussian(16, 0.5, 4.0))
 
     # One shape at any amplitude fits whatever the value: no check per call.
-    compiled = pulse.compile(sweep, machine=machine)
+    compiled = pulse.compile(sweep, control_system=machine)
     for value in (0.1, 0.2, 0.1):
         compiled.lower(Q[0], value)
     assert checked == []
@@ -262,7 +267,7 @@ def test_values_no_limit_depends_on_are_bound_without_a_check(monkeypatch):
         drive(line, gaussian(16, 0.5, 4.0))
 
     # A width sets whether the two share memory: each distinct value is checked once.
-    compiled = pulse.compile(widths, machine=machine)
+    compiled = pulse.compile(widths, control_system=machine)
     for value in (4.0, 4.0):
         compiled.lower(Q[0], value)
     with pytest.raises(ControllerLimitError, match="waveform memory"):

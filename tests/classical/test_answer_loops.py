@@ -28,8 +28,8 @@ from typing import Any
 
 import cudaq_pulse as pulse
 import pytest
+from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link
-from cudaq_pulse.compiler import MachineModel
 
 from tests import _child
 from tests._handles import Q
@@ -381,10 +381,10 @@ def _machines() -> dict[str, dict[str, Any]]:
     return {
         "default": {},
         "two_slots": {
-            "machine": MachineModel(
-                links={0: Link(fixed_ns=3, max_in_flight=2), 1: Link(feedback_ns=20)},
+            "control_system": ControlSystem(
+                controllers=[pulse.Controller(feedback_latency_cycles=9)],
+                links={"host": Link(fixed_ns=3, max_in_flight=2), "decoder": Link(feedback_ns=20)},
                 max_concurrent_drives=2,
-                readout_latency_cycles=9,
             )
         },
     }
@@ -1180,8 +1180,8 @@ def _one_after_another(n: int, *bodies: str, name: str | None = None) -> Any:
     return pulse.kernel(namespace["k"])
 
 
-def _link_slots(slots: int) -> MachineModel:
-    return MachineModel(links={0: Link(fixed_ns=4, max_in_flight=slots)})
+def _link_slots(slots: int) -> ControlSystem:
+    return ControlSystem(links={"host": Link(fixed_ns=4, max_in_flight=slots)})
 
 
 def _most_at_once(spans: list[tuple[int, int]]) -> int:
@@ -1236,7 +1236,7 @@ def test_eager_requests_before_lazy_ones_keep_within_the_slots_under_alap(schedu
                 _one_after_another(5, *bodies),
                 schedule=schedule,
                 unroll_threshold=10**6,
-                machine=_link_slots(slots),
+                control_system=_link_slots(slots),
                 passes=(),
             ).lower(Q[0])
             if _most_in_flight_written_out(lowered) > slots:
@@ -1274,7 +1274,7 @@ def test_loops_one_after_another_on_a_link_play_as_unrolled_within_its_slots(sch
                         kernel,
                         schedule=schedule,
                         unroll_threshold=unroll,
-                        machine=machine,
+                        control_system=machine,
                         passes=(),
                     ).lower(Q[0])
                     for unroll in (0, 10**6)
@@ -1298,7 +1298,7 @@ def _link_events(bodies: tuple[str, ...], schedule: str, slots: int) -> Any:
         _one_after_another(5, *bodies),
         schedule=schedule,
         unroll_threshold=0,
-        machine=_link_slots(slots),
+        control_system=_link_slots(slots),
         passes=(),
     ).lower(Q[0])
     return sorted((e.kind, e.line, e.start_cycles, e.duration_cycles) for e in lowered.schedule)
@@ -1361,7 +1361,7 @@ def _link_size(n: int, bodies: tuple[str, ...], schedule: str, slots: int) -> in
         _one_after_another(n, *bodies),
         schedule=schedule,
         unroll_threshold=0,
-        machine=_link_slots(slots),
+        control_system=_link_slots(slots),
         passes=(),
     ).lower(Q[0])
     return lowered.mlir("pulse").count("start_cycles")

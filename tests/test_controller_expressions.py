@@ -18,10 +18,9 @@ import warnings
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import Controller, _validation
+from cudaq_pulse import Controller, ControlSystem, _validation
 from cudaq_pulse._errors import ExecutionError, InvalidValueError, UnsupportedError
 from cudaq_pulse._native._cudaq_pulse_native import MLIRPipeline
-from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import EXPRESSION_TERMS, FORMAT, evaluate_expression, unroll
 
 from tests._handles import Q
@@ -120,7 +119,7 @@ def _folded(body, x, n, machine=None):
     """What the compiler computes for *body* at x and n."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        compiled = pulse.compile(_kernel(body, bound=True), machine=machine)
+        compiled = pulse.compile(_kernel(body, bound=True), control_system=machine)
         return _value(compiled.lower(Q[0], x, n).export_controller())
 
 
@@ -170,9 +169,9 @@ def test_a_readout_is_set_when_it_observed_any_level_but_0():
 
 
 def test_a_controller_clock_clamps_and_converts_a_run_time_length():
-    machine = MachineModel(controller=Controller(clock_ghz=2.0, cycles_per_timestep=4))
+    machine = ControlSystem(controllers=[Controller(clock_ghz=2.0, cycles_per_timestep=4)])
     body = ["wait(d, n * 4, bounds=(8, 400))"]
-    program = pulse.compile(_kernel(body), machine=machine).lower(Q[0]).export_controller()
+    program = pulse.compile(_kernel(body), control_system=machine).lower(Q[0]).export_controller()
     expression = _value(program)
     assert {"controller_cycles", "max", "min"} <= _ops(expression)
     answer = _answer(program)
@@ -594,13 +593,13 @@ def _no_dialect(program):
 
 @pytest.mark.parametrize("version", [1, 2])
 def test_no_export_of_the_corpus_names_an_operation_of_the_compiler(version):
-    dev = _validation._device(MachineModel())
+    dev = _validation._device(ControlSystem())
     for kernel in _validation._corpus().values():
         lowered = pulse.compile(kernel, device=dev).lower(*dev.qudit_handles[:2])
         _no_dialect(lowered.export_controller(version=version))
     # Format /2 is for controllers on the program clock.
-    clock = Controller(clock_ghz=2.0, cycles_per_timestep=4) if version == 1 else None
-    machine = MachineModel(controller=clock)
+    clocks = [Controller(clock_ghz=2.0, cycles_per_timestep=4)] if version == 1 else []
+    machine = ControlSystem(controllers=clocks)
     for body in (
         *_PHASES.values(),
         *_WAITS.values(),
@@ -608,7 +607,7 @@ def test_no_export_of_the_corpus_names_an_operation_of_the_compiler(version):
         _BRANCH,
         ["if (n * 3 - 4) // 2 >= n % 2 + 1:", *_BRANCH[1:]],
     ):
-        lowered = pulse.compile(_kernel(body), machine=machine).lower(Q[0])
+        lowered = pulse.compile(_kernel(body), control_system=machine).lower(Q[0])
         _no_dialect(lowered.export_controller(version=version))
 
 

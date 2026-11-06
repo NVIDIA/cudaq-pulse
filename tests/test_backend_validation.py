@@ -17,8 +17,7 @@ from typing import Any
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import Controller, _validation, backends
-from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse import Controller, ControlSystem, _validation, backends
 from cudaq_pulse.controller import _EVENT_KINDS, _FORMATS, unroll
 
 _PLUGINS = Path(__file__).resolve().parent / "plugins"
@@ -36,8 +35,8 @@ class ToyBackend:
         self.limits = limits or Controller(clock_ghz=1.0)
         self.shift = shift
 
-    def machine_model(self) -> MachineModel:
-        return MachineModel(controller=self.limits)
+    def control_system(self) -> ControlSystem:
+        return ControlSystem(controllers=[self.limits])
 
     def emit(self, program: Mapping[str, Any]) -> list[list[dict[str, Any]]]:
         if program.get("format") not in _FORMATS:
@@ -90,7 +89,7 @@ def test_a_conforming_backend_passes_in_every_format_it_reads(ideal):
 
 
 def test_the_corpus_tells_where_a_run_time_frequency_change_is_made():
-    dev = _validation._device(MachineModel())
+    dev = _validation._device(ControlSystem())
     compiled = pulse.compile(_validation._corpus()["runtime_frequency"], device=dev)
     lowered = compiled.lower(*dev.qudit_handles[:2])
     events = lowered.export_controller()["events"]
@@ -136,7 +135,7 @@ def test_a_wrong_number_of_programs_fails(ideal, monkeypatch):
 
 def test_a_program_beyond_the_declared_controller_is_skipped(ideal, monkeypatch):
     backend = ToyBackend()
-    monkeypatch.setattr(backend, "machine_model", lambda: MachineModel())
+    monkeypatch.setattr(backend, "control_system", lambda: ControlSystem())
     no_loop = [c for c in pulse.Capability if c is not pulse.Capability.LOOP]
     limits = Controller(clock_ghz=1.0, max_pulses=2, supports=no_loop)
     report = backends.validate(backend, controller=limits)
@@ -166,8 +165,8 @@ def test_an_emulator_that_disagrees_with_the_simulator_fails(monkeypatch):
 
 def test_the_emulator_is_compared_with_the_simulator():
     lowered = pulse.compile(
-        _validation._corpus()[pulse.Event.ACQUIRE], device=_validation._device(MachineModel())
-    ).lower(*_validation._device(MachineModel()).qudit_handles[:2])
+        _validation._corpus()[pulse.Event.ACQUIRE], device=_validation._device(ControlSystem())
+    ).lower(*_validation._device(ControlSystem()).qudit_handles[:2])
     (p,) = _validation._simulated(lowered)
     assert 0.0 < p < 1.0
 

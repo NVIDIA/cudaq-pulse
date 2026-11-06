@@ -11,8 +11,8 @@ either way the program is the same."""
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
+from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link
-from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.kernel._unroll import DEFAULT_UNROLL_THRESHOLD
 from cudaq_pulse.kernel.bytecode_bridge import compile_kernel_bytecode
 from cudaq_pulse.targets import Coupling, MicrowaveDrive, Qubit, TargetDescription
@@ -172,7 +172,7 @@ def test_rolled_and_unrolled_programs_are_the_same(name):
 
 
 POLICIES = ("asap", "alap", "rcp", "alap_rcp")
-MACHINE = MachineModel(links={0: Link(fixed_ns=4, max_in_flight=4)})
+MACHINE = ControlSystem(links={"host": Link(fixed_ns=4, max_in_flight=4)})
 
 
 def _first(bits: pulse.Bits) -> pulse.Bits:
@@ -274,7 +274,9 @@ _FOR_LOOPS = {"sequential": 3, "calls": 3, "readouts": 3, "nested": 5, "answers"
 @pytest.mark.parametrize("name", sorted(_FOR_LOOPS))
 def test_every_loop_over_one_name_stays_rolled(name):
     def lowered(n2, n3):
-        compiled = pulse.compile(_loops(3, n2, n3)[name], unroll_threshold=0, machine=MACHINE)
+        compiled = pulse.compile(
+            _loops(3, n2, n3)[name], unroll_threshold=0, control_system=MACHINE
+        )
         return compiled.lower(Q[0], Q[1])
 
     small, large = lowered(4, 5), lowered(400, 5000)
@@ -290,7 +292,7 @@ def test_several_rolled_loops_schedule_and_simulate_as_unrolled(name, policy):
     def lowered(threshold, passes=None):
         options = {} if passes is None else {"passes": passes}
         compiled = pulse.compile(
-            kernel, unroll_threshold=threshold, schedule=policy, machine=MACHINE, **options
+            kernel, unroll_threshold=threshold, schedule=policy, control_system=MACHINE, **options
         )
         return compiled.lower(Q[0], Q[1])
 

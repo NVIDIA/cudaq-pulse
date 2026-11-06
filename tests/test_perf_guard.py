@@ -37,8 +37,7 @@ from pathlib import Path
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import Controller
-from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse import Controller, ControlSystem
 from cudaq_pulse.kernel._emitter import PulseIREmitter
 from cudaq_pulse.kernel._unroll import DEFAULT_UNROLL_THRESHOLD
 from cudaq_pulse.kernel.bytecode_bridge import _trace_kernel_with_builder
@@ -367,7 +366,7 @@ def test_a_long_program_is_exported_and_checked_in_linear_time():
         waveform_memory_samples=10**9,
         feedback_latency_cycles=1,
     )
-    machine = MachineModel(readout_latency_cycles=1, controller=limits)
+    machine = ControlSystem(controllers=[limits])
 
     def program(n: int):
         @pulse.kernel
@@ -382,7 +381,9 @@ def test_a_long_program_is_exported_and_checked_in_linear_time():
                 if m:
                     drive(line, square(8, 0.1))
 
-        compiled = pulse.compile(kernel, schedule="rcp", machine=machine, unroll_threshold=100_000)
+        compiled = pulse.compile(
+            kernel, schedule="rcp", control_system=machine, unroll_threshold=100_000
+        )
         return compiled.lower(Q[0])
 
     # Eight times the events: about 8x the time when linear, 64x when not.
@@ -428,7 +429,7 @@ def test_a_rolled_loop_is_checked_and_exported_rolled_in_constant_time():
     limits = Controller(
         instruction_cycles=2, detectors={0: 0}, max_tones_per_line=2, waveform_memory_samples=10**9
     )
-    machine = MachineModel(controller=limits)
+    machine = ControlSystem(controllers=[limits])
 
     def program(n: int):
         @pulse.kernel
@@ -447,7 +448,7 @@ def test_a_rolled_loop_is_checked_and_exported_rolled_in_constant_time():
     compiles, exports, size = {}, {}, {}
     for n in ROLLED_TRIPS:
         kernel = program(n)
-        compiles[n] = lambda k=kernel: pulse.compile(k, machine=machine).lower(Q[0])
+        compiles[n] = lambda k=kernel: pulse.compile(k, control_system=machine).lower(Q[0])
         lowered = compiles[n]()
         exports[n] = lambda m=lowered: m.export_controller(version=2)
         size[n] = len(json.dumps(lowered.export_controller(version=2)))
@@ -729,7 +730,6 @@ def test_a_long_idle_simulates_in_constant_time():
 
 def test_an_adaptive_loop_of_fifty_rounds_simulates_one_path_per_shot():
     from cudaq_pulse.classical import Link
-    from cudaq_pulse.compiler import MachineModel
 
     @pulse.classical(max_latency_ns=200, link="controller")
     def next_wait(bit: pulse.Bits, w: float) -> float:
@@ -752,9 +752,11 @@ def test_an_adaptive_loop_of_fifty_rounds_simulates_one_path_per_shot():
             drive(d, square(40, 0.157))
             wait(d, w, bounds=(40, 200_000))
 
-    machine = MachineModel(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
+    machine = ControlSystem(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
     dev = pulse.device({"target": ladder_target(1)})
-    lowered = pulse.compile(rounds, device=dev, machine=machine).lower(dev.qudit_handles[0], 50)
+    lowered = pulse.compile(rounds, device=dev, control_system=machine).lower(
+        dev.qudit_handles[0], 50
+    )
     seconds = _best(
         lambda: pulse.simulate(lowered, shots=1, seed=1, branches="sampled", dt_ns=0.125), 2, 0
     )

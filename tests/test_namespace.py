@@ -118,7 +118,6 @@ def test_every_public_name_resolves():
         "gaussian",
         "CompileMetrics",
         "ScheduledEvent",
-        "MachineModel",
         "DEFAULT_PASSES",
         "Parameter",
     ],
@@ -190,7 +189,7 @@ def test_builtins_stub_reexports_exactly_ops_all(tmp_path):
 def test_compiler_types_are_in_the_compiler_module():
     from cudaq_pulse import compiler
 
-    for name in ("CompileMetrics", "ScheduledEvent", "MachineModel", "DEFAULT_PASSES"):
+    for name in ("CompileMetrics", "ScheduledEvent", "DEFAULT_PASSES"):
         assert hasattr(compiler, name)
 
 

@@ -55,7 +55,6 @@ __all__ = [
     "CompileMetrics",
     "IRLevel",
     "Lowered",
-    "MachineModel",
     "Pass",
     "ScheduledEvent",
     "UnsupportedInterpreterError",
@@ -203,7 +202,7 @@ def _can_select_at_runtime(target: Device, parameter_kind: str) -> bool:
 
 
 class _Links(dict[int, "Link"]):
-    """The links of a machine model: a read-only, hashable mapping by id,
+    """The links of a control system: a read-only, hashable mapping by id,
     which keeps the names the model gave them (``names``), so that a model
     made from another's links (``dataclasses.replace``) keeps them too."""
 
@@ -218,7 +217,7 @@ class _Links(dict[int, "Link"]):
         return (rebuilt_links, (_Links, dict(self), dict(self.names)))
 
     def _readonly(self, *args: Any, **kwargs: Any) -> None:
-        raise TypeError("MachineModel.links is read-only")
+        raise TypeError("the links are read-only")
 
     __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = _readonly  # type: ignore[assignment]
 
@@ -230,32 +229,17 @@ _NO_LINKS: Mapping[int | str, Link] = MappingProxyType({})
 
 
 @dataclass(frozen=True)
-class MachineModel:
-    """Hardware resource limits.
-
-    The drive and readout limits, readout latency and switch penalty apply
-    to the ``rcp`` and ``alap_rcp`` schedules. ``links`` describes the links
-    to classical devices (see ``cudaq_pulse.classical.Link``), keyed by name
-    (``"decoder"``, ``"controller"``) or by link id; a named link gets the
-    lowest id no other link has, in the order given, so the first named
-    link of a model without ids is link 0, the default. A classical
-    function's ``link=`` names one or gives its id. Their slots and
-    latencies apply to every schedule, because they are hardware. A link id
-    a program uses that is not listed gets ``Link()``; an unknown name is an
-    error. ``controller`` gives the limits of the controller the program is
-    for (``cudaq_pulse.Controller``); every scheduled
-    program is checked against them. ``reference_clock_ghz`` is a clock the
-    controllers share, if they do: each controller's clock must be a whole
-    multiple of it, and without it each controller's start is known only to
-    within one of its own cycles. ``line_delays_ns`` gives calibrated
-    delays of lines, as times or numbers of ns, keyed by ``("drive", qudit)``
-    or ``("readout", qudit)``: every operation on the line starts that much
-    later than scheduled. Whole steps of the line's grid move its
-    operations, which are then checked like any others; the rest is the
-    line's ``fine_delay_ns`` in the controller's program, which its
-    controller must be able to add (``Controller.max_fine_delay_ns``)
-    or tolerate
-    (``Controller.alignment_tolerance_cycles``).
+class _MachineModel:
+    """What compiling for a ``ControlSystem`` (``ControlSystem._machine``)
+    needs of it: the lanes, readout latency and switch penalty of the
+    ``rcp`` and ``alap_rcp`` schedules; the links by id, a named link at
+    the lowest id no other link has, in the order given (a link id a
+    program uses that is not listed gets ``Link()``; an unknown name is an
+    error); the controller a program is for, when it is checked as one
+    controller; the reference clock and line delays; and the system when
+    its wiring, capabilities or processors are checked too. An instance
+    made for ``compile(control_system=)`` given one ``Controller`` has
+    ``_bare`` set, not a field: one more would cost every import.
     """
 
     max_concurrent_drives: int = 4
@@ -277,17 +261,16 @@ class MachineModel:
             from ._system import Controller
 
             if not isinstance(self.controller, Controller):
-                raise TypeError(
-                    f"MachineModel.controller must be a Controller, got {self.controller!r}"
-                )
+                raise TypeError(f"the controller must be a Controller, got {self.controller!r}")
         if self.reference_clock_ghz is not None and not self.reference_clock_ghz > 0:
             raise InvalidValueError(
-                f"MachineModel.reference_clock_ghz must be positive, got {self.reference_clock_ghz}"
+                "ControlSystem.reference_clock_ghz must be positive, "
+                f"got {self.reference_clock_ghz}"
             )
         if self.line_delays_ns:
             from ._clocks import checked_line_delays
 
-            delays = checked_line_delays(self.line_delays_ns, "MachineModel")
+            delays = checked_line_delays(self.line_delays_ns, "ControlSystem")
         else:
             delays = _NO_DELAYS
         object.__setattr__(self, "line_delays_ns", delays)
@@ -317,12 +300,14 @@ class MachineModel:
         for key, value in given.items():
             if isinstance(key, str):
                 if not key.isidentifier():
-                    raise ValueError(f"MachineModel.links names are identifiers, got {key!r}")
+                    raise ValueError(f"ControlSystem.links names are identifiers, got {key!r}")
                 names.append(key)
             elif isinstance(key, bool) or not isinstance(key, int) or key < 0:
-                raise ValueError(f"MachineModel.links keys are names or link ids >= 0, got {key!r}")
+                raise ValueError(
+                    f"ControlSystem.links keys are names or link ids >= 0, got {key!r}"
+                )
             if not isinstance(value, classical.Link):
-                raise TypeError(f"MachineModel.links[{key!r}] must be a Link, got {value!r}")
+                raise TypeError(f"ControlSystem.links[{key!r}] must be a Link, got {value!r}")
             if isinstance(key, int):
                 dict.__setitem__(links, key, value)
         by_name: dict[str, int] = {}
@@ -363,7 +348,7 @@ class MachineModel:
         return frozen_reduce(self)
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, MachineModel):
+        if not isinstance(other, _MachineModel):
             return NotImplemented
         return (
             self.max_concurrent_drives,
@@ -394,10 +379,16 @@ class MachineModel:
         if isinstance(link, str):
             found = self.link_names.get(link)
             if found is None:
+                if getattr(self, "_bare", False):
+                    raise CompilationError(
+                        f"no link named {link!r}: compile() was given one Controller, which has"
+                        " no links; give compile() a pulse.ControlSystem that describes the whole"
+                        f" control system, with its links (links={{{link!r}: pulse.Link(...)}})"
+                    )
                 known = ", ".join(repr(n) for n in self.link_names) or "none"
                 raise CompilationError(
-                    f"no link named {link!r} in the machine model (its named links: {known}); "
-                    "add it to MachineModel(links={...})"
+                    f"no link named {link!r} in the control system (its links: {known}); "
+                    "add it to ControlSystem(links={...})"
                 )
             return found
         return link
@@ -423,7 +414,7 @@ class MachineModel:
         return f"{{classical.links = {{{entries}}}}}"
 
 
-_DEFAULT_MACHINE = MachineModel()
+_DEFAULT_MACHINE = _MachineModel()
 _UNLISTED_LINK: list[classical.Link] = []
 
 
@@ -517,13 +508,13 @@ class CompileMetrics:
 
 @dataclass(frozen=True)
 class CompileOptions:
-    """Passes, schedule policy, machine model and unroll threshold of a
+    """Passes, schedule policy, control system and unroll threshold of a
     compilation. ``unroll_threshold`` is a non-negative ``int``, 8 by
     default; 0 never unrolls (see ``cudaq_pulse.compile``)."""
 
     schedule: str = "alap"
     passes: tuple[Pass, ...] = DEFAULT_PASSES
-    machine: MachineModel = _DEFAULT_MACHINE
+    machine: _MachineModel = _DEFAULT_MACHINE
     flatten_schedules: bool = False
     unroll_threshold: int = DEFAULT_UNROLL_THRESHOLD
 
@@ -531,7 +522,7 @@ class CompileOptions:
     def make(
         schedule: str = "alap",
         passes: Sequence[str] | None = None,
-        machine: MachineModel | None = None,
+        control_system: ControlSystem | Controller | None = None,
         flatten_schedules: bool = False,
         unroll_threshold: int | None = None,
     ) -> CompileOptions:
@@ -543,15 +534,24 @@ class CompileOptions:
                 f"Choose from: {', '.join(sorted(_VALID_SCHEDULES))}"
             )
         passes = DEFAULT_PASSES if passes is None else _passes(passes)
-        machine = machine or _DEFAULT_MACHINE
+        if control_system is None:
+            machine = _DEFAULT_MACHINE
+        else:
+            try:
+                machine = control_system._machine
+            except AttributeError:
+                raise InvalidTypeError(
+                    "compile(control_system=) takes a pulse.ControlSystem or a "
+                    f"pulse.Controller, got {control_system!r}"
+                ) from None
         if machine.max_concurrent_drives <= 0:
-            raise ValueError("machine.max_concurrent_drives must be positive")
+            raise ValueError("ControlSystem.max_concurrent_drives must be positive")
         if machine.max_concurrent_readouts <= 0:
-            raise ValueError("machine.max_concurrent_readouts must be positive")
+            raise ValueError("ControlSystem.max_concurrent_readouts must be positive")
         if machine.readout_latency_cycles < 0:
-            raise ValueError("machine.readout_latency_cycles cannot be negative")
+            raise ValueError("the readout latency cannot be negative")
         if machine.line_switch_penalty_cycles < 0:
-            raise ValueError("machine.line_switch_penalty_cycles cannot be negative")
+            raise ValueError("ControlSystem.line_switch_penalty_cycles cannot be negative")
         return CompileOptions(
             schedule,
             passes,
@@ -1331,7 +1331,7 @@ def build(
 
 
 def _clocked_builder(
-    builder: Any, machine: MachineModel, target: Device
+    builder: Any, machine: _MachineModel, target: Device
 ) -> _clocks.ClockPlan | None:
     """Set *builder* up for *machine*'s controllers; their clock plan."""
     from . import _clocks
@@ -1371,7 +1371,7 @@ def _clocked_builder(
 
 def _clocked_module(
     module: Any,
-    machine: MachineModel,
+    machine: _MachineModel,
     target: Device,
     clocks: _clocks.ClockPlan | None,
     builder: Any,
@@ -1394,7 +1394,7 @@ def _clocked_module(
 
 
 def _line_delays(
-    machine: MachineModel, target: Device, clocks: _clocks.ClockPlan | None, n_qudits: int
+    machine: _MachineModel, target: Device, clocks: _clocks.ClockPlan | None, n_qudits: int
 ) -> tuple[str | None, dict[tuple[str, int], float]]:
     from . import _clocks
 
@@ -1521,7 +1521,7 @@ def _routes(lowered: Lowered) -> Sequence[tuple[int, int, str | None]]:
     return routes
 
 
-def _dispatch_tables(machine: MachineModel) -> dict[int, dict[str, tuple[int, str]]]:
+def _dispatch_tables(machine: _MachineModel) -> dict[int, dict[str, tuple[int, str]]]:
     """Per link id, the keys fixed on it (by function name), each with what
     fixes them: a processor's ``dispatch_keys`` on its ``links``."""
     system = machine._system
@@ -1545,7 +1545,7 @@ def _dispatch_tables(machine: MachineModel) -> dict[int, dict[str, tuple[int, st
 
 
 def _fix_keys(
-    machine: MachineModel,
+    machine: _MachineModel,
     tables: dict[int, dict[str, tuple[int, str]]],
     label: str,
     links: Sequence[int | str],
@@ -1581,7 +1581,7 @@ def compile[**P](
     *,
     schedule: str | None = None,
     passes: Sequence[str] | None = None,
-    machine: MachineModel | ControlSystem | None = None,
+    control_system: ControlSystem | Controller | None = None,
     device: Device | None = None,
     flatten_schedules: bool = False,
     unroll_threshold: int | None = None,
@@ -1607,11 +1607,14 @@ def compile[**P](
     passes:
         Optimization passes (``Pass`` members or their names), run in the
         order given; ``DEFAULT_PASSES`` by default, ``()`` for none.
-    machine:
-        Machine model for resource-constrained scheduling, or a
-        ``ControlSystem``: every program is then checked against its
-        controllers' wiring, capabilities and limits. By default the
-        control system of *device*, if it has one.
+    control_system:
+        The ``ControlSystem`` to compile for: every program is checked
+        against its controllers' wiring, capabilities and limits, and its
+        links and lanes set the schedule. One ``Controller`` stands for a
+        system of that controller alone; what it cannot take (a line it
+        does not play, a link it does not have) is an error that says to
+        describe the whole system. By default the control system of
+        *device*, if it has one.
     flatten_schedules:
         Ignore the ``schedule=`` of every called kernel and schedule the whole
         program with *schedule*.
@@ -1632,21 +1635,12 @@ def compile[**P](
 
     if not isinstance(kernel, Kernel):
         raise TypeError(f"compile() expects a @cudaq_pulse.kernel, got {type(kernel).__name__}")
-    if machine is None:
-        if device is not None and device.control_system is not None:
-            machine = device.control_system._machine
-    elif not isinstance(machine, MachineModel):
-        from ._system import ControlSystem
-
-        if not isinstance(machine, ControlSystem):
-            raise InvalidTypeError(
-                f"compile(machine=) takes a MachineModel or a ControlSystem, got {machine!r}"
-            )
-        machine = machine._machine
+    if control_system is None and device is not None:
+        control_system = device.control_system
     options = CompileOptions.make(
         root_schedule(kernel.schedule, schedule),
         passes,
-        machine,
+        control_system,
         flatten_schedules,
         kernel.unroll_threshold if unroll_threshold is None else unroll_threshold,
     )

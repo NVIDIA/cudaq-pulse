@@ -22,8 +22,8 @@ import re
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
+from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link
-from cudaq_pulse.compiler import MachineModel
 
 from tests._handles import Q
 from tests.classical import _schedule_matrix as matrix
@@ -159,7 +159,7 @@ def test_three_kernels_deep_with_mixed_schedules(nested, policy):
     outer, middle, inner, link, take = nested
     program, measure = _nested(*nested)
     case = matrix.Case(link=link, take=take)
-    low = pulse.compile(program, schedule=policy, machine=matrix.MACHINE).lower(Q[0], Q[1])
+    low = pulse.compile(program, schedule=policy, control_system=matrix.MACHINE).lower(Q[0], Q[1])
     matrix.check_calls(case, low)
     matrix.check_lines(low)
     matrix.check_reverify(low)
@@ -203,7 +203,7 @@ def test_simulation_matches_an_explicit_schedule(case):
 
 
 def _in_flight(n, slots, schedule, callee):
-    machine = MachineModel(links={"controller": Link(max_in_flight=slots)})
+    machine = ControlSystem(links={"controller": Link(max_in_flight=slots)})
     decode, _ = matrix.FUNCTIONS[("controller", "result")]
 
     def burst(r, rt):
@@ -219,7 +219,7 @@ def _in_flight(n, slots, schedule, callee):
         r = get_readout_line(q)
         inner(r, r.tone)
 
-    return pulse.compile(k, schedule=schedule, machine=machine).lower(Q[0])
+    return pulse.compile(k, schedule=schedule, control_system=machine).lower(Q[0])
 
 
 @pytest.mark.parametrize("callee", matrix.CALLEES)
@@ -260,7 +260,7 @@ def test_a_latency_meets_its_deadline_or_names_the_fix(link, deadline, meets):
         r = get_readout_line(q)
         inner(r, r.tone).result()
 
-    compiled = pulse.compile(k, machine=matrix.MACHINE)
+    compiled = pulse.compile(k, control_system=matrix.MACHINE)
     budget = math.ceil(matrix.LATENCY_NS * matrix.CLOCK) + math.ceil(
         matrix.LINKS[link].feedback_ns * matrix.CLOCK
     )
@@ -278,9 +278,11 @@ def test_limits_without_timeouts_reject_a_timeout_and_name_the_fix():
     from cudaq_pulse.controller import ControllerLimitError
 
     case = matrix.Case("asap", "alap", "future_in", take="timeout")
-    machine = MachineModel(links=dict(matrix.LINKS), controller=Controller(supports_timeouts=False))
+    machine = ControlSystem(
+        controllers=[Controller(supports_timeouts=False)], links=dict(matrix.LINKS)
+    )
     with pytest.raises(ControllerLimitError, match=re.escape("take it with result() (no timeout)")):
-        matrix.lower_case(case, Q, machine=machine)
+        matrix.lower_case(case, Q, control_system=machine)
 
 
 def test_a_future_is_taken_in_the_loop_iteration_that_submitted_it():
@@ -298,4 +300,4 @@ def test_a_future_is_taken_in_the_loop_iteration_that_submitted_it():
             take(future)
 
     with pytest.raises(pulse.CompilationError, match="take it in the same loop body"):
-        pulse.compile(k, machine=matrix.MACHINE, unroll_threshold=0).lower(Q[0])
+        pulse.compile(k, control_system=matrix.MACHINE, unroll_threshold=0).lower(Q[0])

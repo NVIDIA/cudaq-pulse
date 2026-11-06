@@ -18,15 +18,17 @@ backend's name::
 The entry point names a ``Backend`` or a callable without arguments that
 returns one. ``available()`` lists the installed backends without importing
 them, and ``get(name)`` loads one. A backend follows the ``Backend``
-protocol: ``machine_model()`` is the machine model to compile for, so that
-programs the controller cannot play fail at compile time;
+protocol: ``control_system()`` is the control system to compile for (a
+``ControlSystem``, or its one ``Controller``), so that programs the
+controller cannot play fail at compile time;
 ``emit(program)`` takes ``Lowered.export_controller()`` and returns the
 controller's program; ``run(artifact, shots=...)`` runs it::
 
     from cudaq_pulse import backends
 
     backend = backends.get("toy")
-    lowered = pulse.compile(kernel, device=dev, machine=backend.machine_model()).lower(q)
+    system = backend.control_system()
+    lowered = pulse.compile(kernel, device=dev, control_system=system).lower(q)
     artifact = backend.emit(lowered.export_controller())
     result = backend.run(artifact, shots=100)
 
@@ -50,9 +52,8 @@ from ._errors import InvalidValueError, NotFoundError, PulseError
 if TYPE_CHECKING:
     from importlib.metadata import EntryPoint
 
-    from ._system import Controller
+    from ._system import Controller, ControlSystem
     from ._validation import _Report
-    from .compiler import MachineModel
 
 __all__ = [
     "GROUP",
@@ -76,8 +77,9 @@ class Backend(Protocol):
 
     name: str
 
-    def machine_model(self) -> MachineModel:
-        """The machine model to compile for this controller."""
+    def control_system(self) -> ControlSystem | Controller:
+        """The control system to compile for this controller: a
+        ``ControlSystem``, or its one ``Controller``."""
         ...
 
     def emit(self, program: Mapping[str, Any]) -> Any:
@@ -145,7 +147,7 @@ def _instance(name: str, loaded: Any) -> Backend:
     if not isinstance(backend, Backend):
         raise IncompatibleBackendError(
             f"backend {name!r} is not a cudaq_pulse.backends.Backend: it needs a name, "
-            "machine_model(), emit() and run()"
+            "control_system(), emit() and run()"
         )
     formats = getattr(backend, "formats", None)
     if formats is not None:
@@ -208,7 +210,7 @@ def validate(
     The corpus has a program for each kind of event (``cudaq_pulse.Event``),
     one with a branch and two with values known only at run time (one a
     frequency change made ahead of the pulse that takes it), compiled
-    for *controller* (by default the backend's machine model's), in each
+    for *controller* (by default the backend's control system's), in each
     format the backend reads. Each must be emitted or refused with
     ``IncompatibleBackendError``; a program
     with an event kind no format has, and one in a newer format, must be
@@ -238,7 +240,7 @@ def validate(
     if not isinstance(found, Backend):
         raise IncompatibleBackendError(
             f"{found!r} is not a cudaq_pulse.backends.Backend: it needs a name, "
-            "machine_model(), emit() and run()"
+            "control_system(), emit() and run()"
         )
     from . import _validation
 

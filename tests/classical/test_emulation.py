@@ -18,9 +18,8 @@ import time
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import classical
+from cudaq_pulse import ControlSystem, classical
 from cudaq_pulse.classical import Link, emulation, qec, wire
-from cudaq_pulse.compiler import MachineModel
 
 from tests._handles import Q
 
@@ -59,8 +58,8 @@ def adaptive(q):
 
 
 def test_export_and_manifest_are_json():
-    machine = MachineModel(links={0: Link(slot_bytes=256, max_in_flight=8)})
-    low = pulse.compile(adaptive, machine=machine).lower(Q[0])
+    machine = ControlSystem(links={"host": Link(slot_bytes=256, max_in_flight=8)})
+    low = pulse.compile(adaptive, control_system=machine).lower(Q[0])
     artifact = json.loads(json.dumps(low.export_emulation()))
     assert artifact["format"] == emulation.FORMAT
     assert [e["opened_by"] for e in artifact["epochs"]] == ["start", "wait"]
@@ -122,8 +121,8 @@ def test_late_answers_take_the_timeout_arm_at_the_modelled_rate():
 def test_an_answer_is_in_time_when_the_compiled_program_can_use_it(arrival_ns):
     # The request holds the link 100 + 25 / 10 ns, then the 500 ns timeout and
     # the feedback: due 652.5 ns after the submission, usable if it arrives by 602.5.
-    machine = MachineModel(links={0: Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50)})
-    low = pulse.compile(feedback, machine=machine).lower(Q[0])
+    machine = ControlSystem(links={"host": Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50)})
+    low = pulse.compile(feedback, control_system=machine).lower(Q[0])
     (call,) = low.classical_report()
     assert (call.due_cycles - call.submit_cycles) / low.target.clock_ghz == 652.5
     transport = emulation.Transport(fixed_ns=arrival_ns / 2)

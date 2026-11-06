@@ -22,8 +22,8 @@ import warnings
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import Controller, _validation
-from cudaq_pulse.compiler import DEFAULT_PASSES, MachineModel, Pass
+from cudaq_pulse import Controller, ControlSystem, _validation
+from cudaq_pulse.compiler import DEFAULT_PASSES, Pass
 from cudaq_pulse.controller import unroll
 from cudaq_pulse.targets import Qubit, TargetDescription
 
@@ -39,7 +39,7 @@ _TARGET = TargetDescription(
 )
 _DEV = pulse.device({"target": _TARGET})
 Q = _DEV.qudit_handles
-_PERSISTENT = MachineModel(controller=Controller(persistent_frames=True))
+_PERSISTENT = ControlSystem(controllers=[Controller(persistent_frames=True)])
 
 
 @pulse.kernel
@@ -451,7 +451,7 @@ def test_a_change_in_a_loop_on_a_tone_it_does_not_play_keeps_the_loop_rolled():
 
 
 def test_frames_that_persist_keep_the_last_changes_and_export_the_final_frame():
-    lowered = pulse.compile(trailing, device=_DEV, machine=_PERSISTENT).lower(Q[0])
+    lowered = pulse.compile(trailing, device=_DEV, control_system=_PERSISTENT).lower(Q[0])
     assert "pulse.shift_phase" in lowered.mlir()
     flat = lowered.export_controller()
     structured = lowered.export_controller(version=2)
@@ -511,7 +511,7 @@ def _timing(events):
 
 _TIMING_CORPUS = [
     *(
-        (kind, kernel, _validation._device(MachineModel()))
+        (kind, kernel, _validation._device(ControlSystem()))
         for kind, kernel in _validation._corpus().items()
     ),
     *(

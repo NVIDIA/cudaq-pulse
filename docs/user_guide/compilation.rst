@@ -119,7 +119,7 @@ Options, all keyword-only:
    ``"rcp"`` or ``"alap_rcp"``; by default the kernel's own ``schedule=``,
    else ``"alap"``. ASAP and ALAP preserve data and physical-line
    dependencies, including the order of pulses that play on the same tone;
-   the RCP variants also enforce ``MachineModel`` resource limits. Kernels
+   the RCP variants also enforce the ``ControlSystem``'s lanes. Kernels
    it calls keep their own ``schedule=`` (see `Per-kernel schedules`_).
 
 ``flatten_schedules`` *(bool, default False)*
@@ -141,8 +141,14 @@ Options, all keyword-only:
    of loops). An unknown name is a ``ValueError`` that names the closest. See
    :doc:`../architecture/mlir_passes`.
 
-``machine`` *(MachineModel, optional)*
-   Resource limits for the RCP schedules.
+``control_system`` *(ControlSystem or Controller, optional)*
+   The control system to compile for: every program is checked against its
+   controllers' wiring, capabilities and limits, and its links and the
+   lanes of the RCP schedules set the schedule. One ``Controller`` stands
+   for a system of that controller alone; what it cannot take (a line it
+   does not play, a link it does not have) is an error that says to
+   describe the whole ``ControlSystem``. By default the device's control
+   system, if it has one.
 
 ``device`` *(Device, optional)*
    Pin the compiled kernel to one device. A call with handles of another

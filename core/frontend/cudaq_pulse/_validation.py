@@ -23,9 +23,8 @@ from typing import TYPE_CHECKING, Any
 import cudaq_pulse as pulse
 
 from ._device import Qudit
-from ._system import Controller
+from ._system import Controller, ControlSystem
 from .backends import Backend, IncompatibleBackendError
-from .compiler import MachineModel
 from .controller import (
     _FORMATS,
     _KINDS,
@@ -268,15 +267,22 @@ class _Report:
 # ── Checks ───────────────────────────────────────────────────────────────────
 
 
-def _machine(backend: Backend, controller: Controller | None) -> MachineModel:
-    machine = backend.machine_model()
+def _control_system(backend: Backend, controller: Controller | None) -> ControlSystem:
+    """The backend's control system, with *controller* in place of its one."""
+    system = backend.control_system()
+    if isinstance(system, Controller):
+        system = ControlSystem(controllers=[system])
     if controller is not None:
-        machine = dataclasses.replace(machine, controller=controller)
-    return machine
+        system = dataclasses.replace(system, controllers=[controller])
+    return system
 
 
-def _device(machine: MachineModel) -> Any:
-    limits = machine.controller
+def _one(system: ControlSystem) -> Controller | None:
+    return system.controllers[0] if len(system.controllers) == 1 else None
+
+
+def _device(system: ControlSystem) -> Any:
+    limits = _one(system)
     clock = limits.clock_ghz if limits is not None and limits.clock_ghz else 1.0
     target = TargetDescription(
         name="validation",
@@ -444,15 +450,15 @@ def validate(
 ) -> _Report:
     """See ``cudaq_pulse.backends.validate``."""
     report = _Report(backend.name)
-    machine = _machine(backend, controller)
-    dev = _device(machine)
+    system = _control_system(backend, controller)
+    dev = _device(system)
     formats = _formats(backend)
     tagged = len(formats) > 1
     emitted = 0
     first: dict[str, Any] | None = None
     for kind, kernel in _corpus().items():
         try:
-            compiled = pulse.compile(kernel, device=dev, machine=machine)
+            compiled = pulse.compile(kernel, device=dev, control_system=system)
             lowered = compiled.lower(*dev.qudit_handles[:_QUDITS])
         except ControllerLimitError as e:
             report._add("SKIP", str(kind), f"exceeds the controller's limits: {e.violations[0]}")
@@ -463,7 +469,7 @@ def validate(
             program = lowered.export_controller(version=version)
             first = first or program
             emitted += _emit(
-                report, backend, name, program, lowered, machine.controller, shots, tolerance
+                report, backend, name, program, lowered, _one(system), shots, tolerance
             )
     if first is not None:
         for name, (make, what) in _PROBES.items():

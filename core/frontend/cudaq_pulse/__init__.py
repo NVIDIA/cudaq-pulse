@@ -29,7 +29,7 @@ converts to cycles exactly when the kernel compiles, so one kernel runs on
 devices with different clocks. ``pulse.round_duration(line, n)`` rounds a
 length to whole timesteps of the line, for controllers that start
 operations only every few program cycles.
-Compiler types (``CompileMetrics``, ``ScheduledEvent``, ``MachineModel``,
+Compiler types (``CompileMetrics``, ``ScheduledEvent``,
 ``DEFAULT_PASSES``) are in ``cudaq_pulse.compiler``, target descriptions and
 calibrations in ``cudaq_pulse.targets``. ``pulse.classical`` declares the
 classical functions a kernel calls while the QPU runs; ``pulse.Bits`` and
@@ -104,7 +104,7 @@ __version__: str = _build_config.PACKAGE_VERSION
 if TYPE_CHECKING:
     from . import backends as backends
     from . import viz as viz
-    from ._system import Capability as Capability
+    from ._capability import Capability as Capability
     from ._system import Controller as Controller
     from ._system import ControlSystem as ControlSystem
     from ._system import Processor as Processor
@@ -133,7 +133,7 @@ _LAZY_EXPORTS = {
     "us": "._units",
     "ms": "._units",
     "s": "._units",
-    "Capability": "._system",
+    "Capability": "._capability",
     "Controller": "._system",
     "ControlSystem": "._system",
     "Processor": "._system",

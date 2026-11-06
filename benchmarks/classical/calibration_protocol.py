@@ -149,7 +149,7 @@ def _shares(result, shots):
 def adaptive_t1(n, seed):
     target = _att_target()
     dev = pulse.device({"target": target})
-    lowered = pulse.compile(att_paper, device=dev, machine=P["control_system"]).lower(
+    lowered = pulse.compile(att_paper, device=dev, control_system=P["control_system"]).lower(
         dev.qudit_handles[0]
     )
     start = time.perf_counter()
@@ -182,9 +182,9 @@ def adaptive_t1(n, seed):
 def binary_search(n, seed):
     target = transmon_17q()
     dev = pulse.device({"target": target})
-    lowered = pulse.compile(P["binary_search"], device=dev, machine=P["control_system"]).lower(
-        dev.qudit_handles[0], 15
-    )
+    lowered = pulse.compile(
+        P["binary_search"], device=dev, control_system=P["control_system"]
+    ).lower(dev.qudit_handles[0], 15)
     rng = np.random.default_rng(seed)
     errors, sigmas = [], []
     start = time.perf_counter()
@@ -217,9 +217,9 @@ def binary_search(n, seed):
 def chain(n, seed):
     target = transmon_17q()
     dev = pulse.device({"target": target})
-    lowered = pulse.compile(P["calibration_chain"], device=dev, machine=P["control_system"]).lower(
-        dev.qudit_handles[0], 20_000.0 * CLOCK
-    )
+    lowered = pulse.compile(
+        P["calibration_chain"], device=dev, control_system=P["control_system"]
+    ).lower(dev.qudit_handles[0], 20_000.0 * CLOCK)
     plant = P["chain_plant"](target)
     rows = []
     start = time.perf_counter()
@@ -278,7 +278,7 @@ def steps(seed):
     out = {}
     for name, (kernel, shots) in shots_per_step.items():
         start = time.perf_counter()
-        lowered = pulse.compile(kernel, device=dev, machine=P["control_system"]).lower(q)
+        lowered = pulse.compile(kernel, device=dev, control_system=P["control_system"]).lower(q)
         compile_s = time.perf_counter() - start
         start = time.perf_counter()
         result = pulse.simulate(

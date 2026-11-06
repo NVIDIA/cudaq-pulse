@@ -49,8 +49,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import cudaq_pulse as pulse  # noqa: E402
-from cudaq_pulse import Controller  # noqa: E402
-from cudaq_pulse.compiler import MachineModel  # noqa: E402
+from cudaq_pulse import Controller, ControlSystem  # noqa: E402
 from cudaq_pulse.kernel import packed_ir_builder  # noqa: E402
 from cudaq_pulse.targets import Qubit, TargetDescription  # noqa: E402
 
@@ -218,7 +217,7 @@ def _feedback_program(n: int) -> Any:
         waveform_memory_samples=10**9,
         feedback_latency_cycles=1,
     )
-    machine = MachineModel(readout_latency_cycles=1, controller=limits)
+    machine = ControlSystem(controllers=[limits])
 
     @pulse.kernel
     def program(q):
@@ -233,7 +232,7 @@ def _feedback_program(n: int) -> Any:
                 drive(line, square(8, 0.1))
 
     compiled = pulse.compile(
-        program, device=_DEVICE, schedule="rcp", machine=machine, unroll_threshold=100_000
+        program, device=_DEVICE, schedule="rcp", control_system=machine, unroll_threshold=100_000
     )
     return compiled.lower(Q[0])
 

@@ -14,8 +14,7 @@ import json
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import Controller
-from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse import Controller, ControlSystem
 from cudaq_pulse.controller import ControllerLimitError
 
 from tests._handles import Q
@@ -62,8 +61,8 @@ def _lines(lowered):
 
 def test_whole_cycles_of_a_delay_move_the_lines_operations():
     plain = pulse.compile(two_lines, schedule="asap").lower(Q[0], Q[1])
-    machine = MachineModel(line_delays_ns={("drive", 0): 1.5})
-    delayed = pulse.compile(two_lines, schedule="asap", machine=machine).lower(Q[0], Q[1])
+    machine = ControlSystem(line_delays_ns={("drive", 0): 1.5})
+    delayed = pulse.compile(two_lines, schedule="asap", control_system=machine).lower(Q[0], Q[1])
     # 1.5 ns is 3 cycles of the 2 GHz clock; only qudit 0's line moves.
     assert _starts(plain) == [(0, 0), (1, 0), (0, 8)]
     assert _starts(delayed) == [(0, 3), (1, 0), (0, 11)]
@@ -78,11 +77,10 @@ def test_without_delays_nothing_changes():
     assert "line_delays" not in lowered.mlir()
     assert all("fine_delay_ns" not in line for line in lowered.export_controller()["lines"])
     # A delay of no whole cycle moves nothing and adds no attribute.
-    machine = MachineModel(
-        controller=Controller(max_fine_delay_ns=0.5),
-        line_delays_ns={("drive", 0): 0.25},
+    machine = ControlSystem(
+        controllers=[Controller(max_fine_delay_ns=0.5)], line_delays_ns={("drive", 0): 0.25}
     )
-    lowered = pulse.compile(two_lines, machine=machine).lower(Q[0], Q[1])
+    lowered = pulse.compile(two_lines, control_system=machine).lower(Q[0], Q[1])
     assert "line_delays" not in lowered.mlir()
     assert _lines(lowered)[("drive", 0)]["fine_delay_ns"] == pytest.approx(0.25)
 
@@ -91,8 +89,8 @@ def test_the_rest_of_a_delay_is_the_lines_fine_delay():
     # A 1 GHz controller starts every 2 cycles of the 2 GHz program clock:
     # steps of 1 ns.
     limits = Controller(clock_ghz=1.0, max_fine_delay_ns=1.0)
-    machine = MachineModel(controller=limits, line_delays_ns={("drive", 1): 2.3})
-    lowered = pulse.compile(two_lines, schedule="asap", machine=machine).lower(Q[0], Q[1])
+    machine = ControlSystem(controllers=[limits], line_delays_ns={("drive", 1): 2.3})
+    lowered = pulse.compile(two_lines, schedule="asap", control_system=machine).lower(Q[0], Q[1])
     assert _starts(lowered) == [(0, 0), (1, 4), (0, 8)]
     lines = _lines(lowered)
     assert lines[("drive", 1)]["fine_delay_ns"] == pytest.approx(0.3)
@@ -106,9 +104,9 @@ def test_the_rest_of_a_delay_is_the_lines_fine_delay():
 
 def test_a_rest_the_controller_cannot_add_fails_to_compile():
     limits = Controller(clock_ghz=1.0)
-    machine = MachineModel(controller=limits, line_delays_ns={("drive", 1): 2.3})
+    machine = ControlSystem(controllers=[limits], line_delays_ns={("drive", 1): 2.3})
     with pytest.raises(pulse.CompilationError) as caught:
-        pulse.compile(two_lines, machine=machine).lower(Q[0], Q[1])
+        pulse.compile(two_lines, control_system=machine).lower(Q[0], Q[1])
     message = str(caught.value)
     assert message.startswith("line_delays_ns: the drive line of qudit 1 is delayed 2.3 ns")
     assert (
@@ -119,15 +117,15 @@ def test_a_rest_the_controller_cannot_add_fails_to_compile():
     assert "calibrate the delay to 2 or 3 ns" in message
     # Within the tolerance, the delay rounds to the nearest step.
     limits = Controller(clock_ghz=1.0, alignment_tolerance_cycles=0.3)
-    machine = MachineModel(controller=limits, line_delays_ns={("drive", 1): 2.7})
-    lowered = pulse.compile(two_lines, schedule="asap", machine=machine).lower(Q[0], Q[1])
+    machine = ControlSystem(controllers=[limits], line_delays_ns={("drive", 1): 2.7})
+    lowered = pulse.compile(two_lines, schedule="asap", control_system=machine).lower(Q[0], Q[1])
     assert _starts(lowered) == [(0, 0), (1, 6), (0, 8)]
     assert _lines(lowered)[("drive", 1)]["fine_delay_ns"] == 0.0
     # Past the fine delay a controller has.
     limits = Controller(clock_ghz=1.0, max_fine_delay_ns=0.25)
-    machine = MachineModel(controller=limits, line_delays_ns={("drive", 1): 2.3})
+    machine = ControlSystem(controllers=[limits], line_delays_ns={("drive", 1): 2.3})
     with pytest.raises(pulse.CompilationError, match="adds at most 0.25 ns of fine delay"):
-        pulse.compile(two_lines, machine=machine).lower(Q[0], Q[1])
+        pulse.compile(two_lines, control_system=machine).lower(Q[0], Q[1])
 
 
 @pytest.mark.parametrize(
@@ -142,30 +140,26 @@ def test_a_rest_the_controller_cannot_add_fails_to_compile():
 )
 def test_line_delays_are_checked(delays, match):
     with pytest.raises(ValueError, match=match):
-        MachineModel(line_delays_ns=delays)
+        ControlSystem(line_delays_ns=delays)
 
 
 def test_delays_are_part_of_the_machine():
-    a = MachineModel(line_delays_ns={("drive", 0): 1.0, ("readout", 1): 2.0})
-    b = MachineModel(line_delays_ns={("readout", 1): 2.0, ("drive", 0): 1.0})
+    a = ControlSystem(line_delays_ns={("drive", 0): 1.0, ("readout", 1): 2.0})
+    b = ControlSystem(line_delays_ns={("readout", 1): 2.0, ("drive", 0): 1.0})
     assert a == b and hash(a) == hash(b)
-    assert a != MachineModel() and a != MachineModel(line_delays_ns={("drive", 0): 1.5})
+    assert a != ControlSystem() and a != ControlSystem(line_delays_ns={("drive", 0): 1.5})
 
 
 def test_moved_lines_are_checked_like_any_others():
     limits = Controller(feedback_latency_cycles=20)
-    machine = MachineModel(controller=limits, readout_latency_cycles=20)
-    assert pulse.compile(feedback, schedule="rcp", machine=machine).lower(Q[0], Q[1])
-    later = MachineModel(
-        controller=limits, readout_latency_cycles=20, line_delays_ns={("drive", 1): 5.0}
-    )
-    assert pulse.compile(feedback, schedule="rcp", machine=later).lower(Q[0], Q[1])
+    machine = ControlSystem(controllers=[limits])
+    assert pulse.compile(feedback, schedule="rcp", control_system=machine).lower(Q[0], Q[1])
+    later = ControlSystem(controllers=[limits], line_delays_ns={("drive", 1): 5.0})
+    assert pulse.compile(feedback, schedule="rcp", control_system=later).lower(Q[0], Q[1])
     # The readout ends 10 cycles later, too close to the branch on it.
-    late_readout = MachineModel(
-        controller=limits, readout_latency_cycles=20, line_delays_ns={("readout", 0): 5.0}
-    )
+    late_readout = ControlSystem(controllers=[limits], line_delays_ns={("readout", 0): 5.0})
     with pytest.raises(ControllerLimitError, match="feedback"):
-        pulse.compile(feedback, schedule="rcp", machine=late_readout).lower(Q[0], Q[1])
+        pulse.compile(feedback, schedule="rcp", control_system=late_readout).lower(Q[0], Q[1])
 
 
 # ── Scheduling again ─────────────────────────────────────────────────────────
@@ -210,10 +204,11 @@ DELAYS = (
 def test_new_delays_alone_schedule_again_to_the_same_bytes(kernel, args, schedule, controller):
     kernel = _fresh(kernel)
     for k, delays in enumerate(DELAYS):
-        machine = MachineModel(controller=controller, line_delays_ns=delays)
-        again = pulse.compile(kernel, schedule=schedule, machine=machine).lower(*args)
+        controllers = [] if controller is None else [controller]
+        machine = ControlSystem(controllers=controllers, line_delays_ns=delays)
+        again = pulse.compile(kernel, schedule=schedule, control_system=machine).lower(*args)
         assert _retimed(again) == (k > 0)
-        full = pulse.compile(_fresh(kernel), schedule=schedule, machine=machine).lower(*args)
+        full = pulse.compile(_fresh(kernel), schedule=schedule, control_system=machine).lower(*args)
         assert not _retimed(full)
         assert _outputs(again) == _outputs(full)
 
@@ -222,18 +217,18 @@ def test_a_program_without_delays_is_traced_as_before():
     kernel = _fresh(two_lines)
     pulse.compile(kernel).lower(Q[0], Q[1])
     assert not kernel._traced
-    machine = MachineModel(line_delays_ns={("drive", 0): 1.0})
-    pulse.compile(kernel, machine=machine).lower(Q[0], Q[1])
+    machine = ControlSystem(line_delays_ns={("drive", 0): 1.0})
+    pulse.compile(kernel, control_system=machine).lower(Q[0], Q[1])
     # The same delays again trace again, as without them.
-    assert not _retimed(pulse.compile(kernel, machine=machine).lower(Q[0], Q[1]))
+    assert not _retimed(pulse.compile(kernel, control_system=machine).lower(Q[0], Q[1]))
 
 
 @pytest.mark.slow
 def test_new_delays_schedule_the_matrix_again_to_the_same_bytes():
     from tests.classical import _schedule_matrix as matrix
 
-    first = MachineModel(links=matrix.MACHINE.links, line_delays_ns={("drive", 1): 1.0})
-    then = MachineModel(
+    first = ControlSystem(links=matrix.MACHINE.links, line_delays_ns={("drive", 1): 1.0})
+    then = ControlSystem(
         links=matrix.MACHINE.links, line_delays_ns={("drive", 0): 2.5, ("readout", 1): 1.5}
     )
     checked = 0
@@ -241,13 +236,13 @@ def test_new_delays_schedule_the_matrix_again_to_the_same_bytes():
         if matrix.expected_error(case) is not None:
             continue
         kernel = matrix.program(case)
-        matrix.compile_case(case, kernel=kernel, machine=first).lower(
+        matrix.compile_case(case, kernel=kernel, control_system=first).lower(
             Q[0], Q[1], matrix.LOOP, matrix.FLOAT_TAU
         )
-        again = matrix.compile_case(case, kernel=kernel, machine=then).lower(
+        again = matrix.compile_case(case, kernel=kernel, control_system=then).lower(
             Q[0], Q[1], matrix.LOOP, matrix.FLOAT_TAU
         )
-        full = matrix.compile_case(case, kernel=_fresh(kernel), machine=then).lower(
+        full = matrix.compile_case(case, kernel=_fresh(kernel), control_system=then).lower(
             Q[0], Q[1], matrix.LOOP, matrix.FLOAT_TAU
         )
         if not _retimed(again):
@@ -258,7 +253,7 @@ def test_new_delays_schedule_the_matrix_again_to_the_same_bytes():
 
 
 def test_a_call_with_new_values_keeps_the_delays():
-    machine = MachineModel(line_delays_ns={("drive", 0): 1.0})
-    compiled = pulse.compile(rabi, schedule="asap", machine=machine)
+    machine = ControlSystem(line_delays_ns={("drive", 0): 1.0})
+    compiled = pulse.compile(rabi, schedule="asap", control_system=machine)
     assert [s for _, s in _starts(compiled.lower(Q[0], 0.2))][0] == 2
     assert [s for _, s in _starts(compiled.lower(Q[0], 0.4))][0] == 2

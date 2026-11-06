@@ -24,9 +24,8 @@ import sys
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse import Controller, _pickling, _source_stamp
+from cudaq_pulse import Controller, ControlSystem, _pickling, _source_stamp
 from cudaq_pulse.classical import Link
-from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError
 from cudaq_pulse.kernel import _kernel
 from cudaq_pulse.kernel.ir_builder import SymbolicValueError
@@ -115,8 +114,8 @@ def idle(tau: float):
 
 
 _SHIPPED_DEVICE = pulse.device(_SHIPPED_TARGET)
-_SLOW_CONTROLLER = MachineModel(controller=Controller(clock_ghz=1.0))
-_DELAYED = MachineModel(line_delays_ns={("drive", 0): 1.5})
+_SLOW_CONTROLLER = ControlSystem(controllers=[Controller(clock_ghz=1.0)])
+_DELAYED = ControlSystem(line_delays_ns={("drive", 0): 1.5})
 
 
 def _programs():
@@ -127,8 +126,8 @@ def _programs():
         "variable_wait": ramsey.lower(Q[0], 40.0),
         "branch": pulse.compile(branch, schedule="asap").lower(Q[0], Q[1]),
         "classical_call": pulse.compile(reset, schedule="asap").lower(Q[0]),
-        "other_clock": pulse.compile(rabi, machine=_SLOW_CONTROLLER).lower(Q[0], 0.3),
-        "line_delays": pulse.compile(rabi, machine=_DELAYED).lower(Q[0], 0.3),
+        "other_clock": pulse.compile(rabi, control_system=_SLOW_CONTROLLER).lower(Q[0], 0.3),
+        "line_delays": pulse.compile(rabi, control_system=_DELAYED).lower(Q[0], 0.3),
         "shipped": rabi.lower(_SHIPPED_DEVICE.qudit_handles[2], 0.1),
     }
 
@@ -527,25 +526,27 @@ def swept(q, amp: float):
         drive(d, gaussian(16, 0.5, 4.0))
 
 
-_PERSISTENT = MachineModel(
-    controller=Controller(
-        persistent_frames=True,
-        waveform_memory_samples=4096,
-        waveform_memory="shared",
-    )
+_PERSISTENT = ControlSystem(
+    controllers=[
+        Controller(
+            persistent_frames=True,
+            waveform_memory_samples=4096,
+            waveform_memory="shared",
+        )
+    ]
 )
-_AMPLITUDE_LIMIT = MachineModel(controller=Controller(max_amplitude=0.6))
+_AMPLITUDE_LIMIT = ControlSystem(controllers=[Controller(max_amplitude=0.6)])
 
 
 def _exported():
     return {
         "persistent_frames": pulse.compile(
-            carried_phase, machine=_PERSISTENT, unroll_threshold=0
+            carried_phase, control_system=_PERSISTENT, unroll_threshold=0
         ).lower(Q[0]),
         "rolled_call": pulse.compile(swept, unroll_threshold=0).lower(Q[0], 0.2),
-        "checked_call": pulse.compile(swept, machine=_AMPLITUDE_LIMIT, unroll_threshold=0).lower(
-            Q[0], 0.2
-        ),
+        "checked_call": pulse.compile(
+            swept, control_system=_AMPLITUDE_LIMIT, unroll_threshold=0
+        ).lower(Q[0], 0.2),
     }
 
 
@@ -571,7 +572,7 @@ def test_a_program_unpickles_with_its_controller_exports_in_both_formats(name, m
 
 def test_frames_that_persist_unpickle_declared_and_exported():
     program = _round_trip(_exported()["persistent_frames"])
-    assert program.options.machine == _PERSISTENT
+    assert program.options.machine == _PERSISTENT._machine
     assert program.options.machine.controller.persistent_frames is True
     flat, structured = program.export_controller(), program.export_controller(version=2)
     [frame] = flat["frame_state"]
@@ -880,8 +881,8 @@ def _raised(make):
 
 
 def _limit_error():
-    machine = MachineModel(controller=Controller(instruction_cycles=4, min_idle_cycles=40))
-    return _raised(lambda: pulse.compile(ramsey, machine=machine).lower(Q[0], 0.75))
+    machine = ControlSystem(controllers=[Controller(instruction_cycles=4, min_idle_cycles=40)])
+    return _raised(lambda: pulse.compile(ramsey, control_system=machine).lower(Q[0], 0.75))
 
 
 @pytest.mark.parametrize(

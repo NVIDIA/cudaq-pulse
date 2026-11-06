@@ -21,8 +21,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from cudaq_pulse import Controller
-from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse import Controller, ControlSystem
 from cudaq_pulse.controller import FORMAT
 
 __all__ = ["ToyBackend", "ToyResult"]
@@ -43,7 +42,7 @@ class ToyBackend:
     def __init__(self, qudits: int = 8) -> None:
         self.qudits = qudits
 
-    def machine_model(self) -> MachineModel:
+    def control_system(self) -> ControlSystem:
         limits = Controller(
             clock_ghz=1.0,
             instruction_cycles=2,
@@ -52,7 +51,7 @@ class ToyBackend:
             detector_recovery_cycles=10,
             supports_timeouts=False,
         )
-        return MachineModel(max_concurrent_readouts=1, controller=limits)
+        return ControlSystem(controllers=[limits], max_concurrent_readouts=1)
 
     def emit(self, program: Mapping[str, Any]) -> str:
         if program.get("format") != FORMAT:
@@ -112,7 +111,7 @@ if __name__ == "__main__":
         sync(drive_line, readout_line)
         readout(readout_line, square(cal["readout_duration"], 0.05))
 
-    compiled = pulse.compile(drive_and_measure, device=dev, machine=backend.machine_model())
+    compiled = pulse.compile(drive_and_measure, device=dev, control_system=backend.control_system())
     program = backend.emit(compiled.lower(dev.qudit_handles[0]).export_controller())
     print(program, end="")
     print(backend.run(program, shots=2))

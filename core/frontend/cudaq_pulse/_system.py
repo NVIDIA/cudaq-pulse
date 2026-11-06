@@ -28,20 +28,16 @@ all of them::
 
 from __future__ import annotations
 
-import bisect
 import dataclasses
-import enum
 import math
 import os
 import re
 import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
-from fractions import Fraction
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from . import _clocks
 from ._errors import (
     DeviceDefinitionError,
     InvalidTypeError,
@@ -55,52 +51,28 @@ from ._errors import (
 )
 from ._units import Time, as_nanoseconds
 from .classical import Link
-from .controller import OP_CLASSES, WaveformMemoryScope
 
 if TYPE_CHECKING:
+    from dataclasses import dataclass as _dataclass_when_used
+    from fractions import Fraction
     from pathlib import Path
 
+    from . import _clocks
+    from ._capability import Capability
     from ._device import Device
-    from .compiler import Lowered, MachineModel
+    from .compiler import Lowered, _MachineModel
+    from .controller import WaveformMemoryScope
     from .targets.base import TargetDescription
+else:
+    from ._errors import _dataclass_when_used
 
-__all__ = ["SYSTEM_FORMAT", "Capability", "ControlSystem", "Controller", "Processor"]
+__all__ = ["SYSTEM_FORMAT", "ControlSystem", "Controller", "Processor"]
 
 SYSTEM_FORMAT = "cudaq-pulse.system/1"
 
 
-class Capability(enum.StrEnum):
-    """What a controller can do, for ``Controller.supports``.
-
-    ``play`` a drive; ``acquire`` a readout; ``wait`` for a length computed
-    while the QPU runs; ``sync`` lines; ``call`` a classical function and
-    take its ``answer``; ``branch`` on an outcome or an answer;
-    ``runtime_frame_update`` a tone's frequency or phase from a value
-    computed while the QPU runs; ``forward_outcome`` of one of its readouts
-    to another controller, which branches on it; ``loop``: run a rolled
-    loop itself, holding its body once. A controller without ``loop`` plays
-    a rolled loop unrolled, so each iteration counts against its
-    ``max_pulses``. Unrolling does not change its waveform memory: a
-    waveform is stored once per shape however often it plays, so only the
-    pulse count goes up.
-    """
-
-    PLAY = "play"
-    ACQUIRE = "acquire"
-    WAIT = "wait"
-    SYNC = "sync"
-    CALL = "call"
-    ANSWER = "answer"
-    BRANCH = "branch"
-    RUNTIME_FRAME_UPDATE = "runtime_frame_update"
-    FORWARD_OUTCOME = "forward_outcome"
-    LOOP = "loop"
-
-
 _PLAYED = frozenset({"drive", "readout"})
-_NEEDS = MappingProxyType(
-    {"drive": Capability.PLAY, "readout": Capability.ACQUIRE, "wait": Capability.WAIT}
-)
+_NEEDS = MappingProxyType({"drive": "play", "readout": "acquire", "wait": "wait"})
 
 
 def _lines(value: Iterable[Any], name: str) -> tuple[int, ...]:
@@ -133,9 +105,6 @@ def _cycles(value: Any, name: str) -> int:
     return value
 
 
-# What a processor's cycles_per_op and unsupported name: the classes of
-# operations, and "loop", a rolled loop's counter and jump per iteration.
-PROCESSOR_OPS = (*OP_CLASSES, "loop")
 _PROCESSOR_LIMITS = (
     "max_ops_per_function",
     "max_ops_total",
@@ -146,14 +115,23 @@ _PROCESSOR_LIMITS = (
 )
 
 
+def _processor_ops() -> tuple[str, ...]:
+    """What a processor's cycles_per_op and unsupported name: the classes of
+    operations, and "loop", a rolled loop's counter and jump per iteration."""
+    from .controller import OP_CLASSES
+
+    return (*OP_CLASSES, "loop")
+
+
 def _op_name(given: Any, field_name: str) -> str:
-    if given in PROCESSOR_OPS:
+    ops = _processor_ops()
+    if given in ops:
         return str(given)
-    hint = _closest(str(given), PROCESSOR_OPS)
+    hint = _closest(str(given), ops)
     raise InvalidValueError(
         f"Processor.{field_name} names an unknown operation {given!r}"
         + (f" (did you mean {hint!r}?)" if hint else "")
-        + f"; the operations are {', '.join(PROCESSOR_OPS)}"
+        + f"; the operations are {', '.join(ops)}"
     )
 
 
@@ -180,7 +158,7 @@ def _dispatch_keys(given: Any, owner: str) -> Mapping[str, int]:
     return MappingProxyType(dict(given))
 
 
-@dataclass(frozen=True)
+@_dataclass_when_used(frozen=True)
 class Processor:
     """A classical processor on a controller, which runs the classical
     functions called on its ``links`` (link names of the control system, or
@@ -325,7 +303,7 @@ class Processor:
         return data
 
 
-@dataclass(frozen=True)
+@_dataclass_when_used(frozen=True)
 class Controller:
     """One controller: what it can play, its wiring and its processors;
     every limit is in its own clock cycles.
@@ -428,7 +406,7 @@ class Controller:
     supports_timeouts: bool = True
     max_instructions: int | None = None
     max_program_duration: float | Time | None = None
-    waveform_memory: WaveformMemoryScope | str = WaveformMemoryScope.PER_LINE
+    waveform_memory: WaveformMemoryScope | str = "per_line"
     persistent_frames: bool = False
     drive_lines: Sequence[int] = ()
     readout_lines: Sequence[int] = ()
@@ -447,6 +425,8 @@ class Controller:
             )
         if self.clock_ghz is not None and not self.clock_ghz > 0:
             raise InvalidValueError(f"Controller.clock_ghz must be positive, got {self.clock_ghz}")
+        from .controller import WaveformMemoryScope
+
         try:
             scope = WaveformMemoryScope(self.waveform_memory)
         except ValueError:
@@ -531,6 +511,8 @@ class Controller:
                 raise InvalidTypeError(
                     f"Controller.supports is a list of capabilities, got {self.supports!r}"
                 )
+            from ._capability import Capability
+
             supported = []
             for given in self.supports:
                 try:
@@ -584,13 +566,14 @@ class Controller:
     def as_dict(self) -> dict[str, Any]:
         """The controller as JSON-serializable data, which ``Controller(**data)``
         reads back after ``_controller_fields``."""
-        data = {f.name: getattr(self, f.name) for f in fields(self)}
+        # Every field in order: the class has none that fields() would leave out.
+        data = {name: getattr(self, name) for name in self.__dataclass_fields__}
         data["detectors"] = {str(k): v for k, v in sorted(self.detectors.items())}
         for name in ("max_amplitude", "max_instructions", "max_program_duration"):
             if data[name] is None:
                 del data[name]
         # Memory per line exports as it did before the key existed.
-        if self.waveform_memory is WaveformMemoryScope.PER_LINE:
+        if self.waveform_memory == "per_line":
             del data["waveform_memory"]
         else:
             data["waveform_memory"] = str(self.waveform_memory)
@@ -599,7 +582,7 @@ class Controller:
         data["drive_lines"] = list(self.drive_lines)
         data["readout_lines"] = list(self.readout_lines)
         peers = self.peer_latency_cycles
-        if isinstance(peers, Mapping):
+        if not isinstance(peers, int):
             data["peer_latency_cycles"] = {str(k): v for k, v in sorted(peers.items())}
         if self.supports is not None:
             data["supports"] = [str(c) for c in self.supports]
@@ -614,9 +597,15 @@ class Controller:
         return self.supports is None or capability in self.supports
 
     @property
+    def _machine(self) -> _MachineModel:
+        """What compiling for this controller alone needs, as
+        ``compile(control_system=controller)`` does."""
+        return _one_controller(self)._machine
+
+    @property
     def _runs_loops(self) -> bool:
         """Whether a rolled loop's body counts once against ``max_pulses``."""
-        return self.supports is None or Capability.LOOP in self.supports
+        return self.supports is None or "loop" in self.supports
 
 
 def _longest_program(value: Any) -> float:
@@ -629,6 +618,37 @@ def _longest_program(value: Any) -> float:
         "Controller.max_program_duration must be a positive time or number of "
         f"nanoseconds, or None; got {value!r}"
     )
+
+
+# What an error about the system compile() was given as one Controller says.
+_DESCRIBE = (
+    "give compile() a pulse.ControlSystem that describes the whole control system: its "
+    "controllers, the lines each plays and its links"
+)
+
+
+def _one_controller(controller: Controller) -> ControlSystem:
+    """The system of *controller* alone, for ``compile(control_system=controller)``:
+    what the one controller cannot take is an error that says to describe
+    the whole system."""
+    try:
+        system = ControlSystem(controllers=[controller])
+    except DeviceDefinitionError as error:
+        raise DeviceDefinitionError(
+            f"{_count(len(error.problems), 'problem')} in the control system of the one "
+            f"Controller compile() was given; {_DESCRIBE}",
+            problems=error.problems,
+        ) from None
+    object.__setattr__(system._machine, "_bare", True)
+    return system
+
+
+def _checked_delays(
+    delays: Mapping[tuple[str, int], float | Time],
+) -> Mapping[tuple[str, int], float]:
+    from ._clocks import checked_line_delays
+
+    return checked_line_delays(delays, "ControlSystem")
 
 
 def _known(owners: Iterable[int | None]) -> list[int]:
@@ -677,9 +697,15 @@ class ControlSystem:
     """The controllers of one QPU and what connects them; see the module
     docstring.
 
+    A system without controllers states only its links, lanes, reference
+    clock and line delays, and nothing checks what its controllers can
+    play.
     ``links`` are the links to classical devices, by name (``"feedback"``,
-    ``"controller"``); a classical function's ``link=`` names one, and
-    ``Link.controllers`` says which controllers it reaches.
+    ``"controller"``); a classical function's ``link=`` names one, or gives
+    its id: the links' positions, so the first is link 0, the default. A
+    link id a program uses that is not listed gets ``Link()``.
+    ``Link.controllers`` says which controllers a link reaches. Their slots
+    and latencies apply to every schedule, because they are hardware.
     ``max_concurrent_drives``, ``max_concurrent_readouts`` and
     ``line_switch_penalty_cycles`` apply to the ``rcp`` and ``alap_rcp``
     schedules, which keep a branch on a readout at least the
@@ -691,8 +717,13 @@ class ControlSystem:
     without it each controller's start is known only to within one of its
     own cycles. ``line_delays_ns`` are the calibrated delays of the lines
     the controllers play, keyed by ``("drive", qudit)`` or
-    ``("readout", qudit)``, as times (``2 * pulse.ns``) or numbers of ns, as
-    ``MachineModel.line_delays_ns`` takes them.
+    ``("readout", qudit)``, as times (``2 * pulse.ns``) or numbers of ns:
+    every operation on the line starts that much later than scheduled.
+    Whole steps of the line's grid move its operations, which are then
+    checked like any others; the rest is the line's ``fine_delay_ns`` in
+    the controller's program, which its controller must be able to add
+    (``Controller.max_fine_delay_ns``) or tolerate
+    (``Controller.alignment_tolerance_cycles``).
     """
 
     controllers: Sequence[Controller] = ()
@@ -702,26 +733,28 @@ class ControlSystem:
     line_switch_penalty_cycles: int = 0
     reference_clock_ghz: float | None = None
     line_delays_ns: Mapping[tuple[str, int], float | Time] = field(default_factory=dict)
-    _machine: MachineModel = field(init=False, repr=False, compare=False)
-    _plays_everything: bool = field(init=False, repr=False, compare=False)
-    # By link id and controller, the processor that runs its calls there.
-    _placement: Mapping[int, Mapping[int, int]] = field(init=False, repr=False, compare=False)
-    # The clocks of the controllers that run their own, by label.
-    _own_clocks: Mapping[str, float] = field(init=False, repr=False, compare=False)
-    # Whether a device of it checks its program clock against its clocks.
-    _needs_clock: bool = field(init=False, repr=False, compare=False)
-    # (role, carrier) -> the index of the controller that plays the line.
-    _line_owners: Mapping[tuple[str, int], int] = field(init=False, repr=False, compare=False)
-    # By program clock, the clocks of a program on several controllers.
-    _plans: dict[float, _clocks.ClockPlan | None] = field(init=False, repr=False, compare=False)
-    # Whether a sync lines up its controllers' pulses exactly, so a check
-    # may take a rolled loop's copies for its first (``_summarized``) when
-    # they count program cycles.
-    _lines_up: bool = field(init=False, repr=False, compare=False)
+    # Set by __post_init__, and declared for type checkers only: as fields
+    # they would slow the first use of the class.
+    if TYPE_CHECKING:
+        _machine: _MachineModel = field(init=False)
+        _plays_everything: bool = field(init=False)
+        # By link id and controller, the processor that runs its calls there.
+        _placement: Mapping[int, Mapping[int, int]] = field(init=False)
+        # The clocks of the controllers that run their own, by label.
+        _own_clocks: Mapping[str, float] = field(init=False)
+        # Whether a device of it checks its program clock against its clocks.
+        _needs_clock: bool = field(init=False)
+        # (role, carrier) -> the index of the controller that plays the line.
+        _line_owners: Mapping[tuple[str, int], int] = field(init=False)
+        # By program clock, the clocks of a program on several controllers.
+        _plans: dict[float, _clocks.ClockPlan | None] = field(init=False)
+        # Whether a sync lines up its controllers' pulses exactly, so a check
+        # may take a rolled loop's copies for its first (``_summarized``) when
+        # they count program cycles.
+        _lines_up: bool = field(init=False)
 
     def __post_init__(self) -> None:
-        from ._clocks import checked_line_delays
-        from .compiler import _NO_DELAYS, MachineModel
+        from .compiler import _NO_DELAYS, _MachineModel
 
         if isinstance(self.controllers, Controller) or not isinstance(self.controllers, Iterable):
             raise InvalidTypeError(
@@ -757,7 +790,7 @@ class ControlSystem:
         object.__setattr__(
             self,
             "line_delays_ns",
-            checked_line_delays(delays, "ControlSystem") if delays else _NO_DELAYS,
+            _checked_delays(delays) if delays else _NO_DELAYS,
         )
         problems = _structure_problems(self, "")
         if problems:
@@ -812,19 +845,33 @@ class ControlSystem:
             ),
         )
         links: dict[int | str, Link] = {name: link for name, link in self.links.items()}
+        one = controllers[0] if len(controllers) == 1 else None
+        # Programs are checked against the system as one controller (or,
+        # without controllers, not at all) when that controller plays every
+        # line, supports everything, computes nothing, and no link reaches
+        # only some controllers.
+        alone = not controllers or (
+            one is not None
+            and self._plays_everything
+            and one.supports is None
+            and not one.processors
+            and not any(
+                link.controllers is not None or link.per_controller for link in links.values()
+            )
+        )
         object.__setattr__(
             self,
             "_machine",
-            MachineModel(
+            _MachineModel(
                 max_concurrent_drives=self.max_concurrent_drives,
                 max_concurrent_readouts=self.max_concurrent_readouts,
-                readout_latency_cycles=self._outcome_latency(None),
+                readout_latency_cycles=self._outcome_latency(None) if controllers else 0,
                 line_switch_penalty_cycles=self.line_switch_penalty_cycles,
                 links=links,
-                controller=controllers[0] if len(controllers) == 1 else None,
+                controller=one,
                 reference_clock_ghz=self.reference_clock_ghz,
                 line_delays_ns=self.line_delays_ns,
-                _system=self,
+                _system=None if alone else self,
             ),
         )
 
@@ -898,6 +945,8 @@ class ControlSystem:
             return self._plans[program_ghz]
         except KeyError:
             pass
+        from . import _clocks
+
         controllers = self.controllers
         found = _clocks.controllers_plan(
             controllers,
@@ -918,6 +967,10 @@ class ControlSystem:
         controllers' start uncertainty too. The scheduler holds one readout
         latency, so every readout waits for this one."""
         controllers = self.controllers
+        if clocks is None and len(controllers) == 1:
+            return controllers[0].feedback_latency_cycles
+        from fractions import Fraction
+
         everyone = range(len(controllers))
         readers = [i for i in everyone if controllers[i].readout_lines] or everyone
         users = [
@@ -944,6 +997,8 @@ class ControlSystem:
         ``clock_skew_cycles``, plus one of its own cycles when the system
         shares no reference clock (*clocks*: the program's, ``None`` when
         every controller runs at the program clock)."""
+        from fractions import Fraction
+
         extra = 0 if self.reference_clock_ghz is not None else 1
         return [
             (c.clock_skew_cycles + extra)
@@ -956,6 +1011,8 @@ class ControlSystem:
         usable on each controller, in program cycles (its feedback latency on
         the reader; with its ``peer_latency_cycles`` and both controllers'
         start uncertainty on another)."""
+        from fractions import Fraction
+
         controllers = self.controllers
         uncertainty = self._start_uncertainty(clocks)
         table = []
@@ -978,6 +1035,8 @@ class ControlSystem:
         *program_ghz* on *n_qudits* qudits: the controller of each line, the
         outcome latencies between controllers, how far apart their starts may
         be (in program cycles) and each one's start uncertainty in ns."""
+        from fractions import Fraction
+
         clocks = self._clock_plan(program_ghz)
         uncertainty = self._start_uncertainty(clocks)
         count = len(self.controllers)
@@ -1004,13 +1063,15 @@ class ControlSystem:
         return "{pulse.controllers = {" + ", ".join(fields) + "}}"
 
     def _links_attribute(
-        self, machine: MachineModel, used: Sequence[int], program_ghz: float
+        self, machine: _MachineModel, used: Sequence[int], program_ghz: float
     ) -> str:
         """``machine.links_attribute(used)`` on this system: each link that
         joins controllers carries the start uncertainty between the two of
         them known least well, in ns, which the budget of a call whose sender
         and taker the scheduler cannot tell adds. A per-controller link joins
         none (its calls stay on one) and carries its name."""
+        from fractions import Fraction
+
         each = self._start_uncertainty(self._clock_plan(program_ghz))
         entries = []
         for link_id in sorted(set(used)):
@@ -1043,6 +1104,8 @@ class ControlSystem:
         latency, its ``peer_latency_cycles`` to the user, and both
         controllers' start uncertainty, each in its own cycles (events in
         program cycles)."""
+        from fractions import Fraction
+
         found: list[str] = []
         uncertainty: list[Fraction] | None = None
         for event in events:
@@ -1114,6 +1177,8 @@ class ControlSystem:
         ``alignment_tolerance_cycles``: the first pulse after the sync on each
         of its lines lands within its controller's start uncertainty and what
         its line delay is rounded by (each in the controller's cycles)."""
+        import bisect
+
         if (
             self.reference_clock_ghz is not None
             and not self.line_delays_ns
@@ -1212,10 +1277,13 @@ class ControlSystem:
             owner = played.get((line["role"], line["qudit"]))
             owners.append(owner)
             if owner is None:
+                where = f"line {line['line']} (the {line['role']} line of qudit {line['qudit']})"
                 found.append(
-                    f"line {line['line']} (the {line['role']} line of qudit {line['qudit']}) "
-                    f"is on no controller; add {line['qudit']} to the {line['role']}_lines "
-                    "of one of the control system's controllers"
+                    f"{where} is not on the one Controller compile() was given; add "
+                    f"{line['qudit']} to its {line['role']}_lines, or {_DESCRIBE}"
+                    if getattr(self._machine, "_bare", False)
+                    else f"{where} is on no controller; add {line['qudit']} to the "
+                    f"{line['role']}_lines of one of the control system's controllers"
                 )
         return owners, found
 
@@ -1235,6 +1303,7 @@ class ControlSystem:
         controller for each line, each controller's limits on what it plays,
         its capabilities and the reach of the links. *clocks*, *off* and
         *run_time* are as ``controller._violations`` takes them."""
+        from . import _clocks
         from .controller import _computes_at_run_time, _violations
 
         owners, found = self._owners(lines)
@@ -1320,7 +1389,7 @@ class ControlSystem:
         no calls), each period is whole timesteps of every controller, and
         *rates* come last. A sync lines up the pulses of several controllers
         exactly, so ``_alignment`` finds nothing."""
-        from . import _loops
+        from . import _clocks, _loops
 
         if clocks is not None and clocks.owners is not None:
             grids = {c.grid for c in clocks.controllers}
@@ -1435,15 +1504,18 @@ class ControlSystem:
             start = event["start_cycles"]
             return text if start is None else f"{text} at cycle {start}"
 
-        def need(index: int, capability: Capability, event: Mapping[str, Any]) -> None:
+        def need(index: int, capability: str, event: Mapping[str, Any]) -> None:
             controller = self.controllers[index]
-            if controller.supports_capability(capability):
+            if controller.supports is None or capability in controller.supports:
                 return
+            needs = f"{_label(index, controller)}: {where(event)} needs {capability!r}"
             found.append(
-                f"{_label(index, controller)}: {where(event)} needs "
-                f"{capability.value!r}, which the controller does not support; run that "
-                "part of the program on a controller that supports it, or write it without "
-                f"{capability.value!r}"
+                f"{needs}, which the one Controller compile() was given does not support; "
+                f"write that part of the program without {capability!r}, or {_DESCRIBE}"
+                if getattr(self._machine, "_bare", False)
+                else f"{needs}, which the controller does not support; run that part of the "
+                "program on a controller that supports it, or write it without "
+                f"{capability!r}"
             )
 
         for event in events:
@@ -1458,29 +1530,27 @@ class ControlSystem:
                 ):
                     # Without a call's values, the tone may be a parameter's.
                     if unresolved is None:
-                        need(index, Capability.RUNTIME_FRAME_UPDATE, event)
-                    elif not self.controllers[index].supports_capability(
-                        Capability.RUNTIME_FRAME_UPDATE
-                    ):
+                        need(index, "runtime_frame_update", event)
+                    elif "runtime_frame_update" not in (self.controllers[index].supports or ()):
                         unresolved.append(f"line {event['line']}: frame")
                 if event["conditions"]:
-                    need(index, Capability.BRANCH, event)
+                    need(index, "branch", event)
                 for condition in event["conditions"]:
                     for ref in condition["readouts"]:
                         source = owner(events[ref])
                         if source is not None and source != index:
-                            need(source, Capability.FORWARD_OUTCOME, events[ref])
+                            need(source, "forward_outcome", events[ref])
                     for ref in condition["answers"]:
-                        need(index, Capability.ANSWER, events[ref])
+                        need(index, "answer", events[ref])
             elif kind == "sync":
                 for index in _known(owners[line] for line in event["lines"]):
-                    need(index, Capability.SYNC, event)
+                    need(index, "sync", event)
         for event in events:
             kind = event["kind"]
             if kind == "submit" or kind == "answer":
                 callers = self._callers(event, events, owners, used, users)
                 for index in callers:
-                    need(index, Capability.CALL if kind == "submit" else Capability.ANSWER, event)
+                    need(index, "call" if kind == "submit" else "answer", event)
                 verb = "sends the measurements of" if kind == "submit" else "answers"
                 self._reach(lowered, event, callers, verb, found)
         return found

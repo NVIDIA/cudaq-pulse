@@ -22,7 +22,7 @@ controller's clock is not the program clock, the export also gives
 ``program_clock_ghz``, every time is converted to its cycles (exactly for
 operations on its lines, which are on its grid, and rounded up for the
 others) and every waveform's time parameters are scaled with them. With a
-shared reference clock (``MachineModel.reference_clock_ghz``) it also gives
+shared reference clock (``ControlSystem.reference_clock_ghz``) it also gives
 ``reference_clock_ghz``.
 
 The number after the slash is the format's major version. Within one version,
@@ -867,8 +867,8 @@ def export(
     ``cudaq-pulse.controller/2``: a loop whose iterations repeat is one
     ``loop`` event holding its body, each distinct waveform is listed once,
     and what follows from the rest is left out (``unroll`` gives format /1
-    back). Raises ``ControllerLimitError`` when the machine model's
-    controller limits are exceeded. On a control system of several
+    back). Raises ``ControllerLimitError`` when the limits of its
+    controller are exceeded. On a control system of several
     controllers, the program of the one *controller* indexes (see
     ``_export_part``); without it, a program on more than one is a
     ``ValueError``.
@@ -882,9 +882,10 @@ def export(
     if version != 1:
         if version != 2:
             raise InvalidValueError(f"version must be 1 or 2, got {version!r}")
-        if system is not None:
+        if system is not None and len(system.controllers) > 1:
             raise UnsupportedError(
-                "format /2 is written for one controller; export version 1 for a control system"
+                "format /2 is written for one controller; export version 1 for a control "
+                "system of several"
             )
         if controller is not None:
             _controller_index(controller, 1)
@@ -2267,7 +2268,7 @@ def _rolled_loops(timed: Sequence[Mapping[str, Any]]) -> list[tuple[int, int, in
 
 
 def check(lowered: Lowered, limits: Controller | None = None) -> Sequence[str]:
-    """The limits *lowered* exceeds, of *limits* or else its machine model's:
+    """The limits *lowered* exceeds, of *limits* or else its controller's:
     a list, or past 10,000 violations in rolled loops a sequence that builds
     each one when read (``ControllerLimitError.violations``).
 

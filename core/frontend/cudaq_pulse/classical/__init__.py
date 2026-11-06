@@ -1296,7 +1296,7 @@ def function(implementation: Callable[..., Any] | None = None, /, **options: Any
     ``nominal_latency_ns``, ``latency_mode`` (``"bounded"``, ``"timeout"``
     with ``timeout_ns``, or ``"blocking"``), ``submit`` (``"eager"`` or
     ``"lazy"``), ``deadline_ns``, ``reaction_deadline_ns``, ``link`` (the
-    link its requests travel on: a name from ``MachineModel.links``, such as
+    link its requests travel on: a name from ``ControlSystem.links``, such as
     ``"controller"``, or a link id; default 0; ``device`` is not used for
     it, because a cudaq-pulse device is the QPU) and ``name``. A latency,
     timeout or deadline is a time (``400 * pulse.ns``) or a number of ns.

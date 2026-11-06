@@ -27,8 +27,8 @@ from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 import cudaq_pulse as pulse
+from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link
-from cudaq_pulse.compiler import MachineModel
 
 CLOCK = 2.0  # GHz, the test device's clock
 SPECTATOR, X90, RO, ARM, TAIL = 1200, 24, 200, 40, 30
@@ -44,7 +44,7 @@ LINKS = {
     "controller": Link(fixed_ns=4, feedback_ns=8, max_in_flight=4),
     "gpu": Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50),
 }
-MACHINE = MachineModel(links=dict(LINKS))
+MACHINE = ControlSystem(links=dict(LINKS))
 
 # The schedule of the compiled kernel: its decorator's ("default" is none,
 # which compiles as ALAP), or one only compile() takes.
@@ -477,7 +477,7 @@ def alone(case: Case) -> Any:
 def compile_case(case: Case, device: Any = None, kernel: Any = None, **options: Any) -> Any:
     """``pulse.compile`` of *case*'s program (or of *kernel*), as the case says."""
     settings: dict[str, Any] = {
-        "machine": MACHINE,
+        "control_system": MACHINE,
         "flatten_schedules": case.flatten,
         "unroll_threshold": 10**6 if case.placement in ("static_loop", "spectator_unrolled") else 0,
     }

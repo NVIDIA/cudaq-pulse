@@ -17,9 +17,8 @@ from fractions import Fraction
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse import Controller
+from cudaq_pulse import Controller, ControlSystem
 from cudaq_pulse.classical import Link
-from cudaq_pulse.compiler import MachineModel
 
 from tests._handles import Q
 
@@ -351,9 +350,9 @@ def test_round_duration_rounds_a_time_onto_the_grid():
         d = get_drive_line(q)
         drive(d, square(pulse.round_duration(d, 10.3 * ns), 0.1))
 
-    machine = MachineModel(controller=Controller(clock_ghz=0.5))
+    machine = ControlSystem(controllers=[Controller(clock_ghz=0.5)])
     assert [e[2] for e in _events(k.lower(Q[0]))] == [21]
-    assert [e[2] for e in _events(pulse.compile(k, machine=machine).lower(Q[0]))] == [24]
+    assert [e[2] for e in _events(pulse.compile(k, control_system=machine).lower(Q[0]))] == [24]
 
 
 def test_loops_and_parameters_take_times():
@@ -440,8 +439,8 @@ def answer_in_nanoseconds(q):
 
 
 def test_an_answer_in_nanoseconds_converts_with_one_multiply():
-    machine = MachineModel(links={"controller": Link(fixed_ns=10)})
-    text = pulse.compile(answer_in_nanoseconds, machine=machine).lower(Q[0]).mlir()
+    machine = ControlSystem(links={"controller": Link(fixed_ns=10)})
+    text = pulse.compile(answer_in_nanoseconds, control_system=machine).lower(Q[0]).mlir()
     taken = text.index("classical.wait")
     converted = text[taken:]
     assert converted.count("arith.mulf") == 1
@@ -595,7 +594,7 @@ def test_a_machine_takes_its_link_and_line_times_as_times():
     assert link.fixed_ns.__class__ is float and link.feedback_ns.__class__ is float
     limits = Controller(max_fine_delay_ns=2 * ns)
     assert limits == Controller(max_fine_delay_ns=2.0)
-    machine = MachineModel(line_delays_ns={("drive", 0): 3 * ns}, controller=limits)
+    machine = ControlSystem(controllers=[limits], line_delays_ns={("drive", 0): 3 * ns})
     assert machine.line_delays_ns == {("drive", 0): 3.0}
     with pytest.raises(pulse.InvalidValueError, match="cannot be negative"):
-        MachineModel(line_delays_ns={("drive", 0): -1 * ns})
+        ControlSystem(line_delays_ns={("drive", 0): -1 * ns})

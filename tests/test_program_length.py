@@ -17,8 +17,7 @@ import math
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import CompilationError, Controller
-from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse import CompilationError, Controller, ControlSystem
 
 from tests._handles import Q
 
@@ -76,18 +75,18 @@ def test_waits_of_run_time_length_are_checked_when_bound():
 
 def test_a_program_past_the_controllers_longest_program_names_the_limit():
     # 5000 ns on the 2 GHz clock of Q's device: 10,000 cycles.
-    machine = MachineModel(controller=Controller(max_program_duration=5_000))
-    assert pulse.compile(_waits(100, 100), machine=machine).lower(Q[0]) is not None
+    machine = ControlSystem(controllers=[Controller(max_program_duration=5_000)])
+    assert pulse.compile(_waits(100, 100), control_system=machine).lower(Q[0]) is not None
     with pytest.raises(CompilationError, match=r"Controller\.max_program_duration"):
-        pulse.compile(_waits(101, 100), machine=machine).lower(Q[0])
+        pulse.compile(_waits(101, 100), control_system=machine).lower(Q[0])
 
 
 def test_the_longest_program_may_be_a_time():
     assert Controller(max_program_duration=10 * pulse.us).max_program_duration == 10_000
     assert Controller(max_program_duration=1.5).max_program_duration == 1.5
-    machine = MachineModel(controller=Controller(max_program_duration=10 * pulse.us))
+    machine = ControlSystem(controllers=[Controller(max_program_duration=10 * pulse.us)])
     with pytest.raises(CompilationError, match=r"Controller\.max_program_duration"):
-        pulse.compile(_waits(1000, 100), machine=machine).lower(Q[0])
+        pulse.compile(_waits(1000, 100), control_system=machine).lower(Q[0])
 
 
 @pytest.mark.parametrize("wrong", [0, -1, True, math.nan, math.inf, "8"])
@@ -97,12 +96,12 @@ def test_max_program_duration_is_positive_or_none(wrong):
 
 
 def test_a_long_rolled_loop_past_the_controllers_longest_program_fails_fast():
-    machine = MachineModel(controller=Controller(max_program_duration=10**6))
+    machine = ControlSystem(controllers=[Controller(max_program_duration=10**6)])
     with pytest.raises(CompilationError, match=r"Controller\.max_program_duration"):
-        pulse.compile(_waits(10**15, 4), machine=machine).lower(Q[0])
+        pulse.compile(_waits(10**15, 4), control_system=machine).lower(Q[0])
 
 
-_LONGEST = MachineModel(controller=Controller(max_program_duration=5_000))
+_LONGEST = ControlSystem(controllers=[Controller(max_program_duration=5_000)])
 # Loops stay rolled, so a wait in one is one wait run several times.
 _ROLLED = {"unroll_threshold": 0}
 
@@ -131,7 +130,7 @@ def _sweep(trips, bounds, written=None):
 @pytest.mark.parametrize("trips, bounds", [(3, (4, 10**6)), (3, None), (1, (4, 10**6)), (1, None)])
 def test_a_call_fits_exactly_when_its_lengths_written_in_fit(trips, bounds):
     # One wait three times, folded into its bounds; or two once, summed.
-    compiled = pulse.compile(_sweep(trips, bounds), machine=_LONGEST, **_ROLLED)
+    compiled = pulse.compile(_sweep(trips, bounds), control_system=_LONGEST, **_ROLLED)
     lowest = 0 if bounds is None else bounds[0]
     values = [4.0, 3299.4, 3299.5, 3300.49, 3300.5, 4950.0, 9895.5, 9896.5, 20_000.0]
     outcomes = set()
@@ -139,9 +138,9 @@ def test_a_call_fits_exactly_when_its_lengths_written_in_fit(trips, bounds):
         for y in values:
             written = (math.floor(x + 0.5), math.floor(y + 0.5))
             try:
-                pulse.compile(_sweep(trips, None, written), machine=_LONGEST, **_ROLLED).lower(
-                    Q[0], 0.0, 0.0
-                )
+                pulse.compile(
+                    _sweep(trips, None, written), control_system=_LONGEST, **_ROLLED
+                ).lower(Q[0], 0.0, 0.0)
                 fits = True
             except CompilationError as error:
                 assert "max_program_duration" in str(error)

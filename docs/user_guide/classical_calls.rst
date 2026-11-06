@@ -196,26 +196,27 @@ Links
 A link is a path to a classical device with a cost: a fixed time per
 request, a bandwidth, a feedback time from an answer arriving to a pulse
 using it, a number of requests it holds at once and the largest request it
-takes. They belong to the machine model, named or by id:
+takes. They belong to the control system, by name:
 
 .. code-block:: python
    :class: fragment
 
    from cudaq_pulse.classical import Link
-   from cudaq_pulse.compiler import MachineModel
 
-   machine = MachineModel(
+   control_system = pulse.ControlSystem(
        links={
            "gpu": Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50),
            "controller": Link(fixed_ns=4, feedback_ns=8, max_in_flight=4),
        }
    )
-   lowered = pulse.compile(kernel, device=dev, machine=machine).lower(q)
+   lowered = pulse.compile(kernel, device=dev, control_system=control_system).lower(q)
 
-A function's ``link=`` names a link of the machine model, or gives a link id.
-Named links get the lowest ids no other link has, in the order given, so the
-first named link of a model without ids is link 0, the default. Compiling a
-function that names a link the machine model does not have is an error.
+A function's ``link=`` names a link of the control system, or gives a link
+id: the link's position, so the first is link 0, the default. A link id the
+system does not list gets ``Link()``; compiling a function that names a link
+the control system does not have is an error. A control system without
+controllers, as here, states only its links and lanes: nothing checks what a
+controller can play.
 
 Calling from a kernel
 ---------------------
@@ -537,7 +538,7 @@ when it is known.
        longest_wait = 20 * pulse.us
        wait(d, read_wait.submit().result() * pulse.ns, bounds=(0, longest_wait))
 
-   compiled = pulse.compile(shot, device=dev, machine=machine)
+   compiled = pulse.compile(shot, device=dev, control_system=control_system)
    for i in range(10_000):
        lowered = compiled.lower(q, amplitude)   # no compiling after the first
        ...
@@ -632,7 +633,7 @@ from the ``Processor`` of a controller that runs the functions on its
        controllers=[pulse.Controller(processors=[processor])],
        links={"controller": Link(fixed_ns=4)},
    )
-   lowered = pulse.compile(chain, device=dev, machine=system).lower(q)
+   lowered = pulse.compile(chain, device=dev, control_system=system).lower(q)
    print(controller.resources(lowered))
 
 .. :spellcheck-enable:

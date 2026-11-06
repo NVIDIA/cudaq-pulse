@@ -14,10 +14,9 @@ import re
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import Controller, Processor, _controller_cost
+from cudaq_pulse import Controller, ControlSystem, Processor, _controller_cost
 from cudaq_pulse.classical import Link
 from cudaq_pulse.classical import calibration as cal
-from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import OP_CLASSES, ControllerLimitError, analyze, resources
 
 from tests._handles import Q
@@ -275,11 +274,11 @@ def _machine(processor=None, **limits):
     if processor is not None:
         controller = Controller(processors=[Processor(**processor)], **limits)
         return pulse.ControlSystem(controllers=[controller], links=links)
-    return MachineModel(links=links, controller=Controller(**limits) if limits else None)
+    return ControlSystem(controllers=[Controller(**limits)] if limits else [], links=links)
 
 
 def _lower(machine, n=3):
-    return pulse.compile(_rounds, machine=machine).lower(Q[0], n)
+    return pulse.compile(_rounds, control_system=machine).lower(Q[0], n)
 
 
 def test_a_function_that_computes_past_its_budget_fails_to_compile():

@@ -14,8 +14,8 @@ import re
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
+from cudaq_pulse import ControlSystem
 from cudaq_pulse._native._cudaq_pulse_native import PulseModuleBuilder
-from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.kernel.ir_builder import CompilationError
 
 from tests._handles import Q
@@ -225,7 +225,7 @@ def test_compile_uses_resource_machine_for_overlapping_intervals():
         drive(line1, square(40, 0.2))
 
     compiled = pulse.compile(
-        kernel, schedule="rcp", passes=(), machine=MachineModel(max_concurrent_drives=1)
+        kernel, schedule="rcp", passes=(), control_system=ControlSystem(max_concurrent_drives=1)
     ).lower(Q[0], Q[1])
     assert _drive_timings(compiled.mlir()) == [(0, 100), (100, 40)]
 
@@ -247,7 +247,7 @@ def test_scheduler_tracks_line_lineage_and_resource_intervals():
             drive(line, square(100, 0.2))
 
     compiled = pulse.compile(
-        resources, passes=(), schedule="rcp", machine=MachineModel(max_concurrent_drives=2)
+        resources, passes=(), schedule="rcp", control_system=ControlSystem(max_concurrent_drives=2)
     ).lower(Q[0:3])
     assert [e.start_cycles for e in compiled.schedule] == [0, 0, 100]
 
@@ -312,7 +312,7 @@ def test_alap_rcp_never_schedules_before_time_zero():
     compiled = pulse.compile(
         kernel,
         schedule="alap_rcp",
-        machine=MachineModel(max_concurrent_drives=2, max_concurrent_readouts=1),
+        control_system=ControlSystem(max_concurrent_drives=2, max_concurrent_readouts=1),
     ).lower(*[Q[i] for i in range(n)])
     assert min(e.start_cycles for e in compiled.schedule) >= 0
     compiled._module.run_passes(["pulse-verify"])

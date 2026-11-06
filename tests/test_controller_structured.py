@@ -15,9 +15,8 @@ import warnings
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import Controller, backends
+from cudaq_pulse import Controller, ControlSystem, backends
 from cudaq_pulse.classical import Link
-from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import FORMAT, ControllerLimitError, check, unroll
 from cudaq_pulse.targets import Qubit, TargetDescription
 
@@ -37,7 +36,7 @@ def _decide(bits: pulse.Bits) -> pulse.Bits:
     return [bits[0]]
 
 
-_MACHINE = MachineModel(links={"ctl": Link(fixed_ns=4, feedback_ns=8)})
+_MACHINE = ControlSystem(links={"ctl": Link(fixed_ns=4, feedback_ns=8)})
 
 
 def _sampled(per_cycle, **limits):
@@ -137,7 +136,7 @@ _CASES = {
     "first_differs": (_first_differs, (Q[0],), {}, {}),
     "arithmetic": (_arithmetic, (Q[0], Q[1]), {}, {}),
     "samples": (_arithmetic, (Q[0], Q[1]), {}, {"sample_rate_ghz": 4.0}),
-    "calls": (_calls, (Q[0],), {"machine": _MACHINE}, {}),
+    "calls": (_calls, (Q[0],), {"control_system": _MACHINE}, {}),
 }
 
 
@@ -293,8 +292,8 @@ def test_a_program_states_its_sample_rate_beside_its_clock():
     with pytest.raises(ValueError, match="16 cycles at 1.1 samples per cycle is 17.6 samples"):
         lowered.export_controller(version=2, sample_rate_ghz=2.2)
 
-    machine = MachineModel(controller=_sampled(4))
-    lowered = pulse.compile(kernel, machine=machine, unroll_threshold=0).lower(Q[0], Q[1])
+    machine = ControlSystem(controllers=[_sampled(4)])
+    lowered = pulse.compile(kernel, control_system=machine, unroll_threshold=0).lower(Q[0], Q[1])
     program = lowered.export_controller(version=2)
     assert program["sample_rate_ghz"] == program["controller"]["sample_rate_ghz"] == 8.0
     assert unroll(program) == lowered.export_controller()
@@ -435,11 +434,11 @@ def test_a_violation_in_every_iteration_is_reported_for_each_iteration():
         "line 0: drive at 35972 starts 8 cycles after the drive at 35964; the controller "
         "needs exactly 3 or at least 9"
     )
-    machine = MachineModel(controller=Controller(instruction_cycles=3, min_idle_cycles=6))
-    spaced = check(unrolled, machine.controller)
+    machine = ControlSystem(controllers=[Controller(instruction_cycles=3, min_idle_cycles=6)])
+    spaced = check(unrolled, machine.controllers[0])
     assert len(spaced) == 1000
     with pytest.raises(ControllerLimitError) as error:
-        pulse.compile(pairs, machine=machine, unroll_threshold=0).lower(Q[0])
+        pulse.compile(pairs, control_system=machine, unroll_threshold=0).lower(Q[0])
     assert list(error.value.violations) == list(spaced)
 
 
@@ -448,8 +447,8 @@ def test_a_backend_reading_only_the_structured_format_is_accepted():
         name = "structured"
         formats = ("cudaq-pulse.controller/2",)
 
-        def machine_model(self):
-            return MachineModel()
+        def control_system(self):
+            return ControlSystem()
 
         def emit(self, program):
             return program
@@ -637,8 +636,10 @@ def test_an_amplitude_and_a_phase_from_an_answer_are_exported_with_their_source(
     ]
 
     # Frames that persist keep it, as the frame the tone ends the shot in.
-    persistent = MachineModel(controller=Controller(persistent_frames=True))
-    lowered = pulse.compile(_answer_amplitude, unroll_threshold=0, machine=persistent).lower(Q[0])
+    persistent = ControlSystem(controllers=[Controller(persistent_frames=True)])
+    lowered = pulse.compile(_answer_amplitude, unroll_threshold=0, control_system=persistent).lower(
+        Q[0]
+    )
     structured = lowered.export_controller(version=2)
     [play] = (e for e in structured["events"] if e["kind"] == "play")
     assert (play["tone"], play["frame_updates"]) == (0, [])

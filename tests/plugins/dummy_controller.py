@@ -19,8 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from cudaq_pulse import Controller
-from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse import Controller, ControlSystem
 from cudaq_pulse.controller import FORMAT
 
 LOADED = True
@@ -30,7 +29,7 @@ class DummyBackend:
     name = "dummy"
     formats = (FORMAT,)
 
-    def machine_model(self) -> MachineModel:
+    def control_system(self) -> ControlSystem:
         limits = Controller(
             clock_ghz=1.0,
             instruction_cycles=2,
@@ -38,7 +37,7 @@ class DummyBackend:
             detectors={q: q // 2 for q in range(8)},
             detector_recovery_cycles=10,
         )
-        return MachineModel(max_concurrent_readouts=1, controller=limits)
+        return ControlSystem(controllers=[limits], max_concurrent_readouts=1)
 
     def emit(self, program: Mapping[str, Any]) -> list[tuple[int, int, str, str]]:
         if program.get("format") != FORMAT:

@@ -58,7 +58,7 @@ def _device(target):
 def test_the_pi_train_corrects_a_drive_amplitude_error():
     target = transmon_17q()
     dev, q = _device(target)
-    lowered = pulse.compile(_pi_step, device=dev, machine=P["control_system"]).lower(q)
+    lowered = pulse.compile(_pi_step, device=dev, control_system=P["control_system"]).lower(q)
     plant = P["chain_plant"](target, amplitude_scale=1.02)
     result = pulse.simulate(
         lowered, plant=plant, shots=2, seed=3, branches="sampled", readout="model"
@@ -85,7 +85,7 @@ def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
     )
     target = dataclasses.replace(base, qubits={**base.qubits, 0: device_qubit})
     dev, q = _device(target)
-    lowered = pulse.compile(_adaptive_t1, device=dev, machine=P["control_system"]).lower(q)
+    lowered = pulse.compile(_adaptive_t1, device=dev, control_system=P["control_system"]).lower(q)
     shots = 32
     result = pulse.simulate(lowered, shots=shots, seed=4, branches="sampled", readout="model")
     estimates = []
@@ -103,9 +103,9 @@ def test_adaptive_t1_tracks_the_papers_device_on_the_controller():
 def test_the_binary_search_narrows_on_the_controller():
     target = transmon_17q()
     dev, q = _device(target)
-    lowered = pulse.compile(P["binary_search"], device=dev, machine=P["control_system"]).lower(
-        q, 15
-    )
+    lowered = pulse.compile(
+        P["binary_search"], device=dev, control_system=P["control_system"]
+    ).lower(q, 15)
     for seed, offset in enumerate((-200e3, 120e3)):
         result = pulse.simulate(
             lowered,
@@ -123,7 +123,11 @@ def test_the_binary_search_narrows_on_the_controller():
 def _chain():
     target = transmon_17q()
     dev, q = _device(target)
-    return pulse.compile(P["calibration_chain"], device=dev, machine=P["control_system"]), dev, q
+    return (
+        pulse.compile(P["calibration_chain"], device=dev, control_system=P["control_system"]),
+        dev,
+        q,
+    )
 
 
 def test_the_chain_fits_the_declared_controller():
@@ -146,7 +150,7 @@ def test_a_slower_controller_rejects_the_chain_at_compile_time():
     system = pulse.ControlSystem(
         controllers=[pulse.Controller(processors=[slow])], links=P["control_system"].links
     )
-    slow = pulse.compile(P["calibration_chain"], device=dev, machine=system)
+    slow = pulse.compile(P["calibration_chain"], device=dev, control_system=system)
     with pytest.raises(controller.ControllerLimitError, match="adaptive_t1__1 computes for about"):
         slow.lower(q, 20_000.0 * CLOCK)
 
@@ -155,7 +159,7 @@ def test_two_qubits_calibrate_side_by_side():
     chain, dev, _ = _chain()
     q, p = dev.qudit_handles[:2]
     one = chain.lower(q, 20_000.0 * CLOCK)
-    two = pulse.compile(_two_chains, device=dev, machine=P["control_system"]).lower(
+    two = pulse.compile(_two_chains, device=dev, control_system=P["control_system"]).lower(
         q, p, 20_000.0 * CLOCK
     )
     # Each chain waits only on its own answers, so two take about as long as

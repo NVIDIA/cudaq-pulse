@@ -29,7 +29,7 @@ from typing import Any
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse import ControlSystem
 from cudaq_pulse.controller import ControllerLimitError
 
 from tests import _child
@@ -502,13 +502,13 @@ def _system() -> Any:
 
 def _outcome(kernel: Any, schedule: str, unroll_threshold: int, machine: str) -> Any:
     if machine == "one_lane":
-        model = MachineModel(
+        system = ControlSystem(
+            controllers=[pulse.Controller(feedback_latency_cycles=7)],
             max_concurrent_drives=1,
             max_concurrent_readouts=1,
             line_switch_penalty_cycles=3,
-            readout_latency_cycles=7,
         )
-        options, handles = {"machine": model}, Q
+        options, handles = {"control_system": system}, Q
     else:
         qpu = _system()
         options, handles = {"device": qpu}, qpu.qudits
@@ -566,7 +566,7 @@ def _driven_in_both_arms(n: int) -> Any:
 # that repeat only as a set do not make the iterations repeat.
 @pytest.mark.parametrize("schedule", ["rcp", "alap_rcp"])
 def test_a_loop_whose_branch_drives_in_both_arms_plays_every_event_as_unrolled(schedule):
-    machine = MachineModel(max_concurrent_drives=3, line_switch_penalty_cycles=1)
+    machine = ControlSystem(max_concurrent_drives=3, line_switch_penalty_cycles=1)
 
     def events(trips: int, unroll_threshold: int) -> Any:
         program = pulse.compile(
@@ -574,7 +574,7 @@ def test_a_loop_whose_branch_drives_in_both_arms_plays_every_event_as_unrolled(s
             schedule=schedule,
             unroll_threshold=unroll_threshold,
             passes=(),
-            machine=machine,
+            control_system=machine,
         )
         lowered = program.lower(Q[0], Q[1], Q[2])
         found = [(e.kind, e.line, e.start_cycles, e.duration_cycles) for e in lowered.schedule]

@@ -19,9 +19,8 @@ from fractions import Fraction
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
-from cudaq_pulse import Controller, _clocks
+from cudaq_pulse import Controller, ControlSystem, _clocks
 from cudaq_pulse.classical import Link
-from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError, check, sample_waveform
 
 from tests._handles import LADDER, Q, ladder_target
@@ -30,7 +29,7 @@ SCHEDULES = ("asap", "alap", "rcp", "alap_rcp")
 
 
 def _machine(clock_ghz: float, **kwargs):
-    return MachineModel(controller=Controller(clock_ghz=clock_ghz), **kwargs)
+    return ControlSystem(controllers=[Controller(clock_ghz=clock_ghz)], **kwargs)
 
 
 # ── The program clock ────────────────────────────────────────────────────────
@@ -95,7 +94,7 @@ def _durations(lowered):
 
 def test_round_duration_rounds_onto_the_line_grid():
     def durations(machine=None):
-        return _durations(pulse.compile(rounded, passes=[], machine=machine).lower(Q[0]))
+        return _durations(pulse.compile(rounded, passes=[], control_system=machine).lower(Q[0]))
 
     assert durations() == [37, 37, 37, 3, 42]
     # A 0.5 GHz controller starts every 4 cycles of the 2 GHz program clock.
@@ -128,7 +127,7 @@ def test_each_round_direction_is_its_string(member, text, cycles):
         drive(d, square(pulse.round_duration(d, 37, member), 0.1))
         drive(d, square(pulse.round_duration(d, 37, text), 0.1))
 
-    assert _durations(pulse.compile(k, passes=[], machine=_machine(0.5)).lower(Q[0])) == [
+    assert _durations(pulse.compile(k, passes=[], control_system=_machine(0.5)).lower(Q[0])) == [
         cycles,
         cycles,
     ]
@@ -157,7 +156,7 @@ def test_round_duration_needs_a_line_and_a_known_length():
 
     # Like a duration, a float that reaches it is specialized on.
     with pytest.warns(RuntimeWarning, match="round_duration"):
-        lowered = pulse.compile(specialized, machine=_machine(0.5)).lower(Q[0], 13.0)
+        lowered = pulse.compile(specialized, control_system=_machine(0.5)).lower(Q[0], 13.0)
     assert _durations(lowered) == [16]
     with pytest.raises(pulse.CompilationError, match="takes a line"):
         pulse.compile(not_a_line).lower(Q[0])
@@ -189,7 +188,9 @@ def mixed(a, b):
 
 @pytest.mark.parametrize("schedule", SCHEDULES)
 def test_every_operation_starts_and_ends_on_its_controllers_grid(schedule):
-    lowered = pulse.compile(mixed, schedule=schedule, machine=_machine(0.5)).lower(Q[0], Q[1])
+    lowered = pulse.compile(mixed, schedule=schedule, control_system=_machine(0.5)).lower(
+        Q[0], Q[1]
+    )
     events = [e for e in lowered.schedule if e.kind in ("drive", "readout", "wait")]
     assert events and all(e.start % 4 == 0 and e.end % 4 == 0 for e in events)
     assert "pulse.line_grid = 4 : i64" in lowered.mlir()
@@ -199,7 +200,7 @@ def test_every_operation_starts_and_ends_on_its_controllers_grid(schedule):
 
 
 def test_a_sync_meets_on_the_grid():
-    lowered = pulse.compile(mixed, schedule="asap", machine=_machine(0.5)).lower(Q[0], Q[1])
+    lowered = pulse.compile(mixed, schedule="asap", control_system=_machine(0.5)).lower(Q[0], Q[1])
     drives = [e for e in lowered.schedule if e.kind == "drive" and e.line == 0]
     # Line 0 is busy until 40; the sync meets there, on the grid.
     assert drives[1].start == 40
@@ -225,7 +226,7 @@ def calls_a_block(a, b):
 
 @pytest.mark.parametrize("schedule", ("asap", "alap"))
 def test_a_kernel_with_its_own_schedule_is_placed_on_the_grid(schedule):
-    lowered = pulse.compile(calls_a_block, schedule=schedule, machine=_machine(0.5)).lower(
+    lowered = pulse.compile(calls_a_block, schedule=schedule, control_system=_machine(0.5)).lower(
         Q[0], Q[1]
     )
     assert all(e.start % 4 == 0 for e in lowered.schedule if e.kind == "drive")
@@ -248,7 +249,7 @@ def with_a_call(q):
 @pytest.mark.parametrize("schedule", SCHEDULES)
 def test_classical_calls_keep_lines_on_the_grid(schedule):
     machine = _machine(0.5, links={"controller": Link(fixed_ns=10)})
-    lowered = pulse.compile(with_a_call, schedule=schedule, machine=machine).lower(Q[0])
+    lowered = pulse.compile(with_a_call, schedule=schedule, control_system=machine).lower(Q[0])
     assert all(e.start % 4 == 0 for e in lowered.schedule if e.kind in ("drive", "readout"))
     program = lowered.export_controller()
     assert program["clock_ghz"] == 0.5 and program["program_clock_ghz"] == 2.0
@@ -270,7 +271,7 @@ def off_grid(q):
 
 def test_a_length_off_the_grid_fails_to_compile_naming_the_line_and_the_fix():
     with pytest.raises(ControllerLimitError) as caught:
-        pulse.compile(off_grid, machine=_machine(1.0)).lower(Q[3])
+        pulse.compile(off_grid, control_system=_machine(1.0)).lower(Q[3])
     drive, wait = caught.value.violations
     assert drive == (
         "line d3 moves in timesteps of 2 cycles; 41 cycles isn't a whole number of "
@@ -280,7 +281,7 @@ def test_a_length_off_the_grid_fails_to_compile_naming_the_line_and_the_fix():
     assert wait.startswith("line d3 moves in timesteps of 2 cycles; 5 cycles isn't")
     assert "(the wait at cycle 42; pulse.round_duration(line, 5) gives 6" in wait
     # A controller that starts every cycle takes it.
-    assert pulse.compile(off_grid, machine=_machine(2.0)).lower(Q[3]).schedule
+    assert pulse.compile(off_grid, control_system=_machine(2.0)).lower(Q[3]).schedule
 
 
 def test_check_against_a_slower_controller_reports_what_is_off_its_grid():
@@ -327,20 +328,22 @@ def answer_wait_off_grid(q):
 def test_a_wait_from_an_answer_has_its_bounds_on_every_lines_grid():
     links = {"controller": Link(fixed_ns=10)}
     machine = _machine(0.5, links=links)
-    assert pulse.compile(answer_wait_on_grid, machine=machine).lower(Q[0]).schedule
+    assert pulse.compile(answer_wait_on_grid, control_system=machine).lower(Q[0]).schedule
     with pytest.raises(pulse.CompilationError) as caught:
-        pulse.compile(answer_wait_off_grid, machine=machine).lower(Q[0])
+        pulse.compile(answer_wait_off_grid, control_system=machine).lower(Q[0])
     message = str(caught.value)
     assert message.startswith("wait() on line d0: its length comes from")
     assert "every later operation on every line moves by it" in message
     assert "move in timesteps of 4 cycles; its bounds (6, 402) aren't whole" in message
     assert "for 6, use 4 or 8; for 402, use 400 or 404" in message
     # On the program clock every bound is on the grid.
-    assert pulse.compile(answer_wait_off_grid, machine=MachineModel(links=links)).lower(Q[0])
+    assert pulse.compile(answer_wait_off_grid, control_system=ControlSystem(links=links)).lower(
+        Q[0]
+    )
 
 
 def test_a_variable_wait_off_the_grid_fails_at_the_call():
-    compiled = pulse.compile(variable_wait, machine=_machine(0.5))
+    compiled = pulse.compile(variable_wait, control_system=_machine(0.5))
     lowered = compiled.lower(Q[0], 6.0)
     assert [e.start for e in lowered.schedule if e.kind == "drive"] == [0, 20]
     with pytest.raises(ValueError, match="nearest lengths are 4 and 8"):
@@ -351,7 +354,7 @@ def test_a_variable_wait_off_the_grid_fails_at_the_call():
 
 
 def test_the_export_counts_the_controllers_own_cycles():
-    lowered = pulse.compile(mixed, schedule="asap", machine=_machine(0.5)).lower(Q[0], Q[1])
+    lowered = pulse.compile(mixed, schedule="asap", control_system=_machine(0.5)).lower(Q[0], Q[1])
     program = lowered.export_controller()
     assert program["clock_ghz"] == 0.5 and program["program_clock_ghz"] == 2.0
     assert "reference_clock_ghz" not in program
@@ -368,7 +371,7 @@ def test_the_export_counts_the_controllers_own_cycles():
 
 
 def test_samples_at_a_rate_of_the_controllers_clock():
-    lowered = pulse.compile(mixed, schedule="asap", machine=_machine(0.5)).lower(Q[0], Q[1])
+    lowered = pulse.compile(mixed, schedule="asap", control_system=_machine(0.5)).lower(Q[0], Q[1])
     program = lowered.export_controller(sample_rate_ghz=1.0)
     first = next(e for e in program["events"] if e["kind"] == "drive")
     # Two samples per own cycle: the envelope at every other program cycle.
@@ -381,7 +384,7 @@ def test_samples_at_a_rate_of_the_controllers_clock():
 
 
 def test_the_emulation_export_counts_the_controllers_own_cycles():
-    lowered = pulse.compile(mixed, schedule="asap", machine=_machine(0.5)).lower(Q[0], Q[1])
+    lowered = pulse.compile(mixed, schedule="asap", control_system=_machine(0.5)).lower(Q[0], Q[1])
     data = lowered.export_emulation()
     assert data["clock_ghz"] == 0.5 and data["program_clock_ghz"] == 2.0
     starts = [e["start_cycles"] for e in data["events"]]
@@ -422,12 +425,12 @@ def test_every_time_in_the_exports_is_converted():
             for value in data:
                 walk(value)
 
-    machine = dataclasses.replace(matrix.MACHINE, controller=Controller(clock_ghz=1.0))
+    machine = dataclasses.replace(matrix.MACHINE, controllers=[Controller(clock_ghz=1.0)])
     for case in matrix.all_cases()[::7]:
         if matrix.expected_error(case) is not None:
             continue
         try:
-            lowered = matrix.lower_case(case, Q, machine=machine)
+            lowered = matrix.lower_case(case, Q, control_system=machine)
         except (ControllerLimitError, ValueError):
             continue
         walk(lowered.export_controller())
@@ -437,7 +440,7 @@ def test_every_time_in_the_exports_is_converted():
 
 
 def test_a_single_clock_export_is_unchanged():
-    lowered = pulse.compile(mixed, machine=_machine(2.0)).lower(Q[0], Q[1])
+    lowered = pulse.compile(mixed, control_system=_machine(2.0)).lower(Q[0], Q[1])
     program = lowered.export_controller()
     assert program["clock_ghz"] == 2.0
     assert "program_clock_ghz" not in program and "reference_clock_ghz" not in program
@@ -445,7 +448,7 @@ def test_a_single_clock_export_is_unchanged():
 
 
 def test_a_faster_controller_counts_more_cycles():
-    lowered = pulse.compile(off_grid, machine=_machine(4.0)).lower(Q[0])
+    lowered = pulse.compile(off_grid, control_system=_machine(4.0)).lower(Q[0])
     program = lowered.export_controller()
     assert program["clock_ghz"] == 4.0 and program["program_clock_ghz"] == 2.0
     drive = next(e for e in program["events"] if e["kind"] == "drive")
@@ -457,8 +460,8 @@ def test_a_run_time_wait_has_its_bounds_in_the_controllers_cycles():
     from tests.test_controller import answered
 
     for clock_ghz, bounds in ((None, (8, 400)), (1.0, (4, 200)), (4.0, (16, 800))):
-        machine = MachineModel() if clock_ghz is None else _machine(clock_ghz)
-        program = pulse.compile(answered, machine=machine).lower(Q[0]).export_controller()
+        machine = ControlSystem() if clock_ghz is None else _machine(clock_ghz)
+        program = pulse.compile(answered, control_system=machine).lower(Q[0]).export_controller()
         wait = next(e for e in program["events"] if e["kind"] == "wait")
         assert (wait["min_cycles"], wait["max_cycles"]) == bounds
 
@@ -485,7 +488,9 @@ def _answer_of(program):
 
 def test_what_a_program_computes_at_run_time_is_in_the_controllers_cycles():
     machine = _machine(1.0)
-    program = pulse.compile(timed_at_run_time, machine=machine).lower(Q[0]).export_controller()
+    program = (
+        pulse.compile(timed_at_run_time, control_system=machine).lower(Q[0]).export_controller()
+    )
     answer = _answer_of(program)
     delay = {**answer, "result": 1}
     wait = next(e for e in program["events"] if e["kind"] == "wait")
@@ -540,8 +545,10 @@ def test_what_a_program_computes_at_run_time_is_in_the_controllers_cycles():
 def test_a_clock_that_only_steps_checks_a_run_time_length_on_its_timesteps():
     # The ratio is 1, so only the timestep check is added; times keep their
     # values.
-    machine = MachineModel(controller=Controller(clock_ghz=2.0, cycles_per_timestep=4))
-    program = pulse.compile(timed_at_run_time, machine=machine).lower(Q[0]).export_controller()
+    machine = ControlSystem(controllers=[Controller(clock_ghz=2.0, cycles_per_timestep=4)])
+    program = (
+        pulse.compile(timed_at_run_time, control_system=machine).lower(Q[0]).export_controller()
+    )
     wait = next(e for e in program["events"] if e["kind"] == "wait")
     assert wait["length"]["op"] == "controller_cycles"
     assert (wait["length"]["num"], wait["length"]["den"], wait["length"]["timestep"]) == (1, 1, 4)
@@ -604,7 +611,7 @@ def test_a_run_time_operand_the_export_cannot_tell_is_a_time_is_a_compile_error(
 
 
 def test_a_run_time_violation_fails_the_export_and_the_check(monkeypatch):
-    lowered = pulse.compile(timed_at_run_time, machine=_machine(1.0)).lower(Q[0])
+    lowered = pulse.compile(timed_at_run_time, control_system=_machine(1.0)).lower(Q[0])
     monkeypatch.setattr(_clocks, "own_run_time", lambda *args: ["not convertible"])
     with pytest.raises(ControllerLimitError, match="not convertible"):
         lowered.export_controller()
@@ -655,16 +662,18 @@ def test_lines_on_several_controllers_convert_what_they_compute_at_run_time():
 
 def test_a_reference_clock_divides_every_controller_clock_and_is_exported():
     machine = _machine(0.5, reference_clock_ghz=0.25)
-    program = pulse.compile(mixed, machine=machine).lower(Q[0], Q[1]).export_controller()
+    program = pulse.compile(mixed, control_system=machine).lower(Q[0], Q[1]).export_controller()
     assert program["reference_clock_ghz"] == 0.25
-    machine = MachineModel(controller=Controller(), reference_clock_ghz=0.5)
-    program = pulse.compile(mixed, machine=machine).lower(Q[0], Q[1]).export_controller()
+    machine = ControlSystem(controllers=[Controller()], reference_clock_ghz=0.5)
+    program = pulse.compile(mixed, control_system=machine).lower(Q[0], Q[1]).export_controller()
     assert program["reference_clock_ghz"] == 0.5 and "program_clock_ghz" not in program
     with pytest.raises(ValueError, match="not a whole multiple of the 0.3 GHz reference"):
-        pulse.compile(mixed, machine=_machine(0.5, reference_clock_ghz=0.3)).lower(Q[0], Q[1])
+        pulse.compile(mixed, control_system=_machine(0.5, reference_clock_ghz=0.3)).lower(
+            Q[0], Q[1]
+        )
     with pytest.raises(ValueError, match="must be positive"):
-        MachineModel(reference_clock_ghz=0.0)
-    assert MachineModel(reference_clock_ghz=0.5) != MachineModel()
+        ControlSystem(reference_clock_ghz=0.0)
+    assert ControlSystem(reference_clock_ghz=0.5) != ControlSystem()
 
 
 def test_without_a_reference_each_controller_start_is_known_to_one_own_cycle():
@@ -712,20 +721,20 @@ def test_custom_samples_the_envelope_at_the_lines_rate():
     drive = _played(pulse.compile(shaped).lower(Q[0]))
     assert drive["waveform"]["samples"] == pytest.approx([ramp(k + 0.5) for k in range(8)])
     # ...one per cycle of a controller at half the clock, at t = 1, 3, 5, 7...
-    lowered = pulse.compile(shaped, machine=_machine(1.0)).lower(Q[0])
+    lowered = pulse.compile(shaped, control_system=_machine(1.0)).lower(Q[0])
     assert _durations(lowered) == [8]
     assert "rate = array<i64: 1, 2>" in lowered.mlir()
     drive = _played(lowered)
     assert drive["duration_cycles"] == 4
     assert drive["waveform"]["samples"] == pytest.approx([ramp(t) for t in (1, 3, 5, 7)])
     # ...and two per cycle on a controller that plays two.
-    machine = MachineModel(controller=Controller(sample_rate_ghz=4.0))
-    drive = _played(pulse.compile(shaped, machine=machine).lower(Q[0]))
+    machine = ControlSystem(controllers=[Controller(sample_rate_ghz=4.0)])
+    drive = _played(pulse.compile(shaped, control_system=machine).lower(Q[0]))
     assert drive["duration_cycles"] == 8
     expected = [ramp((k + 0.5) / 2) for k in range(16)]
     assert drive["waveform"]["samples"] == pytest.approx(expected)
     with pytest.raises(pulse.CompilationError, match="a multiple of 2 cycles"):
-        pulse.compile(shaped_off_grid, machine=_machine(1.0)).lower(Q[0])
+        pulse.compile(shaped_off_grid, control_system=_machine(1.0)).lower(Q[0])
 
 
 HELD = [ramp(t) for t in (1, 1, 3, 3, 5, 5, 7, 7)]
@@ -739,7 +748,7 @@ def held_for_two_cycles(q):
 
 def test_a_custom_envelope_is_simulated_at_its_controllers_rate():
     # Each sample at half the clock is held for two cycles of the program's.
-    lowered = pulse.compile(shaped, machine=_machine(1.0)).lower(Q[0])
+    lowered = pulse.compile(shaped, control_system=_machine(1.0)).lower(Q[0])
     held = pulse.compile(held_for_two_cycles).lower(Q[0])
     a = pulse.simulate(lowered).density_matrix
     b = pulse.simulate(held).density_matrix
@@ -772,24 +781,24 @@ def test_sample_arrays_play_only_at_the_rate_they_were_made_for():
     assert _durations(pulse.compile(at_program_rate).lower(Q[0])) == [4]
     # ...and nowhere else: never as a longer or shorter pulse.
     with pytest.raises(pulse.CompilationError) as caught:
-        pulse.compile(at_program_rate, machine=_machine(1.0)).lower(Q[0])
+        pulse.compile(at_program_rate, control_system=_machine(1.0)).lower(Q[0])
     message = str(caught.value)
     assert message.startswith(
         "custom_samples(): 4 samples made for 2 GHz (one sample per clock cycle) on lines "
         "that play 1 GHz (one sample every 2 clock cycles)"
     )
     assert "pass sample_rate_ghz=1" in message and "custom(duration, f)" in message
-    machine = MachineModel(controller=Controller(sample_rate_ghz=4.0))
+    machine = ControlSystem(controllers=[Controller(sample_rate_ghz=4.0)])
     with pytest.raises(pulse.CompilationError, match="lines that play 4 GHz"):
-        pulse.compile(at_program_rate, machine=machine).lower(Q[0])
+        pulse.compile(at_program_rate, control_system=machine).lower(Q[0])
     # Made for the line's rate, they last their samples at it.
-    lowered = pulse.compile(at_half_rate, machine=_machine(1.0)).lower(Q[0])
+    lowered = pulse.compile(at_half_rate, control_system=_machine(1.0)).lower(Q[0])
     assert _durations(lowered) == [8] and _played(lowered)["duration_cycles"] == 4
     with pytest.raises(pulse.CompilationError, match="made for 1 GHz .* lines that play 2 GHz"):
         pulse.compile(at_half_rate).lower(Q[0])
     # Two per cycle, an odd count does not fill whole cycles.
     with pytest.raises(pulse.CompilationError, match="give a multiple of 2 samples"):
-        pulse.compile(at_double_rate, machine=machine).lower(Q[0])
+        pulse.compile(at_double_rate, control_system=machine).lower(Q[0])
 
 
 def test_check_against_another_rate_reports_the_sample_arrays():
@@ -812,7 +821,7 @@ def product(q):
 
 def test_a_product_is_simulated_at_its_controllers_clock():
     fast = pulse.compile(product).lower(Q[0])
-    slow = pulse.compile(product, machine=_machine(0.5)).lower(Q[0])
+    slow = pulse.compile(product, control_system=_machine(0.5)).lower(Q[0])
     llvm_fast, llvm_slow = fast.mlir("llvm"), slow.mlir("llvm")
     assert llvm_fast != llvm_slow
     a = pulse.simulate(fast).density_matrix

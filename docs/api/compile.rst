@@ -24,10 +24,6 @@ Compilation API
    :members:
    :undoc-members:
 
-.. autoclass:: cudaq_pulse.compiler.MachineModel
-   :members:
-   :undoc-members:
-
 .. autoclass:: cudaq_pulse.compiler.ScheduledEvent
    :members:
    :undoc-members:

@@ -373,7 +373,7 @@ def test_reading_a_register_element_attribute_names_the_list_rewrite():
 
 
 def test_a_runtime_qudit_frequency_is_one_tone_until_its_line_is_retuned():
-    machine = pulse.compiler.MachineModel(controller=Controller(max_tones_per_line=1))
+    machine = pulse.ControlSystem(controllers=[Controller(max_tones_per_line=1)])
 
     @pulse.kernel
     def native(q: Qudit):
@@ -387,9 +387,9 @@ def test_a_runtime_qudit_frequency_is_one_tone_until_its_line_is_retuned():
         drive(d, square(20, 0.1))
         drive(d, square(20, 0.2), tone=shift_frequency(d.tone, 1e6))
 
-    assert pulse.compile(native, machine=machine).lower(H[3]).export_controller()
+    assert pulse.compile(native, control_system=machine).lower(H[3]).export_controller()
     with pytest.raises(ControllerLimitError, match="2 tone frequencies"):
-        pulse.compile(retuned, machine=machine).lower(H[3])
+        pulse.compile(retuned, control_system=machine).lower(H[3])
 
 
 def test_list_promoted_to_static_warns():

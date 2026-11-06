@@ -17,13 +17,12 @@ import re
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import CompilationError, Controller
-from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse import CompilationError, Controller, ControlSystem
 
 from tests._handles import Q
 
 # 5000 ns on the 2 GHz clock of Q's device: 10,000 cycles.
-MACHINE = MachineModel(controller=Controller(max_program_duration=5_000))
+MACHINE = ControlSystem(controllers=[Controller(max_program_duration=5_000)])
 LIMIT = r"Controller\.max_program_duration"
 BOUNDS = (4, 10**6)
 LENGTHS = [4.0, 1999.5, 3000.0, 4400.4, 6000.0, 7600.0, 9700.0, 12_000.0]
@@ -94,7 +93,7 @@ def _round(x):
 
 @pytest.mark.parametrize("shape", SHAPES)
 def test_a_call_is_checked_as_the_program_with_its_lengths_written_in(shape):
-    compiled = pulse.compile(_kernel(shape), machine=MACHINE)
+    compiled = pulse.compile(_kernel(shape), control_system=MACHINE)
     waits = compiled.lower(Q[0], 4.0, 4.0).generic.waits
     assert len(waits.length) == 5
     cycles, most, _, repeats = waits.length[:4]
@@ -104,7 +103,7 @@ def test_a_call_is_checked_as_the_program_with_its_lengths_written_in(shape):
         for y in LENGTHS:
             written = (_round(x), _round(y))
             try:
-                pulse.compile(_kernel(shape, written), machine=MACHINE).lower(Q[0], 0.0, 0.0)
+                pulse.compile(_kernel(shape, written), control_system=MACHINE).lower(Q[0], 0.0, 0.0)
                 fits = True
             except CompilationError as error:
                 assert re.search(LIMIT, str(error)), error
@@ -128,7 +127,7 @@ def test_a_call_is_checked_as_the_program_with_its_lengths_written_in(shape):
 
 def test_an_unpickled_module_checks_waits_in_ifs_as_compiled():
     waits = (
-        pulse.compile(_kernel("longer other arm"), machine=MACHINE)
+        pulse.compile(_kernel("longer other arm"), control_system=MACHINE)
         .lower(Q[0], 4.0, 4.0)
         .generic.waits
     )
@@ -147,5 +146,5 @@ def test_waits_outside_ifs_keep_the_sum():
         for _ in range(3):
             wait(d, x, bounds=BOUNDS)
 
-    waits = pulse.compile(flat, machine=MACHINE).lower(Q[0], 4.0).generic.waits
+    waits = pulse.compile(flat, control_system=MACHINE).lower(Q[0], 4.0).generic.waits
     assert len(waits.length) == 4

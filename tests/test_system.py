@@ -16,7 +16,7 @@ import warnings
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import Controller
+from cudaq_pulse import Controller, ControlSystem
 from cudaq_pulse._errors import (
     DeviceDefinitionError,
     InvalidValueError,
@@ -25,7 +25,6 @@ from cudaq_pulse._errors import (
 )
 from cudaq_pulse._system import installed_descriptions
 from cudaq_pulse.classical import Link
-from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError
 from cudaq_pulse.targets.base import (
     Coupling,
@@ -156,7 +155,7 @@ def test_the_device_holds_its_control_system():
 
 
 def _schedule(machine):
-    lowered = pulse.compile(drive_and_branch, schedule="rcp", machine=machine).lower(
+    lowered = pulse.compile(drive_and_branch, schedule="rcp", control_system=machine).lower(
         *pulse.device("transmon_17q").qudits[:2]
     )
     events = [(e.kind, e.line, e.start_cycles, e.duration_cycles) for e in lowered.schedule]
@@ -164,11 +163,9 @@ def _schedule(machine):
 
 
 def test_rcp_waits_the_feedback_latency_of_the_controllers():
-    by_model = _schedule(MachineModel(readout_latency_cycles=50))
     system = pulse.ControlSystem(controllers=[pulse.Controller(feedback_latency_cycles=50)])
     assert system._machine.readout_latency_cycles == 50
-    assert _schedule(system) == by_model
-    assert _schedule(MachineModel()) != by_model
+    assert _schedule(ControlSystem()) != _schedule(system)
     # Of several, the slowest that plays readouts, and on another controller
     # the start uncertainty of both too: one cycle each without a reference.
     a, b = _two_boxes(feedback_latency_cycles=50)
@@ -186,13 +183,47 @@ def test_compile_uses_the_device_control_system():
     qpu = _qpu(box)
     with pytest.raises(ControllerLimitError, match="at most 1"):
         pulse.compile(drive_and_branch, device=qpu)(qpu.qudits[0], qpu.qudits[1])
-    # As with the same limits given to a machine model.
+    # As with the same limits given as one controller.
     with pytest.raises(ControllerLimitError, match="at most 1"):
-        pulse.compile(
-            drive_and_branch, machine=MachineModel(controller=Controller(max_pulses=1))
-        ).lower(qpu.qudits[0], qpu.qudits[1])
-    with pytest.raises(TypeError, match="MachineModel or a ControlSystem"):
-        pulse.compile(drive_and_branch, machine=box)
+        pulse.compile(drive_and_branch, control_system=Controller(max_pulses=1)).lower(
+            qpu.qudits[0], qpu.qudits[1]
+        )
+    with pytest.raises(TypeError, match="takes a pulse.ControlSystem or a pulse.Controller"):
+        pulse.compile(drive_and_branch, control_system=qpu)  # type: ignore[arg-type]
+
+
+def test_one_controller_given_to_compile_says_what_it_lacks():
+    qpu = pulse.device("transmon_17q")
+    q, r = qpu.qudits[:2]
+    wired = pulse.Controller(drive_lines=[0, 1], readout_lines=[1])
+    with pytest.raises(ControllerLimitError) as raised:
+        pulse.compile(drive_and_branch, control_system=wired).lower(q, r)
+    assert (
+        "line 1 (the readout line of qudit 0) is not on the one Controller compile() was given;"
+        " add 0 to its readout_lines, or give compile() a pulse.ControlSystem that describes the"
+        " whole control system" in str(raised.value)
+    )
+    no_branch = [c for c in pulse.Capability if c is not pulse.Capability.BRANCH]
+    with pytest.raises(ControllerLimitError, match="needs 'branch', which the one Controller"):
+        pulse.compile(drive_and_branch, control_system=Controller(supports=no_branch)).lower(q, r)
+
+    @pulse.classical(max_latency_ns=100, link="decoder")
+    def decide(bits: pulse.Bits) -> pulse.Bits:
+        return [bits[0]]
+
+    @pulse.kernel
+    def decoded(q):
+        m = readout(get_readout_line(q), square(100, 0.05))
+        decide.submit([m]).result()
+
+    with pytest.raises(pulse.CompilationError, match="no link named 'decoder': compile\\(\\) was"):
+        pulse.compile(decoded, control_system=Controller()).lower(q)
+    computing = Controller(processors=[pulse.Processor(links=["decoder"])])
+    with pytest.raises(DeviceDefinitionError, match="the one Controller compile\\(\\) was given"):
+        pulse.compile(decoded, control_system=computing)
+    # Described as a system, the same program compiles.
+    system = pulse.ControlSystem(controllers=[computing], links={"decoder": pulse.Link()})
+    pulse.compile(decoded, control_system=system).lower(q)
 
 
 def test_a_line_on_no_controller_does_not_compile():
@@ -217,14 +248,16 @@ def test_each_controller_is_held_to_its_own_limits():
         pulse.compile(drive_and_branch, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
 
 
-def test_one_controller_on_its_own_clock_is_timed_as_on_a_machine_model():
+def test_one_controller_on_its_own_clock_is_timed_alike_in_a_system_of_several():
     box = pulse.Controller(drive_lines=range(4), readout_lines=range(4), clock_ghz=1.0)
     # Without a declared program clock, the controller's is the program's.
     assert _qpu(box).clock_ghz == 1.0
     qpu = _qpu(box, clock_ghz=2.0)
     by_system = pulse.compile(drive_and_branch, device=qpu).lower(qpu.qudits[0], qpu.qudits[1])
-    machine = MachineModel(controller=Controller(clock_ghz=1.0))
-    by_model = pulse.compile(drive_and_branch, machine=machine).lower(qpu.qudits[0], qpu.qudits[1])
+    machine = ControlSystem(controllers=[Controller(clock_ghz=1.0)])
+    by_model = pulse.compile(drive_and_branch, control_system=machine).lower(
+        qpu.qudits[0], qpu.qudits[1]
+    )
     system, model = by_system.export_controller(), by_model.export_controller()
     assert system["clock_ghz"] == 1.0 and system["program_clock_ghz"] == qpu.clock_ghz
     assert system["events"] == model["events"]
@@ -259,8 +292,8 @@ def test_line_delays_and_a_reference_clock_are_the_control_systems():
     by_system = pulse.compile(drive_and_branch, device=timed).lower(
         timed.qudits[0], timed.qudits[1]
     )
-    machine = MachineModel(controller=box, reference_clock_ghz=0.5, line_delays_ns=delays)
-    by_model = pulse.compile(drive_and_branch, machine=machine).lower(
+    machine = ControlSystem(controllers=[box], reference_clock_ghz=0.5, line_delays_ns=delays)
+    by_model = pulse.compile(drive_and_branch, control_system=machine).lower(
         timed.qudits[0], timed.qudits[1]
     )
     assert _outputs(by_system) == _outputs(by_model)
@@ -514,9 +547,9 @@ def test_a_controller_without_loop_gets_its_loops_unrolled_for_it_only():
     with pytest.raises(ControllerLimitError, match="body counted once; the controller holds"):
         pulse.compile(two_loops, device=qpu).lower(qpu.qudits[0], qpu.qudits[2])
     # A controller without loop counts every iteration of both loops.
-    machine = MachineModel(controller=Controller(max_pulses=60, supports=no_loop))
+    machine = ControlSystem(controllers=[Controller(max_pulses=60, supports=no_loop)])
     with pytest.raises(ControllerLimitError) as raised:
-        pulse.compile(two_loops, machine=machine).lower(*qpu.qudits[:2])
+        pulse.compile(two_loops, control_system=machine).lower(*qpu.qudits[:2])
     text = str(raised.value)
     assert "70 drives and readouts; the controller plays at most 60" in text
     assert text.endswith(

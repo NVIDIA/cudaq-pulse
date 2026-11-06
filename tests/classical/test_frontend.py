@@ -16,9 +16,9 @@ from collections.abc import Sequence
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import classical
+from cudaq_pulse import ControlSystem, classical
 from cudaq_pulse.classical import Link, wire
-from cudaq_pulse.compiler import MachineModel, _dispatch_tables
+from cudaq_pulse.compiler import _dispatch_tables
 
 from tests._handles import Q
 
@@ -683,7 +683,7 @@ def _program(*functions, machine=None):
         for f in functions:
             f.submit([m]).result()
 
-    return pulse.compile(k, machine=machine).lower(Q[0])
+    return pulse.compile(k, control_system=machine).lower(Q[0])
 
 
 def _one(name: str, link: int | str = "controller"):
@@ -1029,8 +1029,8 @@ def test_two_functions_with_one_name():
 
 
 def test_links_reach_the_module_and_the_schedule():
-    machine = MachineModel(links={0: Link(fixed_ns=50, bytes_per_ns=1, feedback_ns=100)})
-    low = pulse.compile(_reset, machine=machine).lower(Q[0])
+    machine = ControlSystem(links={"host": Link(fixed_ns=50, bytes_per_ns=1, feedback_ns=100)})
+    low = pulse.compile(_reset, control_system=machine).lower(Q[0])
     assert "fixed_ns = 5.000000e+01" in low.mlir()
     (call,) = low.classical_report()
     clock = low.target.clock_ghz
@@ -1040,14 +1040,14 @@ def test_links_reach_the_module_and_the_schedule():
         (500 + 100) * clock
     )
     assert hash(machine) == hash(
-        MachineModel(links={0: Link(fixed_ns=50, bytes_per_ns=1, feedback_ns=100)})
+        ControlSystem(links={"host": Link(fixed_ns=50, bytes_per_ns=1, feedback_ns=100)})
     )
-    with pytest.raises(TypeError, match="read-only"):
-        machine.links[1] = Link()  # type: ignore[index]
-    with pytest.raises(ValueError, match="link ids"):
-        MachineModel(links={-1: Link()})
+    with pytest.raises(TypeError, match="does not support item assignment"):
+        machine.links["spare"] = Link()  # type: ignore[index]
+    with pytest.raises(ValueError, match="keyed by name"):
+        ControlSystem(links={-1: Link()})  # type: ignore[dict-item]
     with pytest.raises(TypeError, match="must be a Link"):
-        MachineModel(links={0: 5})  # type: ignore[dict-item]
+        ControlSystem(links={"host": 5})  # type: ignore[dict-item]
 
 
 def test_report_and_schedule_events():

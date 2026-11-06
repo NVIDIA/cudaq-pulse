@@ -53,7 +53,7 @@ def main() -> None:
     print("ASAP violations of a 2-drive limit:", concurrent_drive_violations(asap, 2))
 
     rcp = pulse.compile(
-        parallel_x, schedule="rcp", machine=pulse.compiler.MachineModel(max_concurrent_drives=2)
+        parallel_x, schedule="rcp", control_system=pulse.ControlSystem(max_concurrent_drives=2)
     ).lower(*args)
     violations = concurrent_drive_violations(rcp, 2)
     print("RCP violations of a 2-drive limit:", violations)

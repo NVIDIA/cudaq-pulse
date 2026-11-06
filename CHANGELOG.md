@@ -40,7 +40,7 @@ behavior may change in any 0.x release.
   and the nearest valid lengths, and `pulse.cycles_on(line, n)` rounds a
   length onto the grid (`pulse.Rounding`). Controller programs count their
   own cycles, with `"program_clock_ghz"` written when it differs;
-  `MachineModel.reference_clock_ghz` is checked against every controller
+  `ControlSystem.reference_clock_ghz` is checked against every controller
   clock and exported; the simulator samples generated waveforms at the
   line's controller clock.
 - **Runtime qudits.** A parameter annotated `Qudit` or `Register` (or
@@ -62,14 +62,17 @@ behavior may change in any 0.x release.
   quantum system. `compile(kernel, device=qpu)` checks every program against
   the system: a line on no controller, each controller's own limits, a
   capability (`pulse.Capability`) a controller lacks, and a call over a link
-  that does not reach its controllers fail to compile. A controller that
+  that does not reach its controllers fail to compile.
+  `compile(kernel, control_system=...)` takes a system, or one `Controller`
+  that stands for a system of it alone: what that controller cannot take is
+  an error that says to describe the whole system. A system without
+  controllers states only its links and lanes. A controller that
   supports `loop` holds a rolled loop's body once against `max_pulses`; one
   that does not plays it unrolled, and its limit error names the loop; unrolling adds pulses,
   not waveform memory, which holds each shape once. `rcp` keeps a branch
   on a readout the `feedback_latency_cycles` of the controllers that read out.
   A control system's `line_delays_ns` (times or numbers of ns) and
-  `reference_clock_ghz` are its calibrated line delays and shared clock, as
-  on a `MachineModel`; new
+  `reference_clock_ghz` are its calibrated line delays and shared clock; new
   delays alone schedule its programs again without tracing them. Without a
   declared `"clock_ghz"`, a device's program clock is its fastest
   controller clock when every other one divides it; clocks that do not
@@ -373,7 +376,7 @@ behavior may change in any 0.x release.
   name, and up to 252 clock cycles, like `custom_samples`.
 - **Compilation.** Verification, constant and phase folding and pulse
   fusion by default; ASAP, ALAP and resource-constrained schedules
-  (`cudaq_pulse.compiler.MachineModel`); per-kernel schedule policies and
+  (`pulse.compile(control_system=...)`); per-kernel schedule policies and
   schedule blocks. `pulse.Lowered.mlir(level)` returns the module at an IR
   level (`cudaq_pulse.compiler.IRLevel`: `"pulse"`, the scheduled Pulse
   MLIR, `"qop"`, `"cudm"` or `"llvm"`), `Lowered.schedule` the timed events
@@ -402,7 +405,7 @@ behavior may change in any 0.x release.
   (`pulse-fold-constants`, `pulse-remove-unused`, `pulse-merge-waits`,
   `pulse-simplify-control-flow`, `pulse-fold-phases`, `pulse-fuse-pulses`,
   `pulse-hoist-loop-invariants`), as well as `pulse-unroll-classical-loops`
-  and `pulse-schedule-rcp` with its machine model as options (`max-drives`,
+  and `pulse-schedule-rcp` with the control system's lanes as options (`max-drives`,
   `max-readouts`, `readout-latency`, `switch-penalty`, `alap`).
 - **Devices and targets.** `pulse.device` is the one device getter: it
   describes a machine as a target plus a qudit layout, from a registered
@@ -507,7 +510,7 @@ behavior may change in any 0.x release.
   the function's own signature: a wrong argument is an error where it is
   passed, and
   `.submit()` returns a `Pending` of the result's type. Links are named in
-  `MachineModel(links={...})`. Every schedule budgets the worst-case
+  `ControlSystem(links={...})`. Every schedule budgets the worst-case
   latency, holds link slots and reports each call's slack and its hidden and
   exposed latency (`Lowered.classical_report()`); `pulse-classical-check`
   verifies slots, deadlines and ordering. A wait whose length is an answer,
@@ -554,8 +557,9 @@ behavior may change in any 0.x release.
   and the phase the frame gains from there, and each such tone's line and
   the frame every shot starts it in (`runtime_tones`). A program that
   computes nothing at run time exports exactly as before. Within a version,
-  keys and event kinds are only added. `MachineModel(controller=
-  Controller(...))` states what a controller can play (clock, issue
+  keys and event kinds are only added. A `Controller(...)`, given to
+  `pulse.compile(control_system=...)` alone or in its `ControlSystem`,
+  states what a controller can play (clock, issue
   spacing, waveform memory at its `sample_rate_ghz`, tones, the largest
   amplitude, readout detectors, feedback latency, answer timeouts, program
   size; the compiler itself limits no amplitude) and makes compilation fail with

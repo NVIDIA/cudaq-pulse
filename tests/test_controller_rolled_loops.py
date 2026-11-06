@@ -27,8 +27,7 @@ from typing import Any
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import Controller, controller
-from cudaq_pulse.compiler import MachineModel
+from cudaq_pulse import Controller, ControlSystem, controller
 from cudaq_pulse.controller import ControllerLimitError, check
 
 from tests import _child
@@ -44,7 +43,6 @@ _NO_LOOP = [c for c in pulse.Capability if c is not pulse.Capability.LOOP]
 _KERNELS = """
 import json
 import cudaq_pulse as pulse
-from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.controller import ControllerLimitError
 from cudaq_pulse import Controller
 from tests._handles import Q
@@ -119,7 +117,7 @@ def retuned(q):
         if m:
             drive(d, square(8, 0.1))
 
-options = {{"machine": MachineModel(controller=Controller({limits}))}}
+options = {{"control_system": Controller({limits})}}
 handles = (Q[0],)
 {system}
 try:
@@ -221,7 +219,7 @@ def test_the_event_count_of_a_rolled_loop_is_its_trip_count_times_its_body():
     found = _in_a_child("drives", 10**15 + 1, "max_pulses=10**15, supports=NO_LOOP")
     assert found["count"] == 1
     assert found["message"] == (
-        "the program exceeds the controller's limits:\n  1000000000000001 drives and readouts; "
+        "the program does not fit the control system:\n  1000000000000001 drives and readouts; "
         "the controller plays at most 1000000000000000. It does not support 'loop', so rolled "
         "loops are unrolled for it: the loop of 1000000000000001 iterations from cycle 0 plays "
         "1000000000000000 more"
@@ -591,10 +589,10 @@ def _on_grid(n: int) -> dict[str, Any]:
 def _on(kernel: Any, schedule: str, limits: Any) -> Any:
     """*kernel* compiled under *limits*; one of a float is checked when
     called with one, as its export is."""
-    machine = MachineModel(controller=limits)
+    machine = ControlSystem(controllers=[limits])
     if kernel.__wrapped__.__name__ != "scaled":
-        return _lowered(kernel, schedule, machine=machine)
-    compiled = pulse.compile(kernel, schedule=schedule, unroll_threshold=0, machine=machine)
+        return _lowered(kernel, schedule, control_system=machine)
+    compiled = pulse.compile(kernel, schedule=schedule, unroll_threshold=0, control_system=machine)
     return compiled.lower(Q[0], 0.6)
 
 

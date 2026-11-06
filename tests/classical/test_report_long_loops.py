@@ -15,13 +15,12 @@ import time
 
 import cudaq_pulse as pulse
 import pytest
-from cudaq_pulse import _classical_report
+from cudaq_pulse import ControlSystem, _classical_report
 from cudaq_pulse.classical import Link
-from cudaq_pulse.compiler import MachineModel
 
 from tests._handles import Q
 
-MACHINE = MachineModel(links={0: Link(fixed_ns=4, max_in_flight=4)})
+MACHINE = ControlSystem(links={"host": Link(fixed_ns=4, max_in_flight=4)})
 
 
 def _decide(bits: pulse.Bits) -> pulse.Bits:
@@ -102,7 +101,7 @@ def _report(monkeypatch, lowered, listed):
 @pytest.mark.parametrize("schedule", ["asap", "alap", "rcp"])
 def test_the_loops_once_report_what_every_event_does(monkeypatch, trips, name, schedule):
     kernel = _kernels(trips)[name]
-    lowered = pulse.compile(kernel, machine=MACHINE, schedule=schedule, unroll_threshold=0)
+    lowered = pulse.compile(kernel, control_system=MACHINE, schedule=schedule, unroll_threshold=0)
     lowered = lowered.lower(Q[0], Q[1])
     every = _report(monkeypatch, lowered, listed=True)
     assert every and any(e.exposed_cycles is not None for e in every)
@@ -110,7 +109,7 @@ def test_the_loops_once_report_what_every_event_does(monkeypatch, trips, name, s
 
 
 def test_a_call_before_a_loop_of_10_7_iterations_is_reported_without_them():
-    lowered = pulse.compile(_kernels(10**7)["before"], machine=MACHINE, unroll_threshold=0)
+    lowered = pulse.compile(_kernels(10**7)["before"], control_system=MACHINE, unroll_threshold=0)
     lowered = lowered.lower(Q[0], Q[1])
     began = time.process_time()
     (call,) = lowered.classical_report()

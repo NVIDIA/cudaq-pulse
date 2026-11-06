@@ -30,10 +30,10 @@ import dataclasses
 import math
 
 import cudaq_pulse as pulse
+from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link
 from cudaq_pulse.classical import calibration as cal
 from cudaq_pulse.classical.loop import EstimateLog, ParameterStore
-from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.runtime.drift import DriftingPlant, OrnsteinUhlenbeck, TelegraphT1
 from cudaq_pulse.targets import transmon_17q
 
@@ -44,7 +44,7 @@ pulse_cal = {
     "readout_duration": 200 * pulse.ns,
 }
 pi_duration_ns = pulse_cal["pi_duration"] / pulse.ns
-machine = MachineModel(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
+control_system = ControlSystem(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
 
 # ── 1. Frequency binary search in one shot ──────────────────────────────────
 
@@ -130,7 +130,7 @@ if __name__ == "__main__":
             0: dataclasses.replace(qubit, frequency_hz=qubit.frequency_hz + offset_hz),
         },
     )
-    lowered = pulse.compile(binary_search, device=dev, machine=machine).lower(q, 2)
+    lowered = pulse.compile(binary_search, device=dev, control_system=control_system).lower(q, 2)
     result = pulse.simulate(lowered, plant=detuned, dt_ns=0.25)
     print(f"  true detuning {offset_hz / 1e3:.0f} kHz; prior 0 +- {initial_sigma_hz / 1e6:.0f} MHz")
     for branch in sorted(result.branches, key=lambda branch: -branch.probability):

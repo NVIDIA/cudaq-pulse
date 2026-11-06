@@ -189,7 +189,8 @@ assert_type(pulse.Controller(processors=[cores]).processors, Sequence[pulse.Proc
 qpu = pulse.device({"quantum_system": "transmon_17q", "control_system": control})
 assert_type(qpu.control_system, pulse.ControlSystem | None)
 assert_type(qpu.as_dict(), dict[str, Any])
-pulse.compile(rabi, device=qpu, machine=control)
+pulse.compile(rabi, device=qpu, control_system=control)
+pulse.compile(rabi, device=qpu, control_system=box)
 pulse.controller(3)  # type: ignore[arg-type]
 
 readout = DispersiveReadout(frequency_hz=7.0e9, linewidth_hz=1.0e6)

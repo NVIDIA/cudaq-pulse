@@ -44,15 +44,15 @@ def print_timeline(compiled: pulse.Lowered, label: str) -> int:
 
 def main():
     args = [dev.qudit_handles[:4]]
-    machine = pulse.compiler.MachineModel(max_concurrent_drives=2, line_switch_penalty_cycles=5)
+    control_system = pulse.ControlSystem(max_concurrent_drives=2, line_switch_penalty_cycles=5)
     totals = {}
     for policy in ("asap", "alap", "rcp"):
-        compiled = pulse.compile(four_qubit, schedule=policy, machine=machine, device=dev).lower(
-            *args
-        )
+        compiled = pulse.compile(
+            four_qubit, schedule=policy, control_system=control_system, device=dev
+        ).lower(*args)
         label = policy.upper()
         if policy == "rcp":
-            label += f" (max {machine.max_concurrent_drives} concurrent drives)"
+            label += f" (max {control_system.max_concurrent_drives} concurrent drives)"
         totals[policy] = (print_timeline(compiled, label), compiled.metrics.schedule_ms)
 
     print("\n  Policy   Total cycles  Schedule ms")

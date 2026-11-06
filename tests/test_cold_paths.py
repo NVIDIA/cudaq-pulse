@@ -43,7 +43,6 @@ _PROGRAM = """
 import sys
 import cudaq_pulse as p
 from cudaq_pulse.classical import Link
-from cudaq_pulse.compiler import MachineModel
 
 @p.classical(min_latency_ns=200, nominal_latency_ns=300, max_latency_ns=400, link="gpu")
 def decode(s: p.Bits) -> p.Bits:
@@ -61,9 +60,9 @@ def k(q):
         if c[0]:
             drive(d, square(20, 0.1))
 
-machine = MachineModel(links={"gpu": Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50)})
+system = p.ControlSystem(links={"gpu": Link(fixed_ns=100, bytes_per_ns=10, feedback_ns=50)})
 dev = p.device("transmon_17q")
-low = p.compile(k, machine=machine).lower(dev.qudit_handles[0])
+low = p.compile(k, control_system=system).lower(dev.qudit_handles[0])
 """
 
 

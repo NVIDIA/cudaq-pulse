@@ -14,8 +14,8 @@ import time
 
 import cudaq_pulse as pulse
 import pytest
+from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link
-from cudaq_pulse.compiler import MachineModel
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -76,16 +76,16 @@ def test_feedback_makespan_is_readout_submit_latency_and_arm(policy):
 
 
 def test_readout_latency_delays_the_submission_under_rcp():
-    machine = MachineModel(readout_latency_cycles=50)
-    low = pulse.compile(feedback, schedule="rcp", machine=machine).lower(Q[0])
+    machine = ControlSystem(controllers=[pulse.Controller(feedback_latency_cycles=50)])
+    low = pulse.compile(feedback, schedule="rcp", control_system=machine).lower(Q[0])
     (call,) = low.classical_report()
     assert call.submit_cycles == READOUT + 50
 
 
 @pytest.mark.parametrize("feedback_ns", [0, 100, 250])
 def test_feedback_latency_of_the_link_adds_to_the_budget(feedback_ns):
-    machine = MachineModel(links={0: Link(feedback_ns=feedback_ns)})
-    low = pulse.compile(feedback, machine=machine).lower(Q[0])
+    machine = ControlSystem(links={"host": Link(feedback_ns=feedback_ns)})
+    low = pulse.compile(feedback, control_system=machine).lower(Q[0])
     assert _makespan(low) == READOUT + 1 + BUDGET + math.ceil(feedback_ns * CLOCK) + ARM
 
 
@@ -179,10 +179,10 @@ def test_rounds_overlap_their_calls(policy, rolled):
 @pytest.mark.parametrize("policy", POLICIES)
 @pytest.mark.parametrize("slots", [1, 2, 3])
 def test_link_slots_bound_requests_in_flight(policy, slots):
-    machine = MachineModel(links={0: Link(max_in_flight=slots)})
-    low = pulse.compile(_rounds(6), schedule=policy, machine=machine, unroll_threshold=0).lower(
-        Q[0]
-    )
+    machine = ControlSystem(links={"host": Link(max_in_flight=slots)})
+    low = pulse.compile(
+        _rounds(6), schedule=policy, control_system=machine, unroll_threshold=0
+    ).lower(Q[0])
     calls = low.classical_report()
     busy = [(c.submit_cycles, c.due_cycles) for c in calls]
     for start, _ in busy:
@@ -203,8 +203,8 @@ def test_submissions_on_one_link_go_out_in_order():
         for f in futures:
             f.result()
 
-    machine = MachineModel(links={0: Link(fixed_ns=10)})
-    calls = pulse.compile(k, machine=machine).lower(Q[0]).classical_report()
+    machine = ControlSystem(links={"host": Link(fixed_ns=10)})
+    calls = pulse.compile(k, control_system=machine).lower(Q[0]).classical_report()
     starts = [c.submit_cycles for c in calls]
     assert starts == sorted(starts)
     for a, b in zip(calls, calls[1:], strict=False):
@@ -331,7 +331,7 @@ def test_deadline_slack_is_reported():
 
 
 def test_a_request_too_big_for_its_slot_is_rejected():
-    machine = MachineModel(links={0: Link(slot_bytes=24 + 0 + 1 - 1 + 1)})
+    machine = ControlSystem(links={"host": Link(slot_bytes=24 + 0 + 1 - 1 + 1)})
 
     @pulse.classical(max_latency_ns=1)
     def big(b: pulse.Bits) -> None:
@@ -344,7 +344,7 @@ def test_a_request_too_big_for_its_slot_is_rejected():
         big.submit([m] * 16)
 
     with pytest.raises(RuntimeError, match="a request of 'big__16' takes 26 bytes"):
-        pulse.compile(k, machine=machine).lower(Q[0])
+        pulse.compile(k, control_system=machine).lower(Q[0])
 
 
 def _many(n, links):
@@ -461,8 +461,8 @@ def decoded(q, r):
 
 @pytest.mark.parametrize("schedule", POLICIES)
 def test_a_correction_from_decoder_state_waits_for_every_syndrome_it_holds(schedule):
-    machine = MachineModel(links={"decoder": Link(fixed_ns=10)})
-    lowered = pulse.compile(decoded, schedule=schedule, machine=machine).lower(Q[0], Q[1])
+    machine = ControlSystem(links={"decoder": Link(fixed_ns=10)})
+    lowered = pulse.compile(decoded, schedule=schedule, control_system=machine).lower(Q[0], Q[1])
     events = lowered.export_controller()["events"]
     corrections = [e for e in events if e["kind"] == "drive" and e["conditions"]]
     assert len(corrections) == 2
@@ -600,8 +600,8 @@ def test_a_block_waits_for_a_slot_the_caller_holds(callee, policy):
         twice(r)
         f.result()
 
-    machine = MachineModel(links={0: Link(max_in_flight=2)})
-    calls = pulse.compile(k, schedule=policy, machine=machine).lower(Q[0]).classical_report()
+    machine = ControlSystem(links={"host": Link(max_in_flight=2)})
+    calls = pulse.compile(k, schedule=policy, control_system=machine).lower(Q[0]).classical_report()
     first, *block = calls
     # The block's second request needs the slot the first call frees.
     assert block[1].submit_cycles == first.due_cycles

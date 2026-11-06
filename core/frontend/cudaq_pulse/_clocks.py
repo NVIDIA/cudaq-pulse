@@ -161,7 +161,7 @@ class ClockPlan:
     # (role, qudit) -> index into controllers; absent: the first.
     owners: Mapping[tuple[str, int], int] | None = None
     # The scheduler's readout latency in program cycles, when the
-    # controllers count theirs in their own (None: the machine model's).
+    # controllers count theirs in their own (None: the control system's).
     readout_latency_cycles: int | None = None
 
     def __reduce__(self) -> tuple[Any, ...]:
@@ -845,9 +845,8 @@ def round_on_grid(n: Any, grid: int, direction: RoundDirection | str) -> int:
 def checked_line_delays(
     given: Mapping[tuple[str, int], float | Time], owner: str
 ) -> Mapping[tuple[str, int], float]:
-    """*given*, line delays of *owner* (``MachineModel`` or
-    ``ControlSystem``) as times or numbers of ns, checked, as floats of ns in
-    line order."""
+    """*given*, line delays of *owner* (``ControlSystem``) as times or
+    numbers of ns, checked, as floats of ns in line order."""
     delays: dict[tuple[str, int], float] = {}
     for line, ns in dict(given).items():
         if (

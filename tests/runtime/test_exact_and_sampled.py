@@ -21,8 +21,8 @@ import time
 import cudaq_pulse as pulse
 import numpy as np
 import pytest
+from cudaq_pulse import ControlSystem
 from cudaq_pulse.classical import Link
-from cudaq_pulse.compiler import MachineModel
 from cudaq_pulse.runtime import _propagate
 from cudaq_pulse.runtime import simulate as simulate_module
 from cudaq_pulse.targets import MicrowaveDrive, Qubit, TargetDescription
@@ -189,7 +189,7 @@ def test_branch_coverage_takes_its_members_or_their_strings():
     assert pulse.BranchCoverage("all") is pulse.BranchCoverage.ALL
 
 
-_MACHINE = MachineModel(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
+_MACHINE = ControlSystem(links={"controller": Link(fixed_ns=4, feedback_ns=8)})
 
 
 @pulse.classical(max_latency_ns=200, link="controller")
@@ -218,7 +218,7 @@ def _adaptive_loop(q0, rounds: int):
 def test_a_long_adaptive_loop_follows_one_path_per_shot():
     target = _target(t1_us=5.0)
     dev = pulse.device({"target": target})
-    lowered = pulse.compile(_adaptive_loop, device=dev, machine=_MACHINE).lower(
+    lowered = pulse.compile(_adaptive_loop, device=dev, control_system=_MACHINE).lower(
         dev.qudit_handles[0], 60
     )
     result = pulse.simulate(lowered, shots=3, seed=1, branches="sampled", levels=2)

@@ -142,7 +142,7 @@ pulse-schedule-rcp
    readouts play at once, a readout's line and result are ready
    ``readout-latency`` cycles after it ends, and a unit stays busy
    ``switch-penalty`` cycles after each operation. ``alap=true`` gives the
-   ``alap_rcp`` policy. ``pulse.compile`` takes these from ``MachineModel``.
+   ``alap_rcp`` policy. ``pulse.compile`` takes these from the ``ControlSystem``.
 
 pulse-inline-schedule-blocks
    Inlines every ``pulse.schedule_block``, ignoring its policy
