@@ -1274,6 +1274,15 @@ private:
   struct Track {
     const LoopGroups *groups = nullptr;
     llvm::SmallVector<int64_t, 4> earliest;
+    /// Without groups yet, every start recorded, for them once built.
+    llvm::SmallVector<std::pair<mlir::Operation *, int64_t>, 8> starts;
+  };
+
+  /// The carried times before and after an iteration whose values moved by
+  /// different shifts: only two such in a row can repeat group by group, so
+  /// a loop's groups wait for the second.
+  struct Unshifted {
+    llvm::SmallVector<int64_t> before, after;
   };
 
   // ── Shared state ──────────────────────────────────────────────────────
@@ -1462,7 +1471,9 @@ private:
     samples[op].push_back({iteration, start});
     // Only the backward pass tracks the earliest starts.
     for (Track *track : tracks)
-      if (track->groups->ofOp.contains(op)) {
+      if (!track->groups)
+        track->starts.push_back({op, start});
+      else if (track->groups->ofOp.contains(op)) {
         int64_t &earliest =
             track->earliest[track->groups->groupOf(op, /*backward=*/true)];
         earliest = std::min(earliest, start);
@@ -2566,6 +2577,7 @@ private:
     int64_t laneTries = laneTriesPerLoop();
     const LoopGroups *groups = nullptr;
     bool grouped = false;
+    std::optional<Unshifted> unshifted;
     std::optional<GroupShifts> lastGroups;
     RecentStates recent;
     // Lanes that repeat only every few iterations regroup a loop of calls
@@ -2629,12 +2641,20 @@ private:
       // Lines that move by periods of their own repeat too, group by group.
       std::optional<GroupShifts> nowGroups;
       if (!shifted && k + 1 < count && groupsApply()) [[unlikely]] {
-        if (!grouped) {
+        if (!grouped && !unshifted) {
+          unshifted = Unshifted{carried, next};
+        } else if (!grouped) {
           grouped = true;
           groups = groupsOf(loop);
+          if (groups)
+            lastGroups = groupShifts(*groups, unshifted->before,
+                                     unshifted->after, kinds, false);
+          unshifted.reset();
         }
         if (groups)
           nowGroups = groupShifts(*groups, carried, next, kinds, false);
+      } else if (!grouped) {
+        unshifted.reset();
       }
       bool mixed = nowGroups && bounded && lastGroups == nowGroups &&
                    groupsSteady(*groups, *nowGroups, 1) &&
@@ -3204,6 +3224,7 @@ private:
     int64_t laneTries = laneTriesPerLoop();
     const LoopGroups *groups = nullptr;
     bool grouped = false;
+    std::optional<Unshifted> unshifted;
     std::optional<GroupShifts> lastGroups;
     Track track;
     bool simulatedFirst = false;
@@ -3238,13 +3259,17 @@ private:
       if (groups) {
         track.earliest.assign(groups->count, kNever);
         tracks.push_back(&track);
+      } else if (unshifted) {
+        track.starts.clear();
+        tracks.push_back(&track);
       }
+      bool tracked = groups || unshifted;
       // The earliest starts of this iteration, in the arm the loop is in.
       int64_t armBefore = std::exchange(armStart, kNever);
       llvm::SmallVector<int64_t, 4> armStartsBefore = armStarts;
       std::fill(armStarts.begin(), armStarts.end(), kNever);
       mlir::LogicalResult simulated = backwardBlock(*loop.getBody());
-      if (groups)
+      if (tracked)
         tracks.pop_back();
       if (mlir::failed(simulated))
         return mlir::failure();
@@ -3271,15 +3296,32 @@ private:
       // Lines that move by periods of their own repeat too, group by group.
       std::optional<GroupShifts> nowGroups;
       if (!shifted && k > 0 && groupsApply()) [[unlikely]] {
-        if (!grouped) {
+        if (!grouped && !unshifted) {
+          unshifted = Unshifted{carried, next};
+        } else if (!grouped) {
           grouped = true;
           groups = groupsOf(loop);
           if (groups && groups->mixedWaits && groups->linkBound)
             groups = groups->linkBound.get();
           track.groups = groups;
+          if (groups) {
+            lastGroups = groupShifts(*groups, unshifted->before,
+                                     unshifted->after, kinds, true);
+            track.earliest.assign(groups->count, kNever);
+            for (auto [op, start] : track.starts)
+              if (groups->ofOp.contains(op)) {
+                int64_t &earliest =
+                    track.earliest[groups->groupOf(op, /*backward=*/true)];
+                earliest = std::min(earliest, start);
+              }
+          }
+          track.starts.clear();
+          unshifted.reset();
         }
         if (groups)
           nowGroups = groupShifts(*groups, carried, next, kinds, true);
+      } else if (!grouped) {
+        unshifted.reset();
       }
       // Each group that moves has an op to move: the syncs of one without
       // would not start where its ops do.
