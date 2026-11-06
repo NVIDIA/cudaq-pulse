@@ -128,8 +128,8 @@ static BlockShape shapeOf(pulse::ScheduleBlockOp block) {
   return shape;
 }
 
-/// The cycles `op` takes. Scheduling checks first (checkPlaceable) that
-/// every pulse and wait has a known length.
+/// The cycles `op` takes. The forward pass checks (placedDuration) that
+/// every pulse and wait it places has a known length.
 static int64_t durationOf(mlir::Operation *op) {
   if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op))
     return shapeOf(block).length;
@@ -158,14 +158,12 @@ static int64_t durationOf(mlir::Operation *op) {
   return pulse::waitCycles(mlir::cast<pulse::WaitOp>(op)).value_or(0);
 }
 
-/// Whether `op` can be placed: a pulse or wait needs a known, valid length
-/// (the schedule places it for the cycles it takes, so an unknown length is
-/// an error rather than a placement that assumes some length), and a line
-/// one timeline (checkOneAcquisition).
-static mlir::LogicalResult checkPlaceable(mlir::Operation *op) {
-  if (!mlir::isa_and_nonnull<pulse::PulseDialect>(op->getDialect()))
-    return mlir::success();
-  auto checkPulse = [&](mlir::Value waveform) -> mlir::LogicalResult {
+/// The cycles a drive, readout or wait takes as the forward pass places it,
+/// once it is known to be valid: the schedule places an op for the cycles it
+/// takes, so an unknown length is an error rather than a placement that
+/// assumes some length.
+static mlir::FailureOr<int64_t> placedDuration(mlir::Operation *op) {
+  auto checkPulse = [&](mlir::Value waveform) -> mlir::FailureOr<int64_t> {
     std::optional<int64_t> cycles = pulse::waveformCycles(waveform);
     if (!cycles)
       return op->emitError("cannot determine the duration of this pulse; "
@@ -174,27 +172,23 @@ static mlir::LogicalResult checkPlaceable(mlir::Operation *op) {
     if (*cycles <= 0)
       return op->emitError("a pulse must last at least one cycle, got ")
              << *cycles;
-    return mlir::success();
+    return *cycles;
   };
   if (auto drive = mlir::dyn_cast<pulse::DriveOp>(op))
     return checkPulse(drive.getPulse());
   if (auto readout = mlir::dyn_cast<pulse::ReadoutOp>(op))
     return checkPulse(readout.getPulse());
-  if (auto wait = mlir::dyn_cast<pulse::WaitOp>(op)) {
-    // A wait a classical answer gives the length of is a variable wait,
-    // placed from its lowest length.
-    std::optional<int64_t> cycles = pulse::waitCycles(wait);
-    if (!cycles)
-      return wait.emitError("cannot determine the length of this wait; give "
-                            "it a constant length, or make it a "
-                            "pulse.variable_wait with its bounds");
-    if (*cycles < 0)
-      return wait.emitError("a wait cannot last ") << *cycles << " cycles";
-    return mlir::success();
-  }
-  if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
-    return pulse::checkOneAcquisition(op);
-  return mlir::success();
+  auto wait = mlir::dyn_cast<pulse::WaitOp>(op);
+  if (!wait || op->hasAttr("classical.variable"))
+    return durationOf(op);
+  std::optional<int64_t> cycles = pulse::waitCycles(wait);
+  if (!cycles)
+    return wait.emitError("cannot determine the length of this wait; give "
+                          "it a constant length, or make it a "
+                          "pulse.variable_wait with its bounds");
+  if (*cycles < 0)
+    return wait.emitError("a wait cannot last ") << *cycles << " cycles";
+  return *cycles;
 }
 
 /// From the end of a submission until its future is available.
@@ -2367,8 +2361,7 @@ private:
     noteEnd(start, t);
   }
 
-  void place(mlir::Operation *op, int64_t start, int64_t t) {
-    int64_t duration = durationOf(op);
+  void place(mlir::Operation *op, int64_t start, int64_t t, int64_t duration) {
     record(op, start);
     int64_t end = start + duration;
     int64_t lineEnd = end;
@@ -2411,6 +2404,9 @@ private:
       }
     }
     if (isTimedOp(op)) {
+      mlir::FailureOr<int64_t> duration = placedDuration(op);
+      if (mlir::failed(duration))
+        return mlir::failure();
       int64_t t = timelineOf(op);
       int64_t start = std::max(ready(op->getOperand(0)), floorOf(t));
       int64_t owner = several() ? controllerOf(op) : kAnyOwner;
@@ -2455,21 +2451,21 @@ private:
           start = std::max(start, free);
           if (step > 1)
             start = pulse::LineGrid::roundUp(start, step);
-          lanes[best] = start + durationOf(op) + resources.switchPenalty;
+          lanes[best] = start + *duration + resources.switchPenalty;
           owners[best] = owner;
         } else {
           auto lane = std::min_element(lanes.begin(), lanes.end());
           start = std::max(start, *lane);
           if (step > 1)
             start = pulse::LineGrid::roundUp(start, step);
-          *lane = start + durationOf(op) + resources.switchPenalty;
+          *lane = start + *duration + resources.switchPenalty;
         }
       }
       if (step > 1)
         start = pulse::LineGrid::roundUp(start, step);
-      place(op, start, t);
+      place(op, start, t, *duration);
       if (classical && op->hasAttr("classical.variable"))
-        floors[t] = std::max(floors[t], start + durationOf(op));
+        floors[t] = std::max(floors[t], start + *duration);
       return mlir::success();
     }
     if (auto block = mlir::dyn_cast<pulse::ScheduleBlockOp>(op)) {
@@ -3933,7 +3929,8 @@ static std::optional<NotAffine> periodMismatch(mlir::Region &region,
 // ── Schedule blocks ──────────────────────────────────────────────────────
 
 /// The schedule blocks in `region` that no other block in it encloses, once
-/// every other op in it, outside those blocks, can be placed.
+/// each line in it, outside those blocks, has one timeline
+/// (checkOneAcquisition).
 static mlir::FailureOr<llvm::SmallVector<pulse::ScheduleBlockOp>>
 placeableBlocks(mlir::Region &region) {
   llvm::SmallVector<pulse::ScheduleBlockOp> blocks;
@@ -3943,8 +3940,10 @@ placeableBlocks(mlir::Region &region) {
           blocks.push_back(block);
           return mlir::WalkResult::skip();
         }
-        return mlir::failed(checkPlaceable(op)) ? mlir::WalkResult::interrupt()
-                                                : mlir::WalkResult::advance();
+        if (mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op) &&
+            mlir::failed(pulse::checkOneAcquisition(op)))
+          return mlir::WalkResult::interrupt();
+        return mlir::WalkResult::advance();
       });
   if (walk.wasInterrupted())
     return mlir::failure();

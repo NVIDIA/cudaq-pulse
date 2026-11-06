@@ -530,6 +530,12 @@ struct PulseVerifyPass
           }
         }
     };
+    // One walk for each op's own checks: linearity, the values of waveforms
+    // and of the waits and measurements that use them (WaveformCheck), and
+    // acquisitions. Timing and lowering identify a line by the op that
+    // acquires it, so an acquisition in a loop body cannot stand for a new
+    // line per iteration.
+    WaveformCheck waveforms;
     module.walk([&](mlir::Operation *op) {
       for (mlir::Value result : op->getResults())
         checkLinear(result, op);
@@ -537,10 +543,7 @@ struct PulseVerifyPass
         for (mlir::Block &block : region)
           for (mlir::Value arg : block.getArguments())
             checkLinear(arg, op);
-    });
-    // Timing and lowering identify a line by the op that acquires it, so an
-    // acquisition in a loop body cannot stand for a new line per iteration.
-    module.walk([&](mlir::Operation *op) {
+      waveforms.visit(op);
       if (!mlir::isa<pulse::GetDriveLineOp, pulse::GetReadoutLineOp>(op))
         return;
       if (op->getParentOfType<mlir::scf::ForOp>()) {
@@ -664,10 +667,6 @@ struct PulseVerifyPass
       }
     });
 
-    // Check 2: the values of waveforms, and of the waits and measurements
-    // that use them.
-    WaveformCheck waveforms;
-    module.walk([&](mlir::Operation *op) { waveforms.visit(op); });
     hadError |= waveforms.hadError;
     // A wait whose length is not a constant is scheduled at a placeholder
     // length until its arguments are bound; only a variable wait, which

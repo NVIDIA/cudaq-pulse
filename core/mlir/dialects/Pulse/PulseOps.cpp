@@ -105,11 +105,15 @@ LogicalResult SyncOp::verify() {
     return emitOpError("number of input lines (")
            << getLines().size() << ") must match number of output lines ("
            << getSyncedLines().size() << ")";
-  for (auto [index, line, synced] :
-       llvm::enumerate(getLines().getTypes(), getSyncedLines().getTypes()))
+  Operation *op = getOperation();
+  for (unsigned index = 0, count = op->getNumOperands(); index < count;
+       ++index) {
+    Type line = op->getOperand(index).getType();
+    Type synced = op->getResult(index).getType();
     if (line != synced)
       return emitOpError("line ")
              << index << " is a " << line << ", but its result is a " << synced;
+  }
   return success();
 }
 
