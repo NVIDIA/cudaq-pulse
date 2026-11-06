@@ -992,6 +992,8 @@ def _describe(value: Any) -> str:
         return f"a {type(value).__name__} of {len(value)}"
     if value.__class__ is _Choice:
         return str(value.origin)
+    if value.__class__ is _NotMeasurement:
+        return f"`not` of {_describe(value.value)}"
     return f"{type(value).__name__} {value!r}"
 
 
@@ -2473,6 +2475,19 @@ class PulseIREmitter:
                 f"{subject} would depend on {on} through a value made inside an arm of "
                 f"{where}, which does not exist after it; {inside}, or make the value "
                 "before it"
+            )
+        # An arm that is a measurement result, or its `not`.
+        arms = [v.value if v.__class__ is _NotMeasurement else v for v in (a, b)]
+        if (
+            measurement
+            and not name
+            and any(v.__class__ is IRValue and v.vtype == "measurement" for v in arms)
+        ):
+            raise CompilationError(
+                f"`and`, `or` and `not` of measurement results at line {line} give no value "
+                "to keep: a measurement result is known only when the program runs, and only "
+                "an if tests it; write the condition in the if itself, as in "
+                "`if a and not b:`"
             )
         raise CompilationError(
             f"{subject} would depend on {on}: the arms of {where} leave {_describe(a)} and "

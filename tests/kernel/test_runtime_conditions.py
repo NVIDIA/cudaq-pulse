@@ -410,6 +410,13 @@ def test_a_chosen_condition_is_one_compare_of_both_answers():
     assert len(re.findall(r"arith\.cmp[if] ", text)) == 2
 
 
+_NO_MEASURED_VALUE = (
+    "`and`, `or` and `not` of measurement results at line 9 give no value to keep: a "
+    "measurement result is known only when the program runs, and only an if tests it; "
+    "write the condition in the if itself, as in `if a and not b:`"
+)
+
+
 def _mlir_with(prelude, condition):
     return pulse.compile(_kernel(condition, prelude=prelude)).lower(Q[0]).mlir()
 
@@ -425,12 +432,20 @@ def _mlir_with(prelude, condition):
         ),
         ("    c = (n > 3) and m\n", "the value of the conditional expression, `and` or `or`"),
         ("    c = 0.3 if n > 3 else 'a'\n", "an if chooses only between two numbers"),
+        ("    c = m and not m\n", _NO_MEASURED_VALUE),
+        ("    c = not m or m\n", _NO_MEASURED_VALUE),
+        ("    c = m or not m\n", _NO_MEASURED_VALUE),
+        (
+            "    if m:\n        c = not m\n    else:\n        c = m\n",
+            "leave `not` of a measurement result and a measurement result on it",
+        ),
     ],
 )
 def test_a_value_that_cannot_be_chosen_raises(prelude, message):
     kernel = _kernel("c", prelude=prelude)
-    with pytest.raises(CompilationError, match=re.escape(message)):
+    with pytest.raises(CompilationError, match=re.escape(message)) as info:
         pulse.compile(kernel).lower(Q[0])
+    assert "_Not" not in str(info.value) and "%v" not in str(info.value)
 
 
 @pytest.mark.parametrize(
