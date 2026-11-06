@@ -406,7 +406,11 @@ simulation, emulation and a real dispatcher.
 ``cudaq_pulse.classical.qec.Decoder`` declares the calls of a CUDA-QX
 real-time decoder (enqueue syndromes, get corrections, reset) with their wire
 ids, so a program built with it talks to a CUDA-QX decoding server
-unchanged; in simulation, a Python function decodes each path's syndromes.
+unchanged. Its Python ``decode`` function runs with the state such a server
+keeps: a get decodes what was enqueued since the last decode or reset, and
+with nothing to decode answers NOT_READY, which a wait with a timeout takes
+as late. Each path keeps its own state in simulation, as does each shot in
+emulation; ``serve_udp`` keeps one per decoder.
 
 Emulation
 ---------

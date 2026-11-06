@@ -47,7 +47,14 @@ from .._errors import (
 )
 from ..compiler import _dispatch_keys
 from ..runtime._calls import IQModel, _answer_values, _call_inputs, takes_iq
-from . import _RESERVED_KEYS, ClassicalFunction, _handlers_for, wire
+from . import (
+    _NOT_READY,
+    _RESERVED_KEYS,
+    ClassicalFunction,
+    _handlers_for,
+    _NotReadyError,
+    wire,
+)
 
 if TYPE_CHECKING:
     import numpy as np
@@ -109,12 +116,19 @@ class InProcess:
     ):
         self._handlers = dict(handlers)
         self._keys = dict(dispatch_keys or {})
+        # Handlers that keep state per path, as a QEC decoder's do: emulate
+        # passes them the shot's calls, as simulation passes a path's.
+        self._stateful = {
+            name: self._handlers.pop(name)
+            for name, handler in handlers.items()
+            if getattr(handler, "takes_history", False)
+        }
 
     def call(self, function: ClassicalFunction[..., Any], request: bytes) -> tuple[bytes, float]:
         """Deliver *request*; returns the answer bytes and the service's time in ns."""
         handler = self._handlers.get(function.name) or self._handlers.get(function.base_name)
         if handler is None:
-            raise NotFoundError(f"no service for {function.name!r}")
+            return self._call(function, request, None)
         key = self._keys.get(function.name)
         request_id, timestamp, args = wire.decode_request(function, request, key)
         t0 = time.perf_counter_ns()
@@ -122,8 +136,47 @@ class InProcess:
         service_ns = float(time.perf_counter_ns() - t0)
         return wire.encode_answer(function, answer, request_id, timestamp), service_ns
 
+    def _call(
+        self, function: ClassicalFunction[..., Any], request: bytes, history: Sequence[Any] | None
+    ) -> tuple[bytes, float]:
+        """``call``, giving a handler that keeps state per path *history*,
+        the calls the shot made before this one (``None``: its own state)."""
+        handler = self._stateful.get(function.name) or self._stateful.get(function.base_name)
+        if handler is None:
+            if history is None:
+                raise NotFoundError(f"no service for {function.name!r}")
+            return self.call(function, request)
+        key = self._keys.get(function.name)
+        request_id, timestamp, args = wire.decode_request(function, request, key)
+        t0 = time.perf_counter_ns()
+        try:
+            answer = handler(*args) if history is None else handler(*args, history=history)
+        except _NotReadyError:
+            reply = wire._status_answer(request_id, timestamp, _NOT_READY)
+            return reply, float(time.perf_counter_ns() - t0)
+        service_ns = float(time.perf_counter_ns() - t0)
+        return wire.encode_answer(function, answer, request_id, timestamp), service_ns
+
     def close(self) -> None:
         pass
+
+
+def _reply(
+    function: ClassicalFunction[..., Any],
+    handler: Callable[..., Any],
+    args: Sequence[Any],
+    request_id: int,
+    timestamp: int,
+) -> tuple[bytes, int]:
+    """*handler*'s answer to one request, encoded, and its time in ns. A
+    decoder with nothing decoded answers NOT_READY, as a CUDA-QX server does."""
+    t0 = time.perf_counter_ns()
+    try:
+        answer = handler(*args)
+    except _NotReadyError:
+        return wire._status_answer(request_id, timestamp, _NOT_READY), time.perf_counter_ns() - t0
+    service_ns = time.perf_counter_ns() - t0
+    return wire.encode_answer(function, answer, request_id, timestamp), service_ns
 
 
 def serve_udp(
@@ -161,11 +214,8 @@ def serve_udp(
             key, length = struct.unpack_from("<II", data, 4)
             fn = _served(by_key, key, length, data)
             request_id, timestamp, args = wire.decode_request(fn, data, key)
-            t0 = time.perf_counter_ns()
             handler = handlers.get(fn.name) or handlers[fn.base_name]
-            answer = handler(*args)
-            service_ns = time.perf_counter_ns() - t0
-            reply = wire.encode_answer(fn, answer, request_id, timestamp)
+            reply, service_ns = _reply(fn, handler, args, request_id, timestamp)
             sock.sendto(reply + struct.pack("<Q", service_ns), peer)
 
     thread = threading.Thread(target=loop, daemon=True)
@@ -310,10 +360,6 @@ class EmulationResult:
         return n / self.wall_s if self.wall_s > 0 else math.inf
 
 
-# A CUDA-QX decoder's status for corrections it has not decoded yet.
-_NOT_READY = 4
-
-
 def _not_ready(callee: str, request_id: int) -> ExecutionError:
     return ExecutionError(
         f"decoder call {callee!r} was answered NOT_READY (status {_NOT_READY}) to request"
@@ -352,6 +398,12 @@ def emulate(
     chosen = _handlers_for(functions, handlers)
     keys = {name: key for name, (key, _) in _dispatch_keys(lowered).items()}
     channel = channel or InProcess(functions, chosen, keys)
+    call_service = channel.call
+    if isinstance(channel, InProcess) and channel._stateful:
+        # Handlers that keep state per path get the shot's calls so far.
+        def call_service(fn: ClassicalFunction[..., Any], request: bytes) -> tuple[bytes, float]:
+            return channel._call(fn, request, traces)
+
     import numpy as np
 
     rng = np.random.default_rng(seed)
@@ -429,7 +481,7 @@ def emulate(
                     module = module.bind_call(index, [float(value)], *schedule_args)
                     continue
                 request = wire.encode_request(fn, inputs, request_id, dispatch_key=keys[callee])
-                answer_bytes, service_ns = channel.call(fn, request)
+                answer_bytes, service_ns = call_service(fn, request)
                 status, answered_id, answer = wire.decode_answer(fn, answer_bytes)
                 # A decoder not done decoding has no answer: it is late.
                 ready = status == 0

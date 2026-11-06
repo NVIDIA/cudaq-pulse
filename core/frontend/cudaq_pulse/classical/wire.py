@@ -231,6 +231,12 @@ def encode_answer(
     return _RESPONSE.pack(RESPONSE_MAGIC, status, len(payload), request_id, timestamp) + payload
 
 
+def _status_answer(request_id: int, timestamp: int, status: int) -> bytes:
+    """An answer with *status* and no results, as a server answers a request
+    it could not serve."""
+    return _RESPONSE.pack(RESPONSE_MAGIC, status, 0, request_id, timestamp)
+
+
 def call_failed(name: str, request_id: int, status: int) -> ExecutionError:
     """The error for an answer whose status is not 0."""
     return ExecutionError(

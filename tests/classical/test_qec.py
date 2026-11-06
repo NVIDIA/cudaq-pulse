@@ -135,6 +135,126 @@ def test_each_path_keeps_its_own_decoder_state():
         assert branch.calls[-1].answer == [(branch.levels[0] + branch.levels[1]) % 2]
 
 
+def _parity_decoder():
+    return qec.Decoder(
+        0, syndromes=2, corrections=1, max_latency_ns=100, decode=lambda bits: [sum(bits) % 2]
+    )
+
+
+def test_emulation_decodes_what_each_shot_enqueued():
+    decoder = _parity_decoder()
+
+    @pulse.kernel
+    def k(a, b):
+        ra, rb = get_readout_line(a), get_readout_line(b)
+        qec.reset_decoder(decoder)
+        for r in range(2):
+            qec.enqueue_syndromes(
+                decoder, [readout(ra, square(100, 0.05)), readout(rb, square(100, 0.05))], r
+            )
+        qec.get_corrections(decoder).result()
+
+    dev = _device(n=2)
+    low = pulse.compile(k, device=dev).lower(*dev.qudit_handles[:2])
+    run = emulation.emulate(low, shots=40, seed=3, service_time="none")
+    parities = set()
+    for outcomes, calls in zip(run.outcomes, run.calls, strict=True):
+        assert calls[-1].answer == [sum(outcomes) % 2]
+        parities.add(sum(outcomes) % 2)
+    assert parities == {0, 1}
+
+
+def test_serve_udp_keeps_a_decoders_state_as_a_server_does():
+    decoder = _parity_decoder()
+    enqueue, get, reset = (
+        decoder.enqueue_function,
+        decoder.corrections_function,
+        decoder.reset_function,
+    )
+    _, address, stop = emulation.serve_udp([enqueue, get, reset], decoder.handlers())
+    channel = emulation.UdpChannel(address)
+    request_id = iter(range(100))
+
+    def call(fn, *args):
+        answer, _ = channel.call(fn, wire.encode_request(fn, args, next(request_id)))
+        status, _, value = wire.decode_answer(fn, answer)
+        return status, value
+
+    not_ready = CUDAQX["status"]["NOT_READY"]
+    try:
+        assert call(reset, 0) == (0, None)
+        assert call(get, 0, 1, 0) == (not_ready, None)
+        assert call(enqueue, 0, 0, 0, 2, [1, 0]) == (0, None)
+        assert call(enqueue, 0, 1, 0, 2, [1, 1]) == (0, None)
+        assert call(get, 0, 1, 0) == (0, [1])
+        assert call(get, 0, 1, 1) == (0, [1])  # again, then dropped
+        assert call(get, 0, 1, 0) == (not_ready, None)
+        # After a decode, an enqueue starts a new volume.
+        call(enqueue, 0, 0, 0, 2, [1, 1])
+        assert call(get, 0, 1, 0) == (0, [0])
+        call(enqueue, 0, 0, 0, 2, [0, 1])
+        assert call(get, 0, 1, 0) == (0, [1])
+        call(reset, 0)
+        assert call(get, 0, 1, 0) == (not_ready, None)
+    finally:
+        channel.close()
+        stop()
+
+
+def _nothing_enqueued(timeout):
+    decoder = _parity_decoder()
+
+    @pulse.kernel
+    def k(q):
+        d = get_drive_line(q)
+        qec.reset_decoder(decoder)
+        if timeout:
+            ok, fix = qec.get_corrections(decoder).result(timeout=200 * pulse.ns)
+            if ok:
+                drive(d, square(40, PI_AMP))
+        else:
+            if qec.get_corrections(decoder).result()[0]:
+                drive(d, square(40, PI_AMP))
+
+    dev = _device()
+    return pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
+
+
+def test_a_get_with_nothing_enqueued_is_late():
+    low = _nothing_enqueued(timeout=True)
+    (branch,) = pulse.simulate(low, levels=2).branches
+    assert not branch.calls[-1].in_time and branch.calls[-1].answer is None
+    run = emulation.emulate(low, shots=2, service_time="none")
+    assert [shot[-1].in_time for shot in run.calls] == [False, False]
+    low = _nothing_enqueued(timeout=False)
+    with pytest.raises(pulse.ExecutionError, match=r"nothing to decode \(NOT_READY"):
+        pulse.simulate(low, levels=2)
+    with pytest.raises(pulse.ExecutionError, match=r"NOT_READY \(status 4\)"):
+        emulation.emulate(low, service_time="none")
+
+
+def test_a_get_decodes_what_was_enqueued_since_the_last_decode():
+    decoder = qec.Decoder(
+        0, syndromes=1, corrections=1, max_latency_ns=100, decode=lambda bits: [len(bits) % 2]
+    )
+
+    @pulse.kernel
+    def k(q):
+        r = get_readout_line(q)
+        qec.reset_decoder(decoder)
+        qec.enqueue_syndromes(decoder, [readout(r, square(100, 0.05))])
+        qec.get_corrections(decoder).result()
+        qec.enqueue_syndromes(decoder, [readout(r, square(100, 0.05))])
+        qec.get_corrections(decoder).result()
+
+    dev = _device()
+    low = pulse.compile(k, device=dev).lower(dev.qudit_handles[0])
+    for branch in pulse.simulate(low, levels=2).branches:
+        assert [c.answer for c in branch.calls if c.function.startswith("get")] == [[1], [1]]
+    for shot in emulation.emulate(low, shots=4, seed=1, service_time="none").calls:
+        assert [c.answer for c in shot if c.function.startswith("get")] == [[1], [1]]
+
+
 def test_a_decoder_without_decode_needs_handlers():
     decoder = _decoder()
     with pytest.raises(TypeError, match="has no body to run here. Give it a handler"):

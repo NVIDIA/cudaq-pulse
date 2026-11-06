@@ -16,11 +16,18 @@ the server tells them apart by the decoder id in the payload:
   syndrome bits (``{decoder id, round, mapping id, count}`` and the bits);
   nothing comes back.
 - ``get_corrections(decoder, reset=False)``: the corrections decoded from
-  everything enqueued since the last reset; the call to wait on.
+  the syndromes enqueued since the last decode or reset; the call to wait on.
+  Asked again, it gives the same corrections until the next enqueue starts a
+  new volume; ``reset=True`` drops them once read. With nothing to decode the
+  decoder answers NOT_READY, which a wait with a timeout takes as late.
 - ``reset_decoder(decoder)``: clear what was enqueued.
 
-In simulation the decoder is a Python function from the syndrome bits
-enqueued on a path to correction bits; each path keeps its own::
+The decoder's ``decode`` is a Python function from the syndrome bits of one
+volume to correction bits. It runs with the state a CUDA-QX decoding server
+keeps, per path in simulation and per shot in emulation, and per decoder in
+``emulation.serve_udp``. A ``Decoder`` declares no volume size, so a get
+decodes what has arrived; a server waits for the volume its configuration
+gives and answers NOT_READY before it::
 
     from cudaq_pulse.classical import qec
 
@@ -42,7 +49,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from .._errors import InvalidTypeError, InvalidValueError
-from . import ClassicalFunction, _Bits, _Byte, _Integer, function_id
+from . import ClassicalFunction, _Bits, _Byte, _Integer, _NotReadyError, function_id
 
 __all__ = [
     "Decoder",
@@ -62,8 +69,9 @@ class Decoder:
 
     ``syndromes`` is the number of syndrome bits a round enqueues and
     ``corrections`` the number of correction bits ``get_corrections``
-    returns. ``decode`` maps all syndrome bits enqueued since the last reset,
-    in order, to the correction bits; it is the decoder simulation runs.
+    returns. ``decode`` maps the syndrome bits of one volume, in the order
+    they were enqueued, to the correction bits; it is the decoder simulation
+    and emulation run.
     """
 
     def __init__(
@@ -121,31 +129,24 @@ class Decoder:
                 fn.implementation = handler
 
     def handlers(self) -> dict[str, Callable[..., Any]]:
-        """Simulation handlers for the three calls, for ``simulate(handlers=)``.
+        """Handlers for the three calls, for ``simulate(handlers=)``,
+        ``emulate(handlers=)`` and ``serve_udp``.
 
-        ``get_corrections`` decodes the syndromes the path enqueued since its
-        last reset, so every path keeps its own decoder state.
+        They keep the decoder's state as a CUDA-QX decoding server does. In
+        simulation and in-process emulation it is rebuilt from the path's
+        own calls, so every path and every shot starts afresh; called
+        without them, as ``serve_udp`` does, the handlers keep one state,
+        changed by each call as it comes.
         """
         decode = self.decode
         enqueue_name = self.enqueue_function.name
+        get_name = self.corrections_function.name
         reset_name = self.reset_function.name
         corrections = self.corrections
 
-        def enqueue(decoder_id: int, round: int, mapping: int, count: int, bits: list[int]) -> None:
-            return None
-
-        def reset(decoder_id: int) -> None:
-            return None
-
-        def get(decoder_id: int, return_size: int, clear: int, history: Sequence[Any] = ()) -> Any:
+        def decoded(bits: list[int]) -> list[int]:
             if decode is None:
                 raise InvalidTypeError("this Decoder has no decode function to simulate it with")
-            bits: list[int] = []
-            for record in history:
-                if record.function == reset_name:
-                    bits = []
-                elif record.function == enqueue_name:
-                    bits.extend(record.inputs[4])
             answer = list(decode(bits))
             if len(answer) != corrections:
                 raise InvalidValueError(
@@ -153,12 +154,85 @@ class Decoder:
                 )
             return answer
 
+        served = _Session()
+
+        def enqueue(
+            decoder_id: int,
+            round: int,
+            mapping: int,
+            count: int,
+            bits: list[int],
+            history: Sequence[Any] | None = None,
+        ) -> None:
+            if history is None:
+                served.enqueue(bits)
+
+        def reset(decoder_id: int, history: Sequence[Any] | None = None) -> None:
+            if history is None:
+                served.reset()
+
+        def get(
+            decoder_id: int, return_size: int, clear: int, history: Sequence[Any] | None = None
+        ) -> Any:
+            if history is None:
+                return served.get(decoded, clear)
+            session = _Session()
+            for record in history:
+                if record.function == enqueue_name:
+                    session.enqueue(record.inputs[4])
+                elif record.function == get_name:
+                    try:
+                        session.replay_get(record.inputs[2])
+                    except _NotReadyError:
+                        pass
+                elif record.function == reset_name:
+                    session.reset()
+            return session.get(decoded, clear)
+
+        enqueue.takes_history = True  # type: ignore[attr-defined]
         get.takes_history = True  # type: ignore[attr-defined]
-        return {
-            enqueue_name: enqueue,
-            self.corrections_function.name: get,
-            reset_name: reset,
-        }
+        reset.takes_history = True  # type: ignore[attr-defined]
+        return {enqueue_name: enqueue, get_name: get, reset_name: reset}
+
+
+class _Session:
+    """A decoder's state as a CUDA-QX decoding server keeps it: the bits of
+    the volume being collected, and the corrections of the last decode until
+    the next enqueue starts a new volume (or a get with reset drops them)."""
+
+    __slots__ = ("bits", "complete", "decoded")
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.bits: list[int] = []
+        self.complete = False
+        self.decoded: list[int] | None = None
+
+    def enqueue(self, bits: Sequence[int]) -> None:
+        if self.complete:
+            self.reset()
+        self.bits.extend(bits)
+
+    def get(self, decoded: Callable[[list[int]], list[int]], clear: int) -> list[int]:
+        self.replay_get(0)
+        if self.decoded is None:
+            self.decoded = decoded(self.bits)
+        answer = self.decoded
+        if clear:
+            self.reset()
+        return answer
+
+    def replay_get(self, clear: int) -> None:
+        """A get, as far as the state goes: it completes the volume (its
+        decode runs when an answer is needed), or finds nothing to decode."""
+        if not self.complete:
+            if not self.bits:
+                raise _NotReadyError
+            self.complete = True
+        if clear:
+            self.reset()
 
 
 def enqueue_syndromes(

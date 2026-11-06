@@ -286,6 +286,14 @@ _RESERVED_KEYS = {
     0x977A59CF: "cudaq_pulse.classical.qec",
 }
 
+#: A CUDA-QX decoder's status for corrections it has not decoded yet.
+_NOT_READY = 4
+
+
+class _NotReadyError(Exception):
+    """Raised by a decoder's handler with nothing decoded: the server's
+    NOT_READY, which a wait with a timeout takes as a late answer."""
+
 
 # Type checkers see a list of ints, so a body returns any list of bits and
 # ``pulse.Bits()``, an external's placeholder result, checks too (an alias made

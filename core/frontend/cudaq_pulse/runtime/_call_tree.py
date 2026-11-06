@@ -36,8 +36,8 @@ from typing import Any
 
 import numpy as np
 
-from .._errors import InvalidValueError, NotFoundError
-from ..classical import ClassicalFunction
+from .._errors import ExecutionError, InvalidValueError, NotFoundError
+from ..classical import ClassicalFunction, _NotReadyError
 from ._calls import (
     CallRecord,
     IQModel,
@@ -114,6 +114,20 @@ def _schedule_end(module: Any, clock_ghz: float) -> float:
     """The end of a module's schedule, in ns."""
     ends = [s + d for _, _, _, s, d in module.events() if s is not None and d is not None]
     return max(ends, default=0) / clock_ghz
+
+
+def _not_ready(function: ClassicalFunction[..., Any], call: Any) -> list[float]:
+    """What a call answered NOT_READY binds: a late answer."""
+    _, _, callee, _, answered, timeout = call
+    if not answered:
+        return []
+    if timeout >= 0 or function.timeout_ns is not None:
+        return [0.0] * (1 + sum(spec.answer_count for spec in function.results))
+    raise ExecutionError(
+        f"decoder call {callee!r} has nothing to decode (NOT_READY, status 4) and no"
+        " timeout to fall back on; enqueue syndromes before it, or take it with"
+        " .result(timeout=...) and branch on the flag"
+    )
 
 
 def simulate_tree(
@@ -298,7 +312,22 @@ def simulate_tree(
                 return
             if not takes_iq(function):
                 inputs = _call_inputs(function, arguments, outcomes)
-                answer = invoke(callee, inputs, calls)
+                try:
+                    answer = invoke(callee, inputs, calls)
+                except _NotReadyError:
+                    # A decoder with nothing to decode: its NOT_READY is late.
+                    record = CallRecord(function.base_name, callee, start, inputs, None, False)
+                    run(
+                        current.bind_call(index, _not_ready(function, call), *schedule_args),
+                        path,
+                        truth,
+                        state,
+                        t,
+                        count,
+                        weight,
+                        [*calls, record],
+                    )
+                    return
                 answer_call(
                     current, path, truth, state, t, count, weight, calls, call, inputs, answer
                 )
