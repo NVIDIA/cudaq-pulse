@@ -290,8 +290,8 @@ The structured format
 ``export_controller(version=2)`` gives format
 ``"cudaq-pulse.controller/2"``, which grows with a program's operations
 rather than with its executions, as a sequencer runs it. It is written for a
-controller on the program clock, in timesteps of any length (see
-:ref:`timestep`); for one on its own clock, or with line delays, export
+controller on the program clock, in :ref:`timesteps <timestep>` of any
+length; for one on its own clock, or with line delays, export
 ``/1``. It has the keys of ``/1``, except that:
 
 ``events``
