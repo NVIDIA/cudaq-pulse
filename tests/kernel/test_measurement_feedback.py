@@ -442,3 +442,41 @@ def test_an_arm_whose_plain_python_call_reorders_a_list_is_rejected():
 
     with pytest.raises(CompilationError, match="may only change list entries that hold lines"):
         pulse.compile(shuffles).lower(Q[0])
+
+
+def _events(kernel, *qudits):
+    return [
+        (e.kind, e.line, e.start_cycles, e.duration_cycles)
+        for e in pulse.compile(kernel).lower(*qudits).schedule
+    ]
+
+
+@pulse.classical(max_latency_ns=400)
+def _corrections(bits: pulse.Bits) -> pulse.Bits:
+    return [bits[0], bits[0]]
+
+
+def test_corrections_from_an_answer_drive_lines_held_in_a_list():
+    @pulse.kernel
+    def listed(q0, q1, q2):
+        data = [get_drive_line(q0), get_drive_line(q1)]  # noqa: F821
+        probe = get_readout_line(q2)  # noqa: F821
+        for _ in range(2):
+            fix = _corrections.submit([readout(probe, square(80, 0.05))]).result()  # noqa: F821
+            for k in range(2):
+                if fix[k]:
+                    drive(data[k], square(16, 0.3))  # noqa: F821
+
+    @pulse.kernel
+    def named(q0, q1, q2):
+        d0 = get_drive_line(q0)  # noqa: F821
+        d1 = get_drive_line(q1)  # noqa: F821
+        probe = get_readout_line(q2)  # noqa: F821
+        for _ in range(2):
+            fix = _corrections.submit([readout(probe, square(80, 0.05))]).result()  # noqa: F821
+            if fix[0]:
+                drive(d0, square(16, 0.3))  # noqa: F821
+            if fix[1]:
+                drive(d1, square(16, 0.3))  # noqa: F821
+
+    assert _events(listed, Q[0], Q[1], Q[2]) == _events(named, Q[0], Q[1], Q[2])
